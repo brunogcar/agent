@@ -1,0 +1,24 @@
+{"trace_id": "1e124f2e", "workflow": "test", "goal": "phase 1 verification", "started_at": 1777483259.5072105, "started_fmt": "2026-04-29 14:20:59", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "1e124f2e", "node": "config", "message": "paths resolved", "ts": 1777483259.5072105, "agent_root": "D:\\mcp\\agent", "memory_root": "D:\\mcp\\memory_db"}
+{"event": "trace_finish", "trace_id": "1e124f2e", "success": true, "result": "all good", "elapsed_s": 0.0, "ts": 1777483259.5072105}
+{"trace_id": "44fb9f70", "workflow": "startup", "goal": "server boot", "started_at": 1777498686.1983602, "started_fmt": "2026-04-29 18:38:06", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "44fb9f70", "node": "boot", "message": "Agent starting", "ts": 1777498686.199362, "agent_root": "D:\\mcp\\agent", "planner": "qwen/qwen3.5-9b", "executor": "hermes-3-llama-3.1-8b", "router": "nvidia/nemotron-3-nano-4b"}
+{"event": "trace_finish", "trace_id": "44fb9f70", "success": true, "result": "boot complete", "elapsed_s": 0.0, "ts": 1777498686.199362}
+{"trace_id": "0524b7e8", "workflow": "startup", "goal": "server boot", "started_at": 1777498687.1776307, "started_fmt": "2026-04-29 18:38:07", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "0524b7e8", "node": "boot", "message": "Agent starting", "ts": 1777498687.1776307, "agent_root": "D:\\mcp\\agent", "planner": "qwen/qwen3.5-9b", "executor": "hermes-3-llama-3.1-8b", "router": "nvidia/nemotron-3-nano-4b"}
+{"event": "trace_finish", "trace_id": "0524b7e8", "success": true, "result": "boot complete", "elapsed_s": 0.0, "ts": 1777498687.1776307}
+{"trace_id": "3367a545", "workflow": "startup", "goal": "server boot", "started_at": 1777498764.4343379, "started_fmt": "2026-04-29 18:39:24", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "3367a545", "node": "boot", "message": "Agent starting", "ts": 1777498764.4353595, "agent_root": "D:\\mcp\\agent", "planner": "qwen/qwen3.5-9b", "executor": "hermes-3-llama-3.1-8b", "router": "nvidia/nemotron-3-nano-4b"}
+{"event": "trace_finish", "trace_id": "3367a545", "success": true, "result": "boot complete", "elapsed_s": 0.0, "ts": 1777498764.4353595}
+{"trace_id": "c5d5faaf", "workflow": "startup", "goal": "server boot", "started_at": 1777498809.7976978, "started_fmt": "2026-04-29 18:40:09", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "c5d5faaf", "node": "boot", "message": "Agent starting", "ts": 1777498809.7984452, "agent_root": "D:\\mcp\\agent", "planner": "qwen/qwen3.5-9b", "executor": "hermes-3-llama-3.1-8b", "router": "nvidia/nemotron-3-nano-4b"}
+{"event": "trace_finish", "trace_id": "c5d5faaf", "success": true, "result": "boot complete", "elapsed_s": 0.0, "ts": 1777498809.7984452}
+{"trace_id": "20273248", "workflow": "startup", "goal": "server boot", "started_at": 1777498849.0530493, "started_fmt": "2026-04-29 18:40:49", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "20273248", "node": "boot", "message": "Agent starting", "ts": 1777498849.0530493, "agent_root": "D:\\mcp\\agent", "planner": "qwen/qwen3.5-9b", "executor": "hermes-3-llama-3.1-8b", "router": "nvidia/nemotron-3-nano-4b"}
+{"event": "trace_finish", "trace_id": "20273248", "success": true, "result": "boot complete", "elapsed_s": 0.0, "ts": 1777498849.0530493}
+{"trace_id": "078ff484", "workflow": "startup", "goal": "server boot", "started_at": 1777498964.8775086, "started_fmt": "2026-04-29 18:42:44", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "078ff484", "node": "boot", "message": "Agent starting", "ts": 1777498964.8775086, "agent_root": "D:\\mcp\\agent", "planner": "qwen/qwen3.5-9b", "executor": "hermes-3-llama-3.1-8b", "router": "nvidia/nemotron-3-nano-4b"}
+{"event": "trace_finish", "trace_id": "078ff484", "success": true, "result": "boot complete", "elapsed_s": 0.0, "ts": 1777498964.8786154}
+{"trace_id": "c10a0696", "workflow": "startup", "goal": "server boot", "started_at": 1777499611.1661494, "started_fmt": "2026-04-29 18:53:31", "status": "running", "steps": [], "event": "trace_start"}
+{"event": "step", "trace_id": "c10a0696", "node": "boot", "message": "Agent starting", "ts": 1777499611.1661494, "agent_root": "D:\\mcp\\agent", "planner": "qwen/qwen3.5-9b", "executor": "hermes-3-llama-3.1-8b", "router": "nvidia/nemotron-3-nano-4b"}
+{"event": "trace_finish", "trace_id": "c10a0696", "success": true, "result": "boot complete", "elapsed_s": 0.0, "ts": 1777499611.1661494}

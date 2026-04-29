@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.bak
+.env
+memory_db/
+*.db
+*.lock
+.mypy_cache/
+.ruff_cache/
