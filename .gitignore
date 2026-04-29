@@ -9,3 +9,4 @@ memory_db/
 *.lock
 .mypy_cache/
 .ruff_cache/
+logs/
