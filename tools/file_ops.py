@@ -198,11 +198,16 @@ def file(
     query:     str        = "",
     max_chars: int        = 50_000,
     max_results: int      = 10,
+    title:       str      = "",
 ) -> dict:
     """
     File tool — read, write, search, and manage files.
 
-    action: "read" | "write" | "list" | "backup" | "read_many" | "search" | "read_pdf"
+    action: "read" | "write" | "list" | "backup" | "read_many" | "search" |
+            "read_pdf" | "write_pdf" |
+            "read_docx" | "write_docx" |
+            "read_xlsx" | "write_xlsx" |
+            "read_pptx" | "write_pptx"
 
     read
         Read a single file. Paths relative to workspace root.
@@ -461,7 +466,623 @@ def file(
         except Exception as e:
             return {"status": "error", "error": f"PDF read failed: {type(e).__name__}: {e}"}
 
+    # ── read_docx ─────────────────────────────────────────────────────────────
+    if action == "read_docx":
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if not p.exists():
+            return {"status": "error", "error": f"File not found: {p}"}
+        if p.suffix.lower() != ".docx":
+            return {"status": "error", "error": f"Not a .docx file: {p.name}"}
+        try:
+            from docx import Document
+            from docx.oxml.ns import qn
+
+            doc      = Document(str(p))
+            sections = []
+            tables   = []
+
+            for elem in doc.element.body:
+                tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+
+                if tag == "p":
+                    # Paragraph — detect heading style
+                    from docx.text.paragraph import Paragraph
+                    para  = Paragraph(elem, doc)
+                    text  = para.text.strip()
+                    style = para.style.name if para.style else ""
+                    if not text:
+                        continue
+                    if style.startswith("Heading"):
+                        level = style.replace("Heading ", "").strip()
+                        sections.append({"type": "heading", "level": level, "text": text})
+                    else:
+                        sections.append({"type": "paragraph", "text": text})
+
+                elif tag == "tbl":
+                    from docx.table import Table
+                    tbl  = Table(elem, doc)
+                    rows = []
+                    for row in tbl.rows:
+                        rows.append([c.text.strip() for c in row.cells])
+                    tables.append(rows)
+                    sections.append({"type": "table", "rows": rows})
+
+            # Flat text version for easy LLM consumption
+            flat = "\n".join(
+                ("#" * int(s.get("level", 1)) + " " + s["text"])
+                if s["type"] == "heading"
+                else s["text"]
+                if s["type"] == "paragraph"
+                else "[TABLE: " + " | ".join(s["rows"][0]) + " ...]"
+                if s["type"] == "table" and s["rows"]
+                else ""
+                for s in sections
+            ).strip()
+
+            truncated = len(flat) > max_chars
+            if truncated:
+                flat = flat[:max_chars] + f"\n\n[...truncated]"
+
+            return {
+                "status":     "success",
+                "path":       str(p),
+                "text":       flat,
+                "sections":   sections,
+                "tables":     len(tables),
+                "paragraphs": len([s for s in sections if s["type"] == "paragraph"]),
+                "truncated":  truncated,
+            }
+        except ImportError:
+            return {"status": "error", "error": "python-docx not installed. Run: pip install python-docx"}
+        except Exception as e:
+            return {"status": "error", "error": f"DOCX read failed: {type(e).__name__}: {e}"}
+
+    # ── read_xlsx ─────────────────────────────────────────────────────────────
+    if action == "read_xlsx":
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if not p.exists():
+            return {"status": "error", "error": f"File not found: {p}"}
+        if p.suffix.lower() not in (".xlsx", ".xls", ".xlsm"):
+            return {"status": "error", "error": f"Not an Excel file: {p.name}"}
+        try:
+            import pandas as pd
+
+            xl       = pd.ExcelFile(str(p))
+            sheets   = xl.sheet_names
+            result   = {}
+
+            for sheet in sheets:
+                df = xl.parse(sheet)
+                # Cap rows to avoid token explosion
+                MAX_ROWS = 200
+                truncated_sheet = len(df) > MAX_ROWS
+                if truncated_sheet:
+                    df = df.head(MAX_ROWS)
+
+                result[sheet] = {
+                    "columns":   df.columns.tolist(),
+                    "rows":      df.values.tolist(),
+                    "shape":     [len(df), len(df.columns)],
+                    "truncated": truncated_sheet,
+                    "dtypes":    {c: str(t) for c, t in df.dtypes.items()},
+                }
+
+            # Summary stats for numeric columns in first sheet
+            first_df  = xl.parse(sheets[0]) if sheets else None
+            stats     = {}
+            if first_df is not None:
+                num_cols = first_df.select_dtypes(include="number").columns.tolist()
+                if num_cols:
+                    stats = first_df[num_cols].describe().round(2).to_dict()
+
+            return {
+                "status":      "success",
+                "path":        str(p),
+                "sheets":      sheets,
+                "sheet_count": len(sheets),
+                "data":        result,
+                "stats":       stats,
+            }
+        except ImportError:
+            return {"status": "error", "error": "pandas not installed. Run: pip install pandas openpyxl"}
+        except Exception as e:
+            return {"status": "error", "error": f"XLSX read failed: {type(e).__name__}: {e}"}
+
+    # ── write_xlsx ────────────────────────────────────────────────────────────
+    if action == "write_xlsx":
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if not content and not isinstance(content, (dict, list)):
+            return {"status": "error", "error": "content is required for write_xlsx"}
+        if p.suffix.lower() not in (".xlsx", ".xls"):
+            p = p.with_suffix(".xlsx")
+
+        try:
+            import pandas as pd
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+
+            # content can be:
+            # A) {"Sheet1": [{"col": val, ...}, ...], "Sheet2": [...]}  ← multi-sheet
+            # B) [{"col": val, ...}, ...]                               ← single sheet
+            # C) {"columns": [...], "rows": [[...], ...]}               ← raw format
+            # D) a plain string (JSON) — parse it
+            if isinstance(content, str):
+                import json as _json
+                try:
+                    content = _json.loads(content)
+                except Exception:
+                    return {"status": "error",
+                            "error": "content string could not be parsed as JSON"}
+
+            p.parent.mkdir(parents=True, exist_ok=True)
+
+            with pd.ExcelWriter(str(p), engine="openpyxl") as writer:
+                sheets_written = []
+
+                if isinstance(content, dict):
+                    # Check if it's multi-sheet (values are lists) or raw format
+                    first_val = next(iter(content.values()), None)
+                    if isinstance(first_val, list) and all(
+                        isinstance(v, list) for v in content.values()
+                    ):
+                        # Multi-sheet: {"Sheet1": [rows...], "Sheet2": [rows...]}
+                        for sheet_name, rows in content.items():
+                            if rows and isinstance(rows[0], dict):
+                                df = pd.DataFrame(rows)
+                            elif rows and isinstance(rows[0], list):
+                                df = pd.DataFrame(rows[1:], columns=rows[0])
+                            else:
+                                df = pd.DataFrame(rows)
+                            df.to_excel(writer, sheet_name=sheet_name[:31],
+                                        index=False)
+                            sheets_written.append(sheet_name)
+                    elif "columns" in content and "rows" in content:
+                        # Raw format
+                        df = pd.DataFrame(content["rows"],
+                                          columns=content["columns"])
+                        sheet_name = content.get("sheet", "Sheet1")
+                        df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+                        sheets_written.append(sheet_name)
+                    else:
+                        # Single sheet from dict of lists
+                        df = pd.DataFrame(content)
+                        df.to_excel(writer, sheet_name="Sheet1", index=False)
+                        sheets_written.append("Sheet1")
+
+                elif isinstance(content, list):
+                    if content and isinstance(content[0], dict):
+                        df = pd.DataFrame(content)
+                    elif content and isinstance(content[0], list):
+                        df = pd.DataFrame(content[1:], columns=content[0])
+                    else:
+                        df = pd.DataFrame(content)
+                    df.to_excel(writer, sheet_name="Sheet1", index=False)
+                    sheets_written.append("Sheet1")
+
+                # Style header rows
+                wb = writer.book
+                for ws in wb.worksheets:
+                    for cell in ws[1]:  # first row = header
+                        cell.font      = Font(bold=True, color="FFFFFF")
+                        cell.fill      = PatternFill("solid", fgColor="2C3E50")
+                        cell.alignment = Alignment(horizontal="center")
+                    # Auto-width
+                    for col_idx, col in enumerate(ws.columns, 1):
+                        max_len = max(
+                            (len(str(c.value)) for c in col if c.value is not None),
+                            default=8,
+                        )
+                        ws.column_dimensions[get_column_letter(col_idx)].width = min(
+                            max_len + 4, 40
+                        )
+
+            return {
+                "status":         "success",
+                "path":           str(p),
+                "size":           p.stat().st_size,
+                "sheets_written": sheets_written,
+            }
+        except ImportError:
+            return {"status": "error",
+                    "error": "pandas/openpyxl not installed. Run: pip install pandas openpyxl"}
+        except Exception as e:
+            return {"status": "error", "error": f"XLSX write failed: {type(e).__name__}: {e}"}
+
+    # ── read_pptx ─────────────────────────────────────────────────────────────
+    if action == "read_pptx":
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if not p.exists():
+            return {"status": "error", "error": f"File not found: {p}"}
+        if p.suffix.lower() != ".pptx":
+            return {"status": "error", "error": f"Not a .pptx file: {p.name}"}
+        try:
+            from pptx import Presentation
+            from pptx.util import Pt
+
+            prs    = Presentation(str(p))
+            slides = []
+
+            for i, slide in enumerate(prs.slides, 1):
+                texts  = []
+                images = 0
+                tables = 0
+
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for para in shape.text_frame.paragraphs:
+                            text = para.text.strip()
+                            if text:
+                                texts.append(text)
+                    if hasattr(shape, "table"):
+                        tables += 1
+                        # Extract table text
+                        for row in shape.table.rows:
+                            cells = [c.text.strip() for c in row.cells]
+                            texts.append(" | ".join(cells))
+                    if shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
+                        images += 1
+
+                # Slide layout name
+                layout = ""
+                try:
+                    layout = slide.slide_layout.name
+                except Exception:
+                    pass
+
+                slides.append({
+                    "slide":  i,
+                    "layout": layout,
+                    "texts":  texts,
+                    "images": images,
+                    "tables": tables,
+                })
+
+            # Flat readable text
+            flat = "\n\n".join(
+                f"--- Slide {s['slide']} ---\n" + "\n".join(s["texts"])
+                for s in slides
+                if s["texts"]
+            )
+
+            truncated = len(flat) > max_chars
+            if truncated:
+                flat = flat[:max_chars] + "\n\n[...truncated]"
+
+            return {
+                "status":      "success",
+                "path":        str(p),
+                "text":        flat,
+                "slides":      slides,
+                "slide_count": len(slides),
+                "truncated":   truncated,
+            }
+        except ImportError:
+            return {"status": "error",
+                    "error": "python-pptx not installed. Run: pip install python-pptx"}
+        except Exception as e:
+            return {"status": "error", "error": f"PPTX read failed: {type(e).__name__}: {e}"}
+
+    # ── write_pptx ────────────────────────────────────────────────────────────
+    if action == "write_pptx":
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if not content:
+            return {"status": "error", "error": "content is required for write_pptx"}
+        if p.suffix.lower() != ".pptx":
+            p = p.with_suffix(".pptx")
+
+        # content = list of slide dicts:
+        # {"title": "...", "body": "...", "bullets": [...], "layout": "title|content|blank"}
+        # OR a JSON string
+        if isinstance(content, str):
+            import json as _json
+            try:
+                content = _json.loads(content)
+            except Exception:
+                return {"status": "error",
+                        "error": "content string could not be parsed as JSON"}
+
+        if not isinstance(content, list):
+            return {"status": "error",
+                    "error": "content must be a list of slide dicts: [{title, body/bullets}, ...]"}
+
+        try:
+            from pptx import Presentation
+            from pptx.util import Inches, Pt, Emu
+            from pptx.dml.color import RGBColor
+            from pptx.enum.text import PP_ALIGN
+
+            prs = Presentation()
+
+            # Slide dimensions (16:9 widescreen)
+            prs.slide_width  = Inches(13.33)
+            prs.slide_height = Inches(7.5)
+
+            # Color scheme
+            DARK   = RGBColor(0x2C, 0x3E, 0x50)  # dark blue-grey
+            ACCENT = RGBColor(0x34, 0x98, 0xDB)  # blue
+            WHITE  = RGBColor(0xFF, 0xFF, 0xFF)
+            LIGHT  = RGBColor(0xEC, 0xF0, 0xF1)
+
+            layouts = {n.name: n for n in prs.slide_layouts}
+
+            # ── helpers ───────────────────────────────────────────────────────
+            def _add_rect(slide, left, top, width, height, color):
+                from pptx.util import Emu
+                shape = slide.shapes.add_shape(
+                    1,  # MSO_SHAPE_TYPE.RECTANGLE
+                    Inches(left), Inches(top), Inches(width), Inches(height),
+                )
+                shape.fill.solid()
+                shape.fill.fore_color.rgb = color
+                shape.line.fill.background()
+                return shape
+
+            def _add_text(slide, text, left, top, width, height,
+                          font_size=18, bold=False, color=None, align="left"):
+                txb  = slide.shapes.add_textbox(
+                    Inches(left), Inches(top), Inches(width), Inches(height))
+                tf   = txb.text_frame
+                tf.word_wrap = True
+                para = tf.paragraphs[0]
+                para.alignment = {
+                    "left":   PP_ALIGN.LEFT,
+                    "center": PP_ALIGN.CENTER,
+                    "right":  PP_ALIGN.RIGHT,
+                }.get(align, PP_ALIGN.LEFT)
+                run           = para.add_run()
+                run.text      = text
+                run.font.size = Pt(font_size)
+                run.font.bold = bold
+                if color:
+                    run.font.color.rgb = color
+                return txb
+
+            # ── build slides ──────────────────────────────────────────────────
+            for i, spec in enumerate(content):
+                slide_title   = spec.get("title", f"Slide {i+1}")
+                slide_body    = spec.get("body", "")
+                slide_bullets = spec.get("bullets", [])
+                slide_layout  = spec.get("layout", "content").lower()
+                slide_notes   = spec.get("notes", "")
+                is_title_slide = (slide_layout == "title" or i == 0 and slide_layout != "content")
+
+                # Use blank layout for full control
+                blank = prs.slide_layouts[6]  # blank
+                slide = prs.slides.add_slide(blank)
+
+                if is_title_slide and i == 0:
+                    # ── Title slide — dark background, centered ──────────────
+                    _add_rect(slide, 0, 0, 13.33, 7.5, DARK)
+                    _add_rect(slide, 0, 3.0, 13.33, 0.06, ACCENT)
+                    _add_text(slide, slide_title,
+                              1, 2.2, 11.33, 1.4,
+                              font_size=40, bold=True, color=WHITE, align="center")
+                    if slide_body:
+                        _add_text(slide, slide_body,
+                                  1, 3.8, 11.33, 0.8,
+                                  font_size=20, color=LIGHT, align="center")
+                    if spec.get("subtitle"):
+                        _add_text(slide, spec["subtitle"],
+                                  1, 4.6, 11.33, 0.7,
+                                  font_size=16, color=ACCENT, align="center")
+                else:
+                    # ── Content slide ─────────────────────────────────────────
+                    # Top accent bar
+                    _add_rect(slide, 0, 0, 13.33, 1.1, DARK)
+                    _add_rect(slide, 0, 1.1, 13.33, 0.05, ACCENT)
+
+                    # Title
+                    _add_text(slide, slide_title,
+                              0.3, 0.15, 12.73, 0.85,
+                              font_size=26, bold=True, color=WHITE)
+
+                    # Slide number
+                    _add_text(slide, str(i + 1),
+                              12.5, 0.25, 0.6, 0.5,
+                              font_size=13, color=ACCENT, align="right")
+
+                    content_top = 1.35
+
+                    if slide_bullets:
+                        # Bullet list
+                        txb = slide.shapes.add_textbox(
+                            Inches(0.5), Inches(content_top),
+                            Inches(12.33), Inches(5.8))
+                        tf  = txb.text_frame
+                        tf.word_wrap = True
+
+                        for j, bullet in enumerate(slide_bullets):
+                            if j == 0:
+                                para = tf.paragraphs[0]
+                            else:
+                                para = tf.add_paragraph()
+
+                            # Support nested bullets: {"text":"...", "level":1}
+                            if isinstance(bullet, dict):
+                                bullet_text  = bullet.get("text", "")
+                                bullet_level = bullet.get("level", 0)
+                            else:
+                                bullet_text  = str(bullet)
+                                bullet_level = 0
+
+                            para.level = bullet_level
+                            run = para.add_run()
+                            run.text      = bullet_text
+                            run.font.size = Pt(18 - bullet_level * 2)
+                            run.font.color.rgb = DARK
+                            para.space_before = Pt(6)
+
+                    elif slide_body:
+                        _add_text(slide, slide_body,
+                                  0.5, content_top, 12.33, 5.8,
+                                  font_size=18, color=DARK)
+
+                # Speaker notes
+                if slide_notes:
+                    notes_slide = slide.notes_slide
+                    notes_slide.notes_text_frame.text = slide_notes
+
+            p.parent.mkdir(parents=True, exist_ok=True)
+            prs.save(str(p))
+
+            return {
+                "status":      "success",
+                "path":        str(p),
+                "size":        p.stat().st_size,
+                "slide_count": len(content),
+            }
+        except ImportError:
+            return {"status": "error",
+                    "error": "python-pptx not installed. Run: pip install python-pptx"}
+        except Exception as e:
+            return {"status": "error",
+                    "error": f"PPTX write failed: {type(e).__name__}: {e}"}
+
+    # ── write_pdf ─────────────────────────────────────────────────────────────
+    if action == "write_pdf":
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if not content:
+            return {"status": "error", "error": "content is required for write_pdf"}
+        if p.suffix.lower() != ".pdf":
+            p = p.with_suffix(".pdf")
+
+        try:
+            from fpdf import FPDF
+
+            pdf = FPDF()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.add_page()
+
+            if title:
+                pdf.set_title(title)
+                pdf.set_font("Helvetica", "B", 18)
+                pdf.cell(0, 12, title, ln=True)
+                pdf.ln(4)
+
+            pdf.set_font("Helvetica", size=11)
+
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("## "):
+                    pdf.set_font("Helvetica", "B", 14)
+                    pdf.ln(3)
+                    pdf.cell(0, 9, stripped[3:], ln=True)
+                    pdf.set_font("Helvetica", size=11)
+                elif stripped.startswith("# "):
+                    pdf.set_font("Helvetica", "B", 16)
+                    pdf.ln(4)
+                    pdf.cell(0, 10, stripped[2:], ln=True)
+                    pdf.set_font("Helvetica", size=11)
+                elif stripped.startswith("### "):
+                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.ln(2)
+                    pdf.cell(0, 8, stripped[4:], ln=True)
+                    pdf.set_font("Helvetica", size=11)
+                elif stripped in ("---", "***"):
+                    pdf.ln(2)
+                    pdf.line(pdf.l_margin, pdf.get_y(),
+                             pdf.w - pdf.r_margin, pdf.get_y())
+                    pdf.ln(2)
+                elif not stripped:
+                    pdf.ln(4)
+                else:
+                    pdf.multi_cell(0, 6, line)
+
+            p.parent.mkdir(parents=True, exist_ok=True)
+            pdf.output(str(p))
+            return {
+                "status": "success",
+                "path":   str(p),
+                "pages":  pdf.page,
+                "size":   p.stat().st_size,
+            }
+        except ImportError:
+            return {"status": "error", "error": "fpdf2 not installed. Run: pip install fpdf2"}
+        except Exception as e:
+            return {"status": "error", "error": f"PDF write failed: {type(e).__name__}: {e}"}
+
+    # ── write_docx ────────────────────────────────────────────────────────────
+    if action == "write_docx":
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if not content:
+            return {"status": "error", "error": "content is required for write_docx"}
+        if p.suffix.lower() != ".docx":
+            p = p.with_suffix(".docx")
+
+        try:
+            import re as _re
+            from docx import Document
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+            doc = Document()
+
+            if title:
+                t = doc.add_heading(title, level=0)
+                t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("### "):
+                    doc.add_heading(stripped[4:], level=3)
+                elif stripped.startswith("## "):
+                    doc.add_heading(stripped[3:], level=2)
+                elif stripped.startswith("# "):
+                    doc.add_heading(stripped[2:], level=1)
+                elif stripped.startswith(("- ", "* ")):
+                    doc.add_paragraph(stripped[2:], style="List Bullet")
+                elif _re.match(r"^\d+\.\s", stripped):
+                    doc.add_paragraph(_re.sub(r"^\d+\.\s", "", stripped),
+                                      style="List Number")
+                elif stripped in ("---", "***"):
+                    doc.add_paragraph("_" * 60)
+                elif not stripped:
+                    doc.add_paragraph("")
+                else:
+                    para  = doc.add_paragraph()
+                    parts = _re.split(r"(\*\*[^*]+\*\*)", stripped)
+                    for part in parts:
+                        if part.startswith("**") and part.endswith("**"):
+                            para.add_run(part[2:-2]).bold = True
+                        else:
+                            para.add_run(part)
+
+            p.parent.mkdir(parents=True, exist_ok=True)
+            doc.save(str(p))
+            return {
+                "status":     "success",
+                "path":       str(p),
+                "size":       p.stat().st_size,
+                "paragraphs": len(doc.paragraphs),
+            }
+        except ImportError:
+            return {"status": "error",
+                    "error": "python-docx not installed. Run: pip install python-docx"}
+        except Exception as e:
+            return {"status": "error",
+                    "error": f"DOCX write failed: {type(e).__name__}: {e}"}
+
     return {
         "status": "error",
-        "error":  f"Unknown action '{action}'. Use: read | write | list | backup | read_many | search | read_pdf",
+        "error":  (
+            f"Unknown action '{action}'. "
+            "Use: read | write | list | backup | read_many | search | "
+            "read_pdf | write_pdf | "
+            "read_docx | write_docx | "
+            "read_xlsx | write_xlsx | "
+            "read_pptx | write_pptx"
+        ),
     }
