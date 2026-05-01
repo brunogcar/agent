@@ -1,0 +1,174 @@
+"""
+workflows/base.py -- Shared state TypedDict and node utilities.
+
+All three workflows (research, data, autocode) share:
+  - WorkflowState TypedDict
+  - _step() and _error() node helpers that write to the trace
+  - run_workflow() dispatcher that routes by type
+
+Usage from a tool or the agent meta-tool:
+    from workflows.base import run_workflow
+
+    result = run_workflow(
+        workflow_type = "research",
+        goal          = "What is LangGraph?",
+        trace_id      = "abc123",
+    )
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any, Optional
+from typing_extensions import TypedDict
+
+from core.tracer import tracer
+from core.config  import cfg
+
+
+# -- Shared workflow state ----------------------------------------------------
+
+class WorkflowState(TypedDict, total=False):
+    # Identity
+    workflow:    str        # "research" | "data" | "autocode"
+    goal:        str        # what we are trying to accomplish
+    trace_id:    str        # tracer ID for this run
+
+    # Inputs
+    code:        str        # initial code for data workflow
+    target_file: str        # file to edit (autocode)
+    mode:        str        # autocode mode: fix_error | improve | add_feature
+    error_msg:   str        # error traceback (autocode fix_error)
+    feature_desc:str        # feature description (autocode add_feature)
+
+    # Accumulated context
+    memory_context: str     # recalled memories (formatted string)
+    file_content:   str     # current file content (autocode)
+    search_results: str     # web search results
+    analysis:       str     # agent(analyze) output
+    patch:          str     # generated patch (autocode)
+    review:         dict    # agent(review) structured output
+
+    # Execution
+    output:      str        # python execution output
+    exec_error:  str        # execution error if any
+
+    # Control
+    retries:     int        # current retry count
+    error:       str        # fatal workflow error
+    status:      str        # "running" | "success" | "failed"
+
+    # Result
+    result:      str        # final result summary
+    artifacts:   list       # files created, commits made, etc.
+
+
+# -- Node helpers -------------------------------------------------------------
+
+def node_step(state: WorkflowState, node: str, message: str, **kwargs) -> None:
+    """Log a workflow step to the active trace."""
+    tid = state.get("trace_id", "")
+    if tid:
+        tracer.step(tid, node, message, **kwargs)
+
+
+def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> WorkflowState:
+    """Mark state as failed and log to trace."""
+    tid = state.get("trace_id", "")
+    if tid:
+        tracer.error(tid, node, message, **kwargs)
+    return {**state, "status": "failed", "error": message}
+
+
+def node_done(state: WorkflowState, result: str, artifacts: list = None) -> WorkflowState:
+    """Mark state as succeeded."""
+    tid = state.get("trace_id", "")
+    if tid:
+        tracer.finish(tid, success=True, result=result[:200])
+    return {
+        **state,
+        "status":    "success",
+        "result":    result,
+        "artifacts": artifacts or [],
+    }
+
+
+# -- Workflow dispatcher ------------------------------------------------------
+
+def run_workflow(
+    workflow_type: str,
+    goal:          str,
+    trace_id:      str  = "",
+    **kwargs,
+) -> dict:
+    """
+    Run a named workflow and return the final state as a dict.
+
+    workflow_type : "research" | "data" | "autocode"
+    goal          : what to accomplish
+    trace_id      : attach to existing trace (creates new one if empty)
+    **kwargs      : workflow-specific inputs (see each workflow module)
+
+    Returns the final WorkflowState as a plain dict with at minimum:
+      {status: "success"|"failed", result: str, error: str, artifacts: list}
+    """
+    wf_type = workflow_type.strip().lower()
+
+    # Create trace if not provided
+    if not trace_id:
+        trace_id = tracer.new_trace(wf_type, goal=goal)
+
+    initial_state: WorkflowState = {
+        "workflow":  wf_type,
+        "goal":      goal,
+        "trace_id":  trace_id,
+        "retries":   0,
+        "status":    "running",
+        "error":     "",
+        "result":    "",
+        "artifacts": [],
+        **kwargs,
+    }
+
+    try:
+        if wf_type == "research":
+            from workflows.research import build_research_graph
+            graph  = build_research_graph()
+            result = graph.invoke(initial_state)
+
+        elif wf_type == "data":
+            from workflows.data import build_data_graph
+            graph  = build_data_graph()
+            result = graph.invoke(initial_state)
+
+        elif wf_type == "autocode":
+            from workflows.autocode import build_autocode_graph
+            graph  = build_autocode_graph()
+            result = graph.invoke(initial_state)
+
+        else:
+            tracer.error(trace_id, "dispatch",
+                         f"Unknown workflow type: {wf_type!r}")
+            tracer.finish(trace_id, success=False)
+            return {
+                "status": "failed",
+                "error":  (
+                    f"Unknown workflow type '{wf_type}'. "
+                    "Use: research | data | autocode"
+                ),
+                "result":    "",
+                "artifacts": [],
+            }
+
+        return dict(result)
+
+    except Exception as e:
+        msg = f"Workflow '{wf_type}' crashed: {type(e).__name__}: {e}"
+        tracer.error(trace_id, "dispatch", msg)
+        tracer.finish(trace_id, success=False, result=msg)
+        return {
+            "status":    "failed",
+            "error":     msg,
+            "result":    "",
+            "artifacts": [],
+        }
