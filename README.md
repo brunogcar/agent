@@ -343,7 +343,7 @@ git --version
 
 ```bash
 cd D:/mcp
-git clone <repo-url> agent
+git clone https://github.com/brunogcar/agent agent
 cd agent
 
 pip install -r requirements.txt

@@ -74,31 +74,22 @@ def _resolve_root(root_str: str) -> tuple[Optional[Path], str]:
     return p, ""
 
 
-def _ensure_repo(cwd: Path) -> tuple[bool, str]:
-    """Initialise git repo if not already one. Returns (ok, error)."""
+def _check_repo(cwd: Path) -> tuple[bool, str]:
+    """
+    Check whether cwd is inside a git repository.
+    Returns (is_repo, error_message).
+    Does NOT auto-initialise -- use git(operation="init") explicitly.
+    workspace/ is intentionally NOT auto-inited: it is a container for
+    multiple independent project repos, not a repo itself.
+    """
     code, _, _ = _git(["rev-parse", "--git-dir"], cwd)
     if code == 0:
         return True, ""
-
-    code, _, err = _git(["init"], cwd)
-    if code != 0:
-        return False, f"git init failed: {err}"
-
-    # Create .gitignore
-    gi = cwd / ".gitignore"
-    if not gi.exists():
-        gi.write_text("__pycache__/\n*.pyc\n*.pyo\n*.bak\n.env\nlogs/\n*.db\n")
-
-    _git(["add", "-A"], cwd)
-    code, _, err = _git(
-        ["commit", "-m", "initial: autocode baseline",
-         "--author", "agent <agent@local>"],
-        cwd,
+    return False, (
+        f"'{cwd}' is not a git repository. "
+        "Use git(operation='init', root=...) to initialise, "
+        "or point root at a project subfolder that already has a repo."
     )
-    if code != 0 and "nothing to commit" not in err:
-        return False, f"Initial commit failed: {err}"
-
-    return True, ""
 
 
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
@@ -114,7 +105,15 @@ def git(
     """
     Git version control operations.
 
-    operation: "snapshot" | "commit" | "rollback" | "log" | "status" | "diff"
+    operation: "init" | "snapshot" | "commit" | "rollback" | "log" | "status" | "diff"
+
+    init
+        Initialise a new git repository in the target directory.
+        Creates a .gitignore and an initial commit automatically.
+        Call this once when starting a new project folder.
+        Will error if the directory is already a git repo.
+        Optional: root
+        Returns:  {status, path, commit_hash}
 
     snapshot
         Stage all changes and create a timestamped commit.
@@ -170,9 +169,50 @@ def git(
     if err:
         return {"status": "error", "error": err}
 
-    # ── snapshot ──────────────────────────────────────────────────────────────
+    # -- init ----------------------------------------------------------------
+    if operation == "init":
+        ok, _ = _check_repo(cwd)
+        if ok:
+            _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
+            return {
+                "status": "already_a_repo",
+                "path":   str(cwd),
+                "head":   head,
+                "note":   "Directory is already a git repository",
+            }
+
+        code, _, err = _git(["init"], cwd)
+        if code != 0:
+            return {"status": "error", "error": f"git init failed: {err}"}
+
+        # Create sensible .gitignore
+        gi = cwd / ".gitignore"
+        if not gi.exists():
+            gi.write_text(
+                "__pycache__/\n*.pyc\n*.pyo\n*.bak\n"
+                ".env\nlogs/\n*.db\n*.lock\n",
+                encoding="utf-8",
+            )
+
+        _git(["add", "-A"], cwd)
+        code, _, err = _git(
+            ["commit", "-m", "initial commit",
+             "--author", "agent <agent@local>"],
+            cwd,
+        )
+        if code != 0 and "nothing to commit" not in err:
+            return {"status": "error", "error": f"Initial commit failed: {err}"}
+
+        _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
+        return {
+            "status":      "initialised",
+            "path":        str(cwd),
+            "commit_hash": head,
+        }
+
+    # -- snapshot -------------------------------------------------------------
     if operation == "snapshot":
-        ok, err = _ensure_repo(cwd)
+        ok, err = _check_repo(cwd)
         if not ok:
             return {"status": "error", "error": err}
 
@@ -205,7 +245,7 @@ def git(
         if not message:
             return {"status": "error", "error": "message is required for commit"}
 
-        ok, err = _ensure_repo(cwd)
+        ok, err = _check_repo(cwd)
         if not ok:
             return {"status": "error", "error": err}
 
@@ -299,5 +339,5 @@ def git(
 
     return {
         "status": "error",
-        "error":  f"Unknown operation '{operation}'. Use: snapshot | commit | rollback | log | status | diff",
+        "error":  f"Unknown operation '{operation}'. Use: init | snapshot | commit | rollback | log | status | diff",
     }
