@@ -211,7 +211,7 @@ def _build_role_configs() -> dict[str, RoleConfig]:
     defaults = {
         "planner":  {"temperature": 0.3, "max_tokens": 2048, "timeout": 90},
         "executor": {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
-        "router":   {"temperature": 0.0, "max_tokens": 256,  "timeout": 15},
+        "router":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 15},
         "vision":   {"temperature": 0.2, "max_tokens": 1024, "timeout": 60},
         # Agent personas — used by the agent meta-tool
         "summarize": {"temperature": 0.1, "max_tokens": 512,  "timeout": 60},

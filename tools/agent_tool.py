@@ -47,13 +47,13 @@ _SYSTEM_PROMPTS: dict[str, str] = {
     ),
 
     "route": (
-        "You are a task router for an AI agent. "
-        "Given a task description, respond with ONLY a JSON object: "
-        '{"workflow": "research|data|autocode|direct", '
-        '"tool": "web|python|file|git|memory|notify|visualize|agent", '
-        '"complexity": 1-10, '
-        '"reason": "one sentence"}. '
-        "No explanation outside the JSON."
+        "You are a task router. Respond with ONLY a JSON object. "
+        "No thinking tags. No explanation. No markdown fences. "
+        "Start your response with { and end with }.\n"
+        'Format: {"workflow":"research or data or autocode or direct",'
+        '"tool":"web or python or file or git or memory or agent or notify or visualize",'
+        '"complexity":5,'
+        '"reason":"one sentence why"}'
     ),
 
     "research": (
@@ -142,13 +142,13 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         "You are a task planning specialist for an autonomous AI agent. "
         "Break the given goal into a clear, ordered sequence of steps. "
         "Each step must be concrete and executable by the agent's available tools: "
-        "web, python, file, git, memory, notify, visualize, agent. "
-        "\n\nOUTPUT FORMAT (mandatory JSON, no markdown fences):\n"
-        '{"goal": "restated goal", '
-        '"steps": [{"step": 1, "action": "tool_name", "description": "what to do", '
-        '"inputs": {"key": "value"}}], '
-        '"estimated_complexity": 1-10, '
-        '"risks": ["potential failure points"]}'
+        "web, python, file, git, memory, notify, visualize, agent.\n\n"
+        "OUTPUT: valid JSON only. No thinking tags. No markdown fences. "
+        "Start with { and end with }.\n"
+        'Format: {"goal":"restated goal",'
+        '"steps":[{"step":1,"action":"tool_name","description":"what to do","inputs":{"key":"value"}}],'
+        '"estimated_complexity":5,'
+        '"risks":["failure point 1"]}'
     ),
 }
 
@@ -168,8 +168,15 @@ _ROLE_TO_LLM: dict[str, str] = {
     "plan":     "planner",   # Qwen 3.5 9B  — 90s
 }
 
-# Roles that return structured JSON (auto-parsed)
-_JSON_ROLES = {"route", "extract", "code", "review", "plan"}
+# Roles that return JSON via API json_object mode (only Hermes supports it)
+_API_JSON_ROLES    = {"extract", "code", "review"}
+
+# Roles that return JSON via system prompt only (parsed post-hoc)
+# Nemotron and Qwen both reject the json_object response_format parameter
+_PROMPT_JSON_ROLES = {"route", "plan"}
+
+# Combined — all roles where we attempt JSON parsing
+_JSON_ROLES = _API_JSON_ROLES | _PROMPT_JSON_ROLES
 
 
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
@@ -314,7 +321,9 @@ def agent(
 
     system_prompt = _SYSTEM_PROMPTS[role]
     llm_role      = _ROLE_TO_LLM[role]
-    json_mode     = role in _JSON_ROLES
+    # Only use API-level json_object enforcement for models that support it.
+    # Nemotron (router/classify) rejects json_object — use prompt-only for those.
+    json_mode     = role in _API_JSON_ROLES
 
     # Build call kwargs — only pass overrides if explicitly set
     call_kwargs: dict = {}
@@ -353,14 +362,24 @@ def agent(
     }
 
     # Include parsed JSON for structured roles
-    if json_mode:
+    if role in _JSON_ROLES:
         if result.parsed is not None:
+            # API json_mode parsed it already
             response["parsed"] = result.parsed
         else:
-            # Parsing failed — still return text, flag the issue
-            response["parse_warning"] = (
-                "Response was not valid JSON. "
-                "Use result.text and parse manually if needed."
-            )
+            # Prompt-only JSON role — try to parse the text ourselves
+            import json as _json
+            clean = result.text.strip()
+            for fence in ("```json", "```"):
+                if clean.startswith(fence):
+                    clean = clean[len(fence):]
+            clean = clean.strip().rstrip("`").strip()
+            try:
+                response["parsed"] = _json.loads(clean)
+            except _json.JSONDecodeError:
+                response["parse_warning"] = (
+                    "Response was not valid JSON. "
+                    "Use result.text and parse manually if needed."
+                )
 
     return response

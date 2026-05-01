@@ -77,8 +77,8 @@ else:
         p = r["parsed"]
         print(f"   parsed   → workflow={p.get('workflow')} tool={p.get('tool')} "
               f"complexity={p.get('complexity')} ✓")
-    elif "parse_warning" in r:
-        print(f"   parse_warning: {r['parse_warning']}")
+    else:
+        print(f"   note: {r.get('parse_warning','no parsed key')} (text returned, model may need prompt tuning)")
 
     # summarize (Hermes)
     print("\n8. agent(role='summarize') — Hermes")
@@ -106,6 +106,8 @@ else:
         print(f"   parsed    → {len(steps)} steps, complexity={p.get('estimated_complexity')} ✓")
         for s in steps[:3]:
             print(f"   step {s.get('step')}: {s.get('action')} — {s.get('description','')[:50]}")
+    else:
+        print(f"   note: {r.get('parse_warning','no parsed key')} (text returned)")
 
 # ── 3. Registry check ─────────────────────────────────────────────────────────
 print("\n10. Registry — 8 tools expected")
