@@ -21,7 +21,7 @@
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
         "MCP_LOG_LEVEL": "error",
-        "GIT_BASE_DIR": "D:/mcp/workspace"
+        "GIT_BASE_DIR": "D:/mcp/"
       }
     },
     "time": {

@@ -53,8 +53,7 @@ import time
 import uuid
 from typing import Optional
 
-import chromadb
-from chromadb.config import Settings
+# chromadb imported lazily in _make_client() -- keeps server startup fast
 
 from core.config import cfg
 from core.tracer import tracer
@@ -76,7 +75,10 @@ META_FIELDS = [
 
 # ── ChromaDB client ───────────────────────────────────────────────────────────
 
-def _make_client() -> chromadb.PersistentClient:
+def _make_client():
+    """Create ChromaDB client. Lazy import keeps startup fast."""
+    import chromadb
+    from chromadb.config import Settings
     cfg.memory_chroma_path.mkdir(parents=True, exist_ok=True)
     return chromadb.PersistentClient(
         path=str(cfg.memory_chroma_path),
@@ -158,7 +160,7 @@ class MemoryStore:
             for name in ALL_COLLECTIONS
         }
 
-    def _col(self, name: str) -> chromadb.Collection:
+    def _col(self, name: str):
         return self._collections[name]
 
     # ── Store ─────────────────────────────────────────────────────────────────
