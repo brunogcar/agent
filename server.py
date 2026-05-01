@@ -1,13 +1,8 @@
 """
 server.py -- MCP Agent entrypoint.
 
-Minimal by design. All tool logic lives in tools/.
-All configuration lives in core/config.py + .env.
-All tools are auto-discovered by registry.py -- no manual wiring here.
-
-IMPORTANT: stdout is the MCP protocol channel (stdio transport).
-           Never print to stdout before or during mcp.run().
-           All diagnostics go to stderr only.
+stdout = MCP stdio protocol channel. NOTHING may print to stdout.
+All diagnostics go to stderr or the log file.
 """
 
 from __future__ import annotations
@@ -17,8 +12,14 @@ import sys
 from pathlib import Path
 
 
-def _force_utf8() -> None:
-    """Force UTF-8 on stdout/stderr. Windows cp1252 crashes on non-ASCII."""
+def _fix_streams() -> None:
+    """
+    1. Force UTF-8 on both streams (Windows cp1252 crashes on non-ASCII).
+    2. Replace stdout with a stderr-backed stream so any accidental
+       print() calls during boot go to stderr instead of corrupting
+       the MCP JSON-RPC protocol channel.
+    """
+    # Fix encoding first
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name)
         if hasattr(stream, "buffer") and (
@@ -28,10 +29,16 @@ def _force_utf8() -> None:
                     io.TextIOWrapper(stream.buffer, encoding="utf-8",
                                      errors="replace", line_buffering=True))
 
+    # Redirect stdout -> stderr during boot so nothing corrupts the channel.
+    # FastMCP.run() will reclaim stdout for the stdio transport.
+    # We save the real stdout so FastMCP can restore it.
+    sys._real_stdout = sys.stdout       # type: ignore[attr-defined]
+    sys.stdout = sys.stderr             # boot-time stdout -> stderr
 
-_force_utf8()
 
-# -- Bootstrap: ensure agent root is on sys.path ------------------------------
+_fix_streams()
+
+# -- Bootstrap sys.path -------------------------------------------------------
 _AGENT_ROOT = Path(__file__).resolve().parent
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
@@ -46,11 +53,11 @@ cfg.ensure_dirs()
 from mcp.server.fastmcp import FastMCP
 from registry import register_all_tools
 
-# -- Build server (no stdout output here -- stdio transport not yet started) --
+# -- Build the server (stdout still redirected to stderr here) ----------------
 mcp = FastMCP("agent")
 _tool_count = register_all_tools(mcp)
 
-# -- Boot summary to STDERR only (stdout = MCP protocol channel) --------------
+# -- Boot log (all goes to stderr via the redirect above) --------------------
 _boot_tid = tracer.new_trace("startup", goal="server boot")
 tracer.step(_boot_tid, "boot", "MCP Agent ready",
             tools=_tool_count,
@@ -59,26 +66,25 @@ tracer.step(_boot_tid, "boot", "MCP Agent ready",
             router=cfg.router_model)
 
 _W = 56
-_banner = "\n".join([
-    "",
-    "=" * _W,
-    "  MCP Agent Stack -- Ready".center(_W),
-    "=" * _W,
-    f"  Tools     : {_tool_count}",
-    f"  Planner   : {cfg.planner_model}",
-    f"  Executor  : {cfg.executor_model}",
-    f"  Router    : {cfg.router_model}",
-    f"  Workspace : {cfg.workspace_root}",
-    f"  Memory    : {cfg.memory_chroma_path}",
-    f"  Env       : {cfg.env}",
-    "=" * _W,
-    "",
-])
+print("", file=sys.stderr)
+print("=" * _W, file=sys.stderr)
+print("  MCP Agent Stack -- Ready".center(_W), file=sys.stderr)
+print("=" * _W, file=sys.stderr)
+print(f"  Tools     : {_tool_count}", file=sys.stderr)
+print(f"  Planner   : {cfg.planner_model}", file=sys.stderr)
+print(f"  Executor  : {cfg.executor_model}", file=sys.stderr)
+print(f"  Router    : {cfg.router_model}", file=sys.stderr)
+print(f"  Workspace : {cfg.workspace_root}", file=sys.stderr)
+print(f"  Memory    : {cfg.memory_chroma_path}", file=sys.stderr)
+print(f"  Env       : {cfg.env}", file=sys.stderr)
+print("=" * _W, file=sys.stderr)
+print("", file=sys.stderr)
 
-# stderr only -- stdout is reserved for MCP stdio protocol
-print(_banner, file=sys.stderr)
 tracer.finish(_boot_tid, success=True, result=f"{_tool_count} tools registered")
 
-# -- Run (hands stdout to FastMCP stdio transport) ----------------------------
+# -- Restore real stdout and hand it to FastMCP's stdio transport -------------
+sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
+
+# -- Run ----------------------------------------------------------------------
 if __name__ == "__main__":
     mcp.run()

@@ -1,20 +1,20 @@
 """
-tools/git_ops.py — Git meta-tool.
+tools/git_ops.py - Git meta-tool.
 
 Replaces: old git_ops.py (hardcoded D:\\mcp\\python-tool) + @cyanheads/git-mcp-server
           for the most common operations inside the agent workflow.
 The LLM sees ONE tool: git(operation, ...)
 
 Operations:
-  snapshot  → stage all + commit (creates safe rollback point before changes)
-  commit    → stage all + commit after successful change
-  rollback  → hard reset to HEAD (undo all uncommitted changes)
-  log       → recent commit history
-  status    → current working tree status
-  diff      → show unstaged diff
+  snapshot  - stage all + commit (creates safe rollback point before changes)
+  commit    - stage all + commit after successful change
+  rollback  - hard reset to HEAD (undo all uncommitted changes)
+  log       - recent commit history
+  status    - current working tree status
+  diff      - show unstaged diff
 
 Key fixes over old git_ops.py:
-  - No FORBIDDEN_TOKENS check on git commands (that was a bug — blocked valid commit messages)
+  - No FORBIDDEN_TOKENS check on git commands (that was a bug - blocked valid commit messages)
   - Paths use pathlib throughout
   - root parameter: "workspace" | "agent" | any absolute path string
   - Works on both Windows and Linux
@@ -31,7 +31,7 @@ from core.config import cfg
 from registry import tool
 
 
-# ── Git runner ────────────────────────────────────────────────────────────────
+# -- Git runner ----------------------------------------------------------------
 
 def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
     """
@@ -48,7 +48,7 @@ def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
         )
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except FileNotFoundError:
-        return -1, "", "git not found on PATH — install Git"
+        return -1, "", "git not found on PATH - install Git"
     except subprocess.TimeoutExpired:
         return -1, "", "git command timed out after 30s"
     except Exception as e:
@@ -92,7 +92,7 @@ def _check_repo(cwd: Path) -> tuple[bool, str]:
     )
 
 
-# ── Meta-tool ─────────────────────────────────────────────────────────────────
+# -- Meta-tool -----------------------------------------------------------------
 
 @tool
 def git(
@@ -117,7 +117,7 @@ def git(
 
     snapshot
         Stage all changes and create a timestamped commit.
-        Call BEFORE making any automated changes — creates a safe rollback point.
+        Call BEFORE making any automated changes - creates a safe rollback point.
         Optional: message (appended to timestamp), root
         Returns:  {commit_hash, message, status}
 
@@ -129,7 +129,7 @@ def git(
         Returns:  {commit_hash, status}
 
     rollback
-        Hard reset to HEAD — discards ALL uncommitted changes.
+        Hard reset to HEAD - discards ALL uncommitted changes.
         Call when a patch or edit fails testing.
         Also cleans untracked files created by failed changes.
         Optional: root
@@ -150,9 +150,9 @@ def git(
         Returns:  {diff, has_changes}
 
     root parameter:
-        "workspace"     → D:/mcp/workspace  (default, for work output)
-        "agent"         → D:/mcp/agent      (for agent code changes)
-        "/absolute/path" → any absolute path
+        "workspace"     - D:/mcp/workspace  (default, for work output)
+        "agent"         - D:/mcp/agent      (for agent code changes)
+        "/absolute/path" - any absolute path
 
     Examples:
         git(operation="snapshot", message="before editing memory.py")
@@ -240,7 +240,7 @@ def git(
         _, hash_, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
         return {"status": "committed", "commit_hash": hash_, "message": full_msg, "root": str(cwd)}
 
-    # ── commit ────────────────────────────────────────────────────────────────
+    # -- commit ----------------------------------------------------------------
     if operation == "commit":
         if not message:
             return {"status": "error", "error": "message is required for commit"}
@@ -263,7 +263,7 @@ def git(
         _, hash_, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
         return {"status": "committed", "commit_hash": hash_, "root": str(cwd)}
 
-    # ── rollback ──────────────────────────────────────────────────────────────
+    # -- rollback --------------------------------------------------------------
     if operation == "rollback":
         code, _, err = _git(["reset", "--hard", "HEAD"], cwd)
         if code != 0:
@@ -276,11 +276,11 @@ def git(
         return {
             "status":  "rolled_back",
             "head":    head,
-            "message": "Working tree reset to HEAD — all uncommitted changes discarded",
+            "message": "Working tree reset to HEAD - all uncommitted changes discarded",
             "root":    str(cwd),
         }
 
-    # ── log ───────────────────────────────────────────────────────────────────
+    # -- log -------------------------------------------------------------------
     if operation == "log":
         code, out, err = _git(
             ["log", f"--max-count={n}", "--pretty=format:%h|%ai|%s"], cwd
@@ -296,7 +296,7 @@ def git(
 
         return {"status": "ok", "commits": commits, "count": len(commits), "root": str(cwd)}
 
-    # ── status ────────────────────────────────────────────────────────────────
+    # -- status ----------------------------------------------------------------
     if operation == "status":
         code, out, err = _git(["status", "--short"], cwd)
         if code != 0:
@@ -317,7 +317,7 @@ def git(
             "root":    str(cwd),
         }
 
-    # ── diff ──────────────────────────────────────────────────────────────────
+    # -- diff ------------------------------------------------------------------
     if operation == "diff":
         args = ["diff"]
         if path:

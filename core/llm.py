@@ -1,14 +1,14 @@
 """
-core/llm.py — Unified LLM client with provider abstraction.
+core/llm.py - Unified LLM client with provider abstraction.
 
 Design goals:
-  1. Single call site for ALL model interactions — nothing else calls requests directly
-  2. Provider abstraction from day one — adding DeepSeek/Claude/Groq later
+  1. Single call site for ALL model interactions - nothing else calls requests directly
+  2. Provider abstraction from day one - adding DeepSeek/Claude/Groq later
      requires only a new Provider class, zero changes to callers
-  3. Role-based dispatch — callers say "executor" not "hermes-3-llama-3.1-8b"
+  3. Role-based dispatch - callers say "executor" not "hermes-3-llama-3.1-8b"
   4. Per-role timeouts enforced here, not scattered across tool files
-  5. Structured output support — request JSON, get a parsed dict back
-  6. Full trace integration — every call logged with trace_id
+  5. Structured output support - request JSON, get a parsed dict back
+  6. Full trace integration - every call logged with trace_id
 
 Usage:
     from core.llm import llm
@@ -49,7 +49,7 @@ from core.config import cfg
 from core.tracer import tracer
 
 
-# ── Response dataclass ────────────────────────────────────────────────────────
+# -- Response dataclass --------------------------------------------------------
 
 @dataclass
 class LLMResponse:
@@ -73,7 +73,7 @@ class LLMResponse:
         )
 
 
-# ── Provider abstraction ──────────────────────────────────────────────────────
+# -- Provider abstraction ------------------------------------------------------
 
 class BaseProvider(ABC):
     """
@@ -121,7 +121,7 @@ class LMStudioProvider(BaseProvider):
 
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
-        # Shared httpx client — connection pooling across calls
+        # Shared httpx client - connection pooling across calls
         self._client = httpx.Client(
             base_url=self.base_url,
             headers={"Content-Type": "application/json"},
@@ -165,12 +165,12 @@ class LMStudioProvider(BaseProvider):
             return False
 
 
-# ── Provider registry ─────────────────────────────────────────────────────────
+# -- Provider registry ---------------------------------------------------------
 
 class ProviderRegistry:
     """
     Maps provider names to provider instances.
-    New providers are registered here — callers never change.
+    New providers are registered here - callers never change.
     """
 
     def __init__(self) -> None:
@@ -191,7 +191,7 @@ class ProviderRegistry:
         return list(self._providers.keys())
 
 
-# ── Role configuration ────────────────────────────────────────────────────────
+# -- Role configuration --------------------------------------------------------
 
 @dataclass
 class RoleConfig:
@@ -207,13 +207,13 @@ def _build_role_configs() -> dict[str, RoleConfig]:
     """Build role configs from cfg.model_registry."""
     roles: dict[str, RoleConfig] = {}
 
-    # Role-specific defaults — these mirror the registry in config.py
+    # Role-specific defaults - these mirror the registry in config.py
     defaults = {
         "planner":  {"temperature": 0.3, "max_tokens": 2048, "timeout": 90},
         "executor": {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
         "router":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 15},
         "vision":   {"temperature": 0.2, "max_tokens": 1024, "timeout": 60},
-        # Agent personas — used by the agent meta-tool
+        # Agent personas - used by the agent meta-tool
         "summarize": {"temperature": 0.1, "max_tokens": 512,  "timeout": 60},
         "extract":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 60},
         "classify":  {"temperature": 0.0, "max_tokens": 64,   "timeout": 15},
@@ -243,7 +243,7 @@ def _build_role_configs() -> dict[str, RoleConfig]:
     return roles
 
 
-# ── LLM client ────────────────────────────────────────────────────────────────
+# -- LLM client ----------------------------------------------------------------
 
 class LLMClient:
     """
@@ -271,7 +271,7 @@ class LLMClient:
             LMStudioProvider(cfg.lm_studio_base_url),
         )
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # -- Public API ------------------------------------------------------------
 
     def call(
         self,
@@ -295,7 +295,7 @@ class LLMClient:
         json_mode: if True, request JSON output and auto-parse it
         trace_id : attach this call to an existing trace
 
-        Returns LLMResponse — always, never raises.
+        Returns LLMResponse - always, never raises.
         Check response.ok and response.error for failures.
         """
         role_cfg  = self._get_role(role)
@@ -338,7 +338,7 @@ class LLMClient:
 
             except httpx.ConnectError:
                 elapsed = round(time.time() - start, 2)
-                err     = f"Cannot connect to {cfg.lm_studio_base_url} — is LM Studio running?"
+                err     = f"Cannot connect to {cfg.lm_studio_base_url} - is LM Studio running?"
                 if trace_id:
                     tracer.error(trace_id, "llm_call", err, role=role)
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
@@ -413,7 +413,7 @@ class LLMClient:
         )
 
     def is_available(self, role: str = "planner") -> bool:
-        """Quick health check — returns True if the provider is reachable."""
+        """Quick health check - returns True if the provider is reachable."""
         role_cfg = self._get_role(role)
         provider = self._registry.get(role_cfg.provider)
         return provider.is_available()
@@ -442,11 +442,11 @@ class LLMClient:
             for name, rc in sorted(self._roles.items())
         ]
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # -- Internal --------------------------------------------------------------
 
     def _get_role(self, role: str) -> RoleConfig:
         if role not in self._roles:
-            # Unknown role — fall back to executor with a warning
+            # Unknown role - fall back to executor with a warning
             print(f"[llm] WARNING: unknown role '{role}', falling back to executor", file=__import__("sys").stderr)
             return self._roles["executor"]
         return self._roles[role]
@@ -482,7 +482,7 @@ class LLMClient:
             try:
                 parsed = json.loads(clean)
             except json.JSONDecodeError:
-                pass  # parsed stays None — caller checks
+                pass  # parsed stays None - caller checks
 
         return LLMResponse(
             text    = choice,
@@ -495,5 +495,5 @@ class LLMClient:
         )
 
 
-# ── Singleton ─────────────────────────────────────────────────────────────────
+# -- Singleton -----------------------------------------------------------------
 llm = LLMClient()
