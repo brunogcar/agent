@@ -33,7 +33,10 @@ def workflow(
     """
     Workflow tool -- run a multi-step autonomous workflow.
 
-    type: "research" | "data" | "autocode"
+    type: "auto" | "research" | "data" | "autocode"
+
+    "auto" (or omit) -- let Nemotron classify the task and choose the workflow.
+                        Returns routing decision if it's a direct tool task.
 
     -- RESEARCH -----------------------------------------------------------------
     Multi-step information gathering and synthesis.
@@ -107,6 +110,24 @@ def workflow(
                  feature_desc="read_csv action that parses CSV and returns list of dicts")
     """
     wf_type = type.strip().lower()
+
+    if not goal:
+        return {"status": "error", "error": "goal is required"}
+
+    # Auto-route if type is "auto" or empty
+    if wf_type in ("auto", ""):
+        from routing.router import router
+        decision = router.route(goal, trace_id=trace_id)
+        wf_type  = decision.workflow
+        # If router says "direct", use the tool it recommended
+        if wf_type == "direct":
+            return {
+                "status":   "routed",
+                "workflow": "direct",
+                "tool":     decision.tool,
+                "reason":   decision.reason,
+                "note":     f"Use {decision.tool}() directly for this task",
+            }
 
     if wf_type not in ("research", "data", "autocode"):
         return {

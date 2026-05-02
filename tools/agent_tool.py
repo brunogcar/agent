@@ -169,11 +169,13 @@ _ROLE_TO_LLM: dict[str, str] = {
 }
 
 # Roles that return JSON via API json_object mode (only Hermes supports it)
-_API_JSON_ROLES    = {"extract", "code", "review"}
+# Only extract reliably uses json_object on all models
+# code/review moved to prompt-only: Qwen rejects json_object mode
+_API_JSON_ROLES    = {"extract"}
 
 # Roles that return JSON via system prompt only (parsed post-hoc)
 # Nemotron and Qwen both reject the json_object response_format parameter
-_PROMPT_JSON_ROLES = {"route", "plan"}
+_PROMPT_JSON_ROLES = {"route", "plan", "code", "review"}
 
 # Combined — all roles where we attempt JSON parsing
 _JSON_ROLES = _API_JSON_ROLES | _PROMPT_JSON_ROLES

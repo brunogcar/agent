@@ -1,0 +1,233 @@
+"""
+routing/router.py -- Nemotron-based task router.
+
+Classifies any free-text goal into a structured routing decision
+before the workflow layer runs. Nemotron 4B is used for speed (15s timeout).
+
+Usage:
+    from routing.router import router
+
+    decision = router.route("Fix the timeout bug in tools/web.py")
+    # Returns:
+    # {
+    #   "workflow":   "autocode",
+    #   "tool":       "workflow",
+    #   "complexity": 6,
+    #   "reason":     "Involves editing an existing code file to fix a bug",
+    #   "confidence": "high"
+    # }
+
+    decision = router.classify_complexity("Research ChromaDB")
+    # Returns: 4  (int, 1-10)
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Optional
+
+from core.llm    import llm
+from core.tracer import tracer
+
+
+# -- Routing decision dataclass -----------------------------------------------
+
+class RoutingDecision:
+    """Structured routing decision with fallback handling."""
+
+    def __init__(self, raw: dict) -> None:
+        self.workflow   = raw.get("workflow",   "research")
+        self.tool       = raw.get("tool",       "web")
+        self.complexity = int(raw.get("complexity", 5))
+        self.reason     = raw.get("reason",     "")
+        self.confidence = raw.get("confidence", "medium")
+        self.raw        = raw
+
+    def __repr__(self) -> str:
+        return (
+            f"RoutingDecision(workflow={self.workflow!r}, "
+            f"tool={self.tool!r}, complexity={self.complexity}, "
+            f"reason={self.reason!r})"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "workflow":   self.workflow,
+            "tool":       self.tool,
+            "complexity": self.complexity,
+            "reason":     self.reason,
+            "confidence": self.confidence,
+        }
+
+
+# -- Router -------------------------------------------------------------------
+
+class TaskRouter:
+    """
+    Routes tasks to the appropriate workflow using Nemotron 4B.
+
+    Falls back to heuristic routing if the model is unavailable
+    or returns unparseable output.
+    """
+
+    # Heuristic keywords for fallback routing
+    _CODE_KEYWORDS    = ["fix", "bug", "error", "patch", "refactor", "improve",
+                         "add feature", "implement", "edit", "modify", "update code"]
+    _DATA_KEYWORDS    = ["analyse", "analyze", "calculate", "compute", "plot",
+                         "chart", "csv", "excel", "spreadsheet", "statistics",
+                         "pandas", "numpy", "dataset"]
+    _RESEARCH_KEYWORDS= ["what is", "what are", "how does", "explain", "research",
+                         "find information", "summarise", "summarize", "look up"]
+
+    def route(
+        self,
+        goal:     str,
+        trace_id: str = "",
+    ) -> RoutingDecision:
+        """
+        Route a goal to the best workflow.
+        Tries Nemotron first, falls back to heuristics on failure.
+        """
+        if not goal.strip():
+            return RoutingDecision({
+                "workflow": "research", "tool": "web",
+                "complexity": 1, "reason": "Empty goal",
+                "confidence": "low",
+            })
+
+        if trace_id:
+            tracer.step(trace_id, "router", "routing task", goal=goal[:60])
+
+        # Try model-based routing
+        decision = self._model_route(goal, trace_id)
+        if decision:
+            if trace_id:
+                tracer.step(trace_id, "router",
+                            f"routed to {decision.workflow} (model)",
+                            complexity=decision.complexity)
+            return decision
+
+        # Fall back to heuristics
+        decision = self._heuristic_route(goal)
+        if trace_id:
+            tracer.step(trace_id, "router",
+                        f"routed to {decision.workflow} (heuristic)",
+                        complexity=decision.complexity)
+        return decision
+
+    def classify_complexity(self, goal: str) -> int:
+        """
+        Quick complexity score (1-10) for a goal.
+        Uses Nemotron classify role.
+        """
+        r = llm.complete(
+            role   = "router",
+            system = (
+                "Rate the complexity of this task on a scale of 1-10. "
+                "Output only a single integer. Nothing else."
+                "\n1-3: single tool, clear input/output"
+                "\n4-6: multi-step, predictable"
+                "\n7-9: complex, multiple tools, uncertainty"
+                "\n10: requires human judgment"
+            ),
+            user = goal,
+        )
+        if r.ok:
+            try:
+                return max(1, min(10, int(r.text.strip())))
+            except (ValueError, TypeError):
+                pass
+        return 5  # default
+
+    def _model_route(
+        self,
+        goal:     str,
+        trace_id: str,
+    ) -> Optional[RoutingDecision]:
+        """Try to get a routing decision from Nemotron."""
+        r = llm.complete(
+            role   = "router",
+            system = (
+                "You are a task router. Output ONLY a JSON object. "
+                "No thinking. No explanation. Start with { end with }.\n"
+                'Format: {"workflow":"research or data or autocode",'
+                '"tool":"web or python or file or git or memory or agent or notify or visualize or workflow",'
+                '"complexity":5,'
+                '"reason":"one sentence",'
+                '"confidence":"high or medium or low"}'
+                "\n\nRouting rules:"
+                "\n- research: finding info, summarising, reading docs, Q&A"
+                "\n- data: pandas, analysis, calculations, charts, spreadsheets"
+                "\n- autocode: fixing bugs, editing code files, adding features"
+                "\n- direct: single-tool task (use tool field, not workflow)"
+            ),
+            user     = goal,
+            trace_id = trace_id,
+        )
+
+        if not r.ok:
+            return None
+
+        # Parse JSON from response
+        text  = r.text.strip()
+        clean = text
+        for fence in ("```json", "```"):
+            if clean.startswith(fence):
+                clean = clean[len(fence):]
+        clean = clean.strip().rstrip("`").strip()
+
+        # Extract first JSON object if there's surrounding text
+        match = re.search(r"\{[^{}]*\}", clean, re.DOTALL)
+        if match:
+            clean = match.group(0)
+
+        try:
+            data = json.loads(clean)
+            # Validate required fields
+            if "workflow" in data:
+                return RoutingDecision(data)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        return None
+
+    def _heuristic_route(self, goal: str) -> RoutingDecision:
+        """Rule-based fallback routing when model is unavailable."""
+        lower = goal.lower()
+
+        # Check for code-related keywords
+        if any(kw in lower for kw in self._CODE_KEYWORDS):
+            # Extra check: does it mention a file?
+            has_file = any(
+                ext in lower for ext in [".py", ".js", ".ts", ".json", ".yaml", ".md"]
+            )
+            return RoutingDecision({
+                "workflow":   "autocode",
+                "tool":       "workflow",
+                "complexity": 7 if has_file else 5,
+                "reason":     "Contains code modification keywords",
+                "confidence": "medium",
+            })
+
+        if any(kw in lower for kw in self._DATA_KEYWORDS):
+            return RoutingDecision({
+                "workflow":   "data",
+                "tool":       "python",
+                "complexity": 5,
+                "reason":     "Contains data analysis keywords",
+                "confidence": "medium",
+            })
+
+        # Default to research
+        return RoutingDecision({
+            "workflow":   "research",
+            "tool":       "web",
+            "complexity": 4,
+            "reason":     "No specific routing keywords matched",
+            "confidence": "low",
+        })
+
+
+# -- Singleton ----------------------------------------------------------------
+router = TaskRouter()
