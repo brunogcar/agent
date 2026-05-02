@@ -142,7 +142,11 @@ def _rewrite_query(query: str) -> str:
     words   = query.lower().split()
     cleaned = [EXPANSIONS.get(w, w) for w in words if w not in FILLERS]
     result  = " ".join(cleaned).strip()
-    return result if result else query.lower()
+    # Validate: if rewriting emptied the query, fall back to original
+    # Also enforce minimum length -- very short queries hurt recall
+    if not result or len(result.strip()) < 2:
+        return query.lower().strip() or "general"
+    return result
 
 
 # ── Memory store ──────────────────────────────────────────────────────────────

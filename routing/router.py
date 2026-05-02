@@ -79,6 +79,15 @@ class TaskRouter:
                          "pandas", "numpy", "dataset"]
     _RESEARCH_KEYWORDS= ["what is", "what are", "how does", "explain", "research",
                          "find information", "summarise", "summarize", "look up"]
+    # Direct tool keywords -- simple single-tool tasks that don't need a workflow
+    _DIRECT_FILE      = ["read file", "open file", "list files", "list directory",
+                         "write file", "show file", "read the file", "open the file"]
+    _DIRECT_MEMORY    = ["recall", "remember", "what do you know about",
+                         "store this", "save this to memory"]
+    _DIRECT_GIT       = ["git status", "git log", "show commits", "git diff",
+                         "commit this", "git commit"]
+    _DIRECT_NOTIFY    = ["notify me", "send notification", "remind me",
+                         "schedule reminder"]
 
     def route(
         self,
@@ -195,6 +204,43 @@ class TaskRouter:
     def _heuristic_route(self, goal: str) -> RoutingDecision:
         """Rule-based fallback routing when model is unavailable."""
         lower = goal.lower()
+
+        # Check for direct single-tool tasks first (most specific)
+        if any(kw in lower for kw in self._DIRECT_FILE):
+            return RoutingDecision({
+                "workflow":   "direct",
+                "tool":       "file",
+                "complexity": 2,
+                "reason":     "Simple file operation -- use file() directly",
+                "confidence": "high",
+            })
+
+        if any(kw in lower for kw in self._DIRECT_MEMORY):
+            return RoutingDecision({
+                "workflow":   "direct",
+                "tool":       "memory",
+                "complexity": 1,
+                "reason":     "Simple memory operation -- use memory() directly",
+                "confidence": "high",
+            })
+
+        if any(kw in lower for kw in self._DIRECT_GIT):
+            return RoutingDecision({
+                "workflow":   "direct",
+                "tool":       "git",
+                "complexity": 2,
+                "reason":     "Simple git operation -- use git() directly",
+                "confidence": "high",
+            })
+
+        if any(kw in lower for kw in self._DIRECT_NOTIFY):
+            return RoutingDecision({
+                "workflow":   "direct",
+                "tool":       "notify",
+                "complexity": 1,
+                "reason":     "Simple notification -- use notify() directly",
+                "confidence": "high",
+            })
 
         # Check for code-related keywords
         if any(kw in lower for kw in self._CODE_KEYWORDS):

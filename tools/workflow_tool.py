@@ -119,14 +119,19 @@ def workflow(
         from routing.router import router
         decision = router.route(goal, trace_id=trace_id)
         wf_type  = decision.workflow
+        # Attach routing metadata to kwargs so workflows can log it
+        kwargs["_routing"] = decision.to_dict()
         # If router says "direct", use the tool it recommended
         if wf_type == "direct":
             return {
-                "status":   "routed",
-                "workflow": "direct",
-                "tool":     decision.tool,
-                "reason":   decision.reason,
-                "note":     f"Use {decision.tool}() directly for this task",
+                "status":      "routed",
+                "workflow":    "direct",
+                "tool":        decision.tool,
+                "complexity":  decision.complexity,
+                "confidence":  decision.confidence,
+                "reason":      decision.reason,
+                "note":        f"Use {decision.tool}() directly for this task",
+                "routing_by":  "nemotron",
             }
 
     if wf_type not in ("research", "data", "autocode"):

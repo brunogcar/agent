@@ -626,6 +626,9 @@ def file(
                 sheets_written = []
 
                 if isinstance(content, dict):
+                    # Normalise keys to strings to prevent DataFrame errors
+                    content = {str(k): v for k, v in content.items()}
+
                     # Check if it's multi-sheet (values are lists) or raw format
                     first_val = next(iter(content.values()), None)
                     if isinstance(first_val, list) and all(
@@ -633,25 +636,32 @@ def file(
                     ):
                         # Multi-sheet: {"Sheet1": [rows...], "Sheet2": [rows...]}
                         for sheet_name, rows in content.items():
-                            if rows and isinstance(rows[0], dict):
-                                df = pd.DataFrame(rows)
-                            elif rows and isinstance(rows[0], list):
-                                df = pd.DataFrame(rows[1:], columns=rows[0])
-                            else:
-                                df = pd.DataFrame(rows)
-                            df.to_excel(writer, sheet_name=sheet_name[:31],
-                                        index=False)
-                            sheets_written.append(sheet_name)
+                            safe_name = str(sheet_name)[:31]
+                            try:
+                                if rows and isinstance(rows[0], dict):
+                                    # Normalise row keys too
+                                    rows = [{str(k): v for k, v in r.items()} for r in rows]
+                                    df = pd.DataFrame(rows)
+                                elif rows and isinstance(rows[0], list):
+                                    df = pd.DataFrame(rows[1:], columns=rows[0])
+                                else:
+                                    df = pd.DataFrame(rows)
+                                df.to_excel(writer, sheet_name=safe_name, index=False)
+                                sheets_written.append(sheet_name)
+                            except Exception as sheet_err:
+                                # Skip bad sheet, continue with others
+                                sheets_written.append(f"{safe_name}(error:{sheet_err})")
                     elif "columns" in content and "rows" in content:
                         # Raw format
                         df = pd.DataFrame(content["rows"],
                                           columns=content["columns"])
-                        sheet_name = content.get("sheet", "Sheet1")
-                        df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+                        sheet_name = str(content.get("sheet", "Sheet1"))[:31]
+                        df.to_excel(writer, sheet_name=sheet_name, index=False)
                         sheets_written.append(sheet_name)
                     else:
-                        # Single sheet from dict of lists
-                        df = pd.DataFrame(content)
+                        # Single sheet from dict of lists -- normalise keys
+                        safe_content = {str(k): v for k, v in content.items()}
+                        df = pd.DataFrame(safe_content)
                         df.to_excel(writer, sheet_name="Sheet1", index=False)
                         sheets_written.append("Sheet1")
 

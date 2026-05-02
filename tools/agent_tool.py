@@ -369,19 +369,27 @@ def agent(
             # API json_mode parsed it already
             response["parsed"] = result.parsed
         else:
-            # Prompt-only JSON role — try to parse the text ourselves
+            # Prompt-only JSON role -- try to parse the text ourselves
             import json as _json
+            import re as _re
             clean = result.text.strip()
             for fence in ("```json", "```"):
                 if clean.startswith(fence):
                     clean = clean[len(fence):]
             clean = clean.strip().rstrip("`").strip()
+            # Extract first JSON object if there is surrounding text
+            match = _re.search(r"\{.*?\}", clean, _re.DOTALL)
+            if match:
+                clean = match.group(0)
             try:
                 response["parsed"] = _json.loads(clean)
             except _json.JSONDecodeError:
+                # Return empty dict so callers can safely do
+                # response.get("parsed", {}).get("field") without crashing
+                response["parsed"]        = {}
                 response["parse_warning"] = (
-                    "Response was not valid JSON. "
-                    "Use result.text and parse manually if needed."
+                    f"Response was not valid JSON for role '{role}'. "
+                    "parsed={{}} returned. Check response.text for raw output."
                 )
 
     return response
