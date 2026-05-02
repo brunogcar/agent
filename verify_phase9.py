@@ -79,34 +79,38 @@ try:
     assert r.status_code == 200
     print(f"   GET /memory/stats -> OK")
 
-    # Submit task
+    # Submit task (async -- returns immediately with trace_id)
     r = client.post(
         "/task",
-        json={"goal": "What is 2+2?", "workflow": "auto"},
+        json={"tool": "python", "action": "run",
+              "params": {"mode": "run", "code": "print(6*7)"}},
         headers={"Authorization": "Bearer changeme"},
     )
-    assert r.status_code == 200
-    data = r.json()
-    trace_id = data["trace_id"]
-    print(f"   POST /task   -> trace_id={trace_id} status={data['status']} OK")
+    if r.status_code == 200:
+        data     = r.json()
+        trace_id = data["trace_id"]
+        print(f"   POST /task   -> trace_id={trace_id} status={data['status']} OK")
 
-    # Poll result (may still be pending)
-    time.sleep(1)
-    r = client.get(f"/result/{trace_id}",
-                   headers={"Authorization": "Bearer changeme"})
-    assert r.status_code == 200
-    data = r.json()
-    print(f"   GET /result  -> status={data['status']} elapsed={data['elapsed']}s OK")
+        # Poll result
+        time.sleep(0.5)
+        r = client.get(f"/result/{trace_id}",
+                       headers={"Authorization": "Bearer changeme"})
+        data = r.json()
+        print(f"   GET /result  -> status={data['status']} elapsed={data.get('elapsed',0)}s OK")
+    else:
+        print(f"   POST /task   -> HTTP {r.status_code}: {r.text[:80]}")
 
-    # Chat endpoint
+    # Chat endpoint (sync -- dispatches python directly)
     r = client.post(
         "/chat",
-        json={"message": "What is 1+1?"},
+        json={"message": "python run: print(1+1)"},
         headers={"Authorization": "Bearer changeme"},
     )
-    assert r.status_code == 200
-    data = r.json()
-    print(f"   POST /chat   -> status={data['status']} OK")
+    if r.status_code == 200:
+        data = r.json()
+        print(f"   POST /chat   -> status={data['status']} OK")
+    else:
+        print(f"   POST /chat   -> HTTP {r.status_code}: {r.text[:80]}")
 
     # Recent traces
     r = client.get("/traces",

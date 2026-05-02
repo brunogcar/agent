@@ -27,6 +27,15 @@ Or import and mount into another app:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Bootstrap: ensure agent root is on sys.path
+# Needed when running `python gateway/app.py` from any directory
+_AGENT_ROOT = Path(__file__).resolve().parent.parent
+if str(_AGENT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_AGENT_ROOT))
+
 import time
 import uuid
 from typing import Any, Optional
