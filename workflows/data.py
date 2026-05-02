@@ -162,8 +162,9 @@ def node_store(state: WorkflowState) -> WorkflowState:
 
 
 def node_notify(state: WorkflowState) -> WorkflowState:
-    """Send completion notification."""
+    """Send completion notification and mark workflow done."""
     from tools.notify import notify
+    from workflows.base import node_done
 
     goal   = state.get("goal", "")
     result = state.get("result", "") or state.get("output", "")
@@ -173,7 +174,7 @@ def node_notify(state: WorkflowState) -> WorkflowState:
         title   = "Data analysis complete",
         message = f"{goal[:50]}: {result[:80]}",
     )
-    return state
+    return node_done(state, result=result or "Data analysis complete")
 
 
 # -- Routing ------------------------------------------------------------------

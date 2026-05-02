@@ -52,7 +52,7 @@ def node_recall(state: WorkflowState) -> WorkflowState:
 
 
 def node_search(state: WorkflowState) -> WorkflowState:
-    """Search the web for relevant sources."""
+    """Search the web for relevant sources. Filters 403/empty results."""
     from tools.web import web
 
     goal = state.get("goal", "")
@@ -61,22 +61,42 @@ def node_search(state: WorkflowState) -> WorkflowState:
     result = web(action="search_and_read", query=goal, max_results=3)
 
     if result.get("status") != "success" or not result.get("results"):
-        err = result.get("error", "no results")
+        err = result.get("error", "no results returned")
         node_step(state, "search", f"search failed: {err}")
-        # Non-fatal -- synthesize from memory if we have it
         return {**state, "search_results": ""}
 
-    # Format results for the synthesizer
-    parts = []
+    # Filter out 403/access-denied/empty responses
+    MIN_CHARS = 300
+    ACCESS_DENIED = ["403 forbidden", "access denied", "just a moment",
+                     "enable javascript", "please verify", "captcha"]
+    valid = []
     for r in result["results"]:
-        url   = r.get("url", "")
-        title = r.get("title", "")
-        text  = r.get("text", "")[:2000]  # cap per source
-        parts.append(f"SOURCE: {title}\nURL: {url}\n\n{text}")
+        text  = r.get("text", "")
+        lower = text.lower()
+        if len(text) < MIN_CHARS:
+            node_step(state, "search",
+                      f"skipped {r.get('url','')[:50]} -- too short ({len(text)} chars)")
+            continue
+        if any(marker in lower[:200] for marker in ACCESS_DENIED):
+            node_step(state, "search",
+                      f"skipped {r.get('url','')[:50]} -- access denied")
+            continue
+        valid.append(r)
 
+    if not valid:
+        node_step(state, "search", "all results filtered (403/empty)")
+        return {**state, "search_results": ""}
+
+    parts = []
+    for r in valid:
+        parts.append(
+            f"SOURCE: {r.get('title','')}\nURL: {r.get('url','')}\n\n"
+            f"{r.get('text','')[:2000]}"
+        )
     combined = "\n\n---\n\n".join(parts)
     node_step(state, "search",
-              f"scraped {result.get('scraped_count', 0)} sources")
+              f"scraped {len(valid)} valid sources "
+              f"({result.get('scraped_count',0) - len(valid)} filtered)")
     return {**state, "search_results": combined}
 
 
@@ -151,8 +171,9 @@ def node_store(state: WorkflowState) -> WorkflowState:
 
 
 def node_notify(state: WorkflowState) -> WorkflowState:
-    """Send completion notification."""
+    """Send completion notification and mark workflow done."""
     from tools.notify import notify
+    from workflows.base import node_done
 
     goal   = state.get("goal", "")
     result = state.get("result", "")
@@ -162,7 +183,7 @@ def node_notify(state: WorkflowState) -> WorkflowState:
         title   = "Research complete",
         message = f"{goal[:50]}: {result[:80]}...",
     )
-    return state
+    return node_done(state, result=result or "Research complete")
 
 
 # -- Routing ------------------------------------------------------------------

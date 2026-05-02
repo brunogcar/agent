@@ -424,19 +424,22 @@ def node_commit(state: WorkflowState) -> WorkflowState:
     if r.get("commit_hash"):
         artifacts = artifacts + [f"git:{r['commit_hash']}"]
 
-    return {**state, "artifacts": artifacts, "result": msg}
+    # Set status=success so store_learning and notify know the outcome
+    return {**state, "status": "success",
+            "artifacts": artifacts, "result": msg}
 
 
 def node_rollback(state: WorkflowState) -> WorkflowState:
     """Rollback all changes on failure."""
     from tools.git_ops import git
 
-    error = state.get("error", "") or state.get("exec_error", "")
+    error = state.get("error", "") or state.get("exec_error", "unknown error")
     node_step(state, "rollback", f"rolling back: {error[:60]}")
 
     r = git(operation="rollback", root="agent")
     node_step(state, "rollback", f"rolled back to {r.get('head', 'HEAD')}")
-    return state
+    # Ensure status=failed so store_learning records it correctly
+    return {**state, "status": "failed"}
 
 
 def node_store_learning(state: WorkflowState) -> WorkflowState:
@@ -482,8 +485,9 @@ def node_store_learning(state: WorkflowState) -> WorkflowState:
 
 
 def node_notify(state: WorkflowState) -> WorkflowState:
-    """Send completion notification."""
+    """Send completion notification and mark workflow done."""
     from tools.notify import notify
+    from workflows.base import node_done
 
     status = state.get("status", "running")
     goal   = state.get("goal", "")
@@ -493,10 +497,16 @@ def node_notify(state: WorkflowState) -> WorkflowState:
     if status == "failed":
         notify(action="send", title="Autocode FAILED",
                message=f"{goal[:40]}: {error[:60]}")
+        # Already marked failed -- just return as-is with trace finished
+        from core.tracer import tracer
+        tid = state.get("trace_id", "")
+        if tid:
+            tracer.finish(tid, success=False, result=error[:200])
+        return state
     else:
         notify(action="send", title="Autocode complete",
                message=f"{goal[:40]}: {result[:60]}")
-    return state
+        return node_done(state, result=result or "Autocode complete")
 
 
 # -- Routing ------------------------------------------------------------------

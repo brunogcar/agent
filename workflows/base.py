@@ -73,7 +73,10 @@ def node_step(state: WorkflowState, node: str, message: str, **kwargs) -> None:
 
 
 def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> WorkflowState:
-    """Mark state as failed and log to trace."""
+    """Mark state as failed and log to trace. Message is never empty."""
+    # Ensure message is never empty -- empty errors are invisible in traces
+    if not message or not message.strip():
+        message = f"Unspecified error in node '{node}'"
     tid = state.get("trace_id", "")
     if tid:
         tracer.error(tid, node, message, **kwargs)
