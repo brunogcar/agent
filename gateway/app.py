@@ -191,9 +191,12 @@ def create_app():
         # Normalise: empty/None secret falls back to "changeme" (dev mode)
         # This prevents auth bypass when GATEWAY_SECRET= is left blank in .env
         secret = (cfg.gateway_secret or "").strip() or "changeme"
-        if secret != "changeme":
-            if not creds or creds.credentials != secret:
-                raise HTTPException(status_code=401, detail="Unauthorized")
+        if secret == "changeme":
+            # Warn once per request in dev mode -- makes it visible in logs
+            print("[SECURITY] Gateway in DEVELOPMENT MODE -- set GATEWAY_SECRET in .env",
+                  file=sys.stderr)
+        elif not creds or creds.credentials != secret:
+            raise HTTPException(status_code=401, detail="Unauthorized")
 
     # -- Request/response models ----------------------------------------------
 

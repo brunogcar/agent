@@ -354,7 +354,10 @@ class MemoryStore:
             tracer.step(trace_id, "memory_recall",
                         original=query[:60], rewritten=rewritten[:60])
 
-        fetch_k   = max(top_k * 4, 20)  # fetch more, then filter + rank
+        # Adaptive fetch multiplier -- smaller for large top_k to avoid over-fetching
+        # top_k=5 -> multiplier=4 (fetch 20), top_k=20 -> multiplier=2 (fetch 40)
+        fetch_multiplier = max(2, 5 - top_k // 5)
+        fetch_k = max(top_k * fetch_multiplier, 15)
         results   = []
 
         for col_name in collections:

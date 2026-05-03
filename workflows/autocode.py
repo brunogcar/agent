@@ -564,8 +564,17 @@ def route_after_test(state: WorkflowState) -> str:
 
 
 def increment_retry(state: WorkflowState) -> WorkflowState:
-    """Increment retry counter before looping back."""
-    return {**state, "retries": state.get("retries", 0) + 1}
+    """Increment retry counter with exponential backoff before looping back."""
+    import time
+    retries = state.get("retries", 0)
+    # Exponential backoff: retry 1=2s, retry 2=4s, retry 3=8s
+    # Prevents hammering the model and file locks on repeated failures
+    if retries > 0:
+        delay = min(2 ** retries, 30)  # cap at 30s
+        print(f"[autocode] retry {retries + 1} -- waiting {delay}s before next attempt",
+              file=__import__("sys").stderr)
+        time.sleep(delay)
+    return {**state, "retries": retries + 1}
 
 
 # -- Graph builder ------------------------------------------------------------
