@@ -544,12 +544,17 @@ class MemoryStore:
         collections    : which collections to prune (default: all)
 
         Protected from pruning:
-          - procedural memories (always valuable)
-          - anything tagged "summary" or "critical"
-          - importance >= min_importance
+        - Procedural collection is protected from AUTO-pruning (max_age_days/
+          min_importance). It can still be pruned if explicitly included in the
+          collections= parameter — this is intentional for manual maintenance.
+      - anything tagged "summary", "critical", or "protected"
+      - importance >= min_importance
         """
         collections = collections or [COLLECTION_EPISODIC, COLLECTION_SEMANTIC]
-        # Never auto-prune procedural — it's the most valuable collection
+        # Automatic pruning: NEVER prune procedural unless explicitly requested.
+        # This protects high-value "how-to" patterns that should be retained forever.
+        # However, you CAN still call prune(...) with collections=["procedural"]
+        # if you want to manually clean it up (rare but supported).
         if COLLECTION_PROCEDURAL in collections:
             collections = [c for c in collections if c != COLLECTION_PROCEDURAL]
 
