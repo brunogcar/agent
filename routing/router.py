@@ -88,6 +88,14 @@ class TaskRouter:
                          "commit this", "git commit"]
     _DIRECT_NOTIFY    = ["notify me", "send notification", "remind me",
                          "schedule reminder"]
+    # Visualize keywords -- route to direct visualize tool
+    _VISUALIZE_KEYWORDS = ["create a chart", "create chart", "make a chart",
+                           "plot a chart", "draw a chart", "visualize",
+                           "visualise", "create a graph", "make a graph",
+                           "create a map", "make a map", "create a dashboard",
+                           "make a dashboard", "create a report",
+                           "make a report", "bar chart", "line chart",
+                           "pie chart", "scatter plot", "heatmap"]
 
     def route(
         self,
@@ -186,8 +194,9 @@ class TaskRouter:
                 clean = clean[len(fence):]
         clean = clean.strip().rstrip("`").strip()
 
-        # Extract first JSON object if there's surrounding text
-        match = re.search(r"\{[^{}]*\}", clean, re.DOTALL)
+        # Extract first JSON object -- supports one level of nesting
+        # e.g. {"workflow":"x","reason":"...","metadata":{}}
+        match = re.search(r"\{(?:[^{}]|\{[^{}]*\})*\}", clean, re.DOTALL)
         if match:
             clean = match.group(0)
 
@@ -204,6 +213,16 @@ class TaskRouter:
     def _heuristic_route(self, goal: str) -> RoutingDecision:
         """Rule-based fallback routing when model is unavailable."""
         lower = goal.lower()
+
+        # Check for visualize tasks before generic routing
+        if any(kw in lower for kw in self._VISUALIZE_KEYWORDS):
+            return RoutingDecision({
+                "workflow":   "direct",
+                "tool":       "visualize",
+                "complexity": 3,
+                "reason":     "Visualisation task -- use visualize() directly",
+                "confidence": "high",
+            })
 
         # Check for direct single-tool tasks first (most specific)
         if any(kw in lower for kw in self._DIRECT_FILE):

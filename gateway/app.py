@@ -188,8 +188,10 @@ def create_app():
     def _check_auth(
         creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     ) -> None:
-        secret = cfg.gateway_secret
-        if secret and secret != "changeme":
+        # Normalise: empty/None secret falls back to "changeme" (dev mode)
+        # This prevents auth bypass when GATEWAY_SECRET= is left blank in .env
+        secret = (cfg.gateway_secret or "").strip() or "changeme"
+        if secret != "changeme":
             if not creds or creds.credentials != secret:
                 raise HTTPException(status_code=401, detail="Unauthorized")
 
