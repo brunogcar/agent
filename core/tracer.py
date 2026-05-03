@@ -87,8 +87,10 @@ class _FileWriter:
                 f = self._get_file()
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
                 f.flush()
+            except (KeyboardInterrupt, SystemExit):
+                raise  # never suppress shutdown signals
             except Exception:
-                pass  # never crash the agent over a log write
+                pass  # non-fatal I/O errors silently ignored
 
     def close(self) -> None:
         with self._lock:

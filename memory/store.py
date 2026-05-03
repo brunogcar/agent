@@ -192,16 +192,32 @@ class MemoryStore:
         importance = max(1, min(10, importance))
         col        = self._col(collection)
 
-        # Lightweight dedup — skip if very similar text already exists
+        # Per-collection dedup thresholds (cosine distance, lower = more similar):
+        #   episodic:   0.05 -- only skip near-identical event logs
+        #   semantic:   0.12 -- skip very similar facts (same topic/phrasing)
+        #   procedural: 0.08 -- skip near-identical fix patterns
+        # Configurable via MEMORY_DEDUP_THRESHOLD in .env (overrides all)
+        import os as _os
+        _default_thresholds = {
+            COLLECTION_EPISODIC:   0.05,
+            COLLECTION_SEMANTIC:   0.12,
+            COLLECTION_PROCEDURAL: 0.08,
+        }
+        _dedup_thresh = float(
+            _os.getenv("MEMORY_DEDUP_THRESHOLD", "")
+            or _default_thresholds.get(collection, 0.08)
+        )
         try:
             existing = col.query(query_texts=[text], n_results=1,
                                  include=["documents", "distances"])
             docs      = existing.get("documents", [[]])[0]
             distances = existing.get("distances", [[]])[0]
-            if docs and distances and distances[0] < 0.05:
+            if docs and distances and distances[0] < _dedup_thresh:
                 return {"status": "skipped_duplicate", "collection": collection}
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:
-            pass  # dedup failure is non-fatal — store anyway
+            pass  # dedup failure is non-fatal -- store anyway
 
         memory_id = str(uuid.uuid4())
         metadata  = {

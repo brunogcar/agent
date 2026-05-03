@@ -61,6 +61,8 @@ def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
         return "", f"HTTP {e.response.status_code} from {url}"
     except httpx.ConnectError:
         return "", f"Cannot connect to {url}"
+    except (KeyboardInterrupt, SystemExit):
+        raise  # never suppress shutdown signals
     except Exception as e:
         return "", f"{type(e).__name__}: {e}"
 
