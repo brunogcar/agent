@@ -49,6 +49,7 @@ Usage:
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from typing import Optional
@@ -121,8 +122,9 @@ def _rewrite_query(query: str) -> str:
     when the router layer is active.
     """
     FILLERS = {
-        "how do i", "how to", "what is", "what are", "can you",
-        "please", "tell me", "show me", "find", "get", "fetch",
+        # Only strip pure filler words -- preserve question starters
+        # "how do i", "what is" etc carry semantic meaning for recall
+        "please", "tell me", "show me",
         "the", "a", "an", "in", "on", "at", "of", "for",
     }
     EXPANSIONS = {
@@ -154,10 +156,12 @@ def _rewrite_query(query: str) -> str:
 class MemoryStore:
     """
     Three-collection ChromaDB memory store with decay scoring and query rewriting.
-    Thread-safe via ChromaDB's internal locking.
+    Write operations use an explicit lock for thread safety -- ChromaDB's
+    internal locking is not sufficient for concurrent multi-collection writes.
     """
 
     def __init__(self) -> None:
+        self._write_lock  = threading.Lock()  # guards concurrent writes
         self._client      = _make_client()
         self._collections = {
             name: self._client.get_or_create_collection(name)
@@ -213,7 +217,8 @@ class MemoryStore:
         }
 
         try:
-            col.add(documents=[text], ids=[memory_id], metadatas=[metadata])
+            with self._write_lock:
+                col.add(documents=[text], ids=[memory_id], metadatas=[metadata])
             return {"status": "stored", "id": memory_id, "collection": collection}
         except Exception as e:
             return {"status": "error", "error": str(e)}

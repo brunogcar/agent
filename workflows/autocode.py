@@ -43,6 +43,7 @@ from langgraph.graph import StateGraph, END
 
 from core.config  import cfg
 from workflows.base import WorkflowState, node_step, node_error, node_done
+from filelock import FileLock
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -348,13 +349,20 @@ def node_syntax_check(state: WorkflowState) -> WorkflowState:
 def node_apply_patch(state: WorkflowState) -> WorkflowState:
     """Write the patch to disk with filelock."""
     from tools.file_ops import file
-    from filelock import FileLock
 
     target = state.get("target_file", "")
     patch  = state.get("patch", "")
 
     if not patch:
         return node_error(state, "apply", "No patch to apply")
+
+    # Protected file guard -- belt-and-suspenders check
+    # (also checked at workflow entry, but defence in depth)
+    if _is_protected(target):
+        return node_error(state, "apply",
+                          f"Blocked: '{target}' is a protected file. "
+                          "Edit manually. Autocode never touches: "
+                          + ", ".join(sorted(cfg.protected_files)))
 
     node_step(state, "apply", "writing patch to disk", path=target)
 
@@ -376,7 +384,13 @@ def node_apply_patch(state: WorkflowState) -> WorkflowState:
 
 
 def node_test(state: WorkflowState) -> WorkflowState:
-    """Syntax check + ruff lint after applying patch."""
+    """Syntax check + ruff lint after applying patch.
+
+    Distinguishes fatal errors from warnings:
+      - SyntaxError  -> exec_error set -> triggers retry/rollback
+      - ruff issues  -> logged as warning, does NOT block commit
+        (linting style issues should not revert working code)
+    """
     target = state.get("target_file", "")
     p      = cfg.resolve_agent_path(target)
 
@@ -385,23 +399,25 @@ def node_test(state: WorkflowState) -> WorkflowState:
 
     node_step(state, "test", "running post-apply checks")
 
-    # Syntax check on disk
+    # Syntax check -- fatal, must be clean before commit
     try:
         code = p.read_text(encoding="utf-8")
         ok, err = _syntax_check(code)
         if not ok:
-            return {**state, "exec_error": err}
+            node_step(state, "test", f"SYNTAX ERROR: {err}")
+            return {**state, "exec_error": f"SyntaxError: {err}"}
     except Exception as e:
-        return {**state, "exec_error": str(e)}
+        return {**state, "exec_error": f"Read error: {e}"}
 
-    # ruff lint
+    # ruff lint -- non-fatal, log only, never triggers retry
     passed, ruff_out = _run_ruff(p)
     if not passed:
-        node_step(state, "test", f"ruff issues: {ruff_out[:100]}")
-        # Ruff failures are warnings, not fatal -- log and continue
-        return {**state, "exec_error": ""}
+        # Style/lint issues: warn but proceed to commit
+        node_step(state, "test",
+                  f"ruff warnings (non-fatal, proceeding): {ruff_out[:120]}")
+    else:
+        node_step(state, "test", "all checks passed")
 
-    node_step(state, "test", "all checks passed")
     return {**state, "exec_error": ""}
 
 
@@ -536,7 +552,10 @@ def route_after_syntax(state: WorkflowState) -> str:
 
 
 def route_after_test(state: WorkflowState) -> str:
-    if state.get("exec_error"):
+    exec_error = state.get("exec_error", "")
+    # Only retry/rollback on actual syntax errors -- not ruff style warnings
+    # (ruff warnings are logged but do not block commit)
+    if exec_error and "SyntaxError" in exec_error:
         retries = state.get("retries", 0)
         if retries < cfg.autocode_max_retries:
             return "retry"

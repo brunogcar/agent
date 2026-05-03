@@ -43,7 +43,7 @@ SAFE_BUILTINS = {
     "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
     "sorted": sorted, "reversed": reversed,
     "isinstance": isinstance, "issubclass": issubclass,
-    "type": type, "repr": repr, "hash": hash,
+    "type": type, "repr": repr,  # hash removed: DoS risk via collision
     "any": any, "all": all,
     "chr": chr, "ord": ord, "hex": hex, "oct": oct, "bin": bin,
     "divmod": divmod, "pow": pow,

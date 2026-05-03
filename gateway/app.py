@@ -170,10 +170,14 @@ def create_app():
     )
 
     # CORS -- allow all origins (restrict in production)
+    # CORS: allow_credentials=True + allow_origins=["*"] is a security
+    # vulnerability and also raises a FastAPI validation error.
+    # Use allow_credentials=False for open-network deployments,
+    # or restrict allow_origins to specific hosts in production.
     app.add_middleware(
         CORSMiddleware,
         allow_origins     = ["*"],
-        allow_credentials = True,
+        allow_credentials = False,
         allow_methods     = ["*"],
         allow_headers     = ["*"],
     )
