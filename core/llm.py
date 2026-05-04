@@ -447,7 +447,13 @@ class LLMClient:
     def _get_role(self, role: str) -> RoleConfig:
         if role not in self._roles:
             # Unknown role - fall back to executor with a warning
-            print(f"[llm] WARNING: unknown role '{role}', falling back to executor", file=__import__("sys").stderr)
+            import sys as _sys
+            known = sorted(self._roles.keys())
+            print(
+                f"[llm] WARNING: unknown role {role!r} -- falling back to executor. "
+                f"Known roles: {known}",
+                file=_sys.stderr,
+            )
             return self._roles["executor"]
         return self._roles[role]
 

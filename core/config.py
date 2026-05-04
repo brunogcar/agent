@@ -46,9 +46,12 @@ class Config:
 
     def __init__(self) -> None:
         # ── Paths ─────────────────────────────────────────────────────────────
-        self.agent_root    = Path(os.getenv("AGENT_ROOT",    "D:/mcp/agent"))
-        self.workspace_root= Path(os.getenv("WORKSPACE_ROOT","D:/mcp/workspace"))
-        self.memory_root   = Path(os.getenv("MEMORY_ROOT",   "D:/mcp/memory_db"))
+        # Default paths are relative to agent root so they work on Linux
+        # without D:/... paths. Set AGENT_ROOT etc in .env to override.
+        _here = Path(__file__).resolve().parent.parent
+        self.agent_root    = Path(os.getenv("AGENT_ROOT",     str(_here)))
+        self.workspace_root= Path(os.getenv("WORKSPACE_ROOT", str(_here / "workspace")))
+        self.memory_root   = Path(os.getenv("MEMORY_ROOT",    str(_here / "memory_db")))
 
         # Derived paths — never hardcoded anywhere else
         self.memory_chroma_path = self.memory_root / "chroma"
