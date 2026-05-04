@@ -121,6 +121,16 @@ def workflow(
         wf_type  = decision.workflow
         # Attach routing metadata to kwargs so workflows can log it
         kwargs["_routing"] = decision.to_dict()
+        # Log the routing decision to the trace so it's visible later
+        if trace_id:
+            from core.tracer import tracer
+            tracer.step(trace_id, "route",
+                        f"auto-routed to {wf_type!r}",
+                        workflow=wf_type,
+                        tool=decision.tool,
+                        complexity=decision.complexity,
+                        confidence=decision.confidence,
+                        reason=decision.reason)
         # If router says "direct", use the tool it recommended
         if wf_type == "direct":
             return {

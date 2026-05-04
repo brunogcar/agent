@@ -11,7 +11,7 @@ Actions:
   search          -> query SearXNG, return ranked URLs + snippets
   scrape          -> fetch URL, return clean text (BS4, no JS/CSS noise)
   read            -> alias for scrape
-  search_and_read -> search + scrape top results in one call
+  search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
 """
 
 from __future__ import annotations
@@ -182,7 +182,7 @@ def web(
         Returns:  {title, text, word_count, truncated}
 
     search_and_read
-        Search then scrape the top results. One call for full research.
+        Search then scrape the top results in parallel. One call for full research.
         Required: query
         Optional: max_results (default 3), max_chars
         Returns:  {query, results: [{url, title, text}], scraped_count}
@@ -215,25 +215,41 @@ def web(
             return {"status": "error",
                     "error": search_result.get("error", "No search results"),
                     "query": query}
+
+        # Collect valid URLs preserving rank order
+        urls = [r.get("url", "") for r in search_result["results"] if r.get("url")]
+
+        # Fetch all URLs in parallel -- reuses the same pattern as file(read_many)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _fetch_one(u: str) -> tuple[str, dict]:
+            return u, _do_scrape(u, max_chars)
+
+        results_map: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=min(len(urls), 4)) as ex:
+            futures = {ex.submit(_fetch_one, u): u for u in urls}
+            for future in as_completed(futures):
+                u, result = future.result()
+                results_map[u] = result
+
+        # Rebuild in original rank order, keep only successful scrapes
         scraped = []
-        for r in search_result["results"]:
-            u = r.get("url", "")
-            if not u:
-                continue
-            result = _do_scrape(u, max_chars)
-            if result["status"] == "success" and result.get("text"):
+        for u in urls:
+            result = results_map.get(u, {})
+            if result.get("status") == "success" and result.get("text"):
                 scraped.append({
                     "url":        u,
                     "title":      result.get("title", ""),
                     "text":       result["text"],
                     "word_count": result.get("word_count", 0),
                 })
+
         return {
             "status":        "success",
             "query":         query,
             "results":       scraped,
             "scraped_count": len(scraped),
-            "attempted":     n,
+            "attempted":     len(urls),
         }
 
     return {

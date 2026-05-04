@@ -256,14 +256,21 @@ def node_generate_code(state: WorkflowState) -> WorkflowState:
 
     context = f"Analysis:\n{analysis}" if analysis else ""
 
-    node_step(state, "generate", f"generating patch (attempt {retries + 1})")
+    # Vary temperature on retries -- deterministic models (temp=0) produce
+    # identical output each retry and never recover. Each retry gets warmer.
+    retry_temps = [None, 0.2, 0.4, 0.6]  # None = use role default (0.1)
+    retry_temp  = retry_temps[min(retries, len(retry_temps) - 1)]
+
+    node_step(state, "generate", f"generating patch (attempt {retries + 1})",
+              temperature=retry_temp)
 
     r = agent(
-        role     = "code",
-        task     = task,
-        context  = context,
-        content  = file_content,
-        trace_id = state.get("trace_id", ""),
+        role        = "code",
+        task        = task,
+        context     = context,
+        content     = file_content,
+        trace_id    = state.get("trace_id", ""),
+        temperature = retry_temp if retry_temp is not None else -1,
     )
 
     if r.get("status") != "success":

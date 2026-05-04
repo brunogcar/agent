@@ -226,6 +226,38 @@ def create_app():
             "version":   "1.0.0",
         }
 
+    @app.get("/health/models")
+    def health_models(_: None = Depends(_check_auth)):
+        """Check which LM Studio models are loaded and verify required ones."""
+        import httpx as _httpx
+        required = {
+            "planner":  cfg.planner_model,
+            "executor": cfg.executor_model,
+            "router":   cfg.router_model,
+        }
+        try:
+            resp    = _httpx.get(f"{cfg.lm_studio_base_url}/models", timeout=5)
+            loaded  = [m["id"] for m in resp.json().get("data", [])]
+            status  = {}
+            all_ok  = True
+            for role, model in required.items():
+                found = any(model.lower() in m.lower() for m in loaded)
+                status[role] = {"model": model, "loaded": found}
+                if not found:
+                    all_ok = False
+            return {
+                "status":        "ok" if all_ok else "degraded",
+                "all_loaded":    all_ok,
+                "models":        status,
+                "loaded_models": loaded,
+            }
+        except Exception as e:
+            return {
+                "status":     "error",
+                "error":      str(e),
+                "all_loaded": False,
+            }
+
     @app.get("/tools")
     def list_tools(_: None = Depends(_check_auth)):
         """List all available meta-tools."""

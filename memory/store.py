@@ -670,8 +670,15 @@ class MemoryStore:
         if len(all_docs) < 3:
             return {"status": "not_enough_data", "count": len(all_docs)}
 
-        # Sort by importance desc, take top_n
-        all_docs.sort(key=lambda x: x["importance"], reverse=True)
+        # Sort by decay score (importance * recency) not just raw importance
+        # This favours both recent AND important memories for summarisation
+        import time as _time
+        now = _time.time()
+        for d in all_docs:
+            age   = (now - d.get("timestamp", now)) / 86400
+            decay = max(0.3, 1.0 - age / cfg.memory_decay_days)
+            d["_score"] = d["importance"] * decay
+        all_docs.sort(key=lambda x: x["_score"], reverse=True)
         top = all_docs[:top_n]
 
         combined = "\n".join(

@@ -70,6 +70,14 @@ HEAVY_IMPORTS = {
 
 ALL_ALLOWED = STDLIB_IMPORTS | HEAVY_IMPORTS
 
+# Modules that are never allowed even in run_data -- security boundary.
+# These can access the filesystem, network, processes, or environment vars.
+BLOCKED_IMPORTS = {
+    "os", "sys", "subprocess", "shutil", "socket", "pickle",
+    "multiprocessing", "ctypes", "importlib", "builtins",
+    "signal", "pty", "tty", "termios", "fcntl", "resource",
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -246,12 +254,25 @@ def python(mode: str, code: str) -> dict:
             }
 
         imports = _parse_imports(code)
+        # Check blocked imports first (security boundary)
+        dangerous = [n for n in imports if n in BLOCKED_IMPORTS]
+        if dangerous:
+            return {
+                "status": "error",
+                "error": (
+                    f"Import(s) blocked for security: {dangerous}. "
+                    "These modules can access filesystem, processes, or network. "
+                    "Use the file(), git(), or web() tools instead."
+                ),
+                "mode": "run_data",
+            }
+
         blocked = [n for n in imports if n not in ALL_ALLOWED and n not in ("__future__",)]
         if blocked:
             return {
                 "status": "error",
                 "error": (
-                    f"Import(s) not allowed: {blocked}. "
+                    f"Import(s) not in allowed list: {blocked}. "
                     f"Allowed stdlib: {sorted(STDLIB_IMPORTS)}. "
                     f"Allowed heavy: {sorted(HEAVY_IMPORTS)}."
                 ),
