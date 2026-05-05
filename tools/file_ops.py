@@ -1085,6 +1085,41 @@ def file(
             return {"status": "error",
                     "error": f"DOCX write failed: {type(e).__name__}: {e}"}
 
+    # ── compress ──────────────────────────────────────────────────────────────
+    if action == "compress":
+        import zipfile
+        p, err = _safe_resolve(path or ".")
+        if err:
+            return {"status": "error", "error": err}
+        if not p.exists():
+            return {"status": "error", "error": f"Path not found: {p}"}
+
+        # Output zip sits next to the target (or in workspace root if target is root)
+        zip_name = (p.name or "workspace") + ".zip"
+        zip_path = (p.parent if p.parent != p else cfg.workspace_root) / zip_name
+
+        try:
+            file_count = 0
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                if p.is_dir():
+                    for item in p.rglob("*"):
+                        if item.is_file():
+                            arcname = item.relative_to(p)
+                            zf.write(item, arcname)
+                            file_count += 1
+                else:
+                    zf.write(p, p.name)
+                    file_count = 1
+
+            return {
+                "status":     "success",
+                "zip_path":   str(zip_path),
+                "files":      file_count,
+                "size":       zip_path.stat().st_size,
+            }
+        except Exception as e:
+            return {"status": "error", "error": f"Compress failed: {e}"}
+
     return {
         "status": "error",
         "error":  (
@@ -1093,6 +1128,6 @@ def file(
             "read_pdf | write_pdf | "
             "read_docx | write_docx | "
             "read_xlsx | write_xlsx | "
-            "read_pptx | write_pptx"
+            "read_pptx | write_pptx | compress"
         ),
     }

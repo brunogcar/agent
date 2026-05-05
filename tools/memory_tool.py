@@ -128,6 +128,16 @@ def memory(
         if importance < 1 or importance > 10:
             return {"status": "error",
                     "error": f"importance must be 1-10, got {importance}"}
+        # Guard against storing huge blobs that bloat the vector DB
+        MAX_MEMORY_BYTES = 50_000  # 50 KB
+        if len(text.encode("utf-8")) > MAX_MEMORY_BYTES:
+            return {
+                "status": "error",
+                "error":  (
+                    f"text is {len(text.encode())} bytes -- exceeds 50KB limit. "
+                    "Summarise or chunk the content before storing."
+                ),
+            }
         return store.store(
             text=text, memory_type=memory_type, importance=importance,
             tags=tags, trace_id=trace_id, goal=goal, outcome=outcome,

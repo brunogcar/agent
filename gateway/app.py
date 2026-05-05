@@ -44,31 +44,83 @@ from core.config import cfg
 from core.tracer import tracer
 
 
-# -- In-memory task store (replace with SQLite in Phase 9b if needed) --------
+# -- SQLite task store (persists across gateway restarts) --------------------
 
-_tasks: dict[str, dict] = {}
+import sqlite3 as _sqlite3
+import json    as _json_mod
+
+_TASK_DB_PATH = None
+_task_db_lock = __import__("threading").Lock()
+
+
+def _get_task_db() -> _sqlite3.Connection:
+    global _TASK_DB_PATH
+    if _TASK_DB_PATH is None:
+        _TASK_DB_PATH = cfg.memory_root / "gateway_tasks.db"
+    conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            trace_id  TEXT PRIMARY KEY,
+            status    TEXT NOT NULL DEFAULT 'pending',
+            submitted REAL NOT NULL,
+            completed REAL,
+            result    TEXT,
+            error     TEXT,
+            payload   TEXT
+        )
+    """)
+    conn.commit()
+    return conn
 
 
 def _store_task(trace_id: str, payload: dict) -> None:
-    _tasks[trace_id] = {
-        "trace_id":   trace_id,
-        "status":     "pending",
-        "submitted":  time.time(),
-        "result":     None,
-        "error":      None,
-        "payload":    payload,
-    }
+    with _task_db_lock:
+        db = _get_task_db()
+        db.execute(
+            "INSERT OR REPLACE INTO tasks (trace_id, status, submitted, payload) "
+            "VALUES (?, 'pending', ?, ?)",
+            (trace_id, time.time(), _json_mod.dumps(payload)),
+        )
+        db.commit()
+        db.close()
 
 
 def _update_task(trace_id: str, status: str,
                  result: Any = None, error: str = "") -> None:
-    if trace_id in _tasks:
-        _tasks[trace_id].update({
-            "status":    status,
-            "result":    result,
-            "error":     error,
-            "completed": time.time(),
-        })
+    with _task_db_lock:
+        db = _get_task_db()
+        db.execute(
+            "UPDATE tasks SET status=?, completed=?, result=?, error=? "
+            "WHERE trace_id=?",
+            (status, time.time(),
+             _json_mod.dumps(result) if result is not None else None,
+             error, trace_id),
+        )
+        db.commit()
+        db.close()
+
+
+def _get_task(trace_id: str) -> dict | None:
+    with _task_db_lock:
+        db  = _get_task_db()
+        row = db.execute(
+            "SELECT trace_id, status, submitted, completed, result, error "
+            "FROM tasks WHERE trace_id=?", (trace_id,)
+        ).fetchone()
+        db.close()
+    if not row:
+        return None
+    result = None
+    if row[4]:
+        try:
+            result = _json_mod.loads(row[4])
+        except Exception:
+            result = row[4]
+    return {
+        "trace_id":  row[0], "status": row[1],
+        "submitted": row[2], "completed": row[3],
+        "result":    result, "error": row[5] or "",
+    }
 
 
 # -- Background task runner --------------------------------------------------
@@ -216,6 +268,24 @@ def create_app():
 
     # -- Endpoints ------------------------------------------------------------
 
+    @app.get("/version")
+    def version():
+        """Return current git commit hash and branch."""
+        import subprocess as _sp
+        try:
+            commit = _sp.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(cfg.agent_root), stderr=_sp.DEVNULL, text=True,
+            ).strip()
+            branch = _sp.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(cfg.agent_root), stderr=_sp.DEVNULL, text=True,
+            ).strip()
+        except Exception:
+            commit = "unknown"
+            branch = "unknown"
+        return {"commit": commit, "branch": branch, "env": cfg.env}
+
     @app.get("/health")
     def health():
         from core.llm import llm
@@ -328,9 +398,9 @@ def create_app():
           result: the final result (when status=success)
           error:  error message (when status=failed)
         """
-        task = _tasks.get(trace_id)
+        task = _get_task(trace_id)
         if not task:
-            # Check tracer for any info
+            # Fall back to tracer
             trace = tracer.get(trace_id)
             if trace:
                 return {
@@ -342,20 +412,18 @@ def create_app():
             raise HTTPException(status_code=404,
                                 detail=f"trace_id '{trace_id}' not found")
 
-        response = {
+        elapsed = (
+            round(time.time() - task["submitted"], 1)
+            if task["status"] in ("pending", "running")
+            else round((task.get("completed") or time.time()) - task["submitted"], 1)
+        )
+        return {
             "trace_id": trace_id,
             "status":   task["status"],
             "result":   task.get("result"),
             "error":    task.get("error"),
-            "elapsed":  (
-                round(time.time() - task["submitted"], 1)
-                if task["status"] in ("pending", "running")
-                else round(
-                    task.get("completed", time.time()) - task["submitted"], 1
-                )
-            ),
+            "elapsed":  elapsed,
         }
-        return response
 
     @app.post("/chat")
     def chat(
