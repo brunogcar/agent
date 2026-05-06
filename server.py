@@ -85,6 +85,20 @@ tracer.finish(_boot_tid, success=True, result=f"{_tool_count} tools registered")
 # -- Restore real stdout and hand it to FastMCP's stdio transport -------------
 sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
 
-# -- Run ----------------------------------------------------------------------
+# -- Warm up ChromaDB in background (avoids cold-start MCP timeout) -----------
+def _warmup_chromadb() -> None:
+    """Load ChromaDB embedding model before first tool call."""
+    try:
+        from memory.store import memory as _mem
+        # Tiny no-op query to trigger embedding model load
+        _mem.recall("warmup", top_k=1, min_score=0.0)
+        print("[server] ChromaDB warmup complete", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] ChromaDB warmup skipped: {e}", file=sys.stderr)
+
+import threading as _threading
+_threading.Thread(target=_warmup_chromadb, daemon=True).start()
+
+# -- Run (hands stdout to FastMCP's stdio transport) ----------------------------
 if __name__ == "__main__":
     mcp.run()
