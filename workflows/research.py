@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from langgraph.graph import StateGraph, END
 
-from workflows.base import WorkflowState, node_step, node_error, node_done
+from workflows.base   import WorkflowState, node_step, node_error, node_done
+from core.citations   import citations
 
 
 # -- Nodes --------------------------------------------------------------------
@@ -88,15 +89,23 @@ def node_search(state: WorkflowState) -> WorkflowState:
         return {**state, "search_results": ""}
 
     parts = []
+    tid   = state.get("trace_id", "")
     for r in valid:
+        url   = r.get("url",   "")
+        title = r.get("title", "")
+        text  = r.get("text",  "")
+        # Register source for citation tracking
+        if tid and url:
+            snippet = text[:200].replace("\n", " ")
+            citations.add(tid, url=url, title=title, snippet=snippet)
         parts.append(
-            f"SOURCE: {r.get('title','')}\nURL: {r.get('url','')}\n\n"
-            f"{r.get('text','')[:2000]}"
+            f"SOURCE: {title} {citations.cite(tid, url)}\nURL: {url}\n\n"
+            f"{text[:2000]}"
         )
     combined = "\n\n---\n\n".join(parts)
     node_step(state, "search",
-              f"scraped {len(valid)} valid sources "
-              f"({result.get('scraped_count',0) - len(valid)} filtered)")
+              f"scraped {len(valid)} valid sources, {citations.count(tid)} citations",
+              filtered=result.get('scraped_count',0) - len(valid))
     return {**state, "search_results": combined}
 
 
@@ -175,15 +184,18 @@ def node_notify(state: WorkflowState) -> WorkflowState:
     from tools.notify import notify
     from workflows.base import node_done
 
-    goal   = state.get("goal", "")
-    result = state.get("result", "")
+    goal    = state.get("goal", "")
+    result  = state.get("result", "")
+    tid     = state.get("trace_id", "")
+    sources = citations.get_sources(tid) if tid else []
 
     notify(
         action  = "send",
         title   = "Research complete",
         message = f"{goal[:50]}: {result[:80]}...",
     )
-    return node_done(state, result=result or "Research complete")
+    return node_done(state, result=result or "Research complete",
+                     artifacts=[{"sources": sources}])
 
 
 # -- Routing ------------------------------------------------------------------

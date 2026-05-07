@@ -781,32 +781,41 @@ def _build_dashboard(
 def visualize(
     type:       str,
     # Chart params
-    chart_type: str        = "bar",
-    data:       Any        = None,
-    data_path:  str        = "",
-    x_col:      str        = "",
-    y_col:      str        = "",
-    label_col:  str        = "",
-    title:      str        = "",
-    subtitle:   str        = "",
-    x_label:    str        = "",
-    y_label:    str        = "",
-    color:      str        = "",
-    accent:     str        = "#3498db",
-    export_png: bool       = False,
-    export_pdf: bool       = False,
-    output:     str        = "",
+    chart_type: str   = "bar",
+    data:       Any   = None,
+    data_path:  str   = "",
+    x_col:      str   = "",
+    y_col:      str   = "",
+    label_col:  str   = "",
+    title:      str   = "",
+    subtitle:   str   = "",
+    x_label:    str   = "",
+    y_label:    str   = "",
+    color:      str   = "",
+    accent:     str   = "#3498db",
+    export_png: bool  = False,
+    export_pdf: bool  = False,
+    output:     str   = "",
     # Map params
-    map_type:   str        = "markers",
-    center_lat: float      = 0.0,
-    center_lon: float      = 0.0,
-    zoom:       int        = 5,
-    # Report params
-    sections:   list       = None,
-    kpis:       list       = None,
+    map_type:   str   = "markers",
+    center_lat: float = 0.0,
+    center_lon: float = 0.0,
+    zoom:       int   = 5,
+    # Report params (jinja2 sections-based)
+    sections:   list  = None,
+    kpis:       list  = None,
     # Dashboard params
-    charts:     list       = None,
-    columns:    int        = 2,
+    charts:     list  = None,
+    columns:    int   = 2,
+    # market_report / code_report params
+    overview:        str  = "",
+    research:        str  = "",
+    summary:         str  = "",
+    issues:          list = None,
+    recommendations: list = None,
+    changes:         list = None,
+    tables:          list = None,
+    sources:         list = None,
 ) -> dict:
     """
     Visualize tool — create interactive charts, maps, reports, and dashboards.
@@ -901,6 +910,56 @@ def visualize(
                 ])
     """
     vtype = type.strip().lower()
+
+    # ── market_report ─────────────────────────────────────────────────────────
+    if vtype == "market_report":
+        from tools.report_templates import render_market_report
+        html      = render_market_report(
+            title           = title   or "Market Analysis",
+            subtitle        = subtitle,
+            overview        = kwargs.get("overview",   ""),
+            research        = kwargs.get("research",   ""),
+            kpis            = kpis    or [],
+            charts          = charts  or [],
+            tables          = kwargs.get("tables", []),
+            sources         = kwargs.get("sources", []),
+            accent          = accent  or "#3b82f6",
+        )
+        out_name  = output or (title or "market_report").lower().replace(" ", "_")
+        html_path = _out_path(out_name, "html")
+        html_path.write_text(html, encoding="utf-8")
+        return {
+            "status":    "success",
+            "type":      "market_report",
+            "title":     title,
+            "html_path": str(html_path),
+            "open_cmd":  f"start {html_path}" if cfg.is_windows else f"xdg-open {html_path}",
+        }
+
+    # ── code_report ───────────────────────────────────────────────────────────
+    if vtype == "code_report":
+        from tools.report_templates import render_code_report
+        html      = render_code_report(
+            title           = title   or "Code Analysis",
+            subtitle        = subtitle,
+            summary         = kwargs.get("summary",         ""),
+            issues          = kwargs.get("issues",          []),
+            recommendations = kwargs.get("recommendations", []),
+            changes         = kwargs.get("changes",         []),
+            sources         = kwargs.get("sources",         []),
+            kpis            = kpis    or [],
+            accent          = accent  or "#6366f1",
+        )
+        out_name  = output or (title or "code_report").lower().replace(" ", "_")
+        html_path = _out_path(out_name, "html")
+        html_path.write_text(html, encoding="utf-8")
+        return {
+            "status":    "success",
+            "type":      "code_report",
+            "title":     title,
+            "html_path": str(html_path),
+            "open_cmd":  f"start {html_path}" if cfg.is_windows else f"xdg-open {html_path}",
+        }
 
     # ── chart ─────────────────────────────────────────────────────────────────
     if vtype == "chart":

@@ -144,7 +144,7 @@ def workflow(
                 "routing_by":  "nemotron",
             }
 
-    if wf_type not in ("research", "data", "autocode"):
+    if wf_type not in ("research", "data", "autocode", "report"):
         return {
             "status": "error",
             "error":  (
@@ -155,6 +155,12 @@ def workflow(
 
     if not goal:
         return {"status": "error", "error": "goal is required"}
+
+    if wf_type == "report":
+        # Report workflow: research + auto-render market_report or code_report
+        # Routes to research internally then renders with citations
+        kwargs["_report_mode"] = kwargs.pop("mode", "market")
+        wf_type = "research"  # research workflow captures sources via citations
 
     if wf_type == "autocode":
         if not target_file:
