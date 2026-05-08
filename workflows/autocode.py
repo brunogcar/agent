@@ -2,9 +2,9 @@
 autocode.py -- Superpowers-enhanced autonomous coding workflow.
 
 Integrates superpowers methodologies into a LangGraph state machine:
-  1. Task Classification    -- Router model classifies task type before brainstorming
+  1. Task Classification    -- Router model classifies task type
   2. Memory Summarization   -- Past fixes recalled before spec writing
-  3. Brainstorming          -- Spec refinement before any code is written (features only)
+  3. Brainstorming          -- Spec refinement tailored to task type
   4. Writing Plans          -- Structured, acceptance-criteria-driven plans
   5. TDD on Disk            -- Tests run via pytest subprocess, real exit codes
   6. Systematic Debugging   -- Root-cause hypothesis, defense notes, one fix at a time
@@ -12,7 +12,7 @@ Integrates superpowers methodologies into a LangGraph state machine:
   8. Procedural Memory      -- Successful debug fixes stored as reusable knowledge
 
 Model routing:
-  Planner  (Qwen 3.5 9B)    -- classify, brainstorm, plan, spec
+  Planner  (Qwen 3.5 9B)    -- brainstorm, plan, spec
   Router   (Nemotron 4B)    -- task classification
   Executor (Hermes 3 8B)    -- code generation, test writing, fixes, review
 
@@ -49,7 +49,6 @@ from core.tracer  import tracer
 from core.llm     import llm
 
 # ── Tunables ------------------------------------------------------------------
-
 MAX_RETRIES:    int  = cfg.autocode_max_retries
 MAX_FILE_CHARS: int  = cfg.autocode_max_file_chars
 DEBUG:          bool = getattr(cfg, "autocode_debug", False)
@@ -322,8 +321,6 @@ def _git_commit(message: str, tid: str = "") -> str | None:
 
 def _git_create_branch(branch: str, tid: str = "") -> bool:
     """Create branch using snapshot pattern -- checkout not in our git tool."""
-    # Our git_ops.py supports: init|snapshot|commit|rollback|log|status|diff
-    # Branch creation requires a subprocess call directly
     root = str(cfg.agent_root)
     try:
         r = subprocess.run(
@@ -360,13 +357,15 @@ Output ONLY this JSON:
 No prose outside the JSON. questions is empty unless task_type is "unclear"."""
 
 
+# Standard brainstorm for features/unclear
 BRAINSTORM_SYSTEM = """\
 You are the Planner model. Clarify and refine a coding task before any code is written.
 
 Rules:
-- Review past fixes from memory (provided below) to avoid repeating mistakes.
-- Ask NO MORE than 3 targeted clarifying questions if truly needed.
-- If the task is clear, skip questions and go straight to spec.
+- Identify ambiguities in the task description.
+- Ask NO MORE than 3 targeted clarifying questions if truly needed;
+  if the task is clear, skip questions and go straight to spec.
+- Review past fixes from memory if provided (see below) to avoid repeating mistakes.
 - Output a REFINED SPEC in this exact JSON format:
   {
     "spec": "<one clear paragraph, max 200 words>",
@@ -376,6 +375,41 @@ Rules:
   }
 - If questions are non-empty, set spec to "" and return immediately.
 - Output ONLY the JSON object. No prose outside it."""
+
+
+# New bugfix-specific prompt: zero questions, deep analysis
+BUGFIX_BRAINSTORM_SYSTEM = """\
+You are the Planner model. Refine a bugfix task before any code is written.
+
+Rules:
+- Analyse the existing code and error description to understand the root cause.
+- Do NOT ask clarifying questions – the information provided is sufficient.
+- Write a concise spec (max 150 words) that describes the correct behaviour after the fix.
+- Define 2‑4 acceptance criteria that must be true for the fix to be considered successful.
+- Include any constraints (e.g., "must not break existing API", "must handle edge case X").
+- Output ONLY a JSON object:
+  {
+    "spec": "<refined spec>",
+    "acceptance_criteria": ["...", "..."],
+    "constraints": ["...", "..."],
+    "questions": []
+  }
+No prose outside the JSON."""
+
+
+# New refactor-specific prompt: restructuring focus, limited questions
+REFACTOR_BRAINSTORM_SYSTEM = """\
+You are the Planner model. Refine a refactoring task before any code is written.
+
+The existing code is provided. You must:
+- Understand the current structure and its limitations.
+- Define the desired new behaviour and architecture.
+- Ensure backward compatibility unless explicitly told to break it.
+- Review past fixes from memory (provided) to avoid repeating mistakes.
+- Do NOT ask clarifying questions unless the task is genuinely ambiguous; if needed, limit to 1 question.
+
+Output ONLY a JSON object with spec, acceptance_criteria, constraints, and questions (if any).
+Use the same JSON format as the standard brainstorm."""
 
 
 PLAN_SYSTEM = """\
@@ -496,14 +530,15 @@ def node_classify_task(state: AutocodeState) -> AutocodeState:
 
 
 def node_brainstorm(state: AutocodeState) -> AutocodeState:
-    """Refine the spec. Features only -- bugfix/refactor skip this node."""
+    """Refine the spec using the appropriate system prompt for the task type."""
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
         return state
 
-    tracer.step(tid, "brainstorm", "refining spec")
+    task_type = state.get("task_type", "feature")
+    tracer.step(tid, "brainstorm", f"starting for {task_type}")
 
-    # Recall past fixes from memory
+    # ── Memory recall (all tasks) ──
     try:
         from memory.store import memory as _mem
         results = _mem.recall(
@@ -516,8 +551,16 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
         mem_ctx = ""
 
     files_ctx = _files_context(state["files"])
-    system    = BRAINSTORM_SYSTEM.replace("{memory_context}", mem_ctx or "(none)")
-    user      = (
+
+    # ── Select system prompt based on task type ──
+    if task_type == "bugfix":
+        system = BUGFIX_BRAINSTORM_SYSTEM
+    elif task_type == "refactor":
+        system = REFACTOR_BRAINSTORM_SYSTEM
+    else:  # feature / unclear
+        system = BRAINSTORM_SYSTEM
+
+    user = (
         f"Task:\n{state['task']}\n\n"
         f"Relevant files:\n{files_ctx}"
         + (f"\n\nPast fixes:\n{mem_ctx}" if mem_ctx else "")
@@ -979,10 +1022,9 @@ def node_distill_memory(state: AutocodeState) -> AutocodeState:
 # ── Routing ------------------------------------------------------------------
 
 def route_after_classify(state: AutocodeState) -> str:
+    """All tasks go through brainstorming – no more skipping."""
     if state.get("status") == "needs_clarification":
         return "end"
-    if state.get("task_type") in ("bugfix", "refactor"):
-        return "write_plan"   # skip brainstorm
     return "brainstorm"
 
 
@@ -1001,7 +1043,7 @@ def route_after_run_tests(state: AutocodeState) -> str:
 def route_after_debug(state: AutocodeState) -> str:
     if state.get("status") == "failed":
         return "end"
-    return "run_tests"  # re-run tests after fix (not write_files -- need to verify fix)
+    return "run_tests"
 
 
 def route_after_write_files(state: AutocodeState) -> str:
@@ -1031,9 +1073,6 @@ def route_after_verify(state: AutocodeState) -> str:
     return "end"
 
 
-# -- Clear came_from_debug after routing so it doesn't persist ----------------
-# We do this by wrapping write_files result rather than mutating in the router
-
 def node_write_files_with_flag_reset(state: AutocodeState) -> AutocodeState:
     """Write files then clear came_from_debug flag (cannot mutate in router)."""
     result = node_write_files(state)
@@ -1061,8 +1100,7 @@ def build_graph() -> Any:
     g.set_entry_point("classify_task")
 
     g.add_conditional_edges("classify_task", route_after_classify,
-                             {"end": END, "brainstorm": "brainstorm",
-                              "write_plan": "write_plan"})
+                             {"end": END, "brainstorm": "brainstorm"})
 
     g.add_conditional_edges("brainstorm", route_after_brainstorm,
                              {"end": END, "write_plan": "write_plan"})
