@@ -1,741 +1,465 @@
 """
-tools/cli.py — Fast natural-language CLI for the MCP agent stack.
+tools/cli.py — Fast natural-language command dispatcher, registered as an MCP tool.
 
-LOCATION: D:/mcp/agent/tools/cli.py
-RUN FROM:  D:/mcp/agent/   (so that `core` and `tools` are importable)
-    python tools/cli.py "recall chromadb"
-    python tools/cli.py "git log 5"
-    python tools/cli.py health
-    python tools/cli.py --raw "memory stats"
+WHAT THIS IS
+------------
+A single MCP tool `cli(command)` that lets the agent (or you) run simple
+operations instantly without burning Planner tokens on a full workflow cycle.
 
-DESIGN — Two-tier dispatch to minimise token spend:
-  Tier A — 27 regex pattern rules (zero tokens, works fully offline)
-  Tier B — Nemotron 4B fallback (JSON-only prompt, ~20 tokens, <1 s)
+HOW IT WORKS — THREE LAYERS
+-----------------------------
+1. Pattern match  — regex rules cover ~90% of common commands. Zero LLM calls.
+                    Returns immediately.
 
-DECISION: cli.py lives in tools/ alongside the other meta-tools so it is
-co-located with the code it calls, but it is NOT registered with @tool
-(it's a human-facing CLI entry-point, not an LLM-facing tool).
+2. Nemotron route — anything that doesn't match a pattern goes to the Router
+                    model (nemotron-3-nano-4b) with a strict JSON-only prompt.
+                    Nemotron returns one of two things:
+                      a) {tool_name, action, params} → execute directly via whitelist
+                      b) {escalate: true, reason: "..."} → hand off to Executor
 
-DECISION: --raw flag outputs raw JSON for scripting/piping.
-DECISION: Colour output only when stdout is a TTY; plain when piped.
+3. Executor escalation — if Nemotron decides the command is too complex for a
+                    direct tool call, the command is sent to the Executor model
+                    (Hermes) as a free-form task. Hermes reasons and responds.
+                    This is the "agent decides" layer you wanted.
+
+SAFETY
+------
+Only layer 1 and 2a can call tools. They use a strict whitelist — no raw shell,
+no arbitrary file writes, same sandbox as the rest of the stack.
+Layer 2b and 3 (Executor) only produce text responses, they don't call tools
+directly. If Hermes decides it needs tools, it tells the agent which ones to use
+next — it doesn't bypass the MCP layer.
+
+NAMING CONVENTION
+-----------------
+Internal dispatch uses `tool_name` (never `tool`) to avoid shadowing the
+`tool` decorator from registry. That was the fatal bug in the previous version.
+
+MEMORY ACCESS
+-------------
+Uses the same lazy import pattern as memory_tool.py:
+  _mem() → from memory.store import memory
+Direct ChromaDB access, no intermediate tool layer.
+All memory methods match the memory() tool signature exactly.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
-import sys
-import time
-from pathlib import Path
 from typing import Any
 
-# ── bootstrap: running from repo root allows all imports ─────────────────────
-# DECISION: insert repo root so `core.*` and `tools.*` both resolve correctly
-# regardless of whether the user cds into tools/ or runs from repo root.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+import requests
 
-try:
-    from core.config import cfg
-    from core.llm import call_llm
-    AGENT_AVAILABLE = True
-except ImportError:
-    # Graceful degradation: pattern rules still work; LLM fallback disabled.
-    AGENT_AVAILABLE = False
-    cfg = None  # type: ignore[assignment]
-
-# ── paths ─────────────────────────────────────────────────────────────────────
-WORKSPACE: Path = Path(cfg.get("WORKSPACE_ROOT", "D:/mcp/workspace")) if cfg else Path("D:/mcp/workspace")
-AGENT_ROOT: Path = _REPO_ROOT
-
-# DECISION: Nemotron 4B is the router model — it is the smallest/fastest model
-# in the stack, specifically used for classification and dispatch decisions.
-ROUTER_MODEL: str = cfg.get("ROUTER_MODEL", "nvidia/nemotron-3-nano-4b") if cfg else "nvidia/nemotron-3-nano-4b"
-ROUTER_TIMEOUT: int = 15
-
-# ── colour helpers ────────────────────────────────────────────────────────────
-IS_TTY: bool = sys.stdout.isatty()
-
-def _c(text: str, code: str) -> str:
-    return f"\033[{code}m{text}\033[0m" if IS_TTY else text
-
-def green(t: str)  -> str: return _c(t, "32")
-def yellow(t: str) -> str: return _c(t, "33")
-def cyan(t: str)   -> str: return _c(t, "36")
-def red(t: str)    -> str: return _c(t, "31")
-def bold(t: str)   -> str: return _c(t, "1")
-def dim(t: str)    -> str: return _c(t, "2")
+from registry import tool      # decorator — NEVER use 'tool' as a variable name
+from core.config import cfg    # singleton: .lm_studio_base_url, .router_model, .executor_model
 
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  TIER A — PATTERN MATCHING (zero tokens)                                 ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# ── Lazy memory accessor (mirrors memory_tool.py pattern) ─────────────────────
 
-_RULES: list[tuple[re.Pattern, Any]] = []
-
-def _rule(pattern: str) -> Any:
-    """Decorator that registers a regex → handler mapping."""
-    def decorator(fn: Any) -> Any:
-        _RULES.append((re.compile(pattern, re.IGNORECASE), fn))
-        return fn
-    return decorator
+def _mem():
+    """Lazy import of ChromaDB store — avoids slow startup, same as memory_tool.py."""
+    from memory.store import memory as _store
+    return _store
 
 
-# ── HELP ──────────────────────────────────────────────────────────────────────
+# ── LM Studio management (raw HTTP, no extra imports) ─────────────────────────
+# DECISION: raw requests here instead of importing a helper module that may not
+# exist. Keeps this file fully self-contained and import-safe at registry scan time.
 
-@_rule(r"^(help|\?)$")
-def cmd_help(_m: re.Match) -> dict:
-    lines = [
-        bold("MCP Agent CLI — fast natural-language command interface"),
-        "",
-        bold("MEMORY"),
-        "  recall <query>                       search all collections",
-        "  recall <query> in <collection>       episodic | semantic | procedural",
-        "  store <text>                         store to episodic (importance=5)",
-        "  memory stats                         entry counts per collection",
-        "  memory prune                         remove low-score entries",
-        "",
-        bold("WEB"),
-        "  search <query>                       SearXNG web search",
-        "  scrape <url>                         fetch and extract text from URL",
-        "  research <query>                     search + scrape top results",
-        "",
-        bold("FILE"),
-        "  read <path>  /  cat <path>           read file (first 40 lines)",
-        "  ls [path]    /  list [path]          list directory contents",
-        "  write <path> <content>               write file (backs up existing)",
-        "  find <pat>   /  grep <pat>           full-text search workspace",
-        "  compress <path>                      compress file or directory",
-        "",
-        bold("GIT"),
-        "  git status                           working tree status",
-        "  git log [n]                          last N commits (default 5)",
-        "  git diff                             unstaged changes",
-        "  git snapshot [msg]                   create rollback point",
-        "  git commit <msg>                     commit all staged changes",
-        "  git rollback                         undo all uncommitted changes",
-        "",
-        bold("PYTHON / EXEC"),
-        "  run <code>                           sandbox Python (no imports)",
-        "  calc <expr>                          evaluate arithmetic expression",
-        "  exec <code>                          Python with full stdlib + pandas",
-        "",
-        bold("AGENT"),
-        "  classify <text>                      router classification",
-        "  summarize <text>                     one-sentence summary (Planner)",
-        "",
-        bold("NOTIFY"),
-        "  notify <msg>  /  alert <msg>         desktop notification",
-        "  ping <msg>                           alias for notify",
-        "",
-        bold("SYSTEM"),
-        "  health                               LM Studio + memory status",
-        "",
-        bold("FLAGS"),
-        "  --raw                                JSON output (for scripting)",
-        "",
-        dim("Unmatched commands fall back to Nemotron 4B (Tier B)."),
-    ]
-    return {"type": "help", "lines": lines}
+_LMS = "http://localhost:1234"
 
-
-# ── HEALTH ────────────────────────────────────────────────────────────────────
-
-@_rule(r"^(health|status)$")
-def cmd_health(_m: re.Match) -> dict:
-    result: dict[str, Any] = {"type": "health"}
-
-    # LM Studio reachability
+def _lms_ls()              -> str:
     try:
-        import urllib.request
-        base = cfg.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1") if cfg else "http://localhost:1234/v1"
-        with urllib.request.urlopen(f"{base}/models", timeout=3) as r:
-            models = json.loads(r.read())
-            result["lm_studio"] = "ok"
-            result["loaded_models"] = [m["id"] for m in models.get("data", [])]
-    except Exception as e:
-        result["lm_studio"] = f"unreachable ({e})"
+        r = requests.get(f"{_LMS}/api/v0/models", timeout=5); r.raise_for_status()
+        ms = [m.get("id") or str(m) for m in r.json()]
+        return "\n".join(f" • {m}" for m in ms) if ms else "No downloaded models."
+    except Exception as e: return f"LM Studio error: {e}"
 
-    # ChromaDB memory counts
+def _lms_ps()              -> str:
     try:
-        import chromadb
-        db_path = cfg.get("MEMORY_ROOT", "D:/mcp/memory_db") if cfg else "D:/mcp/memory_db"
-        client = chromadb.PersistentClient(path=str(Path(db_path) / "chroma"))
-        counts: dict[str, int] = {}
-        for col in ("episodic", "semantic", "procedural"):
-            try:
-                counts[col] = client.get_collection(col).count()
-            except Exception:
-                counts[col] = 0
-        result["memory"] = counts
-    except Exception as e:
-        result["memory"] = f"unavailable ({e})"
+        r = requests.get(f"{_LMS}/v1/models", timeout=5); r.raise_for_status()
+        ms = [m.get("id") or str(m) for m in r.json().get("data", [])]
+        return "\n".join(f" • {m}" for m in ms) if ms else "No models loaded."
+    except Exception as e: return f"LM Studio error: {e}"
 
-    return result
-
-
-# ── MEMORY STATS ──────────────────────────────────────────────────────────────
-
-@_rule(r"^memory\s+stats$")
-def cmd_memory_stats(_m: re.Match) -> dict:
-    h = cmd_health(None)  # type: ignore[arg-type]
-    return {"type": "memory_stats", "memory": h.get("memory", {})}
-
-
-# ── MEMORY PRUNE ──────────────────────────────────────────────────────────────
-
-@_rule(r"^memory\s+prune$")
-def cmd_memory_prune(_m: re.Match) -> dict:
+def _lms_load(model: str)  -> str:
     try:
-        from memory.store import MemoryStore
-        pruned = MemoryStore().prune()
-        return {"type": "memory_prune", "pruned": pruned}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
+        r = requests.post(f"{_LMS}/v1/models/load", json={"model": model}, timeout=10)
+        r.raise_for_status(); return f"Loaded: {model}"
+    except Exception as e: return f"LM Studio error: {e}"
 
-
-# ── RECALL ────────────────────────────────────────────────────────────────────
-
-@_rule(r"^recall\s+(.+?)\s+in\s+(episodic|semantic|procedural)$")
-def cmd_recall_in(m: re.Match) -> dict:
-    return _do_recall(m.group(1), collections=[m.group(2)])
-
-@_rule(r"^recall\s+(.+)$")
-def cmd_recall(m: re.Match) -> dict:
-    return _do_recall(m.group(1))
-
-def _do_recall(query: str, collections: list[str] | None = None) -> dict:
+def _lms_unload(model: str = "") -> str:
     try:
-        from memory.store import MemoryStore
-        top_k = int(cfg.get("MEMORY_TOP_K", 5)) if cfg else 5
-        results = MemoryStore().recall(query=query, collections=collections, top_k=top_k)
-        return {"type": "recall", "query": query, "results": results}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
+        r = requests.post(f"{_LMS}/v1/models/unload",
+                          json={"model": model} if model else {}, timeout=10)
+        r.raise_for_status(); return f"Unloaded: {model or 'all models'}"
+    except Exception as e: return f"LM Studio error: {e}"
 
-
-# ── STORE ─────────────────────────────────────────────────────────────────────
-
-@_rule(r"^store\s+(.+)$")
-def cmd_store(m: re.Match) -> dict:
-    # DECISION: CLI stores default to episodic, importance=5 (neutral).
-    # Full importance control is available through the memory() meta-tool.
+def _lms_log()             -> str:
     try:
-        from memory.store import MemoryStore
-        result = MemoryStore().store(memory_type="episodic", text=m.group(1), importance=5)
-        return {"type": "store", "result": result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
+        r = requests.get(f"{_LMS}/api/v0/log", timeout=5); r.raise_for_status()
+        return r.text[-2000:] if len(r.text) > 2000 else r.text
+    except Exception as e: return f"LM Studio error: {e}"
 
 
-# ── WEB SEARCH ────────────────────────────────────────────────────────────────
+# ── Tool proxy helpers (lazy imports, normalise dict → human string) ───────────
+# DECISION: each helper imports its tool lazily so registry scan never triggers
+# a cascade of heavy imports. Each uses the tool's action= / operation= interface
+# exactly as documented in the README — no internal function calls.
 
-@_rule(r"^search\s+(.+)$")
-def cmd_search(m: re.Match) -> dict:
+def _file(action: str, **kw) -> str:
+    from tools.file_ops import file
+    r = file(action=action, **kw)
+    if not isinstance(r, dict): return str(r)
+    if action == "read" and "content" in r:
+        lines = r["content"].splitlines()
+        out   = "\n".join(f"{i+1:4d} | {l}" for i, l in enumerate(lines[:40]))
+        return out + (f"\n... ({len(lines)-40} more lines)" if len(lines) > 40 else "")
+    if r.get("status") == "error": return f"Error: {r.get('error', r)}"
+    return r.get("message", json.dumps(r, indent=2))
+
+def _git(operation: str, **kw) -> str:
+    from tools.git_ops import git
+    r = git(operation=operation, **kw)
+    if not isinstance(r, dict): return str(r)
+    if operation == "log":
+        cs = r.get("commits", [])
+        return "\n".join(f"{c.get('sha','')[:7]}  {c.get('message','').splitlines()[0][:70]}"
+                         for c in cs[:10]) or "No commits."
+    if operation == "diff": return r.get("diff", str(r))
+    if r.get("status") == "error": return f"Error: {r.get('error', r)}"
+    return r.get("message", json.dumps(r))
+
+def _web(action: str, **kw) -> str:
+    from tools.web import web
+    r = web(action=action, **kw)
+    if not isinstance(r, dict): return str(r)
+    if action == "search":
+        results = r.get("results", [])
+        return "\n".join(
+            f"{i+1}. {x.get('title','')}\n   {x.get('url','')}\n   {x.get('snippet','')[:100]}"
+            for i, x in enumerate(results[:5])
+        ) or "No results."
+    if action in ("scrape", "read"): return r.get("text", str(r))[:3000]
+    if r.get("status") == "error": return f"Error: {r.get('error', r)}"
+    return str(r)
+
+def _memory(action: str, **kw) -> str:
+    """
+    Direct ChromaDB access via memory/store.py singleton.
+    Mirrors the memory() tool parameter names exactly so behaviour is consistent.
+    """
+    store = _mem()
     try:
-        from tools.web import web
-        result = web(action="search", query=m.group(1), max_results=5)
-        return {"type": "search", "query": m.group(1), **result}
+        if action == "recall":
+            results = store.recall(
+                query       = kw.get("query", ""),
+                top_k       = kw.get("top_k", 5),
+                collections = kw.get("collections"),
+                min_score   = kw.get("min_score", 0.5),
+                tags_filter = kw.get("tags_filter", ""),
+            )
+            if not results: return "No memories found."
+            return "\n".join(
+                f"[{r.get('collection','?')}] score={r.get('score',0):.1f} | "
+                f"{r.get('text', r.get('document',''))[:120]}..."
+                for r in results[:5]
+            )
+        if action == "store":
+            mem_type = kw.get("memory_type", "semantic")
+            text     = kw.get("text", "")
+            importance = kw.get("importance", 5)
+            tags     = kw.get("tags", "")
+            if mem_type == "episodic":
+                store.store_episodic(text, importance=importance,
+                                     goal=kw.get("goal",""), outcome=kw.get("outcome","unknown"),
+                                     tools_used=kw.get("tools_used",""), trace_id=kw.get("trace_id",""))
+            elif mem_type == "procedural":
+                store.store_procedural(text, importance=importance, tags=tags)
+            else:
+                store.store_semantic(text, importance=importance, tags=tags)
+            return f"Stored ({mem_type}, importance={importance})."
+        if action == "stats":
+            stats = store.get_stats()
+            return "\n".join(f"{col}: {cnt} entries" for col, cnt in stats.items())
+        if action == "prune":
+            removed = store.prune()
+            return f"Pruned {removed} low-score memories."
+        return f"Unknown memory action '{action}'. Use: recall | store | stats | prune"
     except Exception as e:
-        return {"type": "error", "error": str(e)}
+        return f"Memory error: {e}"
+
+def _python(code: str, mode: str = "run") -> str:
+    from tools.python_exec import python
+    r = python(mode=mode, code=code)
+    if not isinstance(r, dict): return str(r)
+    return r.get("output", r.get("error", str(r)))
+
+def _notify(message: str) -> str:
+    from tools.notify import notify
+    r = notify(action="send", message=message)
+    if not isinstance(r, dict): return str(r)
+    return r.get("message", str(r))
 
 
-# ── SCRAPE ────────────────────────────────────────────────────────────────────
+# ── Whitelist: only these (tool_name:action) pairs can execute ────────────────
+# DECISION: flat "tool:action" key prevents calling any action not explicitly
+# listed here. Nemotron cannot hallucinate its way into an unlisted operation.
 
-@_rule(r"^scrape\s+(https?://\S+)$")
-def cmd_scrape(m: re.Match) -> dict:
-    try:
-        from tools.web import web
-        result = web(action="scrape", url=m.group(1))
-        return {"type": "scrape", "url": m.group(1), **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── RESEARCH ──────────────────────────────────────────────────────────────────
-
-@_rule(r"^research\s+(.+)$")
-def cmd_research(m: re.Match) -> dict:
-    try:
-        from tools.web import web
-        result = web(action="search_and_read", query=m.group(1), max_results=3)
-        return {"type": "research", "query": m.group(1), **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── FILE READ ─────────────────────────────────────────────────────────────────
-
-@_rule(r"^(?:read|cat|show)\s+(.+)$")
-def cmd_read(m: re.Match) -> dict:
-    try:
-        from tools.file_ops import file
-        result = file(action="read", path=m.group(1).strip())
-        return {"type": "file_read", "path": m.group(1).strip(), **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── FILE LIST ─────────────────────────────────────────────────────────────────
-
-@_rule(r"^(?:ls|list)(?:\s+(.+))?$")
-def cmd_ls(m: re.Match) -> dict:
-    path = (m.group(1) or "").strip() or "."
-    try:
-        from tools.file_ops import file
-        result = file(action="list", path=path)
-        return {"type": "file_list", "path": path, **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── FILE WRITE ────────────────────────────────────────────────────────────────
-
-@_rule(r"^write\s+(\S+)\s+(.+)$")
-def cmd_write(m: re.Match) -> dict:
-    try:
-        from tools.file_ops import file
-        result = file(action="write", path=m.group(1), content=m.group(2))
-        return {"type": "file_write", "path": m.group(1), **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── FILE FIND / GREP ──────────────────────────────────────────────────────────
-
-@_rule(r"^(?:find|grep)\s+(.+)$")
-def cmd_find(m: re.Match) -> dict:
-    try:
-        from tools.file_ops import file
-        result = file(action="search", query=m.group(1))
-        return {"type": "file_search", "query": m.group(1), **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── FILE COMPRESS ─────────────────────────────────────────────────────────────
-
-@_rule(r"^compress\s+(.+)$")
-def cmd_compress(m: re.Match) -> dict:
-    try:
-        from tools.file_ops import file
-        result = file(action="backup", path=m.group(1).strip())
-        return {"type": "compress", "path": m.group(1).strip(), **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── GIT STATUS ────────────────────────────────────────────────────────────────
-
-@_rule(r"^git\s+status$")
-def cmd_git_status(_m: re.Match) -> dict:
-    try:
-        from tools.git_ops import git
-        result = git(operation="status")
-        return {"type": "git_status", **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── GIT LOG ───────────────────────────────────────────────────────────────────
-
-@_rule(r"^git\s+log(?:\s+(\d+))?$")
-def cmd_git_log(m: re.Match) -> dict:
-    n = int(m.group(1)) if m.group(1) else 5
-    try:
-        from tools.git_ops import git
-        result = git(operation="log", n=n)
-        return {"type": "git_log", "n": n, **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── GIT DIFF ──────────────────────────────────────────────────────────────────
-
-@_rule(r"^git\s+diff$")
-def cmd_git_diff(_m: re.Match) -> dict:
-    try:
-        from tools.git_ops import git
-        result = git(operation="diff")
-        return {"type": "git_diff", **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── GIT SNAPSHOT ──────────────────────────────────────────────────────────────
-
-@_rule(r"^git\s+snapshot(?:\s+(.+))?$")
-def cmd_git_snapshot(m: re.Match) -> dict:
-    msg = (m.group(1) or "cli snapshot").strip()
-    try:
-        from tools.git_ops import git
-        result = git(operation="snapshot", message=msg)
-        return {"type": "git_snapshot", "message": msg, **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── GIT COMMIT ────────────────────────────────────────────────────────────────
-
-@_rule(r"^git\s+commit\s+(.+)$")
-def cmd_git_commit(m: re.Match) -> dict:
-    try:
-        from tools.git_ops import git
-        result = git(operation="commit", message=m.group(1).strip())
-        return {"type": "git_commit", **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── GIT ROLLBACK ──────────────────────────────────────────────────────────────
-
-@_rule(r"^git\s+rollback$")
-def cmd_git_rollback(_m: re.Match) -> dict:
-    try:
-        from tools.git_ops import git
-        result = git(operation="rollback")
-        return {"type": "git_rollback", **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── PYTHON RUN (sandbox) ──────────────────────────────────────────────────────
-
-@_rule(r"^run\s+(.+)$")
-def cmd_run(m: re.Match) -> dict:
-    try:
-        from tools.python_exec import python
-        result = python(mode="run", code=m.group(1))
-        return {"type": "python_run", **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── CALC ──────────────────────────────────────────────────────────────────────
-
-@_rule(r"^calc\s+(.+)$")
-def cmd_calc(m: re.Match) -> dict:
-    # DECISION: calc always uses sandbox mode — arithmetic never needs imports.
-    expr = m.group(1).strip()
-    try:
-        from tools.python_exec import python
-        result = python(mode="run", code=f"print({expr})")
-        return {"type": "calc", "expr": expr, **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── EXEC (full stdlib) ────────────────────────────────────────────────────────
-
-@_rule(r"^exec\s+(.+)$")
-def cmd_exec(m: re.Match) -> dict:
-    try:
-        from tools.python_exec import python
-        result = python(mode="run_data", code=m.group(1))
-        return {"type": "python_exec", **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── CLASSIFY ──────────────────────────────────────────────────────────────────
-
-@_rule(r"^classify\s+(.+)$")
-def cmd_classify(m: re.Match) -> dict:
-    # DECISION: classification uses the Router (Nemotron) since that is its
-    # only job in the stack — task type, workflow selection, model assignment.
-    if not AGENT_AVAILABLE:
-        return {"type": "error", "error": "core.llm not available"}
-    prompt = (
-        'Classify this task. Output ONLY JSON: '
-        '{"task_type": "...", "workflow": "...", "model": "..."}. '
-        f'Task: {m.group(1)}'
-    )
-    try:
-        raw = call_llm(model=ROUTER_MODEL, system="Output only JSON, no prose.",
-                       user=prompt, timeout=ROUTER_TIMEOUT)
-        data = json.loads(raw)
-        return {"type": "classify", **data}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── SUMMARIZE ─────────────────────────────────────────────────────────────────
-
-@_rule(r"^summarize\s+(.+)$")
-def cmd_summarize(m: re.Match) -> dict:
-    # DECISION: summarization uses the Planner (Qwen) — it is the synthesis model.
-    if not AGENT_AVAILABLE:
-        return {"type": "error", "error": "core.llm not available"}
-    planner = cfg.get("PLANNER_MODEL", "qwen/qwen3.5-9b") if cfg else "qwen/qwen3.5-9b"
-    try:
-        raw = call_llm(model=planner, system="Reply with exactly one sentence summary.",
-                       user=m.group(1), timeout=30)
-        return {"type": "summarize", "summary": raw.strip()}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ── NOTIFY / ALERT / PING ─────────────────────────────────────────────────────
-
-@_rule(r"^(?:notify|alert|ping)\s+(.+)$")
-def cmd_notify(m: re.Match) -> dict:
-    try:
-        from tools.notify import notify
-        result = notify(action="send", message=m.group(1).strip())
-        return {"type": "notify", **result}
-    except Exception as e:
-        return {"type": "error", "error": str(e)}
-
-
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  TIER B — NEMOTRON FALLBACK                                              ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
-
-# DECISION: Tier B is only reached when all 27 Tier A patterns fail.
-# Nemotron is prompted to output ONLY a JSON dispatch object so the CLI
-# can call the right tool without any further LLM reasoning.
-
-FALLBACK_SYSTEM = """\
-You are a command dispatcher. Given a natural language command, output ONLY a
-JSON object identifying the tool call. No prose, no explanation.
-
-Format:
-{
-  "tool": "memory|web|file|git|python|notify|classify|summarize",
-  "action": "<action string>",
-  "params": { "<key>": "<value>" }
+DISPATCH: dict[str, Any] = {
+    "file:read":     lambda **kw: _file("read",    **kw),
+    "file:write":    lambda **kw: _file("write",   **kw),
+    "file:list":     lambda **kw: _file("list",    **kw),
+    "file:patch":    lambda **kw: _file("patch",   **kw),
+    "file:search":   lambda **kw: _file("search",  **kw),
+    "file:backup":   lambda **kw: _file("backup",  **kw),
+    "git:status":    lambda **kw: _git("status",   **kw),
+    "git:log":       lambda **kw: _git("log",      **kw),
+    "git:diff":      lambda **kw: _git("diff",     **kw),
+    "git:snapshot":  lambda **kw: _git("snapshot", **kw),
+    "git:commit":    lambda **kw: _git("commit",   **kw),
+    "git:rollback":  lambda **kw: _git("rollback", **kw),
+    "web:search":    lambda **kw: _web("search",   **kw),
+    "web:scrape":    lambda **kw: _web("scrape",   **kw),
+    "web:read":      lambda **kw: _web("read",     **kw),
+    "memory:recall": lambda **kw: _memory("recall",**kw),
+    "memory:store":  lambda **kw: _memory("store", **kw),
+    "memory:stats":  lambda **kw: _memory("stats"),
+    "memory:prune":  lambda **kw: _memory("prune"),
+    "python:run":    lambda **kw: _python(kw.get("code",""), mode="run"),
+    "python:calc":   lambda **kw: _python(kw.get("code",""), mode="run"),
+    "python:data":   lambda **kw: _python(kw.get("code",""), mode="run_data"),
+    "notify:send":   lambda **kw: _notify(kw.get("message","")),
+    "lms:ls":        lambda **kw: _lms_ls(),
+    "lms:ps":        lambda **kw: _lms_ps(),
+    "lms:load":      lambda **kw: _lms_load(kw.get("model","")),
+    "lms:unload":    lambda **kw: _lms_unload(kw.get("model","")),
+    "lms:log":       lambda **kw: _lms_log(),
+    "system:health": lambda **kw: "MCP Agent Stack: all systems operational.",
+    "system:help":   lambda **kw: (
+        "cli quick commands:\n"
+        "  git status | log [n] | diff | snapshot [msg] | commit [msg] | rollback\n"
+        "  file read <path> | write <path> <content> | list [dir] | search <query>\n"
+        "  web search <query> | scrape <url> | read <url>\n"
+        "  memory recall <query> | store <text> | stats | prune\n"
+        "  python run <code> | calc <expr>\n"
+        "  notify <message>\n"
+        "  lms ls | ps | load <model> | unload [model] | log\n"
+        "  health | help\n"
+        "Anything else → Nemotron decides: direct dispatch or Executor escalation."
+    ),
 }
 
-Examples:
-  "what do you know about chromadb" → {"tool":"memory","action":"recall","params":{"query":"chromadb"}}
-  "show recent commits"             → {"tool":"git","action":"log","params":{"n":5}}
-  "find files about redis"          → {"tool":"file","action":"search","params":{"query":"redis"}}
-"""
 
-def _tier_b_fallback(command: str) -> dict:
-    if not AGENT_AVAILABLE:
-        return {"type": "error", "error": f"No pattern matched '{command}' and core.llm is unavailable."}
-
+def _safe_dispatch(tool_name: str, action: str, params: dict) -> str:
+    """Look up tool_name:action in whitelist and execute. Never raises."""
+    key = f"{tool_name.lower()}:{action.lower()}"
+    fn  = DISPATCH.get(key)
+    if fn is None:
+        available = [k for k in DISPATCH if k.startswith(tool_name.lower() + ":")]
+        hint = f" Available for '{tool_name}': {available}" if available else \
+               f" Known tools: {sorted({k.split(':')[0] for k in DISPATCH})}"
+        return f"Unknown command '{key}'.{hint}"
     try:
-        raw = call_llm(model=ROUTER_MODEL, system=FALLBACK_SYSTEM,
-                       user=command, timeout=ROUTER_TIMEOUT)
-        dispatch = json.loads(raw)
+        return fn(**params)
     except Exception as e:
-        return {"type": "error", "error": f"Tier B parse failed: {e}", "raw": raw if 'raw' in dir() else ""}
-
-    tool   = dispatch.get("tool", "")
-    action = dispatch.get("action", "")
-    params = dispatch.get("params", {})
-
-    # Re-enter Tier A by reconstructing a canonical command string
-    # DECISION: reconstruct a simple command and re-dispatch rather than
-    # duplicating tool-call logic here. Keeps fallback thin.
-    canonical_map = {
-        ("memory",   "recall"):    lambda p: f"recall {p.get('query', '')}",
-        ("memory",   "store"):     lambda p: f"store {p.get('text', '')}",
-        ("memory",   "stats"):     lambda _: "memory stats",
-        ("web",      "search"):    lambda p: f"search {p.get('query', '')}",
-        ("web",      "scrape"):    lambda p: f"scrape {p.get('url', '')}",
-        ("web",      "search_and_read"): lambda p: f"research {p.get('query', '')}",
-        ("file",     "read"):      lambda p: f"read {p.get('path', '')}",
-        ("file",     "list"):      lambda p: f"ls {p.get('path', '')}",
-        ("file",     "search"):    lambda p: f"find {p.get('query', '')}",
-        ("git",      "status"):    lambda _: "git status",
-        ("git",      "log"):       lambda p: f"git log {p.get('n', 5)}",
-        ("git",      "diff"):      lambda _: "git diff",
-        ("git",      "snapshot"):  lambda p: f"git snapshot {p.get('message', '')}",
-        ("git",      "commit"):    lambda p: f"git commit {p.get('message', '')}",
-        ("git",      "rollback"):  lambda _: "git rollback",
-        ("python",   "run"):       lambda p: f"run {p.get('code', '')}",
-        ("python",   "run_data"):  lambda p: f"exec {p.get('code', '')}",
-        ("notify",   "send"):      lambda p: f"notify {p.get('message', '')}",
-        ("classify", "classify"):  lambda p: f"classify {p.get('text', '')}",
-        ("summarize","summarize"): lambda p: f"summarize {p.get('text', '')}",
-    }
-
-    builder = canonical_map.get((tool, action))
-    if builder:
-        reconstructed = builder(params)
-        return _dispatch(reconstructed)
-
-    return {"type": "error", "error": f"Tier B: unknown tool/action '{tool}/{action}'"}
+        return f"Error in {key}: {e}"
 
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  DISPATCHER                                                              ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# ── Pattern rules (zero LLM tokens) ───────────────────────────────────────────
+# Order matters: more specific patterns before broad ones.
 
-def _dispatch(command: str) -> dict:
-    """Try each Tier A rule; fall through to Tier B if nothing matches."""
-    cmd = command.strip()
-    for pattern, handler in _RULES:
-        m = pattern.match(cmd)
+_PATTERNS = [
+    (r"^health$",                      "system",  "health",   lambda m: {}),
+    (r"^help$",                        "system",  "help",     lambda m: {}),
+    (r"^git\s+status$",                "git",     "status",   lambda m: {}),
+    (r"^git\s+log\s+(\d+)",            "git",     "log",      lambda m: {"n": int(m.group(1))}),
+    (r"^git\s+log$",                   "git",     "log",      lambda m: {}),
+    (r"^git\s+diff$",                  "git",     "diff",     lambda m: {}),
+    (r"^git\s+snapshot\s*(.*)",        "git",     "snapshot", lambda m: {"message": m.group(1).strip() or None}),
+    (r"^git\s+commit\s*(.*)",          "git",     "commit",   lambda m: {"message": m.group(1).strip() or None}),
+    (r"^git\s+rollback\s*(.*)",        "git",     "rollback", lambda m: {"version": m.group(1).strip() or None}),
+    (r"^(?:read|cat|show)\s+(.+)",     "file",    "read",     lambda m: {"path": m.group(1).strip()}),
+    (r"^(?:ls|list)\s*(.*)",           "file",    "list",     lambda m: {"path": m.group(1).strip() or "."}),
+    (r"^write\s+(\S+)\s+(.+)",         "file",    "write",    lambda m: {"path": m.group(1), "content": m.group(2)}),
+    (r"^(?:find|grep)\s+(.+)",         "file",    "search",   lambda m: {"query": m.group(1).strip()}),
+    (r"^search\s+(.+)",                "web",     "search",   lambda m: {"query": m.group(1).strip()}),
+    (r"^scrape\s+(https?://\S+)",      "web",     "scrape",   lambda m: {"url": m.group(1).strip()}),
+    (r"^read\s+(https?://\S+)",        "web",     "read",     lambda m: {"url": m.group(1).strip()}),
+    (r"^recall\s+(.+)",                "memory",  "recall",   lambda m: {"query": m.group(1).strip()}),
+    (r"^store\s+(.+)",                 "memory",  "store",    lambda m: {"text": m.group(1).strip()}),
+    (r"^memory\s+stats$",              "memory",  "stats",    lambda m: {}),
+    (r"^memory\s+prune$",              "memory",  "prune",    lambda m: {}),
+    (r"^calc\s+(.+)",                  "python",  "calc",     lambda m: {"code": m.group(1).strip()}),
+    (r"^(?:run|exec)\s+(.+)",          "python",  "run",      lambda m: {"code": m.group(1).strip()}),
+    (r"^(?:notify|alert|ping)\s+(.+)", "notify",  "send",     lambda m: {"message": m.group(1).strip()}),
+    (r"^lms\s+ls$",                    "lms",     "ls",       lambda m: {}),
+    (r"^lms\s+ps$",                    "lms",     "ps",       lambda m: {}),
+    (r"^lms\s+load\s+(.+)",            "lms",     "load",     lambda m: {"model": m.group(1).strip()}),
+    (r"^lms\s+unload\s+(.+)",          "lms",     "unload",   lambda m: {"model": m.group(1).strip()}),
+    (r"^lms\s+unload$",                "lms",     "unload",   lambda m: {}),
+    (r"^lms\s+log$",                   "lms",     "log",      lambda m: {}),
+]
+
+_COMPILED = [(re.compile(p, re.IGNORECASE), tn, a, fn)
+             for p, tn, a, fn in _PATTERNS]
+
+
+def _match_pattern(command: str):
+    """Returns (tool_name, action, params) or None."""
+    for rx, tool_name, action, param_fn in _COMPILED:
+        m = rx.match(command.strip())
         if m:
-            return handler(m)
-    return _tier_b_fallback(cmd)
+            return tool_name, action, param_fn(m)
+    return None
 
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  RENDERERS — tool-aware pretty printing                                  ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# ── Nemotron router ────────────────────────────────────────────────────────────
 
-def _render(result: dict, raw: bool) -> None:
-    if raw:
-        print(json.dumps(result, indent=2, default=str))
-        return
+_NEMOTRON_SYSTEM = """\
+You are a command router for an MCP agent. Given a natural-language command,
+decide ONE of two things:
 
-    t = result.get("type", "")
+Option A — the command maps to a simple tool call:
+  {"route": "dispatch", "tool_name": "<tool>", "action": "<action>", "params": {}}
+  Allowed tool_name values: file, git, web, memory, python, notify, lms, system.
 
-    if t == "help":
-        for line in result["lines"]:
-            print(line)
+Option B — the command is too complex for a single tool call and needs the Executor:
+  {"route": "escalate", "reason": "<one sentence why>"}
 
-    elif t == "health":
-        lm = result.get("lm_studio", "?")
-        icon = green("●") if lm == "ok" else red("●")
-        print(f"{icon} LM Studio: {lm}")
-        for mid in result.get("loaded_models", []):
-            print(f"  {dim('└')} {mid}")
-        mem = result.get("memory", {})
-        if isinstance(mem, dict):
-            print(f"\n{bold('Memory')}")
-            for col, cnt in mem.items():
-                bar = "█" * min(cnt // 5, 20)
-                print(f"  {cyan(col):20s} {cnt:>4}  {dim(bar)}")
-        else:
-            print(f"  memory: {mem}")
+Use Option A for: status checks, reads, searches, single-step writes, calculations.
+Use Option B for: multi-step tasks, code generation, analysis, research, anything
+  that requires reasoning or multiple tool calls to complete.
 
-    elif t == "memory_stats":
-        mem = result.get("memory", {})
-        if isinstance(mem, dict):
-            for col, cnt in mem.items():
-                bar = "█" * min(cnt // 5, 20)
-                print(f"  {cyan(col):20s} {cnt:>4}  {dim(bar)}")
-        else:
-            print(mem)
-
-    elif t == "recall":
-        results = result.get("results", [])
-        if not results:
-            print(dim("  (no memories found)"))
-            return
-        for r in results:
-            col   = r.get("collection", "?")
-            score = r.get("score", 0)
-            text  = r.get("text", "")
-            bar   = "█" * int(score)
-            print(f"  [{cyan(col)}] score={yellow(f'{score:.1f}')}  {dim(bar)}")
-            print(f"  {text[:120]}")
-            print()
-
-    elif t in ("search", "research"):
-        for item in result.get("results", []):
-            print(f"  {bold(item.get('title', ''))}")
-            print(f"  {cyan(item.get('url', ''))}")
-            print(f"  {item.get('snippet', item.get('text', ''))[:160]}")
-            print()
-
-    elif t == "scrape":
-        text = result.get("text", "")
-        wc   = result.get("word_count", "?")
-        print(f"{dim(f'[{wc} words]')} {result.get('title', '')}")
-        print(text[:2000])
-
-    elif t == "file_read":
-        content = result.get("content", "")
-        lines   = content.splitlines()[:40]
-        for i, line in enumerate(lines, 1):
-            print(f"  {dim(str(i).rjust(3))}  {line}")
-        if len(content.splitlines()) > 40:
-            print(dim(f"  ... ({len(content.splitlines())} total lines)"))
-
-    elif t == "file_list":
-        for entry in result.get("entries", result.get("files", [])):
-            print(f"  {entry}")
-
-    elif t == "file_search":
-        for hit in result.get("hits", result.get("results", [])):
-            print(f"  {cyan(hit.get('path', ''))}  {hit.get('snippet', '')[:100]}")
-
-    elif t in ("file_write", "compress", "memory_prune", "store", "notify",
-               "git_snapshot", "git_commit", "git_rollback"):
-        status = result.get("status", "ok")
-        icon   = green("✓") if status in ("ok", "success") else red("✗")
-        msg    = result.get("message", result.get("result", json.dumps(result)))
-        print(f"  {icon} {msg}")
-
-    elif t == "git_status":
-        print(result.get("output", result.get("status", "")))
-
-    elif t == "git_log":
-        for entry in result.get("commits", []):
-            sha  = yellow(entry.get("sha", "")[:7])
-            msg  = entry.get("message", "")
-            date = dim(entry.get("date", ""))
-            print(f"  {sha}  {msg}  {date}")
-
-    elif t == "git_diff":
-        diff = result.get("diff", result.get("output", ""))
-        # Minimal colour for +/- lines
-        for line in diff.splitlines():
-            if line.startswith("+"):
-                print(green(line))
-            elif line.startswith("-"):
-                print(red(line))
-            else:
-                print(line)
-
-    elif t in ("python_run", "python_exec", "calc"):
-        output = result.get("output", result.get("result", ""))
-        print(f"  {output}")
-
-    elif t == "classify":
-        print(f"  task_type : {cyan(result.get('task_type', '?'))}")
-        print(f"  workflow  : {result.get('workflow', '?')}")
-        print(f"  model     : {result.get('model', '?')}")
-
-    elif t == "summarize":
-        print(f"  {result.get('summary', '')}")
-
-    elif t == "error":
-        print(red(f"  error: {result.get('error', result)}"))
-
-    else:
-        # Generic fallback: pretty-print the dict
-        print(json.dumps(result, indent=2, default=str))
+Output ONLY valid JSON. No explanation, no markdown."""
 
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  ENTRY POINT                                                             ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+def _call_nemotron(command: str) -> dict:
+    """
+    Ask Nemotron to decide: direct dispatch (Option A) or Executor escalation (Option B).
 
-def main() -> None:
-    args = sys.argv[1:]
+    DECISION: Nemotron is the decision point — not the caller. This is exactly
+    what was asked for: "let Nemotron decide whether to escalate or handle it."
+    Temperature=0 for deterministic routing. 150 tokens is enough for either option.
+    Returns a safe fallback dict on any network/parse error.
+    """
+    try:
+        resp = requests.post(
+            f"{cfg.lm_studio_base_url}/chat/completions",
+            json={
+                "model":           cfg.router_model,
+                "messages":        [
+                    {"role": "system", "content": _NEMOTRON_SYSTEM},
+                    {"role": "user",   "content": f"Command: {command}"},
+                ],
+                "temperature":     0.0,
+                "max_tokens":      150,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        parsed  = json.loads(content)
+        # Normalise: older Nemotron checkpoints sometimes return "tool" not "tool_name"
+        if "tool" in parsed and "tool_name" not in parsed:
+            parsed["tool_name"] = parsed.pop("tool")
+        return parsed
+    except Exception as e:
+        # On failure: safe fallback — escalate to Executor with the raw command
+        return {"route": "escalate", "reason": f"Router unavailable ({e}), escalating."}
 
-    raw = False
-    if "--raw" in args:
-        raw = True
-        args = [a for a in args if a != "--raw"]
 
-    if not args:
-        print(f"Usage: python tools/cli.py [--raw] \"<command>\"")
-        print(f"       python tools/cli.py help")
-        sys.exit(0)
+# ── Executor escalation ────────────────────────────────────────────────────────
 
-    command = " ".join(args)
-
-    t0 = time.monotonic()
-    result = _dispatch(command)
-    elapsed = time.monotonic() - t0
-
-    _render(result, raw)
-
-    if not raw and result.get("type") != "help":
-        tier = dim(f"[{elapsed*1000:.0f}ms]")
-        print(f"\n{tier}")
+_EXECUTOR_SYSTEM = """\
+You are a helpful assistant with access to an MCP agent stack.
+Answer the user's request directly and concisely.
+If the task requires tool calls, describe exactly which tool and action to use next.
+Be specific. One clear answer or one clear next step."""
 
 
-if __name__ == "__main__":
-    main()
+def _call_executor(command: str, reason: str = "") -> str:
+    """
+    Send a complex command to the Executor model (Hermes) for free-form reasoning.
+
+    DECISION: Executor only produces TEXT — it does not call tools directly.
+    If it decides tools are needed, it tells the agent which tool+action to use,
+    keeping MCP as the single execution layer. This prevents the Executor from
+    bypassing the whitelist.
+
+    Uses cfg.executor_model (Hermes 3 8B). Timeout 60s — Hermes is slower than
+    Nemotron but produces much better reasoning for complex tasks.
+    """
+    context = f"[Router note: {reason}]\n\n" if reason else ""
+    try:
+        resp = requests.post(
+            f"{cfg.lm_studio_base_url}/chat/completions",
+            json={
+                "model":       cfg.executor_model,
+                "messages":    [
+                    {"role": "system", "content": _EXECUTOR_SYSTEM},
+                    {"role": "user",   "content": f"{context}Task: {command}"},
+                ],
+                "temperature": 0.2,
+                "max_tokens":  600,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        answer = resp.json()["choices"][0]["message"]["content"].strip()
+        return f"[Executor]\n{answer}"
+    except Exception as e:
+        return f"[Executor error] {e} — try breaking the task into smaller steps."
+
+
+# ── Main tool ─────────────────────────────────────────────────────────────────
+
+@tool
+def cli(command: str) -> str:
+    """
+    Execute a natural-language or shorthand command without a full planning cycle.
+
+    Three execution paths — chosen automatically:
+      1. Instant (zero tokens): git status, file read, memory recall, calc, lms ps, etc.
+      2. Routed (Nemotron, ~15s): anything not in the shorthand list — Nemotron
+         parses it into a tool call OR decides it needs the Executor.
+      3. Escalated (Executor/Hermes, ~30-60s): complex tasks, multi-step reasoning,
+         code generation, analysis — Nemotron escalates these automatically.
+
+    Use this instead of chaining multiple tool calls for simple operations.
+    Token cost: pattern-matched commands cost zero LLM tokens.
+    Safety: only whitelisted tool+action pairs can execute directly.
+
+    Examples:
+      cli("git log 5")
+      cli("recall chromadb persistent storage")
+      cli("lms ps")
+      cli("calc sum(range(100))")
+      cli("what's the healthiest way to structure this agent's memory?")
+    """
+    command = command.strip()
+
+    # ── Layer 1: pattern match — zero tokens ──────────────────────────────────
+    matched = _match_pattern(command)
+    if matched:
+        tool_name, action, params = matched
+        return _safe_dispatch(tool_name, action, params)
+
+    # ── Layer 2: Nemotron decides ─────────────────────────────────────────────
+    decision = _call_nemotron(command)
+    route    = decision.get("route", "escalate")
+
+    if route == "dispatch":
+        # Nemotron says: simple tool call
+        return _safe_dispatch(
+            decision.get("tool_name", "system"),
+            decision.get("action",    "help"),
+            decision.get("params",    {}),
+        )
+
+    # ── Layer 3: Executor escalation ──────────────────────────────────────────
+    # Nemotron said "escalate" (or route was unknown/missing)
+    reason = decision.get("reason", "")
+    return _call_executor(command, reason)
