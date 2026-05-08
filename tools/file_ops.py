@@ -1085,6 +1085,40 @@ def file(
             return {"status": "error",
                     "error": f"DOCX write failed: {type(e).__name__}: {e}"}
 
+    # ── patch (str_replace) ───────────────────────────────────────────────────
+    if action == "patch":
+        """
+        Apply a targeted str_replace patch. Faster and cheaper than full rewrite.
+        Required: path, old (exact text to replace), new (replacement text)
+        old must appear EXACTLY ONCE -- add surrounding lines for uniqueness.
+        """
+        old_text = kwargs.get("old", "")
+        new_text = kwargs.get("new", "")
+        if not old_text:
+            return {"status": "error", "error": "patch requires 'old' parameter"}
+
+        p, err = _safe_resolve(path)
+        if err:
+            return {"status": "error", "error": err}
+        if cfg.is_protected(path):
+            return {"status": "error",
+                    "error": f"'{path}' is protected -- cannot patch"}
+
+        from core.patch import apply_patch
+        result = apply_patch(p, old_text, new_text)
+        if result.ok:
+            return {
+                "status":        "success",
+                "path":          result.path,
+                "lines_changed": result.lines_changed,
+                "backup_path":   result.backup_path,
+            }
+        return {
+            "status": "error",
+            "error":  result.error,
+            "occurrences": result.occurrences,
+        }
+
     # ── compress ──────────────────────────────────────────────────────────────
     if action == "compress":
         import zipfile
@@ -1124,7 +1158,7 @@ def file(
         "status": "error",
         "error":  (
             f"Unknown action '{action}'. "
-            "Use: read | write | list | backup | read_many | search | "
+            "Use: patch | read | write | list | backup | read_many | search | "
             "read_pdf | write_pdf | "
             "read_docx | write_docx | "
             "read_xlsx | write_xlsx | "

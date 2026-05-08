@@ -139,11 +139,33 @@ def _default_state(task: str, files: dict[str, str], mode: str = "feature",
 
 # ── Helpers -------------------------------------------------------------------
 
-def _files_context(files: dict[str, str]) -> str:
+def _files_context(files: dict[str, str], hint: str = "") -> str:
+    """
+    Build file context for LLM prompts.
+    When hint is provided, extracts only sections relevant to the task
+    instead of the full file -- saves significant input tokens on large files.
+    """
     if not files:
         return "(no files provided)"
+
+    try:
+        from core.patch import extract_relevant_sections
+        _have_patch = True
+    except ImportError:
+        _have_patch = False
+
     parts = []
     for path, content in files.items():
+        if _have_patch and hint and len(content) > MAX_FILE_CHARS:
+            snippet  = extract_relevant_sections(content, hint, max_chars=MAX_FILE_CHARS)
+            was_compressed = len(snippet) < len(content)
+            if was_compressed:
+                parts.append(
+                    f"### {path} (relevant sections, {len(content)} total chars)\n"
+                    f"```\n{snippet}\n```"
+                )
+                continue
+
         snippet = content[:MAX_FILE_CHARS]
         if len(content) > MAX_FILE_CHARS:
             snippet += f"\n... (truncated, {len(content)} total chars)"
@@ -441,13 +463,32 @@ Rules:
 CODER_SYSTEM = """\
 You are the Executor model acting as a focused Python developer.
 
-Rules:
-- Implement ONLY what is described in the current step.
-- Make the tests pass -- no more, no less (YAGNI).
-- If modifying an existing file, reproduce the ENTIRE file content.
-- Output JSON ONLY:
-  {"files": {"<relative/path.py>": "<full file content>"}, "explanation": "<one sentence>"}
-No prose before or after the JSON."""
+CRITICAL: Prefer targeted patches over full file rewrites to save tokens.
+
+For EXISTING files -- output patches (str_replace):
+  {
+    "patches": [
+      {"path": "<file>", "old": "<exact existing text>", "new": "<replacement>"},
+      ...
+    ],
+    "new_files": {},
+    "explanation": "<one sentence>"
+  }
+  - old must be the EXACT text from the file (copy-paste, do not paraphrase).
+  - old must be unique enough to appear only once -- include surrounding lines.
+  - Multiple patches to the same file are applied sequentially.
+
+For NEW files -- use new_files:
+  {
+    "patches": [],
+    "new_files": {"<relative/path.py>": "<full file content>"},
+    "explanation": "<one sentence>"
+  }
+
+If you must rewrite a whole existing file (major restructure only):
+  put it in new_files with the same path -- it will overwrite.
+
+Output ONLY the JSON. No prose before or after."""
 
 
 DEBUG_SYSTEM = """\
@@ -692,12 +733,16 @@ def node_execute_step(state: AutocodeState) -> AutocodeState:
             f"{test_ctx}"
             f"Current step ({step['id']}): {step['description']}\n"
             f"Acceptance: {step['acceptance']}\n\n"
-            f"Existing files:\n{_files_context(state['files'])}"
+            f"Existing files:\n{_files_context(state['files'], hint=state.get('task',''))}"
         ),
         timeout = EXECUTOR_TIMEOUT,
     )
-    data      = _parse_json(raw)
-    generated = json.dumps(data.get("files", {}), indent=2)
+    data = _parse_json(raw)
+    # Support both old format (files dict) and new patch format
+    if "patches" in data or "new_files" in data:
+        generated = json.dumps(data, indent=2)
+    else:
+        generated = json.dumps({"new_files": data.get("files", {})}, indent=2)
 
     tracer.step(tid, "execute_step", f"code generated ({len(generated)} chars)")
     return {**state, "generated_code": generated, "step_attempt": attempt}
@@ -790,7 +835,11 @@ def node_systematic_debug(state: AutocodeState) -> AutocodeState:
 
 
 def node_write_files(state: AutocodeState) -> AutocodeState:
-    """Write generated code to agent root with FileLock and protected-file checks."""
+    """
+    Write generated code to agent root.
+    Handles both patch format (str_replace) and full file writes.
+    Patches are preferred -- faster, cheaper, less error-prone.
+    """
     tid = state.get("trace_id", "")
     if state.get("status") in ("needs_clarification", "failed"):
         return state
@@ -798,13 +847,48 @@ def node_write_files(state: AutocodeState) -> AutocodeState:
         return state
 
     try:
-        files = json.loads(state["generated_code"])
+        data = json.loads(state["generated_code"])
     except Exception as e:
         tracer.step(tid, "write_files", f"JSON parse failed: {e}")
         return state
 
-    for rel_path, content in files.items():
-        # Protected file check -- frozenset contains strings
+    from core.patch import apply_patch
+
+    # -- Apply str_replace patches for existing files -------------------------
+    patches      = data.get("patches", [])
+    patch_errors = []
+    for p in patches:
+        rel_path = p.get("path", "")
+        old_text = p.get("old", "")
+        new_text = p.get("new", "")
+
+        if cfg.is_protected(rel_path):
+            tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
+            continue
+
+        target = cfg.agent_root / rel_path
+        if not target.exists():
+            tracer.step(tid, "write_files",
+                        f"patch target missing, skipping: {rel_path}")
+            patch_errors.append(f"{rel_path}: file not found for patch")
+            continue
+
+        result = apply_patch(target, old_text, new_text)
+        if result.ok:
+            tracer.step(tid, "write_files",
+                        f"patched {rel_path} ({result.lines_changed} lines changed)")
+        else:
+            tracer.step(tid, "write_files",
+                        f"patch FAILED {rel_path}: {result.error}")
+            patch_errors.append(f"{rel_path}: {result.error}")
+
+    # -- Write new / overwrite files ------------------------------------------
+    new_files = data.get("new_files", {})
+    # Backwards compat: if no patches/new_files keys, treat whole data as files dict
+    if not patches and not new_files and isinstance(data, dict):
+        new_files = data
+
+    for rel_path, content in new_files.items():
         if cfg.is_protected(rel_path):
             tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
             continue
@@ -819,11 +903,16 @@ def node_write_files(state: AutocodeState) -> AutocodeState:
                 if target.exists():
                     shutil.copy2(target, bak_path)
                 target.write_text(str(content), encoding="utf-8")
-            tracer.step(tid, "write_files", f"wrote {rel_path} ({len(content)} chars)")
+            tracer.step(tid, "write_files",
+                        f"wrote {rel_path} ({len(content)} chars)")
         except Timeout:
             tracer.step(tid, "write_files", f"lock timeout: {rel_path}")
         except Exception as e:
             tracer.step(tid, "write_files", f"write error {rel_path}: {e}")
+
+    if patch_errors:
+        tracer.step(tid, "write_files",
+                    f"{len(patch_errors)} patch error(s): {patch_errors[0]}")
 
     # Persist test file to agent root so verify can find it
     if state.get("test_code"):
