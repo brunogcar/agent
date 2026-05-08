@@ -2,7 +2,9 @@
   "mcpServers": {
     "agent": {
       "command": "python",
-      "args": ["D:/mcp/agent/server.py"],
+      "args": [
+        "D:/mcp/agent/server.py"
+      ],
       "cwd": "D:/mcp/agent",
       "env": {}
     },
@@ -11,13 +13,15 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "D:/mcp/workspace",
         "D:/mcp/agent"
       ]
     },
     "git": {
       "command": "npx",
-      "args": ["-y", "@cyanheads/git-mcp-server@latest"],
+      "args": [
+        "-y",
+        "@cyanheads/git-mcp-server@latest"
+      ],
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
         "MCP_LOG_LEVEL": "error",
@@ -26,7 +30,10 @@
     },
     "time": {
       "command": "npx",
-      "args": ["-y", "@mcpcentral/mcp-time"]
+      "args": [
+        "-y",
+        "@mcpcentral/mcp-time"
+      ]
     }
   }
 }
