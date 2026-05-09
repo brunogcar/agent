@@ -79,7 +79,7 @@ def _b64_to_block(b64_str: str, mime_type: str) -> tuple[dict, str]:
     """Base64 string → OpenAI image_url content block."""
     if b64_str.startswith("data:"):
         return {"type": "image_url", "image_url": {"url": b64_str}}, ""
-    return {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_str}"}}
+    return {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_str}"}}, ""
 
 
 def _url_to_block(url: str) -> tuple[dict, str]:
@@ -185,7 +185,7 @@ def vision(
         import json as _json
         import re as _re
         clean = result.text.strip()
-        for fence in ("```json", "````"):
+        for fence in ("```json", "```"):
             if clean.startswith(fence):
                 clean = clean[len(fence):]
         clean = clean.strip().rstrip("`").strip()

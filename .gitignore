@@ -6,6 +6,7 @@ __pycache__/
 .env
 memory_db/
 workspace/
+tmp/
 *.db
 *.lock
 .mypy_cache/

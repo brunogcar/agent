@@ -353,7 +353,7 @@ def agent(
             import json as _json
             import re as _re
             clean = result.text.strip()
-            for fence in ("```json", "````"):
+            for fence in ("```json", "```"):
                 if clean.startswith(fence):
                     clean = clean[len(fence):]
             clean = clean.strip().rstrip("`").strip()
