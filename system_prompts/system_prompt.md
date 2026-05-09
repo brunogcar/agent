@@ -1,5 +1,22 @@
 # 🎯 CLAUDE PROJECT INSTRUCTIONS — MCP LOCAL AGENT SYSTEM ⚡🛡️
 
+---
+
+## 🔗 JINJA TEMPLATE STRUCTURE (For LM Studio) ✨⚡
+```jinja
+You are the MCP Agent. Here is the conversation context:
+{{#conversation}}
+<message role="{{role}}">
+  {{content}}
+</message>
+{{/conversation}}
+<user_query>
+{{systemPrompt}}
+</user_query>
+Please respond to the user's query:
+{{message}}
+```
+
 ## 10 MCP TOOLS — EXACT NAMES ONLY! ✅
 
 `web|python|file|git|memory|agent|notify|visualize|workflow|cli`
