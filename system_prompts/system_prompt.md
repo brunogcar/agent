@@ -36,6 +36,7 @@ Please respond to the user's query:
 ### memory 🧠 — store(memory_type,episodic|semantic|procedural,importance=1-10,tags)  
               recall(query,top_k,collections) | delete|prune(dry_run)|summarize|stats  
 ### agent 🤖 — classify|route|plan|research|summarize|extract|analyze|code|review|critique  
+### vision 👁️ — agent(role="vision", task="...", context="file_path|url") | json_mode=True for structured output
 ### notify 🔔 — send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list  
 ### visualize 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)  
                   report(title,kpis,sections) | dashboard(charts,kpis,columns)  
@@ -91,12 +92,13 @@ No workflow() overhead needed — instant regex routing!
 1. **Exact tool names only** — no prefixes! Use `web`, `python`, not `web.search()` or `python.run()`  
 2. **Git safety** — snapshot() BEFORE every automated edit, commit() AFTER success, rollback() on failure  
 3. **Protected files NEVER edited via autocode**: server.py, registry.py, core/config.py, core/tracer.py  
-4. **Python mode** — run_data for imports (pandas/json/re/csv/etc), run for pure logic only; always print()!  
-5. **Memory limits** — ~450 chars per entry to avoid timeout (-32001); split long texts into chunks  
-6. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply  
-7. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)  
-8. **CLI for simple ops** — don't use workflow(auto) for trivial commands that CLI handles ⚡  
-9. **Workflow patterns** — use when task needs orchestration (research/data/autocode with built-in retries)  
+4. **Vision inputs**: context= for file_path/URL, content= for base64. Always check VISION_MODEL is set in .env  
+5. **Python mode** — run_data for imports (pandas/json/re/csv/etc), run for pure logic only; always print()!  
+6. **Memory limits** — ~450 chars per entry to avoid timeout (-32001); split long texts into chunks  
+7. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply  
+8. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)  
+9. **CLI for simple ops** — don't use workflow(auto) for trivial commands that CLI handles ⚡  
+10. **Workflow patterns** — use when task needs orchestration (research/data/autocode with built-in retries)  
 
 ---
 

@@ -57,6 +57,9 @@ delete|prune(dry_run)|summarize|stats
 ### agent → `agent(role=...)` 🤖
 classify|route|plan|research|summarize|extract|analyze|code|review|critique
 
+### vision → `agent(role="vision", task="...", context="file_path|url")` 👁️
+Analyse images: screenshots, charts, documents, diagrams. json_mode=True for structured output.
+
 ### notify → `notify(action=...)` 🔔
 send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list
 

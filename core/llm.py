@@ -204,7 +204,10 @@ def _build_role_configs() -> dict[str, RoleConfig]:
         "planner":   {"temperature": 0.3, "max_tokens": 2048, "timeout": 90},
         "executor":  {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
         "router":    {"temperature": 0.0, "max_tokens": 512,  "timeout": 15},
-        "vision":    {"temperature": 0.2, "max_tokens": 1024, "timeout": 60},
+        "vision":    {"temperature": 0.1, "max_tokens": 1024, "timeout": 60},
+        # vision shares cfg.vision_model (same Qwen 9B as planner).
+        # LMStudioProvider forwards multimodal image_url blocks as-is to
+        # /chat/completions — no separate provider class needed.
         "summarize": {"temperature": 0.1, "max_tokens": 512,  "timeout": 60},
         "extract":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 60},
         "classify":  {"temperature": 0.0, "max_tokens": 64,   "timeout": 15},
@@ -219,7 +222,11 @@ def _build_role_configs() -> dict[str, RoleConfig]:
 
     for role, d in defaults.items():
         reg_entry = cfg.model_registry.get(role, {})
-        model     = reg_entry.get("model", executor_model)
+        # Vision falls back to cfg.vision_model, not executor_model
+        if role == "vision":
+            model = reg_entry.get("model", cfg.vision_model or executor_model)
+        else:
+            model = reg_entry.get("model", executor_model)
         timeout   = reg_entry.get("timeout", d["timeout"])
         roles[role] = RoleConfig(
             model       = model,

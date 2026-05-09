@@ -25,6 +25,7 @@ Roles:
   code       → Hermes 3 8B  — generate Python code/patches (120s)
   review     → Hermes 3 8B  — review code for bugs/quality (90s)
   plan       → Qwen 3.5 9B  — high-level task decomposition (90s)
+  vision     → Qwen 3.5 9B  — image analysis (delegates to tools/vision.py)
 """
 
 from __future__ import annotations
@@ -34,9 +35,6 @@ from core.llm import llm
 
 
 # ── System prompts ────────────────────────────────────────────────────────────
-# Each role gets a specialist prompt.
-# These are the prompts that were DEFINED but never USED in the old codebase.
-# They are now wired to every call through this tool.
 
 _SYSTEM_PROMPTS: dict[str, str] = {
 
@@ -142,7 +140,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         "You are a task planning specialist for an autonomous AI agent. "
         "Break the given goal into a clear, ordered sequence of steps. "
         "Each step must be concrete and executable by the agent's available tools: "
-        "web, python, file, git, memory, notify, visualize, agent.\n\n"
+        "web, python, file, git, memory, notify, visualize, agent, vision.\n\n"
         "OUTPUT: valid JSON only. No thinking tags. No markdown fences. "
         "Start with { and end with }.\n"
         'Format: {"goal":"restated goal",'
@@ -150,10 +148,18 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         '"estimated_complexity":5,'
         '"risks":["failure point 1"]}'
     ),
+
+    "vision": (
+        "You are a precise visual analysis specialist. "
+        "Describe ONLY what is visible — never hallucinate details. "
+        "Structure your response: Overview, Key Elements, Text Content (if any), Notable Details."
+    ),
 }
 
+
 # ── Role → LLM role mapping ───────────────────────────────────────────────────
-# Maps agent persona → the llm.py role (which determines model + timeout)
+# Maps agent persona → the llm.py role (which determines model + timeout).
+# vision is NOT here — it delegates to tools/vision.py directly (see dispatch).
 
 _ROLE_TO_LLM: dict[str, str] = {
     "classify": "router",    # Nemotron 4B  — 15s
@@ -166,18 +172,16 @@ _ROLE_TO_LLM: dict[str, str] = {
     "code":     "code",      # Hermes 3 8B  — 120s
     "review":   "review",    # Hermes 3 8B  — 90s
     "plan":     "planner",   # Qwen 3.5 9B  — 90s
+    # vision delegates to tools/vision.py — not a direct llm role
 }
 
-# Roles that return JSON via API json_object mode (only Hermes supports it)
-# Only extract reliably uses json_object on all models
-# code/review moved to prompt-only: Qwen rejects json_object mode
+# Roles that use API-level json_object mode (only models that support it)
 _API_JSON_ROLES    = {"extract"}
 
 # Roles that return JSON via system prompt only (parsed post-hoc)
-# Nemotron and Qwen both reject the json_object response_format parameter
 _PROMPT_JSON_ROLES = {"route", "plan", "code", "review"}
 
-# Combined — all roles where we attempt JSON parsing
+# All roles where JSON parsing is attempted
 _JSON_ROLES = _API_JSON_ROLES | _PROMPT_JSON_ROLES
 
 
@@ -187,139 +191,115 @@ _JSON_ROLES = _API_JSON_ROLES | _PROMPT_JSON_ROLES
 def agent(
     role:        str,
     task:        str,
-    context:     str = "",
-    content:     str = "",
-    trace_id:    str = "",
-    temperature: float = -1.0,   # -1 = use role default
-    max_tokens:  int   = -1,     # -1 = use role default
+    context:     str   = "",
+    content:     str   = "",
+    trace_id:    str   = "",
+    temperature: float = -1.0,
+    max_tokens:  int   = -1,
 ) -> dict:
     """
     Agent tool — call a specialist sub-agent for a specific cognitive task.
 
     role: "classify" | "route" | "research" | "summarize" | "extract" |
-          "critique" | "analyze" | "code" | "review" | "plan"
+          "critique" | "analyze" | "code" | "review" | "plan" | "vision"
 
     task     : the instruction or question for this agent
     context  : background information (injected before the task)
-    content  : raw material to process (code, text, data to analyse/summarise)
+               for vision: file_path or public URL to the image
+    content  : raw material to process (code, text, data, or base64 image)
+               for vision: base64-encoded image string
     trace_id : attach to current workflow trace for observability
 
     ── ROLES ────────────────────────────────────────────────────────────────────
 
-    classify  [Nemotron, 15s]
-        Fast binary or categorical decision.
-        Returns a single word or short label — no prose.
-        Use for: is_code_related, sentiment, topic category, yes/no decisions.
-        Example:
-            agent(role="classify",
-                  task="Is this task about fixing code or writing new code?",
-                  content="The function returns wrong values when input is empty")
-            → "fixing"
+    classify  [Nemotron, 15s]  Fast binary/category decision. Single word output.
+    route     [Nemotron, 15s]  Workflow + tool routing. Returns JSON.
+    research  [Hermes,  120s]  Synthesise web/memory content into coherent answer.
+    summarize [Hermes,   60s]  Dense accurate summary. No preamble.
+    extract   [Hermes,   60s]  Pull structured data. Always returns JSON.
+    critique  [Hermes,   90s]  Quality evaluation. APPROVE|REVISE|REJECT verdict.
+    analyze   [Hermes,   90s]  Deep code/data analysis. No fixes — analysis only.
+    code      [Hermes,  120s]  Generate Python patch. Returns {analysis,patch,tests}.
+    review    [Hermes,   90s]  Review patch. Returns {verdict,issues,corrected_patch}.
+    plan      [Qwen,     90s]  Decompose goal into ordered steps. Returns JSON.
+    vision    [Qwen,     60s]  Analyse an image. Delegates to tools/vision.py.
+                               context= file_path or URL, content= base64 string.
 
-    route  [Nemotron, 15s]
-        Decide which workflow and tool to use for a task.
-        Returns JSON: {workflow, tool, complexity, reason}
-        Example:
-            agent(role="route", task="Analyse the Q3 sales CSV and plot a chart")
-            → {"workflow": "data", "tool": "python", "complexity": 5, "reason": "..."}
+    ── VISION EXAMPLES ──────────────────────────────────────────────────────────
 
-    research  [Hermes, 120s]
-        Synthesise web pages, documents, or memory into a coherent answer.
-        Preserves facts, cites sources, notes conflicts.
-        Use after: web(search_and_read) or memory(recall)
-        Example:
-            agent(role="research",
-                  task="Summarise what these sources say about ChromaDB performance",
-                  content="[scraped text from 3 pages]")
+        # Local file
+        agent(role="vision",
+              task="What errors are shown on screen?",
+              context="workspace/screenshot.png")
 
-    summarize  [Hermes, 60s]
-        Condense long content into a dense accurate summary.
-        Removes filler, preserves all key facts and numbers.
-        Example:
-            agent(role="summarize",
-                  task="Summarise this into 3 bullet points",
-                  content="[long document text]")
+        # Public URL
+        agent(role="vision",
+              task="Extract all values from this chart.",
+              context="https://example.com/chart.png")
 
-    extract  [Hermes, 60s]
-        Pull structured data from unstructured text.
-        Always returns JSON.
-        Example:
-            agent(role="extract",
-                  task="Extract: company name, revenue, growth rate, CEO name",
-                  content="[financial report text]")
-            → {"company": "...", "revenue": "...", "growth_rate": "...", "ceo": "..."}
-
-    critique  [Hermes, 90s]
-        Evaluate quality against the stated goal. Harsh and specific.
-        Returns verdict: APPROVE | REVISE | REJECT with specific issues.
-        Example:
-            agent(role="critique",
-                  task="Does this patch correctly fix the memory decay bug?",
-                  context="The bug: decay never applies to procedural memories",
-                  content="[the patch]")
-
-    analyze  [Hermes, 90s]
-        Deep analysis of code, data, or a problem. Analysis only — no fixes yet.
-        References exact line numbers, function names, variable names.
-        Example:
-            agent(role="analyze",
-                  task="What is causing the timeout in this workflow?",
-                  content="[workflow code]")
-
-    code  [Hermes, 120s]
-        Generate a Python patch or new code. Returns structured JSON:
-        {analysis, patch, assumptions, tests}
-        PEP 8 + type hints + docstrings enforced via system prompt.
-        Use ONLY for generating code — then use 'review' to check it.
-        Example:
-            agent(role="code",
-                  task="Fix the decay scoring — it currently ignores the floor value",
-                  context="Function is in memory/store.py, _decay_score()",
-                  content="[current function code]")
-
-    review  [Hermes, 90s]
-        Review a code patch for bugs, edge cases, breaking changes.
-        Returns structured JSON: {verdict, issues, corrected_patch}
-        Always run this after 'code' before applying any patch.
-        Example:
-            agent(role="review",
-                  task="Review this patch for correctness and edge cases",
-                  context="Goal: fix decay scoring in _decay_score()",
-                  content="[the generated patch]")
-
-    plan  [Qwen, 90s]
-        Decompose a high-level goal into ordered agent steps.
-        Returns structured JSON: {goal, steps, estimated_complexity, risks}
-        Each step maps to a specific tool and action.
-        Example:
-            agent(role="plan",
-                  task="Research Tesla stock performance and create a dashboard")
-            → {"goal": "...", "steps": [...], "complexity": 7, "risks": [...]}
+        # Base64 (e.g. from python tool)
+        agent(role="vision",
+              task="Read all text in this image.",
+              content="<base64_string>")
 
     ── STRUCTURED OUTPUT ROLES ───────────────────────────────────────────────────
-    These roles always return JSON in result.parsed (in addition to result.text):
+    These roles always return JSON in result["parsed"]:
         route, extract, code, review, plan
-
-    ── TEMPERATURE / MAX_TOKENS OVERRIDE ────────────────────────────────────────
-    Leave at -1 to use role defaults (recommended).
-    Override only when you have a specific reason:
-        temperature=-1  → use role default (0.0 for router, 0.1 for code, etc.)
-        max_tokens=-1   → use role default (256 for router, 4096 for code, etc.)
     """
     role = role.strip().lower()
 
-    if role not in _ROLE_TO_LLM:
+    all_roles = set(_ROLE_TO_LLM.keys()) | {"vision"}
+    if role not in all_roles:
         return {
             "status": "error",
             "error": (
                 f"Unknown role '{role}'. "
                 "Use: classify | route | research | summarize | extract | "
-                "critique | analyze | code | review | plan"
+                "critique | analyze | code | review | plan | vision"
             ),
         }
 
     if not task:
         return {"status": "error", "error": "task is required"}
+
+    # ── Vision: delegate to tools/vision.py ──────────────────────────────────
+    # Vision cannot go through llm.complete() because multimodal messages
+    # require a list content block (image_url + text), not a string.
+    # tools/vision.py owns all image encoding and message construction.
+    # Convention: context= for file_path/URL, content= for base64.
+    if role == "vision":
+        try:
+            from tools.vision import vision as _vision
+        except ImportError:
+            return {
+                "status": "error",
+                "error":  "tools/vision.py not found — ensure it exists and has @tool decorator.",
+            }
+
+        file_path = ""
+        url       = ""
+        b64       = ""
+
+        if context:
+            if context.startswith(("http://", "https://")):
+                url = context
+            elif context.startswith("data:"):
+                b64 = context
+            else:
+                file_path = context
+
+        if content and not b64 and not file_path and not url:
+            b64 = content
+
+        # FIX: parameter name in vision() is "task", NOT "prompt"!
+        return _vision(
+            task    = task,
+            file_path = file_path,
+            base64    = b64,
+            url       = url,
+            trace_id  = trace_id,
+            context   = "",
+        )
 
     system_prompt = _SYSTEM_PROMPTS[role]
     llm_role      = _ROLE_TO_LLM[role]
@@ -373,7 +353,7 @@ def agent(
             import json as _json
             import re as _re
             clean = result.text.strip()
-            for fence in ("```json", "```"):
+            for fence in ("```json", "````"):
                 if clean.startswith(fence):
                     clean = clean[len(fence):]
             clean = clean.strip().rstrip("`").strip()
