@@ -128,7 +128,7 @@ class Config:
         })
 
         # ── Gateway ────────────────────────────────────────────────────────────
-        self.gateway_host   = os.getenv("GATEWAY_HOST", "0.0.0.0")
+        self.gateway_host   = os.getenv("GATEWAY_HOST", "127.0.0.1")
         self.gateway_port   = int(os.getenv("GATEWAY_PORT", "8000"))
         self.gateway_secret = os.getenv("GATEWAY_SECRET", "changeme")
 

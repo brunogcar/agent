@@ -33,10 +33,29 @@ from registry import tool
 
 # -- Git runner ----------------------------------------------------------------
 
+import os as _os
+
+# Git environment that prevents ALL interactive prompts.
+# Without this, git can hang indefinitely waiting for credentials or
+# user identity -- which causes MCP -32001 timeout errors.
+# GIT_TERMINAL_PROMPT=0  : never show a terminal prompt
+# GIT_ASKPASS=echo       : return empty string for any credential request
+# GIT_SSH_COMMAND        : disable SSH host key prompts
+_GIT_ENV = {
+    **_os.environ,
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_ASKPASS":         "echo",
+    "GIT_SSH_COMMAND":     "ssh -o BatchMode=yes -o StrictHostKeyChecking=no",
+}
+
+
 def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
     """
     Run a git command in the given directory.
     Returns (returncode, stdout, stderr). Never raises.
+
+    Uses _GIT_ENV to suppress all interactive prompts -- the main
+    cause of MCP -32001 timeout errors on git operations.
     """
     try:
         result = subprocess.run(
@@ -45,6 +64,7 @@ def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
             text=True,
             cwd=str(cwd),
             timeout=30,
+            env=_GIT_ENV,
         )
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except FileNotFoundError:
@@ -196,8 +216,10 @@ def git(
 
         _git(["add", "-A"], cwd)
         code, _, err = _git(
-            ["commit", "-m", "initial commit",
-             "--author", "agent <agent@local>"],
+            ["commit",
+             "-c", "user.name=agent",
+             "-c", "user.email=agent@local",
+             "-m", "initial commit"],
             cwd,
         )
         if code != 0 and "nothing to commit" not in err:
@@ -232,7 +254,10 @@ def git(
             }
 
         code, _, err = _git(
-            ["commit", "-m", full_msg, "--author", "agent <agent@local>"], cwd
+            ["commit",
+             "-c", "user.name=agent",
+             "-c", "user.email=agent@local",
+             "-m", full_msg], cwd
         )
         if code != 0:
             return {"status": "error", "error": f"Snapshot commit failed: {err}"}
@@ -252,7 +277,10 @@ def git(
         _git(["add", "-A"], cwd)
 
         code, _, err = _git(
-            ["commit", "-m", message, "--author", "agent <agent@local>"], cwd
+            ["commit",
+             "-c", "user.name=agent",
+             "-c", "user.email=agent@local",
+             "-m", message], cwd
         )
         if code != 0:
             if "nothing to commit" in err:
@@ -265,19 +293,45 @@ def git(
 
     # -- rollback --------------------------------------------------------------
     if operation == "rollback":
+        """
+        P1-6 fix: stash before reset so uncommitted work is recoverable.
+
+        git reset --hard is permanent -- any unsaved work is gone forever.
+        git stash saves it to the stash stack first (git stash pop to restore).
+        Pass force=True as a kwarg to skip stash and reset immediately.
+
+        Also removed git clean -fd from the default path -- cleaning untracked
+        files is a separate destructive action that should be opt-in.
+        """
+        force = kwargs.get("force", False) if "kwargs" in dir() else False
+
+        if force:
+            _git(["reset", "--hard", "HEAD"], cwd)
+            _git(["clean", "-fd"], cwd)
+            _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
+            return {"status": "rolled_back", "head": head,
+                    "message": "Force reset to HEAD (unrecoverable)", "root": str(cwd)}
+
+        # Safe path: stash first
+        import time as _t
+        stash_msg = f"autocode-rollback-{int(_t.time())}"
+        sr        = _git(["stash", "push", "-m", stash_msg], cwd)
+        stashed   = "No local changes" not in sr[1]
+
         code, _, err = _git(["reset", "--hard", "HEAD"], cwd)
         if code != 0:
             return {"status": "error", "error": f"git reset failed: {err}"}
 
-        # Remove untracked files too
-        _git(["clean", "-fd"], cwd)
-
         _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
+        msg = "Working tree reset to HEAD."
+        if stashed:
+            msg += f" Uncommitted work saved to stash '{stash_msg}' (git stash pop to restore)."
         return {
-            "status":  "rolled_back",
-            "head":    head,
-            "message": "Working tree reset to HEAD - all uncommitted changes discarded",
-            "root":    str(cwd),
+            "status":    "rolled_back",
+            "head":      head,
+            "message":   msg,
+            "stash_ref": stash_msg if stashed else "",
+            "root":      str(cwd),
         }
 
     # -- log -------------------------------------------------------------------
