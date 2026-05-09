@@ -11,6 +11,16 @@ Integrates superpowers methodologies into a LangGraph state machine:
   7. Verification Gate      -- Automated checks override LLM opinion (hallucination guard)
   8. Procedural Memory      -- Successful debug fixes stored as reusable knowledge
 
+Task types (classified by Router model):
+  feature      -- New functionality (brainstorm + TDD + verify)
+  bugfix       -- Fix existing error (deep root-cause, no questions, TDD + verify)
+  refactor     -- Restructure without changing behaviour (no questions, TDD + verify)
+  edit         -- Intentional user-requested change WITH impact review
+                  (heavier than bugfix: brainstorm lists affected callers before coding)
+  create_skill -- Generate a new skill file in skills/ that gathers specific data
+                  (API/scrape) and formats a report. Bypasses TDD loop.
+  unclear      -- Insufficient info (ask 1-2 clarifying questions)
+
 Model routing:
   Planner  (Qwen 3.5 9B)    -- brainstorm, plan, spec
   Router   (Nemotron 4B)    -- task classification
@@ -32,6 +42,7 @@ Usage:
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shutil
@@ -68,10 +79,12 @@ class AutocodeState(TypedDict, total=False):
     task:           str
     files:          dict[str, str]
     mode:           str          # "feature" | "fix_error" | "improve" | "add_feature"
+                                 # "edit" | "create_skill"
     target_file:    str
 
     # Classification
-    task_type:      str          # "feature" | "bugfix" | "refactor" | "unclear"
+    task_type:      str          # "feature" | "bugfix" | "refactor" | "edit"
+                                 # "create_skill" | "unclear"
     memory_context: str
 
     # Planning
@@ -103,6 +116,7 @@ class AutocodeState(TypedDict, total=False):
     result:     str
     commit_sha: str
     trace_id:   str
+    skill_path: str              # set by node_create_skill, e.g. "skills/news_headlines.py"
 
 
 def _default_state(task: str, files: dict[str, str], mode: str = "feature",
@@ -134,6 +148,7 @@ def _default_state(task: str, files: dict[str, str], mode: str = "feature",
         result="",
         commit_sha="",
         trace_id="",
+        skill_path="",
     )
 
 
@@ -368,13 +383,20 @@ TASK_CLASSIFIER_SYSTEM = """\
 You are the Router model. Classify a coding task into one category.
 
 Categories:
-- "feature":  New functionality (requires brainstorming and spec)
-- "bugfix":   Fix an existing error (skip brainstorming, go straight to plan)
-- "refactor": Improve structure without changing behaviour (skip brainstorming)
-- "unclear":  Insufficient information (ask 1-2 clarifying questions)
+- "feature":      New functionality (requires brainstorming and spec)
+- "bugfix":       Fix an existing error (deep root-cause analysis, no questions)
+- "refactor":     Improve structure without changing behaviour (no questions)
+- "edit":         Intentional change to existing file(s) requested by the user
+                  (heavier than bugfix -- includes impact review of what else may break)
+                  Triggers: "edit X", "change X", "update X", "modify X", "rewrite X"
+- "create_skill": Build a new self-contained skill file in skills/ that gathers
+                  specific data (news, financials, weather, etc.) via API or scraping
+                  and formats it as a report for use by other tools.
+                  Triggers: "create skill", "new skill", "build skill", "skill for X"
+- "unclear":      Insufficient information (ask 1-2 clarifying questions)
 
 Output ONLY this JSON:
-{"task_type": "bugfix|feature|refactor|unclear", "questions": []}
+{"task_type": "bugfix|feature|refactor|edit|create_skill|unclear", "questions": []}
 
 No prose outside the JSON. questions is empty unless task_type is "unclear"."""
 
@@ -399,15 +421,15 @@ Rules:
 - Output ONLY the JSON object. No prose outside it."""
 
 
-# New bugfix-specific prompt: zero questions, deep analysis
+# Bugfix-specific prompt: zero questions, deep analysis
 BUGFIX_BRAINSTORM_SYSTEM = """\
 You are the Planner model. Refine a bugfix task before any code is written.
 
 Rules:
 - Analyse the existing code and error description to understand the root cause.
-- Do NOT ask clarifying questions – the information provided is sufficient.
+- Do NOT ask clarifying questions -- the information provided is sufficient.
 - Write a concise spec (max 150 words) that describes the correct behaviour after the fix.
-- Define 2‑4 acceptance criteria that must be true for the fix to be considered successful.
+- Define 2-4 acceptance criteria that must be true for the fix to be considered successful.
 - Include any constraints (e.g., "must not break existing API", "must handle edge case X").
 - Output ONLY a JSON object:
   {
@@ -419,7 +441,34 @@ Rules:
 No prose outside the JSON."""
 
 
-# New refactor-specific prompt: restructuring focus, limited questions
+# Edit-specific prompt: intentional change + mandatory impact review
+EDIT_BRAINSTORM_SYSTEM = """\
+You are the Planner model. Refine an edit task before any code is written.
+
+An "edit" is an intentional, user-requested change to existing file(s).
+Unlike a bugfix (something is broken) or refactor (restructure only), an edit
+may change behaviour, APIs, data formats, or output -- so impact must be assessed.
+
+You MUST:
+1. Understand exactly what the user wants changed and why.
+2. Perform an impact review: list every other file, function, or caller that
+   imports or depends on the edited code. Note which ones may need updating.
+3. Define the acceptance criteria: what does "done" look like?
+4. Add constraints: anything that must NOT change (public API, file format, etc.)
+5. Do NOT ask clarifying questions unless the edit target is genuinely ambiguous.
+
+Output ONLY a JSON object:
+  {
+    "spec": "<what is being changed and why, max 150 words>",
+    "impact": ["<file or caller that may be affected>", ...],
+    "acceptance_criteria": ["...", "..."],
+    "constraints": ["...", "..."],
+    "questions": []
+  }
+No prose outside the JSON."""
+
+
+# Refactor-specific prompt: restructuring focus, limited questions
 REFACTOR_BRAINSTORM_SYSTEM = """\
 You are the Planner model. Refine a refactoring task before any code is written.
 
@@ -432,6 +481,59 @@ The existing code is provided. You must:
 
 Output ONLY a JSON object with spec, acceptance_criteria, constraints, and questions (if any).
 Use the same JSON format as the standard brainstorm."""
+
+
+# Skill creation prompt: fixed output contract for skills/ files
+CREATE_SKILL_SYSTEM = """\
+You are the Executor model. Generate a self-contained skill file for the MCP agent.
+
+A skill is a Python file in skills/ that:
+  1. Gathers specific data from a public API or website (no auth required by default).
+  2. Parses and filters the data into a structured result.
+  3. Formats it as a human-readable report string AND returns structured data.
+  4. Registers itself with @tool so the agent can call it directly.
+
+Output ONLY a JSON object:
+  {
+    "skill_name": "<snake_case name, e.g. news_headlines>",
+    "skill_file": "<full Python file content as a string>",
+    "explanation": "<one sentence describing what the skill does>"
+  }
+
+The skill_file MUST follow this template exactly:
+  \"\"\"
+  skills/<skill_name>.py -- <one-line description>
+
+  Data source: <API URL or site>
+  Report format: <describe the output format>
+  Downstream: designed for use with visualize(), memory.store(), or direct LLM consumption.
+  \"\"\"
+  from __future__ import annotations
+  import requests
+  from registry import tool
+
+  @tool
+  def <skill_name>(<params with defaults>) -> str:
+      \"\"\"<docstring: what it does, what params do, what the output looks like>\"\"\"
+      try:
+          # --- fetch ---
+          ...
+          # --- parse ---
+          ...
+          # --- format report ---
+          lines = [...]
+          return "\\n".join(lines)
+      except Exception as e:
+          return f"<skill_name> error: {e}"
+
+The skill must:
+  - Use only stdlib + requests (already installed). No extra pip installs.
+  - Handle errors gracefully (catch Exception, return error string).
+  - Include a module-level docstring with data source and report format.
+  - Have a clear, useful default for every parameter so it works with zero args.
+  - Return a plain string (the formatted report). No dicts, no side effects.
+
+Output ONLY the JSON. No prose before or after."""
 
 
 PLAN_SYSTEM = """\
@@ -539,7 +641,7 @@ Output JSON ONLY:
 # ── Graph nodes ---------------------------------------------------------------
 
 def node_classify_task(state: AutocodeState) -> AutocodeState:
-    """Classify task type to route feature vs bugfix/refactor paths."""
+    """Classify task type to route feature vs bugfix/refactor/edit/create_skill paths."""
     tid = state.get("trace_id", "")
     tracer.step(tid, "classify_task", f"classifying: {state['task'][:60]}")
 
@@ -553,12 +655,18 @@ def node_classify_task(state: AutocodeState) -> AutocodeState:
     task_type = data.get("task_type", "feature")
     questions = data.get("questions", [])
 
-    # Override classification from mode if set
+    # Mode override takes priority over Router classification.
+    # This lets run_autocode_agent(mode="edit") force the edit path
+    # even if the Router would classify it differently.
     mode = state.get("mode", "")
     if mode == "fix_error":
         task_type = "bugfix"
     elif mode == "improve":
         task_type = "refactor"
+    elif mode == "edit":
+        task_type = "edit"
+    elif mode == "create_skill":
+        task_type = "create_skill"
 
     tracer.step(tid, "classify_task", f"classified as: {task_type}")
 
@@ -579,6 +687,11 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
     task_type = state.get("task_type", "feature")
     tracer.step(tid, "brainstorm", f"starting for {task_type}")
 
+    # create_skill skips brainstorm entirely -- its spec is embedded in CREATE_SKILL_SYSTEM
+    if task_type == "create_skill":
+        tracer.step(tid, "brainstorm", "create_skill: skipping brainstorm")
+        return state
+
     # ── Memory recall (all tasks) ──
     try:
         from memory.store import memory as _mem
@@ -596,6 +709,11 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
     # ── Select system prompt based on task type ──
     if task_type == "bugfix":
         system = BUGFIX_BRAINSTORM_SYSTEM
+    elif task_type == "edit":
+        # Edit uses a heavier prompt that includes mandatory impact review.
+        # The impact[] field lists callers/files that may break — appended to
+        # spec so node_verify knows exactly what regressions to watch for.
+        system = EDIT_BRAINSTORM_SYSTEM
     elif task_type == "refactor":
         system = REFACTOR_BRAINSTORM_SYSTEM
     else:  # feature / unclear
@@ -615,13 +733,19 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
         return {**state, "memory_context": mem_ctx,
                 "status": "needs_clarification", "result": qs}
 
-    spec = data.get("spec", state["task"])
-    ac   = data.get("acceptance_criteria", [])
-    cons = data.get("constraints", [])
+    spec   = data.get("spec", state["task"])
+    ac     = data.get("acceptance_criteria", [])
+    cons   = data.get("constraints", [])
+    impact = data.get("impact", [])  # edit workflow only: affected files/callers
+
     if ac:
         spec += "\n\nAcceptance criteria:\n" + "\n".join(f"- {c}" for c in ac)
     if cons:
         spec += "\n\nConstraints:\n" + "\n".join(f"- {c}" for c in cons)
+    if impact:
+        # Append impact list so node_verify knows which regressions to check
+        spec += "\n\nImpact review (files/callers to check for regressions):\n" \
+                + "\n".join(f"- {i}" for i in impact)
 
     tracer.step(tid, "brainstorm", f"spec ready ({len(spec)} chars)")
     return {**state, "memory_context": mem_ctx, "spec": spec}
@@ -633,7 +757,7 @@ def node_write_plan(state: AutocodeState) -> AutocodeState:
     if state.get("status") == "needs_clarification":
         return state
 
-    # For bugfix/refactor without spec from brainstorm, build spec from task
+    # For bugfix/refactor/edit without spec from brainstorm, build spec from task
     spec = state.get("spec") or state["task"]
     tracer.step(tid, "write_plan", "writing plan")
 
@@ -1049,10 +1173,14 @@ def node_commit(state: AutocodeState) -> AutocodeState:
         s["label"] for s in plan
         if s["label"] not in ("write_tests", "verify")
     )
+    task_type = state.get("task_type", "feature")
     msg = (
-        f"feat(autocode): {state['task'][:60]}\n\n"
-        f"- Steps: {labels}\n"
-        f"- Tests: pass\n"
+        f"{'skill' if task_type == 'create_skill' else 'feat'}(autocode): "
+        f"{state['task'][:60]}\n\n"
+        f"- Type: {task_type}\n"
+        + (f"- Steps: {labels}\n" if labels else "")
+        + (f"- Skill: {state.get('skill_path', '')}\n" if state.get("skill_path") else "")
+        + f"- Tests: pass\n"
         f"- Verified: yes"
     )
 
@@ -1062,9 +1190,10 @@ def node_commit(state: AutocodeState) -> AutocodeState:
     result_lines = [
         f"autocode complete -- {sha or '(no new commits)'}",
         f"Branch: {state.get('branch', 'main')}",
-        "",
-        state.get("verification_notes", ""),
     ]
+    if state.get("skill_path"):
+        result_lines.append(f"Skill: {state['skill_path']}")
+    result_lines += ["", state.get("verification_notes", "")]
     if state.get("defense_note"):
         result_lines.append(f"\nDefense note: {state['defense_note']}")
 
@@ -1077,15 +1206,16 @@ def node_commit(state: AutocodeState) -> AutocodeState:
 def node_distill_memory(state: AutocodeState) -> AutocodeState:
     """
     Store successful debug fixes as procedural knowledge.
+    Also stores create_skill completions as episodic knowledge.
     Only runs after a successful commit.
     """
     tid = state.get("trace_id", "")
     if state.get("status") != "done":
         return state
 
+    hypothesis   = state.get("hypothesis", "")
+    defense_note = state.get("defense_note", "")
     error_pattern = state.get("error_log", "")[:200]
-    hypothesis    = state.get("hypothesis", "")
-    defense_note  = state.get("defense_note", "")
 
     if hypothesis:  # Only store if debugging was involved
         try:
@@ -1105,15 +1235,146 @@ def node_distill_memory(state: AutocodeState) -> AutocodeState:
         except Exception as e:
             tracer.step(tid, "distill_memory", f"store failed: {e}")
 
+    # Store skill creation as semantic knowledge so agent can recall what skills exist
+    if state.get("skill_path"):
+        try:
+            from memory.store import memory as _mem
+            _mem.store_semantic(
+                text=(
+                    f"Skill created: {state['skill_path']}\n"
+                    f"Task: {state['task'][:80]}\n"
+                    f"Spec: {state.get('spec','')[:200]}"
+                ),
+                importance = 6,
+                tags       = "skill,create_skill,registry",
+            )
+            tracer.step(tid, "distill_memory", f"skill memory stored: {state['skill_path']}")
+        except Exception as e:
+            tracer.step(tid, "distill_memory", f"skill store failed: {e}")
+
     return state
+
+
+def node_create_skill(state: AutocodeState) -> AutocodeState:
+    """
+    Generate, write, and smoke-test a new skill file in skills/.
+
+    FLOW: classify_task → node_create_skill → commit → distill_memory
+    Bypasses the full TDD loop because skills are brand-new files with no
+    existing callers to regress against.
+
+    Steps inside this node:
+      1. Call Executor with CREATE_SKILL_SYSTEM to generate skill_name + skill_file
+      2. Sanitise skill_name to snake_case
+      3. Create skills/ dir + __init__.py if needed
+      4. Write the skill file
+      5. Validate Python syntax (ast.parse)
+      6. Smoke import test (python -c "import skills.<name>")
+      7. Set verification_passed=True so node_commit proceeds
+
+    DECISION: Skills live in skills/ not tools/ because:
+      - They are data-gathering specialists, not general-purpose meta-tools.
+      - Future: skills/ may have its own metadata registry (source URL, refresh
+        rate, downstream consumers). Keeping them separate makes that easy.
+      - They still register via @tool so the agent calls them identically.
+    """
+    tid = state.get("trace_id", "")
+    if state.get("status") in ("needs_clarification", "failed"):
+        return state
+
+    tracer.step(tid, "create_skill", f"generating skill for: {state['task'][:60]}")
+
+    raw = _call(
+        role    = "executor",
+        system  = CREATE_SKILL_SYSTEM,
+        user    = (
+            f"Task: {state['task']}\n\n"
+            f"Context (existing tools for reference):\n"
+            f"{_files_context(state['files'], hint=state.get('task', ''))}"
+        ),
+        timeout = EXECUTOR_TIMEOUT,
+    )
+    data = _parse_json(raw)
+
+    skill_name  = data.get("skill_name", "")
+    skill_file  = data.get("skill_file", "")
+    explanation = data.get("explanation", "")
+
+    if not skill_name or not skill_file:
+        tracer.step(tid, "create_skill", "FAILED: missing skill_name or skill_file in output")
+        return {**state, "status": "failed",
+                "result": "create_skill: model output missing skill_name or skill_file"}
+
+    # Sanitise to snake_case filename
+    skill_name = re.sub(r"[^a-z0-9_]", "_", skill_name.lower()).strip("_")
+    rel_path   = f"skills/{skill_name}.py"
+
+    # Ensure skills/ exists with __init__.py
+    skills_dir = cfg.agent_root / "skills"
+    skills_dir.mkdir(exist_ok=True)
+    init_file  = skills_dir / "__init__.py"
+    if not init_file.exists():
+        init_file.write_text(
+            '"""skills/ -- specialised data-gathering skill tools."""\n',
+            encoding="utf-8",
+        )
+
+    # Write the skill file
+    target = cfg.agent_root / rel_path
+    try:
+        target.write_text(skill_file, encoding="utf-8")
+        tracer.step(tid, "create_skill", f"wrote {rel_path} ({len(skill_file)} chars)")
+    except Exception as e:
+        return {**state, "status": "failed", "result": f"create_skill: write error: {e}"}
+
+    # Syntax check before smoke import
+    try:
+        ast.parse(skill_file)
+    except SyntaxError as e:
+        tracer.step(tid, "create_skill", f"syntax error: {e}")
+        return {**state, "status": "failed",
+                "result": f"create_skill: syntax error in generated skill: {e}"}
+
+    # Smoke import test -- catches missing imports, bad @tool usage, etc.
+    # Non-fatal: surface as warning rather than hard failure so a skill that
+    # needs a runtime API key still gets committed and can be fixed manually.
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", f"import skills.{skill_name}"],
+            capture_output=True, text=True, timeout=15,
+            cwd=str(cfg.agent_root),
+        )
+        if result.returncode != 0:
+            err = (result.stdout + result.stderr).strip()
+            tracer.step(tid, "create_skill", f"smoke import WARNING: {err[:120]}")
+            smoke_note = f"⚠ Smoke import warning: {err[:200]}"
+        else:
+            tracer.step(tid, "create_skill", "smoke import OK")
+            smoke_note = "Smoke import: OK"
+    except Exception as e:
+        smoke_note = f"Smoke import skipped: {e}"
+
+    tracer.step(tid, "create_skill", f"skill ready: {rel_path}")
+    return {**state,
+            "skill_path":          rel_path,
+            "generated_code":      json.dumps({"new_files": {rel_path: skill_file}}, indent=2),
+            "spec":                f"Skill: {skill_name}\n{explanation}\n{smoke_note}",
+            "verification_passed": True,   # smoke test is the gate for new skills
+            "status":              "running"}
 
 
 # ── Routing ------------------------------------------------------------------
 
 def route_after_classify(state: AutocodeState) -> str:
-    """All tasks go through brainstorming – no more skipping."""
+    """
+    Route after classification.
+    create_skill bypasses brainstorm + TDD -- goes straight to its own node.
+    All other task types go through brainstorm as normal.
+    """
     if state.get("status") == "needs_clarification":
         return "end"
+    if state.get("task_type") == "create_skill":
+        return "create_skill"
     return "brainstorm"
 
 
@@ -1185,11 +1446,18 @@ def build_graph() -> Any:
     g.add_node("verify",            node_verify)
     g.add_node("commit",            node_commit)
     g.add_node("distill_memory",    node_distill_memory)
+    g.add_node("create_skill",      node_create_skill)
 
     g.set_entry_point("classify_task")
 
+    # classify → brainstorm (all types) OR create_skill (shortcut)
     g.add_conditional_edges("classify_task", route_after_classify,
-                             {"end": END, "brainstorm": "brainstorm"})
+                             {"end":          END,
+                              "brainstorm":   "brainstorm",
+                              "create_skill": "create_skill"})
+
+    # create_skill short-circuits to commit (no TDD loop)
+    g.add_edge("create_skill", "commit")
 
     g.add_conditional_edges("brainstorm", route_after_brainstorm,
                              {"end": END, "write_plan": "write_plan"})
@@ -1253,12 +1521,18 @@ def run_autocode_agent(
     Args:
         task:        Natural language description of what to build / fix.
         files:       {relative_path: content} of relevant source files.
-        mode:        "feature" | "fix_error" | "improve" | "add_feature"
-        target_file: File to edit (used to set task for fix_error / add_feature).
+        mode:        "feature"      -- new functionality
+                     "fix_error"    -- fix broken code
+                     "improve"      -- refactor/restructure
+                     "add_feature"  -- add to existing file
+                     "edit"         -- intentional change with impact review
+                     "create_skill" -- generate a new skill file in skills/
+        target_file: File to edit (used for fix_error / add_feature / edit modes).
         error_msg:   Error traceback (for mode="fix_error").
 
     Returns:
-        dict with: status, result, commit_sha, spec, plan, branch
+        dict with: status, result, commit_sha, spec, plan, branch,
+                   skill_path (set for create_skill), elapsed_s, trace_id
     """
     import time
     from tools.notify import notify
@@ -1268,6 +1542,10 @@ def run_autocode_agent(
         task = f"Fix error in {target_file}: {error_msg or task}"
     elif mode == "add_feature" and target_file:
         task = f"Add feature to {target_file}: {task}"
+    elif mode == "edit" and target_file:
+        task = f"Edit {target_file}: {task}"
+    elif mode == "create_skill":
+        task = f"Create skill: {task}"
 
     tid   = tracer.new_trace("autocode", goal=task[:60])
     state = _default_state(task, files or {}, mode=mode, target_file=target_file)
@@ -1328,6 +1606,7 @@ def run_autocode_agent(
         "spec":       final.get("spec", ""),
         "plan":       final.get("plan", []),
         "branch":     final.get("branch", ""),
+        "skill_path": final.get("skill_path", ""),
         "elapsed_s":  elapsed,
         "trace_id":   tid,
     }
