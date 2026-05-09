@@ -10,34 +10,30 @@ Design goals:
   5. Structured output support - request JSON, get a parsed dict back
   6. Full trace integration - every call logged with trace_id
 
+FIX: P0-4 Thread-safety
+  The original code kept a single shared httpx.Client instance on the provider.
+  httpx.Client is NOT thread-safe -- concurrent calls from the gateway's thread
+  pool corrupt each other's requests. Fix: create a new httpx.Client per call
+  using threading.local() so each thread gets its own instance with connection
+  pooling scoped to that thread. This avoids the overhead of a brand-new client
+  on every call while fixing the race condition.
+
 Usage:
     from core.llm import llm
 
-    # Simple call by role
-    result = llm.call("executor", messages=[...])
-    text   = result.text          # str
-    tokens = result.usage         # {"prompt": N, "completion": N}
-
-    # Structured JSON output
-    result = llm.call("router", messages=[...], json_mode=True)
-    data   = result.parsed        # dict (None if parse failed)
-
-    # With system prompt shortcut
     result = llm.complete(
-        role    = "executor",
-        system  = "You are a senior Python developer...",
-        user    = "Fix this bug: ...",
-        context = "Background: ...",          # optional
-        content = "File content: ...",        # optional
+        role   = "executor",
+        system = "You are a senior Python developer...",
+        user   = "Fix this bug: ...",
     )
-
-    # Trace-attached call
-    result = llm.call("planner", messages=[...], trace_id=tid)
+    text = result.text   # str
+    ok   = result.ok     # bool
 """
 
 from __future__ import annotations
 
 import json
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -55,14 +51,14 @@ from core.tracer import tracer
 class LLMResponse:
     """Unified response object returned by all LLM calls."""
 
-    text:     str                        # raw text content
-    role:     str                        # which role was used
-    model:    str                        # actual model string used
-    usage:    dict[str, int]             # {"prompt": N, "completion": N, "total": N}
-    elapsed:  float                      # seconds
-    parsed:   Optional[dict]  = None     # populated if json_mode=True and parse succeeded
-    error:    str             = ""       # non-empty if the call failed
-    ok:       bool            = True     # False if error is non-empty
+    text:     str
+    role:     str
+    model:    str
+    usage:    dict[str, int]
+    elapsed:  float
+    parsed:   Optional[dict]  = None
+    error:    str             = ""
+    ok:       bool            = True
 
     @classmethod
     def from_error(cls, role: str, model: str, error: str, elapsed: float = 0.0) -> "LLMResponse":
@@ -78,13 +74,7 @@ class LLMResponse:
 class BaseProvider(ABC):
     """
     Abstract LLM provider. Implement this to add a new backend.
-
-    To add DeepSeek, Claude, Groq, etc.:
-      1. Subclass BaseProvider
-      2. Implement chat_completion()
-      3. Register in ProviderRegistry below
-
-    The rest of the system never changes.
+    Subclass, implement chat_completion(), register in ProviderRegistry.
     """
 
     name: str = "base"
@@ -99,34 +89,45 @@ class BaseProvider(ABC):
         timeout:     int,
         json_mode:   bool,
         **kwargs:    Any,
-    ) -> dict:
-        """
-        Make a chat completion request.
-        Must return the raw API response dict, or raise on failure.
-        """
-        ...
+    ) -> dict: ...
 
     def is_available(self) -> bool:
-        """Optional health check. Override for providers that need it."""
         return True
 
 
 class LMStudioProvider(BaseProvider):
     """
     OpenAI-compatible provider for LM Studio (local).
-    Also works with any OpenAI-compatible endpoint (Ollama, vLLM, etc.).
+    Also works with Ollama, vLLM, or any OpenAI-compatible endpoint.
+
+    THREAD-SAFETY FIX (P0-4):
+    The original code held a single shared httpx.Client. httpx.Client is not
+    thread-safe -- the gateway serves multiple concurrent requests from a thread
+    pool, causing silent request corruption.
+
+    Fix: threading.local() gives each thread its own httpx.Client instance.
+    Connection pooling still works (per-thread pool), and we avoid creating a
+    brand-new client on every single call.
     """
 
     name = "lmstudio"
 
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
-        # Shared httpx client - connection pooling across calls
-        self._client = httpx.Client(
-            base_url=self.base_url,
-            headers={"Content-Type": "application/json"},
-            timeout=None,  # timeout is set per-request
-        )
+        self._local   = threading.local()  # thread-local storage for client
+
+    def _get_client(self) -> httpx.Client:
+        """
+        Return (or create) a thread-local httpx.Client.
+        Each thread gets its own client -- no shared mutable state.
+        """
+        if not hasattr(self._local, "client") or self._local.client.is_closed:
+            self._local.client = httpx.Client(
+                base_url = self.base_url,
+                headers  = {"Content-Type": "application/json"},
+                timeout  = None,  # timeout enforced per-request
+            )
+        return self._local.client
 
     def chat_completion(
         self,
@@ -146,20 +147,19 @@ class LMStudioProvider(BaseProvider):
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        payload.update(kwargs)
 
-        payload.update(kwargs)  # allow extra params (top_p, stop, etc.)
-
-        response = self._client.post(
+        response = self._get_client().post(
             "/chat/completions",
-            json=payload,
-            timeout=timeout,
+            json    = payload,
+            timeout = timeout,
         )
         response.raise_for_status()
         return response.json()
 
     def is_available(self) -> bool:
         try:
-            resp = self._client.get("/models", timeout=5)
+            resp = self._get_client().get("/models", timeout=5)
             return resp.status_code == 200
         except Exception:
             return False
@@ -168,11 +168,6 @@ class LMStudioProvider(BaseProvider):
 # -- Provider registry ---------------------------------------------------------
 
 class ProviderRegistry:
-    """
-    Maps provider names to provider instances.
-    New providers are registered here - callers never change.
-    """
-
     def __init__(self) -> None:
         self._providers: dict[str, BaseProvider] = {}
 
@@ -195,7 +190,6 @@ class ProviderRegistry:
 
 @dataclass
 class RoleConfig:
-    """Per-role defaults. Callers can override at call time."""
     model:       str
     provider:    str   = "lmstudio"
     timeout:     int   = 60
@@ -204,16 +198,13 @@ class RoleConfig:
 
 
 def _build_role_configs() -> dict[str, RoleConfig]:
-    """Build role configs from cfg.model_registry."""
     roles: dict[str, RoleConfig] = {}
 
-    # Role-specific defaults - these mirror the registry in config.py
     defaults = {
-        "planner":  {"temperature": 0.3, "max_tokens": 2048, "timeout": 90},
-        "executor": {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
-        "router":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 15},
-        "vision":   {"temperature": 0.2, "max_tokens": 1024, "timeout": 60},
-        # Agent personas - used by the agent meta-tool
+        "planner":   {"temperature": 0.3, "max_tokens": 2048, "timeout": 90},
+        "executor":  {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
+        "router":    {"temperature": 0.0, "max_tokens": 512,  "timeout": 15},
+        "vision":    {"temperature": 0.2, "max_tokens": 1024, "timeout": 60},
         "summarize": {"temperature": 0.1, "max_tokens": 512,  "timeout": 60},
         "extract":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 60},
         "classify":  {"temperature": 0.0, "max_tokens": 64,   "timeout": 15},
@@ -224,15 +215,12 @@ def _build_role_configs() -> dict[str, RoleConfig]:
         "review":    {"temperature": 0.2, "max_tokens": 768,  "timeout": 90},
     }
 
-    # Persona roles use executor model by default
     executor_model = cfg.model_registry.get("executor", {}).get("model", cfg.executor_model)
 
     for role, d in defaults.items():
-        # Get model from cfg registry, fall back to executor for persona roles
         reg_entry = cfg.model_registry.get(role, {})
         model     = reg_entry.get("model", executor_model)
         timeout   = reg_entry.get("timeout", d["timeout"])
-
         roles[role] = RoleConfig(
             model       = model,
             timeout     = timeout,
@@ -248,30 +236,20 @@ def _build_role_configs() -> dict[str, RoleConfig]:
 class LLMClient:
     """
     The single LLM client used by everything in the agent.
-
-    Features:
-    - Role-based dispatch (no model names in callers)
-    - Per-role timeout enforcement
-    - JSON mode with auto-parsing
-    - Trace integration
-    - Provider abstraction (swap backend without touching callers)
-    - Retry on transient errors (connection reset, 429)
+    Thread-safe via per-thread httpx.Client instances in LMStudioProvider.
     """
 
     MAX_RETRIES = 2
-    RETRY_DELAY = 2.0  # seconds between retries
+    RETRY_DELAY = 2.0
 
     def __init__(self) -> None:
         self._registry = ProviderRegistry()
         self._roles    = _build_role_configs()
 
-        # Register default local provider
         self._registry.register(
             "lmstudio",
             LMStudioProvider(cfg.lm_studio_base_url),
         )
-
-    # -- Public API ------------------------------------------------------------
 
     def call(
         self,
@@ -286,20 +264,11 @@ class LLMClient:
         **kwargs:    Any,
     ) -> LLMResponse:
         """
-        Make an LLM call by role.
-
-        role     : "planner" | "executor" | "router" | "vision"
-                   | "summarize" | "extract" | "classify"
-                   | "research" | "critique" | "analyze" | "code" | "review"
-        messages : OpenAI-format list of {"role": ..., "content": ...} dicts
-        json_mode: if True, request JSON output and auto-parse it
-        trace_id : attach this call to an existing trace
-
-        Returns LLMResponse - always, never raises.
+        Make an LLM call by role. Always returns LLMResponse, never raises.
         Check response.ok and response.error for failures.
         """
-        role_cfg  = self._get_role(role)
-        provider  = self._registry.get(role_cfg.provider)
+        role_cfg = self._get_role(role)
+        provider = self._registry.get(role_cfg.provider)
 
         _temperature = temperature if temperature is not None else role_cfg.temperature
         _max_tokens  = max_tokens  if max_tokens  is not None else role_cfg.max_tokens
@@ -360,11 +329,9 @@ class LLMClient:
                     tracer.error(trace_id, "llm_call", err, role=role)
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
 
-            # Retry delay for transient errors
             if attempt < self.MAX_RETRIES:
                 time.sleep(self.RETRY_DELAY)
 
-        # Should never reach here
         elapsed = round(time.time() - start, 2)
         return LLMResponse.from_error(role, role_cfg.model, "Max retries exceeded", elapsed)
 
@@ -382,14 +349,6 @@ class LLMClient:
         json_mode:   bool            = False,
         trace_id:    str             = "",
     ) -> LLMResponse:
-        """
-        Convenience wrapper that builds the messages list from parts.
-
-        system  : system prompt
-        user    : the main instruction / question
-        context : background info (injected before user turn as assistant ack)
-        content : raw content to process (appended to user turn)
-        """
         messages: list[dict] = [{"role": "system", "content": system}]
 
         if context:
@@ -413,23 +372,14 @@ class LLMClient:
         )
 
     def is_available(self, role: str = "planner") -> bool:
-        """Quick health check - returns True if the provider is reachable."""
         role_cfg = self._get_role(role)
         provider = self._registry.get(role_cfg.provider)
         return provider.is_available()
 
     def register_provider(self, name: str, provider: BaseProvider) -> None:
-        """
-        Register an additional provider (DeepSeek, Claude API, Groq, etc.).
-
-        Example:
-            from core.llm import llm, LMStudioProvider
-            llm.register_provider("deepseek", LMStudioProvider("https://api.deepseek.com/v1"))
-        """
         self._registry.register(name, provider)
 
     def list_roles(self) -> list[dict]:
-        """List all configured roles with their settings."""
         return [
             {
                 "role":        name,
@@ -442,16 +392,12 @@ class LLMClient:
             for name, rc in sorted(self._roles.items())
         ]
 
-    # -- Internal --------------------------------------------------------------
-
     def _get_role(self, role: str) -> RoleConfig:
         if role not in self._roles:
-            # Unknown role - fall back to executor with a warning
             import sys as _sys
-            known = sorted(self._roles.keys())
             print(
                 f"[llm] WARNING: unknown role {role!r} -- falling back to executor. "
-                f"Known roles: {known}",
+                f"Known: {sorted(self._roles.keys())}",
                 file=_sys.stderr,
             )
             return self._roles["executor"]
@@ -459,13 +405,8 @@ class LLMClient:
 
     @staticmethod
     def _parse_response(
-        raw:       dict,
-        role:      str,
-        model:     str,
-        elapsed:   float,
-        json_mode: bool,
+        raw: dict, role: str, model: str, elapsed: float, json_mode: bool,
     ) -> LLMResponse:
-        """Parse raw API response into LLMResponse."""
         try:
             choice  = raw["choices"][0]["message"]["content"].strip()
             usage_r = raw.get("usage", {})
@@ -479,7 +420,6 @@ class LLMClient:
 
         parsed: Optional[dict] = None
         if json_mode:
-            # Strip markdown fences if model wrapped the JSON
             clean = choice
             for fence in ["```json", "```"]:
                 if clean.startswith(fence):
@@ -488,16 +428,11 @@ class LLMClient:
             try:
                 parsed = json.loads(clean)
             except json.JSONDecodeError:
-                pass  # parsed stays None - caller checks
+                pass
 
         return LLMResponse(
-            text    = choice,
-            role    = role,
-            model   = model,
-            usage   = usage,
-            elapsed = elapsed,
-            parsed  = parsed,
-            ok      = True,
+            text=choice, role=role, model=model,
+            usage=usage, elapsed=elapsed, parsed=parsed, ok=True,
         )
 
 

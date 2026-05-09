@@ -12,47 +12,53 @@ Actions:
   scrape          -> fetch URL, return clean text (BS4, no JS/CSS noise)
   read            -> alias for scrape
   search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
+
+P1-1: Use per-request httpx.Client context manager instead of module-level client.
+This fixes connection leaks and thread-safety (gateway runs multiple threads).
+
+M3: Add 0.5s delay between requests in loop-based actions to be polite to servers.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Optional
+import time as _time
 
 from core.config import cfg
 from registry import tool
 
-# Module-level client -- created lazily on first use
-_client = None
+# Module-level defaults (not clients)
 MAX_TEXT_CHARS = 8000
 SNIPPET_CHARS  = 300
 
+_CLIENT_DEFAULTS = {
+    "headers":          {"User-Agent": "Mozilla/5.0 MCP-Agent/1.0"},
+    "timeout":          10.0,
+    "follow_redirects": True,
+}
+
+
+def _make_client():
+    """Create a fresh httpx.Client. Always use as a context manager."""
+    import httpx
+    return httpx.Client(**_CLIENT_DEFAULTS)
+
 
 def _get_client():
-    """Lazy httpx client -- only created on first web call."""
-    global _client
-    if _client is None:
-        import httpx
-        _HEADERS = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        }
-        _client = httpx.Client(
-            headers=_HEADERS, timeout=30, follow_redirects=True
-        )
-    return _client
+    """
+    Legacy compatibility wrapper -- creates client on first call.
+    New code should use _make_client() as context manager for thread safety.
+    """
+    import httpx
+    return httpx.Client(**_CLIENT_DEFAULTS)
 
 
 def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
-    """Fetch URL, return (html, error)."""
-    import httpx
+    """Fetch URL using context-managed client, return (html, error)."""
     try:
-        resp = _get_client().get(url, timeout=timeout)
+        with _make_client() as client:
+            resp = client.get(url, timeout=timeout)
         resp.raise_for_status()
         return resp.text, ""
     except httpx.TimeoutException:
@@ -109,13 +115,13 @@ def _html_to_text(html: str, max_chars: int = MAX_TEXT_CHARS) -> tuple[str, str]
 
 def _do_search(query: str, max_results: int = 5) -> dict:
     """Call SearXNG and return structured results."""
-    import httpx
     try:
-        resp = _get_client().get(
-            f"{cfg.searxng_url}/search",
-            params={"q": query, "format": "json", "categories": "general"},
-            timeout=15,
-        )
+        with _make_client() as client:
+            resp = client.get(
+                f"{cfg.searxng_url}/search",
+                params={"q": query, "format": "json", "categories": "general"},
+                timeout=15,
+            )
         resp.raise_for_status()
         data    = resp.json()
         raw     = data.get("results", [])[:max_results]

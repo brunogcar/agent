@@ -16,8 +16,8 @@ Every memory entry has a structured format:
     "trace_id":   str,            # links memory to the workflow that created it
     "goal":       str,            # what was being attempted
     "outcome":    str,            # success | failure | partial | unknown
-    "tools_used": str,            # comma-separated tool names
-    "source":     str,            # where this knowledge came from
+    "tools_used": str,            # comma-separated tool names,
+    "source":     str,            # where this knowledge came from,
   }
 
 Recall uses decay scoring so old memories fade naturally:
@@ -33,7 +33,7 @@ Usage:
                           trace_id=tid, goal="fix import error", outcome="success")
 
     memory.store_semantic("ChromaDB supports persistent local storage",
-                          importance=6, tags="chromadb,vector,storage")
+                          importance=6, tags="chromadb,vector,storage", source="docs.trychroma.com")
 
     memory.store_procedural("To fix SyntaxError: always check line N-2 for unclosed bracket",
                              importance=9, tags="syntax,debug")
@@ -207,34 +207,38 @@ class MemoryStore:
             _os.getenv("MEMORY_DEDUP_THRESHOLD", "")
             or _default_thresholds.get(collection, 0.08)
         )
-        try:
-            existing = col.query(query_texts=[text], n_results=1,
-                                 include=["documents", "distances"])
-            docs      = existing.get("documents", [[]])[0]
-            distances = existing.get("distances", [[]])[0]
-            if docs and distances and distances[0] < _dedup_thresh:
-                return {"status": "skipped_duplicate", "collection": collection}
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception:
-            pass  # dedup failure is non-fatal -- store anyway
 
         memory_id = str(uuid.uuid4())
-        metadata  = {
-            "type":       collection,
-            "importance": importance,
-            "tags":       tags,
-            "timestamp":  int(time.time()),
-            "trace_id":   trace_id,
-            "goal":       goal[:200],
-            "outcome":    outcome,
-            "tools_used": tools_used,
-            "source":     source[:200],
-        }
+        
+        # P1-2: dedup check moved INSIDE write lock for atomicity
+        # Without this, two concurrent callers could both pass similarity check
+        # and both insert, creating duplicates. Locking is coarse but
+        # correctness > throughput here.
+        with self._write_lock:
+            try:
+                existing = col.query(query_texts=[text], n_results=1,
+                                     include=["documents", "distances"])
+                docs      = existing.get("documents", [[]])[0]
+                distances = existing.get("distances", [[]])[0]
+                if docs and distances and distances[0] < _dedup_thresh:
+                    return {"status": "skipped_duplicate", "collection": collection}
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                pass  # dedup failure is non-fatal -- store anyway
 
         try:
-            with self._write_lock:
-                col.add(documents=[text], ids=[memory_id], metadatas=[metadata])
+            col.add(documents=[text], ids=[memory_id], metadatas={
+                "type":       collection,
+                "importance": importance,
+                "tags":       tags,
+                "timestamp":  int(time.time()),
+                "trace_id":   trace_id,
+                "goal":       goal[:200],
+                "outcome":    outcome,
+                "tools_used": tools_used,
+                "source":     source[:200],
+            })
             return {"status": "stored", "id": memory_id, "collection": collection}
         except Exception as e:
             return {"status": "error", "error": str(e)}

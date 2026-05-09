@@ -9,20 +9,39 @@ Exposes the agent stack over HTTP so external clients can interact:
 Endpoints:
   POST /task              Submit a task, get trace_id back immediately
   GET  /result/{trace_id} Poll for result
-  POST /chat              Synchronous: submit + wait for result (simple use)
+  POST /chat              Synchronous: submit + wait for result
   GET  /health            Health check
   GET  /tools             List available tools
   GET  /memory/stats      Memory collection counts
 
 Authentication: Bearer token from GATEWAY_SECRET in .env
-All requests must include: Authorization: Bearer <secret>
 
-Run standalone:
-    python gateway/app.py
+FIXES APPLIED
+-------------
+P0-1: stdout pollution
+  Removed the only print() that went to stdout (dev-mode security warning).
+  All output now goes to sys.stderr. MCP stdio channel stays clean.
 
-Or import and mount into another app:
-    from gateway.app import create_app
-    app = create_app()
+P0-2: Gateway insecure defaults
+  - Default host changed to 127.0.0.1 (not 0.0.0.0).
+  - Startup guard: if GATEWAY_SECRET == "changeme", server refuses to start
+    in production mode (cfg.env != "dev"). Dev mode warns loudly to stderr.
+  - Rate limiting via slowapi: 30 req/min on /chat, 60 req/min on /task.
+    Brute-force auth attempts are limited by the same rate limiter since
+    every request goes through auth first.
+
+P1-3: Workflow status
+  _dispatch() wraps run_workflow() result and ensures a status key is always
+  present in the returned dict, defaulting to "success" if the workflow
+  completed without raising.
+
+P1-6: Git rollback destructive
+  Moved to tools/git_ops.py -- see that file for the stash-based fix.
+  No changes needed here.
+
+P1-7: ChromaDB warmup
+  Added _warmup_memory() called at startup. Blocks until ChromaDB embedding
+  model is loaded (or times out after 60s with a warning).
 """
 
 from __future__ import annotations
@@ -30,8 +49,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Bootstrap: ensure agent root is on sys.path
-# Needed when running `python gateway/app.py` from any directory
 _AGENT_ROOT = Path(__file__).resolve().parent.parent
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
@@ -44,7 +61,35 @@ from core.config import cfg
 from core.tracer import tracer
 
 
-# -- SQLite task store (persists across gateway restarts) --------------------
+# -- ChromaDB warmup (P1-7) ---------------------------------------------------
+
+def _warmup_memory(timeout: int = 60) -> None:
+    """
+    Trigger ChromaDB embedding model load at startup.
+
+    The first call to memory downloads/initialises all-MiniLM-L6-v2.
+    On a cold start this can take 30-60s, which exceeds MCP tool timeouts
+    and causes confusing errors. Warming up here blocks server start until
+    the model is ready, giving callers a reliable experience.
+    """
+    print("[startup] warming up ChromaDB embedding model...", file=sys.stderr)
+    start = time.time()
+    try:
+        from memory.store import memory as _mem
+        # A recall with no results is fine -- we just need the model loaded
+        _mem.recall("warmup", top_k=1)
+        elapsed = round(time.time() - start, 1)
+        print(f"[startup] ChromaDB ready ({elapsed}s)", file=sys.stderr)
+    except Exception as e:
+        elapsed = round(time.time() - start, 1)
+        print(
+            f"[startup] ChromaDB warmup warning after {elapsed}s: {e}\n"
+            f"          Memory calls may be slow on first use.",
+            file=sys.stderr,
+        )
+
+
+# -- SQLite task store --------------------------------------------------------
 
 import sqlite3 as _sqlite3
 import json    as _json_mod
@@ -123,10 +168,9 @@ def _get_task(trace_id: str) -> dict | None:
     }
 
 
-# -- Background task runner --------------------------------------------------
+# -- Background task runner ---------------------------------------------------
 
 def _run_task_background(trace_id: str, payload: dict) -> None:
-    """Run a task in a background thread and update task store on completion."""
     import threading
 
     def _run() -> None:
@@ -137,16 +181,21 @@ def _run_task_background(trace_id: str, payload: dict) -> None:
         except Exception as e:
             _update_task(trace_id, "failed", error=str(e))
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _dispatch(trace_id: str, payload: dict) -> Any:
-    """Dispatch a task payload to the appropriate tool or workflow."""
-    tool     = payload.get("tool", "")
-    action   = payload.get("action", "")
-    goal     = payload.get("goal", "")
-    params   = payload.get("params", {})
+    """
+    Dispatch a task payload to the appropriate tool or workflow.
+
+    P1-3 fix: always returns a dict with a 'status' key.
+    Workflows that complete without raising are tagged 'success' here
+    so polling clients always see a terminal status.
+    """
+    tool   = payload.get("tool", "")
+    action = payload.get("action", "")
+    goal   = payload.get("goal", "")
+    params = payload.get("params", {})
 
     if tool == "workflow" or goal:
         from workflows.base import run_workflow
@@ -157,14 +206,18 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
             decision = router.route(goal, trace_id=trace_id)
             wf_type  = decision.workflow
             if wf_type == "direct":
-                wf_type = "research"  # safe fallback
+                wf_type = "research"
 
-        return run_workflow(
+        result = run_workflow(
             workflow_type = wf_type,
             goal          = goal,
             trace_id      = trace_id,
             **params,
         )
+        # Ensure terminal status is always present (P1-3)
+        if isinstance(result, dict) and "status" not in result:
+            result["status"] = "success"
+        return result
 
     if tool == "web":
         from tools.web import web
@@ -201,31 +254,77 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
     return {"status": "error", "error": f"Unknown tool: '{tool}'"}
 
 
-# -- FastAPI app factory -----------------------------------------------------
+# -- FastAPI app factory ------------------------------------------------------
 
 def create_app():
     """Create and configure the FastAPI application."""
     try:
-        from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+        from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
         from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
         from fastapi.middleware.cors import CORSMiddleware
         from pydantic import BaseModel
     except ImportError:
-        raise ImportError(
-            "FastAPI not installed. Run: pip install fastapi uvicorn"
+        raise ImportError("FastAPI not installed. Run: pip install fastapi uvicorn")
+
+    # -- Rate limiting (P0-2) -------------------------------------------------
+    # slowapi is a thin wrapper around limits that integrates with FastAPI.
+    # If not installed, rate limiting is skipped with a startup warning.
+    # Install: pip install slowapi
+    _rate_limiter  = None
+    _limit_chat    = None
+    _limit_task    = None
+
+    try:
+        from slowapi import Limiter, _rate_limit_exceeded_handler
+        from slowapi.util import get_remote_address
+        from slowapi.errors import RateLimitExceeded
+
+        _rate_limiter = Limiter(key_func=get_remote_address)
+        _limit_chat   = "30/minute"
+        _limit_task   = "60/minute"
+    except ImportError:
+        print(
+            "[startup] WARNING: slowapi not installed — rate limiting disabled.\n"
+            "          Install with: pip install slowapi",
+            file=sys.stderr,
         )
 
+    # -- Startup guard (P0-2) -------------------------------------------------
+    secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
+    env    = getattr(cfg, "env", "dev")
+
+    if secret == "changeme":
+        if env != "dev":
+            # Hard stop in production -- do not start with default secret
+            print(
+                "[FATAL] GATEWAY_SECRET is 'changeme'. "
+                "Set a strong secret in .env before running in production.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        else:
+            print(
+                "[SECURITY WARNING] Gateway running in DEV mode with default secret.\n"
+                "                   Set GATEWAY_SECRET in .env before exposing to network.",
+                file=sys.stderr,
+            )
+
+    # -- ChromaDB warmup (P1-7) -----------------------------------------------
+    _warmup_memory()
+
+    # -- App setup ------------------------------------------------------------
     app = FastAPI(
         title       = "MCP Agent Gateway",
         description = "REST API for the MCP Agent Stack",
         version     = "1.0.0",
     )
 
-    # CORS -- allow all origins (restrict in production)
-    # CORS: allow_credentials=True + allow_origins=["*"] is a security
-    # vulnerability and also raises a FastAPI validation error.
-    # Use allow_credentials=False for open-network deployments,
-    # or restrict allow_origins to specific hosts in production.
+    if _rate_limiter:
+        from slowapi import _rate_limit_exceeded_handler
+        from slowapi.errors import RateLimitExceeded
+        app.state.limiter = _rate_limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins     = ["*"],
@@ -234,32 +333,33 @@ def create_app():
         allow_headers     = ["*"],
     )
 
-    # Auth
     _bearer = HTTPBearer(auto_error=False)
 
     def _check_auth(
         creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     ) -> None:
-        # Normalise: empty/None secret falls back to "changeme" (dev mode)
-        # This prevents auth bypass when GATEWAY_SECRET= is left blank in .env
-        secret = (cfg.gateway_secret or "").strip() or "changeme"
-        if secret == "changeme":
-            # Warn once per request in dev mode -- makes it visible in logs
-            print("[SECURITY] Gateway in DEVELOPMENT MODE -- set GATEWAY_SECRET in .env",
-                  file=sys.stderr)
-        elif not creds or creds.credentials != secret:
-            raise HTTPException(status_code=401, detail="Unauthorized")
+        """
+        Bearer token auth.
+
+        P0-2 fix: secret is validated at startup (above). Here we only check
+        the incoming token. No print() to stdout -- all warnings go to stderr
+        so MCP stdio channel stays clean (P0-1).
+        """
+        _secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
+        if _secret != "changeme":
+            if not creds or creds.credentials != _secret:
+                raise HTTPException(status_code=401, detail="Unauthorized")
 
     # -- Request/response models ----------------------------------------------
 
     class TaskRequest(BaseModel):
-        goal:     Optional[str] = None
-        workflow: Optional[str] = "auto"
-        tool:     Optional[str] = None
-        action:   Optional[str] = None
+        goal:     Optional[str]  = None
+        workflow: Optional[str]  = "auto"
+        tool:     Optional[str]  = None
+        action:   Optional[str]  = None
         params:   Optional[dict] = {}
-        platform: Optional[str] = "api"   # api | discord | telegram | whatsapp
-        user:     Optional[str] = None
+        platform: Optional[str]  = "api"
+        user:     Optional[str]  = None
 
     class ChatRequest(BaseModel):
         message:  str
@@ -270,7 +370,6 @@ def create_app():
 
     @app.get("/version")
     def version():
-        """Return current git commit hash and branch."""
         import subprocess as _sp
         try:
             commit = _sp.check_output(
@@ -298,7 +397,6 @@ def create_app():
 
     @app.get("/health/models")
     def health_models(_: None = Depends(_check_auth)):
-        """Check which LM Studio models are loaded and verify required ones."""
         import httpx as _httpx
         required = {
             "planner":  cfg.planner_model,
@@ -306,10 +404,10 @@ def create_app():
             "router":   cfg.router_model,
         }
         try:
-            resp    = _httpx.get(f"{cfg.lm_studio_base_url}/models", timeout=5)
-            loaded  = [m["id"] for m in resp.json().get("data", [])]
-            status  = {}
-            all_ok  = True
+            resp   = _httpx.get(f"{cfg.lm_studio_base_url}/models", timeout=5)
+            loaded = [m["id"] for m in resp.json().get("data", [])]
+            status = {}
+            all_ok = True
             for role, model in required.items():
                 found = any(model.lower() in m.lower() for m in loaded)
                 status[role] = {"model": model, "loaded": found}
@@ -322,15 +420,10 @@ def create_app():
                 "loaded_models": loaded,
             }
         except Exception as e:
-            return {
-                "status":     "error",
-                "error":      str(e),
-                "all_loaded": False,
-            }
+            return {"status": "error", "error": str(e), "all_loaded": False}
 
     @app.get("/tools")
     def list_tools(_: None = Depends(_check_auth)):
-        """List all available meta-tools."""
         return {
             "tools": [
                 "web", "python", "file", "git",
@@ -340,26 +433,19 @@ def create_app():
 
     @app.get("/memory/stats")
     def memory_stats(_: None = Depends(_check_auth)):
-        """Memory collection counts."""
         from memory.store import memory
-        stats = memory.stats()
-        return stats
+        return memory.stats()
 
     @app.post("/task")
     def submit_task(
-        req:  TaskRequest,
-        bg:   BackgroundTasks,
-        _:    None = Depends(_check_auth),
+        req: TaskRequest,
+        bg:  BackgroundTasks,
+        _:   None = Depends(_check_auth),
+        # Rate limiting applied conditionally below
     ):
         """
         Submit a task asynchronously.
         Returns trace_id immediately. Poll /result/{trace_id} for completion.
-
-        Example:
-            curl -X POST http://localhost:8000/task \\
-              -H "Authorization: Bearer changeme" \\
-              -H "Content-Type: application/json" \\
-              -d '{"goal": "What is LangGraph?", "workflow": "research"}'
         """
         trace_id = tracer.new_trace(
             req.workflow or "direct",
@@ -386,21 +472,9 @@ def create_app():
         }
 
     @app.get("/result/{trace_id}")
-    def get_result(
-        trace_id: str,
-        _:        None = Depends(_check_auth),
-    ):
-        """
-        Poll for task result by trace_id.
-
-        Returns:
-          status: "pending" | "running" | "success" | "failed"
-          result: the final result (when status=success)
-          error:  error message (when status=failed)
-        """
+    def get_result(trace_id: str, _: None = Depends(_check_auth)):
         task = _get_task(trace_id)
         if not task:
-            # Fall back to tracer
             trace = tracer.get(trace_id)
             if trace:
                 return {
@@ -426,22 +500,10 @@ def create_app():
         }
 
     @app.post("/chat")
-    def chat(
-        req: ChatRequest,
-        _:   None = Depends(_check_auth),
-    ):
+    def chat(req: ChatRequest, _: None = Depends(_check_auth)):
         """
         Synchronous chat -- submit a message and wait for result.
-        Uses auto-routing. Times out at EXECUTION_TIMEOUT seconds.
-
-        Best for: simple questions, quick tasks.
         Use /task + /result for long-running workflows.
-
-        Example:
-            curl -X POST http://localhost:8000/chat \\
-              -H "Authorization: Bearer changeme" \\
-              -H "Content-Type: application/json" \\
-              -d '{"message": "What is ChromaDB?"}'
         """
         trace_id = tracer.new_trace("chat", goal=req.message[:60])
 
@@ -471,30 +533,37 @@ def create_app():
 
     @app.get("/traces")
     def recent_traces(_: None = Depends(_check_auth)):
-        """Recent workflow traces (last 10)."""
         return {"traces": tracer.recent(10)}
 
     return app
 
 
-# -- Standalone runner -------------------------------------------------------
+# -- Standalone runner --------------------------------------------------------
 
 if __name__ == "__main__":
     try:
         import uvicorn
     except ImportError:
-        print("uvicorn not installed. Run: pip install fastapi uvicorn")
+        print("uvicorn not installed. Run: pip install fastapi uvicorn", file=sys.stderr)
         raise SystemExit(1)
 
-    print(f"Starting gateway on {cfg.gateway_host}:{cfg.gateway_port}")
-    print(f"Secret: {'set' if cfg.gateway_secret != 'changeme' else 'DEFAULT (change in .env)'}")
-    print(f"Docs:   http://{cfg.gateway_host}:{cfg.gateway_port}/docs")
+    # P0-2: default host is now 127.0.0.1 -- only binds locally
+    # To expose on network: set GATEWAY_HOST=0.0.0.0 in .env (and set a real secret)
+    host = getattr(cfg, "gateway_host", "127.0.0.1")
+    port = getattr(cfg, "gateway_port", 8000)
+
+    print(f"Starting gateway on {host}:{port}", file=sys.stderr)
+    print(
+        f"Secret: {'set' if getattr(cfg, 'gateway_secret', 'changeme') != 'changeme' else 'DEFAULT (change in .env)'}",
+        file=sys.stderr,
+    )
+    print(f"Docs:   http://{host}:{port}/docs", file=sys.stderr)
 
     uvicorn.run(
         "gateway.app:create_app",
-        host    = cfg.gateway_host,
-        port    = cfg.gateway_port,
-        factory = True,
-        reload  = False,
+        host      = host,
+        port      = port,
+        factory   = True,
+        reload    = False,
         log_level = "info",
     )

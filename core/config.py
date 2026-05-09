@@ -61,12 +61,12 @@ class Config:
         self.workspace_index    = self.workspace_root / ".index"  # FTS index (Phase 4)
         self.log_path           = self.agent_root / "logs"
 
-        # ── LM Studio ─────────────────────────────────────────────────────────
+        # ── LM Studio ──────────────────────────────────────────────────────────
         self.lm_studio_base_url = os.getenv(
             "LM_STUDIO_BASE_URL", "http://localhost:1234/v1"
         )
 
-        # ── Model roles ───────────────────────────────────────────────────────
+        # ── Model roles ────────────────────────────────────────────────────────
         self.planner_model  = os.getenv("PLANNER_MODEL",  "qwen/qwen3.5-9b")
         self.executor_model = os.getenv("EXECUTOR_MODEL", "hermes-3-llama-3.1-8b")
         self.router_model   = os.getenv("ROUTER_MODEL",   "nvidia/nemotron-3-nano-4b")
@@ -97,22 +97,26 @@ class Config:
             },
         }
 
-        # ── External services ─────────────────────────────────────────────────
+        # ── External services ───────────────────────────────────────────────────
         self.searxng_url = os.getenv("SEARXNG_URL", "http://192.168.1.10:30053")
 
-        # ── Memory tuning ─────────────────────────────────────────────────────
+        # ── Memory tuning ──────────────────────────────────────────────────────
         self.memory_delete_threshold = float(os.getenv("MEMORY_DELETE_THRESHOLD", "0.4"))
         self.memory_decay_days       = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
         self.memory_top_k            = int(os.getenv("MEMORY_TOP_K", "5"))
 
-        # ── Execution ─────────────────────────────────────────────────────────
+        # ── Execution ──────────────────────────────────────────────────────────
         self.execution_timeout = int(os.getenv("EXECUTION_TIMEOUT", "120"))
         self.sandbox_timeout   = int(os.getenv("SANDBOX_TIMEOUT", "30"))
 
-        # ── Autocode ──────────────────────────────────────────────────────────
+        # ── Autocode ───────────────────────────────────────────────────────────
         self.autocode_max_retries    = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
         self.autocode_max_file_chars = int(os.getenv("AUTOCODE_MAX_FILE_CHARS", "6000"))
         self.autocode_debug          = os.getenv("AUTOCODE_DEBUG", "0") == "1"
+
+        # M8: validate tunables -- fail fast at startup rather than silently misbehave
+        assert self.autocode_max_retries  > 0,  "AUTOCODE_MAX_RETRIES must be > 0"
+        assert self.autocode_max_file_chars > 0, "AUTOCODE_MAX_FILE_CHARS must be > 0"
 
         # Protected files — autocode will never touch these
         self.protected_files: frozenset[str] = frozenset({
@@ -123,12 +127,12 @@ class Config:
             "gateway/app.py",    # contains auth logic and secrets handling
         })
 
-        # ── Gateway ───────────────────────────────────────────────────────────
+        # ── Gateway ────────────────────────────────────────────────────────────
         self.gateway_host   = os.getenv("GATEWAY_HOST", "0.0.0.0")
         self.gateway_port   = int(os.getenv("GATEWAY_PORT", "8000"))
         self.gateway_secret = os.getenv("GATEWAY_SECRET", "changeme")
 
-        # ── Environment ───────────────────────────────────────────────────────
+        # ── Environment ────────────────────────────────────────────────────────
         self.env        = os.getenv("ENV", "development")
         self.is_dev     = self.env == "development"
         self.is_windows = os.name == "nt"
