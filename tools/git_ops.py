@@ -18,11 +18,13 @@ Key fixes over old git_ops.py:
   - Paths use pathlib throughout
   - root parameter: "workspace" | "agent" | any absolute path string
   - Works on both Windows and Linux
+  - Environment override only on non-Windows (fixes Windows PATH issues)
 """
 
 from __future__ import annotations
 
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -33,20 +35,19 @@ from registry import tool
 
 # -- Git runner ----------------------------------------------------------------
 
-import os as _os
-
-# Git environment that prevents ALL interactive prompts.
-# Without this, git can hang indefinitely waiting for credentials or
-# user identity -- which causes MCP -32001 timeout errors.
-# GIT_TERMINAL_PROMPT=0  : never show a terminal prompt
-# GIT_ASKPASS=echo       : return empty string for any credential request
-# GIT_SSH_COMMAND        : disable SSH host key prompts
-_GIT_ENV = {
-    **_os.environ,
-    "GIT_TERMINAL_PROMPT": "0",
-    "GIT_ASKPASS":         "echo",
-    "GIT_SSH_COMMAND":     "ssh -o BatchMode=yes -o StrictHostKeyChecking=no",
-}
+# Environment that prevents interactive prompts – only set on non-Windows.
+# On Windows, we omit env= entirely to inherit the full system environment,
+# which keeps Git in PATH and avoids subprocess resolution failures.
+if sys.platform != "win32":
+    import os as _os
+    _GIT_ENV = {
+        **_os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS":         "echo",
+        "GIT_SSH_COMMAND":     "ssh -o BatchMode=yes -o StrictHostKeyChecking=no",
+    }
+else:
+    _GIT_ENV = None
 
 
 def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
@@ -54,18 +55,19 @@ def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
     Run a git command in the given directory.
     Returns (returncode, stdout, stderr). Never raises.
 
-    Uses _GIT_ENV to suppress all interactive prompts -- the main
-    cause of MCP -32001 timeout errors on git operations.
+    On Linux/macOS: uses _GIT_ENV to suppress all interactive prompts.
+    On Windows: inherits parent environment (fixes PATH resolution).
     """
     try:
-        result = subprocess.run(
-            ["git"] + args,
-            capture_output=True,
-            text=True,
-            cwd=str(cwd),
-            timeout=30,
-            env=_GIT_ENV,
-        )
+        run_kwargs = {
+            "capture_output": True,
+            "text": True,
+            "cwd": str(cwd),
+            "timeout": 30,
+        }
+        if _GIT_ENV is not None:
+            run_kwargs["env"] = _GIT_ENV
+        result = subprocess.run(["git"] + args, **run_kwargs)
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except FileNotFoundError:
         return -1, "", "git not found on PATH - install Git"
@@ -121,6 +123,7 @@ def git(
     root:      str = "workspace",
     n:         int = 10,
     path:      str = "",
+    **kwargs,
 ) -> dict:
     """
     Git version control operations.
@@ -152,7 +155,7 @@ def git(
         Hard reset to HEAD - discards ALL uncommitted changes.
         Call when a patch or edit fails testing.
         Also cleans untracked files created by failed changes.
-        Optional: root
+        Optional: root, force (bool) – if force=True, skip stashing and permanently discard changes.
         Returns:  {head, status}
 
     log
@@ -178,6 +181,7 @@ def git(
         git(operation="snapshot", message="before editing memory.py")
         git(operation="commit",   message="fix: correct decay scoring in memory store")
         git(operation="rollback")
+        git(operation="rollback", force=True)   # permanent discard, no stash
         git(operation="log",      n=5)
         git(operation="status")
         git(operation="diff",     path="tools/memory_tool.py")
@@ -294,23 +298,21 @@ def git(
     # -- rollback --------------------------------------------------------------
     if operation == "rollback":
         """
-        P1-6 fix: stash before reset so uncommitted work is recoverable.
-
-        git reset --hard is permanent -- any unsaved work is gone forever.
-        git stash saves it to the stash stack first (git stash pop to restore).
-        Pass force=True as a kwarg to skip stash and reset immediately.
-
-        Also removed git clean -fd from the default path -- cleaning untracked
-        files is a separate destructive action that should be opt-in.
+        Safe rollback: stash changes first unless force=True is passed.
+        force=True will permanently discard uncommitted work (like git reset --hard).
         """
-        force = kwargs.get("force", False) if "kwargs" in dir() else False
+        force = kwargs.get("force", False)
 
         if force:
             _git(["reset", "--hard", "HEAD"], cwd)
             _git(["clean", "-fd"], cwd)
             _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
-            return {"status": "rolled_back", "head": head,
-                    "message": "Force reset to HEAD (unrecoverable)", "root": str(cwd)}
+            return {
+                "status": "rolled_back",
+                "head": head,
+                "message": "Force reset to HEAD (unrecoverable)",
+                "root": str(cwd)
+            }
 
         # Safe path: stash first
         import time as _t
