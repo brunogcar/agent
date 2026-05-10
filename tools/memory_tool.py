@@ -9,7 +9,7 @@ not at module registration time. This keeps server startup fast.
 """
 
 from __future__ import annotations
-
+import re
 from registry import tool
 
 
@@ -17,6 +17,53 @@ def _mem():
     """Lazy import of memory store -- avoids slow chromadb load at startup."""
     from memory.store import memory as _memory
     return _memory
+
+
+# ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────
+TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_. ]*$')  # Safe identifier pattern
+
+def _validate_tags(tags: str, max_count: int = 5) -> tuple[bool, str]:
+    """Validate tags to prevent injection/XSS attacks.
+    
+    Args:
+        tags: Comma-separated tag string (may be empty)
+        max_count: Maximum tags allowed per entry
+        
+    Returns:
+        Tuple of (is_valid, error_message). Returns (True, "") if valid.
+        
+    Validation rules:
+        - Reject dangerous chars: < > " ' ` | newline  
+        - Each tag must start with letter, contain only letters/numbers/hyphens/dots/spaces
+        - Max 5 tags (stricter than default), max 50 chars each tag
+    """
+    if not tags:
+        return True, ""  # Empty is fine
+    
+    # Reject dangerous characters immediately  
+    danger_list = ['<', '>', '"', "'", '`', '|']
+    for bad_char in danger_list:
+        if bad_char in tags:
+            return False, f"Tags cannot contain: {bad_char}"
+    
+    # Split by comma and validate each tag
+    parts = [t.strip() for t in re.split(r'[,\s]+', tags) if t.strip()]
+    
+    if not parts:
+        return False, "No valid tags found"
+    
+    if len(parts) > max_count:
+        return False, f"Too many tags (max {max_count})"
+    
+    for i, tag in enumerate(parts):
+        if len(tag) > 50:
+            return False, f"Tag exceeds length limit ({len(tag)} > 50)"
+        # Tags must match pattern: starts with letter, then alphanumeric/hyphens/dots/spaces
+        if not TAG_PATTERN.fullmatch(tag):
+            bad_chars = set(tag) - set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_. ')
+            return False, f"Tag contains invalid characters: {bad_chars}"
+    
+    return True, ""
 
 
 @tool
@@ -42,8 +89,7 @@ def memory(
     min_importance: int    = 3,
     dry_run:        bool   = True,
 ) -> dict:
-    """
-    Memory tool -- store, recall, and manage agent memories.
+    """Memory tool -- store, recall, and manage agent memories.
 
     action: "store" | "recall" | "delete" | "prune" | "summarize" | "stats"
 
@@ -77,11 +123,6 @@ def memory(
                text="ChromaDB get_or_create_collection is idempotent",
                importance=7, tags="chromadb,startup")
 
-        memory(action="store", memory_type="procedural",
-               text="To add a new MCP tool: decorate with @tool in tools/ directory. "
-                    "registry.py auto-discovers it. No changes to server.py needed.",
-               importance=9, tags="mcp,tools,howto")
-
     -- RECALL -------------------------------------------------------------------
     Semantic search across memory collections, ranked by decay score.
     score = importance * max(0.3, 1 - age/decay_days)
@@ -96,28 +137,6 @@ def memory(
         memory(action="recall", query="how to fix syntax errors", top_k=3)
         memory(action="recall", query="ChromaDB", collections=["semantic"])
         memory(action="recall", query="tool registration", tags_filter="mcp,howto")
-
-    -- DELETE -------------------------------------------------------------------
-    Two-step safety pattern:
-      Step 1 -- call without confirm_ids -> returns candidates (dry run)
-      Step 2 -- call with confirm_ids from step 1 -> actually deletes
-
-    threshold   : cosine distance cutoff (default 0.4)
-    confirm_ids : list of IDs to confirm deletion
-
-    -- PRUNE --------------------------------------------------------------------
-    Remove old, low-importance memories in bulk.
-    Procedural collection is always protected.
-    Memories tagged "summary", "critical", or "protected" are safe.
-
-    dry_run=True (default) -> preview only. dry_run=False -> execute.
-
-    -- SUMMARIZE ----------------------------------------------------------------
-    Consolidate all memories into a dense summary using the planner model.
-    Stored as importance=10 semantic memory tagged "summary".
-
-    -- STATS --------------------------------------------------------------------
-        memory(action="stats")
     """
     action = action.strip().lower()
     store  = _mem()
@@ -126,18 +145,20 @@ def memory(
         if not text or not text.strip():
             return {"status": "error", "error": "text is required for store"}
         if importance < 1 or importance > 10:
-            return {"status": "error",
-                    "error": f"importance must be 1-10, got {importance}"}
+            return {"status": "error", "error": f"importance must be 1-10, got {importance}"}
         # Guard against storing huge blobs that bloat the vector DB
         MAX_MEMORY_BYTES = 50_000  # 50 KB
         if len(text.encode("utf-8")) > MAX_MEMORY_BYTES:
             return {
                 "status": "error",
-                "error":  (
-                    f"text is {len(text.encode())} bytes -- exceeds 50KB limit. "
-                    "Summarise or chunk the content before storing."
-                ),
+                "error": (f"text is {len(text.encode())} bytes -- exceeds 50KB limit. "
+                         "Summarise or chunk the content before storing."),
             }
+        # MED-05: Validate tags for store operation (stricter: max 5, no spaces)
+        is_valid, err = _validate_tags(tags, max_count=5)
+        if not is_valid:
+            return {"status": "error", "error": err}
+
         return store.store(
             text=text, memory_type=memory_type, importance=importance,
             tags=tags, trace_id=trace_id, goal=goal, outcome=outcome,
@@ -147,6 +168,11 @@ def memory(
     if action == "recall":
         if not query:
             return {"status": "error", "error": "query is required for recall"}
+        # MED-05: Validate tags_filter parameter (same validation, relaxed limit)
+        is_valid, err = _validate_tags(tags_filter or "", max_count=10)
+        if not is_valid:
+            return {"status": "error", "error": err}
+
         results = store.recall(
             query=query, top_k=top_k, collections=collections,
             min_score=min_score, tags_filter=tags_filter, trace_id=trace_id,
@@ -177,8 +203,6 @@ def memory(
 
     return {
         "status": "error",
-        "error":  (
-            f"Unknown action '{action}'. "
-            "Use: store | recall | delete | prune | summarize | stats"
-        ),
+        "error": (f"Unknown action '{action}'. "
+                  "Use: store | recall | delete | prune | summarize | stats"),
     }
