@@ -268,9 +268,9 @@ class MemoryStore:
                     "tools_used": tools_used,
                     "source":     source[:200],
                 })
-            return {"status": "stored", "id": memory_id, "collection": collection}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
+                return {"status": "stored", "id": memory_id, "collection": collection}
+            except Exception as e:
+                return {"status": "error", "error": str(e)}
 
     def store_episodic(
         self,
