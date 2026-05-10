@@ -69,6 +69,82 @@ class LLMResponse:
         )
 
 
+# -- Circuit Breaker Pattern (HIG-02) -------------------------------------------
+
+class CircuitBreaker:
+    """
+    Thread-safe circuit breaker with state machine: CLOSED → OPEN → HALF_OPEN → CLOSED.
+    
+    States:
+      - CLOSED:   Normal operation. Track failures.
+      - OPEN:     Fail fast after threshold N failures within timeout_seconds.
+      - HALF_OPEN: After timeout, allow 1 test call to check if service recovered.
+                   Success = CLOSED; Failure = OPEN again.
+    """
+
+    CLOSED: "closed"
+    OPEN: "open"
+    HALF_OPEN: "half-open"
+
+    def __init__(self, failure_threshold: int = 3, timeout_seconds: int = 60,
+                 success_retry_threshold: int = 2, half_open_max_calls: int = 1) -> None:
+        self.failure_threshold = failure_threshold
+        self.timeout_seconds = timeout_seconds
+        self.success_retry_threshold = success_retry_threshold
+        self.half_open_max_calls = half_open_max_calls
+        self._state = CircuitBreaker.CLOSED
+        self._failure_count: int = 0
+        self._last_failure_time: float = 0.0
+        self._half_open_count: int = 0
+        self._lock = threading.Lock()
+    
+    def can_execute(self) -> bool:
+        """Return True if call is allowed based on circuit state."""
+        with self._lock:
+            if self._state == CircuitBreaker.CLOSED:
+                return True
+            if self._state == CircuitBreaker.OPEN:
+                if self._last_failure_time > 0:
+                    if time.time() - self._last_failure_time >= self.timeout_seconds:
+                        self._state = CircuitBreaker.HALF_OPEN
+                        self._half_open_count = 1
+            return True
+    
+    def record_success(self) -> None:
+        """Record a successful call."""
+        with self._lock:
+            if self._state == CircuitBreaker.HALF_OPEN:
+                self._half_open_count += 1
+                if self._half_open_count >= self.success_retry_threshold:
+                    self._state = CircuitBreaker.CLOSED
+                    self._failure_count = 0
+    
+    def record_failure(self) -> None:
+        """Record a failure."""
+        with self._lock:
+            if self._state != CircuitBreaker.HALF_OPEN:
+                self._failure_count += 1
+                self._last_failure_time = time.time()
+                if self._failure_count >= self.failure_threshold:
+                    self._state = CircuitBreaker.OPEN
+    
+    def get_state_info(self) -> dict[str, any]:
+        """Return circuit breaker state info for monitoring."""
+        with self._lock:
+            time_since_failure = 0.0
+            if self._last_failure_time > 0:
+                time_since_failure = time.time() - self._last_failure_time
+            return {
+                "state": self._state,
+                "failure_count": self._failure_count,
+                "timeout_seconds": self.timeout_seconds,
+                "time_since_last_failure": time_since_failure,
+            }
+
+
+# -- Provider abstraction ------------------------------------------------------
+
+
 # -- Provider abstraction ------------------------------------------------------
 
 class BaseProvider(ABC):
@@ -295,6 +371,10 @@ class LLMClient:
             "lmstudio",
             LMStudioProvider(cfg.lm_studio_base_url),
         )
+        
+        # HIG-02: Per-role circuit breakers for resilience
+        self._breakers: dict[str, CircuitBreaker] = {}
+        self._build_breakers()
 
     def call(
         self,
@@ -328,6 +408,15 @@ class LLMClient:
 
         start = time.time()
 
+        # HIG-02: Check circuit breaker before attempt
+        breaker = self._get_breaker(role)
+        if not breaker.can_execute():
+            elapsed = 0.1
+            err     = f"Circuit breaker OPEN for {role}: service degraded (fail-fast)."
+            if trace_id:
+                tracer.warning(trace_id, "llm_call", err)
+            return LLMResponse.from_error(role, role_cfg.model, err, elapsed=0.1)
+
         for attempt in range(self.MAX_RETRIES + 1):
             try:
                 raw = provider.chat_completion(
@@ -340,11 +429,16 @@ class LLMClient:
                     **kwargs,
                 )
                 elapsed = round(time.time() - start, 2)
+                # HIG-02: Record success
+                breaker.record_success()
                 return self._parse_response(raw, role, role_cfg.model, elapsed, json_mode)
 
             except httpx.TimeoutException:
                 elapsed = round(time.time() - start, 2)
                 err     = f"Timeout after {elapsed}s (limit: {_timeout}s)"
+                # HIG-02: Record failure
+                if breaker:
+                    breaker.record_failure()
                 if trace_id:
                     tracer.error(trace_id, "llm_call", err, role=role, attempt=attempt)
                 if attempt == self.MAX_RETRIES:
@@ -353,6 +447,9 @@ class LLMClient:
             except httpx.ConnectError:
                 elapsed = round(time.time() - start, 2)
                 err     = f"Cannot connect to {cfg.lm_studio_base_url} - is LM Studio running?"
+                # HIG-02: Record failure
+                if breaker:
+                    breaker.record_failure()
                 if trace_id:
                     tracer.error(trace_id, "llm_call", err, role=role)
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
@@ -363,6 +460,9 @@ class LLMClient:
                     time.sleep(self.RETRY_DELAY * (attempt + 1))
                     continue
                 err = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                # HIG-02: Record failure for non-retryable errors
+                if breaker:
+                    breaker.record_failure()
                 if trace_id:
                     tracer.error(trace_id, "llm_call", err, role=role)
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
@@ -370,6 +470,9 @@ class LLMClient:
             except Exception as e:
                 elapsed = round(time.time() - start, 2)
                 err     = f"Unexpected error: {type(e).__name__}: {e}"
+                # HIG-02: Record failure
+                if breaker:
+                    breaker.record_failure()
                 if trace_id:
                     tracer.error(trace_id, "llm_call", err, role=role)
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
@@ -436,6 +539,34 @@ class LLMClient:
             }
             for name, rc in sorted(self._roles.items())
         ]
+
+    def _build_breakers(self) -> None:
+        """
+        HIG-02: Build circuit breakers for each role.
+        Uses role timeout config as circuit open duration.
+        """
+        for role_name, role_cfg in self._roles.items():
+            timeout_seconds = role_cfg.timeout
+            breaker = CircuitBreaker(
+                failure_threshold=3,
+                timeout_seconds=timeout_seconds,
+                success_retry_threshold=2,
+                half_open_max_calls=1,
+            )
+            self._breakers[role_name] = breaker
+    
+    def _get_breaker(self, role: str) -> CircuitBreaker:
+        """Get circuit breaker for role, create if not exists."""
+        if role not in self._breakers:
+            fallback_timeout = cfg.model_registry.get("executor", {}).get("timeout", 120)
+            fallback_breaker = CircuitBreaker(
+                failure_threshold=3,
+                timeout_seconds=fallback_timeout,
+                success_retry_threshold=2,
+                half_open_max_calls=1,
+            )
+            self._breakers[role] = fallback_breaker
+        return self._breakers[role]
 
     def _get_role(self, role: str) -> RoleConfig:
         if role not in self._roles:
