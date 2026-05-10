@@ -13,18 +13,21 @@ Operations:
   status    - current working tree status
   diff      - show unstaged diff
 
-Key fixes over old git_ops.py:
+Key fixes:
   - No FORBIDDEN_TOKENS check on git commands (that was a bug - blocked valid commit messages)
   - Paths use pathlib throughout
   - root parameter: "workspace" | "agent" | any absolute path string
   - Works on both Windows and Linux
   - Environment override only on non-Windows (fixes Windows PATH issues)
+  - Automatically locates Git executable on Windows (no reliance on PATH)
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+import shutil
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -33,15 +36,44 @@ from core.config import cfg
 from registry import tool
 
 
+# -- Git executable detection ---------------------------------------------------
+
+def _get_git_exe() -> str:
+    """Return absolute path to git executable. Works on Windows and Unix."""
+    # First, try shutil.which() – respects system PATH
+    git_path = shutil.which("git")
+    if git_path:
+        return git_path
+
+    # On Windows, fall back to common installation paths
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\Program Files\Git\bin\git.exe",
+            r"C:\Program Files (x86)\Git\bin\git.exe",
+            os.path.expandvars(r"%USERPROFILE%\AppData\Local\Programs\Git\bin\git.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Git\bin\git.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Git\bin\git.exe"),
+        ]
+        for cand in candidates:
+            p = Path(cand)
+            if p.exists():
+                return str(p)
+
+    # Last resort – hope it's in PATH (maybe after env fix)
+    return "git"
+
+
+GIT_EXE = _get_git_exe()
+
+
 # -- Git runner ----------------------------------------------------------------
 
 # Environment that prevents interactive prompts – only set on non-Windows.
 # On Windows, we omit env= entirely to inherit the full system environment,
-# which keeps Git in PATH and avoids subprocess resolution failures.
+# which keeps other environment variables intact (though we now use absolute path).
 if sys.platform != "win32":
-    import os as _os
     _GIT_ENV = {
-        **_os.environ,
+        **os.environ,
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ASKPASS":         "echo",
         "GIT_SSH_COMMAND":     "ssh -o BatchMode=yes -o StrictHostKeyChecking=no",
@@ -55,8 +87,9 @@ def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
     Run a git command in the given directory.
     Returns (returncode, stdout, stderr). Never raises.
 
-    On Linux/macOS: uses _GIT_ENV to suppress all interactive prompts.
-    On Windows: inherits parent environment (fixes PATH resolution).
+    Uses absolute path to git executable (auto-detected).
+    On Linux/macOS: uses _GIT_ENV to suppress interactive prompts.
+    On Windows: inherits parent environment (fixes PATH issues).
     """
     try:
         run_kwargs = {
@@ -67,10 +100,12 @@ def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
         }
         if _GIT_ENV is not None:
             run_kwargs["env"] = _GIT_ENV
-        result = subprocess.run(["git"] + args, **run_kwargs)
+        # Use absolute path if we found it, otherwise fallback to "git"
+        git_cmd = GIT_EXE if GIT_EXE else "git"
+        result = subprocess.run([git_cmd] + args, **run_kwargs)
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except FileNotFoundError:
-        return -1, "", "git not found on PATH - install Git"
+        return -1, "", f"git executable not found (tried: {GIT_EXE}) – install Git and ensure it's in PATH"
     except subprocess.TimeoutExpired:
         return -1, "", "git command timed out after 30s"
     except Exception as e:
