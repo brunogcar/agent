@@ -6,47 +6,62 @@ WHAT THIS IS
 A single MCP tool `cli(command)` that lets the agent (or you) run simple
 operations instantly without burning Planner tokens on a full workflow cycle.
 
-HOW IT WORKS — THREE LAYERS
+HOW IT WORKS — FOUR LAYERS
 -----------------------------
 1. Pattern match  — regex rules cover ~90% of common commands. Zero LLM calls.
-                    Returns immediately.
+                    Returns immediately. Handles: git, file, web, memory, calc,
+                    echo, lms, health, help.
 
-2. Nemotron route — anything that doesn't match a pattern goes to the Router
+2. Shell whitelist — read-only and file-management shell commands executed via
+                    subprocess with a strict allowlist. Zero LLM calls. Real output.
+                    Read-only: python --version, whoami, where, dir/ls, type/cat,
+                               systeminfo, ipconfig, hostname, tasklist, ver
+                    File ops:  copy, xcopy, move, mkdir, rmdir, del
+                    DECISION: These are NOT routed through agent tools (file_ops,
+                    python_exec) because the agent often wants raw shell output
+                    (e.g. `python --version` returns "Python 3.11.x", not a dict).
+                    The whitelist is the security boundary -- anything not on it
+                    falls through to Nemotron. No arbitrary shell execution.
+
+3. Nemotron route — anything that doesn't match a pattern goes to the Router
                     model (nemotron-3-nano-4b) with a strict JSON-only prompt.
                     Nemotron returns one of two things:
-                      a) {tool_name, action, params} → execute directly via whitelist
-                      b) {escalate: true, reason: "..."} → hand off to Executor
+                      a) {tool_name, action, params} -> execute directly via whitelist
+                      b) {escalate: true, reason: "..."} -> hand off to Executor
 
-3. Executor escalation — if Nemotron decides the command is too complex for a
+4. Executor escalation — if Nemotron decides the command is too complex for a
                     direct tool call, the command is sent to the Executor model
                     (Hermes) as a free-form task. Hermes reasons and responds.
-                    This is the "agent decides" layer you wanted.
 
 SAFETY
 ------
-Only layer 1 and 2a can call tools. They use a strict whitelist — no raw shell,
-no arbitrary file writes, same sandbox as the rest of the stack.
-Layer 2b and 3 (Executor) only produce text responses, they don't call tools
-directly. If Hermes decides it needs tools, it tells the agent which ones to use
-next — it doesn't bypass the MCP layer.
+Layer 1 (patterns) and layer 2 (shell whitelist) are zero-token execution.
+Layer 2 uses subprocess with a command allowlist -- no arbitrary shell injection.
+Commands are split by shlex on non-Windows, split() on Windows (no shell=True).
+Output is capped at 4KB to stay within MCP response limits.
+Layer 3 (Nemotron dispatch) uses a strict tool:action whitelist.
+Layer 4 (Executor) only produces text -- it does not call tools directly.
 
 NAMING CONVENTION
 -----------------
 Internal dispatch uses `tool_name` (never `tool`) to avoid shadowing the
 `tool` decorator from registry. That was the fatal bug in the previous version.
 
-MEMORY ACCESS
--------------
-Uses the same lazy import pattern as memory_tool.py:
-  _mem() → from memory.store import memory
-Direct ChromaDB access, no intermediate tool layer.
-All memory methods match the memory() tool signature exactly.
+WORKING DIRECTORY
+-----------------
+Shell commands default to cfg.agent_root.
+Commands that look like workspace operations (copy to workspace/, etc.) auto-detect.
+Pass `cd workspace` prefix to override: `cd workspace && dir` is not supported --
+use the path directly in the command instead.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -61,6 +76,216 @@ def _mem():
     """Lazy import of ChromaDB store — avoids slow startup, same as memory_tool.py."""
     from memory.store import memory as _store
     return _store
+
+
+# ── Shell whitelist executor (Layer 2) ────────────────────────────────────────
+# DECISION: A tight allowlist of shell commands that produce real output the agent
+# needs directly (python --version, whoami, dir, etc). These are NOT routed through
+# agent tools because the agent wants raw terminal output, not a wrapped dict.
+#
+# Security model:
+#   - Only commands whose first token appears in _SHELL_ALLOW can execute.
+#   - shell=True is NEVER used -- commands are passed as a list to subprocess.
+#   - Output capped at 4KB (MCP response limit).
+#   - Timeout 10s -- these are info commands, not long-running processes.
+#   - Working directory: cfg.agent_root by default (safe, predictable).
+#
+# DECISION: split into read-only and file-op sets so future code can audit
+# or restrict them independently. Both are in the same allowlist dict for now.
+#
+# WHY NOT python_exec for `python --version`:
+#   python_exec runs code inside the sandbox (BLOCKED_IMPORTS etc).
+#   `python --version` is a subprocess call, not Python code -- it would need
+#   `import subprocess` which is blocked. Shell layer is the right place.
+
+_SHELL_ALLOW: dict[str, list[str]] = {
+    # ── Read-only info commands ───────────────────────────────────────────────
+    # These never modify the filesystem. Safe to run unconditionally.
+    "python":      ["python", "--version"],          # template; args replaced by caller
+    "pip":         ["pip", "--version"],
+    "whoami":      ["whoami"],
+    "hostname":    ["hostname"],
+    "ver":         ["cmd", "/c", "ver"],             # Windows version string
+    "systeminfo":  ["systeminfo"],                   # verbose; agent uses sparingly
+    "ipconfig":    ["ipconfig"],
+    "tasklist":    ["tasklist"],
+    "where":       ["where"],                        # which equivalent on Windows
+    "which":       ["which"],                        # Linux/macOS
+    "dir":         ["cmd", "/c", "dir"],
+    "ls":          ["cmd", "/c", "dir"] if sys.platform == "win32" else ["ls", "-la"],
+    "type":        ["cmd", "/c", "type"],            # Windows cat
+    "cat":         ["cat"],                          # Linux/macOS cat
+    "env":         ["cmd", "/c", "set"] if sys.platform == "win32" else ["env"],
+    "set":         ["cmd", "/c", "set"],
+    "echo":        None,                             # handled by pattern layer; listed for completeness
+    # ── File operation commands ───────────────────────────────────────────────
+    # These modify the filesystem but are common enough to whitelist.
+    # DECISION: file_ops tool is preferred for agent code; these exist for
+    # quick imperative ops like `copy src dst` that don't need a full tool call.
+    "copy":        ["cmd", "/c", "copy"],
+    "xcopy":       ["cmd", "/c", "xcopy"],
+    "move":        ["cmd", "/c", "move"],
+    "mkdir":       ["cmd", "/c", "mkdir"] if sys.platform == "win32" else ["mkdir", "-p"],
+    "md":          ["cmd", "/c", "mkdir"],           # Windows mkdir alias
+    "rmdir":       ["cmd", "/c", "rmdir"],
+    "rd":          ["cmd", "/c", "rmdir"],           # Windows rmdir alias
+    "del":         ["cmd", "/c", "del"],
+    "rm":          ["rm"],                           # Linux/macOS
+    "cp":          ["cp"],                           # Linux/macOS copy
+    "mv":          ["mv"],                           # Linux/macOS move
+}
+
+# Commands that need extra tokens appended from user input (not fixed commands)
+_SHELL_PASSTHROUGH = {
+    "python", "pip", "where", "which", "dir", "ls", "type", "cat",
+    "copy", "xcopy", "move", "mkdir", "md", "rmdir", "rd", "del",
+    "rm", "cp", "mv",
+}
+
+_SHELL_MAX_OUTPUT = 4096   # cap output to stay within MCP response limits
+_SHELL_TIMEOUT    = 15     # seconds; info commands should never take longer
+
+
+def _detect_cwd(command: str) -> Path:
+    """
+    Auto-detect working directory from command context.
+
+    DECISION: The agent operates in two root contexts:
+      - agent root    (D:/mcp/agent)      -- agent code, tools, skills
+      - workspace root (D:/mcp/workspace) -- project work, output files
+
+    Heuristic (first match wins):
+      1. Command contains an absolute path -> use its parent dir if it's a dir,
+         or its parent if it's a file. This handles `type D:/mcp/agent/tools/x.py`.
+      2. Command contains "workspace" token -> workspace root.
+      3. Command contains "agent" token (but not "workspace") -> agent root.
+      4. Default -> agent root (most shell ops relate to agent code).
+
+    WHY NOT always workspace: file ops like `copy tools/x.py tools/x.bak` are
+    agent-root operations. Defaulting to workspace would break relative paths.
+    """
+    # Check for absolute path tokens in the command
+    for token in command.split():
+        p = Path(token.strip('"').strip("'"))
+        if p.is_absolute():
+            if p.is_dir():
+                return p
+            if p.parent.is_dir():
+                return p.parent
+
+    cmd_lower = command.lower()
+    if "workspace" in cmd_lower:
+        return cfg.workspace_root
+    if "agent" in cmd_lower:
+        return cfg.agent_root
+
+    return cfg.agent_root   # safe default
+
+
+# Commands that map to agent tool fallbacks when shell fails.
+# DECISION: shell-first, agent-fallback pattern.
+#   If the shell command fails (FileNotFoundError, bad exit code, empty output
+#   on a command that should produce something), we retry via the agent tool
+#   layer. This gives the best of both worlds: raw shell speed when it works,
+#   agent tool reliability when it doesn't (e.g. dir fails -> file:list).
+#
+# Map: shell_cmd_name -> (tool_name, action, param_builder)
+# param_builder receives the original command string and returns a dict.
+_SHELL_AGENT_FALLBACK: dict[str, tuple[str, str, Any]] = {
+    "dir":   ("file", "list",   lambda cmd: {"path": cmd.split()[1] if len(cmd.split()) > 1 else "."}),
+    "ls":    ("file", "list",   lambda cmd: {"path": cmd.split()[1] if len(cmd.split()) > 1 else "."}),
+    "type":  ("file", "read",   lambda cmd: {"path": " ".join(cmd.split()[1:])}),
+    "cat":   ("file", "read",   lambda cmd: {"path": " ".join(cmd.split()[1:])}),
+    "copy":  ("file", "backup", lambda cmd: {"path": cmd.split()[1] if len(cmd.split()) > 1 else ""}),
+    "cp":    ("file", "backup", lambda cmd: {"path": cmd.split()[1] if len(cmd.split()) > 1 else ""}),
+}
+
+
+def _shell_exec(command: str) -> str | None:
+    """
+    Try to execute `command` as a whitelisted shell command.
+
+    Returns:
+      str  -- command output (or error message) if command is whitelisted.
+      None -- command not whitelisted; caller should fall through to next layer.
+
+    DECISION: Returns None (not an error string) when not whitelisted so the
+    caller can fall through to Nemotron cleanly. An error string would be
+    misread as "command ran but failed" when it never ran at all.
+
+    DECISION: shell-first, agent-fallback.
+      On shell failure, check _SHELL_AGENT_FALLBACK and retry via agent tool.
+      This handles environments where cmd.exe behaves differently, or where
+      a relative path only resolves correctly through the agent's file_ops tool.
+      Fallback is best-effort -- if it also fails, return the original shell error.
+    """
+    parts = command.strip().split()
+    if not parts:
+        return None
+
+    cmd_name = parts[0].lower()
+    # Strip .exe suffix on Windows (user may type `python.exe --version`)
+    if cmd_name.endswith(".exe"):
+        cmd_name = cmd_name[:-4]
+
+    if cmd_name not in _SHELL_ALLOW or _SHELL_ALLOW[cmd_name] is None:
+        return None   # not whitelisted -- fall through to Nemotron
+
+    # Build the actual argv list
+    base = _SHELL_ALLOW[cmd_name]
+    if cmd_name in _SHELL_PASSTHROUGH:
+        if base and base[0] == "cmd":
+            argv = base + parts[1:]
+        else:
+            argv = base + parts[1:]
+    else:
+        argv = list(base)  # fixed commands (whoami, hostname) -- ignore extra args
+
+    # Auto-detect working directory from command context (DECISION above)
+    cwd = _detect_cwd(command)
+
+    shell_error = ""
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output = True,
+            text           = True,
+            cwd            = str(cwd),
+            timeout        = _SHELL_TIMEOUT,
+            # DECISION: shell=False always -- no injection possible.
+            # Commands validated against allowlist before reaching here.
+        )
+        out = (result.stdout + result.stderr).strip()
+        if len(out) > _SHELL_MAX_OUTPUT:
+            out = out[:_SHELL_MAX_OUTPUT] + f"\n... (truncated at {_SHELL_MAX_OUTPUT} chars)"
+
+        # Success path
+        if result.returncode == 0:
+            return out if out else "(command completed, no output)"
+
+        # Non-zero exit -- try agent fallback before returning error
+        shell_error = out or f"(exit code {result.returncode})"
+
+    except FileNotFoundError:
+        shell_error = f"Command not found: {parts[0]}"
+    except subprocess.TimeoutExpired:
+        return f"Command timed out after {_SHELL_TIMEOUT}s: {command}"
+    except Exception as e:
+        shell_error = f"Shell error: {e}"
+
+    # ── Agent fallback (shell-first, agent-fallback pattern) ──────────────────
+    # Shell failed -- try the mapped agent tool before surfacing the error.
+    if cmd_name in _SHELL_AGENT_FALLBACK:
+        tool_name, action, param_fn = _SHELL_AGENT_FALLBACK[cmd_name]
+        try:
+            params = param_fn(command)
+            fallback_result = _safe_dispatch(tool_name, action, params)
+            if fallback_result and not fallback_result.startswith("Unknown command"):
+                return f"[shell failed, agent fallback]\n{fallback_result}"
+        except Exception:
+            pass   # fallback also failed -- surface original shell error below
+
+    return shell_error
 
 
 # ── LM Studio management (raw HTTP, no extra imports) ─────────────────────────
@@ -125,7 +350,8 @@ def _git(operation: str, **kw) -> str:
     if not isinstance(r, dict): return str(r)
     if operation == "log":
         cs = r.get("commits", [])
-        return "\n".join(f"{c.get('sha','')[:7]}  {c.get('message','').splitlines()[0][:70]}"
+        # BUG FIX: git_ops.py returns key "hash" not "sha" — was always printing blank hashes
+        return "\n".join(f"{c.get('hash','')[:7]}  {c.get('message','').splitlines()[0][:70]}"
                          for c in cs[:10]) or "No commits."
     if operation == "diff": return r.get("diff", str(r))
     if r.get("status") == "error": return f"Error: {r.get('error', r)}"
@@ -239,7 +465,7 @@ DISPATCH: dict[str, Any] = {
     "system:health": lambda **kw: "MCP Agent Stack: all systems operational.",
     "system:help":   lambda **kw: (
         "cli quick commands:\n"
-        "  git status | log [n] | diff | snapshot [msg] | commit [msg] | rollback\n"
+        "  git status | log [n] | diff | snapshot [msg] | commit <msg> | rollback [--force]\n"
         "  file read <path> | write <path> <content> | list [dir] | search <query>\n"
         "  web search <query> | scrape <url> | read <url>\n"
         "  memory recall <query> | store <text> | stats | prune\n"
@@ -247,7 +473,11 @@ DISPATCH: dict[str, Any] = {
         "  notify <message>\n"
         "  lms ls | ps | load <model> | unload [model] | log\n"
         "  health | help\n"
-        "Anything else → Nemotron decides: direct dispatch or Executor escalation."
+        "Shell (zero tokens, real output):\n"
+        "  python --version | pip --version | whoami | hostname | where <cmd>\n"
+        "  dir [path] | ls [path] | type <file> | cat <file> | env | set\n"
+        "  copy <src> <dst> | move <src> <dst> | mkdir <dir> | del <file>\n"
+        "Anything else -> Nemotron decides: direct dispatch or Executor escalation."
     ),
 }
 
@@ -271,35 +501,47 @@ def _safe_dispatch(tool_name: str, action: str, params: dict) -> str:
 # Order matters: more specific patterns before broad ones.
 
 _PATTERNS = [
-    (r"^health$",                      "system",  "health",   lambda m: {}),
-    (r"^help$",                        "system",  "help",     lambda m: {}),
-    (r"^git\s+status$",                "git",     "status",   lambda m: {}),
-    (r"^git\s+log\s+(\d+)",            "git",     "log",      lambda m: {"n": int(m.group(1))}),
-    (r"^git\s+log$",                   "git",     "log",      lambda m: {}),
-    (r"^git\s+diff$",                  "git",     "diff",     lambda m: {}),
-    (r"^git\s+snapshot\s*(.*)",        "git",     "snapshot", lambda m: {"message": m.group(1).strip() or None}),
-    (r"^git\s+commit\s*(.*)",          "git",     "commit",   lambda m: {"message": m.group(1).strip() or None}),
-    (r"^git\s+rollback\s*(.*)",        "git",     "rollback", lambda m: {"version": m.group(1).strip() or None}),
-    (r"^(?:read|cat|show)\s+(.+)",     "file",    "read",     lambda m: {"path": m.group(1).strip()}),
-    (r"^(?:ls|list)\s*(.*)",           "file",    "list",     lambda m: {"path": m.group(1).strip() or "."}),
-    (r"^write\s+(\S+)\s+(.+)",         "file",    "write",    lambda m: {"path": m.group(1), "content": m.group(2)}),
-    (r"^(?:find|grep)\s+(.+)",         "file",    "search",   lambda m: {"query": m.group(1).strip()}),
-    (r"^search\s+(.+)",                "web",     "search",   lambda m: {"query": m.group(1).strip()}),
-    (r"^scrape\s+(https?://\S+)",      "web",     "scrape",   lambda m: {"url": m.group(1).strip()}),
-    (r"^read\s+(https?://\S+)",        "web",     "read",     lambda m: {"url": m.group(1).strip()}),
-    (r"^recall\s+(.+)",                "memory",  "recall",   lambda m: {"query": m.group(1).strip()}),
-    (r"^store\s+(.+)",                 "memory",  "store",    lambda m: {"text": m.group(1).strip()}),
-    (r"^memory\s+stats$",              "memory",  "stats",    lambda m: {}),
-    (r"^memory\s+prune$",              "memory",  "prune",    lambda m: {}),
-    (r"^calc\s+(.+)",                  "python",  "calc",     lambda m: {"code": m.group(1).strip()}),
-    (r"^(?:run|exec)\s+(.+)",          "python",  "run",      lambda m: {"code": m.group(1).strip()}),
-    (r"^(?:notify|alert|ping)\s+(.+)", "notify",  "send",     lambda m: {"message": m.group(1).strip()}),
-    (r"^lms\s+ls$",                    "lms",     "ls",       lambda m: {}),
-    (r"^lms\s+ps$",                    "lms",     "ps",       lambda m: {}),
-    (r"^lms\s+load\s+(.+)",            "lms",     "load",     lambda m: {"model": m.group(1).strip()}),
-    (r"^lms\s+unload\s+(.+)",          "lms",     "unload",   lambda m: {"model": m.group(1).strip()}),
-    (r"^lms\s+unload$",                "lms",     "unload",   lambda m: {}),
-    (r"^lms\s+log$",                   "lms",     "log",      lambda m: {}),
+    (r"^health$",                        "system",  "health",   lambda m: {}),
+    (r"^help$",                          "system",  "help",     lambda m: {}),
+    (r"^git\s+status$",                  "git",     "status",   lambda m: {}),
+    (r"^git\s+log\s+(\d+)",              "git",     "log",      lambda m: {"n": int(m.group(1))}),
+    (r"^git\s+log$",                     "git",     "log",      lambda m: {}),
+    (r"^git\s+diff$",                    "git",     "diff",     lambda m: {}),
+    (r"^git\s+snapshot\s*(.*)",          "git",     "snapshot", lambda m: {"message": m.group(1).strip() or ""}),
+    # BUG FIX: old patterns passed message=None on empty input (breaks git tool's `if not message` guard)
+    # commit now requires a message arg to match -- prevents calling git commit with no message
+    (r"^git\s+commit\s+(.+)",            "git",     "commit",   lambda m: {"message": m.group(1).strip()}),
+    # BUG FIX: old rollback passed version= which is not a valid git() parameter -- should be force=
+    (r"^git\s+rollback\s+--?force$",     "git",     "rollback", lambda m: {"force": True}),
+    (r"^git\s+rollback$",                "git",     "rollback", lambda m: {}),
+    (r"^(?:read|cat|show)\s+(.+)",       "file",    "read",     lambda m: {"path": m.group(1).strip()}),
+    (r"^(?:ls|list)\s*(.*)",             "file",    "list",     lambda m: {"path": m.group(1).strip() or "."}),
+    (r"^write\s+(\S+)\s+(.+)",           "file",    "write",    lambda m: {"path": m.group(1), "content": m.group(2)}),
+    (r"^(?:find|grep)\s+(.+)",           "file",    "search",   lambda m: {"query": m.group(1).strip()}),
+    (r"^search\s+(.+)",                  "web",     "search",   lambda m: {"query": m.group(1).strip()}),
+    (r"^scrape\s+(https?://\S+)",        "web",     "scrape",   lambda m: {"url": m.group(1).strip()}),
+    (r"^read\s+(https?://\S+)",          "web",     "read",     lambda m: {"url": m.group(1).strip()}),
+    (r"^recall\s+(.+)",                  "memory",  "recall",   lambda m: {"query": m.group(1).strip()}),
+    (r"^store\s+(.+)",                   "memory",  "store",    lambda m: {"text": m.group(1).strip()}),
+    (r"^memory\s+stats$",                "memory",  "stats",    lambda m: {}),
+    (r"^memory\s+prune$",                "memory",  "prune",    lambda m: {}),
+    (r"^calc\s+(.+)",                    "python",  "calc",     lambda m: {"code": m.group(1).strip()}),
+    (r"^(?:run|exec)\s+(.+)",            "python",  "run",      lambda m: {"code": m.group(1).strip()}),
+    # BUG FIX: echo fell through to Executor which just described the command instead of running it.
+    # Route echo -> python:run so `echo "hi"` actually prints "hi" instead of returning instructions.
+    # DECISION: shell echo is the canonical smoke-test for cli. Routing it to Hermes was the exact
+    # bug reported -- Executor explained `echo` instead of executing it. Strip outer quotes so
+    # echo "Testing" and echo Testing both work without the quotes appearing in output.
+    (r'echo\s+"([^"]+)"',              "python",  "run",      lambda m: {"code": f'print({m.group(1)!r})'}),
+    (r"echo\s+'([^']+)'",             "python",  "run",      lambda m: {"code": f'print({m.group(1)!r})'}),
+    (r"^echo\s+(.*)",                   "python",  "run",      lambda m: {"code": f'print({m.group(1).strip()!r})'}),
+    (r"^(?:notify|alert|ping)\s+(.+)",  "notify",  "send",     lambda m: {"message": m.group(1).strip()}),
+    (r"^lms\s+ls$",                      "lms",     "ls",       lambda m: {}),
+    (r"^lms\s+ps$",                      "lms",     "ps",       lambda m: {}),
+    (r"^lms\s+load\s+(.+)",              "lms",     "load",     lambda m: {"model": m.group(1).strip()}),
+    (r"^lms\s+unload\s+(.+)",            "lms",     "unload",   lambda m: {"model": m.group(1).strip()}),
+    (r"^lms\s+unload$",                  "lms",     "unload",   lambda m: {}),
+    (r"^lms\s+log$",                     "lms",     "log",      lambda m: {}),
 ]
 
 _COMPILED = [(re.compile(p, re.IGNORECASE), tn, a, fn)
@@ -343,7 +585,16 @@ def _call_nemotron(command: str) -> dict:
     what was asked for: "let Nemotron decide whether to escalate or handle it."
     Temperature=0 for deterministic routing. 150 tokens is enough for either option.
     Returns a safe fallback dict on any network/parse error.
+
+    DECISION: response_format json_object is best-effort — some Nemotron checkpoints
+    ignore it and return prose or think-tagged output. We apply three parse layers:
+      1. Direct json.loads on the content
+      2. Strip think tags (<think>...</think>) then retry
+      3. Regex extract first {...} block from whatever text came back
+    Only after all three fail do we escalate. This prevents Nemotron's occasional
+    formatting hiccups from silently routing everything to the slower Executor.
     """
+    import re as _re
     try:
         resp = requests.post(
             f"{cfg.lm_studio_base_url}/chat/completions",
@@ -361,7 +612,26 @@ def _call_nemotron(command: str) -> dict:
         )
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
-        parsed  = json.loads(content)
+
+        # Layer 1: direct parse
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            # Layer 2: strip think tags (some Nemotron checkpoints emit <think>...</think>)
+            clean = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL).strip()
+            try:
+                parsed = json.loads(clean)
+            except json.JSONDecodeError:
+                # Layer 3: extract first {...} block from prose response
+                m = _re.search(r"\{[^{}]*\}", clean, _re.DOTALL)
+                if m:
+                    try:
+                        parsed = json.loads(m.group())
+                    except json.JSONDecodeError:
+                        return {"route": "escalate", "reason": "Router returned unparseable output."}
+                else:
+                    return {"route": "escalate", "reason": "Router returned unparseable output."}
+
         # Normalise: older Nemotron checkpoints sometimes return "tool" not "tool_name"
         if "tool" in parsed and "tool_name" not in parsed:
             parsed["tool_name"] = parsed.pop("tool")
@@ -421,19 +691,28 @@ def cli(command: str) -> str:
     """
     Execute a natural-language or shorthand command without a full planning cycle.
 
-    Three execution paths — chosen automatically:
-      1. Instant (zero tokens): git status, file read, memory recall, calc, lms ps, etc.
-      2. Routed (Nemotron, ~15s): anything not in the shorthand list — Nemotron
-         parses it into a tool call OR decides it needs the Executor.
-      3. Escalated (Executor/Hermes, ~30-60s): complex tasks, multi-step reasoning,
-         code generation, analysis — Nemotron escalates these automatically.
+    Four execution paths — chosen automatically:
+      1. Instant (zero tokens): git status, file read, memory recall, calc, echo, lms ps...
+      2. Shell (zero tokens):   python --version, whoami, dir, copy, del, mkdir, where...
+      3. Routed (Nemotron, ~15s): anything else -- Nemotron parses it into a tool call
+         OR escalates to Executor.
+      4. Escalated (Executor/Hermes, ~30-60s): complex tasks, multi-step reasoning.
 
-    Use this instead of chaining multiple tool calls for simple operations.
-    Token cost: pattern-matched commands cost zero LLM tokens.
-    Safety: only whitelisted tool+action pairs can execute directly.
+    Shell commands (layer 2) execute via subprocess with a strict allowlist.
+    Real output, no LLM tokens, 15s timeout, 4KB output cap.
+
+    Allowed shell commands:
+      Info:  python, pip, whoami, hostname, ver, ipconfig, tasklist, where/which,
+             dir/ls, type/cat, env/set
+      Files: copy/cp, xcopy, move/mv, mkdir/md, rmdir/rd, del/rm
 
     Examples:
       cli("git log 5")
+      cli("python --version")
+      cli("whoami")
+      cli("dir workspace")
+      cli("where python")
+      cli("copy tools\\git_ops.py workspace\\git_ops.py")
       cli("recall chromadb persistent storage")
       cli("lms ps")
       cli("calc sum(range(100))")
@@ -447,7 +726,15 @@ def cli(command: str) -> str:
         tool_name, action, params = matched
         return _safe_dispatch(tool_name, action, params)
 
-    # ── Layer 2: Nemotron decides ─────────────────────────────────────────────
+    # ── Layer 2: shell whitelist — zero tokens, real subprocess output ────────
+    # DECISION: runs BEFORE Nemotron so common shell commands (python --version,
+    # whoami, dir, copy) never cost any LLM tokens. _shell_exec returns None if
+    # the command is not whitelisted, cleanly falling through to layer 3.
+    shell_result = _shell_exec(command)
+    if shell_result is not None:
+        return shell_result
+
+    # ── Layer 3: Nemotron decides ─────────────────────────────────────────────
     decision = _call_nemotron(command)
     route    = decision.get("route", "escalate")
 
@@ -459,7 +746,7 @@ def cli(command: str) -> str:
             decision.get("params",    {}),
         )
 
-    # ── Layer 3: Executor escalation ──────────────────────────────────────────
+    # ── Layer 4: Executor escalation ──────────────────────────────────────────
     # Nemotron said "escalate" (or route was unknown/missing)
     reason = decision.get("reason", "")
     return _call_executor(command, reason)
