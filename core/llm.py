@@ -163,6 +163,41 @@ class LMStudioProvider(BaseProvider):
             return resp.status_code == 200
         except Exception:
             return False
+    
+    def close_clients(self) -> None:
+        """
+        Close all thread-local httpx clients. Call explicitly when shutting down.
+        
+        Usage:
+            from core.llm import llm, LMStudioProvider
+            # Or call via static method on any instance
+            LMStudioProvider.close_clients_all()
+        """
+        for thread, client in list(self._clients.items()):
+            try:
+                client.close()
+            except Exception:
+                pass  # Best effort cleanup
+    
+    @classmethod  
+    def close_clients_all(cls) -> None:
+        """Close all clients across all instances. Registered with atexit."""
+        _at_exit_registered = getattr(cls, '_close_clients_all_registered', False)
+        if not _at_exit_registered:
+            import atexit as _atex
+            _cleanup_handler = lambda: cls._call_close_all()
+            _atex.register(_cleanup_handler)
+            cls._close_clients_all_registered = True
+    
+    def _call_close_all(cls) -> None:
+        """Internal method to actually close clients."""
+        for instance in cls.__subclasses__():
+            try:
+                if hasattr(instance, 'close_clients'):
+                    instance.close_clients()
+            except Exception:
+                pass
+
 
 
 # -- Provider registry ---------------------------------------------------------
@@ -242,6 +277,9 @@ def _build_role_configs() -> dict[str, RoleConfig]:
 
 class LLMClient:
     """
+
+        import atexit as _atexit
+        LMStudioProvider.close_clients_all()  # Register cleanup on shutdown
     The single LLM client used by everything in the agent.
     Thread-safe via per-thread httpx.Client instances in LMStudioProvider.
     """

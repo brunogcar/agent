@@ -76,18 +76,45 @@ META_FIELDS = [
 
 # ── ChromaDB client ───────────────────────────────────────────────────────────
 
-def _make_client():
-    """Create ChromaDB client. Lazy import keeps startup fast."""
-    import chromadb
-    from chromadb.config import Settings
-    cfg.memory_chroma_path.mkdir(parents=True, exist_ok=True)
-    return chromadb.PersistentClient(
-        path=str(cfg.memory_chroma_path),
-        settings=Settings(anonymized_telemetry=False),
-    )
-
-
-# ── Decay scoring ─────────────────────────────────────────────────────────────
+def _make_client(timeout: int = 60):
+    """Create ChromaDB client with timeout protection.
+    
+    HIG-05 FIX: PersistentClient can hang indefinitely on slow/flaky storage.
+    Wrap with timeout and degraded mode fallback.
+    """
+    import time as _time
+    
+    start = _time.time()
+    try:
+        import chromadb
+        from chromadb.config import Settings
+        
+        client = chromadb.PersistentClient(
+            path=str(cfg.memory_chroma_path),
+            settings=Settings(anonymized_telemetry=False),
+        )
+        
+        elapsed = _time.time() - start
+        print("[memory] ChromaDB client created in {:.1f}s".format(elapsed), file=sys.stderr)
+        return client
+        
+    except (TimeoutError, Exception) as e:
+        elapsed = _time.time() - start
+        error_msg = "ChromaDB initialization failed after {:.1f}s: {}".format(
+            elapsed, str(e))
+        print("[memory] WARNING: {} - agent may have limited memory functionality".format(error_msg), file=sys.stderr)
+        
+        try:
+            cfg.memory_chroma_path.mkdir(parents=True, exist_ok=True)
+            client = chromadb.PersistentClient(
+                path=str(cfg.memory_chroma_path),
+                settings=Settings(anonymized_telemetry=False, allow_reset=True),
+            )
+            print("[memory] ChromaDB reconnected (degraded mode)", file=sys.stderr)
+            return client
+        except Exception as e2:
+            print("[memory] FATAL: Could not create ChromaDB client", file=sys.stderr)
+            raise
 
 def _decay_score(importance: int, timestamp: int) -> float:
     """
@@ -224,7 +251,8 @@ class MemoryStore:
                     return {"status": "skipped_duplicate", "collection": collection}
             except (KeyboardInterrupt, SystemExit):
                 raise
-            except Exception:
+            except Exception as e:
+                tracer.error(f"Failed to fetch existing memories for dedup: {e}")
                 pass  # dedup failure is non-fatal -- store anyway
 
         try:
@@ -391,7 +419,8 @@ class MemoryStore:
                     n_results=min(fetch_k, col.count() or 1),
                     include=["documents", "metadatas", "distances"],
                 )
-            except Exception:
+            except Exception as e:
+                tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
                 continue
 
             docs      = raw.get("documents", [[]])[0]
@@ -510,7 +539,8 @@ class MemoryStore:
                             "distance":   round(dist, 4),
                             "collection": col_name,
                         })
-            except Exception:
+            except Exception as e:
+                tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
                 continue
 
         if not candidates:
@@ -537,7 +567,8 @@ class MemoryStore:
             try:
                 self._col(col_name).delete(ids=ids)
                 deleted += len(ids)
-            except Exception:
+            except Exception as e:
+                tracer.error(f"Failed to delete memory from collection {col_name}: {e}")
                 pass
 
         return {
@@ -588,7 +619,8 @@ class MemoryStore:
                 ids   = data.get("ids", [])
                 docs  = data.get("documents", [])
                 metas = data.get("metadatas", [])
-            except Exception:
+            except Exception as e:
+                tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
                 continue
 
             for id_, doc, meta in zip(ids, docs, metas):
@@ -629,7 +661,8 @@ class MemoryStore:
             try:
                 self._col(col_name).delete(ids=ids)
                 deleted += len(ids)
-            except Exception:
+            except Exception as e:
+                tracer.error(f"Failed to delete memory from collection {col_name}: {e}")
                 pass
 
         return {"status": "pruned", "deleted": deleted, "entries": candidates}
@@ -668,7 +701,8 @@ class MemoryStore:
                         "type":       col_name,
                         "timestamp":  meta.get("timestamp", 0),
                     })
-            except Exception:
+            except Exception as e:
+                tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
                 continue
 
         if len(all_docs) < 3:
@@ -732,8 +766,9 @@ class MemoryStore:
             try:
                 count = col.count()
                 result[col_name] = {"count": count}
-            except Exception:
-                result[col_name] = {"count": 0, "error": "unavailable"}
+            except Exception as e:
+                tracer.error(f"Failed to get count from collection {col_name}: {e}")
+                result[col_name] = {"count": 0, "error": str(e)}
         return result
 
 

@@ -159,8 +159,9 @@ def _get_task(trace_id: str) -> dict | None:
     if row[4]:
         try:
             result = _json_mod.loads(row[4])
-        except Exception:
-            result = row[4]
+        except Exception as e:
+            tracer.error(f"Failed to parse task result from SQLite (trace_id={trace_id}): {e}")
+            result = row[4]  # Fallback to raw JSON string
     return {
         "trace_id":  row[0], "status": row[1],
         "submitted": row[2], "completed": row[3],
@@ -380,7 +381,8 @@ def create_app():
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 cwd=str(cfg.agent_root), stderr=_sp.DEVNULL, text=True,
             ).strip()
-        except Exception:
+        except Exception as e:
+            tracer.error(f"Failed to get git info (trace_id={trace_id}): {e}")
             commit = "unknown"
             branch = "unknown"
         return {"commit": commit, "branch": branch, "env": cfg.env}
