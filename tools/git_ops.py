@@ -123,7 +123,7 @@ def git(
     root:      str = "workspace",
     n:         int = 10,
     path:      str = "",
-    **kwargs,
+    force:     bool = False,   # explicit parameter for rollback
 ) -> dict:
     """
     Git version control operations.
@@ -301,8 +301,6 @@ def git(
         Safe rollback: stash changes first unless force=True is passed.
         force=True will permanently discard uncommitted work (like git reset --hard).
         """
-        force = kwargs.get("force", False)
-
         if force:
             _git(["reset", "--hard", "HEAD"], cwd)
             _git(["clean", "-fd"], cwd)
