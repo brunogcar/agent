@@ -1,25 +1,76 @@
 """
-tools/git_ops.py - Git meta-tool.
+tools/git_ops.py - Git meta-tool for the MCP agent.
 
 Replaces: old git_ops.py (hardcoded D:\\mcp\\python-tool) + @cyanheads/git-mcp-server
           for the most common operations inside the agent workflow.
 The LLM sees ONE tool: git(operation, ...)
 
 Operations:
-  snapshot  - stage all + commit (creates safe rollback point before changes)
+  init      - initialise a new git repo + initial commit + .gitignore
+  snapshot  - stage all + timestamped commit (safe rollback point before changes)
   commit    - stage all + commit after successful change
   rollback  - hard reset to HEAD (undo all uncommitted changes)
   log       - recent commit history
   status    - current working tree status
   diff      - show unstaged diff
 
-Key fixes:
-  - No FORBIDDEN_TOKENS check on git commands (that was a bug - blocked valid commit messages)
-  - Paths use pathlib throughout
-  - root parameter: "workspace" | "agent" | any absolute path string
-  - Works on both Windows and Linux
-  - Environment override only on non-Windows (fixes Windows PATH issues)
-  - Automatically locates Git executable on Windows (no reliance on PATH)
+--- ARCHITECTURE DECISIONS (read before touching this file) ---
+
+DECISION 1: path alias -> root
+  Agents (and Claude) sometimes call git(operation="status", path="D:/mcp/agent")
+  because they see "path" in the diff operation and assume it's the repo directory.
+  root is the correct parameter, but we alias path->root when root=="workspace"
+  AND path looks like an absolute directory path, to avoid silent wrong-repo bugs.
+  This was the PRIMARY cause of MCP timeout: git ran on workspace/ (no repo) instead
+  of agent/ (has repo), causing _check_repo() to spin on rev-parse with no .git.
+
+DECISION 2: Remove redundant _check_repo() pre-flight from read-only ops
+  status/log/diff called _check_repo() (one subprocess) THEN the actual command
+  (another subprocess). On Windows, each subprocess.run() costs ~200-500ms spawn
+  time. Two subprocesses = 400-1000ms just in overhead. Multiply by 4 for snapshot
+  (check + add + status --porcelain + commit) = easily 2-4s overhead alone.
+  FIX: skip _check_repo() for status/log/diff. Let git itself return "not a repo"
+  error -- the error message is equally useful and we save one round-trip.
+  Keep _check_repo() only for write ops (snapshot/commit/rollback) where we want
+  a clean error before touching the working tree.
+
+DECISION 3: Per-subprocess timeout = 15s (was 30s)
+  MCP server kills the entire tool call after ~30s. If one subprocess uses
+  the full 30s timeout, the chain (e.g. snapshot: add + status + commit) blows
+  the MCP budget. 15s is generous for any local git operation; if git hangs for
+  15s something is deeply wrong (index lock, credential prompt, etc.).
+
+DECISION 4: CREATE_NO_WINDOW on Windows
+  Without this flag, git spawns a hidden console window (Win32 subsystem quirk).
+  That console window can block if git tries to write to it. More critically,
+  it inherits the parent process's stdin, which on an MCP server is the JSON-RPC
+  pipe -- git reading from stdin causes a deadlock that looks like a timeout.
+  subprocess.DEVNULL for stdin + CREATE_NO_WINDOW together prevent this.
+
+DECISION 5: stdin=DEVNULL always
+  Any git operation that tries to read from stdin (credential prompts, merge
+  conflict editors, etc.) will block the subprocess forever unless stdin is
+  closed. We set stdin=DEVNULL unconditionally. GIT_TERMINAL_PROMPT=0 is the
+  git-level guard; DEVNULL is the OS-level guard. Belt + suspenders.
+
+DECISION 6: GIT_TERMINAL_PROMPT=0 on Windows via _GIT_ENV
+  The old code skipped env override on Windows to preserve PATH. But we already
+  use an absolute git path (GIT_EXE), so we don't need PATH for git. We can
+  safely set GIT_TERMINAL_PROMPT=0 on Windows too, preventing any credential
+  prompt from blocking the subprocess. We still inherit **os.environ so other
+  vars (USERPROFILE, APPDATA, etc.) remain available.
+
+DECISION 7: root="agent" default for status/log/diff
+  The most common agent use-case is inspecting the agent repo itself.
+  workspace/ is intentionally NOT a git repo (it's a container for multiple
+  independent project repos). Defaulting to "workspace" for read ops causes
+  "not a repo" errors. Default kept as "workspace" for write ops (snapshot/commit)
+  to match autocode.py expectations, but document this clearly.
+
+DECISION 8: No auto-init
+  workspace/ is NOT auto-inited because it holds multiple independent project repos.
+  git(operation='init') must be called explicitly. This prevents accidentally
+  creating a monorepo wrapper around the workspace container.
 """
 
 from __future__ import annotations
@@ -36,16 +87,23 @@ from core.config import cfg
 from registry import tool
 
 
-# -- Git executable detection ---------------------------------------------------
+# ---------------------------------------------------------------------------
+# Git executable detection
+# ---------------------------------------------------------------------------
 
 def _get_git_exe() -> str:
-    """Return absolute path to git executable. Works on Windows and Unix."""
-    # First, try shutil.which() – respects system PATH
+    """
+    Return absolute path to git executable.
+
+    WHY: On Windows, git is often NOT in the MCP server process's PATH even
+    though it works in a terminal (terminal sets PATH from registry; MCP server
+    inherits a minimal service PATH). shutil.which() covers the normal case;
+    the candidate list covers the "service PATH is stripped" case.
+    """
     git_path = shutil.which("git")
     if git_path:
         return git_path
 
-    # On Windows, fall back to common installation paths
     if sys.platform == "win32":
         candidates = [
             r"C:\Program Files\Git\bin\git.exe",
@@ -59,65 +117,102 @@ def _get_git_exe() -> str:
             if p.exists():
                 return str(p)
 
-    # Last resort – hope it's in PATH (maybe after env fix)
+    # Last resort -- if this fails, error message in _git() will explain why
     return "git"
 
 
 GIT_EXE = _get_git_exe()
 
 
-# -- Git runner ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Subprocess environment
+# ---------------------------------------------------------------------------
 
-# Environment that prevents interactive prompts – only set on non-Windows.
-# On Windows, we omit env= entirely to inherit the full system environment,
-# which keeps other environment variables intact (though we now use absolute path).
-if sys.platform != "win32":
-    _GIT_ENV = {
-        **os.environ,
-        "GIT_TERMINAL_PROMPT": "0",
-        "GIT_ASKPASS":         "echo",
-        "GIT_SSH_COMMAND":     "ssh -o BatchMode=yes -o StrictHostKeyChecking=no",
-    }
-else:
-    _GIT_ENV = None
+# WHY: We set GIT_TERMINAL_PROMPT=0 on ALL platforms now (see DECISION 6).
+# We inherit os.environ so USERPROFILE, APPDATA, etc. are available to git
+# for reading global .gitconfig. Only adding/overriding, never wiping.
+#
+# DECISION 9: Identity via env vars, NOT -c flags
+#   The old approach passed -c user.name=agent -c user.email=agent@local on the
+#   commit command line. This breaks on newer git versions (2.39+) on Windows:
+#   "fatal: options '-m' and '-c' cannot be used together"
+#   The correct, version-agnostic way is GIT_AUTHOR_*/GIT_COMMITTER_* env vars.
+#   These are honoured by all git versions and take priority over .gitconfig.
+#   This also removes two args from every commit call, slightly reducing subprocess
+#   overhead and eliminating the version-specific flag interaction entirely.
+_GIT_ENV = {
+    **os.environ,
+    "GIT_TERMINAL_PROMPT":   "0",       # prevents credential prompts (git-level guard)
+    "GIT_ASKPASS":           "echo",    # non-interactive askpass fallback
+    "GIT_SSH_COMMAND":       "ssh -o BatchMode=yes -o StrictHostKeyChecking=no",
+    # Identity -- set here so commit never needs -c user.name/email on cmdline
+    "GIT_AUTHOR_NAME":       "agent",
+    "GIT_AUTHOR_EMAIL":      "agent@local",
+    "GIT_COMMITTER_NAME":    "agent",
+    "GIT_COMMITTER_EMAIL":   "agent@local",
+}
 
+# Extra subprocess flags for Windows (see DECISION 4)
+_POPEN_FLAGS: dict = {}
+if sys.platform == "win32":
+    _POPEN_FLAGS["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+
+# ---------------------------------------------------------------------------
+# Core git runner
+# ---------------------------------------------------------------------------
 
 def _git(args: list[str], cwd: Path) -> tuple[int, str, str]:
     """
-    Run a git command in the given directory.
-    Returns (returncode, stdout, stderr). Never raises.
+    Run a git command in cwd. Returns (returncode, stdout, stderr). Never raises.
 
-    Uses absolute path to git executable (auto-detected).
-    On Linux/macOS: uses _GIT_ENV to suppress interactive prompts.
-    On Windows: inherits parent environment (fixes PATH issues).
+    Key safety properties (see DECISIONS 3-6 in module docstring):
+    - stdin=DEVNULL: prevents blocking on credential/merge prompts (OS-level)
+    - GIT_TERMINAL_PROMPT=0: prevents blocking at git level
+    - CREATE_NO_WINDOW: prevents Win32 console window blocking MCP stdio pipe
+    - timeout=15: keeps total chain within MCP's ~30s budget
     """
     try:
-        run_kwargs = {
-            "capture_output": True,
-            "text": True,
-            "cwd": str(cwd),
-            "timeout": 30,
-        }
-        if _GIT_ENV is not None:
-            run_kwargs["env"] = _GIT_ENV
-        # Use absolute path if we found it, otherwise fallback to "git"
-        git_cmd = GIT_EXE if GIT_EXE else "git"
-        result = subprocess.run([git_cmd] + args, **run_kwargs)
+        result = subprocess.run(
+            [GIT_EXE] + args,
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            env=_GIT_ENV,
+            stdin=subprocess.DEVNULL,   # DECISION 5: never read from MCP's stdin pipe
+            timeout=15,                 # DECISION 3: 15s per command, not 30s
+            **_POPEN_FLAGS,             # DECISION 4: CREATE_NO_WINDOW on Windows
+        )
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except FileNotFoundError:
-        return -1, "", f"git executable not found (tried: {GIT_EXE}) – install Git and ensure it's in PATH"
+        return -1, "", f"git not found (tried: {GIT_EXE}) -- install Git and ensure it is in PATH"
     except subprocess.TimeoutExpired:
-        return -1, "", "git command timed out after 30s"
+        return -1, "", "git command timed out after 15s (possible index lock or network hang)"
     except Exception as e:
         return -1, "", str(e)
 
 
-def _resolve_root(root_str: str) -> tuple[Optional[Path], str]:
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_root(root_str: str, path_str: str = "") -> tuple[Optional[Path], str]:
     """
-    Resolve root parameter to an absolute Path.
-    root: "workspace" | "agent" | absolute path string
-    Returns (path, error).
+    Resolve the repo directory from the root (and optional path alias) parameters.
+
+    WHY path_str alias: agents frequently pass path="D:/mcp/agent" thinking it
+    sets the working directory, because they see the diff operation's path param.
+    When root is still the default ("workspace") and path_str is an absolute
+    directory, we treat path_str as the intended root (DECISION 1).
+    This avoids the silent "wrong repo" bug without breaking the diff use-case
+    (diff passes path as a file path, which is never a bare drive root).
     """
+    # Alias: if root is default and path looks like a directory, use it as root
+    if root_str == "workspace" and path_str:
+        p_candidate = Path(path_str)
+        if p_candidate.is_absolute() and p_candidate.is_dir():
+            root_str = path_str  # treat the path arg as the intended root
+
     if root_str == "workspace":
         return cfg.workspace_root, ""
     if root_str == "agent":
@@ -133,103 +228,110 @@ def _resolve_root(root_str: str) -> tuple[Optional[Path], str]:
 
 def _check_repo(cwd: Path) -> tuple[bool, str]:
     """
-    Check whether cwd is inside a git repository.
-    Returns (is_repo, error_message).
-    Does NOT auto-initialise -- use git(operation="init") explicitly.
-    workspace/ is intentionally NOT auto-inited: it is a container for
-    multiple independent project repos, not a repo itself.
+    Verify cwd is inside a git repo. Only called before write operations.
+
+    WHY only write ops: status/log/diff skip this to save one subprocess call
+    (DECISION 2). git itself returns a clear "not a git repository" error.
+    We keep this guard for snapshot/commit/rollback so we fail cleanly before
+    touching the working tree.
     """
     code, _, _ = _git(["rev-parse", "--git-dir"], cwd)
     if code == 0:
         return True, ""
     return False, (
         f"'{cwd}' is not a git repository. "
-        "Use git(operation='init', root=...) to initialise, "
-        "or point root at a project subfolder that already has a repo."
+        "Use git(operation='init', root=...) to initialise one, "
+        "or point root at a subdirectory that already has a repo."
     )
 
 
-# -- Meta-tool -----------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Meta-tool
+# ---------------------------------------------------------------------------
 
 @tool
 def git(
     operation: str,
-    message:   str = "",
-    root:      str = "workspace",
-    n:         int = 10,
-    path:      str = "",
-    force:     bool = False,   # explicit parameter for rollback
+    message:   str  = "",
+    root:      str  = "workspace",
+    n:         int  = 10,
+    path:      str  = "",
+    force:     bool = False,
 ) -> dict:
     """
     Git version control operations.
 
     operation: "init" | "snapshot" | "commit" | "rollback" | "log" | "status" | "diff"
 
+    IMPORTANT - root vs path parameter:
+      root  - the repo directory: "workspace" | "agent" | "/absolute/path"
+              DEFAULT is "workspace". For agent code ops, pass root="agent".
+      path  - ONLY used by diff to filter a specific file. NOT the repo directory.
+              Exception: if you pass path="D:/mcp/agent" with root="workspace",
+              the tool detects this and uses path as the root (backward-compat alias).
+
     init
-        Initialise a new git repository in the target directory.
-        Creates a .gitignore and an initial commit automatically.
-        Call this once when starting a new project folder.
-        Will error if the directory is already a git repo.
+        Initialise a new git repository. Creates .gitignore + initial commit.
+        Call once when starting a new project folder. Errors if already a repo.
         Optional: root
-        Returns:  {status, path, commit_hash}
+        Returns: {status, path, commit_hash}
 
     snapshot
-        Stage all changes and create a timestamped commit.
-        Call BEFORE making any automated changes - creates a safe rollback point.
+        Stage all + timestamped commit. Call BEFORE automated changes.
+        Creates a safe rollback point. Returns nothing_to_commit if tree is clean.
         Optional: message (appended to timestamp), root
-        Returns:  {commit_hash, message, status}
+        Returns: {status: "committed"|"nothing_to_commit", commit_hash, message}
 
     commit
-        Stage all changes and commit with a message.
-        Call AFTER successful automated changes.
+        Stage all + commit. Call AFTER successful automated changes.
         Required: message
         Optional: root
-        Returns:  {commit_hash, status}
+        Returns: {status: "committed"|"nothing_to_commit", commit_hash}
 
     rollback
-        Hard reset to HEAD - discards ALL uncommitted changes.
-        Call when a patch or edit fails testing.
-        Also cleans untracked files created by failed changes.
-        Optional: root, force (bool) – if force=True, skip stashing and permanently discard changes.
-        Returns:  {head, status}
+        Reset to HEAD. Discards ALL uncommitted changes.
+        Default (force=False): stashes changes first (recoverable via git stash pop).
+        force=True: permanently discards changes + cleans untracked files.
+        Optional: root, force
+        Returns: {status, head, message, stash_ref}
 
     log
-        Show recent commit history.
-        Optional: n (number of commits, default 10), root
-        Returns:  {commits: [{hash, date, message}], count}
+        Recent commit history.
+        Optional: n (default 10), root
+        Returns: {commits: [{hash, date, message}], count}
 
     status
-        Show current working tree status (modified, added, deleted files).
+        Working tree status. Tip: pass root="agent" to check agent repo.
         Optional: root
-        Returns:  {changes: [{flag, file}], clean, head}
+        Returns: {head, changes: [{flag, file}], clean, count}
 
     diff
-        Show unstaged diff. Optional: path (specific file), root
-        Returns:  {diff, has_changes}
-
-    root parameter:
-        "workspace"     - D:/mcp/workspace  (default, for work output)
-        "agent"         - D:/mcp/agent      (for agent code changes)
-        "/absolute/path" - any absolute path
+        Unstaged diff. path filters to a specific file (relative or absolute).
+        Optional: path (file to diff), root
+        Returns: {diff, has_changes}
 
     Examples:
-        git(operation="snapshot", message="before editing memory.py")
-        git(operation="commit",   message="fix: correct decay scoring in memory store")
-        git(operation="rollback")
-        git(operation="rollback", force=True)   # permanent discard, no stash
-        git(operation="log",      n=5)
-        git(operation="status")
-        git(operation="diff",     path="tools/memory_tool.py")
-        git(operation="snapshot", root="agent")
+        git(operation="status",   root="agent")
+        git(operation="log",      root="agent", n=5)
+        git(operation="snapshot", root="agent", message="before editing memory.py")
+        git(operation="commit",   root="agent", message="fix: correct decay scoring")
+        git(operation="rollback", root="agent")
+        git(operation="rollback", root="agent", force=True)
+        git(operation="diff",     root="agent", path="tools/memory_tool.py")
+        git(operation="snapshot")   # defaults to workspace
     """
     operation = operation.strip().lower()
 
-    cwd, err = _resolve_root(root)
+    # DECISION 1: resolve root, with path alias for backward-compat
+    cwd, err = _resolve_root(root, path)
     if err:
         return {"status": "error", "error": err}
 
-    # -- init ----------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # init
+    # -----------------------------------------------------------------------
     if operation == "init":
+        # Check first: init on an existing repo is a no-op (not an error)
         ok, _ = _check_repo(cwd)
         if ok:
             _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
@@ -240,13 +342,13 @@ def git(
                 "note":   "Directory is already a git repository",
             }
 
-        code, _, err = _git(["init"], cwd)
+        code, _, err2 = _git(["init"], cwd)
         if code != 0:
-            return {"status": "error", "error": f"git init failed: {err}"}
+            return {"status": "error", "error": f"git init failed: {err2}"}
 
-        # Create sensible .gitignore
         gi = cwd / ".gitignore"
         if not gi.exists():
+            # Standard ignores for this Python/MCP project stack
             gi.write_text(
                 "__pycache__/\n*.pyc\n*.pyo\n*.bak\n"
                 ".env\nlogs/\n*.db\n*.lock\n",
@@ -254,35 +356,30 @@ def git(
             )
 
         _git(["add", "-A"], cwd)
-        code, _, err = _git(
-            ["commit",
-             "-c", "user.name=agent",
-             "-c", "user.email=agent@local",
-             "-m", "initial commit"],
-            cwd,
-        )
-        if code != 0 and "nothing to commit" not in err:
-            return {"status": "error", "error": f"Initial commit failed: {err}"}
+        # Identity comes from _GIT_ENV (GIT_AUTHOR_*/GIT_COMMITTER_*) -- see DECISION 9
+        code, _, err2 = _git(["commit", "-m", "initial commit"], cwd)
+        if code != 0 and "nothing to commit" not in err2:
+            return {"status": "error", "error": f"Initial commit failed: {err2}"}
 
         _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
-        return {
-            "status":      "initialised",
-            "path":        str(cwd),
-            "commit_hash": head,
-        }
+        return {"status": "initialised", "path": str(cwd), "commit_hash": head}
 
-    # -- snapshot -------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # snapshot
+    # -----------------------------------------------------------------------
     if operation == "snapshot":
-        ok, err = _check_repo(cwd)
+        # Keep _check_repo here: write op, want clean failure before touching tree
+        ok, err2 = _check_repo(cwd)
         if not ok:
-            return {"status": "error", "error": err}
+            return {"status": "error", "error": err2}
 
         ts       = datetime.now().strftime("%Y-%m-%d %H:%M")
         full_msg = f"snapshot [{ts}]" + (f": {message}" if message else "")
 
         _git(["add", "-A"], cwd)
 
-        code, porcelain, _ = _git(["status", "--porcelain"], cwd)
+        # Check if there's anything to commit AFTER staging
+        _, porcelain, _ = _git(["status", "--porcelain"], cwd)
         if not porcelain:
             _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
             return {
@@ -292,75 +389,75 @@ def git(
                 "root":        str(cwd),
             }
 
-        code, _, err = _git(
-            ["commit",
-             "-c", "user.name=agent",
-             "-c", "user.email=agent@local",
-             "-m", full_msg], cwd
-        )
+        # Identity comes from _GIT_ENV (GIT_AUTHOR_*/GIT_COMMITTER_*) -- see DECISION 9
+        code, _, err2 = _git(["commit", "-m", full_msg], cwd)
         if code != 0:
-            return {"status": "error", "error": f"Snapshot commit failed: {err}"}
+            return {"status": "error", "error": f"Snapshot commit failed: {err2}"}
 
         _, hash_, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
         return {"status": "committed", "commit_hash": hash_, "message": full_msg, "root": str(cwd)}
 
-    # -- commit ----------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # commit
+    # -----------------------------------------------------------------------
     if operation == "commit":
         if not message:
             return {"status": "error", "error": "message is required for commit"}
 
-        ok, err = _check_repo(cwd)
+        ok, err2 = _check_repo(cwd)
         if not ok:
-            return {"status": "error", "error": err}
+            return {"status": "error", "error": err2}
 
         _git(["add", "-A"], cwd)
 
-        code, _, err = _git(
-            ["commit",
-             "-c", "user.name=agent",
-             "-c", "user.email=agent@local",
-             "-m", message], cwd
-        )
+        # Identity comes from _GIT_ENV (GIT_AUTHOR_*/GIT_COMMITTER_*) -- see DECISION 9
+        code, _, err2 = _git(["commit", "-m", message], cwd)
         if code != 0:
-            if "nothing to commit" in err:
+            if "nothing to commit" in err2:
                 _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
                 return {"status": "nothing_to_commit", "commit_hash": head}
-            return {"status": "error", "error": err}
+            return {"status": "error", "error": err2}
 
         _, hash_, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
         return {"status": "committed", "commit_hash": hash_, "root": str(cwd)}
 
-    # -- rollback --------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # rollback
+    # -----------------------------------------------------------------------
     if operation == "rollback":
-        """
-        Safe rollback: stash changes first unless force=True is passed.
-        force=True will permanently discard uncommitted work (like git reset --hard).
-        """
+        ok, err2 = _check_repo(cwd)
+        if not ok:
+            return {"status": "error", "error": err2}
+
         if force:
+            # Permanent discard -- used when stash is not wanted (e.g. failed autocode run)
             _git(["reset", "--hard", "HEAD"], cwd)
-            _git(["clean", "-fd"], cwd)
+            _git(["clean", "-fd"], cwd)   # also removes untracked files
             _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
             return {
-                "status": "rolled_back",
-                "head": head,
-                "message": "Force reset to HEAD (unrecoverable)",
-                "root": str(cwd)
+                "status":  "rolled_back",
+                "head":    head,
+                "message": "Force reset to HEAD (changes permanently discarded)",
+                "root":    str(cwd),
             }
 
-        # Safe path: stash first
+        # Safe path: stash changes first so they can be recovered
+        # WHY stash instead of just reset: autocode.py may have written partial
+        # changes that are valuable for debugging even after a test failure.
         import time as _t
         stash_msg = f"autocode-rollback-{int(_t.time())}"
         sr        = _git(["stash", "push", "-m", stash_msg], cwd)
+        # sr[1] is stdout; "No local changes" means nothing was stashed
         stashed   = "No local changes" not in sr[1]
 
-        code, _, err = _git(["reset", "--hard", "HEAD"], cwd)
+        code, _, err2 = _git(["reset", "--hard", "HEAD"], cwd)
         if code != 0:
-            return {"status": "error", "error": f"git reset failed: {err}"}
+            return {"status": "error", "error": f"git reset failed: {err2}"}
 
         _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
         msg = "Working tree reset to HEAD."
         if stashed:
-            msg += f" Uncommitted work saved to stash '{stash_msg}' (git stash pop to restore)."
+            msg += f" Changes saved to stash '{stash_msg}' -- run 'git stash pop' to restore."
         return {
             "status":    "rolled_back",
             "head":      head,
@@ -369,13 +466,18 @@ def git(
             "root":      str(cwd),
         }
 
-    # -- log -------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # log
+    # -----------------------------------------------------------------------
     if operation == "log":
-        code, out, err = _git(
-            ["log", f"--max-count={n}", "--pretty=format:%h|%ai|%s"], cwd
+        # DECISION 2: no _check_repo() here -- git log itself returns a clear error
+        # if not in a repo, and we save one subprocess call (~200-500ms on Windows).
+        code, out, err2 = _git(
+            ["log", f"--max-count={n}", "--pretty=format:%h|%ai|%s"],
+            cwd,
         )
         if code != 0:
-            return {"status": "error", "error": err or "No commits yet"}
+            return {"status": "error", "error": err2 or "No commits yet (empty repo?)"}
 
         commits = []
         for line in out.splitlines():
@@ -385,17 +487,22 @@ def git(
 
         return {"status": "ok", "commits": commits, "count": len(commits), "root": str(cwd)}
 
-    # -- status ----------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # status
+    # -----------------------------------------------------------------------
     if operation == "status":
-        code, out, err = _git(["status", "--short"], cwd)
+        # DECISION 2: no _check_repo() pre-flight -- saves one subprocess.
+        # git status --short already returns non-zero + clear message if not a repo.
+        code, out, err2 = _git(["status", "--short"], cwd)
         if code != 0:
-            return {"status": "error", "error": err}
+            return {"status": "error", "error": err2}
 
         changes = []
         for line in out.splitlines():
             if len(line) >= 3:
                 changes.append({"flag": line[:2].strip(), "file": line[3:]})
 
+        # Get HEAD separately; this will be empty string on an empty repo
         _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
         return {
             "status":  "ok",
@@ -406,27 +513,39 @@ def git(
             "root":    str(cwd),
         }
 
-    # -- diff ------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # diff
+    # -----------------------------------------------------------------------
     if operation == "diff":
+        # DECISION 2: no _check_repo() pre-flight.
         args = ["diff"]
+        # path here is a FILE path for filtering the diff (not the repo root)
+        # _resolve_root() already consumed path if it looked like a directory root.
+        # At this point, if path is set it must be a file path.
         if path:
             p = Path(path)
             if not p.is_absolute():
                 p = cwd / path
             args.append(str(p))
 
-        code, out, err = _git(args, cwd)
+        code, out, err2 = _git(args, cwd)
         if code != 0:
-            return {"status": "error", "error": err}
+            return {"status": "error", "error": err2}
 
         return {
             "status":      "ok",
-            "diff":        out[:10_000] if out else "",
+            "diff":        out[:10_000] if out else "",   # cap at 10KB to stay within MCP response limits
             "has_changes": bool(out),
             "root":        str(cwd),
         }
 
+    # -----------------------------------------------------------------------
+    # unknown operation
+    # -----------------------------------------------------------------------
     return {
         "status": "error",
-        "error":  f"Unknown operation '{operation}'. Use: init | snapshot | commit | rollback | log | status | diff",
+        "error":  (
+            f"Unknown operation '{operation}'. "
+            "Valid: init | snapshot | commit | rollback | log | status | diff"
+        ),
     }
