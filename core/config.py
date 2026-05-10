@@ -78,22 +78,22 @@ class Config:
             "planner": {
                 "model":    self.planner_model,
                 "base_url": self.lm_studio_base_url,
-                "timeout":  90,
+                "timeout":  int(os.getenv("PLANNER_TIMEOUT", str(90))),
             },
             "executor": {
                 "model":    self.executor_model,
                 "base_url": self.lm_studio_base_url,
-                "timeout":  120,
+                "timeout":  int(os.getenv("EXECUTOR_TIMEOUT", str(120))),
             },
             "router": {
                 "model":    self.router_model,
                 "base_url": self.lm_studio_base_url,
-                "timeout":  15,
+                "timeout":  int(os.getenv("ROUTER_TIMEOUT", str(15))),
             },
             "vision": {
                 "model":    self.vision_model,
                 "base_url": self.lm_studio_base_url,
-                "timeout":  60,
+                "timeout":  int(os.getenv("VISION_TIMEOUT", str(60))),
             },
         }
 
