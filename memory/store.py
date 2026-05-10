@@ -258,16 +258,16 @@ class MemoryStore:
         with self._write_lock:
             try:
                 col.add(documents=[text], ids=[memory_id], metadatas={
-                "type":       collection,
-                "importance": importance,
-                "tags":       tags,
-                "timestamp":  int(time.time()),
-                "trace_id":   trace_id,
-                "goal":       goal[:200],
-                "outcome":    outcome,
-                "tools_used": tools_used,
-                "source":     source[:200],
-            })
+                    "type":       collection,
+                    "importance": importance,
+                    "tags":       tags,
+                    "timestamp":  int(time.time()),
+                    "trace_id":   trace_id,
+                    "goal":       goal[:200],
+                    "outcome":    outcome,
+                    "tools_used": tools_used,
+                    "source":     source[:200],
+                })
             return {"status": "stored", "id": memory_id, "collection": collection}
         except Exception as e:
             return {"status": "error", "error": str(e)}
