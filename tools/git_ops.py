@@ -13,6 +13,11 @@ Operations:
   log       - recent commit history
   status    - current working tree status
   diff      - show unstaged diff
+  branch    - list branches: message="list"
+  checkout  - switch branches or commits: message="target_branch_or_commit"
+  restore   - restore files from a specific commit: message="target_commit"
+  tag       - create or list tags: message="list" or "tag_name"
+  show      - show commit details: message="commit_hash"
 
 --- ARCHITECTURE DECISIONS (read before touching this file) ---
 
@@ -261,7 +266,7 @@ def git(
     """
     Git version control operations.
 
-    operation: "init" | "snapshot" | "commit" | "rollback" | "log" | "status" | "diff"
+    operation: "init" | "snapshot" | "commit" | "rollback" | "log" | "status" | "diff" | "branch" | "checkout" | "restore" | "tag" | "show"
 
     IMPORTANT - root vs path parameter:
       root  - the repo directory: "workspace" | "agent" | "/absolute/path"
@@ -310,6 +315,40 @@ def git(
         Optional: path (file to diff), root
         Returns: {diff, has_changes}
 
+    branch
+        Manage local branches. Branches allow isolating experimental work.
+        Subcommands (via 'message' parameter):
+          - list              (e.g. branch operation with no message)
+          - create <name>     (e.g. message="create my-feature")
+          - delete <name>     (e.g. message="delete old-branch") -- safe, only if merged
+        Returns: {status, branches/created/deleted, ...}
+
+    checkout
+        Switch to a branch or commit. Can also create and switch in one step.
+        Use 'message' to specify the target:
+          - branch name       (e.g. checkout, message="main")
+          - "-b new-branch"   (e.g. checkout, message="-b experiment")
+        Returns: {status, to/branch, ...}
+
+    restore
+        Restore a specific file to HEAD (or a specified commit) discarding local changes.
+        'path' parameter = file to restore (relative or absolute)
+        'message' parameter = optional commit ref (e.g. "HEAD~2")
+        Returns: {status, file, ...}
+
+    tag
+        List or create lightweight tags to mark milestones.
+        Subcommands (via 'message'):
+          - list              (default)
+          - create <name>     (e.g. message="create v1.0")
+        Returns: {status, tags/created, ...}
+
+    show
+        Show details of a commit, tag, or tree object.
+        'message' = commit hash, tag name (default: "HEAD")
+        Returns: {status, output (capped at 10KB), ...}
+        
+
     Examples:
         git(operation="status",   root="agent")
         git(operation="log",      root="agent", n=5)
@@ -319,6 +358,18 @@ def git(
         git(operation="rollback", root="agent", force=True)
         git(operation="diff",     root="agent", path="tools/memory_tool.py")
         git(operation="snapshot")   # defaults to workspace
+
+        git(operation="branch")                              # list local branches
+        git(operation="branch", message="create experiment") # create branch "experiment"
+        git(operation="branch", message="delete old-fix")    # delete merged branch "old-fix"
+        git(operation="checkout", message="main")            # switch to main branch
+        git(operation="checkout", message="-b new-idea")     # create and switch to "new-idea"
+        git(operation="restore", path="tools/git_ops.py")    # restore file to HEAD
+        git(operation="restore", path="README.md", message="HEAD~2") # restore from older commit
+        git(operation="tag")                                 # list all tags
+        git(operation="tag", message="create v1.0")          # create tag "v1.0"
+        git(operation="show", message="HEAD")                # show latest commit details
+        git(operation="show", message="abc1234")             # show specific commit
     """
     operation = operation.strip().lower()
 
@@ -539,6 +590,147 @@ def git(
             "root":        str(cwd),
         }
 
+    # -------------------------------------------------------------------
+    # branch (new)
+    # -------------------------------------------------------------------
+    if operation == "branch":
+        # Subcommand is first word of message; rest is branch name.
+        parts = message.strip().split(maxsplit=1) if message.strip() else []
+        sub   = parts[0].lower() if parts else "list"
+        name  = parts[1] if len(parts) > 1 else ""
+
+        if sub == "list":
+            code, out, err2 = _git(["branch"], cwd)
+            if code != 0:
+                return {"status": "error", "error": err2}
+            branches = []
+            for line in out.splitlines():
+                current = line.startswith("*")
+                bname   = line[2:].strip()
+                branches.append({"name": bname, "current": current})
+            return {"status": "ok", "branches": branches, "root": str(cwd)}
+
+        elif sub == "create":
+            if not name:
+                return {"status": "error", "error": "Branch name required (message='create <name>')"}
+            ok, err2 = _check_repo(cwd)
+            if not ok:
+                return {"status": "error", "error": err2}
+            code, _, err2 = _git(["branch", name], cwd)
+            if code != 0:
+                return {"status": "error", "error": err2}
+            return {"status": "created", "branch": name, "root": str(cwd)}
+
+        elif sub == "delete":
+            if not name:
+                return {"status": "error", "error": "Branch name required (message='delete <name>')"}
+            ok, err2 = _check_repo(cwd)
+            if not ok:
+                return {"status": "error", "error": err2}
+            # Safe delete: only if merged (-d). No --force.
+            code, _, err2 = _git(["branch", "-d", name], cwd)
+            if code != 0:
+                return {"status": "error", "error": err2}
+            return {"status": "deleted", "branch": name, "root": str(cwd)}
+
+        else:
+            return {"status": "error", "error": f"Unknown branch subcommand: '{sub}'. Use list, create <name>, delete <name>"}
+
+    # -------------------------------------------------------------------
+    # checkout (new)
+    # -------------------------------------------------------------------
+    if operation == "checkout":
+        target = message.strip() if message else ""
+        if not target:
+            return {"status": "error", "error": "Branch or commit to checkout is required (message param)"}
+
+        ok, err2 = _check_repo(cwd)
+        if not ok:
+            return {"status": "error", "error": err2}
+
+        # Support "checkout -b newbranch" shorthand via message = "-b newbranch"
+        if target.startswith("-b"):
+            parts = target.split(maxsplit=1)
+            if len(parts) < 2:
+                return {"status": "error", "error": "Branch name required after -b"}
+            branch_name = parts[1].strip()
+            code, _, err2 = _git(["checkout", "-b", branch_name], cwd)
+            if code != 0:
+                return {"status": "error", "error": err2}
+            return {"status": "switched", "branch": branch_name, "root": str(cwd)}
+
+        code, _, err2 = _git(["checkout", target], cwd)
+        if code != 0:
+            return {"status": "error", "error": err2}
+        return {"status": "switched", "to": target, "root": str(cwd)}
+
+    # -------------------------------------------------------------------
+    # restore (new)
+    # -------------------------------------------------------------------
+    if operation == "restore":
+        if not path:
+            return {"status": "error", "error": "File path is required (use the 'path' parameter)"}
+
+        ok, err2 = _check_repo(cwd)
+        if not ok:
+            return {"status": "error", "error": err2}
+
+        # Resolve file path relative to cwd if not absolute
+        file_path = Path(path)
+        if not file_path.is_absolute():
+            file_path = cwd / path
+
+        args = ["restore"]
+        # Optional source (commit) from `message`
+        if message.strip():
+            args.append(f"--source={message.strip()}")
+        args.append(str(file_path))
+
+        code, _, err2 = _git(args, cwd)
+        if code != 0:
+            return {"status": "error", "error": err2}
+        return {"status": "restored", "file": str(file_path), "root": str(cwd)}
+
+    # -------------------------------------------------------------------
+    # tag (new)
+    # -------------------------------------------------------------------
+    if operation == "tag":
+        parts = message.strip().split(maxsplit=1) if message.strip() else []
+        sub   = parts[0].lower() if parts else "list"
+        name  = parts[1] if len(parts) > 1 else ""
+
+        if sub == "list":
+            code, out, err2 = _git(["tag", "-l"], cwd)
+            if code != 0:
+                return {"status": "error", "error": err2}
+            tags = [t.strip() for t in out.splitlines() if t.strip()]
+            return {"status": "ok", "tags": tags, "root": str(cwd)}
+
+        elif sub == "create":
+            if not name:
+                return {"status": "error", "error": "Tag name required (message='create <name>')"}
+            ok, err2 = _check_repo(cwd)
+            if not ok:
+                return {"status": "error", "error": err2}
+            code, _, err2 = _git(["tag", name], cwd)
+            if code != 0:
+                return {"status": "error", "error": err2}
+            return {"status": "created", "tag": name, "root": str(cwd)}
+
+        else:
+            return {"status": "error", "error": f"Unknown tag subcommand: '{sub}'. Use list, create <name>"}
+
+    # -------------------------------------------------------------------
+    # show (new)
+    # -------------------------------------------------------------------
+    if operation == "show":
+        target = message.strip() if message.strip() else "HEAD"
+        code, out, err2 = _git(["show", target], cwd)
+        if code != 0:
+            return {"status": "error", "error": err2}
+        # Cap output to 10KB like diff
+        return {"status": "ok", "output": out[:10_000], "root": str(cwd)}
+
     # -----------------------------------------------------------------------
     # unknown operation
     # -----------------------------------------------------------------------
@@ -549,3 +741,34 @@ def git(
             "Valid: init | snapshot | commit | rollback | log | status | diff"
         ),
     }
+
+# ---------------------------------------------------------------------------
+# Commands intentionally excluded from the git meta‑tool
+# ---------------------------------------------------------------------------
+#
+# The following operations are NOT exposed to the autonomous agent because they
+# either involve remote repositories, are destructive to shared history, or
+# require human judgement for conflict resolution:
+#
+#   fetch       – touches a remote; can update remote‑tracking branches and
+#                 potentially introduce unwanted refs. The agent runs in an
+#                 isolated, local‑first environment and does not need remote
+#                 awareness by default.
+#
+#   pull        – fetch + merge. Combines network access with automatic
+#                 merging that can produce conflicts. Unsuitable for
+#                 unsupervised execution.
+#
+#   merge       – joins two branches. May create merge conflicts that the
+#                 agent cannot resolve reliably. Branch‑per‑feature with
+#                 explicit commits is preferred.
+#
+#   rebase      – rewrites commit history. Extremely dangerous for an
+#                 autonomous agent; can lose work or corrupt the timeline.
+#
+#   push        – sends local commits to a remote. Explicitly excluded to
+#                 maintain the agent's local‑only boundary.
+#
+# If a future use case requires any of these (e.g., a fully‑automated CI
+# pipeline), add them behind a `allow_remote=True` flag and enforce
+# additional safety guards (authentication, conflict detection, etc.).
