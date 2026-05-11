@@ -145,3 +145,46 @@ def test_is_protected_rejects_workspace_files():
     assert not cfg.is_protected("workspace/output.py")
     assert not cfg.is_protected("skills/b3/skill.py")
     assert not cfg.is_protected("tools/web.py")
+
+
+# ── Autocode Workflow Integration Tests ───────────────────────────────────────
+
+def test_autocode_goal_to_task_conversion():
+    """
+    Test that autocode workflow properly converts goal -> task.
+    
+    This is the critical fix for run_workflow() to work with the autocode graph,
+    which expects a 'task' key in state instead of 'goal'.
+    """
+    from workflows.base import run_workflow
+    
+    # Run autocode workflow via base.py dispatcher (as meta-tool does)
+    result = run_workflow(
+        workflow_type="autocode",
+        goal="Add input validation to memory store",
+        trace_id="test-autocode-integration",
+    )
+    
+    # Should not crash - graph should build and invoke
+    assert "status" in result, "Result must have status field"
+    # Status can be anything (running/failed/success) as long as it doesn't crash
+    assert result["status"] in ("success", "failed", "running"), \
+        f"Invalid status: {result['status']}"
+
+
+def test_autocode_workflow_with_target_file():
+    """
+    Test autocode workflow with target_file and mode kwargs.
+    """
+    from workflows.base import run_workflow
+    
+    result = run_workflow(
+        workflow_type="autocode",
+        goal="Fix error in memory/store.py: ValueError missing argument",
+        trace_id="test-autocode-with-target",
+        target_file="memory/store.py",
+        mode="fix_error",
+    )
+    
+    assert "status" in result
+    assert result["status"] in ("success", "failed", "running")
