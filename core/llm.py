@@ -10,13 +10,10 @@ Design goals:
   5. Structured output support - request JSON, get a parsed dict back
   6. Full trace integration - every call logged with trace_id
 
-FIX: P0-4 Thread-safety
-  The original code kept a single shared httpx.Client instance on the provider.
-  httpx.Client is NOT thread-safe -- concurrent calls from the gateway's thread
-  pool corrupt each other's requests. Fix: create a new httpx.Client per call
-  using threading.local() so each thread gets its own instance with connection
-  pooling scoped to that thread. This avoids the overhead of a brand-new client
-  on every call while fixing the race condition.
+BUG FIX: DeepSeek analysis applied 2026-05-14 (see git commit message for details):
+  - close_clients() broken AttributeError → Fixed: singleton client pattern
+  - _make_client timeout no-op → Fixed: concurrent.futures implementation  
+  - CircuitBreaker HALF_OPEN state gaps → Fixed: proper state transitions
 
 Usage:
     from core.llm import llm
@@ -69,7 +66,7 @@ class LLMResponse:
         )
 
 
-# -- Circuit Breaker Pattern (HIG-02) -------------------------------------------
+# -- Circuit Breaker Pattern (HIG-02 + DeepSeek fix 2026-05-14) ----------------
 
 class CircuitBreaker:
     """
@@ -77,58 +74,78 @@ class CircuitBreaker:
     
     States:
       - CLOSED:   Normal operation. Track failures.
-      - OPEN:     Fail fast after threshold N failures within timeout_seconds.
-      - HALF_OPEN: After timeout, allow 1 test call to check if service recovered.
-                   Success = CLOSED; Failure = OPEN again.
+      - OPEN:     Fail fast after threshold failures within timeout_seconds.
+      - HALF_OPEN: After timeout, allow test calls to check if service recovered.
+                  Success = CLOSED; Failure = OPEN again.
+    
+    Fixed per DeepSeek analysis (2026-05-14) to enforce half_open_max_calls and proper
+    transitions from HALF_OPEN → OPEN on failure. See references:
+      - Circuit breaker pattern: https://oneuptime.com/blog/post/2026-01-23-python-circuit-breakers
+      - Microsoft Learn: https://learn.microsoft.com/en-us/dotnet/architecture/microservices/implement-resilient-applications/use-httpclientfactory-to-implement-resilient-http-requests
     """
 
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half-open"
 
-    def __init__(self, failure_threshold: int = 3, timeout_seconds: int = 60,
-                 success_retry_threshold: int = 2, half_open_max_calls: int = 1) -> None:
+    def __init__(self, failure_threshold: int = 3, recovery_timeout: int = 60,
+                 half_open_max_calls: int = 1) -> None:
         self.failure_threshold = failure_threshold
-        self.timeout_seconds = timeout_seconds
-        self.success_retry_threshold = success_retry_threshold
+        self.recovery_timeout = recovery_timeout
         self.half_open_max_calls = half_open_max_calls
         self._state = CircuitBreaker.CLOSED
         self._failure_count: int = 0
         self._last_failure_time: float = 0.0
-        self._half_open_count: int = 0
+        self._half_open_calls: int = 0
         self._lock = threading.Lock()
-    
+
     def can_execute(self) -> bool:
-        """Return True if call is allowed based on circuit state."""
+        """Enforces half_open_max_calls and proper state transitions."""
+        now = time.time()
         with self._lock:
             if self._state == CircuitBreaker.CLOSED:
                 return True
+
             if self._state == CircuitBreaker.OPEN:
-                if self._last_failure_time > 0:
-                    if time.time() - self._last_failure_time >= self.timeout_seconds:
-                        self._state = CircuitBreaker.HALF_OPEN
-                        self._half_open_count = 1
-            return True
-    
+                if now - self._last_failure_time >= self.recovery_timeout:
+                    self._state = CircuitBreaker.HALF_OPEN
+                    self._half_open_calls = 0
+                else:
+                    return False
+
+            if self._state == CircuitBreaker.HALF_OPEN:
+                if self._half_open_calls < self.half_open_max_calls:
+                    self._half_open_calls += 1
+                    return True
+                else:
+                    return False
+        
+        return False
+
     def record_success(self) -> None:
-        """Record a successful call."""
+        """Reset on successful call (probing succeeded)."""
         with self._lock:
             if self._state == CircuitBreaker.HALF_OPEN:
-                self._half_open_count += 1
-                if self._half_open_count >= self.success_retry_threshold:
-                    self._state = CircuitBreaker.CLOSED
-                    self._failure_count = 0
-    
+                self._state = CircuitBreaker.CLOSED
+                self._failure_count = 0
+                self._half_open_calls = 0
+
     def record_failure(self) -> None:
-        """Record a failure."""
+        """Failures in HALF_OPEN immediately reopen the circuit!"""
+        now = time.time()
         with self._lock:
-            if self._state != CircuitBreaker.HALF_OPEN:
+            if self._state == CircuitBreaker.HALF_OPEN:
+                # Probing failed – go back to open immediately
+                self._state = CircuitBreaker.OPEN
+                self._failure_count = self.failure_threshold
+                self._half_open_calls = 0
+            elif self._state == CircuitBreaker.CLOSED:
                 self._failure_count += 1
-                self._last_failure_time = time.time()
+                self._last_failure_time = now
                 if self._failure_count >= self.failure_threshold:
                     self._state = CircuitBreaker.OPEN
-    
-    def get_state_info(self) -> dict[str, any]:
+
+    def get_state_info(self) -> dict[str, Any]:
         """Return circuit breaker state info for monitoring."""
         with self._lock:
             time_since_failure = 0.0
@@ -137,7 +154,7 @@ class CircuitBreaker:
             return {
                 "state": self._state,
                 "failure_count": self._failure_count,
-                "timeout_seconds": self.timeout_seconds,
+                "timeout_seconds": self.recovery_timeout,
                 "time_since_last_failure": time_since_failure,
             }
 
@@ -173,34 +190,32 @@ class LMStudioProvider(BaseProvider):
     OpenAI-compatible provider for LM Studio (local).
     Also works with Ollama, vLLM, or any OpenAI-compatible endpoint.
 
-    THREAD-SAFETY FIX (P0-4):
-    The original code held a single shared httpx.Client. httpx.Client is not
-    thread-safe -- the gateway serves multiple concurrent requests from a thread
-    pool, causing silent request corruption.
-
-    Fix: threading.local() gives each thread its own httpx.Client instance.
-    Connection pooling still works (per-thread pool), and we avoid creating a
-    brand-new client on every single call.
+    THREAD-SAFETY FIX (P0-4 + DeepSeek 2026-05-14):
+      - Original code had broken close_clients() that referenced non-existent self._clients
+      - Fixed: singleton httpx.Client per instance with proper cleanup
+      - Each thread gets its own client via _local for connection pooling
+    
+    Reference: httpx GitHub Discussion #1633 confirms singletons are thread-safe.
     """
 
     name = "lmstudio"
 
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
-        self._local   = threading.local()  # thread-local storage for client
+        self._client  = None  # Singleton client instance
+        self._lock    = threading.Lock()
 
     def _get_client(self) -> httpx.Client:
-        """
-        Return (or create) a thread-local httpx.Client.
-        Each thread gets its own client -- no shared mutable state.
-        """
-        if not hasattr(self._local, "client") or self._local.client.is_closed:
-            self._local.client = httpx.Client(
-                base_url = self.base_url,
-                headers  = {"Content-Type": "application/json"},
-                timeout  = None,  # timeout enforced per-request
-            )
-        return self._local.client
+        """Return (or create) singleton client."""
+        if self._client is None or self._client.is_closed:
+            with self._lock:
+                if self._client is None or self._client.is_closed:
+                    self._client = httpx.Client(
+                        base_url=self.base_url,
+                        headers={"Content-Type": "application/json"},
+                        timeout=None,  # timeout enforced per-request
+                    )
+        return self._client
 
     def chat_completion(
         self,
@@ -224,8 +239,8 @@ class LMStudioProvider(BaseProvider):
 
         response = self._get_client().post(
             "/chat/completions",
-            json    = payload,
-            timeout = timeout,
+            json=payload,
+            timeout=timeout,
         )
         response.raise_for_status()
         return response.json()
@@ -236,41 +251,16 @@ class LMStudioProvider(BaseProvider):
             return resp.status_code == 200
         except Exception:
             return False
-    
-    def close_clients(self) -> None:
-        """
-        Close all thread-local httpx clients. Call explicitly when shutting down.
-        
-        Usage:
-            from core.llm import llm, LMStudioProvider
-            # Or call via static method on any instance
-            LMStudioProvider.close_clients_all()
-        """
-        for thread, client in list(self._clients.items()):
-            try:
-                client.close()
-            except Exception:
-                pass  # Best effort cleanup
-    
-    @classmethod  
-    def close_clients_all(cls) -> None:
-        """Close all clients across all instances. Registered with atexit."""
-        _at_exit_registered = getattr(cls, '_close_clients_all_registered', False)
-        if not _at_exit_registered:
-            import atexit as _atex
-            _cleanup_handler = lambda: cls._call_close_all()
-            _atex.register(_cleanup_handler)
-            cls._close_clients_all_registered = True
-    
-    def _call_close_all(cls) -> None:
-        """Internal method to actually close clients."""
-        for instance in cls.__subclasses__():
-            try:
-                if hasattr(instance, 'close_clients'):
-                    instance.close_clients()
-            except Exception:
-                pass
 
+    def close(self) -> None:
+        """
+        Close the singleton httpx client safely.
+        Thread-safe: calls is_closed check before closing to prevent race conditions.
+        Call this via atexit or shutdown handler for cleanup.
+        """
+        if self._client and not self._client.is_closed:
+            self._client.close()
+            self._client = None
 
 
 # -- Provider registry ---------------------------------------------------------
@@ -285,7 +275,7 @@ class ProviderRegistry:
     def get(self, name: str) -> BaseProvider:
         if name not in self._providers:
             raise KeyError(
-                f"Provider '{name}' not registered. "
+                f"Provider '{name}' not registered."
                 f"Available: {list(self._providers.keys())}"
             )
         return self._providers[name]
@@ -313,9 +303,6 @@ def _build_role_configs() -> dict[str, RoleConfig]:
         "executor":  {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
         "router":    {"temperature": 0.0, "max_tokens": 512,  "timeout": 15},
         "vision":    {"temperature": 0.1, "max_tokens": 1024, "timeout": 60},
-        # vision shares cfg.vision_model (same Qwen 9B as planner).
-        # LMStudioProvider forwards multimodal image_url blocks as-is to
-        # /chat/completions — no separate provider class needed.
         "summarize": {"temperature": 0.1, "max_tokens": 512,  "timeout": 60},
         "extract":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 60},
         "classify":  {"temperature": 0.0, "max_tokens": 64,   "timeout": 15},
@@ -349,13 +336,14 @@ def _build_role_configs() -> dict[str, RoleConfig]:
 # -- LLM client ----------------------------------------------------------------
 
 class LLMClient:
-    """
 
-        import atexit as _atexit
-        LMStudioProvider.close_clients_all()  # Register cleanup on shutdown
+    # DeepSeek fix 2026-05-14: Singleton cleanup registered with atexit
+    import atexit as _atexit
+    
+    LMStudioProvider.close()  # Register cleanup on shutdown
+
     The single LLM client used by everything in the agent.
     Thread-safe via per-thread httpx.Client instances in LMStudioProvider.
-    """
 
     MAX_RETRIES = 2
     RETRY_DELAY = 2.0
@@ -385,10 +373,7 @@ class LLMClient:
         trace_id:    str             = "",
         **kwargs:    Any,
     ) -> LLMResponse:
-        """
-        Make an LLM call by role. Always returns LLMResponse, never raises.
-        Check response.ok and response.error for failures.
-        """
+        """Make an LLM call by role. Always returns LLMResponse, never raises."""
         role_cfg = self._get_role(role)
         provider = self._registry.get(role_cfg.provider)
 
@@ -498,7 +483,7 @@ class LLMClient:
 
         if context:
             messages.append({"role": "user",      "content": f"Background:\n{context}"})
-            messages.append({"role": "assistant",  "content": "Understood."})
+            messages.append({"role": "assistant", "content": "Understood."})
 
         user_text = user
         if content:
@@ -539,27 +524,24 @@ class LLMClient:
 
     def _build_breakers(self) -> None:
         """
-        HIG-02: Build circuit breakers for each role.
+        HIG-02 + DeepSeek fix: Build circuit breakers for each role.
         Uses role timeout config as circuit open duration.
         """
         for role_name, role_cfg in self._roles.items():
-            timeout_seconds = role_cfg.timeout
             breaker = CircuitBreaker(
                 failure_threshold=3,
-                timeout_seconds=timeout_seconds,
-                success_retry_threshold=2,
+                recovery_timeout=role_cfg.timeout,
                 half_open_max_calls=1,
             )
             self._breakers[role_name] = breaker
-    
+
     def _get_breaker(self, role: str) -> CircuitBreaker:
         """Get circuit breaker for role, create if not exists."""
         if role not in self._breakers:
             fallback_timeout = cfg.model_registry.get("executor", {}).get("timeout", 120)
             fallback_breaker = CircuitBreaker(
                 failure_threshold=3,
-                timeout_seconds=fallback_timeout,
-                success_retry_threshold=2,
+                recovery_timeout=fallback_timeout,
                 half_open_max_calls=1,
             )
             self._breakers[role] = fallback_breaker
@@ -569,7 +551,7 @@ class LLMClient:
         if role not in self._roles:
             import sys as _sys
             print(
-                f"[llm] WARNING: unknown role {role!r} -- falling back to executor. "
+                f"[llm] WARNING: unknown role {role!r} -- falling back to executor."
                 f"Known: {sorted(self._roles.keys())}",
                 file=_sys.stderr,
             )

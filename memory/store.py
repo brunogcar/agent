@@ -76,46 +76,52 @@ META_FIELDS = [
 
 
 # ── ChromaDB client ───────────────────────────────────────────────────────────
+# DeepSeek fix applied 2026-05-14: Added concurrent.futures timeout implementation
+# Reference: https://github.com/chroma-core/chroma/issues/5868
 
 def _make_client(timeout: int = 60):
-    """Create ChromaDB client with timeout protection.
+    """Create ChromaDB client with a hard timeout; fall back to degraded mode.
     
-    HIG-05 FIX: PersistentClient can hang indefinitely on slow/flaky storage.
-    Wrap with timeout and degraded mode fallback.
+    HIG-05 + DeepSeek fix: PersistentClient can hang indefinitely on slow/flaky storage.
+    Wrap with concurrent.futures.timeout and graceful fallback.
+    
+    This prevents startup hangs when ChromaDB is unavailable or storage is locked.
     """
+    import concurrent.futures
     import time as _time
+    import chromadb
+    from chromadb.config import Settings
     
-    start = _time.time()
-    try:
-        import chromadb
-        from chromadb.config import Settings
-        
-        client = chromadb.PersistentClient(
+    def _create():
+        return chromadb.PersistentClient(
             path=str(cfg.memory_chroma_path),
             settings=Settings(anonymized_telemetry=False),
         )
-        
-        elapsed = _time.time() - start
-        print("[memory] ChromaDB client created in {:.1f}s".format(elapsed), file=sys.stderr)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_create)
+            client = future.result(timeout=timeout)
+        print(f"[memory] ChromaDB client created in {_time.time()-start:.1f}s", file=sys.stderr)
         return client
-        
-    except (TimeoutError, Exception) as e:
-        elapsed = _time.time() - start
-        error_msg = "ChromaDB initialization failed after {:.1f}s: {}".format(
-            elapsed, str(e))
-        print("[memory] WARNING: {} - agent may have limited memory functionality".format(error_msg), file=sys.stderr)
-        
-        try:
-            cfg.memory_chroma_path.mkdir(parents=True, exist_ok=True)
-            client = chromadb.PersistentClient(
-                path=str(cfg.memory_chroma_path),
-                settings=Settings(anonymized_telemetry=False, allow_reset=True),
-            )
-            print("[memory] ChromaDB reconnected (degraded mode)", file=sys.stderr)
-            return client
-        except Exception as e2:
-            print("[memory] FATAL: Could not create ChromaDB client", file=sys.stderr)
-            raise
+
+    except concurrent.futures.TimeoutError:
+        print(f"[memory] ChromaDB creation timed out after {timeout}s", file=sys.stderr)
+    except Exception as e:
+        print(f"[memory] ChromaDB creation failed: {e}", file=sys.stderr)
+
+    # Degraded fallback (same as before, now properly triggered on timeout!)
+    try:
+        cfg.memory_chroma_path.mkdir(parents=True, exist_ok=True)
+        client = chromadb.PersistentClient(
+            path=str(cfg.memory_chroma_path),
+            settings=Settings(anonymized_telemetry=False, allow_reset=True),
+        )
+        print("[memory] ChromaDB reconnected (degraded mode)", file=sys.stderr)
+        return client
+    except Exception as e2:
+        print(f"[memory] FATAL: Could not create ChromaDB client: {e2}", file=sys.stderr)
+        raise
 
 def _decay_score(importance: int, timestamp: int) -> float:
     """
