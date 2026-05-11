@@ -1509,7 +1509,7 @@ def get_graph() -> Any:
 # ── Public entry point -------------------------------------------------------
 
 def run_autocode_agent(
-    task:        str,
+    task:        str = "",  # Accept empty string to allow state-based injection
     files:       dict[str, str] | None = None,
     mode:        str = "feature",
     target_file: str = "",
@@ -1547,12 +1547,15 @@ def run_autocode_agent(
     elif mode == "create_skill":
         task = f"Create skill: {task}"
 
-    tid   = tracer.new_trace("autocode", goal=task[:60])
-    state = _default_state(task, files or {}, mode=mode, target_file=target_file)
+    # Use task from parameter or fall back to state if invoked via workflow
+    effective_task = task or state.get("task", "")
+    
+    tid   = tracer.new_trace("autocode", goal=effective_task[:60])
+    state = _default_state(effective_task, files or {}, mode=mode, target_file=target_file)
     state["trace_id"] = tid
 
     # Pre-run snapshot
-    _git_snapshot(f"pre-autocode: {task[:30]}", tid)
+    _git_snapshot(f"pre-autocode: {effective_task[:30]}", tid)
 
     # Store episodic start
     try:
@@ -1581,11 +1584,11 @@ def run_autocode_agent(
         from memory.store import memory as _mem
         _mem.store_episodic(
             text=(
-                f"Autocode {'succeeded' if success else 'failed'}: '{task[:60]}' "
+                f"Autocode {'succeeded' if success else 'failed'}: '{effective_task[:60]}' "
                 f"sha={final.get('commit_sha','')}"
             ),
             importance=7 if success else 5,
-            goal=task, outcome="success" if success else "failure",
+            goal=effective_task, outcome="success" if success else "failure",
             tools_used="autocode,file,git",
         )
     except Exception:

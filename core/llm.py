@@ -82,9 +82,9 @@ class CircuitBreaker:
                    Success = CLOSED; Failure = OPEN again.
     """
 
-    CLOSED: "closed"
-    OPEN: "open"
-    HALF_OPEN: "half-open"
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half-open"
 
     def __init__(self, failure_threshold: int = 3, timeout_seconds: int = 60,
                  success_retry_threshold: int = 2, half_open_max_calls: int = 1) -> None:
@@ -140,9 +140,6 @@ class CircuitBreaker:
                 "timeout_seconds": self.timeout_seconds,
                 "time_since_last_failure": time_since_failure,
             }
-
-
-# -- Provider abstraction ------------------------------------------------------
 
 
 # -- Provider abstraction ------------------------------------------------------

@@ -133,6 +133,10 @@ def run_workflow(
         **kwargs,
     }
 
+    # For autocode workflow, convert goal -> task for compatibility with run_autocode_agent
+    if wf_type == "autocode":
+        initial_state["task"] = goal
+
     try:
         if wf_type == "research":
             from workflows.research import build_research_graph
