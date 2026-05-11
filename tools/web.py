@@ -4,8 +4,8 @@ tools/web.py -- Web meta-tool.
 Replaces: searxng MCP server + http MCP server + old scraping.py
 The LLM sees ONE tool: web(action, ...)
 
-Imports are lazy -- httpx and bs4 are only loaded on first actual call,
-not at module registration time.
+Imports are lazy for bs4 (only on first call), but httpx is imported at top
+to avoid "name not defined" errors in exception handlers and type checks.
 
 Actions:
   search          -> query SearXNG, return ranked URLs + snippets
@@ -25,6 +25,17 @@ import re
 from typing import Optional
 import time as _time
 
+# ⭐ FIX: Import httpx at top level to avoid "name 'httpx' is not defined" errors
+# in exception handlers and type checks (Python evaluates these at call time)
+try:
+    import httpx
+except ImportError:
+    # Graceful fallback - let the tool fail gracefully with a clear error
+    raise ImportError(
+        "httpx module is required for web.py but could not be imported. "
+        "Please run: pip install httpx"
+    )
+
 from core.config import cfg
 from registry import tool
 
@@ -41,7 +52,6 @@ _CLIENT_DEFAULTS = {
 
 def _make_client():
     """Create a fresh httpx.Client. Always use as a context manager."""
-    import httpx
     return httpx.Client(**_CLIENT_DEFAULTS)
 
 
@@ -50,7 +60,6 @@ def _get_client():
     Legacy compatibility wrapper -- creates client on first call.
     New code should use _make_client() as context manager for thread safety.
     """
-    import httpx
     return httpx.Client(**_CLIENT_DEFAULTS)
 
 
