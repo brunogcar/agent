@@ -36,8 +36,8 @@ def _allowed_roots() -> list[Path]:
     global _ALLOWED_ROOTS
     if _ALLOWED_ROOTS is None:
         _ALLOWED_ROOTS = [
-            cfg.workspace_root.resolve(),
             cfg.agent_root.resolve(),
+            cfg.workspace_root.resolve(),
         ]
     return _ALLOWED_ROOTS
 
@@ -71,7 +71,7 @@ def _safe_resolve(path_str: str) -> tuple[Optional[Path], str]:
     if p is None:
         return None, (
             f"Path '{path_str}' is outside allowed directories. "
-            f"Use paths within workspace ({cfg.workspace_root}) or agent ({cfg.agent_root})."
+            f"Use paths within agent ({cfg.agent_root}) or workspace ({cfg.workspace_root})."
         )
     return p, ""
 
@@ -153,37 +153,71 @@ def _build_index(root: Path, extensions: set[str] = None) -> int:
 
 # ── Read helpers ──────────────────────────────────────────────────────────────
 
-def _read_file(path: Path, max_chars: int = 50_000) -> dict:
-    """Read a single file and return structured result."""
-    if not path.exists():
-        return {"status": "error", "error": f"File not found: {path}"}
-    if not path.is_file():
-        return {"status": "error", "error": f"Not a file: {path}"}
+def _read_file(path_str: str, max_chars: int = 50_000) -> dict:
+    """Read a file with agent-root-first search, symlink safety, and extension validation."""
+    resolved = None
 
-    stat = path.stat()
+    # 1. If relative, try agent root first (source code lives here)
+    if not Path(path_str).is_absolute():
+        candidate = cfg.agent_root / path_str
+        if candidate.exists():
+            candidate = candidate.resolve()          # follow symlinks
+            if candidate.is_relative_to(cfg.agent_root):
+                resolved = candidate
+
+    # 2. Then try workspace root
+    if resolved is None and not Path(path_str).is_absolute():
+        candidate = cfg.workspace_root / path_str
+        if candidate.exists():
+            candidate = candidate.resolve()
+            if candidate.is_relative_to(cfg.workspace_root):
+                resolved = candidate
+
+    # 3. Fallback to absolute/explicit path via existing safe resolver
+    if resolved is None:
+        resolved = _resolve(path_str)
+
+    if not resolved:
+        return {"status": "error", "error": "File not found or access denied"}
+
+    # Extension check on the REAL file (after symlink resolution)
+    ALLOWED_EXTENSIONS = {
+        ".txt", ".py", ".md", ".json", ".yaml", ".yml", ".toml", ".cfg", ".ini",
+        ".log", ".csv", ".tsv", ".html", ".css", ".js", ".xml", ".svg",
+    }
+    if resolved.suffix.lower() not in ALLOWED_EXTENSIONS:
+        return {"status": "error", "error": f"File type not allowed: {resolved.suffix}"}
+
+    # --- original reading logic (unchanged) ---
+    if not resolved.exists():
+        return {"status": "error", "error": f"File not found: {resolved}"}
+    if not resolved.is_file():
+        return {"status": "error", "error": f"Not a file: {resolved}"}
+
+    stat = resolved.stat()
     if stat.st_size == 0:
         return {
-            "status": "success", "path": str(path),
+            "status": "success", "path": str(resolved),
             "content": "", "size": 0, "lines": 0, "truncated": False,
         }
 
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = resolved.read_text(encoding="utf-8", errors="replace")
         truncated = len(text) > max_chars
         if truncated:
             text = text[:max_chars] + f"\n\n[...truncated — {stat.st_size} bytes total]"
 
         return {
             "status":    "success",
-            "path":      str(path),
+            "path":      str(resolved),
             "content":   text,
             "size":      stat.st_size,
             "lines":     text.count("\n") + 1,
             "truncated": truncated,
-            "extension": path.suffix,
+            "extension": resolved.suffix,
         }
     except Exception as e:
-        return {"status": "error", "error": f"Read failed: {e}", "path": str(path)}
+        return {"status": "error", "error": f"Read failed: {e}", "path": str(resolved)}
 
 
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
@@ -210,7 +244,7 @@ def file(
             "read_pptx" | "write_pptx"
 
     read
-        Read a single file. Paths relative to workspace root.
+        Read a single file. Paths relative to agent and workspace roots.
         Required: path
         Optional: max_chars (default 50000)
         Returns:  {content, size, lines, truncated}
@@ -239,7 +273,7 @@ def file(
         Returns:  {files: [{path, content, size, error}], count}
 
     search
-        Full-text search across workspace files.
+        Full-text search across agent and workspace files.
         Builds/updates the index automatically on first use.
         Required: query
         Optional: max_results (default 10)
@@ -356,7 +390,7 @@ def file(
         summary_chars = 500 if mode == "summary" else max_chars
 
         def _read_one(path_str: str) -> dict:
-            p, err = _safe_resolve(path_str)
+            p, err = _safe_resolve(path_str)   # p is already resolved & contained
             if err:
                 return {"path": path_str, "error": err, "content": "", "size": 0}
             result = _read_file(p, summary_chars)
