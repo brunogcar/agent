@@ -100,10 +100,11 @@ _task_db_lock = __import__("threading").Lock()
 
 def _get_task_db() -> _sqlite3.Connection:
     global _TASK_DB_PATH
-    if _TASK_DB_PATH is None:
-        _TASK_DB_PATH = cfg.memory_root / "gateway_tasks.db"
-    conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False)
-    conn.execute("""
+    try:
+        if _TASK_DB_PATH is None:
+            _TASK_DB_PATH = cfg.memory_root / "gateway_tasks.db"
+        conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False)
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             trace_id  TEXT PRIMARY KEY,
             status    TEXT NOT NULL DEFAULT 'pending',
@@ -113,9 +114,17 @@ def _get_task_db() -> _sqlite3.Connection:
             error     TEXT,
             payload   TEXT
         )
-    """)
-    conn.commit()
-    return conn
+    """
+        )
+        conn.commit()
+        return conn
+    except Exception as e:
+        tracer.error(f"Failed to initialize SQLite task database at {_TASK_DB_PATH}: {e}")
+        # Check for critical errors that should prevent startup
+        error_str = str(e).lower()
+        if any(kw in error_str for kw in ['permission denied', 'no such file or directory', 'read-only']):
+            print(f"\n[FATAL] SQLite database initialization failed: {e}", file=sys.stderr)
+            raise
 
 
 def _store_task(trace_id: str, payload: dict) -> None:
