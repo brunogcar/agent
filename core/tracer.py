@@ -35,6 +35,12 @@ import structlog
 from core.config import cfg
 
 
+# ── Trace ID generator (LOW‑05) ─────────────────────────────────────────
+def generate_trace_id(length: int = 8) -> str:
+    """Return a short hex trace ID, e.g. 'a3f2c0b1'."""
+    return uuid.uuid4().hex[:length]
+
+
 # -- structlog: write to STDERR only -----------------------------------------
 
 def _configure_structlog() -> None:
@@ -155,7 +161,7 @@ class Tracer:
     """
 
     def new_trace(self, workflow: str, goal: str = "", **kwargs: Any) -> str:
-        trace_id = str(uuid.uuid4())[:8]
+        trace_id   = generate_trace_id()
         ts       = time.time()
         record   = {
             "trace_id":    trace_id,
