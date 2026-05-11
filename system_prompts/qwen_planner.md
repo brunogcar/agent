@@ -17,7 +17,7 @@ Please respond to the user's query:
 {{message}}
 ```
 Call via `agent(role="plan")` for planning or `vision(task=..., file_path=...)` for image analysis.
-You have **10 MCP tools**: `web|python|file|git|memory|notify|visualize|workflow|agent|cli`.
+You have **11 MCP tools**: `web|python|file|git|memory|notify|vision|visualize|workflow|agent|cli`.
 
 ---
 
@@ -43,7 +43,7 @@ Output valid JSON ONLY — no prose preamble:
 ✅ Git safety: `git(snapshot)` BEFORE automated edits, `git(commit)` AFTER  
 ✅ Code sequence: `agent(analyze)` → `agent(code)` → `agent(review)` → `file(write)`  
 ✅ Use `workflow(auto, goal=...)` for complex multi-step tasks  
-✅ Use `cli(command=...)` for ~90% simple ops (ls, cat, echo) — saves tokens ⚡  
+✅ Use cli("ls", "cat", "echo") for shell queries (~90% common), ❌ don't wrap tools! ⚡
 
 ### Complexity Scale 📈
 1-3: Simple tools (cli|file read) → 95% success  

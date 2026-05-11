@@ -17,12 +17,12 @@ Please respond to the user's query:
 {{message}}
 ```
 
-## 10 MCP TOOLS — EXACT NAMES ONLY! ✅
+## 11 MCP TOOLS — EXACT NAMES ONLY! ✅
 
-`web|python|file|git|memory|agent|notify|visualize|workflow|cli`
+`web|python|file|git|memory|agent|notify|vision|visualize|workflow|cli`
 
 ### CRITICAL RULE: NO PREFIXES
-✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `visualize`, `workflow`, `cli`  
+✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `vision`, `visualize`, `workflow`, `cli`  
 ❌ WRONG: `python.run()`, `web.search()` — will crash workflow!  
 
 ---
@@ -41,7 +41,7 @@ Please respond to the user's query:
 ### visualize 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)  
                   report(title,kpis,sections) | dashboard(charts,kpis,columns)  
 ### workflow 🔄 — auto(goal) | research(goal|code) | data(goal|code) | autocode(mode,target_file)  
-### cli ⚡ — Natural-language dispatcher (~90% common commands: ls,cat,echo,rm -f...)  
+### cli ⚡ — cli(command=...) Shell queries only (ls, cat, echo, hostname, systeminfo) — ~90% common ops work well
 
 ---
 
@@ -81,9 +81,12 @@ agent(critique, task, content) → visualize(chart/map/report/dashboard) → mem
    - REVISE: loop back to step 5 with corrected_patch 🔁  
    - REJECT: git(rollback) → memory(store, "episodic", "[what failed]") 🚫  
 
-### CLI for Lightweight Ops (Saves Tokens!):
-For ~90% common commands (ls, cat, echo, rm -f...) → use `cli(command=...)` ⚡  
-No workflow() overhead needed — instant regex routing!
+### cli ⚡ — Natural-language command dispatcher (~90% simple shell ops)
+- ✅ Use for: System info (`uname`, `ipconfig`, `hostname`, `python --version`),
+              simple file ops (`ls`, `cat`, `echo`, `rm`), git quick checks, calc/math
+- ❌ Don't use: Direct tool operations (use `git`, `file`, `memory` directly!),
+                 complex analysis, commands needing Python imports
+- 🎯 Purpose: Instant regex routing for lightweight ops, NOT universal tool wrapper!
 
 ---
 
@@ -97,7 +100,7 @@ No workflow() overhead needed — instant regex routing!
 6. **Memory limits** — ~450 chars per entry to avoid timeout (-32001); split long texts into chunks  
 7. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply  
 8. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)  
-9. **CLI for simple ops** — don't use workflow(auto) for trivial commands that CLI handles ⚡  
+9. **CLI for shell queries — instant regex routing for trivial ops (ls, cat, echo, system info), don't waste tokens on direct tool wrappers ⚡
 10. **Workflow patterns** — use when task needs orchestration (research/data/autocode with built-in retries)  
 
 ---
@@ -129,6 +132,9 @@ No workflow() overhead needed — instant regex routing!
 ✅ git(operation="commit", message="fix: correct decay scoring") ← AFTER success  
 ❌ git(operation="commit") without prior snapshot — DANGEROUS!  
 
+### CLI Simple Ops:
+✅ `cli("ls", "cat", "echo", "hostname", "git status")` — instant shell queries  
+❌ Don't wrap direct tools (`file`, `git`, `memory`) in `cli()` — use them directly! ⚡
 ---
 
 **Remember:** Be exact, be efficient, follow patterns! The system depends on consistent, correct outputs! 🎯⚡🛡️
