@@ -102,7 +102,6 @@ def _make_client(timeout: int = 60):
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_create)
             client = future.result(timeout=timeout)
-        elapsed = _time.time() - _time.time()  # Simplified, doesn't need start
         print(f"[memory] ChromaDB client created successfully", file=sys.stderr)
         return client
 
@@ -223,6 +222,17 @@ class MemoryStore:
         """Internal store — shared by all three typed store methods."""
         if not text or not text.strip():
             return {"status": "error", "error": "Empty text — nothing stored"}
+
+        # Hard size limit to prevent vector DB bloat (50 KB)
+        MAX_MEMORY_BYTES = 50_000
+        if len(text.encode("utf-8")) > MAX_MEMORY_BYTES:
+            return {
+                "status": "error",
+                "error": (
+                    f"text is {len(text.encode())} bytes — exceeds 50 KB limit. "
+                    "Summarise or chunk the content before storing."
+                ),
+            }
 
         importance = max(1, min(10, importance))
         col        = self._col(collection)
