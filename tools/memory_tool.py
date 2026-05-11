@@ -20,7 +20,7 @@ def _mem():
 
 
 # ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────
-TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_. ]*$')  # Safe identifier pattern
+TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_\-.\s]*$')  # Allow hyphens and spaces, but must start with letter
 
 def _validate_tags(tags: str, max_count: int = 5) -> tuple[bool, str]:
     """Validate tags to prevent injection/XSS attacks.
