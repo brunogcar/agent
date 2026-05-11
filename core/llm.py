@@ -333,14 +333,22 @@ def _build_role_configs() -> dict[str, RoleConfig]:
     return roles
 
 
+# -- Cleanup registration ----------------------------------------------------
+# DeepSeek fix 2026-05-14: Proper atexit cleanup via llm singleton (not class method)
+
+def _cleanup():
+    """Close all registered provider clients."""
+    from core.llm import llm as _llm_client
+    for provider in _llm_client._registry._providers.values():
+        if hasattr(provider, 'close'):
+            provider.close()
+
+import atexit as _atex
+_atex.register(_cleanup)
+
 # -- LLM client ----------------------------------------------------------------
 
 class LLMClient:
-
-    # DeepSeek fix 2026-05-14: Singleton cleanup registered with atexit
-    import atexit as _atexit
-    
-    LMStudioProvider.close()  # Register cleanup on shutdown
 
     The single LLM client used by everything in the agent.
     Thread-safe via per-thread httpx.Client instances in LMStudioProvider.

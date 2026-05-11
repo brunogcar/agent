@@ -102,7 +102,8 @@ def _make_client(timeout: int = 60):
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(_create)
             client = future.result(timeout=timeout)
-        print(f"[memory] ChromaDB client created in {_time.time()-start:.1f}s", file=sys.stderr)
+        elapsed = _time.time() - _time.time()  # Simplified, doesn't need start
+        print(f"[memory] ChromaDB client created successfully", file=sys.stderr)
         return client
 
     except concurrent.futures.TimeoutError:
