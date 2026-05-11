@@ -38,6 +38,9 @@ except ImportError:
 
 from core.config import cfg
 from registry import tool
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 # Module-level defaults (not clients)
 MAX_TEXT_CHARS = 8000
@@ -48,6 +51,28 @@ _CLIENT_DEFAULTS = {
     "timeout":          10.0,
     "follow_redirects": True,
 }
+
+
+def _is_safe_url(url: str) -> bool:
+    """
+    Return False if the URL resolves to a private, loopback, link-local,
+    reserved, or multicast IP address (SSRF protection).
+    """
+    try:
+        hostname = urlparse(url).hostname
+        if not hostname:
+            return False
+        # Resolve all addresses
+        addrs = socket.getaddrinfo(hostname, None)
+        for addr in addrs:
+            ip = ipaddress.ip_address(addr[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local or
+                ip.is_reserved or ip.is_multicast):
+                return False
+        return True
+    except Exception:
+        # If we can't validate, block (fail closed)
+        return False
 
 
 def _make_client():
@@ -65,6 +90,10 @@ def _get_client():
 
 def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
     """Fetch URL using context-managed client, return (html, error)."""
+    # SSRF protection – block private/internal IPs before making the request
+    if not _is_safe_url(url):
+        return "", f"Blocked for security: {url} resolves to a private/internal address"
+
     try:
         with _make_client() as client:
             resp = client.get(url, timeout=timeout)
