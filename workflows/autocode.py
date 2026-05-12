@@ -13,10 +13,11 @@ Integrates superpowers methodologies into a LangGraph state machine:
 
 Task types (classified by Router model):
   feature      -- New functionality (brainstorm + TDD + verify)
-  bugfix       -- Fix existing error (deep root-cause, no questions, TDD + verify)
+  audit        -- Deep review combining root‑cause analysis, impact assessment, regression checks, and TDD.
+  fix          -- Fix existing error (deep root-cause, no questions, TDD + verify)
   refactor     -- Restructure without changing behaviour (no questions, TDD + verify)
   edit         -- Intentional user-requested change WITH impact review
-                  (heavier than bugfix: brainstorm lists affected callers before coding)
+                  (heavier than fix: brainstorm lists affected callers before coding)
   create_skill -- Generate a new skill file in skills/ that gathers specific data
                   (API/scrape) and formats a report. Bypasses TDD loop.
   unclear      -- Insufficient info (ask 1-2 clarifying questions)
@@ -79,12 +80,12 @@ class AutocodeState(TypedDict, total=False):
     task:           str
     files:          dict[str, str]
     mode:           str          # "feature" | "fix_error" | "improve" | "add_feature"
-                                 # "edit" | "create_skill"
+                                 # "edit" | "create_skill" | "audit"
     target_file:    str
 
     # Classification
-    task_type:      str          # "feature" | "bugfix" | "refactor" | "edit"
-                                 # "create_skill" | "unclear"
+    task_type:      str          # "feature" | "fix" | "refactor" | "edit"
+                                 # "create_skill" | "audit" | "unclear"
     memory_context: str
 
     # Planning
@@ -384,19 +385,33 @@ You are the Router model. Classify a coding task into one category.
 
 Categories:
 - "feature":      New functionality (requires brainstorming and spec)
-- "bugfix":       Fix an existing error (deep root-cause analysis, no questions)
-- "refactor":     Improve structure without changing behaviour (no questions)
+                  Triggers: "add X", "create X", "build X", "implement X",
+                            "new feature", "add feature", "write a ..."
+
+- "audit":        Deep review combining root‑cause analysis, impact assessment, regression checks, and TDD.
+                  Triggers: "audit", "security review", "deep review", "security audit"
+
 - "edit":         Intentional change to existing file(s) requested by the user
-                  (heavier than bugfix -- includes impact review of what else may break)
+                  (heavier than fix -- includes impact review of what else may break)
                   Triggers: "edit X", "change X", "update X", "modify X", "rewrite X"
+
+- "fix":          Fix an existing error (deep root-cause analysis, no questions)
+                  Triggers: "fix X", "repair X", "bug", "error", "crash",
+                            "resolve issue", "debug", "correct", "patch"                    
+
+- "refactor":     Improve structure without changing behaviour (no questions)
+                  Triggers: "refactor X", "restructure X", "clean up X",
+                            "improve structure", "reorganise", "tidy up"
+
 - "create_skill": Build a new self-contained skill file in skills/ that gathers
                   specific data (news, financials, weather, etc.) via API or scraping
                   and formats it as a report for use by other tools.
                   Triggers: "create skill", "new skill", "build skill", "skill for X"
+
 - "unclear":      Insufficient information (ask 1-2 clarifying questions)
 
 Output ONLY this JSON:
-{"task_type": "bugfix|feature|refactor|edit|create_skill|unclear", "questions": []}
+{"task_type": "audit|fix|feature|refactor|edit|create_skill|unclear", "questions": []}
 
 No prose outside the JSON. questions is empty unless task_type is "unclear"."""
 
@@ -420,10 +435,38 @@ Rules:
 - If questions are non-empty, set spec to "" and return immediately.
 - Output ONLY the JSON object. No prose outside it."""
 
+# Audit-specific prompt: deep analysis, intentional change + mandatory impact review
+AUDIT_BRAINSTORM_SYSTEM = """\
+You are the Planner model performing a security / critical audit of a change.
 
-# Bugfix-specific prompt: zero questions, deep analysis
-BUGFIX_BRAINSTORM_SYSTEM = """\
-You are the Planner model. Refine a bugfix task before any code is written.
+This task is a deep review combining root‑cause analysis with a full impact
+assessment. The change may be a fix, a refactor, or a new feature, but it must
+be examined for correctness, security, and regression risks.
+
+Rules:
+- Analyse the existing code and the change description to identify the exact
+  underlying issue or goal. Perform a thorough root‑cause analysis (do not guess).
+- Do NOT ask clarifying questions unless the audit target is genuinely ambiguous.
+  If you must, ask no more than 3 targeted questions.
+- Perform a mandatory impact review: list every file, function, or caller that
+  imports or depends on the code being changed. Note which ones may break.
+- Write a concise spec (max 150 words) describing the correct behaviour after
+  the change.
+- Define 3‑5 acceptance criteria that must pass for the audit to be satisfied.
+- List any constraints (must not break X, must handle edge case Y, etc.).
+- Output ONLY a JSON object:
+  {
+    "spec": "<refined spec>",
+    "impact": ["<affected file or caller>", ...],
+    "acceptance_criteria": ["...", "..."],
+    "constraints": ["...", "..."],
+    "questions": []
+  }
+No prose outside the JSON."""
+
+# Fix-specific prompt: zero questions, deep analysis
+FIX_BRAINSTORM_SYSTEM = """\
+You are the Planner model. Refine a fix task before any code is written.
 
 Rules:
 - Analyse the existing code and error description to understand the root cause.
@@ -446,7 +489,7 @@ EDIT_BRAINSTORM_SYSTEM = """\
 You are the Planner model. Refine an edit task before any code is written.
 
 An "edit" is an intentional, user-requested change to existing file(s).
-Unlike a bugfix (something is broken) or refactor (restructure only), an edit
+Unlike a fix (something is broken) or refactor (restructure only), an edit
 may change behaviour, APIs, data formats, or output -- so impact must be assessed.
 
 You MUST:
@@ -641,7 +684,7 @@ Output JSON ONLY:
 # ── Graph nodes ---------------------------------------------------------------
 
 def node_classify_task(state: AutocodeState) -> AutocodeState:
-    """Classify task type to route feature vs bugfix/refactor/edit/create_skill paths."""
+    """Classify task type to route feature vs fix/refactor/edit/create_skill paths."""
     tid = state.get("trace_id", "")
     tracer.step(tid, "classify_task", f"classifying: {state['task'][:60]}")
 
@@ -660,13 +703,15 @@ def node_classify_task(state: AutocodeState) -> AutocodeState:
     # even if the Router would classify it differently.
     mode = state.get("mode", "")
     if mode == "fix_error":
-        task_type = "bugfix"
+        task_type = "fix"
     elif mode == "improve":
         task_type = "refactor"
     elif mode == "edit":
         task_type = "edit"
     elif mode == "create_skill":
         task_type = "create_skill"
+    elif mode == "audit":
+        task_type = "audit"
 
     tracer.step(tid, "classify_task", f"classified as: {task_type}")
 
@@ -707,8 +752,8 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
     files_ctx = _files_context(state["files"])
 
     # ── Select system prompt based on task type ──
-    if task_type == "bugfix":
-        system = BUGFIX_BRAINSTORM_SYSTEM
+    if task_type == "fix":
+        system = FIX_BRAINSTORM_SYSTEM
     elif task_type == "edit":
         # Edit uses a heavier prompt that includes mandatory impact review.
         # The impact[] field lists callers/files that may break — appended to
@@ -716,6 +761,8 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
         system = EDIT_BRAINSTORM_SYSTEM
     elif task_type == "refactor":
         system = REFACTOR_BRAINSTORM_SYSTEM
+    elif task_type == "audit":
+        system = AUDIT_BRAINSTORM_SYSTEM
     else:  # feature / unclear
         system = BRAINSTORM_SYSTEM
 
@@ -757,7 +804,7 @@ def node_write_plan(state: AutocodeState) -> AutocodeState:
     if state.get("status") == "needs_clarification":
         return state
 
-    # For bugfix/refactor/edit without spec from brainstorm, build spec from task
+    # For fix/refactor/edit without spec from brainstorm, build spec from task
     spec = state.get("spec") or state["task"]
     tracer.step(tid, "write_plan", "writing plan")
 
@@ -1527,6 +1574,7 @@ def run_autocode_agent(
                      "add_feature"  -- add to existing file
                      "edit"         -- intentional change with impact review
                      "create_skill" -- generate a new skill file in skills/
+                     "audit"        -- deep review combining root‑cause analysis, impact assessment, and regression checks
         target_file: File to edit (used for fix_error / add_feature / edit modes).
         error_msg:   Error traceback (for mode="fix_error").
 
@@ -1546,9 +1594,15 @@ def run_autocode_agent(
         task = f"Edit {target_file}: {task}"
     elif mode == "create_skill":
         task = f"Create skill: {task}"
+    elif mode == "audit":
+        # Audit can be a general review task; optionally target a file
+        if target_file:
+            task = f"Audit {target_file}: {task}"
+        else:
+            task = f"Audit: {task}"
 
     # Use task from parameter or fall back to state if invoked via workflow
-    effective_task = task or state.get("task", "")
+    effective_task = task or ""
     
     tid   = tracer.new_trace("autocode", goal=effective_task[:60])
     state = _default_state(effective_task, files or {}, mode=mode, target_file=target_file)
