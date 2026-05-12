@@ -349,10 +349,10 @@ _atex.register(_cleanup)
 # -- LLM client ----------------------------------------------------------------
 
 class LLMClient:
-
+    """
     The single LLM client used by everything in the agent.
     Thread-safe via per-thread httpx.Client instances in LMStudioProvider.
-
+    """
     MAX_RETRIES = 2
     RETRY_DELAY = 2.0
 

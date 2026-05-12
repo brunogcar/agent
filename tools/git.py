@@ -65,6 +65,7 @@ def _build_doc() -> str:
 # The actual dispatcher implementation
 # ---------------------------------------------------------------------------
 
+@tool
 def git(
     operation: str,
     message:   str  = "",
