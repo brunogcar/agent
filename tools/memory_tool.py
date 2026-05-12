@@ -22,7 +22,7 @@ def _mem():
 # ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────
 TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_\-.\s]*$')  # Allow hyphens and spaces, but must start with letter
 
-def _validate_tags(tags: str, max_count: int = 5) -> tuple[bool, str]:
+def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
     """Validate tags to prevent injection/XSS attacks.
     
     Args:
@@ -35,7 +35,7 @@ def _validate_tags(tags: str, max_count: int = 5) -> tuple[bool, str]:
     Validation rules:
         - Reject dangerous chars: < > " ' ` | newline  
         - Each tag must start with letter, contain only letters/numbers/hyphens/dots/spaces
-        - Max 5 tags (stricter than default), max 50 chars each tag
+        - Max 6 tags (stricter than default), max 50 chars each tag
     """
     if not tags:
         return True, ""  # Empty is fine
@@ -154,8 +154,8 @@ def memory(
                 "error": (f"text is {len(text.encode())} bytes -- exceeds 50KB limit. "
                          "Summarise or chunk the content before storing."),
             }
-        # MED-05: Validate tags for store operation (stricter: max 5, no spaces)
-        is_valid, err = _validate_tags(tags, max_count=5)
+        # MED-05: Validate tags for store operation (stricter: max 6, no spaces)
+        is_valid, err = _validate_tags(tags, max_count=6)
         if not is_valid:
             return {"status": "error", "error": err}
 
