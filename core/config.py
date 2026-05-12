@@ -67,10 +67,12 @@ class Config:
         )
 
         # ── Model roles ────────────────────────────────────────────────────────
-        self.planner_model  = os.getenv("PLANNER_MODEL",  "qwen/qwen3.5-9b")
-        self.executor_model = os.getenv("EXECUTOR_MODEL", "hermes-3-llama-3.1-8b")
-        self.router_model   = os.getenv("ROUTER_MODEL",   "nvidia/nemotron-3-nano-4b")
-        self.vision_model   = os.getenv("VISION_MODEL",   "")  # empty = not configured
+        self.planner_model  = os.getenv("PLANNER_MODEL")
+        if not self.planner_model:
+            raise RuntimeError("PLANNER_MODEL is required in .env")
+        self.executor_model = os.getenv("EXECUTOR_MODEL") or self.planner_model
+        self.router_model   = os.getenv("ROUTER_MODEL") or self.planner_model
+        self.vision_model   = os.getenv("VISION_MODEL") or self.planner_model
 
         # Model registry — the single place that maps role → model string.
         # core/llm.py reads this; nothing else should reference model names directly.
