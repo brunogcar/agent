@@ -36,15 +36,36 @@ def tool(fn: Any) -> Any:
 
 def register_all_tools(mcp: FastMCP) -> int:
     """
-    Discover and register all @tool-decorated functions in the tools/ package.
+    Discover and register all @tool-decorated functions in tools/ and skills/.
     Returns the count of registered tools.
     All output goes to stderr -- never stdout.
-    """
-    import tools  # the tools package
 
+    SCANNING RULES
+    --------------
+    tools/   -- scanned recursively one level (flat package).
+                Every module is imported; every @tool function is registered.
+
+    skills/  -- scanned at the TOP LEVEL ONLY (flat modules in skills/).
+                Only skills/dispatcher.py is expected to have @tool here.
+                Sub-packages (skills/b3/, skills/news/, etc.) are pure Python
+                modules -- they are NOT scanned directly. The dispatcher imports
+                them internally via its own domain discovery mechanism.
+
+    DECISION: skills/ sub-packages are not scanned by registry
+        skills/b3/__init__.py has no @tool. Only skills/dispatcher.py does.
+        Scanning sub-packages would import domain modules at startup (slow,
+        and triggers ChromaDB/requests imports before MCP handshake completes).
+        The dispatcher uses lazy imports via importlib at call time instead.
+
+    DECISION: skills/ scan is separate from tools/ scan
+        Keeping them separate makes the log output clear ("tools/" vs "skills/")
+        and lets us apply different scanning rules to each package independently.
+    """
     registered = 0
     errors: list[str] = []
 
+    # ── Scan tools/ ──────────────────────────────────────────────────────────
+    import tools
     for finder, module_name, _ in pkgutil.iter_modules(tools.__path__):
         full_name = f"tools.{module_name}"
         try:
@@ -62,10 +83,40 @@ def register_all_tools(mcp: FastMCP) -> int:
                 except Exception as e:
                     errors.append(f"Failed to register {full_name}.{attr_name}: {e}")
 
+    # ── Scan skills/ (top-level flat modules only) ────────────────────────────
+    # Only imports modules directly in skills/ (not sub-packages like skills/b3/).
+    # dispatcher.py lives here and is the sole @tool entry point for all skills.
+    try:
+        import skills
+        for finder, module_name, is_pkg in pkgutil.iter_modules(skills.__path__):
+            if is_pkg:
+                # Sub-packages (b3/, news/, etc.) -- skip, dispatcher loads them
+                continue
+            full_name = f"skills.{module_name}"
+            try:
+                module = importlib.import_module(full_name)
+            except Exception as e:
+                errors.append(f"Failed to import {full_name}: {e}")
+                continue
+
+            for attr_name in dir(module):
+                fn = getattr(module, attr_name)
+                if callable(fn) and getattr(fn, "_is_mcp_tool", False):
+                    try:
+                        mcp.tool()(fn)
+                        registered += 1
+                    except Exception as e:
+                        errors.append(f"Failed to register {full_name}.{attr_name}: {e}")
+
+        print(f"[registry] Scanned skills/ for @tool functions", file=sys.stderr)
+    except ImportError:
+        # skills/ package doesn't exist yet -- not an error, just skip
+        print("[registry] skills/ package not found, skipping", file=sys.stderr)
+
     # stderr only -- never stdout
     if errors:
         for err in errors:
             print(f"[registry] WARNING: {err}", file=sys.stderr)
 
-    print(f"[registry] Registered {registered} tools from tools/", file=sys.stderr)
+    print(f"[registry] Registered {registered} tools total (tools/ + skills/)", file=sys.stderr)
     return registered

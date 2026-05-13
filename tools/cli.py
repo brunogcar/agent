@@ -101,7 +101,7 @@ def _mem():
 _SHELL_ALLOW: dict[str, list[str]] = {
     # ── Read-only info commands ───────────────────────────────────────────────
     # These never modify the filesystem. Safe to run unconditionally.
-    "python":      ["python", "--version"],          # template; args replaced by caller
+    "python":      None,                             # handled specially in _shell_exec (script vs --version)
     "pip":         ["pip", "--version"],
     "whoami":      ["whoami"],
     "hostname":    ["hostname"],
@@ -229,6 +229,35 @@ def _shell_exec(command: str) -> str | None:
         cmd_name = cmd_name[:-4]
 
     if cmd_name not in _SHELL_ALLOW or _SHELL_ALLOW[cmd_name] is None:
+        # Special case: python is None in _SHELL_ALLOW, handled here
+        # DECISION: `python` with a .py file arg runs the script; bare `python`
+        # returns --version; other args (e.g. -c "...") pass through directly.
+        # The old behavior (always --version) broke `cli("python run_b3_sync.py")`
+        # returning "Python 3.11.9" instead of executing the script.
+        if cmd_name == "python":
+            import shutil as _shutil
+            py_exe = _shutil.which("python") or "python"
+            if len(parts) == 1:
+                argv = [py_exe, "--version"]
+            elif parts[1].endswith(".py") or parts[1].startswith("-"):
+                # Script path or flag like -c/-m -- pass all args through
+                argv = [py_exe] + parts[1:]
+            else:
+                argv = [py_exe, "--version"]
+            cwd = _detect_cwd(command)
+            try:
+                result = subprocess.run(
+                    argv, capture_output=True, text=True,
+                    cwd=str(cwd), timeout=60,   # scripts may take longer than 15s
+                )
+                out = (result.stdout + result.stderr).strip()
+                if len(out) > _SHELL_MAX_OUTPUT:
+                    out = out[:_SHELL_MAX_OUTPUT] + f"\n... (truncated)"
+                return out if out else "(python completed, no output)"
+            except subprocess.TimeoutExpired:
+                return f"python script timed out after 60s"
+            except Exception as e:
+                return f"python error: {e}"
         return None   # not whitelisted -- fall through to Nemotron
 
     # Build the actual argv list
@@ -429,6 +458,44 @@ def _notify(message: str) -> str:
     return r.get("message", str(r))
 
 
+def _skill_call(domain: str, mode: str, arg: str = "", **extra) -> str:
+    """
+    Route to skills/dispatcher.py skill() function.
+    Used by the cli pattern layer for shorthand calls.
+
+    arg interpretation by mode (so cli patterns stay simple):
+      query  -> arg becomes ticker= (e.g. "skill b3_api query PETR4")
+      sync   -> arg becomes files=  (e.g. "skill b3_api sync Instruments")
+      status -> arg ignored
+
+    DECISION: lazy import -- skills/dispatcher.py imports all domain manifests
+    at import time which triggers importlib.import_module on skills/b3/ etc.
+    Keeping this lazy means the CLI tool registers instantly at MCP startup
+    and domain discovery happens only on the first actual skill() call.
+    """
+    try:
+        from skills.dispatcher import skill as _skill_fn
+
+        # Map positional arg to the right kwarg based on mode
+        kwargs: dict = {}
+        if arg:
+            if mode == "query":
+                kwargs["ticker"] = arg.upper()
+            elif mode == "sync":
+                kwargs["files"] = arg   # dispatcher parses comma-sep or JSON
+            # status and others: arg is ignored
+
+        result = _skill_fn(domain=domain, mode=mode, **kwargs)
+        if isinstance(result, dict):
+            import json as _json
+            return _json.dumps(result, indent=2, ensure_ascii=False)
+        return str(result)
+    except ImportError:
+        return "skills/dispatcher.py not found -- ensure skills/ package is installed"
+    except Exception as e:
+        return f"skill error: {e}"
+
+
 # ── Whitelist: only these (tool_name:action) pairs can execute ────────────────
 # DECISION: flat "tool:action" key prevents calling any action not explicitly
 # listed here. Nemotron cannot hallucinate its way into an unlisted operation.
@@ -462,6 +529,10 @@ DISPATCH: dict[str, Any] = {
     "lms:load":      lambda **kw: _lms_load(kw.get("model","")),
     "lms:unload":    lambda **kw: _lms_unload(kw.get("model","")),
     "lms:log":       lambda **kw: _lms_log(),
+    # skill dispatcher -- routes to skills/dispatcher.py
+    # domain= and mode= extracted by pattern; arg= is the optional third word
+    # (e.g. ticker for query, file name for sync). _skill_call interprets it.
+    "skill:call":    lambda **kw: _skill_call(kw.get("domain",""), kw.get("mode",""), kw.get("arg","")),
     "system:health": lambda **kw: "MCP Agent Stack: all systems operational.",
     "system:help":   lambda **kw: (
         "cli quick commands:\n"
@@ -472,10 +543,11 @@ DISPATCH: dict[str, Any] = {
         "  python run <code> | calc <expr>\n"
         "  notify <message>\n"
         "  lms ls | ps | load <model> | unload [model] | log\n"
+        "  skill <domain> <mode>  -- e.g. skill b3_api status | skill b3_api sync\n"
         "  health | help\n"
         "Shell (zero tokens, real output):\n"
-        "  python --version | pip --version | whoami | hostname | where <cmd>\n"
-        "  dir [path] | ls [path] | type <file> | cat <file> | env | set\n"
+        "  python <script.py> [args] | python --version | pip --version\n"
+        "  whoami | hostname | where <cmd> | dir [path] | type <file>\n"
         "  copy <src> <dst> | move <src> <dst> | mkdir <dir> | del <file>\n"
         "Anything else -> Nemotron decides: direct dispatch or Executor escalation."
     ),
@@ -536,6 +608,16 @@ _PATTERNS = [
     (r"echo\s+'([^']+)'",             "python",  "run",      lambda m: {"code": f'print({m.group(1)!r})'}),
     (r"^echo\s+(.*)",                   "python",  "run",      lambda m: {"code": f'print({m.group(1).strip()!r})'}),
     (r"^(?:notify|alert|ping)\s+(.+)",  "notify",  "send",     lambda m: {"message": m.group(1).strip()}),
+    # skill domain dispatcher -- routes directly to skills/dispatcher.py @tool
+    # DECISION: two patterns cover the common cli shorthand forms:
+    #   "skill b3_api status"        -> domain=b3_api, mode=status, arg=""
+    #   "skill b3_api query PETR4"   -> domain=b3_api, mode=query,  arg=PETR4
+    # The arg is interpreted by _skill_call: query -> ticker=arg, sync -> files=[arg].
+    # Anything needing more params (filters, columns) still calls skill() directly.
+    (r"^skill\s+(\w+)\s+(\w+)\s+(\S+)$", "skill", "call",
+        lambda m: {"domain": m.group(1), "mode": m.group(2), "arg": m.group(3)}),
+    (r"^skill\s+(\w+)\s+(\w+)$",          "skill", "call",
+        lambda m: {"domain": m.group(1), "mode": m.group(2), "arg": ""}),
     (r"^lms\s+ls$",                      "lms",     "ls",       lambda m: {}),
     (r"^lms\s+ps$",                      "lms",     "ps",       lambda m: {}),
     (r"^lms\s+load\s+(.+)",              "lms",     "load",     lambda m: {"model": m.group(1).strip()}),
