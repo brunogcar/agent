@@ -1,330 +1,319 @@
+```markdown
 # MCP Agent Stack
 
-A fully autonomous local AI agent built on the Model Context Protocol (MCP),
-running entirely on consumer hardware with no cloud dependencies.
+**Fully autonomous local AI agent built on MCP, LM Studio (3 models + optional Vision), ChromaDB, SearXNG, and LangGraph.**
 
-The agent can research, write and fix its own code, analyse data, create
-documents and visualisations, manage files and git history, and schedule tasks
-— all through a clean set of 6 meta-tools that hide 100+ internal operations
-from the language model.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-stdio-green)](https://modelcontextprotocol.io)
+[![LM Studio](https://img.shields.io/badge/LM_Studio-0.3+-orange)](https://lmstudio.ai/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-0.3+-purple)](https://langchain-ai.github.io/langgraph/)
 
 ---
 
-## Hardware & Model Requirements
+## Architecture Overview
+
+```mermaid
+graph TD
+    A["User (LM Studio / CLI / Gateway)"] -->|MCP stdio or REST| B[server.py]
+    B --> C[registry.py]
+    C --> D[Tools Layer (11 meta-tools)]
+    C --> E[Intelligence Layer]
+    D --> F[core/llm.py]
+    E --> F
+    F -->|OpenAI-compatible API| G["LM Studio (localhost:1234)"]
+    G --> H[(Planner: Qwen3.5-9B)]
+    G --> I[(Executor: Hermes-3-8B)]
+    G --> J[(Router: Nemotron-3-Nano-4B)]
+    E --> K[memory/store.py<br/>3-collection ChromaDB]
+    E --> L[routing/router.py<br/>Nemotron task classifier]
+    E --> M[workflows/<br/>research, data, autocode]
+    D --> N[External: SearXNG, local FS, Git, notifications]
+    B --> O[core/tracer.py → structured JSONL logs]
+    B --> P[gateway/app.py → REST API]
+```
+
+**3‑model configuration:**
+- **Planner** (orchestration, memory summaries, vision) — `qwen/qwen3.5-9b`
+- **Executor** (code generation, analysis, synthesis) — `hermes-3-llama-3.1-8b`
+- **Router** (fast task classification) — `nvidia/nemotron-3-nano-4b`
+
+All models served locally through LM Studio's OpenAI-compatible `/v1` endpoint at `http://localhost:1234/v1`.
+
+---
+
+## Hardware & Model
 
 | Component | Minimum | Recommended (this build) |
 |-----------|---------|--------------------------|
 | CPU | Any modern x86-64 | AMD Ryzen 5 5900X |
-| RAM | 16 GB | 64 GB DDR4 3600 MHz |
-| GPU VRAM | 8 GB | 16 GB (RTX 5060 Ti) |
-| Storage | 20 GB free | NVMe SSD |
+| RAM | 64 GB DDR4 3600 MHz |
+| GPU VRAM | 16 GB (RTX 5060 Ti) |
+| Storage | 20+ GB free | NVMe SSD |
 | OS | Windows 10 / Ubuntu 22.04 | Windows 11 or Linux |
 
 ### Models (via LM Studio)
 
-| Role | Model | Quantization | Context |
-|------|-------|-------------|---------|
-| Planner | `qwen/qwen3.5-9b` | Q4_0+ | 131k |
-| Executor | `hermes-3-llama-3.1-8b` | Q4_0+ | 16k |
-| Router | `nvidia/nemotron-3-nano-4b` | Q4_0+ | 4k |
-| Vision *(optional)* | any LLaVA/Qwen-VL | Q4_0+ | — |
-
-All models served locally via **LM Studio** on `http://localhost:1234/v1`.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│                 Claude / User                   │
-└────────────────────┬────────────────────────────┘
-                     │
-┌────────────────────▼────────────────────────────┐
-│           PLANNER  (Qwen 3.5 9B)                │
-│  Produces structured JSON plan — never calls    │
-│  tools directly                                 │
-└────────────────────┬────────────────────────────┘
-                     │ JSON plan
-┌────────────────────▼────────────────────────────┐
-│           ROUTER   (Nemotron 4B)                │
-│  Classifies task type, selects workflow or      │
-│  direct tool, assigns executor model            │
-└──────────┬──────────────────┬───────────────────┘
-           │                  │
-┌──────────▼──────┐  ┌────────▼──────────────────┐
-│   WORKFLOWS     │  │  EXECUTOR (Hermes 3 8B)   │
-│   (LangGraph)   │  │  Strict JSON schema only  │
-│  research       │  │  CODER / REVIEWER /        │
-│  data           │  │  ANALYZER system prompts  │
-│  autocode       │  │  all correctly wired       │
-└──────────┬──────┘  └────────┬──────────────────┘
-           └────────┬─────────┘
-┌───────────────────▼──────────────────────────────┐
-│              6 META-TOOLS                        │
-│  web · python · file · git · notify · visualize  │
-└───────────────────┬──────────────────────────────┘
-                    │
-┌───────────────────▼──────────────────────────────┐
-│           IMPLEMENTATION LAYER                   │
-│  SearXNG · ChromaDB · SQLite FTS                 │
-│  LM Studio · openpyxl · plotly · folium          │
-│  fpdf2 · python-docx · python-pptx               │
-└──────────────────────────────────────────────────┘
-```
-
-### Model roles — enforced, not suggestions
-
-| Role | Model | Used for | Timeout |
-|------|-------|----------|---------|
-| Planner | Qwen 3.5 9B | Workflow orchestration, memory summarisation | 90s |
-| Executor | Hermes 3 8B | Code generation, analysis, synthesis | 120s |
-| Router | Nemotron 4B | Task classification, tool selection | 15s |
-
-### Memory — 3 ChromaDB collections
-
-| Collection | Stores | Example |
-|------------|--------|---------|
-| `episodic` | What happened | "Fixed SyntaxError in memory.py — outcome: success" |
-| `semantic` | What you know | "ChromaDB supports persistent local storage" |
-| `procedural` | How to do things | "To register a new tool: decorate with @tool" |
-
-Recall uses **decay scoring**: `score = importance × max(0.3, 1 − age/30days)`  
-Old high-importance memories fade slowly but never disappear entirely.
+| Role | Model | Quantization | Context Window | Timeout |
+|------|-------|-------------|----------------|---------|
+| Planner | `qwen/qwen3.5-9b` | Q4_0+ | 131k | 90s |
+| Executor | `hermes-3-llama-3.1-8b` | Q4_0+ | 16k | 120s |
+| Router | `nvidia/nemotron-3-nano-4b` | Q4_0+ | 4k | 15s |
+| Vision *(optional)* | any LLaVA/Qwen-VL | Q4_0+ | — | 60s |
 
 ---
 
 ## Project Structure
 
 ```
-D:/mcp/
-├── agent/                          ← agent source (this repo)
-│   ├── .env                        ← all configuration (never committed)
-│   ├── .gitignore
-│   ├── server.py                   ← FastMCP entrypoint (minimal)
-│   ├── registry.py                 ← auto-discovers @tool functions
-│   ├── requirements.txt
-│   │
-│   ├── core/
-│   │   ├── config.py               ← singleton cfg — all paths/models/settings
-│   │   ├── llm.py                  ← unified LLM client, provider abstraction
-│   │   └── tracer.py               ← structured logging, trace IDs
-│   │
-│   ├── tools/                      ← 6 meta-tools (what the LLM sees)
-│   │   ├── web.py                  ← search | scrape | read | search_and_read
-│   │   ├── python_exec.py          ← run (sandbox) | run_data (imports OK)
-│   │   ├── file_ops.py             ← 14 actions: txt/pdf/docx/xlsx/pptx
-│   │   ├── git_ops.py              ← snapshot | commit | rollback | log | status | diff
-│   │   ├── notify.py               ← send | schedule | cancel | list
-│   │   └── visualize.py            ← chart | map | report | dashboard
-│   │
-│   ├── memory/
-│   │   └── store.py                ← 3-collection ChromaDB + decay scoring
-│   │
-│   ├── routing/                    ← Phase 8 — Nemotron router layer
-│   ├── workflows/                  ← Phase 7 — research / data / autocode
-│   ├── gateway/                    ← Phase 9 — REST API + messaging adapters
-│   └── skills/                     ← Phase 10 — B3 and domain skill packs
-│
-├── workspace/                      ← agent working directory (git tracked)
-│   ├── autocode/                   ← autocode outputs and backups
-│   └── visualizations/             ← generated HTML charts, maps, dashboards
-│
-└── memory_db/                      ← persistent storage (not committed)
-    ├── chroma/                     ← ChromaDB vector collections
-    ├── agent.db                    ← SQLite general storage
-    └── task.db                     ← SQLite task queue
+agent/
+├── server.py                   # Entry point: MCP stdio server, tool registration, warmup
+├── registry.py                 # Auto‑discovers @tool functions in tools/ and skills/
+├── mcp.json                    # MCP server configuration (agent + fs + git + time)
+├── requirements.txt            # All Python dependencies
+├── .env                        # Environment variables (paths, models, ports…)
+├── core/
+│   ├── config.py               # Singleton config (paths, models, env vars)
+│   ├── llm.py                  # Unified LLM client with circuit breaker, role dispatch, structured output
+│   ├── tracer.py               # Structured JSONL logging with trace IDs (stderr + logs/)
+│   ├── patch.py                # str_replace patching with .bak backups
+│   └── citations.py            # Per‑trace citation tracker ([1], [2]…)
+├── tools/                      # 11 meta‑tools that the LLM sees
+│   ├── web.py                  # SearXNG search, BS4 scraping, SSRF protection
+│   ├── python_exec.py          # Sandboxed execution (run / run_data modes)
+│   ├── file_ops.py             # Full file system CRUD, PDF, Office files, SQLite FTS
+│   ├── git.py                  # Plugin dispatcher to git_ops/
+│   ├── git_ops/                # Git plugin system (commit, log, diff, rollback, branch, etc.)
+│   ├── notify.py               # Desktop notifications (send, schedule, cancel, list)
+│   ├── visualize.py            # Charts, maps, reports, dashboards via Plotly + Folium
+│   ├── vision.py               # Multimodal image analysis using cfg.vision_model
+│   ├── memory_tool.py          # LLM‑facing wrapper for memory/store.py (store, recall, delete, stats)
+│   ├── agent_tool.py           # 10 specialist LLM roles (code, review, classify, research, …)
+│   ├── cli.py                  # Natural‑language → shell command dispatcher (4‑layer routing)
+│   ├── workflow_tool.py        # Launch LangGraph workflows (research, data, autocode)
+│   └── report_templates.py     # Premium HTML report templates (market, code)
+├── memory/
+│   └── store.py                # ChromaDB persistence: episodic, semantic, procedural collections + decay scoring
+├── routing/
+│   └── router.py               # Nemotron‑based task router with heuristic fallback
+├── workflows/
+│   ├── base.py                 # Shared state, node helpers, dispatcher
+│   ├── research.py             # Recall → Search → Scrape → Synthesize → Store → Notify
+│   ├── data.py                 # Recall → Execute → Critique → Store → Notify
+│   └── autocode.py             # Snapshot → Read → Recall → Analyze → Code → Review → Syntax → Apply → Test → Commit/Rollback → Store → Notify
+├── gateway/
+│   └── app.py                  # FastAPI REST API (chat, task, result, health, tools, memory stats)
+├── skills/
+│   ├── dispatcher.py           # Auto‑discovers skill domains from skills/*/__init__.py
+│   └── b3/
+│       └── __init__.py         # B3 (Brazilian stock exchange) domain: sync, query, status
+└── system_prompts/
+    ├── qwen_planner.md         # Planner instructions, JSON output format, vision rules
+    ├── hermes_executor.md      # Executor's 11 specialist roles with per‑role output schemas
+    ├── nemotron_router.md      # Router classification and routing logic
+    └── system_prompt.md        # Project‑level instructions, tool reference, workflow patterns
 ```
 
 ---
 
-## The 6 Meta-Tools
+## Quick Start (for context loading)
 
-The LLM sees exactly 6 tools. All complexity is hidden inside.
+1. **Clone & dependencies**  
+   ```bash
+   git clone https://github.com/brunogcar/agent && cd agent
+   pip install -r requirements.txt
+   ```
 
-### `web(action, ...)`
-Search the web or read web pages. Internally uses SearXNG + httpx + BeautifulSoup4.
+2. **Configure**  
+   Copy `.env.example` to `.env` (or use the current `.env` below) and adjust paths/models/SearXNG URL.
 
-| Action | Required | Optional | Returns |
-|--------|----------|----------|---------|
-| `search` | `query` | `max_results=5` | `{results: [{url, title, snippet}]}` |
-| `scrape` | `url` | `max_chars=8000` | `{title, text, word_count}` |
-| `read` | `url` | `max_chars=8000` | alias for scrape |
-| `search_and_read` | `query` | `max_results=3` | `{results: [{url, title, text}]}` |
+3. **Required services**  
+   - LM Studio with the three models loaded (see `.env`).  
+   - SearXNG instance at `http://localhost:8080` (optional, for web search).  
+   - ChromaDB auto‑creates at `MEMORY_ROOT`.
 
-```python
-web(action="search", query="FastMCP python tutorial")
-web(action="scrape", url="https://docs.python.org/3/library/pathlib.html")
-web(action="search_and_read", query="ChromaDB persistent client")
-```
-
-### `python(mode, code)`
-Execute Python code safely. Two modes with different isolation levels.
-
-| Mode | Imports | Execution | Use for |
-|------|---------|-----------|---------|
-| `run` | None (sandbox) | In-process | Pure logic, math, string ops |
-| `run_data` | stdlib + pandas/numpy/etc | In-process or subprocess | Data analysis, file processing |
-
-```python
-python(mode="run", code="print(sum(i**2 for i in range(10)))")
-python(mode="run_data", code="import pandas as pd\ndf = pd.read_csv('data.csv')\nprint(df.describe())")
-```
-
-Always use `print()` to return output — variables are not captured.
-
-### `file(action, ...)`
-Read, write, search and manage files. 14 actions covering all common formats.
-
-| Category | Actions |
-|----------|---------|
-| Basic | `read`, `write`, `list`, `backup` |
-| Multi-file | `read_many` (concurrent), `search` (SQLite FTS) |
-| PDF | `read_pdf`, `write_pdf` |
-| Word | `read_docx`, `write_docx` |
-| Excel | `read_xlsx`, `write_xlsx` |
-| PowerPoint | `read_pptx`, `write_pptx` |
-
-All paths resolve relative to `workspace/`. Path traversal outside allowed roots is blocked.  
-`write` auto-creates a `.bak` backup of any existing file.
-
-### `git(operation, ...)`
-Version control for workspace and agent code.
-
-| Operation | Use for |
-|-----------|---------|
-| `snapshot` | Create safe rollback point **before** any automated change |
-| `commit` | Record successful changes **after** testing passes |
-| `rollback` | Undo all uncommitted changes when something fails |
-| `log` | View recent commit history |
-| `status` | See what has changed |
-| `diff` | View exact changes |
-
-`root` parameter: `"workspace"` (default) or `"agent"` — the agent can version both.
-
-```python
-git(operation="snapshot", message="before editing memory.py")
-git(operation="commit",   message="fix: correct decay scoring")
-git(operation="rollback")                                        # undo on failure
-git(operation="log", n=5, root="agent")
-```
-
-### `notify(action, ...)`
-
-| Action | Use for |
-|--------|---------|
-| `send` | Immediate desktop notification |
-| `schedule` | Reminder after N minutes |
-| `cancel` | Cancel a scheduled reminder |
-| `list` | Show all pending reminders |
-
-Cross-platform: Windows uses plyer (toast), Linux uses notify-send, both fall back to console.
-
-### `visualize(type, ...)`
-Create self-contained interactive HTML files — open in any browser, no server needed.
-
-| Type | Output | Libraries |
-|------|--------|-----------|
-| `chart` | Interactive Plotly chart | plotly |
-| `map` | Interactive Leaflet map | folium |
-| `report` | Professional HTML report with embedded charts | jinja2 + plotly |
-| `dashboard` | Multi-panel responsive dashboard | plotly |
-
-Chart types: `bar · line · scatter · area · pie · histogram · box · heatmap · treemap · funnel · bubble`  
-Map types: `markers · heatmap · choropleth · route · circles`
-
-All outputs saved to `workspace/visualizations/`.  
-Optional PNG export (`export_png=True`) via kaleido.  
-Optional PDF export for reports (`export_pdf=True`) via weasyprint.
+4. **Run**  
+   ```bash
+   python server.py           # MCP stdio mode
+   # or
+   uvicorn gateway.app:app --host 0.0.0.0 --port 8000  # REST API mode
+   ```
 
 ---
 
 ## Configuration (`.env`)
 
+All paths and model names are driven by environment variables, loaded by `core/config.py` as a singleton `cfg`.
+
 ```ini
-# Paths — use forward slashes, no trailing slash
+# ── Paths (no trailing slash) ──────────────────────────────────────────────
 AGENT_ROOT=D:/mcp/agent
-WORKSPACE_ROOT=D:/mcp/workspace
-MEMORY_ROOT=D:/mcp/memory_db
+WORKSPACE_ROOT=D:/mcp/agent/workspace
+MEMORY_ROOT=D:/mcp/agent/memory_db
 
-# LM Studio
+# ── LM Studio ──────────────────────────────────────────────────────────────
 LM_STUDIO_BASE_URL=http://localhost:1234/v1
+FASTMCP_LOG_LEVEL=error
 
-# Model roles
+# ── Model roles ────────────────────────────────────────────────────────────
 PLANNER_MODEL=qwen/qwen3.5-9b
 EXECUTOR_MODEL=hermes-3-llama-3.1-8b
 ROUTER_MODEL=nvidia/nemotron-3-nano-4b
-# VISION_MODEL=               # uncomment when a vision model is loaded
+VISION_MODEL=qwen/qwen3.5-9b          # Usually same as planner
 
-# SearXNG (self-hosted)
-SEARXNG_URL=http://192.168.1.10:30053
+# ── External services ──────────────────────────────────────────────────────
+SEARXNG_URL=http://localhost:8080     # or your NAS IP: http://192.168.1.10:30053
 
-# Memory tuning
-MEMORY_DELETE_THRESHOLD=0.4
+# ── Memory tuning ────────────────────────────────────────────────────────────
+MEMORY_DELETE_THRESHOLD=0.4           # Importance below this may be pruned
 MEMORY_DECAY_DAYS=30
 MEMORY_TOP_K=5
 
-# Execution
-EXECUTION_TIMEOUT=120
-SANDBOX_TIMEOUT=30
+# ── Execution ──────────────────────────────────────────────────────────────
+EXECUTION_TIMEOUT=120                 # Seconds for code execution (sandbox)
 
-# Autocode
+# ── Autocode ────────────────────────────────────────────────────────────────
 AUTOCODE_MAX_RETRIES=3
 AUTOCODE_MAX_FILE_CHARS=6000
-AUTOCODE_DEBUG=0            # set to 1 for verbose trace logging
+AUTOCODE_DEBUG=0                      # Set to 1 for verbose trace logging
 
-# Gateway (Phase 9)
+# ── Gateway ─────────────────────────────────────────────────────────────────
 GATEWAY_HOST=0.0.0.0
 GATEWAY_PORT=8000
-GATEWAY_SECRET=changeme     # change before exposing to network
+GATEWAY_SECRET=changeme               # Change before exposing to network!
 
-# Environment
-ENV=development
+# ── Environment ────────────────────────────────────────────────────────────
+ENV=development                        # development or production
 ```
+
+> **Note:** `SANDBOX_TIMEOUT` is planned but not yet wired in the codebase – currently only `EXECUTION_TIMEOUT` controls all execution timeouts.
 
 ---
 
-## MCP Server Configuration (`mcp.json`)
+## Tools Reference (what the LLM can invoke)
 
-4 servers instead of the original 9. SearXNG, SQLite, fetch, and sequential-thinking
-are absorbed into the agent's meta-tools and no longer exposed separately.
+All tools are registered via `@tool` decorators and auto‑discovered by `registry.py`.
 
-```json
-{
-  "mcpServers": {
-    "agent": {
-      "command": "python",
-      "args": ["D:/mcp/agent/server.py"],
-      "cwd": "D:/mcp/agent",
-      "env": { "ENV_FILE": "D:/mcp/agent/.env" }
-    },
-    "fs": {
-      "command": "npx",
-      "args": [
-        "-y", "@modelcontextprotocol/server-filesystem",
-        "D:/mcp/workspace",
-        "D:/mcp/agent"
-      ]
-    },
-    "git": {
-      "command": "npx",
-      "args": ["-y", "@cyanheads/git-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "GIT_BASE_DIR": "D:/mcp/workspace"
-      }
-    },
-    "time": {
-      "command": "npx",
-      "args": ["-y", "@mcpcentral/mcp-time"]
-    }
-  }
-}
-```
+| Tool | File | Key Functionality |
+|------|------|-------------------|
+| **web** | `tools/web.py` | Web search (SearXNG) and scraping (BeautifulSoup), SSRF protection. |
+| **python** | `tools/python_exec.py` | Run Python code in sandbox (`run` mode) or with data‑science libs (`run_data` mode). |
+| **file** | `tools/file_ops.py` | File read/write/list/backup/search/read_pdf, Office files (docx/xlsx/pptx), SQLite FTS. |
+| **git** | `tools/git.py` + `git_ops/` | Plugin‑based Git operations: init, status, commit, log, diff, branch, checkout, rollback, snapshot, restore. |
+| **notify** | `tools/notify.py` | Cross‑platform desktop notifications (send, schedule, cancel, list). |
+| **visualize** | `tools/visualize.py` | Create charts (Plotly), maps (Folium), HTML reports, dashboards. |
+| **vision** | `tools/vision.py` | Analyze images using `cfg.vision_model` (file, URL, base64). |
+| **memory** | `tools/memory_tool.py` | Manage persistent memory: store, recall, delete, prune, summarize, stats (3‑collection ChromaDB). |
+| **agent** | `tools/agent_tool.py` | Invoke specialised LLM sub‑agents: classify, route, research, summarize, extract, critique, analyze, code, review, plan. |
+| **cli** | `tools/cli.py` | Transform natural language into shell commands. 4‑layer dispatch: regex patterns → shell whitelist → Nemotron route → Executor escalation. |
+| **workflow** | `tools/workflow_tool.py` | Execute long‑running LangGraph workflows: `research`, `data`, `autocode`. |
+| *(internal)* | `tools/report_templates.py` | Premium tabbed HTML report templates (used by visualise and workflows). |
 
 ---
 
-## Installation
+## Intelligence Layer
+
+### Memory (`memory/store.py`)
+
+- **3 ChromaDB collections**: episodic (events), semantic (facts), procedural (skills).  
+- **Decay scoring**: `score = importance × max(0.3, 1 − age_days / decay_days)`. Items below `MEMORY_DELETE_THRESHOLD` are pruned.  
+- **Query rewriting**: improves recall by expanding query context.
+
+### Router (`routing/router.py`)
+
+- Uses the **Nemotron‑3‑Nano‑4B** model for fast task classification.  
+- Outputs a route label (`web`, `python`, `memory`, `agent`, …) and complexity score (1‑10).  
+- Falls back to heuristic keyword matching if LLM call fails.
+
+### Workflows (`workflows/`)
+
+Built with LangGraph, all workflows use `base.py`'s `WorkflowState` and emit structured traces:
+
+- **research.py**: Recall → Search → Scrape → Synthesize → Store → Notify  
+  *(Use for: information gathering, summarisation, fact-finding)*
+- **data.py**: Recall → Execute → Critique → Store → Notify  
+  *(Use for: pandas/numpy analysis, calculations, dataset generation)*
+- **autocode.py**: Snapshot → Read → Recall → Analyze → Code → Review → Syntax → Apply → Test → Commit (or Rollback) → Store → Notify  
+  *(Use for: fixing bugs, adding features, refactoring code)*
+
+**Protected files** — autocode will never touch these, nor any file outside `WORKSPACE_ROOT`:
+- `server.py`, `registry.py`
+- `core/config.py`, `core/tracer.py`
+- `memory/store.py`
+
+---
+
+## Models & Roles
+
+| Role | Model | Purpose | Context Window | Timeout |
+|------|-------|---------|----------------|---------|
+| `planner` | `qwen/qwen3.5-9b` | Orchestration, memory summaries, vision | 131k | 90s |
+| `executor` | `hermes-3-llama-3.1-8b` | Code generation, analysis, synthesis | 16k | 120s |
+| `router` | `nvidia/nemotron-3-nano-4b` | Task classification, tool selection | 4k | 15s |
+| `vision` | (same as planner) | Multimodal image analysis | — | 60s |
+
+All models are served by **LM Studio** at `http://localhost:1234/v1` (OpenAI‑compatible endpoint).  
+`core/llm.py` implements a circuit breaker to prevent cascading failures.
+
+---
+
+## Gateway API (`gateway/app.py`)
+
+**REST endpoints** (Phase 9):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/chat` | POST | Send a message to the agent (async task) |
+| `/task` | POST | Submit a structured task |
+| `/result/{task_id}` | GET | Retrieve task result by task ID |
+| `/health` | GET | Health check (checks LM Studio availability) |
+| `/tools` | GET | List registered tools |
+| `/memory/stats` | GET | Memory statistics |
+
+Authentication via `GATEWAY_SECRET`.  
+Rate limiting (planned via `slowapi`): 30 req/min on `/chat`, 60 req/min on `/task`.  
+Messaging adapters (Discord, Telegram) are planned.
+
+---
+
+## Skills (`skills/`)
+
+- **Dispatcher** (`skills/dispatcher.py`) auto‑discovers skill domains (folders with an `__init__.py`).  
+- **B3** (`skills/b3/__init__.py`): Brazilian stock market domain – sync B3 data, query tickers, status checks.  
+  *(Mode: `sync` to download daily CSVs; `query` to run SQL queries)*
+
+---
+
+## Observability & Tracing
+
+- **Structured logging** via `structlog` in `core/tracer.py`.  
+- All LLM calls, tool executions, and workflow steps emit trace‑ID‑tagged JSON lines to stderr and `logs/agent_YYYYMMDD.jsonl`.  
+- **Citation tracking** in `core/citations.py` for web‑based answers.
+
+---
+
+## System Prompts
+
+Four Markdown files in `system_prompts/` define the behaviour of each model:
+
+- `qwen_planner.md` – Planner instructions, JSON output format, vision rules
+- `hermes_executor.md` – Executor's 11 specialist roles with per‑role output schemas
+- `nemotron_router.md` – Router classification and routing logic
+- `system_prompt.md` – Master project prompt (tool reference, workflows, safety rules)
+
+---
+
+## Key Design Decisions
+
+- **MCP stdio transport** for seamless integration with LM Studio, Claude Desktop and other MCP hosts.  
+- **Tool auto‑discovery** via `registry.py` so new tools are picked up without manual wiring.  
+- **Plugin architecture for Git** – `git_ops/` modules are discovered dynamically.  
+- **Sandboxed Python execution** – `run` mode restricts builtins; `run_data` runs in‑process with heavy libs in a subprocess.  
+- **Memory decay** – Prevents context pollution and keeps the knowledge base relevant.  
+- **Circuit breakers** — Per-role resilience prevents cascading failures when models are unavailable.
+
+---
+
+## Installation (Detailed)
 
 ### 1. Prerequisites
 
@@ -349,7 +338,7 @@ cd agent
 pip install -r requirements.txt
 ```
 
-> **weasyprint on Windows** requires the GTK3 runtime.  
+> **WeasyPrint on Windows**: requires GTK3 runtime.  
 > Download: https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer  
 > If it fails, skip it — HTML reports work without it, only PDF export is unavailable.
 
@@ -361,10 +350,10 @@ cp .env.example .env
 # Edit .env with your actual paths, model names, and SearXNG URL
 ```
 
-### 4. SearXNG (self-hosted search)
+### 4. SearXNG (self-hosted search) — Optional
 
+**Docker (recommended):**
 ```bash
-# Docker (recommended)
 docker run -d \
   --name searxng \
   -p 30053:8080 \
@@ -380,35 +369,10 @@ Set `SEARXNG_URL=http://localhost:30053` in `.env` (or your NAS IP).
 ### 5. LM Studio
 
 1. Download LM Studio: https://lmstudio.ai
-2. Load all three models (Planner, Executor, Router)
+2. Load the three models (Planner, Executor, Router) as specified in `.env`
 3. Enable the local server on port 1234
 4. Verify: `curl http://localhost:1234/v1/models`
 
-### 6. Verify installation
-
-```bash
-# Phase 1 — config and tracing
-python -c "from core.config import cfg; from core.tracer import tracer; cfg.ensure_dirs(); print(cfg)"
-
-# Phase 2 — LLM client
-python verify_phase2.py
-
-# Phase 3 — memory
-python verify_phase3.py
-
-# Phase 4 — meta-tools
-python verify_phase4.py
-python verify_phase4b.py
-python verify_phase4c.py
-```
-
-### 7. Start the agent
-
-```bash
-python server.py
-```
-
----
 
 ## Memory System
 
@@ -423,12 +387,12 @@ memory(action="store", memory_type="episodic",
 
 # Semantic — things you know
 memory(action="store", memory_type="semantic",
-       text="ChromaDB collections are isolated vector spaces",
+       text="ChromaDB supports persistent local storage",
        importance=7, tags="chromadb,architecture")
 
 # Procedural — how to do things
 memory(action="store", memory_type="procedural",
-       text="To add a new tool: decorate with @tool, no changes to server.py needed",
+       text="To register a new tool: decorate with @tool",
        importance=9, tags="mcp,tools")
 ```
 
@@ -458,83 +422,30 @@ Memories are ranked by: `score = importance × max(0.3, 1 − age_days / decay_d
 
 ---
 
-## Workflows (Phase 7)
+## Workflows Overview
 
 Three core workflow types built with LangGraph:
 
-### Research workflow
-```
-recall → search → scrape → synthesize (Hermes) → store → notify
-```
-Use for: information gathering, summarisation, fact-finding.
+- **Research** — gather information from web, synthesize findings
+- **Data** — analyze datasets with pandas/numpy, generate reports
+- **Autocode** — fix bugs, add features, refactor code (with full TDD + safety)
 
-### Data workflow
-```
-recall → execute code → critique → store → notify
-```
-Use for: pandas/numpy analysis, calculations, dataset generation.
-
-### Autocode workflow
-```
-snapshot → read → recall → analyze (Hermes+ANALYZER_SYSTEM)
-        → generate patch (Hermes+CODER_SYSTEM)
-        → review (Hermes+REVIEWER_SYSTEM)
-        → syntax check → ruff lint → test
-        → apply → commit  OR  rollback on failure
-        → store learning → notify
-```
-Use for: fixing bugs, adding features, refactoring code.
-
-**Protected files** — autocode will never touch these:
-- `server.py`
-- `registry.py`
-- `core/config.py`
-- `core/tracer.py`
+Each workflow is triggered via `workflow(type="auto/research/data", goal=...)` or through the agent meta-tool.
 
 ---
 
-## Observability
+## Troubleshooting
 
-Every workflow run gets a `trace_id` (8-char hex). All steps, errors, and
-results attach to it.
+| Issue | Solution |
+|-------|----------|
+| **LM Studio reachable: False** | → LM Studio is not running or the server is not enabled.<br/>→ Check `http://localhost:1234/v1/models` in your browser. |
+| **Cannot reach SearXNG** | → Check `SEARXNG_URL` in `.env` matches your NAS/Docker IP and port.<br/>→ Test: `curl http://YOUR_IP:30053/search?q=test&format=json` |
+| **ChromaDB import error** | → Try: `pip install chromadb --no-binary chromadb` |
+| **kaleido crashes on PNG export** | → Try: `pip install kaleido==0.2.1` |
+| **Autocode produces syntax errors** | → Check `AUTOCODE_DEBUG=1` in `.env` and review the trace log.<br/>→ The code generation prompts assume Hermes’ strict JSON output; other executor models may produce malformed plans. |
+| **Tool not appearing after adding it** | → Confirm the function has the `@tool` decorator.<br/>→ Confirm the file is inside the `tools/` directory.<br/>→ Restart the MCP server (`python server.py`). |
+| **WeasyPrint PDF export fails on Windows** | → GTK3 runtime may be missing. Download: https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer<br/>Or skip it — HTML reports work without PDF export. |
 
-```
-[1e124f2e] autocode | goal='fix decay scoring' | status=success | steps=12 | elapsed=47.3s
-```
-
-Logs written to `logs/agent_YYYYMMDD.jsonl` (structured JSON, one entry per line).
-
-```bash
-# View today's log
-cat logs/agent_$(date +%Y%m%d).jsonl | python -m json.tool | less
-
-# Filter by trace
-grep "1e124f2e" logs/agent_20260430.jsonl
-```
-
----
-
-## Cross-machine Setup (Phase 9)
-
-The gateway layer exposes a REST API so two machines can collaborate:
-
-```
-Machine A (Windows, RTX 5060 Ti) ←→ Machine B (Linux, other GPU)
-         POST /task                        POST /task
-         GET  /result/{trace_id}           GET  /result/{trace_id}
-```
-
-Both machines run the same codebase with different `.env` files.  
-Machine B can delegate heavy LLM tasks to Machine A, or run parallel workflows.
-
-Configure in `.env`:
-```ini
-GATEWAY_HOST=0.0.0.0
-GATEWAY_PORT=8000
-GATEWAY_SECRET=your-shared-secret
-```
-
----
 
 ## Adding New Tools
 
@@ -562,7 +473,6 @@ def your_tool(action: str, param: str = "") -> dict:
 The `core/llm.py` provider abstraction makes this a one-file change:
 
 ```python
-# In your startup code or a config file:
 from core.llm import llm, LMStudioProvider
 
 # DeepSeek (OpenAI-compatible)
@@ -573,57 +483,35 @@ llm.register_provider(
 
 # Then use it in a role override:
 cfg.model_registry["executor"]["provider"] = "deepseek"
-cfg.model_registry["executor"]["model"]    = "deepseek-coder-v2"
+cfg.model_registry["executor"]["model"] = "deepseek-coder-v2"
 ```
 
 ---
 
-## Troubleshooting
+## Why This Architecture?
 
-**`LM Studio reachable: False`**  
-→ LM Studio is not running or the server is not enabled.  
-→ Check `http://localhost:1234/v1/models` in your browser.
+**Three-model design:**
+- **Planner (Qwen 9B)** — handles complex reasoning, memory summaries, and vision tasks that need long-context understanding
+- **Executor (Hermes 8B)** — specialized for code generation with strict JSON output, tight temperature control (0.1)
+- **Router (Nemotron 4B)** — ultra-fast (15s timeout) classification to route simple tasks directly without loading heavy models
 
-**`Cannot reach SearXNG`**  
-→ Check `SEARXNG_URL` in `.env` matches your NAS/Docker IP and port.  
-→ Test: `curl http://YOUR_IP:30053/search?q=test&format=json`
+**Circuit breakers:**
+- Each LLM role has a dedicated circuit breaker that fails fast after 3 consecutive failures
+- After a failure window, the circuit enters "half-open" state and allows one test call
+- This prevents cascading timeouts when LM Studio becomes unresponsive
 
-**ChromaDB import error**  
-→ Try: `pip install chromadb --no-binary chromadb`
-
-**`kaleido` crashes on PNG export**  
-→ Try: `pip install kaleido==0.2.1`
-
-**Autocode produces syntax errors**  
-→ Check `AUTOCODE_DEBUG=1` in `.env` and review the trace log.  
-→ The CODER_SYSTEM and REVIEWER_SYSTEM prompts require Hermes — confirm the executor model is loaded in LM Studio.
-
-**Tool not appearing after adding it**  
-→ Confirm the function has the `@tool` decorator.  
-→ Confirm the file is inside the `tools/` directory.  
-→ Restart the MCP server (`python server.py`).
-
----
-
-## Roadmap
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| 1 | ✅ Done | Foundation — config, tracer, registry |
-| 2 | ✅ Done | LLM client — provider abstraction, role dispatch |
-| 3 | ✅ Done | Memory — 3-collection ChromaDB, decay scoring |
-| 4 | ✅ Done | Meta-tools — web, python, file, git, notify |
-| 4b | ✅ Done | Visualise — chart, map, report, dashboard |
-| 4c | ✅ Done | Office files — docx, xlsx, pptx read/write |
-| 5 | 🔄 Next | Agent + memory meta-tools, Nemotron router wired |
-| 6 | ⬜ | Server.py complete, mcp.json finalised, end-to-end test |
-| 7 | ⬜ | Workflows — research, data, autocode rebuilt with traces |
-| 8 | ⬜ | Router layer — Nemotron classifies all incoming tasks |
-| 9 | ⬜ | Gateway — REST API + messaging adapters (Discord, Telegram) |
-| 10 | ⬜ | B3 skills — Brazilian stock market domain pack |
+**Memory decay:**
+- Prevents context pollution by gradually reducing importance scores over time
+- Items below `MEMORY_DELETE_THRESHOLD` (default 0.4) are automatically pruned
+- Keeps the knowledge base focused on recent and important information
 
 ---
 
 ## Licence
 
 Private project. Not for redistribution.
+
+---
+
+*This README is designed to serve as a complete AI‑readable project context. For a full file‑by‑file breakdown, refer to the initial context‑loading prompt.*
+```
