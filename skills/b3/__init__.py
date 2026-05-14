@@ -79,13 +79,13 @@ MANIFEST: dict = {
 }
 
 
-def route(mode: str, **params) -> dict:
+def route(mode: str, **kwargs) -> dict:
     """
     Route a skill() call to the correct b3_api function.
-    Called by dispatcher.py -- not intended for direct use.
 
-    Returns a dict with at least {status, ...}.
-    On unknown mode, returns {status: error, ...} with available modes listed.
+    Uses inspect.signature to filter kwargs to only what the target function
+    accepts. This means the dispatcher can evolve its unified param signature
+    without breaking this domain. See cvm/__init__.py route() for full rationale.
     """
     if mode not in MANIFEST["modes"]:
         available = list(MANIFEST["modes"].keys())
@@ -94,16 +94,14 @@ def route(mode: str, **params) -> dict:
             "error":  f"Unknown mode '{mode}' for domain 'b3_api'. Available: {available}",
         }
 
-    fn = MANIFEST["modes"][mode]["fn"]
+    import inspect
+    fn       = MANIFEST["modes"][mode]["fn"]
+    sig      = inspect.signature(fn)
+    accepted = set(sig.parameters.keys())
+    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+
     try:
-        return fn(**params)
-    except TypeError as e:
-        # Catches invalid parameter names passed from dispatcher
-        valid = list(MANIFEST["modes"][mode]["params"].keys())
-        return {
-            "status": "error",
-            "error":  f"Invalid parameters for b3_api/{mode}: {e}. Valid params: {valid}",
-        }
+        return fn(**filtered)
     except Exception as e:
         return {
             "status": "error",

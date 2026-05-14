@@ -155,25 +155,31 @@ def skill(
     limit:   int  = 100,
     # ── b3_api / sync params ──────────────────────────────────────────────
     force:   bool = False,
+    # ── cvm params ────────────────────────────────────────────────────────
+    company:     str = "",   # company name, partial name, or CNPJ
+    anos:        str = "",   # JSON array or comma-sep years: "[2023,2024]" or "2023,2024"
+    consolidado: int = 1,    # 1=consolidated (default), 0=individual
+    limit_years: int = 0,    # 0 = use mode default; >0 overrides
+    query:       str = "",   # search query (for cvm/search mode)
 ) -> dict:
     """
     DECISION: explicit typed parameters instead of **kwargs.
 
     FastMCP serialises **kwargs as a required 'params' property in the JSON
     schema, which forces the LLM to wrap arguments like:
-        skill(domain="b3_api", mode="query", params='{"ticker":"PETR4"}')
+        skill(domain="cvm", mode="resumo_anual", params='{"company":"PETROBRAS"}')
     instead of the natural:
-        skill(domain="b3_api", mode="query", ticker="PETR4")
+        skill(domain="cvm", mode="resumo_anual", company="PETROBRAS")
 
     By listing all parameters explicitly with defaults, FastMCP generates a
     flat schema the LLM can fill naturally. Parameters unused by a given
     domain/mode are simply ignored by the route() function.
 
     ADDING A NEW DOMAIN WITH NEW PARAMS: add them here with a default of ""
-    or False. The domain's route() function only reads what it needs.
+    or 0/False. The domain's route() function only reads what it needs.
 
+    anos accepts JSON array string OR comma-separated: "[2023,2024]" or "2023,2024"
     files/filters/columns accept JSON strings OR comma-separated values.
-    The domain route() function parses them internally.
     """
     domain = domain.strip().lower()
 
@@ -188,16 +194,15 @@ def skill(
             ),
         }
 
-    # Build params dict -- only pass non-empty values so route() defaults work
     import json as _json
 
     params: dict = {}
 
+    # ── b3_api params ─────────────────────────────────────────────────────
     if ticker:
         params["ticker"] = ticker.strip().upper()
 
     if files:
-        # Accept JSON array string OR comma-separated: "Instruments,Trades"
         try:
             parsed = _json.loads(files)
             params["files"] = parsed if isinstance(parsed, list) else [files]
@@ -208,7 +213,7 @@ def skill(
         try:
             params["filters"] = _json.loads(filters)
         except (_json.JSONDecodeError, ValueError):
-            pass   # invalid JSON filter -- ignore, route() will use its defaults
+            pass
 
     if columns:
         try:
@@ -222,6 +227,31 @@ def skill(
 
     if force:
         params["force"] = True
+
+    # ── cvm params ────────────────────────────────────────────────────────
+    if company:
+        params["company"] = company.strip()
+
+    if anos:
+        # Accept "[2023,2024]" or "2023,2024" or "2023"
+        try:
+            parsed = _json.loads(anos)
+            params["anos"] = [int(x) for x in (parsed if isinstance(parsed, list) else [parsed])]
+        except (_json.JSONDecodeError, ValueError):
+            try:
+                params["anos"] = [int(x.strip()) for x in anos.split(",") if x.strip()]
+            except ValueError:
+                pass  # invalid anos -- let route() use its default
+
+    # consolidado: only pass if explicitly set to 0 (default=1 is the route() default too)
+    if consolidado == 0:
+        params["consolidado"] = 0
+
+    if limit_years > 0:
+        params["limit_years"] = limit_years
+
+    if query:
+        params["query"] = query.strip()
 
     module = _DOMAINS[domain]
     return module.route(mode=mode, **params)
