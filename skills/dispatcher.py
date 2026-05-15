@@ -160,7 +160,15 @@ def skill(
     anos:        str = "",   # JSON array or comma-sep years: "[2023,2024]" or "2023,2024"
     consolidado: int = 1,    # 1=consolidated (default), 0=individual
     limit_years: int = 0,    # 0 = use mode default; >0 overrides
-    query:       str = "",   # search query (for cvm/search mode)
+    # ── cvm_register params ───────────────────────────────────────────────
+    cd_cvm:      str  = "",   # CVM internal code e.g. "9512"
+    full:        bool = False, # return all 46 columns (lookup mode)
+    active_only: bool = True,  # filter to SIT=ATIVO (search mode)
+    setor:       str  = "",   # sector fragment e.g. "Energia"
+    sit:         str  = "",   # registration status e.g. "ATIVO", "CANCELADA"
+    sit_emissor: str  = "",   # issuer situation fragment
+    controle:    str  = "",   # ownership: "PRIVADO", "ESTATAL", "ESTRANGEIRO"
+    uf:          str  = "",   # state code e.g. "SP", "RJ"
 ) -> dict:
     """
     DECISION: explicit typed parameters instead of **kwargs.
@@ -252,6 +260,32 @@ def skill(
 
     if query:
         params["query"] = query.strip()
+
+    # ── cvm_register params ───────────────────────────────────────────────
+    if cd_cvm:
+        params["cd_cvm"] = cd_cvm.strip()
+
+    if full:
+        params["full"] = True
+
+    # active_only defaults True -- only pass when explicitly False
+    if not active_only:
+        params["active_only"] = False
+
+    if setor:
+        params["setor"] = setor.strip()
+
+    if sit:
+        params["sit"] = sit.strip()
+
+    if sit_emissor:
+        params["sit_emissor"] = sit_emissor.strip()
+
+    if controle:
+        params["controle"] = controle.strip()
+
+    if uf:
+        params["uf"] = uf.strip()
 
     module = _DOMAINS[domain]
     return module.route(mode=mode, **params)
