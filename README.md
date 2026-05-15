@@ -514,4 +514,3 @@ Private project. Not for redistribution.
 ---
 
 *This README is designed to serve as a complete AI‑readable project context. For a full file‑by‑file breakdown, refer to the initial context‑loading prompt.*
-```
