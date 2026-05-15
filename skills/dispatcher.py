@@ -1,304 +1,149 @@
 """
-skills/dispatcher.py -- Single MCP tool entry point for all skills.
+skills/dispatcher.py -- Single MCP @tool entry point for all skill domains.
 
-The LLM sees ONE new tool: skill(domain, mode, **params)
+ARCHITECTURE
+------------
+skill(domain, sub_domain, mode, params)
 
-DESIGN
-------
-- Only this file has @tool -- nothing else in skills/ is MCP-visible.
-- Each domain lives in skills/<domain>/__init__.py and exports a MANIFEST dict.
-- Dispatcher auto-discovers domains at import time by scanning skills/ subfolders.
-- Dynamic docstring is built from all manifests so the LLM always has
-  accurate, up-to-date examples without manual docstring maintenance.
+  domain     -- top-level domain: "b3", "cvm", "news", etc.
+  sub_domain -- sub-domain within domain: "b3_api", "cvm_api", "cvm_register"
+                "" or omitted = auto-select if only one sub-domain exists
+                "all" = run mode on ALL sub-domains (only those with include_in_all=True)
+  mode       -- operation: "sync", "query", "status", "search", etc.
+  params     -- JSON string with mode-specific args: '{"ticker":"PETR4","limit":5}'
+                "" = no params, use function defaults
 
-ADDING A NEW DOMAIN
+ZERO-MAINTENANCE DESIGN
+-----------------------
+Adding a new domain:
+  1. Create skills/<domain>/__init__.py with MANIFEST + route()
+  2. Done. Dispatcher auto-discovers it on next server restart.
+
+Adding a new sub-domain to an existing domain:
+  1. Create skills/<domain>/<sub_domain>/__init__.py with MANIFEST + route()
+  2. Done. Domain router auto-discovers it.
+
+Adding new params to a sub-domain function:
+  1. Add the param to the function signature
+  2. Pass it in params JSON: '{"new_param": "value"}'
+  3. Done. No changes to dispatcher or any other file.
+
+WHY params AS JSON STRING
+--------------------------
+FastMCP builds the MCP JSON schema from the @tool function signature.
+Explicit typed params require editing dispatcher for every new domain param.
+JSON string solves this: 4 stable typed params forever, arbitrary domain args
+passed as '{"key": "value"}' -- natural for LLMs which already output JSON.
+
+include_in_all FLAG
 -------------------
-1. Create skills/<new_domain>/__init__.py with MANIFEST dict and route() function.
-   Copy skills/b3/__init__.py as a template.
-2. That's it. Dispatcher discovers it automatically on next server restart.
-   No changes to this file, registry.py, or server.py.
-
-DECISION: **params not explicit keyword args
-  Each domain has different parameters. Passing **params lets the dispatcher
-  forward any keyword arguments to the domain's route() function, which
-  validates them against its own manifest. This avoids a 20-parameter tool
-  signature that confuses the LLM with irrelevant options.
-
-DECISION: Dynamic docstring rebuilt at import time (not at call time)
-  FastMCP reads the docstring once at startup to register the tool with the
-  MCP server. Rebuilding at import time means the docstring is always current
-  when the server starts, without any runtime overhead per call.
-
-DECISION: Domains discovered from filesystem, not a hardcoded list
-  skills/<name>/__init__.py + MANIFEST key = auto-registered.
-  This means adding a domain never requires touching this file.
+sub_domain="all" only runs modes where include_in_all=True in the MANIFEST.
+Default is False -- opt-in. Batch-safe modes (sync, status) set True.
+Param-requiring modes (query, search, lookup) set False.
 """
 
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from registry import tool
 
 
-# ---------------------------------------------------------------------------
-# Domain registry -- built once at import time
-# ---------------------------------------------------------------------------
-
-def _discover_domains() -> dict[str, Any]:
-    """
-    Scan skills/ subfolders for domain modules with a MANIFEST dict.
-    Returns {domain_name: module} for all discovered domains.
-
-    A valid domain module must:
-      1. Live at skills/<name>/__init__.py
-      2. Export MANIFEST dict with at least "domain" and "modes" keys
-      3. Export route(mode, **params) -> dict function
-    """
-    domains: dict[str, Any] = {}
+def _discover_domains() -> dict:
+    """Scan skills/ for domain packages with MANIFEST + route()."""
+    domains: dict = {}
     skills_dir = Path(__file__).resolve().parent
 
     for item in sorted(skills_dir.iterdir()):
-        if not item.is_dir() or item.name.startswith("_") or item.name.startswith("."):
+        if not item.is_dir() or item.name.startswith(("_", ".")):
             continue
         init_file = item / "__init__.py"
         if not init_file.exists():
             continue
-
         module_path = f"skills.{item.name}"
         try:
             module = importlib.import_module(module_path)
             manifest = getattr(module, "MANIFEST", None)
-            if not manifest or "domain" not in manifest or "modes" not in manifest:
+            if not manifest or "domain" not in manifest:
                 continue
             if not callable(getattr(module, "route", None)):
                 continue
-            domain_name = manifest["domain"]
-            domains[domain_name] = module
+            domains[manifest["domain"]] = module
         except Exception as e:
-            print(f"[skills/dispatcher] WARNING: failed to load {module_path}: {e}", file=sys.stderr)
+            print(f"[dispatcher] WARNING: failed to load {module_path}: {e}", file=sys.stderr)
 
     return domains
 
 
-_DOMAINS: dict[str, Any] = _discover_domains()
+_DOMAINS: dict = _discover_domains()
 
-
-# ---------------------------------------------------------------------------
-# Dynamic docstring builder
-# ---------------------------------------------------------------------------
 
 def _build_docstring() -> str:
-    """
-    Build the tool docstring from all discovered domain manifests.
-    Called once at module import time.
-    """
     lines = [
         "Execute a skill from any registered domain.",
         "",
-        "skill(domain, mode, **params)",
-        "",
-        "domain: the skill domain to use",
-        "mode:   the operation within that domain",
-        "params: domain/mode-specific keyword arguments (see examples below)",
+        "skill(domain, sub_domain='', mode='', params='')",
+        "  params = JSON string: '{\"ticker\":\"PETR4\",\"limit\":5}'",
+        "  sub_domain='all' runs mode on all sub-domains where include_in_all=True",
         "",
     ]
-
-    if not _DOMAINS:
-        lines.append("No skill domains registered yet.")
-        return "\n".join(lines)
-
-    lines.append("AVAILABLE DOMAINS")
-    lines.append("-" * 60)
-
     for domain_name, module in _DOMAINS.items():
         manifest = module.MANIFEST
-        lines.append(f"\ndomain=\"{domain_name}\"")
-        lines.append(f"  {manifest.get('description', '')}")
-        if manifest.get("source"):
-            lines.append(f"  Source: {manifest['source']}")
-        lines.append(f"  Modes: {', '.join(manifest['modes'].keys())}")
+        has_sub  = manifest.get("has_sub_domains", False)
+        lines.append(f'domain="{domain_name}" -- {manifest.get("description","")[:70]}')
+        if has_sub:
+            discover_fn = getattr(module, "_discover_sub_domains", None)
+            sub_domains = discover_fn() if discover_fn else {}
+            for sd_name, sd_mod in sub_domains.items():
+                sd_m = sd_mod.MANIFEST
+                lines.append(f'  sub_domain="{sd_name}"')
+                for m_name, m_info in sd_m.get("modes", {}).items():
+                    tag = " [sync_all]" if m_info.get("include_in_all") else ""
+                    lines.append(f'    mode="{m_name}"{tag} -- {m_info.get("description","")[:55]}')
+                    exs = m_info.get("examples", [])
+                    if exs:
+                        lines.append(f'      e.g. {exs[0]}')
+        else:
+            for m_name, m_info in manifest.get("modes", {}).items():
+                lines.append(f'  mode="{m_name}" -- {m_info.get("description","")[:60]}')
+                exs = m_info.get("examples", [])
+                if exs:
+                    lines.append(f'    e.g. {exs[0]}')
         lines.append("")
-
-        for mode_name, mode_info in manifest["modes"].items():
-            lines.append(f"  mode=\"{mode_name}\"")
-            lines.append(f"    {mode_info.get('description', '')}")
-            if mode_info.get("params"):
-                lines.append("    Parameters:")
-                for pname, pdesc in mode_info["params"].items():
-                    lines.append(f"      {pname}: {pdesc}")
-            if mode_info.get("examples"):
-                lines.append("    Examples:")
-                for ex in mode_info["examples"]:
-                    lines.append(f"      {ex}")
-            lines.append("")
-
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# The single @tool entry point
-# ---------------------------------------------------------------------------
-
 @tool
 def skill(
-    domain:  str,
-    mode:    str,
-    # ── b3_api / query params ─────────────────────────────────────────────
-    ticker:  str  = "",
-    files:   str  = "",
-    filters: str  = "",
-    columns: str  = "",
-    limit:   int  = 100,
-    # ── b3_api / sync params ──────────────────────────────────────────────
-    force:   bool = False,
-    # ── cvm params ────────────────────────────────────────────────────────
-    company:     str = "",   # company name, partial name, or CNPJ
-    anos:        str = "",   # JSON array or comma-sep years: "[2023,2024]" or "2023,2024"
-    consolidado: int = 1,    # 1=consolidated (default), 0=individual
-    limit_years: int = 0,    # 0 = use mode default; >0 overrides
-    # ── cvm_register params ───────────────────────────────────────────────
-    cd_cvm:      str  = "",   # CVM internal code e.g. "9512"
-    full:        bool = False, # return all 46 columns (lookup mode)
-    active_only: bool = True,  # filter to SIT=ATIVO (search mode)
-    setor:       str  = "",   # sector fragment e.g. "Energia"
-    sit:         str  = "",   # registration status e.g. "ATIVO", "CANCELADA"
-    sit_emissor: str  = "",   # issuer situation fragment
-    controle:    str  = "",   # ownership: "PRIVADO", "ESTATAL", "ESTRANGEIRO"
-    uf:          str  = "",   # state code e.g. "SP", "RJ"
+    domain:     str,
+    sub_domain: str = "",
+    mode:       str = "",
+    params:     str = "",
 ) -> dict:
-    """
-    DECISION: explicit typed parameters instead of **kwargs.
+    """Docstring set dynamically below."""
+    # Parse params JSON
+    kwargs: dict = {}
+    if params:
+        try:
+            kwargs = json.loads(params)
+            if not isinstance(kwargs, dict):
+                return {"status": "error", "error": f"params must be a JSON object, got: {type(kwargs).__name__}"}
+        except json.JSONDecodeError as e:
+            return {"status": "error",
+                    "error": f"params is not valid JSON: {e}. Example: '{{\"ticker\":\"PETR4\"}}'"}
 
-    FastMCP serialises **kwargs as a required 'params' property in the JSON
-    schema, which forces the LLM to wrap arguments like:
-        skill(domain="cvm", mode="resumo_anual", params='{"company":"PETROBRAS"}')
-    instead of the natural:
-        skill(domain="cvm", mode="resumo_anual", company="PETROBRAS")
-
-    By listing all parameters explicitly with defaults, FastMCP generates a
-    flat schema the LLM can fill naturally. Parameters unused by a given
-    domain/mode are simply ignored by the route() function.
-
-    ADDING A NEW DOMAIN WITH NEW PARAMS: add them here with a default of ""
-    or 0/False. The domain's route() function only reads what it needs.
-
-    anos accepts JSON array string OR comma-separated: "[2023,2024]" or "2023,2024"
-    files/filters/columns accept JSON strings OR comma-separated values.
-    """
     domain = domain.strip().lower()
-
     if domain not in _DOMAINS:
-        available = list(_DOMAINS.keys())
         return {
             "status": "error",
-            "error":  (
-                f"Unknown domain '{domain}'. "
-                f"Available: {available}. "
-                f"Use skill(domain='<name>', mode='status') to check each domain."
-            ),
+            "error":  f"Unknown domain '{domain}'. Available: {list(_DOMAINS.keys())}",
         }
 
-    import json as _json
-
-    params: dict = {}
-
-    # ── b3_api params ─────────────────────────────────────────────────────
-    if ticker:
-        params["ticker"] = ticker.strip().upper()
-
-    if files:
-        try:
-            parsed = _json.loads(files)
-            params["files"] = parsed if isinstance(parsed, list) else [files]
-        except (_json.JSONDecodeError, ValueError):
-            params["files"] = [f.strip() for f in files.split(",") if f.strip()]
-
-    if filters:
-        try:
-            params["filters"] = _json.loads(filters)
-        except (_json.JSONDecodeError, ValueError):
-            pass
-
-    if columns:
-        try:
-            parsed = _json.loads(columns)
-            params["columns"] = parsed if isinstance(parsed, list) else [columns]
-        except (_json.JSONDecodeError, ValueError):
-            params["columns"] = [c.strip() for c in columns.split(",") if c.strip()]
-
-    if limit != 100:
-        params["limit"] = limit
-
-    if force:
-        params["force"] = True
-
-    # ── cvm params ────────────────────────────────────────────────────────
-    if company:
-        params["company"] = company.strip()
-
-    if anos:
-        # Accept "[2023,2024]" or "2023,2024" or "2023"
-        try:
-            parsed = _json.loads(anos)
-            params["anos"] = [int(x) for x in (parsed if isinstance(parsed, list) else [parsed])]
-        except (_json.JSONDecodeError, ValueError):
-            try:
-                params["anos"] = [int(x.strip()) for x in anos.split(",") if x.strip()]
-            except ValueError:
-                pass  # invalid anos -- let route() use its default
-
-    # consolidado: only pass if explicitly set to 0 (default=1 is the route() default too)
-    if consolidado == 0:
-        params["consolidado"] = 0
-
-    if limit_years > 0:
-        params["limit_years"] = limit_years
-
-    if query:
-        params["query"] = query.strip()
-
-    # ── cvm_register params ───────────────────────────────────────────────
-    if cd_cvm:
-        params["cd_cvm"] = cd_cvm.strip()
-
-    if full:
-        params["full"] = True
-
-    # active_only defaults True -- only pass when explicitly False
-    if not active_only:
-        params["active_only"] = False
-
-    if setor:
-        params["setor"] = setor.strip()
-
-    if sit:
-        params["sit"] = sit.strip()
-
-    if sit_emissor:
-        params["sit_emissor"] = sit_emissor.strip()
-
-    if controle:
-        params["controle"] = controle.strip()
-
-    if uf:
-        params["uf"] = uf.strip()
-
     module = _DOMAINS[domain]
-    return module.route(mode=mode, **params)
+    return module.route(sub_domain=sub_domain.strip(), mode=mode.strip(), **kwargs)
 
 
-# Set dynamic docstring so FastMCP registers the correct help text
 skill.__doc__ = _build_docstring()
-
-
-# ---------------------------------------------------------------------------
-# skills/__init__.py companion
-# ---------------------------------------------------------------------------
-# (This file is skills/dispatcher.py, not skills/__init__.py.
-#  skills/__init__.py should be empty or contain only a package docstring.
-#  The dispatcher is a separate module so it can be imported independently
-#  without triggering domain discovery.)

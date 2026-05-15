@@ -65,7 +65,7 @@ from typing import Any
 import requests
 
 from core.config import cfg
-from skills.b3.catalog import (
+from skills.b3.b3_api.b3_api_catalog import (
     B3_SCHEMAS,
     all_file_names,
     build_create_sql,

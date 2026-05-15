@@ -44,7 +44,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from skills.cvm.catalog import (
+from skills.cvm.cvm_api.cvm_api_catalog import (
     CVM_DB_PATH,
     GRUPOS,
     MESES_LABELS,
