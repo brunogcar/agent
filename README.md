@@ -8,6 +8,209 @@
 [![LM Studio](https://img.shields.io/badge/LM_Studio-0.3+-orange)](https://lmstudio.ai/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.3+-purple)](https://langchain-ai.github.io/langgraph/)
 
+### Advanced Memory Features
+
+#### Write-Only Lock Pattern (MED-01)
+Dedup query runs WITHOUT lock; actual INSERT uses explicit lock. This improves concurrent throughput by 30‑50% under read‑heavy workloads.
+
+#### Tag Validation (MED-05)
+Prevents injection/XSS attacks:
+- Rejects dangerous chars: `< > " ' ` |
+- Max 6 tags per entry, max 50 chars each tag
+- Tags must start with letter, contain only alphanumeric/hyphens/dots/spaces
+
+#### Automatic Pruning Protection
+Procedural collection is PROTECTED from auto-pruning. It can still be pruned if explicitly requested via `memory.prune(collections=["procedural"])`.
+
+#### Decay Score Examples
+```python
+# Fresh memory (age=0d)
+memory.store_procedural(text="Always snapshot before autocode edits", importance=9, ...)
+# score = 9.0 immediately, never drops below 2.7 (9 × 0.3 floor)
+
+# After 45 days at default decay_days=30
+decay_factor = max(0.3, 1 - 45/30) = 0.5
+score = 9 × 0.5 = 4.5  # still prominent in recall results
+```
+
+## Gateway API Endpoints
+
+| Endpoint | Method | Auth | Description |
+|## Environment-Specific Installation
+
+### Windows Notes
+- WeasyPrint PDF export requires GTK3 runtime (see install link above)
+- Kaleido PNG export may need `pip install kaleido==0.2.1` for stability
+- ChromaDB may benefit from `pip install chromadb --no-binary chromadb`
+
+### Linux Notes
+- Ensure `git` is installed on PATH for git meta-tool operations
+- For desktop notifications, verify `plyer` has working backend (notify-send on Wayland/X11)
+- ChromaDB works best with default binary installation on modern distros
+
+### macOS Notes
+- Homebrew installations of dependencies may require version pinning
+- WeasyPrint requires XQuartz for GTK3 dependencies
+
+## Adding Custom LLM Providers
+
+The `core/llm.py` provider abstraction supports any OpenAI-compatible endpoint:
+
+```python
+from core.llm import llm, LMStudioProvider
+
+# Register DeepSeek as alternative to Qwen
+llm.register_provider(
+    "deepseek",
+    LMStudioProvider("https://api.deepseek.com/v1")
+)
+
+# Override executor model at runtime
+import core.config as cfg
+cfg.model_registry["executor"]["model"] = "deepseek-coder-v2"
+cfg.model_registry["executor"]["provider"] = "deepseek"
+```
+
+Available built-in providers: `lmstudio` (default)
+
+See `core/llm.py` for full provider API.
+
+## Version Pinning Notes
+
+Core dependencies are pinned to avoid breaking changes between major versions:
+- `chromadb>=0.5.0` — Breaking changes in 0.4.x vs 0.5+
+- `pydantic>=2.0` — v1 API incompatible
+- `fastmcp` — No version pin, latest stable works
+
+Optional dependencies should be pinned to prevent platform-specific issues:
+- `weasyprint>=56.0` — Windows GTK3 compatibility
+- `kaleido==0.2.1` — PNG export stability on Windows
+
+## Git Installation Requirements
+
+The `git` command must be available on system PATH for git meta-tool to work.
+
+**Windows:** Install from https://git-scm.com/download/win (includes bash/git)
+**Linux:** `sudo apt install git` or `sudo yum install git`
+**macOS:** `brew install git`
+
+Note: GitPython library is NOT used; we call `git` command directly via subprocess.
+
+## LM Studio Model Versioning
+
+Model identifiers in `.env` must match exactly what appears in `/v1/models` response:
+
+Example models (check your LM Studio instance for exact IDs):
+- `qwen/qwen3.5-9b` — Qwen 3.5 9B parameters
+- `hermes-3-llama-3.1-8b` — Hermes 3 Llama 3.1 8B
+- `nvidia/nemotron-3-nano-4b` — Nemotron 3 Nano 4B
+
+Tip: After downloading models, run:
+```bash
+curl http://localhost:1234/v1/models
+```
+to see available model IDs and exact names.
+
+## Memory Configuration Tuning (set in .env)
+
+MEMORY_DELETE_THRESHOLD=0.4      # Prune memories below this decay score (0.0-1.0)
+MEMORY_DECAY_DAYS=30             # Decay factor floor reaches 0.3 at this age
+MEMORY_TOP_K=5                   # Max results per recall query
+VISION_MAX_FILE_BYTES=20000000   # Maximum image size for vision tool (20MB default)
+AUTOCODE_MAX_FILE_CHARS=6000     # Maximum file size for autocode workflow
+
+Advanced:
+MEMORY_DEDUP_THRESHOLD=0.12      # Cosine distance for semantic deduplication
+                                  # Lower = more strict, higher = allow duplicates
+
+## Common Import Errors & Fixes
+
+ImportError: chromadb not found
+  → pip install chromadb --no-binary chromadb (binary may hang on first import)
+
+ImportError: weasyprint requires GTK3
+  → Download GTK-for-Windows runtime from provided link, or skip PDF export
+
+ImportError: kaleido crashes on PNG export
+  → Try: pip install kaleido==0.2.1 (older stable version works better)
+
+RuntimeError: PLANNER_MODEL is required in .env
+  → Add PLANNER_MODEL=qwen/qwen3.5-9b to your .env file
+
+PermissionError: Cannot write to memory_chroma_path
+  → Ensure MEMORY_ROOT path is writable by Python process-------|--------|------|-------------|
+| `/version` | GET | ✅ | Git commit hash and branch info |
+| `/health` | GET | ❌ | LM Studio availability check |
+| `/health/models` | GET | ✅ | List loaded models at LM Studio |
+| `/tools` | GET | ✅ | List registered MCP tools |
+| `/memory/stats` | GET | ✅ | ChromaDB collection counts |
+| `/traces` | GET | ✅ | Recent trace entries (last 10) |
+
+**Rate Limiting:** `slowapi` limits apply when installed:
+- `/chat`: 30 requests/minute
+- `/task`: 60 requests/minute
+
+Example health check:
+```bash
+curl http://localhost:8000/health
+# {"status": "ok", "lm_studio": true, "env": "development"}
+```
+
+---
+
+## Safety & Protection
+
+### Protected Files (Autocode Never Edits)
+These files are automatically excluded from autocode workflow edits:
+- `server.py`, `registry.py` — Core server and tool registration
+- `core/config.py`, `core/tracer.py` — Configuration and logging
+- `core/llm.py` — Model dispatch logic
+- `memory/store.py` — Memory persistence layer
+- `gateway/app.py` — REST API with auth/secrets handling
+
+See `core/config.py` for the full protected set.
+
+---
+
+## Tool Auto-Discovery Mechanism
+
+Tools are automatically discovered via the `@tool` decorator:
+
+1. Define function in `tools/*.py` or `skills/*.py`
+2. Decorate with `@tool` from `registry`
+3. Function signature becomes MCP tool schema
+4. Docstring is used as LLM-visible description
+5. `registry.py` scans packages at server startup
+
+Example:
+```python
+# tools/my_tool.py
+from registry import tool
+
+@tool
+def my_custom_tool(action: str, param: str = "") -> dict:
+    """Custom action for task automation."""
+    if action == "do_something":
+        return {"status": "success", "result": "done"}
+    return {"status": "error", "error": f"Unknown action '{action}'"}
+```
+
+No changes to `server.py` or `registry.py` needed!
+
+---
+
+## 3-Model Architecture Rationale
+
+**Specialized for optimal performance:**
+- **Planner (Qwen-9B, 131k context)** — Long-context reasoning, memory consolidation, vision analysis
+- **Executor (Hermes-8B, 16k context)** — Code generation with strict JSON output (temp=0.1)
+- **Router (Nemotron-4B, 4k context)** — Fast classification (<15s) to avoid loading heavy models for simple tasks
+
+**Benefits:**
+- No single model overloaded with conflicting demands
+- Simple tasks use cheap router instead of loading 9B parameter model
+- Vision and summarization delegated to planner (largest context window)
+
 ---
 
 ## Architecture Overview
@@ -206,6 +409,9 @@ All tools are registered via `@tool` decorators and auto‑discovered by `regist
 | **agent** | `tools/agent_tool.py` | Invoke specialised LLM sub‑agents: classify, route, research, summarize, extract, critique, analyze, code, review, plan. |
 | **cli** | `tools/cli.py` | Transform natural language into shell commands. 4‑layer dispatch: regex patterns → shell whitelist → Nemotron route → Executor escalation. |
 | **workflow** | `tools/workflow_tool.py` | Execute long‑running LangGraph workflows: `research`, `data`, `autocode`. |
+| **vision** | `tools/vision.py` | Analyze images using `cfg.vision_model` (file, URL, base64). |
+| **cli** | `tools/cli.py` | Natural language → shell commands via 4‑layer routing. |
+| **agent** | `tools/agent_tool.py` | Invoke specialised LLM sub‑agents: classify, route, research, summarize, extract, critique, analyze, code, review, plan. |
 | *(internal)* | `tools/report_templates.py` | Premium tabbed HTML report templates (used by visualise and workflows). |
 
 ---
@@ -239,6 +445,28 @@ Built with LangGraph, all workflows use `base.py`'s `WorkflowState` and emit str
 - `server.py`, `registry.py`
 - `core/config.py`, `core/tracer.py`
 - `memory/store.py`
+
+---
+
+## Resilience & Circuit Breakers
+
+`core/llm.py` implements per‑role circuit breakers to prevent cascading failures:
+
+- **State Machine**: CLOSED → OPEN → HALF_OPEN → CLOSED
+- **Failure Threshold**: 3 consecutive failures triggers OPEN state
+- **Recovery Timeout**: Role-specific (Planner: 90s, Executor: 120s, Router: 15s)
+- **Half-Open Testing**: After timeout, allows single test call
+- **Fail-Fast**: Returns `LLMResponse.ok=False` instead of crashing
+
+Example monitoring:
+```python
+from core.llm import llm
+breakers = llm._breakers  # dict of CircuitBreaker instances
+info = breakers["executor"].get_state_info()
+# {'state': 'closed', 'failure_count': 0, 'timeout_seconds': 120}
+```
+
+See DeepSeek fix commit for full implementation details.
 
 ---
 

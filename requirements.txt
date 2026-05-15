@@ -1,4 +1,8 @@
-# ── MCP Agent Stack — Python Dependencies ─────────────────────────────────────
+# ── Office file formats ───────────────────────────────────────────────────────
+fpdf2             # PDF creation
+python-docx       # Word (.docx) read/write
+python-pptx       # PowerPoint (.pptx) read/write
+pdfplumber        # PDF text extraction# ── MCP Agent Stack — Python Dependencies ─────────────────────────────────────
 # Install: pip install -r requirements.txt
 #
 # External service required (not pip-installable):
@@ -55,6 +59,10 @@ plotly            # interactive charts (HTML output, no server needed)
 kaleido           # static PNG/PDF export from plotly
 folium            # interactive maps (Leaflet.js, HTML output)
 
+# ── REMOVED (not used in current codebase):
+# slowapi      # Rate limiting planned but not implemented
+# gitpython    # Git operations use system 'git' command via subprocess
+
 # ── Report generation ─────────────────────────────────────────────────────────
 jinja2            # HTML report templating
 weasyprint        # HTML → PDF conversion (optional, see install notes below)
@@ -69,9 +77,11 @@ pdfplumber        # PDF text extraction
 ruff              # fast Python linter, runs in autocode test phase
 
 # ── Git operations (used internally by git meta-tool) ─────────────────────────
-# git must be installed on the system and available on PATH
-# Windows: https://git-scm.com/download/win
-# Linux:   sudo apt install git
+# git must be installed on system PATH for git meta-tool to work.
+# Windows: Install from https://git-scm.com/download/win (includes bash/git)
+# Linux:   sudo apt install git or sudo yum install git
+# macOS:   brew install git
+# Note: GitPython library is NOT used; we call 'git' command directly via subprocess.
 
 # ──────────────────────────────────────────────────────────────────────────────
 # INSTALL NOTES
