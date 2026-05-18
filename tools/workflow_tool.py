@@ -1,4 +1,4 @@
-"""
+﻿"""
 tools/workflow_tool.py -- Workflow meta-tool.
 
 Exposes the three LangGraph workflows as a single MCP tool.
@@ -100,7 +100,7 @@ def workflow(
 
         workflow(type="autocode",
                  mode="improve",
-                 target_file="memory/store.py",
+                 target_file="core/memory.py",
                  goal="Add input validation to store_semantic()")
 
         workflow(type="autocode",
@@ -116,7 +116,7 @@ def workflow(
 
     # Auto-route if type is "auto" or empty
     if wf_type in ("auto", ""):
-        from routing.router import router
+        from core.router import router
         decision = router.route(goal, trace_id=trace_id)
         wf_type  = decision.workflow
         # Attach routing metadata to kwargs so workflows can log it
@@ -195,3 +195,4 @@ def workflow(
         goal          = goal,
         **kwargs,
     )
+

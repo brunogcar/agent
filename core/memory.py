@@ -1,5 +1,5 @@
-"""
-memory/store.py — Three-collection ChromaDB memory system.
+﻿"""
+core/memory.py — Three-collection ChromaDB memory system.
 
 Collections:
   episodic   → what happened  (task runs, workflow outcomes, errors)
@@ -26,7 +26,7 @@ Recall uses decay scoring so old memories fade naturally:
 Query rewriting improves recall accuracy before hitting ChromaDB.
 
 Usage:
-    from memory.store import memory
+    from core.memory import memory
 
     # Store
     memory.store_episodic("Fixed bug in memory.py", importance=8,
@@ -792,3 +792,4 @@ class MemoryStore:
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 memory = MemoryStore()
+

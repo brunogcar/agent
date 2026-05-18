@@ -1,5 +1,5 @@
-"""
-gateway/app.py -- FastAPI REST gateway.
+﻿"""
+core/gateway.py -- FastAPI REST gateway.
 
 Exposes the agent stack over HTTP so external clients can interact:
   - Machine-to-machine (second PC running same stack)
@@ -75,7 +75,7 @@ def _warmup_memory(timeout: int = 60) -> None:
     print("[startup] warming up ChromaDB embedding model...", file=sys.stderr)
     start = time.time()
     try:
-        from memory.store import memory as _mem
+        from core.memory import memory as _mem
         # A recall with no results is fine -- we just need the model loaded
         _mem.recall("warmup", top_k=1)
         elapsed = round(time.time() - start, 1)
@@ -212,7 +212,7 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
         wf_type = payload.get("workflow", "auto")
 
         if wf_type == "auto":
-            from routing.router import router
+            from core.router import router
             decision = router.route(goal, trace_id=trace_id)
             wf_type  = decision.workflow
             if wf_type == "direct":
@@ -246,20 +246,28 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
         return file(action=action, **params)
 
     if tool == "git":
-        from tools.git_ops import git
+        from tools.git import git
         return git(operation=action, **params)
 
     if tool == "agent":
         from tools.agent_tool import agent
         return agent(**params)
 
-    if tool == "visualize":
-        from tools.visualize import visualize
-        return visualize(**params)
+    if tool == "report":
+        from tools.visualize import report
+        return report(**params)
 
     if tool == "notify":
         from tools.notify import notify
         return notify(action=action, **params)
+
+    if tool == "cli":
+        from tools.cli import cli
+        return cli(**params)
+
+    if tool == "vision":
+        from tools.vision import vision
+        return vision(**params)
 
     return {"status": "error", "error": f"Unknown tool: '{tool}'"}
 
@@ -437,14 +445,14 @@ def create_app():
     def list_tools(_: None = Depends(_check_auth)):
         return {
             "tools": [
-                "web", "python", "file", "git",
-                "memory", "agent", "notify", "visualize", "workflow",
+                "web", "python", "file", "git", "vision", 
+                "memory", "agent", "notify", "report", "workflow",
             ]
         }
 
     @app.get("/memory/stats")
     def memory_stats(_: None = Depends(_check_auth)):
-        from memory.store import memory
+        from core.memory import memory
         return memory.stats()
 
     @app.post("/task")
@@ -578,3 +586,4 @@ if __name__ == "__main__":
         reload    = False,
         log_level = "info",
     )
+

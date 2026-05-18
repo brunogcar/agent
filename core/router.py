@@ -1,11 +1,11 @@
-"""
-routing/router.py -- Nemotron-based task router.
+﻿"""
+core/router.py -- Nemotron-based task router.
 
 Classifies any free-text goal into a structured routing decision
 before the workflow layer runs. Nemotron 4B is used for speed (15s timeout).
 
 Usage:
-    from routing.router import router
+    from core.router import router
 
     decision = router.route("Fix the timeout bug in tools/web.py")
     # Returns:
@@ -296,3 +296,4 @@ class TaskRouter:
 
 # -- Singleton ----------------------------------------------------------------
 router = TaskRouter()
+

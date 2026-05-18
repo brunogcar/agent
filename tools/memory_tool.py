@@ -1,7 +1,7 @@
-"""
+﻿"""
 tools/memory_tool.py -- Memory meta-tool.
 
-Exposes memory/store.py to the LLM as a single tool.
+Exposes core/memory.py to the LLM as a single tool.
 The LLM sees ONE tool: memory(action, ...)
 
 Imports are lazy -- chromadb is only loaded on first actual call,
@@ -15,7 +15,7 @@ from registry import tool
 
 def _mem():
     """Lazy import of memory store -- avoids slow chromadb load at startup."""
-    from memory.store import memory as _memory
+    from core.memory import memory as _memory
     return _memory
 
 
@@ -206,3 +206,4 @@ def memory(
         "error": (f"Unknown action '{action}'. "
                   "Use: store | recall | delete | prune | summarize | stats"),
     }
+

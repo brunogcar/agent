@@ -1,4 +1,4 @@
-"""
+﻿"""
 server.py -- MCP Agent entrypoint.
 
 stdout = MCP stdio protocol channel. NOTHING may print to stdout.
@@ -89,7 +89,7 @@ sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
 def _warmup_chromadb() -> None:
     """Load ChromaDB embedding model before first tool call."""
     try:
-        from memory.store import memory as _mem
+        from core.memory import memory as _mem
         # Tiny no-op query to trigger embedding model load
         _mem.recall("warmup", top_k=1, min_score=0.0)
         print("[server] ChromaDB warmup complete", file=sys.stderr)
@@ -102,3 +102,4 @@ _threading.Thread(target=_warmup_chromadb, daemon=True).start()
 # -- Run (hands stdout to FastMCP's stdio transport) ----------------------------
 if __name__ == "__main__":
     mcp.run()
+

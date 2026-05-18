@@ -1,4 +1,4 @@
-"""
+﻿"""
 tests/test_workflows.py -- Unit tests for workflow state and routing
 
 Run from D:/mcp/agent/:
@@ -135,8 +135,8 @@ def test_protected_files_set_contains_core():
 def test_protected_files_expanded_set():
     from core.config import cfg
     # Phase9h expanded set
-    assert cfg.is_protected("memory/store.py"),  "memory/store.py should be protected"
-    assert cfg.is_protected("gateway/app.py"),   "gateway/app.py should be protected"
+    assert cfg.is_protected("core/memory.py"),  "core/memory.py should be protected"
+    assert cfg.is_protected("core/gateway.py"),   "core/gateway.py should be protected"
     assert cfg.is_protected("core/llm.py"),      "core/llm.py should be protected"
 
 
@@ -180,11 +180,12 @@ def test_autocode_workflow_with_target_file():
     
     result = run_workflow(
         workflow_type="autocode",
-        goal="Fix error in memory/store.py: ValueError missing argument",
+        goal="Fix error in core/memory.py: ValueError missing argument",
         trace_id="test-autocode-with-target",
-        target_file="memory/store.py",
+        target_file="core/memory.py",
         mode="fix_error",
     )
     
     assert "status" in result
     assert result["status"] in ("success", "failed", "running")
+

@@ -1,4 +1,4 @@
-"""
+﻿"""
 tools/cli.py — Fast natural-language command dispatcher, registered as an MCP tool.
 
 WHAT THIS IS
@@ -74,7 +74,7 @@ from core.config import cfg    # singleton: .lm_studio_base_url, .router_model, 
 
 def _mem():
     """Lazy import of ChromaDB store — avoids slow startup, same as memory_tool.py."""
-    from memory.store import memory as _store
+    from core.memory import memory as _store
     return _store
 
 
@@ -402,7 +402,7 @@ def _web(action: str, **kw) -> str:
 
 def _memory(action: str, **kw) -> str:
     """
-    Direct ChromaDB access via memory/store.py singleton.
+    Direct ChromaDB access via core/memory.py singleton.
     Mirrors the memory() tool parameter names exactly so behaviour is consistent.
     """
     store = _mem()
@@ -832,3 +832,4 @@ def cli(command: str) -> str:
     # Nemotron said "escalate" (or route was unknown/missing)
     reason = decision.get("reason", "")
     return _call_executor(command, reason)
+

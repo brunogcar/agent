@@ -1,4 +1,4 @@
-"""
+﻿"""
 workflows/research.py -- Research workflow.
 
 Pattern:
@@ -29,7 +29,7 @@ from core.citations   import citations
 
 def node_recall(state: WorkflowState) -> WorkflowState:
     """Recall relevant memories before hitting the web."""
-    from memory.store import memory
+    from core.memory import memory
 
     goal = state.get("goal", "")
     node_step(state, "recall", "checking memory", goal=goal[:60])
@@ -150,7 +150,7 @@ def node_synthesize(state: WorkflowState) -> WorkflowState:
 
 def node_store(state: WorkflowState) -> WorkflowState:
     """Store research findings in semantic memory."""
-    from memory.store import memory
+    from core.memory import memory
 
     result = state.get("result", "")
     goal   = state.get("goal", "")
@@ -247,3 +247,4 @@ def build_research_graph() -> StateGraph:
     g.add_edge("notify", END)
 
     return g.compile()
+

@@ -1,4 +1,4 @@
-"""
+﻿"""
 tests/test_tools.py -- Unit tests for meta-tools
 Run from D:/mcp/agent/: pytest tests/test_tools.py -v
 """
@@ -114,39 +114,40 @@ def test_file_write_protected_blocked():
 # -- Router heuristic ---------------------------------------------------------
 
 def test_router_code_keywords():
-    from routing.router import TaskRouter
+    from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("fix the bug in tools/web.py")
     assert d.workflow == "autocode"
 
 def test_router_data_keywords():
-    from routing.router import TaskRouter
+    from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("analyse the sales csv with pandas")
     assert d.workflow == "data"
 
 def test_router_visualize_keywords():
-    from routing.router import TaskRouter
+    from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("create a bar chart of monthly revenue")
     assert d.workflow == "direct" and d.tool == "visualize"
 
 def test_router_file_direct():
     """Use exact phrase from _DIRECT_FILE keyword list."""
-    from routing.router import TaskRouter
+    from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("read file config.py")
     assert d.workflow == "direct" and d.tool == "file"
 
 def test_router_git_direct():
-    from routing.router import TaskRouter
+    from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("git status")
     assert d.workflow == "direct" and d.tool == "git"
 
 def test_router_defaults_to_research():
-    from routing.router import TaskRouter
+    from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("something completely unrelated xyz")
     assert d.workflow == "research"
 
 def test_routing_decision_fields():
-    from routing.router import TaskRouter
+    from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("what is chromadb")
     assert 1 <= d.complexity <= 10
     assert d.confidence in ("high", "medium", "low")
     assert isinstance(d.reason, str) and len(d.reason) > 0
+

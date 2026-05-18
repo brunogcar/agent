@@ -1,4 +1,4 @@
-"""
+﻿"""
 core/config.py — Single source of truth for all configuration.
 
 Uses pathlib throughout — works identically on Windows and Linux.
@@ -125,8 +125,8 @@ class Config:
             "server.py", "registry.py",
             "core/config.py", "core/tracer.py",
             "core/llm.py",       # model dispatch -- corruption breaks all AI calls
-            "memory/store.py",   # memory backend -- corruption breaks all recall
-            "gateway/app.py",    # contains auth logic and secrets handling
+            "core/memory.py",   # memory backend -- corruption breaks all recall
+            "core/gateway.py",    # contains auth logic and secrets handling
         })
 
         # ── Gateway ────────────────────────────────────────────────────────────
@@ -189,3 +189,4 @@ class Config:
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 cfg = Config()
+

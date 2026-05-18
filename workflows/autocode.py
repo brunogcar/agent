@@ -1,4 +1,4 @@
-"""
+﻿"""
 autocode.py -- Superpowers-enhanced autonomous coding workflow.
 
 Integrates superpowers methodologies into a LangGraph state machine:
@@ -37,7 +37,7 @@ Usage:
     from autocode import run_autocode_agent
     result = run_autocode_agent(
         task="Add input validation to memory store",
-        files={"memory/store.py": open("memory/store.py").read()},
+        files={"core/memory.py": open("core/memory.py").read()},
     )
 """
 
@@ -739,7 +739,7 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
 
     # ── Memory recall (all tasks) ──
     try:
-        from memory.store import memory as _mem
+        from core.memory import memory as _mem
         results = _mem.recall(
             query       = state["task"][:150],
             top_k       = 3,
@@ -1266,7 +1266,7 @@ def node_distill_memory(state: AutocodeState) -> AutocodeState:
 
     if hypothesis:  # Only store if debugging was involved
         try:
-            from memory.store import memory as _mem
+            from core.memory import memory as _mem
             _mem.store_procedural(
                 text=(
                     f"Autocode debug fix:\n"
@@ -1285,7 +1285,7 @@ def node_distill_memory(state: AutocodeState) -> AutocodeState:
     # Store skill creation as semantic knowledge so agent can recall what skills exist
     if state.get("skill_path"):
         try:
-            from memory.store import memory as _mem
+            from core.memory import memory as _mem
             _mem.store_semantic(
                 text=(
                     f"Skill created: {state['skill_path']}\n"
@@ -1613,7 +1613,7 @@ def run_autocode_agent(
 
     # Store episodic start
     try:
-        from memory.store import memory as _mem
+        from core.memory import memory as _mem
         _mem.store_episodic(
             text=f"Autocode started: '{task[:60]}' mode={mode}",
             importance=5, goal=task, outcome="unknown", tools_used="autocode",
@@ -1635,7 +1635,7 @@ def run_autocode_agent(
 
     # Store episodic completion
     try:
-        from memory.store import memory as _mem
+        from core.memory import memory as _mem
         _mem.store_episodic(
             text=(
                 f"Autocode {'succeeded' if success else 'failed'}: '{effective_task[:60]}' "
@@ -1671,3 +1671,4 @@ def run_autocode_agent(
 
 # Alias for compatibility with the workflow_tool.py autocode graph builder
 build_autocode_graph = build_graph
+

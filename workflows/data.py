@@ -1,4 +1,4 @@
-"""
+﻿"""
 workflows/data.py -- Data analysis workflow.
 
 Pattern:
@@ -27,7 +27,7 @@ from workflows.base import WorkflowState, node_step, node_error, node_done
 
 def node_recall(state: WorkflowState) -> WorkflowState:
     """Check memory for relevant prior analysis or patterns."""
-    from memory.store import memory
+    from core.memory import memory
 
     goal = state.get("goal", "")
     node_step(state, "recall", "checking memory", goal=goal[:60])
@@ -129,7 +129,7 @@ def node_critique(state: WorkflowState) -> WorkflowState:
 
 def node_store(state: WorkflowState) -> WorkflowState:
     """Store analysis results in episodic memory."""
-    from memory.store import memory
+    from core.memory import memory
 
     goal   = state.get("goal", "")
     result = state.get("result", "") or state.get("output", "")
@@ -216,3 +216,4 @@ def build_data_graph() -> StateGraph:
     g.add_edge("notify",   END)
 
     return g.compile()
+
