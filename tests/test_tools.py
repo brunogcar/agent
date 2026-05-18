@@ -123,10 +123,10 @@ def test_router_data_keywords():
     d = TaskRouter()._heuristic_route("analyse the sales csv with pandas")
     assert d.workflow == "data"
 
-def test_router_visualize_keywords():
+def test_router_report_keywords():
     from core.router import TaskRouter
     d = TaskRouter()._heuristic_route("create a bar chart of monthly revenue")
-    assert d.workflow == "direct" and d.tool == "visualize"
+    assert d.workflow == "direct" and d.tool == "report"
 
 def test_router_file_direct():
     """Use exact phrase from _DIRECT_FILE keyword list."""

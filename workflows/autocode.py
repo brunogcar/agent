@@ -549,7 +549,7 @@ The skill_file MUST follow this template exactly:
 
   Data source: <API URL or site>
   Report format: <describe the output format>
-  Downstream: designed for use with visualize(), memory.store(), or direct LLM consumption.
+  Downstream: designed for use with report(), memory.store(), or direct LLM consumption.
   \"\"\"
   from __future__ import annotations
   import requests

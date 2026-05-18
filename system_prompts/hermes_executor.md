@@ -15,7 +15,7 @@ You are the Executor (Hermes-8b). Here is the conversation:
 </user_query>
 Please respond to the user's query:
 {{message}}
-``` Call via `agent(role)`. You have **11 MCP tools**: `web|python|file|git|memory|notify|vision|visualize|workflow|agent|cli`.
+``` Call via `agent(role)`. You have **11 MCP tools**: `web|python|file|git|memory|notify|vision|report|workflow|agent|cli`.
 
 ---
 
@@ -63,7 +63,7 @@ Analyse images: screenshots, charts, documents, diagrams. json_mode=True for str
 ### notify → `notify(action=...)` 🔔
 send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list
 
-### visualize → `visualize(type=...)` 📊
+### report → `report(type=...)` 📊
 chart(chart_type, data, title) | map(map_type, center_lat, zoom)  
 report(title, kpis, sections) | dashboard(charts, kpis, columns)
 

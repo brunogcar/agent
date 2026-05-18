@@ -254,7 +254,7 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
         return agent(**params)
 
     if tool == "report":
-        from tools.visualize import report
+        from tools.report_tool import report
         return report(**params)
 
     if tool == "notify":

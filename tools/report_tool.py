@@ -1,10 +1,10 @@
 """
-tools/visualize.py — Visualize meta-tool.
+tools/report.py — Report meta-tool.
 
 Produces self-contained HTML files (no server required — open in any browser).
 Can also export charts as PNG/PDF via kaleido.
 
-The LLM sees ONE tool: visualize(type, ...)
+The LLM sees ONE tool: report(type, ...)
 
 Types:
   chart     → Plotly interactive chart (bar, line, scatter, pie, histogram,
@@ -778,7 +778,7 @@ def _build_dashboard(
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
 
 @tool
-def visualize(
+def report(
     type:       str,
     # Chart params
     chart_type: str   = "bar",
@@ -818,7 +818,7 @@ def visualize(
     sources:         list = None,
 ) -> dict:
     """
-    Visualize tool — create interactive charts, maps, reports, and dashboards.
+    Report tool — create interactive charts, maps, reports, and dashboards.
     All outputs are self-contained HTML files — open in any browser, no server needed.
 
     type: "chart" | "map" | "report" | "dashboard"
@@ -842,11 +842,11 @@ def visualize(
     Optional: title, x_label, y_label, color ("#hex"), export_png, output (filename)
 
     Examples:
-      visualize(type="chart", chart_type="bar",
+      report(type="chart", chart_type="bar",
                 data={"x":["Q1","Q2","Q3"], "y":[100,150,130]},
                 title="Quarterly Revenue")
 
-      visualize(type="chart", chart_type="line",
+      report(type="chart", chart_type="line",
                 data_path="sales.csv", x_col="date", y_col="revenue",
                 title="Revenue Trend", export_png=True)
 
@@ -865,7 +865,7 @@ def visualize(
     Optional: center_lat, center_lon, zoom, title, output
 
     Examples:
-      visualize(type="map", map_type="markers",
+      report(type="map", map_type="markers",
                 data={"lat":[-23.5,-22.9], "lon":[-46.6,-43.2],
                       "labels":["São Paulo","Rio de Janeiro"]},
                 title="Brazilian Cities", zoom=5)
@@ -880,7 +880,7 @@ def visualize(
     Optional: subtitle, accent ("#hex"), export_pdf, output
 
     Example:
-      visualize(type="report", title="Q3 Analysis",
+      report(type="report", title="Q3 Analysis",
                 subtitle="Brazilian Market",
                 kpis=[{"label":"Revenue","value":"R$1.2M"},
                       {"label":"Growth","value":"+18%"}],
@@ -899,7 +899,7 @@ def visualize(
     columns: 1-4 (grid columns, default 2)
 
     Example:
-      visualize(type="dashboard", title="Sales Dashboard",
+      report(type="dashboard", title="Sales Dashboard",
                 columns=2,
                 kpis=[{"label":"Revenue","value":"R$1.2M","delta":"+18%"}],
                 charts=[

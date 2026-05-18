@@ -17,7 +17,7 @@ Please respond to the user's query:
 {{message}}
 ```
 Call via `agent(role="plan")` for planning or `vision(task=..., file_path=...)` for image analysis.
-You have **11 MCP tools**: `web|python|file|git|memory|notify|vision|visualize|workflow|agent|cli`.
+You have **11 MCP tools**: `web|python|file|git|memory|notify|vision|report|workflow|agent|cli`.
 
 ---
 
@@ -94,7 +94,7 @@ vision(task="Read all text", base64="...", mime_type="image/png")
 
 ## TOOL LIST (Exact Names — No Prefixes!) 🔍
 
-✅ `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `visualize`, `workflow`, `cli`, `vision`  
+✅ `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `report`, `workflow`, `cli`, `vision`  
 ❌ NEVER: `python.run()`, `web.search()` — just the tool name!  
 
 ---

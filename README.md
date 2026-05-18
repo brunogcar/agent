@@ -287,7 +287,7 @@ agent/
 │   ├── git.py                  # Plugin dispatcher to git_ops/
 │   ├── git_ops/                # Git plugin system (commit, log, diff, rollback, branch, etc.)
 │   ├── notify.py               # Desktop notifications (send, schedule, cancel, list)
-│   ├── visualize.py            # Charts, maps, reports, dashboards via Plotly + Folium
+│   ├── report_tool.py          # Charts, maps, reports, dashboards via Plotly + Folium
 │   ├── vision.py               # Multimodal image analysis using cfg.vision_model
 │   ├── memory_tool.py          # LLM‑facing wrapper for memory/store.py (store, recall, delete, stats)
 │   ├── agent_tool.py           # 10 specialist LLM roles (code, review, classify, research, …)
@@ -324,6 +324,11 @@ agent/
    ```bash
    git clone https://github.com/brunogcar/agent && cd agent
    pip install -r requirements.txt
+   ```
+
+1. **extra dependencie for reports**  
+   ```bash
+   playwright install
    ```
 
 2. **Configure**  
@@ -403,7 +408,7 @@ All tools are registered via `@tool` decorators and auto‑discovered by `regist
 | **file** | `tools/file_ops.py` | File read/write/list/backup/search/read_pdf, Office files (docx/xlsx/pptx), SQLite FTS. |
 | **git** | `tools/git.py` + `git_ops/` | Plugin‑based Git operations: init, status, commit, log, diff, branch, checkout, rollback, snapshot, restore. |
 | **notify** | `tools/notify.py` | Cross‑platform desktop notifications (send, schedule, cancel, list). |
-| **visualize** | `tools/visualize.py` | Create charts (Plotly), maps (Folium), HTML reports, dashboards. |
+| **report** | `tools/report_tool.py` | Create charts (Plotly), maps (Folium), HTML reports, dashboards. |
 | **vision** | `tools/vision.py` | Analyze images using `cfg.vision_model` (file, URL, base64). |
 | **memory** | `tools/memory_tool.py` | Manage persistent memory: store, recall, delete, prune, summarize, stats (3‑collection ChromaDB). |
 | **agent** | `tools/agent_tool.py` | Invoke specialised LLM sub‑agents: classify, route, research, summarize, extract, critique, analyze, code, review, plan. |

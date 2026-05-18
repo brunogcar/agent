@@ -19,10 +19,10 @@ Please respond to the user's query:
 
 ## 11 MCP TOOLS — EXACT NAMES ONLY! ✅
 
-`web|python|file|git|memory|agent|notify|vision|visualize|workflow|cli`
+`web|python|file|git|memory|agent|notify|vision|report|workflow|cli`
 
 ### CRITICAL RULE: NO PREFIXES
-✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `vision`, `visualize`, `workflow`, `cli`  
+✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `vision`, `report`, `workflow`, `cli`  
 ❌ WRONG: `python.run()`, `web.search()` — will crash workflow!  
 
 ---
@@ -38,7 +38,7 @@ Please respond to the user's query:
 ### agent 🤖 — classify|route|plan|research|summarize|extract|analyze|code|review|critique  
 ### vision 👁️ — agent(role="vision", task="...", context="file_path|url") | json_mode=True for structured output
 ### notify 🔔 — send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list  
-### visualize 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)  
+### report 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)  
                   report(title,kpis,sections) | dashboard(charts,kpis,columns)  
 ### workflow 🔄 — auto(goal) | research(goal|code) | data(goal|code) | autocode(mode,target_file)  
 ### cli ⚡ — cli(command=...) Shell queries only (ls, cat, echo, hostname, systeminfo) — ~90% common ops work well
@@ -68,7 +68,7 @@ memory(store, memory_type="semantic", importance=7-9, tags="[...]") → notify(s
 
 ### Data Analysis Pattern:
 recall(...) → file(read_many(paths=[...],mode="summary")) → python(mode="run_data", code="pandas analysis")  
-agent(critique, task, content) → visualize(chart/map/report/dashboard) → memory(store, "episodic")  
+agent(critique, task, content) → report(chart/map/report/dashboard) → memory(store, "episodic")  
 
 ### Autocode Fix Pattern (CRITICAL SEQUENCE!):
 1. git(snapshot, message="before fixing...") ← FIRST, ALWAYS! 🔄  

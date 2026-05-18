@@ -49,7 +49,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         "No thinking tags. No explanation. No markdown fences. "
         "Start your response with { and end with }.\n"
         'Format: {"workflow":"research or data or autocode or direct",'
-        '"tool":"web or python or file or git or memory or agent or notify or visualize",'
+        '"tool":"web or python or file or git or memory or agent or notify or report",'
         '"complexity":5,'
         '"reason":"one sentence why"}'
     ),
@@ -140,7 +140,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         "You are a task planning specialist for an autonomous AI agent. "
         "Break the given goal into a clear, ordered sequence of steps. "
         "Each step must be concrete and executable by the agent's available tools: "
-        "web, python, file, git, memory, notify, visualize, agent, vision.\n\n"
+        "web, python, file, git, memory, notify, report, agent, vision.\n\n"
         "OUTPUT: valid JSON only. No thinking tags. No markdown fences. "
         "Start with { and end with }.\n"
         'Format: {"goal":"restated goal",'

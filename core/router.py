@@ -88,9 +88,9 @@ class TaskRouter:
                          "commit this", "git commit"]
     _DIRECT_NOTIFY    = ["notify me", "send notification", "remind me",
                          "schedule reminder"]
-    # Visualize keywords -- route to direct visualize tool
-    _VISUALIZE_KEYWORDS = ["create a chart", "create chart", "make a chart",
-                           "plot a chart", "draw a chart", "visualize",
+    # Report keywords -- route to direct report tool
+    _REPORT_KEYWORDS = ["create a chart", "create chart", "make a chart",
+                           "plot a chart", "draw a chart", "report",
                            "visualise", "create a graph", "make a graph",
                            "create a map", "make a map", "create a dashboard",
                            "make a dashboard", "create a report",
@@ -169,7 +169,7 @@ class TaskRouter:
                 "You are a task router. Output ONLY a JSON object. "
                 "No thinking. No explanation. Start with { end with }.\n"
                 'Format: {"workflow":"research or data or autocode",'
-                '"tool":"web or python or file or git or memory or agent or notify or visualize or workflow",'
+                '"tool":"web or python or file or git or memory or agent or notify or report or workflow",'
                 '"complexity":5,'
                 '"reason":"one sentence",'
                 '"confidence":"high or medium or low"}'
@@ -214,13 +214,13 @@ class TaskRouter:
         """Rule-based fallback routing when model is unavailable."""
         lower = goal.lower()
 
-        # Check for visualize tasks before generic routing
-        if any(kw in lower for kw in self._VISUALIZE_KEYWORDS):
+        # Check for report tasks before generic routing
+        if any(kw in lower for kw in self._REPORT_KEYWORDS):
             return RoutingDecision({
                 "workflow":   "direct",
-                "tool":       "visualize",
+                "tool":       "report",
                 "complexity": 3,
-                "reason":     "Visualisation task -- use visualize() directly",
+                "reason":     "Report task -- use report() directly",
                 "confidence": "high",
             })
 

@@ -551,7 +551,7 @@ def cvm_dividends(
 
     DECISION: Returns both a human-readable "report" string AND a structured
     "data" list. The report is ready for display or memory storage. The data
-    list allows downstream tools (visualize, agent) to build charts or
+    list allows downstream tools (report, agent) to build charts or
     do further analysis without re-parsing the text.
 
     Example:

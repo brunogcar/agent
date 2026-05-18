@@ -65,7 +65,7 @@ ROUTER_SYSTEM = (
     "Start with { and end with }.\n\n"
     "Pick EXACTLY ONE value for each field from the lists below:\n"
     "- workflow: research, data, autocode, direct, general\n"
-    "- tool: web, python, file, git, memory, agent, notify, visualize, workflow\n"
+    "- tool: web, python, file, git, memory, agent, notify, report, workflow\n"
     "- complexity: 1 to 10 (integer)\n"
     "- reason: one short sentence\n"
     "- confidence: high, medium, or low\n\n"
@@ -152,7 +152,7 @@ def validate_router(parsed) -> Tuple[bool, Optional[str]]:
     wf = map_workflow(parsed.get("workflow",""))
     if wf is None: return False, None
     tool = parsed.get("tool","")
-    valid_tools = {"web","python","file","git","memory","agent","notify","visualize","workflow","none","…"}
+    valid_tools = {"web","python","file","git","memory","agent","notify","report","workflow","none","…"}
     if tool not in valid_tools and not any(t in tool for t in valid_tools):
         return False, wf
     if not isinstance(parsed["complexity"], (int,float)) or not 1 <= parsed["complexity"] <= 10:

@@ -12,6 +12,8 @@ Actions:
   read_many → read multiple files concurrently
   search    → full-text search across workspace (SQLite FTS)
   read_pdf  → extract text from PDF using pdfplumber
+  write_pdf → write text to PDF using fpdf2
+
 
 All paths are resolved relative to workspace_root unless absolute.
 Paths outside workspace_root and agent_root are rejected for safety.
