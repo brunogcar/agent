@@ -1,0 +1,132 @@
+"""
+State machine construction for autocode workflow.
+"""
+
+from __future__ import annotations
+
+from langgraph.graph import END, StateGraph
+from workflows.autocode_helpers.state import AutocodeState
+from workflows.autocode_helpers.nodes.classify import node_classify_task
+from workflows.autocode_helpers.nodes.brainstorm import node_brainstorm
+from workflows.autocode_helpers.nodes.plan import node_write_plan
+from workflows.autocode_helpers.nodes.branch import node_git_branch
+from workflows.autocode_helpers.nodes.tests import node_write_tests
+from workflows.autocode_helpers.nodes.execute import node_execute_step
+from workflows.autocode_helpers.nodes.run_tests import node_run_tests
+from workflows.autocode_helpers.nodes.debug import node_systematic_debug
+from workflows.autocode_helpers.nodes.write_files import (
+    node_write_files,
+    node_write_files_with_flag_reset,
+)
+from workflows.autocode_helpers.nodes.verify import node_verify
+from workflows.autocode_helpers.nodes.commit import node_commit
+from workflows.autocode_helpers.nodes.memory import node_distill_memory
+from workflows.autocode_helpers.nodes.create_skill import node_create_skill
+from workflows.autocode_helpers.routes import (
+    route_after_classify,
+    route_after_brainstorm,
+    route_after_run_tests,
+    route_after_debug,
+    route_after_write_files,
+    route_after_verify,
+)
+
+# Global graph instance
+_GRAPH = None
+
+def build_graph() -> StateGraph:
+    """
+    Build the LangGraph state machine for the autocode workflow.
+    """
+    global _GRAPH
+
+    if _GRAPH is not None:
+        return _GRAPH
+
+    workflow = StateGraph(AutocodeState)
+
+    # Add all nodes
+    workflow.add_node("node_classify_task", node_classify_task)
+    workflow.add_node("node_brainstorm", node_brainstorm)
+    workflow.add_node("node_write_plan", node_write_plan)
+    workflow.add_node("node_git_branch", node_git_branch)
+    workflow.add_node("node_write_tests", node_write_tests)
+    workflow.add_node("node_execute_step", node_execute_step)
+    workflow.add_node("node_run_tests", node_run_tests)
+    workflow.add_node("node_systematic_debug", node_systematic_debug)
+    workflow.add_node("node_write_files", node_write_files)
+    workflow.add_node("node_write_files_with_flag_reset", node_write_files_with_flag_reset)
+    workflow.add_node("node_verify", node_verify)
+    workflow.add_node("node_commit", node_commit)
+    workflow.add_node("node_distill_memory", node_distill_memory)
+    workflow.add_node("node_create_skill", node_create_skill)
+
+    # Set entry point
+    workflow.set_entry_point("node_classify_task")
+
+    # Route after classification
+    workflow.add_conditional_edges(
+        "node_classify_task",
+        route_after_classify,
+        {
+            "node_brainstorm": "node_brainstorm",
+            "node_create_skill": "node_create_skill",
+            "END": END,
+        },
+    )
+
+    # Direct edges for main flow
+    workflow.add_edge("node_create_skill", END)
+    workflow.add_edge("node_brainstorm", "node_write_plan")
+    workflow.add_edge("node_write_plan", "node_git_branch")
+    workflow.add_edge("node_git_branch", "node_write_tests")
+    workflow.add_edge("node_write_tests", "node_execute_step")  # FIXED: Direct edge
+    workflow.add_edge("node_execute_step", "node_write_files")
+
+    # Route after write_files (TDD loop vs verification)
+    workflow.add_conditional_edges(
+        "node_write_files",
+        route_after_write_files,
+        {
+            "node_run_tests": "node_run_tests",
+            "node_verify": "node_verify",
+        },
+    )
+
+    # Route after run_tests (pass vs debug)
+    workflow.add_conditional_edges(
+        "node_run_tests",
+        route_after_run_tests,
+        {
+            "node_verify": "node_verify",
+            "node_systematic_debug": "node_systematic_debug",
+        },
+    )
+
+    # Debug loop
+    workflow.add_edge("node_systematic_debug", "node_run_tests")
+
+    # Route after verification
+    workflow.add_conditional_edges(
+        "node_verify",
+        route_after_verify,
+        {
+            "node_commit": "node_commit",
+            "END": END,
+        },
+    )
+
+    # Final steps
+    workflow.add_edge("node_commit", "node_distill_memory")
+    workflow.add_edge("node_distill_memory", END)
+
+    _GRAPH = workflow
+    return workflow
+
+def get_graph() -> StateGraph:
+    """
+    Get the singleton graph instance.
+    """
+    if _GRAPH is None:
+        build_graph()
+    return _GRAPH
