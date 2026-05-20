@@ -60,7 +60,6 @@ from typing import Any, Optional
 from core.config import cfg
 from core.tracer import tracer
 
-
 # -- ChromaDB warmup (P1-7) ---------------------------------------------------
 
 def _warmup_memory(timeout: int = 60) -> None:
@@ -88,7 +87,6 @@ def _warmup_memory(timeout: int = 60) -> None:
             file=sys.stderr,
         )
 
-
 # -- SQLite task store --------------------------------------------------------
 
 import sqlite3 as _sqlite3
@@ -96,7 +94,6 @@ import json    as _json_mod
 
 _TASK_DB_PATH = None
 _task_db_lock = __import__("threading").Lock()
-
 
 def _get_task_db() -> _sqlite3.Connection:
     global _TASK_DB_PATH
@@ -126,7 +123,6 @@ def _get_task_db() -> _sqlite3.Connection:
             print(f"\n[FATAL] SQLite database initialization failed: {e}", file=sys.stderr)
             raise
 
-
 def _store_task(trace_id: str, payload: dict) -> None:
     with _task_db_lock:
         db = _get_task_db()
@@ -137,7 +133,6 @@ def _store_task(trace_id: str, payload: dict) -> None:
         )
         db.commit()
         db.close()
-
 
 def _update_task(trace_id: str, status: str,
                  result: Any = None, error: str = "") -> None:
@@ -152,7 +147,6 @@ def _update_task(trace_id: str, status: str,
         )
         db.commit()
         db.close()
-
 
 def _get_task(trace_id: str) -> dict | None:
     with _task_db_lock:
@@ -177,7 +171,6 @@ def _get_task(trace_id: str) -> dict | None:
         "result":    result, "error": row[5] or "",
     }
 
-
 # -- Background task runner ---------------------------------------------------
 
 def _run_task_background(trace_id: str, payload: dict) -> None:
@@ -192,7 +185,6 @@ def _run_task_background(trace_id: str, payload: dict) -> None:
             _update_task(trace_id, "failed", error=str(e))
 
     threading.Thread(target=_run, daemon=True).start()
-
 
 def _dispatch(trace_id: str, payload: dict) -> Any:
     """
@@ -242,7 +234,7 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
         return memory(action=action, **params)
 
     if tool == "file":
-        from tools.file_ops import file
+        from tools.file import file
         return file(action=action, **params)
 
     if tool == "git":
@@ -270,7 +262,6 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
         return vision(**params)
 
     return {"status": "error", "error": f"Unknown tool: '{tool}'"}
-
 
 # -- FastAPI app factory ------------------------------------------------------
 
@@ -329,6 +320,10 @@ def create_app():
 
     # -- ChromaDB warmup (P1-7) -----------------------------------------------
     _warmup_memory()
+
+    # -- Config validation (new) -------------------------------------------------
+    from core.config_validation import validate_config
+    validate_config()
 
     # -- App setup ------------------------------------------------------------
     app = FastAPI(
@@ -405,14 +400,11 @@ def create_app():
         return {"commit": commit, "branch": branch, "env": cfg.env}
 
     @app.get("/health")
-    def health():
-        from core.llm import llm
-        return {
-            "status":    "ok",
-            "lm_studio": llm.is_available(),
-            "env":       cfg.env,
-            "version":   "1.0.0",
-        }
+    async def health():
+        """Health check endpoint"""
+        from fastapi import Response
+        from core.health import health_check_endpoint
+        return Response(content=health_check_endpoint(), media_type="application/json")
 
     @app.get("/health/models")
     def health_models(_: None = Depends(_check_auth)):
@@ -445,7 +437,7 @@ def create_app():
     def list_tools(_: None = Depends(_check_auth)):
         return {
             "tools": [
-                "web", "python", "file", "git", "vision", 
+                "web", "python", "file", "git", "vision",
                 "memory", "agent", "notify", "report", "workflow",
             ]
         }
@@ -556,7 +548,6 @@ def create_app():
 
     return app
 
-
 # -- Standalone runner --------------------------------------------------------
 
 if __name__ == "__main__":
@@ -586,4 +577,3 @@ if __name__ == "__main__":
         reload    = False,
         log_level = "info",
     )
-

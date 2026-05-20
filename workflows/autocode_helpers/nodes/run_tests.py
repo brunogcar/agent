@@ -1,46 +1,84 @@
 """
-Test execution node.
+Test runner node for autocode workflow.
 """
 
 from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
-from workflows.autocode_helpers.state import AutocodeState
-from workflows.autocode_helpers.test_runner import run_tests_on_disk
-from workflows.autocode_helpers.helpers import _files_context
+
 from core.config import cfg
 from core.tracer import tracer
-import json
+from workflows.autocode_helpers.state import AutocodeState
 
-def node_run_tests(state: AutocodeState) -> AutocodeState:
-    """Run tests on disk with real pytest. Exit code is ground truth."""
-    tid = state.get("trace_id", "")
-    if not state.get("generated_code"):
-        return {**state, "test_result": "", "error_log": ""}
-
-    tracer.step(tid, "run_tests", "running pytest on disk")
+def run_tests_on_disk(test_files: list[str], project_root: str = None) -> dict:
+    """
+    Run pytest on the given test files in a subprocess.
+    """
+    # Use workspace_root as default, but allow override
+    if project_root is None:
+        project_root = str(cfg.workspace_root)
+    
+    test_paths = [str(Path(project_root) / tf) for tf in test_files]
+    cmd = [sys.executable, "-m", "pytest", "-v", "--tb=short", *test_paths]
 
     try:
-        files = json.loads(state["generated_code"])
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=cfg.sandbox_timeout,
+            cwd=project_root  # Run in the project root directory
+        )
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": f"Tests timed out after {cfg.sandbox_timeout}s",
+            "returncode": -1
+        }
     except Exception as e:
-        return {**state, "error_log": f"Cannot parse generated code: {e}"}
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": str(e),
+            "returncode": -2
+        }
 
-    if not state.get("test_code"):
-        return {**state, "test_result": "(no tests)", "error_log": ""}
+def node_run_tests(state: AutocodeState) -> AutocodeState:
+    """
+    Run tests for the current TDD iteration.
+    """
+    tid = state.get("trace_id", "")
+    tracer.step(tid, "run_tests", "Running tests")
 
-    passed, output = run_tests_on_disk(
-        files=files,
-        test_code=state["test_code"],
-        workspace=cfg.workspace_root,
-    )
+    # Get test files from state
+    test_files = state.get("test_files", [])
+    if not test_files:
+        return {**state, "status": "error", "error": "No test files to run"}
 
-    if passed:
-        tracer.step(tid, "run_tests", "PASSED")
-        # Advance step counter on pass -- prevents infinite test loops
-        new_step = state.get("current_step", 0) + 1
-        return {**state,
-                "test_result": output,
-                "error_log":   "",
-                "current_step": new_step}
+    # Run tests
+    test_results = run_tests_on_disk(test_files)
+    state["test_results"] = test_results
+
+    # Update TDD iteration
+    state["tdd_iteration"] = state.get("tdd_iteration", 0) + 1
+
+    if test_results.get("success"):
+        tracer.step(tid, "run_tests", f"Tests passed in {state['tdd_iteration']} iterations")
+        state["tdd_status"] = "passed"
+        state["tdd_error"] = ""
     else:
-        tracer.step(tid, "run_tests", f"FAILED: {output[:80]}")
-        return {**state, "test_result": output, "error_log": output}
+        state["tdd_status"] = "failed"
+        state["tdd_error"] = test_results.get("stderr", "Tests failed")
+        tracer.step(tid, "run_tests", f"Tests failed (iteration {state['tdd_iteration']})")
+
+    return state

@@ -1,101 +1,141 @@
 """
-State management for autocode workflow.
+State definitions and defaults for autocode workflow.
 """
 
 from __future__ import annotations
-from pathlib import Path
-from typing import Any, TypedDict
 
-from core.config import cfg
+from langgraph.graph.message import add_messages
+from langchain_core.messages import AnyMessage
+from typing import Annotated, TypedDict, Optional
 
-# ── Tunables ------------------------------------------------------------------
+# Constants
+MAX_RETRIES = 3
+MAX_FILE_CHARS = 50_000
+DEBUG = False
+PLANNER_TIMEOUT = 180
+EXECUTOR_TIMEOUT = 120
+ROUTER_TIMEOUT = 60
+AGENT_ROOT = None  # Set via cfg
 
-MAX_RETRIES:    int  = cfg.autocode_max_retries
-MAX_FILE_CHARS: int  = cfg.autocode_max_file_chars
-DEBUG:          bool = getattr(cfg, "autocode_debug", False)
-
-PLANNER_TIMEOUT:  int = 90
-EXECUTOR_TIMEOUT: int = 120
-ROUTER_TIMEOUT:   int = 15
-
-# autocode writes to the AGENT root (not workspace) when editing agent code.
-# Skills and workspace projects use cfg.workspace_root.
-AGENT_ROOT: Path = cfg.agent_root
-
-# ── State TypedDict -----------------------------------------------------------
+# Timeout configuration
+NODE_TIMEOUTS = {
+    "planner": 120,
+    "executor": 60,
+    "verifier": 90,
+    "default": 90
+}
 
 class AutocodeState(TypedDict, total=False):
-    # Inputs
-    task:           str
-    files:          dict[str, str]
-    mode:           str          # "feature" | "fix_error" | "improve" | "add_feature"
-                                 # "edit" | "create_skill" | "audit"
-    target_file:    str
+    """State for the autocode workflow."""
+
+    # Core task
+    task: str
+    files: dict[str, str]
+    mode: str
+    target_file: str
+    trace_id: str
+    dry_run: bool
 
     # Classification
-    task_type:      str          # "feature" | "fix" | "refactor" | "edit"
-                                 # "create_skill" | "audit" | "unclear"
-    memory_context: str
+    task_type: str
 
-    # Planning
-    spec:           str
-    plan:           list[dict]
-    branch:         str
-    current_step:   int
-    step_attempt:   int
+    # Brainstorm/Plan
+    brainstorm_notes: str
+    plan: dict
+    plan_accepted: bool
+
+    # TDD loop
+    tdd_iteration: int
+    tdd_source_code: str
+    tdd_error: str
+    tdd_status: str
+    max_retries: int
+    files_map: dict
 
     # Execution
-    generated_code: str
-    test_code:      str
-    test_result:    str
-    error_log:      str
+    execution_notes: str
+    modified_files: list[str]
 
-    # Debugging
-    hypothesis:     str
-    defense_note:   str
-    debug_attempts: int
-    came_from_debug: bool
+    # Test results
+    test_results: dict
+    tests_written: bool
+
+    # Debug
+    debug_notes: str
+    root_cause: str
+    defense_notes: str
 
     # Verification
-    verification_passed: bool
-    verification_notes:  str
-    evidence_outputs:    dict    # {"tests": "...", "lint": "...", "regression": "..."}
+    verification_notes: str
+    verify_report: str
 
-    # Result
-    status:     str              # "running" | "done" | "failed" | "needs_clarification"
-    result:     str
+    # Git
     commit_sha: str
-    trace_id:   str
-    skill_path: str              # set by node_create_skill, e.g. "skills/news_headlines.py"
+    branch_name: str
 
-def _default_state(task: str, files: dict[str, str], mode: str = "feature",
-                   target_file: str = "") -> AutocodeState:
-    return AutocodeState(
-        task=task,
-        files={k: v[:MAX_FILE_CHARS] for k, v in files.items()},
-        mode=mode,
-        target_file=target_file,
-        task_type="feature",
-        memory_context="",
-        spec="",
-        plan=[],
-        branch="",
-        current_step=0,
-        step_attempt=0,
-        generated_code="",
-        test_code="",
-        test_result="",
-        error_log="",
-        hypothesis="",
-        defense_note="",
-        debug_attempts=0,
-        came_from_debug=False,
-        verification_passed=False,
-        verification_notes="",
-        evidence_outputs={},
-        status="running",
-        result="",
-        commit_sha="",
-        trace_id="",
-        skill_path="",
-    )
+    # Memory
+    memory_notes: str
+
+    # Messages (with reducer)
+    messages: Annotated[list[AnyMessage], add_messages]
+
+    # Status
+    status: str
+    error: str
+    result: str
+
+def _default_state(
+    task: str = "",
+    files: dict[str, str] = None,
+    mode: str = "",
+    target_file: str = "",
+) -> dict:
+    """Create a default state dictionary."""
+    return {
+        "task": task,
+        "files": files or {},
+        "mode": mode,
+        "target_file": target_file,
+        "trace_id": "",
+        "dry_run": False,
+        "task_type": "",
+        "brainstorm_notes": "",
+        "plan": {},
+        "plan_accepted": False,
+        "spec": "",
+        "tdd_iteration": 0,
+        "tdd_source_code": "",
+        "tdd_error": "",
+        "tdd_status": "",
+        "max_retries": MAX_RETRIES,
+        "files_map": {},
+        "execution_notes": "",
+        "modified_files": [],
+        "test_results": {},
+        "tests_written": False,
+        "debug_notes": "",
+        "root_cause": "",
+        "defense_notes": "",
+        "verification_notes": "",
+        "verify_report": "",
+        "commit_sha": "",
+        "branch_name": "",
+        "memory_notes": "",
+        "messages": [],
+        "status": "running",
+        "error": "",
+        "result": "",
+    }
+
+def _state_reducer(state: AutocodeState, update: dict) -> AutocodeState:
+    """
+    Custom state reducer that handles messages explicitly.
+    Prevents duplicate message accumulation in LangGraph.
+    """
+    new_state = {**state, **update}
+
+    # Explicit guard: if update contains 'messages', replace instead of merging
+    if "messages" in update:
+        new_state["messages"] = update["messages"]
+
+    return new_state

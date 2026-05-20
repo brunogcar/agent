@@ -1,116 +1,164 @@
 """
-Utility functions for autocode workflow.
+Helpers for autocode workflow.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
-from core.llm import llm
 from core.config import cfg
+from core.llm import llm
+from core.tracer import tracer
 
-def _files_context(files: dict[str, str], hint: str = "") -> str:
+def _extract_code(text: str) -> list[str]:
     """
-    Build file context for LLM prompts.
-    When hint is provided, extracts only sections relevant to the task
-    instead of the full file -- saves significant input tokens on large files.
+    Extract code blocks from text. Handles ```python, ```, and indented blocks.
     """
-    if not files:
-        return "(no files provided)"
+    pattern = r'```(?:[^\n]*\n)?(.*?)```'
+    matches = re.finditer(pattern, text, re.DOTALL)
+    return [m.group(1).strip() for m in matches]
+
+def _parse_json(text: str | None) -> dict:
+    """
+    Parse JSON from text, extracting from code blocks if needed.
+    """
+    if not text:
+        return {}
 
     try:
-        from core.patch import extract_relevant_sections
-        _have_patch = True
-    except ImportError:
-        _have_patch = False
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
 
-    parts = []
-    for path, content in files.items():
-        if _have_patch and hint and len(content) > cfg.autocode_max_file_chars:
-            snippet  = extract_relevant_sections(content, hint, max_chars=cfg.autocode_max_file_chars)
-            was_compressed = len(snippet) < len(content)
-            if was_compressed:
-                parts.append(
-                    f"### {path} (relevant sections, {len(content)} total chars)\n"
-                    f"```\n{snippet}\n```"
-                )
+    try:
+        code_blocks = _extract_code(text)
+        for block in code_blocks:
+            try:
+                return json.loads(block)
+            except json.JSONDecodeError:
                 continue
-
-        snippet = content[:cfg.autocode_max_file_chars]
-        if len(content) > cfg.autocode_max_file_chars:
-            snippet += f"\n... (truncated, {len(content)} total chars)"
-        parts.append(f"### {path}\n```\n{snippet}\n```")
-    return "\n\n".join(parts)
-
-def _extract_code(text: str, lang: str = "python") -> str:
-    pattern = rf"```(?:{lang})?\s*\n(.*?)```"
-    m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-    return m.group(1).strip() if m else text.strip()
-
-def _parse_json(raw: str) -> dict:
-    """Try to extract a JSON object from raw LLM output."""
-    raw = raw.strip()
-    # Strip think tags (Qwen sometimes emits them)
-    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+    except Exception:
         pass
-    # Strip markdown fences
-    for fence in ("```json", "```"):
-        if raw.startswith(fence):
-            raw = raw[len(fence):]
-    raw = raw.strip().rstrip("`").strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    # Extract first {...} block
-    m = re.search(r"\{(?:[^{}]|\{[^{}]*\})*\}", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group())
-        except json.JSONDecodeError:
-            pass
+
     return {}
 
-def _parse_json_array(raw: str) -> list:
-    raw = raw.strip()
-    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+def _parse_json_array(text: str | None) -> list:
+    """
+    Parse JSON array from text.
+    """
+    if not text:
+        return []
+
     try:
-        return json.loads(raw)
+        return json.loads(text)
     except json.JSONDecodeError:
         pass
-    m = re.search(r"\[.*\]", raw, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group())
-        except json.JSONDecodeError:
-            pass
+
+    try:
+        code_blocks = _extract_code(text)
+        for block in code_blocks:
+            try:
+                return json.loads(block)
+            except json.JSONDecodeError:
+                continue
+    except Exception:
+        pass
+
     return []
 
-def _should_copy_file(path: Path, relative_to: Path) -> bool:
-    """Return True if a file should be copied to the temp test directory."""
-    try:
-        rel = path.relative_to(relative_to)
-    except ValueError:
-        return False
-    parts = rel.parts
-    if not parts:
-        return False
-    skip = {".git", "venv", ".venv", "__pycache__", "build", "dist",
-            ".pytest_cache", ".mypy_cache", "node_modules"}
-    if parts[0] in skip or parts[0].startswith("."):
-        return False
-    return True
+def _files_context(files: dict[str, str], max_len: int = 2000) -> str:
+    """
+    Format files dictionary for LLM context.
+    """
+    if not files:
+        return "No files provided."
 
-def _call(role: str, system: str, user: str, timeout: int) -> str:
+    context = []
+    for path, content in files.items():
+        context.append(f"# {path}\n{content[:max_len]}")
+    return "\n\n".join(context)
+
+def _should_copy_file(path: str | Path, protected_files: frozenset[str]) -> bool:
     """
-    Call the LLM via the project's llm singleton.
-    Maps role name to the correct model and uses llm.complete().
+    Check if a file should be copied (not protected).
     """
-    r = llm.complete(role=role, system=system, user=user)
-    return r.text if r.ok else ""
+    path_str = str(path).replace("\\", "/")
+    name = Path(path).name
+    return name not in protected_files and path_str not in protected_files
+
+def _call(role: str, system: str, user: str, timeout: int | None = None) -> str:
+    """
+    Call the LLM with the given role, system prompt, and user message.
+    Uses your llm.complete() API as shown in core/llm.py docstring.
+    """
+    try:
+        response = llm.complete(
+            role=role,
+            system=system,
+            user=user,
+            timeout=timeout,
+        )
+        if response.ok:
+            return response.text
+        else:
+            raise RuntimeError(f"LLM error: {response.error}")
+    except Exception as e:
+        tracer.error("llm_call", f"Failed to call {role} model: {e}")
+        raise
+
+def _write_files(state: dict) -> dict:
+    """
+    Write files with smart base directory selection:
+    - workspace/* → cfg.workspace_root
+    - Everything else → cfg.agent_root
+    """
+    files_map = state.get("files_map") or state.get("files", {})
+    if not files_map:
+        return {"error": "No files to write"}
+
+    backups = {}
+    written = []
+    tid = state.get("trace_id", "")
+
+    for file_path, content in files_map.items():
+        if not file_path or not content:
+            continue
+
+        # Smart base directory selection
+        if file_path.startswith("workspace/") or "/workspace/" in file_path:
+            base = cfg.workspace_root
+        else:
+            base = cfg.agent_root
+
+        full_path = Path(base) / file_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Rest of the function remains the same...
+        try:
+            if full_path.exists():
+                backup_path = full_path.with_suffix(full_path.suffix + ".bak")
+                backup_path.write_text(full_path.read_text(encoding="utf-8"), encoding="utf-8")
+                backups[file_path] = str(backup_path)
+
+            with tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8', dir=full_path.parent,
+                delete=False, suffix='.tmp'
+            ) as tmp:
+                tmp.write(content)
+                tmp_path = Path(tmp.name)
+
+            os.replace(tmp_path, full_path)
+            written.append(file_path)
+
+        except Exception as e:
+            if 'tmp_path' in locals() and tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+            tracer.error(tid, f"Atomic write failed for {file_path}: {e}")
+            return {"error": f"Write failed: {e}", "partial_written": written, "backups": backups}
+
+    return {"files_written": written, "backups": backups}

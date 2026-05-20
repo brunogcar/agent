@@ -35,7 +35,6 @@ _env_file = _find_env_file()
 if _env_file:
     load_dotenv(_env_file)
 
-
 # ── Config class ──────────────────────────────────────────────────────────────
 
 class Config:
@@ -116,6 +115,14 @@ class Config:
         self.autocode_max_file_chars = int(os.getenv("AUTOCODE_MAX_FILE_CHARS", "6000"))
         self.autocode_debug          = os.getenv("AUTOCODE_DEBUG", "0") == "1"
 
+        # ── Timeouts ────────────────────────────────────────────────────────────
+        self.sandbox_timeout = int(os.getenv("SANDBOX_TIMEOUT", "30"))
+        self.execution_timeout = int(os.getenv("EXECUTOR_TIMEOUT", "120"))
+        self.planner_timeout = int(os.getenv("PLANNER_TIMEOUT", "180"))
+        self.router_timeout = int(os.getenv("ROUTER_TIMEOUT", "60"))
+        self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
+        self.max_retries = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
+
         # M8: validate tunables -- fail fast at startup rather than silently misbehave
         assert self.autocode_max_retries  > 0,  "AUTOCODE_MAX_RETRIES must be > 0"
         assert self.autocode_max_file_chars > 0, "AUTOCODE_MAX_FILE_CHARS must be > 0"
@@ -186,7 +193,5 @@ class Config:
             f"planner={self.planner_model!r}, executor={self.executor_model!r})"
         )
 
-
 # ── Singleton ─────────────────────────────────────────────────────────────────
 cfg = Config()
-
