@@ -43,12 +43,10 @@ P1-7: ChromaDB warmup
   Added _warmup_memory() called at startup. Blocks until ChromaDB embedding
   model is loaded (or times out after 60s with a warning).
 """
-
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-
 _AGENT_ROOT = Path(__file__).resolve().parent.parent
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
@@ -56,16 +54,13 @@ if str(_AGENT_ROOT) not in sys.path:
 import time
 import uuid
 from typing import Any, Optional
-
 from core.config import cfg
 from core.tracer import tracer
 
-# -- ChromaDB warmup (P1-7) ---------------------------------------------------
-
+# ── ChromaDB warmup (P1-7) ---------------------------------------------------
 def _warmup_memory(timeout: int = 60) -> None:
     """
     Trigger ChromaDB embedding model load at startup.
-
     The first call to memory downloads/initialises all-MiniLM-L6-v2.
     On a cold start this can take 30-60s, which exceeds MCP tool timeouts
     and causes confusing errors. Warming up here blocks server start until
@@ -87,11 +82,9 @@ def _warmup_memory(timeout: int = 60) -> None:
             file=sys.stderr,
         )
 
-# -- SQLite task store --------------------------------------------------------
-
+# ── SQLite task store --------------------------------------------------------
 import sqlite3 as _sqlite3
 import json    as _json_mod
-
 _TASK_DB_PATH = None
 _task_db_lock = __import__("threading").Lock()
 
@@ -100,21 +93,20 @@ def _get_task_db() -> _sqlite3.Connection:
     try:
         if _TASK_DB_PATH is None:
             _TASK_DB_PATH = cfg.memory_root / "gateway_tasks.db"
-        conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            trace_id  TEXT PRIMARY KEY,
-            status    TEXT NOT NULL DEFAULT 'pending',
-            submitted REAL NOT NULL,
-            completed REAL,
-            result    TEXT,
-            error     TEXT,
-            payload   TEXT
-        )
-    """
-        )
-        conn.commit()
-        return conn
+            conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    trace_id  TEXT PRIMARY KEY,
+                    status    TEXT NOT NULL DEFAULT 'pending',
+                    submitted REAL NOT NULL,
+                    completed REAL,
+                    result    TEXT,
+                    error     TEXT, 
+                    payload   TEXT
+                )
+            """)
+            conn.commit()
+            return conn
     except Exception as e:
         tracer.error(f"Failed to initialize SQLite task database at {_TASK_DB_PATH}: {e}")
         # Check for critical errors that should prevent startup
@@ -122,6 +114,7 @@ def _get_task_db() -> _sqlite3.Connection:
         if any(kw in error_str for kw in ['permission denied', 'no such file or directory', 'read-only']):
             print(f"\n[FATAL] SQLite database initialization failed: {e}", file=sys.stderr)
             raise
+    return _sqlite3.connect(str(_TASK_DB_PATH))
 
 def _store_task(trace_id: str, payload: dict) -> None:
     with _task_db_lock:
@@ -152,7 +145,7 @@ def _get_task(trace_id: str) -> dict | None:
     with _task_db_lock:
         db  = _get_task_db()
         row = db.execute(
-            "SELECT trace_id, status, submitted, completed, result, error "
+            "SELECT trace_id, status, submitted, completed, result, error  "
             "FROM tasks WHERE trace_id=?", (trace_id,)
         ).fetchone()
         db.close()
@@ -168,14 +161,12 @@ def _get_task(trace_id: str) -> dict | None:
     return {
         "trace_id":  row[0], "status": row[1],
         "submitted": row[2], "completed": row[3],
-        "result":    result, "error": row[5] or "",
+        "result":    result,  "error": row[5] or "",
     }
 
-# -- Background task runner ---------------------------------------------------
-
+# ── Background task runner ---------------------------------------------------
 def _run_task_background(trace_id: str, payload: dict) -> None:
     import threading
-
     def _run() -> None:
         try:
             _update_task(trace_id, "running")
@@ -189,7 +180,6 @@ def _run_task_background(trace_id: str, payload: dict) -> None:
 def _dispatch(trace_id: str, payload: dict) -> Any:
     """
     Dispatch a task payload to the appropriate tool or workflow.
-
     P1-3 fix: always returns a dict with a 'status' key.
     Workflows that complete without raising are tagged 'success' here
     so polling clients always see a terminal status.
@@ -263,19 +253,18 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
 
     return {"status": "error", "error": f"Unknown tool: '{tool}'"}
 
-# -- FastAPI app factory ------------------------------------------------------
-
+# ── FastAPI app factory ------------------------------------------------------
 def create_app():
     """Create and configure the FastAPI application."""
     try:
-        from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
+        from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Query
         from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
         from fastapi.middleware.cors import CORSMiddleware
         from pydantic import BaseModel
     except ImportError:
         raise ImportError("FastAPI not installed. Run: pip install fastapi uvicorn")
 
-    # -- Rate limiting (P0-2) -------------------------------------------------
+    # ── Rate limiting (P0-2) -------------------------------------------------
     # slowapi is a thin wrapper around limits that integrates with FastAPI.
     # If not installed, rate limiting is skipped with a startup warning.
     # Install: pip install slowapi
@@ -298,7 +287,7 @@ def create_app():
             file=sys.stderr,
         )
 
-    # -- Startup guard (P0-2) -------------------------------------------------
+    # ── Startup guard (P0-2) -------------------------------------------------
     secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
     env    = getattr(cfg, "env", "dev")
 
@@ -306,7 +295,7 @@ def create_app():
         if env != "dev":
             # Hard stop in production -- do not start with default secret
             print(
-                "[FATAL] GATEWAY_SECRET is 'changeme'. "
+                "[FATAL] GATEWAY_SECRET is 'changeme'.  "
                 "Set a strong secret in .env before running in production.",
                 file=sys.stderr,
             )
@@ -318,14 +307,14 @@ def create_app():
                 file=sys.stderr,
             )
 
-    # -- ChromaDB warmup (P1-7) -----------------------------------------------
+    # ── ChromaDB warmup (P1-7) -----------------------------------------------
     _warmup_memory()
 
-    # -- Config validation (new) -------------------------------------------------
+    # [PHASE 2 FIX] Config validation on startup
     from core.config_validation import validate_config
     validate_config()
 
-    # -- App setup ------------------------------------------------------------
+    # ── App setup ------------------------------------------------------------
     app = FastAPI(
         title       = "MCP Agent Gateway",
         description = "REST API for the MCP Agent Stack",
@@ -363,8 +352,7 @@ def create_app():
             if not creds or creds.credentials != _secret:
                 raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # -- Request/response models ----------------------------------------------
-
+    # ── Request/response models ----------------------------------------------
     class TaskRequest(BaseModel):
         goal:     Optional[str]  = None
         workflow: Optional[str]  = "auto"
@@ -379,7 +367,7 @@ def create_app():
         platform: Optional[str] = "api"
         user:     Optional[str] = None
 
-    # -- Endpoints ------------------------------------------------------------
+    # ── Endpoints ------------------------------------------------------------
 
     @app.get("/version")
     def version():
@@ -394,7 +382,7 @@ def create_app():
                 cwd=str(cfg.agent_root), stderr=_sp.DEVNULL, text=True,
             ).strip()
         except Exception as e:
-            tracer.error(f"Failed to get git info (trace_id={trace_id}): {e}")
+            tracer.error(f"Failed to get git info: {e}")
             commit = "unknown"
             branch = "unknown"
         return {"commit": commit, "branch": branch, "env": cfg.env}
@@ -405,6 +393,50 @@ def create_app():
         from fastapi import Response
         from core.health import health_check_endpoint
         return Response(content=health_check_endpoint(), media_type="application/json")
+
+    # [PHASE 2 FIX] Autocode health endpoint with optional deep check
+    @app.get("/health/autocode")
+    async def health_autocode(deep: bool = Query(False), _: None = Depends(_check_auth)):
+        """[PHASE 2 FIX] Autocode workflow health check."""
+        from core.llm import llm
+        from core.memory import memory as mem
+        import httpx as _httpx
+        
+        checks = {
+            "lm_studio": "unknown",
+            "chromadb": "unknown",
+            "agent_root": str(cfg.agent_root),
+        }
+        try:
+            if deep:
+                resp = _httpx.get(f"{cfg.lm_studio_base_url}/models", timeout=5)
+                checks["lm_studio"] = "ok" if resp.status_code == 200 else "error"
+            else:
+                checks["lm_studio"] = "ok"  # Assume ok for fast path
+        except Exception:
+            checks["lm_studio"] = "unreachable"
+
+        try:
+            mem.recall("__ping__", top_k=0)
+            checks["chromadb"] = "ok"
+        except Exception:
+            checks["chromadb"] = "degraded"
+
+        all_ok = all(v == "ok" for v in [checks["lm_studio"], checks["chromadb"]])
+        return {"status": "ok" if all_ok else "degraded", "checks": checks}
+
+    # [PHASE 2 FIX] Circuit breaker monitoring endpoint
+    @app.get("/health/circuit-breakers")
+    async def health_circuit_breakers(_: None = Depends(_check_auth)):
+        """[PHASE 2 FIX] Return state of all LLM circuit breakers for monitoring."""
+        from core.llm import llm
+        try:
+            return {
+                "status": "ok",
+                "breakers": llm.circuit_breaker_states
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
     @app.get("/health/models")
     def health_models(_: None = Depends(_check_auth)):
@@ -425,7 +457,7 @@ def create_app():
                 if not found:
                     all_ok = False
             return {
-                "status":        "ok" if all_ok else "degraded",
+                "status":         "ok" if all_ok else "degraded",
                 "all_loaded":    all_ok,
                 "models":        status,
                 "loaded_models": loaded,
@@ -478,7 +510,7 @@ def create_app():
 
         return {
             "trace_id": trace_id,
-            "status":   "submitted",
+            "status":    "submitted",
             "poll_url": f"/result/{trace_id}",
         }
 
@@ -530,14 +562,14 @@ def create_app():
             result = _dispatch(trace_id, payload)
             return {
                 "trace_id": trace_id,
-                "status":   "success",
+                "status":    "success",
                 "result":   result,
                 "platform": req.platform,
             }
         except Exception as e:
             return {
                 "trace_id": trace_id,
-                "status":   "failed",
+                "status":    "failed",
                 "error":    str(e),
                 "platform": req.platform,
             }
@@ -548,8 +580,7 @@ def create_app():
 
     return app
 
-# -- Standalone runner --------------------------------------------------------
-
+# ── Standalone runner --------------------------------------------------------
 if __name__ == "__main__":
     try:
         import uvicorn
@@ -570,7 +601,7 @@ if __name__ == "__main__":
     print(f"Docs:   http://{host}:{port}/docs", file=sys.stderr)
 
     uvicorn.run(
-        "gateway.app:create_app",
+        "core.gateway:create_app",  # [FIX] Corrected factory path
         host      = host,
         port      = port,
         factory   = True,

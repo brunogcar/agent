@@ -18,7 +18,6 @@ Usage:
     tracer.finish(tid, success=True, result="committed abc123")
     trace = tracer.get(tid)
 """
-
 from __future__ import annotations
 
 import json
@@ -29,20 +28,15 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-
 import structlog
-
 from core.config import cfg
-
 
 # ── Trace ID generator (LOW‑05) ─────────────────────────────────────────
 def generate_trace_id(length: int = 8) -> str:
     """Return a short hex trace ID, e.g. 'a3f2c0b1'."""
     return uuid.uuid4().hex[:length]
 
-
-# -- structlog: write to STDERR only -----------------------------------------
-
+# ── structlog: write to STDERR only -----------------------------------------
 def _configure_structlog() -> None:
     """Configure structlog for stderr output only. Never touches stdout."""
     structlog.configure(
@@ -61,16 +55,12 @@ def _configure_structlog() -> None:
         cache_logger_on_first_use=True,
     )
 
-
 _configure_structlog()
 _log = structlog.get_logger()
 
-
-# -- File log writer ---------------------------------------------------------
-
+# ── File log writer ---------------------------------------------------------
 class _FileWriter:
     """Thread-safe JSONL log writer. Writes to disk only -- never stdout."""
-
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._current_date: str = ""
@@ -104,15 +94,11 @@ class _FileWriter:
                 self._file.close()
                 self._file = None
 
-
 _writer = _FileWriter()
 
-
-# -- Trace store -------------------------------------------------------------
-
+# ── Trace store -------------------------------------------------------------
 class _TraceStore:
     """In-memory store for active traces. Bounded to prevent memory leak."""
-
     MAX_TRACES = 200
 
     def __init__(self) -> None:
@@ -148,18 +134,14 @@ class _TraceStore:
             return [self._store[tid] for tid in reversed(recent_ids)
                     if tid in self._store]
 
-
 _store = _TraceStore()
 
-
-# -- Public Tracer -----------------------------------------------------------
-
+# ── Public Tracer -----------------------------------------------------------
 class Tracer:
     """
     Structured tracer for agent workflows.
     Thread-safe. All output goes to stderr + log file. Never stdout.
     """
-
     def new_trace(self, workflow: str, goal: str = "", **kwargs: Any) -> str:
         trace_id   = generate_trace_id()
         ts       = time.time()
@@ -169,7 +151,7 @@ class Tracer:
             "goal":        goal,
             "started_at":  ts,
             "started_fmt": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S"),
-            "status":      "running",
+            "status":       "running",
             "steps":       [],
             **kwargs,
         }
@@ -190,8 +172,16 @@ class Tracer:
     def step(self, trace_id: str, node: str, message: str = "",
              **kwargs: Any) -> None:
         ts    = time.time()
-        entry = {"event": "step", "trace_id": trace_id, "node": node,
-                 "message": message, "ts": ts, **kwargs}
+        # [PHASE 2 FIX] Ensure structured context fields are consistently logged
+        entry = {
+            "event": "step",
+            "trace_id": trace_id,
+            "node": node,
+            "message": message,
+            "ts": ts,
+            "latency_ms": kwargs.pop("latency_ms", None),
+            **kwargs
+        }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
         if cfg.autocode_debug:
@@ -200,8 +190,14 @@ class Tracer:
     def error(self, trace_id: str, node: str, message: str = "",
               **kwargs: Any) -> None:
         ts    = time.time()
-        entry = {"event": "error", "trace_id": trace_id, "node": node,
-                 "message": message, "ts": ts, **kwargs}
+        entry = {
+            "event": "error",
+            "trace_id": trace_id,
+            "node": node,
+            "message": message,
+            "ts": ts,
+            **kwargs
+        }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
         _log.warning("error", trace_id=trace_id, node=node, msg=message[:200])
@@ -216,7 +212,7 @@ class Tracer:
             "success": success, "result": result[:200],
             "elapsed_s": elapsed, "ts": ts, **kwargs,
         }
-        _store.update(trace_id, "status",  "success" if success else "failed")
+        _store.update(trace_id, "status",   "success" if success else "failed")
         _store.update(trace_id, "elapsed", elapsed)
         _store.update(trace_id, "result",  result[:200])
         _store.append_step(trace_id, entry)
@@ -242,11 +238,10 @@ class Tracer:
         steps   = len(trace.get("steps", []))
         goal    = trace.get("goal", "")[:60]
         return (
-            f"[{trace_id}] {trace['workflow']} | "
-            f"goal={goal!r} | status={status} | "
+            f"[{trace_id}] {trace['workflow']} |  "
+            f"goal={goal!r} | status={status} |  "
             f"steps={steps} | elapsed={elapsed}s"
         )
 
-
-# -- Singleton ---------------------------------------------------------------
+# ── Singleton ---------------------------------------------------------------
 tracer = Tracer()

@@ -10,13 +10,11 @@ Other modules import from here:
     print(cfg.agent_root)
     print(cfg.planner_model)
 """
-
 from __future__ import annotations
 
 import os
 from pathlib import Path
 from typing import Optional
-
 from dotenv import load_dotenv
 
 # ── Locate and load .env ──────────────────────────────────────────────────────
@@ -36,13 +34,11 @@ if _env_file:
     load_dotenv(_env_file)
 
 # ── Config class ──────────────────────────────────────────────────────────────
-
 class Config:
     """
     Centralised config. All paths are pathlib.Path objects.
     Access via the module-level `cfg` singleton.
     """
-
     def __init__(self) -> None:
         # ── Paths ─────────────────────────────────────────────────────────────
         # Default paths are relative to agent root so they work on Linux
@@ -124,8 +120,19 @@ class Config:
         self.max_retries = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
 
         # M8: validate tunables -- fail fast at startup rather than silently misbehave
-        assert self.autocode_max_retries  > 0,  "AUTOCODE_MAX_RETRIES must be > 0"
-        assert self.autocode_max_file_chars > 0, "AUTOCODE_MAX_FILE_CHARS must be > 0"
+        assert self.autocode_max_retries   > 0,   "AUTOCODE_MAX_RETRIES must be > 0"
+        assert self.autocode_max_file_chars  > 0,  "AUTOCODE_MAX_FILE_CHARS must be > 0"
+
+        # [PHASE 2 FIX] Startup validation: timeout hierarchy
+        _node_timeouts = [self.planner_timeout, self.execution_timeout, self.router_timeout]
+        assert self.autocode_graph_timeout >= max(_node_timeouts), \
+            "AUTOCODE_GRAPH_TIMEOUT must be >= max(node timeouts)"
+
+        # [PHASE 2 FIX] Startup validation: agent root
+        if not self.agent_root.is_absolute():
+            raise ValueError("AGENT_ROOT must be an absolute path")
+        if not self.agent_root.exists():
+            raise FileNotFoundError(f"AGENT_ROOT not found: {self.agent_root}")
 
         # Protected files — autocode will never touch these
         self.protected_files: frozenset[str] = frozenset({
