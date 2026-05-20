@@ -1,32 +1,16 @@
 """
-skills/b3/b3_cvm/__init__.py -- B3-CVM identity bridge domain manifest.
+skills/b3/b3_cvm/__init__.py -- B3-CVM bridge sub-domain manifest and router.
 
-=== PURPOSE ===
-This domain's ONLY job is resolving company identity across three systems
-that each use a different primary key:
+Deploy to: D:\mcp\agent\skills\b3\b3_cvm\__init__.py
 
-  B3 (trading):   ticker  (PETR4, VALE3, ITUB4...)
-  CVM (filings):  CD_CVM  (integer, e.g. 9512 for Petrobras)
-  rapina.db:      empresa.id (internal integer, multiple per company/year)
+DECISION: single sub_domain "b3_cvm" under the b3/ domain.
+The bridge does not fetch prices (that is b3_api's job).
+It only resolves company identity. Clean separation of concerns.
 
-The bridge.db file (memory_db/cvm/bridge.db) is the single source of truth.
-It is populated by mode="sync" and then read-only by all other skills.
-
-=== HOW THE DISPATCHER USES THIS ===
-skills/dispatcher.py calls:
-  1. MANIFEST to list available modes
-  2. route(sub_domain, mode, params) to dispatch calls
-  3. inspect.signature filtering to pass only valid params
-
-The dispatcher auto-discovers this domain because this __init__.py
-defines MANIFEST and route() following the exact pattern used by
-skills/b3/b3_api/__init__.py and skills/cvm/cvm_api/__init__.py.
-
-=== DECISION: single sub_domain "b3_cvm" ===
-Unlike b3/ (which has b3_api as sub_domain) or cvm/ (which has cvm_api,
-cvm_register, cvm_dividends, cvm_shareholders), the bridge is a single
-focused skill. It does NOT try to also do B3 or CVM data fetching --
-those remain in their respective skills. The bridge is an index, not a store.
+The dispatcher (skills/dispatcher.py) auto-discovers this domain because:
+  1. skills/b3/__init__.py defines has_sub_domains=True and _discover_sub_domains()
+  2. This __init__.py defines MANIFEST["domain"] and route()
+  3. route() lazy-imports b3_cvm.py so server startup is not slowed down
 """
 
 from __future__ import annotations
@@ -35,97 +19,55 @@ import importlib
 import inspect
 from typing import Any
 
-# ── MANIFEST ──────────────────────────────────────────────────────────────────
-# Tells the dispatcher what this domain can do.
-# Each mode is what the LLM sees when it calls skill(domain="b3_cvm", mode=X).
-#
-# DECISION: include_in_all=False for sync -- we do NOT want sync() running
-# automatically when the agent calls skill(domain="b3_cvm", mode="all").
-# Sync hits the network and writes to disk; it should be explicit.
-
 MANIFEST = {
     "domain": "b3_cvm",
     "description": (
         "Company identity bridge: maps B3 tickers to CVM CD_CVM codes, "
-        "CNPJs, and rapina.db empresa IDs. Required for cross-skill lookups "
-        "(e.g. getting dividends by ticker). Sync once per week; lookup is instant."
+        "CNPJs, and rapina.db empresa IDs. "
+        "Sync once per week. Lookup is instant (SQLite only, no network)."
     ),
     "modes": {
         "sync": {
             "description": (
-                "Download B3 ISIN file + CVM cad_cia_aberta.csv and build "
-                "the identity bridge table in bridge.db. Run once per week "
-                "or when new companies are listed. Takes ~10-15 seconds."
+                "Download B3 ISIN ZIP + CVM cad_cia_aberta.csv and build "
+                "bridge.db. Run once per week. Takes ~10-15s."
             ),
-            "params": {},
-            "include_in_all": False,   # explicit only -- hits network + writes disk
+            "include_in_all": False,  # hits network + writes disk -- explicit only
         },
         "status": {
-            "description": (
-                "Show bridge.db sync status: last sync date, row count, "
-                "coverage statistics. Quick health check."
-            ),
-            "params": {},
+            "description": "Show bridge.db sync status and coverage statistics.",
             "include_in_all": True,
         },
         "lookup": {
             "description": (
-                "Resolve a company by ticker, CNPJ, or CD_CVM to its full "
-                "identity record: {ticker, isin, cnpj, cd_cvm, denom_social, "
-                "denom_comerc, sit, rapina_ids}. Use before calling cvm_dividends "
-                "or cvm_shareholders with a ticker."
+                "Resolve company by ticker, CNPJ, or CD_CVM. "
+                "Returns: cnpj, cd_cvm, denom_social, denom_comerc, "
+                "tickers (all B3 codes), rapina_ids (list of ints for rapina queries)."
             ),
-            "params": {
-                "ticker":  "B3 ticker code, e.g. 'PETR4' (optional)",
-                "cnpj":    "14-digit CNPJ, e.g. '33000167000101' (optional)",
-                "cd_cvm":  "CVM integer code, e.g. 9512 (optional)",
-            },
             "include_in_all": False,
         },
         "resolve": {
-            "description": (
-                "Fuzzy search by company name. Returns list of matching "
-                "company_map rows. Useful when you only have a name fragment "
-                "like 'PETROBRAS' or 'ITAU'."
-            ),
-            "params": {
-                "query": "Name fragment to search (case-insensitive)",
-            },
+            "description": "Fuzzy name search. Returns list of matching companies.",
             "include_in_all": False,
         },
         "tickers": {
-            "description": (
-                "List all tickers in bridge.db for a given company name or CNPJ. "
-                "Useful to discover that PETR3/PETR4/PETR4F all belong to the same CNPJ."
-            ),
-            "params": {
-                "query": "Name fragment or CNPJ to look up",
-            },
+            "description": "List all B3 tickers for a company (name or CNPJ).",
             "include_in_all": False,
         },
     },
 }
 
 
-# ── route() ───────────────────────────────────────────────────────────────────
-# Called by skills/dispatcher.py. Lazy-imports the implementation module
-# so that httpx/sqlite3 are not imported at server startup time.
-# This is the same lazy-import pattern used by all other skill domains.
-
-def route(sub_domain: str, mode: str, params: dict) -> Any:
+def route(sub_domain: str, mode: str, **kwargs: Any) -> Any:
     """
-    Dispatch a b3_cvm skill call.
+    Dispatch b3_cvm mode call. Lazy-imports b3_cvm.py.
 
-    sub_domain is always "b3_cvm" for this domain (single sub-domain).
-    mode is one of: sync | status | lookup | resolve | tickers
-    params is a dict of keyword arguments matching the mode's params.
+    DECISION: Lazy import so that httpx and sqlite3 are not imported at
+    server startup (same pattern as all other skills). The MCP server
+    must respond to ListToolsRequest quickly; heavy imports block that.
     """
-    # DECISION: lazy import -- b3_cvm.py imports httpx and sqlite3.
-    # These are fine at call time but would slow server startup if imported
-    # at module level (same reason all skills use lazy imports).
     mod = importlib.import_module("skills.b3.b3_cvm.b3_cvm")
 
-    # Dispatch table: mode -> function in b3_cvm.py
     dispatch = {
         "sync":    mod.mode_sync,
         "status":  mod.mode_status,
@@ -136,14 +78,12 @@ def route(sub_domain: str, mode: str, params: dict) -> Any:
 
     fn = dispatch.get(mode)
     if fn is None:
-        available = list(dispatch.keys())
         return {
             "status": "error",
-            "error": f"Unknown mode '{mode}' for b3_cvm. Available: {available}",
+            "error": f"Unknown mode '{mode}' for b3_cvm. Available: {list(dispatch)}",
         }
 
-    # Filter params to only those the function actually accepts
-    # (same pattern used in other skill __init__.py files)
-    sig    = inspect.signature(fn)
-    valid  = {k: v for k, v in params.items() if k in sig.parameters}
+    # Filter kwargs to only what the function signature accepts
+    sig   = inspect.signature(fn)
+    valid = {k: v for k, v in kwargs.items() if k in sig.parameters}
     return fn(**valid)
