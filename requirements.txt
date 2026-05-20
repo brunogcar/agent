@@ -76,6 +76,10 @@ playwright>=1.40.0
 playwright install chromium
 # After installing, run: playwright install chromium   (installs the browser engine for HTML→PDF conversion)
 
+# ── Testing ───────────────────────────────────────────────────────────────
+pytest>=7.4.0
+pytest-env>=1.0.0
+
 # ── Static analysis (autocode quality gate) ───────────────────────────────────
 ruff              # fast Python linter, runs in autocode test phase
 
