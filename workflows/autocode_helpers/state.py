@@ -1,12 +1,13 @@
 """
 State definitions and defaults for autocode workflow.
 """
-
 from __future__ import annotations
 
 from langgraph.graph.message import add_messages
 from langchain_core.messages import AnyMessage
 from typing import Annotated, TypedDict, Optional
+
+from core.config import cfg  # [FIX 4] Added to read timeout config from env
 
 # Constants
 MAX_RETRIES = 3
@@ -17,12 +18,12 @@ EXECUTOR_TIMEOUT = 120
 ROUTER_TIMEOUT = 60
 AGENT_ROOT = None  # Set via cfg
 
-# Timeout configuration
+# [FIX 4] Timeout configuration aligned with config.py env vars
 NODE_TIMEOUTS = {
-    "planner": 120,
-    "executor": 60,
-    "verifier": 90,
-    "default": 90
+    "planner": cfg.planner_timeout,
+    "executor": cfg.execution_timeout,
+    "verifier": getattr(cfg, "verifier_timeout", cfg.execution_timeout),
+    "default": cfg.execution_timeout
 }
 
 class AutocodeState(TypedDict, total=False):
@@ -127,15 +128,6 @@ def _default_state(
         "result": "",
     }
 
-def _state_reducer(state: AutocodeState, update: dict) -> AutocodeState:
-    """
-    Custom state reducer that handles messages explicitly.
-    Prevents duplicate message accumulation in LangGraph.
-    """
-    new_state = {**state, **update}
-
-    # Explicit guard: if update contains 'messages', replace instead of merging
-    if "messages" in update:
-        new_state["messages"] = update["messages"]
-
-    return new_state
+# [FIX 1] REMOVED: _state_reducer function
+# LangGraph's `add_messages` annotation handles accumulation automatically.
+# The custom reducer conflicted with it, causing message replacement instead of append.

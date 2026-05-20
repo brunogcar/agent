@@ -1,7 +1,6 @@
 """
 Verification node.
 """
-
 from __future__ import annotations
 
 import json
@@ -38,9 +37,9 @@ def node_verify(state: AutocodeState) -> AutocodeState:
         except Exception:
             pass
         return {**state,
-                "status": "failed",
-                "verification_notes": "TDD max retries exceeded",
-                "verification_passed": False}
+                 "status": "failed",
+                 "verification_notes": "TDD max retries exceeded",
+                 "verification_passed": False}
 
     if state.get("status") in ("needs_clarification", "failed"):
         return state
@@ -48,10 +47,10 @@ def node_verify(state: AutocodeState) -> AutocodeState:
     tracer.step(tid, "verify", "running automated checks")
 
     # Fresh pytest on agent root
-    tests_passed  = False
-    fresh_output  = ""
-    test_file     = cfg.agent_root / "autocode" / "test_autocode_feature.py"
-    tests_dir     = cfg.agent_root / "tests"
+    tests_passed = False
+    fresh_output = ""
+    test_file = cfg.agent_root / "autocode" / "test_autocode_feature.py"
+    tests_dir = cfg.agent_root / "tests"
 
     try:
         cmd = [sys.executable, "-m", "pytest", "--tb=short", "--color=no", "-q"]
@@ -63,6 +62,14 @@ def node_verify(state: AutocodeState) -> AutocodeState:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding='utf-8')
         fresh_output = (result.stdout + result.stderr).strip()
         tests_passed = result.returncode == 0
+    except FileNotFoundError:
+        # [FIX 5] Specific handler for missing pytest
+        fresh_output = "pytest not found in PATH — install with: pip install pytest"
+        tests_passed = False
+    except subprocess.TimeoutExpired as e:
+        # [FIX 5] Specific handler for timeout
+        fresh_output = f"pytest timed out after {e.timeout}s"
+        tests_passed = False
     except Exception as e:
         fresh_output = f"pytest failed to run: {e}"
 
@@ -84,16 +91,16 @@ def node_verify(state: AutocodeState) -> AutocodeState:
     automated_ok = tests_passed  # lint is advisory only
 
     tracer.step(tid, "verify",
-                f"automated: {'PASS' if automated_ok else 'FAIL'} "
-                f"(pytest={'OK' if tests_passed else 'FAIL'}, "
+                f"automated: {'PASS' if automated_ok else 'FAIL'}  "
+                f"(pytest={'OK' if tests_passed else 'FAIL'},  "
                 f"lint={'OK' if lint_passed else 'WARN'})")
 
     # LLM review (for spec coverage and cleanliness) - WITH ERROR HANDLING
     try:
-        gen_files = json.loads(state.get("generated_code", "{}"))
-        impl_ctx  = "\n\n".join(f"# {p}\n{c}" for p, c in gen_files.items())
+        # [FIX 2] Use tdd_source_code instead of non-existent generated_code
+        impl_ctx = state.get("tdd_source_code", "")
     except Exception:
-        impl_ctx = state.get("generated_code", "")
+        impl_ctx = state.get("tdd_source_code", "")
 
     try:
         raw = _call(
@@ -131,14 +138,14 @@ def node_verify(state: AutocodeState) -> AutocodeState:
 
     tracer.step(tid, "verify", f"result: {'PASS' if all_passed else 'FAIL'} -- {summary[:80]}")
     return {**state,
-            "verification_passed": all_passed,
-            "verification_notes": (
-                f"Automated: {'PASS' if automated_ok else 'FAIL'} | "
+             "verification_passed": all_passed,
+             "verification_notes": (
+                f"Automated: {'PASS' if automated_ok else 'FAIL'} |  "
                 f"LLM: {'PASS' if llm_checks_ok else 'FAIL'}\n"
                 f"{summary}\n\n{notes}"
             ),
-            "evidence_outputs": {
-                "tests":      fresh_output[:2000],
-                "lint":       lint_output[:500],
-                "regression": fresh_output[:2000],
+             "evidence_outputs": {
+                 "tests":      fresh_output[:2000],
+                 "lint":       lint_output[:500],
+                 "regression": fresh_output[:2000],
             }}

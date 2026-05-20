@@ -1,12 +1,11 @@
 """
 State machine construction for autocode workflow.
 """
-
 from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
-from workflows.autocode_helpers.state import AutocodeState, _state_reducer
+from workflows.autocode_helpers.state import AutocodeState
 from workflows.autocode_helpers.nodes.classify import node_classify_task
 from workflows.autocode_helpers.nodes.validate import node_validate_input
 from workflows.autocode_helpers.nodes.brainstorm import node_brainstorm
@@ -40,8 +39,8 @@ def build_graph() -> StateGraph:
     """
     Build the LangGraph state machine for the autocode workflow.
     """
-    workflow = StateGraph(AutocodeState, state_reducer=_state_reducer)
-
+    workflow = StateGraph(AutocodeState)
+    
     # Add all nodes
     workflow.add_node("node_classify_task", node_classify_task)
     workflow.add_node("node_validate_input", node_validate_input)

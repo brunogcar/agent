@@ -1,7 +1,6 @@
 """
 Helpers for autocode workflow.
 """
-
 from __future__ import annotations
 
 import json
@@ -17,9 +16,9 @@ from core.tracer import tracer
 
 def _extract_code(text: str) -> list[str]:
     """
-    Extract code blocks from text. Handles ```python, ```, and indented blocks.
+    Extract code blocks from text. Handles `python,`, and indented blocks.
     """
-    pattern = r'```(?:[^\n]*\n)?(.*?)```'
+    pattern = r'`(?:[^\n]*\n)?(.*?)`'
     matches = re.finditer(pattern, text, re.DOTALL)
     return [m.group(1).strip() for m in matches]
 
@@ -29,7 +28,6 @@ def _parse_json(text: str | None) -> dict:
     """
     if not text:
         return {}
-
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -53,7 +51,6 @@ def _parse_json_array(text: str | None) -> list:
     """
     if not text:
         return []
-
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -77,7 +74,6 @@ def _files_context(files: dict[str, str], max_len: int = 2000) -> str:
     """
     if not files:
         return "No files provided."
-
     context = []
     for path, content in files.items():
         context.append(f"# {path}\n{content[:max_len]}")
@@ -96,6 +92,11 @@ def _call(role: str, system: str, user: str, timeout: int | None = None) -> str:
     Call the LLM with the given role, system prompt, and user message.
     Uses your llm.complete() API as shown in core/llm.py docstring.
     """
+    # [FIX 3] Default to per-role timeout if not specified
+    from workflows.autocode_helpers.state import NODE_TIMEOUTS
+    if timeout is None:
+        timeout = NODE_TIMEOUTS.get(role, NODE_TIMEOUTS["default"])
+
     try:
         response = llm.complete(
             role=role,
@@ -138,7 +139,6 @@ def _write_files(state: dict) -> dict:
         full_path = Path(base) / file_path
         full_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Rest of the function remains the same...
         try:
             if full_path.exists():
                 backup_path = full_path.with_suffix(full_path.suffix + ".bak")
@@ -158,6 +158,12 @@ def _write_files(state: dict) -> dict:
         except Exception as e:
             if 'tmp_path' in locals() and tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
+            # [FIX 6] Best-effort rollback if write fails mid-loop
+            for orig_str, backup_path in backups.items():
+                try:
+                    Path(orig_str).write_text(Path(backup_path).read_text(encoding="utf-8"), encoding="utf-8")
+                except Exception:
+                    pass
             tracer.error(tid, f"Atomic write failed for {file_path}: {e}")
             return {"error": f"Write failed: {e}", "partial_written": written, "backups": backups}
 
