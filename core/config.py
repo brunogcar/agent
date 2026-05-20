@@ -102,18 +102,14 @@ class Config:
         self.memory_decay_days       = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
         self.memory_top_k            = int(os.getenv("MEMORY_TOP_K", "5"))
 
-        # ── Execution ──────────────────────────────────────────────────────────
-        self.execution_timeout = int(os.getenv("EXECUTION_TIMEOUT", "120"))
+        # ── Execution & Autocode ──────────────────────────────────────────────
+        self.execution_timeout = int(os.getenv("EXECUTOR_TIMEOUT", "120"))  # [FIX] Removed duplicate EXECUTION_TIMEOUT line
         self.sandbox_timeout   = int(os.getenv("SANDBOX_TIMEOUT", "30"))
-
-        # ── Autocode ───────────────────────────────────────────────────────────
         self.autocode_max_retries    = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
         self.autocode_max_file_chars = int(os.getenv("AUTOCODE_MAX_FILE_CHARS", "6000"))
         self.autocode_debug          = os.getenv("AUTOCODE_DEBUG", "0") == "1"
 
         # ── Timeouts ────────────────────────────────────────────────────────────
-        self.sandbox_timeout = int(os.getenv("SANDBOX_TIMEOUT", "30"))
-        self.execution_timeout = int(os.getenv("EXECUTOR_TIMEOUT", "120"))
         self.planner_timeout = int(os.getenv("PLANNER_TIMEOUT", "180"))
         self.router_timeout = int(os.getenv("ROUTER_TIMEOUT", "60"))
         self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
@@ -123,12 +119,12 @@ class Config:
         assert self.autocode_max_retries   > 0,   "AUTOCODE_MAX_RETRIES must be > 0"
         assert self.autocode_max_file_chars  > 0,  "AUTOCODE_MAX_FILE_CHARS must be > 0"
 
-        # [PHASE 2 FIX] Startup validation: timeout hierarchy
+        # [FIX] Replace assert with explicit raise (survives python -O)
         _node_timeouts = [self.planner_timeout, self.execution_timeout, self.router_timeout]
-        assert self.autocode_graph_timeout >= max(_node_timeouts), \
-            "AUTOCODE_GRAPH_TIMEOUT must be >= max(node timeouts)"
+        if self.autocode_graph_timeout < max(_node_timeouts):
+            raise ValueError("AUTOCODE_GRAPH_TIMEOUT must be >= max(node timeouts)")
 
-        # [PHASE 2 FIX] Startup validation: agent root
+        # [FIX] Replace assert with explicit raise
         if not self.agent_root.is_absolute():
             raise ValueError("AGENT_ROOT must be an absolute path")
         if not self.agent_root.exists():

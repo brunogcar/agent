@@ -33,7 +33,6 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from functools import cached_property  # [PHASE 2 FIX]
 from typing import Any, Optional
 import httpx
 from core.config import cfg
@@ -341,8 +340,8 @@ class LLMClient:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._build_breakers()
 
-    # [PHASE 2 FIX] Public cached property for gateway monitoring
-    @cached_property
+    # [FIX] Changed from @cached_property to @property to reflect dynamic breaker states
+    @property
     def circuit_breaker_states(self) -> dict[str, dict]:
         """Public API for gateway to query breaker states."""
         return {role: breaker.get_state_info() for role, breaker in self._breakers.items()}

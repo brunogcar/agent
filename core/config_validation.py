@@ -63,7 +63,7 @@ def validate_config() -> None:
     # -- Raise if any errors --
     if errors:
         error_msg = "Config validation failed:\n  - " + "\n  - ".join(errors)
-        tracer.error("config_validation", "Startup config check failed", extra={"errors": errors})
+        tracer.error("startup", "config_validation", "Startup config check failed", extra={"errors": errors})
         raise RuntimeError(error_msg)
 
-    tracer.step("config_validation", "All config checks passed")
+    tracer.step("startup", "config_validation", "All config checks passed")

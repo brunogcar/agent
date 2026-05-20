@@ -13,8 +13,8 @@ Usage:
     from core.tracer import tracer
 
     tid = tracer.new_trace("autocode", goal="fix memory.py")
-    tracer.step(tid, "read", "file loaded", chars=4200)
-    tracer.error(tid, "apply", "patch failed", error="context mismatch")
+    tracer.step(tid,  "read ",  "file loaded ", chars=4200)
+    tracer.error(tid,  "apply ",  "patch failed ", error="context mismatch")
     tracer.finish(tid, success=True, result="committed abc123")
     trace = tracer.get(tid)
 """
@@ -172,14 +172,14 @@ class Tracer:
     def step(self, trace_id: str, node: str, message: str = "",
              **kwargs: Any) -> None:
         ts    = time.time()
-        # [PHASE 2 FIX] Ensure structured context fields are consistently logged
+        # [FIX] Use .get() to avoid mutating caller's kwargs dict
         entry = {
             "event": "step",
             "trace_id": trace_id,
             "node": node,
             "message": message,
             "ts": ts,
-            "latency_ms": kwargs.pop("latency_ms", None),
+            "latency_ms": kwargs.get("latency_ms"),
             **kwargs
         }
         _store.append_step(trace_id, entry)
