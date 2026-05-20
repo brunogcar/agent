@@ -1,14 +1,12 @@
 """
 Test runner node for autocode workflow.
 """
-
 from __future__ import annotations
 
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_helpers.state import AutocodeState
@@ -59,7 +57,7 @@ def node_run_tests(state: AutocodeState) -> AutocodeState:
     """
     tid = state.get("trace_id", "")
     tracer.step(tid, "run_tests", "Running tests")
-
+    
     # Get test files from state
     test_files = state.get("test_files", [])
     if not test_files:
@@ -76,6 +74,21 @@ def node_run_tests(state: AutocodeState) -> AutocodeState:
         tracer.step(tid, "run_tests", f"Tests passed in {state['tdd_iteration']} iterations")
         state["tdd_status"] = "passed"
         state["tdd_error"] = ""
+        
+        # [PHASE 3 FIX] Wire success callback: store procedural memory on convergence
+        try:
+            from core.memory import memory
+            memory.store(
+                text=f"TDD converged after {state['tdd_iteration']} iterations for task: '{state.get('task', '')}'",
+                memory_type="procedural",
+                importance=7,
+                tags="tdd_success,converged,autocode",
+                trace_id=tid,
+                outcome="success"
+            )
+        except Exception:
+            pass  # Non-fatal: memory storage failure should not break the workflow
+            
     else:
         state["tdd_status"] = "failed"
         state["tdd_error"] = test_results.get("stderr", "Tests failed")
