@@ -1,8 +1,4 @@
-# ── Office file formats ───────────────────────────────────────────────────────
-fpdf2             # PDF creation
-python-docx       # Word (.docx) read/write
-python-pptx       # PowerPoint (.pptx) read/write
-pdfplumber        # PDF text extraction# ── MCP Agent Stack — Python Dependencies ─────────────────────────────────────
+# ── MCP Agent Stack — Python Dependencies ─────────────────────────────────────
 # Install: pip install -r requirements.txt
 #
 # External service required (not pip-installable):

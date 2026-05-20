@@ -17,7 +17,7 @@ HOW IT WORKS — FOUR LAYERS
                     Read-only: python --version, whoami, where, dir/ls, type/cat,
                                systeminfo, ipconfig, hostname, tasklist, ver
                     File ops:  copy, xcopy, move, mkdir, rmdir, del
-                    DECISION: These are NOT routed through agent tools (file_ops,
+                    DECISION: These are NOT routed through agent tools (file,
                     python_exec) because the agent often wants raw shell output
                     (e.g. `python --version` returns "Python 3.11.x", not a dict).
                     The whitelist is the security boundary -- anything not on it
@@ -120,7 +120,7 @@ _SHELL_ALLOW: dict[str, list[str]] = {
     "echo":        None,                             # handled by pattern layer; listed for completeness
     # ── File operation commands ───────────────────────────────────────────────
     # These modify the filesystem but are common enough to whitelist.
-    # DECISION: file_ops tool is preferred for agent code; these exist for
+    # DECISION: file tool is preferred for agent code; these exist for
     # quick imperative ops like `copy src dst` that don't need a full tool call.
     "copy":        ["cmd", "/c", "copy"],
     "xcopy":       ["cmd", "/c", "xcopy"],
@@ -216,7 +216,7 @@ def _shell_exec(command: str) -> str | None:
     DECISION: shell-first, agent-fallback.
       On shell failure, check _SHELL_AGENT_FALLBACK and retry via agent tool.
       This handles environments where cmd.exe behaves differently, or where
-      a relative path only resolves correctly through the agent's file_ops tool.
+      a relative path only resolves correctly through the agent's file tool.
       Fallback is best-effort -- if it also fails, return the original shell error.
     """
     parts = command.strip().split()
@@ -363,7 +363,7 @@ def _lms_log()             -> str:
 # exactly as documented in the README — no internal function calls.
 
 def _file(action: str, **kw) -> str:
-    from tools.file_ops import file
+    from tools.file import file
     r = file(action=action, **kw)
     if not isinstance(r, dict): return str(r)
     if action == "read" and "content" in r:
@@ -374,7 +374,7 @@ def _file(action: str, **kw) -> str:
     return r.get("message", json.dumps(r, indent=2))
 
 def _git(operation: str, **kw) -> str:
-    from tools.git_ops import git
+    from tools.git import git
     r = git(operation=operation, **kw)
     if not isinstance(r, dict): return str(r)
     if operation == "log":

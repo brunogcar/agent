@@ -78,12 +78,12 @@ def test_blocked_imports_coverage():
 # -- File tool ----------------------------------------------------------------
 
 def test_file_path_traversal_blocked():
-    from tools.file_ops import file
+    from tools.file import file
     r = file(action="read", path="../../etc/passwd")
     assert r["status"] == "error" and "outside allowed" in r["error"]
 
 def test_file_write_read_roundtrip():
-    from tools.file_ops import file
+    from tools.file import file
     w = file(action="write", path="autocode/unit_test_roundtrip.txt",
              content="unit test content")
     assert w["status"] == "success"
@@ -92,14 +92,14 @@ def test_file_write_read_roundtrip():
 
 def test_file_list_workspace_root():
     """list path='autocode' -- a directory we know exists."""
-    from tools.file_ops import file
+    from tools.file import file
     r = file(action="list", path="autocode")
     assert r["status"] == "success"
     assert r["count"] >= 0  # may be empty but should not error
 
 def test_file_list_agent_root():
     """list an absolute agent path to confirm server.py exists there."""
-    from tools.file_ops import file
+    from tools.file import file
     from core.config import cfg
     r = file(action="list", path=str(cfg.agent_root))
     assert r["status"] == "success"
@@ -107,7 +107,7 @@ def test_file_list_agent_root():
     assert "server.py" in names
 
 def test_file_write_protected_blocked():
-    from tools.file_ops import file
+    from tools.file import file
     r = file(action="write", path="server.py", content="# tampered")
     assert r["status"] == "error" and "protected" in r["error"].lower()
 

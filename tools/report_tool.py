@@ -66,7 +66,7 @@ def _load_data(
     if not data_path:
         return None, "Provide either data= (dict/list) or data_path= (path to CSV/JSON)"
 
-    from tools.file_ops import _safe_resolve
+    from tools.file import _safe_resolve
     p, err = _safe_resolve(data_path)
     if err:
         return None, err
@@ -359,7 +359,7 @@ def _build_map(
             if isinstance(data, dict):
                 geojson = data.get("geojson", {})
                 if isinstance(geojson, str):
-                    from tools.file_ops import _safe_resolve
+                    from tools.file import _safe_resolve
                     p, err = _safe_resolve(geojson)
                     if not err and p.exists():
                         geojson = json.loads(p.read_text())

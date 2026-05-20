@@ -12,8 +12,3 @@ tmp/
 .mypy_cache/
 .ruff_cache/
 logs/
-
-[apply]
-    whitespace = fix
-[core]
-    autocrlf = input
