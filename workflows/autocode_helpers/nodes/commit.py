@@ -3,6 +3,7 @@ Git commit node.
 """
 
 from __future__ import annotations
+
 from typing import Any
 
 from workflows.autocode_helpers.state import AutocodeState
@@ -17,7 +18,7 @@ def node_commit(state: AutocodeState) -> AutocodeState:
     if not state.get("verification_passed"):
         return state
 
-    plan   = state.get("plan", [])
+    plan = state.get("plan", [])
     labels = ", ".join(
         s["label"] for s in plan
         if s["label"] not in ("write_tests", "verify")
@@ -33,8 +34,10 @@ def node_commit(state: AutocodeState) -> AutocodeState:
         f"- Verified: yes"
     )
 
-    sha = _git_commit(msg, tid)
-    tracer.step(tid, "commit", f"sha: {sha}")
+    # [GIT SCOPING] Route commit to workspace project if set, else agent_root
+    root = state.get("project_root")
+    sha = _git_commit(msg, tid, root)
+    tracer.step(tid, "commit", f"sha: {sha} @ {root or 'agent_root'}")
 
     result_lines = [
         f"autocode complete -- {sha or '(no new commits)'}",
@@ -47,6 +50,6 @@ def node_commit(state: AutocodeState) -> AutocodeState:
         result_lines.append(f"\nDefense note: {state['defense_note']}")
 
     return {**state,
-            "status":     "done",
-            "commit_sha": sha or "",
-            "result":     "\n".join(result_lines)}
+             "status":      "done",
+             "commit_sha": sha or "",
+             "result":      "\n".join(result_lines)}

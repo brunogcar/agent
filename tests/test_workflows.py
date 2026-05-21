@@ -10,6 +10,7 @@ Tests:
   - Autocode routing logic (Updated for split architecture)
   - Protected file check in config
 """
+
 from __future__ import annotations
 
 import sys
@@ -117,16 +118,13 @@ def test_autocode_goal_to_task_conversion():
     """
     from workflows.base import run_workflow
 
-    # Run autocode workflow via base.py dispatcher (as meta-tool does)
     result = run_workflow(
         workflow_type="autocode",
         goal="Add input validation to memory store",
         trace_id="test-autocode-integration",
     )
 
-    # Should not crash - graph should build and invoke
     assert "status" in result, "Result must have status field"
-    # Status can be anything (running/failed/success) as long as it doesn't crash
     assert result["status"] in ("success", "failed", "running"), \
         f"Invalid status: {result['status']}"
 

@@ -1,6 +1,7 @@
 """
 State definitions and defaults for autocode workflow.
 """
+
 from __future__ import annotations
 
 from langgraph.graph.message import add_messages
@@ -39,6 +40,7 @@ class AutocodeState(TypedDict, total=False):
 
     # Classification
     task_type: str
+    project_root: str  # [GIT SCOPING] Isolated repo root for workspace projects
 
     # Brainstorm/Plan
     brainstorm_notes: str
@@ -101,6 +103,7 @@ def _default_state(
         "trace_id": "",
         "dry_run": dry_run,
         "task_type": "",
+        "project_root": "",  # [GIT SCOPING] Defaults to agent_root if empty
         "brainstorm_notes": "",
         "plan": [],  # [FIX] Must be a list for TDD step indexing
         "plan_accepted": False,
@@ -128,7 +131,3 @@ def _default_state(
         "error": "",
         "result": "",
     }
-
-# [FIX 1] REMOVED: _state_reducer function
-# LangGraph's `add_messages` annotation handles accumulation automatically.
-# The custom reducer conflicted with it, causing message replacement instead of append.

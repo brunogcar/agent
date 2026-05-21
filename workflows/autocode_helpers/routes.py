@@ -1,8 +1,11 @@
 """
 Routing functions for the autocode state machine.
 """
+
 from __future__ import annotations
+
 from typing import Any
+
 from workflows.autocode_helpers.state import AutocodeState
 
 def route_after_classify(state: AutocodeState) -> str:
@@ -24,10 +27,9 @@ def route_after_brainstorm(state: AutocodeState) -> str:
 
 def route_after_run_tests(state: AutocodeState) -> str:
     """Route after running tests node."""
-    # [FIX] Check ACTUAL keys set by run_tests.py: tdd_status + test_results
     tdd_status = state.get("tdd_status", "")
     test_results = state.get("test_results", {})
-    
+
     if tdd_status == "passed" or test_results.get("success"):
         return "node_verify"
     else:
@@ -39,7 +41,6 @@ def route_after_debug(state: AutocodeState) -> str:
 
 def route_after_write_files(state: AutocodeState) -> str:
     """Route after writing files node."""
-    # [FIX] Include "feature" in TDD loop routing
     task_type = state.get("task_type", "feature")
     if task_type in ["fix", "fix_error", "refactor", "improve", "feature"]:
         return "node_run_tests"
