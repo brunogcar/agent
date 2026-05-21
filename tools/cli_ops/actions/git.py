@@ -2,6 +2,7 @@
 git.py — Git tool proxy for cli meta-tool.
 
 Lazy imports git tool and normalizes dict output to human-readable strings.
+All functions auto-register via @register_action decorator.
 """
 
 from __future__ import annotations
@@ -9,6 +10,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from tools.cli_ops.actions._registry import register_action
+
+@register_action("git", "status")
+@register_action("git", "log")
+@register_action("git", "diff")
+@register_action("git", "snapshot")
+@register_action("git", "commit")
+@register_action("git", "rollback")
 def _git(operation: str, **kw: Any) -> str:
     """Proxy to tools/git.py with formatted output."""
     from tools.git import git

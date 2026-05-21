@@ -2,14 +2,18 @@
 lms.py — LM Studio management actions for cli meta-tool.
 
 Provides raw HTTP access to LM Studio API for model management.
+All functions auto-register via @register_action decorator.
 """
 
 from __future__ import annotations
 
 import requests
 
+from tools.cli_ops.actions._registry import register_action
+
 _LMS = "http://localhost:1234"
 
+@register_action("lms", "ls")
 def _lms_ls() -> str:
     """List downloaded models."""
     try:
@@ -20,6 +24,7 @@ def _lms_ls() -> str:
     except Exception as e:
         return f"LM Studio error: {e}"
 
+@register_action("lms", "ps")
 def _lms_ps() -> str:
     """List loaded models."""
     try:
@@ -30,6 +35,7 @@ def _lms_ps() -> str:
     except Exception as e:
         return f"LM Studio error: {e}"
 
+@register_action("lms", "load")
 def _lms_load(model: str) -> str:
     """Load a model."""
     try:
@@ -43,6 +49,7 @@ def _lms_load(model: str) -> str:
     except Exception as e:
         return f"LM Studio error: {e}"
 
+@register_action("lms", "unload")
 def _lms_unload(model: str = "") -> str:
     """Unload a model or all models."""
     try:
@@ -56,6 +63,7 @@ def _lms_unload(model: str = "") -> str:
     except Exception as e:
         return f"LM Studio error: {e}"
 
+@register_action("lms", "log")
 def _lms_log() -> str:
     """Get LM Studio logs."""
     try:

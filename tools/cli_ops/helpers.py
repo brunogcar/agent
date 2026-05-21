@@ -4,6 +4,7 @@ helpers.py — Shared helper functions for cli meta-tool.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,47 @@ from typing import Any
 
 from core.config import cfg
 
-# ── Lazy memory accessor ────────────────────────────────────────────────
+# ── Input Sanitization ───────────────────────────────────────────────────────
+_MAX_COMMAND_LENGTH = 2048
+_MAX_ARGUMENTS = 20
+_CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x1f\x7f-\x9f]')
+
+def _sanitize_command(command: str) -> str:
+    """
+    Sanitize command input before processing.
+
+    Rejects:
+    - Commands exceeding max length
+    - Commands containing null bytes
+    - Commands with control characters
+    - Commands with too many arguments
+    """
+    if not isinstance(command, str):
+        raise ValueError("Command must be a string")
+
+    # Check length
+    if len(command) > _MAX_COMMAND_LENGTH:
+        raise ValueError(f"Command too long (max {_MAX_COMMAND_LENGTH} chars)")
+
+    # Check for null bytes
+    if '\x00' in command:
+        raise ValueError("Command contains null bytes")
+
+    # Check for control characters
+    if _CONTROL_CHAR_PATTERN.search(command):
+        raise ValueError("Command contains control characters")
+
+    # Normalize whitespace (multiple spaces -> single)
+    command = ' '.join(command.split())
+
+    # Check argument count
+    args = command.split()
+    if len(args) > _MAX_ARGUMENTS:
+        raise ValueError(f"Too many arguments (max {_MAX_ARGUMENTS})")
+
+    return command
+
+# ── Lazy memory accessor ─────────────────────────────────────────────────────
 def _mem():
     """Lazy import of ChromaDB store — avoids slow startup."""
     from core.memory import memory as _store
@@ -20,7 +61,7 @@ def _mem():
 # ── Shell whitelist constants ────────────────────────────────────────────────
 _SHELL_ALLOW: dict[str, list[str]] = {
     # Read-only info commands
-    "python":      None,  # handled specially in _shell_exec
+    "python":      None,
     "pip":         ["pip", "--version"],
     "whoami":      ["whoami"],
     "hostname":    ["hostname"],
@@ -69,6 +110,7 @@ _SHELL_AGENT_FALLBACK: dict[str, tuple[str, str, Any]] = {
     "cp":    ("file", "backup", lambda cmd: {"path": cmd.split()[1] if len(cmd.split()) > 1 else ""}),
 }
 
+# ── Enhanced Working Directory Detection ──────────────────────────────────────
 def _detect_cwd(command: str) -> Path:
     """
     Auto-detect working directory from command context.
@@ -79,10 +121,13 @@ def _detect_cwd(command: str) -> Path:
 
     Heuristic (first match wins):
       1. Command contains an absolute path -> use its parent dir
-      2. Command contains "workspace" token -> workspace root
-      3. Command contains "agent" token (but not "workspace") -> agent root
-      4. Default -> agent root
+      2. Command contains "workspace/" or "workspace\" -> workspace root
+      3. Command contains "agent/" or "agent\" -> agent root
+      4. Command starts with "cd workspace" -> workspace root
+      5. Command starts with "cd agent" -> agent root
+      6. Default -> agent root
     """
+    # Check for absolute path tokens in the command
     for token in command.split():
         p = Path(token.strip('"').strip("'"))
         if p.is_absolute():
@@ -92,13 +137,23 @@ def _detect_cwd(command: str) -> Path:
                 return p.parent
 
     cmd_lower = command.lower()
-    if "workspace" in cmd_lower:
+
+    # Check for explicit cd commands
+    if cmd_lower.startswith("cd workspace"):
         return cfg.workspace_root
-    if "agent" in cmd_lower:
+    if cmd_lower.startswith("cd agent"):
         return cfg.agent_root
 
+    # Check for path prefixes
+    if "workspace/" in cmd_lower or "workspace\\" in cmd_lower:
+        return cfg.workspace_root
+    if "agent/" in cmd_lower or "agent\\" in cmd_lower:
+        return cfg.agent_root
+
+    # Default to agent root
     return cfg.agent_root
 
+# ── Shell executor ───────────────────────────────────────────────────────────
 def _shell_exec(command: str) -> str | None:
     """
     Try to execute `command` as a whitelisted shell command.
@@ -177,6 +232,7 @@ def _shell_exec(command: str) -> str | None:
     if cmd_name in _SHELL_AGENT_FALLBACK:
         tool_name, action, param_fn = _SHELL_AGENT_FALLBACK[cmd_name]
         try:
+            from tools.cli_ops.actions import DISPATCH
             params = param_fn(command)
             fallback_result = _safe_dispatch(tool_name, action, params)
             if fallback_result and not fallback_result.startswith("Unknown command"):
@@ -186,6 +242,7 @@ def _shell_exec(command: str) -> str | None:
 
     return shell_error
 
+# ── Safe dispatch ─────────────────────────────────────────────────────────────
 def _safe_dispatch(tool_name: str, action: str, params: dict) -> str:
     """Look up tool_name:action in whitelist and execute. Never raises."""
     from tools.cli_ops.actions import DISPATCH

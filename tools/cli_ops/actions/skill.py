@@ -2,6 +2,7 @@
 skill.py — Skill dispatcher proxy for cli meta-tool.
 
 Routes to skills/dispatcher.py skill() function.
+All functions auto-register via @register_action decorator.
 """
 
 from __future__ import annotations
@@ -9,7 +10,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-def _skill_call(domain: str, mode: str, arg: str = "", **extra: Any) -> str:
+from tools.cli_ops.actions._registry import register_action
+
+@register_action("skill", "call")
+def _skill_call(domain: str = "", mode: str = "", arg: str = "", **extra: Any) -> str:
     """
     Route to skills/dispatcher.py skill() function.
 
@@ -21,7 +25,6 @@ def _skill_call(domain: str, mode: str, arg: str = "", **extra: Any) -> str:
     try:
         from skills.dispatcher import skill as _skill_fn
 
-        # Map positional arg to the right kwarg based on mode
         kwargs: dict[str, Any] = {}
         if arg:
             if mode == "query":

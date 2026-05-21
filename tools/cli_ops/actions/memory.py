@@ -2,65 +2,73 @@
 memory.py — Memory tool proxy for cli meta-tool.
 
 Direct ChromaDB access via core/memory.py singleton.
-Mirrors the memory() tool parameter names exactly.
+All functions auto-register via @register_action decorator.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from tools.cli_ops.actions._registry import register_action
+
 def _mem():
     """Lazy import of ChromaDB store."""
     from core.memory import memory as _store
     return _store
 
-def _memory(action: str, **kw: Any) -> str:
-    """Proxy to memory store with formatted output."""
+@register_action("memory", "recall")
+def _memory_recall(query: str = "", top_k: int = 5, collections: list = None, min_score: float = 0.5, tags_filter: str = "") -> str:
+    """Recall memories from ChromaDB."""
     store = _mem()
-
     try:
-        if action == "recall":
-            results = store.recall(
-                query=kw.get("query", ""),
-                top_k=kw.get("top_k", 5),
-                collections=kw.get("collections"),
-                min_score=kw.get("min_score", 0.5),
-                tags_filter=kw.get("tags_filter", ""),
-            )
-            if not results:
-                return "No memories found."
-            return "\n".join(
-                f"[{r.get('collection','?')}] score={r.get('score',0):.1f} | "
-                f"{r.get('text', r.get('document',''))[:120]}..."
-                for r in results[:5]
-            )
+        results = store.recall(
+            query=query,
+            top_k=top_k,
+            collections=collections,
+            min_score=min_score,
+            tags_filter=tags_filter,
+        )
+        if not results:
+            return "No memories found."
+        return "\n".join(
+            f"[{r.get('collection','?')}] score={r.get('score',0):.1f} | "
+            f"{r.get('text', r.get('document',''))[:120]}..."
+            for r in results[:5]
+        )
+    except Exception as e:
+        return f"Memory error: {e}"
 
-        if action == "store":
-            mem_type = kw.get("memory_type", "semantic")
-            text = kw.get("text", "")
-            importance = kw.get("importance", 5)
-            tags = kw.get("tags", "")
-            if mem_type == "episodic":
-                store.store_episodic(
-                    text, importance=importance,
-                    goal=kw.get("goal",""), outcome=kw.get("outcome","unknown"),
-                    tools_used=kw.get("tools_used",""), trace_id=kw.get("trace_id","")
-                )
-            elif mem_type == "procedural":
-                store.store_procedural(text, importance=importance, tags=tags)
-            else:
-                store.store_semantic(text, importance=importance, tags=tags)
-            return f"Stored ({mem_type}, importance={importance})."
+@register_action("memory", "store")
+def _memory_store(text: str = "", memory_type: str = "semantic", importance: int = 5, tags: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", trace_id: str = "") -> str:
+    """Store memory in ChromaDB."""
+    store = _mem()
+    try:
+        if memory_type == "episodic":
+            store.store_episodic(text, importance=importance, goal=goal, outcome=outcome, tools_used=tools_used, trace_id=trace_id)
+        elif memory_type == "procedural":
+            store.store_procedural(text, importance=importance, tags=tags)
+        else:
+            store.store_semantic(text, importance=importance, tags=tags)
+        return f"Stored ({memory_type}, importance={importance})."
+    except Exception as e:
+        return f"Memory error: {e}"
 
-        if action == "stats":
-            stats = store.get_stats()
-            return "\n".join(f"{col}: {cnt} entries" for col, cnt in stats.items())
+@register_action("memory", "stats")
+def _memory_stats() -> str:
+    """Get memory statistics."""
+    store = _mem()
+    try:
+        stats = store.get_stats()
+        return "\n".join(f"{col}: {cnt} entries" for col, cnt in stats.items())
+    except Exception as e:
+        return f"Memory error: {e}"
 
-        if action == "prune":
-            removed = store.prune()
-            return f"Pruned {removed} low-score memories."
-
-        return f"Unknown memory action '{action}'. Use: recall | store | stats | prune"
-
+@register_action("memory", "prune")
+def _memory_prune() -> str:
+    """Prune low-score memories."""
+    store = _mem()
+    try:
+        removed = store.prune()
+        return f"Pruned {removed} low-score memories."
     except Exception as e:
         return f"Memory error: {e}"

@@ -2,12 +2,18 @@
 web.py — Web tool proxy for cli meta-tool.
 
 Lazy imports web tool and normalizes dict output to human-readable strings.
+All functions auto-register via @register_action decorator.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from tools.cli_ops.actions._registry import register_action
+
+@register_action("web", "search")
+@register_action("web", "scrape")
+@register_action("web", "read")
 def _web(action: str, **kw: Any) -> str:
     """Proxy to tools/web.py with formatted output."""
     from tools.web import web

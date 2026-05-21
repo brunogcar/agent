@@ -41,11 +41,6 @@ NAMING CONVENTION
 -----------------
 Internal dispatch uses `tool_name` (never `tool`) to avoid shadowing the
 `tool` decorator from registry.
-
-WORKING DIRECTORY
------------------
-Shell commands default to cfg.agent_root.
-Commands that look like workspace operations (copy to workspace/, etc.) auto-detect.
 """
 
 from __future__ import annotations
@@ -54,13 +49,9 @@ from registry import tool
 from core.config import cfg
 
 # Import from cli_ops package
-from tools.cli_ops.helpers import _detect_cwd, _shell_exec, _safe_dispatch
+from tools.cli_ops.helpers import _sanitize_command, _detect_cwd, _shell_exec, _safe_dispatch
 from tools.cli_ops.patterns import _match_pattern
 from tools.cli_ops.router import _call_router
-from tools.cli_ops.actions import (
-    _lms_ls, _lms_ps, _lms_load, _lms_unload, _lms_log,
-    _file, _git, _web, _memory, _python, _notify, _skill_call
-)
 
 @tool
 def cli(command: str) -> str:
@@ -79,6 +70,12 @@ def cli(command: str) -> str:
     Returns:
         Command output or result as string
     """
+    # Sanitize input first
+    try:
+        command = _sanitize_command(command)
+    except ValueError as e:
+        return f"Invalid command: {e}"
+
     # Layer 1: Pattern matching (zero tokens)
     result = _match_pattern(command)
     if result is not None:
