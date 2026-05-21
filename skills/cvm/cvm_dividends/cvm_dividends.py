@@ -62,133 +62,39 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
+# ── Shared imports from parent modules (single source of truth)
+# DECISION: No inline copies -- single source of truth in parent helpers.
+from skills.cvm._db import connect_rapina as _connect_rapina, cnpj_digits as _cnpj
+from skills.cvm._bridge import resolve_company as _resolve_company, looks_like_ticker as _looks_like_ticker
 
-# ── DB path helpers ───────────────────────────────────────────────────────────
 
-def _db_path() -> Path:
-    """Return path to rapina.db. Searches via MEMORY_ROOT env or walks up."""
-    import os
-    memory_root = os.getenv("MEMORY_ROOT", "")
-    if memory_root:
-        candidate = Path(memory_root) / "cvm" / "rapina.db"
-        if candidate.exists():
-            return candidate
-    here = Path(__file__).resolve().parent
-    for _ in range(6):
-        for sub in ("memory_db/cvm/rapina.db", "rapina.db"):
-            candidate = here / sub
-            if candidate.exists():
-                return candidate
-        here = here.parent
-    raise FileNotFoundError(
-        "rapina.db not found. Set MEMORY_ROOT env var to point to memory_db/."
-    )
-
+# ── DB connection ─────────────────────────────────────────────────────────────
+# Shared helpers imported from skills/cvm/_db.py and skills/cvm/_bridge.py
 
 def _connect() -> sqlite3.Connection:
-    """Open rapina.db read-only."""
-    path = _db_path()
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open rapina.db read-only. Wraps _db.connect_rapina() for local use."""
+    return _connect_rapina()
 
 
 # ── Company resolution (bridge-aware) ─────────────────────────────────────────
-
-def _looks_like_ticker(s: str) -> bool:
-    """
-    Heuristic: does this string look like a B3 ticker?
-    Pattern: 4 uppercase letters + 1-2 digits + optional F
-    Examples: PETR4, VALE3, ITUB4, BBAS3, TAEE11, PETR4F
-
-    DECISION: Use this check before attempting bridge lookup so we don't
-    waste a bridge query on "PETROBRAS S.A." or "33000167000101".
-    """
-    return bool(re.match(r"^[A-Z]{4}\d{1,2}F?$", s.upper().strip()))
-
-
-def _resolve_via_bridge(ticker: str) -> Optional[tuple[list[int], str]]:
-    """
-    Try to resolve a B3 ticker via bridge.db.
-
-    Returns (rapina_ids, denom_social) if found, None otherwise.
-
-    DECISION: Import bridge lazily so cvm_dividends still works if
-    b3_cvm skill is not installed (bridge is an enhancement, not a hard dep).
-    The caller (_resolve_company) handles the None case by falling back
-    to name-based rapina.db search.
-    """
-    try:
-        from skills.b3.b3_cvm.b3_cvm import resolve_by_ticker
-        result = resolve_by_ticker(ticker)
-        if result and result.get("rapina_ids"):
-            return result["rapina_ids"], result.get("denom_social", ticker)
-        # Bridge found ticker but no rapina_ids -> company not in rapina
-        # Return empty list with the CVM name so we can give a better message
-        if result:
-            return [], result.get("denom_social", ticker)
-    except ImportError:
-        # b3_cvm skill not installed -- silent fallback
-        pass
-    except Exception:
-        # bridge.db not synced, corrupted, etc. -- silent fallback
-        pass
-    return None
-
 
 def _resolve_company(
     conn: sqlite3.Connection,
     ticker_or_name: str,
 ) -> tuple[list[int], str]:
-    """
-    Resolve a company identifier to (rapina_ids, canonical_name).
+    """Resolve a company identifier to (rapina_ids, canonical_name).
 
+    Uses the imported resolve_company() from skills.cvm._bridge.
+    
     Resolution order:
       1. If looks like a B3 ticker -> try bridge.db first (fast, reliable)
       2. If 14-digit CNPJ -> direct rapina.db query
       3. Name fragment -> LIKE search in rapina.db empresas.nome
 
     Returns ([], "") if not found.
-
-    WHY THIS ORDER:
-      Tickers are the most common input from users ("give me PETR4 dividends").
-      rapina.db has no ticker column, so the bridge is the only reliable path.
-      CNPJ is the universal key and never needs bridge.
-      Name search is the final fallback for manual/script use.
     """
-    s = ticker_or_name.strip()
-
-    # Path 1: B3 ticker -> bridge
-    if _looks_like_ticker(s):
-        bridge_result = _resolve_via_bridge(s.upper())
-        if bridge_result is not None:
-            ids, name = bridge_result
-            return ids, name
-        # Bridge not available or ticker not found -> fall through to name search
-        # This means "PETR4" will try name matching "PETR4" in rapina which
-        # will likely fail, but gives a clearer error than silent empty result.
-
-    # Path 2: CNPJ (14 digits after stripping non-digits)
-    digits_only = re.sub(r"\D", "", s)
-    if len(digits_only) == 14:
-        rows = conn.execute(
-            "SELECT DISTINCT id, nome FROM empresas "
-            "WHERE cnpj = ? ORDER BY id",
-            (digits_only,),
-        ).fetchall()
-        if rows:
-            return [r["id"] for r in rows], rows[0]["nome"]
-
-    # Path 3: Name LIKE search (case-insensitive)
-    rows = conn.execute(
-        "SELECT DISTINCT id, nome FROM empresas "
-        "WHERE upper(nome) LIKE ? ORDER BY id",
-        (f"%{s.upper()}%",),
-    ).fetchall()
-    if rows:
-        return [r["id"] for r in rows], rows[0]["nome"]
-
-    return [], ""
+    # Delegate to shared implementation from skills.cvm._bridge
+    return _resolve_company(conn, ticker_or_name)
 
 
 # ── Mode: annual (DVA 7.08.04.*) ─────────────────────────────────────────────
@@ -214,7 +120,7 @@ def _mode_annual(
     if not ids:
         return "Empresa nao encontrada no banco de dados rapina."
 
-    placeholders = ",".join("?" * len(ids))
+    placeholders = ",".join("?") * len(ids)
     sql = f"""
         SELECT
             dt_refer,
@@ -293,7 +199,7 @@ def _mode_cash_paid(
     if not ids:
         return "Empresa nao encontrada."
 
-    placeholders = ",".join("?" * len(ids))
+    placeholders = ",".join("?") * len(ids)
     sql = f"""
         SELECT
             dt_refer,
@@ -384,7 +290,7 @@ def _mode_declared(
     if not ids:
         return "Empresa nao encontrada."
 
-    placeholders = ",".join("?" * len(ids))
+    placeholders = ",".join("?") * len(ids)
 
     # Primary query: known exact codes
     sql = f"""
@@ -491,7 +397,7 @@ def _mode_status(
     if not ids:
         return "Empresa nao encontrada no banco de dados rapina."
 
-    placeholders = ",".join("?" * len(ids))
+    placeholders = ",".join("?") * len(ids)
 
     def _latest(code: str, annual_only: bool = False) -> tuple[str, float]:
         """Return (dt_refer, abs_value) for most recent row with given code."""
@@ -513,7 +419,7 @@ def _mode_status(
 
     # DVA annual -- declared
     dva_date,  dva_total = _latest("7.08.04",    annual_only=True)
-    _,         dva_jcp   = _latest("7.08.04.01", annual_only=True)
+    _,         dwa_jcp   = _latest("7.08.04.01", annual_only=True)
     _,         dva_div   = _latest("7.08.04.02", annual_only=True)
 
     # DFC -- cash paid (most recent period, could be quarterly)
@@ -531,11 +437,11 @@ def _mode_status(
     if dva_date:
         payout_str = ""
         if dva_total:
-            payout = (dva_jcp + dva_div) / abs(dva_total) * 100
-            payout_str = f"  Payout ratio            : {payout:.1f}%\n"
+            payout = (dwa_jcp + dva_div) / abs(dva_total) * 100
+            payout_str = f"  Payout ratio            : {payout:.1f}%%\n"
         lines.append(f"[DVA] Ultimo exercicio anual: {dva_date[:4]}")
         lines.append(f"  Total Capitais Proprios : R$ {dva_total/1e9:.3f} bi")
-        lines.append(f"  JCP declarado           : R$ {dva_jcp/1e9:.3f} bi")
+        lines.append(f"  JCP declarado           : R$ {dwa_jcp/1e9:.3f} bi")
         lines.append(f"  Dividendos declarados   : R$ {dva_div/1e9:.3f} bi")
         if payout_str:
             lines.append(payout_str.rstrip())
@@ -615,18 +521,8 @@ def cvm_dividends(
         if not ids:
             # Give a helpful error distinguishing ticker-not-in-bridge from
             # company-genuinely-not-found
-            if _looks_like_ticker(ticker):
-                hint = (
-                    f" Dica: execute skill(domain='b3_cvm', mode='sync') para "
-                    f"sincronizar o bridge, ou use o nome CVM: "
-                    f"skill(domain='cvm_dividends', ticker='PETROBRAS')."
-                )
-            else:
-                hint = (
-                    " Use o nome CVM oficial, CNPJ (14 digitos), "
-                    "ou ticker B3 (requer bridge sincronizado)."
-                )
-            msg = f"Empresa '{ticker}' nao encontrada em rapina.db.{hint}"
+            from skills.cvm._bridge import not_found_message
+            msg = not_found_message(ticker)
             return {
                 "status": "not_found",
                 "error":  msg,

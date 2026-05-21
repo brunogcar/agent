@@ -59,114 +59,17 @@ from pathlib import Path
 from typing import Optional
 
 
-# ── DB path helpers ───────────────────────────────────────────────────────────
-# DECISION: Same pattern as cvm_dividends._db_path() so both skills find
-# rapina.db using the same search logic. If MEMORY_ROOT is set, that wins.
-# Otherwise walk up directory tree looking for memory_db/cvm/rapina.db.
+# ── DB connection + resolution (shared helpers) ───────────────────────────────
+# DECISION: Import from skills/cvm/_db.py and skills/cvm/_bridge.py.
+# No inline copies -- one place to fix if resolution logic changes.
 
-def _db_path() -> Path:
-    import os
-    memory_root = os.getenv("MEMORY_ROOT", "")
-    if memory_root:
-        candidate = Path(memory_root) / "cvm" / "rapina.db"
-        if candidate.exists():
-            return candidate
-    here = Path(__file__).resolve().parent
-    for _ in range(6):
-        for sub in ("memory_db/cvm/rapina.db", "rapina.db"):
-            candidate = here / sub
-            if candidate.exists():
-                return candidate
-        here = here.parent
-    raise FileNotFoundError(
-        "rapina.db not found. Set MEMORY_ROOT env var to point to memory_db/."
-    )
+from skills.cvm._db import connect_rapina as _connect_rapina
+from skills.cvm._bridge import resolve_company as _resolve_company, looks_like_ticker as _looks_like_ticker
 
 
 def _connect() -> sqlite3.Connection:
-    path = _db_path()
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-# ── Company resolution (bridge-aware) ─────────────────────────────────────────
-# DECISION: Exact same resolution logic as cvm_dividends._resolve_company().
-# We deliberately duplicate (not import) this logic because:
-#   a) The two skills are independently deployable
-#   b) Avoids a circular import chain (both import from b3_cvm)
-#   c) Each skill can evolve its resolution logic independently
-# The shared pattern is: ticker -> bridge -> (ids, name), then CNPJ, then name.
-
-def _looks_like_ticker(s: str) -> bool:
-    """B3 ticker heuristic: 4 letters + 1-2 digits + optional F. e.g. PETR4, TAEE11."""
-    return bool(re.match(r"^[A-Z]{4}\d{1,2}F?$", s.upper().strip()))
-
-
-def _resolve_via_bridge(ticker: str) -> Optional[tuple[list[int], str]]:
-    """
-    Try bridge.db for ticker -> (rapina_ids, company_name).
-    Returns None if bridge unavailable or ticker not found.
-    Silent on all errors -- bridge is optional enhancement.
-    """
-    try:
-        from skills.b3.b3_cvm.b3_cvm import resolve_by_ticker
-        result = resolve_by_ticker(ticker)
-        if result and result.get("rapina_ids"):
-            return result["rapina_ids"], result.get("denom_social", ticker)
-        if result:
-            # Ticker found in bridge but no rapina data (not in rapina.db)
-            return [], result.get("denom_social", ticker)
-    except ImportError:
-        pass  # b3_cvm not installed
-    except Exception:
-        pass  # bridge.db not synced, locked, etc.
-    return None
-
-
-def _resolve_company(
-    conn: sqlite3.Connection,
-    ticker_or_name: str,
-) -> tuple[list[int], str]:
-    """
-    Resolve company identifier to (rapina_ids, canonical_name).
-
-    Resolution order:
-      1. B3 ticker pattern -> bridge.db (fast, no name ambiguity)
-      2. 14-digit CNPJ -> direct rapina.db query
-      3. Name fragment -> LIKE search in rapina.db empresas.nome
-
-    Returns ([], "") if not found at any step.
-    """
-    s = ticker_or_name.strip()
-
-    # Path 1: ticker -> bridge
-    if _looks_like_ticker(s):
-        bridge_result = _resolve_via_bridge(s.upper())
-        if bridge_result is not None:
-            return bridge_result
-
-    # Path 2: CNPJ
-    digits_only = re.sub(r"\D", "", s)
-    if len(digits_only) == 14:
-        rows = conn.execute(
-            "SELECT DISTINCT id, nome FROM empresas "
-            "WHERE cnpj = ? ORDER BY id",
-            (digits_only,),
-        ).fetchall()
-        if rows:
-            return [r["id"] for r in rows], rows[0]["nome"]
-
-    # Path 3: name LIKE
-    rows = conn.execute(
-        "SELECT DISTINCT id, nome FROM empresas "
-        "WHERE upper(nome) LIKE ? ORDER BY id",
-        (f"%{s.upper()}%",),
-    ).fetchall()
-    if rows:
-        return [r["id"] for r in rows], rows[0]["nome"]
-
-    return [], ""
+    """Open rapina.db read-only. Wraps _db.connect_rapina() for local use."""
+    return _connect_rapina()
 
 
 # ── Mode: equity_structure (BPP 2.03.*) ──────────────────────────────────────
@@ -518,17 +421,8 @@ def cvm_shareholders(
         ids, company_name = _resolve_company(conn, ticker)
 
         if not ids:
-            if _looks_like_ticker(ticker):
-                hint = (
-                    f" Dica: execute skill(domain='b3_cvm', mode='sync') para "
-                    f"sincronizar o bridge ticker->CNPJ, ou use o nome CVM diretamente."
-                )
-            else:
-                hint = (
-                    " Use o nome CVM oficial, CNPJ (14 digitos), "
-                    "ou ticker B3 (requer bridge sincronizado)."
-                )
-            msg = f"Empresa '{ticker}' nao encontrada em rapina.db.{hint}"
+            from skills.cvm._bridge import not_found_message
+            msg = not_found_message(ticker)
             return {
                 "status": "not_found",
                 "error":  msg,

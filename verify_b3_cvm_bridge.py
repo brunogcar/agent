@@ -44,19 +44,20 @@ section("0. Import check")
 try:
     from skills.b3.b3_cvm.b3_cvm import (
         mode_sync, mode_status, mode_lookup, mode_resolve, mode_tickers,
-        resolve_by_ticker, resolve_by_cnpj, resolve_by_cd_cvm, is_ticker,
+        resolve_by_ticker, resolve_by_cnpj, resolve_by_cd_cvm,
     )
-    print("  [PASS] skills.b3.b3_cvm.b3_cvm imported OK")
+    from skills.cvm._bridge import looks_like_ticker
+    print("  [PASS] b3_cvm + _bridge imported OK")
 except ImportError as e:
     print(f"  [FAIL] FATAL: {e}"); sys.exit(1)
 
-# ── 1. is_ticker heuristic ────────────────────────────────────────────────────
-section("1. is_ticker() heuristic")
+# ── 1. looks_like_ticker heuristic ───────────────────────────────────────────
+section("1. looks_like_ticker() heuristic")
 for s, expected in [
     ("PETR4", True), ("VALE3", True), ("TAEE11", True), ("PETR4F", True),
     ("PETROBRAS", False), ("33000167000101", False), ("ABCD", False), ("petr4", True),
 ]:
-    check(f"is_ticker({s!r})=={expected}", is_ticker(s)==expected, f"got {is_ticker(s)}")
+    check(f"looks_like_ticker({s!r})=={expected}", looks_like_ticker(s)==expected, f"got {looks_like_ticker(s)}")
 
 # ── 2. Bridge sync ────────────────────────────────────────────────────────────
 if NO_SYNC:
@@ -65,12 +66,13 @@ else:
     section("2. Bridge sync (downloads B3 ISIN ZIP + CVM CSV)")
     print("  Running mode_sync()...")
     sync_result = mode_sync()
-    check("sync status==success", sync_result.get("status")=="success", sync_result.get("error",""))
-    check("B3 rows > 1000",       sync_result.get("b3_rows",0) > 1000,    f"got {sync_result.get('b3_rows',0)}")
-    check("CVM rows > 100",       sync_result.get("cvm_rows",0) > 100,    f"got {sync_result.get('cvm_rows',0)}")
-    check("bridge_total > 1000",  sync_result.get("bridge_total",0) > 1000, f"got {sync_result.get('bridge_total',0)}")
-    check("B3+CVM matches > 100", sync_result.get("with_cvm",0) > 100,    f"got {sync_result.get('with_cvm',0)} -- CNPJ col missing if 0")
-    check("B3+rapina > 0",        sync_result.get("with_rapina",0) > 0,   f"got {sync_result.get('with_rapina',0)}")
+    check("sync status==success",    sync_result.get("status")=="success",      sync_result.get("error",""))
+    check("instruments rows > 100",  sync_result.get("instruments",0) > 100,   f"got {sync_result.get('instruments',0)}")
+    check("isin_cnpj index > 1000",  sync_result.get("isin_cnpj",0) > 1000,   f"got {sync_result.get('isin_cnpj',0)}")
+    check("CVM rows > 100",          sync_result.get("cvm_rows",0) > 100,      f"got {sync_result.get('cvm_rows',0)}")
+    check("bridge_total > 100",      sync_result.get("bridge_total",0) > 100,  f"got {sync_result.get('bridge_total',0)}")
+    check("with_cvm > 100",          sync_result.get("with_cvm",0) > 100,      f"got {sync_result.get('with_cvm',0)}")
+    check("with_rapina > 0",         sync_result.get("with_rapina",0) > 0,     f"got {sync_result.get('with_rapina',0)}")
     if sync_result.get("status") == "success":
         print(f"\n  Sync summary:")
         for line in sync_result.get("report","").splitlines(): print(f"    {line}")
@@ -81,7 +83,11 @@ r = mode_status()
 check("status in ok/not_synced", r.get("status") in ("ok","not_synced"), r.get("error",""))
 if r.get("status") == "ok":
     for line in r.get("report","").splitlines(): print(f"    {line}")
-bridge_has_data = r.get("status") == "ok" and r.get("with_cvm",0) > 0
+bridge_has_data = r.get("status") == "ok" and r.get("with_cvm", 0) > 0
+if bridge_has_data:
+    print(f"    Bridge has CVM data -- lookup tests will run")
+else:
+    print(f"    Bridge has no CVM data yet -- run without --no-sync to populate")
 
 # ── 4. Ticker lookup ──────────────────────────────────────────────────────────
 if not bridge_has_data:
