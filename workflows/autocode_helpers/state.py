@@ -42,7 +42,7 @@ class AutocodeState(TypedDict, total=False):
 
     # Brainstorm/Plan
     brainstorm_notes: str
-    plan: dict
+    plan: list[dict]
     plan_accepted: bool
 
     # TDD loop
@@ -90,6 +90,7 @@ def _default_state(
     files: dict[str, str] = None,
     mode: str = "",
     target_file: str = "",
+    dry_run: bool = False,
 ) -> dict:
     """Create a default state dictionary."""
     return {
@@ -98,10 +99,10 @@ def _default_state(
         "mode": mode,
         "target_file": target_file,
         "trace_id": "",
-        "dry_run": False,
+        "dry_run": dry_run,
         "task_type": "",
         "brainstorm_notes": "",
-        "plan": {},
+        "plan": [],  # [FIX] Must be a list for TDD step indexing
         "plan_accepted": False,
         "spec": "",
         "tdd_iteration": 0,

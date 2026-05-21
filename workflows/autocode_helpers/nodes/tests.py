@@ -16,8 +16,10 @@ def node_write_tests(state: AutocodeState) -> AutocodeState:
         return state
 
     plan = state.get("plan", [])
+    if not isinstance(plan, list):  # [SAFETY] Prevent KeyError if plan was overwritten
+        plan = []
     idx  = state.get("current_step", 0)
-    if idx >= len(plan) or plan[idx]["label"] != "write_tests":
+    if idx  >= len(plan) or plan[idx].get("label") != "write_tests":
         return state
 
     step = plan[idx]

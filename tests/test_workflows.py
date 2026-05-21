@@ -7,9 +7,8 @@ Tests:
   - WorkflowState TypedDict structure
   - node_done sets status=success
   - node_error sets status=failed with non-empty message
+  - Autocode routing logic (Updated for split architecture)
   - Protected file check in config
-  - Autocode routing logic (updated for split architecture)
-  - Autocode workflow integration
 """
 from __future__ import annotations
 
