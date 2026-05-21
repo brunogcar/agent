@@ -80,6 +80,10 @@ playwright install chromium
 pytest>=7.4.0
 pytest-env>=1.0.0
 
+# ── Monitoring & Metrics ──────────────────────────────────────────────────────
+prometheus_client>=0.20.0
+slowapi>=0.1.9
+
 # ── Static analysis (autocode quality gate) ───────────────────────────────────
 ruff              # fast Python linter, runs in autocode test phase
 
