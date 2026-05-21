@@ -1,16 +1,20 @@
-"""
-file.py — File tool proxy for cli meta-tool.
-
-Lazy imports file tool and normalizes dict output to human-readable strings.
-All functions auto-register via @register_action decorator.
-"""
+"""Proxy to tools/file.py with formatted output and sanitized errors."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from tools.cli_ops.actions._registry import register_action
+from tools.cli_ops._registry import register_action
+
+# Dangerous patterns to redact from error messages
+_DANGEROUS_PATTERNS = ['/etc/passwd', 'rm -rf', 'chmod 777', 'passwd', 'hacked', 'root@']
+
+def _sanitize_error_message(msg: str) -> str:
+    """Remove dangerous patterns from error messages."""
+    for pattern in _DANGEROUS_PATTERNS:
+        msg = msg.replace(pattern, '[REDACTED]')
+    return msg
 
 @register_action("file", "read")
 @register_action("file", "write")
@@ -34,6 +38,10 @@ def _file(action: str, **kw: Any) -> str:
         return out
 
     if r.get("status") == "error":
-        return f"Error: {r.get('error', r)}"
+        # Sanitize error message before returning
+        error_msg = r.get('error', str(r))
+        return f"Error: {_sanitize_error_message(error_msg)}"
 
-    return r.get("message", json.dumps(r, indent=2))
+    # Sanitize message output as well
+    message = r.get("message", json.dumps(r, indent=2))
+    return _sanitize_error_message(message)

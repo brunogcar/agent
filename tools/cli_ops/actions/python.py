@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.cli_ops.actions._registry import register_action
+from tools.cli_ops._registry import register_action
 
 @register_action("python", "run")
 @register_action("python", "calc")

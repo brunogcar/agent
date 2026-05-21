@@ -51,7 +51,7 @@ from core.config import cfg
 # Import from cli_ops package
 from tools.cli_ops.helpers import _sanitize_command, _detect_cwd, _shell_exec, _safe_dispatch
 from tools.cli_ops.patterns import _match_pattern
-from tools.cli_ops.router import _call_router
+from tools.cli_ops import router
 
 @tool
 def cli(command: str) -> str:
@@ -83,12 +83,18 @@ def cli(command: str) -> str:
         return _safe_dispatch(tool_name, action, params)
 
     # Layer 2: Shell whitelist (zero tokens)
-    result = _shell_exec(command)
-    if result is not None:
-        return result
+    SHELL_WHITELIST = {
+        "python --version",
+        "git --version",
+        "ls",
+        "pwd",
+        "whoami",
+    }
+    if command in SHELL_WHITELIST:
+        return _shell_exec(command)
 
     # Layer 3: Router dispatch
-    result = _call_router(command)
+    result = router._call_router(command)
     if result is not None:
         if result.get("route") == "dispatch":
             return _safe_dispatch(

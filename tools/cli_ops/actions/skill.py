@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from tools.cli_ops.actions._registry import register_action
+from tools.cli_ops._registry import register_action
 
 @register_action("skill", "call")
 def _skill_call(domain: str = "", mode: str = "", arg: str = "", **extra: Any) -> str:

@@ -11,8 +11,7 @@ import json
 from core.config import cfg
 
 # Router system prompt
-_ROUTER_SYSTEM = """\
-You are a command router for an MCP agent. Given a natural-language command,
+_ROUTER_SYSTEM = """You are a command router for an MCP agent. Given a natural-language command,
 decide ONE of two things:
 
 Option A — the command maps to a simple tool call:
@@ -26,11 +25,10 @@ Use Option A for: status checks, reads, searches, single-step writes, calculatio
 Use Option B for: multi-step tasks, code generation, analysis, research, anything
   that requires reasoning or multiple tool calls to complete.
 
-Output ONLY valid JSON. No explanation, no markdown.\"\""
+Output ONLY valid JSON. No explanation, no markdown."""
 
 def _call_router(command: str) -> dict | None:
-    """
-    Send command to Router model for classification.
+    """Send command to Router model for classification.
 
     Returns:
         dict with 'route' key ('dispatch' or 'escalate')

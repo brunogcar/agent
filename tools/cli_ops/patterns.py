@@ -25,17 +25,17 @@ _PATTERNS = [
     (r"^git\s+rollback\s+--?force$",     "git",     "rollback", lambda m: {"force": True}),
     (r"^git\s+rollback$",                "git",     "rollback", lambda m: {}),
 
+    # Web operations - MOVED BEFORE FILE
+    (r"^search\s+(.+)",                  "web",     "search",   lambda m: {"query": m.group(1).strip()}),
+    (r"^scrape\s+(https?://\S+)",        "web",     "scrape",   lambda m: {"url": m.group(1).strip()}),
+    (r"^read\s+(https?://\S+)",          "web",     "read",     lambda m: {"url": m.group(1).strip()}),
+
     # File operations
     (r"^(?:read|cat|show)\s+(.+)",       "file",    "read",     lambda m: {"path": m.group(1).strip()}),
     (r"^(?:ls|list)\s*(.*)",             "file",    "list",     lambda m: {"path": m.group(1).strip() or "."}),
     (r"^write\s+(\S+)\s+(.+)",           "file",    "write",    lambda m: {"path": m.group(1), "content": m.group(2)}),
     (r"^(?:find|grep)\s+(.+)",           "file",    "search",   lambda m: {"query": m.group(1).strip()}),
     (r"^backup\s+(\S+)",                "file",    "backup",   lambda m: {"path": m.group(1).strip()}),
-
-    # Web operations
-    (r"^search\s+(.+)",                  "web",     "search",   lambda m: {"query": m.group(1).strip()}),
-    (r"^scrape\s+(https?://\S+)",        "web",     "scrape",   lambda m: {"url": m.group(1).strip()}),
-    (r"^read\s+(https?://\S+)",          "web",     "read",     lambda m: {"url": m.group(1).strip()}),
 
     # Memory operations
     (r"^recall\s+(.+)",                  "memory",  "recall",   lambda m: {"query": m.group(1).strip()}),
@@ -46,8 +46,9 @@ _PATTERNS = [
     # Python operations
     (r"^calc\s+(.+)",                    "python",  "calc",     lambda m: {"code": m.group(1).strip()}),
     (r"^(?:run|exec)\s+(.+)",            "python",  "run",      lambda m: {"code": m.group(1).strip()}),
-    (r'echo\s+"([^"]+)"',              "python",  "run",      lambda m: {"code": f'print({m.group(1)!r})'}),
-    (r"echo\s+'([^']+)'",             "python",  "run",      lambda m: {"code": f'print({m.group(1)!r})'}),
+    # FIXED: Use double quotes in output for double-quoted input
+    (r'echo\s+"([^"]+)"',                "python",  "run",      lambda m: {"code": f'print("{m.group(1)}")'}),
+    (r"echo\s+'([^']+)'",               "python",  "run",      lambda m: {"code": f"print('{m.group(1)}')"}),  # FIXED: use single quotes
     (r"^echo\s+(.*)",                   "python",  "run",      lambda m: {"code": f'print({m.group(1).strip()!r})'}),
 
     # Notify

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import requests
 
-from tools.cli_ops.actions._registry import register_action
+from tools.cli_ops._registry import register_action
 
 _LMS = "http://localhost:1234"
 

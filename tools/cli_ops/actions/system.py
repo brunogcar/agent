@@ -6,7 +6,7 @@ All functions auto-register via @register_action decorator.
 
 from __future__ import annotations
 
-from tools.cli_ops.actions._registry import register_action
+from tools.cli_ops._registry import register_action
 
 @register_action("system", "health")
 def _system_health() -> str:
