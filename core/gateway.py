@@ -474,6 +474,33 @@ def create_app():
             ]
         }
 
+    @app.get("/metrics")
+    def metrics_endpoint(_: None = Depends(_check_auth)):
+        """
+        GET /metrics -- Prometheus telemetry endpoint.
+        Returns standard Prometheus text/plain metrics for autocode nodes,
+        task outcomes, TDD iterations, and LLM token usage.
+        Auth: Bearer token (GATEWAY_SECRET).
+        """
+        from fastapi import Response
+        from core.metrics import generate_metrics, get_content_type
+        return Response(content=generate_metrics(), media_type=get_content_type())
+
+    @app.get("/autocode/graph")
+    def autocode_graph(_: None = Depends(_check_auth)):
+        """
+        GET /autocode/graph -- Mermaid flowchart of the autocode state machine.
+        Dynamically extracts nodes & routing from the LangGraph definition.
+        Useful for debugging routing loops or documenting workflow structure.
+        Auth: Bearer token (GATEWAY_SECRET).
+        """
+        from fastapi import Response
+        from workflows.autocode_helpers.graph import build_graph
+        from workflows.autocode_helpers.mermaid import export_mermaid
+        graph = build_graph()
+        mermaid = export_mermaid(graph)
+        return Response(content=mermaid, media_type="text/plain")
+
     @app.get("/memory/stats")
     def memory_stats(_: None = Depends(_check_auth)):
         from core.memory import memory
