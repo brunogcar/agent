@@ -2,22 +2,21 @@
 core/llm.py - Unified LLM client with provider abstraction.
 
 Design goals:
-  1. Single call site for ALL model interactions - nothing else calls requests directly
-  2. Provider abstraction from day one - adding DeepSeek/Claude/Groq later
-     requires only a new Provider class, zero changes to callers
-  3. Role-based dispatch - callers say "executor" not the raw model string from .env
-  4. Per-role timeouts enforced here, not scattered across tool files
-  5. Structured output support - request JSON, get a parsed dict back
-  6. Full trace integration - every call logged with trace_id
+  - Single call site for ALL model interactions - nothing else calls requests directly
+  - Provider abstraction from day one - adding DeepSeek/Claude/Groq later
+    requires only a new Provider class, zero changes to callers
+  - Role-based dispatch - callers say "executor" not the raw model string from .env
+  - Per-role timeouts enforced here, not scattered across tool files
+  - Structured output support - request JSON, get a parsed dict back
+  - Full trace integration - every call logged with trace_id
 
 BUG FIX: DeepSeek analysis applied 2026-05-14 (see git commit message for details):
   - close_clients() broken AttributeError → Fixed: singleton client pattern
-  - _make_client timeout no-op → Fixed: concurrent.futures implementation  
+  - _make_client timeout no-op → Fixed: concurrent.futures implementation
   - CircuitBreaker HALF_OPEN state gaps → Fixed: proper state transitions
 
 Usage:
     from core.llm import llm
-
     result = llm.complete(
         role   = "executor",
         system = "You are a senior Python developer...",
@@ -29,16 +28,21 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
 import httpx
+
 from core.config import cfg
 from core.tracer import tracer
 
+
 # ── Response dataclass --------------------------------------------------------
+
 @dataclass
 class LLMResponse:
     """Unified response object returned by all LLM calls."""
@@ -47,7 +51,7 @@ class LLMResponse:
     model:    str
     usage:    dict[str, int]
     elapsed:  float
-    parsed:   Optional[dict]  = None
+    parsed:   Optional[Any]  = None
     error:    str             = ""
     ok:       bool            = True
 
@@ -59,15 +63,18 @@ class LLMResponse:
             elapsed=elapsed, error=error, ok=False,
         )
 
+
 # ── Circuit Breaker Pattern (HIG-02 + DeepSeek fix 2026-05-14) ----------------
+
 class CircuitBreaker:
     """
     Thread-safe circuit breaker with state machine: CLOSED → OPEN → HALF_OPEN → CLOSED.
+
     States:
       - CLOSED:   Normal operation. Track failures.
       - OPEN:     Fail fast after threshold failures within timeout_seconds.
       - HALF_OPEN: After timeout, allow test calls to check if service recovered.
-                  Success = CLOSED; Failure = OPEN again.
+                   Success = CLOSED; Failure = OPEN again.
 
     Fixed per DeepSeek analysis (2026-05-14) to enforce half_open_max_calls and proper
     transitions from HALF_OPEN → OPEN on failure. See references:
@@ -148,7 +155,9 @@ class CircuitBreaker:
                 "time_since_last_failure": time_since_failure,
             }
 
+
 # ── Provider abstraction ------------------------------------------------------
+
 class BaseProvider(ABC):
     """
     Abstract LLM provider. Implement this to add a new backend.
@@ -171,23 +180,24 @@ class BaseProvider(ABC):
     def is_available(self) -> bool:
         return True
 
+
 class LMStudioProvider(BaseProvider):
     """
     OpenAI-compatible provider for LM Studio (local).
     Also works with Ollama, vLLM, or any OpenAI-compatible endpoint.
+
     THREAD-SAFETY FIX (P0-4 + DeepSeek 2026-05-14):
       - Original code had broken close_clients() that referenced non-existent self._clients
       - Fixed: singleton httpx.Client per instance with proper cleanup
       - Each thread gets its own client via _local for connection pooling
-
     Reference: httpx GitHub Discussion #1633 confirms singletons are thread-safe.
     """
     name = "lmstudio"
 
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
-        self._client  = None  # Singleton client instance
-        self._lock    = threading.Lock()
+        self._client = None  # Singleton client instance
+        self._lock = threading.Lock()
 
     def _get_client(self) -> httpx.Client:
         """Return (or create) singleton client."""
@@ -204,7 +214,7 @@ class LMStudioProvider(BaseProvider):
     def chat_completion(
         self,
         model:       str,
-        messages:     list[dict],
+        messages:      list[dict],
         temperature: float,
         max_tokens:  int,
         timeout:     int,
@@ -246,12 +256,16 @@ class LMStudioProvider(BaseProvider):
             self._client.close()
             self._client = None
 
+
 # ── Provider registry ---------------------------------------------------------
+
 class ProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, BaseProvider] = {}
+
     def register(self, name: str, provider: BaseProvider) -> None:
         self._providers[name] = provider
+
     def get(self, name: str) -> BaseProvider:
         if name not in self._providers:
             raise KeyError(
@@ -259,10 +273,13 @@ class ProviderRegistry:
                 f"Available: {list(self._providers.keys())}"
             )
         return self._providers[name]
+
     def available(self) -> list[str]:
         return list(self._providers.keys())
 
+
 # ── Role configuration --------------------------------------------------------
+
 @dataclass
 class RoleConfig:
     model:       str
@@ -271,23 +288,23 @@ class RoleConfig:
     temperature: float = 0.2
     max_tokens:  int   = 1024
 
+
 def _build_role_configs() -> dict[str, RoleConfig]:
     roles: dict[str, RoleConfig] = {}
     defaults = {
         "planner":   {"temperature": 0.3, "max_tokens": 2048, "timeout": 90},
         "executor":  {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
         "router":    {"temperature": 0.0, "max_tokens": 512,   "timeout": 15},
-        "vision":    {"temperature": 0.1, "max_tokens": 1024, "timeout": 60},
+        "vision":    {"temperature": 0.1, "max_tokens": 1024,  "timeout": 60},
         "summarize": {"temperature": 0.1, "max_tokens": 512,   "timeout": 60},
         "extract":   {"temperature": 0.0, "max_tokens": 512,   "timeout": 60},
         "classify":  {"temperature": 0.0, "max_tokens": 64,    "timeout": 15},
-        "research":  {"temperature": 0.2, "max_tokens": 1024, "timeout": 120},
+        "research":  {"temperature": 0.2, "max_tokens": 1024,  "timeout": 120},
         "critique":  {"temperature": 0.2, "max_tokens": 768,   "timeout": 90},
-        "analyze":   {"temperature": 0.1, "max_tokens": 1024, "timeout": 90},
-        "code":      {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
+        "analyze":   {"temperature": 0.1, "max_tokens": 1024,  "timeout": 90},
+        "code":      {"temperature": 0.1, "max_tokens": 4096,  "timeout": 120},
         "review":    {"temperature": 0.2, "max_tokens": 768,   "timeout": 90},
     }
-
     executor_model = cfg.model_registry.get("executor", {}).get("model", cfg.executor_model)
 
     for role, d in defaults.items():
@@ -306,6 +323,7 @@ def _build_role_configs() -> dict[str, RoleConfig]:
         )
     return roles
 
+
 # ── Cleanup registration ----------------------------------------------------
 # DeepSeek fix 2026-05-14: Proper atexit cleanup via llm singleton (not class method)
 def _cleanup():
@@ -318,7 +336,9 @@ def _cleanup():
 import atexit as _atex
 _atex.register(_cleanup)
 
+
 # ── LLM client ----------------------------------------------------------------
+
 class LLMClient:
     """
     The single LLM client used by everything in the agent.
@@ -435,7 +455,7 @@ class LLMClient:
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
 
             except Exception as e:
-                elapsed = round(time.time() - start, 2) 
+                elapsed = round(time.time() - start, 2)
                 err     = f"Unexpected error: {type(e).__name__}: {e}"
                 # HIG-02: Record failure
                 if breaker:
@@ -467,8 +487,8 @@ class LLMClient:
         messages: list[dict] = [{"role": "system", "content": system}]
 
         if context:
-            messages.append({"role": "user",       "content": f"Background:\n{context}"})
-            messages.append({"role": "assistant",  "content": "Understood."})
+            messages.append({"role": "user",        "content": f"Background:\n{context}"})
+            messages.append({"role": "assistant",   "content": "Understood."})
 
         user_text = user
         if content:
@@ -491,7 +511,7 @@ class LLMClient:
         provider = self._registry.get(role_cfg.provider)
         return provider.is_available()
 
-    def register_provider(self, name: str, provider : BaseProvider) -> None:
+    def register_provider(self, name: str, provider: BaseProvider) -> None:
         self._registry.register(name, provider)
 
     def list_roles(self) -> list[dict]:
@@ -558,22 +578,56 @@ class LLMClient:
         except (KeyError, IndexError) as e:
             return LLMResponse.from_error(role, model, f"Response parse error: {e}", elapsed)
 
-        parsed: Optional[dict] = None
+        parsed: Optional[Any] = None
         if json_mode:
-            clean = choice
-            for fence in ["```json", "```"]:
-                if clean.startswith(fence):
-                    clean = clean[len(fence):]
-            clean = clean.strip().rstrip("`").strip()
+            # [P1] Robust JSON extraction
+            # Strategy:
+            # 1. Try parsing the raw string directly (handles clean JSON, arrays, and backticks in strings)
+            # 2. Try extracting from markdown code blocks
+            # 3. Fall back to finding outermost JSON object/array
+            
+            json_str = None
+            choice_stripped = choice.strip()
+            
+            # 1. Direct parse attempt (fixes arrays and backticks inside strings)
             try:
-                parsed = json.loads(clean)
+                parsed = json.loads(choice_stripped)
             except json.JSONDecodeError:
                 pass
+            
+            # 2. If direct parse failed, try extraction
+            if parsed is None:
+                # Try markdown code block extraction
+                # Use a regex that expects the fence to be on its own line or at the start/end
+                code_block_match = re.search(r'```(?:json)?\s*\n(.*?)\n\s*```', choice, re.DOTALL)
+                if code_block_match:
+                    json_str = code_block_match.group(1).strip()
+                else:
+                    # Fall back to finding outermost JSON structure
+                    obj_match = re.search(r'\{.*\}', choice, re.DOTALL)
+                    arr_match = re.search(r'\[.*\]', choice, re.DOTALL)
+                    
+                    # Pick the one that starts earliest in the string
+                    if obj_match and arr_match:
+                        json_str = obj_match.group(0) if obj_match.start() < arr_match.start() else arr_match.group(0)
+                    elif obj_match:
+                        json_str = obj_match.group(0)
+                    elif arr_match:
+                        json_str = arr_match.group(0)
+                    else:
+                        json_str = choice_stripped
+                
+                if json_str:
+                    try:
+                        parsed = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        pass
 
         return LLMResponse(
             text=choice, role=role, model=model,
             usage=usage, elapsed=elapsed, parsed=parsed, ok=True,
         )
+
 
 # ── Singleton -----------------------------------------------------------------
 llm = LLMClient()
