@@ -1,172 +1,51 @@
 """
-skills/cvm/cvm_shareholders/cvm_shareholders.py -- Shareholder structure from rapina.db.
+skills/cvm/cvm_shareholders/cvm_shareholders.py
+Deploy to: D:\mcp\agent\skills\cvm\cvm_shareholders\cvm_shareholders.py
 
-=== UPGRADE LOG ===
-v2 (this version): _resolve_company() is now bridge-aware.
-  Identical upgrade pattern as cvm_dividends v2:
-  - B3 ticker input -> bridge.db -> (rapina_ids, denom_social)
-  - Falls back to CNPJ or name search in rapina.db if bridge unavailable
-  Both paths produce the same (ids, name) tuple consumed by _mode_*().
+Shareholder/equity structure from rapina.db using CORRECT schema (confirmed 2026-05-21):
 
-=== DATA MODEL (from inspect_dividends_shareholders.py, confirmed) ===
+=== RAPINA.DB SCHEMA (actual) ===
+empresas: id, cnpj, nome, ano
+contas:   id_empresa, codigo, descr, grupo, consolidado,
+          data_ini_exerc, data_fim_exerc, meses, valor, escala, moeda
 
-rapina.db table: empresas
-  One row per (company, fiscal_period). Same CNPJ -> multiple ids.
-  Columns: id, nome, cnpj (digits only), ano, dt_refer
+Join:  contas.id_empresa = empresas.id
+Value: valor * escala  (escala=1000 -> stored in thousands of BRL)
+Annual filter: meses=12 (not date suffix -- fiscal year may end any month)
 
-Two sources for shareholder/equity structure:
+=== BPP 2.03.* CONFIRMED for Petrobras ===
+2.03       Patrimonio Liquido Consolidado
+2.03.01    Capital Social Realizado
+2.03.02    Reservas de Capital
+2.03.03    (Reservas de Avaliacao -- if present)
+2.03.04    (Reservas de Lucros -- if present)
+2.03.05    (Lucros/Prejuizos Acumulados -- if present)
+2.03.09    (Participacao Nao Controladores -- if present)
 
-  BPP 2.03.* "Patrimonio Liquido" -- quarterly available
-    2.03.01  Capital Social Realizado
-    2.03.02  Reservas de Capital
-    2.03.03  Reservas de Avaliacao (ajustes valor justo, conversao)
-    2.03.04  Reservas de Lucros
-      2.03.04.01..09  Sub-items -- ALL ZERO for Petrobras (roll up into parent)
-                      DECISION: Only query parent 2.03.04, not sub-items.
-    2.03.05  Lucros/Prejuizos Acumulados
-    2.03.06  Ajustes de Avaliacao Patrimonial
-    2.03.09  Participacao dos Acionistas Nao Controladores (minority interest)
-    2.03.10  Outros componentes do Patrimonio Liquido
-    Total PL = 2.03 (parent code, confirmed present)
-
-  DFC 6.* "Fluxo de Caixa" -- for equity movement context (optional)
-    Not queried here -- use cvm_dividends for DFC data.
-
-=== WHAT WE DO NOT USE ===
-  BPP 2.03.04.01..09 sub-items: ALL ZERO for Petrobras.
-    DECISION: confirmed by inspection. These codes exist in the schema
-    but rapina stores 0 for all of them. Use parent 2.03.04 only.
-  BPP 2.01.05.02.01 and similar: those are dividend payables,
-    handled by cvm_dividends. Shareholders skill focuses on EQUITY structure.
-
-=== MODES ===
-  equity_structure -- full PL breakdown: capital, reserves, retained, minority
-  minority         -- minority interest (2.03.09) trend over time
-  status           -- quick PL snapshot: total equity + key components
-
-=== UNIT ===
-Values in rapina.db are in REAIS (not thousands/millions).
-Display as billions (/1e9) for large-cap companies.
+NOTE: BPP rows have meses=12 regardless of quarter-end date.
+This is because BPP is a balance sheet (stock, not flow) --
+rapina stores it as if it were an annual figure even for quarterly reports.
 """
 
 from __future__ import annotations
 
-import json
-import re
 import sqlite3
 from collections import defaultdict
-from pathlib import Path
-from typing import Optional
 
-
-# ── DB path helpers ───────────────────────────────────────────────────────────
-# DECISION: Same pattern as cvm_dividends._db_path() so both skills find
-# rapina.db using the same search logic. If MEMORY_ROOT is set, that wins.
-# Otherwise walk up directory tree looking for memory_db/cvm/rapina.db.
-
-def _db_path() -> Path:
-    import os
-    memory_root = os.getenv("MEMORY_ROOT", "")
-    if memory_root:
-        candidate = Path(memory_root) / "cvm" / "rapina.db"
-        if candidate.exists():
-            return candidate
-    here = Path(__file__).resolve().parent
-    for _ in range(6):
-        for sub in ("memory_db/cvm/rapina.db", "rapina.db"):
-            candidate = here / sub
-            if candidate.exists():
-                return candidate
-        here = here.parent
-    raise FileNotFoundError(
-        "rapina.db not found. Set MEMORY_ROOT env var to point to memory_db/."
-    )
+from skills.cvm._db import connect_rapina as _connect_rapina
+from skills.cvm._bridge import resolve_company as _resolve_company
 
 
 def _connect() -> sqlite3.Connection:
-    path = _db_path()
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _connect_rapina()
 
 
-# ── Company resolution (bridge-aware) ─────────────────────────────────────────
-# DECISION: Exact same resolution logic as cvm_dividends._resolve_company().
-# We deliberately duplicate (not import) this logic because:
-#   a) The two skills are independently deployable
-#   b) Avoids a circular import chain (both import from b3_cvm)
-#   c) Each skill can evolve its resolution logic independently
-# The shared pattern is: ticker -> bridge -> (ids, name), then CNPJ, then name.
-
-def _looks_like_ticker(s: str) -> bool:
-    """B3 ticker heuristic: 4 letters + 1-2 digits + optional F. e.g. PETR4, TAEE11."""
-    return bool(re.match(r"^[A-Z]{4}\d{1,2}F?$", s.upper().strip()))
-
-
-def _resolve_via_bridge(ticker: str) -> Optional[tuple[list[int], str]]:
-    """
-    Try bridge.db for ticker -> (rapina_ids, company_name).
-    Returns None if bridge unavailable or ticker not found.
-    Silent on all errors -- bridge is optional enhancement.
-    """
+def _val(valor, escala) -> float:
+    """Return actual BRL. valor * escala (escala usually 1000)."""
     try:
-        from skills.b3.b3_cvm.b3_cvm import resolve_by_ticker
-        result = resolve_by_ticker(ticker)
-        if result and result.get("rapina_ids"):
-            return result["rapina_ids"], result.get("denom_social", ticker)
-        if result:
-            # Ticker found in bridge but no rapina data (not in rapina.db)
-            return [], result.get("denom_social", ticker)
-    except ImportError:
-        pass  # b3_cvm not installed
-    except Exception:
-        pass  # bridge.db not synced, locked, etc.
-    return None
-
-
-def _resolve_company(
-    conn: sqlite3.Connection,
-    ticker_or_name: str,
-) -> tuple[list[int], str]:
-    """
-    Resolve company identifier to (rapina_ids, canonical_name).
-
-    Resolution order:
-      1. B3 ticker pattern -> bridge.db (fast, no name ambiguity)
-      2. 14-digit CNPJ -> direct rapina.db query
-      3. Name fragment -> LIKE search in rapina.db empresas.nome
-
-    Returns ([], "") if not found at any step.
-    """
-    s = ticker_or_name.strip()
-
-    # Path 1: ticker -> bridge
-    if _looks_like_ticker(s):
-        bridge_result = _resolve_via_bridge(s.upper())
-        if bridge_result is not None:
-            return bridge_result
-
-    # Path 2: CNPJ
-    digits_only = re.sub(r"\D", "", s)
-    if len(digits_only) == 14:
-        rows = conn.execute(
-            "SELECT DISTINCT id, nome FROM empresas "
-            "WHERE cnpj = ? ORDER BY id",
-            (digits_only,),
-        ).fetchall()
-        if rows:
-            return [r["id"] for r in rows], rows[0]["nome"]
-
-    # Path 3: name LIKE
-    rows = conn.execute(
-        "SELECT DISTINCT id, nome FROM empresas "
-        "WHERE upper(nome) LIKE ? ORDER BY id",
-        (f"%{s.upper()}%",),
-    ).fetchall()
-    if rows:
-        return [r["id"] for r in rows], rows[0]["nome"]
-
-    return [], ""
+        return float(valor or 0) * float(escala or 1)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ── Mode: equity_structure (BPP 2.03.*) ──────────────────────────────────────
@@ -178,116 +57,87 @@ def _mode_equity_structure(
     periods: int,
 ) -> str:
     """
-    Full equity (Patrimonio Liquido) breakdown from BPP form 2, code 2.03.*.
+    Full PL breakdown per period from BPP 2.03.*.
 
-    Codes queried (confirmed present in rapina.db for Petrobras):
-      2.03      -- Total PL (parent, always present)
-      2.03.01   -- Capital Social Realizado
-      2.03.02   -- Reservas de Capital
-      2.03.03   -- Reservas de Avaliacao
-      2.03.04   -- Reservas de Lucros (parent; sub-items 2.03.04.01-09 are ALL ZERO)
-      2.03.05   -- Lucros / Prejuizos Acumulados
-      2.03.06   -- Ajustes de Avaliacao Patrimonial
-      2.03.09   -- Participacao dos Acionistas Nao Controladores (minority)
-      2.03.10   -- Outros (catch-all)
+    DECISION: No meses filter here -- BPP rows have meses=12 even for
+    quarterly reports (balance sheet is always a full-period snapshot).
+    We fetch all data_fim_exerc periods and show the last N.
 
-    DECISION: We query PARENT codes only (not 2.03.04.01 etc).
-    Inspection confirmed sub-items are all zero for Petrobras.
-    This may not hold for all companies but the parent 2.03.04 is always
-    the correct total regardless of how sub-items are broken out.
-
-    DEDUP: MAX(vl_conta) per (dt_refer, cd_conta) -- same rationale as
-    cvm_dividends: rapina may have duplicate imports for restated periods.
-
-    PERIOD ANNOTATION: Dec-31 rows are labeled [anual] for clarity.
-    Quarterly rows show the cumulative balance at that quarter-end.
+    Codes fetched: 2.03 (total) + children 2.03.01 through 2.03.09.
+    Children that are missing (zero or not filed) simply show 0.
     """
     if not ids:
-        return "Empresa nao encontrada no banco de dados rapina."
+        return "Empresa nao encontrada."
 
-    # All equity codes we want to fetch
+    ph   = ",".join("?" * len(ids))
+    # Fetch parent + all likely children
     codes = (
         "2.03", "2.03.01", "2.03.02", "2.03.03",
-        "2.03.04", "2.03.05", "2.03.06", "2.03.09", "2.03.10",
+        "2.03.04", "2.03.05", "2.03.06", "2.03.07",
+        "2.03.08", "2.03.09", "2.03.10",
     )
-    placeholders_ids  = ",".join("?" * len(ids))
-    placeholders_codes = ",".join("?" * len(codes))
+    ph_c = ",".join("?" * len(codes))
 
     sql = f"""
-        SELECT
-            dt_refer,
-            cd_conta,
-            ds_conta,
-            MAX(vl_conta) AS vl_conta
-        FROM empresas
-        WHERE id IN ({placeholders_ids})
-          AND cd_conta IN ({placeholders_codes})
-        GROUP BY dt_refer, cd_conta
-        ORDER BY dt_refer DESC, cd_conta
+        SELECT c.data_fim_exerc, c.codigo, c.descr,
+               MAX(c.valor) AS valor, MAX(c.escala) AS escala
+        FROM contas c
+        WHERE c.id_empresa IN ({ph})
+          AND c.codigo IN ({ph_c})
+          AND c.consolidado = 1
+        GROUP BY c.data_fim_exerc, c.codigo
+        ORDER BY c.data_fim_exerc DESC, c.codigo
         LIMIT ?
     """
-    rows = conn.execute(
-        sql, list(ids) + list(codes) + [periods * len(codes)]
-    ).fetchall()
+    rows = conn.execute(sql, list(ids) + list(codes) + [periods * len(codes)]).fetchall()
 
     if not rows:
         return f"{company_name}: sem dados BPP Patrimonio Liquido (2.03.*) no banco."
 
-    # Group by period
-    by_period: dict[str, dict[str, float]] = defaultdict(dict)
-    # Also store descriptions for display
+    by_period: dict[str, dict] = defaultdict(dict)
     descriptions: dict[str, str] = {}
     for r in rows:
-        by_period[r["dt_refer"]][r["cd_conta"]] = r["vl_conta"] or 0
-        descriptions[r["cd_conta"]] = r["ds_conta"] or ""
+        by_period[r["data_fim_exerc"]][r["codigo"]] = (r["valor"], r["escala"])
+        descriptions[r["codigo"]] = r["descr"] or ""
 
     lines = [
-        f"=== {company_name} -- Estrutura do Patrimonio Liquido (BPP 2.03) ===",
-        "Fonte: Balanco Patrimonial Passivo (saldo ao final de cada periodo)",
+        f"=== {company_name} -- Patrimonio Liquido (BPP 2.03) ===",
+        "Fonte: BPP -- saldo ao final de cada periodo (consolidado=1).",
         "",
     ]
-
     count = 0
     for period in sorted(by_period.keys(), reverse=True):
         if count >= periods:
             break
         d = by_period[period]
 
-        label = period
-        if period.endswith("-12-31"):
-            label = f"{period}  [anual]"
+        def v(code): return _val(*d[code]) if code in d else 0.0
 
-        total      = d.get("2.03",    0)
-        capital    = d.get("2.03.01", 0)
-        res_cap    = d.get("2.03.02", 0)
-        res_aval   = d.get("2.03.03", 0)
-        res_lucros = d.get("2.03.04", 0)
-        luc_prej   = d.get("2.03.05", 0)
-        ajustes    = d.get("2.03.06", 0)
-        minority   = d.get("2.03.09", 0)
-        outros     = d.get("2.03.10", 0)
+        total    = v("2.03")
+        capital  = v("2.03.01")
+        res_cap  = v("2.03.02")
+        res_aval = v("2.03.03")
+        res_luc  = v("2.03.04")
+        luc_prej = v("2.03.05")
+        ajustes  = v("2.03.06")
+        minority = v("2.03.09")
 
-        # Minority % of total equity (when total != 0)
-        minority_pct = ""
-        if total and minority:
-            pct = abs(minority) / abs(total) * 100
-            minority_pct = f"  ({pct:.1f}% do PL total)"
+        min_pct = f"  ({abs(minority)/abs(total)*100:.1f}% do PL)" if total and minority else ""
 
-        lines.append(f"Periodo: {label}")
+        lines.append(f"Periodo: {period}")
         lines.append(f"  Total PL                    : R$ {total/1e9:>10.3f} bi")
         lines.append(f"  Capital Social Realizado    : R$ {capital/1e9:>10.3f} bi")
-        lines.append(f"  Reservas de Capital         : R$ {res_cap/1e9:>10.3f} bi")
-        lines.append(f"  Reservas de Avaliacao       : R$ {res_aval/1e9:>10.3f} bi")
-        lines.append(f"  Reservas de Lucros          : R$ {res_lucros/1e9:>10.3f} bi")
-        lines.append(f"  Lucros/Prejuizos Acumulados : R$ {luc_prej/1e9:>10.3f} bi")
+        if res_cap:
+            lines.append(f"  Reservas de Capital         : R$ {res_cap/1e9:>10.3f} bi")
+        if res_aval:
+            lines.append(f"  Reservas de Avaliacao       : R$ {res_aval/1e9:>10.3f} bi")
+        if res_luc:
+            lines.append(f"  Reservas de Lucros          : R$ {res_luc/1e9:>10.3f} bi")
+        if luc_prej:
+            lines.append(f"  Lucros/Prejuizos Acumulados : R$ {luc_prej/1e9:>10.3f} bi")
         if ajustes:
-            lines.append(f"  Ajustes Aval. Patrimonial  : R$ {ajustes/1e9:>10.3f} bi")
-        lines.append(
-            f"  Part. Nao Controladores     : R$ {minority/1e9:>10.3f} bi"
-            f"{minority_pct}"
-        )
-        if outros:
-            lines.append(f"  Outros                      : R$ {outros/1e9:>10.3f} bi")
+            lines.append(f"  Ajustes Aval. Patrimonial   : R$ {ajustes/1e9:>10.3f} bi")
+        lines.append(f"  Nao Controladores (2.03.09) : R$ {minority/1e9:>10.3f} bi{min_pct}")
         lines.append("")
         count += 1
 
@@ -303,39 +153,22 @@ def _mode_minority(
     periods: int,
 ) -> str:
     """
-    Minority interest (Participacao dos Acionistas Nao Controladores) trend.
-
-    Code 2.03.09 is the balance sheet value of minority shareholders' claim
-    on consolidated equity. It is NON-ZERO only for companies with subsidiaries
-    that are not 100% owned (consolidated in the BPP).
-
-    For Petrobras: large minority interest exists because Petrobras Distribuidora
-    (BR Distribuidora) and other subsidiaries had minority shareholders.
-
-    DECISION: Show both absolute value AND as % of total PL (2.03) to give
-    context. A growing minority % may indicate dilution of controlling interest
-    or acquisition of non-100% subsidiaries.
-
-    TREND NOTE: This is a BALANCE SHEET figure (stock, not flow).
-    To see changes in minority interest, compare consecutive periods.
-    Large swings indicate M&A activity or subsidiary restructuring.
+    Minority interest (2.03.09) vs total equity (2.03) trend.
+    Both fetched together for % calculation.
     """
     if not ids:
         return "Empresa nao encontrada."
 
-    placeholders = ",".join("?" * len(ids))
-
-    # Fetch minority (2.03.09) AND total PL (2.03) together for % calculation
+    ph = ",".join("?" * len(ids))
     sql = f"""
-        SELECT
-            dt_refer,
-            cd_conta,
-            MAX(vl_conta) AS vl_conta
-        FROM empresas
-        WHERE id IN ({placeholders})
-          AND cd_conta IN ('2.03', '2.03.09')
-        GROUP BY dt_refer, cd_conta
-        ORDER BY dt_refer DESC
+        SELECT c.data_fim_exerc, c.codigo,
+               MAX(c.valor) AS valor, MAX(c.escala) AS escala
+        FROM contas c
+        WHERE c.id_empresa IN ({ph})
+          AND c.codigo IN ('2.03', '2.03.09')
+          AND c.consolidado = 1
+        GROUP BY c.data_fim_exerc, c.codigo
+        ORDER BY c.data_fim_exerc DESC
         LIMIT ?
     """
     rows = conn.execute(sql, list(ids) + [periods * 2]).fetchall()
@@ -343,39 +176,30 @@ def _mode_minority(
     if not rows:
         return f"{company_name}: sem dados de participacao de nao controladores (2.03.09)."
 
-    # Group by period
-    by_period: dict[str, dict[str, float]] = defaultdict(dict)
+    by_period: dict[str, dict] = defaultdict(dict)
     for r in rows:
-        by_period[r["dt_refer"]][r["cd_conta"]] = r["vl_conta"] or 0
+        by_period[r["data_fim_exerc"]][r["codigo"]] = (r["valor"], r["escala"])
 
     lines = [
-        f"=== {company_name} -- Participacao de Nao Controladores (BPP 2.03.09) ===",
-        "Fonte: Balanco Patrimonial Passivo -- saldo do patrimonio de minoritarios",
-        "Nota: valor zero indica que nao ha subsidiarias com minoritarios consolidadas.",
+        f"=== {company_name} -- Nao Controladores (BPP 2.03.09) ===",
+        "Fonte: BPP -- saldo do patrimonio de minoritarios.",
+        "Nota: valor zero = sem subsidiarias com minoritarios consolidadas.",
         "",
     ]
-
     count = 0
     for period in sorted(by_period.keys(), reverse=True):
         if count >= periods:
             break
         d = by_period[period]
-        minority = d.get("2.03.09", 0)
-        total_pl = d.get("2.03",    0)
+        minority = _val(*d["2.03.09"]) if "2.03.09" in d else 0.0
+        total    = _val(*d["2.03"])    if "2.03"    in d else 0.0
 
         pct_str = ""
-        if total_pl and minority is not None:
-            pct = abs(minority) / abs(total_pl) * 100 if total_pl else 0
-            pct_str = f"  ({pct:.1f}% do PL total R${total_pl/1e9:.2f}bi)"
+        if total and minority:
+            pct_str = f"  ({abs(minority)/abs(total)*100:.1f}% do PL total R${total/1e9:.2f}bi)"
 
-        label = period
-        if period.endswith("-12-31"):
-            label = f"{period}  [anual]"
-
-        lines.append(f"Periodo: {label}")
-        lines.append(
-            f"  Nao Controladores : R$ {minority/1e9:>10.3f} bi{pct_str}"
-        )
+        lines.append(f"Periodo: {period}")
+        lines.append(f"  Nao Controladores : R$ {minority/1e9:>10.3f} bi{pct_str}")
         lines.append("")
         count += 1
 
@@ -389,89 +213,74 @@ def _mode_status(
     ids: list[int],
     company_name: str,
 ) -> str:
-    """
-    Quick shareholder/equity snapshot: latest total PL + key components.
-
-    Shows the most recent available period (quarterly or annual).
-    Useful as a quick health check before diving into detailed modes.
-
-    DECISION: mode="status" is the default. It answers "what is this
-    company's current equity structure?" without requiring the user to
-    know BPP codes or period conventions.
-    """
+    """Latest PL snapshot: total + key components, most recent period."""
     if not ids:
-        return "Empresa nao encontrada no banco de dados rapina."
+        return "Empresa nao encontrada."
 
-    placeholders = ",".join("?" * len(ids))
-
+    ph    = ",".join("?" * len(ids))
     codes = ("2.03", "2.03.01", "2.03.04", "2.03.05", "2.03.09")
-    placeholders_codes = ",".join("?" * len(codes))
+    ph_c  = ",".join("?" * len(codes))
 
     sql = f"""
-        SELECT
-            dt_refer,
-            cd_conta,
-            ds_conta,
-            MAX(vl_conta) AS vl_conta
-        FROM empresas
-        WHERE id IN ({placeholders})
-          AND cd_conta IN ({placeholders_codes})
-        GROUP BY dt_refer, cd_conta
-        ORDER BY dt_refer DESC
+        SELECT c.data_fim_exerc, c.codigo,
+               MAX(c.valor) AS valor, MAX(c.escala) AS escala
+        FROM contas c
+        WHERE c.id_empresa IN ({ph})
+          AND c.codigo IN ({ph_c})
+          AND c.consolidado = 1
+        GROUP BY c.data_fim_exerc, c.codigo
+        ORDER BY c.data_fim_exerc DESC
         LIMIT ?
     """
-    rows = conn.execute(
-        sql, list(ids) + list(codes) + [len(codes) * 4]  # fetch up to 4 recent periods
-    ).fetchall()
+    rows = conn.execute(sql, list(ids) + list(codes) + [len(codes) * 8]).fetchall()
 
     if not rows:
         return f"{company_name}: sem dados de Patrimonio Liquido no banco."
 
-    # Find the most recent period that has the total (2.03)
+    # Find most recent period with total PL (2.03)
+    by_period: dict[str, dict] = defaultdict(dict)
+    for r in rows:
+        by_period[r["data_fim_exerc"]][r["codigo"]] = (r["valor"], r["escala"])
+
     periods_with_total = sorted(
-        set(r["dt_refer"] for r in rows if r["cd_conta"] == "2.03"),
-        reverse=True,
+        [p for p in by_period if "2.03" in by_period[p]], reverse=True
     )
     if not periods_with_total:
         return f"{company_name}: codigo 2.03 (total PL) nao encontrado."
 
     latest = periods_with_total[0]
+    annual_periods = [p for p in periods_with_total if
+                      any(r["codigo"] == "2.03" and r["data_fim_exerc"] == p and
+                          # annual if it appears with meses=12 or is a Dec-31
+                          True
+                          for r in rows)]
+    # Simpler: just pick second most recent as comparison if different
+    prev = periods_with_total[1] if len(periods_with_total) > 1 else None
 
-    # Also get the most recent annual period for comparison
-    annual_periods = [p for p in periods_with_total if p.endswith("-12-31")]
-    latest_annual = annual_periods[0] if annual_periods else None
-
-    def _val(period: str, code: str) -> float:
-        for r in rows:
-            if r["dt_refer"] == period and r["cd_conta"] == code:
-                return float(r["vl_conta"] or 0)
-        return 0.0
-
-    label = latest
-    if latest.endswith("-12-31"):
-        label = f"{latest}  [anual]"
+    def v(period, code):
+        d = by_period.get(period, {})
+        return _val(*d[code]) if code in d else 0.0
 
     lines = [
         f"=== {company_name} -- Status do Patrimonio Liquido ===",
         "",
-        f"Periodo mais recente: {label}",
-        f"  Total PL                    : R$ {_val(latest, '2.03')/1e9:.3f} bi",
-        f"  Capital Social              : R$ {_val(latest, '2.03.01')/1e9:.3f} bi",
-        f"  Reservas de Lucros          : R$ {_val(latest, '2.03.04')/1e9:.3f} bi",
-        f"  Lucros/Prejuizos Acumulados : R$ {_val(latest, '2.03.05')/1e9:.3f} bi",
-        f"  Nao Controladores           : R$ {_val(latest, '2.03.09')/1e9:.3f} bi",
+        f"Periodo mais recente: {latest}",
+        f"  Total PL                    : R$ {v(latest,'2.03')/1e9:.3f} bi",
+        f"  Capital Social              : R$ {v(latest,'2.03.01')/1e9:.3f} bi",
+        f"  Reservas de Lucros          : R$ {v(latest,'2.03.04')/1e9:.3f} bi",
+        f"  Lucros/Prejuizos Acumulados : R$ {v(latest,'2.03.05')/1e9:.3f} bi",
+        f"  Nao Controladores           : R$ {v(latest,'2.03.09')/1e9:.3f} bi",
         "",
     ]
 
-    # Show last annual for YoY comparison if different from latest
-    if latest_annual and latest_annual != latest:
+    if prev and prev != latest:
         lines += [
-            f"Ultimo exercicio anual: {latest_annual[:4]}",
-            f"  Total PL                    : R$ {_val(latest_annual, '2.03')/1e9:.3f} bi",
-            f"  Capital Social              : R$ {_val(latest_annual, '2.03.01')/1e9:.3f} bi",
-            f"  Reservas de Lucros          : R$ {_val(latest_annual, '2.03.04')/1e9:.3f} bi",
-            f"  Lucros/Prejuizos Acumulados : R$ {_val(latest_annual, '2.03.05')/1e9:.3f} bi",
-            f"  Nao Controladores           : R$ {_val(latest_annual, '2.03.09')/1e9:.3f} bi",
+            f"Periodo anterior: {prev}",
+            f"  Total PL                    : R$ {v(prev,'2.03')/1e9:.3f} bi",
+            f"  Capital Social              : R$ {v(prev,'2.03.01')/1e9:.3f} bi",
+            f"  Reservas de Lucros          : R$ {v(prev,'2.03.04')/1e9:.3f} bi",
+            f"  Lucros/Prejuizos Acumulados : R$ {v(prev,'2.03.05')/1e9:.3f} bi",
+            f"  Nao Controladores           : R$ {v(prev,'2.03.09')/1e9:.3f} bi",
             "",
         ]
 
@@ -489,25 +298,12 @@ def cvm_shareholders(
     Query shareholder/equity structure from rapina.db.
 
     Args:
-        ticker:  B3 ticker (e.g. "VALE3"), company name fragment (e.g. "VALE"),
-                 or 14-digit CNPJ. Tickers resolved via bridge.db if available.
+        ticker:  B3 ticker (VALE3), name fragment (VALE), or CNPJ.
+                 Tickers resolved via bridge.db if available.
         mode:    "status"           -- latest PL snapshot (default)
-                 "equity_structure" -- full PL breakdown per period
-                 "minority"         -- minority interest trend (2.03.09)
-        periods: Number of periods to return for equity_structure/minority (default 5).
-
-    Returns:
-        dict: status, mode, company, ids, report, data.
-
-    DECISION: Same return shape as cvm_dividends for consistency.
-    All skills in the cvm domain return {status, mode, company, ids, report, data}.
-    This lets the agent handle errors uniformly across skills.
-
-    Examples:
-        cvm_shareholders(ticker="PETR4")
-        cvm_shareholders(ticker="VALE", mode="equity_structure", periods=4)
-        cvm_shareholders(ticker="ITUB4", mode="minority")
-        cvm_shareholders(ticker="60746948000112", mode="status")
+                 "equity_structure" -- full breakdown per period
+                 "minority"         -- minority interest trend
+        periods: periods to return (default 5)
     """
     try:
         conn = _connect()
@@ -518,23 +314,9 @@ def cvm_shareholders(
         ids, company_name = _resolve_company(conn, ticker)
 
         if not ids:
-            if _looks_like_ticker(ticker):
-                hint = (
-                    f" Dica: execute skill(domain='b3_cvm', mode='sync') para "
-                    f"sincronizar o bridge ticker->CNPJ, ou use o nome CVM diretamente."
-                )
-            else:
-                hint = (
-                    " Use o nome CVM oficial, CNPJ (14 digitos), "
-                    "ou ticker B3 (requer bridge sincronizado)."
-                )
-            msg = f"Empresa '{ticker}' nao encontrada em rapina.db.{hint}"
-            return {
-                "status": "not_found",
-                "error":  msg,
-                "report": msg,
-                "data":   [],
-            }
+            from skills.cvm._bridge import not_found_message
+            msg = not_found_message(ticker)
+            return {"status": "not_found", "error": msg, "report": msg, "data": []}
 
         mode_clean = mode.lower().strip()
 
@@ -545,10 +327,7 @@ def cvm_shareholders(
         elif mode_clean == "status":
             report = _mode_status(conn, ids, company_name)
         else:
-            msg = (
-                f"Modo '{mode}' invalido. "
-                "Use: status | equity_structure | minority"
-            )
+            msg = f"Modo '{mode}' invalido. Use: status | equity_structure | minority"
             return {"status": "error", "error": msg, "report": msg, "data": []}
 
         return {

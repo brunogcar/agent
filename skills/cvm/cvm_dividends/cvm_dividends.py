@@ -1,61 +1,41 @@
 """
-skills/cvm/cvm_dividends/cvm_dividends.py -- Dividend data from rapina.db.
+skills/cvm/cvm_dividends/cvm_dividends.py
+Deploy to: D:\mcp\agent\skills\cvm\cvm_dividends\cvm_dividends.py
 
-=== UPGRADE LOG ===
-v2 (this version): _resolve_company() now bridge-aware.
-  - If the caller passes a B3 ticker (e.g. "PETR4"), we first try
-    bridge.db to get the CNPJ + rapina_ids without any name matching.
-  - Falls back to the original name/CNPJ search in rapina.db if:
-      a) bridge.db does not exist yet (not synced)
-      b) ticker not found in bridge
-      c) the argument is clearly not a ticker (has spaces, is a CNPJ, etc.)
-  This means cvm_dividends works BOTH with and without the bridge.
-  The bridge just makes ticker resolution instant and reliable.
+Dividend data from rapina.db using the CORRECT schema (confirmed 2026-05-21):
 
-=== DATA MODEL (from inspect_dividends_shareholders.py, confirmed) ===
+=== RAPINA.DB SCHEMA (actual) ===
+empresas: id, cnpj, nome, ano
+contas:   id_empresa, codigo, descr, grupo, consolidado,
+          data_ini_exerc, data_fim_exerc, meses, valor, escala, moeda
 
-rapina.db table: empresas
-  One row per (company, fiscal_period). Same CNPJ → multiple ids.
-  Columns: id, nome, cnpj (digits only), ano, dt_refer
+Join:     contas.id_empresa = empresas.id
+Value:    valor * escala  (escala=1000 means stored in thousands of BRL)
+Annual:   meses=12  (NOT data_fim LIKE '%-12-31' -- fiscal year may end any month)
+Codes:    codigo (not cd_conta), valor (not vl_conta), data_fim_exerc (not dt_refer)
 
-Three sources for dividend data:
+=== DATA SOURCES ===
+DVA 7.08.04.*  annual declared dividends (meses=12)
+  7.08.04    total equity remuneration
+  7.08.04.01 JCP (Juros sobre Capital Proprio)
+  7.08.04.02 Dividendos declared
+  7.08.04.03 Lucros Retidos
 
-  DVA 7.08.04.*  "Remuneracao de Capitais Proprios" -- annual only
-    7.08.04.01  JCP (Juros sobre Capital Proprio) -- tax-deductible for company
-    7.08.04.02  Dividendos declared in the fiscal year (accrual basis)
-    7.08.04.03  Lucros Retidos / Prejuizo do Periodo
-    7.08.04.04  Part. Nao Controladores nos Lucros Retidos
-    KEY: dt_refer always Dec-31 for annual. Values in REAIS (not thousands).
-    Petrobras 2022: declared R$155.9B. 2023: declared R$52.9B.
+DFC 6.03.05 / 6.03.06  cash paid (all meses available, cumulative YTD)
+  NOTE: 6.03.05/6.03.06 codes may vary -- rapina DFC uses different numbering.
+  We search by descr LIKE '%dividendo%' as fallback if exact codes missing.
 
-  DFC 6.03.05 / 6.03.06  "Dividendos pagos" -- quarterly available
-    6.03.05  Cash paid to controlling shareholders (negative = outflow)
-    6.03.06  Cash paid to non-controlling shareholders
-    6.02.05  Dividends RECEIVED from investees -- NOT distributions, skip
-    KEY: cumulative YTD. Dec-31 = full year. Use ABS(vl_conta).
-    Petrobras 2022: paid R$194.2B (more than declared -- prior-year settling).
-
-  BPP 2.01.05.02.01  "Dividendos e JCP a Pagar" -- quarterly, balance sheet
-    Current liability: declared but not yet paid.
-    Petrobras Q1-2023: R$0 (paid in prior quarter). Q2-2023: R$30.8B.
-    ZERO IS CORRECT for Q1/Q3 -- it means the liability was cleared.
-    2.01.05.02.02  "Dividendo Minimo Obrigatorio a Pagar" -- usually 0 for PETR.
-    WARNING: This code is Petrobras-specific. Other companies may use
-    different BPP sub-codes. Fallback search by ds_conta is included.
-
-=== CNPJ IN rapina.db ===
-Stored as digits-only string e.g. "33000167000101".
-Strip all non-digits before matching.
+BPP 2.01.05.02.01  dividends payable on balance sheet
+  2.01.05.02.01  Dividendos e JCP a Pagar  (confirmed present for Petrobras)
+  2.01.05.02.02  Dividendo Minimo Obrigatorio a Pagar
 
 === UNIT ===
-All values in rapina.db are in REAIS (not thousands, not millions).
-Display as billions (/1e9) for readability of large companies.
-For small companies, consider /1e6 (millions) -- future enhancement.
+valor * escala = BRL. Display /1e9 (billions).
+Example: valor=110605000, escala=1000 -> 110,605,000,000 BRL = R$110.6 bi
 """
 
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 from collections import defaultdict
@@ -63,201 +43,95 @@ from pathlib import Path
 from typing import Optional
 
 
-# ── DB path helpers ───────────────────────────────────────────────────────────
+# ── DB connection (shared helpers) ────────────────────────────────────────────
 
-def _db_path() -> Path:
-    """Return path to rapina.db. Searches via MEMORY_ROOT env or walks up."""
-    import os
-    memory_root = os.getenv("MEMORY_ROOT", "")
-    if memory_root:
-        candidate = Path(memory_root) / "cvm" / "rapina.db"
-        if candidate.exists():
-            return candidate
-    here = Path(__file__).resolve().parent
-    for _ in range(6):
-        for sub in ("memory_db/cvm/rapina.db", "rapina.db"):
-            candidate = here / sub
-            if candidate.exists():
-                return candidate
-        here = here.parent
-    raise FileNotFoundError(
-        "rapina.db not found. Set MEMORY_ROOT env var to point to memory_db/."
-    )
+from skills.cvm._db import connect_rapina as _connect_rapina, cnpj_digits as _cnpj
+from skills.cvm._bridge import resolve_company as _resolve_company, looks_like_ticker as _looks_like_ticker
 
 
 def _connect() -> sqlite3.Connection:
-    """Open rapina.db read-only."""
-    path = _db_path()
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _connect_rapina()
 
 
-# ── Company resolution (bridge-aware) ─────────────────────────────────────────
+# ── Value helper ──────────────────────────────────────────────────────────────
 
-def _looks_like_ticker(s: str) -> bool:
-    """
-    Heuristic: does this string look like a B3 ticker?
-    Pattern: 4 uppercase letters + 1-2 digits + optional F
-    Examples: PETR4, VALE3, ITUB4, BBAS3, TAEE11, PETR4F
-
-    DECISION: Use this check before attempting bridge lookup so we don't
-    waste a bridge query on "PETROBRAS S.A." or "33000167000101".
-    """
-    return bool(re.match(r"^[A-Z]{4}\d{1,2}F?$", s.upper().strip()))
-
-
-def _resolve_via_bridge(ticker: str) -> Optional[tuple[list[int], str]]:
-    """
-    Try to resolve a B3 ticker via bridge.db.
-
-    Returns (rapina_ids, denom_social) if found, None otherwise.
-
-    DECISION: Import bridge lazily so cvm_dividends still works if
-    b3_cvm skill is not installed (bridge is an enhancement, not a hard dep).
-    The caller (_resolve_company) handles the None case by falling back
-    to name-based rapina.db search.
-    """
+def _val(valor, escala) -> float:
+    """Return actual BRL value. rapina stores in units of escala (usually 1000)."""
     try:
-        from skills.b3.b3_cvm.b3_cvm import resolve_by_ticker
-        result = resolve_by_ticker(ticker)
-        if result and result.get("rapina_ids"):
-            return result["rapina_ids"], result.get("denom_social", ticker)
-        # Bridge found ticker but no rapina_ids -> company not in rapina
-        # Return empty list with the CVM name so we can give a better message
-        if result:
-            return [], result.get("denom_social", ticker)
-    except ImportError:
-        # b3_cvm skill not installed -- silent fallback
-        pass
-    except Exception:
-        # bridge.db not synced, corrupted, etc. -- silent fallback
-        pass
-    return None
+        return float(valor or 0) * float(escala or 1)
+    except (TypeError, ValueError):
+        return 0.0
 
 
-def _resolve_company(
-    conn: sqlite3.Connection,
-    ticker_or_name: str,
-) -> tuple[list[int], str]:
-    """
-    Resolve a company identifier to (rapina_ids, canonical_name).
-
-    Resolution order:
-      1. If looks like a B3 ticker -> try bridge.db first (fast, reliable)
-      2. If 14-digit CNPJ -> direct rapina.db query
-      3. Name fragment -> LIKE search in rapina.db empresas.nome
-
-    Returns ([], "") if not found.
-
-    WHY THIS ORDER:
-      Tickers are the most common input from users ("give me PETR4 dividends").
-      rapina.db has no ticker column, so the bridge is the only reliable path.
-      CNPJ is the universal key and never needs bridge.
-      Name search is the final fallback for manual/script use.
-    """
-    s = ticker_or_name.strip()
-
-    # Path 1: B3 ticker -> bridge
-    if _looks_like_ticker(s):
-        bridge_result = _resolve_via_bridge(s.upper())
-        if bridge_result is not None:
-            ids, name = bridge_result
-            return ids, name
-        # Bridge not available or ticker not found -> fall through to name search
-        # This means "PETR4" will try name matching "PETR4" in rapina which
-        # will likely fail, but gives a clearer error than silent empty result.
-
-    # Path 2: CNPJ (14 digits after stripping non-digits)
-    digits_only = re.sub(r"\D", "", s)
-    if len(digits_only) == 14:
-        rows = conn.execute(
-            "SELECT DISTINCT id, nome FROM empresas "
-            "WHERE cnpj = ? ORDER BY id",
-            (digits_only,),
-        ).fetchall()
-        if rows:
-            return [r["id"] for r in rows], rows[0]["nome"]
-
-    # Path 3: Name LIKE search (case-insensitive)
-    rows = conn.execute(
-        "SELECT DISTINCT id, nome FROM empresas "
-        "WHERE upper(nome) LIKE ? ORDER BY id",
-        (f"%{s.upper()}%",),
-    ).fetchall()
-    if rows:
-        return [r["id"] for r in rows], rows[0]["nome"]
-
-    return [], ""
-
-
-# ── Mode: annual (DVA 7.08.04.*) ─────────────────────────────────────────────
+# ── Mode: annual (DVA 7.08.04.*, meses=12) ───────────────────────────────────
 
 def _mode_annual(
     conn: sqlite3.Connection,
     ids: list[int],
     company_name: str,
-    years: int,
+    periods: int,
 ) -> str:
     """
-    Annual dividend declared -- DVA form 7, code 7.08.04.*.
+    Annual dividends from DVA, codes 7.08.04.*.
+    Filter: meses=12 (full fiscal year), consolidado=1.
+    Sort: data_fim_exerc DESC to get most recent years first.
 
-    Filters dt_refer LIKE '%-12-31' to get only annual rows (not YTD quarterly).
-    Groups by year and shows total, JCP, dividends, retained earnings.
-
-    DEDUP: MAX(vl_conta) per (dt_refer, cd_conta) because rapina may import
-    the same period multiple times (e.g. restatements). MAX picks the latest.
-
-    PAYOUT RATIO: (JCP + Dividends) / Total -- only shown when total != 0.
-    For loss years, total is negative so payout is expressed as abs().
+    DEDUP: rapina may have multiple rows per (id_empresa, codigo, data_fim_exerc)
+    if the company restated. Use MAX(valor) -- latest restatement wins.
+    Actually rapina deduplicates on import, but MAX is safe defensive practice.
     """
     if not ids:
         return "Empresa nao encontrada no banco de dados rapina."
 
-    placeholders = ",".join("?" * len(ids))
+    ph = ",".join("?" * len(ids))
+    codes = ("7.08.04", "7.08.04.01", "7.08.04.02", "7.08.04.03")
+    ph_c  = ",".join("?" * len(codes))
+
     sql = f"""
-        SELECT
-            dt_refer,
-            cd_conta,
-            ds_conta,
-            MAX(vl_conta) AS vl_conta
-        FROM empresas
-        WHERE id IN ({placeholders})
-          AND cd_conta IN ('7.08.04', '7.08.04.01', '7.08.04.02', '7.08.04.03')
-          AND dt_refer LIKE '%-12-31'
-        GROUP BY dt_refer, cd_conta
-        ORDER BY dt_refer DESC, cd_conta
+        SELECT c.data_fim_exerc, c.codigo, c.descr,
+               MAX(c.valor) AS valor, MAX(c.escala) AS escala
+        FROM contas c
+        WHERE c.id_empresa IN ({ph})
+          AND c.codigo IN ({ph_c})
+          AND c.meses = 12
+          AND c.consolidado = 1
+        GROUP BY c.data_fim_exerc, c.codigo
+        ORDER BY c.data_fim_exerc DESC, c.codigo
         LIMIT ?
     """
-    rows = conn.execute(sql, ids + [years * 4]).fetchall()
+    rows = conn.execute(sql, list(ids) + list(codes) + [periods * len(codes)]).fetchall()
 
     if not rows:
-        return f"{company_name}: sem dados DVA (7.08.04.*) no banco."
+        return f"{company_name}: sem dados DVA (7.08.04.*) com meses=12."
 
-    by_year: dict[str, dict] = defaultdict(dict)
+    by_period: dict[str, dict] = defaultdict(dict)
     for r in rows:
-        by_year[r["dt_refer"]][r["cd_conta"]] = r["vl_conta"]
+        by_period[r["data_fim_exerc"]][r["codigo"]] = (r["valor"], r["escala"])
 
     lines = [
         f"=== {company_name} -- Dividendos Anuais (DVA 7.08.04) ===",
-        "Fonte: Demonstracao do Valor Adicionado (regime de competencia -- valor DECLARADO)",
+        "Fonte: DVA (regime de competencia -- valor DECLARADO no exercicio, meses=12)",
         "",
     ]
     count = 0
-    for year in sorted(by_year.keys(), reverse=True):
-        if count >= years:
+    for period in sorted(by_period.keys(), reverse=True):
+        if count >= periods:
             break
-        d = by_year[year]
-        total    = d.get("7.08.04",    0) or 0
-        jcp      = d.get("7.08.04.01", 0) or 0
-        div      = d.get("7.08.04.02", 0) or 0
-        retained = d.get("7.08.04.03", 0) or 0
-        lines.append(f"Ano: {year[:4]}")
+        d = by_period[period]
+
+        def v(code): return _val(*d[code]) if code in d else 0.0
+
+        total    = v("7.08.04")
+        jcp      = v("7.08.04.01")
+        div      = v("7.08.04.02")
+        retained = v("7.08.04.03")
+
+        lines.append(f"Periodo: {period} (anual)")
         lines.append(f"  Total Remuneracao Capitais Proprios : R$ {total/1e9:>10.3f} bi")
         lines.append(f"  JCP (Juros s/ Capital Proprio)      : R$ {jcp/1e9:>10.3f} bi")
         lines.append(f"  Dividendos declarados               : R$ {div/1e9:>10.3f} bi")
         lines.append(f"  Lucros Retidos / Prejuizo           : R$ {retained/1e9:>10.3f} bi")
-        if total != 0:
+        if total:
             payout = (jcp + div) / abs(total) * 100
             lines.append(f"  Payout ratio (JCP+Div / Total)      : {payout:.1f}%")
         lines.append("")
@@ -266,7 +140,7 @@ def _mode_annual(
     return "\n".join(lines)
 
 
-# ── Mode: cash_paid (DFC 6.03.05 / 6.03.06) ──────────────────────────────────
+# ── Mode: cash_paid (DFC, dividends paid in cash) ─────────────────────────────
 
 def _mode_cash_paid(
     conn: sqlite3.Connection,
@@ -275,78 +149,100 @@ def _mode_cash_paid(
     periods: int,
 ) -> str:
     """
-    Cash dividends actually paid -- DFC form 6, code 6.03.05 and 6.03.06.
+    Cash dividends paid from DFC.
 
-    6.03.05  = paid to controlling shareholders (NEGATIVE in DFC -- outflow)
-    6.03.06  = paid to non-controlling (minority) shareholders
-    6.02.05  = dividends RECEIVED from investees (NOT a distribution -- informational)
+    DECISION: Search by descr LIKE '%dividendo%' OR '%jcp%' in grupo='DFC'
+    because Petrobras DFC numbering (6.03.05) may not match other companies.
+    rapina normalizes grupo to 'DFC' for all cash flow statement items.
+    Also try exact codes 6.03.05 and 6.03.06 first.
 
-    We use ABS() because DFC convention stores outflows as negative values.
-    Rows are cumulative YTD within each fiscal year:
-      Dec-31 row = full year total (most useful)
-      Sep-30 row = Jan-Sep cumulative
-
-    DECISION: Show all periods including quarters. The analyst can read
-    the Dec-31 row for annual comparisons. We do NOT subtract quarters
-    to get discrete Q values -- the raw DFC as-filed is the standard.
+    Values are negative in DFC (cash outflow) -- use ABS().
+    meses=12 for annual; show all periods sorted desc.
     """
     if not ids:
         return "Empresa nao encontrada."
 
-    placeholders = ",".join("?" * len(ids))
-    sql = f"""
-        SELECT
-            dt_refer,
-            cd_conta,
-            ds_conta,
-            MAX(ABS(vl_conta)) AS vl_conta
-        FROM empresas
-        WHERE id IN ({placeholders})
-          AND cd_conta IN ('6.03.05', '6.03.06', '6.02.05')
-        GROUP BY dt_refer, cd_conta
-        ORDER BY dt_refer DESC, cd_conta
+    ph = ",".join("?" * len(ids))
+
+    # Try exact codes first
+    sql_exact = f"""
+        SELECT c.data_fim_exerc, c.codigo, c.descr, c.meses,
+               MAX(ABS(c.valor)) AS valor, MAX(c.escala) AS escala
+        FROM contas c
+        WHERE c.id_empresa IN ({ph})
+          AND c.codigo IN ('6.03.05','6.03.06','6.02.05')
+          AND c.consolidado = 1
+        GROUP BY c.data_fim_exerc, c.codigo
+        ORDER BY c.data_fim_exerc DESC, c.codigo
         LIMIT ?
     """
-    rows = conn.execute(sql, ids + [periods * 3]).fetchall()
+    rows = conn.execute(sql_exact, list(ids) + [periods * 3]).fetchall()
+
+    # Fallback: search by description in DFC group
+    if not rows:
+        sql_desc = f"""
+            SELECT c.data_fim_exerc, c.codigo, c.descr, c.meses,
+                   MAX(ABS(c.valor)) AS valor, MAX(c.escala) AS escala
+            FROM contas c
+            WHERE c.id_empresa IN ({ph})
+              AND c.grupo = 'DFC'
+              AND (lower(c.descr) LIKE '%dividendo%'
+                   OR lower(c.descr) LIKE '%jcp%'
+                   OR lower(c.descr) LIKE '%juros sobre%capital%')
+              AND c.consolidado = 1
+            GROUP BY c.data_fim_exerc, c.codigo
+            ORDER BY c.data_fim_exerc DESC, c.codigo
+            LIMIT ?
+        """
+        rows = conn.execute(sql_desc, list(ids) + [periods * 5]).fetchall()
+        source_note = "Nota: usando busca por descricao (codigos DFC variam por empresa)."
+    else:
+        source_note = ""
 
     if not rows:
-        return f"{company_name}: sem dados DFC (6.03.05/6.03.06) no banco."
+        return (
+            f"{company_name}: sem dados DFC de dividendos pagos.\n"
+            "Tente mode='annual' (DVA) para dividendos declarados."
+        )
 
     by_period: dict[str, dict] = defaultdict(dict)
     for r in rows:
-        by_period[r["dt_refer"]][r["cd_conta"]] = r["vl_conta"]
+        key = f"{r['data_fim_exerc']}|{r['meses']}"
+        by_period[key][r["codigo"]] = {
+            "descr": r["descr"], "valor": r["valor"], "escala": r["escala"]
+        }
 
     lines = [
-        f"=== {company_name} -- Dividendos Pagos em Caixa (DFC 6.03) ===",
-        "Fonte: Demonstracao dos Fluxos de Caixa (regime de caixa -- valor PAGO)",
-        "Nota: valores cumulativos YTD. Linha Dec-31 = ano completo.",
-        "",
+        f"=== {company_name} -- Dividendos Pagos em Caixa (DFC) ===",
+        "Fonte: DFC (regime de caixa -- valor PAGO). Valores cumulativos YTD.",
+        "Nota: meses=12 = ano completo. 6.02.05 = dividendos RECEBIDOS (nao distribuicoes).",
     ]
+    if source_note:
+        lines.append(source_note)
+    lines.append("")
+
     count = 0
-    for period in sorted(by_period.keys(), reverse=True):
+    for key in sorted(by_period.keys(), reverse=True):
         if count >= periods:
             break
-        d = by_period[period]
-        paid_ctrl = d.get("6.03.05", 0) or 0
-        paid_min  = d.get("6.03.06", 0) or 0
-        received  = d.get("6.02.05", 0) or 0
-        total_out = paid_ctrl + paid_min
+        period, meses = key.split("|")
+        d = by_period[key]
 
-        # Annotate Dec-31 as annual
-        label = period
-        if period.endswith("-12-31"):
-            label = f"{period}  [anual]"
-
+        label = f"{period}  [anual]" if meses == "12" else f"{period}  [{meses}m]"
         lines.append(f"Periodo: {label}")
-        lines.append(f"  Pago a controladores     : R$ {paid_ctrl/1e9:>10.3f} bi")
-        lines.append(f"  Pago a nao controladores : R$ {paid_min/1e9:>10.3f} bi")
-        lines.append(f"  Total saida de caixa     : R$ {total_out/1e9:>10.3f} bi")
-        if received:
-            # Informational only -- this is money coming IN from subsidiaries
-            lines.append(
-                f"  Dividendos recebidos *   : R$ {received/1e9:>10.3f} bi"
-                f"  (* recebidos de coligadas, nao distribuicoes)"
-            )
+
+        total_out = 0.0
+        for codigo, info in sorted(d.items()):
+            v = _val(info["valor"], info["escala"])
+            descr = info["descr"][:40]
+            if codigo == "6.02.05":
+                lines.append(f"  {codigo} {descr:<40}: R$ {v/1e9:>10.3f} bi  (* RECEBIDO)")
+            else:
+                lines.append(f"  {codigo} {descr:<40}: R$ {v/1e9:>10.3f} bi")
+                total_out += v
+
+        if len(d) > 1:
+            lines.append(f"  {'Total saida':<45}: R$ {total_out/1e9:>10.3f} bi")
         lines.append("")
         count += 1
 
@@ -362,81 +258,64 @@ def _mode_declared(
     periods: int,
 ) -> str:
     """
-    Dividends payable on balance sheet -- BPP form 2, code 2.01.05.02.01.
-
-    This is the OUTSTANDING LIABILITY at period-end: amounts declared
-    by the board but not yet remitted to shareholders.
-
-    IMPORTANT: Zero is a valid and EXPECTED value for many periods.
-    Petrobras typically declares dividends mid-year (Q2/Q4) and pays
-    them the same quarter. So Q1 and Q3 balance sheet often shows R$0.
-    This is NOT missing data -- it means the liability was cleared.
-
-    FALLBACK: If 2.01.05.02.01 returns no rows, try a description-based
-    search for companies with non-standard BPP structure. This broadens
-    coverage to companies that use different sub-codes.
-
-    STRUCTURAL LIMITATION: Code 2.01.05.02.01 is tied to Petrobras's
-    specific BPP layout. Other companies may classify dividends payable
-    under 2.01.05.02, 2.01.04.08, or custom codes. The fallback helps
-    but cannot guarantee coverage for all companies.
+    Dividends payable on balance sheet (BPP 2.01.05.02.01).
+    Confirmed present for Petrobras. Other companies may use different codes.
+    Zero balance is NORMAL -- means liability was cleared in that period.
     """
     if not ids:
         return "Empresa nao encontrada."
 
-    placeholders = ",".join("?" * len(ids))
+    ph = ",".join("?" * len(ids))
+    codes = ("2.01.05.02.01", "2.01.05.02.02", "2.01.05.02")
+    ph_c  = ",".join("?" * len(codes))
 
-    # Primary query: known exact codes
     sql = f"""
-        SELECT
-            dt_refer,
-            cd_conta,
-            ds_conta,
-            MAX(vl_conta) AS vl_conta
-        FROM empresas
-        WHERE id IN ({placeholders})
-          AND cd_conta IN ('2.01.05.02.01', '2.01.05.02.02', '2.01.05.02')
-        GROUP BY dt_refer, cd_conta
-        ORDER BY dt_refer DESC, cd_conta
+        SELECT c.data_fim_exerc, c.codigo, c.descr,
+               MAX(c.valor) AS valor, MAX(c.escala) AS escala
+        FROM contas c
+        WHERE c.id_empresa IN ({ph})
+          AND c.codigo IN ({ph_c})
+          AND c.consolidado = 1
+        GROUP BY c.data_fim_exerc, c.codigo
+        ORDER BY c.data_fim_exerc DESC, c.codigo
         LIMIT ?
     """
-    rows = conn.execute(sql, ids + [periods * 3]).fetchall()
+    rows = conn.execute(sql, list(ids) + list(codes) + [periods * len(codes)]).fetchall()
 
+    # Fallback: description search
     if not rows:
-        # Fallback: description-based search for non-standard BPP structure
         sql2 = f"""
-            SELECT dt_refer, cd_conta, ds_conta, MAX(vl_conta) AS vl_conta
-            FROM empresas
-            WHERE id IN ({placeholders})
-              AND cd_conta LIKE '2.%'
-              AND (lower(ds_conta) LIKE '%dividendo%pagar%'
-                   OR lower(ds_conta) LIKE '%jcp%pagar%'
-                   OR lower(ds_conta) LIKE '%juros%capital%pagar%')
-            GROUP BY dt_refer, cd_conta
-            ORDER BY dt_refer DESC
+            SELECT c.data_fim_exerc, c.codigo, c.descr,
+                   MAX(c.valor) AS valor, MAX(c.escala) AS escala
+            FROM contas c
+            WHERE c.id_empresa IN ({ph})
+              AND c.codigo LIKE '2.%'
+              AND (lower(c.descr) LIKE '%dividendo%pagar%'
+                   OR lower(c.descr) LIKE '%jcp%pagar%')
+              AND c.consolidado = 1
+            GROUP BY c.data_fim_exerc, c.codigo
+            ORDER BY c.data_fim_exerc DESC
             LIMIT ?
         """
-        rows = conn.execute(sql2, ids + [periods * 2]).fetchall()
-        source_note = "Nota: usando busca por descricao (estrutura BPP nao padrao detectada)."
+        rows = conn.execute(sql2, list(ids) + [periods * 2]).fetchall()
+        source_note = "Nota: busca por descricao (estrutura BPP nao padrao)."
     else:
         source_note = ""
 
     if not rows:
         return (
-            f"{company_name}: sem dados BPP de dividendos a pagar.\n"
-            "Esta empresa pode usar estrutura BPP diferente da padrao (2.01.05.02.01).\n"
-            "Experimente mode='annual' (DVA) ou mode='cash_paid' (DFC) para dados alternativos."
+            f"{company_name}: sem dados BPP de dividendos a pagar (2.01.05.02.01).\n"
+            "Esta empresa pode usar estrutura BPP diferente."
         )
 
     by_period: dict[str, dict] = defaultdict(dict)
     for r in rows:
-        by_period[r["dt_refer"]][r["cd_conta"]] = r["vl_conta"]
+        by_period[r["data_fim_exerc"]][r["codigo"]] = (r["valor"], r["escala"], r["descr"])
 
     lines = [
         f"=== {company_name} -- Dividendos a Pagar (BPP 2.01.05.02.01) ===",
-        "Fonte: Balanco Patrimonial Passivo -- saldo do passivo circulante no final do periodo",
-        "AVISO: Saldo R$0 e NORMAL para Q1/Q3 -- indica que o passivo foi liquidado no periodo.",
-        "AVISO: Codigo 2.01.05.02.01 e especifico de certas empresas (ex: Petrobras).",
+        "Fonte: BPP -- saldo do passivo circulante no final do periodo.",
+        "AVISO: Saldo R$0 e NORMAL para periodos sem declaracao pendente.",
     ]
     if source_note:
         lines.append(source_note)
@@ -447,24 +326,11 @@ def _mode_declared(
         if count >= periods:
             break
         d = by_period[period]
-        payable   = d.get("2.01.05.02.01", 0) or 0
-        mandatory = d.get("2.01.05.02.02", 0) or 0
-        parent    = d.get("2.01.05.02",    0) or 0
-
-        label = period
-        if period.endswith("-12-31"):
-            label = f"{period}  [anual]"
-
-        lines.append(f"Periodo: {label}")
-        lines.append(f"  Dividendos e JCP a Pagar : R$ {payable/1e9:>10.3f} bi")
-        if mandatory:
-            lines.append(
-                f"  Div. Minimo Obrigatorio  : R$ {mandatory/1e9:>10.3f} bi"
-            )
-        if parent and parent != payable:
-            lines.append(
-                f"  Total Outros Passivos    : R$ {parent/1e9:>10.3f} bi"
-            )
+        lines.append(f"Periodo: {period}")
+        for codigo in sorted(d.keys()):
+            valor, escala, descr = d[codigo]
+            v = _val(valor, escala)
+            lines.append(f"  {codigo} {descr[:40]:<40}: R$ {v/1e9:>10.3f} bi")
         lines.append("")
         count += 1
 
@@ -478,98 +344,110 @@ def _mode_status(
     ids: list[int],
     company_name: str,
 ) -> str:
-    """
-    Quick dividend health summary combining DVA, DFC, and BPP.
-
-    Answers: "Is this company paying dividends and how much?"
-    Shows latest available data point from each source.
-
-    DECISION: mode="status" is the default because it requires no domain
-    knowledge from the user. They just call cvm_dividends(ticker="PETR4")
-    and get a useful overview without needing to know DVA vs DFC vs BPP.
-    """
+    """Quick dividend health summary: latest annual DVA + latest DFC + latest BPP."""
     if not ids:
-        return "Empresa nao encontrada no banco de dados rapina."
+        return "Empresa nao encontrada."
 
-    placeholders = ",".join("?" * len(ids))
+    ph = ",".join("?" * len(ids))
 
-    def _latest(code: str, annual_only: bool = False) -> tuple[str, float]:
-        """Return (dt_refer, abs_value) for most recent row with given code."""
-        date_filter = "AND dt_refer LIKE '%-12-31'" if annual_only else ""
-        sql = f"""
-            SELECT dt_refer, MAX(ABS(vl_conta)) AS vl
-            FROM empresas
-            WHERE id IN ({placeholders})
-              AND cd_conta = ?
-              {date_filter}
-            GROUP BY dt_refer
-            ORDER BY dt_refer DESC
-            LIMIT 1
-        """
-        row = conn.execute(sql, ids + [code]).fetchone()
-        if row and row["vl"] is not None:
-            return row["dt_refer"], float(row["vl"])
+    def _latest_annual(code: str):
+        """Most recent meses=12 row for given codigo."""
+        row = conn.execute(f"""
+            SELECT data_fim_exerc, MAX(valor) AS valor, MAX(escala) AS escala
+            FROM contas
+            WHERE id_empresa IN ({ph}) AND codigo=? AND meses=12 AND consolidado=1
+            GROUP BY data_fim_exerc ORDER BY data_fim_exerc DESC LIMIT 1
+        """, list(ids) + [code]).fetchone()
+        if row and row["valor"] is not None:
+            return row["data_fim_exerc"], _val(row["valor"], row["escala"])
         return "", 0.0
 
-    # DVA annual -- declared
-    dva_date,  dva_total = _latest("7.08.04",    annual_only=True)
-    _,         dva_jcp   = _latest("7.08.04.01", annual_only=True)
-    _,         dva_div   = _latest("7.08.04.02", annual_only=True)
+    def _latest_any(code: str):
+        """Most recent row for given codigo (any meses)."""
+        row = conn.execute(f"""
+            SELECT data_fim_exerc, meses, MAX(ABS(valor)) AS valor, MAX(escala) AS escala
+            FROM contas
+            WHERE id_empresa IN ({ph}) AND codigo=? AND consolidado=1
+            GROUP BY data_fim_exerc ORDER BY data_fim_exerc DESC LIMIT 1
+        """, list(ids) + [code]).fetchone()
+        if row and row["valor"] is not None:
+            return row["data_fim_exerc"], row["meses"], _val(row["valor"], row["escala"])
+        return "", 0, 0.0
 
-    # DFC -- cash paid (most recent period, could be quarterly)
-    dfc_date,  dfc_ctrl  = _latest("6.03.05")
-    _,         dfc_min   = _latest("6.03.06")
+    # DVA annual
+    dva_date, dva_total = _latest_annual("7.08.04")
+    dva_jcp = 0.0
+    dva_div = 0.0
 
-    # BPP -- payable balance
-    bpp_date,  bpp_pay   = _latest("2.01.05.02.01")
+    if dva_date:
+        def _val_at(code, date):
+            row = conn.execute(f"""
+                SELECT MAX(valor) AS valor, MAX(escala) AS escala FROM contas
+                WHERE id_empresa IN ({ph}) AND codigo=? AND data_fim_exerc=?
+                  AND meses=12 AND consolidado=1
+            """, list(ids) + [code, dva_date]).fetchone()
+            return _val(row["valor"], row["escala"]) if row and row["valor"] else 0.0
+        dva_jcp = _val_at("7.08.04.01", dva_date)
+        dva_div = _val_at("7.08.04.02", dva_date)
 
-    lines = [
-        f"=== {company_name} -- Status de Dividendos ===",
-        "",
-    ]
+    # DFC - try exact code, fallback to description
+    dfc_date, dfc_meses, dfc_paid = _latest_any("6.03.05")
+    if not dfc_date:
+        row = conn.execute(f"""
+            SELECT data_fim_exerc, meses, MAX(ABS(valor)) AS valor, MAX(escala) AS escala
+            FROM contas
+            WHERE id_empresa IN ({ph}) AND grupo='DFC'
+              AND (lower(descr) LIKE '%dividendo%pago%' OR lower(descr) LIKE '%dividendo%acionista%')
+              AND consolidado=1
+            GROUP BY data_fim_exerc ORDER BY data_fim_exerc DESC LIMIT 1
+        """, list(ids)).fetchone()
+        if row and row["valor"]:
+            dfc_date, dfc_meses = row["data_fim_exerc"], row["meses"]
+            dfc_paid = _val(row["valor"], row["escala"])
+
+    # BPP payable
+    bpp_date, _, bpp_pay = _latest_any("2.01.05.02.01")
+
+    lines = [f"=== {company_name} -- Status de Dividendos ===", ""]
 
     if dva_date:
         payout_str = ""
         if dva_total:
-            payout = (dva_jcp + dva_div) / abs(dva_total) * 100
-            payout_str = f"  Payout ratio            : {payout:.1f}%\n"
-        lines.append(f"[DVA] Ultimo exercicio anual: {dva_date[:4]}")
-        lines.append(f"  Total Capitais Proprios : R$ {dva_total/1e9:.3f} bi")
-        lines.append(f"  JCP declarado           : R$ {dva_jcp/1e9:.3f} bi")
-        lines.append(f"  Dividendos declarados   : R$ {dva_div/1e9:.3f} bi")
+            pct = (dva_jcp + dva_div) / abs(dva_total) * 100
+            payout_str = f"  Payout ratio            : {pct:.1f}%"
+        lines += [
+            f"[DVA] Ultimo exercicio anual: {dva_date}",
+            f"  Total Capitais Proprios : R$ {dva_total/1e9:.3f} bi",
+            f"  JCP declarado           : R$ {dva_jcp/1e9:.3f} bi",
+            f"  Dividendos declarados   : R$ {dva_div/1e9:.3f} bi",
+        ]
         if payout_str:
-            lines.append(payout_str.rstrip())
+            lines.append(payout_str)
         lines.append("")
     else:
-        lines.append("[DVA] Sem dados de dividendos declarados.\n")
+        lines.append("[DVA] Sem dados de dividendos anuais.\n")
 
     if dfc_date:
-        total_paid = dfc_ctrl + dfc_min
-        label = f"{dfc_date} [anual]" if dfc_date.endswith("-12-31") else dfc_date
-        lines.append(f"[DFC] Ultimo periodo com dados: {label}")
-        lines.append(f"  Pago a controladores    : R$ {dfc_ctrl/1e9:.3f} bi")
-        lines.append(f"  Pago a nao controladores: R$ {dfc_min/1e9:.3f} bi")
-        lines.append(f"  Total saida de caixa    : R$ {total_paid/1e9:.3f} bi")
-        lines.append("")
+        label = f"{dfc_date} [anual]" if dfc_meses == 12 else f"{dfc_date} [{dfc_meses}m]"
+        lines += [
+            f"[DFC] Ultimo periodo: {label}",
+            f"  Dividendos/JCP pagos    : R$ {dfc_paid/1e9:.3f} bi",
+            "",
+        ]
     else:
         lines.append("[DFC] Sem dados de pagamento em caixa.\n")
 
     if bpp_date:
-        label = f"{bpp_date} [anual]" if bpp_date.endswith("-12-31") else bpp_date
-        lines.append(f"[BPP] Saldo passivo em {label}")
-        lines.append(f"  Dividendos e JCP a Pagar: R$ {bpp_pay/1e9:.3f} bi")
-        if bpp_pay == 0:
-            lines.append(
-                "  (Saldo zero: passivo liquidado no periodo -- normal para Q1/Q3)"
-            )
-        lines.append("")
+        lines += [
+            f"[BPP] Saldo passivo em {bpp_date}",
+            f"  Dividendos e JCP a Pagar: R$ {bpp_pay/1e9:.3f} bi",
+            "(Saldo zero = passivo liquidado no periodo)" if bpp_pay == 0 else "",
+            "",
+        ]
     else:
-        lines.append(
-            "[BPP] Sem passivo de dividendos registrado "
-            "(codigo 2.01.05.02.01 nao encontrado para esta empresa).\n"
-        )
+        lines.append("[BPP] Sem passivo de dividendos (2.01.05.02.01 nao encontrado).\n")
 
-    return "\n".join(lines)
+    return "\n".join(l for l in lines)
 
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────
@@ -580,29 +458,16 @@ def cvm_dividends(
     periods: int = 5,
 ) -> dict:
     """
-    Query dividend data from rapina.db for a Brazilian listed company.
+    Query dividend data from rapina.db.
 
     Args:
-        ticker:  B3 ticker (e.g. "PETR4"), company name fragment (e.g. "PETROBRAS"),
-                 or 14-digit CNPJ. Tickers are resolved via bridge.db if available.
-        mode:    "status"    -- quick summary: latest DVA + DFC + BPP (default)
-                 "annual"    -- annual declared (DVA 7.08.04.*), last N years
-                 "cash_paid" -- cash actually paid (DFC 6.03.05/06), last N periods
-                 "declared"  -- dividends payable on BPP (2.01.05.02.01), last N periods
-        periods: Number of years/periods to return for annual/cash_paid/declared (default 5).
-
-    Returns:
-        dict: status, mode, company, report (human-readable), data (list, future use).
-
-    DECISION: Returns a human-readable "report" string as the primary output.
-    This is ready for display, memory storage, or agent synthesis without
-    any post-processing. The "data" list is reserved for future structured output.
-
-    Examples:
-        cvm_dividends(ticker="PETR4")               # quick status via bridge
-        cvm_dividends(ticker="PETROBRAS", mode="annual", periods=5)
-        cvm_dividends(ticker="VALE3", mode="cash_paid")
-        cvm_dividends(ticker="33000167000101", mode="declared")
+        ticker:  B3 ticker (PETR4), name fragment (PETROBRAS), or CNPJ (14 digits).
+                 Tickers resolved via bridge.db if available.
+        mode:    "status"    -- quick summary (default)
+                 "annual"    -- annual declared DVA 7.08.04.*
+                 "cash_paid" -- cash paid DFC
+                 "declared"  -- payable BPP 2.01.05.02.01
+        periods: years/periods to return (default 5)
     """
     try:
         conn = _connect()
@@ -613,26 +478,9 @@ def cvm_dividends(
         ids, company_name = _resolve_company(conn, ticker)
 
         if not ids:
-            # Give a helpful error distinguishing ticker-not-in-bridge from
-            # company-genuinely-not-found
-            if _looks_like_ticker(ticker):
-                hint = (
-                    f" Dica: execute skill(domain='b3_cvm', mode='sync') para "
-                    f"sincronizar o bridge, ou use o nome CVM: "
-                    f"skill(domain='cvm_dividends', ticker='PETROBRAS')."
-                )
-            else:
-                hint = (
-                    " Use o nome CVM oficial, CNPJ (14 digitos), "
-                    "ou ticker B3 (requer bridge sincronizado)."
-                )
-            msg = f"Empresa '{ticker}' nao encontrada em rapina.db.{hint}"
-            return {
-                "status": "not_found",
-                "error":  msg,
-                "report": msg,
-                "data":   [],
-            }
+            from skills.cvm._bridge import not_found_message
+            msg = not_found_message(ticker)
+            return {"status": "not_found", "error": msg, "report": msg, "data": []}
 
         mode_clean = mode.lower().strip()
 
@@ -645,19 +493,16 @@ def cvm_dividends(
         elif mode_clean == "status":
             report = _mode_status(conn, ids, company_name)
         else:
-            msg = (
-                f"Modo '{mode}' invalido. "
-                "Use: status | annual | cash_paid | declared"
-            )
+            msg = f"Modo '{mode}' invalido. Use: status | annual | cash_paid | declared"
             return {"status": "error", "error": msg, "report": msg, "data": []}
 
         return {
             "status":  "success",
             "mode":    mode_clean,
             "company": company_name,
-            "ids":     ids,        # expose for debugging / chaining with other skills
+            "ids":     ids,
             "report":  report,
-            "data":    [],         # reserved for structured output in a future version
+            "data":    [],
         }
 
     except Exception as e:

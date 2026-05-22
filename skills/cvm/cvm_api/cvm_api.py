@@ -63,22 +63,15 @@ from skills.cvm.cvm_api.cvm_api_catalog import (
 
 def _connect() -> sqlite3.Connection:
     """
-    Open rapina.db as read-only.
-    Raises FileNotFoundError with a clear message if not found.
+    Open rapina.db read-only via shared _db helper.
+    CVM_DB_PATH still used by status mode for file size reporting.
 
-    DECISION: read-only URI mode (uri=True with ?mode=ro) prevents accidental
-    writes and allows concurrent reads without WAL conflicts.
-    rapina.db is updated externally by rapinav2 -- this skill never writes.
+    DECISION: delegates to skills.cvm._db.connect_rapina() so all cvm skills
+    use the same DB path resolution logic (MEMORY_ROOT env var or walk-up).
+    Behavior is identical to the original -- read-only, Row factory.
     """
-    if not CVM_DB_PATH.exists():
-        raise FileNotFoundError(
-            f"rapina.db not found at {CVM_DB_PATH}. "
-            f"Move it there: mkdir {CVM_DB_PATH.parent} && copy rapina.db {CVM_DB_PATH}"
-        )
-    uri = f"file:{CVM_DB_PATH}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+    from skills.cvm._db import connect_rapina
+    return connect_rapina()
 
 
 # ---------------------------------------------------------------------------
@@ -87,19 +80,46 @@ def _connect() -> sqlite3.Connection:
 
 def _resolve_company(conn: sqlite3.Connection, query: str) -> list[dict]:
     """
-    Find company records in empresas by CNPJ or name.
+    Find company records in empresas by ticker, CNPJ, or name.
     Returns list of {id, cnpj, nome, ano} dicts for ALL years found.
     Multiple rows = same company across multiple years (expected).
 
     Resolution order:
+      0. B3 ticker -> bridge.db (added v2: requires b3_cvm sync)
       1. CNPJ match (strips formatting for comparison)
       2. Exact name match (case-insensitive)
       3. Partial name match
 
-    DECISION: return ALL year rows so the caller can decide which years to use.
-    Filtering to specific years happens in the query functions.
+    DECISION: bridge lookup prepended to existing logic.
+    If bridge unavailable or ticker not found, falls through to CNPJ/name.
+    Return shape unchanged: list[dict] with {id, cnpj, nome, ano}.
     """
     q = query.strip()
+
+    # ── Path 0: B3 ticker -> bridge ───────────────────────────────────────────
+    # DECISION: Import lazily -- bridge is optional enhancement.
+    # If b3_cvm not installed or bridge not synced, silently skip.
+    from skills.cvm._bridge import looks_like_ticker, resolve_via_bridge
+    if looks_like_ticker(q):
+        bridge = resolve_via_bridge(q.upper())
+        if bridge is not None:
+            rapina_ids, name = bridge
+            if rapina_ids:
+                # Fetch the actual empresas rows for these ids so the rest of
+                # cvm_api works unchanged (it expects full Row objects with ano/cnpj)
+                placeholders = ",".join("?" * len(rapina_ids))
+                bridge_rows = conn.execute(
+                    f"SELECT id, cnpj, nome, ano FROM empresas "
+                    f"WHERE id IN ({placeholders}) ORDER BY ano",
+                    rapina_ids,
+                ).fetchall()
+                if bridge_rows:
+                    return [dict(r) for r in bridge_rows]
+            # Bridge found ticker but no rapina data -- fall through to name search
+            # using the CVM name from bridge as the query string
+            if name and name != q:
+                q = name  # search by CVM name instead of ticker
+
     rows: list[sqlite3.Row] = []
 
     # 1. CNPJ lookup -- normalize both sides to numeric for comparison
