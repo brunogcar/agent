@@ -26,26 +26,23 @@ from __future__ import annotations
 
 from core.config import cfg
 from registry import tool
-
 from tools.git_ops._registry import DISPATCH
 from tools.git_ops.helpers import _resolve_root, _check_repo
+from core.path_guard import check_git_operation, make_path_error
+from core.tracer import tracer
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dynamic Docstring Builder
-# Preserves the exact LLM-facing documentation format from the original.
-# Reads help text and examples directly from the registered operations.
 # ─────────────────────────────────────────────────────────────────────────────
 def _build_doc() -> str:
     """
     Generate the tool's docstring dynamically from registered git operations.
-    This ensures that any new operation added via @register_action automatically
-    appears in the LLM's tool description without manual updates.
     """
     git_ops = DISPATCH.get("git", {})
     lines = [
         "Git version control operations.",
         "",
-        "operation:  " + " | ".join(sorted(git_ops.keys())),
+        "operation:   " + " | ".join(sorted(git_ops.keys())),
         "",
         "IMPORTANT - root vs path parameter:",
         "  root  - the repo directory: \"agent\" (default) | \"workspace\" | \"/absolute/path\"",
@@ -56,32 +53,28 @@ def _build_doc() -> str:
         "          the tool detects this and uses path as the root (backward-compat alias).",
         "",
     ]
-    
     for name in sorted(git_ops.keys()):
         info = git_ops[name]
         lines.append(info["help"])
-        lines.append(" ")
+        lines.append("  ")
         exs = info.get("examples", [])
         if exs:
-            lines.append("  Examples:")
+            lines.append("  Examples: ")
             for ex in exs:
                 lines.append(f"    {ex}")
-            lines.append(" ")
+            lines.append("  ")
 
-    # Common usage patterns (kept as a quick reference for the LLM)
     lines.append("Common usage patterns:")
     lines.append("    git(operation=\"status\")                  # check working tree")
     lines.append("    git(operation=\"log\", n=5)                # recent commits")
     lines.append("    git(operation=\"snapshot\", message=\"...\") # safe point before changes")
     lines.append("    git(operation=\"commit\", message=\"...\")  # after a successful change")
     lines.append("    git(operation=\"rollback\")                # undo uncommitted changes")
-    
+
     return "\n".join(lines)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dispatcher Implementation
-# Preserves exact parameter signature, root resolution, repo validation,
-# and error handling from the original implementation.
 # ─────────────────────────────────────────────────────────────────────────────
 @tool
 def git(
@@ -91,47 +84,67 @@ def git(
     n:         int  = 10,
     path:      str  = "",
     force:     bool = False,
+    target:    str  = "",
+    trace_id:  str  = "",
 ) -> dict:
     """
     Git version control operations. Dispatched via standardized registry.
-    Preserves original safety checks, backward-compat aliases, and LLM docstrings.
     """
     operation = operation.strip().lower()
+    if not trace_id:
+        trace_id = tracer.new_trace("git", goal=operation)
 
     # 1. Resolve working directory (preserves backward-compat alias logic)
     cwd, err = _resolve_root(root, path)
     if err:
-        return {"status": "error", "error": err}
+        return make_path_error(path or root, operation, err, trace_id)
 
-    # 2. Lookup operation in registry
+    # 2. Validate git operation scoping (blocks clone outside workspace)
+    allowed, err, resolved_cwd = check_git_operation(
+        operation=operation,
+        cwd=cwd,
+        target=target if target else None
+    )
+    if not allowed:
+        return make_path_error(cwd or path, operation, err, trace_id)
+
+    # Use resolved_cwd if provided
+    actual_cwd = resolved_cwd or cwd
+
+    # 3. Lookup operation in registry
     git_ops = DISPATCH.get("git", {})
     op_info = git_ops.get(operation)
     if not op_info:
         return {
             "status": "error",
             "error": f"Unknown operation '{operation}'. Valid: {' | '.join(sorted(git_ops.keys()))}",
+            "trace_id": trace_id,
         }
 
-    # 3. Validate repository if the operation requires it
+    # 4. Validate repository if the operation requires it
     if op_info.get("needs_repo"):
-        ok, err = _check_repo(cwd)
+        ok, err = _check_repo(actual_cwd)
         if not ok:
-            return {"status": "error", "error": err}
+            return {"status": "error", "error": err, "trace_id": trace_id}
 
-    # 4. Prepare kwargs exactly as original handlers expect
+    # 5. Prepare kwargs exactly as original handlers expect
     kwargs = {
-        "cwd": cwd,
+        "cwd": actual_cwd,
         "message": message,
         "path": path,
         "n": n,
         "force": force,
+        "trace_id": trace_id,
     }
+    
+    if target:
+        kwargs["target"] = target
 
-    # 5. Execute handler safely
+    # 6. Execute handler safely
     try:
         return op_info["func"](**kwargs)
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": str(e), "trace_id": trace_id}
 
 # Attach dynamic docstring so MCP/LLM sees the formatted help text
 git.__doc__ = _build_doc()
@@ -139,30 +152,7 @@ git.__doc__ = _build_doc()
 # ---------------------------------------------------------------------------
 # Commands intentionally excluded from the git meta‑tool
 # ---------------------------------------------------------------------------
-#
 # The following operations are NOT exposed to the autonomous agent because they
 # either involve remote repositories, are destructive to shared history, or
 # require human judgement for conflict resolution:
-#
-#   fetch       – touches a remote; can update remote‑tracking branches and
-#                 potentially introduce unwanted refs. The agent runs in an
-#                 isolated, local‑first environment and does not need remote
-#                 awareness by default.
-#
-#   pull        – fetch + merge. Combines network access with automatic
-#                 merging that can produce conflicts. Unsuitable for
-#                 unsupervised execution.
-#
-#   merge       – joins two branches. May create merge conflicts that the
-#                 agent cannot resolve reliably. Branch‑per‑feature with
-#                 explicit commits is preferred.
-#
-#   rebase      – rewrites commit history. Extremely dangerous for an
-#                 autonomous agent; can lose work or corrupt the timeline.
-#
-#   push        – sends local commits to a remote. Explicitly excluded to
-#                 maintain the agent's local‑only boundary.
-#
-# If a future use case requires any of these (e.g., a fully‑automated CI
-# pipeline), add them behind a `allow_remote=True` flag and enforce
-# additional safety guards (authentication, conflict detection, etc.).
+# fetch, pull, merge, rebase, push
