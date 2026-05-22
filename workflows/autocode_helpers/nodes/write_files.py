@@ -1,14 +1,13 @@
 """
 File writing node.
 """
-
 from __future__ import annotations
 
 import json
 import shutil
+
 from pathlib import Path
 from typing import Any
-
 from workflows.autocode_helpers.state import AutocodeState
 from workflows.autocode_helpers.helpers import _files_context
 from core.config import cfg
@@ -24,11 +23,12 @@ def node_write_files(state: AutocodeState) -> AutocodeState:
     tid = state.get("trace_id", "")
     if state.get("status") in ("needs_clarification", "failed"):
         return state
-    if not state.get("generated_code"):
+    
+    # [FIX] Schema drift: execute/debug nodes write to tdd_source_code, not generated_code
+    if not state.get("tdd_source_code"):
         return state
-
     try:
-        data = json.loads(state["generated_code"])
+        data = json.loads(state["tdd_source_code"])
     except Exception as e:
         tracer.step(tid, "write_files", f"JSON parse failed: {e}")
         return state

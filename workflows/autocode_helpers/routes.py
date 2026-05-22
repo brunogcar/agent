@@ -5,13 +5,12 @@ Routing functions for the autocode state machine.
 from __future__ import annotations
 
 from typing import Any
-
 from workflows.autocode_helpers.state import AutocodeState
 
 def route_after_classify(state: AutocodeState) -> str:
     """Route after task classification node."""
-    classification = state.get("classification", {})
-    task_type = classification.get("task_type", state.get("task_type", "unclear"))
+    # [FIX] Removed dead 'classification' dict lookup; classify node writes directly to task_type
+    task_type = state.get("task_type", "unclear")
     if task_type == "unclear":
         return "END"
     elif task_type == "create_skill":

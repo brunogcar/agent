@@ -5,7 +5,6 @@ Execution node for autocode workflow.
 from __future__ import annotations
 
 from typing import Any
-
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_helpers.helpers import _call, _write_files
@@ -17,19 +16,22 @@ def node_execute_step(state: AutocodeState) -> AutocodeState:
     """
     tid = state.get("trace_id", "")
     tracer.step(tid, "execute_step", "Executing plan step")
-
-    # Get current plan step
-    plan = state.get("plan", {})
-    current_step = plan.get("steps", [{}])[state.get("step_index", 0)]
+    
+    # [FIX] Schema drift: plan is a list[dict], not a dict with "steps" key
+    plan = state.get("plan", [])
+    current_step_idx = state.get("current_step", 0)
+    if current_step_idx >= len(plan):
+        return {**state, "status": "error", "error": "No more plan steps"}
+    current_step = plan[current_step_idx]
 
     if not current_step:
         return {**state, "status": "error", "error": "No plan step to execute"}
 
     # Use your actual config attributes
     system = """
-    You are an expert Python developer. Generate clean, production-ready code.
-    Return ONLY the code in a code block, no explanations.
-    """
+You are an expert Python developer. Generate clean, production-ready code.
+Return ONLY the code in a code block, no explanations.
+"""
     user = f"Plan step: {current_step.get('description', '')}\nCurrent files:\n{state.get('files_context', '')}"
 
     try:
