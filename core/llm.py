@@ -5,7 +5,7 @@ Design goals:
   1. Single call site for ALL model interactions - nothing else calls requests directly
   2. Provider abstraction from day one - adding DeepSeek/Claude/Groq later
      requires only a new Provider class, zero changes to callers
-  3. Role-based dispatch - callers say "executor" not "hermes-3-llama-3.1-8b"
+  3. Role-based dispatch - callers say "executor" not the raw model string from .env
   4. Per-role timeouts enforced here, not scattered across tool files
   5. Structured output support - request JSON, get a parsed dict back
   6. Full trace integration - every call logged with trace_id

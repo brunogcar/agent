@@ -1,10 +1,10 @@
-# 🧠 QWEN PLANNER + VISION — ORCHESTRATION & VISUAL ANALYSIS 🎯👁️
+# 🧠 PLANNER + VISION — ORCHESTRATION & VISUAL ANALYSIS 🎯👁️
 
 ---
 
 ## 🔗 JINJA TEMPLATE STRUCTURE (For LM Studio) ✨⚡
 ```jinja
-You are the Planner/Vision Model (Qwen-9b). Here is the conversation:
+You are the Planner/Vision Model. Here is the conversation:
 {{#conversation}}
 <message role="{{role}}">
   {{content}}

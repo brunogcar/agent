@@ -159,7 +159,7 @@ def vision(
     if not cfg.vision_model:
         return {
             "status": "error",
-            "error":  "VISION_MODEL not set in .env — add: VISION_MODEL=qwen/qwen3.5-9b",
+            "error":  "VISION_MODEL not set in .env — add it to your .env file",
         }
 
     # Build image content block from whichever source was provided

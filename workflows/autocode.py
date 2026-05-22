@@ -23,9 +23,9 @@ Task types (classified by Router model):
   unclear      -- Insufficient info (ask 1-2 clarifying questions)
 
 Model routing:
-  Planner  (Qwen 3.5 9B)    -- brainstorm, plan, spec
-  Router   (Nemotron 4B)    -- task classification
-  Executor (Hermes 3 8B)    -- code generation, test writing, fixes, review
+  Planner                  -- brainstorm, plan, spec
+  Router                   -- task classification
+  Executor                 -- code generation, test writing, fixes, review
 
 API compatibility:
   Imports: core.tracer.tracer singleton, core.llm.llm singleton

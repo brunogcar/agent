@@ -1,8 +1,8 @@
 ﻿"""
-core/router.py -- Nemotron-based task router.
+core/router.py -- Router-based task router.
 
 Classifies any free-text goal into a structured routing decision
-before the workflow layer runs. Nemotron 4B is used for speed (15s timeout).
+before the workflow layer runs. The Router model is used for speed (15s timeout).
 
 Usage:
     from core.router import router
@@ -65,7 +65,7 @@ class RoutingDecision:
 
 class TaskRouter:
     """
-    Routes tasks to the appropriate workflow using Nemotron 4B.
+    Routes tasks to the appropriate workflow using the Router model.
 
     Falls back to heuristic routing if the model is unavailable
     or returns unparseable output.
@@ -104,7 +104,7 @@ class TaskRouter:
     ) -> RoutingDecision:
         """
         Route a goal to the best workflow.
-        Tries Nemotron first, falls back to heuristics on failure.
+        Tries the Router first, falls back to heuristics on failure.
         """
         if not goal.strip():
             return RoutingDecision({
@@ -136,7 +136,7 @@ class TaskRouter:
     def classify_complexity(self, goal: str) -> int:
         """
         Quick complexity score (1-10) for a goal.
-        Uses Nemotron classify role.
+        Uses the Router classify role.
         """
         r = llm.complete(
             role   = "router",
@@ -162,7 +162,7 @@ class TaskRouter:
         goal:     str,
         trace_id: str,
     ) -> Optional[RoutingDecision]:
-        """Try to get a routing decision from Nemotron."""
+        """Try to get a routing decision from the Router."""
         r = llm.complete(
             role   = "router",
             system = (

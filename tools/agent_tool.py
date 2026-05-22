@@ -7,7 +7,7 @@ The LLM sees ONE tool: agent(role, task, ...)
 Key fixes over old agents.py:
   1. Every role has its OWN system prompt — CODER/REVIEWER/ANALYZER are
      no longer dead code. They are actually used.
-  2. Nemotron (router) is used for fast classification tasks — not Hermes.
+  2. The Router model is used for fast classification tasks — not the Executor.
   3. Per-role timeouts enforced via core/llm.py (not a flat 120s for all).
   4. Structured JSON output for code roles — enforces discipline.
   5. context= and content= passed as separate parameters so the LLM client
@@ -162,16 +162,16 @@ _SYSTEM_PROMPTS: dict[str, str] = {
 # vision is NOT here — it delegates to tools/vision.py directly (see dispatch).
 
 _ROLE_TO_LLM: dict[str, str] = {
-    "classify": "router",    # Nemotron 4B  — 15s
-    "route":    "router",    # Nemotron 4B  — 15s
-    "research": "research",  # Hermes 3 8B  — 120s
-    "summarize":"summarize", # Hermes 3 8B  — 60s
-    "extract":  "extract",   # Hermes 3 8B  — 60s
-    "critique": "critique",  # Hermes 3 8B  — 90s
-    "analyze":  "analyze",   # Hermes 3 8B  — 90s
-    "code":     "code",      # Hermes 3 8B  — 120s
-    "review":   "review",    # Hermes 3 8B  — 90s
-    "plan":     "planner",   # Qwen 3.5 9B  — 90s
+    "classify": "router",    # Router       — 15s
+    "route":    "router",    # Router       — 15s
+    "research": "research",  # Executor     — 120s
+    "summarize":"summarize", # Executor     — 60s
+    "extract":  "extract",   # Executor     — 60s
+    "critique": "critique",  # Executor     — 90s
+    "analyze":  "analyze",   # Executor     — 90s
+    "code":     "code",      # Executor     — 120s
+    "review":   "review",    # Executor     — 90s
+    "plan":     "planner",   # Planner      — 90s
     # vision delegates to tools/vision.py — not a direct llm role
 }
 
@@ -212,17 +212,17 @@ def agent(
 
     ── ROLES ────────────────────────────────────────────────────────────────────
 
-    classify  [Nemotron, 15s]  Fast binary/category decision. Single word output.
-    route     [Nemotron, 15s]  Workflow + tool routing. Returns JSON.
-    research  [Hermes,  120s]  Synthesise web/memory content into coherent answer.
-    summarize [Hermes,   60s]  Dense accurate summary. No preamble.
-    extract   [Hermes,   60s]  Pull structured data. Always returns JSON.
-    critique  [Hermes,   90s]  Quality evaluation. APPROVE|REVISE|REJECT verdict.
-    analyze   [Hermes,   90s]  Deep code/data analysis. No fixes — analysis only.
-    code      [Hermes,  120s]  Generate Python patch. Returns {analysis,patch,tests}.
-    review    [Hermes,   90s]  Review patch. Returns {verdict,issues,corrected_patch}.
-    plan      [Qwen,     90s]  Decompose goal into ordered steps. Returns JSON.
-    vision    [Qwen,     60s]  Analyse an image. Delegates to tools/vision.py.
+    classify  [Router,   15s]  Fast binary/category decision. Single word output.
+    route     [Router,   15s]  Workflow + tool routing. Returns JSON.
+    research  [Executor,120s]  Synthesise web/memory content into coherent answer.
+    summarize [Executor, 60s]  Dense accurate summary. No preamble.
+    extract   [Executor, 60s]  Pull structured data. Always returns JSON.
+    critique  [Executor, 90s]  Quality evaluation. APPROVE|REVISE|REJECT verdict.
+    analyze   [Executor, 90s]  Deep code/data analysis. No fixes — analysis only.
+    code      [Executor,120s]  Generate Python patch. Returns {analysis,patch,tests}.
+    review    [Executor, 90s]  Review patch. Returns {verdict,issues,corrected_patch}.
+    plan      [Planner,  90s]  Decompose goal into ordered steps. Returns JSON.
+    vision    [Planner,  60s]  Analyse an image. Delegates to tools/vision.py.
                                context= file_path or URL, content= base64 string.
 
     ── VISION EXAMPLES ──────────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ def agent(
     system_prompt = _SYSTEM_PROMPTS[role]
     llm_role      = _ROLE_TO_LLM[role]
     # Only use API-level json_object enforcement for models that support it.
-    # Nemotron (router/classify) rejects json_object — use prompt-only for those.
+    # The Router (classify) rejects json_object — use prompt-only for those.
     json_mode     = role in _API_JSON_ROLES
 
     # Build call kwargs — only pass overrides if explicitly set

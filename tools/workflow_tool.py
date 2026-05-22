@@ -35,7 +35,7 @@ def workflow(
 
     type: "auto" | "research" | "data" | "autocode"
 
-    "auto" (or omit) -- let Nemotron classify the task and choose the workflow.
+    "auto" (or omit) -- let the Router classify the task and choose the workflow.
                         Returns routing decision if it's a direct tool task.
 
     -- RESEARCH -----------------------------------------------------------------
@@ -141,7 +141,7 @@ def workflow(
                 "confidence":  decision.confidence,
                 "reason":      decision.reason,
                 "note":        f"Use {decision.tool}() directly for this task",
-                "routing_by":  "nemotron",
+                "routing_by":  "router",
             }
 
     if wf_type not in ("research", "data", "autocode", "report"):

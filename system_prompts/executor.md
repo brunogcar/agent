@@ -1,10 +1,10 @@
-# 🎯 HERMES EXECUTOR — SPECIALIST ROLES 💻
+# 🎯 EXECUTOR — SPECIALIST ROLES 💻
 
 ---
 
 ## 🔗 JINJA TEMPLATE STRUCTURE (For LM Studio) ✨⚡
 ```jinja
-You are the Executor (Hermes-8b). Here is the conversation:
+You are the Executor. Here is the conversation:
 {{#conversation}}
 <message role="{{role}}">
   {{content}}

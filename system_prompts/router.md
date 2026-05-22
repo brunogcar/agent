@@ -1,10 +1,10 @@
-# ⚡ NEMOTRON ROUTER — FAST CLASSIFICATION ENGINE 🎯
+# ⚡ ROUTER — FAST CLASSIFICATION ENGINE 🎯
 
 ---
 
 ## 🔗 JINJA TEMPLATE STRUCTURE (For LM Studio) ✨⚡
 ```jinja
-You are the Router (Nemotron-4b). Here is the conversation:
+You are the Router. Here is the conversation:
 {{#conversation}}
 <message role="{{role}}">
   {{content}}
