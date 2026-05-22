@@ -18,6 +18,7 @@ P1-1: Use per-request httpx.Client context manager instead of module-level clien
 M3:   Add 0.5s delay between requests in loop-based actions to be polite to servers.
 P2:   Added URL deduplication to search_and_read to prevent scraping the same URL
       multiple times when SearXNG returns duplicates from different engines.
+P2:   Magic numbers centralized in core/config.py.
 """
 from __future__ import annotations
 
@@ -25,12 +26,9 @@ import re
 from typing import Optional
 import time as _time
 
-# ⭐ FIX: Import httpx at top level to avoid "name 'httpx' is not defined" errors
-# in exception handlers and type checks (Python evaluates these at call time)
 try:
     import httpx
 except ImportError:
-    # Graceful fallback - let the tool fail gracefully with a clear error
     raise ImportError(
         "httpx module is required for web.py but could not be imported. "
         "Please run: pip install httpx"
@@ -43,8 +41,8 @@ import socket
 from urllib.parse import urlparse
 
 
-# Module-level defaults (not clients)
-# [P2] Limits centralized in core/config.py
+# [P2] Magic numbers centralized in core/config.py
+# cfg.web_max_text_chars, cfg.web_snippet_chars, cfg.web_max_search_results
 
 _CLIENT_DEFAULTS = {
     "headers":          {"User-Agent": "Mozilla/5.0 MCP-Agent/1.0"},
@@ -62,7 +60,6 @@ def _is_safe_url(url: str) -> bool:
         hostname = urlparse(url).hostname
         if not hostname:
             return False
-        # Resolve all addresses
         addrs = socket.getaddrinfo(hostname, None)
         for addr in addrs:
             ip = ipaddress.ip_address(addr[4][0])
@@ -71,7 +68,6 @@ def _is_safe_url(url: str) -> bool:
                 return False
         return True
     except Exception:
-        # If we can't validate, block (fail closed)
         return False
 
 
@@ -81,16 +77,12 @@ def _make_client():
 
 
 def _get_client():
-    """
-    Legacy compatibility wrapper -- creates client on first call.
-    New code should use _make_client() as context manager for thread safety.
-    """
+    """Legacy compatibility wrapper."""
     return httpx.Client(**_CLIENT_DEFAULTS)
 
 
 def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
     """Fetch URL using context-managed client, return (html, error)."""
-    # SSRF protection – block private/internal IPs before making the request
     if not _is_safe_url(url):
         return "", f"Blocked for security: {url} resolves to a private/internal address"
 
@@ -106,13 +98,16 @@ def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
     except httpx.ConnectError:
         return "", f"Cannot connect to {url}"
     except (KeyboardInterrupt, SystemExit):
-        raise  # never suppress shutdown signals
+        raise
     except Exception as e:
         return "", f"{type(e).__name__}: {e}"
 
 
-def _html_to_text(html: str, max_chars: int = MAX_TEXT_CHARS) -> tuple[str, str]:
+def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]:
     """Extract clean text from HTML using BeautifulSoup."""
+    if max_chars is None:
+        max_chars = cfg.web_max_text_chars
+
     from bs4 import BeautifulSoup
 
     soup  = BeautifulSoup(html, "html.parser")
@@ -153,7 +148,7 @@ def _html_to_text(html: str, max_chars: int = MAX_TEXT_CHARS) -> tuple[str, str]
 
 
 def _do_search(query: str, max_results: int = 5) -> dict:
-    """Call SearXNG and return structured results."""
+    """Call SearXNG and return structured results. Default 5 for backward compat."""
     try:
         with _make_client() as client:
             resp = client.get(
@@ -170,7 +165,7 @@ def _do_search(query: str, max_results: int = 5) -> dict:
             results.append({
                 "url":     r.get("url", ""),
                 "title":   r.get("title", ""),
-                "snippet": snippet[:SNIPPET_CHARS],
+                "snippet": snippet[:cfg.web_snippet_chars],
                 "engine":  r.get("engine", ""),
             })
         return {"status": "success", "results": results,
@@ -183,8 +178,11 @@ def _do_search(query: str, max_results: int = 5) -> dict:
         return {"status": "error", "error": f"Search failed: {type(e).__name__}: {e}"}
 
 
-def _do_scrape(url: str, max_chars: int = MAX_TEXT_CHARS) -> dict:
+def _do_scrape(url: str, max_chars: Optional[int] = None) -> dict:
     """Fetch URL and return clean extracted text."""
+    if max_chars is None:
+        max_chars = cfg.web_max_text_chars
+
     html, err = _fetch_html(url)
     if err:
         return {"status": "error", "url": url, "error": err}
@@ -209,7 +207,7 @@ def web(
     query:       str = "",
     url:         str = "",
     max_results: int = 5,
-    max_chars:   int = MAX_TEXT_CHARS,
+    max_chars:   Optional[int] = None,
 ) -> dict:
     """
     Web tool -- search the web or read web pages.
@@ -225,13 +223,13 @@ def web(
     scrape / read
         Fetch a URL and return clean text (JavaScript and CSS removed).
         Required: url
-        Optional: max_chars (default 8000)
+        Optional: max_chars (default from cfg.web_max_text_chars)
         Returns: {title, text, word_count, truncated}
 
     search_and_read
         Search then scrape the top results in parallel. One call for full research.
         Required: query
-        Optional: max_results (default 5, max 10), max_chars
+        Optional: max_results (default 5, upper bound from cfg.web_max_search_results), max_chars
         Returns: {query, results: [{url, title, text}], scraped_count}
 
     Examples:
@@ -239,6 +237,9 @@ def web(
         web(action="scrape", url="https://docs.python.org/3/library/pathlib.html")
         web(action="search_and_read", query="ChromaDB persistent client")
     """
+    if max_chars is None:
+        max_chars = cfg.web_max_text_chars
+
     action = action.strip().lower()
 
     if action == "search":
@@ -257,8 +258,8 @@ def web(
             return {"status": "error",
                     "error": "action='search_and_read' requires query="}
 
-        # [FIX] Allow up to 10 results for deep research (default is 5)
-        n = min(max_results, 10)
+        # [P2] Upper bound from config (default 10, allows deep research up to cfg limit)
+        n = min(max_results, cfg.web_max_search_results)
         search_result = _do_search(query, n)
         if search_result["status"] != "success" or not search_result["results"]:
             return {"status": "error",
@@ -266,7 +267,6 @@ def web(
                     "query": query}
 
         # [P2] Deduplicate URLs while preserving rank order
-        # SearXNG may return the same URL from different engines
         seen_urls = set()
         urls = []
         for r in search_result["results"]:
@@ -275,7 +275,6 @@ def web(
                 seen_urls.add(u)
                 urls.append(u)
 
-        # Fetch all URLs in parallel -- reuses the same pattern as file(read_many)
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         def _fetch_one(u: str) -> tuple[str, dict]:
@@ -288,7 +287,6 @@ def web(
                 u, result = future.result()
                 results_map[u] = result
 
-        # Rebuild in original rank order, keep only successful scrapes
         scraped = []
         for u in urls:
             result = results_map.get(u, {})

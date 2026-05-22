@@ -7,11 +7,12 @@ The LLM sees ONE tool: memory(action, ...)
 Imports are lazy -- chromadb is only loaded on first actual call,
 not at module registration time. This keeps server startup fast.
 """
-
 from __future__ import annotations
+
 import re
 from registry import tool
 from core.config import cfg
+
 
 def _mem():
     """Lazy import of memory store -- avoids slow chromadb load at startup."""
@@ -20,49 +21,51 @@ def _mem():
 
 
 # ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────
-TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_\-.\s]*$')  # Allow hyphens and spaces, but must start with letter
+TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.\-\s]*$')  # Allow hyphens and spaces, but must start with letter
+
 
 def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
-    """Validate tags to prevent injection/XSS attacks.
-    
+    """
+    Validate tags to prevent injection/XSS attacks.
+
     Args:
         tags: Comma-separated tag string (may be empty)
         max_count: Maximum tags allowed per entry
-        
+
     Returns:
         Tuple of (is_valid, error_message). Returns (True, "") if valid.
-        
+
     Validation rules:
-        - Reject dangerous chars: < > " ' ` | newline  
+        - Reject dangerous chars: < > " ' ` | newline
         - Each tag must start with letter, contain only letters/numbers/hyphens/dots/spaces
-        - Max 6 tags (stricter than default), max 50 chars each tag
+        - Max N tags (from max_count), max cfg.max_tag_length chars each tag
     """
     if not tags:
         return True, ""  # Empty is fine
-    
-    # Reject dangerous characters immediately  
+
+    # Reject dangerous characters immediately
     danger_list = ['<', '>', '"', "'", '`', '|']
     for bad_char in danger_list:
         if bad_char in tags:
             return False, f"Tags cannot contain: {bad_char}"
-    
+
     # Split by comma and validate each tag
     parts = [t.strip() for t in re.split(r'[,\s]+', tags) if t.strip()]
-    
+
     if not parts:
         return False, "No valid tags found"
-    
+
     if len(parts) > max_count:
         return False, f"Too many tags (max {max_count})"
-    
+
     for i, tag in enumerate(parts):
         if len(tag) > cfg.max_tag_length:
             return False, f"Tag exceeds length limit ({len(tag)} > {cfg.max_tag_length})"
         # Tags must match pattern: starts with letter, then alphanumeric/hyphens/dots/spaces
         if not TAG_PATTERN.fullmatch(tag):
-            bad_chars = set(tag) - set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_. ')
+            bad_chars = set(tag) - set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.- ')
             return False, f"Tag contains invalid characters: {bad_chars}"
-    
+
     return True, ""
 
 
@@ -89,20 +92,20 @@ def memory(
     min_importance: int    = 3,
     dry_run:        bool   = True,
 ) -> dict:
-    """Memory tool -- store, recall, and manage agent memories.
-
+    """
+    Memory tool -- store, recall, and manage agent memories.
     action: "store" | "recall" | "delete" | "prune" | "summarize" | "stats"
 
     -- STORE --------------------------------------------------------------------
     Save a memory to one of three typed collections.
 
     memory_type : "episodic"   -> things that happened (task runs, outcomes)
-                  "semantic"   -> things you know (facts, research, knowledge)
-                  "procedural" -> how to do things (fix patterns, solutions)
+                   "semantic"   -> things you know (facts, research, knowledge)
+                   "procedural" -> how to do things (fix patterns, solutions)
 
     importance  : 1-10. High importance = slower decay.
                   9-10 critical facts, project structure, hard-won fixes
-                  7-8  useful patterns, successful approaches
+                   7-8  useful patterns, successful approaches
                   5-6  general knowledge, research findings
                   1-4  low-value, transient information
 
@@ -146,14 +149,20 @@ def memory(
             return {"status": "error", "error": "text is required for store"}
         if importance < 1 or importance > 10:
             return {"status": "error", "error": f"importance must be 1-10, got {importance}"}
+
         # Guard against storing huge blobs that bloat the vector DB
-        if len(text.encode("utf-8")) > cfg.max_memory_bytes:
+        # [P2] Use centralized cfg.memory_max_entry_bytes (formerly max_memory_bytes)
+        text_bytes = len(text.encode("utf-8"))
+        if text_bytes > cfg.memory_max_entry_bytes:
             return {
                 "status": "error",
-                "error": (f"text is {len(text.encode())} bytes -- exceeds 50KB limit. "
-                         "Summarise or chunk the content before storing."),
+                "error": (
+                    f"text is {text_bytes} bytes -- exceeds {cfg.memory_max_entry_bytes} byte limit. "
+                    "Summarise or chunk the content before storing."
+                ),
             }
-        # MED-05: Validate tags for store operation (stricter: max 6, no spaces)
+
+        # MED-05: Validate tags for store operation (uses cfg.max_tags_per_entry)
         is_valid, err = _validate_tags(tags, max_count=cfg.max_tags_per_entry)
         if not is_valid:
             return {"status": "error", "error": err}
@@ -205,4 +214,3 @@ def memory(
         "error": (f"Unknown action '{action}'. "
                   "Use: store | recall | delete | prune | summarize | stats"),
     }
-

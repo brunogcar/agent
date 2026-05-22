@@ -97,20 +97,25 @@ class Config:
         self.memory_top_k            = int(os.getenv("MEMORY_TOP_K", "5"))
 
         # ── Tool & System Limits (P2: Centralized Magic Numbers) ──────────────
-        # Memory Tool Limits
-        self.max_memory_bytes  = int(os.getenv("MAX_MEMORY_BYTES", "50000"))  # 50KB
-        self.max_tags_per_entry = int(os.getenv("MAX_TAGS_PER_ENTRY", "6"))
-        self.max_tag_length    = int(os.getenv("MAX_TAG_LENGTH", "50"))
-        
+        # Memory Tool Limits (per-entry scope, not total)
+        self.memory_max_entry_bytes = int(os.getenv("MAX_MEMORY_BYTES", "50000"))  # 50KB per entry
+        self.max_tags_per_entry     = int(os.getenv("MAX_TAGS_PER_ENTRY", "6"))
+        self.max_tag_length         = int(os.getenv("MAX_TAG_LENGTH", "50"))
+
         # Web Tool Limits
-        self.web_max_text_chars    = int(os.getenv("WEB_MAX_TEXT_CHARS", "8000"))
-        self.web_snippet_chars    = int(os.getenv("WEB_SNIPPET_CHARS", "300"))
+        # NOTE: 8000 chars (~2-3k tokens) is a conservative default to prevent
+        # context overflow in existing workflows that depend on this value.
+        # Override in .env if you need larger pages.
+        self.web_max_text_chars      = int(os.getenv("WEB_MAX_TEXT_CHARS", "8000"))
+        self.web_snippet_chars      = int(os.getenv("WEB_SNIPPET_CHARS", "300"))
         self.web_max_search_results = int(os.getenv("WEB_MAX_SEARCH_RESULTS", "10"))
-        
+
         # CLI Tool Limits
-        self.cli_max_command_length = int(os.getenv("CLI_MAX_COMMAND_LENGTH", "1024"))
-        self.cli_max_arguments      = int(os.getenv("CLI_MAX_ARGUMENTS", "20"))
-        
+        # 4096 matches typical terminal buffer sizes; 1024 was too restrictive
+        # for real-world commands like `git log --oneline` or complex pipelines.
+        self.cli_max_command_chars = int(os.getenv("CLI_MAX_COMMAND_LENGTH", "4096"))
+        self.cli_max_arguments     = int(os.getenv("CLI_MAX_ARGUMENTS", "20"))
+
         # File Tool Limits
         self.file_max_read_chars = int(os.getenv("FILE_MAX_READ_CHARS", "50000"))
 
@@ -127,9 +132,12 @@ class Config:
         self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
         self.max_retries = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
 
-        # Validations
-        assert self.autocode_max_retries > 0, "AUTOCODE_MAX_RETRIES must be > 0"
-        assert self.autocode_max_file_chars > 0, "AUTOCODE_MAX_FILE_CHARS must be > 0"
+        # ── Validations ───────────────────────────────────────────────────────
+        # Existing validations (survive python -O via explicit raise)
+        if self.autocode_max_retries <= 0:
+            raise ValueError("AUTOCODE_MAX_RETRIES must be > 0")
+        if self.autocode_max_file_chars <= 0:
+            raise ValueError("AUTOCODE_MAX_FILE_CHARS must be > 0")
 
         _node_timeouts = [self.planner_timeout, self.execution_timeout, self.router_timeout]
         if self.autocode_graph_timeout < max(_node_timeouts):
@@ -139,6 +147,26 @@ class Config:
             raise ValueError("AGENT_ROOT must be an absolute path")
         if not self.agent_root.exists():
             raise FileNotFoundError(f"AGENT_ROOT not found: {self.agent_root}")
+
+        # P2: Validate all new tool limits
+        if not (1 <= self.memory_max_entry_bytes <= 10_000_000):
+            raise ValueError(f"MAX_MEMORY_BYTES must be 1-10000000, got {self.memory_max_entry_bytes}")
+        if not (1 <= self.max_tags_per_entry <= 50):
+            raise ValueError(f"MAX_TAGS_PER_ENTRY must be 1-50, got {self.max_tags_per_entry}")
+        if not (1 <= self.max_tag_length <= 200):
+            raise ValueError(f"MAX_TAG_LENGTH must be 1-200, got {self.max_tag_length}")
+        if not (1 <= self.web_max_text_chars <= 100_000):
+            raise ValueError(f"WEB_MAX_TEXT_CHARS must be 1-100000, got {self.web_max_text_chars}")
+        if not (1 <= self.web_snippet_chars <= 5000):
+            raise ValueError(f"WEB_SNIPPET_CHARS must be 1-5000, got {self.web_snippet_chars}")
+        if not (1 <= self.web_max_search_results <= 50):
+            raise ValueError(f"WEB_MAX_SEARCH_RESULTS must be 1-50, got {self.web_max_search_results}")
+        if not (1 <= self.cli_max_command_chars < 50_000):
+            raise ValueError(f"CLI_MAX_COMMAND_LENGTH must be 1-49999, got {self.cli_max_command_chars}")
+        if not (1 <= self.cli_max_arguments <= 100):
+            raise ValueError(f"CLI_MAX_ARGUMENTS must be 1-100, got {self.cli_max_arguments}")
+        if not (1 <= self.file_max_read_chars <= 1_000_000):
+            raise ValueError(f"FILE_MAX_READ_CHARS must be 1-1000000, got {self.file_max_read_chars}")
 
         # ── Protected files ───────────────────────────────────────────────────
         self.protected_files: frozenset[str] = frozenset({

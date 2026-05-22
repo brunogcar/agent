@@ -20,7 +20,9 @@ from core.config import cfg
 # =============================================================================
 # Constants
 # =============================================================================
-# [P2] Limits centralized in core/config.py
+# [P2] Limits centralized in core/config.py (cfg.cli_max_command_chars, cfg.cli_max_arguments)
+
+# Regex to match control characters (excluding normal whitespace)
 _CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 
 # ── Security: Allowlist & Denylist ─────────────────────────────────────
@@ -47,12 +49,21 @@ SHELL_OPERATORS = {"|", "||", "&&", ";", ">", ">>", "<", "&", "`", "$("}
 def _sanitize_command(command: str) -> str:
     """
     Sanitize command input before processing.
+    Rejects:
+    - Commands exceeding max length
+    - Commands containing null bytes
+    - Commands with control characters
+    - Commands with too many arguments
+    - Commands containing dangerous patterns
     """
     if not isinstance(command, str):
         raise ValueError("Command must be a string")
 
-    if len(command) > _MAX_COMMAND_LENGTH:
-        raise ValueError(f"Command too long (max {_MAX_COMMAND_LENGTH} chars)")
+    # [P2] Use centralized config limit
+    if len(command) > cfg.cli_max_command_chars:
+        raise ValueError(
+            f"Command too long (max {cfg.cli_max_command_chars} chars)"
+        )
 
     if '\x00' in command:
         raise ValueError("Command contains null bytes")
@@ -60,17 +71,19 @@ def _sanitize_command(command: str) -> str:
     if _CONTROL_CHAR_PATTERN.search(command):
         raise ValueError("Command contains control characters")
 
-    # Check for dangerous patterns (injection attempts)
+    # Check for dangerous patterns
     DANGEROUS_PATTERNS = ['rm -rf', 'passwd', 'hacked', 'root@', 'etc/passwd', 'chmod 777']
     command_lower = command.lower()
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command_lower:
             raise ValueError("Command contains blocked pattern")
 
+    # Normalize whitespace
     command = ' '.join(command.split())
 
     args = command.split()
-    if len(args) > _MAX_ARGUMENTS:
+    # [P2] Use centralized config limit
+    if len(args) > cfg.cli_max_arguments:
         raise ValueError("too many arguments")
 
     return command
@@ -79,7 +92,10 @@ def _sanitize_command(command: str) -> str:
 # Workspace Detection
 # =============================================================================
 def _detect_cwd(command: str) -> Path | None:
-    """Detect working directory from command."""
+    """
+    Detect working directory from command.
+    Returns Path if 'cd' or path prefix detected, else None.
+    """
     command_lower = command.lower().strip()
 
     if command_lower.startswith("cd "):
@@ -145,7 +161,6 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
         if p.exists():
             try:
                 full_path = p.resolve()
-                # Ensure path is inside workspace
                 if not (full_path == workspace_root or workspace_root in full_path.parents):
                     return f"Shell error: Path '{token}' is outside the workspace."
             except (OSError, ValueError):
@@ -155,7 +170,7 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
     try:
         result = subprocess.run(
             tokens,
-            shell=False,  # CRITICAL: Prevents shell injection
+            shell=False,
             cwd=str(cwd) if cwd else str(cfg.workspace_root),
             capture_output=True,
             text=True,
