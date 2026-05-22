@@ -44,8 +44,7 @@ from urllib.parse import urlparse
 
 
 # Module-level defaults (not clients)
-MAX_TEXT_CHARS = 8000
-SNIPPET_CHARS  = 300
+# [P2] Limits centralized in core/config.py
 
 _CLIENT_DEFAULTS = {
     "headers":          {"User-Agent": "Mozilla/5.0 MCP-Agent/1.0"},

@@ -20,8 +20,7 @@ from core.config import cfg
 # =============================================================================
 # Constants
 # =============================================================================
-_MAX_COMMAND_LENGTH = 1024
-_MAX_ARGUMENTS = 20
+# [P2] Limits centralized in core/config.py
 _CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 
 # ── Security: Allowlist & Denylist ─────────────────────────────────────

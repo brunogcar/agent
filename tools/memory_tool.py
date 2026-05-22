@@ -11,7 +11,7 @@ not at module registration time. This keeps server startup fast.
 from __future__ import annotations
 import re
 from registry import tool
-
+from core.config import cfg
 
 def _mem():
     """Lazy import of memory store -- avoids slow chromadb load at startup."""
@@ -56,8 +56,8 @@ def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
         return False, f"Too many tags (max {max_count})"
     
     for i, tag in enumerate(parts):
-        if len(tag) > 50:
-            return False, f"Tag exceeds length limit ({len(tag)} > 50)"
+        if len(tag) > cfg.max_tag_length:
+            return False, f"Tag exceeds length limit ({len(tag)} > {cfg.max_tag_length})"
         # Tags must match pattern: starts with letter, then alphanumeric/hyphens/dots/spaces
         if not TAG_PATTERN.fullmatch(tag):
             bad_chars = set(tag) - set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_. ')
@@ -147,15 +147,14 @@ def memory(
         if importance < 1 or importance > 10:
             return {"status": "error", "error": f"importance must be 1-10, got {importance}"}
         # Guard against storing huge blobs that bloat the vector DB
-        MAX_MEMORY_BYTES = 50_000  # 50 KB
-        if len(text.encode("utf-8")) > MAX_MEMORY_BYTES:
+        if len(text.encode("utf-8")) > cfg.max_memory_bytes:
             return {
                 "status": "error",
                 "error": (f"text is {len(text.encode())} bytes -- exceeds 50KB limit. "
                          "Summarise or chunk the content before storing."),
             }
         # MED-05: Validate tags for store operation (stricter: max 6, no spaces)
-        is_valid, err = _validate_tags(tags, max_count=6)
+        is_valid, err = _validate_tags(tags, max_count=cfg.max_tags_per_entry)
         if not is_valid:
             return {"status": "error", "error": err}
 
