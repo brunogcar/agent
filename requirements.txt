@@ -1,124 +1,43 @@
-# ── MCP Agent Stack — Python Dependencies ─────────────────────────────────────
-# Install: pip install -r requirements.txt
-#
-# External service required (not pip-installable):
-#   SearXNG — self-hosted search engine
-#   Docker:  docker run -d -p 30053:8080 searxng/searxng
-#   NAS/VPS: see https://docs.searxng.org/admin/installation.html
-#   Set SEARXNG_URL in .env after installation
-
-# ── Core MCP framework ────────────────────────────────────────────────────────
+# ── Core MCP & LLM Orchestration ─────────────────────────────────
+langgraph
+langchain-core
 fastmcp
-
-# ── Configuration ─────────────────────────────────────────────────────────────
+openai
+pydantic>=2.0
 python-dotenv
 
-# ── HTTP client (replaces requests throughout) ────────────────────────────────
-httpx
-
-# ── Web scraping ──────────────────────────────────────────────────────────────
-beautifulsoup4
-
-# ── Vector memory (ChromaDB) ──────────────────────────────────────────────────
-chromadb
-
-# ── Async SQLite (task queue, FTS index) ──────────────────────────────────────
-aiosqlite
-
-# ── Data validation and schema enforcement ────────────────────────────────────
-pydantic>=2.0
-
-# ── Structured logging ────────────────────────────────────────────────────────
-structlog
-
-# ── File locking (parallel autocode safety) ───────────────────────────────────
+# ── Memory & Vector Database ─────────────────────────────────────
+chromadb>=0.5.0
 filelock
 
-# ── Workflow orchestration ────────────────────────────────────────────────────
-langgraph
+# ── Web, Search & Scraping ───────────────────────────────────────
+requests
+beautifulsoup4
+httpx
 
-# ── Task scheduling ───────────────────────────────────────────────────────────
-apscheduler
-
-# ── Desktop notifications ─────────────────────────────────────────────────────
-# Windows: native toast via plyer
-# Linux:   uses notify-send (install libnotify-bin via apt)
-plyer
-
-# ── Data analysis ─────────────────────────────────────────────────────────────
+# ── Data Analysis & Sandboxed Execution ──────────────────────────
 pandas
 numpy
-openpyxl          # Excel read/write backend for pandas
 
-# ── Visualisation ─────────────────────────────────────────────────────────────
-plotly            # interactive charts (HTML output, no server needed)
-kaleido           # static PNG/PDF export from plotly
-folium            # interactive maps (Leaflet.js, HTML output)
+# ── File Operations (PDF, Office, Images) ────────────────────────
+pypdf
+python-docx
+openpyxl
+python-pptx
+Pillow
 
-# ── REMOVED (not used in current codebase):
-# slowapi      # Rate limiting planned but not implemented
-# gitpython    # Git operations use system 'git' command via subprocess
+# ── Reporting, Charts & Maps ─────────────────────────────────────
+plotly
+folium
+kaleido==0.2.1
+weasyprint>=56.0
+playwright
 
-# ── Report generation ─────────────────────────────────────────────────────────
-jinja2            # HTML report templating
-weasyprint        # HTML → PDF conversion (optional, see install notes below)
+# ── REST Gateway & API ───────────────────────────────────────────
+fastapi
+uvicorn
+slowapi
 
-# ── Office file formats ───────────────────────────────────────────────────────
-fpdf2             # PDF creation
-python-docx       # Word (.docx) read/write
-python-pptx       # PowerPoint (.pptx) read/write
-pdfplumber        # PDF text extraction
-
-# ── Report Generation ─────────────────────────────────────────────────────────
-weasyprint>=60.0
-playwright>=1.40.0
-
-playwright install chromium
-# After installing, run: playwright install chromium   (installs the browser engine for HTML→PDF conversion)
-
-# ── Testing ───────────────────────────────────────────────────────────────
-pytest>=7.4.0
-pytest-env>=1.0.0
-
-# ── Monitoring & Metrics ──────────────────────────────────────────────────────
-prometheus_client>=0.20.0
-slowapi>=0.1.9
-
-# ── Static analysis (autocode quality gate) ───────────────────────────────────
-ruff              # fast Python linter, runs in autocode test phase
-
-# ── Git operations (used internally by git meta-tool) ─────────────────────────
-# git must be installed on system PATH for git meta-tool to work.
-# Windows: Install from https://git-scm.com/download/win (includes bash/git)
-# Linux:   sudo apt install git or sudo yum install git
-# macOS:   brew install git
-# Note: GitPython library is NOT used; we call 'git' command directly via subprocess.
-
-# ──────────────────────────────────────────────────────────────────────────────
-# INSTALL NOTES
-# ──────────────────────────────────────────────────────────────────────────────
-#
-# weasyprint on Windows requires GTK3 runtime:
-#   https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer
-#   If installation fails, skip it — HTML report output works without it.
-#   PDF export from reports simply won't be available.
-#
-# kaleido (Plotly PNG export) sometimes needs a specific version on Windows:
-#   pip install kaleido==0.2.1   (if the latest version crashes)
-#
-# chromadb on some systems needs:
-#   pip install chromadb --no-binary chromadb
-#
-# LM Studio (local LLM server) — not pip-installable:
-#   Download: https://lmstudio.ai
-#   Models used:
-#     Planner:  qwen/qwen3.5-9b       (Q4_0 or better)
-#     Executor: hermes-3-llama-3.1-8b (Q4_0 or better)
-#     Router:   nvidia/nemotron-3-nano-4b
-#   LM Studio must be running with the server enabled on port 1234
-#
-# MCP servers (Node.js / npx) — installed automatically on first run:
-#   @modelcontextprotocol/server-filesystem
-#   @cyanheads/git-mcp-server
-#   @mcpcentral/mcp-time
-#   Node.js required: https://nodejs.org
+# ── Logging, Notifications & Utilities ───────────────────────────
+structlog
+plyer
