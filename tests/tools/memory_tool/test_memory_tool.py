@@ -1,5 +1,5 @@
 """
-tests/tools/memory/test_memory_tool.py
+tests/tools/memory_tool/test_memory_tool.py
 Unit tests for the memory meta-tool, focusing on:
 - P2: Centralized cfg.memory_max_entry_bytes integration
 - Tag validation (MED-05)
@@ -15,6 +15,7 @@ from tools.memory_tool import memory, _validate_tags, _mem
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 @pytest.fixture
 def mock_config(monkeypatch):
     """Patch cfg attributes used by memory_tool."""
@@ -47,6 +48,7 @@ def mock_store():
 # =============================================================================
 # Test Tag Validation (MED-05)
 # =============================================================================
+
 class TestTagValidation:
     def test_empty_tags_valid(self, mock_config):
         is_valid, err = _validate_tags("", max_count=6)
@@ -87,6 +89,7 @@ class TestTagValidation:
 # =============================================================================
 # Test Store Action
 # =============================================================================
+
 class TestStoreAction:
     def test_missing_text_error(self, mock_config, mock_store):
         result = memory(action="store", text="")
@@ -126,6 +129,7 @@ class TestStoreAction:
 # =============================================================================
 # Test Recall Action
 # =============================================================================
+
 class TestRecallAction:
     def test_missing_query_error(self, mock_config, mock_store):
         result = memory(action="recall", query="")
@@ -147,6 +151,7 @@ class TestRecallAction:
 # =============================================================================
 # Test Other Actions
 # =============================================================================
+
 class TestOtherActions:
     def test_delete_missing_query(self, mock_config, mock_store):
         result = memory(action="delete", query="")
@@ -179,6 +184,7 @@ class TestOtherActions:
 # =============================================================================
 # Test Config Integration (P2)
 # =============================================================================
+
 class TestConfigIntegration:
     def test_memory_limit_uses_config(self, mock_config, mock_store):
         """Verify the error message dynamically uses cfg.memory_max_entry_bytes."""

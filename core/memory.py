@@ -223,13 +223,12 @@ class MemoryStore:
         if not text or not text.strip():
             return {"status": "error", "error": "Empty text — nothing stored"}
 
-        # Hard size limit to prevent vector DB bloat (50 KB)
-        MAX_MEMORY_BYTES = 50_000
-        if len(text.encode("utf-8")) > MAX_MEMORY_BYTES:
+        text_bytes = len(text.encode("utf-8"))
+        if text_bytes > cfg.memory_max_entry_bytes:
             return {
                 "status": "error",
                 "error": (
-                    f"text is {len(text.encode())} bytes — exceeds 50 KB limit. "
+                    f"text is {text_bytes} bytes -- exceeds {cfg.memory_max_entry_bytes} byte limit. "
                     "Summarise or chunk the content before storing."
                 ),
             }

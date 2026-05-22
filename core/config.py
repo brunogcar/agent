@@ -1,5 +1,6 @@
 ﻿"""
 core/config.py — Single source of truth for all configuration.
+
 Uses pathlib throughout — works identically on Windows and Linux.
 All values come from .env (loaded once at import time).
 Nothing is hardcoded except the .env file location discovery.
@@ -19,6 +20,7 @@ from dotenv import load_dotenv
 
 
 # ── Locate and load .env ──────────────────────────────────────────────────────
+
 def _find_env_file() -> Optional[Path]:
     """Walk up from this file's location until we find .env"""
     candidate = Path(__file__).resolve().parent
@@ -35,14 +37,17 @@ if _env_file:
 
 
 # ── Config class ──────────────────────────────────────────────────────────────
+
 class Config:
     """
     Centralised config. All paths are pathlib.Path objects.
     Access via the module-level `cfg` singleton.
     """
+
     def __init__(self) -> None:
         # ── Paths ─────────────────────────────────────────────────────────────
         _here = Path(__file__).resolve().parent.parent
+
         self.agent_root     = Path(os.getenv("AGENT_ROOT",     str(_here)))
         self.workspace_root = Path(os.getenv("WORKSPACE_ROOT", str(_here / "workspace")))
         self.memory_root    = Path(os.getenv("MEMORY_ROOT",    str(_here / "memory_db")))
@@ -61,6 +66,7 @@ class Config:
         self.planner_model  = os.getenv("PLANNER_MODEL")
         if not self.planner_model:
             raise RuntimeError("PLANNER_MODEL is required in .env")
+
         self.executor_model = os.getenv("EXECUTOR_MODEL") or self.planner_model
         self.router_model   = os.getenv("ROUTER_MODEL") or self.planner_model
         self.vision_model   = os.getenv("VISION_MODEL") or self.planner_model
@@ -97,11 +103,14 @@ class Config:
         self.memory_top_k            = int(os.getenv("MEMORY_TOP_K", "5"))
 
         # ── Tool & System Limits (P2: Centralized Magic Numbers) ──────────────
-        # Memory Tool Limits (per-entry scope, not total)
+        
+        # Memory Tool Limits
+        # Renamed from max_memory_bytes to memory_max_entry_bytes (D1 Option B consensus)
+        # to clarify this is per-entry, not total storage limit
         self.memory_max_entry_bytes = int(os.getenv("MAX_MEMORY_BYTES", "50000"))  # 50KB per entry
         self.max_tags_per_entry     = int(os.getenv("MAX_TAGS_PER_ENTRY", "6"))
         self.max_tag_length         = int(os.getenv("MAX_TAG_LENGTH", "50"))
-
+        
         # Web Tool Limits
         # NOTE: 8000 chars (~2-3k tokens) is a conservative default to prevent
         # context overflow in existing workflows that depend on this value.
@@ -109,13 +118,13 @@ class Config:
         self.web_max_text_chars      = int(os.getenv("WEB_MAX_TEXT_CHARS", "8000"))
         self.web_snippet_chars      = int(os.getenv("WEB_SNIPPET_CHARS", "300"))
         self.web_max_search_results = int(os.getenv("WEB_MAX_SEARCH_RESULTS", "10"))
-
+        
         # CLI Tool Limits
         # 4096 matches typical terminal buffer sizes; 1024 was too restrictive
         # for real-world commands like `git log --oneline` or complex pipelines.
         self.cli_max_command_chars = int(os.getenv("CLI_MAX_COMMAND_LENGTH", "4096"))
         self.cli_max_arguments     = int(os.getenv("CLI_MAX_ARGUMENTS", "20"))
-
+        
         # File Tool Limits
         self.file_max_read_chars = int(os.getenv("FILE_MAX_READ_CHARS", "50000"))
 
@@ -212,6 +221,7 @@ class Config:
             f"Config(env={self.env!r}, agent_root={self.agent_root}, "
             f"planner={self.planner_model!r}, executor={self.executor_model!r})"
         )
+
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 cfg = Config()

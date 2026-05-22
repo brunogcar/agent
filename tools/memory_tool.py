@@ -1,5 +1,5 @@
 ﻿"""
-tools/memory_tool.py -- Memory meta-tool.
+tools/memory_tool.py — Memory meta-tool.
 
 Exposes core/memory.py to the LLM as a single tool.
 The LLM sees ONE tool: memory(action, ...)
@@ -21,20 +21,21 @@ def _mem():
 
 
 # ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────
+
 TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.\-\s]*$')  # Allow hyphens and spaces, but must start with letter
 
 
 def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
     """
     Validate tags to prevent injection/XSS attacks.
-
+    
     Args:
         tags: Comma-separated tag string (may be empty)
         max_count: Maximum tags allowed per entry
-
+        
     Returns:
         Tuple of (is_valid, error_message). Returns (True, "") if valid.
-
+        
     Validation rules:
         - Reject dangerous chars: < > " ' ` | newline
         - Each tag must start with letter, contain only letters/numbers/hyphens/dots/spaces
@@ -42,22 +43,22 @@ def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
     """
     if not tags:
         return True, ""  # Empty is fine
-
+    
     # Reject dangerous characters immediately
     danger_list = ['<', '>', '"', "'", '`', '|']
     for bad_char in danger_list:
         if bad_char in tags:
             return False, f"Tags cannot contain: {bad_char}"
-
+    
     # Split by comma and validate each tag
     parts = [t.strip() for t in re.split(r'[,\s]+', tags) if t.strip()]
-
+    
     if not parts:
         return False, "No valid tags found"
-
+    
     if len(parts) > max_count:
         return False, f"Too many tags (max {max_count})"
-
+    
     for i, tag in enumerate(parts):
         if len(tag) > cfg.max_tag_length:
             return False, f"Tag exceeds length limit ({len(tag)} > {cfg.max_tag_length})"
@@ -65,7 +66,7 @@ def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
         if not TAG_PATTERN.fullmatch(tag):
             bad_chars = set(tag) - set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.- ')
             return False, f"Tag contains invalid characters: {bad_chars}"
-
+    
     return True, ""
 
 
@@ -94,48 +95,49 @@ def memory(
 ) -> dict:
     """
     Memory tool -- store, recall, and manage agent memories.
+    
     action: "store" | "recall" | "delete" | "prune" | "summarize" | "stats"
-
+    
     -- STORE --------------------------------------------------------------------
     Save a memory to one of three typed collections.
-
+    
     memory_type : "episodic"   -> things that happened (task runs, outcomes)
-                   "semantic"   -> things you know (facts, research, knowledge)
-                   "procedural" -> how to do things (fix patterns, solutions)
-
+                  "semantic"   -> things you know (facts, research, knowledge)
+                  "procedural" -> how to do things (fix patterns, solutions)
+    
     importance  : 1-10. High importance = slower decay.
                   9-10 critical facts, project structure, hard-won fixes
                    7-8  useful patterns, successful approaches
                   5-6  general knowledge, research findings
                   1-4  low-value, transient information
-
+    
     tags        : comma-separated, e.g. "python,syntax,debug"
     trace_id    : attach to current workflow trace
     goal        : what was being attempted (episodic/procedural)
     outcome     : "success" | "failure" | "partial" | "unknown"
     tools_used  : comma-separated tool names (episodic)
     source      : where knowledge came from (semantic), e.g. URL
-
+    
     Examples:
         memory(action="store", memory_type="episodic",
                text="Fixed SyntaxError in tools/web.py -- missing colon after def",
                importance=8, goal="fix scraping bug", outcome="success",
                tools_used="python,git", trace_id="abc123")
-
+        
         memory(action="store", memory_type="semantic",
                text="ChromaDB get_or_create_collection is idempotent",
                importance=7, tags="chromadb,startup")
-
+    
     -- RECALL -------------------------------------------------------------------
     Semantic search across memory collections, ranked by decay score.
     score = importance * max(0.3, 1 - age/decay_days)
-
+    
     query       : what to search for
     top_k       : max results (default 5)
     collections : ["episodic"] | ["semantic"] | ["procedural"] | all (default)
     min_score   : minimum decay score (default 0.5)
     tags_filter : comma-separated -- only return memories with ANY of these tags
-
+    
     Examples:
         memory(action="recall", query="how to fix syntax errors", top_k=3)
         memory(action="recall", query="ChromaDB", collections=["semantic"])
@@ -149,9 +151,9 @@ def memory(
             return {"status": "error", "error": "text is required for store"}
         if importance < 1 or importance > 10:
             return {"status": "error", "error": f"importance must be 1-10, got {importance}"}
-
+        
         # Guard against storing huge blobs that bloat the vector DB
-        # [P2] Use centralized cfg.memory_max_entry_bytes (formerly max_memory_bytes)
+        # [P2] Use centralized cfg.memory_max_entry_bytes (renamed from max_memory_bytes)
         text_bytes = len(text.encode("utf-8"))
         if text_bytes > cfg.memory_max_entry_bytes:
             return {
@@ -161,7 +163,7 @@ def memory(
                     "Summarise or chunk the content before storing."
                 ),
             }
-
+        
         # MED-05: Validate tags for store operation (uses cfg.max_tags_per_entry)
         is_valid, err = _validate_tags(tags, max_count=cfg.max_tags_per_entry)
         if not is_valid:

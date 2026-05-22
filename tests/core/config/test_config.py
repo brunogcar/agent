@@ -8,7 +8,40 @@ Uses two testing strategies:
 - Integration tests: use monkeypatch.setattr on the singleton to test production paths
 """
 import pytest
+import importlib
+import sys
 from core.config import cfg, Config
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+@pytest.fixture
+def reload_config(monkeypatch):
+    """
+    Helper fixture to safely reload core.config with custom env vars.
+    This is necessary because `cfg` is a singleton instantiated at import time.
+    
+    NOTE: We do NOT try to restore state in teardown. pytest's monkeypatch
+    automatically undoes all setenv/delenv calls when the test ends, so
+    subsequent tests see the original env. The global `cfg` singleton may
+    retain a stale state, but that's fine — integration tests use monkeypatch
+    on the singleton directly, and constructor tests create fresh Config() instances.
+    """
+    def _reload(env_vars: dict):
+        for k, v in env_vars.items():
+            monkeypatch.setenv(k, str(v))
+        
+        # Remove from sys.modules to force a fresh import
+        if "core.config" in sys.modules:
+            del sys.modules["core.config"]
+            
+        import core.config
+        importlib.reload(core.config)
+        return core.config.cfg
+        
+    yield _reload
+    # NO cleanup needed — monkeypatch auto-restores env vars
 
 
 # =============================================================================
@@ -17,46 +50,50 @@ from core.config import cfg, Config
 class TestConfigConstructorDefaults:
     """Test that Config() constructor parses defaults correctly."""
 
-    def test_memory_limits_default(self, monkeypatch):
-        # Ensure env vars are unset so we get defaults
-        for key in ["MAX_MEMORY_BYTES", "MAX_TAGS_PER_ENTRY", "MAX_TAG_LENGTH"]:
-            monkeypatch.delenv(key, raising=False)
-        c = Config()
+    def test_memory_limits_default(self, reload_config):
+        c = reload_config({})
         assert c.memory_max_entry_bytes == 50000
         assert c.max_tags_per_entry == 6
         assert c.max_tag_length == 50
 
-    def test_web_limits_default(self, monkeypatch):
-        for key in ["WEB_MAX_TEXT_CHARS", "WEB_SNIPPET_CHARS", "WEB_MAX_SEARCH_RESULTS"]:
-            monkeypatch.delenv(key, raising=False)
-        c = Config()
+    def test_web_limits_default(self, reload_config):
+        c = reload_config({})
         assert c.web_max_text_chars == 8000
         assert c.web_snippet_chars == 300
         assert c.web_max_search_results == 10
 
-    def test_cli_limits_default(self, monkeypatch):
-        for key in ["CLI_MAX_COMMAND_LENGTH", "CLI_MAX_ARGUMENTS"]:
-            monkeypatch.delenv(key, raising=False)
-        c = Config()
+    def test_cli_limits_default(self, reload_config):
+        c = reload_config({})
         assert c.cli_max_command_chars == 4096  # Updated default from 1024
         assert c.cli_max_arguments == 20
 
-    def test_cli_env_override(self, monkeypatch):
-        monkeypatch.setenv("CLI_MAX_COMMAND_LENGTH", "8192")
-        c = Config()
-        assert c.cli_max_command_chars == 8192
 
-    def test_web_env_override(self, monkeypatch):
-        monkeypatch.setenv("WEB_MAX_TEXT_CHARS", "16000")
-        monkeypatch.setenv("WEB_MAX_SEARCH_RESULTS", "20")
-        c = Config()
+class TestConfigOverrides:
+    def test_memory_override(self, reload_config):
+        c = reload_config({
+            "MAX_MEMORY_BYTES": "100000",
+            "MAX_TAGS_PER_ENTRY": "10"
+        })
+        assert c.memory_max_entry_bytes == 100000
+        assert c.max_tags_per_entry == 10
+
+    def test_web_override(self, reload_config):
+        c = reload_config({
+            "WEB_MAX_TEXT_CHARS": "16000",
+            "WEB_MAX_SEARCH_RESULTS": "20"
+        })
         assert c.web_max_text_chars == 16000
         assert c.web_max_search_results == 20
 
-    def test_memory_env_override(self, monkeypatch):
-        monkeypatch.setenv("MAX_MEMORY_BYTES", "100000")
-        monkeypatch.setenv("MAX_TAGS_PER_ENTRY", "10")
-        c = Config()
+    def test_cli_env_override(self, reload_config):
+        c = reload_config({"CLI_MAX_COMMAND_LENGTH": "8192"})
+        assert c.cli_max_command_chars == 8192
+
+    def test_memory_env_override(self, reload_config):
+        c = reload_config({
+            "MAX_MEMORY_BYTES": "100000",
+            "MAX_TAGS_PER_ENTRY": "10"
+        })
         assert c.memory_max_entry_bytes == 100000
         assert c.max_tags_per_entry == 10
 
@@ -66,56 +103,46 @@ class TestConfigConstructorDefaults:
 # =============================================================================
 class TestConfigValidation:
     """Test that Config() rejects invalid values with explicit ValueError."""
-
-    def test_negative_memory_limit(self, monkeypatch):
-        monkeypatch.setenv("MAX_MEMORY_BYTES", "-1")
+    
+    def test_negative_memory_limit(self, reload_config):
         with pytest.raises(ValueError, match="MAX_MEMORY_BYTES"):
-            Config()
+            reload_config({"MAX_MEMORY_BYTES": "-1"})
 
-    def test_zero_memory_limit(self, monkeypatch):
-        monkeypatch.setenv("MAX_MEMORY_BYTES", "0")
+    def test_zero_memory_limit(self, reload_config):
         with pytest.raises(ValueError, match="MAX_MEMORY_BYTES"):
-            Config()
+            reload_config({"MAX_MEMORY_BYTES": "0"})
 
-    def test_extreme_memory_limit(self, monkeypatch):
-        monkeypatch.setenv("MAX_MEMORY_BYTES", "999999999")
+    def test_extreme_memory_limit(self, reload_config):
         with pytest.raises(ValueError, match="MAX_MEMORY_BYTES"):
-            Config()
+            reload_config({"MAX_MEMORY_BYTES": "999999999"})
 
-    def test_non_numeric_memory(self, monkeypatch):
-        monkeypatch.setenv("MAX_MEMORY_BYTES", "not_a_number")
+    def test_non_numeric_memory(self, reload_config):
         with pytest.raises(ValueError):  # int() will raise ValueError
-            Config()
+            reload_config({"MAX_MEMORY_BYTES": "not_a_number"})
 
-    def test_negative_cli_command_length(self, monkeypatch):
-        monkeypatch.setenv("CLI_MAX_COMMAND_LENGTH", "-100")
+    def test_negative_cli_command_length(self, reload_config):
         with pytest.raises(ValueError, match="CLI_MAX_COMMAND_LENGTH"):
-            Config()
+            reload_config({"CLI_MAX_COMMAND_LENGTH": "-100"})
 
-    def test_zero_cli_command_length(self, monkeypatch):
-        monkeypatch.setenv("CLI_MAX_COMMAND_LENGTH", "0")
+    def test_zero_cli_command_length(self, reload_config):
         with pytest.raises(ValueError, match="CLI_MAX_COMMAND_LENGTH"):
-            Config()
+            reload_config({"CLI_MAX_COMMAND_LENGTH": "0"})
 
-    def test_extreme_cli_command_length(self, monkeypatch):
-        monkeypatch.setenv("CLI_MAX_COMMAND_LENGTH", "999999")
+    def test_extreme_cli_command_length(self, reload_config):
         with pytest.raises(ValueError, match="CLI_MAX_COMMAND_LENGTH"):
-            Config()
+            reload_config({"CLI_MAX_COMMAND_LENGTH": "999999"})
 
-    def test_negative_web_chars(self, monkeypatch):
-        monkeypatch.setenv("WEB_MAX_TEXT_CHARS", "-500")
+    def test_negative_web_chars(self, reload_config):
         with pytest.raises(ValueError, match="WEB_MAX_TEXT_CHARS"):
-            Config()
+            reload_config({"WEB_MAX_TEXT_CHARS": "-500"})
 
-    def test_zero_web_chars(self, monkeypatch):
-        monkeypatch.setenv("WEB_MAX_TEXT_CHARS", "0")
+    def test_zero_web_chars(self, reload_config):
         with pytest.raises(ValueError, match="WEB_MAX_TEXT_CHARS"):
-            Config()
+            reload_config({"WEB_MAX_TEXT_CHARS": "0"})
 
-    def test_zero_tags(self, monkeypatch):
-        monkeypatch.setenv("MAX_TAGS_PER_ENTRY", "0")
+    def test_zero_tags(self, reload_config):
         with pytest.raises(ValueError, match="MAX_TAGS_PER_ENTRY"):
-            Config()
+            reload_config({"MAX_TAGS_PER_ENTRY": "0"})
 
 
 # =============================================================================
@@ -123,34 +150,31 @@ class TestConfigValidation:
 # Tests the actual production code path (tools use the singleton they imported)
 # =============================================================================
 class TestConfigIntegration:
-    """Test that patching the singleton affects tool behavior."""
+    """
+    Test that patching the singleton affects tool behavior.
+    
+    NOTE: We do NOT assert restoration in `finally` blocks because
+    monkeypatch.setattr() only restores values after the test function
+    fully returns (during pytest's own teardown phase).
+    """
 
     def test_singleton_patching_affects_readers(self, monkeypatch):
         """Tools that imported cfg see the patched values."""
         original = cfg.web_max_text_chars
-        try:
-            monkeypatch.setattr(cfg, "web_max_text_chars", 1000)
-            # Any code that does `cfg.web_max_text_chars` will see 1000
-            assert cfg.web_max_text_chars == 1000
-        finally:
-            # monkeypatch auto-restores, but be explicit
-            assert cfg.web_max_text_chars == original
+        monkeypatch.setattr(cfg, "web_max_text_chars", 1000)
+        # Any code that does `cfg.web_max_text_chars` will see 1000
+        assert cfg.web_max_text_chars == 1000
+        # monkeypatch will auto-restore to `original` when this test ends
 
     def test_singleton_patching_cli(self, monkeypatch):
         original = cfg.cli_max_command_chars
-        try:
-            monkeypatch.setattr(cfg, "cli_max_command_chars", 500)
-            assert cfg.cli_max_command_chars == 500
-        finally:
-            assert cfg.cli_max_command_chars == original
+        monkeypatch.setattr(cfg, "cli_max_command_chars", 500)
+        assert cfg.cli_max_command_chars == 500
 
     def test_singleton_patching_memory(self, monkeypatch):
         original = cfg.memory_max_entry_bytes
-        try:
-            monkeypatch.setattr(cfg, "memory_max_entry_bytes", 75000)
-            assert cfg.memory_max_entry_bytes == 75000
-        finally:
-            assert cfg.memory_max_entry_bytes == original
+        monkeypatch.setattr(cfg, "memory_max_entry_bytes", 75000)
+        assert cfg.memory_max_entry_bytes == 75000
 
 
 # =============================================================================
