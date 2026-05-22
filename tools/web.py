@@ -1,7 +1,7 @@
 """
 tools/web.py -- Web meta-tool.
-
 Replaces: searxng MCP server + http MCP server + old scraping.py
+
 The LLM sees ONE tool: web(action, ...)
 
 Imports are lazy for bs4 (only on first call), but httpx is imported at top
@@ -14,11 +14,11 @@ Actions:
   search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
 
 P1-1: Use per-request httpx.Client context manager instead of module-level client.
-This fixes connection leaks and thread-safety (gateway runs multiple threads).
-
-M3: Add 0.5s delay between requests in loop-based actions to be polite to servers.
+      This fixes connection leaks and thread-safety (gateway runs multiple threads).
+M3:   Add 0.5s delay between requests in loop-based actions to be polite to servers.
+P2:   Added URL deduplication to search_and_read to prevent scraping the same URL
+      multiple times when SearXNG returns duplicates from different engines.
 """
-
 from __future__ import annotations
 
 import re
@@ -41,6 +41,7 @@ from registry import tool
 import ipaddress
 import socket
 from urllib.parse import urlparse
+
 
 # Module-level defaults (not clients)
 MAX_TEXT_CHARS = 8000
@@ -148,6 +149,7 @@ def _html_to_text(html: str, max_chars: int = MAX_TEXT_CHARS) -> tuple[str, str]
     truncated = len(clean) > max_chars
     if truncated:
         clean = clean[:max_chars] + f"\n\n[...truncated at {max_chars} chars]"
+
     return clean, title
 
 
@@ -187,16 +189,18 @@ def _do_scrape(url: str, max_chars: int = MAX_TEXT_CHARS) -> dict:
     html, err = _fetch_html(url)
     if err:
         return {"status": "error", "url": url, "error": err}
+
     text, title = _html_to_text(html, max_chars)
     if not text:
         return {"status": "error", "url": url, "error": "No text content extracted"}
+
     return {
-        "status":     "success",
+        "status":      "success",
         "url":        url,
         "title":      title,
         "text":       text,
         "word_count": len(text.split()),
-        "truncated":  "[...truncated" in text,
+        "truncated":   "[...truncated" in text,
     }
 
 
@@ -217,19 +221,19 @@ def web(
         Search SearXNG and return ranked URLs with titles and snippets.
         Required: query
         Optional: max_results (default 5)
-        Returns:  {results: [{url, title, snippet, engine}], count}
+        Returns: {results: [{url, title, snippet, engine}], count}
 
     scrape / read
         Fetch a URL and return clean text (JavaScript and CSS removed).
         Required: url
         Optional: max_chars (default 8000)
-        Returns:  {title, text, word_count, truncated}
+        Returns: {title, text, word_count, truncated}
 
     search_and_read
         Search then scrape the top results in parallel. One call for full research.
         Required: query
-        Optional: max_results (default 3), max_chars
-        Returns:  {query, results: [{url, title, text}], scraped_count}
+        Optional: max_results (default 5, max 10), max_chars
+        Returns: {query, results: [{url, title, text}], scraped_count}
 
     Examples:
         web(action="search", query="FastMCP python tutorial", max_results=5)
@@ -253,15 +257,24 @@ def web(
         if not query:
             return {"status": "error",
                     "error": "action='search_and_read' requires query="}
-        n             = min(max_results, 3)
+
+        # [FIX] Allow up to 10 results for deep research (default is 5)
+        n = min(max_results, 10)
         search_result = _do_search(query, n)
         if search_result["status"] != "success" or not search_result["results"]:
             return {"status": "error",
                     "error": search_result.get("error", "No search results"),
                     "query": query}
 
-        # Collect valid URLs preserving rank order
-        urls = [r.get("url", "") for r in search_result["results"] if r.get("url")]
+        # [P2] Deduplicate URLs while preserving rank order
+        # SearXNG may return the same URL from different engines
+        seen_urls = set()
+        urls = []
+        for r in search_result["results"]:
+            u = r.get("url", "")
+            if u and u not in seen_urls:
+                seen_urls.add(u)
+                urls.append(u)
 
         # Fetch all URLs in parallel -- reuses the same pattern as file(read_many)
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -289,11 +302,12 @@ def web(
                 })
 
         return {
-            "status":        "success",
+            "status":         "success",
             "query":         query,
             "results":       scraped,
             "scraped_count": len(scraped),
             "attempted":     len(urls),
+            "duplicates_removed": len(search_result["results"]) - len(urls),
         }
 
     return {
