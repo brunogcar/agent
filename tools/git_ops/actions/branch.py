@@ -1,38 +1,46 @@
-"""Branch – list, create, or delete local branches."""
+"""
+Branch – list, create, or delete local branches.
 
-from ._base import register_git
-from ._helpers import _git, _check_repo
+Manages local branches. Subcommands are passed via the `message` parameter:
+  - list (default)
+  - create <name>
+  - delete <name> (safe delete, only if merged)
+Only create/delete require a valid repository.
+"""
+from tools.git_ops._registry import register_action
+from tools.git_ops.helpers import _git, _check_repo
 
-HELP_BRANCH = """\
+HELP_BRANCH = """
 branch
-    Manage local branches. Subcommands (via 'message'):
-      - list              (no message or message="list")
-      - create <name>     (message="create my-branch")
-      - delete <name>     (message="delete old-branch") – safe, only if merged
+Manage local branches. Subcommands (via 'message'):
+- list              (no message or message="list")
+- create <name>     (message="create my-branch")
+- delete <name>     (message="delete old-branch") – safe, only if merged
 """
 
-@register_git(
-    name="branch",
+@register_action(
+    "git", "branch",
     help_text=HELP_BRANCH,
-    needs_repo=False,   # handlers check for write ops internally
+    needs_repo=False,  # handlers check for write ops internally
     examples=[
-        "git(operation=\"branch\")                              # list",
-        "git(operation=\"branch\", message=\"create experiment\") # create",
-        "git(operation=\"branch\", message=\"delete old-fix\")    # delete",
+        'git(operation="branch")                              # list',
+        'git(operation="branch", message="create experiment") # create',
+        'git(operation="branch", message="delete old-fix")    # delete',
     ],
 )
 def run_branch(cwd, message: str = "", **kwargs) -> dict:
+    """Manage local branches. Subcommands via 'message'."""
     parts = message.strip().split(maxsplit=1) if message.strip() else []
     sub = parts[0].lower() if parts else "list"
     name = parts[1] if len(parts) > 1 else ""
-
+    
     if sub == "list":
         code, out, err = _git(["branch"], cwd)
         if code != 0:
             return {"status": "error", "error": err}
         branches = []
         for line in out.splitlines():
-            current = line.startswith("*")
+            current = line.startswith("* ")
             bname = line[2:].strip()
             branches.append({"name": bname, "current": current})
         return {"status": "ok", "branches": branches, "root": str(cwd)}

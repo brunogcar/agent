@@ -1,31 +1,38 @@
-"""Checkout – switch branches or create a new one."""
+"""
+Checkout – switch branches or create a new one.
 
-from ._base import register_git
-from ._helpers import _git, _check_repo
+Switches the working tree to a branch, commit, or tag.
+Supports creating and switching to a new branch via `-b <name>`
+passed in the `message` parameter.
+Requires a valid git repository.
+"""
+from tools.git_ops._registry import register_action
+from tools.git_ops.helpers import _git, _check_repo
 
-HELP_CHECKOUT = """\
+HELP_CHECKOUT = """
 checkout
-    Switch to a branch or commit. Create and switch with '-b'.
-    Use 'message' to specify target:
-      - branch name        (e.g. checkout, message="main")
-      - "-b new-branch"    (e.g. checkout, message="-b experiment")
+Switch to a branch or commit. Create and switch with '-b'.
+Use 'message' to specify target:
+- branch name        (e.g. checkout, message="main")
+- "-b new-branch"    (e.g. checkout, message="-b experiment")
 """
 
-@register_git(
-    name="checkout",
+@register_action(
+    "git", "checkout",
     help_text=HELP_CHECKOUT,
     needs_repo=True,
     examples=[
-        "git(operation=\"checkout\", message=\"main\")          # switch",
-        "git(operation=\"checkout\", message=\"-b new-idea\")   # create and switch",
+        'git(operation="checkout", message="main")          # switch',
+        'git(operation="checkout", message="-b new-idea")   # create and switch',
     ],
 )
 def run_checkout(cwd, message: str = "", **kwargs) -> dict:
+    """Switch to a branch or commit. Create and switch with '-b'."""
     target = message.strip() if message else ""
     if not target:
         return {"status": "error", "error": "Branch or commit to checkout is required (message param)"}
-
-    if target.startswith("-b"):
+    
+    if target.startswith("-b "):
         parts = target.split(maxsplit=1)
         if len(parts) < 2:
             return {"status": "error", "error": "Branch name required after -b"}

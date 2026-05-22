@@ -1,28 +1,35 @@
-"""Rollback – reset to HEAD, optionally with stash."""
+"""
+Rollback – reset to HEAD, optionally with stash.
 
+Resets the working tree to the latest commit. By default, stashes
+uncommitted changes first so they can be recovered. If force=True,
+permanently discards changes and cleans untracked files.
+Requires a valid git repository.
+"""
 import time as _t
-from ._base import register_git
-from ._helpers import _git, _check_repo
+from tools.git_ops._registry import register_action
+from tools.git_ops.helpers import _git, _check_repo
 
-HELP_ROLLBACK = """\
+HELP_ROLLBACK = """
 rollback
-    Reset to HEAD. Discards ALL uncommitted changes.
-    Default (force=False): stashes changes first (recoverable via git stash pop).
-    force=True: permanently discards changes + cleans untracked files.
-    Optional: root, force
-    Returns: {status, head, message, stash_ref}
+Reset to HEAD. Discards ALL uncommitted changes.
+Default (force=False): stashes changes first (recoverable via git stash pop).
+force=True: permanently discards changes + cleans untracked files.
+Optional: root, force
+Returns: {status, head, message, stash_ref}
 """
 
-@register_git(
-    name="rollback",
+@register_action(
+    "git", "rollback",
     help_text=HELP_ROLLBACK,
     needs_repo=True,
     examples=[
-        "git(operation=\"rollback\")                # safe, auto stash",
-        "git(operation=\"rollback\", force=True)    # permanent discard",
+        'git(operation="rollback")                # safe, auto stash',
+        'git(operation="rollback", force=True)    # permanent discard',
     ],
 )
 def run_rollback(cwd, force: bool = False, **kwargs) -> dict:
+    """Reset to HEAD. Discards ALL uncommitted changes."""
     if force:
         _git(["reset", "--hard", "HEAD"], cwd)
         _git(["clean", "-fd"], cwd)
@@ -33,7 +40,7 @@ def run_rollback(cwd, force: bool = False, **kwargs) -> dict:
             "message": "Force reset to HEAD (changes permanently discarded)",
             "root": str(cwd),
         }
-
+    
     # safe path
     stash_msg = f"autocode-rollback-{int(_t.time())}"
     sr = _git(["stash", "push", "-m", stash_msg], cwd)
@@ -44,9 +51,9 @@ def run_rollback(cwd, force: bool = False, **kwargs) -> dict:
         return {"status": "error", "error": f"git reset failed: {err}"}
 
     _, head, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
-    msg = "Working tree reset to HEAD."
+    msg = "Working tree reset to HEAD. "
     if stashed:
-        msg += f" Changes saved to stash '{stash_msg}' -- run 'git stash pop' to restore."
+        msg += f"Changes saved to stash '{stash_msg}' -- run 'git stash pop' to restore."
     return {
         "status": "rolled_back",
         "head": head,

@@ -1,16 +1,39 @@
-"""git_ops – plug-in git operation handlers, auto-discovered."""
+"""
+Auto-registration initializer for git operations.
 
+This module ensures that all action handlers in tools/git_ops/actions/
+are imported at startup, which triggers their @register_action decorators
+and populates the DISPATCH table in _registry.py.
+
+How it works:
+    1. Import _registry to ensure the DISPATCH dict exists
+    2. Use pathlib to find all .py files in the actions/ subdirectory
+    3. Dynamically import each module using importlib
+    4. Each imported module's @register_action decorators run automatically
+
+This pattern means:
+    ✅ No manual list of actions to maintain
+    ✅ Adding a new action = just drop a file in actions/
+    ✅ Removing an action = just delete the file
+    ✅ Zero risk of forgetting to register an action
+
+Note: The actions/ directory must contain only action handler modules
+(one function per file, decorated with @register_action). Utility modules
+should be placed elsewhere (e.g., git_ops/helpers.py).
+"""
 import importlib
-import pkgutil
+from pathlib import Path
 
+# Import _registry to ensure DISPATCH dict is initialized before we register actions
+# noqa: F401 suppresses "imported but unused" warning — we import for side effects
+from . import _registry  # noqa: F401
 
-def _discover():
-    """Import every sibling .py file to trigger @register_git decorators."""
-    package_path = __path__[0]
-    for _, module_name, _ in pkgutil.iter_modules([package_path]):
-        if module_name.startswith("_") or module_name == "__init__":
-            continue
-        importlib.import_module(f".{module_name}", package=__name__)
-
-
-_discover()
+# Auto-discover and import all action handler modules from the actions/ subdirectory
+# This triggers @register_action decorators, populating DISPATCH automatically
+for py_file in Path(__file__).parent.glob("actions/*.py"):
+    # Skip __init__.py — it's not an action handler
+    if py_file.name != "__init__.py":
+        # Construct the full module path: tools.git_ops.actions.<module_name>
+        module_name = f"tools.git_ops.actions.{py_file.stem}"
+        # Import the module — this executes its top-level code, including decorators
+        importlib.import_module(module_name)

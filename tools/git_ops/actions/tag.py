@@ -1,30 +1,38 @@
-"""Tag – list or create lightweight tags."""
+"""
+Tag – list or create lightweight tags.
 
-from ._base import register_git
-from ._helpers import _git, _check_repo
+Manages lightweight tags to mark milestones or releases.
+Subcommands are passed via the `message` parameter:
+  - list (default)
+  - create <name>
+Only the 'create' subcommand requires a valid repository.
+"""
+from tools.git_ops._registry import register_action
+from tools.git_ops.helpers import _git, _check_repo
 
-HELP_TAG = """\
+HELP_TAG = """
 tag
-    List or create lightweight tags to mark milestones.
-    Subcommands (via 'message'):
-      - list              (default)
-      - create <name>     (e.g. message="create v1.0")
+List or create lightweight tags to mark milestones.
+Subcommands (via 'message'):
+- list              (default)
+- create <name>     (e.g. message="create v1.0")
 """
 
-@register_git(
-    name="tag",
+@register_action(
+    "git", "tag",
     help_text=HELP_TAG,
-    needs_repo=False,   # only create needs check, handled inside
+    needs_repo=False,  # only create needs check, handled inside
     examples=[
-        "git(operation=\"tag\")                          # list",
-        "git(operation=\"tag\", message=\"create v1.0\")  # create",
+        'git(operation="tag")                          # list',
+        'git(operation="tag", message="create v1.0")  # create',
     ],
 )
 def run_tag(cwd, message: str = "", **kwargs) -> dict:
+    """List or create lightweight tags to mark milestones."""
     parts = message.strip().split(maxsplit=1) if message.strip() else []
     sub = parts[0].lower() if parts else "list"
     name = parts[1] if len(parts) > 1 else ""
-
+    
     if sub == "list":
         code, out, err = _git(["tag", "-l"], cwd)
         if code != 0:

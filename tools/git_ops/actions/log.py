@@ -1,32 +1,37 @@
-"""Log – show recent commit history."""
+"""
+Log – show recent commit history.
 
-from ._base import register_git
-from ._helpers import _git
+Returns recent commit history with hash, date, and message.
+Read-only operation; safely handles empty repositories.
+"""
+from tools.git_ops._registry import register_action
+from tools.git_ops.helpers import _git
 
-HELP_LOG = """\
+HELP_LOG = """
 log
-    Recent commit history.
-    Optional: n (default 10), root
-    Returns: {commits: [{hash, date, message}], count}
+Recent commit history.
+Optional: n (default 10), root
+Returns: {commits: [{hash, date, message}], count}
 """
 
-@register_git(
-    name="log",
+@register_action(
+    "git", "log",
     help_text=HELP_LOG,
     needs_repo=False,
     examples=[
-        "git(operation=\"log\")        # last 10 commits",
-        "git(operation=\"log\", n=5)   # last 5 commits",
+        'git(operation="log")        # last 10 commits',
+        'git(operation="log", n=5)   # last 5 commits',
     ],
 )
 def run_log(cwd, n: int = 10, **kwargs) -> dict:
+    """Show recent commit history. Optional: n (default 10), root."""
     code, out, err = _git(
         ["log", f"--max-count={n}", "--pretty=format:%h|%ai|%s"],
         cwd,
     )
     if code != 0:
         return {"status": "error", "error": err or "No commits yet (empty repo?)"}
-
+    
     commits = []
     for line in out.splitlines():
         parts = line.split("|", 2)
