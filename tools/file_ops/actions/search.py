@@ -7,7 +7,9 @@ from __future__ import annotations
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops.index import _get_index, _build_index
 from core.config import cfg
+from tools.file_ops._registry import register_action
 
+@register_action("file", "search")
 def _handle_search(query: str = "", max_results: int = 10) -> dict:
     """Full-text search across agent and workspace files."""
     if not query:

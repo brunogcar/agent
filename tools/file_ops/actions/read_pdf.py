@@ -7,7 +7,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
+@register_action("file", "read_pdf")
 def _handle_read_pdf(path: str = "", max_chars: int = 50_000) -> dict:
     """Extract text from a PDF file using pdfplumber."""
     p, err = _safe_resolve(path)

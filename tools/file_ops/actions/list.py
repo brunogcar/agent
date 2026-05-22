@@ -8,7 +8,9 @@ import time
 from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
+@register_action("file", "list")
 def _handle_list(path: str = "") -> dict:
     """List contents of a directory."""
     p, err = _safe_resolve(path or ".")

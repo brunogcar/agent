@@ -8,7 +8,9 @@ from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
 from core.config import cfg
+from tools.file_ops._registry import register_action
 
+@register_action("file", "patch")
 def _handle_patch(path: str = "", **kwargs) -> dict:
     """
     Apply a targeted str_replace patch.

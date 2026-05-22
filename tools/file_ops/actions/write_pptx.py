@@ -9,7 +9,9 @@ from pathlib import Path
 
 from core.config import cfg
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
+@register_action("file", "write_pptx")
 def _handle_write_pptx(path: str = "", content: str = "", **kwargs) -> dict:
     """Write data to a PowerPoint file using python-pptx."""
     p, err = _safe_resolve(path)

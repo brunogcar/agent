@@ -9,7 +9,9 @@ from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops.actions.read import _read_file
+from tools.file_ops._registry import register_action
 
+@register_action("file", "read_many")
 def _handle_read_many(paths: list = None, mode: str = "full", max_chars: int = 50_000) -> dict:
     """Read multiple files concurrently."""
     if not paths:

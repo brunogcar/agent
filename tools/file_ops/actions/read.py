@@ -9,22 +9,24 @@ from typing import Optional
 
 from core.config import cfg
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
-def _read_file(path_str: str, max_chars: int = 50_000) -> dict:
+@register_action("file", "read")
+def _read_file(path: str, max_chars: int = 50_000) -> dict:
     """Read a file with agent-root-first search, symlink safety, and extension validation."""
     resolved = None
 
     # 1. If relative, try agent root first (source code lives here)
-    if not Path(path_str).is_absolute():
-        candidate = cfg.agent_root / path_str
+    if not Path(path).is_absolute():
+        candidate = cfg.agent_root / path
         if candidate.exists():
             candidate = candidate.resolve()          # follow symlinks
             if candidate.is_relative_to(cfg.agent_root):
                 resolved = candidate
 
     # 2. Then try workspace root
-    if resolved is None and not Path(path_str).is_absolute():
-        candidate = cfg.workspace_root / path_str
+    if resolved is None and not Path(path).is_absolute():
+        candidate = cfg.workspace_root / path
         if candidate.exists():
             candidate = candidate.resolve()
             if candidate.is_relative_to(cfg.workspace_root):
@@ -32,7 +34,7 @@ def _read_file(path_str: str, max_chars: int = 50_000) -> dict:
 
     # 3. Fallback to absolute/explicit path via existing safe resolver
     if resolved is None:
-        resolved = _safe_resolve(path_str)[0]
+        resolved = _safe_resolve(path)[0]
 
     if not resolved:
         return {"status": "error", "error": "File not found or access denied"}

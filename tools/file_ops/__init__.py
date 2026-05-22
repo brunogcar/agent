@@ -1,6 +1,10 @@
 """Auto-register file operations."""
+
 import importlib
 from pathlib import Path
+
+# Import _registry module to initialize DISPATCH
+from . import _registry  # noqa: F401  <-- CHANGE THIS LINE
 
 # Auto-import all action modules
 for py_file in Path(__file__).parent.glob("actions/*.py"):

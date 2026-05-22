@@ -8,7 +8,9 @@ import sys
 from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
+@register_action("file", "write_pdf")
 def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_chars: int = 50_000) -> dict:
     """Write text to PDF using fpdf2."""
     p, err = _safe_resolve(path)

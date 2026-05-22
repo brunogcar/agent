@@ -20,45 +20,30 @@ Paths outside workspace_root and agent_root are rejected for safety.
 
 from __future__ import annotations
 
-import time
-from typing import Optional
-
-from core.config import cfg
 from registry import tool
+from tools.file_ops._registry import DISPATCH
 
-# Import helpers
-from tools.file_ops.helpers import _safe_resolve
+def _safe_dispatch_file(action: str, **params) -> dict:
+    """
+    Dispatch file action through DISPATCH registry.
 
-# Import action handlers
-from tools.file_ops.actions.read import _read_file
-from tools.file_ops.actions.write import _handle_write
-from tools.file_ops.actions.list import _handle_list
-from tools.file_ops.actions.backup import _handle_backup
-from tools.file_ops.actions.read_many import _handle_read_many
-from tools.file_ops.actions.search import _handle_search
-from tools.file_ops.actions.read_pdf import _handle_read_pdf
-from tools.file_ops.actions.write_pdf import _handle_write_pdf
-from tools.file_ops.actions.read_docx import _handle_read_docx
-from tools.file_ops.actions.write_docx import _handle_write_docx
-from tools.file_ops.actions.read_xlsx import _handle_read_xlsx
-from tools.file_ops.actions.write_xlsx import _handle_write_xlsx
-from tools.file_ops.actions.read_pptx import _handle_read_pptx
-from tools.file_ops.actions.write_pptx import _handle_write_pptx
-from tools.file_ops.actions.patch import _handle_patch
+    Args:
+        action: Action name (read, write, list, etc.)
+        **params: Action-specific parameters
+
+    Returns:
+        Result dictionary from the action function
+    """
+    if action in DISPATCH.get("file", {}):
+        func = DISPATCH["file"][action]
+        try:
+            return func(**params)
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    return {"status": "error", "error": f"Unknown file action: {action}"}
 
 @tool
-def file(
-    action:    str,
-    path:      str        = "",
-    content:   str        = "",
-    paths:     list       = None,
-    mode:      str        = "full",
-    query:     str        = "",
-    max_chars: int        = 50_000,
-    max_results: int      = 10,
-    title:       str      = "",
-    **kwargs
-) -> dict:
+def file(action: str, **kwargs) -> dict:
     """
     File tool — read, write, search, and manage files.
 
@@ -119,69 +104,4 @@ def file(
         file(action="search", query="ChromaDB collection", max_results=5)
         file(action="read_pdf", path="docs/manual.pdf")
     """
-    action = action.strip().lower()
-
-    # ── read ──────────────────────────────────────────────────────────────────
-    if action == "read":
-        p, err = _safe_resolve(path)
-        if err:
-            return {"status": "error", "error": err}
-        return _read_file(p, max_chars)
-
-    # ── write ─────────────────────────────────────────────────────────────────
-    if action == "write":
-        return _handle_write(path=path, content=content)
-
-    # ── list ──────────────────────────────────────────────────────────────────
-    if action == "list":
-        return _handle_list(path=path)
-
-    # ── backup ────────────────────────────────────────────────────────────────
-    if action == "backup":
-        return _handle_backup(path=path)
-
-    # ── read_many ─────────────────────────────────────────────────────────────
-    if action == "read_many":
-        return _handle_read_many(paths=paths, mode=mode, max_chars=max_chars)
-
-    # ── search ────────────────────────────────────────────────────────────────
-    if action == "search":
-        return _handle_search(query=query, max_results=max_results)
-
-    # ── read_pdf ──────────────────────────────────────────────────────────────
-    if action == "read_pdf":
-        return _handle_read_pdf(path=path, max_chars=max_chars)
-
-    # ── write_pdf ─────────────────────────────────────────────────────────────
-    if action == "write_pdf":
-        return _handle_write_pdf(path=path, content=content, title=title, max_chars=max_chars)
-
-    # ── read_docx ─────────────────────────────────────────────────────────────
-    if action == "read_docx":
-        return _handle_read_docx(path=path, max_chars=max_chars)
-
-    # ── write_docx ────────────────────────────────────────────────────────────
-    if action == "write_docx":
-        return _handle_write_docx(path=path, content=content, title=title)
-
-    # ── read_xlsx ─────────────────────────────────────────────────────────────
-    if action == "read_xlsx":
-        return _handle_read_xlsx(path=path, max_chars=max_chars)
-
-    # ── write_xlsx ────────────────────────────────────────────────────────────
-    if action == "write_xlsx":
-        return _handle_write_xlsx(path=path, content=content)
-
-    # ── read_pptx ─────────────────────────────────────────────────────────────
-    if action == "read_pptx":
-        return _handle_read_pptx(path=path, max_chars=max_chars)
-
-    # ── write_pptx ────────────────────────────────────────────────────────────
-    if action == "write_pptx":
-        return _handle_write_pptx(path=path, content=content)
-
-    # ── patch (str_replace) ───────────────────────────────────────────────────
-    if action == "patch":
-        return _handle_patch(path=path, **kwargs)
-
-    return {"status": "error", "error": f"Unknown action: {action}"}
+    return _safe_dispatch_file(action.strip().lower(), **kwargs)

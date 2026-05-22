@@ -8,7 +8,9 @@ import json as _json
 from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
+@register_action("file", "write_xlsx")
 def _handle_write_xlsx(path: str = "", content: str = "", **kwargs) -> dict:
     """Write data to an Excel file using pandas."""
     p, err = _safe_resolve(path)

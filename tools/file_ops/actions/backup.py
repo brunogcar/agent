@@ -9,7 +9,9 @@ import time
 from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
+@register_action("file", "backup")
 def _handle_backup(path: str = "") -> dict:
     """Copy a file with .bak suffix (manual backup)."""
     import shutil

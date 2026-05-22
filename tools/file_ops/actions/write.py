@@ -9,7 +9,9 @@ from pathlib import Path
 
 from core.config import cfg
 from tools.file_ops.helpers import _safe_resolve
+from tools.file_ops._registry import register_action
 
+@register_action("file", "write")
 def _handle_write(path: str = "", content: str = "", **kwargs) -> dict:
     """Write content to a file. Auto-creates parent directories."""
     p, err = _safe_resolve(path)
