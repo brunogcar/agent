@@ -19,8 +19,12 @@ from tools.web import web, _do_search, _do_scrape, _is_safe_url
 # =============================================================================
 @pytest.fixture
 def mock_config():
-    """Mock configuration for web tool."""
+    """Mock configuration for web tool with explicit integer values."""
     with patch("tools.web.cfg") as mock_cfg:
+        # CRITICAL: Set actual integers to avoid MagicMock comparison errors
+        mock_cfg.web_max_text_chars = 8000
+        mock_cfg.web_snippet_chars = 300
+        mock_cfg.web_max_search_results = 10
         mock_cfg.searxng_url = "http://localhost:8080"
         yield mock_cfg
 
@@ -134,9 +138,9 @@ class TestSearch:
         }
         mock_response.raise_for_status = MagicMock()
         mock_httpx.get.return_value = mock_response
-        
+
         result = web(action="search", query="test query")
-        
+
         assert result["status"] == "success"
         assert result["count"] == 1
         assert result["results"][0]["url"] == "https://example.com"
@@ -144,25 +148,25 @@ class TestSearch:
     def test_search_missing_query(self, mock_config):
         """Test search without query parameter."""
         result = web(action="search", query="")
-        
+
         assert result["status"] == "error"
         assert "requires query" in result["error"]
 
     def test_search_timeout(self, mock_config, mock_httpx):
         """Test search timeout handling."""
         mock_httpx.get.side_effect = httpx.TimeoutException("Timeout")
-        
+
         result = web(action="search", query="test")
-        
+
         assert result["status"] == "error"
         assert "timeout" in result["error"].lower()
 
     def test_search_connection_error(self, mock_config, mock_httpx):
         """Test search connection error."""
         mock_httpx.get.side_effect = httpx.ConnectError("Connection failed")
-        
+
         result = web(action="search", query="test")
-        
+
         assert result["status"] == "error"
         assert "Cannot reach" in result["error"]
 
@@ -177,9 +181,9 @@ class TestScrape:
         mock_response.text = "<html><head><title>Test</title></head><body><p>Content</p></body></html>"
         mock_response.raise_for_status = MagicMock()
         mock_httpx.get.return_value = mock_response
-        
+
         result = web(action="scrape", url="https://example.com")
-        
+
         assert result["status"] == "success"
         assert result["title"] == "Test"
         assert "Content" in result["text"]
@@ -187,7 +191,7 @@ class TestScrape:
     def test_scrape_missing_url(self, mock_config):
         """Test scrape without URL parameter."""
         result = web(action="scrape", url="")
-        
+
         assert result["status"] == "error"
         assert "requires url" in result["error"]
 
@@ -197,9 +201,9 @@ class TestScrape:
         mock_response.text = "<html><body>Test</body></html>"
         mock_response.raise_for_status = MagicMock()
         mock_httpx.get.return_value = mock_response
-        
+
         result = web(action="read", url="https://example.com")
-        
+
         assert result["status"] == "success"
 
 
@@ -210,14 +214,14 @@ class TestSSRFProtection:
     def test_blocks_localhost(self, mock_config, mock_httpx):
         """Test that localhost URLs are blocked."""
         result = web(action="scrape", url="http://localhost:8080/admin")
-        
+
         assert result["status"] == "error"
         assert "private/internal" in result["error"].lower()
 
     def test_blocks_private_ip(self, mock_config, mock_httpx):
         """Test that private IP addresses are blocked."""
         result = web(action="scrape", url="http://192.168.1.1/config")
-        
+
         assert result["status"] == "error"
         assert "private/internal" in result["error"].lower()
 
@@ -227,11 +231,11 @@ class TestSSRFProtection:
         mock_response.text = "<html><body>Public content</body></html>"
         mock_response.raise_for_status = MagicMock()
         mock_httpx.get.return_value = mock_response
-        
+
         # Patch _is_safe_url to return True for this test
         with patch("tools.web._is_safe_url", return_value=True):
             result = web(action="scrape", url="https://example.com")
-        
+
         assert result["status"] == "success"
 
 
@@ -242,7 +246,7 @@ class TestErrorHandling:
     def test_unknown_action(self, mock_config):
         """Test unknown action returns error."""
         result = web(action="unknown_action")
-        
+
         assert result["status"] == "error"
         assert "Unknown action" in result["error"]
 
@@ -252,9 +256,9 @@ class TestErrorHandling:
         mock_response.json.return_value = {"results": []}
         mock_response.raise_for_status = MagicMock()
         mock_httpx.get.return_value = mock_response
-        
+
         result = web(action="search_and_read", query="no results query")
-        
+
         assert result["status"] == "error"
         assert "No search results" in result["error"]
 
@@ -264,10 +268,10 @@ class TestErrorHandling:
         mock_response.status_code = 404
         error = httpx.HTTPStatusError("Not Found", request=MagicMock(), response=mock_response)
         mock_httpx.get.side_effect = error
-        
+
         with patch("tools.web._is_safe_url", return_value=True):
             result = web(action="scrape", url="https://example.com/notfound")
-        
+
         assert result["status"] == "error"
         assert "404" in result["error"]
 

@@ -1,5 +1,6 @@
 """
 Shared utilities and helpers for cli meta-tool operations.
+
 Includes:
 - Command sanitization and validation
 - Workspace/cwd detection
@@ -20,9 +21,8 @@ from core.config import cfg
 # =============================================================================
 # Constants
 # =============================================================================
-# [P2] Limits centralized in core/config.py (cfg.cli_max_command_chars, cfg.cli_max_arguments)
+# [P2] Limits centralized in core/config.py
 
-# Regex to match control characters (excluding normal whitespace)
 _CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 
 # ── Security: Allowlist & Denylist ─────────────────────────────────────
@@ -49,21 +49,13 @@ SHELL_OPERATORS = {"|", "||", "&&", ";", ">", ">>", "<", "&", "`", "$("}
 def _sanitize_command(command: str) -> str:
     """
     Sanitize command input before processing.
-    Rejects:
-    - Commands exceeding max length
-    - Commands containing null bytes
-    - Commands with control characters
-    - Commands with too many arguments
-    - Commands containing dangerous patterns
     """
     if not isinstance(command, str):
         raise ValueError("Command must be a string")
 
-    # [P2] Use centralized config limit
+    # [P2] Use centralized config limit (4096 chars)
     if len(command) > cfg.cli_max_command_chars:
-        raise ValueError(
-            f"Command too long (max {cfg.cli_max_command_chars} chars)"
-        )
+        raise ValueError(f"Command too long (max {cfg.cli_max_command_chars} chars)")
 
     if '\x00' in command:
         raise ValueError("Command contains null bytes")
@@ -71,14 +63,13 @@ def _sanitize_command(command: str) -> str:
     if _CONTROL_CHAR_PATTERN.search(command):
         raise ValueError("Command contains control characters")
 
-    # Check for dangerous patterns
+    # Check for dangerous patterns (injection attempts)
     DANGEROUS_PATTERNS = ['rm -rf', 'passwd', 'hacked', 'root@', 'etc/passwd', 'chmod 777']
     command_lower = command.lower()
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command_lower:
             raise ValueError("Command contains blocked pattern")
 
-    # Normalize whitespace
     command = ' '.join(command.split())
 
     args = command.split()
@@ -92,10 +83,7 @@ def _sanitize_command(command: str) -> str:
 # Workspace Detection
 # =============================================================================
 def _detect_cwd(command: str) -> Path | None:
-    """
-    Detect working directory from command.
-    Returns Path if 'cd' or path prefix detected, else None.
-    """
+    """Detect working directory from command."""
     command_lower = command.lower().strip()
 
     if command_lower.startswith("cd "):
@@ -161,6 +149,7 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
         if p.exists():
             try:
                 full_path = p.resolve()
+                # Ensure path is inside workspace
                 if not (full_path == workspace_root or workspace_root in full_path.parents):
                     return f"Shell error: Path '{token}' is outside the workspace."
             except (OSError, ValueError):
@@ -170,7 +159,7 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
     try:
         result = subprocess.run(
             tokens,
-            shell=False,
+            shell=False,  # CRITICAL: Prevents shell injection
             cwd=str(cwd) if cwd else str(cfg.workspace_root),
             capture_output=True,
             text=True,
@@ -191,11 +180,20 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
 # Dispatch
 # =============================================================================
 def _safe_dispatch(tool_name: str, action: str, params: dict) -> str:
-    """Look up tool_name:action in whitelist and execute."""
+    """
+    Look up tool_name:action in whitelist and execute.
+    Filters trace_id from params to avoid 'unexpected keyword argument' errors
+    in action handlers that don't accept it.
+    """
     from tools.cli_ops import DISPATCH
 
     if tool_name in DISPATCH and action in DISPATCH[tool_name]:
         action_func = DISPATCH[tool_name][action]
+        
+        # Filter out trace_id if the handler doesn't accept it
+        # This prevents "unexpected keyword argument 'trace_id'" errors
+        trace_id = params.pop("trace_id", None)
+        
         try:
             try:
                 return action_func(action, **params)

@@ -5,24 +5,26 @@ import pytest
 from tools.cli_ops.helpers import _sanitize_command
 from tools.cli import cli
 
+
 class TestSanitization:
     """Test the _sanitize_command function directly."""
 
     def test_null_byte_rejection(self):
         with pytest.raises(ValueError, match="null bytes"):
-            _sanitize_command("ls \x00 /tmp")
+            _sanitize_command("ls\x00/tmp")
 
     def test_control_char_rejection(self):
         with pytest.raises(ValueError, match="control characters"):
-            _sanitize_command("ls \x01")
+            _sanitize_command("ls\x01")
 
     def test_long_command_rejection(self):
+        # Generate a command longer than 4096 chars (new limit)
         with pytest.raises(ValueError, match="too long"):
-            _sanitize_command("a" * 3000)
+            _sanitize_command("a" * 5000)
 
     def test_too_many_args_rejection(self):
         with pytest.raises(ValueError, match="too many arguments"):
-            _sanitize_command(" ".join(["arg"] * 50))
+            _sanitize_command("  ".join(["arg"] * 50))
 
     def test_whitespace_normalization(self):
         result = _sanitize_command("ls   -la    /tmp")
@@ -40,6 +42,7 @@ class TestSanitization:
         result = _sanitize_command(" ")
         assert result == ""
 
+
 class TestFuzzInputs:
     """Test with various malicious or edge-case inputs."""
 
@@ -49,7 +52,7 @@ class TestFuzzInputs:
         "&& echo hacked",        # Chained command
         "$(whoami)",             # Command substitution
         "`whoami`",              # Backtick
-        "a" * 1000,              # Long input
+        "a" * 1000,              # Long input (but under 4096 limit)
         "\x00\x01\x02",          # Control chars
         "ls /tmp; rm -rf /",     # Multiple commands
         "python -c \"import os; os.system('rm -rf /')\"",  # Python injection
@@ -89,4 +92,5 @@ class TestFuzzInputs:
             "chmod 777",
         ]
         for pattern in dangerous_patterns:
-            assert pattern not in result.lower(), f"Dangerous pattern '{pattern}' found in output for command: {command[:50]}"
+            assert pattern not in result.lower(), \
+                f"Dangerous pattern '{pattern}' found in output for command: {command[:50]}"
