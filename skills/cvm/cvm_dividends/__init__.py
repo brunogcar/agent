@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/cvm/cvm_dividends/__init__.py
 Deploy to: D:\mcp\agent\skills\cvm\cvm_dividends\__init__.py
 
@@ -26,12 +26,12 @@ from skills.cvm.cvm_dividends.cvm_dividends import cvm_dividends
 MANIFEST = {
     "sub_domain":  "cvm_dividends",
     "description": (
-        "Dividend and JCP data from rapina.db. "
+        "Dividend and JCP data from dfp_itr.db. "
         "Three sources: DVA (annual declared), BPP (payable balance), DFC (cash paid). "
         "Accepts B3 ticker (requires bridge sync), company name, or CNPJ."
     ),
-    "source":  "rapina.db -- DVA 7.08.04.*, BPP 2.01.05.02.*, DFC 6.03.*",
-    "storage": "memory_db/cvm/rapina.db (read-only)",
+    "source":  "dfp_itr.db -- DVA 7.08.04.*, BPP 2.01.05.02.*, DFC 6.03.*",
+    "storage": "memory_db/cvm/dfp_itr.db (read-only)",
 
     "modes": {
         "status": {

@@ -1,10 +1,10 @@
-"""
+﻿"""
 skills/cvm/cvm_dividends/cvm_dividends.py
 Deploy to: D:\mcp\agent\skills\cvm\cvm_dividends\cvm_dividends.py
 
-Dividend data from rapina.db using the CORRECT schema (confirmed 2026-05-21):
+Dividend data from dfp_itr.db using the CORRECT schema (confirmed 2026-05-21):
 
-=== RAPINA.DB SCHEMA (actual) ===
+=== dfp_itr.db SCHEMA (actual) ===
 empresas: id, cnpj, nome, ano
 contas:   id_empresa, codigo, descr, grupo, consolidado,
           data_ini_exerc, data_fim_exerc, meses, valor, escala, moeda
@@ -22,7 +22,7 @@ DVA 7.08.04.*  annual declared dividends (meses=12)
   7.08.04.03 Lucros Retidos
 
 DFC 6.03.05 / 6.03.06  cash paid (all meses available, cumulative YTD)
-  NOTE: 6.03.05/6.03.06 codes may vary -- rapina DFC uses different numbering.
+  NOTE: 6.03.05/6.03.06 codes may vary -- dfp_itr DFC uses different numbering.
   We search by descr LIKE '%dividendo%' as fallback if exact codes missing.
 
 BPP 2.01.05.02.01  dividends payable on balance sheet
@@ -45,18 +45,18 @@ from typing import Optional
 
 # ── DB connection (shared helpers) ────────────────────────────────────────────
 
-from skills.cvm._db import connect_rapina as _connect_rapina, cnpj_digits as _cnpj
+from skills.cvm._db import connect_dfp_itr as _connect_dfp_itr, cnpj_digits as _cnpj
 from skills.cvm._bridge import resolve_company as _resolve_company, looks_like_ticker as _looks_like_ticker
 
 
 def _connect() -> sqlite3.Connection:
-    return _connect_rapina()
+    return _connect_dfp_itr()
 
 
 # ── Value helper ──────────────────────────────────────────────────────────────
 
 def _val(valor, escala) -> float:
-    """Return actual BRL value. rapina stores in units of escala (usually 1000)."""
+    """Return actual BRL value. dfp_itr stores in units of escala (usually 1000)."""
     try:
         return float(valor or 0) * float(escala or 1)
     except (TypeError, ValueError):
@@ -76,12 +76,12 @@ def _mode_annual(
     Filter: meses=12 (full fiscal year), consolidado=1.
     Sort: data_fim_exerc DESC to get most recent years first.
 
-    DEDUP: rapina may have multiple rows per (id_empresa, codigo, data_fim_exerc)
+    DEDUP: dfp_itr may have multiple rows per (id_empresa, codigo, data_fim_exerc)
     if the company restated. Use MAX(valor) -- latest restatement wins.
-    Actually rapina deduplicates on import, but MAX is safe defensive practice.
+    Actually dfp_itr deduplicates on import, but MAX is safe defensive practice.
     """
     if not ids:
-        return "Empresa nao encontrada no banco de dados rapina."
+        return "Empresa nao encontrada no banco de dados dfp_itr."
 
     ph = ",".join("?" * len(ids))
     codes = ("7.08.04", "7.08.04.01", "7.08.04.02", "7.08.04.03")
@@ -153,7 +153,7 @@ def _mode_cash_paid(
 
     DECISION: Search by descr LIKE '%dividendo%' OR '%jcp%' in grupo='DFC'
     because Petrobras DFC numbering (6.03.05) may not match other companies.
-    rapina normalizes grupo to 'DFC' for all cash flow statement items.
+    dfp_itr normalizes grupo to 'DFC' for all cash flow statement items.
     Also try exact codes 6.03.05 and 6.03.06 first.
 
     Values are negative in DFC (cash outflow) -- use ABS().
@@ -458,7 +458,7 @@ def cvm_dividends(
     periods: int = 5,
 ) -> dict:
     """
-    Query dividend data from rapina.db.
+    Query dividend data from dfp_itr.db.
 
     Args:
         ticker:  B3 ticker (PETR4), name fragment (PETROBRAS), or CNPJ (14 digits).

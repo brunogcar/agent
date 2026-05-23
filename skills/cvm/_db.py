@@ -1,12 +1,12 @@
-"""
+﻿"""
 skills/cvm/_db.py
 Deploy to: D:\mcp\agent\skills\cvm\_db.py
 
 Shared database utilities for ALL cvm sub-domains.
-Imported by: cvm_dividends, cvm_shareholders, cvm_api, cvm_register,
+Imported by: cvm_dividends, cvm_shareholders, cvm_dfp_itr, cvm_register,
              and future cvm_dfp_itr, cvm_ipe, cvm_fre.
 
-FUTURE: When cvm_dfp_itr replaces cvm_api, add dfp_itr_path() here.
+FUTURE: When cvm_dfp_itr replaces cvm_dfp_itr, add dfp_itr_path() here.
 When cvm_ipe/cvm_fre are added, add ipe_path() / fre_path() here.
 Each sub-domain gets its own DB file, all resolved the same way.
 """
@@ -72,18 +72,18 @@ def cvm_data_dir() -> Path:
 
 # ── Database path helpers ─────────────────────────────────────────────────────
 
-def rapina_path() -> Path:
+def dfp_itr_path() -> Path:
     """
-    Path to rapina.db (current name for DFP/ITR database).
+    Path to dfp_itr.db (current name for DFP/ITR database).
 
-    FUTURE RENAME: becomes dfp_itr_path() when rapina.db -> dfp_itr.db.
+    FUTURE RENAME: becomes dfp_itr_path() when dfp_itr.db -> dfp_itr.db.
     Update this function and all callers get the new path automatically.
     """
-    p = cvm_data_dir() / "rapina.db"
+    p = cvm_data_dir() / "dfp_itr.db"
     if not p.exists():
         raise FileNotFoundError(
-            f"rapina.db not found at {p}. "
-            "Run cvm_api(mode='sync') or rapina2 sync to populate it."
+            f"dfp_itr.db not found at {p}. "
+            "Run cvm_dfp_itr(mode='sync') or dfp_itr2 sync to populate it."
         )
     return p
 
@@ -95,9 +95,9 @@ def bridge_path() -> Path:
 
 # ── Connection helpers ────────────────────────────────────────────────────────
 
-def connect_rapina() -> sqlite3.Connection:
-    """Open rapina.db read-only with Row factory."""
-    path = rapina_path()
+def connect_dfp_itr() -> sqlite3.Connection:
+    """Open dfp_itr.db read-only with Row factory."""
+    path = dfp_itr_path()
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -110,7 +110,7 @@ def connect_rapina() -> sqlite3.Connection:
 _BRIDGE_REQUIRED_COLS = {
     "ticker", "isin", "b3_name", "sgmt", "catg", "spec_cd",
     "gov_level", "mkt_cap", "cnpj", "cd_cvm", "denom_social",
-    "denom_comerc", "sit", "tp_merc", "setor_ativ", "rapina_ids", "synced_at",
+    "denom_comerc", "sit", "tp_merc", "setor_ativ", "dfp_itr_ids", "synced_at",
 }
 
 _BRIDGE_DDL = """
@@ -130,7 +130,7 @@ _BRIDGE_DDL = """
         sit          TEXT DEFAULT '',
         tp_merc      TEXT DEFAULT '',
         setor_ativ   TEXT DEFAULT '',
-        rapina_ids   TEXT DEFAULT '[]',
+        dfp_itr_ids   TEXT DEFAULT '[]',
         synced_at    TEXT DEFAULT '',
         PRIMARY KEY (ticker, isin)
     );
@@ -211,21 +211,21 @@ def connect_bridge(read_only: bool = True) -> sqlite3.Connection:
     return conn
 
 
-# ── rapina CNPJ index ─────────────────────────────────────────────────────────
+# ── dfp_itr CNPJ index ─────────────────────────────────────────────────────────
 
-def build_rapina_cnpj_index() -> dict[str, list[int]]:
+def build_dfp_itr_cnpj_index() -> dict[str, list[int]]:
     """
-    Build {cnpj: [empresa_id, ...]} from rapina.db.
+    Build {cnpj: [empresa_id, ...]} from dfp_itr.db.
 
     One CNPJ maps to many empresa.ids (one per fiscal period).
     Petrobras has 40+ rows covering quarterly periods from 2016 to 2025.
 
     DECISION: Collect ALL ids sorted ascending ([0]=oldest, [-1]=newest).
     The consuming mode filters by dt_refer -- not by id value.
-    Returns {} if rapina.db not found (bridge still works, rapina_ids=[]).
+    Returns {} if dfp_itr.db not found (bridge still works, dfp_itr_ids=[]).
     """
     try:
-        conn = connect_rapina()
+        conn = connect_dfp_itr()
     except FileNotFoundError as e:
         print(f"[_db] WARNING: {e}", file=sys.stderr)
         return {}
@@ -248,6 +248,6 @@ def build_rapina_cnpj_index() -> dict[str, list[int]]:
         index[c] = sorted(set(index[c]))
 
     total = sum(len(v) for v in index.values())
-    print(f"[_db] rapina index: {len(index):,} CNPJs | {total:,} empresa rows",
+    print(f"[_db] dfp_itr index: {len(index):,} CNPJs | {total:,} empresa rows",
           file=sys.stderr)
     return index

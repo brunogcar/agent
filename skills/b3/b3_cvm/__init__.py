@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/b3/b3_cvm/__init__.py -- B3-CVM bridge sub-domain manifest and router.
 
 Deploy to: D:\mcp\agent\skills\b3\b3_cvm\__init__.py
@@ -23,7 +23,7 @@ MANIFEST = {
     "domain": "b3_cvm",
     "description": (
         "Company identity bridge: maps B3 tickers to CVM CD_CVM codes, "
-        "CNPJs, and rapina.db empresa IDs. "
+        "CNPJs, and dfp_itr.db empresa IDs. "
         "Sync once per week. Lookup is instant (SQLite only, no network)."
     ),
     "modes": {
@@ -42,7 +42,7 @@ MANIFEST = {
             "description": (
                 "Resolve company by ticker, CNPJ, or CD_CVM. "
                 "Returns: cnpj, cd_cvm, denom_social, denom_comerc, "
-                "tickers (all B3 codes), rapina_ids (list of ints for rapina queries)."
+                "tickers (all B3 codes), dfp_itr_ids (list of ints for dfp_itr queries)."
             ),
             "include_in_all": False,
         },

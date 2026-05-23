@@ -1,10 +1,10 @@
-"""
-skills/cvm/catalog.py -- Schema constants for rapina.db (rapinav2 format).
+﻿"""
+skills/cvm/catalog.py -- Schema constants for dfp_itr.db (dfp_itr_sync format).
 
-SOURCE: Empirical inspection of rapina.db (1.5 GB, 12.5M rows in contas).
-        See inspect_rapina_db_v2.py for the full schema discovery run.
+SOURCE: Empirical inspection of dfp_itr.db (1.5 GB, 12.5M rows in contas).
+        See inspect_dfp_itr_db_v2.py for the full schema discovery run.
 
-RAPINA.DB STRUCTURE (3 tables matter)
+dfp_itr.db STRUCTURE (3 tables matter)
 --------------------------------------
 
 empresas (10,840 rows) -- one row PER COMPANY PER YEAR
@@ -78,10 +78,10 @@ from core.config import cfg
 # Database path
 # ---------------------------------------------------------------------------
 
-# DECISION: rapina.db lives in memory_db/cvm/ alongside chromadb and b3 data.
-# rapinav2 is run externally to update it (rapinav2 atualizar --all).
+# DECISION: dfp_itr.db lives in memory_db/cvm/ alongside chromadb and b3 data.
+# dfp_itr_sync is run externally to update it (dfp_itr_sync atualizar --all).
 # This skill reads it as read-only -- never writes to it.
-CVM_DB_PATH: Path = cfg.memory_root / "cvm" / "rapina.db"
+CVM_DB_PATH: Path = cfg.memory_root / "cvm" / "dfp_itr.db"
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +114,9 @@ MESES_LABELS = {
 # Verified against 10,800+ companies -- all present in >98% of records.
 #
 # NOTE ON 3.11 vs 3.03:
-#   3.03 = Resultado Bruto (Gross Profit) -- what rapina calls "Resultado Bruto"
+#   3.03 = Resultado Bruto (Gross Profit) -- what dfp_itr calls "Resultado Bruto"
 #   3.11 = Lucro/Prejuízo Consolidado (Net Income) -- the bottom line
-#   Both are included. Some older rapinav2 docs label 3.11 as "Resultado Bruto"
+#   Both are included. Some older dfp_itr_sync docs label 3.11 as "Resultado Bruto"
 #   but inspection shows 3.11 is Net Income. We use both with correct labels.
 #
 # NOTE ON EQUITY (2.03):
@@ -192,6 +192,6 @@ def format_cnpj(cnpj: str) -> str:
 def real_value(valor: float, escala: int) -> float:
     """
     Convert stored value to real R$ value.
-    rapinav2 stores values / escala, so real = valor * escala.
+    dfp_itr_sync stores values / escala, so real = valor * escala.
     """
     return valor * escala

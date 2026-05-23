@@ -1,10 +1,10 @@
-"""
-skills/cvm/cvm_api.py -- Query rapina.db for CVM financial statement data.
+﻿"""
+skills/cvm/cvm_dfp_itr.py -- Query dfp_itr.db for CVM financial statement data.
 
 WHAT THIS DOES
 --------------
-Reads rapina.db (built by rapinav2) and returns financial data in four views
-matching the four main sheets rapinav2 generates in Excel:
+Reads dfp_itr.db (built by dfp_itr_sync) and returns financial data in four views
+matching the four main sheets dfp_itr_sync generates in Excel:
 
   completo_anual   -- all account codes, meses=12, consolidated
   completo_trim    -- all account codes, meses=3/6/9, consolidated
@@ -20,7 +20,7 @@ Company resolution order (first match wins):
 
 CNPJ-YEAR ID PATTERN
 ---------------------
-rapinav2 stores one empresas row per company per YEAR (id changes each year).
+dfp_itr_sync stores one empresas row per company per YEAR (id changes each year).
 To query multiple years: collect all ids for a CNPJ, then query contas by
 id_empresa IN (...). This is the correct pattern -- do NOT assume one company
 has one stable id.
@@ -32,9 +32,9 @@ Values in DB are already scaled (Petrobras Ativo Total shows 1.2T correctly).
 
 FUTURE: B3 LINK
 ---------------
-isin table (in rapina.db) has cnpj in numeric format.
+isin table (in dfp_itr.db) has cnpj in numeric format.
 b3_api Instruments table has ISIN column.
-The join path: b3_api.ticker -> b3_api.ISIN -> rapina.isin.cnpj -> empresas.cnpj
+The join path: b3_api.ticker -> b3_api.ISIN -> dfp_itr.isin.cnpj -> empresas.cnpj
 This v1 exposes cnpj + isin_data in query results to enable that join later.
 """
 
@@ -44,7 +44,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from skills.cvm.cvm_api.cvm_api_catalog import (
+from skills.cvm.cvm_dfp_itr.cvm_dfp_itr_catalog import (
     CVM_DB_PATH,
     GRUPOS,
     MESES_LABELS,
@@ -63,15 +63,15 @@ from skills.cvm.cvm_api.cvm_api_catalog import (
 
 def _connect() -> sqlite3.Connection:
     """
-    Open rapina.db read-only via shared _db helper.
+    Open dfp_itr.db read-only via shared _db helper.
     CVM_DB_PATH still used by status mode for file size reporting.
 
-    DECISION: delegates to skills.cvm._db.connect_rapina() so all cvm skills
+    DECISION: delegates to skills.cvm._db.connect_dfp_itr() so all cvm skills
     use the same DB path resolution logic (MEMORY_ROOT env var or walk-up).
     Behavior is identical to the original -- read-only, Row factory.
     """
-    from skills.cvm._db import connect_rapina
-    return connect_rapina()
+    from skills.cvm._db import connect_dfp_itr
+    return connect_dfp_itr()
 
 
 # ---------------------------------------------------------------------------
@@ -103,19 +103,19 @@ def _resolve_company(conn: sqlite3.Connection, query: str) -> list[dict]:
     if looks_like_ticker(q):
         bridge = resolve_via_bridge(q.upper())
         if bridge is not None:
-            rapina_ids, name = bridge
-            if rapina_ids:
+            dfp_itr_ids, name = bridge
+            if dfp_itr_ids:
                 # Fetch the actual empresas rows for these ids so the rest of
-                # cvm_api works unchanged (it expects full Row objects with ano/cnpj)
-                placeholders = ",".join("?" * len(rapina_ids))
+                # cvm_dfp_itr works unchanged (it expects full Row objects with ano/cnpj)
+                placeholders = ",".join("?" * len(dfp_itr_ids))
                 bridge_rows = conn.execute(
                     f"SELECT id, cnpj, nome, ano FROM empresas "
                     f"WHERE id IN ({placeholders}) ORDER BY ano",
-                    rapina_ids,
+                    dfp_itr_ids,
                 ).fetchall()
                 if bridge_rows:
                     return [dict(r) for r in bridge_rows]
-            # Bridge found ticker but no rapina data -- fall through to name search
+            # Bridge found ticker but no dfp_itr data -- fall through to name search
             # using the CVM name from bridge as the query string
             if name and name != q:
                 q = name  # search by CVM name instead of ticker
@@ -394,7 +394,7 @@ def _run_query(
         if not emp_rows:
             return {
                 "status": "error",
-                "error":  f"Company '{company}' not found in rapina.db. "
+                "error":  f"Company '{company}' not found in dfp_itr.db. "
                           f"Try the full name or CNPJ (e.g. '33.000.167/0001-01').",
             }
 
@@ -511,7 +511,7 @@ def completo_anual(
 ) -> dict:
     """
     All account codes, annual data (meses=12), consolidated by default.
-    Equivalent to rapinav2 "completo anual (consolid)" sheet.
+    Equivalent to dfp_itr_sync "completo anual (consolid)" sheet.
 
     company:     company name, partial name, or CNPJ
     anos:        specific years to return (e.g. [2023, 2024]). Default: last 5.
@@ -529,7 +529,7 @@ def completo_trim(
 ) -> dict:
     """
     All account codes, quarterly data (meses=3/6/9), consolidated by default.
-    Equivalent to rapinav2 "completo trim. (consolid)" sheet.
+    Equivalent to dfp_itr_sync "completo trim. (consolid)" sheet.
 
     NOTE: meses=6 is H1 cumulative (Jan-Jun), NOT standalone Q2.
           meses=9 is 9-month cumulative, NOT standalone Q3.
@@ -551,7 +551,7 @@ def resumo_anual(
 ) -> dict:
     """
     Key metrics only, annual data (meses=12), consolidated by default.
-    Equivalent to rapinav2 "resumo anual (consolid)" sheet.
+    Equivalent to dfp_itr_sync "resumo anual (consolid)" sheet.
 
     Metrics included (20 total):
       Income: Receita Líquida, COGS, Gross Profit, EBIT, Financial Result,
@@ -576,7 +576,7 @@ def resumo_trim(
 ) -> dict:
     """
     Key metrics only, quarterly data (meses=3/6/9), consolidated by default.
-    Equivalent to rapinav2 "resumo trim. (consolid)" sheet.
+    Equivalent to dfp_itr_sync "resumo trim. (consolid)" sheet.
 
     NOTE: periods are cumulative within the year (see completo_trim note).
 
@@ -639,12 +639,12 @@ def search_companies(query: str, limit: int = 10) -> dict:
 
 def db_status() -> dict:
     """
-    Return rapina.db status: file size, row counts, date range, last update.
+    Return dfp_itr.db status: file size, row counts, date range, last update.
     """
     if not CVM_DB_PATH.exists():
         return {
             "status":  "not_found",
-            "error":   f"rapina.db not found at {CVM_DB_PATH}",
+            "error":   f"dfp_itr.db not found at {CVM_DB_PATH}",
             "db_path": str(CVM_DB_PATH),
         }
 

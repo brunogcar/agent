@@ -1,10 +1,10 @@
-"""
+﻿"""
 skills/cvm/cvm.py -- CVM domain registry and sub-domain auto-discovery.
 
 Scans skills/cvm/ for sub-domain packages (folders with __init__.py + MANIFEST).
 
 Current sub-domains:
-  cvm_api       -- Financial statements from rapina.db (DFP/ITR)
+  cvm_dfp_itr       -- Financial statements from dfp_itr.db (DFP/ITR)
   cvm_register  -- Company register from cad_cia_aberta.csv
 
 Planned sub-domains:

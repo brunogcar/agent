@@ -1,10 +1,10 @@
-"""
+﻿"""
 skills/cvm/cvm_shareholders/cvm_shareholders.py
 Deploy to: D:\mcp\agent\skills\cvm\cvm_shareholders\cvm_shareholders.py
 
-Shareholder/equity structure from rapina.db using CORRECT schema (confirmed 2026-05-21):
+Shareholder/equity structure from dfp_itr.db using CORRECT schema (confirmed 2026-05-21):
 
-=== RAPINA.DB SCHEMA (actual) ===
+=== dfp_itr.db SCHEMA (actual) ===
 empresas: id, cnpj, nome, ano
 contas:   id_empresa, codigo, descr, grupo, consolidado,
           data_ini_exerc, data_fim_exerc, meses, valor, escala, moeda
@@ -24,7 +24,7 @@ Annual filter: meses=12 (not date suffix -- fiscal year may end any month)
 
 NOTE: BPP rows have meses=12 regardless of quarter-end date.
 This is because BPP is a balance sheet (stock, not flow) --
-rapina stores it as if it were an annual figure even for quarterly reports.
+dfp_itr stores it as if it were an annual figure even for quarterly reports.
 """
 
 from __future__ import annotations
@@ -32,12 +32,12 @@ from __future__ import annotations
 import sqlite3
 from collections import defaultdict
 
-from skills.cvm._db import connect_rapina as _connect_rapina
+from skills.cvm._db import connect_dfp_itr as _connect_dfp_itr
 from skills.cvm._bridge import resolve_company as _resolve_company
 
 
 def _connect() -> sqlite3.Connection:
-    return _connect_rapina()
+    return _connect_dfp_itr()
 
 
 def _val(valor, escala) -> float:
@@ -295,7 +295,7 @@ def cvm_shareholders(
     periods: int = 5,
 ) -> dict:
     """
-    Query shareholder/equity structure from rapina.db.
+    Query shareholder/equity structure from dfp_itr.db.
 
     Args:
         ticker:  B3 ticker (VALE3), name fragment (VALE), or CNPJ.

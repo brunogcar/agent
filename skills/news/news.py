@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/news/news.py -- News skill (standalone domain, no sub-domains).
 
 PLANNED SOURCES
@@ -9,7 +9,7 @@ PLANNED SOURCES
   cvm_notices  -- CVM official notices and IPO filings
 
 DECISION: news is a standalone domain (no sub-domains) because each source
-is a simple scrape/RSS function, not a complex data pipeline like b3_api or cvm_api.
+is a simple scrape/RSS function, not a complex data pipeline like b3_api or cvm_dfp_itr.
 Sources are listed directly as modes: mode="infomoney", mode="valor", etc.
 
 STUB -- implement when ready by adding functions here and registering in MANIFEST modes.

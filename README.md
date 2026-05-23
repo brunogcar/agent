@@ -1,4 +1,4 @@
-```markdown
+﻿```markdown
 # 🤖 MCP Agent Stack
 **Fully autonomous local AI agent built on MCP, LM Studio (3-role architecture), ChromaDB, SearXNG, and LangGraph.**
 
@@ -86,10 +86,10 @@ Focuses on **Brasil, Bolsa, Balcão** (Brazilian Stock Exchange) data.
 #### 2. CVM Skill (`skills/cvm/`)
 Focuses on **Comissão de Valores Mobiliários** (Brazilian SEC equivalent) regulatory and financial data.
 - **Subdomains**:
-  - `cvm_api`: Core wrapper for CVM's open data portal, handling rate limits and CSV extraction.
+  - `cvm_dfp_itr`: Core wrapper for CVM's open data portal, handling rate limits and CSV extraction.
   - `cvm_dividends`: Cross-references CVM financial statements with B3 payout data.
   - `cvm_shareholders`: Tracks major shareholder movements, institutional ownership, and insider trading.
-  - *Rapina Integration*: Utilizes `rapina` (or direct API scraping) for historical financial statements (DFP, ITR, FRE).
+  - *dfp_itr Integration*: Utilizes `dfp_itr` (or direct API scraping) for historical financial statements (DFP, ITR, FRE).
 
 ---
 

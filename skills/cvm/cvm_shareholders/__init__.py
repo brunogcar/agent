@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/cvm/cvm_shareholders/__init__.py
 Deploy to: D:\mcp\agent\skills\cvm\cvm_shareholders\__init__.py
 
@@ -25,12 +25,12 @@ from skills.cvm.cvm_shareholders.cvm_shareholders import cvm_shareholders
 MANIFEST = {
     "sub_domain":  "cvm_shareholders",
     "description": (
-        "Shareholder equity structure from rapina.db BPP 2.03.*. "
+        "Shareholder equity structure from dfp_itr.db BPP 2.03.*. "
         "Capital, reserves, retained earnings, minority interest. "
         "Accepts B3 ticker (requires bridge sync), company name, or CNPJ."
     ),
-    "source":  "rapina.db -- BPP 2.03.* (Patrimonio Liquido)",
-    "storage": "memory_db/cvm/rapina.db (read-only)",
+    "source":  "dfp_itr.db -- BPP 2.03.* (Patrimonio Liquido)",
+    "storage": "memory_db/cvm/dfp_itr.db (read-only)",
 
     "modes": {
         "status": {

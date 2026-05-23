@@ -1,10 +1,10 @@
-"""
+﻿"""
 skills/cvm/cvm_dividends/cvm_dividends_catalog.py -- Account codes for dividend data.
 
-SOURCE: Empirical inspection of rapina.db (12.5M rows in contas).
+SOURCE: Empirical inspection of dfp_itr.db (12.5M rows in contas).
 All codes verified present in >10,000 companies.
 
-THREE DIVIDEND DATA LAYERS IN rapina.db
+THREE DIVIDEND DATA LAYERS IN dfp_itr.db
 ----------------------------------------
 
 Layer 1 -- DVA (Demonstração do Valor Adicionado)
@@ -53,8 +53,8 @@ from __future__ import annotations
 from pathlib import Path
 from core.config import cfg
 
-# Database path -- same rapina.db used by cvm_api
-RAPINA_DB = cfg.memory_root / "cvm" / "rapina.db"
+# Database path -- same dfp_itr.db used by cvm_dfp_itr
+dfp_itr_DB = cfg.memory_root / "cvm" / "dfp_itr.db"
 
 # ---------------------------------------------------------------------------
 # DVA dividend codes (primary source)

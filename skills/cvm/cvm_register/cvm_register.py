@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/cvm_register/cvm_register_api.py -- CVM company register (cad_cia_aberta.csv).
 
 WHAT THIS IS
@@ -26,8 +26,8 @@ State: memory_db/cvm/.register_state.json
 
 LINKING TO OTHER SKILLS
 -----------------------
-CD_CVM  -> links to ITR/DFP filings (used internally by rapinav2 to build contas)
-CNPJ_CIA -> links to rapina.db empresas.cnpj (join for financial data)
+CD_CVM  -> links to ITR/DFP filings (used internally by dfp_itr_sync to build contas)
+CNPJ_CIA -> links to dfp_itr.db empresas.cnpj (join for financial data)
 CNPJ_CIA -> links to isin.cnpj (after normalize) for B3 instruments
 DENOM_COMERC / DENOM_SOCIAL -> human-readable lookup
 
@@ -333,7 +333,7 @@ def lookup(
 
     This is the primary entry point for linking to other skills:
       result["CD_CVM"]   -> use with DFP/ITR filing queries
-      result["CNPJ_CIA"] -> use with rapina.db (cvm skill) and b3_api (isin join)
+      result["CNPJ_CIA"] -> use with dfp_itr.db (cvm skill) and b3_api (isin join)
     """
     if not REGISTER_DB.exists():
         return {

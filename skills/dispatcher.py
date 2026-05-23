@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/dispatcher.py -- Single MCP @tool entry point for all skill domains.
 
 ARCHITECTURE
@@ -6,7 +6,7 @@ ARCHITECTURE
 skill(domain, sub_domain, mode, params)
 
   domain     -- top-level domain: "b3", "cvm", "news", etc.
-  sub_domain -- sub-domain within domain: "b3_api", "cvm_api", "cvm_register"
+  sub_domain -- sub-domain within domain: "b3_api", "cvm_dfp_itr", "cvm_register"
                 "" or omitted = auto-select if only one sub-domain exists
                 "all" = run mode on ALL sub-domains (only those with include_in_all=True)
   mode       -- operation: "sync", "query", "status", "search", etc.

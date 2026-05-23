@@ -1,4 +1,4 @@
-# 🧩 Skills Architecture & Domain Guide
+﻿# 🧩 Skills Architecture & Domain Guide
 
 Skills are domain-specific clusters of logic that extend the agent's capabilities beyond general-purpose tools. Unlike core meta-tools (which are flat and generic), skills are organized into **Domains** and **Subdomains** using a **Hub-and-Spoke architecture**.
 
@@ -71,10 +71,10 @@ The central router for all B3-related operations. It exposes a single `b3` tool 
 The central router for all CVM regulatory data. It exposes a single `cvm` tool to the LLM.
 - **Routing Logic**: Directs requests to specific subdomains based on the data type required (e.g., financials vs. shareholders).
 - **Rate Limiting**: Implements global rate limiting for CVM portal requests to avoid IP bans.
-- **Integration**: Orchestrates data fetching between `cvm_api` (raw data) and analytical subdomains.
+- **Integration**: Orchestrates data fetching between `cvm_dfp_itr` (raw data) and analytical subdomains.
 
 #### 📂 Subdomains
-- **`cvm_api`**:
+- **`cvm_dfp_itr`**:
     - **Function**: Low-level HTTP wrapper for the CVM Open Data portal.
     - **Capabilities**: Handles session management, ZIP extraction, and raw CSV parsing.
 - **`cvm_dividends`**:

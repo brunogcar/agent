@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/b3/b3_cvm/b3_cvm.py
 Deploy to: D:\mcp\agent\skills\b3\b3_cvm\b3_cvm.py
 
@@ -24,14 +24,14 @@ company_map table -- one row per (ticker, isin):
   sit          -- ATIVO / CANCELADO / SUSPENSO
   tp_merc      -- BOVESPA / BALCAO etc.
   setor_ativ   -- economic sector
-  rapina_ids   -- JSON array of rapina empresa.id ints
+  dfp_itr_ids   -- JSON array of dfp_itr empresa.id ints
   synced_at    -- ISO timestamp
 
 === JOIN LOGIC ===
 instruments.db (local) -> TckrSymb + ISIN + company info
 B3 ISIN ZIP (download) -> ISIN -> CNPJ  (via EMISSOR+NUMERACA join)
 CVM CSV (download)     -> CNPJ -> CD_CVM + names + status
-rapina.db (local)      -> CNPJ -> [empresa_ids]
+dfp_itr.db (local)      -> CNPJ -> [empresa_ids]
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Optional
 
 from skills.cvm._db import (
-    connect_bridge, build_rapina_cnpj_index,
+    connect_bridge, build_dfp_itr_cnpj_index,
     cnpj_digits, bridge_path,
 )
 
@@ -88,7 +88,7 @@ def mode_sync() -> dict:
       a. Load instruments.db filtered to CASH/EQUITY-CASH/SHARES+UNIT
       b. Download B3 ISIN ZIP -> parse -> {isin: cnpj}
       c. Download CVM CSV     -> parse -> {cnpj: cvm_row}
-      d. Build rapina index   -> {cnpj: [empresa_ids]}
+      d. Build dfp_itr index   -> {cnpj: [empresa_ids]}
       e. Join all on CNPJ, UPSERT into bridge.db
       f. Log to sync_log
 
@@ -143,8 +143,8 @@ def mode_sync() -> dict:
         ):
             cvm_by_cnpj[c] = row
 
-    # d. rapina index
-    rapina_index = build_rapina_cnpj_index()
+    # d. dfp_itr index
+    dfp_itr_index = build_dfp_itr_cnpj_index()
 
     # e. join + upsert
     conn        = connect_bridge(read_only=False)
@@ -162,17 +162,17 @@ def mode_sync() -> dict:
                 no_cnpj += 1
 
             cvm        = cvm_by_cnpj.get(cnpj, {}) if cnpj else {}
-            rapina_ids = rapina_index.get(cnpj, []) if cnpj else []
+            dfp_itr_ids = dfp_itr_index.get(cnpj, []) if cnpj else []
             if cvm:
                 matched_cvm += 1
-            if rapina_ids:
+            if dfp_itr_ids:
                 matched_rap += 1
 
             conn.execute("""
                 INSERT INTO company_map
                     (ticker, isin, b3_name, sgmt, catg, spec_cd, gov_level,
                      mkt_cap, cnpj, cd_cvm, denom_social, denom_comerc,
-                     sit, tp_merc, setor_ativ, rapina_ids, synced_at)
+                     sit, tp_merc, setor_ativ, dfp_itr_ids, synced_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(ticker, isin) DO UPDATE SET
                     b3_name=excluded.b3_name, sgmt=excluded.sgmt,
@@ -183,7 +183,7 @@ def mode_sync() -> dict:
                     denom_comerc=excluded.denom_comerc,
                     sit=excluded.sit, tp_merc=excluded.tp_merc,
                     setor_ativ=excluded.setor_ativ,
-                    rapina_ids=excluded.rapina_ids, synced_at=excluded.synced_at
+                    dfp_itr_ids=excluded.dfp_itr_ids, synced_at=excluded.synced_at
             """, (
                 ticker, isin,
                 row["CrpnNm"] or "", row["SgmtNm"] or "", row["SctyCtgyNm"] or "",
@@ -193,14 +193,14 @@ def mode_sync() -> dict:
                 cvm.get("cd_cvm", 0),    cvm.get("denom_social", ""),
                 cvm.get("denom_comerc", ""), cvm.get("sit", ""),
                 cvm.get("tp_merc", ""),  cvm.get("setor_ativ", ""),
-                json.dumps(rapina_ids),  now_iso,
+                json.dumps(dfp_itr_ids),  now_iso,
             ))
 
         conn.commit()
 
         total       = conn.execute("SELECT COUNT(*) FROM company_map").fetchone()[0]
         with_cvm    = conn.execute("SELECT COUNT(*) FROM company_map WHERE cd_cvm > 0").fetchone()[0]
-        with_rapina = conn.execute("SELECT COUNT(*) FROM company_map WHERE rapina_ids != '[]'").fetchone()[0]
+        with_dfp_itr = conn.execute("SELECT COUNT(*) FROM company_map WHERE dfp_itr_ids != '[]'").fetchone()[0]
         duration    = round(time.time() - t0, 1)
 
         conn.execute("""
@@ -216,7 +216,7 @@ def mode_sync() -> dict:
         conn.close()
 
     cvm_pct    = round(with_cvm    / total * 100, 1) if total else 0
-    rapina_pct = round(with_rapina / total * 100, 1) if total else 0
+    dfp_itr_pct = round(with_dfp_itr / total * 100, 1) if total else 0
 
     report = (
         f"=== B3-CVM Bridge Sync Complete ===\n"
@@ -226,7 +226,7 @@ def mode_sync() -> dict:
         f"CVM register     : {len(cvm_rows):,}\n"
         f"Bridge total     : {total:,} tickers\n"
         f"With CVM data    : {with_cvm:,} ({cvm_pct}%)\n"
-        f"With rapina data : {with_rapina:,} ({rapina_pct}%)\n"
+        f"With dfp_itr data : {with_dfp_itr:,} ({dfp_itr_pct}%)\n"
         f"No CNPJ in ZIP   : {no_cnpj:,}\n"
         f"Synced at        : {now_iso}\n"
     )
@@ -235,8 +235,8 @@ def mode_sync() -> dict:
         "status": "success",
         "instruments": len(inst_rows), "isin_cnpj": len(isin_cnpj),
         "cvm_rows": len(cvm_rows), "bridge_total": total,
-        "with_cvm": with_cvm, "with_rapina": with_rapina,
-        "no_cnpj": no_cnpj, "cvm_pct": cvm_pct, "rapina_pct": rapina_pct,
+        "with_cvm": with_cvm, "with_dfp_itr": with_dfp_itr,
+        "no_cnpj": no_cnpj, "cvm_pct": cvm_pct, "dfp_itr_pct": dfp_itr_pct,
         "duration_s": duration, "synced_at": now_iso, "report": report,
     }
 
@@ -252,7 +252,7 @@ def mode_status() -> dict:
         conn        = connect_bridge(read_only=True)
         total       = conn.execute("SELECT COUNT(*) FROM company_map").fetchone()[0]
         with_cvm    = conn.execute("SELECT COUNT(*) FROM company_map WHERE cd_cvm > 0").fetchone()[0]
-        with_rapina = conn.execute("SELECT COUNT(*) FROM company_map WHERE rapina_ids != '[]'").fetchone()[0]
+        with_dfp_itr = conn.execute("SELECT COUNT(*) FROM company_map WHERE dfp_itr_ids != '[]'").fetchone()[0]
         shares      = conn.execute("SELECT COUNT(*) FROM company_map WHERE catg='SHARES'").fetchone()[0]
         units       = conn.execute("SELECT COUNT(*) FROM company_map WHERE catg='UNIT'").fetchone()[0]
         last_log    = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
@@ -275,13 +275,13 @@ def mode_status() -> dict:
             f"Sync duration    : {duration}s\n"
             f"Total tickers    : {total:,} (SHARES={shares:,} UNIT={units:,})\n"
             f"With CVM data    : {with_cvm:,} ({round(with_cvm/total*100,1) if total else 0}%)\n"
-            f"With rapina data : {with_rapina:,} ({round(with_rapina/total*100,1) if total else 0}%)\n"
+            f"With dfp_itr data : {with_dfp_itr:,} ({round(with_dfp_itr/total*100,1) if total else 0}%)\n"
             f"Bridge file      : {path}\n"
         )
         return {
             "status": "ok", "last_sync": last_sync, "total": total,
             "shares": shares, "units": units,
-            "with_cvm": with_cvm, "with_rapina": with_rapina,
+            "with_cvm": with_cvm, "with_dfp_itr": with_dfp_itr,
             "bridge_path": str(path), "report": report,
         }
     except Exception as e:
@@ -332,7 +332,7 @@ def mode_lookup(ticker: str = "", cnpj: str = "", cd_cvm: int = 0) -> dict:
                        "sgmt": r["sgmt"], "catg": r["catg"], "spec": r["spec_cd"],
                        "gov": r["gov_level"], "mkt_cap": r["mkt_cap"]}
                       for r in all_rows]
-        rapina_ids = json.loads(row["rapina_ids"] or "[]")
+        dfp_itr_ids = json.loads(row["dfp_itr_ids"] or "[]")
         ticker_str = ", ".join(t["ticker"] for t in tickers)
 
         result = {
@@ -342,7 +342,7 @@ def mode_lookup(ticker: str = "", cnpj: str = "", cd_cvm: int = 0) -> dict:
             "b3_name": row["b3_name"], "sit": row["sit"],
             "tp_merc": row["tp_merc"], "setor_ativ": row["setor_ativ"],
             "gov_level": row["gov_level"],
-            "tickers": tickers, "rapina_ids": rapina_ids,
+            "tickers": tickers, "dfp_itr_ids": dfp_itr_ids,
             "synced_at": row["synced_at"],
         }
         result["report"] = (
@@ -354,7 +354,7 @@ def mode_lookup(ticker: str = "", cnpj: str = "", cd_cvm: int = 0) -> dict:
             f"Tickers    : {ticker_str}\n"
             f"Status CVM : {row['sit']}\n"
             f"Sector     : {row['setor_ativ']}\n"
-            f"rapina_ids : {len(rapina_ids)} rows\n"
+            f"dfp_itr_ids : {len(dfp_itr_ids)} rows\n"
         )
         return result
     except Exception as e:
@@ -403,7 +403,7 @@ def mode_resolve(query: str = "") -> dict:
                 "gov_level": rep["gov_level"], "setor_ativ": rep["setor_ativ"],
                 "tickers": [{"ticker": r["ticker"], "isin": r["isin"], "catg": r["catg"]}
                             for r in ticks],
-                "rapina_ids": json.loads(rep["rapina_ids"] or "[]"),
+                "dfp_itr_ids": json.loads(rep["dfp_itr_ids"] or "[]"),
             })
 
         if not companies:
@@ -416,7 +416,7 @@ def mode_resolve(query: str = "") -> dict:
             lines += [c["denom_social"] or c["b3_name"],
                       f"  CNPJ:{c['cnpj']}  CD_CVM:{c['cd_cvm']}  Gov:{c['gov_level']}",
                       f"  Tickers: {tstr}  Status:{c['sit']}",
-                      f"  rapina_ids: {len(c['rapina_ids'])} rows", ""]
+                      f"  dfp_itr_ids: {len(c['dfp_itr_ids'])} rows", ""]
         return {"status": "success", "query": query, "count": len(companies),
                 "companies": companies, "report": "\n".join(lines)}
     except Exception as e:

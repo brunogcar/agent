@@ -1,18 +1,18 @@
-"""
+﻿"""
 skills/cvm/cvm_shareholders/cvm_shareholders_catalog.py -- Account codes for shareholder data.
 
-SOURCE: Empirical inspection of rapina.db (12.5M rows in contas).
+SOURCE: Empirical inspection of dfp_itr.db (12.5M rows in contas).
 
-SHAREHOLDER DATA IN rapina.db
+SHAREHOLDER DATA IN dfp_itr.db
 ------------------------------
 All shareholder data comes from BPP (Balanço Patrimonial Passivo)
 under the Patrimônio Líquido (Equity) section, codigo 2.03.*.
 
-rapina.db does NOT contain:
+dfp_itr.db does NOT contain:
   - Individual shareholder names or ownership percentages (that's FRE data)
   - Share counts by class (that's FRE data)
 
-rapina.db DOES contain:
+dfp_itr.db DOES contain:
   - Total equity and its breakdown (capital, reserves, retained earnings)
   - Minority interest (non-controlling shareholders) value
   - Capital structure evolution over time
@@ -44,7 +44,7 @@ MINORITY INTEREST NOTE (2.03.09)
 Present in ~5,931 companies (consolidated statements with subsidiaries).
 Represents the equity of non-controlling shareholders in subsidiaries.
 The remainder (2.03 minus 2.03.09) is attributable to the parent company shareholders.
-This is the only shareholder-split data available in rapina.db without FRE.
+This is the only shareholder-split data available in dfp_itr.db without FRE.
 
 DECISION: Focus on equity structure + minority interest as the core shareholder
 data available. Full ownership % requires FRE filings (future cvm_fre skill).
@@ -54,7 +54,7 @@ from __future__ import annotations
 from pathlib import Path
 from core.config import cfg
 
-RAPINA_DB = cfg.memory_root / "cvm" / "rapina.db"
+dfp_itr_DB = cfg.memory_root / "cvm" / "dfp_itr.db"
 
 # ---------------------------------------------------------------------------
 # Equity structure codes (BPP 2.03.*)

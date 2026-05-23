@@ -1,11 +1,11 @@
-"""
+﻿"""
 skills/b3/__init__.py -- B3 domain root manifest and sub-domain router.
 
 Deploy to: D:\mcp\agent\skills\b3\__init__.py
 
 Sub-domains:
   b3_api  -- B3 market data: prices, quotes, instruments
-  b3_cvm  -- Identity bridge: ticker <-> CNPJ <-> CD_CVM <-> rapina_ids
+  b3_cvm  -- Identity bridge: ticker <-> CNPJ <-> CD_CVM <-> dfp_itr_ids
 
 DECISION: Auto-discovery of sub-domains via _discover_sub_domains().
 Adding a new B3 sub-domain (e.g. b3_fii, b3_options) requires only
@@ -26,7 +26,7 @@ MANIFEST = {
     "description":     (
         "Brazilian B3 stock exchange. "
         "b3_api: market data (prices, quotes). "
-        "b3_cvm: identity bridge (ticker->CNPJ->CD_CVM->rapina_ids)."
+        "b3_cvm: identity bridge (ticker->CNPJ->CD_CVM->dfp_itr_ids)."
     ),
     "has_sub_domains": True,
 }

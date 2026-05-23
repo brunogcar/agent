@@ -1,9 +1,9 @@
-"""
+﻿"""
 skills/cvm/_bridge.py
 Deploy to: D:\mcp\agent\skills\cvm\_bridge.py
 
 Shared company resolution logic for ALL cvm sub-domains.
-Imported by: cvm_dividends, cvm_shareholders, cvm_api, cvm_register,
+Imported by: cvm_dividends, cvm_shareholders, cvm_dfp_itr, cvm_register,
              and future cvm_dfp_itr, cvm_ipe, cvm_fre.
 
 WHAT THIS REPLACES
@@ -21,17 +21,17 @@ HOW SUB-DOMAINS USE THIS
 -------------------------
     from skills.cvm._bridge import resolve_company
 
-    # In any cvm sub-domain that queries rapina.db:
-    ids, company_name = resolve_company(rapina_conn, ticker_or_name)
+    # In any cvm sub-domain that queries dfp_itr.db:
+    ids, company_name = resolve_company(dfp_itr_conn, ticker_or_name)
     if not ids:
         return {"status": "not_found", ...}
-    # use ids in rapina queries
+    # use ids in dfp_itr queries
 
 RESOLUTION ORDER
 ----------------
 1. B3 ticker pattern (PETR4, VALE3) -> bridge.db lookup (fast, unambiguous)
-2. 14-digit CNPJ -> direct rapina.db query (no bridge needed)
-3. Name fragment -> LIKE search in rapina.db empresas.nome (fallback)
+2. 14-digit CNPJ -> direct dfp_itr.db query (no bridge needed)
+3. Name fragment -> LIKE search in dfp_itr.db empresas.nome (fallback)
 
 The bridge (step 1) is optional -- if bridge.db doesn't exist or the ticker
 isn't found, we fall through to name search. This means all cvm skills work
@@ -71,7 +71,7 @@ def resolve_via_bridge(ticker: str) -> Optional[tuple[list[int], str]]:
     """
     Try to resolve a B3 ticker via bridge.db.
 
-    Returns (rapina_ids, denom_social) if found.
+    Returns (dfp_itr_ids, denom_social) if found.
     Returns None if bridge.db doesn't exist, ticker not found, or any error.
 
     DECISION: All errors are silently swallowed and return None.
@@ -87,10 +87,10 @@ def resolve_via_bridge(ticker: str) -> Optional[tuple[list[int], str]]:
     try:
         from skills.b3.b3_cvm.b3_cvm import resolve_by_ticker
         result = resolve_by_ticker(ticker)
-        if result and result.get("rapina_ids"):
-            return result["rapina_ids"], result.get("denom_social", ticker)
+        if result and result.get("dfp_itr_ids"):
+            return result["dfp_itr_ids"], result.get("denom_social", ticker)
         if result:
-            # Ticker found in bridge but has no rapina data
+            # Ticker found in bridge but has no dfp_itr data
             # Return empty list with name so caller can give helpful error
             return [], result.get("denom_social", ticker)
     except ImportError:
@@ -107,10 +107,10 @@ def resolve_company(
     ticker_or_name: str,
 ) -> tuple[list[int], str]:
     """
-    Resolve any company identifier to (rapina_ids, canonical_name).
+    Resolve any company identifier to (dfp_itr_ids, canonical_name).
 
     Args:
-        conn:            Open rapina.db connection (read-only).
+        conn:            Open dfp_itr.db connection (read-only).
         ticker_or_name:  Any of:
                            - B3 ticker:      "PETR4", "VALE3", "ITUB4"
                            - CNPJ 14 digits: "33000167000101"
@@ -122,8 +122,8 @@ def resolve_company(
 
     Resolution order:
       1. Ticker -> bridge.db (requires prior sync of b3_cvm)
-      2. CNPJ (14 digits after stripping) -> rapina.db direct
-      3. Name LIKE -> rapina.db fuzzy search
+      2. CNPJ (14 digits after stripping) -> dfp_itr.db direct
+      3. Name LIKE -> dfp_itr.db fuzzy search
 
     DECISION: Return ALL empresa.ids for the CNPJ (not just latest).
     The consuming mode (_mode_annual, _mode_cash_paid etc.) filters
@@ -146,7 +146,7 @@ def resolve_company(
         # Bridge unavailable or ticker not in bridge -> fall through to name search
         # (don't return yet -- maybe the 4-letter+digit string is also a name fragment)
 
-    # ── Path 2: CNPJ (14 digits) -> rapina.db ────────────────────────────────
+    # ── Path 2: CNPJ (14 digits) -> dfp_itr.db ────────────────────────────────
     digits_only = re.sub(r"\D", "", s)
     if len(digits_only) == 14:
         rows = conn.execute(
@@ -157,7 +157,7 @@ def resolve_company(
         if rows:
             return [r["id"] for r in rows], rows[0]["nome"]
 
-    # ── Path 3: Name LIKE search -> rapina.db ────────────────────────────────
+    # ── Path 3: Name LIKE search -> dfp_itr.db ────────────────────────────────
     rows = conn.execute(
         "SELECT DISTINCT id, nome FROM empresas "
         "WHERE upper(nome) LIKE ? ORDER BY id ASC",
@@ -184,7 +184,7 @@ def not_found_message(ticker_or_name: str) -> str:
             f"Ou use o nome CVM: ex. 'PETROBRAS'."
         )
     return (
-        f"Empresa '{ticker_or_name}' nao encontrada em rapina.db. "
+        f"Empresa '{ticker_or_name}' nao encontrada em dfp_itr.db. "
         f"Use o nome CVM oficial, CNPJ (14 digitos), "
         f"ou ticker B3 (requer bridge sincronizado)."
     )

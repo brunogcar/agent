@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/b3/b3_cvm/b3_cvm_parser.py
 Deploy to: D:\mcp\agent\skills\b3\b3_cvm\b3_cvm_parser.py
 
@@ -183,7 +183,7 @@ def parse_cvm_register(raw_bytes: bytes) -> list[dict]:
     the decimal separator -- semicolons are the PT-BR CSV convention.
 
     DECISION: Include ALL companies (ATIVO, CANCELADO, SUSPENSO).
-    rapina.db has historical data for cancelled companies (merged/acquired).
+    dfp_itr.db has historical data for cancelled companies (merged/acquired).
     The 'sit' column lets callers filter if they only want active ones.
     """
     content = None

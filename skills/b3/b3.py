@@ -1,4 +1,4 @@
-"""
+﻿"""
 skills/b3/b3.py -- B3 domain registry and sub-domain auto-discovery.
 
 Scans skills/b3/ for sub-domain packages (folders with __init__.py + MANIFEST).
@@ -11,7 +11,7 @@ Current sub-domains:
 
 Planned sub-domains:
   b3_dividends -- B3 dividend history (future)
-  b3_cotacoes  -- historical price quotes (future, uses cotacoes table in rapina.db)
+  b3_cotacoes  -- historical price quotes (future, uses cotacoes table in dfp_itr.db)
 """
 
 from __future__ import annotations
