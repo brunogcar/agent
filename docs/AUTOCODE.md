@@ -1,93 +1,144 @@
+```markdown
 # 🤖 Autocode Workflow: Autonomous TDD Coding
 
-The Autocode workflow (`workflows/autocode.py`) is a fully autonomous, safety-first LangGraph state machine designed to fix bugs, add features, audit code, and scaffold new skills without human intervention. It strictly adheres to Test-Driven Development (TDD) principles and architectural safety guardrails.
+The Autocode workflow (`workflows/autocode_helpers/`) is a fully autonomous, safety-first LangGraph state machine designed to fix bugs, add features, audit code, and scaffold new skills without human intervention. It strictly adheres to Test-Driven Development (TDD) principles, workspace isolation, and architectural safety guardrails.
+
+## 🎯 Purpose & Design Philosophy
+Autocode is built to operate as a **self-correcting engineering agent**. Rather than generating code in a single pass, it:
+1. **Classifies intent** to determine scope, safety constraints, and execution strategy.
+2. **Plans architecturally** before touching files, ensuring changes align with existing patterns.
+3. **Writes tests first** (TDD) to establish a verifiable success criteria.
+4. **Executes, validates, and debugs** in a closed loop until tests pass or max retries are hit.
+5. **Commits atomically** with git snapshots, protected-file enforcement, and workspace scoping.
+6. **Stores procedural memory** so past fixes inform future runs.
+
+All operations are constrained by timeouts, circuit breakers, file locks, and a strict "do not touch" core file list.
 
 ---
 
 ## 🧠 Task Classification & Execution Modes
 
-Before the 12-step state machine begins, the **Router** model classifies the user's request using a strict system prompt. This classification dictates the workflow's behavior, context gathering, and LLM routing.
+Before the state machine begins, the Router model classifies the request. This dictates routing, context gathering, TDD intensity, and which nodes are activated.
 
-| Category | Triggers | Workflow Impact & Behavior |
-|---|---|---|
-| **`feature`** | "add X", "create X", "build X", "implement X", "new feature" | **Full Cycle.** Triggers deep brainstorming (Planner), architectural spec generation, implementation (Executor), and test generation. |
-| **`audit`** | "audit", "security review", "deep review", "security audit" | **Read-Heavy / Analytical.** Combines root-cause analysis, impact assessment, regression checks, and TDD verification. Produces a comprehensive report rather than just a patch. |
-| **`edit`** | "edit X", "change X", "update X", "modify X", "rewrite X" | **Intentional Modification.** Heavier than a simple fix. Includes impact review to ensure the intentional change doesn't break adjacent dependencies. |
-| **`fix`** | "fix X", "repair X", "bug", "error", "crash", "debug", "patch" | **Root-Cause Focus.** Deep root-cause analysis with no clarifying questions. Immediately isolates the fault, patches, and verifies via existing tests. |
-| **`refactor`** | "refactor X", "restructure X", "clean up X", "improve structure" | **Strict AST & TDD.** Improves structure without changing behavior. Heavily relies on AST validation and existing test suites to guarantee zero functional regression. |
-| **`create_skill`**| "create skill", "new skill", "build skill", "skill for X" | **Scaffolding Mode.** Bypasses standard file patching. Instead, generates a new self-contained domain folder in `skills/` with `__init__.py`, API wrappers, and `@tool` decorators. |
-| **`unclear`** | Insufficient context or ambiguous intent | **Halt & Query.** Aborts the state machine and asks 1-2 clarifying questions before proceeding. |
+| Category       | Triggers                                      | Workflow Impact & Behavior                                                                 | Nodes Triggered / Skipped                          |
+|----------------|-----------------------------------------------|--------------------------------------------------------------------------------------------|----------------------------------------------------|
+| `feature`      | "add X", "create X", "build X", "implement X" | Full Cycle. Deep brainstorming, architectural spec, TDD loop, verification, commit.        | All nodes. TDD loop active.                        |
+| `audit`        | "audit", "security review", "deep review"     | Read-Heavy / Analytical. Root-cause analysis, impact assessment, regression checks.        | Skips `execute`/`write_files`. Focus on `verify`.  |
+| `edit`         | "edit X", "change X", "update X", "modify X"  | Intentional Modification. Heavier than fix. Includes impact review & regression testing.   | Full cycle, but stricter `verify` AST checks.      |
+| `fix`          | "fix X", "repair X", "bug", "error", "crash"  | Root-Cause Focus. No clarifying questions. Isolates fault, patches, verifies via tests.    | Fast-tracks `brainstorm`. TDD loop active.         |
+| `refactor`     | "refactor X", "restructure X", "clean up X"   | Strict AST & TDD. Improves structure without changing behavior. Zero functional regression.| Full cycle. `verify` enforces behavioral parity.   |
+| `create_skill` | "create skill", "new skill", "build skill"    | Scaffolding Mode. Generates self-contained `skills/` domain folder with API wrappers.      | Bypasses TDD loop. Routes directly to `END`.       |
+| `unclear`      | Ambiguous intent or missing context           | Halt & Query. Aborts state machine, returns 1-2 clarifying questions.                      | Routes to `END` immediately.                       |
 
 ---
 
-## 🔄 The 12-Step State Machine
+## 🔄 The 15-Node State Machine
+
+The workflow has evolved from a linear 12-step pipeline into a **conditional, self-correcting graph** with 5 routing points and a closed TDD loop.
 
 ```mermaid
 graph TD
-    A[1. Snapshot] --> B[2. Read]
-    B --> C[3. Recall]
-    C --> D[4. Analyze]
-    D --> E[5. Code]
-    E --> F[6. Review]
-    F --> G[7. Syntax]
-    G --> H[8. Apply]
-    H --> I[9. Test]
-    I --> J{Tests Pass?}
-    J -->|Yes| K[10. Commit]
-    J -->|No| L[10. Rollback]
-    K --> M[11. Store]
-    L --> M
-    M --> N[12. Notify]
+    A[node_classify_task] --> B{route_after_classify}
+    B -->|unclear| END
+    B -->|create_skill| C[node_create_skill]
+    B -->|feature/fix/refactor/edit/audit| D[node_validate_input]
+    D --> E[node_brainstorm]
+    E --> F[node_write_plan]
+    F --> G[node_git_branch]
+    G --> H[node_write_tests]
+    H --> I[node_execute_step]
+    I --> J[node_write_files]
+    J --> K{route_after_write_files}
+    K -->|TDD tasks| L[node_run_tests]
+    K -->|non-TDD| M[node_verify]
+    L --> N{route_after_run_tests}
+    N -->|passed| M
+    N -->|failed| O[node_systematic_debug]
+    O --> L
+    M --> P{route_after_verify}
+    P -->|passed| Q[node_commit]
+    P -->|failed| END
+    Q --> R[node_distill_memory]
+    R --> END
+    C --> END
 ```
 
 ### Step-by-Step Breakdown
-
-1. **Snapshot**: Takes a git snapshot/backup of the target files before touching anything.
-2. **Read**: Gathers target file contents. Respects `AUTOCODE_MAX_FILE_CHARS` to prevent context window overflow.
-3. **Recall**: Queries ChromaDB `procedural` and `episodic` memory for past bugs, fixes, and architectural decisions related to the target files.
-4. **Analyze**: The **Planner** role brainstorms, specs the fix, and creates an execution plan (behavior varies based on the Router's classification).
-5. **Code**: The **Executor** role generates the patch/code. Uses strict JSON output and tight temperature control (0.1) for precision.
-6. **Review**: The **Executor** role critiques its own generated code for edge cases and logic errors.
-7. **Syntax**: Performs AST (Abstract Syntax Tree) validation and linting to catch malformed Python before applying.
-8. **Apply**: `core/patch.py` applies changes using `str_replace` logic and creates `.bak` backups of the original files.
-9. **Test**: Runs `pytest` or the python execution sandbox against the modified files to verify the fix/feature.
-10. **Commit / Rollback**: 
-    - *Success*: Git commits the changes with a descriptive message.
-    - *Failure*: Restores the `.bak` files, performs a git reset/rollback to the snapshot state, and retries (up to `AUTOCODE_MAX_RETRIES`).
-11. **Store**: Saves the successful fix and methodology as `procedural` memory for future recall.
-12. **Notify**: Sends a cross-platform desktop notification indicating success or final failure.
+1. **Classify**: Router determines task type, confidence, and safety scope.
+2. **Validate Input**: Checks file paths, protects core files, enforces `AUTOCODE_MAX_FILE_CHARS`.
+3. **Brainstorm**: Planner explores architectural impact, edge cases, and implementation strategy.
+4. **Write Plan**: Generates a structured `list[dict]` of execution steps (`plan` state key).
+5. **Git Branch**: Creates a workspace-scoped git snapshot & branch (`project_root` isolation).
+6. **Write Tests**: Generates failing pytest scaffolding based on the plan & spec.
+7. **Execute Step**: Executor generates code for the current plan step. Stores in `tdd_source_code`.
+8. **Write Files**: Applies `str_replace` patches or full file writes atomically with `.bak` backups & file locks.
+9. **Run Tests**: Executes pytest/sandbox. Updates `tdd_status` and `test_results`.
+10. **Systematic Debug**: On test failure, analyzes traceback, suggests fixes, updates `tdd_source_code`, and loops back to `run_tests`.
+11. **Verify**: AST validation, linting, spec alignment, and regression checks. Sets `verification_passed`.
+12. **Commit**: Atomic git commit with structured message. Respects `project_root` scoping.
+13. **Distill Memory**: Stores successful methodology, root causes, and patterns to ChromaDB `procedural` memory.
+14. **Create Skill**: (Parallel path) Scaffolds `skills/` domain structure, bypasses TDD loop.
+15. **END**: Terminal state. Returns trace, result, and commit SHA.
 
 ---
 
-## 🚀 Recent Architectural Improvements (Phases 1-4)
+## ⚙️ Inner Workings & Data Flow
 
-The Autocode workflow and surrounding infrastructure have undergone significant hardening and feature expansions:
+### State Schema (`AutocodeState`)
+All nodes share a single `TypedDict` state. Key fields that drive routing & TDD:
+- `plan: list[dict]` – Ordered execution steps. Indexed via `current_step`.
+- `tdd_source_code: str` – Raw code/patch output from `execute` or `debug`. Replaced legacy `generated_code`.
+- `tdd_status: str` – `"passed"`, `"failed"`, or `""`. Drives `route_after_run_tests`.
+- `test_results: dict` – pytest/sandbox output. Contains `success: bool`.
+- `verification_passed: bool` – Set by `node_verify`. Gates `node_commit`.
+- `project_root: str` – Workspace repo root for git operations. Prevents agent-repo pollution.
+- `messages: Annotated[list[AnyMessage], add_messages]` – LangGraph message accumulator.
 
-- **Formalized Test Suite Integration**: Autocode now natively integrates with `pytest`. The "Test" node doesn't just run arbitrary python; it actively discovers and executes the project's formal test suite to guarantee zero regressions during `fix` and `refactor` tasks.
-- **Safety Hardening**: Enhanced memory write-locks (MED-01) and strict tag validation (MED-05) prevent context poisoning during high-concurrency Autocode runs. Protected file lists have been expanded and strictly enforced at the AST level.
-- **Prometheus Metrics Endpoint**: A new `/metrics` endpoint exposes real-time telemetry for the Autocode workflow, including LLM circuit breaker states, workflow success/failure ratios, and memory decay statistics.
-- **Mermaid Graph Export**: Workflows and architectural state machines can now dynamically export their current execution graphs as Mermaid.js syntax, allowing for real-time trace visualization and automated documentation updates.
-- **Circuit Breaker Resilience**: Per-role circuit breakers in `core/llm.py` now gracefully degrade Autocode tasks if a specific model (e.g., the Planner) becomes unresponsive, preventing cascading timeout failures.
+### Routing & Conditional Edges
+Routing functions live in `workflows/autocode_helpers/routes.py`. They read terminal state keys and return the next node name or `"END"`:
+- `route_after_classify` → Dispatches by `task_type`.
+- `route_after_write_files` → Routes `feature/fix/refactor/improve` to `node_run_tests`; others to `node_verify`.
+- `route_after_run_tests` → Checks `tdd_status == "passed"` or `test_results.success`. Routes to `node_verify` or `node_systematic_debug`.
+- `route_after_verify` → Gates commit on `verification_passed`.
+
+### TDD Loop & Self-Correction
+The loop runs: `write_tests → execute → write_files → run_tests ↔ debug → verify`.
+- Max iterations controlled by `AUTOCODE_MAX_RETRIES` (default 3).
+- Each failure increments `tdd_iteration`, captures traceback, and triggers `node_systematic_debug`.
+- Debug node performs root-cause analysis, patches `tdd_source_code`, and re-enters the loop.
+- Convergence triggers memory storage: `"TDD converged after N iterations"`.
+
+### Git Scoping & Workspace Isolation
+- `project_root` dynamically routes `git snapshot`, `branch`, and `commit` operations to the target workspace repo (`workspace/autocode/...`).
+- Falls back to `cfg.agent_root` only if `project_root` is empty.
+- Prevents cross-repo pollution when the agent modifies external projects.
+- All writes use `filelock` + `.bak` backups for atomicity and rollback safety.
+
+### Memory Integration & Telemetry
+- **Procedural Memory**: Successful fixes, TDD convergence counts, and root causes are stored in ChromaDB with decay & importance scoring.
+- **Recall**: `node_brainstorm` and `node_validate_input` query past fixes to avoid repeating mistakes.
+- **Prometheus Metrics**: `GET /metrics` exposes node duration, task status counts, TDD iterations, and LLM token usage. Gracefully degrades if `prometheus_client` is missing.
+- **Mermaid Export**: `GET /autocode/graph` dynamically extracts the compiled LangGraph structure and returns a valid Mermaid TD flowchart for debugging & docs.
 
 ---
 
 ## 🛡️ Safety Guardrails & Protected Files
 
 ### The "Do Not Touch" List
-Autocode is **strictly forbidden** from modifying the following core infrastructure files. Any attempt to patch them will be immediately aborted by the workflow:
+Autocode is strictly forbidden from modifying core infrastructure. Any patch targeting these is blocked at `node_validate_input` and `node_write_files`:
+- `server.py`, `registry.py` (MCP wiring & tool discovery)
+- `core/config.py`, `core/tracer.py`, `core/llm.py` (Infrastructure, logging, model dispatch)
+- `core/memory.py` (Database & persistence)
+- `core/gateway.py` (REST API, auth, secrets)
 
-- `server.py`, `registry.py` (Core MCP wiring and tool discovery)
-- `core/config.py`, `core/tracer.py`, `core/llm.py` (Infrastructure, logging, and model dispatch)
-- `core/memory.py` (Database and persistence layer)
-- `core/gateway.py` (REST API, auth, and secrets handling)
-
-*See `core/config.py` for the full programmatic protected set.*
+See `core/config.py` → `cfg.protected_files` for the programmatic set.
 
 ### Execution Constraints & Scoping
-- **Workspace Scoping**: Cannot read, write, or execute outside of `WORKSPACE_ROOT`.
-- **Max Retries**: Controlled by `AUTOCODE_MAX_RETRIES` (default `3`). If it fails 3 times, it rolls back completely and aborts.
-- **File Size Limits**: Files larger than `AUTOCODE_MAX_FILE_CHARS` (default `6000`) are chunked or rejected to prevent LLM context window overflow.
-- **Debug Mode**: Setting `AUTOCODE_DEBUG=1` in `.env` enables verbose trace logging for the workflow steps.
+- **Workspace Scoping**: Cannot read/write outside `WORKSPACE_ROOT` or `project_root`.
+- **Max Retries**: `AUTOCODE_MAX_RETRIES` (default 3). Hard rollback on exhaustion.
+- **File Size Limits**: `AUTOCODE_MAX_FILE_CHARS` (default 6000). Chunked or rejected to prevent context overflow.
+- **Timeout Hierarchy**: Node timeouts (`planner`, `executor`, `router`) cascade from `.env`. Graph timeout must exceed max node timeout.
+- **Circuit Breakers**: Per-role breakers in `core/llm.py` gracefully degrade tasks if a model becomes unresponsive.
 
 ---
 
@@ -95,21 +146,32 @@ Autocode is **strictly forbidden** from modifying the following core infrastruct
 
 ```ini
 # ── Autocode Tuning ────────────────────────────────────────────────
-AUTOCODE_MAX_RETRIES=3          # Max attempts before hard rollback
+AUTOCODE_MAX_RETRIES=3          # Max TDD attempts before hard rollback
 AUTOCODE_MAX_FILE_CHARS=6000    # Max characters per file read into context
 AUTOCODE_DEBUG=0                # Set to 1 for verbose trace logging
-EXECUTION_TIMEOUT=120           # Seconds allowed for the Test step sandbox
+EXECUTION_TIMEOUT=120           # Seconds allowed for test sandbox / executor
+PLANNER_TIMEOUT=180             # Brainstorm / spec generation timeout
+ROUTER_TIMEOUT=60               # Classification / routing timeout
+AUTOCODE_GRAPH_TIMEOUT=300      # Total graph execution timeout
 ```
 
 ---
 
 ## ⚠️ AI Agent Instructions for Modifying Autocode
 
-If you are an AI assistant tasked with modifying `workflows/autocode.py` or its associated nodes:
+If you are an AI assistant tasked with modifying `workflows/autocode_helpers/` or its nodes:
+1. **Never remove or bypass** `node_git_branch` (snapshot) or rollback logic. Safety is non-negotiable.
+2. **Never bypass** `cfg.is_protected()` checks or the task classifier routing.
+3. **State Schema Compliance**: 
+   - Use `tdd_source_code`, NOT `generated_code`.
+   - Treat `plan` as `list[dict]`, indexed via `current_step`.
+   - Route using `tdd_status`, `test_results.success`, and `verification_passed`.
+4. **LLM Calls**: Must use `_call()` from `workflows/autocode_helpers/helpers.py` with correct role (`planner`/`executor`/`router`).
+5. **Logging**: Use `tracer.step()` or `tracer.error()`. Never use `print()` to stdout.
+6. **Git Scoping**: Always pass `state.get("project_root")` to `git_ops` functions.
+7. **Imports**: Always use `from __future__ import annotations` (double underscores).
+8. **Testing**: `python -m pytest tests/workflows/autocode/ -v --tb=short` 
 
-1. **Never** remove or bypass the **Snapshot** or **Rollback** nodes. Safety is paramount.
-2. **Never** bypass the **Protected Files** check or the **Task Classifier** routing logic.
-3. Ensure all LLM calls use the `_call()` helper from `core/llm.py` with the correct role (`planner` for analysis/brainstorming, `executor` for code generation/review).
-4. Maintain the `WorkflowState` `TypedDict` structure defined in `workflows/base.py`.
-5. All logging must use `core.tracer` (e.g., `tracer.step()`). Never use `print()`.
-6. When adding new classification categories, update both the `TASK_CLASSIFIER_SYSTEM` prompt and the corresponding LangGraph conditional edges.
+---
+*Last updated: Phase 4 complete. Routing, state schema, git scoping, and telemetry aligned. All 13 workflow tests passing.*
+```

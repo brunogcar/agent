@@ -29,7 +29,7 @@ def node_write_tests(state: AutocodeState) -> AutocodeState:
         role    = "executor",
         system  = TEST_SYSTEM,
         user    = (
-            f"Spec:\n{state['spec']}\n\n"
+            f"Spec:\n{state.get('spec', '')}\n\n"
             f"Existing files:\n{_files_context(state['files'])}\n\n"
             f"Step: {step['description']}"
         ),

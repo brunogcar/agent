@@ -46,6 +46,7 @@ class AutocodeState(TypedDict, total=False):
     brainstorm_notes: str
     plan: list[dict]
     plan_accepted: bool
+    spec: str  # [FIX] Added to prevent LangGraph from stripping it
 
     # TDD loop
     tdd_iteration: int
@@ -54,6 +55,7 @@ class AutocodeState(TypedDict, total=False):
     tdd_status: str
     max_retries: int
     files_map: dict
+    current_step: int  # [FIX] Added for TDD step indexing
 
     # Execution
     execution_notes: str
@@ -114,6 +116,7 @@ def _default_state(
         "tdd_status": "",
         "max_retries": MAX_RETRIES,
         "files_map": {},
+        "current_step": 0,  # [FIX] Added for TDD step indexing
         "execution_notes": "",
         "modified_files": [],
         "test_results": {},
