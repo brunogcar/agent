@@ -1,101 +1,71 @@
-﻿"""
-skills/cvm/cvm_dfp_itr/__init__.py -- CVM API sub-domain manifest.
+"""
+skills/cvm/cvm_dfp_itr/__init__.py
+Deploy to: D:\mcp\agent\skills\cvm\cvm_dfp_itr\__init__.py
 
 Routes skill(domain="cvm", sub_domain="cvm_dfp_itr", mode=...) calls.
-Reads from dfp_itr.db (built by dfp_itr_sync).
+
+RENAMED FROM: skills/cvm/cvm_api/__init__.py
+sync mode now uses cvm_dfp_itr_sync.py (our own downloader, replaces rapinav2).
+
+Modes:
+  sync    -- download CVM DFP/ITR ZIPs and populate dfp_itr.db
+  status  -- show db stats (row counts, date range, synced years)
+  query   -- query financial data for a company (existing cvm_api logic)
 """
 
 from __future__ import annotations
+
 import inspect
-from skills.cvm.cvm_dfp_itr.cvm_dfp_itr import (
-    completo_anual, completo_trim,
-    resumo_anual,   resumo_trim,
-    search_companies, db_status,
-)
+
 
 MANIFEST = {
     "sub_domain":  "cvm_dfp_itr",
-    "description": "CVM financial statements from dfp_itr.db. Annual and quarterly DFP/ITR for ~700 listed companies.",
-    "source":      "dfp_itr.db (dfp_itr_sync) -- update: dfp_itr_sync atualizar --all",
-    "storage":     "memory_db/cvm/dfp_itr.db (read-only, 1.5GB)",
+    "description": (
+        "CVM DFP/ITR financial statements (BPA, BPP, DRE, DFC, DVA). "
+        "~10K companies, quarterly + annual, 2010-present. "
+        "Accepts B3 ticker (bridge), name, or CNPJ."
+    ),
+    "source":  "dados.cvm.gov.br DFP + ITR ZIPs -> dfp_itr.db",
+    "storage": "memory_db/cvm/dfp_itr.db",
 
     "modes": {
-        "completo_anual": {
-            "fn":             completo_anual,
-            "description":    "All account codes, annual data (meses=12), consolidated.",
+        "sync": {
+            "description": (
+                "Download CVM DFP/ITR ZIPs and populate dfp_itr.db. "
+                "Default: current + prior year (~30s). full_history=true: all years (~10 min)."
+            ),
             "include_in_all": False,
             "params": {
-                "company":     "str. Company name, partial name, or CNPJ. Required.",
-                "anos":        "list[int]. Years e.g. [2023,2024]. Default: last 5.",
-                "consolidado": "int. 1=consolidated (default), 0=individual.",
-                "limit_years": "int. Max years. Default: 5.",
+                "form":         "str. 'DFP' (annual) or 'ITR' (quarterly). Default: 'DFP'.",
+                "years":        "list[int]. Specific years. Default: current + prior.",
+                "full_history": "bool. All years from 2010. Default: false.",
+                "force":        "bool. Re-download even if synced. Default: false.",
             },
             "examples": [
-                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="completo_anual", params=\'{"company":"PETROBRAS"}\')',
-            ],
-        },
-        "completo_trim": {
-            "fn":             completo_trim,
-            "description":    "All account codes, quarterly data (meses=3/6/9), consolidated.",
-            "include_in_all": False,
-            "params": {
-                "company":     "str. Required.",
-                "anos":        "list[int]. Default: last 3.",
-                "consolidado": "int. Default: 1.",
-                "limit_years": "int. Default: 3.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="completo_trim", params=\'{"company":"PETROBRAS"}\')',
-            ],
-        },
-        "resumo_anual": {
-            "fn":             resumo_anual,
-            "description":    "Key metrics only, annual. Revenue, EBIT, net income, assets, equity, cash flows.",
-            "include_in_all": False,
-            "params": {
-                "company":     "str. Required.",
-                "anos":        "list[int]. Default: last 10.",
-                "consolidado": "int. Default: 1.",
-                "limit_years": "int. Default: 10.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="resumo_anual", params=\'{"company":"PETROBRAS"}\')',
-                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="resumo_anual", params=\'{"company":"VALE","limit_years":5}\')',
-            ],
-        },
-        "resumo_trim": {
-            "fn":             resumo_trim,
-            "description":    "Key metrics only, quarterly.",
-            "include_in_all": False,
-            "params": {
-                "company":     "str. Required.",
-                "anos":        "list[int]. Default: last 4.",
-                "consolidado": "int. Default: 1.",
-                "limit_years": "int. Default: 4.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="resumo_trim", params=\'{"company":"PETROBRAS"}\')',
-            ],
-        },
-        "search": {
-            "fn":             search_companies,
-            "description":    "Search companies by name or CNPJ in dfp_itr.db.",
-            "include_in_all": False,
-            "params": {
-                "query": "str. Name fragment or partial CNPJ. Required.",
-                "limit": "int. Max results. Default: 10.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="search", params=\'{"query":"PETRO"}\')',
+                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="sync")',
+                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="sync", params=\'{"form":"ITR"}\')',
             ],
         },
         "status": {
-            "fn":             db_status,
-            "description":    "Show dfp_itr.db info: size, rows, date range.",
+            "description": "Show dfp_itr.db stats: empresas, contas, date range, synced years.",
             "include_in_all": True,
-            "params":         {},
+            "params": {},
             "examples": [
                 'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="status")',
+            ],
+        },
+        "query": {
+            "description": "Query financial statements for a company by code/grupo/year.",
+            "include_in_all": False,
+            "params": {
+                "company":     "str. B3 ticker, name fragment, or CNPJ. Required.",
+                "grupo":       "str. BPA|BPP|DRE|DFC|DVA|DMPL. Optional.",
+                "codigo":      "str. Account code prefix e.g. '3.04'. Optional.",
+                "anos":        "list[int]. Specific years. Default: last 3.",
+                "consolidado": "int. 1=consolidated (default), 0=individual.",
+            },
+            "examples": [
+                'skill(domain="cvm", sub_domain="cvm_dfp_itr", mode="query", params=\'{"company":"PETR4","grupo":"DVA"}\')',
             ],
         },
     },
@@ -103,16 +73,40 @@ MANIFEST = {
 
 
 def route(mode: str = "", **kwargs) -> dict:
+    """Dispatch cvm_dfp_itr mode call. Lazy imports to keep startup fast."""
     if not mode:
-        return {"status": "error", "error": f"mode is required for cvm_dfp_itr. Options: {list(MANIFEST['modes'].keys())}"}
+        return {"status": "error",
+                "error": f"mode required. Options: {list(MANIFEST['modes'].keys())}"}
     if mode not in MANIFEST["modes"]:
         return {"status": "error",
-                "error": f"Unknown mode '{mode}' for cvm_dfp_itr. Available: {list(MANIFEST['modes'].keys())}"}
-    fn       = MANIFEST["modes"][mode]["fn"]
-    sig      = inspect.signature(fn)
-    accepted = set(sig.parameters.keys())
-    filtered = {k: v for k, v in kwargs.items() if k in accepted}
+                "error": f"Unknown mode '{mode}'. Available: {list(MANIFEST['modes'].keys())}"}
+
+    # Lazy import -- cvm_dfp_itr.py may not exist yet if running after rename
+    # We also import sync separately since it lives in cvm_dfp_itr_sync.py
     try:
-        return fn(**filtered)
+        if mode == "sync":
+            from skills.cvm.cvm_dfp_itr_sync import sync as _sync_fn
+            sig      = inspect.signature(_sync_fn)
+            filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            return _sync_fn(**filtered)
+
+        elif mode == "status":
+            # Try dfp_itr_sync status first (shows sync_state table)
+            try:
+                from skills.cvm.cvm_dfp_itr_sync import status as _status_fn
+                return _status_fn()
+            except ImportError:
+                from skills.cvm.cvm_dfp_itr.cvm_dfp_itr import db_status
+                return db_status()
+
+        elif mode == "query":
+            from skills.cvm.cvm_dfp_itr.cvm_dfp_itr import mode_query
+            sig      = inspect.signature(mode_query)
+            filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            return mode_query(**filtered)
+
     except Exception as e:
-        return {"status": "error", "sub_domain": "cvm_dfp_itr", "mode": mode, "error": str(e)}
+        return {"status": "error", "sub_domain": "cvm_dfp_itr",
+                "mode": mode, "error": str(e)}
+
+    return {"status": "error", "error": f"Unhandled mode '{mode}'"}
