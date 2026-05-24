@@ -360,11 +360,20 @@ class LLMClient:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._build_breakers()
 
-    # [FIX] Changed from @cached_property to @property to reflect dynamic breaker states
     @property
-    def circuit_breaker_states(self) -> dict[str, dict]:
+    def circuit_breaker_states(self) -> dict[str, dict] | None:
         """Public API for gateway to query breaker states."""
-        return {role: breaker.get_state_info() for role, breaker in self._breakers.items()}
+        # 1. Always log states to JSONL for observability
+        for role, breaker in self._breakers.items():
+            try:
+                tracer.log("circuit_breaker", role=role, **breaker.get_state_info())
+            except Exception:
+                pass
+
+        # 2. Optionally expose via property if --metrics flag is enabled
+        if getattr(cfg, "enable_metrics_endpoint", False):
+            return {role: breaker.get_state_info() for role, breaker in self._breakers.items()}
+        return None
 
     def call(
         self,

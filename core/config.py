@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 
 
 # ── Locate and load .env ──────────────────────────────────────────────────────
-
 def _find_env_file() -> Optional[Path]:
     """Walk up from this file's location until we find .env"""
     candidate = Path(__file__).resolve().parent
@@ -37,13 +36,11 @@ if _env_file:
 
 
 # ── Config class ──────────────────────────────────────────────────────────────
-
 class Config:
     """
     Centralised config. All paths are pathlib.Path objects.
     Access via the module-level `cfg` singleton.
     """
-
     def __init__(self) -> None:
         # ── Paths ─────────────────────────────────────────────────────────────
         _here = Path(__file__).resolve().parent.parent
@@ -184,6 +181,16 @@ class Config:
             "core/llm.py", "core/memory.py", "core/gateway.py",
         })
 
+        # ── SSRF Protection ───────────────────────────────────────────────────
+        # Allowlist for trusted internal services (comma-separated hostnames)
+        # Default: permissive for development (localhost, LM Studio, SearXNG)
+        # Production: set ALLOWED_INTERNAL_HOSTS="" to block ALL private/localhost
+        self.allowed_internal_hosts: frozenset[str] = frozenset(
+            h.strip().lower()
+            for h in os.getenv("ALLOWED_INTERNAL_HOSTS", "localhost,127.0.0.1,::1").split(",")
+            if h.strip()
+        )
+
         # ── Gateway ───────────────────────────────────────────────────────────
         self.gateway_host   = os.getenv("GATEWAY_HOST", "127.0.0.1")
         self.gateway_port   = int(os.getenv("GATEWAY_PORT", "8000"))
@@ -196,12 +203,18 @@ class Config:
 
     def ensure_dirs(self) -> None:
         """Create all required directories if they don't exist."""
+        import sys
         dirs = [
             self.memory_root, self.memory_chroma_path, self.workspace_root,
             self.workspace_autocode, self.workspace_index, self.log_path,
         ]
         for d in dirs:
-            d.mkdir(parents=True, exist_ok=True)
+            # Check if directory exists before trying to create it
+            if not d.exists():
+                d.mkdir(parents=True, exist_ok=True)
+                # Log specifically when autocode workspace is created
+                if d == self.workspace_autocode:
+                    print(f"[INFO] Created autocode workspace at {d}", file=sys.stderr)
 
     def resolve_agent_path(self, relative: str) -> Path:
         clean = relative.replace("\\", "/").lstrip("/")
@@ -212,9 +225,24 @@ class Config:
         return (self.workspace_root / clean).resolve()
 
     def is_protected(self, path: str | Path) -> bool:
-        name = Path(path).name
-        rel = str(path).replace("\\", "/").lstrip("/")
-        return name in self.protected_files or rel in self.protected_files
+        """Check if path matches protected file list (case-insensitive, canonical paths)."""
+        target = Path(path).resolve()
+        name = target.name.lower()
+        
+        # Check filename match (case-insensitive)
+        if any(name == pf.lower() for pf in self.protected_files):
+            return True
+        
+        # Check relative path match (case-insensitive)
+        try:
+            rel = str(target.relative_to(self.agent_root)).lower().replace("\\", "/")
+            if any(rel == pf.lower() for pf in self.protected_files):
+                return True
+        except ValueError:
+            # Path is outside agent_root
+            pass
+            
+        return False
 
     def __repr__(self) -> str:
         return (
@@ -225,3 +253,20 @@ class Config:
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 cfg = Config()
+
+
+# ── SSRF Startup Warning (Logged once per process) ────────────────────────────
+_SSRF_WARNING_LOGGED: bool = False
+
+def _warn_ssrf_default_enabled() -> None:
+    global _SSRF_WARNING_LOGGED
+    if not _SSRF_WARNING_LOGGED and cfg.allowed_internal_hosts:
+        import sys
+        print(
+            "[WARNING] SSRF: localhost access allowed by default for development. "
+            "Set ALLOWED_INTERNAL_HOSTS='' for production.",
+            file=sys.stderr,
+        )
+        _SSRF_WARNING_LOGGED = True
+
+_warn_ssrf_default_enabled()

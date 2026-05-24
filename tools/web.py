@@ -1,17 +1,15 @@
 """
 tools/web.py -- Web meta-tool.
 Replaces: searxng MCP server + http MCP server + old scraping.py
-
 The LLM sees ONE tool: web(action, ...)
-
 Imports are lazy for bs4 (only on first call), but httpx is imported at top
 to avoid "name not defined" errors in exception handlers and type checks.
 
 Actions:
-  search          -> query SearXNG, return ranked URLs + snippets
-  scrape          -> fetch URL, return clean text (BS4, no JS/CSS noise)
-  read            -> alias for scrape
-  search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
+    search          -> query SearXNG, return ranked URLs + snippets
+    scrape          -> fetch URL, return clean text (BS4, no JS/CSS noise)
+    read            -> alias for scrape
+    search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
 
 P1-1: Use per-request httpx.Client context manager instead of module-level client.
       This fixes connection leaks and thread-safety (gateway runs multiple threads).
@@ -22,9 +20,12 @@ P2:   Magic numbers centralized in core/config.py.
 """
 from __future__ import annotations
 
+import ipaddress
 import re
-from typing import Optional
+import socket
 import time as _time
+from typing import Optional
+from urllib.parse import urlparse
 
 try:
     import httpx
@@ -36,9 +37,6 @@ except ImportError:
 
 from core.config import cfg
 from registry import tool
-import ipaddress
-import socket
-from urllib.parse import urlparse
 
 
 # [P2] Magic numbers centralized in core/config.py
@@ -60,13 +58,9 @@ def _is_safe_url(url: str) -> bool:
         hostname = urlparse(url).hostname
         if not hostname:
             return False
-        addrs = socket.getaddrinfo(hostname, None)
-        for addr in addrs:
-            ip = ipaddress.ip_address(addr[4][0])
-            if (ip.is_private or ip.is_loopback or ip.is_link_local or
-                ip.is_reserved or ip.is_multicast):
-                return False
-        return True
+        # Reuse vision's SSRF checker for consistency
+        from tools.vision import _is_private_or_localhost
+        return not _is_private_or_localhost(hostname)
     except Exception:
         return False
 
@@ -85,7 +79,6 @@ def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
     """Fetch URL using context-managed client, return (html, error)."""
     if not _is_safe_url(url):
         return "", f"Blocked for security: {url} resolves to a private/internal address"
-
     try:
         with _make_client() as client:
             resp = client.get(url, timeout=timeout)
@@ -107,7 +100,6 @@ def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]
     """Extract clean text from HTML using BeautifulSoup."""
     if max_chars is None:
         max_chars = cfg.web_max_text_chars
-
     from bs4 import BeautifulSoup
 
     soup  = BeautifulSoup(html, "html.parser")
@@ -116,7 +108,7 @@ def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]
         title = soup.title.string.strip()
 
     for tag in soup(["script", "style", "nav", "footer",
-                     "header", "aside", "noscript", "iframe"]):
+                      "header", "aside", "noscript", "iframe"]):
         tag.decompose()
 
     main = (
@@ -156,20 +148,20 @@ def _do_search(query: str, max_results: int = 5) -> dict:
                 params={"q": query, "format": "json", "categories": "general"},
                 timeout=15,
             )
-        resp.raise_for_status()
-        data    = resp.json()
-        raw     = data.get("results", [])[:max_results]
-        results = []
-        for r in raw:
-            snippet = r.get("content", "") or r.get("description", "")
-            results.append({
-                "url":     r.get("url", ""),
-                "title":   r.get("title", ""),
-                "snippet": snippet[:cfg.web_snippet_chars],
-                "engine":  r.get("engine", ""),
-            })
-        return {"status": "success", "results": results,
-                "count": len(results), "query": query}
+            resp.raise_for_status()
+            data    = resp.json()
+            raw     = data.get("results", [])[:max_results]
+            results = []
+            for r in raw:
+                snippet = r.get("content", "") or r.get("description", "")
+                results.append({
+                    "url":     r.get("url", ""),
+                    "title":   r.get("title", ""),
+                    "snippet": snippet[:cfg.web_snippet_chars],
+                    "engine":  r.get("engine", ""),
+                })
+            return {"status": "success", "results": results,
+                    "count": len(results), "query": query}
     except httpx.TimeoutException:
         return {"status": "error", "error": f"SearXNG timeout at {cfg.searxng_url}"}
     except httpx.ConnectError:
@@ -182,7 +174,6 @@ def _do_scrape(url: str, max_chars: Optional[int] = None) -> dict:
     """Fetch URL and return clean extracted text."""
     if max_chars is None:
         max_chars = cfg.web_max_text_chars
-
     html, err = _fetch_html(url)
     if err:
         return {"status": "error", "url": url, "error": err}
@@ -192,12 +183,12 @@ def _do_scrape(url: str, max_chars: Optional[int] = None) -> dict:
         return {"status": "error", "url": url, "error": "No text content extracted"}
 
     return {
-        "status":      "success",
+        "status":       "success",
         "url":        url,
         "title":      title,
         "text":       text,
         "word_count": len(text.split()),
-        "truncated":   "[...truncated" in text,
+        "truncated":    "[...truncated" in text,
     }
 
 
@@ -211,8 +202,7 @@ def web(
 ) -> dict:
     """
     Web tool -- search the web or read web pages.
-
-    action: "search" | "scrape" | "read" | "search_and_read"
+    action:  "search" | "scrape" | "read" | "search_and_read"
 
     search
         Search SearXNG and return ranked URLs with titles and snippets.
@@ -250,21 +240,21 @@ def web(
     if action in ("scrape", "read"):
         if not url:
             return {"status": "error",
-                    "error": f"action='{action}' requires url="}
+                     "error": f"action='{action}' requires url="}
         return _do_scrape(url, max_chars)
 
     if action == "search_and_read":
         if not query:
             return {"status": "error",
-                    "error": "action='search_and_read' requires query="}
+                     "error": "action='search_and_read' requires query="}
 
         # [P2] Upper bound from config (default 10, allows deep research up to cfg limit)
         n = min(max_results, cfg.web_max_search_results)
         search_result = _do_search(query, n)
         if search_result["status"] != "success" or not search_result["results"]:
             return {"status": "error",
-                    "error": search_result.get("error", "No search results"),
-                    "query": query}
+                     "error": search_result.get("error", "No search results"),
+                     "query": query}
 
         # [P2] Deduplicate URLs while preserving rank order
         seen_urls = set()
@@ -299,7 +289,7 @@ def web(
                 })
 
         return {
-            "status":         "success",
+            "status":          "success",
             "query":         query,
             "results":       scraped,
             "scraped_count": len(scraped),
