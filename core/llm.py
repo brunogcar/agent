@@ -23,8 +23,9 @@ Usage:
         user   = "Fix this bug: ...",
     )
     text = result.text   # str
-    ok   = result.ok     # bool
+    ok   = r
 """
+
 from __future__ import annotations
 
 import json
@@ -36,13 +37,11 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import httpx
-
 from core.config import cfg
 from core.tracer import tracer
 
 
 # ── Response dataclass --------------------------------------------------------
-
 @dataclass
 class LLMResponse:
     """Unified response object returned by all LLM calls."""
@@ -65,11 +64,9 @@ class LLMResponse:
 
 
 # ── Circuit Breaker Pattern (HIG-02 + DeepSeek fix 2026-05-14) ----------------
-
 class CircuitBreaker:
     """
     Thread-safe circuit breaker with state machine: CLOSED → OPEN → HALF_OPEN → CLOSED.
-
     States:
       - CLOSED:   Normal operation. Track failures.
       - OPEN:     Fail fast after threshold failures within timeout_seconds.
@@ -157,7 +154,6 @@ class CircuitBreaker:
 
 
 # ── Provider abstraction ------------------------------------------------------
-
 class BaseProvider(ABC):
     """
     Abstract LLM provider. Implement this to add a new backend.
@@ -185,7 +181,6 @@ class LMStudioProvider(BaseProvider):
     """
     OpenAI-compatible provider for LM Studio (local).
     Also works with Ollama, vLLM, or any OpenAI-compatible endpoint.
-
     THREAD-SAFETY FIX (P0-4 + DeepSeek 2026-05-14):
       - Original code had broken close_clients() that referenced non-existent self._clients
       - Fixed: singleton httpx.Client per instance with proper cleanup
@@ -214,7 +209,7 @@ class LMStudioProvider(BaseProvider):
     def chat_completion(
         self,
         model:       str,
-        messages:      list[dict],
+        messages:    list[dict],
         temperature: float,
         max_tokens:  int,
         timeout:     int,
@@ -258,7 +253,6 @@ class LMStudioProvider(BaseProvider):
 
 
 # ── Provider registry ---------------------------------------------------------
-
 class ProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, BaseProvider] = {}
@@ -279,7 +273,6 @@ class ProviderRegistry:
 
 
 # ── Role configuration --------------------------------------------------------
-
 @dataclass
 class RoleConfig:
     model:       str
@@ -294,19 +287,18 @@ def _build_role_configs() -> dict[str, RoleConfig]:
     defaults = {
         "planner":   {"temperature": 0.3, "max_tokens": 2048, "timeout": 90},
         "executor":  {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
-        "router":    {"temperature": 0.0, "max_tokens": 512,   "timeout": 15},
-        "vision":    {"temperature": 0.1, "max_tokens": 1024,  "timeout": 60},
-        "summarize": {"temperature": 0.1, "max_tokens": 512,   "timeout": 60},
-        "extract":   {"temperature": 0.0, "max_tokens": 512,   "timeout": 60},
-        "classify":  {"temperature": 0.0, "max_tokens": 64,    "timeout": 15},
-        "research":  {"temperature": 0.2, "max_tokens": 1024,  "timeout": 120},
-        "critique":  {"temperature": 0.2, "max_tokens": 768,   "timeout": 90},
-        "analyze":   {"temperature": 0.1, "max_tokens": 1024,  "timeout": 90},
-        "code":      {"temperature": 0.1, "max_tokens": 4096,  "timeout": 120},
-        "review":    {"temperature": 0.2, "max_tokens": 768,   "timeout": 90},
+        "router":    {"temperature": 0.0, "max_tokens": 512,  "timeout": 15},
+        "vision":    {"temperature": 0.1, "max_tokens": 1024, "timeout": 60},
+        "summarize": {"temperature": 0.1, "max_tokens": 512,  "timeout": 60},
+        "extract":   {"temperature": 0.0, "max_tokens": 512,  "timeout": 60},
+        "classify":  {"temperature": 0.0, "max_tokens": 64,   "timeout": 15},
+        "research":  {"temperature": 0.2, "max_tokens": 1024, "timeout": 120},
+        "critique":  {"temperature": 0.2, "max_tokens": 768,  "timeout": 90},
+        "analyze":   {"temperature": 0.1, "max_tokens": 1024, "timeout": 90},
+        "code":      {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
+        "review":    {"temperature": 0.2, "max_tokens": 768,  "timeout": 90},
     }
     executor_model = cfg.model_registry.get("executor", {}).get("model", cfg.executor_model)
-
     for role, d in defaults.items():
         reg_entry = cfg.model_registry.get(role, {})
         # Vision falls back to cfg.vision_model, not executor_model
@@ -333,12 +325,11 @@ def _cleanup():
         if hasattr(provider, 'close'):
             provider.close()
 
-import atexit as _atex
-_atex.register(_cleanup)
+import atexit as _atexit
+_atexit.register(_cleanup)
 
 
 # ── LLM client ----------------------------------------------------------------
-
 class LLMClient:
     """
     The single LLM client used by everything in the agent.
@@ -360,6 +351,7 @@ class LLMClient:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._build_breakers()
 
+    # [FIX] Changed from @cached_property to @property to reflect dynamic breaker states
     @property
     def circuit_breaker_states(self) -> dict[str, dict] | None:
         """Public API for gateway to query breaker states."""
@@ -367,8 +359,8 @@ class LLMClient:
         for role, breaker in self._breakers.items():
             try:
                 tracer.log("circuit_breaker", role=role, **breaker.get_state_info())
-            except Exception:
-                pass
+            except Exception as e:
+                tracer.error("circuit_breaker_metrics", error=str(e), role=role)
 
         # 2. Optionally expose via property if --metrics flag is enabled
         if getattr(cfg, "enable_metrics_endpoint", False):
@@ -464,7 +456,7 @@ class LLMClient:
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
 
             except Exception as e:
-                elapsed = round(time.time() - start, 2)
+                elapsed = round(time.time() - start, 2) 
                 err     = f"Unexpected error: {type(e).__name__}: {e}"
                 # HIG-02: Record failure
                 if breaker:

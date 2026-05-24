@@ -71,17 +71,31 @@ def _is_private_or_localhost(hostname: str) -> bool:
     elif ":" in hostname and not hostname.startswith("[") and "::" not in hostname:
         hostname = hostname.split(":")[0]
     
+    # Allow explicitly permitted hosts FIRST (short-circuit for performance)
     if hostname in cfg.allowed_internal_hosts:
         return False
+    
+    # Loopback variants (any port)
     if hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return True
+    
+    # Reserved TLDs (mDNS, test domains, RFC 6761/6762)
     if hostname.endswith((".local", ".test", ".localhost", ".invalid")):
         return True
+    
+    # IP address validation using stdlib ipaddress module
     try:
         ip = ipaddress.ip_address(hostname)
-        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+        return bool(
+            ip.is_private or      # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            ip.is_loopback or     # 127.0.0.0/8, ::1
+            ip.is_link_local or   # 169.254.0.0/16, fe80::/10
+            ip.is_reserved        # 192.0.2.0/24, 2001:db8::/32, etc.
+        )
     except ValueError:
+        # Not a valid IP address — already handled by hostname checks above
         pass
+    
     return False
 
 

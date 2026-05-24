@@ -58,7 +58,9 @@ def _is_safe_url(url: str) -> bool:
         hostname = urlparse(url).hostname
         if not hostname:
             return False
-        # Reuse vision's SSRF checker for consistency
+        # SSRF helper imported from vision.py
+        # Dependency direction: web.py → vision.py (not vice versa).
+        # If circular imports detected, move _is_private_or_localhost to core/security.py in Phase 3.
         from tools.vision import _is_private_or_localhost
         return not _is_private_or_localhost(hostname)
     except Exception:

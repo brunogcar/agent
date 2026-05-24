@@ -13,6 +13,7 @@ Other modules import from here:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -203,18 +204,12 @@ class Config:
 
     def ensure_dirs(self) -> None:
         """Create all required directories if they don't exist."""
-        import sys
         dirs = [
             self.memory_root, self.memory_chroma_path, self.workspace_root,
             self.workspace_autocode, self.workspace_index, self.log_path,
         ]
         for d in dirs:
-            # Check if directory exists before trying to create it
-            if not d.exists():
-                d.mkdir(parents=True, exist_ok=True)
-                # Log specifically when autocode workspace is created
-                if d == self.workspace_autocode:
-                    print(f"[INFO] Created autocode workspace at {d}", file=sys.stderr)
+            d.mkdir(parents=True, exist_ok=True)
 
     def resolve_agent_path(self, relative: str) -> Path:
         clean = relative.replace("\\", "/").lstrip("/")
@@ -225,21 +220,23 @@ class Config:
         return (self.workspace_root / clean).resolve()
 
     def is_protected(self, path: str | Path) -> bool:
-        """Check if path matches protected file list (case-insensitive, canonical paths)."""
+        """Check if path matches protected file list (case-insensitive)."""
         target = Path(path).resolve()
         name = target.name.lower()
         
-        # Check filename match (case-insensitive)
+        # Check filename match (case-insensitive) — handles all scenarios including symlinks
         if any(name == pf.lower() for pf in self.protected_files):
             return True
         
-        # Check relative path match (case-insensitive)
+        # Only check relative path if within agent_root (canonical boundary check)
         try:
-            rel = str(target.relative_to(self.agent_root)).lower().replace("\\", "/")
-            if any(rel == pf.lower() for pf in self.protected_files):
+            agent_root_resolved = self.agent_root.resolve()  # ← Resolve both paths!
+            rel_path = target.relative_to(agent_root_resolved)  # ← Now safe!
+            rel_str = str(rel_path).lower().replace("\\", "/")
+            if any(rel_str == pf.lower() for pf in self.protected_files):
                 return True
-        except ValueError:
-            # Path is outside agent_root
+        except (ValueError, OSError):
+            # Path outside agent_root — should be blocked upstream by path_guard.is_safe_path
             pass
             
         return False
@@ -261,7 +258,6 @@ _SSRF_WARNING_LOGGED: bool = False
 def _warn_ssrf_default_enabled() -> None:
     global _SSRF_WARNING_LOGGED
     if not _SSRF_WARNING_LOGGED and cfg.allowed_internal_hosts:
-        import sys
         print(
             "[WARNING] SSRF: localhost access allowed by default for development. "
             "Set ALLOWED_INTERNAL_HOSTS='' for production.",
