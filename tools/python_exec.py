@@ -52,6 +52,43 @@ SAFE_BUILTINS = {
 
 FORBIDDEN_IN_SANDBOX = ["__import__", "eval(", "exec(", "open(", "compile("]
 
+# 🔴 AST Sandbox Validation (Security P0)
+# Replaces brittle string-matching with syntax-tree analysis.
+# Blocks imports, dangerous builtins, and module attribute access.
+DANGEROUS_BUILTINS = {
+    "eval", "exec", "compile", "open", "__import__",
+    "input", "breakpoint", "globals", "locals", "vars", "dir"
+}
+DANGEROUS_MODULES = {"os", "sys", "subprocess", "shutil", "socket", "ctypes", "multiprocessing"}
+
+def _validate_sandbox_ast(code: str) -> tuple[bool, str]:
+    """
+    AST-based sandbox validation. Blocks imports and dangerous builtin calls.
+    Returns (is_safe, error_message).
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return False, f"SyntaxError: {e.msg} (line {e.lineno})"
+
+    for node in ast.walk(tree):
+        # Block all imports in strict sandbox
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return False, "Imports are not allowed in sandbox mode. Use mode='run_data' for imports."
+
+        # Block dangerous function calls
+        if isinstance(node, ast.Call):
+            func = node.func
+            # Direct calls: eval(), exec(), open(), etc.
+            if isinstance(func, ast.Name) and func.id in DANGEROUS_BUILTINS:
+                return False, f"Blocked dangerous call: {func.id}() in sandbox mode."
+            # Attribute calls: os.system(), subprocess.run(), etc.
+            if isinstance(func, ast.Attribute):
+                if isinstance(func.value, ast.Name) and func.value.id in DANGEROUS_MODULES:
+                    return False, f"Blocked dangerous module access: {func.value.id}.{func.attr}() in sandbox mode."
+
+    return True, ""
+
 # Stdlib modules — run in-process (fast, no subprocess overhead)
 STDLIB_IMPORTS = {
     "random", "json", "math", "statistics", "datetime", "calendar",
@@ -216,6 +253,7 @@ def python(mode: str, code: str) -> dict:
 
     # ── run (sandbox) ─────────────────────────────────────────────────────────
     if mode == "run":
+        # Fast-path string check (cheap, catches obvious violations)
         for token in FORBIDDEN_IN_SANDBOX:
             if token in code:
                 return {
@@ -225,9 +263,15 @@ def python(mode: str, code: str) -> dict:
                         "Use mode='run_data' for code that needs imports or file access."
                     ),
                 }
+    
+        # 🔴 Authoritative AST validation (blocks obfuscated bypasses)
+        ast_safe, ast_err = _validate_sandbox_ast(code)
+        if not ast_safe:
+            return {"status": "error", "error": ast_err}
+
         try:
             old_stdout = sys.stdout
-            sys.stdout  = captured = io.StringIO()
+            sys.stdout = captured = io.StringIO()
             local_env: dict = {}
             exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
             output = captured.getvalue().strip()
@@ -235,7 +279,7 @@ def python(mode: str, code: str) -> dict:
             return {
                 "status": "success",
                 "output": output if output else str({k: str(v) for k, v in local_env.items()}),
-                "mode":   "sandbox",
+                "mode":    "sandbox",
             }
         except Exception as e:
             sys.stdout = old_stdout
