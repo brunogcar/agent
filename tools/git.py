@@ -1,8 +1,8 @@
 """
-tools/git.py — Git meta-tool for version control operations.
+tools/git.py — Git meta-tool for version control actions.
 
-The LLM sees ONE tool: git(operation, ...)
-Supported operations: status, log, diff, commit, init, restore, rollback,
+The LLM sees ONE tool: git(action, ...)
+Supported actions: status, log, diff, commit, init, restore, rollback,
                       snapshot, show, tag, branch, checkout.
 
 Default root: "agent" (the agent's own repository). Pass root="workspace" to
@@ -18,7 +18,7 @@ IMPORTANT - root vs path parameter:
 
 Commands intentionally excluded from autonomous execution:
   fetch, pull, merge, rebase, push
-  These involve remote operations, destructive history rewrites, or conflict
+  These involve remote actions, destructive history rewrites, or conflict
   resolution, which require human judgement and are unsafe for unsupervised agents.
 """
 
@@ -36,13 +36,13 @@ from core.tracer import tracer
 # ─────────────────────────────────────────────────────────────────────────────
 def _build_doc() -> str:
     """
-    Generate the tool's docstring dynamically from registered git operations.
+    Generate the tool's docstring dynamically from registered git actions.
     """
     git_ops = DISPATCH.get("git", {})
     lines = [
-        "Git version control operations.",
+        "Git version control actions.",
         "",
-        "operation:   " + " | ".join(sorted(git_ops.keys())),
+        "action:   " + " | ".join(sorted(git_ops.keys())),
         "",
         "IMPORTANT - root vs path parameter:",
         "  root  - the repo directory: \"agent\" (default) | \"workspace\" | \"/absolute/path\"",
@@ -65,11 +65,11 @@ def _build_doc() -> str:
             lines.append("  ")
 
     lines.append("Common usage patterns:")
-    lines.append("    git(operation=\"status\")                  # check working tree")
-    lines.append("    git(operation=\"log\", n=5)                # recent commits")
-    lines.append("    git(operation=\"snapshot\", message=\"...\") # safe point before changes")
-    lines.append("    git(operation=\"commit\", message=\"...\")  # after a successful change")
-    lines.append("    git(operation=\"rollback\")                # undo uncommitted changes")
+    lines.append("    git(action=\"status\")                  # check working tree")
+    lines.append("    git(action=\"log\", n=5)                # recent commits")
+    lines.append("    git(action=\"snapshot\", message=\"...\") # safe point before changes")
+    lines.append("    git(action=\"commit\", message=\"...\")  # after a successful change")
+    lines.append("    git(action=\"rollback\")                # undo uncommitted changes")
 
     return "\n".join(lines)
 
@@ -78,7 +78,7 @@ def _build_doc() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 @tool
 def git(
-    operation: str,
+    action: str,
     message:   str  = "",
     root:      str  = "agent",
     n:         int  = 10,
@@ -88,40 +88,40 @@ def git(
     trace_id:  str  = "",
 ) -> dict:
     """
-    Git version control operations. Dispatched via standardized registry.
+    Git version control actions. Dispatched via standardized registry.
     """
-    operation = operation.strip().lower()
+    action = action.strip().lower()
     if not trace_id:
-        trace_id = tracer.new_trace("git", goal=operation)
+        trace_id = tracer.new_trace("git", goal=action)
 
     # 1. Resolve working directory (preserves backward-compat alias logic)
     cwd, err = _resolve_root(root, path)
     if err:
-        return make_path_error(path or root, operation, err, trace_id)
+        return make_path_error(path or root, action, err, trace_id)
 
-    # 2. Validate git operation scoping (blocks clone outside workspace)
+    # 2. Validate git action scoping (blocks clone outside workspace)
     allowed, err, resolved_cwd = check_git_operation(
-        operation=operation,
+        operation=action,
         cwd=cwd,
         target=target if target else None
     )
     if not allowed:
-        return make_path_error(cwd or path, operation, err, trace_id)
+        return make_path_error(cwd or path, action, err, trace_id)
 
     # Use resolved_cwd if provided
     actual_cwd = resolved_cwd or cwd
 
-    # 3. Lookup operation in registry
+    # 3. Lookup action in registry
     git_ops = DISPATCH.get("git", {})
-    op_info = git_ops.get(operation)
+    op_info = git_ops.get(action)
     if not op_info:
         return {
             "status": "error",
-            "error": f"Unknown operation '{operation}'. Valid: {' | '.join(sorted(git_ops.keys()))}",
+            "error": f"Unknown action '{action}'. Valid: {' | '.join(sorted(git_ops.keys()))}",
             "trace_id": trace_id,
         }
 
-    # 4. Validate repository if the operation requires it
+    # 4. Validate repository if the action requires it
     if op_info.get("needs_repo"):
         ok, err = _check_repo(actual_cwd)
         if not ok:
@@ -152,7 +152,7 @@ git.__doc__ = _build_doc()
 # ---------------------------------------------------------------------------
 # Commands intentionally excluded from the git meta‑tool
 # ---------------------------------------------------------------------------
-# The following operations are NOT exposed to the autonomous agent because they
+# The following actions are NOT exposed to the autonomous agent because they
 # either involve remote repositories, are destructive to shared history, or
 # require human judgement for conflict resolution:
 # fetch, pull, merge, rebase, push

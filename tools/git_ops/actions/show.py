@@ -1,7 +1,7 @@
 """
 Show – details of a commit, tag, or tree object.
 
-Read-only operation that displays the contents and metadata of a git object.
+Read-only action that displays the contents and metadata of a git object.
 Defaults to HEAD if no reference is provided via the `message` parameter.
 Output is capped at 10KB to prevent LLM context overflow.
 """
@@ -20,9 +20,9 @@ Returns: {status, output (capped at 10KB), ...}
     help_text=HELP_SHOW,
     needs_repo=False,  # read-only – no repo check needed
     examples=[
-        'git(operation="show")                      # latest commit',
-        'git(operation="show", message="abc1234")  # specific commit',
-        'git(operation="show", message="v1.0")     # show a tag',
+        'git(action="show")                     # latest commit',
+        'git(action="show", message="abc1234")  # specific commit',
+        'git(action="show", message="v1.0")     # show a tag',
     ],
 )
 def run_show(cwd, message: str = "", **kwargs) -> dict:

@@ -23,8 +23,8 @@ Returns: {status: "committed"|"nothing_to_commit", commit_hash, message}
     help_text=HELP_SNAPSHOT,
     needs_repo=True,
     examples=[
-        'git(operation="snapshot")                      # auto timestamp only',
-        'git(operation="snapshot", message="before edit") # with custom note',
+        'git(action="snapshot")                        # auto timestamp only',
+        'git(action="snapshot", message="before edit") # with custom note',
     ],
 )
 def run_snapshot(cwd, message: str = "", **kwargs) -> dict:

@@ -220,17 +220,18 @@ class MemoryStore:
         source:     str        = "",
     ) -> dict:
         """Internal store — shared by all three typed store methods."""
+        
         # 🔴 CRITICAL: Async cancellation safety — abort before any side effects
         import asyncio
-        task = asyncio.current_task()
-        # Use cancelling() instead of cancelled() for sync functions
-        # cancelled() only returns True AFTER CancelledError is raised
-        # cancelling() returns count of pending cancellation requests (Python 3.11+)
-        if task and task.cancelling() > 0:
-            raise asyncio.CancelledError("Workflow cancelled — aborting memory store operation")
-
-        if not text or not text.strip():
-            return {"status": "error", "error": "Empty text — nothing stored"}
+        try:
+            # get_running_loop() raises RuntimeError if no loop is active (e.g. sync calls)
+            loop = asyncio.get_running_loop()
+            task = asyncio.current_task(loop)
+            if task and task.cancelling() > 0:
+                raise asyncio.CancelledError("Workflow cancelled — aborting memory store operation")
+        except RuntimeError:
+            # No running event loop (called from synchronous code/tests) — safe to proceed
+            pass
 
         text_bytes = len(text.encode("utf-8"))
         if text_bytes > cfg.memory_max_entry_bytes:
@@ -281,6 +282,20 @@ class MemoryStore:
 
         # Lock only the actual insert operation - this is the critical section!
         with self._write_lock:
+            # 🔴 TOCTOU fix: Re-check for duplicates inside the lock (double-check locking)
+            # Catches the rare race where two identical writes passed the outer check
+            try:
+                existing_inner = col.query(query_texts=[text], n_results=1,
+                                           include=["documents", "distances"])
+                inner_docs = existing_inner.get("documents", [[]])[0]
+                inner_dists = existing_inner.get("distances", [[]])[0]
+                if inner_docs and inner_dists and inner_dists[0] < _dedup_thresh:
+                    return {"status": "skipped_duplicate", "collection": collection}
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                tracer.error(f"Inner dedup check failed (non-fatal): {e}")
+            
             try:
                 col.add(documents=[text], ids=[memory_id], metadatas={
                     "type":       collection,

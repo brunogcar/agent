@@ -21,8 +21,8 @@ Returns: {status, target, staged_files, count, root}
     help_text=HELP_ADD,
     needs_repo=True,
     examples=[
-        'git(operation="add", path="src/main.py")      # stage specific file',
-        'git(operation="add", all_files=True)          # stage all changes',
+        'git(action="add", path="src/main.py")      # stage specific file',
+        'git(action="add", all_files=True)          # stage all changes',
     ],
 )
 def run_add(cwd, path: str = "", all_files: bool = False, **kwargs) -> dict:

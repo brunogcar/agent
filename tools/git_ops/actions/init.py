@@ -22,8 +22,8 @@ Returns: {status, path, commit_hash}
     help_text=HELP_INIT,
     needs_repo=False,  # we check manually inside
     examples=[
-        'git(operation="init")                 # init in current agent root',
-        'git(operation="init", root="/path") # init elsewhere',
+        'git(action="init")                 # init in current agent root',
+        'git(action="init", root="/path") # init elsewhere',
     ],
 )
 def run_init(cwd, **kwargs) -> dict:

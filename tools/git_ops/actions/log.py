@@ -2,7 +2,7 @@
 Log – show recent commit history.
 
 Returns recent commit history with hash, date, and message.
-Read-only operation; safely handles empty repositories.
+Read-only action; safely handles empty repositories.
 """
 from tools.git_ops._registry import register_action
 from tools.git_ops.helpers import _git
@@ -19,8 +19,8 @@ Returns: {commits: [{hash, date, message}], count}
     help_text=HELP_LOG,
     needs_repo=False,
     examples=[
-        'git(operation="log")        # last 10 commits',
-        'git(operation="log", n=5)   # last 5 commits',
+        'git(action="log")        # last 10 commits',
+        'git(action="log", n=5)   # last 5 commits',
     ],
 )
 def run_log(cwd, n: int = 10, **kwargs) -> dict:

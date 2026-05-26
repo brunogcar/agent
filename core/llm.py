@@ -618,17 +618,27 @@ class LLMClient:
                     else:
                         json_str = choice_stripped
                 
-                if json_str:
-                    try:
-                        parsed = json.loads(json_str)
-                    except json.JSONDecodeError:
-                        pass
+            if json_str:
+                try:
+                    parsed = json.loads(json_str)
+                except json.JSONDecodeError:
+                    pass
 
-        return LLMResponse(
-            text=choice, role=role, model=model,
-            usage=usage, elapsed=elapsed, parsed=parsed, ok=True,
-        )
+            # 🔴 Schema Validation: Catch LLM tool call drift
+            # Only validate if it looks like a tool call (has 'tool' and 'action')
+            if parsed and isinstance(parsed, dict) and "tool" in parsed and "action" in parsed:
+                try:
+                    from core.contracts import validate_tool_call
+                    validate_tool_call(parsed)
+                except Exception as e:
+                    import sys as _sys
+                    print(f"[llm] WARNING: Tool call schema validation failed: {e}", file=_sys.stderr)
 
+            return LLMResponse(
+                text=choice, role=role, model=model,
+                usage= usage, elapsed=elapsed, parsed=parsed, ok=True,
+            )
+        
 
 # ── Singleton -----------------------------------------------------------------
 llm = LLMClient()

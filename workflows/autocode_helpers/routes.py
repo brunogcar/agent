@@ -36,6 +36,9 @@ def route_after_run_tests(state: AutocodeState) -> str:
 
 def route_after_debug(state: AutocodeState) -> str:
     """Route after debugging node."""
+    # 🔴 Hard Retry Limit Circuit Breaker: Prevent infinite loops
+    if state.get("tdd_status") == "max_retries_exceeded":
+        return "node_verify"  # Fail gracefully and exit the TDD loop
     return "node_run_tests"
 
 def route_after_write_files(state: AutocodeState) -> str:

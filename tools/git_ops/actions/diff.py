@@ -2,7 +2,7 @@
 Diff – show unstaged diff, optionally filtered by file.
 Returns unified diff output for unstaged changes. The `path` parameter
 filters the diff to a specific file (relative or absolute).
-Read-only operation.
+Read-only action.
 """
 from pathlib import Path
 
@@ -21,9 +21,9 @@ Returns: {diff, has_changes, truncated, total_lines}
     help_text=HELP_DIFF,
     needs_repo=False,
     examples=[
-        'git(operation="diff")                                      # all changes',
-        'git(operation="diff", path="tools/memory.py")              # specific file',
-        'git(operation="diff", max_lines=1000)                      # allow larger diff',
+        'git(action="diff")                                      # all changes',
+        'git(action="diff", path="tools/memory.py")              # specific file',
+        'git(action="diff", max_lines=1000)                      # allow larger diff',
     ],
 )
 def run_diff(cwd, path: str = "", max_lines: int = 500, **kwargs) -> dict:

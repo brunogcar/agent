@@ -21,8 +21,8 @@ Restore a specific file to HEAD (or a specified commit) discarding local changes
     help_text=HELP_RESTORE,
     needs_repo=True,
     examples=[
-        'git(operation="restore", path="tools/git_ops.py")',
-        'git(operation="restore", path="README.md", message="HEAD~2")',
+        'git(action="restore", path="tools/git_ops.py")',
+        'git(action="restore", path="README.md", message="HEAD~2")',
     ],
 )
 def run_restore(cwd, path: str = "", message: str = "", **kwargs) -> dict:

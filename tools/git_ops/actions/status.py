@@ -2,7 +2,7 @@
 Status – show working tree status.
 
 Returns structured working tree state: branch, changes list, clean flag.
-Read-only operation; does not require a valid git repository to run
+Read-only action; does not require a valid git repository to run
 (will gracefully report if not a repo via git's own output).
 """
 from tools.git_ops._registry import register_action
@@ -20,8 +20,8 @@ Returns: {head, changes: [{flag, file}], clean, count}
     help_text=HELP_STATUS,
     needs_repo=False,
     examples=[
-        'git(operation="status")         # agent repo',
-        'git(operation="status", root="workspace")',
+        'git(action="status")         # agent repo',
+        'git(action="status", root="workspace")',
     ],
 )
 def run_status(cwd, **kwargs) -> dict:

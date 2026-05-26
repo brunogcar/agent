@@ -1,5 +1,5 @@
 """
-Auto-registration registry for git operations.
+Auto-registration registry for git actions.
 
 This module defines the central DISPATCH dictionary that maps
 (tool_name, action_name) pairs to their handler functions and metadata.
@@ -35,7 +35,7 @@ def register_action(
     Decorator to register a git action handler function with metadata in the global DISPATCH table.
 
     Args:
-        tool_name (str): Tool namespace. Always "git" for git operations.
+        tool_name (str): Tool namespace. Always "git" for git actions.
         action_name (str): Action identifier exposed to the LLM (e.g., "status", "log").
         help_text (str): Help block to be included in the tool's dynamic docstring.
         needs_repo (bool): If True, the dispatcher calls _check_repo() before invoking the handler.

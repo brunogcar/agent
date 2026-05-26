@@ -21,7 +21,7 @@ Returns: {status: "committed"|"nothing_to_commit", commit_hash}
     help_text=HELP_COMMIT,
     needs_repo=True,
     examples=[
-        'git(operation="commit", message="fix: correct decay scoring")',
+        'git(action="commit", message="fix: correct decay scoring")',
     ],
 )
 def run_commit(cwd, message: str = "", **kwargs) -> dict:

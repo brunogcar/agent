@@ -24,8 +24,8 @@ Returns: {status, head, message, stash_ref}
     help_text=HELP_ROLLBACK,
     needs_repo=True,
     examples=[
-        'git(operation="rollback")                # safe, auto stash',
-        'git(operation="rollback", force=True)    # permanent discard',
+        'git(action="rollback")                # safe, auto stash',
+        'git(action="rollback", force=True)    # permanent discard',
     ],
 )
 def run_rollback(cwd, force: bool = False, **kwargs) -> dict:

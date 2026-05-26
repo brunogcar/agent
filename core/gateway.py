@@ -241,7 +241,7 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
 
     if tool == "git":
         from tools.git import git
-        return git(operation=action, **params)
+        return git(action=action, **params)
 
     if tool == "agent":
         from tools.agent_tool import agent

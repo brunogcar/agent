@@ -23,9 +23,9 @@ Manage local branches. Subcommands (via 'message'):
     help_text=HELP_BRANCH,
     needs_repo=False,  # handlers check for write ops internally
     examples=[
-        'git(operation="branch")                              # list',
-        'git(operation="branch", message="create experiment") # create',
-        'git(operation="branch", message="delete old-fix")    # delete',
+        'git(action="branch")                              # list',
+        'git(action="branch", message="create experiment") # create',
+        'git(action="branch", message="delete old-fix")    # delete',
     ],
 )
 def run_branch(cwd, message: str = "", **kwargs) -> dict:

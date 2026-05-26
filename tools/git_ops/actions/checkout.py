@@ -22,8 +22,8 @@ Use 'message' to specify target:
     help_text=HELP_CHECKOUT,
     needs_repo=True,
     examples=[
-        'git(operation="checkout", message="main")          # switch',
-        'git(operation="checkout", message="-b new-idea")   # create and switch',
+        'git(action="checkout", message="main")          # switch',
+        'git(action="checkout", message="-b new-idea")   # create and switch',
     ],
 )
 def run_checkout(cwd, message: str = "", **kwargs) -> dict:

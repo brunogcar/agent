@@ -23,8 +23,8 @@ Subcommands (via 'message'):
     help_text=HELP_TAG,
     needs_repo=False,  # only create needs check, handled inside
     examples=[
-        'git(operation="tag")                          # list',
-        'git(operation="tag", message="create v1.0")  # create',
+        'git(action="tag")                          # list',
+        'git(action="tag", message="create v1.0")  # create',
     ],
 )
 def run_tag(cwd, message: str = "", **kwargs) -> dict:

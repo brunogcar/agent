@@ -257,7 +257,12 @@ _SSRF_WARNING_LOGGED: bool = False
 
 def _warn_ssrf_default_enabled() -> None:
     global _SSRF_WARNING_LOGGED
-    if not _SSRF_WARNING_LOGGED and cfg.allowed_internal_hosts:
+    # Only warn during actual server startup, not during quick CLI tests
+    # sys.argv[0] == "-c" for `python -c "..."`
+    # sys.argv[0] == "" for `@"..."@ | python` (stdin pipe)
+    is_cli_test = len(sys.argv) > 0 and sys.argv[0] in ("-c", "")
+    
+    if not _SSRF_WARNING_LOGGED and cfg.allowed_internal_hosts and not is_cli_test:
         print(
             "[WARNING] SSRF: localhost access allowed by default for development. "
             "Set ALLOWED_INTERNAL_HOSTS='' for production.",

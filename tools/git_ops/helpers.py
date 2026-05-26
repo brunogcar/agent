@@ -1,5 +1,5 @@
 """
-Shared helpers used by all git operation plugins.
+Shared helpers used by all git action plugins.
 
 This module centralizes all git-specific infrastructure to ensure consistent
 behavior across all action handlers:
@@ -161,7 +161,7 @@ def _resolve_root(root_str: str, path_str: str = "") -> tuple[Optional[Path], st
 
 def _check_repo(cwd: Path) -> tuple[bool, str]:
     """
-    Verify cwd is inside a git repo. Only called before write/modify operations.
+    Verify cwd is inside a git repo. Only called before write/modify actions.
 
     Args:
         cwd (Path): Directory to validate.
@@ -174,6 +174,6 @@ def _check_repo(cwd: Path) -> tuple[bool, str]:
         return True, ""
     return False, (
         f"'{cwd}' is not a git repository. "
-        "Use git(operation='init', root=...) to initialise one, "
+        "Use git(action='init', root=...) to initialise one, "
         "or point root at a subdirectory that already has a repo."
     )

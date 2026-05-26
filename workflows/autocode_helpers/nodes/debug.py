@@ -48,10 +48,19 @@ def node_systematic_debug(state: AutocodeState) -> AutocodeState:
     stderr = test_results.get("stderr", "")
     stdout = test_results.get("stdout", "")
 
-    # Generate debug analysis
+    # 🔴 Retry Context Distillation: Progressive temperature jitter
+    # Forces the model to explore alternate logic paths instead of repeating failures
+    base_temp = 0.1
+    jitter = current_iteration * 0.15  # 0.1 -> 0.25 -> 0.40 -> 0.55
+    retry_temp = min(base_temp + jitter, 0.8)
+
+    # Generate debug analysis (Stricter prompt to prevent anchoring on prior speculation)
     system = (
         "You are a senior debug engineer. Output ONLY valid JSON, no other text.\n"
-        "Analyze the test failure and return a JSON object with these EXACT fields:\n"
+        "Analyze the raw test failure below. Ignore any previous assumptions or "
+        "speculative reasoning from prior attempts. Base your diagnosis STRICTLY "
+        "on the provided traceback and test output.\n"
+        "Return a JSON object with these EXACT fields:\n"
         '{"root_cause": "string", "defense_notes": "string", "fix": "string"}'
     )
     user = f"Test failure:\n{stderr[:2000]}\n\nTest output:\n{stdout[:2000]}"
@@ -61,7 +70,8 @@ def node_systematic_debug(state: AutocodeState) -> AutocodeState:
             role="executor",
             system=system,
             user=user,
-            timeout=cfg.execution_timeout
+            timeout=cfg.execution_timeout,
+            temperature=retry_temp
         )
     except Exception as e:
         tracer.error(tid, "systematic_debug", f"Debug LLM call failed: {e}")
