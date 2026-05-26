@@ -29,6 +29,10 @@ def _resolve(path_str: str) -> Optional[Path]:
     - Relative paths are resolved from agent_root FIRST, then workspace_root
     Returns None if the path escapes allowed roots.
     """
+    # Defense-in-depth: Block null byte injection attacks
+    if "\x00" in str(path_str):
+        return None
+
     p = Path(path_str)
 
     # For relative paths: try agent_root first (source code lives here)
@@ -67,6 +71,8 @@ def _safe_resolve(path_str: str) -> tuple[Optional[Path], str]:
     """Returns (resolved_path, error_message). error is "" on success."""
     if not path_str:
         return None, "path is required"
+    if "\x00" in str(path_str):
+        return None, "Path contains invalid null bytes"
     p = _resolve(path_str)
     if p is None:
         return None, (
