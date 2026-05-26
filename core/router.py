@@ -97,6 +97,48 @@ class TaskRouter:
                            "make a report", "bar chart", "line chart",
                            "pie chart", "scatter plot", "heatmap"]
 
+    def _extract_first_json(self, text: str) -> str | None:
+        """
+        Extract the first valid JSON object from text.
+        Handles deep nesting, escaped quotes inside strings, and markdown wrappers.
+        Replaces the fragile single-level regex.
+        """
+        decoder = json.JSONDecoder()
+        in_string = False
+        escape = False
+        depth = 0
+        start = None
+
+        for i, ch in enumerate(text):
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                if in_string:
+                    escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+
+            if ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and start is not None:
+                    candidate = text[start:i + 1]
+                    try:
+                        decoder.decode(candidate)
+                        return candidate
+                    except json.JSONDecodeError:
+                        # Invalid JSON structure, reset and keep looking
+                        start = None
+        return None
+
     def route(
         self,
         goal:     str,
@@ -194,11 +236,10 @@ class TaskRouter:
                 clean = clean[len(fence):]
         clean = clean.strip().rstrip("`").strip()
 
-        # Extract first JSON object -- supports one level of nesting
-        # e.g. {"workflow":"x","reason":"...","metadata":{}}
-        match = re.search(r"\{(?:[^{}]|\{[^{}]*\})*\}", clean, re.DOTALL)
-        if match:
-            clean = match.group(0)
+    # Extract first JSON object using robust bracket-counting parser
+        extracted = self._extract_first_json(clean)
+        if extracted:
+            clean = extracted
 
         try:
             data = json.loads(clean)

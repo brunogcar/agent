@@ -555,11 +555,10 @@ class LLMClient:
 
     def _get_role(self, role: str) -> RoleConfig:
         if role not in self._roles:
-            import sys as _sys
-            print(
-                f"[llm] WARNING: unknown role {role!r} -- falling back to executor. "
-                f"Known: {sorted(self._roles.keys())}",
-                file=_sys.stderr,
+            tracer.error(
+                "", 
+                "llm_role_fallback", 
+                f"Unknown role {role!r} -- falling back to executor. Known: {sorted(self._roles.keys())}"
             )
             return self._roles["executor"]
         return self._roles[role]
@@ -631,13 +630,11 @@ class LLMClient:
                     from core.contracts import validate_tool_call
                     validate_tool_call(parsed)
                 except Exception as e:
-                    import sys as _sys
-                    print(f"[llm] WARNING: Tool call schema validation failed: {e}", file=_sys.stderr)
-
-            return LLMResponse(
-                text=choice, role=role, model=model,
-                usage= usage, elapsed=elapsed, parsed=parsed, ok=True,
-            )
+                    tracer.error(
+                        "",
+                        "schema_validation_failed",
+                        f"Tool call schema validation failed for {role}/{model}: {e}"
+                    )
         
 
 # ── Singleton -----------------------------------------------------------------
