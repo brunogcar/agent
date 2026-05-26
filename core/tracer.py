@@ -28,8 +28,21 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-import structlog
 from core.config import cfg
+
+# Optional structlog support with graceful fallback
+try:
+    import structlog
+    _HAS_STRUCTLOG = True
+except ImportError:
+    _HAS_STRUCTLOG = False
+    # Fallback to standard logging if structlog not available
+    import logging
+    logging.basicConfig(
+        level=logging.DEBUG if cfg.autocode_debug else logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
 # ── Trace ID generator (LOW‑05) ─────────────────────────────────────────
 def generate_trace_id(length: int = 8) -> str:
@@ -39,6 +52,9 @@ def generate_trace_id(length: int = 8) -> str:
 # ── structlog: write to STDERR only -----------------------------------------
 def _configure_structlog() -> None:
     """Configure structlog for stderr output only. Never touches stdout."""
+    if not _HAS_STRUCTLOG:
+        return  # Skip if structlog not available
+    
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -50,13 +66,16 @@ def _configure_structlog() -> None:
         wrapper_class=structlog.make_filtering_bound_logger(
             10 if cfg.autocode_debug else 20
         ),
-        # PrintLoggerFactory writes to sys.stderr by default when passed sys.stderr
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=True,
     )
 
 _configure_structlog()
-_log = structlog.get_logger()
+
+if _HAS_STRUCTLOG:
+    _log = structlog.get_logger()
+else:
+    _log = logging.getLogger("agent")
 
 # ── File log writer ---------------------------------------------------------
 class _FileWriter:
@@ -184,8 +203,11 @@ class Tracer:
         }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
-        if cfg.autocode_debug:
+    if cfg.autocode_debug:
+        if _HAS_STRUCTLOG:
             _log.debug("step", trace_id=trace_id, node=node, msg=message[:120])
+        else:
+            _log.debug(f"[step] {trace_id} | {node} | {message[:120]}")
 
     def error(self, trace_id: str, node: str, message: str = "",
               **kwargs: Any) -> None:
@@ -200,7 +222,10 @@ class Tracer:
         }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
-        _log.warning("error", trace_id=trace_id, node=node, msg=message[:200])
+        if _HAS_STRUCTLOG:
+            _log.warning("error", trace_id=trace_id, node=node, msg=message[:200])
+        else:
+            _log.warning(f"[error] {trace_id} | {node} | {message[:200]}")
 
     def finish(self, trace_id: str, success: bool = True,
                result: str = "", **kwargs: Any) -> None:
@@ -218,10 +243,13 @@ class Tracer:
         _store.append_step(trace_id, entry)
         _writer.write(entry)
         # stderr only
-        _log.info("trace_finish",
-                  trace_id=trace_id,
-                  status="success" if success else "failed",
-                  elapsed=f"{elapsed}s")
+        if _HAS_STRUCTLOG:
+            _log.info("trace_finish",
+                      trace_id=trace_id,
+                      status="success" if success else "failed",
+                      elapsed=f"{elapsed}s")
+        else:
+            _log.info(f"[trace_finish] {trace_id} | status={'success' if success else 'failed'} | elapsed={elapsed}s")
 
     def get(self, trace_id: str) -> Optional[dict]:
         return _store.get(trace_id)
