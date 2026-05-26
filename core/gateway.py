@@ -2,9 +2,9 @@
 core/gateway.py -- FastAPI REST gateway.
 
 Exposes the agent stack over HTTP so external clients can interact:
-  - Machine-to-machine (second PC running same stack)
-  - Phone / browser (simple curl or fetch)
-  - Messaging adapters (Discord, Telegram, WhatsApp -- Phase 9b)
+- Machine-to-machine (second PC running same stack)
+- Phone / browser (simple curl or fetch)
+- Messaging adapters (Discord, Telegram, WhatsApp -- Phase 9b)
 
 Endpoints:
   POST /task              Submit a task, get trace_id back immediately
@@ -23,12 +23,12 @@ P0-1: stdout pollution
   All output now goes to sys.stderr. MCP stdio channel stays clean.
 
 P0-2: Gateway insecure defaults
-  - Default host changed to 127.0.0.1 (not 0.0.0.0).
-  - Startup guard: if GATEWAY_SECRET == "changeme", server refuses to start
-    in production mode (cfg.env != "dev"). Dev mode warns loudly to stderr.
-  - Rate limiting via slowapi: 30 req/min on /chat, 60 req/min on /task.
-    Brute-force auth attempts are limited by the same rate limiter since
-    every request goes through auth first.
+  Default host changed to 127.0.0.1 (not 0.0.0.0).
+  Startup guard: if GATEWAY_SECRET == "changeme", server refuses to start
+  in production mode (cfg.env != "dev"). Dev mode warns loudly to stderr.
+  Rate limiting via slowapi: 30 req/min on /chat, 60 req/min on /task.
+  Brute-force auth attempts are limited by the same rate limiter since
+  every request goes through auth first.
 
 P1-3: Workflow status
   _dispatch() wraps run_workflow() result and ensures a status key is always
@@ -47,33 +47,68 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+
 _AGENT_ROOT = Path(__file__).resolve().parent.parent
 if str(_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENT_ROOT))
 
 import time
 import uuid
+import threading
 from typing import Any, Optional
+
 from core.config import cfg
 from core.tracer import tracer
+
+# ── FastAPI & Pydantic imports (Module-level for ForwardRef resolution) ────
+# Must be at module level because `from __future__ import annotations` turns
+# type hints into strings. FastAPI needs these in the global namespace to
+# resolve them correctly when registering routes inside the factory.
+try:
+    from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Query
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
+except ImportError:
+    raise ImportError("FastAPI/Pydantic not installed. Run: pip install fastapi uvicorn pydantic")
+
 
 # ── ChromaDB warmup (P1-7) ---------------------------------------------------
 def _warmup_memory(timeout: int = 60) -> None:
     """
     Trigger ChromaDB embedding model load at startup.
+
     The first call to memory downloads/initialises all-MiniLM-L6-v2.
-    On a cold start this can take 30-60s, which exceeds MCP tool timeouts
+    On a cold start this can take 30-60s, which exceeds MCP tool ti meouts
     and causes confusing errors. Warming up here blocks server start until
     the model is ready, giving callers a reliable experience.
     """
-    print("[startup] warming up ChromaDB embedding model...", file=sys.stderr)
-    start = time.time()
-    try:
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+    def _do_warmup() -> None:
+        """Inner function to run warmup in isolated thread."""
         from core.memory import memory as _mem
         # A recall with no results is fine -- we just need the model loaded
         _mem.recall("warmup", top_k=1)
+
+    print("[startup] warming up ChromaDB embedding model...", file=sys.stderr)
+    start = time.time()
+    try:
+        # Run warmup in thread with hard timeout to prevent indefinite hangs
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_do_warmup)
+            future.result(timeout=timeout)
+
         elapsed = round(time.time() - start, 1)
         print(f"[startup] ChromaDB ready ({elapsed}s)", file=sys.stderr)
+
+    except FuturesTimeoutError:
+        elapsed = round(time.time() - start, 1)
+        print(
+            f"[startup] ChromaDB warmup TIMEOUT after {elapsed}s — proceeding in degraded mode\n"
+            f"          Memory calls may be slow on first use.",
+            file=sys.stderr,
+        )
     except Exception as e:
         elapsed = round(time.time() - start, 1)
         print(
@@ -82,35 +117,38 @@ def _warmup_memory(timeout: int = 60) -> None:
             file=sys.stderr,
         )
 
+
 # ── SQLite task store --------------------------------------------------------
 import sqlite3 as _sqlite3
 import json    as _json_mod
+
 _TASK_DB_PATH = None
-_task_db_lock = __import__("threading").Lock()
+_task_db_lock = threading.Lock()
+
 
 def _get_task_db() -> _sqlite3.Connection:
     global _TASK_DB_PATH
     try:
         if _TASK_DB_PATH is None:
             _TASK_DB_PATH = cfg.memory_root / "gateway_tasks.db"
-            conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False, timeout=30.0)
-            # Strategy C: Enable WAL mode and busy_timeout to prevent lock contention
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA busy_timeout=5000;")
-            conn.execute("PRAGMA wal_autocheckpoint=1000;")  # Prevents unbounded .wal growth
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS tasks (
-                    trace_id  TEXT PRIMARY KEY,
-                    status    TEXT NOT NULL DEFAULT 'pending',
-                    submitted REAL NOT NULL,
-                    completed REAL,
-                    result    TEXT,
-                    error     TEXT, 
-                    payload   TEXT
-                )
-            """)
-            conn.commit()
-            return conn
+        conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False, timeout=30.0)
+        # Strategy C: Enable WAL mode and busy_timeout to prevent lock contention
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        conn.execute("PRAGMA wal_autocheckpoint=1000;")  # Prevents unbounded .wal growth
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                trace_id  TEXT PRIMARY KEY,
+                status    TEXT NOT NULL DEFAULT 'pending',
+                submitted REAL NOT NULL,
+                completed REAL,
+                result    TEXT,
+                error     TEXT, 
+                payload   TEXT
+            )
+        """)
+        conn.commit()
+        return conn
     except Exception as e:
         tracer.error(f"Failed to initialize SQLite task database at {_TASK_DB_PATH}: {e}")
         # Check for critical errors that should prevent startup
@@ -118,7 +156,8 @@ def _get_task_db() -> _sqlite3.Connection:
         if any(kw in error_str for kw in ['permission denied', 'no such file or directory', 'read-only']):
             print(f"\n[FATAL] SQLite database initialization failed: {e}", file=sys.stderr)
             raise
-    return _sqlite3.connect(str(_TASK_DB_PATH))
+        return _sqlite3.connect(str(_TASK_DB_PATH))
+
 
 def _store_task(trace_id: str, payload: dict) -> None:
     with _task_db_lock:
@@ -130,6 +169,7 @@ def _store_task(trace_id: str, payload: dict) -> None:
         )
         db.commit()
         db.close()
+
 
 def _update_task(trace_id: str, status: str,
                  result: Any = None, error: str = "") -> None:
@@ -145,16 +185,19 @@ def _update_task(trace_id: str, status: str,
         db.commit()
         db.close()
 
+
 def _get_task(trace_id: str) -> dict | None:
     with _task_db_lock:
         db  = _get_task_db()
         row = db.execute(
-            "SELECT trace_id, status, submitted, completed, result, error  "
-            "FROM tasks WHERE trace_id=?", (trace_id,)
+            "SELECT trace_id, status, submitted, completed, result, error"
+            " FROM tasks WHERE trace_id=?", (trace_id,)
         ).fetchone()
         db.close()
+
     if not row:
         return None
+
     result = None
     if row[4]:
         try:
@@ -162,15 +205,18 @@ def _get_task(trace_id: str) -> dict | None:
         except Exception as e:
             tracer.error(f"Failed to parse task result from SQLite (trace_id={trace_id}): {e}")
             result = row[4]  # Fallback to raw JSON string
+
     return {
-        "trace_id":  row[0], "status": row[1],
-        "submitted": row[2], "completed": row[3],
-        "result":    result,  "error": row[5] or "",
+        "trace_id":  row[0],  "status": row[1],
+        "submitted": row[2],  "completed": row[3],
+        "result":    result,   "error": row[5] or "",
     }
+
 
 # ── Background task runner ---------------------------------------------------
 # Global executor to pool and reuse worker threads (prevents thread explosion)
 _TASK_EXECUTOR = None
+
 
 def _get_executor():
     global _TASK_EXECUTOR
@@ -178,6 +224,7 @@ def _get_executor():
         from concurrent.futures import ThreadPoolExecutor
         _TASK_EXECUTOR = ThreadPoolExecutor(max_workers=10, thread_name_prefix="gw-task")
     return _TASK_EXECUTOR
+
 
 def _run_task_background(trace_id: str, payload: dict, timeout: float = 300) -> None:
     """Run task using ThreadPoolExecutor with a background timeout monitor."""
@@ -207,11 +254,13 @@ def _run_task_background(trace_id: str, payload: dict, timeout: float = 300) -> 
     # Monitor runs in background so the HTTP endpoint returns immediately
     threading.Thread(target=_monitor_timeout, daemon=True).start()
 
+
 def _dispatch(trace_id: str, payload: dict) -> Any:
     """
     Dispatch a task payload to the appropriate tool or workflow.
+
     P1-3 fix: always returns a dict with a 'status' key.
-    Workflows that complete without raising are tagged 'success' here
+    Workflows that complete without raising are tagged 'success' her e
     so polling clients always see a terminal status.
     """
     tool   = payload.get("tool", "")
@@ -236,7 +285,7 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
             trace_id      = trace_id,
             **params,
         )
-        # Ensure terminal status is always present (P1-3)
+        # Ensure terminal status  is always present (P1-3)
         if isinstance(result, dict) and "status" not in result:
             result["status"] = "success"
         return result
@@ -283,16 +332,29 @@ def _dispatch(trace_id: str, payload: dict) -> Any:
 
     return {"status": "error", "error": f"Unknown tool: '{tool}'"}
 
+
+# ── Request/response models (Module-level to prevent ForwardRef issues) ────
+# Because of `from __future__ import annotations`, FastAPI needs these
+# in the global namespace to resolve the string annotations correctly.
+class TaskRequest(BaseModel):
+    goal:     Optional[str]  = None
+    workflow: Optional[str]  = "auto"
+    tool:     Optional[str]  = None
+    action:   Optional[str]  = None
+    params:   Optional[dict] = None
+    platform: Optional[str]  = "api"
+    user:     Optional[str]  = None
+
+
+class ChatRequest(BaseModel):
+    message:  str
+    platform: Optional[str] = "api"
+    user:     Optional[str] = None
+
+
 # ── FastAPI app factory ------------------------------------------------------
 def create_app():
     """Create and configure the FastAPI application."""
-    try:
-        from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request, Query
-        from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-        from fastapi.middleware.cors import CORSMiddleware
-        from pydantic import BaseModel
-    except ImportError:
-        raise ImportError("FastAPI not installed. Run: pip install fastapi uvicorn")
 
     # ── Rate limiting (P0-2) -------------------------------------------------
     # slowapi is a thin wrapper around limits that integrates with FastAPI.
@@ -325,7 +387,7 @@ def create_app():
         if env != "dev":
             # Hard stop in production -- do not start with default secret
             print(
-                "[FATAL] GATEWAY_SECRET is 'changeme'.  "
+                "[FATAL] GATEWAY_SECRET is 'changeme'. "
                 "Set a strong secret in .env before running in production.",
                 file=sys.stderr,
             )
@@ -340,7 +402,7 @@ def create_app():
     # ── ChromaDB warmup (P1-7) -----------------------------------------------
     _warmup_memory()
 
-    # [PHASE 2 FIX] Config validation on startup
+    # [PHASE 2 FIX] Config validation on startu p
     from core.config_validation import validate_config
     validate_config()
 
@@ -375,27 +437,12 @@ def create_app():
 
         P0-2 fix: secret is validated at startup (above). Here we only check
         the incoming token. No print() to stdout -- all warnings go to stderr
-        so MCP stdio channel stays clean (P0-1).
+        so  MCP stdio channel stays clean (P0-1).
         """
         _secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
         if _secret != "changeme":
             if not creds or creds.credentials != _secret:
                 raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # ── Request/response models ----------------------------------------------
-    class TaskRequest(BaseModel):
-        goal:     Optional[str]  = None
-        workflow: Optional[str]  = "auto"
-        tool:     Optional[str]  = None
-        action:   Optional[str]  = None
-        params:   Optional[dict] = {}
-        platform: Optional[str]  = "api"
-        user:     Optional[str]  = None
-
-    class ChatRequest(BaseModel):
-        message:  str
-        platform: Optional[str] = "api"
-        user:     Optional[str] = None
 
     # ── Endpoints ------------------------------------------------------------
 
@@ -472,7 +519,7 @@ def create_app():
     def health_models(_: None = Depends(_check_auth)):
         import httpx as _httpx
         required = {
-            "planner":  cfg.planner_model,
+            "planner": cfg.planner_model,
             "executor": cfg.executor_model,
             "router":   cfg.router_model,
         }
@@ -487,7 +534,7 @@ def create_app():
                 if not found:
                     all_ok = False
             return {
-                "status":         "ok" if all_ok else "degraded",
+                "status":          "ok" if all_ok else "degraded",
                 "all_loaded":    all_ok,
                 "models":        status,
                 "loaded_models": loaded,
@@ -508,6 +555,7 @@ def create_app():
     def metrics_endpoint(_: None = Depends(_check_auth)):
         """
         GET /metrics -- Prometheus telemetry endpoint.
+
         Returns standard Prometheus text/plain metrics for autocode nodes,
         task outcomes, TDD iterations, and LLM token usage.
         Auth: Bearer token (GATEWAY_SECRET).
@@ -520,7 +568,8 @@ def create_app():
     def autocode_graph(_: None = Depends(_check_auth)):
         """
         GET /autocode/graph -- Mermaid flowchart of the autocode state machine.
-        Dynamically extracts nodes & routing from the LangGraph definition.
+
+        Dynamically extracts nodes  & routing from the LangGraph definition.
         Useful for debugging routing loops or documenting workflow structure.
         Auth: Bearer token (GATEWAY_SECRET).
         """
@@ -567,7 +616,7 @@ def create_app():
 
         return {
             "trace_id": trace_id,
-            "status":    "submitted",
+            "status":     "submitted",
             "poll_url": f"/result/{trace_id}",
         }
 
@@ -619,14 +668,14 @@ def create_app():
             result = _dispatch(trace_id, payload)
             return {
                 "trace_id": trace_id,
-                "status":    "success",
+                "status":     "success",
                 "result":   result,
                 "platform": req.platform,
             }
         except Exception as e:
             return {
                 "trace_id": trace_id,
-                "status":    "failed",
+                "status":     "failed",
                 "error":    str(e),
                 "platform": req.platform,
             }
@@ -636,6 +685,7 @@ def create_app():
         return {"traces": tracer.recent(10)}
 
     return app
+
 
 # ── Standalone runner --------------------------------------------------------
 if __name__ == "__main__":

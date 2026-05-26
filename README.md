@@ -124,9 +124,16 @@ A fully autonomous, safety-first TDD coding agent. It will **never** touch prote
 ```powershell
 git clone https://github.com/brunogcar/agent agent
 cd agent
+
+# Recommended: Use a virtual environment (prevents dependency conflicts)
 python -m venv venv
 .\venv\Scripts\activate
+
+# Install dependencies (includes chromadb, fastapi, langgraph, etc.)
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+
+# Install Playwright browsers for web scraping
 playwright install
 ```
 
