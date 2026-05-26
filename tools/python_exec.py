@@ -57,7 +57,8 @@ FORBIDDEN_IN_SANDBOX = ["__import__", "eval(", "exec(", "open(", "compile("]
 # Blocks imports, dangerous builtins, and module attribute access.
 DANGEROUS_BUILTINS = {
     "eval", "exec", "compile", "open", "__import__",
-    "input", "breakpoint", "globals", "locals", "vars", "dir"
+    "input", "breakpoint", "globals", "locals", "vars", "dir",
+    "getattr", "setattr", "delattr"
 }
 DANGEROUS_MODULES = {"os", "sys", "subprocess", "shutil", "socket", "ctypes", "multiprocessing"}
 
@@ -86,6 +87,20 @@ def _validate_sandbox_ast(code: str) -> tuple[bool, str]:
             if isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name) and func.value.id in DANGEROUS_MODULES:
                     return False, f"Blocked dangerous module access: {func.value.id}.{func.attr}() in sandbox mode."
+
+        # Block dynamic subscript resolution (e.g., __builtins__["eval"])
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if node.slice.value in DANGEROUS_BUILTINS:
+                    return False, f"Blocked dynamic subscript access to '{node.slice.value}' in sandbox mode."
+
+        # Block definition-time execution vectors
+        if isinstance(node, ast.ClassDef):
+            return False, "Class definitions (metaclass attacks) are not allowed in sandbox mode."
+        if isinstance(node, ast.AsyncFunctionDef):
+            return False, "Async functions are not allowed in sandbox mode."
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            return False, "Context managers (with statements) are not allowed in sandbox mode."
 
     return True, ""
 

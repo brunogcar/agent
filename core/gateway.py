@@ -109,6 +109,8 @@ def _warmup_memory(timeout: int = 60) -> None:
             f"          Memory calls may be slow on first use.",
             file=sys.stderr,
         )
+        # Log to tracer so it shows up in structured debugging/telemetry
+        tracer.warning("memory_warmup_timeout", timeout=timeout, elapsed=elapsed, msg="Proceeding in degraded mode")
     except Exception as e:
         elapsed = round(time.time() - start, 1)
         print(
