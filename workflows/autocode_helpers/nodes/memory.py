@@ -3,13 +3,15 @@ Procedural memory node.
 """
 
 from __future__ import annotations
+
 import json
+
 from typing import Any
 
 from workflows.autocode_helpers.state import AutocodeState
 from core.tracer import tracer
 
-def node_distill_memory(state: AutocodeState) -> AutocodeState:
+def node_distill_memory(state: AutocodeState) -> dict:
     """
     Store successful debug fixes as procedural knowledge.
     """
@@ -19,12 +21,11 @@ def node_distill_memory(state: AutocodeState) -> AutocodeState:
     commit_sha = state.get("commit_sha", "")
     hypothesis = state.get("hypothesis", "")
     defense_note = state.get("defense_note", "")
-
     tracer.step(tid, "node_distill_memory", "Storing procedural memory...")
 
     # Only store memory for debug fixes
     if task_type not in ["fix", "fix_error"]:
-        return state
+        return {}
 
     memory_entry = {
         "task": task,
@@ -51,4 +52,4 @@ def node_distill_memory(state: AutocodeState) -> AutocodeState:
     except Exception as e:
         tracer.error(tid, "node_distill_memory", f"Failed to store memory: {e}")
 
-    return state
+    return {}

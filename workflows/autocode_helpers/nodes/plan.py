@@ -3,19 +3,21 @@ Plan writing node.
 """
 
 from __future__ import annotations
+
 import re
+
 from typing import Any
+
 from workflows.autocode_helpers.state import AutocodeState, PLANNER_TIMEOUT
 from workflows.autocode_helpers.constants import PLAN_SYSTEM
 from workflows.autocode_helpers.helpers import _call, _parse_json_array
 from core.tracer import tracer
 
-def node_write_plan(state: AutocodeState) -> AutocodeState:
+def node_write_plan(state: AutocodeState) -> dict:
     """Generate step-by-step implementation plan."""
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
-        return state
-
+        return {}
     spec = state.get("spec") or state["task"]
     tracer.step(tid, "write_plan", "writing plan")
 
@@ -37,4 +39,4 @@ def node_write_plan(state: AutocodeState) -> AutocodeState:
     branch = f"autocode/{slug}"
 
     tracer.step(tid, "write_plan", f"{len(plan)} steps, branch: {branch}")
-    return {**state, "spec": spec, "plan": plan, "branch": branch, "current_step": 0}
+    return {"spec": spec, "plan": plan, "branch": branch, "current_step": 0}

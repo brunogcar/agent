@@ -1,12 +1,15 @@
 """
 Test runner node for autocode workflow.
 """
+
 from __future__ import annotations
 
 import subprocess
 import sys
+
 from pathlib import Path
 from typing import Any
+
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_helpers.state import AutocodeState
@@ -18,7 +21,6 @@ def run_tests_on_disk(test_files: list[str], project_root: str = None) -> dict:
     # Use workspace_root as default, but allow override
     if project_root is None:
         project_root = str(cfg.workspace_root)
-    
     test_paths = [str(Path(project_root) / tf) for tf in test_files]
     cmd = [sys.executable, "-m", "pytest", "-v", "--tb=short", *test_paths]
 
@@ -51,35 +53,37 @@ def run_tests_on_disk(test_files: list[str], project_root: str = None) -> dict:
             "returncode": -2
         }
 
-def node_run_tests(state: AutocodeState) -> AutocodeState:
+def node_run_tests(state: AutocodeState) -> dict:
     """
     Run tests for the current TDD iteration.
     """
     tid = state.get("trace_id", "")
     tracer.step(tid, "run_tests", "Running tests")
-    
     # Get test files from state
     test_files = state.get("test_files", [])
     if not test_files:
-        return {**state, "status": "error", "error": "No test files to run"}
+        return {"status": "error", "error": "No test files to run"}
 
     # Run tests
     test_results = run_tests_on_disk(test_files)
-    state["test_results"] = test_results
+    current_iter = state.get("tdd_iteration", 0) + 1
 
-    # Update TDD iteration
-    state["tdd_iteration"] = state.get("tdd_iteration", 0) + 1
+    # Build partial update dict instead of mutating state directly
+    updates = {
+        "test_results": test_results,
+        "tdd_iteration": current_iter,
+    }
 
     if test_results.get("success"):
-        tracer.step(tid, "run_tests", f"Tests passed in {state['tdd_iteration']} iterations")
-        state["tdd_status"] = "passed"
-        state["tdd_error"] = ""
-        
+        tracer.step(tid, "run_tests", f"Tests passed in {current_iter} iterations")
+        updates["tdd_status"] = "passed"
+        updates["tdd_error"] = ""
+
         # [PHASE 3 FIX] Wire success callback: store procedural memory on convergence
         try:
             from core.memory import memory
             memory.store(
-                text=f"TDD converged after {state['tdd_iteration']} iterations for task: '{state.get('task', '')}'",
+                text=f"TDD converged after {current_iter} iterations for task: '{state.get('task', '')}'",
                 memory_type="procedural",
                 importance=7,
                 tags="tdd_success,converged,autocode",
@@ -88,10 +92,10 @@ def node_run_tests(state: AutocodeState) -> AutocodeState:
             )
         except Exception:
             pass  # Non-fatal: memory storage failure should not break the workflow
-            
-    else:
-        state["tdd_status"] = "failed"
-        state["tdd_error"] = test_results.get("stderr", "Tests failed")
-        tracer.step(tid, "run_tests", f"Tests failed (iteration {state['tdd_iteration']})")
 
-    return state
+    else:
+        updates["tdd_status"] = "failed"
+        updates["tdd_error"] = test_results.get("stderr", "Tests failed")
+        tracer.step(tid, "run_tests", f"Tests failed (iteration {current_iter})")
+
+    return updates

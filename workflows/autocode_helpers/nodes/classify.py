@@ -3,17 +3,18 @@ Task classification node.
 """
 
 from __future__ import annotations
+
 from typing import Any
+
 from workflows.autocode_helpers.state import AutocodeState, ROUTER_TIMEOUT
 from workflows.autocode_helpers.constants import TASK_CLASSIFIER_SYSTEM
 from workflows.autocode_helpers.helpers import _call, _parse_json
 from core.tracer import tracer
 
-def node_classify_task(state: AutocodeState) -> AutocodeState:
+def node_classify_task(state: AutocodeState) -> dict:
     """Classify task type to route feature vs fix/refactor/edit/create_skill paths."""
     tid = state.get("trace_id", "")
     tracer.step(tid, "classify_task", f"classifying: {state['task'][:60]}")
-
     raw  = _call(
         role    = "router",
         system  = TASK_CLASSIFIER_SYSTEM,
@@ -41,7 +42,10 @@ def node_classify_task(state: AutocodeState) -> AutocodeState:
 
     if questions and task_type == "unclear":
         qs = "\n".join(f"- {q}" for q in questions)
-        return {**state, "task_type": task_type,
-                "status": "needs_clarification", "result": qs}
+        return {
+            "task_type": task_type,
+            "status": "needs_clarification",
+            "result": qs
+        }
 
-    return {**state, "task_type": task_type}
+    return {"task_type": task_type}

@@ -3,7 +3,9 @@ Brainstorming node.
 """
 
 from __future__ import annotations
+
 from typing import Any
+
 from workflows.autocode_helpers.state import AutocodeState, PLANNER_TIMEOUT
 from workflows.autocode_helpers.constants import (
     BRAINSTORM_SYSTEM,
@@ -15,19 +17,18 @@ from workflows.autocode_helpers.constants import (
 from workflows.autocode_helpers.helpers import _call, _parse_json, _files_context
 from core.tracer import tracer
 
-def node_brainstorm(state: AutocodeState) -> AutocodeState:
+def node_brainstorm(state: AutocodeState) -> dict:
     """Refine the spec using the appropriate system prompt for the task type."""
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
-        return state
-
+        return {}
     task_type = state.get("task_type", "feature")
     tracer.step(tid, "brainstorm", f"starting for {task_type}")
 
     # create_skill skips brainstorm entirely -- its spec is embedded in CREATE_SKILL_SYSTEM
     if task_type == "create_skill":
         tracer.step(tid, "brainstorm", "create_skill: skipping brainstorm")
-        return state
+        return {}  # No state update needed
 
     # ── Memory recall (all tasks) ──
     try:
@@ -66,8 +67,11 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
 
     if data.get("questions"):
         qs = "\n".join(f"- {q}" for q in data["questions"])
-        return {**state, "memory_context": mem_ctx,
-                "status": "needs_clarification", "result": qs}
+        return {
+            "memory_context": mem_ctx,
+            "status": "needs_clarification",
+            "result": qs
+        }
 
     spec   = data.get("spec", state["task"])
     ac     = data.get("acceptance_criteria", [])
@@ -83,4 +87,4 @@ def node_brainstorm(state: AutocodeState) -> AutocodeState:
                 + "\n".join(f"- {i}" for i in impact)
 
     tracer.step(tid, "brainstorm", f"spec ready ({len(spec)} chars)")
-    return {**state, "memory_context": mem_ctx, "spec": spec}
+    return {"memory_context": mem_ctx, "spec": spec}

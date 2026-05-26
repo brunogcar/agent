@@ -10,14 +10,13 @@ from workflows.autocode_helpers.state import AutocodeState
 from workflows.autocode_helpers.git_ops import _git_commit
 from core.tracer import tracer
 
-def node_commit(state: AutocodeState) -> AutocodeState:
+def node_commit(state: AutocodeState) -> dict:
     """Commit the verified change."""
     tid = state.get("trace_id", "")
     if state.get("status") in ("needs_clarification", "failed"):
-        return state
+        return {}
     if not state.get("verification_passed"):
-        return state
-
+        return {}
     plan = state.get("plan", [])
     labels = ", ".join(
         s["label"] for s in plan
@@ -45,11 +44,12 @@ def node_commit(state: AutocodeState) -> AutocodeState:
     ]
     if state.get("skill_path"):
         result_lines.append(f"Skill: {state['skill_path']}")
-    result_lines += ["", state.get("verification_notes", "")]
+    result_lines += [" ", state.get("verification_notes", " ")]
     if state.get("defense_note"):
         result_lines.append(f"\nDefense note: {state['defense_note']}")
 
-    return {**state,
-             "status":      "done",
-             "commit_sha": sha or "",
-             "result":      "\n".join(result_lines)}
+    return {
+        "status": "done",
+        "commit_sha": sha or "",
+        "result": "\n".join(result_lines)
+    }

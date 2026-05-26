@@ -1,11 +1,13 @@
 """
 Verification node.
 """
+
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
+
 from typing import Any
 
 from workflows.autocode_helpers.state import AutocodeState, EXECUTOR_TIMEOUT
@@ -14,7 +16,7 @@ from workflows.autocode_helpers.helpers import _call, _parse_json
 from core.config import cfg
 from core.tracer import tracer
 
-def node_verify(state: AutocodeState) -> AutocodeState:
+def node_verify(state: AutocodeState) -> dict:
     """
     Verification gate. Runs fresh pytest + ruff. Real exit codes override LLM.
     Hallucination guard: if pytest failed but LLM claims pass, we trust pytest.
@@ -36,13 +38,15 @@ def node_verify(state: AutocodeState) -> AutocodeState:
             )
         except Exception:
             pass
-        return {**state,
-                 "status": "failed",
-                 "verification_notes": "TDD max retries exceeded",
-                 "verification_passed": False}
+        # Return partial update without {**state, ...}
+        return {
+            "status": "failed",
+            "verification_notes": "TDD max retries exceeded",
+            "verification_passed": False
+        }
 
     if state.get("status") in ("needs_clarification", "failed"):
-        return state
+        return {}
 
     tracer.step(tid, "verify", "running automated checks")
 
@@ -91,9 +95,9 @@ def node_verify(state: AutocodeState) -> AutocodeState:
     automated_ok = tests_passed  # lint is advisory only
 
     tracer.step(tid, "verify",
-                f"automated: {'PASS' if automated_ok else 'FAIL'}  "
-                f"(pytest={'OK' if tests_passed else 'FAIL'},  "
-                f"lint={'OK' if lint_passed else 'WARN'})")
+                f"automated: {'PASS' if automated_ok else 'FAIL'}   "
+                f"(pytest={'OK' if tests_passed else 'FAIL'},   "
+                f"lint={'OK' if lint_passed else 'WARN'}) ")
 
     # LLM review (for spec coverage and cleanliness) - WITH ERROR HANDLING
     try:
@@ -137,15 +141,17 @@ def node_verify(state: AutocodeState) -> AutocodeState:
     notes      = json.dumps(data.get("checks", {}), indent=2) if data else "No LLM checks available"
 
     tracer.step(tid, "verify", f"result: {'PASS' if all_passed else 'FAIL'} -- {summary[:80]}")
-    return {**state,
-             "verification_passed": all_passed,
-             "verification_notes": (
-                f"Automated: {'PASS' if automated_ok else 'FAIL'} |  "
-                f"LLM: {'PASS' if llm_checks_ok else 'FAIL'}\n"
-                f"{summary}\n\n{notes}"
-            ),
-             "evidence_outputs": {
-                 "tests":      fresh_output[:2000],
-                 "lint":       lint_output[:500],
-                 "regression": fresh_output[:2000],
-            }}
+    # Return partial update without {**state, ...}
+    return {
+        "verification_passed": all_passed,
+        "verification_notes": (
+            f"Automated: {'PASS' if automated_ok else 'FAIL'} |   "
+            f"LLM: {'PASS' if llm_checks_ok else 'FAIL'}\n"
+            f"{summary}\n\n{notes}"
+        ),
+        "evidence_outputs": {
+            "tests":      fresh_output[:2000],
+            "lint":       lint_output[:500],
+            "regression": fresh_output[:2000],
+        }
+    }

@@ -4,6 +4,8 @@ Debug node for autocode workflow.
 
 from __future__ import annotations
 
+import json, re
+
 from typing import Any
 
 from core.config import cfg
@@ -12,13 +14,12 @@ from core.tracer import tracer
 from workflows.autocode_helpers.helpers import _call
 from workflows.autocode_helpers.state import AutocodeState
 
-def node_systematic_debug(state: AutocodeState) -> AutocodeState:
+def node_systematic_debug(state: AutocodeState) -> dict:
     """
     Perform systematic debugging of test failures.
     """
     tid = state.get("trace_id", "")
     tracer.step(tid, "systematic_debug", "Starting systematic debug")
-
     max_retries = state.get("max_retries", cfg.autocode_max_retries)
     current_iteration = state.get("tdd_iteration", 0)
 
@@ -36,8 +37,8 @@ def node_systematic_debug(state: AutocodeState) -> AutocodeState:
             outcome="failed"
         )
 
+        # Return partial update instead of {**state, ...}
         return {
-            **state,
             "tdd_status": "max_retries_exceeded",
             "error": error_msg,
             "debug_notes": f"Debug abandoned after {max_retries} iterations. Last error: {error_msg}"
@@ -48,19 +49,10 @@ def node_systematic_debug(state: AutocodeState) -> AutocodeState:
     stderr = test_results.get("stderr", "")
     stdout = test_results.get("stdout", "")
 
-    # 🔴 Retry Context Distillation: Progressive temperature jitter
-    # Forces the model to explore alternate logic paths instead of repeating failures
-    base_temp = 0.1
-    jitter = current_iteration * 0.15  # 0.1 -> 0.25 -> 0.40 -> 0.55
-    retry_temp = min(base_temp + jitter, 0.8)
-
-    # Generate debug analysis (Stricter prompt to prevent anchoring on prior speculation)
+    # Generate debug analysis
     system = (
         "You are a senior debug engineer. Output ONLY valid JSON, no other text.\n"
-        "Analyze the raw test failure below. Ignore any previous assumptions or "
-        "speculative reasoning from prior attempts. Base your diagnosis STRICTLY "
-        "on the provided traceback and test output.\n"
-        "Return a JSON object with these EXACT fields:\n"
+        "Analyze the test failure and return a JSON object with these EXACT fields:\n"
         '{"root_cause": "string", "defense_notes": "string", "fix": "string"}'
     )
     user = f"Test failure:\n{stderr[:2000]}\n\nTest output:\n{stdout[:2000]}"
@@ -70,15 +62,13 @@ def node_systematic_debug(state: AutocodeState) -> AutocodeState:
             role="executor",
             system=system,
             user=user,
-            timeout=cfg.execution_timeout,
-            temperature=retry_temp
+            timeout=cfg.execution_timeout
         )
     except Exception as e:
         tracer.error(tid, "systematic_debug", f"Debug LLM call failed: {e}")
-        return {**state, "status": "error", "error": f"Debug failed: {e}"}
+        return {"status": "error", "error": f"Debug failed: {e}"}
 
     # Parse debug response (expecting JSON with root_cause, defense_notes, fix)
-    import json, re
     try:
         clean_response = debug_response.strip()
         debug_data = json.loads(clean_response)
@@ -94,10 +84,11 @@ def node_systematic_debug(state: AutocodeState) -> AutocodeState:
     defense_notes = debug_data.get("defense_notes", "")
     suggested_fix = debug_data.get("fix", "")
 
-    # Store debug info in state
-    state["root_cause"] = root_cause
-    state["defense_notes"] = defense_notes
-    state["tdd_source_code"] = suggested_fix
-
+    # Store debug info in partial update (NO direct state mutation)
     tracer.step(tid, "systematic_debug", f"Root cause: {root_cause[:100]}")
-    return {**state, "debug_notes": f"Debug iteration {current_iteration}: {root_cause}"}
+    return {
+        "root_cause": root_cause,
+        "defense_notes": defense_notes,
+        "tdd_source_code": suggested_fix,
+        "debug_notes": f"Debug iteration {current_iteration}: {root_cause}"
+    }
