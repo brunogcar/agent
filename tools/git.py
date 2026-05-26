@@ -78,21 +78,32 @@ def _build_doc() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 @tool
 def git(
-    action: str,
-    message:   str  = "",
-    root:      str  = "agent",
+    action: str = "",
+    message:   str  =  "",
+    root:      str  =  "agent",
     n:         int  = 10,
-    path:      str  = "",
+    path:      str  =  "",
     force:     bool = False,
-    target:    str  = "",
-    trace_id:  str  = "",
+    target:    str  =  "",
+    trace_id:  str  =  "",
+    operation: str  =  "",  # 🔴 Backward-compat shim for legacy callers/memories
 ) -> dict:
     """
     Git version control actions. Dispatched via standardized registry.
     """
+    # 🔴 Backward-compat shim: map legacy 'operation' to 'action'
+    if operation and not action:
+        tracer.warning(trace_id, "git_deprecation", 
+                       "git(operation=...) is deprecated. Migrate to git(action=...).")
+        action = operation
+        
     action = action.strip().lower()
     if not trace_id:
         trace_id = tracer.new_trace("git", goal=action)
+
+    # 🔴 Cancellation Guard: Abort before any git mutations
+    from core.cancellation import ensure_not_cancelled
+    ensure_not_cancelled(trace_id)
 
     # 1. Resolve working directory (preserves backward-compat alias logic)
     cwd, err = _resolve_root(root, path)

@@ -93,7 +93,10 @@ def _get_task_db() -> _sqlite3.Connection:
     try:
         if _TASK_DB_PATH is None:
             _TASK_DB_PATH = cfg.memory_root / "gateway_tasks.db"
-            conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False)
+            conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False, timeout=30.0)
+            # Strategy C: Enable WAL mode and busy_timeout to prevent lock contention
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     trace_id  TEXT PRIMARY KEY,
@@ -165,19 +168,22 @@ def _get_task(trace_id: str) -> dict | None:
     }
 
 # ── Background task runner ---------------------------------------------------
+# Global executor to pool and reuse worker threads (prevents thread explosion)
+_TASK_EXECUTOR = None
+
+def _get_executor():
+    global _TASK_EXECUTOR
+    if _TASK_EXECUTOR is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _TASK_EXECUTOR = ThreadPoolExecutor(max_workers=10, thread_name_prefix="gw-task")
+    return _TASK_EXECUTOR
+
 def _run_task_background(trace_id: str, payload: dict, timeout: float = 300) -> None:
-    """Run task with hard timeout to prevent zombie threads."""
-    import threading
+    """Run task using ThreadPoolExecutor with a background timeout monitor."""
     import sys
-    
-    def _run_with_timeout() -> None:
-        thread = threading.Thread(target=_run_inner, daemon=True)
-        thread.start()
-        thread.join(timeout=timeout)
-        if thread.is_alive():
-            print(f"[gateway] ERROR: Task '{trace_id}' exceeded {timeout}s limit", file=sys.stderr)
-            _update_task(trace_id, "failed", error=f"Task exceeded {timeout}s timeout")
-    
+    import threading
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
+
     def _run_inner() -> None:
         try:
             _update_task(trace_id, "running")
@@ -185,9 +191,20 @@ def _run_task_background(trace_id: str, payload: dict, timeout: float = 300) -> 
             _update_task(trace_id, "success", result=result)
         except Exception as e:
             _update_task(trace_id, "failed", error=str(e))
-    
-    wrapper = threading.Thread(target=_run_with_timeout, daemon=True)
-    wrapper.start()
+
+    executor = _get_executor()
+    future = executor.submit(_run_inner)
+
+    def _monitor_timeout():
+        try:
+            future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            print(f"[gateway] ERROR: Task '{trace_id}' exceeded {timeout}s limit", file=sys.stderr)
+            _update_task(trace_id, "failed", error=f"Task exceeds {timeout}s timeout")
+            future.cancel()  # Best effort cancellation
+
+    # Monitor runs in background so the HTTP endpoint returns immediately
+    threading.Thread(target=_monitor_timeout, daemon=True).start()
 
 def _dispatch(trace_id: str, payload: dict) -> Any:
     """

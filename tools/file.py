@@ -130,4 +130,9 @@ def file(action: str, trace_id: str = "", **kwargs) -> dict:
     """
     if not trace_id:
         trace_id = tracer.new_trace("file", goal=action)
+
+    # 🔴 Cancellation Guard: Abort before any file mutations
+    from core.cancellation import ensure_not_cancelled
+    ensure_not_cancelled(trace_id)
+
     return _safe_dispatch_file(action.strip().lower(), trace_id=trace_id, **kwargs)

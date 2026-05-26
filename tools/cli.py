@@ -63,13 +63,16 @@ def cli(command: str) -> str:
     2. Shell whitelist (zero LLM tokens)
     3. Router dispatch (LLM-based routing)
     4. Executor escalation (free-form reasoning)
-
     Args:
         command: Natural language command string
 
     Returns:
         Command output or result as string
     """
+    # 🔴 Cancellation Guard: Abort before executing shell commands or LLM routing
+    from core.cancellation import ensure_not_cancelled
+    ensure_not_cancelled()
+
     # Sanitize input first
     try:
         command = _sanitize_command(command)

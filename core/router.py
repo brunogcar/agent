@@ -208,13 +208,15 @@ class TaskRouter:
         r = llm.complete(
             role   = "router",
             system = (
-                "You are a task router. Output ONLY a JSON object. "
-                "No thinking. No explanation. Start with { end with }.\n"
-                'Format: {"workflow":"research or data or autocode",'
-                '"tool":"web or python or file or git or memory or agent or notify or report or workflow",'
-                '"complexity":5,'
-                '"reason":"one sentence",'
-                '"confidence":"high or medium or low"}'
+                "You are a task router. Output ONLY a JSON object wrapped in <tool_call> tags. "
+                "No thinking. No explanation.\n"
+                "<tool_call>\n"
+                '{"workflow": "research or data or autocode",'
+                ' "tool": "web or python or file or git or memory or agent or notify or report or workflow",'
+                ' "complexity":5,'
+                ' "reason": "one sentence",'
+                ' "confidence": "high or medium or low"}\n'
+                "</tool_call>\n"
                 "\n\nRouting rules:"
                 "\n- research: finding info, summarising, reading docs, Q&A"
                 "\n- data: pandas, analysis, calculations, charts, spreadsheets"
@@ -229,17 +231,24 @@ class TaskRouter:
             return None
 
         # Parse JSON from response
-        text  = r.text.strip()
+        text = r.text.strip()
         clean = text
-        for fence in ("```json", "```"):
-            if clean.startswith(fence):
-                clean = clean[len(fence):]
-        clean = clean.strip().rstrip("`").strip()
 
-    # Extract first JSON object using robust bracket-counting parser
-        extracted = self._extract_first_json(clean)
-        if extracted:
-            clean = extracted
+        # 🔴 Consensus Item 4: Tool-Call Envelopes (Prompt Injection Mitigation)
+        # Prefer explicit <tool_call> tags if the model followed instructions
+        envelope_match = re.search(r'<tool_call>\s*(.*?)\s*</tool_call>', text, re.DOTALL)
+        if envelope_match:
+            clean = envelope_match.group(1).strip()
+        else:
+            # Fallback: Strip markdown fences and use deterministic bracket-counting parser
+            for fence in ("```json", "```"):
+                if clean.startswith(fence):
+                    clean = clean[len(fence):]
+            clean = clean.strip().rstrip("`").strip()
+
+            extracted = self._extract_first_json(clean)
+            if extracted:
+                clean = extracted
 
         try:
             data = json.loads(clean)

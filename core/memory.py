@@ -221,17 +221,9 @@ class MemoryStore:
     ) -> dict:
         """Internal store — shared by all three typed store methods."""
         
-        # 🔴 CRITICAL: Async cancellation safety — abort before any side effects
-        import asyncio
-        try:
-            # get_running_loop() raises RuntimeError if no loop is active (e.g. sync calls)
-            loop = asyncio.get_running_loop()
-            task = asyncio.current_task(loop)
-            if task and task.cancelling() > 0:
-                raise asyncio.CancelledError("Workflow cancelled — aborting memory store operation")
-        except RuntimeError:
-            # No running event loop (called from synchronous code/tests) — safe to proceed
-            pass
+        # 🔴 Cancellation Guard: Abort before any memory mutations
+        from core.cancellation import ensure_not_cancelled
+        ensure_not_cancelled(trace_id)
 
         text_bytes = len(text.encode("utf-8"))
         if text_bytes > cfg.memory_max_entry_bytes:
