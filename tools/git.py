@@ -92,6 +92,8 @@ def git(
     Git version control actions. Dispatched via standardized registry.
     """
     # 🔴 Backward-compat shim: map legacy 'operation' to 'action'
+    if operation and action and operation != action:
+        raise ValueError(f"Conflicting parameters: action='{action}' vs operation='{operation}'. Use only 'action'.")
     if operation and not action:
         tracer.warning(trace_id, "git_deprecation", 
                        "git(operation=...) is deprecated. Migrate to git(action=...).")

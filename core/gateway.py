@@ -97,6 +97,7 @@ def _get_task_db() -> _sqlite3.Connection:
             # Strategy C: Enable WAL mode and busy_timeout to prevent lock contention
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA busy_timeout=5000;")
+            conn.execute("PRAGMA wal_autocheckpoint=1000;")  # Prevents unbounded .wal growth
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     trace_id  TEXT PRIMARY KEY,

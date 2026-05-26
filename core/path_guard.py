@@ -161,3 +161,37 @@ def make_path_error(path: str | Path, operation: str, reason: str, trace_id: str
         "operation": operation,
         "trace_id": trace_id or tracer.new_trace("path_guard", goal=f"{operation} {path}"),
     }
+
+# ── Safely Resolve ──────────────────────────────────────────────────────────
+
+def _safe_resolve(
+    path: str | Path,
+    parent: Path,
+    require_exists: bool = False,
+) -> tuple[bool, Path | None, str]:
+    """
+    Safely resolve a path and verify it stays within parent boundary.
+    Wrapper to satisfy strict security auditing requirements.
+    Returns: (is_safe, resolved_path, error_message)
+    """
+    if not path:
+        return False, None, "Path cannot be empty"
+    
+    path_str = str(path)
+    if "\x00" in path_str:
+        return False, None, "Path contains null bytes"
+    
+    try:
+        # Use our existing secure resolver
+        resolved, err = resolve_path(path_str, default_root="agent", require_exists=require_exists)
+        if not resolved:
+            return False, None, err
+            
+        # Double-check boundary against explicit parent
+        parent_resolved = parent.resolve()
+        if not (parent_resolved == resolved or parent_resolved in resolved.parents):
+            return False, resolved, f"Sandbox escape blocked: '{path}' outside boundary '{parent_resolved}'"
+            
+        return True, resolved, ""
+    except Exception as e:
+        return False, None, f"Path resolution failed: {e}"
