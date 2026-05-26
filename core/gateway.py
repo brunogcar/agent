@@ -165,17 +165,29 @@ def _get_task(trace_id: str) -> dict | None:
     }
 
 # ── Background task runner ---------------------------------------------------
-def _run_task_background(trace_id: str, payload: dict) -> None:
+def _run_task_background(trace_id: str, payload: dict, timeout: float = 300) -> None:
+    """Run task with hard timeout to prevent zombie threads."""
     import threading
-    def _run() -> None:
+    import sys
+    
+    def _run_with_timeout() -> None:
+        thread = threading.Thread(target=_run_inner, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            print(f"[gateway] ERROR: Task '{trace_id}' exceeded {timeout}s limit", file=sys.stderr)
+            _update_task(trace_id, "failed", error=f"Task exceeded {timeout}s timeout")
+    
+    def _run_inner() -> None:
         try:
             _update_task(trace_id, "running")
             result = _dispatch(trace_id, payload)
             _update_task(trace_id, "success", result=result)
         except Exception as e:
             _update_task(trace_id, "failed", error=str(e))
-
-    threading.Thread(target=_run, daemon=True).start()
+    
+    wrapper = threading.Thread(target=_run_with_timeout, daemon=True)
+    wrapper.start()
 
 def _dispatch(trace_id: str, payload: dict) -> Any:
     """

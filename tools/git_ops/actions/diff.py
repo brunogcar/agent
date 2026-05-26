@@ -5,6 +5,7 @@ filters the diff to a specific file (relative or absolute).
 Read-only operation.
 """
 from pathlib import Path
+
 from tools.git_ops._registry import register_action
 from tools.git_ops.helpers import _git
 
@@ -52,39 +53,29 @@ def run_diff(cwd, path: str = "", max_lines: int = 500, **kwargs) -> dict:
         }
 
     # ── P1-2: Smart Truncation ──────────────────────────────────────────────
-    # Use splitlines() for cross-platform compatibility (\n vs \r\n)
     lines = out.splitlines()
     total_lines = len(lines)
     truncated = total_lines > max_lines
 
     if truncated:
-        # Identify critical lines to preserve: headers, errors, exceptions
         critical_keywords = {"diff --git", "@@", "error:", "fatal:", "traceback", "exception"}
         critical_indices = {i for i, line in enumerate(lines) 
                            if any(kw in line.lower() for kw in critical_keywords)}
         
-        # Strategy: Keep first 25% + headers, last 25% + footer, and ALL critical lines
         header_end = next((i for i, line in enumerate(lines) 
                            if line.startswith("@@") or line.startswith("diff --git")), 10)
         keep_start = min(int(max_lines * 0.25) + header_end, total_lines // 2)
         keep_end = min(int(max_lines * 0.25) + 10, total_lines // 2)
         
-        # Build result: start block + critical middle lines + end block
         result = []
         seen_indices = set()
-        
-        # Add start block
         for i in range(keep_start):
             result.append(lines[i])
             seen_indices.add(i)
-            
-        # Add critical lines from the middle (if they weren't already kept)
         for i in sorted(critical_indices):
             if keep_start <= i < total_lines - keep_end:
                 result.append(lines[i])
                 seen_indices.add(i)
-                
-        # Add end block
         for i in range(total_lines - keep_end, total_lines):
             if i not in seen_indices:
                 result.append(lines[i])

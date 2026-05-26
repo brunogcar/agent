@@ -220,6 +220,15 @@ class MemoryStore:
         source:     str        = "",
     ) -> dict:
         """Internal store — shared by all three typed store methods."""
+        # 🔴 CRITICAL: Async cancellation safety — abort before any side effects
+        import asyncio
+        task = asyncio.current_task()
+        # Use cancelling() instead of cancelled() for sync functions
+        # cancelled() only returns True AFTER CancelledError is raised
+        # cancelling() returns count of pending cancellation requests (Python 3.11+)
+        if task and task.cancelling() > 0:
+            raise asyncio.CancelledError("Workflow cancelled — aborting memory store operation")
+
         if not text or not text.strip():
             return {"status": "error", "error": "Empty text — nothing stored"}
 
