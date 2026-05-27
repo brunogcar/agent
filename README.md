@@ -60,7 +60,7 @@ graph TD
 For detailed technical references, consult the dedicated documentation:
 
 | Doc | Purpose |
-|----------|---------|----------|-----------|
+|-----|---------|
 | [`workflows/`](workflows/) | LangGraph state machines: `research.py`, `data.py`, `autocode.py` |
 | [`tools/`](tools/) | Meta-tool implementations and sandboxing logic |
 | [`skills/`](skills/) | Domain-specific modules: `b3/` (Brazilian stocks), `cvm/` (regulatory data), auto-discovered via `dispatcher.py` |
