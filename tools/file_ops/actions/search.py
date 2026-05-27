@@ -10,7 +10,7 @@ from core.config import cfg
 from tools.file_ops._registry import register_action
 
 @register_action("file", "search")
-def _handle_search(query: str = "", max_results: int = 10) -> dict:
+def _handle_search(query: str = "", max_results: int = 10, trace_id: str = "") -> dict:
     """Full-text search across agent and workspace files."""
     if not query:
         return {"status": "error", "error": "query is required for search"}

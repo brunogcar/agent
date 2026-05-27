@@ -29,11 +29,44 @@ def sample_docx_path(setup_tmp_dir):
 
 @pytest.fixture
 def sample_pdf_path(setup_tmp_dir):
-    """Create a minimal valid .pdf file for testing."""
-    path = setup_tmp_dir / "sample.pdf"
-    if not path.exists():
-        file(action="write_pdf", path=str(path), content="Test PDF content")
-    return str(path)
+    import os
+    pdf_path = os.path.join(setup_tmp_dir, "sample.pdf")
+    # Minimal valid PDF with extractable text (no external dependencies)
+    pdf_content = b"""%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 44 >>
+stream
+BT /F1 24 Tf 100 700 Td (Test PDF Content) Tj ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000010 00000 n 
+0000000138 00000 n 
+0000000207 00000 n 
+0000000282 00000 n 
+0000000357 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+400
+%%EOF"""
+    with open(pdf_path, "wb") as f:
+        f.write(pdf_content)
+    return pdf_path
 
 @pytest.fixture
 def sample_pptx_path(setup_tmp_dir):
@@ -176,10 +209,13 @@ class TestWriteDocxPatterns:
         assert "path" in result
 
 class TestWritePdfPatterns:
-    def test_write_pdf_file(self):
-        result = file(action="write_pdf", path="tmp/output.pdf", content="Test PDF")
+    def test_write_pdf_file(self, setup_tmp_dir):
+        import os
+        pdf_path = os.path.join(setup_tmp_dir, "output.pdf")
+        result = file(action="write_pdf", path=pdf_path, content="Test PDF")
         assert result.get("status") == "success"
         assert "path" in result
+        assert os.path.exists(pdf_path)
 
 class TestWritePptxPatterns:
     def test_write_pptx_file(self):

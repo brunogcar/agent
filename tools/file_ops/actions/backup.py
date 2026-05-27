@@ -12,7 +12,7 @@ from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
 @register_action("file", "backup")
-def _handle_backup(path: str = "") -> dict:
+def _handle_backup(path: str = "", trace_id: str = "") -> dict:
     """Copy a file with .bak suffix (manual backup)."""
     import shutil
     p, err = _safe_resolve(path)

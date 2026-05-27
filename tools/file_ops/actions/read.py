@@ -12,7 +12,7 @@ from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
 @register_action("file", "read")
-def _read_file(path: str, max_chars: int = 50_000) -> dict:
+def _read_file(path: str, max_chars: int = 50_000, trace_id: str = "") -> dict:
     """Read a file with agent-root-first search, symlink safety, and extension validation."""
     resolved = None
 

@@ -11,7 +11,7 @@ from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
 @register_action("file", "write_docx")
-def _handle_write_docx(path: str = "", content: str = "", title: str = "") -> dict:
+def _handle_write_docx(path: str = "", content: str = "", title: str = "", trace_id: str = "") -> dict:
     """Write text to a DOCX file using python-docx."""
     p, err = _safe_resolve(path)
     if err:

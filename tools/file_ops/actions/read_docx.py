@@ -11,7 +11,7 @@ from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
 @register_action("file", "read_docx")
-def _handle_read_docx(path: str = "", max_chars: int = 50_000) -> dict:
+def _handle_read_docx(path: str = "", max_chars: int = 50_000, trace_id: str = "") -> dict:
     """Read a DOCX file using python-docx."""
     p, err = _safe_resolve(path)
     if err:

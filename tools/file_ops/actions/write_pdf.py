@@ -11,7 +11,7 @@ from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
 @register_action("file", "write_pdf")
-def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_chars: int = 50_000) -> dict:
+def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_chars: int = 50_000, trace_id: str = "") -> dict:
     """Write text to PDF using fpdf2."""
     p, err = _safe_resolve(path)
     if err:
@@ -41,7 +41,8 @@ def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_ch
             if stripped.startswith("## "):
                 pdf.set_font("Helvetica", "B", 14)
                 pdf.ln(3)
-                pdf.cell(0, 9, stripped[3:], ln=True)
+                from fpdf import XPos, YPos
+                pdf.cell(0, 9, stripped[3:], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.set_font("Helvetica", size=11)
             elif stripped.startswith("# "):
                 pdf.set_font("Helvetica", "B", 16)
