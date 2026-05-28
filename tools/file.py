@@ -60,6 +60,17 @@ def _safe_dispatch_file(action: str, trace_id: str = "", **params) -> dict:
     # 3. Dispatch to action handler
     if action in DISPATCH.get("file", {}):
         func = DISPATCH["file"][action]
+        
+        # [FIX] Unpack literal 'kwargs' if the MCP bridge nested the arguments
+        # Use setdefault to prevent nested kwargs from overwriting trusted outer fields (e.g., trace_id)
+        if "kwargs" in params and isinstance(params["kwargs"], dict):
+            nested = params.pop("kwargs")
+            for k, v in nested.items():
+                params.setdefault(k, v)
+            
+        # [FIX] Defensive cleanup: ensure dispatcher metadata doesn't leak
+        params.pop("action", None)
+        
         try:
             return func(trace_id=trace_id, **params)
         except Exception as e:
