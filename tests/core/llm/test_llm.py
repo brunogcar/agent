@@ -449,7 +449,7 @@ class TestLLMClientIntegration:
         assert messages[3]["role"] == "user"
         assert "Hello" in messages[3]["content"]
 
-    def test_unknown_role_falls_back_to_executor(self, llm_client, mock_provider, capsys):
+    def test_unknown_role_falls_back_to_executor(self, llm_client, mock_provider):
         """Test that unknown roles fall back to executor."""
         mock_provider.chat_completion.return_value = {
             "choices": [{"message": {"content": "response"}}],
@@ -457,10 +457,12 @@ class TestLLMClientIntegration:
         }
         llm_client._registry.register("lmstudio", mock_provider)
         
-        resp = llm_client.call(role="unknown_role", messages=[{"role": "user", "content": "test"}])
+        # Patch tracer.error to verify fallback warning was logged
+        with patch("core.llm.tracer.error") as mock_error:
+            resp = llm_client.call(role="unknown_role", messages=[{"role": "user", "content": "test"}])
         
         assert resp.ok is True
-        
-        # Check warning was printed to stderr
-        captured = capsys.readouterr()
-        assert "unknown role" in captured.err.lower()
+        # Verify fallback warning was triggered
+        mock_error.assert_called_once()
+        args, _ = mock_error.call_args
+        assert "unknown role" in str(args).lower()

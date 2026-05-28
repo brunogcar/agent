@@ -636,6 +636,16 @@ class LLMClient:
                         f"Tool call schema validation failed for {role}/{model}: {e}"
                     )
         
+        return LLMResponse(
+            text=choice,
+            role=role,
+            model=model,
+            usage=usage,
+            elapsed=elapsed,
+            parsed=parsed,
+            ok=True,
+        )
+        
 
 # ── Singleton -----------------------------------------------------------------
 llm = LLMClient()

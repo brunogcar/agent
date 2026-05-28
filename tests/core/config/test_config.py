@@ -19,29 +19,20 @@ from core.config import cfg, Config
 @pytest.fixture
 def reload_config(monkeypatch):
     """
-    Helper fixture to safely reload core.config with custom env vars.
-    This is necessary because `cfg` is a singleton instantiated at import time.
-    
-    NOTE: We do NOT try to restore state in teardown. pytest's monkeypatch
-    automatically undoes all setenv/delenv calls when the test ends, so
-    subsequent tests see the original env. The global `cfg` singleton may
-    retain a stale state, but that's fine — integration tests use monkeypatch
-    on the singleton directly, and constructor tests create fresh Config() instances.
+    Helper fixture to safely test Config with custom env vars.
+    Creates FRESH Config() instances for constructor tests.
+    Does NOT reload the global `cfg` singleton to avoid breaking
+    other modules that already imported it (path_guard, git, etc.).
     """
     def _reload(env_vars: dict):
         for k, v in env_vars.items():
             monkeypatch.setenv(k, str(v))
-        
-        # Remove from sys.modules to force a fresh import
-        if "core.config" in sys.modules:
-            del sys.modules["core.config"]
-            
-        import core.config
-        importlib.reload(core.config)
-        return core.config.cfg
+        # Return a FRESH Config instance for constructor testing
+        from core.config import Config
+        return Config()
         
     yield _reload
-    # NO cleanup needed — monkeypatch auto-restores env vars
+    # monkeypatch auto-restores env vars when test ends
 
 
 # =============================================================================
