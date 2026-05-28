@@ -203,11 +203,11 @@ class Tracer:
         }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
-    if cfg.autocode_debug:
-        if _HAS_STRUCTLOG:
-            _log.debug("step", trace_id=trace_id, node=node, msg=message[:120])
-        else:
-            _log.debug(f"[step] {trace_id} | {node} | {message[:120]}")
+        if cfg.autocode_debug:          # ← now inside step()
+            if _HAS_STRUCTLOG:
+                _log.debug("step", trace_id=trace_id, node=node, msg=message[:120])
+            else:
+                _log.debug(f"[step] {trace_id} | {node} | {message[:120]}")
 
     def error(self, trace_id: str, node: str, message: str = "",
               **kwargs: Any) -> None:
@@ -226,6 +226,25 @@ class Tracer:
             _log.warning("error", trace_id=trace_id, node=node, msg=message[:200])
         else:
             _log.warning(f"[error] {trace_id} | {node} | {message[:200]}")
+
+    def warning(self, trace_id: str, node: str, message: str = "",
+                **kwargs: Any) -> None:
+        """Log a warning-level event with trace context. Follows same pattern as error()."""
+        ts    = time.time()
+        entry = {
+            "event": "warning",
+            "trace_id": trace_id,
+            "node": node,
+            "message": message,
+            "ts": ts,
+            **kwargs
+        }
+        _store.append_step(trace_id, entry)
+        _writer.write(entry)
+        if _HAS_STRUCTLOG:
+            _log.warning("warning", trace_id=trace_id, node=node, msg=message[:200])
+        else:
+            _log.warning(f"[warning] {trace_id} | {node} | {message[:200]}")
 
     def finish(self, trace_id: str, success: bool = True,
                result: str = "", **kwargs: Any) -> None:
