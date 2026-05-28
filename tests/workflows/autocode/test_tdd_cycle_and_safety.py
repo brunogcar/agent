@@ -76,12 +76,19 @@ class TestDryRunAndSafetyGuards:
         assert "modified_files" not in result
         assert not list(temp_workspace.glob("*.py"))
 
-    def test_protected_file_rejected_at_validate(self, base_state):
+    def test_protected_file_rejected_at_validate(self, base_state, temp_workspace):
         """Nodes must never write to cfg.protected_files."""
         from core.config import cfg
-        assert cfg.is_protected("core/config.py")
-        assert cfg.is_protected("server.py")
-        assert not cfg.is_protected("workspace/output.py")
+        # Create dummy files in the mocked agent_root so Path.resolve() works correctly
+        (temp_workspace / "core").mkdir(parents=True, exist_ok=True)
+        (temp_workspace / "core/config.py").touch()
+        (temp_workspace / "server.py").touch()
+        (temp_workspace / "workspace").mkdir(parents=True, exist_ok=True)
+        (temp_workspace / "workspace/output.py").touch()
+        
+        assert cfg.is_protected(temp_workspace / "core/config.py")
+        assert cfg.is_protected(temp_workspace / "server.py")
+        assert not cfg.is_protected(temp_workspace / "workspace/output.py")
 
     def test_max_retries_enforced_in_state(self, base_state):
         """tdd_iteration must increment and cap at max_retries."""

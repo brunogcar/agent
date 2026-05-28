@@ -85,8 +85,8 @@ class TestNodeWriteFiles:
         from workflows.autocode_helpers.nodes.write_files import node_write_files
         base_state.pop("tdd_source_code", None)
         result = node_write_files(base_state)
-        # Should return state unchanged
-        assert result is base_state
+        # LangGraph partial update: empty dict means no changes
+        assert result == {}
 
     def test_write_files_parses_json_and_writes(self, temp_workspace, base_state):
         from workflows.autocode_helpers.nodes.write_files import node_write_files
@@ -103,5 +103,5 @@ class TestNodeWriteFiles:
         from workflows.autocode_helpers.nodes.write_files import node_write_files
         base_state["tdd_source_code"] = "{ invalid json"
         result = node_write_files(base_state)
-        # Should not crash; returns state
-        assert result is base_state
+        # LangGraph partial update: empty dict means no changes
+        assert result == {}

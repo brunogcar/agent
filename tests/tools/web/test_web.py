@@ -211,8 +211,10 @@ class TestScrape:
 # Test SSRF Protection
 # =============================================================================
 class TestSSRFProtection:
-    def test_blocks_localhost(self, mock_config, mock_httpx):
+    def test_blocks_localhost(self, mock_config, mock_httpx, monkeypatch):
         """Test that localhost URLs are blocked."""
+        import tools.vision
+        monkeypatch.setattr(tools.vision.cfg, "allowed_internal_hosts", frozenset())
         result = web(action="scrape", url="http://localhost:8080/admin")
 
         assert result["status"] == "error"
@@ -280,8 +282,10 @@ class TestErrorHandling:
 # Test Helper Functions
 # =============================================================================
 class TestHelperFunctions:
-    def test_is_safe_url_blocks_loopback(self):
+    def test_is_safe_url_blocks_loopback(self, monkeypatch):
         """Test _is_safe_url blocks loopback addresses."""
+        import tools.vision
+        monkeypatch.setattr(tools.vision.cfg, "allowed_internal_hosts", frozenset())
         assert _is_safe_url("http://127.0.0.1/admin") is False
         assert _is_safe_url("http://localhost/admin") is False
 

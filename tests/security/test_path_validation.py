@@ -63,43 +63,34 @@ class TestSSRFNetworkScopeBlocking:
         """Test that ALLOWED_INTERNAL_HOSTS env var overrides default allowlist."""
         # Temporarily override env var
         monkeypatch.setenv("ALLOWED_INTERNAL_HOSTS", "searxng.internal,local-lm-studio")
-        
-        # Force reload of cfg.allowed_internal_hosts (simplified for test)
-        from core import config
-        original = config.cfg.allowed_internal_hosts
-        config.cfg.allowed_internal_hosts = frozenset(
-            h.strip().lower() for h in 
+
+        import tools.vision
+        new_allowlist = frozenset(
+            h.strip().lower() for h in
             os.getenv("ALLOWED_INTERNAL_HOSTS", "").split(",") if h.strip()
         )
-        
-        try:
-            # New allowlist entries should be allowed
-            assert _is_private_or_localhost("searxng.internal") is False
-            assert _is_private_or_localhost("local-lm-studio") is False
-            
-            # Default entries no longer in allowlist should be blocked
-            assert _is_private_or_localhost("localhost") is True
-            assert _is_private_or_localhost("127.0.0.1") is True
-        finally:
-            # Restore original config
-            config.cfg.allowed_internal_hosts = original
+        monkeypatch.setattr(tools.vision.cfg, "allowed_internal_hosts", new_allowlist)
+
+        # New allowlist entries should be allowed
+        assert _is_private_or_localhost("searxng.internal") is False
+        assert _is_private_or_localhost("local-lm-studio") is False
+
+        # Default entries no longer in allowlist should be blocked
+        assert _is_private_or_localhost("localhost") is True
+        assert _is_private_or_localhost("127.0.0.1") is True
     
     def test_empty_allowlist_blocks_all_localhost(self, monkeypatch):
         """Test that ALLOWED_INTERNAL_HOSTS='' blocks all localhost/private access."""
         monkeypatch.setenv("ALLOWED_INTERNAL_HOSTS", "")
-        
-        from core import config
-        original = config.cfg.allowed_internal_hosts
-        config.cfg.allowed_internal_hosts = frozenset()
-        
-        try:
-            # All localhost variants should be blocked
-            assert _is_private_or_localhost("localhost") is True
-            assert _is_private_or_localhost("127.0.0.1") is True
-            assert _is_private_or_localhost("::1") is True
-            assert _is_private_or_localhost("192.168.1.1") is True
-        finally:
-            config.cfg.allowed_internal_hosts = original
+
+        import tools.vision
+        monkeypatch.setattr(tools.vision.cfg, "allowed_internal_hosts", frozenset())
+
+        # All localhost variants should be blocked
+        assert _is_private_or_localhost("localhost") is True
+        assert _is_private_or_localhost("127.0.0.1") is True
+        assert _is_private_or_localhost("::1") is True
+        assert _is_private_or_localhost("192.168.1.1") is True
     
     def test_invalid_hostname_handling(self):
         """Test that malformed hostnames don't crash the validator."""

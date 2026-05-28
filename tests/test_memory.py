@@ -95,7 +95,7 @@ def test_store_rejects_oversized_text():
     big_text = "x" * 51_000
     r = memory(action="store", text=big_text, memory_type="semantic", importance=5)
     assert r["status"] == "error"
-    assert "50KB" in r["error"]
+    assert "50000 byte limit" in r["error"]
 
 # -- Recall structure (not content-dependent) ----------------------------------
 

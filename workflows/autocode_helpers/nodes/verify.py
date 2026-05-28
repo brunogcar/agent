@@ -42,7 +42,8 @@ def node_verify(state: AutocodeState) -> dict:
         return {
             "status": "failed",
             "verification_notes": "TDD max retries exceeded",
-            "verification_passed": False
+            "verification_passed": False,
+            "trace_id": tid
         }
 
     if state.get("status") in ("needs_clarification", "failed"):
@@ -153,5 +154,6 @@ def node_verify(state: AutocodeState) -> dict:
             "tests":      fresh_output[:2000],
             "lint":       lint_output[:500],
             "regression": fresh_output[:2000],
-        }
+        },
+        "trace_id": tid
     }

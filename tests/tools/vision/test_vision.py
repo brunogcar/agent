@@ -43,12 +43,16 @@ class TestVisionValidation:
         assert "File not found" in err
 
 class TestVisionSSRF:
-    def test_localhost_blocked(self):
+    def test_localhost_blocked(self, monkeypatch):
+        import tools.vision
+        monkeypatch.setattr(tools.vision.cfg, "allowed_internal_hosts", frozenset())
         is_valid, err = _validate_vision_inputs("", "", "http://localhost/secret")
         assert not is_valid
         assert "SSRF" in err
 
-    def test_127_0_0_1_blocked(self):
+    def test_127_0_0_1_blocked(self, monkeypatch):
+        import tools.vision
+        monkeypatch.setattr(tools.vision.cfg, "allowed_internal_hosts", frozenset())
         is_valid, err = _validate_vision_inputs("", "", "http://127.0.0.1:8080/img.png")
         assert not is_valid
         assert "SSRF" in err

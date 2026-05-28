@@ -68,8 +68,9 @@ class TestCommitAndGitEdgeCases:
         from workflows.autocode_helpers.nodes.commit import node_commit
         base_graph_state["verification_passed"] = False
         result = node_commit(base_graph_state)
-        assert result["status"] != "done"
-        assert result is base_graph_state
+        # LangGraph partial update: returns delta indicating skip
+        assert result.get("status") == "skipped"
+        assert result.get("commit_sha") == ""
 
     def test_commit_handles_nothing_to_commit(self, temp_workspace):
         from workflows.autocode_helpers.git_ops import _git_commit

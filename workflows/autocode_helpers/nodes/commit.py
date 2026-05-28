@@ -16,7 +16,7 @@ def node_commit(state: AutocodeState) -> dict:
     if state.get("status") in ("needs_clarification", "failed"):
         return {}
     if not state.get("verification_passed"):
-        return {}
+        return {"status": "skipped", "commit_sha": ""}
     plan = state.get("plan", [])
     labels = ", ".join(
         s["label"] for s in plan

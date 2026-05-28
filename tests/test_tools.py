@@ -80,7 +80,7 @@ def test_blocked_imports_coverage():
 def test_file_path_traversal_blocked():
     from tools.file import file
     r = file(action="read", path="../../etc/passwd")
-    assert r["status"] == "error" and "outside allowed" in r["error"]
+    assert r["status"] == "error" and "resolves outside AGENT_ROOT" in r["error"]
 
 def test_file_write_read_roundtrip():
     from tools.file import file
