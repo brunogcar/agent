@@ -112,6 +112,9 @@ STDLIB_IMPORTS = {
     "heapq", "bisect", "pprint", "copy", "time", "uuid",
     "pathlib", "os", "sys", "hashlib", "base64", "struct",
     "dataclasses", "typing", "enum", "abc",
+    # 🔵 B3 Validator: Allow LLM-generated scripts to import core utilities
+    # (e.g., from core.br_validator import parse_brl, parse_br_date)
+    "core",
 }
 
 # Heavy libs — require subprocess (slow first import, worth isolating)
