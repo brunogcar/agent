@@ -157,6 +157,17 @@ def _start_meta_learner() -> None:
 
 _start_meta_learner()
 
+# -- Start Runtime Watchdog ----------------------------------------------------
+def _start_watchdog() -> None:
+    try:
+        from core.runtime_watchdog import watchdog
+        _threading.Thread(target=watchdog.run_forever, daemon=True).start()
+        print("[server] Runtime Watchdog started", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Watchdog failed to start: {e}", file=sys.stderr)
+
+_start_watchdog()
+
 # -- Run (hands stdout to FastMCP's stdio transport) ----------------------------
 if __name__ == "__main__":
     mcp.run()
