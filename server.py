@@ -146,6 +146,17 @@ def _warmup_chromadb() -> None:
 import threading as _threading
 _threading.Thread(target=_warmup_chromadb, daemon=True).start()
 
+# -- Start Meta-Learning Daemon ----------------------------------------------
+def _start_meta_learner() -> None:
+    try:
+        from core.meta_learning import learner
+        _threading.Thread(target=learner.run_forever, daemon=True).start()
+        print("[server] Meta-Learner daemon started", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Meta-Learner failed to start: {e}", file=sys.stderr)
+
+_start_meta_learner()
+
 # -- Run (hands stdout to FastMCP's stdio transport) ----------------------------
 if __name__ == "__main__":
     mcp.run()

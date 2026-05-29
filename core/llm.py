@@ -380,96 +380,97 @@ class LLMClient:
         **kwargs:    Any,
     ) -> LLMResponse:
         """Make an LLM call by role. Always returns LLMResponse, never raises."""
-        role_cfg = self._get_role(role)
-        provider = self._registry.get(role_cfg.provider)
+        from core.activity_tracker import tracker
+        tracker.inference_start()
+        try:
+            role_cfg = self._get_role(role)
+            provider = self._registry.get(role_cfg.provider)
 
-        _temperature = temperature if temperature is not None else role_cfg.temperature
-        _max_tokens  = max_tokens  if max_tokens  is not None else role_cfg.max_tokens
-        _timeout     = timeout     if timeout     is not None else role_cfg.timeout
+            _temperature = temperature if temperature is not None else role_cfg.temperature
+            _max_tokens  = max_tokens  if max_tokens  is not None else role_cfg.max_tokens
+            _timeout     = timeout     if timeout     is not None else role_cfg.timeout
 
-        if trace_id:
-            tracer.step(
-                trace_id, "llm_call",
-                role=role, model=role_cfg.model,
-                messages=len(messages), timeout=_timeout,
-            )
-
-        start = time.time()
-
-        # HIG-02: Check circuit breaker before attempt
-        breaker = self._get_breaker(role)
-        if not breaker.can_execute():
-            elapsed = 0.1
-            err     = f"Circuit breaker OPEN for {role}: service degraded (fail-fast)."
             if trace_id:
-                tracer.warning(trace_id, "llm_call", err)
-            return LLMResponse.from_error(role, role_cfg.model, err, elapsed=0.1)
-
-        for attempt in range(self.MAX_RETRIES + 1):
-            try:
-                raw = provider.chat_completion(
-                    model       = role_cfg.model,
-                    messages    = messages,
-                    temperature = _temperature,
-                    max_tokens  = _max_tokens,
-                    timeout     = _timeout,
-                    json_mode   = json_mode,
-                    **kwargs,
+                tracer.step(
+                    trace_id, "llm_call",
+                    role=role, model=role_cfg.model,
+                    messages=len(messages), timeout=_timeout,
                 )
-                elapsed = round(time.time() - start, 2)
-                # HIG-02: Record success
-                breaker.record_success()
-                return self._parse_response(raw, role, role_cfg.model, elapsed, json_mode)
 
-            except httpx.TimeoutException:
-                elapsed = round(time.time() - start, 2)
-                err     = f"Timeout after {elapsed}s (limit: {_timeout}s)"
-                # HIG-02: Record failure
-                if breaker:
-                    breaker.record_failure()
+            start = time.time()
+
+            # HIG-02: Check circuit breaker before attempt
+            breaker = self._get_breaker(role)
+            if not breaker.can_execute():
+                elapsed = 0.1
+                err     = f"Circuit breaker OPEN for {role}: service degraded (fail-fast)."
                 if trace_id:
-                    tracer.error(trace_id, "llm_call", err, role=role, attempt=attempt)
-                if attempt == self.MAX_RETRIES:
+                    tracer.warning(trace_id, "llm_call", err)
+                return LLMResponse.from_error(role, role_cfg.model, err, elapsed=0.1)
+
+            for attempt in range(self.MAX_RETRIES + 1):
+                try:
+                    raw = provider.chat_completion(
+                        model       = role_cfg.model,
+                        messages    = messages,
+                        temperature = _temperature,
+                        max_tokens  = _max_tokens,
+                        timeout     = _timeout,
+                        json_mode   = json_mode,
+                        **kwargs,
+                    )
+                    elapsed = round(time.time() - start, 2)
+                    # HIG-02: Record success
+                    breaker.record_success()
+                    return self._parse_response(raw, role, role_cfg.model, elapsed, json_mode)
+
+                except httpx.TimeoutException:
+                    elapsed = round(time.time() - start, 2)
+                    err     = f"Timeout after {elapsed}s (limit: {_timeout}s)"
+                    if breaker:
+                        breaker.record_failure()
+                    if trace_id:
+                        tracer.error(trace_id, "llm_call", err, role=role, attempt=attempt)
+                    if attempt == self.MAX_RETRIES:
+                        return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
+
+                except httpx.ConnectError:
+                    elapsed = round(time.time() - start, 2)
+                    err     = f"Cannot connect to {cfg.lm_studio_base_url} - is LM Studio running?"
+                    if breaker:
+                        breaker.record_failure()
+                    if trace_id:
+                        tracer.error(trace_id, "llm_call", err, role=role)
                     return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
 
-            except httpx.ConnectError:
-                elapsed = round(time.time() - start, 2)
-                err     = f"Cannot connect to {cfg.lm_studio_base_url} - is LM Studio running?"
-                # HIG-02: Record failure
-                if breaker:
-                    breaker.record_failure()
-                if trace_id:
-                    tracer.error(trace_id, "llm_call", err, role=role)
-                return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
+                except httpx.HTTPStatusError as e:
+                    elapsed = round(time.time() - start, 2)
+                    if e.response.status_code == 429 and attempt < self.MAX_RETRIES:
+                        time.sleep(self.RETRY_DELAY * (attempt + 1))
+                        continue
+                    err = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    if breaker:
+                        breaker.record_failure()
+                    if trace_id:
+                        tracer.error(trace_id, "llm_call", err, role=role)
+                    return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
 
-            except httpx.HTTPStatusError as e:
-                elapsed = round(time.time() - start, 2)
-                if e.response.status_code == 429 and attempt < self.MAX_RETRIES:
-                    time.sleep(self.RETRY_DELAY * (attempt + 1))
-                    continue
-                err = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
-                # HIG-02: Record failure for non-retryable errors
-                if breaker:
-                    breaker.record_failure()
-                if trace_id:
-                    tracer.error(trace_id, "llm_call", err, role=role)
-                return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
+                except Exception as e:
+                    elapsed = round(time.time() - start, 2)  
+                    err     = f"Unexpected error: {type(e).__name__}: {e}"
+                    if breaker:
+                        breaker.record_failure()
+                    if trace_id:
+                        tracer.error(trace_id, "llm_call", err, role=role)
+                    return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
 
-            except Exception as e:
-                elapsed = round(time.time() - start, 2) 
-                err     = f"Unexpected error: {type(e).__name__}: {e}"
-                # HIG-02: Record failure
-                if breaker:
-                    breaker.record_failure()
-                if trace_id:
-                    tracer.error(trace_id, "llm_call", err, role=role)
-                return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
+                if attempt < self.MAX_RETRIES:
+                    time.sleep(self.RETRY_DELAY)
 
-            if attempt < self.MAX_RETRIES:
-                time.sleep(self.RETRY_DELAY)
-
-        elapsed = round(time.time() - start, 2)
-        return LLMResponse.from_error(role, role_cfg.model, "Max retries exceeded", elapsed)
+            elapsed = round(time.time() - start, 2)
+            return LLMResponse.from_error(role, role_cfg.model, "Max retries exceeded", elapsed)
+        finally:
+            tracker.inference_end()
 
     def complete(
         self,

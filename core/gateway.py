@@ -439,8 +439,11 @@ def create_app():
 
         P0-2 fix: secret is validated at startup (above). Here we only check
         the incoming token. No print() to stdout -- all warnings go to stderr
-        so  MCP stdio channel stays clean (P0-1).
+        so MCP stdio channel stays clean (P0-1).
         """
+        from core.activity_tracker import tracker
+        tracker.touch()
+        
         _secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
         if _secret != "changeme":
             if not creds or creds.credentials != _secret:
