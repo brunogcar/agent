@@ -57,9 +57,10 @@ class Config:
         self.workspace_index    = self.workspace_root / ".index"
         self.log_path           = self.agent_root / "logs"
 
-        # ── LM Studio ─────────────────────────────────────────────────────────
+        # ── Runtime Provider (LM Studio, Ollama, vLLM) ────────────────────────
+        self.runtime_provider = os.getenv("RUNTIME_PROVIDER", "lmstudio").lower()
         self.lm_studio_base_url = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
-        self.lm_studio_restart_cmd = os.getenv("LM_STUDIO_RESTART_CMD", "lms server start")
+        self.lm_studio_restart_cmd = os.getenv("LM_STUDIO_RESTART_CMD", "")
 
         # ── Model roles ───────────────────────────────────────────────────────
         self.planner_model  = os.getenv("PLANNER_MODEL")

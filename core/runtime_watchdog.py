@@ -15,10 +15,10 @@ import logging
 from pathlib import Path
 
 from core.config import cfg
+from core.runtime_providers import get_provider
 
 logger = logging.getLogger(__name__)
 
-PROBE_URL = f"{cfg.lm_studio_base_url}/models"
 LOCK_FILE = cfg.workspace_root / ".watchdog_restart.lock"
 MAX_RESTARTS = 3
 COOLDOWN_SECONDS = 15 * 60  # 15 minutes
@@ -30,6 +30,7 @@ class RuntimeWatchdog:
         self._lock = threading.Lock()
         self.failure_count = 0
         self.restart_timestamps: list[float] = []
+        self.provider = get_provider(cfg.runtime_provider)
         
     def run_forever(self):
         logger.info("[Watchdog] Daemon started.")
@@ -44,12 +45,17 @@ class RuntimeWatchdog:
     def _check_health(self):
         try:
             # Timeout aggressively (3s)
-            resp = httpx.get(PROBE_URL, timeout=3.0)
+            resp = httpx.get(self.provider.health_url, timeout=3.0)
             if resp.status_code == 200:
-                # Healthy: reset failure count
-                with self._lock:
-                    self.failure_count = 0
-                return
+                # Verify model backend is actually loaded (provider-specific)
+                try:
+                    data = resp.json()
+                    if self.provider.is_ready(data):
+                        with self._lock:
+                            self.failure_count = 0
+                        return
+                except Exception:
+                    pass  # JSON parse failed, treat as unhealthy
         except Exception:
             pass
             
@@ -106,9 +112,9 @@ class RuntimeWatchdog:
                 pass
                 
     def _execute_restart(self):
-        cmd = cfg.lm_studio_restart_cmd
+        cmd = cfg.lm_studio_restart_cmd or self.provider.default_restart_cmd
         if not cmd:
-            logger.error("[Watchdog] LM_STUDIO_RESTART_CMD is empty. Cannot restart.")
+            logger.error(f"[Watchdog] No restart command configured for {self.provider.name}. Cannot restart.")
             return
             
         # Windows-specific detachment
@@ -134,19 +140,21 @@ class RuntimeWatchdog:
         except Exception as e:
             logger.error(f"[Watchdog] Failed to execute restart command: {e}")
             
-    def _wait_for_recovery(self, timeout: int = 90):
-        """Poll until LM Studio is healthy or timeout."""
+    def _wait_for_recovery(self, timeout: int = 180):
+        """Poll until the provider is healthy or timeout."""
         start = time.time()
         while (time.time() - start) < timeout:
             time.sleep(5)
             try:
-                resp = httpx.get(PROBE_URL, timeout=3.0)
+                resp = httpx.get(self.provider.health_url, timeout=3.0)
                 if resp.status_code == 200:
-                    logger.info("[Watchdog] LM Studio recovered successfully.")
-                    return
+                    data = resp.json()
+                    if self.provider.is_ready(data):
+                        logger.info(f"[Watchdog] {self.provider.name} recovered successfully.")
+                        return
             except Exception:
                 pass
-        logger.warning("[Watchdog] LM Studio did not recover within timeout.")
+        logger.warning(f"[Watchdog] {self.provider.name} did not recover within timeout.")
 
 # Singleton
 watchdog = RuntimeWatchdog()
