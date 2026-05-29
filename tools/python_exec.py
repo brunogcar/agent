@@ -112,9 +112,11 @@ STDLIB_IMPORTS = {
     "heapq", "bisect", "pprint", "copy", "time", "uuid",
     "pathlib", "os", "sys", "hashlib", "base64", "struct",
     "dataclasses", "typing", "enum", "abc",
-    # 🔵 B3 Validator: Allow LLM-generated scripts to import core utilities
-    # (e.g., from core.br_validator import parse_brl, parse_br_date)
-    "core",
+}
+
+# 🔵 Granular Core Allowlist: Only specific safe utilities can be imported by LLM scripts
+CORE_ALLOWED = {
+    "core.br_validator",
 }
 
 # Heavy libs — require subprocess (slow first import, worth isolating)
@@ -123,7 +125,7 @@ HEAVY_IMPORTS = {
     "seaborn", "plotly", "PIL", "cv2", "torch", "tensorflow",
 }
 
-ALL_ALLOWED = STDLIB_IMPORTS | HEAVY_IMPORTS
+ALL_ALLOWED = STDLIB_IMPORTS | HEAVY_IMPORTS | CORE_ALLOWED
 
 # Modules that are never allowed even in run_data -- security boundary.
 # These can access the filesystem, network, processes, or environment vars.
@@ -142,14 +144,16 @@ def _parse_imports(code: str) -> list[str]:
         tree = ast.parse(code)
     except SyntaxError:
         return []
-
     names = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                names.append(alias.name.split(".")[0])
+                # Preserve full path for core.* to allow granular sandboxing
+                name = alias.name
+                names.append(name if name.startswith("core.") else name.split(".")[0])
         elif isinstance(node, ast.ImportFrom) and node.module:
-            names.append(node.module.split(".")[0])
+            name = node.module
+            names.append(name if name.startswith("core.") else name.split(".")[0])
     return names
 
 

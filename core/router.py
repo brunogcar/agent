@@ -153,6 +153,7 @@ class TaskRouter:
                 "workflow": "research", "tool": "web",
                 "complexity": 1, "reason": "Empty goal",
                 "confidence": "low",
+                "clarifying_questions": ["What would you like me to help you with?"]
             })
 
         if trace_id:
