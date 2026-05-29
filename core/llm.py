@@ -390,6 +390,12 @@ class LLMClient:
             _max_tokens  = max_tokens  if max_tokens  is not None else role_cfg.max_tokens
             _timeout     = timeout     if timeout     is not None else role_cfg.timeout
 
+            # 🔴 PHASE 5: COGNITIVE BUDGETING
+            # Intercept messages to ensure they fit the context window.
+            # This prevents OOM crashes and attention dilution.
+            from core.context_budget import budget_messages
+            messages = budget_messages(messages, cfg.max_context_tokens)
+
             if trace_id:
                 tracer.step(
                     trace_id, "llm_call",

@@ -64,6 +64,40 @@ class WorkflowState(TypedDict, total=False):
 
 # -- Node helpers -------------------------------------------------------------
 
+def trim_state(state: WorkflowState) -> WorkflowState:
+    """
+    Phase 5: Evict low-value fields from working memory to the async queue.
+    Returns a NEW state dict (Copy-on-Write) to preserve LangGraph immutability.
+    """
+    from core.context_budget import estimate_tokens, ContextClass
+    from core.eviction_queue import eviction_queue
+    from core.config import cfg
+    
+    # Simple heuristic: If 'search_results' or 'output' is huge, evict it.
+    # We keep the state lean to prevent RAM bloat.
+    new_state = dict(state)
+    evicted_keys = []
+    
+    for key in ["search_results", "output", "analysis"]:
+        val = new_state.get(key)
+        if val and isinstance(val, str) and len(val) > 4000: # ~1000 tokens
+            # Evict to queue
+            eviction_queue.push(
+                text=val,
+                metadata={"source": key, "trace_id": state.get("trace_id", "")}
+            )
+            # Replace with placeholder
+            new_state[key] = f"[Evicted: {len(val)} chars saved to episodic memory. Use memory tool to recall.]"
+            evicted_keys.append(key)
+            
+    if evicted_keys:
+        # Log the eviction
+        tid = state.get("trace_id", "")
+        if tid:
+            tracer.step(tid, "eviction", f"Evicted {evicted_keys} to episodic memory")
+            
+    return new_state
+
 def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = False, **kwargs) -> None:
     """Log a workflow step to the active trace."""
     tid = state.get("trace_id", "")

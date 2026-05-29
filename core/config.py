@@ -102,7 +102,11 @@ class Config:
         self.memory_decay_days       = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
         self.memory_top_k            = int(os.getenv("MEMORY_TOP_K", "5"))
 
-        # ── Tool & System Limits (P2: Centralized Magic Numbers) ──────────────
+        # ── Context Budgeting (Phase 5) ───────────────────────────────────────
+        # Max tokens for the input context window (leaves room for output)
+        self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
+    
+        # ── Tool  & System Limits (P2: Centralized Magic Numbers) ──────────────
         
         # Memory Tool Limits
         # Renamed from max_memory_bytes to memory_max_entry_bytes (D1 Option B consensus)

@@ -157,6 +157,17 @@ def _start_meta_learner() -> None:
 
 _start_meta_learner()
 
+# -- Start Eviction Flusher ----------------------------------------------------
+def _start_eviction_flusher() -> None:
+    try:
+        from core.eviction_queue import flusher_loop
+        _threading.Thread(target=flusher_loop, daemon=True).start()
+        print("[server] Eviction Flusher started", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Eviction Flusher failed: {e}", file=sys.stderr)
+
+_start_eviction_flusher()
+
 # -- Scan for Incomplete Workflows ---------------------------------------------
 def _scan_incomplete_workflows() -> None:
     """Log any workflows that crashed mid-execution."""
