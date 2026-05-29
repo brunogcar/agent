@@ -256,3 +256,179 @@ def execute_stats(store) -> dict:
             tracer.error("", "maintenance", f"Failed to get count from collection {col_name}: {e}")
             result[col_name] = {"count": 0, "error": str(e)}
     return result
+
+import math
+import re
+
+# Phase 6: Negation pattern for contradiction detection
+NEGATION_PATTERN = re.compile(r"\b(never|don't|do not|avoid|instead of|stop|prevent)\b", re.IGNORECASE)
+
+def execute_diversity_maintenance(store, dry_run: bool = False) -> dict:
+    """
+    Phase 6: Memory Diversity Enforcement.
+    Clusters procedural memories, merges near-duplicates, archives stale rules.
+    """
+    col = store._col(COLLECTION_PROCEDURAL)
+    try:
+        all_data = col.get(include=["metadatas", "documents"])
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+        
+    ids = all_data.get("ids", [])
+    metas = all_data.get("metadatas", [])
+    docs = all_data.get("documents", [])
+    
+    if not ids:
+        return {"status": "success", "metrics": {"rules_processed": 0}}
+        
+    processed = set()
+    clusters = []
+    
+    # 1. Clustering (Greedy ChromaDB Walk)
+    for i, mem_id in enumerate(ids):
+        if mem_id in processed:
+            continue
+            
+        try:
+            neighbors = col.query(
+                query_texts=[docs[i]],
+                n_results=20,
+                include=["metadatas", "documents", "distances"]
+            )
+        except Exception:
+            continue
+            
+        n_ids = neighbors["ids"][0]
+        n_dists = neighbors["distances"][0]
+        n_metas = neighbors["metadatas"][0]
+        n_docs = neighbors["documents"][0]
+        
+        cluster = []
+        for j, n_id in enumerate(n_ids):
+            if n_id in processed:
+                continue
+            if n_dists[j] <= cfg.diversity_distance_threshold:
+                cluster.append({
+                    "id": n_id,
+                    "doc": n_docs[j],
+                    "meta": n_metas[j] or {}
+                })
+                processed.add(n_id)
+                
+        if len(cluster) > 1:
+            clusters.append(cluster)
+            
+    # 2. Merging & Contradiction Guard
+    merges_performed = 0
+    contradictions_detected = 0
+    deleted_ids = set()
+    
+    with store._write_lock:
+        for cluster in clusters:
+            # Check for polarity inversions or mixed outcomes
+            has_negation = [bool(NEGATION_PATTERN.search(c["doc"])) for c in cluster]
+            outcomes = [c["meta"].get("outcome", "unknown") for c in cluster]
+            
+            if len(set(has_negation)) > 1 or len(set(outcomes)) > 1:
+                contradictions_detected += 1
+                if not dry_run:
+                    flag_ids = [c["id"] for c in cluster]
+                    flag_metas = [c["meta"] for c in cluster]
+                    for m in flag_metas:
+                        m["contradiction_flagged"] = True
+                    try:
+                        col.update(ids=flag_ids, metadatas=flag_metas)
+                    except Exception:
+                        pass
+                continue
+                
+            # Champion Selection
+            def score(c):
+                return (c["meta"].get("reinforcement_count", 0) * 2) + c["meta"].get("recall_count", 0)
+                
+            cluster.sort(key=score, reverse=True)
+            champion = cluster[0]
+            losers = cluster[1:]
+            
+            if not dry_run:
+                champ_meta = champion["meta"]
+                loser_reinf = sum(l["meta"].get("reinforcement_count", 0) for l in losers)
+                loser_recall = sum(l["meta"].get("recall_count", 0) for l in losers)
+                
+                # Logarithmic absorption to prevent runaway inflation
+                new_reinf = math.log10(1 + champ_meta.get("reinforcement_count", 0) + loser_reinf)
+                new_recall = math.log10(1 + champ_meta.get("recall_count", 0) + loser_recall)
+                
+                champ_meta["reinforcement_count"] = round(new_reinf, 4)
+                champ_meta["recall_count"] = round(new_recall, 4)
+                champ_meta["merged_from"] = [l["id"] for l in losers]
+                
+                try:
+                    col.update(ids=[champion["id"]], metadatas=[champ_meta])
+                except Exception:
+                    continue
+                    
+                # Delete Losers & Sync Hash Cache
+                loser_ids = [l["id"] for l in losers]
+                for l in losers:
+                    h = l["meta"].get("text_hash")
+                    if h:
+                        store._hash_cache.discard(h)
+                        
+                try:
+                    col.delete(ids=loser_ids)
+                    deleted_ids.update(loser_ids)
+                except Exception:
+                    pass
+                    
+            merges_performed += 1
+            
+        # 3. Archival & Purging
+        rules_archived = 0
+        rules_purged = 0
+        cutoff_archive = time.time() - (cfg.archive_age_days * 86400)
+        cutoff_purge = time.time() - (cfg.purge_age_days * 86400)
+        
+        for i, mem_id in enumerate(ids):
+            if mem_id in deleted_ids:
+                continue
+                
+            meta = metas[i] or {}
+            if meta.get("archived"):
+                # Hard delete after 90 days
+                if meta.get("archived_at", 0) < cutoff_purge:
+                    if not dry_run:
+                        try:
+                            col.delete(ids=[mem_id])
+                            h = meta.get("text_hash")
+                            if h: store._hash_cache.discard(h)
+                            rules_purged += 1
+                        except Exception:
+                            pass
+                continue
+                
+            recall = meta.get("recall_count", 0)
+            ts = meta.get("timestamp", 0)
+            
+            # Archive if never recalled and older than 30 days
+            if recall < 0.1 and ts < cutoff_archive:
+                if not dry_run:
+                    meta["archived"] = True
+                    meta["archived_at"] = time.time()
+                    try:
+                        col.update(ids=[mem_id], metadatas=[meta])
+                        rules_archived += 1
+                    except Exception:
+                        pass
+                        
+    metrics = {
+        "rules_processed": len(ids),
+        "clusters_found": len(clusters),
+        "merges_performed": merges_performed,
+        "rules_archived": rules_archived,
+        "rules_purged": rules_purged,
+        "contradictions_detected": contradictions_detected,
+        "dry_run": dry_run
+    }
+    
+    return {"status": "success", "metrics": metrics}

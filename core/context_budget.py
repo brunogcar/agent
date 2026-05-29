@@ -25,8 +25,8 @@ class ContextClass(Enum):
     """Cognitive priority tiers for context assembly."""
     SYSTEM = 0      # Never evict (Rules, Persona)
     USER = 1        # Never evict (Current Intent)
-    PROCEDURAL = 2  # High (Recalled Rules)
-    ERROR = 3       # High (Tracebacks, Failures)
+    ERROR = 2       # Critical (Tracebacks, Failures) - Must outrank procedural for debugging
+    PROCEDURAL = 3  # High (Recalled Rules)
     RECENT = 4      # Medium (Last N turns)
     OUTPUT = 5      # Low (Tool outputs, Search results)
     ARCHIVE = 6     # Evict First (Old history)
@@ -126,26 +126,33 @@ def budget_messages(messages: list[dict], max_tokens: int) -> list[dict]:
             score = _score_message(msg, i, total)
             candidates.append((i, msg, tokens, score))
             
-    # 2. Greedy Selection for Candidates
+    # 2. Greedy Selection with Per-Class Caps
     # Sort by score descending
     candidates.sort(key=lambda x: x[3], reverse=True)
     
     selected = []
+    class_token_usage = {cls: 0 for cls in ContextClass}
+    
+    # Soft cap: No single non-pinned class can exceed 50% of the input budget
+    # This prevents a single massive traceback from starving the rest of the context
+    CLASS_CAP = int(input_budget * 0.50)
+    
     for i, msg, tokens, score in candidates:
+        cls = _classify_message(msg)
+        
+        # Enforce per-class cap
+        if class_token_usage[cls] + tokens > CLASS_CAP:
+            continue
+            
         if current_tokens + tokens <= input_budget:
             selected.append((i, msg, tokens))
             current_tokens += tokens
-        else:
-            # Budget full. 
-            # Optimization: If this is a massive tool output, we could truncate it 
-            # instead of dropping it, but for V1 we drop to preserve coherence of other items.
-            pass
+            class_token_usage[cls] += tokens
             
-    # 3. Re-assemble Chronologically
-    final_set = pinned + selected
-    final_set.sort(key=lambda x: x[0])
-    
-    result = [msg for _, msg, _ in final_set]
+    # 3. Re-assemble: Pinned (System/User) first, then selected in SCORE order.
+    # CRITICAL FIX: Do NOT re-sort chronologically, as that defeats the priority scoring
+    # and pushes old but critical errors below newer, low-priority outputs.
+    result = [msg for _, msg, _ in pinned] + [msg for _, msg, _ in selected]
     
     # 4. Safety Check: If we still somehow exceeded (e.g. pinned messages were huge),
     # truncate the last user message as a last resort.

@@ -102,6 +102,11 @@ class Config:
         self.memory_decay_days       = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
         self.memory_top_k            = int(os.getenv("MEMORY_TOP_K", "5"))
 
+        # ── Memory Diversity (Phase 6) ────────────────────────────────────────
+        self.diversity_distance_threshold = float(os.getenv("DIVERSITY_DISTANCE_THRESHOLD", "0.12"))
+        self.archive_age_days             = int(os.getenv("ARCHIVE_AGE_DAYS", "30"))
+        self.purge_age_days               = int(os.getenv("PURGE_AGE_DAYS", "90"))
+
         # ── Context Budgeting (Phase 5) ───────────────────────────────────────
         # Max tokens for the input context window (leaves room for output)
         self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))

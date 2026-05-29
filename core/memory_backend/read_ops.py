@@ -53,6 +53,10 @@ def execute_recall(
         ids       = raw.get("ids", [[]])[0]
 
         for doc, meta, dist, mem_id in zip(docs, metas, distances, ids):
+            # Skip archived memories (Phase 6 Diversity Enforcement)
+            if meta and meta.get("archived"):
+                continue
+
             importance = meta.get("importance", 5)
             timestamp  = meta.get("timestamp", 0)
             tags       = meta.get("tags", " ")

@@ -182,6 +182,41 @@ def _scan_incomplete_workflows() -> None:
 
 _scan_incomplete_workflows()
 
+# -- Start Memory Diversity Enforcer -----------------------------------------
+def _start_diversity_enforcer() -> None:
+    """Run memory diversity maintenance when idle."""
+    import time as _time
+    try:
+        from core.memory_backend.maintenance import execute_diversity_maintenance
+        from core.memory import memory as _mem
+        from core.activity_tracker import tracker
+        
+        last_run = 0.0
+        while True:
+            _time.sleep(1800) # Check every 30 mins
+            try:
+                # 7 day cooldown
+                if (_time.time() - last_run) < (7 * 86400):
+                    continue
+                    
+                # Check idle (4 hours)
+                if not tracker.try_acquire_background_slot(min_idle_seconds=14400):
+                    continue
+                    
+                try:
+                    print("[server] Running Memory Diversity Enforcement...", file=sys.stderr)
+                    result = execute_diversity_maintenance(_mem.store)
+                    print(f"[server] Diversity Maintenance: {result.get('metrics', {})}", file=sys.stderr)
+                    last_run = _time.time()
+                finally:
+                    tracker.release_background_slot()
+            except Exception as e:
+                print(f"[server] Diversity maintenance error: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Diversity enforcer skipped: {e}", file=sys.stderr)
+
+_threading.Thread(target=_start_diversity_enforcer, daemon=True).start()
+
 # -- Start Runtime Watchdog ----------------------------------------------------
 def _start_watchdog() -> None:
     try:

@@ -35,10 +35,12 @@ class EvictionQueue:
             "ts": time.time()
         }
         
-        # 1. Disk Spill (Atomic Append)
+        # 1. Disk Spill (Thread-Safe Append)
         try:
-            with open(QUEUE_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload) + "\n")
+            with self._lock:
+                with open(QUEUE_FILE, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(payload) + "\n")
+                    f.flush()
         except Exception as e:
             logger.error(f"[Eviction] Disk spill failed: {e}")
             
