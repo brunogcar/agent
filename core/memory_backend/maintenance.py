@@ -261,7 +261,10 @@ import math
 import re
 
 # Phase 6: Negation pattern for contradiction detection
-NEGATION_PATTERN = re.compile(r"\b(never|don't|do not|avoid|instead of|stop|prevent)\b", re.IGNORECASE)
+NEGATION_PATTERN = re.compile(
+    r"\b(never|don't|do not|avoid|instead of|stop|prevent|not\s+\w+|is not|are not|should not)\b", 
+    re.IGNORECASE
+)
 
 def execute_diversity_maintenance(store, dry_run: bool = False) -> dict:
     """
@@ -355,9 +358,12 @@ def execute_diversity_maintenance(store, dry_run: bool = False) -> dict:
                 loser_reinf = sum(l["meta"].get("reinforcement_count", 0) for l in losers)
                 loser_recall = sum(l["meta"].get("recall_count", 0) for l in losers)
                 
-                # Logarithmic absorption to prevent runaway inflation
-                new_reinf = math.log10(1 + champ_meta.get("reinforcement_count", 0) + loser_reinf)
-                new_recall = math.log10(1 + champ_meta.get("recall_count", 0) + loser_recall)
+                # Logarithmic absorption: Add log of losers to champion's existing count
+                champ_reinf = champ_meta.get("reinforcement_count", 0)
+                champ_recall = champ_meta.get("recall_count", 0)
+                
+                new_reinf = champ_reinf + math.log10(1 + loser_reinf)
+                new_recall = champ_recall + math.log10(1 + loser_recall)
                 
                 champ_meta["reinforcement_count"] = round(new_reinf, 4)
                 champ_meta["recall_count"] = round(new_recall, 4)
@@ -370,16 +376,16 @@ def execute_diversity_maintenance(store, dry_run: bool = False) -> dict:
                     
                 # Delete Losers & Sync Hash Cache
                 loser_ids = [l["id"] for l in losers]
-                for l in losers:
-                    h = l["meta"].get("text_hash")
-                    if h:
-                        store._hash_cache.discard(h)
-                        
                 try:
                     col.delete(ids=loser_ids)
                     deleted_ids.update(loser_ids)
-                except Exception:
-                    pass
+                    # Sync hash cache ONLY after successful deletion
+                    for l in losers:
+                        h = l["meta"].get("text_hash")
+                        if h:
+                            store._hash_cache.discard(h)
+                except Exception as e:
+                    logger.warning(f"[Diversity] Failed to delete losers {loser_ids}: {e}")
                     
             merges_performed += 1
             
