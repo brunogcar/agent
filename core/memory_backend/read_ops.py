@@ -44,7 +44,7 @@ def execute_recall(
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as e:
-            tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
+            tracer.error(trace_id, "read_ops", f"ChromaDB query failed for collection {col_name}: {e}")
             continue
 
         docs      = raw.get("documents", [[]])[0]

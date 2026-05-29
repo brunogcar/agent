@@ -49,7 +49,7 @@ def execute_delete(store, query: str, collections: list[str] = None, threshold: 
                         "_hash":      meta.get("text_hash"),  # For cache cleanup
                     })
         except Exception as e:
-            tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
+            tracer.error("", "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
             continue
 
     if not candidates:
@@ -79,7 +79,7 @@ def execute_delete(store, query: str, collections: list[str] = None, threshold: 
             store._col(col_name).delete(ids=ids)
             deleted += len(ids)
         except Exception as e:
-            tracer.error(f"Failed to delete memory from collection {col_name}: {e}")
+            tracer.error("", "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
             pass
 
     # Strip internal _hash key before returning to LLM/User
@@ -115,7 +115,7 @@ def execute_prune(store, max_age_days: int = 30, min_importance: int = 3, dry_ru
             docs  = data.get("documents", [])
             metas = data.get("metadatas", [])
         except Exception as e:
-            tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
+            tracer.error("", "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
             continue
 
         for id_, doc, meta in zip(ids, docs, metas):
@@ -161,7 +161,7 @@ def execute_prune(store, max_age_days: int = 30, min_importance: int = 3, dry_ru
             store._col(col_name).delete(ids=ids)
             deleted += len(ids)
         except Exception as e:
-            tracer.error(f"Failed to delete memory from collection {col_name}: {e}")
+            tracer.error("", "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
             pass
 
     clean_entries = [{k: v for k, v in c.items() if k != "_hash"} for c in candidates]
@@ -193,7 +193,7 @@ def execute_summarize(store, collections: list[str] = None, top_n: int = 30, sto
                     "reinf":      meta.get("reinforcement_count", 0),
                 })
         except Exception as e:
-            tracer.error(f"ChromaDB query failed for collection {col_name}: {e}")
+            tracer.error("", "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
             continue
 
     if len(all_docs) < 3:
@@ -253,6 +253,6 @@ def execute_stats(store) -> dict:
             count = col.count()
             result[col_name] = {"count": count}
         except Exception as e:
-            tracer.error(f"Failed to get count from collection {col_name}: {e}")
+            tracer.error("", "maintenance", f"Failed to get count from collection {col_name}: {e}")
             result[col_name] = {"count": 0, "error": str(e)}
     return result

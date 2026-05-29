@@ -5,7 +5,6 @@ Implements O(1) Hash Guard, Contextual Feedback, and Procedural Reinforcement.
 from __future__ import annotations
 
 import os
-import sys
 import time
 import uuid
 
@@ -16,6 +15,28 @@ from core.memory_backend.constants import (
     DEFAULT_DEDUP_THRESHOLDS, MAX_DUPLICATE_PREVIEW_CHARS
 )
 from core.memory_backend.scoring import normalize_and_hash
+
+
+def _build_duplicate_payload(docs, distances, metas, ids, collection):
+    """Helper to build consistent contextual feedback for both outer and inner dedup checks."""
+    existing_text = docs[0]
+    existing_id = ids[0] if ids else "unknown"
+    
+    snippet = existing_text[:MAX_DUPLICATE_PREVIEW_CHARS]
+    if len(existing_text) > MAX_DUPLICATE_PREVIEW_CHARS:
+        snippet += "..."
+        
+    return {
+        "status": "skipped_duplicate",
+        "reason": "semantic_match",
+        "action": "reference_existing",
+        "directive": "This knowledge is already in memory. Do not retry with overlapping chunks.",
+        "matched_snippet": snippet,
+        "existing_id": existing_id,
+        "match_distance": round(distances[0], 4),
+        "retry_recommended": False,
+        "collection": collection
+    }
 
 
 def execute_store(
@@ -55,7 +76,7 @@ def execute_store(
     )
 
     # ==========================================
-    # FIX B: O(1) Hash Guard (Exact Match)
+    # FIX B: O(1) Hash Guard (Exact Match) - OUTER CHECK
     # ==========================================
     text_hash = normalize_and_hash(text)
     if text_hash in store._hash_cache:
@@ -71,7 +92,7 @@ def execute_store(
     memory_id = str(uuid.uuid4())
 
     # ===== MED-01 FIX: Write-Only Lock pattern (Solution B) =====
-    # Dedup is best-effort - racing is acceptable! Only lock actual inserts.
+    # Outer vector dedup (best effort, fast path)
     try:
         existing = col.query(
             query_texts=[text], 
@@ -80,72 +101,80 @@ def execute_store(
         )
         docs      = existing.get("documents", [[]])[0]
         distances = existing.get("distances", [[]])[0]
-        metas     = existing.get("metadatas", [[]])[0]
-        ids       = existing.get("ids", [[]])[0]
         
         if docs and distances and distances[0] < _dedup_thresh:
-            existing_text = docs[0]
-            existing_id = ids[0] if ids else "unknown"
-            existing_meta = metas[0] if metas else {}
-            
-            # ==========================================
-            # FIX C: Procedural Reinforcement
-            # ==========================================
-            if collection == COLLECTION_PROCEDURAL:
-                new_count = existing_meta.get("reinforcement_count", 0) + 1
-                existing_meta["reinforcement_count"] = new_count
-                existing_meta["last_reinforced"] = int(time.time())
-                
-                with store._write_lock:
-                    col.update(ids=[existing_id], metadatas=[existing_meta])
-                
-                store._hash_cache.add(text_hash)
-                return {
-                    "status": "reinforced",
-                    "reason": "semantic_match",
-                    "existing_id": existing_id,
-                    "reinforcement_count": new_count,
-                    "collection": collection
-                }
-
-            # ==========================================
-            # FIX A: Contextual Feedback Trap
-            # ==========================================
-            snippet = existing_text[:MAX_DUPLICATE_PREVIEW_CHARS]
-            if len(existing_text) > MAX_DUPLICATE_PREVIEW_CHARS:
-                snippet += "..."
-                
-            return {
-                "status": "skipped_duplicate",
-                "reason": "semantic_match",
-                "action": "reference_existing",
-                "directive": "This knowledge is already in memory. Do not retry with overlapping chunks.",
-                "matched_snippet": snippet,
-                "existing_id": existing_id,
-                "match_distance": round(distances[0], 4),
-                "retry_recommended": False,
-                "collection": collection
-            }
+            # Fast path hit! Return contextual feedback. 
+            # We skip reinforcement here to avoid the Read/Write race condition.
+            metas = existing.get("metadatas", [[]])[0]
+            ids   = existing.get("ids", [[]])[0]
+            return _build_duplicate_payload(docs, distances, metas, ids, collection)
             
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception as e:
-        tracer.error(f"Failed to fetch existing memories for dedup: {e}")
+        tracer.error(trace_id, "write_ops", f"Failed to fetch existing memories for dedup: {e}")
 
     # Lock only the actual insert operation - this is the critical section!
     with store._write_lock:
-        # 🔴 TOCTOU fix: Re-check for duplicates inside the lock (double-check locking)
+        # 🔴 TOCTOU fix: Re-check Hash and Vector inside the lock
+        
+        # 1. Re-check Hash Cache (Fixes Hash TOCTOU)
+        if text_hash in store._hash_cache:
+            return {
+                "status": "skipped_duplicate",
+                "reason": "exact_hash_match",
+                "action": "reference_existing",
+                "directive": "This exact text is already in memory. Do not retry.",
+                "retry_recommended": False,
+                "collection": collection
+            }
+
+        # 2. Re-check Vector (Fixes Inner Dedup Blind Spot & Reinforcement Race)
         try:
-            existing_inner = col.query(query_texts=[text], n_results=1, include=["documents", "distances"])
+            existing_inner = col.query(
+                query_texts=[text], 
+                n_results=1, 
+                include=["documents", "distances", "metadatas"]
+            )
             inner_docs = existing_inner.get("documents", [[]])[0]
             inner_dists = existing_inner.get("distances", [[]])[0]
+            
             if inner_docs and inner_dists and inner_dists[0] < _dedup_thresh:
-                return {"status": "skipped_duplicate", "collection": collection, "retry_recommended": False}
+                inner_metas = existing_inner.get("metadatas", [[]])[0]
+                inner_ids   = existing_inner.get("ids", [[]])[0]
+                
+                # ==========================================
+                # FIX C: Procedural Reinforcement (NOW INSIDE LOCK)
+                # ==========================================
+                if collection == COLLECTION_PROCEDURAL:
+                    existing_meta = inner_metas[0] if inner_metas else {}
+                    existing_id = inner_ids[0] if inner_ids else None
+                    
+                    if existing_id:
+                        new_count = existing_meta.get("reinforcement_count", 0) + 1
+                        existing_meta["reinforcement_count"] = new_count
+                        existing_meta["last_reinforced"] = int(time.time())
+                        
+                        col.update(ids=[existing_id], metadatas=[existing_meta])
+                        store._hash_cache.add(text_hash)
+                        
+                        return {
+                            "status": "reinforced",
+                            "reason": "semantic_match",
+                            "existing_id": existing_id,
+                            "reinforcement_count": new_count,
+                            "collection": collection
+                        }
+                
+                # If not procedural, return the contextual feedback (Fixes Inner Blind Spot)
+                return _build_duplicate_payload(inner_docs, inner_dists, inner_metas, inner_ids, collection)
+                
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:
-            tracer.error(f"Inner dedup check failed (non-fatal): {e}")
+            tracer.error(trace_id, "write_ops", f"Inner dedup check failed (non-fatal): {e}")
         
+        # 3. Actual Insert
         try:
             col.add(documents=[text], ids=[memory_id], metadatas={
                 "type":       collection,
