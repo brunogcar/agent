@@ -277,24 +277,28 @@ def execute_diversity_maintenance(store, dry_run: bool = False) -> dict:
     except Exception as e:
         return {"status": "error", "error": str(e)}
         
-    ids = all_data.get("ids", [])
-    metas = all_data.get("metadatas", [])
-    docs = all_data.get("documents", [])
+    raw_ids = all_data.get("ids", [])
+    raw_metas = all_data.get("metadatas", [])
+    raw_docs = all_data.get("documents", [])
     
-    if not ids:
+    if not raw_ids:
         return {"status": "success", "metrics": {"rules_processed": 0}}
         
+    # Map IDs to their docs/metas for safe deterministic sorting
+    data_map = {m_id: {"doc": doc, "meta": meta or {}} for m_id, doc, meta in zip(raw_ids, raw_docs, raw_metas)}
+    ids = sorted(data_map.keys())
+    
     processed = set()
     clusters = []
     
     # 1. Clustering (Greedy ChromaDB Walk)
-    for i, mem_id in enumerate(ids):
+    for mem_id in ids:
         if mem_id in processed:
             continue
             
         try:
             neighbors = col.query(
-                query_texts=[docs[i]],
+                query_texts=[data_map[mem_id]["doc"]],
                 n_results=20,
                 include=["metadatas", "documents", "distances"]
             )
