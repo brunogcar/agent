@@ -232,7 +232,7 @@ def _run_subprocess(code: str) -> dict:
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
 
 @tool
-def python(mode: str, code: str) -> dict:
+def python(mode: str, code: str, trace_id: str = "") -> dict:
     """
     Execute Python code.
 
@@ -297,11 +297,15 @@ def python(mode: str, code: str) -> dict:
             local_env: dict = {}
             exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
             output = captured.getvalue().strip()
-            sys.stdout = old_stdout
+            sys.stdout = old_stdout      
+            from core.context_pruner import prune_text
+            final_output = output if output else str({k: str(v) for k, v in local_env.items()})
+            if output: # Only prune actual stdout, not env dumps
+                final_output = prune_text("python_exec", final_output, trace_id)
             return {
                 "status": "success",
-                "output": output if output else str({k: str(v) for k, v in local_env.items()}),
-                "mode":    "sandbox",
+                "output": final_output,
+                "mode":     "sandbox",
             }
         except Exception as e:
             sys.stdout = old_stdout
@@ -347,8 +351,14 @@ def python(mode: str, code: str) -> dict:
 
         needs_heavy = any(n in HEAVY_IMPORTS for n in imports)
         if needs_heavy:
-            return _run_subprocess(code)
-        return _run_inprocess(code, imports)
+            result = _run_subprocess(code)
+        else:
+            result = _run_inprocess(code, imports)
+        
+        if result.get("status") == "success" and result.get("output"):
+            from core.context_pruner import prune_text
+            result["output"] = prune_text("python_exec", result["output"], trace_id)
+        return result
 
     return {
         "status": "error",

@@ -85,6 +85,19 @@ tracer.finish(_boot_tid, success=True, result=f"{_tool_count} tools registered")
 # -- Restore real stdout and hand it to FastMCP's stdio transport -------------
 sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
 
+# -- Cleanup old VRAM artifacts ------------------------------------------------
+def _cleanup_artifacts() -> None:
+    """Delete .artifacts/ files older than 7 days on startup."""
+    try:
+        from core.context_pruner import cleanup_old_artifacts
+        cleanup_old_artifacts(max_age_days=7)
+        print("[server] Cleaned up old .artifacts/", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Artifact cleanup skipped: {e}", file=sys.stderr)
+
+import threading as _threading
+_threading.Thread(target=_cleanup_artifacts, daemon=True).start()
+
 # -- Warm up ChromaDB in background (avoids cold-start MCP timeout) -----------
 def _warmup_chromadb() -> None:
     """Load ChromaDB embedding model before first tool call."""

@@ -13,3 +13,6 @@ tmp/
 .ruff_cache/
 logs/
 venv/
+
+# Ignore massive debug artifacts from VRAM Context Pruner
+workspace/.artifacts/

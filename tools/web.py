@@ -213,6 +213,7 @@ def web(
     url:         str = "",
     max_results: int = 5,
     max_chars:   Optional[int] = None,
+    trace_id:    str = "",
 ) -> dict:
     """
     Web tool -- search the web or read web pages.
@@ -254,8 +255,10 @@ def web(
     if action in ("scrape", "read"):
         if not url:
             return {"status": "error",
-                     "error": f"action='{action}' requires url="}
-        return _do_scrape(url, max_chars)
+                    "error": f"action='{action}' requires url="}
+        result = _do_scrape(url, max_chars)
+        from core.context_pruner import prune_tool_dict
+        return prune_tool_dict("web", result, trace_id)
 
     if action == "search_and_read":
         if not query:
@@ -302,14 +305,16 @@ def web(
                     "word_count": result.get("word_count", 0),
                 })
 
-        return {
-            "status":          "success",
-            "query":         query,
-            "results":       scraped,
-            "scraped_count": len(scraped),
-            "attempted":     len(urls),
+        result = {
+            "status":           "success",
+            "query":            query,
+            "results":          scraped,
+            "scraped_count":    len(scraped),
+            "attempted":        len(urls),
             "duplicates_removed": len(search_result["results"]) - len(urls),
         }
+        from core.context_pruner import prune_tool_dict
+        return prune_tool_dict("web", result, trace_id)
 
     return {
         "status": "error",

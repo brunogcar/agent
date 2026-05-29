@@ -55,64 +55,55 @@ from tools.cli_ops import router
 
 
 @tool
-def cli(command: str) -> str:
+def cli(command: str, trace_id: str = "") -> str:
     """
     Natural-language command dispatcher.
-    Executes commands through a 4-layer routing system:
-    1. Pattern matching (zero LLM tokens)
-    2. Shell whitelist (zero LLM tokens)
-    3. Router dispatch (LLM-based routing)
-    4. Executor escalation (free-form reasoning)
-    Args:
-        command: Natural language command string
-
-    Returns:
-        Command output or result as string
     """
-    # 🔴 Cancellation Guard: Abort before executing shell commands or LLM routing
-    from core.cancellation import ensure_not_cancelled
-    ensure_not_cancelled()
+    def _cli_logic():
+        # 🔴 Cancellation Guard: Abort before executing shell commands or LLM routing
+        from core.cancellation import ensure_not_cancelled
+        ensure_not_cancelled()
 
-    # Sanitize input first
-    try:
-        command = _sanitize_command(command)
-    except ValueError as e:
-        return f"Invalid command: {e}"
+        # Sanitize input first
+        try:
+            command_inner = _sanitize_command(command)
+        except ValueError as e:
+            return f"Invalid command: {e}"
 
-    # Layer 1: Pattern matching (zero tokens)
-    result = _match_pattern(command)
-    if result is not None:
-        tool_name, action, params = result
-        return _safe_dispatch(tool_name, action, params)
+        # Layer 1: Pattern matching (zero tokens)
+        result = _match_pattern(command_inner)
+        if result is not None:
+            tool_name, action, params = result
+            return _safe_dispatch(tool_name, action, params)
 
-    # Layer 2: Shell whitelist (zero tokens)
-    # Instead of exact string matching, we check if the base command is safe
-    # and let _shell_exec handle the heavy validation (allowlist + path scoping).
-    try:
-        # Parse just the first token to check against allowlist
-        base_cmd = shlex.split(command, posix=(os.name != 'nt'))[0].lower()
-        if base_cmd.endswith(".exe"):
-            base_cmd = base_cmd[:-4]
-            
-        if base_cmd in ALLOWED_COMMANDS:
-            return _shell_exec(command)
-    except Exception:
-        pass  # Fall through to Router if parsing fails
+        # Layer 2: Shell whitelist (zero tokens)
+        try:
+            base_cmd = shlex.split(command_inner, posix=(os.name != 'nt'))[0].lower()
+            if base_cmd.endswith(".exe"):
+                base_cmd = base_cmd[:-4]
+                
+            if base_cmd in ALLOWED_COMMANDS:
+                return _shell_exec(command_inner)
+        except Exception:
+            pass  # Fall through to Router if parsing fails
 
-    # Layer 3: Router dispatch
-    result = router._call_router(command)
-    if result is not None:
-        if result.get("route") == "dispatch":
-            return _safe_dispatch(
-                result.get("tool_name", ""),
-                result.get("action", ""),
-                result.get("params", {})
-            )
-        # route == "escalate" falls through to Layer 4
+        # Layer 3: Router dispatch
+        result = router._call_router(command_inner)
+        if result is not None:
+            if result.get("route") == "dispatch":
+                return _safe_dispatch(
+                    result.get("tool_name", ""),
+                    result.get("action", ""),
+                    result.get("params", {})
+                )
 
-    # Layer 4: Executor escalation (handled by router returning escalation message)
-    if result is not None and result.get("route") == "escalate":
-        return f"Escalated to Executor: {result.get('reason', 'complex task')}"
+        # Layer 4: Executor escalation
+        if result is not None and result.get("route") == "escalate":
+            return f"Escalated to Executor: {result.get('reason', 'complex task')}"
 
-    # Fallback: try direct dispatch with common defaults
-    return _safe_dispatch("system", "help", {})
+        # Fallback: try direct dispatch with common defaults
+        return _safe_dispatch("system", "help", {})
+
+    final_result = _cli_logic()
+    from core.context_pruner import prune_text
+    return prune_text("cli", final_result, trace_id)
