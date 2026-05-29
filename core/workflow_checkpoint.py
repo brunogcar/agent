@@ -8,6 +8,7 @@ import json
 import time
 import shutil
 import logging
+import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -20,32 +21,33 @@ QUARANTINE_DIR = CHECKPOINT_DIR / "quarantine"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 QUARANTINE_DIR.mkdir(parents=True, exist_ok=True)
 
-MAX_RESUMES = 3
+MAX_RESUMES = 5
 
-def sanitize_state(state: dict) -> dict:
-    """Extract only JSON-safe primitives from WorkflowState."""
-    safe = {}
-    for k, v in state.items():
-        if isinstance(v, (str, int, float, bool, type(None))):
-            safe[k] = v
-        elif isinstance(v, (list, tuple)):
-            try:
-                json.dumps(v)
-                safe[k] = v
-            except (TypeError, ValueError):
-                safe[k] = [str(item) for item in v]
-        elif isinstance(v, dict):
-            try:
-                json.dumps(v)
-                safe[k] = v
-            except (TypeError, ValueError):
-                safe[k] = {str(ik): str(iv) for ik, iv in v.items()}
-        elif isinstance(v, Path):
-            safe[k] = str(v)
-        else:
-            # Drop non-serializable objects (httpx clients, locks, CircuitBreakers)
-            pass
-    return safe
+def sanitize_state(state: Any, _seen: set = None) -> Any:
+    """Recursively extract only JSON-safe primitives from state."""
+    if _seen is None:
+        _seen = set()
+        
+    obj_id = id(state)
+    if obj_id in _seen:
+        return "<circular_reference>"
+    _seen.add(obj_id)
+
+    if isinstance(state, (str, int, float, bool, type(None))):
+        return state
+    elif isinstance(state, (datetime.datetime, datetime.date)):
+        return state.isoformat()
+    elif isinstance(state, bytes):
+        return state.decode("utf-8", errors="replace")
+    elif hasattr(state, "__fspath__"): # Path-like objects
+        return str(state)
+    elif isinstance(state, dict):
+        return {str(k): sanitize_state(v, _seen) for k, v in state.items()}
+    elif isinstance(state, (list, tuple)):
+        return [sanitize_state(v, _seen) for v in state]
+    else:
+        # Drop non-serializable objects (httpx clients, locks, CircuitBreakers)
+        return None
 
 def save_checkpoint(trace_id: str, node_name: str, state: dict) -> None:
     """Append a checkpoint to the workflow's JSONL journal."""
@@ -90,7 +92,21 @@ def get_latest(trace_id: str) -> Optional[dict]:
         entry = json.loads(last_line)
         
         # Zombie check: if resumed too many times, quarantine
+        is_zombie = False
         if entry.get("resume_count", 0) >= MAX_RESUMES:
+            is_zombie = True
+            
+        # Check for consecutive same-node failures (pathological loop)
+        if not is_zombie and len(lines) >= 2:
+            try:
+                prev = json.loads(lines[-2].strip())
+                if (prev.get("status") == "failed" and entry.get("status") == "failed" and
+                    prev.get("node") == entry.get("node") and prev.get("node") not in ("resume", "")):
+                    is_zombie = True
+            except Exception:
+                pass
+                
+        if is_zombie:
             logger.warning(f"[Checkpoint] Quarantining zombie workflow {trace_id}")
             quarantine(trace_id)
             return None
