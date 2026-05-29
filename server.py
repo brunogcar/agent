@@ -172,7 +172,7 @@ _start_eviction_flusher()
 def _scan_incomplete_workflows() -> None:
     """Log any workflows that crashed mid-execution."""
     try:
-        from core.workflow_checkpoint import scan_incomplete
+        from workflows.helpers.checkpoint import scan_incomplete
         incomplete = scan_incomplete()
         if incomplete:
             print(f"[server] Found {len(incomplete)} incomplete workflows: {incomplete}", file=sys.stderr)

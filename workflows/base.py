@@ -1,4 +1,4 @@
-"""
+﻿"""
 workflows/base.py -- Shared state TypedDict and node utilities.
 
 All three workflows (research, data, autocode) share:
@@ -105,7 +105,7 @@ def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = 
         tracer.step(tid, node, message, **kwargs)
         
     if checkpoint and tid:
-        from core.workflow_checkpoint import save_checkpoint
+        from workflows.helpers.checkpoint import save_checkpoint
         save_checkpoint(tid, node, state)
 
 
@@ -118,7 +118,7 @@ def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> Workf
     tid = state.get("trace_id", "")
     if tid:
         tracer.error(tid, node, message, **kwargs)
-        from core.workflow_checkpoint import save_checkpoint
+        from workflows.helpers.checkpoint import save_checkpoint
         save_checkpoint(tid, node, {**state, "status": "failed", "error": message})
 
     return {**state, "status": "failed", "error": message}
@@ -129,7 +129,7 @@ def node_done(state: WorkflowState, result: str, artifacts: list = None) -> Work
     tid = state.get("trace_id", "")
     if tid:
         tracer.finish(tid, success=True, result=result[:200])
-        from core.workflow_checkpoint import mark_complete
+        from workflows.helpers.checkpoint import mark_complete
         mark_complete(tid)
 
     return {
@@ -181,7 +181,7 @@ def run_workflow(
 
     # 🔴 CHECKPOINT RESUMPTION
     if resume:
-        from core.workflow_checkpoint import get_latest
+        from workflows.helpers.checkpoint import get_latest
         restored = get_latest(trace_id)
         if restored:
             tracer.step(trace_id, "resume", "Resuming from checkpoint")

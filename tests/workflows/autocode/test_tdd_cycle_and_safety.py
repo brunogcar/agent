@@ -1,4 +1,4 @@
-"""
+﻿"""
 tests/workflows/autocode/test_tdd_cycle_and_safety.py
 Merged & expanded safety suite for Phase 3/4 autocode features.
 Validates:
@@ -102,7 +102,7 @@ class TestSurgicalPatchingAndFileLocks:
 
     def test_apply_patch_success_creates_bak(self, temp_workspace):
         """Successful patch must create backup and modify file."""
-        from core.patch import apply_patch
+        from workflows.autocode_helpers.patch import apply_patch
         target = temp_workspace / "patch_target.py"
         target.write_text("def old(): pass\n", encoding="utf-8")
 
@@ -113,7 +113,7 @@ class TestSurgicalPatchingAndFileLocks:
 
     def test_apply_patch_fallback_on_mismatch(self, temp_workspace):
         """Mismatched old_text must return ok=False without corrupting file."""
-        from core.patch import apply_patch
+        from workflows.autocode_helpers.patch import apply_patch
         target = temp_workspace / "fallback_target.py"
         target.write_text("original content", encoding="utf-8")
 

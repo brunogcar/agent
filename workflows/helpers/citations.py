@@ -1,11 +1,11 @@
-"""
+﻿"""
 core/citations.py -- Citation tracker for research workflows.
 
 Tracks which facts came from which sources during a research session.
 Keyed by trace_id so citations are scoped to a single workflow run.
 
 Usage:
-    from core.citations import citations
+    from workflows.helpers.citations import citations
 
     # During scraping
     citations.add(trace_id, url="https://example.com", title="Example",

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Patch (str_replace) action handler.
 """
 
@@ -28,7 +28,7 @@ def _handle_patch(path: str = "", **kwargs) -> dict:
         return {"status": "error",
                 "error": f"'{path}' is protected -- cannot patch"}
 
-    from core.patch import apply_patch
+    from workflows.autocode_helpers.patch import apply_patch
     result = apply_patch(p, old_text, new_text)
     if result.ok:
         return {

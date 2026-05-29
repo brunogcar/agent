@@ -1,4 +1,4 @@
-"""
+﻿"""
 File writing node.
 """
 
@@ -34,7 +34,7 @@ def node_write_files(state: AutocodeState) -> dict:
         tracer.step(tid, "write_files", f"JSON parse failed: {e}")
         return {}  # LangGraph partial update: no changes needed
 
-    from core.patch import apply_patch
+    from workflows.autocode_helpers.patch import apply_patch
 
     # -- Apply str_replace patches for existing files -------------------------
     patches      = data.get("patches", [])
