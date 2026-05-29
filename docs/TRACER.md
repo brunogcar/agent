@@ -20,7 +20,10 @@ Tracer (singleton)
 ├── Structlog Config (stderr only, JSON renderer)
 │   └── Graceful Fallback (standard logging if structlog missing)
 ├── _FileWriter (Thread-safe JSONL, daily rotation)
-└── _TraceStore (In-memory, bounded to 200 traces)
+├── _TraceStore (In-memory, bounded to 200 traces)
+└── Trace Reader (`core/trace_reader.py`)
+    ├── Fast Path (In-memory lookup via `_TraceStore`)
+    └── Slow Path (Disk scan of last 14 days of JSONL logs)
 ```
 
 ---
@@ -274,7 +277,22 @@ If you are an AI assistant modifying `core/tracer.py` or any file that uses it:
 
 ---
 
-## 🔍 Querying Logs
+## 🌐 Trace Query API (HTTP Endpoints)
+The agent exposes a REST API via `core/gateway.py` to query execution timelines programmatically. This is powered by `core/trace_reader.py`, which checks the in-memory `_TraceStore` first (Fast Path), and falls back to scanning the last 14 days of JSONL files on disk (Slow Path).
+
+### Endpoints
+- `GET /traces` — List the most recent traces from memory.
+- `GET /traces/{trace_id}` — Retrieve the full execution timeline (start, steps, errors, finish) for a specific trace ID.
+
+### Example Usage (PowerShell)
+```powershell
+# List recent traces
+Invoke-RestMethod -Uri "http://localhost:8000/traces" -Headers @{ Authorization = "Bearer YOUR_SECRET" }
+
+# Get full timeline for a specific trace
+Invoke-RestMethod -Uri "http://localhost:8000/traces/a3f2c0b1" -Headers @{ Authorization = "Bearer YOUR_SECRET" }
+
+🔍 Querying Logs (Manual CLI)
 
 ### With `jq` (Command Line)
 ```bash
@@ -304,7 +322,8 @@ for line in log_file.read_text().splitlines():
 
 ## 🔮 Future Enhancements (Planned)
 
-- **OpenTelemetry Integration**: Export traces to Jaeger/Zipkin for distributed tracing across multiple agent instances.
+- **✅ Trace Query API (COMPLETED):** Added `core/trace_reader.py` and FastAPI endpoints (`GET /traces`, `GET /traces/{trace_id}`) to query timelines via HTTP.
+- OpenTelemetry Integration: Export traces to Jaeger/Zipkin for distributed tracing across multiple agent instances.
 - **Log Compression**: Automatically gzip old JSONL files after 7 days to save disk space.
 - **Remote Log Shipping**: Optional forwarding to a centralized log aggregator (e.g., Loki, ELK) for multi-machine deployments.
 - **Trace Sampling**: Automatically drop low-importance traces (e.g., simple router calls) to reduce log volume.

@@ -683,8 +683,35 @@ def create_app():
             }
 
     @app.get("/traces")
-    def recent_traces(_: None = Depends(_check_auth)):
-        return {"traces": tracer.recent(10)}
+    def recent_traces(limit: int = 10, _: None = Depends(_check_auth)):
+        from core.tracer_reader import list_recent_traces
+        return {"traces": list_recent_traces(limit)}
+
+    @app.get("/traces/{trace_id}")
+    def get_trace_timeline(trace_id: str, _: None = Depends(_check_auth)):
+        """Retrieve the full execution timeline for a specific trace_id."""
+        from core.tracer_reader import read_trace
+        from fastapi import HTTPException
+        
+        trace = read_trace(trace_id)
+        if not trace:
+            raise HTTPException(
+                status_code=404,
+                detail=f"trace_id '{trace_id}' not found in memory or last 14 days of logs"
+            )
+        return trace
+
+    @app.get("/traces/{trace_id}")
+    def get_trace_timeline(trace_id: str, _: None = Depends(_check_auth)):
+        """Retrieve the full execution timeline for a specific trace_id."""
+        from core.tracer_reader import read_trace
+        trace = read_trace(trace_id)
+        if not trace:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"trace_id '{trace_id}' not found in memory or last 14 days of logs"
+            )
+        return trace
 
     return app
 
