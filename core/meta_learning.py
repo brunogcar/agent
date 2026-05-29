@@ -43,7 +43,10 @@ Episodic Memories:
 SPECIFICITY_MARKERS = [
     "import", "def ", "class ", "df.", "pd.", "np.", ".py", "Error", 
     "Exception", "api", "http", "json", "sql", "git", "docker", "pip",
-    "chromadb", "langgraph", "mcp", "traceback", "assert", "pytest"
+    "chromadb", "langgraph", "mcp", "traceback", "assert", "pytest",
+    # Added to catch general technical rules (chunking, retries, etc.)
+    "chunk", "row", "limit", "timeout", "retry", "backoff", "cache", 
+    "429", "500", "bug", "fix", "crash", "loop", "memory", "vram"
 ]
 
 class MetaLearner:
