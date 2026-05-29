@@ -23,9 +23,13 @@ from urllib.parse import urlparse
 
 import httpx
 from registry import tool
+import logging
 from core.config import cfg
 from core.llm import llm
 from core.tracer import tracer
+
+logger = logging.getLogger(__name__)
+_SSRF_WARNED = False
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -61,6 +65,14 @@ You are a precise visual analysis specialist. Output ONLY valid JSON — no pros
 # ── SSRF Protection ─────────────────────────────────────────────────────────
 def _is_private_or_localhost(hostname: str) -> bool:
     """Block by network scope. Respects ALLOWED_INTERNAL_HOSTS allowlist."""
+    global _SSRF_WARNED
+    if not _SSRF_WARNED and cfg.allowed_internal_hosts:
+        logger.warning(
+            "SSRF: localhost access allowed by default for development. "
+            "Set ALLOWED_INTERNAL_HOSTS='' in .env for production."
+        )
+        _SSRF_WARNED = True
+
     hostname = hostname.lower().strip()
     
     # Handle IPv6 with port: [::1]:8080 → ::1

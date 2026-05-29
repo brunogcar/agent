@@ -35,8 +35,12 @@ except ImportError:
         "Please run: pip install httpx"
     )
 
+import logging
 from core.config import cfg
 from registry import tool
+
+logger = logging.getLogger(__name__)
+_SSRF_WARNED = False
 
 
 # [P2] Magic numbers centralized in core/config.py
@@ -54,6 +58,14 @@ def _is_safe_url(url: str) -> bool:
     Return False if the URL resolves to a private, loopback, link-local,
     reserved, or multicast IP address (SSRF protection).
     """
+    global _SSRF_WARNED
+    if not _SSRF_WARNED and cfg.allowed_internal_hosts:
+        logger.warning(
+            "SSRF: localhost access allowed by default for development. "
+            "Set ALLOWED_INTERNAL_HOSTS='' in .env for production."
+        )
+        _SSRF_WARNED = True
+
     try:
         hostname = urlparse(url).hostname
         if not hostname:
