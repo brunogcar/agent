@@ -77,6 +77,14 @@ class RecallTracker:
                         updated += len(current["ids"])
                     except Exception as e:
                         logger.warning(f"Telemetry flush failed for {col_name}: {e}")
+                        # 🔴 Failure Recovery: Merge failed stats back into buffer for next cycle
+                        with self._lock:
+                            for m_id, stats in mem_stats.items():
+                                key = (col_name, m_id)
+                                if key not in self._pending:
+                                    self._pending[key] = stats
+                                else:
+                                    self._pending[key]["count"] += stats["count"]
         except Exception as e:
             logger.warning(f"Telemetry flush lock failed: {e}")
             

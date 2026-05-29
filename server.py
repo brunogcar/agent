@@ -118,6 +118,20 @@ def _flush_telemetry_loop() -> None:
 
 _threading.Thread(target=_flush_telemetry_loop, daemon=True).start()
 
+# -- Graceful Shutdown: Flush telemetry on exit --------------------------------
+import atexit as _atexit
+def _shutdown_flush() -> None:
+    """Force final telemetry flush before process dies."""
+    try:
+        from core.memory_backend.telemetry import tracker
+        from core.memory import memory as _mem
+        flushed = tracker.flush(_mem.store)
+        if flushed > 0:
+            print(f"[server] Final telemetry flush: {flushed} updates", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Shutdown flush skipped: {e}", file=sys.stderr)
+_atexit.register(_shutdown_flush)
+
 # -- Warm up ChromaDB in background (avoids cold-start MCP timeout) -----------
 def _warmup_chromadb() -> None:
     """Load ChromaDB embedding model before first tool call."""
