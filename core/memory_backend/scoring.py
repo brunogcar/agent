@@ -12,16 +12,17 @@ import unicodedata
 from core.config import cfg
 
 def _decay_score(
-    importance: int, 
-    timestamp: int, 
-    collection: str = "", 
-    reinforcement_count: int = 0
+    importance: int,
+    timestamp: int,
+    collection: str = "",
+    reinforcement_count: int = 0,
+    recall_count: int = 0
 ) -> float:
     """
-    Score = importance * decay_factor * reinforcement_boost
-    
+    Score = importance * decay_factor * reinforcement_boost * recall_boost
     Procedural memories bypass time-based decay.
-    Reinforcement uses a capped logarithmic boost to prevent runaway inflation.
+    Reinforcement uses a capped logarithmic boost.
+    Recall uses a capped linear boost to elevate frequently used memories.
     """
     # 1. Time Decay (Bypassed for procedural)
     if collection == "procedural":
@@ -31,12 +32,15 @@ def _decay_score(
         decay = max(0.3, 1.0 - (age_days / cfg.memory_decay_days))
         
     # 2. Reinforcement Boost (Capped Logarithmic)
-    # log(1 + count) grows quickly then flattens. 
-    # We cap the effective count at 10 to prevent infinite growth.
     capped_count = min(reinforcement_count, 10)
     reinforcement_boost = 1.0 + (0.15 * math.log(1 + capped_count))
-    
-    return round(importance * decay * reinforcement_boost, 3)
+
+    # 3. Recall Boost (Capped Linear)
+    # +5% max boost for frequently recalled memories (20 recalls * 0.0025)
+    capped_recalls = min(recall_count, 20)
+    recall_boost = 1.0 + (0.0025 * capped_recalls)
+
+    return round(importance * decay * reinforcement_boost * recall_boost, 3)
 
 
 def _rewrite_query(query: str) -> str:

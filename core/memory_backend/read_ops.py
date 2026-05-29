@@ -50,24 +50,30 @@ def execute_recall(
         docs      = raw.get("documents", [[]])[0]
         metas     = raw.get("metadatas", [[]])[0]
         distances = raw.get("distances", [[]])[0]
+        ids       = raw.get("ids", [[]])[0]
 
-        for doc, meta, dist in zip(docs, metas, distances):
+        for doc, meta, dist, mem_id in zip(docs, metas, distances, ids):
             importance = meta.get("importance", 5)
             timestamp  = meta.get("timestamp", 0)
-            tags       = meta.get("tags", "")
+            tags       = meta.get("tags", " ")
             reinf      = meta.get("reinforcement_count", 0)
-            
-            # Uses the new scoring function with decay bypass & reinforcement
-            score      = _decay_score(importance, timestamp, col_name, reinf)
+            recall_cnt = meta.get("recall_count", 0)
+                
+            # Uses the new scoring function with decay bypass, reinforcement & recall boost
+            score      = _decay_score(importance, timestamp, col_name, reinf, recall_cnt)
             age_days   = round((time.time() - timestamp) / 86400, 1)
 
-            if score < min_score:
+            if score  < min_score:
                 continue
             if tags_filter:
                 wanted = {t.strip() for t in tags_filter.split(",")}
                 actual = {t.strip() for t in tags.split(",")}
-                if not wanted & actual:
+                if not wanted  & actual:
                     continue
+
+            # Record telemetry in RAM (0ms latency)
+            from core.memory_backend.telemetry import tracker
+            tracker.record_recall(col_name, mem_id, trace_id)
 
             results.append({
                 "text":       doc,

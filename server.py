@@ -98,6 +98,26 @@ def _cleanup_artifacts() -> None:
 import threading as _threading
 _threading.Thread(target=_cleanup_artifacts, daemon=True).start()
 
+# -- Flush Memory Telemetry in background ------------------------------------
+def _flush_telemetry_loop() -> None:
+    """Flush memory recall telemetry to ChromaDB every 60 seconds."""
+    import time as _time
+    try:
+        from core.memory_backend.telemetry import tracker
+        from core.memory import memory as _mem
+        while True:
+            _time.sleep(60)
+            try:
+                flushed = tracker.flush(_mem.store)
+                if flushed > 0:
+                    print(f"[server] Flushed {flushed} memory telemetry updates", file=sys.stderr)
+            except Exception as e:
+                print(f"[server] Telemetry flush error: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Telemetry loop skipped: {e}", file=sys.stderr)
+
+_threading.Thread(target=_flush_telemetry_loop, daemon=True).start()
+
 # -- Warm up ChromaDB in background (avoids cold-start MCP timeout) -----------
 def _warmup_chromadb() -> None:
     """Load ChromaDB embedding model before first tool call."""
