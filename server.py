@@ -157,6 +157,20 @@ def _start_meta_learner() -> None:
 
 _start_meta_learner()
 
+# -- Scan for Incomplete Workflows ---------------------------------------------
+def _scan_incomplete_workflows() -> None:
+    """Log any workflows that crashed mid-execution."""
+    try:
+        from core.workflow_checkpoint import scan_incomplete
+        incomplete = scan_incomplete()
+        if incomplete:
+            print(f"[server] Found {len(incomplete)} incomplete workflows: {incomplete}", file=sys.stderr)
+            print("[server] Use workflow(resume=True, trace_id=...) to resume.", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Workflow scan skipped: {e}", file=sys.stderr)
+
+_scan_incomplete_workflows()
+
 # -- Start Runtime Watchdog ----------------------------------------------------
 def _start_watchdog() -> None:
     try:

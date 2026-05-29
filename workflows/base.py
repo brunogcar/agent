@@ -7,15 +7,14 @@ All three workflows (research, data, autocode) share:
   - run_workflow() dispatcher that routes by type
 
 Usage from a tool or the agent meta-tool:
-    from workflows.base import run_workflow
 
+    from workflows.base import run_workflow
     result = run_workflow(
         workflow_type = "research",
         goal          = "What is LangGraph?",
         trace_id      = "abc123",
     )
 """
-
 from __future__ import annotations
 
 import time
@@ -65,11 +64,15 @@ class WorkflowState(TypedDict, total=False):
 
 # -- Node helpers -------------------------------------------------------------
 
-def node_step(state: WorkflowState, node: str, message: str, **kwargs) -> None:
+def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = False, **kwargs) -> None:
     """Log a workflow step to the active trace."""
     tid = state.get("trace_id", "")
     if tid:
         tracer.step(tid, node, message, **kwargs)
+        
+    if checkpoint and tid:
+        from core.workflow_checkpoint import save_checkpoint
+        save_checkpoint(tid, node, state)
 
 
 def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> WorkflowState:
@@ -77,9 +80,13 @@ def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> Workf
     # Ensure message is never empty -- empty errors are invisible in traces
     if not message or not message.strip():
         message = f"Unspecified error in node '{node}'"
+
     tid = state.get("trace_id", "")
     if tid:
         tracer.error(tid, node, message, **kwargs)
+        from core.workflow_checkpoint import save_checkpoint
+        save_checkpoint(tid, node, {**state, "status": "failed", "error": message})
+
     return {**state, "status": "failed", "error": message}
 
 
@@ -88,9 +95,12 @@ def node_done(state: WorkflowState, result: str, artifacts: list = None) -> Work
     tid = state.get("trace_id", "")
     if tid:
         tracer.finish(tid, success=True, result=result[:200])
+        from core.workflow_checkpoint import mark_complete
+        mark_complete(tid)
+
     return {
         **state,
-        "status":    "success",
+        "status":     "success",
         "result":    result,
         "artifacts": artifacts or [],
     }
@@ -102,6 +112,7 @@ def run_workflow(
     workflow_type: str,
     goal:          str,
     trace_id:      str  = "",
+    resume:        bool = False,
     **kwargs,
 ) -> dict:
     """
@@ -110,6 +121,7 @@ def run_workflow(
     workflow_type : "research" | "data" | "autocode"
     goal          : what to accomplish
     trace_id      : attach to existing trace (creates new one if empty)
+    resume        : if True, attempt to restore from checkpoint journal
     **kwargs      : workflow-specific inputs (see each workflow module)
 
     Returns the final WorkflowState as a plain dict with at minimum:
@@ -122,16 +134,26 @@ def run_workflow(
         trace_id = tracer.new_trace(wf_type, goal=goal)
 
     initial_state: WorkflowState = {
-        "workflow":  wf_type,
-        "goal":      goal,
-        "trace_id":  trace_id,
-        "retries":   0,
-        "status":    "running",
-        "error":     "",
-        "result":    "",
-        "artifacts": [],
+        "workflow":   wf_type,
+        "goal":       goal,
+        "trace_id":   trace_id,
+        "retries":    0,
+        "status":     "running",
+        "error":      "",
+        "result":     "",
+        "artifacts":  [],
         **kwargs,
     }
+
+    # 🔴 CHECKPOINT RESUMPTION
+    if resume:
+        from core.workflow_checkpoint import get_latest
+        restored = get_latest(trace_id)
+        if restored:
+            tracer.step(trace_id, "resume", "Resuming from checkpoint")
+            initial_state = {**restored, "status": "running", "goal": goal}
+        else:
+            tracer.warning(trace_id, "resume", "No checkpoint found, starting fresh")
 
     # For autocode workflow, convert goal -> task for compatibility with run_autocode_agent
     if wf_type == "autocode":
@@ -154,16 +176,16 @@ def run_workflow(
             result = graph.invoke(initial_state)
 
         else:
-            tracer.error(trace_id, "dispatch",
+            tracer.error( trace_id, "dispatch",
                          f"Unknown workflow type: {wf_type!r}")
             tracer.finish(trace_id, success=False)
             return {
-                "status": "failed",
+                "status":  "failed",
                 "error":  (
-                    f"Unknown workflow type '{wf_type}'. "
+                    f"Unknown workflow type '{wf_type}'.  "
                     "Use: research | data | autocode"
                 ),
-                "result":    "",
+                "result":     "",
                 "artifacts": [],
             }
 
@@ -174,8 +196,8 @@ def run_workflow(
         tracer.error(trace_id, "dispatch", msg)
         tracer.finish(trace_id, success=False, result=msg)
         return {
-            "status":    "failed",
+            "status":     "failed",
             "error":     msg,
-            "result":    "",
+            "result":     "",
             "artifacts": [],
         }

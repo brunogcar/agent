@@ -69,6 +69,7 @@ def workflow(
     error_msg: str = "",
     feature_desc: str = "",
     trace_id: str = "",
+    resume: bool = False,
 ) -> dict:
     """
     Launch a multi-step autonomous workflow.
@@ -204,6 +205,7 @@ def workflow(
 
         result = run_workflow(
             workflow_type=wf_type,
+            resume=resume,
             **kwargs,
         )
 
