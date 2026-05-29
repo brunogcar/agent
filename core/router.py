@@ -35,13 +35,13 @@ from core.tracer import tracer
 
 class RoutingDecision:
     """Structured routing decision with fallback handling."""
-
     def __init__(self, raw: dict) -> None:
-        self.workflow   = raw.get("workflow",   "research")
-        self.tool       = raw.get("tool",       "web")
+        self.workflow   = raw.get("workflow",    "research")
+        self.tool       = raw.get("tool",        "web")
         self.complexity = int(raw.get("complexity", 5))
-        self.reason     = raw.get("reason",     "")
-        self.confidence = raw.get("confidence", "medium")
+        self.reason     = raw.get("reason",      "")
+        self.confidence = raw.get("confidence",  "medium")
+        self.clarifying_questions = raw.get("clarifying_questions", [])
         self.raw        = raw
 
     def __repr__(self) -> str:
@@ -212,16 +212,21 @@ class TaskRouter:
                 "No thinking. No explanation.\n"
                 "<tool_call>\n"
                 '{"workflow": "research or data or autocode",'
-                ' "tool": "web or python or file or git or memory or agent or notify or report or workflow",'
-                ' "complexity":5,'
-                ' "reason": "one sentence",'
-                ' "confidence": "high or medium or low"}\n'
+                '  "tool": "web or python or file or git or memory or agent or notify or report or workflow",'
+                '  "complexity":5,'
+                '  "reason": "one sentence",'
+                '  "confidence": "high or medium or low",'
+                '  "clarifying_questions": ["question1", "question2"]}\n'
                 "</tool_call>\n"
                 "\n\nRouting rules:"
                 "\n- research: finding info, summarising, reading docs, Q&A"
                 "\n- data: pandas, analysis, calculations, charts, spreadsheets"
                 "\n- autocode: fixing bugs, editing code files, adding features"
                 "\n- direct: single-tool task (use tool field, not workflow)"
+                "\n\nConfidence rules:"
+                "\n- high: Clear task with specific details"
+                "\n- medium: Understandable but could be more specific"
+                "\n- low: Vague or ambiguous. MUST provide 1-2 clarifying questions to help the user refine their goal."
             ),
             user     = goal,
             trace_id = trace_id,

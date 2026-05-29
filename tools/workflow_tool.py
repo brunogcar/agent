@@ -147,7 +147,7 @@ def workflow(
             actual_type = decision.workflow
             
             tracer.step(trace_id, "workflow_route", 
-                       f"Auto-routed '{goal[:30]}' to {actual_type}")
+                       f"Auto-routed '{goal[:30]}' to {actual_type} (confidence: {decision.confidence})")
 
             # If the Router decides this isn't a workflow at all (e.g., "what time is it?"),
             # it returns "direct". We pass this back to the LLM so it can call the correct tool.
@@ -157,6 +157,19 @@ def workflow(
                     "workflow": "direct",
                     "tool": decision.tool,
                     "reason": decision.reason,
+                    "trace_id": trace_id,
+                }
+
+            # 🔴 ROUTER CONFIDENCE GUARD: Prevent wasting 15+ minutes on misunderstood tasks
+            # If the Router says "low" confidence, it means the goal is too vague or ambiguous.
+            # We abort execution and return clarifying questions to the user instead.
+            if decision.confidence == "low" and decision.clarifying_questions:
+                questions_text = "\n".join(f"- {q}" for q in decision.clarifying_questions)
+                return {
+                    "status": "needs_clarification",
+                    "reason": "The task goal is too vague or ambiguous to proceed confidently.",
+                    "clarifying_questions": decision.clarifying_questions,
+                    "message": f"To help me understand your request better, please clarify:\n{questions_text}",
                     "trace_id": trace_id,
                 }
 
