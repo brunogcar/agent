@@ -441,7 +441,7 @@ def create_app():
         the incoming token. No print() to stdout -- all warnings go to stderr
         so MCP stdio channel stays clean (P0-1).
         """
-        from core.activity_tracker import tracker
+        from core.runtime.activity_tracker import tracker
         tracker.touch()
         
         _secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
@@ -473,7 +473,7 @@ def create_app():
     async def health():
         """Health check endpoint"""
         from fastapi import Response
-        from core.health import health_check_endpoint
+        from core.runtime.health import health_check_endpoint
         return Response(content=health_check_endpoint(), media_type="application/json")
 
     # [PHASE 2 FIX] Autocode health endpoint with optional deep check

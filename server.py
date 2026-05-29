@@ -189,7 +189,7 @@ def _start_diversity_enforcer() -> None:
     try:
         from core.memory_backend.maintenance import execute_diversity_maintenance
         from core.memory import memory as _mem
-        from core.activity_tracker import tracker
+        from core.runtime.activity_tracker import tracker
         
         last_run = 0.0
         while True:
@@ -220,7 +220,7 @@ _threading.Thread(target=_start_diversity_enforcer, daemon=True).start()
 # -- Start Runtime Watchdog ----------------------------------------------------
 def _start_watchdog() -> None:
     try:
-        from core.runtime_watchdog import watchdog
+        from core.runtime.watchdog import watchdog
         _threading.Thread(target=watchdog.run_forever, daemon=True).start()
         print("[server] Runtime Watchdog started", file=sys.stderr)
     except Exception as e:

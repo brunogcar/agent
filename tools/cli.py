@@ -61,7 +61,7 @@ def cli(command: str, trace_id: str = "") -> str:
     """
     def _cli_logic():
         # 🔴 Cancellation Guard: Abort before executing shell commands or LLM routing
-        from core.cancellation import ensure_not_cancelled
+        from core.runtime.cancellation import ensure_not_cancelled
         ensure_not_cancelled()
 
         # Sanitize input first

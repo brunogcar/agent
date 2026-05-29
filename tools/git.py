@@ -1,4 +1,4 @@
-"""
+﻿"""
 tools/git.py — Git meta-tool for version control actions.
 
 The LLM sees ONE tool: git(action, ...)
@@ -104,7 +104,7 @@ def git(
         trace_id = tracer.new_trace("git", goal=action)
 
     # 🔴 Cancellation Guard: Abort before any git mutations
-    from core.cancellation import ensure_not_cancelled
+    from core.runtime.cancellation import ensure_not_cancelled
     ensure_not_cancelled(trace_id)
 
     # 1. Resolve working directory (preserves backward-compat alias logic)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 core/memory_backend/write_ops.py — Pure functions for memory write operations.
 Implements O(1) Hash Guard, Contextual Feedback, and Procedural Reinforcement.
 """
@@ -54,7 +54,7 @@ def execute_store(
     """Internal store logic — shared by all three typed store methods."""
     
     # 🔴 Cancellation Guard: Abort before any memory mutations
-    from core.cancellation import ensure_not_cancelled
+    from core.runtime.cancellation import ensure_not_cancelled
     ensure_not_cancelled(trace_id)
 
     text_bytes = len(text.encode("utf-8"))

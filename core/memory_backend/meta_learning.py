@@ -1,4 +1,4 @@
-"""
+﻿"""
 core/meta_learning.py — "Sleep & Learn" Background Daemon.
 Distills recent episodic memories into procedural rules when the agent is idle.
 """
@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from core.config import cfg
 from core.memory import memory
 from core.llm import llm
-from core.activity_tracker import tracker
+from core.runtime.activity_tracker import tracker
 from core.memory_backend.scoring import normalize_and_hash
 
 logger = logging.getLogger(__name__)

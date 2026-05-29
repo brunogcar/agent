@@ -380,7 +380,7 @@ class LLMClient:
         **kwargs:    Any,
     ) -> LLMResponse:
         """Make an LLM call by role. Always returns LLMResponse, never raises."""
-        from core.activity_tracker import tracker
+        from core.runtime.activity_tracker import tracker
         tracker.inference_start()
         try:
             role_cfg = self._get_role(role)

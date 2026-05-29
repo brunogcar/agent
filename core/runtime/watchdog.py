@@ -1,4 +1,4 @@
-"""
+﻿"""
 core/runtime_watchdog.py — LM Studio Process Watchdog.
 Monitors LM Studio health via HTTP probe and automatically restarts
 the process if it becomes unresponsive. Windows-native.
@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 from core.config import cfg
-from core.runtime_providers import get_provider
+from core.runtime.providers import get_provider
 
 logger = logging.getLogger(__name__)
 
