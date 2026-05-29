@@ -23,6 +23,7 @@ from langgraph.graph import StateGraph, END
 
 from workflows.base   import WorkflowState, node_step, node_error, node_done
 from core.citations   import citations
+from core.memory_backend.procedural.distill import distill_workflow
 
 
 # -- Nodes --------------------------------------------------------------------
@@ -179,6 +180,26 @@ def node_store(state: WorkflowState) -> WorkflowState:
     return state
 
 
+def node_distill(state: WorkflowState) -> WorkflowState:
+    """Extract procedural rules from the completed research workflow."""
+    tid = state.get("trace_id", "")
+    goal = state.get("goal", "")
+    result = state.get("result", "")
+    
+    if not result or state.get("status") == "failed":
+        return state
+        
+    trace_text = f"GOAL: {goal}\n\nOUTCOME: Success\n\nSYNTHESIS:\n{result[:2000]}"
+    
+    try:
+        # Non-blocking best-effort distillation
+        distill_workflow(trace_text=trace_text, trace_id=tid)
+    except Exception:
+        pass  # Never fail the workflow if distillation fails
+        
+    return state
+
+
 def node_notify(state: WorkflowState) -> WorkflowState:
     """Send completion notification and mark workflow done."""
     from tools.notify import notify
@@ -225,6 +246,7 @@ def build_research_graph() -> StateGraph:
     g.add_node("search",     node_search)
     g.add_node("synthesize", node_synthesize)
     g.add_node("store",      node_store)
+    g.add_node("distill",    node_distill)
     g.add_node("notify",     node_notify)
 
     g.set_entry_point("recall")
@@ -243,7 +265,8 @@ def build_research_graph() -> StateGraph:
         {"store": "store", "failed": END},
     )
 
-    g.add_edge("store",  "notify")
+    g.add_edge("store",   "distill")
+    g.add_edge("distill", "notify")
     g.add_edge("notify", END)
 
     return g.compile()
