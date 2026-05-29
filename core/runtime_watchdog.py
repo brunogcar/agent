@@ -30,6 +30,7 @@ class RuntimeWatchdog:
         self._lock = threading.Lock()
         self.failure_count = 0
         self.restart_timestamps: list[float] = []
+        self.last_success_time: float = 0.0
         self.provider = get_provider(cfg.runtime_provider)
         
     def run_forever(self):
@@ -53,6 +54,7 @@ class RuntimeWatchdog:
                     if self.provider.is_ready(data):
                         with self._lock:
                             self.failure_count = 0
+                            self.last_success_time = time.time()
                         return
                 except Exception:
                     pass  # JSON parse failed, treat as unhealthy
@@ -61,6 +63,11 @@ class RuntimeWatchdog:
             
         # Probe failed
         with self._lock:
+            # Passive Grace Period: Ignore transient failures for 60s after a successful recovery
+            if self.last_success_time > 0 and (time.time() - self.last_success_time) < 60.0:
+                logger.debug("[Watchdog] Transient failure during post-restart grace period. Ignoring.")
+                return
+                
             self.failure_count += 1
             current_failures = self.failure_count
             

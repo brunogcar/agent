@@ -51,6 +51,9 @@ class LMStudioProvider(RuntimeProvider):
         
     def is_ready(self, json_data: dict) -> bool:
         # LM Studio returns {"data": [{"id": "model_name", ...}]}
+        if "data" not in json_data:
+            logger.debug(f"[LMStudioProvider] Unexpected health response keys: {list(json_data.keys())}")
+            return False
         return bool(json_data.get("data"))
 
 class OllamaProvider(RuntimeProvider):
@@ -68,6 +71,9 @@ class OllamaProvider(RuntimeProvider):
         
     def is_ready(self, json_data: dict) -> bool:
         # Ollama returns {"models": [{"name": "model_name", ...}]}
+        if "models" not in json_data:
+            logger.debug(f"[OllamaProvider] Unexpected health response keys: {list(json_data.keys())}")
+            return False
         return bool(json_data.get("models"))
 
 class VLLMProvider(RuntimeProvider):
@@ -93,9 +99,12 @@ _PROVIDERS = {
 }
 
 def get_provider(name: str) -> RuntimeProvider:
-    """Factory function to get a provider instance."""
+    """Factory function to get a provider instance. Fail-fast on unknown names."""
     provider_cls = _PROVIDERS.get(name.lower())
     if not provider_cls:
-        logger.warning(f"Unknown provider '{name}', falling back to lmstudio")
-        return LMStudioProvider()
+        available = ", ".join(_PROVIDERS.keys())
+        raise ValueError(
+            f"Unknown RUNTIME_PROVIDER '{name}' in .env. "
+            f"Available providers: {available}"
+        )
     return provider_cls()
