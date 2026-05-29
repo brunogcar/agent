@@ -1,4 +1,4 @@
-"""
+﻿"""
 tools/web.py -- Web meta-tool.
 Replaces: searxng MCP server + http MCP server + old scraping.py
 The LLM sees ONE tool: web(action, ...)
@@ -257,7 +257,7 @@ def web(
             return {"status": "error",
                     "error": f"action='{action}' requires url="}
         result = _do_scrape(url, max_chars)
-        from core.context_pruner import prune_tool_dict
+        from core.memory_backend.pruner import prune_tool_dict
         return prune_tool_dict("web", result, trace_id)
 
     if action == "search_and_read":
@@ -313,7 +313,7 @@ def web(
             "attempted":        len(urls),
             "duplicates_removed": len(search_result["results"]) - len(urls),
         }
-        from core.context_pruner import prune_tool_dict
+        from core.memory_backend.pruner import prune_tool_dict
         return prune_tool_dict("web", result, trace_id)
 
     return {

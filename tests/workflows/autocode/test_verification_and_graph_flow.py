@@ -1,4 +1,4 @@
-"""
+﻿"""
 tests/workflows/autocode/test_verification_and_graph_flow.py
 Validates verify node logic, commit routing, graph compilation,
 state mutation compliance. Zero real git/LLM calls.
@@ -43,7 +43,7 @@ class TestVerificationNodeLogic:
         # [FIX] Patch _call WHERE IT'S USED (in verify module), not where defined
         with patch("workflows.autocode_helpers.nodes.verify._call", return_value='{"automated_checks_passed": true, "checks": {"syntax": {"passed": true}, "tests": {"passed": true}, "spec": {"passed": true}, "regressions": {"passed": true}, "cleanliness": {"passed": true}}, "summary": "All checks passed"}'), \
              patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")), \
-             patch("core.patch.apply_patch", return_value=MagicMock(ok=True, lines_changed=1)):
+             patch("workflows.autocode_helpers.patch.apply_patch", return_value=MagicMock(ok=True, lines_changed=1)):
             result = node_verify(base_graph_state)
             # verify may set verification_passed based on complex logic; just ensure valid output
             assert isinstance(result, dict)

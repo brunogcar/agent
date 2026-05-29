@@ -35,6 +35,8 @@ def mock_config():
             "planner": {"model": "test-model", "timeout": 90},
             "router": {"model": "test-model", "timeout": 15},
         }
+        # Phase 5 Context Budgeting requires this to prevent MagicMock comparison errors
+        mock_cfg.max_context_tokens = 8000
         yield mock_cfg
 
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 core/llm.py - Unified LLM client with provider abstraction.
 
 Design goals:
@@ -393,7 +393,7 @@ class LLMClient:
             # 🔴 PHASE 5: COGNITIVE BUDGETING
             # Intercept messages to ensure they fit the context window.
             # This prevents OOM crashes and attention dilution.
-            from core.context_budget import budget_messages
+            from core.memory_backend.budget import budget_messages
             messages = budget_messages(messages, cfg.max_context_tokens)
 
             if trace_id:

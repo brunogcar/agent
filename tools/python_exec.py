@@ -1,4 +1,4 @@
-"""
+﻿"""
 tools/python_exec.py — Python execution meta-tool.
 
 Replaces: run_python + run_python_data (old flat tools)
@@ -298,7 +298,7 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
             exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
             output = captured.getvalue().strip()
             sys.stdout = old_stdout      
-            from core.context_pruner import prune_text
+            from core.memory_backend.pruner import prune_text
             final_output = output if output else str({k: str(v) for k, v in local_env.items()})
             if output: # Only prune actual stdout, not env dumps
                 final_output = prune_text("python_exec", final_output, trace_id)
@@ -356,7 +356,7 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
             result = _run_inprocess(code, imports)
         
         if result.get("status") == "success" and result.get("output"):
-            from core.context_pruner import prune_text
+            from core.memory_backend.pruner import prune_text
             result["output"] = prune_text("python_exec", result["output"], trace_id)
         return result
 

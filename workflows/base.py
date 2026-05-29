@@ -69,8 +69,8 @@ def trim_state(state: WorkflowState) -> WorkflowState:
     Phase 5: Evict low-value fields from working memory to the async queue.
     Returns a NEW state dict (Copy-on-Write) to preserve LangGraph immutability.
     """
-    from core.context_budget import estimate_tokens, ContextClass
-    from core.eviction_queue import eviction_queue
+    from core.memory_backend.budget import estimate_tokens, ContextClass
+    from core.memory_backend.eviction import eviction_queue
     from core.config import cfg
     
     # Simple heuristic: If 'search_results' or 'output' is huge, evict it.

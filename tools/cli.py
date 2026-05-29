@@ -105,5 +105,5 @@ def cli(command: str, trace_id: str = "") -> str:
         return _safe_dispatch("system", "help", {})
 
     final_result = _cli_logic()
-    from core.context_pruner import prune_text
+    from core.memory_backend.pruner import prune_text
     return prune_text("cli", final_result, trace_id)

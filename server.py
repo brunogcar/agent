@@ -89,7 +89,7 @@ sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
 def _cleanup_artifacts() -> None:
     """Delete .artifacts/ files older than 7 days on startup."""
     try:
-        from core.context_pruner import cleanup_old_artifacts
+        from core.memory_backend.pruner import cleanup_old_artifacts
         cleanup_old_artifacts(max_age_days=7)
         print("[server] Cleaned up old .artifacts/", file=sys.stderr)
     except Exception as e:
@@ -149,7 +149,7 @@ _threading.Thread(target=_warmup_chromadb, daemon=True).start()
 # -- Start Meta-Learning Daemon ----------------------------------------------
 def _start_meta_learner() -> None:
     try:
-        from core.meta_learning import learner
+        from core.memory_backend.meta_learning import learner
         _threading.Thread(target=learner.run_forever, daemon=True).start()
         print("[server] Meta-Learner daemon started", file=sys.stderr)
     except Exception as e:
@@ -160,7 +160,7 @@ _start_meta_learner()
 # -- Start Eviction Flusher ----------------------------------------------------
 def _start_eviction_flusher() -> None:
     try:
-        from core.eviction_queue import flusher_loop
+        from core.memory_backend.eviction import flusher_loop
         _threading.Thread(target=flusher_loop, daemon=True).start()
         print("[server] Eviction Flusher started", file=sys.stderr)
     except Exception as e:

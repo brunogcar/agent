@@ -149,10 +149,11 @@ def budget_messages(messages: list[dict], max_tokens: int) -> list[dict]:
             current_tokens += tokens
             class_token_usage[cls] += tokens
             
-    # 3. Re-assemble: Pinned (System/User) first, then selected in SCORE order.
-    # CRITICAL FIX: Do NOT re-sort chronologically, as that defeats the priority scoring
-    # and pushes old but critical errors below newer, low-priority outputs.
-    result = [msg for _, msg, _ in pinned] + [msg for _, msg, _ in selected]
+    # 3. Re-assemble chronologically to preserve conversation flow (User/Assistant alternation).
+    # The scoring already determined *which* messages survive; now we just order them by original index.
+    final_set = pinned + selected
+    final_set.sort(key=lambda x: x[0])
+    result = [msg for _, msg, _ in final_set]
     
     # 4. Safety Check: If we still somehow exceeded (e.g. pinned messages were huge),
     # truncate the last user message as a last resort.
