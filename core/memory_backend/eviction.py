@@ -1,5 +1,5 @@
 """
-core/eviction_queue.py — Async WAL-spill for evicted context.
+core/memory_backend/eviction.py — Async WAL-spill for evicted context.
 Ensures evicted working memory is persisted to disk immediately (crash-safe)
 and flushed to ChromaDB asynchronously (non-blocking).
 """
@@ -23,7 +23,7 @@ class EvictionQueue:
     def __init__(self):
         self._queue = Queue()
         self._lock = threading.Lock()
-        
+
     def push(self, text: str, metadata: dict):
         """
         Push an eviction payload.
@@ -48,17 +48,14 @@ class EvictionQueue:
             
         # 2. RAM Queue
         self._queue.put(payload)
-        
-    def replay_and_get_batch(self, max_size: int = 50) -> list[dict]:
+
+    def get_all_pending(self) -> list[dict]:
         """
-        Read from disk, consolidate with RAM, return batch, and ATOMICALLY rewrite 
-        disk file with remaining. Disk is the source of truth to prevent duplication.
+        Read all pending items from disk and RAM without modifying state.
+        Used by the flusher to inspect what needs to be processed.
         """
-        disk_items = []
-        tmp_file = QUEUE_FILE.with_suffix(".jsonl.tmp")
-        
+        items = []
         with self._lock:
-            # 1. Read from disk
             if QUEUE_FILE.exists():
                 try:
                     with open(QUEUE_FILE, "r", encoding="utf-8") as f:
@@ -66,27 +63,31 @@ class EvictionQueue:
                             line = line.strip()
                             if line:
                                 try:
-                                    disk_items.append(json.loads(line))
+                                    items.append(json.loads(line))
                                 except json.JSONDecodeError:
-                                    pass
+                                    pass # Ignore corrupted partial lines
                 except Exception as e:
                     logger.error(f"[Eviction] Failed to read disk queue: {e}")
                     
-            # 2. Drain RAM queue into disk_items to consolidate
+            # Drain RAM queue into items to consolidate
             while True:
                 try:
-                    disk_items.append(self._queue.get_nowait())
+                    items.append(self._queue.get_nowait())
                 except Empty:
                     break
                     
-            # 3. Extract batch
-            batch = disk_items[:max_size]
-            remaining = disk_items[max_size:]
-            
-            # 4. ATOMIC Rewrite disk file with remaining items
+        return items
+
+    def commit_success(self, remaining_items: list[dict]):
+        """
+        Call ONLY after successful ChromaDB flush. 
+        Rewrites disk with remaining items using atomic os.replace.
+        """
+        tmp_file = QUEUE_FILE.with_suffix(".jsonl.tmp")
+        with self._lock:
             try:
                 with open(tmp_file, "w", encoding="utf-8") as f:
-                    for item in remaining:
+                    for item in remaining_items:
                         f.write(json.dumps(item) + "\n")
                     f.flush()
                     os.fsync(f.fileno())
@@ -98,9 +99,6 @@ class EvictionQueue:
                         tmp_file.unlink()
                     except Exception:
                         pass
-                        
-        # Note: We DO NOT put remaining back into RAM. Disk is the source of truth.
-        return batch
 
 # Singleton
 eviction_queue = EvictionQueue()
@@ -113,11 +111,13 @@ def flusher_loop():
     while True:
         time.sleep(5) # Flush every 5 seconds
         
-        # replay_and_get_batch handles boot recovery AND normal batching safely
-        batch = eviction_queue.replay_and_get_batch()
-        if not batch:
+        all_pending = eviction_queue.get_all_pending()
+        if not all_pending:
             continue
             
+        batch = all_pending[:50]
+        remaining = all_pending[50:]
+        
         logger.info(f"[Eviction] Flushing {len(batch)} items to ChromaDB...")
         try:
             for item in batch:
@@ -127,7 +127,8 @@ def flusher_loop():
                     tags="evicted,working-memory",
                     **item["metadata"]
                 )
+            # 🔴 CRITICAL FIX: Only truncate disk AFTER successful ChromaDB write
+            eviction_queue.commit_success(remaining)
         except Exception as e:
             logger.error(f"[Eviction] Flush failed: {e}")
-            # Items remain in JSONL for next restart recovery because 
-            # replay_and_get_batch already rewrote the disk file with them.
+            # FAILURE: Do NOT touch the disk file. Items remain on disk for next restart.
