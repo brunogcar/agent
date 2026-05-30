@@ -18,8 +18,9 @@ from core.config import cfg
 
 logger = logging.getLogger(__name__)
 
-# Estimated chars per token (conservative for mixed code/text)
-CHARS_PER_TOKEN = 4 
+# Estimated chars per token (conservative for mixed code/text + Portuguese)
+# Lowered from 4 to 3.5 to add a safety margin against KV-cache overflow
+CHARS_PER_TOKEN = 3.5 
 
 class ContextClass(Enum):
     """Cognitive priority tiers for context assembly."""
@@ -32,10 +33,10 @@ class ContextClass(Enum):
     ARCHIVE = 6     # Evict First (Old history)
 
 def estimate_tokens(text: str) -> int:
-    """Fast heuristic token estimation."""
+    """Fast heuristic token estimation with safety margin."""
     if not text:
         return 0
-    return len(text) // CHARS_PER_TOKEN
+    return int(len(text) / CHARS_PER_TOKEN)
 
 def _classify_message(msg: dict) -> ContextClass:
     """Deterministically classify a message based on role and content."""
@@ -121,10 +122,33 @@ def budget_messages(messages: list[dict], max_tokens: int) -> list[dict]:
         
         if cls in (ContextClass.SYSTEM, ContextClass.USER):
             pinned.append((i, msg, tokens))
-            current_tokens += tokens
         else:
             score = _score_message(msg, i, total)
             candidates.append((i, msg, tokens, score))
+
+    # 🔴 CRITICAL FIX: Pinned Overflow
+    # If SYSTEM + USER messages alone exceed the budget, hard-truncate the USER message.
+    pinned_tokens = sum(t for _, _, t in pinned)
+    if pinned_tokens > max_tokens:
+        logger.warning(f"[Budget] Pinned messages ({pinned_tokens} tokens) exceed budget ({max_tokens}). Truncating USER message.")
+        system_msgs = [(i, m, t) for i, m, t in pinned if _classify_message(m) == ContextClass.SYSTEM]
+        user_msgs = [(i, m, t) for i, m, t in pinned if _classify_message(m) == ContextClass.USER]
+        
+        system_tokens = sum(t for _, _, t in system_msgs)
+        remaining_budget = max(0, max_tokens - system_tokens - 100) # 100 tokens safety buffer
+        
+        if user_msgs and remaining_budget > 0:
+            last_user_i, last_user_msg, _ = user_msgs[-1]
+            user_content = last_user_msg.get("content", "")
+            max_chars = int(remaining_budget * CHARS_PER_TOKEN)
+            truncated_content = user_content[:max_chars] + "\n\n[...TRUNCATED DUE TO CONTEXT OVERFLOW...]"
+            truncated_msg = {**last_user_msg, "content": truncated_content}
+            truncated_tokens = estimate_tokens(truncated_content)
+            pinned = system_msgs + [(last_user_i, truncated_msg, truncated_tokens)]
+        else:
+            pinned = system_msgs
+            
+    current_tokens = sum(t for _, _, t in pinned)
             
     # 2. Greedy Selection with Per-Class Caps
     # Sort by score descending

@@ -8,7 +8,10 @@ import json
 import time
 import shutil
 import logging
+import os
 import datetime
+import uuid
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
@@ -28,22 +31,32 @@ def sanitize_state(state: Any, _seen: set = None) -> Any:
     if _seen is None:
         _seen = set()
         
-    obj_id = id(state)
-    if obj_id in _seen:
-        return "<circular_reference>"
-    _seen.add(obj_id)
+    # 🔴 CRITICAL FIX: Only track containers to prevent false positives on interned primitives
+    if isinstance(state, (dict, list, tuple, set)):
+        obj_id = id(state)
+        if obj_id in _seen:
+            return "<circular_reference>"
+        _seen.add(obj_id)
 
     if isinstance(state, (str, int, float, bool, type(None))):
         return state
-    elif isinstance(state, (datetime.datetime, datetime.date)):
+    elif isinstance(state, (datetime.datetime, datetime.date, datetime.time)):
         return state.isoformat()
+    elif isinstance(state, datetime.timedelta):
+        return state.total_seconds()
     elif isinstance(state, bytes):
         return state.decode("utf-8", errors="replace")
+    elif isinstance(state, Decimal):
+        return float(state)
+    elif isinstance(state, uuid.UUID):
+        return str(state)
     elif hasattr(state, "__fspath__"): # Path-like objects
         return str(state)
     elif isinstance(state, dict):
         return {str(k): sanitize_state(v, _seen) for k, v in state.items()}
     elif isinstance(state, (list, tuple)):
+        return [sanitize_state(v, _seen) for v in state]
+    elif isinstance(state, set):
         return [sanitize_state(v, _seen) for v in state]
     else:
         # Drop non-serializable objects (httpx clients, locks, CircuitBreakers)
@@ -73,6 +86,7 @@ def save_checkpoint(trace_id: str, node_name: str, state: dict) -> None:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
             f.flush()
+            os.fsync(f.fileno()) # Force OS to write to disk
     except Exception as e:
         logger.warning(f"[Checkpoint] Failed to write {trace_id}: {e}")
 

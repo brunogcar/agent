@@ -69,18 +69,22 @@ def execute_delete(store, query: str, collections: list[str] = None, threshold: 
     by_col: dict[str, list[str]] = {}
     for c in to_delete:
         by_col.setdefault(c["collection"], []).append(c["id"])
-        # Keep the O(1) Hash Guard in sync
-        if c.get("_hash"):
-            store._hash_cache.discard(c["_hash"])
 
     deleted = 0
+    successful_ids = set()
     for col_name, ids in by_col.items():
         try:
             store._col(col_name).delete(ids=ids)
             deleted += len(ids)
+            successful_ids.update(ids)
         except Exception as e:
             tracer.error("", "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
             pass
+
+    # 🔴 CRITICAL FIX: Keep the O(1) Hash Guard in sync ONLY for successful deletes
+    for c in to_delete:
+        if c["id"] in successful_ids and c.get("_hash"):
+            store._hash_cache.discard(c["_hash"])
 
     # Strip internal _hash key before returning to LLM/User
     clean_deleted = [{k: v for k, v in c.items() if k != "_hash"} for c in to_delete]
@@ -152,17 +156,22 @@ def execute_prune(store, max_age_days: int = 30, min_importance: int = 3, dry_ru
     by_col: dict[str, list[str]] = {}
     for c in candidates:
         by_col.setdefault(c["collection"], []).append(c["id"])
-        if c.get("_hash"):
-            store._hash_cache.discard(c["_hash"])
 
     deleted = 0
+    successful_ids = set()
     for col_name, ids in by_col.items():
         try:
             store._col(col_name).delete(ids=ids)
             deleted += len(ids)
+            successful_ids.update(ids)
         except Exception as e:
             tracer.error("", "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
             pass
+
+    # 🔴 CRITICAL FIX: Keep the O(1) Hash Guard in sync ONLY for successful deletes
+    for c in candidates:
+        if c["id"] in successful_ids and c.get("_hash"):
+            store._hash_cache.discard(c["_hash"])
 
     clean_entries = [{k: v for k, v in c.items() if k != "_hash"} for c in candidates]
     return {"status": "pruned", "deleted": deleted, "entries": clean_entries}

@@ -381,8 +381,7 @@ class LLMClient:
     ) -> LLMResponse:
         """Make an LLM call by role. Always returns LLMResponse, never raises."""
         from core.runtime.activity_tracker import tracker
-        tracker.inference_start()
-        try:
+        with tracker.inference_slot(timeout=60.0):
             role_cfg = self._get_role(role)
             provider = self._registry.get(role_cfg.provider)
 
@@ -475,8 +474,6 @@ class LLMClient:
 
             elapsed = round(time.time() - start, 2)
             return LLMResponse.from_error(role, role_cfg.model, "Max retries exceeded", elapsed)
-        finally:
-            tracker.inference_end()
 
     def complete(
         self,

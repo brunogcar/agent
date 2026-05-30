@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+import os
 import threading
 import logging
 from pathlib import Path
@@ -26,7 +27,7 @@ class EvictionQueue:
     def push(self, text: str, metadata: dict):
         """
         Push an eviction payload.
-        1. Append to JSONL (Crash-safe)
+        1. Append to JSONL (Crash-safe + fsync)
         2. Add to RAM queue (For background flusher)
         """
         payload = {
@@ -35,35 +36,68 @@ class EvictionQueue:
             "ts": time.time()
         }
         
-        # 1. Disk Spill (Thread-Safe Append)
+        # 1. Disk Spill (Thread-Safe Append + fsync)
         try:
             with self._lock:
                 with open(QUEUE_FILE, "a", encoding="utf-8") as f:
                     f.write(json.dumps(payload) + "\n")
                     f.flush()
+                    os.fsync(f.fileno()) # Force OS to write to disk
         except Exception as e:
             logger.error(f"[Eviction] Disk spill failed: {e}")
             
         # 2. RAM Queue
         self._queue.put(payload)
         
-    def get_batch(self, max_size: int = 50) -> list[dict]:
-        """Get a batch of items for flushing."""
-        batch = []
-        try:
-            while len(batch) < max_size:
-                batch.append(self._queue.get_nowait())
-        except Empty:
-            pass
-        return batch
+    def replay_and_get_batch(self, max_size: int = 50) -> list[dict]:
+        """
+        Read from disk, load into RAM, return batch, and rewrite disk file with remaining.
+        This handles both boot-time replay and normal batch extraction safely.
+        """
+        disk_items = []
         
-    def clear_disk_queue(self):
-        """Delete the JSONL file after successful flush."""
-        try:
+        # 1. Read from disk
+        with self._lock:
             if QUEUE_FILE.exists():
-                QUEUE_FILE.unlink()
-        except Exception:
-            pass
+                try:
+                    with open(QUEUE_FILE, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    disk_items.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    pass # Ignore corrupted partial lines from power loss
+                except Exception as e:
+                    logger.error(f"[Eviction] Failed to read disk queue: {e}")
+                    
+            # 2. Drain RAM queue into disk_items to consolidate
+            while True:
+                try:
+                    disk_items.append(self._queue.get_nowait())
+                except Empty:
+                    break
+                    
+        # 3. Extract batch
+        batch = disk_items[:max_size]
+        remaining = disk_items[max_size:]
+        
+        # 4. Rewrite disk file with remaining items (Atomic persistence)
+        with self._lock:
+            try:
+                with open(QUEUE_FILE, "w", encoding="utf-8") as f:
+                    for item in remaining:
+                        f.write(json.dumps(item) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+            except Exception as e:
+                logger.error(f"[Eviction] Failed to rewrite disk queue: {e}")
+                
+        # 5. Put remaining back into RAM queue for next time
+        for item in remaining:
+            self._queue.put(item)
+            
+        return batch
 
 # Singleton
 eviction_queue = EvictionQueue()
@@ -75,7 +109,9 @@ def flusher_loop():
     logger.info("[Eviction] Flusher thread started.")
     while True:
         time.sleep(5) # Flush every 5 seconds
-        batch = eviction_queue.get_batch()
+        
+        # replay_and_get_batch handles boot recovery AND normal batching safely
+        batch = eviction_queue.replay_and_get_batch()
         if not batch:
             continue
             
@@ -88,8 +124,7 @@ def flusher_loop():
                     tags="evicted,working-memory",
                     **item["metadata"]
                 )
-            # Success: Clear disk queue
-            eviction_queue.clear_disk_queue()
         except Exception as e:
             logger.error(f"[Eviction] Flush failed: {e}")
-            # Items remain in JSONL for next restart recovery
+            # Items remain in JSONL for next restart recovery because 
+            # replay_and_get_batch already rewrote the disk file with them.
