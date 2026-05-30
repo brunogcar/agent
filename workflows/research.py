@@ -19,8 +19,10 @@ Usage:
 
 from __future__ import annotations
 
-from langgraph.graph import StateGraph, END
+import json
 
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from langgraph.graph import StateGraph, END
 from workflows.base   import WorkflowState, node_step, node_error, node_done
 from core.citations   import citations
 from core.memory_backend.procedural.distill import distill_workflow
@@ -54,60 +56,133 @@ def node_recall(state: WorkflowState) -> WorkflowState:
 
 
 def node_search(state: WorkflowState) -> WorkflowState:
-    """Search the web for relevant sources. Filters 403/empty results."""
+    """Search the web for relevant URLs."""
     from tools.web import web
-
     goal = state.get("goal", "")
-    node_step(state, "search", "searching web", query=goal[:60])
+    node_step(state, "search", "searching web for URLs", query=goal[:60])
 
-    result = web(action="search_and_read", query=goal, max_results=3)
+    result = web(action="search", query=goal, max_results=3)
 
     if result.get("status") != "success" or not result.get("results"):
         err = result.get("error", "no results returned")
         node_step(state, "search", f"search failed: {err}")
         return {**state, "search_results": ""}
 
-    # Filter out 403/access-denied/empty responses
-    MIN_CHARS = 300
-    ACCESS_DENIED = ["403 forbidden", "access denied", "just a moment",
-                     "enable javascript", "please verify", "captcha"]
-    valid = []
+    valid_urls = []
     for r in result["results"]:
-        text  = r.get("text", "")
-        lower = text.lower()
-        if len(text) < MIN_CHARS:
-            node_step(state, "search",
-                      f"skipped {r.get('url','')[:50]} -- too short ({len(text)} chars)")
-            continue
-        if any(marker in lower[:200] for marker in ACCESS_DENIED):
-            node_step(state, "search",
-                      f"skipped {r.get('url','')[:50]} -- access denied")
-            continue
-        valid.append(r)
-
-    if not valid:
-        node_step(state, "search", "all results filtered (403/empty)")
+        if r.get("url"):
+            valid_urls.append({"url": r["url"], "title": r.get("title", ""), "snippet": r.get("snippet", "")})
+            
+    if not valid_urls:
+        node_step(state, "search", "no valid URLs found")
         return {**state, "search_results": ""}
 
-    parts = []
-    tid   = state.get("trace_id", "")
-    for r in valid:
-        url   = r.get("url",   "")
-        title = r.get("title", "")
-        text  = r.get("text",  "")
-        # Register source for citation tracking
-        if tid and url:
-            snippet = text[:200].replace("\n", " ")
-            citations.add(tid, url=url, title=title, snippet=snippet)
-        parts.append(
-            f"SOURCE: {title} {citations.cite(tid, url)}\nURL: {url}\n\n"
-            f"{text[:2000]}"
-        )
-    combined = "\n\n---\n\n".join(parts)
-    node_step(state, "search",
-              f"scraped {len(valid)} valid sources, {citations.count(tid)} citations",
-              filtered=result.get('scraped_count',0) - len(valid))
-    return {**state, "search_results": combined}
+    # Store as JSON string for the parallel scraper node
+    return {**state, "search_results": json.dumps(valid_urls)}
+
+def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dict:
+    """Worker function: scrape URL and summarize with Executor."""
+    from tools.web import web
+    from core.llm import llm
+    from core.runtime.activity_tracker import tracker
+    from core.config import cfg
+    
+    # 1. Scrape
+    scrape_res = web(action="read", url=url)
+    if scrape_res.get("status") != "success":
+        return {"url": url, "title": title, "status": "failed", "error": scrape_res.get("error", "scrape failed")}
+        
+    text = scrape_res.get("text", "")
+    if len(text) < 300:
+        return {"url": url, "title": title, "status": "failed", "error": "too short"}
+        
+    # Truncate to web_max_text_chars to prevent context overflow
+    text = text[:cfg.web_max_text_chars]
+    
+    # 2. Summarize (with inference slot)
+    try:
+        with tracker.inference_slot(timeout=30.0):
+            resp = llm.complete(
+                role="executor",
+                system="You are a research assistant. Summarize the given web page in 3-5 bullet points, focusing strictly on facts relevant to the user's goal. Do not include introductory filler.",
+                user=f"Goal: {goal}\n\nSummarize the following text:\n\n{text}",
+                max_tokens=cfg.worker_max_tokens,
+                timeout=cfg.worker_timeout,
+                trace_id=trace_id
+            )
+        if not resp.ok:
+            return {"url": url, "title": title, "status": "failed", "error": f"LLM failed: {resp.error}"}
+            
+        return {"url": url, "title": title, "status": "success", "summary": resp.text}
+    except TimeoutError:
+        return {"url": url, "title": title, "status": "failed", "error": "inference slot timeout"}
+    except Exception as e:
+        return {"url": url, "title": title, "status": "failed", "error": str(e)}
+
+def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
+    """Coordinator: scrape and summarize URLs in parallel."""
+    from core.config import cfg
+    from core.citations import citations
+    
+    raw_results = state.get("search_results", "")
+    if not raw_results:
+        return {**state, "search_results": ""}
+        
+    try:
+        urls_data = json.loads(raw_results)
+    except Exception:
+        return {**state, "search_results": ""}
+        
+    goal = state.get("goal", "")
+    tid = state.get("trace_id", "")
+    
+    node_step(state, "parallel_scrape", f"spawning {len(urls_data)} workers")
+    
+    dossier_parts = []
+    citation_idx = 1
+    
+    with ThreadPoolExecutor(max_workers=cfg.max_concurrent_workers) as executor:
+        future_to_data = {
+            executor.submit(_scrape_and_summarize, item["url"], item.get("title", ""), goal, tid): item 
+            for item in urls_data
+        }
+        
+        for future in as_completed(future_to_data, timeout=cfg.worker_timeout + 30):
+            item = future_to_data[future]
+            try:
+                res = future.result(timeout=cfg.worker_timeout)
+            except TimeoutError:
+                res = {"url": item["url"], "title": item.get("title", ""), "status": "failed", "error": "global timeout"}
+            except Exception as e:
+                res = {"url": item["url"], "title": item.get("title", ""), "status": "failed", "error": str(e)}
+                
+            if res["status"] == "success":
+                # Register citation
+                if tid and res["url"]:
+                    citations.add(tid, url=res["url"], title=res["title"], snippet=res["summary"][:200])
+                
+                dossier_parts.append(
+                    f"### [Source {citation_idx}] {res['title']}\n"
+                    f"URL: {res['url']}\n\n"
+                    f"{res['summary']}\n"
+                )
+                citation_idx += 1
+            else:
+                node_step(state, "parallel_scrape", f"worker failed for {item['url']}: {res['error']}")
+                
+    if not dossier_parts:
+        node_step(state, "parallel_scrape", "all workers failed")
+        return {**state, "search_results": ""}
+        
+    dossier = "\n\n".join(dossier_parts)
+    
+    # Hard cap the dossier to prevent context explosion at synthesis time
+    max_dossier_chars = cfg.web_max_text_chars * 2
+    if len(dossier) > max_dossier_chars:
+        dossier = dossier[:max_dossier_chars] + "\n\n[...TRUNCATED DUE TO LENGTH...]"
+        
+    node_step(state, "parallel_scrape", f"built dossier with {citation_idx-1} sources ({len(dossier)} chars)")
+    return {**state, "search_results": dossier}
 
 
 def node_synthesize(state: WorkflowState) -> WorkflowState:
@@ -241,9 +316,9 @@ def route_after_synthesize(state: WorkflowState) -> str:
 def build_research_graph() -> StateGraph:
     """Build and compile the research workflow graph."""
     g = StateGraph(WorkflowState)
-
     g.add_node("recall",     node_recall)
     g.add_node("search",     node_search)
+    g.add_node("parallel_scrape", node_parallel_scrape)
     g.add_node("synthesize", node_synthesize)
     g.add_node("store",      node_store)
     g.add_node("distill",    node_distill)
@@ -251,10 +326,11 @@ def build_research_graph() -> StateGraph:
 
     g.set_entry_point("recall")
 
-    g.add_edge("recall", "search")
+    g.add_edge("recall",  "search")
+    g.add_edge("search", "parallel_scrape")
 
     g.add_conditional_edges(
-        "search",
+        "parallel_scrape",
         route_after_search,
         {"synthesize": "synthesize", "failed": END},
     )

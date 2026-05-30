@@ -109,7 +109,13 @@ class Config:
 
         # ── Context Budgeting (Phase 5) ───────────────────────────────────────
         # Max tokens for the input context window (leaves room for output)
-        self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
+        self.max_context_tokens  = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
+
+        # ── Parallel Execution (Phase 7) ──────────────────────────────────────
+        self.max_concurrent_workers = int(os.getenv("MAX_CONCURRENT_WORKERS", "3"))
+        self.max_concurrent_inferences = int(os.getenv("MAX_CONCURRENT_INFERENCES", "2"))
+        self.worker_timeout = int(os.getenv("WORKER_TIMEOUT", "60"))
+        self.worker_max_tokens = int(os.getenv("WORKER_MAX_TOKENS", "250"))
     
         # ── Tool  & System Limits (P2: Centralized Magic Numbers) ──────────────
         
