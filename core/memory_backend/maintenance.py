@@ -411,8 +411,8 @@ def execute_diversity_maintenance(store, dry_run: bool = False) -> dict:
         for i, mem_id in enumerate(ids):
             if mem_id in deleted_ids:
                 continue
-                
-            meta = metas[i] or {}
+
+            meta = data_map[mem_id]["meta"] or {}
             if meta.get("archived"):
                 # Hard delete after 90 days
                 if meta.get("archived_at", 0) < cutoff_purge:
