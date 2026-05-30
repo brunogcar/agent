@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINT_DIR = cfg.workspace_root / "checkpoints"
 QUARANTINE_DIR = CHECKPOINT_DIR / "quarantine"
+
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 QUARANTINE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +48,7 @@ def sanitize_state(state: Any, _seen: set = None) -> Any:
     elif isinstance(state, bytes):
         return state.decode("utf-8", errors="replace")
     elif isinstance(state, Decimal):
-        return float(state)
+        return str(state)
     elif isinstance(state, uuid.UUID):
         return str(state)
     elif hasattr(state, "__fspath__"): # Path-like objects
@@ -57,7 +58,10 @@ def sanitize_state(state: Any, _seen: set = None) -> Any:
     elif isinstance(state, (list, tuple)):
         return [sanitize_state(v, _seen) for v in state]
     elif isinstance(state, set):
-        return [sanitize_state(v, _seen) for v in state]
+        try:
+            return [sanitize_state(v, _seen) for v in sorted(state)]
+        except TypeError:
+            return [sanitize_state(v, _seen) for v in state]
     else:
         # Drop non-serializable objects (httpx clients, locks, CircuitBreakers)
         return None
@@ -152,6 +156,7 @@ def scan_incomplete() -> list[str]:
     """Find all incomplete workflows (modified in last 48h, status != success/failed)."""
     incomplete = []
     cutoff = time.time() - (48 * 3600)
+    
     for path in CHECKPOINT_DIR.glob("*.jsonl"):
         if path.stat().st_mtime < cutoff:
             continue
@@ -164,4 +169,5 @@ def scan_incomplete() -> list[str]:
                     incomplete.append(path.stem)
         except Exception:
             pass
+            
     return incomplete

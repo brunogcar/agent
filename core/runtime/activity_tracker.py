@@ -13,7 +13,7 @@ from core.config import cfg
 
 class ActivityTracker:
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock() # 🔴 CRITICAL FIX: RLock prevents deadlock when touch() is called inside inference_slot()
         self.last_user_activity = time.time()
         self.active_inferences = 0
         self.background_active = False
@@ -28,6 +28,7 @@ class ActivityTracker:
             with self._lock:
                 if self.active_inferences < self.max_concurrent_inferences:
                     self.active_inferences += 1
+                    self.touch()  # 🔴 CRITICAL FIX: Update idle detection for background daemons
                     acquired = True
                     break
             time.sleep(0.1)

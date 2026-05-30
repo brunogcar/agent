@@ -51,13 +51,14 @@ class EvictionQueue:
         
     def replay_and_get_batch(self, max_size: int = 50) -> list[dict]:
         """
-        Read from disk, load into RAM, return batch, and rewrite disk file with remaining.
-        This handles both boot-time replay and normal batch extraction safely.
+        Read from disk, consolidate with RAM, return batch, and ATOMICALLY rewrite 
+        disk file with remaining. Disk is the source of truth to prevent duplication.
         """
         disk_items = []
+        tmp_file = QUEUE_FILE.with_suffix(".jsonl.tmp")
         
-        # 1. Read from disk
         with self._lock:
+            # 1. Read from disk
             if QUEUE_FILE.exists():
                 try:
                     with open(QUEUE_FILE, "r", encoding="utf-8") as f:
@@ -67,7 +68,7 @@ class EvictionQueue:
                                 try:
                                     disk_items.append(json.loads(line))
                                 except json.JSONDecodeError:
-                                    pass # Ignore corrupted partial lines from power loss
+                                    pass
                 except Exception as e:
                     logger.error(f"[Eviction] Failed to read disk queue: {e}")
                     
@@ -78,25 +79,27 @@ class EvictionQueue:
                 except Empty:
                     break
                     
-        # 3. Extract batch
-        batch = disk_items[:max_size]
-        remaining = disk_items[max_size:]
-        
-        # 4. Rewrite disk file with remaining items (Atomic persistence)
-        with self._lock:
+            # 3. Extract batch
+            batch = disk_items[:max_size]
+            remaining = disk_items[max_size:]
+            
+            # 4. ATOMIC Rewrite disk file with remaining items
             try:
-                with open(QUEUE_FILE, "w", encoding="utf-8") as f:
+                with open(tmp_file, "w", encoding="utf-8") as f:
                     for item in remaining:
                         f.write(json.dumps(item) + "\n")
                     f.flush()
                     os.fsync(f.fileno())
+                os.replace(tmp_file, QUEUE_FILE)
             except Exception as e:
                 logger.error(f"[Eviction] Failed to rewrite disk queue: {e}")
-                
-        # 5. Put remaining back into RAM queue for next time
-        for item in remaining:
-            self._queue.put(item)
-            
+                if tmp_file.exists():
+                    try:
+                        tmp_file.unlink()
+                    except Exception:
+                        pass
+                        
+        # Note: We DO NOT put remaining back into RAM. Disk is the source of truth.
         return batch
 
 # Singleton
