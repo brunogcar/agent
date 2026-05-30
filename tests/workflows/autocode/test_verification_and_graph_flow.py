@@ -13,8 +13,9 @@ from pathlib import Path
 
 @pytest.fixture
 def temp_workspace(tmp_path, monkeypatch):
-    """Patch cfg.agent_root to tmp_path for safe graph execution."""
+    """Patch cfg.workspace_root to tmp_path for safe file writes."""
     import core.config
+    monkeypatch.setattr(core.config.cfg, "workspace_root", tmp_path)
     monkeypatch.setattr(core.config.cfg, "agent_root", tmp_path)
     yield tmp_path
 
@@ -28,7 +29,7 @@ def base_graph_state(temp_workspace):
         "status": "running",
         "dry_run": True,
         "task_type": "feature",
-        "project_root": "",
+        "project_root": str(temp_workspace),
         "plan": [{"label": "write_code"}],
         "verification_passed": True,
         "messages": [],
@@ -117,3 +118,6 @@ class TestStateMutationCompliance:
             result = node_execute_step(base_graph_state)
         assert "tdd_source_code" in result
         assert "execution_notes" in result
+
+
+

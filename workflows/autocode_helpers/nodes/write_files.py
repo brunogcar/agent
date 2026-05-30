@@ -48,7 +48,10 @@ def node_write_files(state: AutocodeState) -> dict:
             tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
             continue
 
-        target = cfg.agent_root / rel_path
+        # Use project_root from state if available, otherwise workspace_root
+        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+        target = base_path / rel_path
+
         if not target.exists():
             tracer.step(tid, "write_files",
                         f"patch target missing, skipping: {rel_path}")
@@ -75,7 +78,10 @@ def node_write_files(state: AutocodeState) -> dict:
             tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
             continue
 
-        target = cfg.agent_root / rel_path
+        # Use project_root from state if available, otherwise workspace_root
+        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+        target = base_path / rel_path
+
         target.parent.mkdir(parents=True, exist_ok=True)
         lock_path = str(target) + ".lock"
         bak_path  = target.with_suffix(target.suffix + ".bak")
@@ -98,7 +104,9 @@ def node_write_files(state: AutocodeState) -> dict:
 
     # Persist test file to agent root so verify can find it
     if state.get("test_code"):
-        test_file = cfg.agent_root / "autocode" / "test_autocode_feature.py"
+        # Use project_root from state if available, otherwise workspace_root
+        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+        test_file = base_path / "autocode" / "test_autocode_feature.py"
         lock_path = str(test_file) + ".lock"
         test_file.parent.mkdir(parents=True, exist_ok=True)
         try:

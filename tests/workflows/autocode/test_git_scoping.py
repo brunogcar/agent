@@ -1,4 +1,4 @@
-"""
+﻿"""
 tests/workflows/autocode/test_git_scoping.py
 Validates project_root isolation for git_ops, branch, and commit nodes.
 Guarantees:
@@ -31,7 +31,7 @@ def base_state(temp_agent_root):
         "task": "test git scoping",
         "trace_id": "test-trace-git",
         "status": "running",
-        "project_root": "",
+        "project_root": str(temp_agent_root),
         "branch": "",
         "verification_passed": True,
         "plan": [],

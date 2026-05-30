@@ -5,6 +5,7 @@ Verification node.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
 import sys
 
@@ -54,8 +55,10 @@ def node_verify(state: AutocodeState) -> dict:
     # Fresh pytest on agent root
     tests_passed = False
     fresh_output = ""
-    test_file = cfg.agent_root / "autocode" / "test_autocode_feature.py"
-    tests_dir = cfg.agent_root / "tests"
+    base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+    test_file = base_path / "autocode" / "test_autocode_feature.py"
+    tests_dir = base_path / "autocode" / "tests"
+
 
     try:
         cmd = [sys.executable, "-m", "pytest", "--tb=short", "--color=no", "-q"]
@@ -83,7 +86,7 @@ def node_verify(state: AutocodeState) -> dict:
     lint_passed = True
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check", str(cfg.agent_root),
+            [sys.executable, "-m", "ruff", "check", str(cfg.workspace_root),
              "--select", "E,F", "--no-cache"],
             capture_output=True, text=True, timeout=30, encoding='utf-8'
         )

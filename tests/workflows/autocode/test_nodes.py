@@ -1,4 +1,4 @@
-"""
+﻿"""
 tests/workflows/autocode/test_nodes.py
 Unit tests for execute and write_files nodes.
 Guarantees:
@@ -17,8 +17,9 @@ from pathlib import Path
 
 @pytest.fixture
 def temp_workspace(tmp_path, monkeypatch):
-    """Patch cfg.agent_root to tmp_path for safe file writes."""
+    """Patch cfg.workspace_root to tmp_path for safe file writes."""
     import core.config
+    monkeypatch.setattr(core.config.cfg, "workspace_root", tmp_path)
     monkeypatch.setattr(core.config.cfg, "agent_root", tmp_path)
     yield tmp_path
 
@@ -31,6 +32,7 @@ def base_state(temp_workspace):
         "trace_id": "test-trace-node",
         "status": "running",
         "dry_run": True,
+        "project_root": str(temp_workspace),
         "plan": [
             {"id": 1, "label": "write_code", "description": "implement helper"}
         ],
@@ -105,3 +107,5 @@ class TestNodeWriteFiles:
         result = node_write_files(base_state)
         # LangGraph partial update: empty dict means no changes
         assert result == {}
+
+

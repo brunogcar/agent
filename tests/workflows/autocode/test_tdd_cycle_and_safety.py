@@ -21,6 +21,7 @@ from pathlib import Path
 def temp_workspace(tmp_path, monkeypatch):
     """Patch cfg.agent_root to tmp_path for safe file writes."""
     import core.config
+    monkeypatch.setattr(core.config.cfg, "workspace_root", tmp_path)
     monkeypatch.setattr(core.config.cfg, "agent_root", tmp_path)
     yield tmp_path
 
@@ -55,7 +56,7 @@ def base_state(temp_workspace):
         "tdd_status": "",
         "test_results": {},
         "verification_passed": False,
-        "project_root": "",
+        "project_root": str(temp_workspace),
     }
 
 
@@ -212,3 +213,5 @@ class TestErrorPropagationAndRouting:
         from workflows.autocode_helpers.routes import route_after_verify
         base_state["verification_passed"] = False
         assert route_after_verify(base_state) == "END"
+
+
