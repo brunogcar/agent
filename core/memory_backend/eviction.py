@@ -22,7 +22,7 @@ QUEUE_FILE = cfg.workspace_root / ".eviction_queue.jsonl"
 class EvictionQueue:
     def __init__(self):
         self._queue = Queue()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def push(self, text: str, metadata: dict):
         """
@@ -42,7 +42,7 @@ class EvictionQueue:
                 with open(QUEUE_FILE, "a", encoding="utf-8") as f:
                     f.write(json.dumps(payload) + "\n")
                     f.flush()
-                    os.fsync(f.fileno()) # Force OS to write to disk
+                    os.fsync(f.fileno())
         except Exception as e:
             logger.error(f"[Eviction] Disk spill failed: {e}")
             
@@ -65,11 +65,10 @@ class EvictionQueue:
                                 try:
                                     items.append(json.loads(line))
                                 except json.JSONDecodeError:
-                                    pass # Ignore corrupted partial lines
+                                    pass
                 except Exception as e:
                     logger.error(f"[Eviction] Failed to read disk queue: {e}")
                     
-            # Drain RAM queue into items to consolidate
             while True:
                 try:
                     items.append(self._queue.get_nowait())
@@ -109,8 +108,9 @@ def flusher_loop():
     
     logger.info("[Eviction] Flusher thread started.")
     while True:
-        time.sleep(5) # Flush every 5 seconds
+        time.sleep(5)
         
+        # Phase 1: Read (Does NOT modify disk)
         all_pending = eviction_queue.get_all_pending()
         if not all_pending:
             continue
@@ -120,6 +120,7 @@ def flusher_loop():
         
         logger.info(f"[Eviction] Flushing {len(batch)} items to ChromaDB...")
         try:
+            # Phase 2: Flush
             for item in batch:
                 memory.store(
                     text=item["text"],
@@ -127,7 +128,7 @@ def flusher_loop():
                     tags="evicted,working-memory",
                     **item["metadata"]
                 )
-            # 🔴 CRITICAL FIX: Only truncate disk AFTER successful ChromaDB write
+            # Phase 3: Commit (ONLY truncates disk AFTER successful ChromaDB write)
             eviction_queue.commit_success(remaining)
         except Exception as e:
             logger.error(f"[Eviction] Flush failed: {e}")
