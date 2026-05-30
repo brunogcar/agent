@@ -1,4 +1,4 @@
-﻿"""
+"""
 workflows/research.py -- Research workflow.
 
 Pattern:
@@ -24,7 +24,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from langgraph.graph import StateGraph, END
 from workflows.base   import WorkflowState, node_step, node_error, node_done
-from core.citations   import citations
+from workflows.helpers.citations import citations
 from core.memory_backend.procedural.distill import distill_workflow
 
 
@@ -122,7 +122,7 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
 def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
     """Coordinator: scrape and summarize URLs in parallel."""
     from core.config import cfg
-    from core.citations import citations
+    from workflows.helpers.citations import citations
     
     raw_results = state.get("search_results", "")
     if not raw_results:
