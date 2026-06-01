@@ -110,7 +110,7 @@ STDLIB_IMPORTS = {
     "collections", "itertools", "functools", "re", "csv",
     "io", "textwrap", "string", "decimal", "fractions",
     "heapq", "bisect", "pprint", "copy", "time", "uuid",
-    "pathlib", "os", "sys", "hashlib", "base64", "struct",
+    "hashlib",  "base64",  "struct",
     "dataclasses", "typing", "enum", "abc",
 }
 

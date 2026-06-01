@@ -45,7 +45,7 @@ except ImportError:
     )
 
 # ── Trace ID generator (LOW‑05) ─────────────────────────────────────────
-def generate_trace_id(length: int = 8) -> str:
+def generate_trace_id(length: int = 12) -> str:
     """Return a short hex trace ID, e.g. 'a3f2c0b1'."""
     return uuid.uuid4().hex[:length]
 

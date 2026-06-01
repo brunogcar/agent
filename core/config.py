@@ -75,12 +75,12 @@ class Config:
             "planner": {
                 "model":    self.planner_model,
                 "base_url": self.lm_studio_base_url,
-                "timeout":  int(os.getenv("PLANNER_TIMEOUT", "90")),
+                "timeout":  int(os.getenv("PLANNER_TIMEOUT", "180")),  # Aligned with self.planner_timeout
             },
             "executor": {
                 "model":    self.executor_model,
                 "base_url": self.lm_studio_base_url,
-                "timeout":  int(os.getenv("EXECUTOR_TIMEOUT", "120")),
+                "timeout":  int(os.getenv("EXECUTOR_TIMEOUT", "120")),  # Aligned with self.executor_timeout
             },
             "router": {
                 "model":    self.router_model,
@@ -230,7 +230,12 @@ class Config:
 
     def resolve_agent_path(self, relative: str) -> Path:
         clean = relative.replace("\\", "/").lstrip("/")
-        return (self.agent_root / clean).resolve()
+        target = (self.agent_root / clean).resolve()
+        try:
+            target.relative_to(self.agent_root.resolve())
+        except ValueError as e:
+            raise PermissionError(f"Path '{relative}' resolves outside AGENT_ROOT") from e
+        return target
 
     def resolve_workspace_path(self, relative: str) -> Path:
         clean = relative.replace("\\", "/").lstrip("/")

@@ -54,36 +54,35 @@ from mcp.server.fastmcp import FastMCP
 from registry import register_all_tools
 
 # -- Build the server (stdout still redirected to stderr here) ----------------
-mcp = FastMCP("agent")
-_tool_count = register_all_tools(mcp)
+try:
+    mcp = FastMCP("agent")
+    _tool_count = register_all_tools(mcp)
 
-# -- Boot log (all goes to stderr via the redirect above) --------------------
-_boot_tid = tracer.new_trace("startup", goal="server boot")
-tracer.step(_boot_tid, "boot", "MCP Agent ready",
-            tools=_tool_count,
-            planner=cfg.planner_model,
-            executor=cfg.executor_model,
-            router=cfg.router_model)
-
-_W = 56
-print("", file=sys.stderr)
-print("=" * _W, file=sys.stderr)
-print("  MCP Agent Stack -- Ready".center(_W), file=sys.stderr)
-print("=" * _W, file=sys.stderr)
-print(f"  Tools     : {_tool_count}", file=sys.stderr)
-print(f"  Planner   : {cfg.planner_model}", file=sys.stderr)
-print(f"  Executor  : {cfg.executor_model}", file=sys.stderr)
-print(f"  Router    : {cfg.router_model}", file=sys.stderr)
-print(f"  Workspace : {cfg.workspace_root}", file=sys.stderr)
-print(f"  Memory    : {cfg.memory_chroma_path}", file=sys.stderr)
-print(f"  Env       : {cfg.env}", file=sys.stderr)
-print("=" * _W, file=sys.stderr)
-print("", file=sys.stderr)
-
-tracer.finish(_boot_tid, success=True, result=f"{_tool_count} tools registered")
-
-# -- Restore real stdout and hand it to FastMCP's stdio transport -------------
-sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
+    # -- Boot log (all goes to stderr via the redirect above) --------------------
+    _boot_tid = tracer.new_trace("startup", goal="server boot")
+    tracer.step(_boot_tid, "boot", "MCP Agent ready",
+        tools=_tool_count,
+        planner=cfg.planner_model,
+        executor=cfg.executor_model,
+        router=cfg.router_model)
+    _W = 56
+    print(" ", file=sys.stderr)
+    print("= " * _W, file=sys.stderr)
+    print("  MCP Agent Stack -- Ready ".center(_W), file=sys.stderr)
+    print("= " * _W, file=sys.stderr)
+    print(f"  Tools     : {_tool_count} ", file=sys.stderr)
+    print(f"  Planner   : {cfg.planner_model} ", file=sys.stderr)
+    print(f"  Executor  : {cfg.executor_model} ", file=sys.stderr)
+    print(f"  Router    : {cfg.router_model} ", file=sys.stderr)
+    print(f"  Workspace : {cfg.workspace_root} ", file=sys.stderr)
+    print(f"  Memory    : {cfg.memory_chroma_path} ", file=sys.stderr)
+    print(f"  Env       : {cfg.env} ", file=sys.stderr)
+    print("= " * _W, file=sys.stderr)
+    print(" ", file=sys.stderr)
+    tracer.finish(_boot_tid, success=True, result=f"{_tool_count} tools registered")
+finally:
+    # -- Restore real stdout and hand it to FastMCP's stdio transport -------------
+    sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
 
 # -- Cleanup old VRAM artifacts ------------------------------------------------
 def _cleanup_artifacts() -> None:
