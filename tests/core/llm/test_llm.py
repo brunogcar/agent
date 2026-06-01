@@ -1,10 +1,10 @@
 """
 tests/core/llm/test_llm.py
 Comprehensive unit tests for the LLM client, focusing on:
-- P1: Robust JSON extraction (regex-based parsing)
-- Circuit breaker state machine
-- Error handling and retry logic
-- Provider abstraction
+P1: Robust JSON extraction (regex-based parsing)
+Circuit breaker state machine
+Error handling and retry logic
+Provider abstraction
 """
 import json
 import pytest
@@ -23,17 +23,23 @@ from core.llm import (
 # =============================================================================
 # Fixtures
 # =============================================================================
+
 @pytest.fixture
 def mock_config():
-    """Mock configuration for LLM client."""
+    """Mock configuration for LLM client.
+    
+    Phase 1 refactor: cfg is now imported in core.llm_backend.config and 
+    core.llm_backend.client, not in core.llm directly.
+    """
     with patch("core.llm_backend.config.cfg") as mock_cfg:
         mock_cfg.lm_studio_base_url = "http://localhost:1234/v1"
         mock_cfg.executor_model = "test-model"
         mock_cfg.vision_model = "test-vision-model"
         mock_cfg.model_registry = {
-            "executor": {"model": "test-model", "timeout": 120},
-            "planner": {"model": "test-model", "timeout": 90},
-            "router": {"model": "test-model", "timeout": 15},
+            "executor":  {"model": "test-model", "timeout": 120, "provider": "lmstudio"},
+            "planner":   {"model": "test-model", "timeout": 90,  "provider": "lmstudio"},
+            "router":    {"model": "test-model", "timeout": 15,  "provider": "lmstudio"},
+            "consultor": {"model": "test-model", "timeout": 60,  "provider": "openai"},
         }
         # Phase 5 Context Budgeting requires this to prevent MagicMock comparison errors
         mock_cfg.max_context_tokens = 8000
@@ -57,11 +63,12 @@ def mock_provider():
 # =============================================================================
 # Test LLMResponse
 # =============================================================================
+
 class TestLLMResponse:
+
     def test_from_error(self):
         """Test error response creation."""
         resp = LLMResponse.from_error("executor", "test-model", "Timeout", elapsed=5.0)
-        
         assert resp.ok is False
         assert resp.error == "Timeout"
         assert resp.role == "executor"
@@ -81,7 +88,6 @@ class TestLLMResponse:
             parsed={"key": "value"},
             ok=True,
         )
-        
         assert resp.ok is True
         assert resp.text == "Hello world"
         assert resp.parsed == {"key": "value"}
@@ -90,11 +96,12 @@ class TestLLMResponse:
 # =============================================================================
 # Test Circuit Breaker
 # =============================================================================
+
 class TestCircuitBreaker:
+
     def test_initial_state_closed(self):
         """Circuit breaker starts in CLOSED state."""
         breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
-        
         assert breaker.can_execute() is True
         state = breaker.get_state_info()
         assert state["state"] == "closed"
@@ -103,14 +110,11 @@ class TestCircuitBreaker:
     def test_opens_after_threshold_failures(self):
         """Circuit opens after consecutive failures."""
         breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
-        
         breaker.record_failure()
         breaker.record_failure()
         assert breaker.can_execute() is True
-        
         breaker.record_failure()  # 3rd failure
         assert breaker.can_execute() is False
-        
         state = breaker.get_state_info()
         assert state["state"] == "open"
         assert state["failure_count"] == 3
@@ -118,15 +122,11 @@ class TestCircuitBreaker:
     def test_half_open_after_timeout(self):
         """Circuit transitions to HALF_OPEN after recovery timeout."""
         breaker = CircuitBreaker(failure_threshold=2, recovery_timeout=1)
-        
         breaker.record_failure()
         breaker.record_failure()
         assert breaker.can_execute() is False
-        
-        # Simulate time passing
         import time
         breaker._last_failure_time = time.time() - 2  # 2 seconds ago
-        
         assert breaker.can_execute() is True
         state = breaker.get_state_info()
         assert state["state"] == "half-open"
@@ -134,16 +134,12 @@ class TestCircuitBreaker:
     def test_closes_on_success_in_half_open(self):
         """Successful call in HALF_OPEN closes the circuit."""
         breaker = CircuitBreaker(failure_threshold=2, recovery_timeout=1)
-        
         breaker.record_failure()
         breaker.record_failure()
-        
         import time
         breaker._last_failure_time = time.time() - 2
-        
         breaker.can_execute()  # Transitions to HALF_OPEN
         breaker.record_success()
-        
         state = breaker.get_state_info()
         assert state["state"] == "closed"
         assert state["failure_count"] == 0
@@ -151,16 +147,12 @@ class TestCircuitBreaker:
     def test_reopens_on_failure_in_half_open(self):
         """Failed call in HALF_OPEN reopens the circuit."""
         breaker = CircuitBreaker(failure_threshold=2, recovery_timeout=1)
-        
         breaker.record_failure()
         breaker.record_failure()
-        
         import time
         breaker._last_failure_time = time.time() - 2
-        
         breaker.can_execute()  # Transitions to HALF_OPEN
         breaker.record_failure()
-        
         state = breaker.get_state_info()
         assert state["state"] == "open"
         assert state["failure_count"] == breaker.failure_threshold
@@ -169,6 +161,7 @@ class TestCircuitBreaker:
 # =============================================================================
 # Test JSON Extraction (P1 Fix)
 # =============================================================================
+
 class TestJSONExtraction:
     """Test the robust regex-based JSON parsing in _parse_response."""
 
@@ -178,9 +171,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '{"key": "value", "number": 42}'}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed == {"key": "value", "number": 42}
 
@@ -190,9 +181,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '```json\n{"key": "value"}\n```'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed == {"key": "value"}
 
@@ -202,9 +191,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '```\n{"key": "value"}\n```'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed == {"key": "value"}
 
@@ -214,9 +201,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": 'Here is the result:\n{"key": "value"}'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed == {"key": "value"}
 
@@ -226,9 +211,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '{"key": "value"}\n\nHope this helps!'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed == {"key": "value"}
 
@@ -238,9 +221,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": 'Sure! Here you go:\n\n{"status": "success", "data": [1, 2, 3]}\n\nLet me know if you need anything else.'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed == {"status": "success", "data": [1, 2, 3]}
 
@@ -250,9 +231,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '{"outer": {"inner": "value"}, "array": [1, 2, {"nested": true}]}'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed["outer"]["inner"] == "value"
         assert resp.parsed["array"][2]["nested"] is True
@@ -263,11 +242,8 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '[1, 2, 3, {"key": "value"}]'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
-        # With the improved parser, clean arrays are parsed successfully
         assert resp.parsed == [1, 2, 3, {"key": "value"}]
 
     def test_malformed_json_graceful_failure(self):
@@ -276,9 +252,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '{"key": "value"'}}],  # Missing closing brace
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed is None  # Graceful degradation
 
@@ -288,9 +262,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": 'This is just plain text with no JSON.'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert resp.parsed is None
 
@@ -300,9 +272,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '{"key": "value"}'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=False)
-        
         assert resp.ok is True
         assert resp.parsed is None  # Not parsed because json_mode=False
         assert resp.text == '{"key": "value"}'
@@ -313,9 +283,7 @@ class TestJSONExtraction:
             "choices": [{"message": {"content": '{"code": "```python\\nprint(\\"hello\\")\\n```"}'}}],
             "usage": {}
         }
-        
         resp = LLMClient._parse_response(raw, "executor", "test-model", 1.0, json_mode=True)
-        
         assert resp.ok is True
         assert "```python" in resp.parsed["code"]
 
@@ -323,14 +291,14 @@ class TestJSONExtraction:
 # =============================================================================
 # Test LLMClient Error Handling
 # =============================================================================
+
 class TestLLMClientErrorHandling:
+
     def test_timeout_exception(self, llm_client, mock_provider):
         """Test handling of timeout exceptions."""
         mock_provider.chat_completion.side_effect = httpx.TimeoutException("Timeout")
         llm_client._registry.register("lmstudio", mock_provider)
-        
         resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
-        
         assert resp.ok is False
         assert "Timeout" in resp.error
 
@@ -338,9 +306,7 @@ class TestLLMClientErrorHandling:
         """Test handling of connection errors."""
         mock_provider.chat_completion.side_effect = httpx.ConnectError("Connection refused")
         llm_client._registry.register("lmstudio", mock_provider)
-        
         resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
-        
         assert resp.ok is False
         assert "Cannot connect" in resp.error
 
@@ -349,13 +315,10 @@ class TestLLMClientErrorHandling:
         mock_response = Mock()
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
-        
         error = httpx.HTTPStatusError("Error", request=Mock(), response=mock_response)
         mock_provider.chat_completion.side_effect = error
         llm_client._registry.register("lmstudio", mock_provider)
-        
         resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
-        
         assert resp.ok is False
         assert "500" in resp.error
 
@@ -364,9 +327,7 @@ class TestLLMClientErrorHandling:
         mock_response = Mock()
         mock_response.status_code = 429
         mock_response.text = "Rate limited"
-        
         error = httpx.HTTPStatusError("Error", request=Mock(), response=mock_response)
-        
         # First two calls fail with 429, third succeeds
         mock_provider.chat_completion.side_effect = [
             error,
@@ -374,11 +335,9 @@ class TestLLMClientErrorHandling:
             {"choices": [{"message": {"content": "success"}}], "usage": {}}
         ]
         llm_client._registry.register("lmstudio", mock_provider)
-        
         # Patch sleep to speed up test
         with patch("time.sleep"):
             resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
-        
         assert resp.ok is True
         assert resp.text == "success"
         assert mock_provider.chat_completion.call_count == 3
@@ -387,21 +346,20 @@ class TestLLMClientErrorHandling:
 # =============================================================================
 # Test Provider Registry
 # =============================================================================
+
 class TestProviderRegistry:
+
     def test_register_and_get(self):
         """Test provider registration and retrieval."""
         registry = ProviderRegistry()
         provider = Mock(spec=LMStudioProvider)
-        
         registry.register("test", provider)
         retrieved = registry.get("test")
-        
         assert retrieved is provider
 
     def test_get_nonexistent_raises(self):
         """Test that getting a non-existent provider raises KeyError."""
         registry = ProviderRegistry()
-        
         with pytest.raises(KeyError, match="Provider 'nonexistent' not registered"):
             registry.get("nonexistent")
 
@@ -410,9 +368,7 @@ class TestProviderRegistry:
         registry = ProviderRegistry()
         registry.register("provider1", Mock())
         registry.register("provider2", Mock())
-        
         available = registry.available()
-        
         assert "provider1" in available
         assert "provider2" in available
 
@@ -420,7 +376,9 @@ class TestProviderRegistry:
 # =============================================================================
 # Test LLMClient Integration
 # =============================================================================
+
 class TestLLMClientIntegration:
+
     def test_complete_method_builds_messages(self, llm_client, mock_provider):
         """Test that complete() builds the correct message structure."""
         mock_provider.chat_completion.return_value = {
@@ -428,20 +386,16 @@ class TestLLMClientIntegration:
             "usage": {}
         }
         llm_client._registry.register("lmstudio", mock_provider)
-        
         resp = llm_client.complete(
             role="executor",
             system="You are helpful",
             user="Hello",
             context="Background info",
         )
-        
         assert resp.ok is True
-        
         # Verify the messages structure
         call_args = mock_provider.chat_completion.call_args
         messages = call_args[1]["messages"]
-        
         assert len(messages) == 4  # system, context, assistant ack, user
         assert messages[0]["role"] == "system"
         assert messages[0]["content"] == "You are helpful"
@@ -458,11 +412,10 @@ class TestLLMClientIntegration:
             "usage": {}
         }
         llm_client._registry.register("lmstudio", mock_provider)
-        
         # Patch tracer.error to verify fallback warning was logged
+        # Phase 1 refactor: tracer is imported in core.llm_backend.client
         with patch("core.llm_backend.client.tracer.error") as mock_error:
             resp = llm_client.call(role="unknown_role", messages=[{"role": "user", "content": "test"}])
-        
         assert resp.ok is True
         # Verify fallback warning was triggered
         mock_error.assert_called_once()

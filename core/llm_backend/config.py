@@ -49,7 +49,7 @@ def _build_role_configs() -> dict[str, RoleConfig]:
         
         roles[role] = RoleConfig(
             model       = model,
-            provider    = reg_entry.get( "provider ",  "lmstudio "),  # Read provider from config.py
+            provider    = reg_entry.get( "provider ",  "lmstudio"),  # Read provider from config.py
             timeout     = timeout,
             temperature = d["temperature"],
             max_tokens  = d["max_tokens"],
