@@ -8,7 +8,24 @@ from core.llm import llm
 from core.config import cfg
 from core.llm_backend.budget import check_rate_limit
 
-_MAX_CONTEXT_CHARS = 4000
+_MAX_CONTEXT_TOKENS = 2000  # Conservative default for cloud models
+
+# Attempt to import tiktoken for accurate token counting, fallback to char estimate
+try:
+    import tiktoken
+    _HAS_TIKTOKEN = True
+except ImportError:
+    _HAS_TIKTOKEN = False
+
+def _estimate_tokens(text: str) -> int:
+    if _HAS_TIKTOKEN:
+        try:
+            encoder = tiktoken.get_encoding("cl100k_base")
+            return len(encoder.encode(text))
+        except Exception:
+            pass
+    # Fallback: ~4 chars per token is a safe conservative estimate
+    return len(text) // 4
 
 _ADVISORY_SYSTEM_PROMPT = (
     "You are an expert advisory consultant. Provide clear, concise, and highly actionable advice. "
@@ -35,6 +52,13 @@ def consult(question: str, context: str = "") -> dict:
     # Get provider name for rate limiting
     provider = cfg.model_registry.get("consultor", {}).get("provider", "unknown")
 
+    # Pre-flight check: verify the role's provider is available
+    if not llm.is_available("consultor"):
+        return {
+            "status": "disabled",
+            "error": f"Provider for consultor role ('{provider}') is not available or not configured.",
+        }
+
     # Check rate limit before making the cloud call
     if not check_rate_limit(provider):
         return {
@@ -42,12 +66,23 @@ def consult(question: str, context: str = "") -> dict:
             "error": f"Rate limit exceeded for {provider}. Please wait before consulting again.",
         }
 
-    # Context truncation guardrail
-    truncated_warning = None
-    if len(context) > _MAX_CONTEXT_CHARS:
-        context = context[:_MAX_CONTEXT_CHARS] + "\n\n[WARNING: Context truncated to 4000 chars.]"
-        truncated_warning = "Context was truncated to 4000 characters."
+    # Token-aware context truncation guardrail
+    warnings = []
+    current_tokens = _estimate_tokens(context)
+    if current_tokens > _MAX_CONTEXT_TOKENS:
+        if _HAS_TIKTOKEN:
+            try:
+                encoder = tiktoken.get_encoding("cl100k_base")
+                tokens = encoder.encode(context)
+                context = encoder.decode(tokens[:_MAX_CONTEXT_TOKENS])
+            except Exception:
+                context = context[: _MAX_CONTEXT_TOKENS * 4]
+        else:
+            context = context[: _MAX_CONTEXT_TOKENS * 4]
+        
+        warnings.append(f"Context truncated from ~{current_tokens} to {_MAX_CONTEXT_TOKENS} tokens to prevent overflow.")
 
+    # Execute LLM Call (llm.complete handles the timeout from RoleConfig)
     result = llm.complete(
         role="consultor",
         system=_ADVISORY_SYSTEM_PROMPT,
@@ -70,7 +105,7 @@ def consult(question: str, context: str = "") -> dict:
         "advice": result.text,
     }
 
-    if truncated_warning:
-        response["warning"] = truncated_warning
+    if warnings:
+        response["warnings"] = warnings
 
     return response
