@@ -26,7 +26,7 @@ from core.llm import (
 @pytest.fixture
 def mock_config():
     """Mock configuration for LLM client."""
-    with patch("core.llm.cfg") as mock_cfg:
+    with patch("core.llm_backend.config.cfg") as mock_cfg:
         mock_cfg.lm_studio_base_url = "http://localhost:1234/v1"
         mock_cfg.executor_model = "test-model"
         mock_cfg.vision_model = "test-vision-model"
@@ -460,7 +460,7 @@ class TestLLMClientIntegration:
         llm_client._registry.register("lmstudio", mock_provider)
         
         # Patch tracer.error to verify fallback warning was logged
-        with patch("core.llm.tracer.error") as mock_error:
+        with patch("core.llm_backend.client.tracer.error") as mock_error:
             resp = llm_client.call(role="unknown_role", messages=[{"role": "user", "content": "test"}])
         
         assert resp.ok is True
