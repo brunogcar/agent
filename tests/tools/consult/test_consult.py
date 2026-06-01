@@ -115,3 +115,31 @@ class TestConsultExecution:
         result = consult(question="Test?")
         assert result["status"] == "error"
         assert result["error"] == "Connection timed out"
+
+class TestPhase5CHardening:
+    def test_concurrent_rate_limiter_stress(self, mock_cfg, mock_budget, mock_llm):
+        """Verify rate limiter holds up under concurrent burst."""
+        from core.llm_backend.budget import check_rate_limit
+        import threading
+
+        results = []
+        def make_call():
+            results.append(check_rate_limit("openai", max_calls=3, period=60))
+
+        threads = [threading.Thread(target=make_call) for _ in range(10)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        assert sum(results) == 3
+
+    def test_unicode_context_truncation(self, mock_cfg, mock_budget, mock_llm):
+        """Ensure truncation doesn't break mid-unicode character."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.text = "OK"
+        mock_response.model = "gpt-4o-mini"
+        mock_llm.complete.return_value = mock_response
+
+        unicode_context = "Hello " + "世界" * 2000
+        result = consult(question="Test", context=unicode_context)
+        assert result["status"] == "success"

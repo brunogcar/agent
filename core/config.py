@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/config.py — Single source of truth for all configuration.
 
 Uses pathlib throughout — works identically on Windows and Linux.
@@ -20,7 +20,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 
-# ── Locate and load .env ──────────────────────────────────────────────────────
+# -- Locate and load .env ------------------------------------------------------
 def _find_env_file() -> Optional[Path]:
     """Walk up from this file's location until we find .env"""
     candidate = Path(__file__).resolve().parent
@@ -36,7 +36,7 @@ if _env_file:
     load_dotenv(_env_file)
 
 
-# ── Intelligent Provider & Model Resolution ─────────────────────────────
+# -- Intelligent Provider & Model Resolution -----------------------------
 def _resolve_role(value: str) -> tuple[str, str]:
     """
     Resolves a single model string into (provider, model) dynamically from .env.
@@ -60,14 +60,14 @@ def _resolve_role(value: str) -> tuple[str, str]:
     return "lmstudio", val
 
 
-# ── Config class ──────────────────────────────────────────────────────────────
+# -- Config class --------------------------------------------------------------
 class Config:
     """
     Centralised config. All paths are pathlib.Path objects.
     Access via the module-level `cfg` singleton.
     """
     def __init__(self) -> None:
-        # ── Paths ─────────────────────────────────────────────────────────────
+        # -- Paths -------------------------------------------------------------
         _here = Path(__file__).resolve().parent.parent
 
         self.agent_root     = Path(os.getenv("AGENT_ROOT",     str(_here)))
@@ -81,12 +81,12 @@ class Config:
         self.workspace_index    = self.workspace_root / ".index"
         self.log_path           = self.agent_root / "logs"
 
-        # ── Runtime Provider (LM Studio, Ollama, vLLM) ────────────────────────
+        # -- Runtime Provider (LM Studio, Ollama, vLLM) ------------------------
         self.runtime_provider = os.getenv("RUNTIME_PROVIDER", "lmstudio").lower()
         self.lm_studio_base_url = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
         self.lm_studio_restart_cmd = os.getenv("LM_STUDIO_RESTART_CMD", "")
 
-        # ── Cloud Advisory Providers (OpenAI-Compatible APIs) ─────────────────
+        # -- Cloud Advisory Providers (OpenAI-Compatible APIs) -----------------
         # If the API key is present in .env, the provider is registered and available.
         # Comment out the key in .env to disable the provider.
         self.openai_api_key   = os.getenv("OPENAI_API_KEY", "")
@@ -104,7 +104,7 @@ class Config:
         self.kimi_api_key      = os.getenv("KIMI_API_KEY", "")
         self.kimi_base_url     = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
 
-        # ── Model roles ───────────────────────────────────────────────────────
+        # -- Model roles -------------------------------------------------------
         planner_raw = os.getenv("PLANNER_MODEL")
         if not planner_raw:
             raise RuntimeError("PLANNER_MODEL is required in .env")
@@ -163,30 +163,30 @@ class Config:
                 "timeout":  int(os.getenv("CONSULTOR_TIMEOUT", "60")),
             }
 
-        # ── External services ─────────────────────────────────────────────────
+        # -- External services -------------------------------------------------
         self.searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8080")
 
-        # ── Memory tuning ─────────────────────────────────────────────────────
+        # -- Memory tuning -----------------------------------------------------
         self.memory_delete_threshold = float(os.getenv("MEMORY_DELETE_THRESHOLD", "0.4"))
         self.memory_decay_days       = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
         self.memory_top_k            = int(os.getenv("MEMORY_TOP_K", "5"))
 
-        # ── Memory Diversity (Phase 6) ────────────────────────────────────────
+        # -- Memory Diversity (Phase 6) ----------------------------------------
         self.diversity_distance_threshold = float(os.getenv("DIVERSITY_DISTANCE_THRESHOLD", "0.12"))
         self.archive_age_days             = int(os.getenv("ARCHIVE_AGE_DAYS", "30"))
         self.purge_age_days               = int(os.getenv("PURGE_AGE_DAYS", "90"))
 
-        # ── Context Budgeting (Phase 5) ───────────────────────────────────────
+        # -- Context Budgeting (Phase 5) ---------------------------------------
         # Max tokens for the input context window (leaves room for output)
         self.max_context_tokens  = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
 
-        # ── Parallel Execution (Phase 7) ──────────────────────────────────────
+        # -- Parallel Execution (Phase 7) --------------------------------------
         self.max_concurrent_workers = int(os.getenv("MAX_CONCURRENT_WORKERS", "3"))
         self.max_concurrent_inferences = int(os.getenv("MAX_CONCURRENT_INFERENCES", "2"))
         self.worker_timeout = int(os.getenv("WORKER_TIMEOUT", "60"))
         self.worker_max_tokens = int(os.getenv("WORKER_MAX_TOKENS", "250"))
     
-        # ── Tool  & System Limits (P2: Centralized Magic Numbers) ──────────────
+        # -- Tool  & System Limits (P2: Centralized Magic Numbers) --------------
         
         # Memory Tool Limits
         # Renamed from max_memory_bytes to memory_max_entry_bytes (D1 Option B consensus)
@@ -212,20 +212,20 @@ class Config:
         # File Tool Limits
         self.file_max_read_chars = int(os.getenv("FILE_MAX_READ_CHARS", "50000"))
 
-        # ── Execution & Autocode ──────────────────────────────────────────────
+        # -- Execution & Autocode ----------------------------------------------
         self.execution_timeout = int(os.getenv("EXECUTOR_TIMEOUT", "120"))
         self.sandbox_timeout   = int(os.getenv("SANDBOX_TIMEOUT", "30"))
         self.autocode_max_retries    = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
         self.autocode_max_file_chars = int(os.getenv("AUTOCODE_MAX_FILE_CHARS", "6000"))
         self.autocode_debug          = os.getenv("AUTOCODE_DEBUG", "0") == "1"
 
-        # ── Timeouts ──────────────────────────────────────────────────────────
+        # -- Timeouts ----------------------------------------------------------
         self.planner_timeout = int(os.getenv("PLANNER_TIMEOUT", "180"))
         self.router_timeout = int(os.getenv("ROUTER_TIMEOUT", "60"))
         self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
         self.max_retries = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
 
-        # ── Validations ───────────────────────────────────────────────────────
+        # -- Validations -------------------------------------------------------
         # Existing validations (survive python -O via explicit raise)
         if self.autocode_max_retries <= 0:
             raise ValueError("AUTOCODE_MAX_RETRIES must be > 0")
@@ -261,14 +261,14 @@ class Config:
         if not (1 <= self.file_max_read_chars <= 1_000_000):
             raise ValueError(f"FILE_MAX_READ_CHARS must be 1-1000000, got {self.file_max_read_chars}")
 
-        # ── Protected files ───────────────────────────────────────────────────
+        # -- Protected files ---------------------------------------------------
         self.protected_files: frozenset[str] = frozenset({
             "server.py", "registry.py",
             "core/config.py", "core/tracer.py",
             "core/llm.py", "core/memory.py", "core/gateway.py",
         })
 
-        # ── SSRF Protection ───────────────────────────────────────────────────
+        # -- SSRF Protection ---------------------------------------------------
         # Allowlist for trusted internal services (comma-separated hostnames)
         # Default: permissive for development (localhost, LM Studio, SearXNG)
         # Production: set ALLOWED_INTERNAL_HOSTS="" to block ALL private/localhost
@@ -278,12 +278,12 @@ class Config:
             if h.strip()
         )
 
-        # ── Gateway ───────────────────────────────────────────────────────────
+        # -- Gateway -----------------------------------------------------------
         self.gateway_host   = os.getenv("GATEWAY_HOST", "127.0.0.1")
         self.gateway_port   = int(os.getenv("GATEWAY_PORT", "8000"))
         self.gateway_secret = os.getenv("GATEWAY_SECRET", "changeme")
 
-        # ── Environment ───────────────────────────────────────────────────────
+        # -- Environment -------------------------------------------------------
         self.env        = os.getenv("ENV", "development")
         self.is_dev     = self.env == "development"
         self.is_windows = os.name == "nt"
@@ -321,8 +321,8 @@ class Config:
         
         # Only check relative path if within agent_root (canonical boundary check)
         try:
-            agent_root_resolved = self.agent_root.resolve()  # ← Resolve both paths!
-            rel_path = target.relative_to(agent_root_resolved)  # ← Now safe!
+            agent_root_resolved = self.agent_root.resolve()  # ? Resolve both paths!
+            rel_path = target.relative_to(agent_root_resolved)  # ? Now safe!
             rel_str = str(rel_path).lower().replace("\\", "/")
             if any(rel_str == pf.lower() for pf in self.protected_files):
                 return True
@@ -339,5 +339,5 @@ class Config:
         )
 
 
-# ── Singleton ─────────────────────────────────────────────────────────────────
+# -- Singleton -----------------------------------------------------------------
 cfg = Config()

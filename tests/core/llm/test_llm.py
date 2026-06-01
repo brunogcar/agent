@@ -421,3 +421,19 @@ class TestLLMClientIntegration:
         mock_error.assert_called_once()
         args, _ = mock_error.call_args
         assert "unknown role" in str(args).lower()
+class TestNetworkPartitionsAndSchemaDrift:
+    def test_malformed_html_response(self, llm_client, mock_provider):
+        """Provider returns HTML (e.g., Cloudflare block) instead of JSON."""
+        mock_provider.chat_completion.return_value = "<html><body>502 Bad Gateway</body></html>"
+        llm_client._registry.register("lmstudio", mock_provider)
+        resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
+        assert resp.ok is False
+        assert "error" in resp.error.lower() or "502" in resp.error
+
+    def test_missing_choices_field(self, llm_client, mock_provider):
+        """Provider returns valid JSON but missing expected 'choices' key."""
+        mock_provider.chat_completion.return_value = {"usage": {}}
+        llm_client._registry.register("lmstudio", mock_provider)
+        resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
+        assert resp.ok is False
+        assert "error" in resp.error.lower()
