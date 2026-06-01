@@ -15,14 +15,30 @@ from typing import Callable
 
 _TASK_EXECUTOR = None
 
-def get_executor() -> ThreadPoolExecutor:
-    """
-    Return (or create) the global ThreadPoolExecutor for background tasks.
-    Reuses worker threads to prevent thread explosion under load.
-    """
+def init_executor() -> ThreadPoolExecutor:
+    """Initialize the global ThreadPoolExecutor. Called during app startup."""
     global _TASK_EXECUTOR
     if _TASK_EXECUTOR is None:
         _TASK_EXECUTOR = ThreadPoolExecutor(max_workers=10, thread_name_prefix="gw-task")
+    return _TASK_EXECUTOR
+
+def shutdown_executor() -> None:
+    """Gracefully shutdown the executor. Called during app shutdown."""
+    global _TASK_EXECUTOR
+    if _TASK_EXECUTOR is not None:
+        # wait=True ensures pending tasks finish or are cancelled cleanly
+        # cancel_futures=True prevents new tasks from starting during shutdown
+        _TASK_EXECUTOR.shutdown(wait=True, cancel_futures=True)
+        _TASK_EXECUTOR = None
+
+def get_executor() -> ThreadPoolExecutor:
+    """
+    Return the global ThreadPoolExecutor.
+    Initializes lazily if lifespan hasn't run (e.g., in isolated unit tests).
+    """
+    global _TASK_EXECUTOR
+    if _TASK_EXECUTOR is None:
+        return init_executor()
     return _TASK_EXECUTOR
 
 def run_background_task(

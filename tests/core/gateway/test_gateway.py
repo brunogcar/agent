@@ -7,6 +7,10 @@ Tests focus on:
 - SQLite Task Store integrity (Store/Get/Update with thread-safe isolation).
 - Gateway Endpoints (Async submission, Polling, Error handling, 404 fallbacks).
 
+PHASE 2 UPDATE: 
+- HTTP Endpoint tests now use FastAPI's native `app.dependency_overrides` 
+  instead of fragile `monkeypatch` mocking.
+
 Run with: pytest tests/core/gateway/test_gateway.py -v
 """
 import sys
@@ -21,11 +25,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import core.gateway as gw
+import core.config as config_mod
 import core.gateway_backend.factory as factory_mod
 import core.gateway_backend.store as store_mod
-import core.gateway_backend.dispatcher as dispatcher_mod
-import core.config as config_mod
+import core.gateway_backend.dependencies as deps_mod
 from core.tracer import tracer
 
 
@@ -45,9 +48,6 @@ class TestWarmupMemory:
         def failing_recall(*args, **kwargs):
             raise ModuleNotFoundError("No module named 'chromadb'")
 
-        # Mock dispatcher to prevent side effects if warmup somehow triggers it
-        monkeypatch.setattr(dispatcher_mod, "dispatch", MagicMock())
-        
         with patch('builtins.__import__', side_effect=failing_recall):
             try:
                 factory_mod._warmup_memory(timeout=1)
@@ -56,7 +56,10 @@ class TestWarmupMemory:
 
 
 class TestSQLiteTaskStore:
-    """Test SQLite task storage functions with isolated temp databases."""
+    """
+    Layer 1: Pure Unit Tests for the SQLite task storage functions.
+    Tests the actual store module directly with isolated temp databases.
+    """
 
     @pytest.fixture(autouse=True)
     def setup_isolated_db(self, tmp_path, monkeypatch):
@@ -77,7 +80,6 @@ class TestSQLiteTaskStore:
         assert task is not None
         assert task["trace_id"] == trace_id
         assert task["status"] == "pending"
-        # Note: _get_task SQL does not SELECT the payload column in current implementation
         assert task["result"] is None
         assert task["error"] == ""
 
@@ -115,31 +117,47 @@ class TestSQLiteTaskStore:
 
 
 class TestGatewayEndpoints:
-    """Test FastAPI endpoint logic using FastAPI's TestClient."""
+    """
+    Layer 2: Route Tests using FastAPI's TestClient.
+    PHASE 2: Uses `app.dependency_overrides` to mock the store, dispatcher, 
+    and runner. Zero monkeypatching of route internals.
+    """
 
     @pytest.fixture
-    def client(self, monkeypatch, tmp_path):
-        """Create a TestClient for the FastAPI app with mocked startup dependencies."""
-        monkeypatch.setattr(config_mod.cfg, "memory_root", tmp_path)
-        monkeypatch.setattr(config_mod.cfg, "gateway_secret", "test_secret")
-        monkeypatch.setattr(config_mod.cfg, "env", "dev")
-        
-        # Mock heavy startup functions to prevent side effects during testing
+    def client(self, monkeypatch):
+        """Create a TestClient with mocked startup and injected dependencies."""
+        # 1. Mock heavy startup functions to prevent side effects during testing
         monkeypatch.setattr(factory_mod, "_warmup_memory", lambda *args, **kwargs: None)
-        
-        # Mock config validation (imported locally in create_app)
         import core.config_validation
         monkeypatch.setattr(core.config_validation, "validate_config", lambda: None)
         
-        # Mock background task runner so it doesn't actually execute
-        import core.runtime.task_runner
-        monkeypatch.setattr(core.runtime.task_runner, "run_background_task", lambda *args, **kwargs: None)
-        
-        # Reset DB path to use tmp_path
-        store_mod._TASK_DB_PATH = None
-        
+        # 2. Create the app
         app = factory_mod.create_app()
-        return TestClient(app)
+        
+        # 3. 🔴 PHASE 2 STEP 5: DEPENDENCY INJECTION OVERRIDES 🔴
+        mock_store = MagicMock()
+        mock_store._store_task = MagicMock()
+        mock_store._update_task = MagicMock()
+        mock_store._get_task = MagicMock(return_value=None) # Default to not found
+        
+        mock_runner = MagicMock()
+        mock_runner.run_background_task = MagicMock()
+        
+        mock_dispatcher = MagicMock()
+        mock_dispatcher.dispatch = MagicMock(return_value={"result": "mocked"})
+        
+        app.dependency_overrides[deps_mod.get_task_store] = lambda: mock_store
+        app.dependency_overrides[deps_mod.get_task_runner] = lambda: mock_runner
+        app.dependency_overrides[deps_mod.get_dispatcher] = lambda: mock_dispatcher
+        app.dependency_overrides[deps_mod.check_auth] = lambda: None  # Bypass auth for route tests
+        
+        # 4. Attach mocks to the client for easy assertion in tests
+        client = TestClient(app)
+        client.mock_store = mock_store
+        client.mock_runner = mock_runner
+        client.mock_dispatcher = mock_dispatcher
+        
+        return client
 
     def test_submit_task_returns_trace_id_immediately(self, client):
         """Verify POST /task returns a trace_id and status 'submitted' immediately."""
@@ -153,22 +171,29 @@ class TestGatewayEndpoints:
             json=payload,
             headers={"Authorization": "Bearer test_secret"}
         )
-        if response.status_code != 200:
-            print(f"Error response: {response.json()}")
         assert response.status_code == 200
         data = response.json()
         assert "trace_id" in data
         assert data["status"] == "submitted"
         assert "poll_url" in data
-
-    def test_get_result_existing_task_returns_payload(self, client, monkeypatch, tmp_path):
-        """Verify GET /result/{trace_id} returns task details for a stored task."""
-        monkeypatch.setattr(config_mod.cfg, "memory_root", tmp_path)
-        store_mod._TASK_DB_PATH = None
         
+        # Verify the injected dependencies were actually called
+        client.mock_store._store_task.assert_called_once()
+        client.mock_runner.run_background_task.assert_called_once()
+
+    def test_get_result_existing_task_returns_payload(self, client):
+        """Verify GET /result/{trace_id} returns task details for a stored task."""
         trace_id = "poll_test_001"
-        store_mod._store_task(trace_id, {"goal": "Poll Me"})
-        store_mod._update_task(trace_id, "success", result={"data": "done"})
+        
+        # Configure the mock store to return a successful task
+        client.mock_store._get_task.return_value = {
+            "trace_id": trace_id,
+            "status": "success",
+            "result": {"data": "done"},
+            "error": "",
+            "submitted": time.time() - 5,
+            "completed": time.time()
+        }
 
         response = client.get(
             f"/result/{trace_id}",
@@ -181,17 +206,17 @@ class TestGatewayEndpoints:
         assert data["result"] == {"data": "done"}
         assert "elapsed" in data
 
-    def test_get_result_unknown_raises_404(self, client, monkeypatch, tmp_path):
-        """Verify GET /result/{trace_id} raises HTTPException for unknown trace."""
-        monkeypatch.setattr(config_mod.cfg, "memory_root", tmp_path)
-        store_mod._TASK_DB_PATH = None
-        
-        # Mock tracer.get to return None so it falls through to 404
-        monkeypatch.setattr(tracer, "get", lambda x: None)
-
-        response = client.get(
-            "/result/unknown_trace_id_999",
-            headers={"Authorization": "Bearer test_secret"}
-        )
+    def test_get_result_unknown_raises_404(self, client):
+        """Verify GET /result/{trace_id} raises 404 for unknown trace via centralized exception handler."""
+        # Mock tracer.get to return None so it falls through to TaskNotFoundError
+        with patch.object(tracer, "get", return_value=None):
+            response = client.get(
+                "/result/unknown_trace_id_999",
+                headers={"Authorization": "Bearer test_secret"}
+            )
+            
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        data = response.json()
+        assert "error" in data
+        assert data["error"] == "Task not found"
+        assert "trace_id" in data

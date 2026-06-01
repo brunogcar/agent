@@ -29,3 +29,27 @@ class ChatRequest(BaseModel):
     message:  str
     platform: Optional[str] = "api"
     user:     Optional[str] = None
+
+# ── Response Models (Phase 2 Step 3: Contract Locking) ──────────────
+# These lock the API contract. FastAPI will automatically strip internal
+# fields, validate the output, and generate perfect OpenAPI documentation.
+from typing import Any, Literal
+
+class TaskSubmitResponse(BaseModel):
+    trace_id: str
+    status: Literal["submitted"]
+    poll_url: str
+
+class TaskResultResponse(BaseModel):
+    trace_id: str
+    status: Literal["pending", "running", "success", "failed", "unknown"]
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    elapsed: float
+
+class ChatResponse(BaseModel):
+    trace_id: str
+    status: Literal["success", "failed"]
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    platform: str

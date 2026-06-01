@@ -12,6 +12,23 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from core.config import cfg
 
+# ── Dependency Providers (Phase 2 Step 5: Dependency Injection) ─────────
+# These allow us to swap out the store, dispatcher, and runner in tests
+# using app.dependency_overrides, completely eliminating monkeypatch.
+from types import ModuleType
+
+def get_task_store() -> ModuleType:
+    from core.gateway_backend import store
+    return store
+
+def get_dispatcher() -> ModuleType:
+    from core.gateway_backend import dispatcher
+    return dispatcher
+
+def get_task_runner() -> ModuleType:
+    from core.runtime import task_runner
+    return task_runner
+
 _bearer = HTTPBearer(auto_error=False)
 
 def check_auth(
