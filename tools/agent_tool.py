@@ -15,17 +15,18 @@ Key fixes over old agents.py:
   6. trace_id propagated through every call for full observability.
 
 Roles:
-  classify   → Nemotron 4B  — fast binary/category decisions (15s)
-  route      → Nemotron 4B  — task routing decision (15s)
-  research   → Hermes 3 8B  — synthesise web/memory content (120s)
-  summarize  → Hermes 3 8B  — condense long content (60s)
-  extract    → Hermes 3 8B  — pull structured data from text (60s)
-  critique   → Hermes 3 8B  — evaluate quality, find issues (90s)
-  analyze    → Hermes 3 8B  — deep analysis of code/data/text (90s)
-  code       → Hermes 3 8B  — generate Python code/patches (120s)
-  review     → Hermes 3 8B  — review code for bugs/quality (90s)
-  plan       → Qwen 3.5 9B  — high-level task decomposition (90s)
-  vision     → Qwen 3.5 9B  — image analysis (delegates to tools/vision.py)
+  classify   → ROUTER    — fast binary/category decisions (15s)
+  route      → ROUTER    — task routing decision (15s)
+  research   → EXECUTOR  — synthesise web/memory content (120s)
+  summarize  → EXECUTOR  — condense long content (60s)
+  extract    → EXECUTOR  — pull structured data from text (60s)
+  critique   → EXECUTOR  — evaluate quality, find issues (90s)
+  analyze    → EXECUTOR  — deep analysis of code/data/text (90s)
+  code       → EXECUTOR  — generate Python code/patches (120s)
+  review     → EXECUTOR  — review code for bugs/quality (90s)
+  plan       → PLANNER   — high-level task decomposition (90s)
+  consult    → CONSULTOR — Expert advisory on architecture/best practices/pitfalls (60s)
+  vision     → VISION    — image analysis (delegates to tools/vision.py)
 """
 
 from __future__ import annotations
@@ -136,6 +137,12 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         '"corrected_patch": "corrected code if verdict is REVISE, else null"}'
     ),
 
+    "consultor ": (
+        "You are an expert advisory consultant. Provide clear, concise, and highly actionable advice. "
+        "Focus on architectural soundness, best practices, and potential pitfalls. "
+        "Do not write code unless explicitly asked. Keep responses structured and easy to read. "
+    ),    
+
     "plan": (
         "You are a task planning specialist for an autonomous AI agent. "
         "Break the given goal into a clear, ordered sequence of steps. "
@@ -162,16 +169,18 @@ _SYSTEM_PROMPTS: dict[str, str] = {
 # vision is NOT here — it delegates to tools/vision.py directly (see dispatch).
 
 _ROLE_TO_LLM: dict[str, str] = {
-    "classify": "router",    # Router       — 15s
-    "route":    "router",    # Router       — 15s
-    "research": "research",  # Executor     — 120s
-    "summarize":"summarize", # Executor     — 60s
-    "extract":  "extract",   # Executor     — 60s
-    "critique": "critique",  # Executor     — 90s
-    "analyze":  "analyze",   # Executor     — 90s
-    "code":     "code",      # Executor     — 120s
-    "review":   "review",    # Executor     — 90s
-    "plan":     "planner",   # Planner      — 90s
+    "classify":  "router",    # Router        — 15s
+    "route":     "router",    # Router        — 15s
+    "research":  "research",   # Executor     — 120s
+    "summarize": "summarize",  # Executor     — 60s
+    "extract":   "extract",    # Executor     — 60s
+    "critique":  "critique",   # Executor     — 90s
+    "analyze":   "analyze",    # Executor     — 90s
+    "code":      "code",       # Executor     — 120s
+    "review":    "review",     # Executor     — 90s
+    "plan":      "planner",    # Planner      — 90s
+    "consultor": "consultor ", # Consultor    — 60s
+
     # vision delegates to tools/vision.py — not a direct llm role
 }
 
@@ -201,7 +210,7 @@ def agent(
     Agent tool — call a specialist sub-agent for a specific cognitive task.
 
     role: "classify" | "route" | "research" | "summarize" | "extract" |
-          "critique" | "analyze" | "code" | "review" | "plan" | "vision"
+          "critique" | "analyze" | "code" | "review" | "plan" | "consultor" | "vision"
 
     task     : the instruction or question for this agent
     context  : background information (injected before the task)
@@ -222,6 +231,7 @@ def agent(
     code      [Executor,120s]  Generate Python patch. Returns {analysis,patch,tests}.
     review    [Executor, 90s]  Review patch. Returns {verdict,issues,corrected_patch}.
     plan      [Planner,  90s]  Decompose goal into ordered steps. Returns JSON.
+    consultor [Consultor,60s]  Expert advisory on architecture, best practices, or pitfalls.
     vision    [Planner,  60s]  Analyse an image. Delegates to tools/vision.py.
                                context= file_path or URL, content= base64 string.
 
@@ -255,7 +265,7 @@ def agent(
             "error": (
                 f"Unknown role '{role}'. "
                 "Use: classify | route | research | summarize | extract | "
-                "critique | analyze | code | review | plan | vision"
+                "critique | analyze | code | review | plan  |  consultor | vision"
             ),
         }
 

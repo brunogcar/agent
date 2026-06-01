@@ -36,6 +36,30 @@ if _env_file:
     load_dotenv(_env_file)
 
 
+# ── Intelligent Provider & Model Resolution ─────────────────────────────
+def _resolve_role(value: str) -> tuple[str, str]:
+    """
+    Resolves a single model string into (provider, model) dynamically from .env.
+    - "openai" -> ("openai", os.getenv("OPENAI_BASE_MODEL", ""))
+    - "qwen-qwen3.5-9b" -> ("qwen", "qwen-qwen3.5-9b")
+    - "granite-4.0" -> ("lmstudio", "granite-4.0")
+    - "" -> ("lmstudio", "")
+    """
+    if not value or not value.strip():
+        return "lmstudio", ""
+    
+    val = value.strip()
+    val_lower = val.lower()
+    
+    # EXACT MATCH ONLY for cloud providers. Prevents "qwen-3b" from misrouting.
+    if val_lower in {"openai", "deepseek", "mistral", "qwen", "kimi"}:
+        base_model_env = f"{val_lower.upper()}_BASE_MODEL"
+        return val_lower, os.getenv(base_model_env, "")
+        
+    # Anything else is treated as a LOCAL model name.
+    return "lmstudio", val
+
+
 # ── Config class ──────────────────────────────────────────────────────────────
 class Config:
     """
@@ -81,36 +105,63 @@ class Config:
         self.kimi_base_url     = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
 
         # ── Model roles ───────────────────────────────────────────────────────
-        self.planner_model  = os.getenv("PLANNER_MODEL")
-        if not self.planner_model:
+        planner_raw = os.getenv("PLANNER_MODEL")
+        if not planner_raw:
             raise RuntimeError("PLANNER_MODEL is required in .env")
 
-        self.executor_model = os.getenv("EXECUTOR_MODEL") or self.planner_model
-        self.router_model   = os.getenv("ROUTER_MODEL") or self.planner_model
-        self.vision_model   = os.getenv("VISION_MODEL") or self.planner_model
+        executor_raw = os.getenv("EXECUTOR_MODEL") or planner_raw
+        router_raw   = os.getenv("ROUTER_MODEL") or planner_raw
+        vision_raw   = os.getenv("VISION_MODEL") or planner_raw
+        consultor_raw = os.getenv("CONSULTOR_MODEL", "").strip()
+
+        # Resolve provider and model automatically for each role
+        planner_prov, planner_mod   = _resolve_role(planner_raw)
+        executor_prov, executor_mod = _resolve_role(executor_raw)
+        router_prov, router_mod     = _resolve_role(router_raw)
+        vision_prov, vision_mod     = _resolve_role(vision_raw)
+        consultor_prov, consultor_mod = _resolve_role(consultor_raw)
+
+        self.planner_model   = planner_mod
+        self.executor_model  = executor_mod
+        self.router_model    = router_mod
+        self.vision_model    = vision_mod
+        self.consultor_model = consultor_mod
 
         self.model_registry: dict[str, dict] = {
             "planner": {
-                "model":    self.planner_model,
-                "base_url": self.lm_studio_base_url,
-                "timeout":  int(os.getenv("PLANNER_TIMEOUT", "180")),  # Aligned with self.planner_timeout
+                "model":    planner_mod,
+                "provider": planner_prov,
+                "base_url": self.lm_studio_base_url if planner_prov == "lmstudio" else os.getenv(f"{planner_prov.upper()}_BASE_URL", ""),
+                "timeout":  int(os.getenv("PLANNER_TIMEOUT", "180")),
             },
             "executor": {
-                "model":    self.executor_model,
-                "base_url": self.lm_studio_base_url,
-                "timeout":  int(os.getenv("EXECUTOR_TIMEOUT", "120")),  # Aligned with self.executor_timeout
+                "model":    executor_mod,
+                "provider": executor_prov,
+                "base_url": self.lm_studio_base_url if executor_prov == "lmstudio" else os.getenv(f"{executor_prov.upper()}_BASE_URL", ""),
+                "timeout":  int(os.getenv("EXECUTOR_TIMEOUT", "120")),
             },
             "router": {
-                "model":    self.router_model,
-                "base_url": self.lm_studio_base_url,
+                "model":    router_mod,
+                "provider": router_prov,
+                "base_url": self.lm_studio_base_url if router_prov == "lmstudio" else os.getenv(f"{router_prov.upper()}_BASE_URL", ""),
                 "timeout":  int(os.getenv("ROUTER_TIMEOUT", "15")),
             },
             "vision": {
-                "model":    self.vision_model,
-                "base_url": self.lm_studio_base_url,
+                "model":    vision_mod,
+                "provider": vision_prov,
+                "base_url": self.lm_studio_base_url if vision_prov == "lmstudio" else os.getenv(f"{vision_prov.upper()}_BASE_URL", ""),
                 "timeout":  int(os.getenv("VISION_TIMEOUT", "60")),
             },
         }
+
+        # Add consultor to registry ONLY if a model is explicitly resolved
+        if consultor_mod:
+            self.model_registry["consultor"] = {
+                "model":    consultor_mod,
+                "provider": consultor_prov,
+                "base_url": self.lm_studio_base_url if consultor_prov == "lmstudio" else os.getenv(f"{consultor_prov.upper()}_BASE_URL", ""),
+                "timeout":  int(os.getenv("CONSULTOR_TIMEOUT", "60")),
+            }
 
         # ── External services ─────────────────────────────────────────────────
         self.searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8080")

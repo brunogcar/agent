@@ -31,6 +31,7 @@ def _build_role_configs() -> dict[str, RoleConfig]:
         "analyze":   {"temperature": 0.1, "max_tokens": 1024, "timeout": 90},
         "code":      {"temperature": 0.1, "max_tokens": 4096, "timeout": 120},
         "review":    {"temperature": 0.2, "max_tokens": 768,  "timeout": 90},
+        "consultor": {"temperature": 0.2, "max_tokens": 1024, "timeout": 60},
     }
 
     executor_model = cfg.model_registry.get("executor", {}).get("model", cfg.executor_model)
@@ -48,6 +49,7 @@ def _build_role_configs() -> dict[str, RoleConfig]:
         
         roles[role] = RoleConfig(
             model       = model,
+            provider    = reg_entry.get( "provider ",  "lmstudio "),  # Read provider from config.py
             timeout     = timeout,
             temperature = d["temperature"],
             max_tokens  = d["max_tokens"],
