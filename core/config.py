@@ -62,6 +62,24 @@ class Config:
         self.lm_studio_base_url = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
         self.lm_studio_restart_cmd = os.getenv("LM_STUDIO_RESTART_CMD", "")
 
+        # ── Cloud Advisory Providers (OpenAI-Compatible APIs) ─────────────────
+        # If the API key is present in .env, the provider is registered and available.
+        # Comment out the key in .env to disable the provider.
+        self.openai_api_key   = os.getenv("OPENAI_API_KEY", "")
+        self.openai_base_url  = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    
+        self.deepseek_api_key  = os.getenv("DEEPSEEK_API_KEY", "")
+        self.deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    
+        self.mistral_api_key   = os.getenv("MISTRAL_API_KEY", "")
+        self.mistral_base_url  = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
+    
+        self.qwen_api_key      = os.getenv("QWEN_API_KEY", "")
+        self.qwen_base_url     = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    
+        self.kimi_api_key      = os.getenv("KIMI_API_KEY", "")
+        self.kimi_base_url     = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+
         # ── Model roles ───────────────────────────────────────────────────────
         self.planner_model  = os.getenv("PLANNER_MODEL")
         if not self.planner_model:

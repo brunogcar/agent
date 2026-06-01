@@ -15,15 +15,30 @@ def create_llm_client() -> LLMClient:
     """Instantiate and configure the global LLMClient."""
     client = LLMClient()
     
-    # Register default local provider
+    # 1. Register default local provider
     client.register_provider(
         "lmstudio",
         LMStudioProvider(cfg.lm_studio_base_url),
     )
     
-    # TODO: Phase 2 will dynamically register OpenAI, DeepSeek, Mistral, etc. here
-    # based on .env API keys.
+    # 2. Dynamically register Cloud Advisory Providers based on .env keys
+    from core.llm_backend.providers.openai_compat import OpenAICompatibleProvider
     
+    cloud_providers = [
+        ("openai",   cfg.openai_api_key,   cfg.openai_base_url),
+        ("deepseek", cfg.deepseek_api_key, cfg.deepseek_base_url),
+        ("mistral",  cfg.mistral_api_key,  cfg.mistral_base_url),
+        ("qwen",     cfg.qwen_api_key,     cfg.qwen_base_url),
+        ("kimi",     cfg.kimi_api_key,     cfg.kimi_base_url),
+    ]
+    
+    for name, api_key, base_url in cloud_providers:
+        if api_key:  # Only register if the key is present and not empty
+            client.register_provider(
+                name,
+                OpenAICompatibleProvider(base_url=base_url, api_key=api_key, provider_name=name)
+            )
+            
     return client
 
 def _cleanup_providers(client: LLMClient) -> None:
