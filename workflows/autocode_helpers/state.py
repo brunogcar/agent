@@ -27,6 +27,13 @@ NODE_TIMEOUTS = {
     "default": cfg.execution_timeout
 }
 
+class FileSnapshot(TypedDict):
+    """Memory-safe snapshot for LangGraph state to prevent bloat."""
+    content_preview: str      # First 8KB — enough for import extraction
+    md5: str                  # Full file hash for integrity verification
+    size: int                 # Full file size
+    truncated: bool           # True if content_preview < full content
+
 class AutocodeState(TypedDict, total=False):
     """State for the autocode workflow."""
 
@@ -54,7 +61,7 @@ class AutocodeState(TypedDict, total=False):
     tdd_error: str
     tdd_status: str
     max_retries: int
-    files_map: dict
+    files_map: dict[str, FileSnapshot]  # path -> FileSnapshot
     current_step: int  # [FIX] Added for TDD step indexing
 
     # Execution
@@ -120,7 +127,7 @@ def _default_state(
         "tdd_error": "",
         "tdd_status": "",
         "max_retries": MAX_RETRIES,
-        "files_map": {},
+        "files_map": {},  # dict[str, FileSnapshot]
         "current_step": 0,  # [FIX] Added for TDD step indexing
         "execution_notes": "",
         "modified_files": [],
