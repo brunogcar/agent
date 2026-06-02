@@ -2,9 +2,7 @@
 State machine construction for autocode workflow.
 """
 from __future__ import annotations
-
 from langgraph.graph import END, StateGraph
-
 from workflows.autocode_helpers.state import AutocodeState
 from workflows.autocode_helpers.nodes.classify import node_classify_task
 from workflows.autocode_helpers.nodes.validate import node_validate_input
@@ -14,6 +12,7 @@ from workflows.autocode_helpers.nodes.branch import node_git_branch
 from workflows.autocode_helpers.nodes.tests import node_write_tests
 from workflows.autocode_helpers.nodes.execute import node_execute_step
 from workflows.autocode_helpers.nodes.run_tests import node_run_tests
+from workflows.autocode_helpers.nodes.analyze_impact import node_analyze_impact
 from workflows.autocode_helpers.nodes.debug import node_systematic_debug
 from workflows.autocode_helpers.nodes.write_files import (
     node_write_files,
@@ -30,6 +29,7 @@ from workflows.autocode_helpers.routes import (
     route_after_debug,
     route_after_write_files,
     route_after_verify,
+    route_after_analyze_impact,
 )
 
 # Global compiled graph instance
@@ -40,7 +40,7 @@ def build_graph() -> StateGraph:
     Build the LangGraph state machine for the autocode workflow.
     """
     workflow = StateGraph(AutocodeState)
-    
+
     # Add all nodes
     workflow.add_node("node_classify_task", node_classify_task)
     workflow.add_node("node_validate_input", node_validate_input)
@@ -50,6 +50,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_write_tests", node_write_tests)
     workflow.add_node("node_execute_step", node_execute_step)
     workflow.add_node("node_run_tests", node_run_tests)
+    workflow.add_node("node_analyze_impact", node_analyze_impact)
     workflow.add_node("node_systematic_debug", node_systematic_debug)
     workflow.add_node("node_write_files", node_write_files)
     workflow.add_node("node_write_files_with_flag_reset", node_write_files_with_flag_reset)
@@ -85,12 +86,21 @@ def build_graph() -> StateGraph:
     workflow.add_edge("node_execute_step", "node_write_files")
 
     # Route after write_files (TDD loop vs verification)
+    # CHANGED: Route to analyze_impact first instead of run_tests
     workflow.add_conditional_edges(
         "node_write_files",
         route_after_write_files,
         {
+            "node_analyze_impact": "node_analyze_impact",
+        },
+    )
+
+    # Route after analyze_impact (Always proceeds to run_tests)
+    workflow.add_conditional_edges(
+        "node_analyze_impact",
+        route_after_analyze_impact,
+        {
             "node_run_tests": "node_run_tests",
-            "node_verify": "node_verify",
         },
     )
 

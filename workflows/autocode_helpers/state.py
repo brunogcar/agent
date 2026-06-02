@@ -64,6 +64,10 @@ class AutocodeState(TypedDict, total=False):
     # Test results
     test_results: dict
     tests_written: bool
+    
+    # Impact Analysis (Phase: AST Dependency Graphing)
+    impact_warnings: list[str]
+    targeted_test_cmd: str | None
 
     # Debug
     debug_notes: str

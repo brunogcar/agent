@@ -25,7 +25,8 @@ class TestGraphStructureAndWiring:
             "node_write_plan", "node_git_branch", "node_write_tests",
             "node_execute_step", "node_run_tests", "node_systematic_debug",
             "node_write_files", "node_write_files_with_flag_reset",
-            "node_verify", "node_commit", "node_distill_memory", "node_create_skill"
+            "node_verify", "node_commit", "node_distill_memory", "node_create_skill",
+            "node_analyze_impact"
         }
         assert set(g.nodes.keys()) == expected_nodes, \
             f"Node mismatch. Missing: {expected_nodes - set(g.nodes.keys())}"
@@ -54,7 +55,7 @@ class TestGraphStructureAndWiring:
         assert route_after_run_tests({"tdd_status": "passed"}) == "node_verify"
         assert route_after_run_tests({"tdd_status": "failed"}) == "node_systematic_debug"
         
-        assert route_after_write_files({"task_type": "feature"}) == "node_run_tests"
+        assert route_after_write_files({"task_type": "feature"}) == "node_analyze_impact"
         assert route_after_write_files({"task_type": "audit"}) == "node_verify"
         
         assert route_after_verify({"verification_passed": True}) == "node_commit"

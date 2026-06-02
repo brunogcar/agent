@@ -14,15 +14,23 @@ from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_helpers.state import AutocodeState
 
-def run_tests_on_disk(test_files: list[str], project_root: str = None) -> dict:
+def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_cmd: str | None = None) -> dict:
     """
-    Run pytest on the given test files in a subprocess.
+    Run pytest on the given test files, or use a targeted command string.
     """
-    # Use workspace_root as default, but allow override
     if project_root is None:
         project_root = str(cfg.workspace_root)
-    test_paths = [str(Path(project_root) / tf) for tf in test_files]
-    cmd = [sys.executable, "-m", "pytest", "-v", "--tb=short", *test_paths]
+    
+    if targeted_cmd:
+        # targeted_cmd is like "pytest tests/test_a.py tests/test_b.py"
+        parts = targeted_cmd.split()
+        if parts and parts[0] == "pytest":
+            cmd = [sys.executable, "-m", "pytest"] + parts[1:]
+        else:
+            cmd = parts
+    else:
+        test_paths = [str(Path(project_root) / tf) for tf in test_files]
+        cmd = [sys.executable, "-m", "pytest", "-v", "--tb=short", *test_paths]
 
     try:
         result = subprocess.run(

@@ -19,6 +19,7 @@ from core.tracer import tracer
 INJECTIONS_LOG = cfg.sleep_learn_log_path / "injections.jsonl"
 CONFIDENCE_BOOST = 0.1
 CONFIDENCE_PENALTY = -0.2
+CONFIDENCE_PENALTY_HEAVY = -0.3  # For ignored impact warnings
 MIN_CONFIDENCE_THRESHOLD = 0.3
 
 # Infrastructure errors that should NOT penalize rules
@@ -39,7 +40,7 @@ def _is_infra_failure(error_msg: str) -> bool:
     lower_msg = error_msg.lower()
     return any(kw in lower_msg for kw in INFRA_ERROR_KEYWORDS)
 
-def update_rule_confidence(rule_id: str, success: bool) -> dict:
+def update_rule_confidence(rule_id: str, success: bool, penalty_override: float | None = None) -> dict:
     """Updates a single rule's confidence score in ChromaDB."""
     try:
         collection = _get_collection()
@@ -49,7 +50,7 @@ def update_rule_confidence(rule_id: str, success: bool) -> dict:
 
         meta = existing['metadatas'][0]
         current_conf = float(meta.get("confidence_score", 0.8))
-        delta = CONFIDENCE_BOOST if success else CONFIDENCE_PENALTY
+        delta = CONFIDENCE_BOOST if success else (penalty_override or CONFIDENCE_PENALTY)
         new_conf = round(max(0.0, min(1.0, current_conf + delta)), 2)
 
         if new_conf < MIN_CONFIDENCE_THRESHOLD:
@@ -145,8 +146,20 @@ def process_feedback() -> dict:
         if tid in outcomes:
             success = outcomes[tid]
             if success is not None:  # None means infra failure (skip)
+                
+                # Check for ignored impact warnings
+                ignored_impact = False
+                if not success:
+                    trace_data = _store.get(tid)
+                    if trace_data:
+                        for step in trace_data.get("steps", []):
+                            if step.get("node") == "analyze_impact" and step.get("warnings"):
+                                ignored_impact = True
+                                break
+                
                 for rule_id in inj.get("rule_ids", []):
-                    res = update_rule_confidence(rule_id, success)
+                    penalty = CONFIDENCE_PENALTY_HEAVY if ignored_impact else None
+                    res = update_rule_confidence(rule_id, success, penalty_override=penalty)
                     stats["processed"] += 1
                     if res["status"] == "updated":
                         if success: stats["boosted"] += 1
