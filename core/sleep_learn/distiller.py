@@ -11,6 +11,7 @@ from core.llm import llm
 from core.tracer import tracer
 from core.sleep_learn.filters import is_quality_rule
 from core.sleep_learn.storage import save_rule
+from core.sleep_learn.logger import log_event
 
 _DISTILLATION_SYSTEM_PROMPT = (
     "You are a meta-learning engine. Your job is to analyze a specific agent "
@@ -74,6 +75,7 @@ def distill_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
         trace_id, "sleep_learn", "rule_saved", 
         rule_id=rule_id, confidence=confidence, rule_length=len(rule_text)
     )
+    log_event({"event": "rule_saved", "trace_id": trace_id, "rule_id": rule_id, "confidence": confidence, "rule_preview": rule_text[:80]})
     
     return {
         "status": "success", 

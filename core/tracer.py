@@ -90,8 +90,8 @@ class _FileWriter:
         if today != self._current_date or self._file is None:
             if self._file:
                 self._file.close()
-            cfg.log_path.mkdir(parents=True, exist_ok=True)
-            log_file = cfg.log_path / f"agent_{today}.jsonl"
+            cfg.agent_log_path.mkdir(parents=True, exist_ok=True)
+            log_file = cfg.agent_log_path / f"agent_{today}.jsonl"
             self._file = open(log_file, "a", encoding="utf-8")
             self._current_date = today
         return self._file

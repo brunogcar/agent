@@ -14,6 +14,7 @@ from core.sleep_learn.config import (
 from core.sleep_learn.sweeper import sweep_recent_observations
 from core.sleep_learn.distiller import distill_observation
 from core.tracer import tracer
+from core.sleep_learn.logger import log_event
 
 def run_daemon_cycle() -> Dict[str, Any]:
     """
@@ -55,4 +56,5 @@ def run_daemon_cycle() -> Dict[str, Any]:
     }
     
     tracer.info("daemon", "sleep_learn", "cycle_completed", **summary)
+    log_event({"event": "cycle_completed", **summary})
     return summary

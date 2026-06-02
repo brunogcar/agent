@@ -80,6 +80,8 @@ class Config:
         self.workspace_autocode = self.workspace_root / "autocode"
         self.workspace_index    = self.workspace_root / ".index"
         self.log_path           = self.agent_root / "logs"
+        self.agent_log_path     = self.log_path / "agent"
+        self.sleep_learn_log_path = self.log_path / "sleep_learn"
 
         # -- Runtime Provider (LM Studio, Ollama, vLLM) ------------------------
         self.runtime_provider = os.getenv("RUNTIME_PROVIDER", "lmstudio").lower()
@@ -292,7 +294,7 @@ class Config:
         """Create all required directories if they don't exist."""
         dirs = [
             self.memory_root, self.memory_chroma_path, self.workspace_root,
-            self.workspace_autocode, self.workspace_index, self.log_path,
+            self.workspace_autocode, self.workspace_index, self.log_path, self.agent_log_path, self.sleep_learn_log_path,
         ]
         for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
