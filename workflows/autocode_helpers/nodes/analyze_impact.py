@@ -44,5 +44,6 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
         tracer.error(tid, "analyze_impact", f"AST analysis failed: {e}")
         return {
             "impact_warnings": [f"AST analysis crashed: {e}. Running full test suite."],
-            "targeted_test_cmd": "pytest"
+            "targeted_test_cmd": "pytest",
+            "impact_analysis_failed": True  # P0 Fix: Prevents false-positive penalty in feedback loop
         }

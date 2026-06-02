@@ -147,15 +147,17 @@ def process_feedback() -> dict:
             success = outcomes[tid]
             if success is not None:  # None means infra failure (skip)
                 
-                # Check for ignored impact warnings
+                # P0 Fix: Check for ignored impact warnings, but DO NOT penalize if analysis crashed
                 ignored_impact = False
                 if not success:
                     trace_data = _store.get(tid)
                     if trace_data:
-                        for step in trace_data.get("steps", []):
-                            if step.get("node") == "analyze_impact" and step.get("warnings"):
-                                ignored_impact = True
-                                break
+                        # If the analysis failed, it's an infrastructure issue, not agent negligence
+                        if not trace_data.get("impact_analysis_failed", False):
+                            for step in trace_data.get("steps", []):
+                                if step.get("node") == "analyze_impact" and step.get("warnings"):
+                                    ignored_impact = True
+                                    break
                 
                 for rule_id in inj.get("rule_ids", []):
                     penalty = CONFIDENCE_PENALTY_HEAVY if ignored_impact else None

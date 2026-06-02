@@ -9,9 +9,7 @@ import hashlib
 import asyncio
 from pathlib import Path
 from typing import Dict, Any
-
-# Simple in-memory cache: {file_path: {"hash": str, "data": dict}}
-_AST_CACHE: Dict[str, Dict[str, Any]] = {}
+from functools import lru_cache
 
 def _compute_file_hash(file_path: str) -> str:
     """Compute MD5 hash of file contents for cache invalidation."""
@@ -21,8 +19,12 @@ def _compute_file_hash(file_path: str) -> str:
     except Exception:
         return ""
 
-def _parse_ast_sync(file_path: str) -> Dict[str, Any]:
-    """Synchronous AST parsing logic, to be run in a thread."""
+@lru_cache(maxsize=1024)
+def _parse_ast_sync(file_path: str, file_hash: str) -> Dict[str, Any]:
+    """
+    Synchronous AST parsing logic, to be run in a thread.
+    Cached via LRU to prevent memory leaks. Keyed by path + hash for auto-invalidation.
+    """
     path = Path(file_path).resolve()
     if not path.exists():
         return {"status": "failed", "reason": "File not found", "imports": [], "defines": []}
@@ -58,25 +60,15 @@ def _parse_ast_sync(file_path: str) -> Dict[str, Any]:
         return {"status": "failed", "reason": str(e), "imports": [], "defines": []}
 
 async def get_file_dependencies(file_path: str) -> Dict[str, Any]:
-    """
-    Parse a Python file and extract its imports and defined symbols.
-    Runs in a thread to avoid blocking the async event loop.
-    """
+    """Parse a Python file and extract its imports and defined symbols."""
     path = str(Path(file_path).resolve())
     current_hash = _compute_file_hash(path)
     
-    # Cache hit
-    if path in _AST_CACHE and _AST_CACHE[path]["hash"] == current_hash:
-        return _AST_CACHE[path]["data"]
-
     # Run CPU-bound AST parsing in a separate thread
-    result = await asyncio.to_thread(_parse_ast_sync, path)
-    
-    # Update cache
-    _AST_CACHE[path] = {"hash": current_hash, "data": result}
+    # The lru_cache inside _parse_ast_sync handles memory bounds and invalidation
+    result = await asyncio.to_thread(_parse_ast_sync, path, current_hash)
     return result
 
 def clear_ast_cache():
-    """Utility to clear cache if needed (e.g., after major refactors)."""
-    global _AST_CACHE
-    _AST_CACHE.clear()
+    """Utility to clear cache if needed."""
+    _parse_ast_sync.cache_clear()
