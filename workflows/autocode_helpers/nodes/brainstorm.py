@@ -56,6 +56,10 @@ def node_brainstorm(state: AutocodeState) -> dict:
     else:  # feature / unclear
         system = BRAINSTORM_SYSTEM
 
+# Phase 3: Inject relevant learned rules for the Planner
+from core.sleep_learn import inject_rules_into_prompt
+system = inject_rules_into_prompt(goal=state["task"], system_prompt=system)
+
     user = (
         f"Task:\n{state['task']}\n\n"
         f"Relevant files:\n{files_ctx}"

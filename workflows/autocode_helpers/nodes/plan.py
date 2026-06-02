@@ -21,7 +21,11 @@ def node_write_plan(state: AutocodeState) -> dict:
     spec = state.get("spec") or state["task"]
     tracer.step(tid, "write_plan", "writing plan")
 
-    raw  = _call(role="planner", system=PLAN_SYSTEM,
+    # Phase 3: Inject relevant learned rules for the Planner
+from core.sleep_learn import inject_rules_into_prompt
+system = inject_rules_into_prompt(goal=spec, system_prompt=PLAN_SYSTEM)
+
+raw  = _call(role="planner", system=system,
                  user=f"Spec:\n{spec}", timeout=PLANNER_TIMEOUT)
     plan = _parse_json_array(raw)
 
