@@ -78,7 +78,7 @@ def inject_rules_into_prompt(goal: str, system_prompt: str) -> str:
         rules_text += f"{i}. [Confidence: {r['confidence']:.2f}] {r['rule']}\n"
     rules_text += "------------------------------"
 
-    tracer.info(
+    tracer.step(
         "daemon", "sleep_learn_injector", "rules_injected",
         goal_preview=goal[:50],
         rules_count=len(rules),

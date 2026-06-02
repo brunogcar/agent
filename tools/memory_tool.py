@@ -1,29 +1,24 @@
 ﻿"""
 tools/memory_tool.py — Memory meta-tool.
-
 Exposes core/memory.py to the LLM as a single tool.
 The LLM sees ONE tool: memory(action, ...)
-
 Imports are lazy -- chromadb is only loaded on first actual call,
 not at module registration time. This keeps server startup fast.
 """
 from __future__ import annotations
-
 import re
 from registry import tool
 from core.config import cfg
-
+from core.memory_backend.janitor import archive_old_episodes
+from core.sleep_learn.janitor import purge_stale_rules
 
 def _mem():
     """Lazy import of memory store -- avoids slow chromadb load at startup."""
     from core.memory import memory as _memory
     return _memory
 
-
 # ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────
-
-TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.\-\s]*$')  # Allow hyphens and spaces, but must start with letter
-
+TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.\s-]*$')  # Allow hyphens and spaces, but must start with letter
 
 def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
     """
@@ -43,22 +38,22 @@ def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
     """
     if not tags:
         return True, ""  # Empty is fine
-    
+
     # Reject dangerous characters immediately
     danger_list = ['<', '>', '"', "'", '`', '|']
     for bad_char in danger_list:
         if bad_char in tags:
             return False, f"Tags cannot contain: {bad_char}"
-    
+
     # Split by comma and validate each tag
     parts = [t.strip() for t in re.split(r'[,\s]+', tags) if t.strip()]
-    
+
     if not parts:
         return False, "No valid tags found"
-    
+
     if len(parts) > max_count:
         return False, f"Too many tags (max {max_count})"
-    
+
     for i, tag in enumerate(parts):
         if len(tag) > cfg.max_tag_length:
             return False, f"Tag exceeds length limit ({len(tag)} > {cfg.max_tag_length})"
@@ -66,9 +61,8 @@ def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
         if not TAG_PATTERN.fullmatch(tag):
             bad_chars = set(tag) - set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.- ')
             return False, f"Tag contains invalid characters: {bad_chars}"
-    
-    return True, ""
 
+    return True, ""
 
 @tool
 def memory(
@@ -95,29 +89,28 @@ def memory(
 ) -> dict:
     """
     Memory tool -- store, recall, and manage agent memories.
-    
-    action: "store" | "recall" | "delete" | "prune" | "summarize" | "stats"
-    
+    action:  "store" | "recall" | "delete" | "prune" | "summarize" | "stats" | "janitor"
+
     -- STORE --------------------------------------------------------------------
     Save a memory to one of three typed collections.
-    
+
     memory_type : "episodic"   -> things that happened (task runs, outcomes)
                   "semantic"   -> things you know (facts, research, knowledge)
                   "procedural" -> how to do things (fix patterns, solutions)
-    
+
     importance  : 1-10. High importance = slower decay.
                   9-10 critical facts, project structure, hard-won fixes
-                   7-8  useful patterns, successful approaches
+                    7-8  useful patterns, successful approaches
                   5-6  general knowledge, research findings
                   1-4  low-value, transient information
-    
+
     tags        : comma-separated, e.g. "python,syntax,debug"
     trace_id    : attach to current workflow trace
     goal        : what was being attempted (episodic/procedural)
     outcome     : "success" | "failure" | "partial" | "unknown"
     tools_used  : comma-separated tool names (episodic)
     source      : where knowledge came from (semantic), e.g. URL
-    
+
     Examples:
         memory(action="store", memory_type="episodic",
                text="Fixed SyntaxError in tools/web.py -- missing colon after def",
@@ -127,24 +120,43 @@ def memory(
         memory(action="store", memory_type="semantic",
                text="ChromaDB get_or_create_collection is idempotent",
                importance=7, tags="chromadb,startup")
-    
+
     -- RECALL -------------------------------------------------------------------
     Semantic search across memory collections, ranked by decay score.
     score = importance * max(0.3, 1 - age/decay_days)
-    
+
     query       : what to search for
     top_k       : max results (default 5)
     collections : ["episodic"] | ["semantic"] | ["procedural"] | all (default)
     min_score   : minimum decay score (default 0.5)
     tags_filter : comma-separated -- only return memories with ANY of these tags
-    
+
     Examples:
         memory(action="recall", query="how to fix syntax errors", top_k=3)
         memory(action="recall", query="ChromaDB", collections=["semantic"])
         memory(action="recall", query="tool registration", tags_filter="mcp,howto")
     """
     action = action.strip().lower()
-    store  = _mem()
+
+    # ── JANITOR ACTION ──────────────────────────────────────────────────────
+    # Handle this FIRST to avoid loading the memory store (and chromadb) unnecessarily.
+    if action == "janitor":
+        """
+        Run memory compaction: archive old episodic memories and purge stale learned rules.
+        This is useful when memory retrieval feels slow or the database is growing too large.
+        """
+        epi_stats = archive_old_episodes()
+        rule_stats = purge_stale_rules()
+        
+        return {
+            "status": "success",
+            "episodic_archived": epi_stats["archived"],
+            "rules_purged": rule_stats["purged"],
+            "errors": [e for e in [epi_stats.get("error"), rule_stats.get("error")] if e]
+        }
+
+    # ONLY load the memory store if we actually need it (prevents chromadb import on janitor action)
+    store = _mem()
 
     if action == "store":
         if not text or not text.strip():
@@ -153,13 +165,12 @@ def memory(
             return {"status": "error", "error": f"importance must be 1-10, got {importance}"}
         
         # Guard against storing huge blobs that bloat the vector DB
-        # [P2] Use centralized cfg.memory_max_entry_bytes (renamed from max_memory_bytes)
         text_bytes = len(text.encode("utf-8"))
         if text_bytes > cfg.memory_max_entry_bytes:
             return {
                 "status": "error",
                 "error": (
-                    f"text is {text_bytes} bytes -- exceeds {cfg.memory_max_entry_bytes} byte limit. "
+                    f"text is {text_bytes} bytes -- exceeds {cfg.memory_max_entry_bytes} byte limit.  "
                     "Summarise or chunk the content before storing."
                 ),
             }
@@ -213,6 +224,6 @@ def memory(
 
     return {
         "status": "error",
-        "error": (f"Unknown action '{action}'. "
-                  "Use: store | recall | delete | prune | summarize | stats"),
+        "error": (f"Unknown action '{action}'.  "
+                  "Use: store | recall | delete | prune | summarize | stats | janitor"),
     }

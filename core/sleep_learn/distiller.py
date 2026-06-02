@@ -11,7 +11,6 @@ from core.llm import llm
 from core.tracer import tracer
 from core.sleep_learn.filters import is_quality_rule
 from core.sleep_learn.storage import save_rule
-from core.sleep_learn.logger import log_event
 
 _DISTILLATION_SYSTEM_PROMPT = (
     "You are a meta-learning engine. Your job is to analyze a specific agent "
@@ -37,7 +36,7 @@ def distill_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "skipped", "reason": "Observation text is empty"}
 
     # 1. Call the public LLM API (Respects all global rate limits, budgets, and circuit breakers)
-    tracer.info(trace_id, "sleep_learn", "distillation_started", observation_type=observation.get("event_type"))
+    tracer.step(trace_id, "sleep_learn", "distillation_started", observation_type=observation.get("event_type"))
     
     result = llm.complete(
         role="executor",  # Use local model to avoid cloud costs for meta-learning
@@ -50,13 +49,13 @@ def distill_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     if not result.ok:
-        tracer.error(trace_id, "sleep_learn", "llm_call_failed", error=result.error)
+        tracer.error(trace_id, "sleep_learn", f"LLM call failed: {result.error}")
         return {"status": "error", "reason": f"LLM call failed: {result.error}"}
 
     # 2. Parse and Validate the extracted rule
     parsed = result.parsed
     if not parsed or not isinstance(parsed, dict) or "rule" not in parsed:
-        tracer.warning(trace_id, "sleep_learn", "invalid_json_schema", raw_text=result.text)
+        tracer.warning(trace_id, "sleep_learn", f"Invalid JSON schema. Raw: {result.text[:100]}")
         return {"status": "failed", "reason": "LLM did not return a valid 'rule' key in JSON"}
 
     rule_text = parsed["rule"]
@@ -65,17 +64,16 @@ def distill_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
     # 3. Run through Quality & Safety Gates
     is_valid, reject_reason = is_quality_rule(rule_text)
     if not is_valid:
-        tracer.info(trace_id, "sleep_learn", "rule_rejected", reason=reject_reason, rule=rule_text[:50])
+        tracer.step(trace_id, "sleep_learn", f"Rule rejected: {reject_reason}", rule_preview=rule_text[:50])
         return {"status": "rejected", "reason": reject_reason}
 
     # 4. Save to isolated storage
     rule_id = save_rule(rule_text, source_id, confidence)
     
-    tracer.info(
+    tracer.step(
         trace_id, "sleep_learn", "rule_saved", 
         rule_id=rule_id, confidence=confidence, rule_length=len(rule_text)
     )
-    log_event({"event": "rule_saved", "trace_id": trace_id, "rule_id": rule_id, "confidence": confidence, "rule_preview": rule_text[:80]})
     
     return {
         "status": "success", 
