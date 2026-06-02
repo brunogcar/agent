@@ -27,7 +27,13 @@ def purge_stale_rules() -> dict:
             created_at = meta.get("created_at", 0)
             confidence = meta.get("confidence_score", 1.0)
             
-            if (now - created_at > purge_age_secs) or (confidence < 0.5):
+            # P0 Fix: Never purge rules that have been recalled (rare but critical)
+            # Only purge if: (Old AND Never Used) OR (Confidence too low)
+            recall_count = meta.get("recall_count", 0)
+            # Conservative fallback: If never recalled, give it 180 days before purging
+            is_stale = (now - created_at > max(purge_age_secs, 15552000)) and (recall_count == 0)
+            
+            if is_stale or (confidence < 0.5):
                 ids_to_delete.append(all_data["ids"][i])
                 
         if ids_to_delete:

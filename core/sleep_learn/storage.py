@@ -42,6 +42,8 @@ def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) ->
             "source_memory_id": source_memory_id,
             "confidence_score": confidence,
             "created_at": int(time.time()),
+            "last_accessed_at": int(time.time()),
+            "recall_count": 0,
             "source": "sleep_learn_daemon",
             "phase": "2_active_distillation"
         }]
