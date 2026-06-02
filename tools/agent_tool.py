@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from registry import tool
 from core.llm import llm
+from core.sleep_learn import inject_rules_into_prompt
 
 
 # ── System prompts ────────────────────────────────────────────────────────────
