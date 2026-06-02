@@ -4,6 +4,7 @@ Phase 3: Dynamic Rule Injection.
 Retrieves relevant learned rules and injects them into the Planner's context.
 """
 from __future__ import annotations
+import json
 from typing import List, Dict, Any
 
 import chromadb
@@ -15,6 +16,7 @@ from core.sleep_learn.config import (
     SLEEP_LEARN_MAX_INJECTED_RULES,
 )
 from core.tracer import tracer
+from core.config import cfg
 
 # Connect to the isolated sleep_learn ChromaDB
 _client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
@@ -59,7 +61,7 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
         tracer.error("daemon", "sleep_learn_injector", f"Failed to query rules: {e}")
         return []
 
-def inject_rules_into_prompt(goal: str, system_prompt: str) -> str:
+def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") -> str:
     """
     Retrieves relevant rules for the goal and appends them to the system prompt.
     If injection is disabled or no rules are found, returns the original prompt.
@@ -84,5 +86,12 @@ def inject_rules_into_prompt(goal: str, system_prompt: str) -> str:
         rules_count=len(rules),
         rule_ids=[r['id'] for r in rules]
     )
+
+    # Log injection for the Feedback Loop (Path 2)
+    if trace_id:
+        log_file = cfg.sleep_learn_log_path / "injections.jsonl"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"trace_id": trace_id, "rule_ids": [r['id'] for r in rules]}) + "\n")
 
     return system_prompt + rules_text

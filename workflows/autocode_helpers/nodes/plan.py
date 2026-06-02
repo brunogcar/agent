@@ -1,11 +1,8 @@
 """
 Plan writing node.
 """
-
 from __future__ import annotations
-
 import re
-
 from typing import Any
 
 from workflows.autocode_helpers.state import AutocodeState, PLANNER_TIMEOUT
@@ -18,14 +15,15 @@ def node_write_plan(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
         return {}
+
     spec = state.get("spec") or state["task"]
     tracer.step(tid, "write_plan", "writing plan")
 
-    # Phase 3: Inject relevant learned rules for the Planner
-from core.sleep_learn import inject_rules_into_prompt
-system = inject_rules_into_prompt(goal=spec, system_prompt=PLAN_SYSTEM)
+    # Phase 3/5: Inject relevant learned rules for the Planner
+    from core.sleep_learn import inject_rules_into_prompt
+    system = inject_rules_into_prompt(goal=spec, system_prompt=PLAN_SYSTEM, trace_id=tid)
 
-raw  = _call(role="planner", system=system,
+    raw  = _call(role="planner", system=system,
                  user=f"Spec:\n{spec}", timeout=PLANNER_TIMEOUT)
     plan = _parse_json_array(raw)
 

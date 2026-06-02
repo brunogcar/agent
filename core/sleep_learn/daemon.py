@@ -15,6 +15,7 @@ from core.sleep_learn.sweeper import sweep_recent_observations
 from core.sleep_learn.distiller import distill_observation
 from core.memory_backend.janitor import archive_old_episodes
 from core.sleep_learn.janitor import purge_stale_rules
+from core.sleep_learn.feedback import process_feedback
 from core.tracer import tracer
 
 def run_daemon_cycle() -> Dict[str, Any]:
@@ -52,6 +53,9 @@ def run_daemon_cycle() -> Dict[str, Any]:
     epi_stats = archive_old_episodes()
     rule_stats = purge_stale_rules()
 
+    # Run the Feedback Loop (Path 2: Dynamic Confidence Scoring)
+    feedback_stats = process_feedback()
+
     summary = {
         "status": "completed",
         "processed": len(observations),
@@ -59,7 +63,10 @@ def run_daemon_cycle() -> Dict[str, Any]:
         "rules_rejected": rejected,
         "distillation_errors": failures,
         "episodic_archived": epi_stats["archived"],
-        "rules_purged": rule_stats["purged"],
+        "rules_purged_janitor": rule_stats["purged"],
+        "feedback_boosted": feedback_stats["boosted"],
+        "feedback_penalized": feedback_stats["penalized"],
+        "feedback_purged": feedback_stats["purged"],
     }
     
     tracer.step("daemon", "sleep_learn", "cycle_completed", **summary)

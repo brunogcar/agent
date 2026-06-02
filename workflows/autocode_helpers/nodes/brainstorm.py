@@ -1,9 +1,7 @@
 """
 Brainstorming node.
 """
-
 from __future__ import annotations
-
 from typing import Any
 
 from workflows.autocode_helpers.state import AutocodeState, PLANNER_TIMEOUT
@@ -22,6 +20,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
         return {}
+
     task_type = state.get("task_type", "feature")
     tracer.step(tid, "brainstorm", f"starting for {task_type}")
 
@@ -56,9 +55,9 @@ def node_brainstorm(state: AutocodeState) -> dict:
     else:  # feature / unclear
         system = BRAINSTORM_SYSTEM
 
-# Phase 3: Inject relevant learned rules for the Planner
-from core.sleep_learn import inject_rules_into_prompt
-system = inject_rules_into_prompt(goal=state["task"], system_prompt=system)
+    # Phase 3/5: Inject relevant learned rules for the Planner
+    from core.sleep_learn import inject_rules_into_prompt
+    system = inject_rules_into_prompt(goal=state["task"], system_prompt=system, trace_id=tid)
 
     user = (
         f"Task:\n{state['task']}\n\n"
