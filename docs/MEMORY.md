@@ -131,4 +131,11 @@ If you are an AI assistant modifying the memory or cognition systems, you **MUST
 9.  **Query Rewriting:** The `_rewrite_query()` function is model-free for speed. Do not add LLM calls here.
 10. **Cancellation Guards:** All store/delete operations check `ensure_not_cancelled(trace_id)` before mutating. Never remove these guards.
 11. **Context Budgeting:** Never bypass `budget_messages()` in `core/llm.py`. It is the final safety net preventing VRAM OOM crashes.
-12. **Diversity Enforcement:** Never manually delete or merge procedural rules. The background Diversity Enforcer handles clustering, contradiction guarding, and archival autonomously.
+12. **Diversity Enforcement:** Never manually delete or merge procedural rules. The background Diversity Enforcer handles clustering, contradiction guarding, and archival autonomously. 
+
+### 🧹 The Janitor & Autonomous Compaction
+To prevent ChromaDB bloat and keep retrieval latency low, the system includes a unified Janitor.
+- **Trigger:** Runs automatically during the Sleep & Learn daemon's idle cycles, or manually via `memory(action="janitor")`.
+- **Episodic Archival:** Moves episodic memories older than `ARCHIVE_AGE_DAYS` (default 30) to the `episodic_archive` collection.
+- **Rule Purging:** Deletes learned procedural rules older than `PURGE_AGE_DAYS` (default 90) or rules whose confidence score drops below 0.3 due to the feedback loop.
+- **Zero Startup Cost:** The janitor uses lazy `chromadb` imports, ensuring the MCP server startup time remains unaffected.

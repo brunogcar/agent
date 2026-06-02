@@ -40,7 +40,7 @@ def update_rule_confidence(rule_id: str, success: bool) -> dict:
         meta = existing['metadatas'][0]
         current_conf = float(meta.get("confidence_score", 0.8))
         delta = CONFIDENCE_BOOST if success else CONFIDENCE_PENALTY
-        new_conf = max(0.0, min(1.0, current_conf + delta))
+        new_conf = round(max(0.0, min(1.0, current_conf + delta)), 2)
 
         if new_conf < MIN_CONFIDENCE_THRESHOLD:
             collection.delete(ids=[rule_id])

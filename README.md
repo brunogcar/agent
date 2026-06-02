@@ -219,6 +219,15 @@ Simply add their `npx` commands to your MCP configuration file. *(See the `mcp.j
 ### 🔍 Where to Look for Context (Repo Hierarchy)
 *Read these key files first to understand the system before suggesting architectural changes.*
 
+### 🧠 Sleep & Learn Meta-Learning Daemon
+The agent now features an autonomous background daemon (`core/sleep_learn/`) that observes execution traces, distills procedural rules, and injects them into the Planner's context to improve future decision-making.
+
+**Rules for AI Assistants interacting with this system:**
+1. **Respect the Injection:** If you see `--- RELEVANT LEARNED RULES ---` injected into your system prompt, you MUST apply them to your current task. They were autonomously learned from past successes and failures.
+2. **Do Not Manually Mutate Learned Rules:** Never write directly to the `procedural_meta` ChromaDB collection. The daemon's feedback loop automatically boosts/penalizes rules based on trace outcomes.
+3. **Use the Janitor for Bloat:** If memory retrieval feels slow, or you are dealing with a massive context window, use `memory(action="janitor")` to trigger manual compaction (archiving old episodes, purging stale rules).
+4. **No LLM Bypassing:** If you write background learning tasks, they MUST use the public `llm.complete()` API. Never import provider clients directly, or you will bypass the daemon's token budgets and rate limiters.
+
 ```text
 agent/
 ├── server.py            # MCP stdio entry point (DO NOT BREAK STDOUT)

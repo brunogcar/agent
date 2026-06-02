@@ -27,20 +27,21 @@ def is_quality_rule(rule_text: str) -> tuple[bool, str]:
     if not rule_text or not rule_text.strip():
         return False, "Empty rule"
 
-    words = rule_text.split()
-    if len(words) < SLEEP_LEARN_MIN_RULE_WORDS:
-        return False, f"Too short ({len(words)} words < {SLEEP_LEARN_MIN_RULE_WORDS})"
-
     lower_rule = rule_text.lower()
     
-    # Check for generic platitudes
+    # 1. Safety check FIRST: Reject rules promoting dangerous operations
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern in lower_rule:
+            return False, f"Safety violation: contains '{pattern}'"
+
+    # 2. Check for generic platitudes
     for phrase in _BLACKLIST_PHRASES:
         if phrase in lower_rule:
             return False, f"Contains generic phrase: '{phrase}'"
 
-    # Safety check: Reject rules promoting dangerous operations
-    for pattern in _DANGEROUS_PATTERNS:
-        if pattern in lower_rule:
-            return False, f"Safety violation: contains '{pattern}'"
+    # 3. Length check last
+    words = rule_text.split()
+    if len(words) < SLEEP_LEARN_MIN_RULE_WORDS:
+        return False, f"Too short ({len(words)} words < {SLEEP_LEARN_MIN_RULE_WORDS})"
 
     return True, "Passed all gates"
