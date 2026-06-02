@@ -41,8 +41,9 @@ VALID_WORKFLOWS: frozenset[str] = frozenset({
     "research",
     "data",
     "autocode",
-    "report",  # Often routes to research internally or specific report flow
-    "auto",    # Auto-route via Router
+    "report",
+    "understand",  # Codebase Knowledge Graph builder
+    "auto",
 })
 
 WorkflowType = Literal["research", "data", "autocode", "report", "auto"]
@@ -68,6 +69,8 @@ def workflow(
     mode: str = "improve",
     error_msg: str = "",
     feature_desc: str = "",
+    # understand workflow
+    project_root: str = "",
     trace_id: str = "",
     resume: bool = False,
 ) -> dict:
@@ -110,6 +113,17 @@ def workflow(
             trace_id=trace_id,
             workflow_type=wf_type,
         )
+
+    # === VALIDATION: understand-specific parameters ===
+    # Understand builds a knowledge graph for a specific project directory.
+    # It requires the project_root to know where to scan and where to store artifacts.
+    if wf_type == "understand":
+        if not project_root or not project_root.strip():
+            return _make_error(
+                "project_root is required for understand workflow",
+                trace_id=trace_id,
+                workflow_type=wf_type,
+            )
 
     # === VALIDATION: autocode-specific parameters ===
     # Autocode takes git snapshots and modifies the filesystem. 

@@ -209,6 +209,15 @@ def run_workflow(
             graph  = build_autocode_graph()
             result = graph.invoke(initial_state)
 
+
+    elif wf_type == "understand":
+        import asyncio
+        from pathlib import Path
+        from workflows.understand import run_understand_workflow
+        project_root = initial_state.get("project_root", "")
+        is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve())) if project_root else False
+        result = asyncio.run(run_understand_workflow(project_root, is_agent_root=is_agent))
+
         else:
             tracer.error( trace_id, "dispatch",
                          f"Unknown workflow type: {wf_type!r}")
