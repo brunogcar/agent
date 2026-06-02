@@ -2,6 +2,7 @@
 workflows/autocode_helpers/nodes/analyze_impact.py
 Analyzes the impact of modified files and determines targeted tests.
 Uses the project-scoped core/kgraph/test_mapper for persistent, smart mapping.
+Strictly parses from state["files_map"] (FileSnapshot) for 100% checkpoint idempotency.
 """
 from __future__ import annotations
 from pathlib import Path
@@ -14,7 +15,6 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
     """
     Analyzes the impact of modified files and determines targeted tests.
     Runs after files are written/patched, and before run_tests.
-    Uses FileSnapshot from state to ensure 100% checkpoint idempotency.
     """
     tid = state.get("trace_id", "unknown")
     files_map = state.get("files_map", {})
@@ -31,7 +31,8 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
     
     try:
         # Resolve project path (fallback to agent_root if not working on an external project)
-        project_path = Path(project_root) if project_root else cfg.agent_root
+        is_agent = (not project_root) or (Path(project_root).resolve() == cfg.agent_root.resolve())
+        project_path = Path(project_root) if not is_agent else cfg.agent_root
         
         # Call the new project-scoped test mapper
         result = await get_targeted_tests(
@@ -75,7 +76,6 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
         else:
             targeted_test_cmd = "pytest"  # Fallback to full suite
             
-        # Pass has_agent_fault to tracer so the feedback loop can read it easily
         tracer.step(
             tid, "analyze_impact", "Impact analysis complete", 
             targeted_cmd=targeted_test_cmd, 

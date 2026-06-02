@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/kgraph/test_mapper.py
 Maps source files to targeted tests using persistent AST indexing.
 """
@@ -10,6 +10,18 @@ from core.kgraph.test_index import load_test_index, save_test_index, validate_an
 from core.kgraph.ast_parser import parse_file_dependencies
 
 # Files that always require the full test suite due to global impact
+
+def _load_test_mapping(project_path: Path) -> dict:
+    """Load manual test mappings from .understand/test_mapping.yaml."""
+    mapping_path = project_path / ".understand" / "test_mapping.yaml"
+    if not mapping_path.exists():
+        return {}
+    try:
+        with open(mapping_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
 CRITICAL_PATHS: Set[str] = {
     "core/config.py", "core/llm.py", "core/memory.py", 
     "server.py", "registry.py", "core/gateway.py", "core/tracer.py",
@@ -115,10 +127,17 @@ async def get_targeted_tests(
     targeted_tests = set()
     index_dirty = False
     
-    # 4. Resolve tests for modified files
+    # 4. Resolve tests for modified files (with YAML override support)
+    manual_mapping = _load_test_mapping(project_path)
+    
     for f in modified_files:
         rel_f = Path(f).as_posix()
-        tests_for_f = reverse_map.get(rel_f, [])
+        
+        # Check manual mapping first
+        if rel_f in manual_mapping:
+            tests_for_f = manual_mapping[rel_f]
+        else:
+            tests_for_f = reverse_map.get(rel_f, [])
         
         if not tests_for_f:
             warnings.append(f"No specific tests mapped for {f}. Falling back to full suite.")

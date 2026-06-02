@@ -4,6 +4,7 @@ Hardened SQLite storage for graph topology with WAL mode and write serialization
 """
 from __future__ import annotations
 import sqlite3
+import hashlib
 import threading
 import time
 from pathlib import Path
@@ -102,6 +103,38 @@ class GraphStore:
         wal_path = self._db_path.with_suffix(".db-wal")
         if wal_path.exists() and wal_path.stat().st_size > 50_000_000:  # 50MB
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
+    def get_file_hash(self, project_id: str, path: str) -> str | None:
+        """Get the stored content hash for a specific file node."""
+        rows = self.read("SELECT content_hash FROM nodes WHERE project_id = ? AND path = ? AND type = 'file'", (project_id, path))
+        return rows[0]["content_hash"] if rows else None
+
+    def upsert_file_graph(self, project_id: str, path: str, content_hash: str, dependencies: list[str]) -> None:
+        """Atomically update a file's node and its dependency edges."""
+        node_id = f"file:{path}"
+        with self._write_lock:
+            conn = self._get_conn()
+            # 1. Delete old edges originating from this file
+            conn.execute("DELETE FROM edges WHERE project_id = ? AND source_id = ?", (project_id, node_id))
+            # 2. Upsert the file node
+            conn.execute("""
+                INSERT OR REPLACE INTO nodes (id, project_id, path, type, content_hash, metadata)
+                VALUES (?, ?, ?, 'file', ?, '{}')
+            """, (node_id, project_id, path, content_hash))
+            # 3. Insert new edges
+            for dep in dependencies:
+                edge_id = hashlib.md5(f"{node_id}->{dep}".encode()).hexdigest()
+                conn.execute("""
+                    INSERT OR IGNORE INTO edges (id, project_id, source_id, target_id)
+                    VALUES (?, ?, ?, ?)
+                """, (edge_id, project_id, node_id, dep))
+            conn.commit()
+            
+            self._write_count += 1
+            if self._write_count >= self._CHECKPOINT_EVERY:
+                self._force_checkpoint(conn)
+                self._write_count = 0
 
     def close(self) -> None:
         if hasattr(self._local, "conn") and self._local.conn:
