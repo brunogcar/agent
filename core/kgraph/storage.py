@@ -82,6 +82,7 @@ class GraphStore:
             );
             CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_id);
             CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(path);
+            CREATE INDEX IF NOT EXISTS idx_nodes_project_path ON nodes(project_id, path);
             CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
             CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
         """)

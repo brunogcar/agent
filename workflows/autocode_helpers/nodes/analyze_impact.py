@@ -44,7 +44,7 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
                         current_md5 = hashlib.md5(snapshot.encode("utf-8")).hexdigest()
                         content = snapshot
                     else:
-                        current_md5 = snapshot.get("md5")
+                        current_md5 = snapshot.get("full_md5") or snapshot.get("md5")
                         content = snapshot.get("content_preview", "")
                         
                     if not current_md5:

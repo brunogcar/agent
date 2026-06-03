@@ -1,10 +1,11 @@
-﻿"""
+"""
 workflows/understand.py
 LangGraph workflow for building and updating the Codebase Knowledge Graph.
 """
 from __future__ import annotations
 import asyncio
 import hashlib
+import math
 import os
 from pathlib import Path
 from typing import TypedDict, Any
@@ -21,7 +22,7 @@ class UnderstandState(TypedDict, total=False):
     project_id: str
     artifact_dir: str
     status: str
-    files_to_parse: list[tuple[str, str, str]]  # (full_path, rel_path, hash)
+    files_to_parse: list[tuple[str, str, str, float, int]]  # (full_path, rel_path, hash, mtime, size)
     files_parsed: int
     edges_created: int
     errors: list[str]
@@ -45,7 +46,7 @@ async def node_init_project(state: UnderstandState) -> dict:
     tracer.step(tid, "init", f"Initializing project {state['project_path']}")
     pm = ProjectManager(state["project_path"], is_agent_root=state["is_agent_root"])
     
-    # 🔴 AI Panel Fix: Validate source_root exists to prevent silent empty graphs
+    # Validate source_root exists to prevent silent empty graphs
     if not pm.is_agent_root and not pm.source_root.exists():
         return {"status": "failed", "errors": [f"Source root does not exist: {pm.source_root}. Did the git clone fail?"]}
     
@@ -73,7 +74,6 @@ async def node_discover_files(state: UnderstandState) -> dict:
     
     def _scan_disk():
         discovered = []
-        # Walk the SOURCE root, not the project root!
         for root, dirs, files in os.walk(pm.source_root):
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for f in files:
@@ -89,7 +89,7 @@ async def node_discover_files(state: UnderstandState) -> dict:
                 
                 rel_path = full_path.relative_to(pm.source_root).as_posix()
                 
-                # 🔴 O(N) I/O BOMB FIX: Fast-path validation using mtime and size
+                # O(N) I/O BOMB FIX: Fast-path validation using mtime and size
                 node = store.read(
                     "SELECT content_hash, last_modified, file_size FROM nodes WHERE project_id = ? AND path = ?",
                     (state["project_id"], rel_path)
@@ -97,8 +97,8 @@ async def node_discover_files(state: UnderstandState) -> dict:
                 
                 if node:
                     row = node[0]
-                    # If mtime and size match, skip MD5 computation entirely
-                    if row["last_modified"] == stat.st_mtime and row["file_size"] == stat.st_size:
+                    # Use math.isclose for float precision safety
+                    if math.isclose(row["last_modified"], stat.st_mtime, abs_tol=0.001) and row["file_size"] == stat.st_size:
                         continue
                 
                 # Only compute MD5 if stats changed or file is new
@@ -135,13 +135,12 @@ async def node_parse_and_store(state: UnderstandState) -> dict:
     for i in range(0, len(files_to_parse), batch_size):
         batch = files_to_parse[i:i+batch_size]
         tasks = []
-        for full_path, rel_path, current_hash in batch:
+        for full_path, rel_path, current_hash, mtime, size in batch:
             tasks.append(parse_file_dependencies(state["project_id"], full_path))
             
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        for batch_item, deps in zip(batch, results):
-            full_path, rel_path, current_hash = batch_item[0], batch_item[1], batch_item[2]
+        for (full_path, rel_path, current_hash, mtime, size), deps in zip(batch, results):
             if isinstance(deps, Exception):
                 errors.append(f"Failed to parse {rel_path}: {deps}")
                 continue
@@ -149,13 +148,9 @@ async def node_parse_and_store(state: UnderstandState) -> dict:
             # deps is a frozenset of module names
             target_paths = []
             for dep in deps:
-                # e.g., "core.config" -> "core/config.py"
                 target_paths.append(dep.replace(".", "/") + ".py")
-                target_paths.append(dep) # Keep raw module name for external libs
+                target_paths.append(dep)
                 
-            # Extract mtime and size from the discovered tuple if available
-            mtime = batch_item[3] if len(batch_item) > 3 else 0.0
-            size = batch_item[4] if len(batch_item) > 4 else 0
             await asyncio.to_thread(store.upsert_file_graph, state["project_id"], rel_path, current_hash, target_paths, mtime, size)
             parsed += 1
             edges += len(target_paths)
@@ -194,7 +189,6 @@ async def run_understand_workflow(project_path: str, is_agent_root: bool = False
         tracer.error(tid, "understand", f"Workflow failed: {e}")
         tracer.finish(tid, success=False, result=str(e))
         return {"status": "failed", "errors": [str(e)]}
-
 
 def run_understand_workflow_sync(project_path: str, is_agent_root: bool = False) -> dict[str, Any]:
     """
