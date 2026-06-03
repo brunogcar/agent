@@ -111,7 +111,7 @@ def _write_files(state: dict) -> dict:
     # 1. Determine the absolute base directory for writing
     if project_root:
         try:
-            from core.kgraph.project import ProjectManager, is_same_path, is_same_path
+            from core.kgraph.project import ProjectManager, is_same_path
             # Check if the project_root IS the agent_root
             is_agent = is_same_path(Path(project_root), cfg.agent_root)
             pm = ProjectManager(project_root, is_agent_root=is_agent)

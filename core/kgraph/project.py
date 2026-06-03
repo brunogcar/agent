@@ -14,16 +14,21 @@ from core.kgraph.cleanup import KGCleanup
 
 def is_same_path(a: str | Path, b: str | Path) -> bool:
     """
-    Safely check if two paths point to the same directory, 
-    handling Windows case-insensitivity, symlinks, and type differences.
+    Cross-platform, bulletproof path comparison.
+    Uses os.path.normcase which handles Windows case-insensitivity 
+    and slash normalization, while remaining strictly case-sensitive on Linux/macOS.
     """
     try:
-        path_a = Path(a).resolve().absolute()
-        path_b = Path(b).resolve().absolute()
-        return path_a.samefile(path_b)
-    except (OSError, AttributeError, ValueError, FileNotFoundError):
-        # Fallback to case-insensitive string comparison of resolved absolute paths
-        return str(Path(a).resolve().absolute()).casefold() == str(Path(b).resolve().absolute()).casefold()
+        # 1. OS-level check (handles symlinks perfectly)
+        return Path(a).resolve().samefile(Path(b).resolve())
+    except (OSError, ValueError, FileNotFoundError):
+        # 2. Fallback: normcase + abspath
+        # On Windows: lowercases and converts / to \
+        # On Linux/macOS: does nothing (preserves case-sensitivity)
+        norm_a = os.path.normcase(os.path.abspath(str(a).strip()))
+        norm_b = os.path.normcase(os.path.abspath(str(b).strip()))
+        return norm_a == norm_b
+
 
 class ProjectManager:
     """Manages the .understand/ workspace for a specific project."""
