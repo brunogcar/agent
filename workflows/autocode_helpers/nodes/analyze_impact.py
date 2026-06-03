@@ -45,7 +45,12 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
                         content = snapshot
                     else:
                         current_md5 = snapshot.get("full_md5") or snapshot.get("md5")
-                        content = snapshot.get("content_preview", "")
+                        # 🔴 FIX: Read full file from disk to prevent 8KB AST truncation
+                        full_path = pm.source_root / rel_path
+                        if full_path.exists():
+                            content = full_path.read_text(encoding='utf-8', errors='replace')
+                        else:
+                            content = snapshot.get("content_preview", "")
                         
                     if not current_md5:
                         continue

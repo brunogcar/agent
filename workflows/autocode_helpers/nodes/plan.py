@@ -4,7 +4,6 @@ Plan writing node.
 from __future__ import annotations
 import re
 from typing import Any
-
 from workflows.autocode_helpers.state import AutocodeState, PLANNER_TIMEOUT
 from workflows.autocode_helpers.constants import PLAN_SYSTEM
 from workflows.autocode_helpers.helpers import _call, _parse_json_array
@@ -17,7 +16,7 @@ def node_write_plan(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
         return {}
-
+    
     spec = state.get("spec") or state["task"]
     tracer.step(tid, "write_plan", "writing plan")
 
@@ -33,12 +32,11 @@ def node_write_plan(state: AutocodeState) -> dict:
     if project_root and files_in_context:
         try:
             from pathlib import Path
-            from core.config import cfg
             from core.kgraph.project import is_same_path, ProjectManager
             
             is_agent = is_same_path(Path(project_root), cfg.agent_root)
             pm = ProjectManager(project_path=project_root, is_agent_root=is_agent)
-            
+             
             callers = []
             # Limit to top 3 files to prevent excessive DB queries
             for f in files_in_context[:3]:
@@ -49,8 +47,9 @@ def node_write_plan(state: AutocodeState) -> dict:
                 # 🔴 Limit to top 5 unique callers to prevent token overflow (Mistral's recommendation)
                 unique_callers = list(set(callers))[:5]
                 blast_radius_note = f"\n\n⚠️ BLAST RADIUS WARNING: The files you are planning to modify are also used by: {', '.join(unique_callers)}. Ensure your plan includes steps to verify these callers are not broken."
-        except Exception:
-            pass  # Fail silently, fallback to normal planning
+        except Exception as e:
+            # 🔴 Phase 8 Final Polish: Observability for KG query failures
+            tracer.warning(tid, "write_plan", f"Blast radius query failed: {e}")
 
     raw  = _call(role="planner", system=system,
                  user=f"Spec:\n{spec}{blast_radius_note}", timeout=PLANNER_TIMEOUT)
