@@ -1,7 +1,7 @@
 """
 core/kgraph/project.py
 Manages physical isolation and project-level statistics.
-Supports both agent_root (source=root, artifacts=.understand) 
+Supports both agent_root (source=root, artifacts=.understand)
 and workspace projects (source=code, artifacts=.understand).
 """
 from __future__ import annotations
@@ -12,16 +12,21 @@ from typing import Literal, Tuple
 from core.config import cfg
 from core.kgraph.cleanup import KGCleanup
 
-def is_same_path(a: Path, b: Path) -> bool:
-    """Safely check if two paths point to the same file, handling Windows case-insensitivity."""
+def is_same_path(a: str | Path, b: str | Path) -> bool:
+    """
+    Safely check if two paths point to the same directory, 
+    handling Windows case-insensitivity, symlinks, and type differences.
+    """
     try:
-        return a.resolve().samefile(b.resolve())
-    except OSError:
-        return False
+        path_a = Path(a).resolve().absolute()
+        path_b = Path(b).resolve().absolute()
+        return path_a.samefile(path_b)
+    except (OSError, AttributeError, ValueError, FileNotFoundError):
+        # Fallback to case-insensitive string comparison of resolved absolute paths
+        return str(Path(a).resolve().absolute()).casefold() == str(Path(b).resolve().absolute()).casefold()
 
 class ProjectManager:
     """Manages the .understand/ workspace for a specific project."""
-    
     # Hard limits for local-first execution
     MAX_FILES_FOR_FOREGROUND = 5000
     MAX_FILE_SIZE_BYTES = 1_048_576  # 1MB
@@ -53,16 +58,15 @@ class ProjectManager:
         self.artifact_root.mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "cache").mkdir(exist_ok=True)
         
-        # For workspace projects, ensure the 'code' dir exists
-        if not self.is_agent_root:
-            self.source_root.mkdir(parents=True, exist_ok=True)
-            
+        # NOTE: We do NOT create self.source_root here for workspace projects.
+        # If the 'code' directory is missing, we want node_init_project to catch 
+        # it and fail explicitly, preventing silent empty graphs.
+         
         # 🔴 Phase 7 Step 3: Run cleanup on startup to prevent WAL/cache bloat
         try:
             KGCleanup.cleanup_project(self.path, max_age_days=30, max_size_gb=5)
         except Exception:
             pass  # Fail silently, cleanup is best-effort
-
 
     def get_indexing_mode(self) -> Literal["foreground", "background", "reject"]:
         """Determine if the project is safe to index in the foreground."""
