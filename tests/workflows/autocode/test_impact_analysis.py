@@ -1,12 +1,12 @@
-﻿"""
+"""
 tests/workflows/autocode/test_impact_analysis.py
-Validates AST mapper handles edge cases gracefully and async execution works.
+Validates the new core.kgraph.ast_parser handles edge cases gracefully and async execution works.
 """
 import pytest
 import asyncio
 import tempfile
 import os
-from workflows.autocode_helpers.impact_analysis import get_file_dependencies, clear_ast_cache
+from core.kgraph.ast_parser import parse_file_dependencies, clear_ast_cache
 
 @pytest.mark.asyncio
 async def test_valid_file_parsing():
@@ -16,11 +16,9 @@ async def test_valid_file_parsing():
         path = f.name
     
     try:
-        result = await get_file_dependencies(path)
-        assert result["status"] == "success"
-        assert "os" in result["imports"]
-        assert "core.config" in result["imports"]
-        assert "my_func" in result["defines"]
+        result = await parse_file_dependencies("test_project", path)
+        assert "os" in result
+        assert "core.config" in result
     finally:
         os.unlink(path)
         clear_ast_cache()
@@ -33,10 +31,8 @@ async def test_syntax_error_fallback():
         path = f.name
     
     try:
-        result = await get_file_dependencies(path)
-        assert result["status"] == "failed"
-        assert "SyntaxError" in result["reason"]
-        assert result["imports"] == []
+        result = await parse_file_dependencies("test_project", path)
+        assert result == frozenset()
     finally:
         os.unlink(path)
         clear_ast_cache()
@@ -49,17 +45,14 @@ async def test_cache_invalidates_on_change():
         path = f.name
     
     try:
-        # First parse
-        res1 = await get_file_dependencies(path)
-        assert res1["status"] == "success"
+        res1 = await parse_file_dependencies("test_project", path)
+        assert "sys" in res1
         
-        # Modify file
         with open(path, 'a') as f:
             f.write("\nimport os")
             
-        # Second parse should hit file, not cache
-        res2 = await get_file_dependencies(path)
-        assert "os" in res2["imports"]
+        res2 = await parse_file_dependencies("test_project", path)
+        assert "os" in res2
     finally:
         os.unlink(path)
         clear_ast_cache()

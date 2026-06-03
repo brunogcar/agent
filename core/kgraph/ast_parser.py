@@ -70,3 +70,36 @@ async def parse_file_dependencies(project_id: str, file_path: str | Path) -> Fro
 def clear_ast_cache() -> None:
     """Clear the LRU cache (useful for testing or major refactors)."""
     _parse_file_dependencies_sync.cache_clear()
+
+
+# --- Phase 6: Parse from string (for micro-updates from state) ---
+def _parse_dependencies_sync_from_string(content: str) -> frozenset[str]:
+    try:
+        tree = ast.parse(content)
+        deps = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    deps.add(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    deps.add(node.module)
+        return frozenset(deps)
+    except Exception:
+        return frozenset()
+
+@lru_cache(maxsize=512)
+def _parse_dependencies_cached(project_id: str, content_hash: str, content: str) -> frozenset[str]:
+    return _parse_dependencies_sync_from_string(content)
+
+async def parse_dependencies_from_string(project_id: str, content: str) -> frozenset[str]:
+    """Parse dependencies from a string content (used for state-based micro-updates)."""
+    content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _AST_EXECUTOR,
+        _parse_dependencies_cached,
+        project_id,
+        content_hash,
+        content
+    )

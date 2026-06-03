@@ -1,10 +1,12 @@
-﻿"""
+"""
 workflows/autocode_helpers/nodes/analyze_impact.py
 Analyzes the impact of modified files and determines targeted tests.
 Uses the project-scoped core/kgraph/test_mapper for persistent, smart mapping.
-Strictly parses from state["files_map"] (FileSnapshot) for 100% checkpoint idempotency.
+Includes Phase 6 Stale Graph Micro-Updates.
 """
 from __future__ import annotations
+import asyncio
+import hashlib
 from pathlib import Path
 from workflows.autocode_helpers.state import AutocodeState
 from core.kgraph.test_mapper import get_targeted_tests
@@ -12,29 +14,70 @@ from core.config import cfg
 from core.tracer import tracer
 
 async def node_analyze_impact(state: AutocodeState) -> dict:
-    """
-    Analyzes the impact of modified files and determines targeted tests.
-    Runs after files are written/patched, and before run_tests.
-    """
     tid = state.get("trace_id", "unknown")
     files_map = state.get("files_map", {})
     project_root = state.get("project_root", "")
     
-    # If no files were modified, skip impact analysis
     if not files_map:
         return {"impact_warnings": [], "targeted_test_cmd": None, "impact_analysis_failed": False}
 
     tracer.step(tid, "analyze_impact", f"Analyzing impact for {len(files_map)} files")
-    
-    # Extract modified file paths from the FileSnapshot keys (Checkpoint Idempotency)
     modified_files = list(files_map.keys())
     
+    # --- Phase 6: Stale Graph Micro-Update ---
+    if project_root:
+        try:
+            from core.kgraph.project import ProjectManager
+            from core.kgraph.storage import GraphStore
+            from core.kgraph.ast_parser import parse_dependencies_from_string
+            
+            is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve()))
+            pm = ProjectManager(project_root, is_agent_root=is_agent)
+            db_path = pm.artifact_root / "kg.db"
+            
+            if db_path.exists():
+                store = GraphStore(db_path)
+                micro_updated = []
+                
+                for rel_path, snapshot in files_map.items():
+                    if isinstance(snapshot, str):
+                        current_md5 = hashlib.md5(snapshot.encode("utf-8")).hexdigest()
+                        content = snapshot
+                    else:
+                        current_md5 = snapshot.get("md5")
+                        content = snapshot.get("content_preview", "")
+                        
+                    if not current_md5:
+                        continue
+                        
+                    stored_md5 = store.get_file_hash(pm.project_id, rel_path)
+                    
+                    if current_md5 != stored_md5:
+                        deps = await parse_dependencies_from_string(pm.project_id, content)
+                        target_paths = []
+                        for dep in deps:
+                            target_paths.append(dep.replace(".", "/") + ".py")
+                            target_paths.append(dep)
+                            
+                        await asyncio.to_thread(
+                            store.upsert_file_graph, 
+                            pm.project_id, 
+                            rel_path, 
+                            current_md5, 
+                            target_paths
+                        )
+                        micro_updated.append(rel_path)
+                        
+                if micro_updated:
+                    tracer.step(tid, "analyze_impact", f"Micro-updated {len(micro_updated)} stale graph nodes")
+        except Exception as e:
+            tracer.warning(tid, "analyze_impact", f"Graph micro-update failed: {e}")
+    # --- End Phase 6 Micro-Update ---
+    
     try:
-        # Resolve project path (fallback to agent_root if not working on an external project)
         is_agent = (not project_root) or (Path(project_root).resolve() == cfg.agent_root.resolve())
         project_path = Path(project_root) if not is_agent else cfg.agent_root
         
-        # Call the new project-scoped test mapper
         result = await get_targeted_tests(
             project_path=project_path,
             modified_files=modified_files,
@@ -45,7 +88,6 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
         fallback = result.get("fallback", False)
         raw_warnings = result.get("warnings", [])
         
-        # Convert raw string warnings into typed ImpactWarning dicts
         impact_warnings = []
         agent_fault = False
         
@@ -53,14 +95,13 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
             is_agent_fault = False
             warning_type = "MAPPING_MISS"
             
-            # Classify the warning to determine fault
             if "Critical path" in w:
                 warning_type = "CRITICAL_PATH"
             elif "Zombie test" in w:
                 warning_type = "ZOMBIE_TEST"
             elif "No specific tests" in w or "No valid targeted" in w:
                 warning_type = "NO_TEST_MAPPING"
-                is_agent_fault = True  # Agent modified a file with no tests mapped
+                is_agent_fault = True
                 agent_fault = True
             
             impact_warnings.append({
@@ -69,12 +110,11 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
                 "agent_fault": is_agent_fault
             })
         
-        # Build the targeted test command
         targeted_test_cmd = None
         if not fallback and test_files:
             targeted_test_cmd = "pytest " + " ".join(test_files)
         else:
-            targeted_test_cmd = "pytest"  # Fallback to full suite
+            targeted_test_cmd = "pytest"
             
         tracer.step(
             tid, "analyze_impact", "Impact analysis complete", 
@@ -96,7 +136,7 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
             "impact_warnings": [{
                 "type": "AST_ERROR",
                 "message": f"AST analysis crashed: {e}. Running full test suite.",
-                "agent_fault": False  # Infrastructure failure, not agent's fault
+                "agent_fault": False
             }],
             "targeted_test_cmd": "pytest",
             "impact_analysis_failed": True

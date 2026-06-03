@@ -8,6 +8,7 @@ from .vectors import get_project_vector_collection
 from .ast_parser import parse_file_dependencies, clear_ast_cache
 from .test_index import load_test_index, save_test_index
 from .test_mapper import get_targeted_tests, rebuild_test_index, CRITICAL_PATHS
+from .queries import get_dependencies, get_callers
 
 __all__ = [
     "ProjectManager",
@@ -20,4 +21,6 @@ __all__ = [
     "get_targeted_tests",
     "rebuild_test_index",
     "CRITICAL_PATHS",
+    "get_dependencies",
+    "get_callers",
 ]

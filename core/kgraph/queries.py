@@ -64,3 +64,49 @@ def find_relevant_files(project_path: str | Path, query: str, top_k: int = 5) ->
         return [path for _, path in scored_files[:top_k]]
     except Exception:
         return []
+
+
+# --- Phase 6: The "On-Demand Librarian" (Internal Queries) ---
+def get_dependencies(project_path: str | Path, file_path: str, max_depth: int = 1) -> list[str]:
+    """Get files that the given file imports (outgoing edges)."""
+    pm = ProjectManager(project_path)
+    db_path = pm.artifact_root / "kg.db"
+    if not db_path.exists():
+        return []
+    
+    store = GraphStore(db_path)
+    node_id = f"file:{file_path}"
+    
+    rows = store.read(
+        "SELECT target_id FROM edges WHERE project_id = ? AND source_id = ?",
+        (pm.project_id, node_id)
+    )
+    deps = [row["target_id"] for row in rows]
+    
+    # Filter out raw module names, keep only file paths
+    return [d for d in deps if d.endswith(".py")]
+
+def get_callers(project_path: str | Path, file_path: str) -> list[str]:
+    """Get files that import the given file (incoming edges)."""
+    pm = ProjectManager(project_path)
+    db_path = pm.artifact_root / "kg.db"
+    if not db_path.exists():
+        return []
+    
+    store = GraphStore(db_path)
+    
+    # Match against file path or module name
+    module_name = file_path.replace("/", ".").replace(".py", "")
+    
+    rows = store.read(
+        """SELECT source_id FROM edges 
+           WHERE project_id = ? AND (target_id = ? OR target_id = ?)""",
+        (pm.project_id, file_path, module_name)
+    )
+    
+    callers = []
+    for row in rows:
+        source_id = row["source_id"]
+        if source_id.startswith("file:"):
+            callers.append(source_id[5:]) # strip "file:"
+    return callers
