@@ -35,3 +35,40 @@ The system strictly enforces physical isolation between the agent's own code and
 4. **DO NOT** parse files larger than 1MB. Skip them silently.
 5. **DO NOT** allow cross-project cache collisions. The AST `@lru_cache` key MUST include `project_id`.
 6. **DO NOT** force graph edges into ChromaDB. Vector search is for semantics; SQLite is for structure.
+## Agent Usage Instructions
+To instruct the agent to build or update the Knowledge Graph, use the following natural language prompt:
+
+> "Please run the understand workflow to build the codebase knowledge graph for the project at [PROJECT_PATH]."
+
+The agent will automatically translate this into the correct tool call:
+`json
+{
+  "tool": "workflow",
+  "parameters": {
+    "type": "understand",
+    "goal": "Build the knowledge graph for the codebase",
+    "project_root": "D:/mcp/agent/workspace/projects/my_project"
+  }
+}
+`
+*Note: For the agent's own codebase, use project_root: "D:/mcp/agent". For external workspace projects, ensure the source code is located in the code/ subdirectory (e.g., workspace/projects/my_project/code/).*
+
+## Manual Verification Commands
+You can manually trigger the workflow or inspect the SQLite database to verify the graph's health without involving the LLM.
+
+### 1. Trigger Workflow Manually
+To run the understand workflow synchronously from the command line (using the virtual environment):
+`powershell
+# For the agent root:
+D:\mcp\agent\venv\Scripts\python.exe -c "from workflows.understand import run_understand_workflow_sync; res = run_understand_workflow_sync('D:/mcp/agent', is_agent_root=True); print('Parsed:', res.get('files_parsed'), 'files')"
+
+# For a workspace project:
+D:\mcp\agent\venv\Scripts\python.exe -c "from workflows.understand import run_understand_workflow_sync; res = run_understand_workflow_sync('D:/mcp/agent/workspace/projects/my_project', is_agent_root=False); print('Parsed:', res.get('files_parsed'), 'files')"
+`
+
+### 2. Inspect the SQLite Graph
+To verify the number of nodes (files) and edges (dependencies) stored in the database:
+`powershell
+D:\mcp\agent\venv\Scripts\python.exe -c "import sqlite3; conn = sqlite3.connect('D:/mcp/agent/.understand/kg.db'); print('Total Nodes:', conn.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]); print('Total Edges:', conn.execute('SELECT COUNT(*) FROM edges').fetchone()[0]); conn.close()"
+`
+*(Replace the path with your specific project's .understand/kg.db path if checking a workspace project).*

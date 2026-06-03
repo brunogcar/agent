@@ -195,6 +195,20 @@ def run_understand_workflow_sync(project_path: str, is_agent_root: bool = False)
     Synchronous wrapper for run_understand_workflow.
     Prevents RuntimeError when called from an already-running async event loop (e.g., FastMCP).
     """
-    graph = build_understand_graph()
-    initial_state = _default_state(project_path, is_agent_root=is_agent_root)
-    return graph.invoke(initial_state)
+    import concurrent.futures
+    import asyncio
+    
+    def _run_async():
+        graph = build_understand_graph()
+        initial_state = _default_state(project_path, is_agent_root=is_agent_root)
+        # Create a new event loop for this thread to avoid "event loop is already running"
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(graph.ainvoke(initial_state))
+        finally:
+            loop.close()
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(_run_async)
+        return future.result()
