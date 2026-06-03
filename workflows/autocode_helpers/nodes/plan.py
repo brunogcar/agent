@@ -25,8 +25,35 @@ def node_write_plan(state: AutocodeState) -> dict:
     from core.sleep_learn import inject_rules_into_prompt
     system = inject_rules_into_prompt(goal=spec, system_prompt=PLAN_SYSTEM, trace_id=tid)
 
+    # ── Phase 8: Blast Radius Context Injection for Planner ──
+    blast_radius_note = ""
+    project_root = state.get("project_root", "")
+    files_in_context = list(state.get("files", {}).keys())
+
+    if project_root and files_in_context:
+        try:
+            from pathlib import Path
+            from core.config import cfg
+            from core.kgraph.project import is_same_path, ProjectManager
+            
+            is_agent = is_same_path(Path(project_root), cfg.agent_root)
+            pm = ProjectManager(project_path=project_root, is_agent_root=is_agent)
+            
+            callers = []
+            # Limit to top 3 files to prevent excessive DB queries
+            for f in files_in_context[:3]:
+                deps = get_callers(pm.path, f)
+                callers.extend([c for c in deps if c not in files_in_context])
+            
+            if callers:
+                # 🔴 Limit to top 5 unique callers to prevent token overflow (Mistral's recommendation)
+                unique_callers = list(set(callers))[:5]
+                blast_radius_note = f"\n\n⚠️ BLAST RADIUS WARNING: The files you are planning to modify are also used by: {', '.join(unique_callers)}. Ensure your plan includes steps to verify these callers are not broken."
+        except Exception:
+            pass  # Fail silently, fallback to normal planning
+
     raw  = _call(role="planner", system=system,
-                 user=f"Spec:\n{spec}", timeout=PLANNER_TIMEOUT)
+                 user=f"Spec:\n{spec}{blast_radius_note}", timeout=PLANNER_TIMEOUT)
     plan = _parse_json_array(raw)
 
     if not plan:
