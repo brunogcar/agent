@@ -77,7 +77,8 @@ def save_checkpoint(trace_id: str, node_name: str, state: dict) -> None:
         "node": node_name,
         "status": state.get("status", "running"),
         "state": sanitize_state(state),
-        "resume_count": 0 
+        "resume_count": 0,
+         "version": 1  # Checkpoint schema version for compatibility validation
     }
     
     try:

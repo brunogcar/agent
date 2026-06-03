@@ -58,7 +58,7 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
                     stored_md5 = store.get_file_hash(pm.project_id, rel_path)
                     
                     if current_md5 != stored_md5:
-                        deps = await parse_dependencies_from_string(pm.project_id, content)
+                        deps = await asyncio.to_thread(parse_dependencies_from_string, pm.project_id, content)
                         target_paths = []
                         for dep in deps:
                             target_paths.append(dep.replace(".", "/") + ".py")

@@ -164,10 +164,13 @@ def run_workflow(
     if resume:
         from workflows.helpers.checkpoint import get_latest
         restored = get_latest(trace_id)
-        if restored:
+    if restored:
+        if restored.get("version", 0) != 1:
+            tracer.warning(trace_id, "resume", "Checkpoint version mismatch, starting fresh")
+        else:
             tracer.step(trace_id, "resume", "Resuming from checkpoint")
             initial_state = {**restored, "status": "running", "goal": goal}
-        else:
+    else:
             tracer.warning(trace_id, "resume", "No checkpoint found, starting fresh")
     
     # For autocode workflow, convert goal -> task for compatibility

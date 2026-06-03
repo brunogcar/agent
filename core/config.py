@@ -313,23 +313,25 @@ class Config:
         return (self.workspace_root / clean).resolve()
 
     def is_protected(self, path: str | Path) -> bool:
-        """Check if path matches protected file list (case-insensitive)."""
-        target = Path(path).resolve()
-        name = os.path.normcase(target.name)
-        
-        # Check filename match (case-insensitive) — handles all scenarios including symlinks
-        if any(name == pf.lower() for pf in self.protected_files):
-            return True
-        
-        # Only check relative path if within agent_root (canonical boundary check)
+        """Check if path matches protected file list (Cross-platform, bulletproof)."""
         try:
-            agent_root_resolved = self.agent_root.resolve()  # ? Resolve both paths!
-            rel_path = target.relative_to(agent_root_resolved)  # ? Now safe!
-            rel_str = os.path.normcase(str(rel_path).replace("\\", "/"))
-            if any(rel_str == os.path.normcase(pf) for pf in self.protected_files):
-                return True
-        except (ValueError, OSError):
-            # Path outside agent_root — should be blocked upstream by path_guard.is_safe_path
+            target = Path(path).resolve()
+            agent_root_resolved = self.agent_root.resolve()
+            
+            # 1. Check absolute path match (Handles OS-specific case sensitivity natively)
+            for pf in self.protected_files:
+                protected_path = (agent_root_resolved / pf).resolve()
+                if target == protected_path:
+                    return True
+                    
+            # 2. Fallback: Check if target matches the protected file anywhere (e.g., symlinks)
+            # Use os.path.normcase for cross-platform safety (lowercases on Windows, no-op on Linux)
+            target_name = os.path.normcase(target.name)
+            for pf in self.protected_files:
+                if target_name == os.path.normcase(Path(pf).name):
+                    if target == Path(pf).resolve():
+                        return True
+        except (ValueError, OSError, RuntimeError):
             pass
             
         return False

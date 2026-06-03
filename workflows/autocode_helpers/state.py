@@ -10,14 +10,13 @@ from typing import Annotated, TypedDict, Optional
 
 from core.config import cfg  # [FIX 4] Added to read timeout config from env
 
-# Constants
-MAX_RETRIES = 3
-MAX_FILE_CHARS = 50_000
-DEBUG = False
-PLANNER_TIMEOUT = 180
-EXECUTOR_TIMEOUT = 120
-ROUTER_TIMEOUT = 60
-AGENT_ROOT = None  # Set via cfg
+# # Constants (Centralized in core.config.cfg, referenced here for local defaults)
+MAX_RETRIES = cfg.autocode_max_retries
+MAX_FILE_CHARS = cfg.autocode_max_file_chars
+DEBUG = cfg.autocode_debug
+PLANNER_TIMEOUT = cfg.planner_timeout
+EXECUTOR_TIMEOUT = cfg.execution_timeout
+ROUTER_TIMEOUT = cfg.router_timeout
 
 # [FIX 4] Timeout configuration aligned with config.py env vars
 NODE_TIMEOUTS = {
