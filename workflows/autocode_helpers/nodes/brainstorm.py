@@ -1,9 +1,9 @@
-"""
+﻿"""
 Brainstorming node.
 """
 from __future__ import annotations
+from pathlib import Path
 from typing import Any
-
 from workflows.autocode_helpers.state import AutocodeState, PLANNER_TIMEOUT
 from workflows.autocode_helpers.constants import (
     BRAINSTORM_SYSTEM,
@@ -14,34 +14,71 @@ from workflows.autocode_helpers.constants import (
 )
 from workflows.autocode_helpers.helpers import _call, _parse_json, _files_context
 from core.tracer import tracer
+from core.config import cfg
 
 def node_brainstorm(state: AutocodeState) -> dict:
     """Refine the spec using the appropriate system prompt for the task type."""
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
         return {}
-
+    
     task_type = state.get("task_type", "feature")
     tracer.step(tid, "brainstorm", f"starting for {task_type}")
 
-    # create_skill skips brainstorm entirely -- its spec is embedded in CREATE_SKILL_SYSTEM
     if task_type == "create_skill":
         tracer.step(tid, "brainstorm", "create_skill: skipping brainstorm")
-        return {}  # No state update needed
+        return {}
 
     # ── Memory recall (all tasks) ──
     try:
         from core.memory import memory as _mem
         results = _mem.recall(
-            query       = state["task"][:150],
-            top_k       = 3,
-            collections = ["procedural", "episodic"],
+            query=state["task"][:150],
+            top_k=3,
+            collections=["procedural", "episodic"],
         )
         mem_ctx = "\n\n".join(f"[{r['type']}] {r['text']}" for r in results)
     except Exception:
         mem_ctx = ""
 
-    files_ctx = _files_context(state["files"])
+    # ── Knowledge Graph Context Injection (Phase 5) ──
+    kg_files = {}
+    project_root = state.get("project_root", "")
+    if project_root:
+        try:
+            from core.kgraph.project import ProjectManager
+            from core.kgraph.queries import find_relevant_files
+            
+            # Explicitly check if we are working on the agent itself
+            is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve()))
+            pm = ProjectManager(project_root, is_agent_root=is_agent)
+            
+            # THIS IS THE KEY: source_root is either cfg.agent_root OR cfg.workspace_root/projects/X/code
+            source_root = pm.source_root 
+            
+            # Query the graph for relevant files
+            relevant_paths = find_relevant_files(pm.path, state["task"], top_k=5)
+            
+            if relevant_paths:
+                tracer.step(tid, "brainstorm", f"KG found {len(relevant_paths)} relevant files in {source_root}")
+                for rel_path in relevant_paths:
+                    full_path = source_root / rel_path
+                    if full_path.exists() and rel_path not in state.get("files", {}):
+                        try:
+                            # Read first 8KB to prevent context bloat
+                            content = full_path.read_text(encoding="utf-8", errors="replace")[:8000]
+                            kg_files[rel_path] = content
+                        except Exception:
+                            pass
+                
+                # Merge KG files into state["files"]
+                if kg_files:
+                    state["files"] = {**kg_files, **state.get("files", {})}
+        except Exception as e:
+            tracer.warning(tid, "brainstorm", f"KG query failed: {e}")
+
+    # Now build files context (includes both original and KG-injected files)
+    files_ctx = _files_context(state.get("files", {}))
 
     # ── Select system prompt based on task type ──
     if task_type == "fix":
@@ -65,7 +102,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
         + (f"\n\nPast fixes:\n{mem_ctx}" if mem_ctx else "")
     )
 
-    raw  = _call(role="planner", system=system, user=user, timeout=PLANNER_TIMEOUT)
+    raw = _call(role="planner", system=system, user=user, timeout=PLANNER_TIMEOUT)
     data = _parse_json(raw)
 
     if data.get("questions"):
@@ -76,9 +113,9 @@ def node_brainstorm(state: AutocodeState) -> dict:
             "result": qs
         }
 
-    spec   = data.get("spec", state["task"])
-    ac     = data.get("acceptance_criteria", [])
-    cons   = data.get("constraints", [])
+    spec = data.get("spec", state["task"])
+    ac = data.get("acceptance_criteria", [])
+    cons = data.get("constraints", [])
     impact = data.get("impact", [])
 
     if ac:
@@ -90,4 +127,9 @@ def node_brainstorm(state: AutocodeState) -> dict:
                 + "\n".join(f"- {i}" for i in impact)
 
     tracer.step(tid, "brainstorm", f"spec ready ({len(spec)} chars)")
-    return {"memory_context": mem_ctx, "spec": spec}
+    
+    updates = {"memory_context": mem_ctx, "spec": spec}
+    if kg_files:
+        updates["files"] = state["files"]
+    
+    return updates
