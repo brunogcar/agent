@@ -1,53 +1,46 @@
 ﻿"""
 core/router.py -- Router-based task router.
-
 Classifies any free-text goal into a structured routing decision
 before the workflow layer runs. The Router model is used for speed (15s timeout).
 
 Usage:
     from core.router import router
-
     decision = router.route("Fix the timeout bug in tools/web.py")
     # Returns:
     # {
-    #   "workflow":   "autocode",
-    #   "tool":       "workflow",
-    #   "complexity": 6,
-    #   "reason":     "Involves editing an existing code file to fix a bug",
-    #   "confidence": "high"
+    #    "workflow":    "autocode",
+    #    "tool":        "workflow",
+    #    "complexity": 6,
+    #    "reason":      "Involves editing an existing code file to fix a bug",
+    #    "confidence":  "high"
     # }
 
     decision = router.classify_complexity("Research ChromaDB")
     # Returns: 4  (int, 1-10)
 """
-
 from __future__ import annotations
-
 import json
 import re
 from typing import Optional
-
 from core.llm    import llm
-from core.tracer import tracer
-
+from core.tracer   import tracer
 
 # -- Routing decision dataclass -----------------------------------------------
-
 class RoutingDecision:
     """Structured routing decision with fallback handling."""
     def __init__(self, raw: dict) -> None:
-        self.workflow   = raw.get("workflow",    "research")
-        self.tool       = raw.get("tool",        "web")
+        self.workflow   = raw.get("workflow",     "research")
+        self.tool       = raw.get("tool",         "web")
         self.complexity = int(raw.get("complexity", 5))
-        self.reason     = raw.get("reason",      "")
-        self.confidence = raw.get("confidence",  "medium")
+        self.reason     = raw.get("reason",       "")
+        self.confidence = raw.get("confidence",   "medium")
         self.clarifying_questions = raw.get("clarifying_questions", [])
         self.raw        = raw
 
     def __repr__(self) -> str:
         return (
-            f"RoutingDecision(workflow={self.workflow!r}, "
-            f"tool={self.tool!r}, complexity={self.complexity}, "
+            f"RoutingDecision(workflow={self.workflow!r},  "
+            f"tool={self.tool!r}, complexity={self.complexity},  "
             f"reason={self.reason!r})"
         )
 
@@ -60,42 +53,39 @@ class RoutingDecision:
             "confidence": self.confidence,
         }
 
-
 # -- Router -------------------------------------------------------------------
-
 class TaskRouter:
     """
     Routes tasks to the appropriate workflow using the Router model.
-
     Falls back to heuristic routing if the model is unavailable
     or returns unparseable output.
     """
 
     # Heuristic keywords for fallback routing
     _CODE_KEYWORDS    = ["fix", "bug", "error", "patch", "refactor", "improve",
-                         "add feature", "implement", "edit", "modify", "update code"]
+                        "add feature", "implement", "edit", "modify", "update code"]
     _DATA_KEYWORDS    = ["analyse", "analyze", "calculate", "compute", "plot",
-                         "chart", "csv", "excel", "spreadsheet", "statistics",
-                         "pandas", "numpy", "dataset"]
+                        "chart", "csv", "excel", "spreadsheet", "statistics",
+                        "pandas", "numpy", "dataset"]
     _RESEARCH_KEYWORDS= ["what is", "what are", "how does", "explain", "research",
-                         "find information", "summarise", "summarize", "look up"]
+                        "find information", "summarise", "summarize", "look up"]
     # Direct tool keywords -- simple single-tool tasks that don't need a workflow
     _DIRECT_FILE      = ["read file", "open file", "list files", "list directory",
-                         "write file", "show file", "read the file", "open the file"]
+                        "write file", "show file", "read the file", "open the file"]
     _DIRECT_MEMORY    = ["recall", "remember", "what do you know about",
-                         "store this", "save this to memory"]
+                        "store this", "save this to memory"]
     _DIRECT_GIT       = ["git status", "git log", "show commits", "git diff",
-                         "commit this", "git commit"]
+                        "commit this", "git commit"]
     _DIRECT_NOTIFY    = ["notify me", "send notification", "remind me",
-                         "schedule reminder"]
+                        "schedule reminder"]
     # Report keywords -- route to direct report tool
     _REPORT_KEYWORDS = ["create a chart", "create chart", "make a chart",
-                           "plot a chart", "draw a chart", "report",
-                           "visualise", "create a graph", "make a graph",
-                           "create a map", "make a map", "create a dashboard",
-                           "make a dashboard", "create a report",
-                           "make a report", "bar chart", "line chart",
-                           "pie chart", "scatter plot", "heatmap"]
+                        "plot a chart", "draw a chart", "report",
+                        "visualise", "create a graph", "make a graph",
+                        "create a map", "make a map", "create a dashboard",
+                        "make a dashboard", "create a report",
+                        "make a report", "bar chart", "line chart",
+                        "pie chart", "scatter plot", "heatmap"]
 
     def _extract_first_json(self, text: str) -> str | None:
         """
@@ -103,13 +93,31 @@ class TaskRouter:
         Handles deep nesting, escaped quotes inside strings, and markdown wrappers.
         Replaces the fragile single-level regex.
         """
+        # 1. Strip markdown fences immediately (immune to LLM formatting)
+        clean = text.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        elif clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+
+        # 2. Try direct parse first (fastest)
+        try:
+            json.loads(clean)
+            return clean
+        except json.JSONDecodeError:
+            pass
+
+        # 3. Fallback to bracket counting
         decoder = json.JSONDecoder()
         in_string = False
         escape = False
         depth = 0
         start = None
 
-        for i, ch in enumerate(text):
+        for i, ch in enumerate(clean):
             if escape:
                 escape = False
                 continue
@@ -130,7 +138,7 @@ class TaskRouter:
             elif ch == "}":
                 depth -= 1
                 if depth == 0 and start is not None:
-                    candidate = text[start:i + 1]
+                    candidate = clean[start:i + 1]
                     try:
                         decoder.decode(candidate)
                         return candidate
@@ -184,7 +192,7 @@ class TaskRouter:
         r = llm.complete(
             role   = "router",
             system = (
-                "Rate the complexity of this task on a scale of 1-10. "
+                "Rate the complexity of this task on a scale of 1-10.  "
                 "Output only a single integer. Nothing else."
                 "\n1-3: single tool, clear input/output"
                 "\n4-6: multi-step, predictable"
@@ -209,15 +217,15 @@ class TaskRouter:
         r = llm.complete(
             role   = "router",
             system = (
-                "You are a task router. Output ONLY a JSON object wrapped in <tool_call> tags. "
+                "You are a task router. Output ONLY a JSON object wrapped in <tool_call> tags.  "
                 "No thinking. No explanation.\n"
                 "<tool_call>\n"
                 '{"workflow": "research or data or autocode",'
-                '  "tool": "web or python or file or git or memory or agent or notify or report or workflow",'
-                '  "complexity":5,'
-                '  "reason": "one sentence",'
-                '  "confidence": "high or medium or low",'
-                '  "clarifying_questions": ["question1", "question2"]}\n'
+                '   "tool": "web or python or file or git or memory or agent or notify or report or workflow",'
+                '   "complexity":5,'
+                '   "reason": "one sentence",'
+                '   "confidence": "high or medium or low",'
+                '   "clarifying_questions": ["question1", "question2"]}\n'
                 "</tool_call>\n"
                 "\n\nRouting rules:"
                 "\n- research: finding info, summarising, reading docs, Q&A"
@@ -273,48 +281,48 @@ class TaskRouter:
         # Check for report tasks before generic routing
         if any(kw in lower for kw in self._REPORT_KEYWORDS):
             return RoutingDecision({
-                "workflow":   "direct",
-                "tool":       "report",
+                "workflow":    "direct",
+                "tool":        "report",
                 "complexity": 3,
-                "reason":     "Report task -- use report() directly",
-                "confidence": "high",
+                "reason":      "Report task -- use report() directly",
+                "confidence":  "high",
             })
 
         # Check for direct single-tool tasks first (most specific)
         if any(kw in lower for kw in self._DIRECT_FILE):
             return RoutingDecision({
-                "workflow":   "direct",
-                "tool":       "file",
+                "workflow":    "direct",
+                "tool":        "file",
                 "complexity": 2,
-                "reason":     "Simple file operation -- use file() directly",
-                "confidence": "high",
+                "reason":      "Simple file operation -- use file() directly",
+                "confidence":  "high",
             })
 
         if any(kw in lower for kw in self._DIRECT_MEMORY):
             return RoutingDecision({
-                "workflow":   "direct",
-                "tool":       "memory",
+                "workflow":    "direct",
+                "tool":        "memory",
                 "complexity": 1,
-                "reason":     "Simple memory operation -- use memory() directly",
-                "confidence": "high",
+                "reason":      "Simple memory operation -- use memory() directly",
+                "confidence":  "high",
             })
 
         if any(kw in lower for kw in self._DIRECT_GIT):
             return RoutingDecision({
-                "workflow":   "direct",
-                "tool":       "git",
+                "workflow":    "direct",
+                "tool":        "git",
                 "complexity": 2,
-                "reason":     "Simple git operation -- use git() directly",
-                "confidence": "high",
+                "reason":      "Simple git operation -- use git() directly",
+                "confidence":  "high",
             })
 
         if any(kw in lower for kw in self._DIRECT_NOTIFY):
             return RoutingDecision({
-                "workflow":   "direct",
-                "tool":       "notify",
+                "workflow":    "direct",
+                "tool":        "notify",
                 "complexity": 1,
-                "reason":     "Simple notification -- use notify() directly",
-                "confidence": "high",
+                "reason":      "Simple notification -- use notify() directly",
+                "confidence":  "high",
             })
 
         # Check for code-related keywords
@@ -324,32 +332,30 @@ class TaskRouter:
                 ext in lower for ext in [".py", ".js", ".ts", ".json", ".yaml", ".md"]
             )
             return RoutingDecision({
-                "workflow":   "autocode",
-                "tool":       "workflow",
+                "workflow":    "autocode",
+                "tool":        "workflow",
                 "complexity": 7 if has_file else 5,
-                "reason":     "Contains code modification keywords",
-                "confidence": "medium",
+                "reason":      "Contains code modification keywords",
+                "confidence":  "medium",
             })
 
         if any(kw in lower for kw in self._DATA_KEYWORDS):
             return RoutingDecision({
-                "workflow":   "data",
-                "tool":       "python",
+                "workflow":    "data",
+                "tool":        "python",
                 "complexity": 5,
-                "reason":     "Contains data analysis keywords",
-                "confidence": "medium",
+                "reason":      "Contains data analysis keywords",
+                "confidence":  "medium",
             })
 
         # Default to research
         return RoutingDecision({
-            "workflow":   "research",
-            "tool":       "web",
+            "workflow":    "research",
+            "tool":        "web",
             "complexity": 4,
-            "reason":     "No specific routing keywords matched",
-            "confidence": "low",
+            "reason":      "No specific routing keywords matched",
+            "confidence":  "low",
         })
-
 
 # -- Singleton ----------------------------------------------------------------
 router = TaskRouter()
-

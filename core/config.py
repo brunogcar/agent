@@ -315,7 +315,7 @@ class Config:
     def is_protected(self, path: str | Path) -> bool:
         """Check if path matches protected file list (case-insensitive)."""
         target = Path(path).resolve()
-        name = target.name.lower()
+        name = os.path.normcase(target.name)
         
         # Check filename match (case-insensitive) — handles all scenarios including symlinks
         if any(name == pf.lower() for pf in self.protected_files):
@@ -325,8 +325,8 @@ class Config:
         try:
             agent_root_resolved = self.agent_root.resolve()  # ? Resolve both paths!
             rel_path = target.relative_to(agent_root_resolved)  # ? Now safe!
-            rel_str = str(rel_path).lower().replace("\\", "/")
-            if any(rel_str == pf.lower() for pf in self.protected_files):
+            rel_str = os.path.normcase(str(rel_path).replace("\\", "/"))
+            if any(rel_str == os.path.normcase(pf) for pf in self.protected_files):
                 return True
         except (ValueError, OSError):
             # Path outside agent_root — should be blocked upstream by path_guard.is_safe_path

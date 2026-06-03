@@ -103,11 +103,13 @@ class GraphStore:
                 self._write_count = 0
 
     def _force_checkpoint(self, conn: sqlite3.Connection) -> None:
-        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        wal_path = self._db_path.with_suffix(".db-wal")
-        if wal_path.exists() and wal_path.stat().st_size > 50_000_000:  # 50MB
+    # TRUNCATE forces SQLite to checkpoint AND shrink the WAL file to 0 bytes.
+    # This prevents the "30-day disk exhaustion" bug on Windows.
+        try:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
+        except sqlite3.OperationalError:
+            # Fallback to PASSIVE if TRUNCATE fails (e.g., database is locked)
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
     def get_file_hash(self, project_id: str, path: str) -> str | None:
         """Get the stored content hash for a specific file node."""
