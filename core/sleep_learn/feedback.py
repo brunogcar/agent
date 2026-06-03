@@ -151,7 +151,7 @@ def process_feedback() -> dict:
                 # DO NOT penalize if analysis crashed or if it was a critical path/zombie test.
                 ignored_impact = False
                 if not success:
-                    trace_data = _store.get(tid)
+                    trace_data = tracer.get(tid)
                     if trace_data:
                         # If the analysis itself failed, it's an infrastructure issue
                         if not trace_data.get("impact_analysis_failed", False):

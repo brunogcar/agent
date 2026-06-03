@@ -1,73 +1,40 @@
-﻿"""
-core/sleep_learn/daemon.py
-Phase 2: Main Orchestrator for the Sleep & Learn Daemon.
-Checks idle state, sweeps observations, and runs active distillation.
 """
-from __future__ import annotations
-from typing import Dict, Any, List
-
-from core.sleep_learn.config import (
-    SLEEP_LEARN_ENABLED,
-    SLEEP_LEARN_IDLE_THRESHOLD_SEC,
-    SLEEP_LEARN_MAX_DAILY_DISTILLATIONS
-)
-from core.sleep_learn.sweeper import sweep_recent_observations
-from core.sleep_learn.distiller import distill_observation
-from core.memory_backend.janitor import archive_old_episodes
-from core.sleep_learn.janitor import purge_stale_rules
+core/sleep_learn/daemon.py
+Background daemon for Sleep & Learn feedback processing.
+Designed for non-24/7 usage: runs at startup, and catches midnight if the agent stays running.
+"""
+import threading
+import time
+import logging
 from core.sleep_learn.feedback import process_feedback
-from core.tracer import tracer
 
-def run_daemon_cycle() -> Dict[str, Any]:
-    """
-    Executes one full cycle of the Sleep & Learn daemon (Phase 2).
-    """
-    if not SLEEP_LEARN_ENABLED:
-        return {"status": "disabled"}
+def _daemon_loop():
+    """Runs feedback at startup, then checks hourly for midnight."""
+    # 1. Run immediately at startup
+    logging.info("[Sleep & Learn] Running initial feedback processing at startup...")
+    try:
+        process_feedback()
+    except Exception as e:
+        logging.error(f"[Sleep & Learn] Startup feedback failed: {e}")
 
-    # Idle Check (Placeholder for actual activity_tracker integration)
-    idle_seconds = 3600  # TODO: Replace with tracker.get_idle_time()
-    if idle_seconds < SLEEP_LEARN_IDLE_THRESHOLD_SEC:
-        return {"status": "skipped", "reason": "System not idle"}
-
-    # 1. Sweep
-    observations = sweep_recent_observations(hours=1)
-    if not observations:
-        return {"status": "skipped", "reason": "No observations to process"}
-
-    # 2. Distill (with strict daily limits to prevent resource exhaustion)
-    successes, failures, rejected = 0, 0, 0
+    last_run_date = time.strftime('%Y-%m-%d')
     
-    for obs in observations[:SLEEP_LEARN_MAX_DAILY_DISTILLATIONS]:
-        result = distill_observation(obs)
-        status = result.get("status")
+    # 2. Loop to catch midnight if the agent stays running
+    while True:
+        time.sleep(3600)  # Check every hour to avoid busy-waiting
+        current_date = time.strftime('%Y-%m-%d')
+        current_hour = time.localtime().tm_hour
         
-        if status == "success":
-            successes += 1
-        elif status == "rejected":
-            rejected += 1
-        else:
-            failures += 1
+        # If it's midnight (hour 0) and we haven't run today yet
+        if current_hour == 0 and current_date != last_run_date:
+            logging.info("[Sleep & Learn] Running scheduled midnight feedback processing...")
+            try:
+                process_feedback()
+                last_run_date = current_date
+            except Exception as e:
+                logging.error(f"[Sleep & Learn] Midnight feedback failed: {e}")
 
-    # Run the Janitor for memory compaction during idle time
-    epi_stats = archive_old_episodes()
-    rule_stats = purge_stale_rules()
-
-    # Run the Feedback Loop (Path 2: Dynamic Confidence Scoring)
-    feedback_stats = process_feedback()
-
-    summary = {
-        "status": "completed",
-        "processed": len(observations),
-        "rules_learned": successes,
-        "rules_rejected": rejected,
-        "distillation_errors": failures,
-        "episodic_archived": epi_stats["archived"],
-        "rules_purged_janitor": rule_stats["purged"],
-        "feedback_boosted": feedback_stats["boosted"],
-        "feedback_penalized": feedback_stats["penalized"],
-        "feedback_purged": feedback_stats["purged"],
-    }
-    
-    tracer.step("daemon", "sleep_learn", "cycle_completed", **summary)
-    return summary
+def start_background_daemon():
+    """Starts the Sleep & Learn daemon in a background thread."""
+    thread = threading.Thread(target=_daemon_loop, daemon=True, name="SleepLearnDaemon")
+    thread.start()
