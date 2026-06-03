@@ -11,7 +11,7 @@ from typing import TypedDict, Any
 from langgraph.graph import END, StateGraph
 from core.config import cfg
 from core.tracer import tracer
-from core.kgraph.project import ProjectManager
+from core.kgraph.project import ProjectManager, is_same_path
 from core.kgraph.storage import GraphStore
 from core.kgraph.ast_parser import parse_file_dependencies
 
@@ -45,6 +45,10 @@ async def node_init_project(state: UnderstandState) -> dict:
     tracer.step(tid, "init", f"Initializing project {state['project_path']}")
     pm = ProjectManager(state["project_path"], is_agent_root=state["is_agent_root"])
     
+    # 🔴 AI Panel Fix: Validate source_root exists to prevent silent empty graphs
+    if not pm.is_agent_root and not pm.source_root.exists():
+        return {"status": "failed", "errors": [f"Source root does not exist: {pm.source_root}. Did the git clone fail?"]}
+    
     mode = await asyncio.to_thread(pm.get_indexing_mode)
     if mode == "reject":
         return {"status": "failed", "errors": [f"Project too large for indexing."]}
@@ -77,18 +81,32 @@ async def node_discover_files(state: UnderstandState) -> dict:
                     continue
                 full_path = Path(root) / f
                 try:
-                    if full_path.stat().st_size > ProjectManager.MAX_FILE_SIZE_BYTES:
+                    stat = full_path.stat()
+                    if stat.st_size > ProjectManager.MAX_FILE_SIZE_BYTES:
                         continue
                 except OSError:
                     continue
                 
-                # Store relative path from the SOURCE root
                 rel_path = full_path.relative_to(pm.source_root).as_posix()
+                
+                # 🔴 O(N) I/O BOMB FIX: Fast-path validation using mtime and size
+                node = store.read(
+                    "SELECT content_hash, last_modified, file_size FROM nodes WHERE project_id = ? AND path = ?",
+                    (state["project_id"], rel_path)
+                )
+                
+                if node:
+                    row = node[0]
+                    # If mtime and size match, skip MD5 computation entirely
+                    if row["last_modified"] == stat.st_mtime and row["file_size"] == stat.st_size:
+                        continue
+                
+                # Only compute MD5 if stats changed or file is new
                 current_hash = hashlib.md5(full_path.read_bytes()).hexdigest()
                 stored_hash = store.get_file_hash(state["project_id"], rel_path)
                 
                 if current_hash != stored_hash:
-                    discovered.append((str(full_path), rel_path, current_hash))
+                    discovered.append((str(full_path), rel_path, current_hash, stat.st_mtime, stat.st_size))
         return discovered
 
     files_to_parse = await asyncio.to_thread(_scan_disk)
@@ -122,7 +140,8 @@ async def node_parse_and_store(state: UnderstandState) -> dict:
             
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        for (full_path, rel_path, current_hash), deps in zip(batch, results):
+        for batch_item, deps in zip(batch, results):
+            full_path, rel_path, current_hash = batch_item[0], batch_item[1], batch_item[2]
             if isinstance(deps, Exception):
                 errors.append(f"Failed to parse {rel_path}: {deps}")
                 continue
@@ -134,7 +153,10 @@ async def node_parse_and_store(state: UnderstandState) -> dict:
                 target_paths.append(dep.replace(".", "/") + ".py")
                 target_paths.append(dep) # Keep raw module name for external libs
                 
-            await asyncio.to_thread(store.upsert_file_graph, state["project_id"], rel_path, current_hash, target_paths)
+            # Extract mtime and size from the discovered tuple if available
+            mtime = batch_item[3] if len(batch_item) > 3 else 0.0
+            size = batch_item[4] if len(batch_item) > 4 else 0
+            await asyncio.to_thread(store.upsert_file_graph, state["project_id"], rel_path, current_hash, target_paths, mtime, size)
             parsed += 1
             edges += len(target_paths)
             
@@ -172,3 +194,13 @@ async def run_understand_workflow(project_path: str, is_agent_root: bool = False
         tracer.error(tid, "understand", f"Workflow failed: {e}")
         tracer.finish(tid, success=False, result=str(e))
         return {"status": "failed", "errors": [str(e)]}
+
+
+def run_understand_workflow_sync(project_path: str, is_agent_root: bool = False) -> dict[str, Any]:
+    """
+    Synchronous wrapper for run_understand_workflow.
+    Prevents RuntimeError when called from an already-running async event loop (e.g., FastMCP).
+    """
+    graph = build_understand_graph()
+    initial_state = _default_state(project_path, is_agent_root=is_agent_root)
+    return graph.invoke(initial_state)

@@ -68,6 +68,8 @@ class GraphStore:
                 path TEXT NOT NULL,
                 type TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
+                last_modified REAL,
+                file_size INTEGER,
                 metadata TEXT,
                 updated_at REAL DEFAULT (strftime('%s', 'now')),
                 UNIQUE(project_id, path)
@@ -79,6 +81,7 @@ class GraphStore:
                 target_id TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_id);
+            CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(path);
             CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
             CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
         """)
@@ -110,18 +113,18 @@ class GraphStore:
         rows = self.read("SELECT content_hash FROM nodes WHERE project_id = ? AND path = ? AND type = 'file'", (project_id, path))
         return rows[0]["content_hash"] if rows else None
 
-    def upsert_file_graph(self, project_id: str, path: str, content_hash: str, dependencies: list[str]) -> None:
+    def upsert_file_graph(self, project_id: str, path: str, content_hash: str, dependencies: list[str], last_modified: float = 0.0, file_size: int = 0) -> None:
         """Atomically update a file's node and its dependency edges."""
         node_id = f"file:{path}"
         with self._write_lock:
             conn = self._get_conn()
             # 1. Delete old edges originating from this file
             conn.execute("DELETE FROM edges WHERE project_id = ? AND source_id = ?", (project_id, node_id))
-            # 2. Upsert the file node
+            # 2. Upsert the file node with mtime and size for fast-path validation
             conn.execute("""
-                INSERT OR REPLACE INTO nodes (id, project_id, path, type, content_hash, metadata)
-                VALUES (?, ?, ?, 'file', ?, '{}')
-            """, (node_id, project_id, path, content_hash))
+                INSERT OR REPLACE INTO nodes (id, project_id, path, type, content_hash, last_modified, file_size, metadata)
+                VALUES (?, ?, ?, 'file', ?, ?, ?, '{}')
+            """, (node_id, project_id, path, content_hash, last_modified, file_size))
             # 3. Insert new edges
             for dep in dependencies:
                 edge_id = hashlib.md5(f"{node_id}->{dep}".encode()).hexdigest()

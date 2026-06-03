@@ -27,11 +27,11 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
     # --- Phase 6: Stale Graph Micro-Update ---
     if project_root:
         try:
-            from core.kgraph.project import ProjectManager
+            from core.kgraph.project import ProjectManager, is_same_path
             from core.kgraph.storage import GraphStore
             from core.kgraph.ast_parser import parse_dependencies_from_string
             
-            is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve()))
+            is_agent = is_same_path(Path(project_root), cfg.agent_root)
             pm = ProjectManager(project_root, is_agent_root=is_agent)
             db_path = pm.artifact_root / "kg.db"
             

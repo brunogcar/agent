@@ -101,7 +101,7 @@ async def get_targeted_tests(
     # 1. Check Critical Paths
     for f in modified_files:
         rel_f = Path(f).as_posix()
-        if any(cp in rel_f for cp in CRITICAL_PATHS):
+        if any(rel_f == cp or rel_f.endswith(f"/{cp}") for cp in CRITICAL_PATHS):
             return {
                 "tests": [], 
                 "fallback": True, 

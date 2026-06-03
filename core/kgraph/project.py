@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/kgraph/project.py
 Manages physical isolation and project-level statistics.
 Supports both agent_root (source=root, artifacts=.understand) 
@@ -10,6 +10,14 @@ import os
 from pathlib import Path
 from typing import Literal, Tuple
 from core.config import cfg
+from core.kgraph.cleanup import KGCleanup
+
+def is_same_path(a: Path, b: Path) -> bool:
+    """Safely check if two paths point to the same file, handling Windows case-insensitivity."""
+    try:
+        return a.resolve().samefile(b.resolve())
+    except OSError:
+        return False
 
 class ProjectManager:
     """Manages the .understand/ workspace for a specific project."""
@@ -41,13 +49,20 @@ class ProjectManager:
         return hashlib.sha256(str(self.path).encode("utf-8")).hexdigest()[:16]
 
     def ensure_initialized(self) -> None:
-        """Create the artifact directory structure if it doesn't exist."""
+        """Create the artifact directory structure if it doesn't exist and run cleanup."""
         self.artifact_root.mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "cache").mkdir(exist_ok=True)
         
         # For workspace projects, ensure the 'code' dir exists
         if not self.is_agent_root:
             self.source_root.mkdir(parents=True, exist_ok=True)
+            
+        # 🔴 Phase 7 Step 3: Run cleanup on startup to prevent WAL/cache bloat
+        try:
+            KGCleanup.cleanup_project(self.path, max_age_days=30, max_size_gb=5)
+        except Exception:
+            pass  # Fail silently, cleanup is best-effort
+
 
     def get_indexing_mode(self) -> Literal["foreground", "background", "reject"]:
         """Determine if the project is safe to index in the foreground."""

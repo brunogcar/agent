@@ -210,13 +210,12 @@ def run_workflow(
             result = graph.invoke(initial_state)
 
 
-    elif wf_type == "understand":
-        import asyncio
-        from pathlib import Path
-        from workflows.understand import run_understand_workflow
-        project_root = initial_state.get("project_root", "")
-        is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve())) if project_root else False
-        result = asyncio.run(run_understand_workflow(project_root, is_agent_root=is_agent))
+        elif wf_type == "understand":
+            from pathlib import Path
+            from workflows.understand import run_understand_workflow_sync
+            project_root = initial_state.get("project_root", "")
+            is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve())) if project_root else False
+            result = run_understand_workflow_sync(project_root, is_agent_root=is_agent)
 
         else:
             tracer.error( trace_id, "dispatch",

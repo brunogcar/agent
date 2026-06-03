@@ -30,7 +30,8 @@ NODE_TIMEOUTS = {
 class FileSnapshot(TypedDict):
     """Memory-safe snapshot for LangGraph state to prevent bloat."""
     content_preview: str      # First 8KB — enough for import extraction
-    md5: str                  # Full file hash for integrity verification
+    preview_md5: str          # MD5 of the 8KB preview (for state comparison)
+    full_md5: str             # MD5 of the full file (for graph integrity)
     size: int                 # Full file size
     truncated: bool           # True if content_preview < full content
 

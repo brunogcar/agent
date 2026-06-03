@@ -9,6 +9,8 @@ from workflows.autocode_helpers.state import AutocodeState, PLANNER_TIMEOUT
 from workflows.autocode_helpers.constants import PLAN_SYSTEM
 from workflows.autocode_helpers.helpers import _call, _parse_json_array
 from core.tracer import tracer
+from core.config import cfg
+from core.kgraph.queries import get_callers
 
 def node_write_plan(state: AutocodeState) -> dict:
     """Generate step-by-step implementation plan."""
