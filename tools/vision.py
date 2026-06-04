@@ -15,7 +15,6 @@ SSRF protection blocks localhost and private IP ranges.
 from __future__ import annotations
 
 import base64 as _b64
-import ipaddress
 import os
 import sys
 from pathlib import Path
@@ -129,7 +128,8 @@ def _validate_vision_inputs(file_path: str, base64_str: str, url: str) -> tuple[
         if not hostname:
             return False, "Invalid URL: missing hostname"
         # SSRF Protection: Network-scope blocking + allowlist
-        if _is_private_or_localhost(hostname):
+        from core.security import is_safe_network_address
+        if not is_safe_network_address(hostname):
             tracer.warning("SSRF", {"action": "blocked", "url": url, "hostname": hostname, "reason": "private_network"})
             return False, f"SSRF blocked: {url} points to private/localhost network"
         if parsed.scheme not in ("http", "https"):
