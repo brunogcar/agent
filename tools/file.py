@@ -61,13 +61,6 @@ def _safe_dispatch_file(action: str, trace_id: str = "", **params) -> dict:
     if action in DISPATCH.get("file", {}):
         func = DISPATCH["file"][action]
         
-        # [FIX] Unpack literal 'kwargs' if the MCP bridge nested the arguments
-        # Use setdefault to prevent nested kwargs from overwriting trusted outer fields (e.g., trace_id)
-        if "kwargs" in params and isinstance(params["kwargs"], dict):
-            nested = params.pop("kwargs")
-            for k, v in nested.items():
-                params.setdefault(k, v)
-            
         # [FIX] Defensive cleanup: ensure dispatcher metadata doesn't leak
         params.pop("action", None)
         
@@ -79,7 +72,17 @@ def _safe_dispatch_file(action: str, trace_id: str = "", **params) -> dict:
     return {"status": "error", "error": f"Unknown file action: {action}", "trace_id": trace_id}
 
 @tool
-def file(action: str, trace_id: str = "", **kwargs) -> dict:
+def file(
+    action: str,
+    path: str = "",
+    paths: list[str] | None = None,
+    content: str = "",
+    query: str = "",
+    max_chars: int | None = None,
+    max_results: int | None = None,
+    mode: str = "full",
+    trace_id: str = "",
+) -> dict:
     """
     File tool — read, write, search, and manage files.
     action: "read" | "write" | "list" | "backup" | "read_many" | "search" |
@@ -146,4 +149,17 @@ def file(action: str, trace_id: str = "", **kwargs) -> dict:
     from core.runtime.cancellation import ensure_not_cancelled
     ensure_not_cancelled(trace_id)
 
-    return _safe_dispatch_file(action.strip().lower(), trace_id=trace_id, **kwargs)
+    # Pack explicit parameters back into a dict for the dispatcher
+    # Filter out empty strings/None to keep params clean
+    params = {
+        "path": path,
+        "paths": paths,
+        "content": content,
+        "query": query,
+        "max_chars": max_chars,
+        "max_results": max_results,
+        "mode": mode,
+    }
+    params = {k: v for k, v in params.items() if v not in ("", None, [])}
+    
+    return _safe_dispatch_file(action.strip().lower(), trace_id=trace_id, **params)
