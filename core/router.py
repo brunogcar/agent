@@ -235,7 +235,7 @@ class TaskRouter:
 
         # 🔴 Consensus Item 4: Tool-Call Envelopes (Prompt Injection Mitigation)
         # Prefer explicit <tool_call> tags if the model followed instructions
-        envelope_match = re.search(r'<tool_call>\s*(.*?)\s*</tool_call>', text, re.DOTALL)
+        envelope_match = re.search(r'<tool_call>(.*?)</tool_call>', text, re.DOTALL | re.IGNORECASE)
         if envelope_match:
             clean = envelope_match.group(1).strip()
         else:
