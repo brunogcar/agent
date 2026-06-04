@@ -60,7 +60,6 @@ def trim_state(state: WorkflowState) -> WorkflowState:
     Phase 5: Evict low-value fields from working memory to the async queue.
     Returns a NEW state dict (Copy-on-Write) to preserve LangGraph immutability.
     """
-    from core.memory_backend.budget import estimate_tokens, ContextClass
     from core.memory_backend.eviction import eviction_queue
     from core.config import cfg
     new_state = dict(state)
@@ -165,7 +164,7 @@ def run_workflow(
         from workflows.helpers.checkpoint import get_latest
         restored = get_latest(trace_id)
         if restored:
-            if restored.get("version", 0) != 1:
+            if restored.get("_checkpoint_version", 0) != 1:
                 tracer.warning(trace_id, "resume", "Checkpoint version mismatch, starting fresh")
             else:
                 tracer.step(trace_id, "resume", "Resuming from checkpoint")

@@ -140,7 +140,11 @@ def get_latest(trace_id: str) -> Optional[dict]:
             quarantine(trace_id)
             return None
             
-        return entry.get("state")
+        state = entry.get("state")
+        if isinstance(state, dict):
+            # Inject version from envelope into state so base.py can validate it
+            state["_checkpoint_version"] = entry.get("version", 0)
+        return state
     except Exception as e:
         logger.warning(f"[Checkpoint] Failed to read {trace_id}: {e}")
         return None
