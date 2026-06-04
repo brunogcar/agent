@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from core.config import cfg
 
-ARTIFACT_DIR = cfg.workspace_root / ".artifacts"
+ARTIFACT_DIR = cfg.agent_root / ".artifacts"
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ~8000 chars is roughly 2000-2500 tokens. Safe for 16GB VRAM envelope.

@@ -38,7 +38,7 @@ LangGraph State (safe, bounded context)
 |------|--------|---------|
 | **1. Size Check** | If `len(text) <= 8000`, return unchanged. | Zero overhead for small outputs. |
 | **2. Structural Clean** | For `web`: strip HTML tags via regex. | Removes 80% of web bloat instantly. |
-| **3. Artifact Preservation** | Save full raw text to `workspace/.artifacts/{trace_id}_{tool}_{uuid}.txt`. | Full fidelity is never lost; agent can recover via `file` tool. |
+| **3. Artifact Preservation** | Save full raw text to `.artifacts/{trace_id}_{tool}_{uuid}.txt`. | Full fidelity is never lost; agent can recover via `file` tool. |
 | **4. Tool-Aware Truncation** | `python_exec`/`cli`: keep LAST 8k chars. `web`: keep first 4k + last 4k. | Preserves critical content (errors at end of tracebacks, titles at start of HTML). |
 | **5. Metadata Injection** | Add `_pruned: true`, `_artifact_path`, `_recovery_hint` to the return dict. | Tells the LLM exactly what happened and how to recover missing details. |
 
@@ -46,8 +46,7 @@ LangGraph State (safe, bounded context)
 
 ### Storage Location
 ```
-workspace/
-└── .artifacts/
+.artifacts/
     ├── abc123_web_1a2b3c.txt    # Full scraped HTML
     ├── def456_python_exec_4d5e6f.txt  # Full pandas output
     └── ghi789_cli_7g8h9i.txt     # Full CLI stdout
@@ -64,12 +63,12 @@ When the LLM sees `_pruned: true`:
   "status": "success",
   "output": "... [truncated content] ...",
   "_pruned": true,
-  "_artifact_path": "workspace/.artifacts/abc123_web_1a2b3c.txt",
-  "_recovery_hint": "Use file(path='workspace/.artifacts/abc123_web_1a2b3c.txt') to read full output."
+  "_artifact_path": ".artifacts/abc123_web_1a2b3c.txt",
+  "_recovery_hint": "Use file(path='.artifacts/abc123_web_1a2b3c.txt') to read full output."
 }
 
 # LLM should then:
-file(action="read", path="workspace/.artifacts/abc123_web_1a2b3c.txt")
+file(action="read", path=".artifacts/abc123_web_1a2b3c.txt")
 ```
 
 ## ⚙️ Configuration
@@ -93,7 +92,7 @@ If artifact saving fails (disk full, permissions), the pruner still returns the 
 
 ## 🚨 AI Agent Instructions
 
-If you are an AI assistant modifying `core/context_pruner.py` or the heavy tools:
+If you are an AI assistant modifying `core/memory_backend/pruner.py` or the heavy tools:
 
 1. **Never remove artifact preservation.** The full output must always be saved to disk before truncation.
 2. **Never bypass tool-aware truncation.** Different tools have different critical-content locations (errors at end of tracebacks, titles at start of HTML).
