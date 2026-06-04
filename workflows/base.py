@@ -68,12 +68,12 @@ def trim_state(state: WorkflowState) -> WorkflowState:
 
     for key in ["search_results", "output", "analysis"]:
         val = new_state.get(key)
-        if val and isinstance(val, str) and len(val) > 4000:
+        if val and isinstance(val, str) and (len(val) // 4) > 1000:
             eviction_queue.push(
                 text=val,
                 metadata={"source": key, "trace_id": state.get("trace_id", "")}
             )
-            new_state[key] = f"[Evicted: {len(val)} chars saved to episodic memory. Use memory tool to recall.]"
+            new_state[key] = f"[Evicted: {len(val) // 4} tokens saved to episodic memory. Use memory tool to recall.]"
             evicted_keys.append(key)
             
     if evicted_keys:

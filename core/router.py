@@ -76,7 +76,7 @@ class TaskRouter:
         """
         Extract the first valid JSON object from text.
         Handles deep nesting, escaped quotes inside strings, and markdown wrappers.
-        Replaces the fragile single-level regex.
+        Uses Python's native C-optimized json.JSONDecoder().raw_decode() for safety.
         """
         # 1. Strip markdown fences immediately (immune to LLM formatting)
         clean = text.strip()
@@ -95,41 +95,18 @@ class TaskRouter:
         except json.JSONDecodeError:
             pass
 
-        # 3. Fallback to bracket counting
+        # 3. Fallback: Use Python's native C-optimized raw_decode
+        # This safely handles all escape sequences, nested strings, and edge cases.
         decoder = json.JSONDecoder()
-        in_string = False
-        escape = False
-        depth = 0
-        start = None
-
-        for i, ch in enumerate(clean):
-            if escape:
-                escape = False
-                continue
-            if ch == "\\":
-                if in_string:
-                    escape = True
-                continue
-            if ch == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-
-            if ch == "{":
-                if depth == 0:
-                    start = i
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0 and start is not None:
-                    candidate = clean[start:i + 1]
-                    try:
-                        decoder.decode(candidate)
-                        return candidate
-                    except json.JSONDecodeError:
-                        # Invalid JSON structure, reset and keep looking
-                        start = None
+        idx = 0
+        while idx < len(clean):
+            if clean[idx] in '{[':
+                try:
+                    obj, end = decoder.raw_decode(clean, idx)
+                    return clean[idx:end]
+                except json.JSONDecodeError:
+                    pass
+            idx += 1
         return None
 
     def route(
