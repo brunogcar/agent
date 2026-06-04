@@ -1,13 +1,30 @@
 """
 core/security.py — Centralized security policies and network validation.
 """
+from __future__ import annotations
+
+import concurrent.futures
 import ipaddress
 import logging
 import socket
+
 from core.config import cfg
 
 logger = logging.getLogger(__name__)
 _SSRF_WARNED = False
+
+# Dedicated thread pool for DNS resolution to prevent blocking the event loop
+_DNS_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="dns_resolver")
+
+def _resolve_safe(hostname: str, timeout: float = 2.0) -> list:
+    """Resolve hostname with a strict timeout to prevent DoS via slow DNS."""
+    future = _DNS_POOL.submit(socket.getaddrinfo, hostname, None)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        return []
+    except Exception:
+        return []
 
 def is_safe_network_address(hostname: str) -> bool:
     """
@@ -19,6 +36,7 @@ def is_safe_network_address(hostname: str) -> bool:
     - Blocks private, loopback, link-local, and reserved IP ranges.
     - Blocks IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1).
     - Prevents DNS Rebinding attacks by resolving hostnames to IPs and validating ALL returned records.
+    - Prevents DNS DoS by enforcing a strict 2-second timeout on resolution.
     """
     global _SSRF_WARNED
     
@@ -72,10 +90,16 @@ def is_safe_network_address(hostname: str) -> bool:
         pass
 
     # 2. DNS Resolution & Validation (Prevents DNS Rebinding)
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-        for _, _, _, _, sockaddr in infos:
-            ip_str = sockaddr[0]
+    # We use a dedicated thread pool with a strict timeout to prevent DoS.
+    infos = _resolve_safe(hostname, timeout=2.0)
+    
+    # If resolution fails or times out (empty list), we MUST block.
+    if not infos:
+        return False
+        
+    for _, _, _, _, sockaddr in infos:
+        ip_str = sockaddr[0]
+        try:
             ip = ipaddress.ip_address(ip_str)
             
             # Block IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1)
@@ -84,7 +108,8 @@ def is_safe_network_address(hostname: str) -> bool:
                 
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return False
-        return True
-    except (socket.gaierror, OSError):
-        # If DNS resolution fails, assume unsafe to be conservative
-        return False
+        except ValueError:
+            # If we can't parse the resolved IP, block it to be safe.
+            return False
+            
+    return True

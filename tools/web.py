@@ -1,15 +1,16 @@
-﻿"""
+"""
 tools/web.py -- Web meta-tool.
 Replaces: searxng MCP server + http MCP server + old scraping.py
 The LLM sees ONE tool: web(action, ...)
+
 Imports are lazy for bs4 (only on first call), but httpx is imported at top
 to avoid "name not defined" errors in exception handlers and type checks.
 
 Actions:
-    search          -> query SearXNG, return ranked URLs + snippets
-    scrape          -> fetch URL, return clean text (BS4, no JS/CSS noise)
-    read            -> alias for scrape
-    search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
+  search          -> query SearXNG, return ranked URLs + snippets
+  scrape          -> fetch URL, return clean text (BS4, no JS/CSS noise)
+  read            -> alias for scrape
+  search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
 
 P1-1: Use per-request httpx.Client context manager instead of module-level client.
       This fixes connection leaks and thread-safety (gateway runs multiple threads).
@@ -39,7 +40,6 @@ from registry import tool
 
 logger = logging.getLogger(__name__)
 
-
 # [P2] Magic numbers centralized in core/config.py
 # cfg.web_max_text_chars, cfg.web_snippet_chars, cfg.web_max_search_results
 
@@ -48,7 +48,6 @@ _CLIENT_DEFAULTS = {
     "timeout":          10.0,
     "follow_redirects": True,
 }
-
 
 def _is_safe_url(url: str) -> bool:
     """
@@ -65,26 +64,24 @@ def _is_safe_url(url: str) -> bool:
     except Exception:
         return False
 
-
 def _make_client():
     """Create a fresh httpx.Client. Always use as a context manager."""
     return httpx.Client(**_CLIENT_DEFAULTS)
-
 
 def _get_client():
     """Legacy compatibility wrapper."""
     return httpx.Client(**_CLIENT_DEFAULTS)
 
-
 def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
     """Fetch URL using context-managed client, return (html, error)."""
     if not _is_safe_url(url):
         return "", f"Blocked for security: {url} resolves to a private/internal address"
+        
     try:
         with _make_client() as client:
             resp = client.get(url, timeout=timeout)
-        resp.raise_for_status()
-        return resp.text, ""
+            resp.raise_for_status()
+            return resp.text, ""
     except httpx.TimeoutException:
         return "", f"Timeout fetching {url}"
     except httpx.HTTPStatusError as e:
@@ -96,20 +93,19 @@ def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
     except Exception as e:
         return "", f"{type(e).__name__}: {e}"
 
-
 def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]:
     """Extract clean text from HTML using BeautifulSoup."""
     if max_chars is None:
         max_chars = cfg.web_max_text_chars
+        
     from bs4 import BeautifulSoup
-
     soup  = BeautifulSoup(html, "html.parser")
     title = ""
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
 
     for tag in soup(["script", "style", "nav", "footer",
-                      "header", "aside", "noscript", "iframe"]):
+                     "header", "aside", "noscript", "iframe"]):
         tag.decompose()
 
     main = (
@@ -138,7 +134,6 @@ def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]
         clean = clean[:max_chars] + f"\n\n[...truncated at {max_chars} chars]"
 
     return clean, title
-
 
 def _do_search(query: str, max_results: int = 5) -> dict:
     """Call SearXNG and return structured results. Default 5 for backward compat."""
@@ -170,28 +165,27 @@ def _do_search(query: str, max_results: int = 5) -> dict:
     except Exception as e:
         return {"status": "error", "error": f"Search failed: {type(e).__name__}: {e}"}
 
-
 def _do_scrape(url: str, max_chars: Optional[int] = None) -> dict:
     """Fetch URL and return clean extracted text."""
     if max_chars is None:
         max_chars = cfg.web_max_text_chars
+        
     html, err = _fetch_html(url)
     if err:
         return {"status": "error", "url": url, "error": err}
-
+        
     text, title = _html_to_text(html, max_chars)
     if not text:
         return {"status": "error", "url": url, "error": "No text content extracted"}
 
     return {
-        "status":       "success",
+        "status":        "success",
         "url":        url,
         "title":      title,
         "text":       text,
         "word_count": len(text.split()),
-        "truncated":    "[...truncated" in text,
+        "truncated":     "[...truncated" in text,
     }
-
 
 @tool
 def web(
@@ -204,30 +198,31 @@ def web(
 ) -> dict:
     """
     Web tool -- search the web or read web pages.
-    action:  "search" | "scrape" | "read" | "search_and_read"
+
+    action:   "search" | "scrape" | "read" | "search_and_read"
 
     search
-        Search SearXNG and return ranked URLs with titles and snippets.
-        Required: query
-        Optional: max_results (default 5)
-        Returns: {results: [{url, title, snippet, engine}], count}
+      Search SearXNG and return ranked URLs with titles and snippets.
+      Required: query
+      Optional: max_results (default 5)
+      Returns: {results: [{url, title, snippet, engine}], count}
 
     scrape / read
-        Fetch a URL and return clean text (JavaScript and CSS removed).
-        Required: url
-        Optional: max_chars (default from cfg.web_max_text_chars)
-        Returns: {title, text, word_count, truncated}
+      Fetch a URL and return clean text (JavaScript and CSS removed).
+      Required: url
+      Optional: max_chars (default from cfg.web_max_text_chars)
+      Returns: {title, text, word_count, truncated}
 
     search_and_read
-        Search then scrape the top results in parallel. One call for full research.
-        Required: query
-        Optional: max_results (default 5, upper bound from cfg.web_max_search_results), max_chars
-        Returns: {query, results: [{url, title, text}], scraped_count}
+      Search then scrape the top results in parallel. One call for full research.
+      Required: query
+      Optional: max_results (default 5, upper bound from cfg.web_max_search_results), max_chars
+      Returns: {query, results: [{url, title, text}], scraped_count}
 
     Examples:
-        web(action="search", query="FastMCP python tutorial", max_results=5)
-        web(action="scrape", url="https://docs.python.org/3/library/pathlib.html")
-        web(action="search_and_read", query="ChromaDB persistent client")
+      web(action="search", query="FastMCP python tutorial", max_results=5)
+      web(action="scrape", url="https://docs.python.org/3/library/pathlib.html")
+      web(action="search_and_read", query="ChromaDB persistent client")
     """
     if max_chars is None:
         max_chars = cfg.web_max_text_chars
@@ -250,15 +245,15 @@ def web(
     if action == "search_and_read":
         if not query:
             return {"status": "error",
-                     "error": "action='search_and_read' requires query="}
+                    "error": "action='search_and_read' requires query="}
 
         # [P2] Upper bound from config (default 10, allows deep research up to cfg limit)
         n = min(max_results, cfg.web_max_search_results)
         search_result = _do_search(query, n)
         if search_result["status"] != "success" or not search_result["results"]:
             return {"status": "error",
-                     "error": search_result.get("error", "No search results"),
-                     "query": query}
+                    "error": search_result.get("error", "No search results"),
+                    "query": query}
 
         # [P2] Deduplicate URLs while preserving rank order
         seen_urls = set()
@@ -293,7 +288,7 @@ def web(
                 })
 
         result = {
-            "status":           "success",
+            "status":            "success",
             "query":            query,
             "results":          scraped,
             "scraped_count":    len(scraped),
@@ -305,7 +300,7 @@ def web(
 
     return {
         "status": "error",
-        "error":  (
+        "error": (
             f"Unknown action '{action}'. "
             "Use: search | scrape | read | search_and_read"
         ),

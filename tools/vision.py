@@ -4,13 +4,13 @@ The LLM sees ONE tool: vision(task, file_path, url=...)
 Provide exactly ONE image source: file_path, base64, or url.
 
 DESIGN DECISIONS
-Registered with @tool (not in skills/) so MCP server discovers it at startup.
-Uses llm.call() directly because it needs multimodal messages.
-JSON mode uses llm.call()'s built-in parsing (response_format + fence stripping)
-rather than duplicating the logic.
-URL sources are automatically downloaded and converted to a data URI, ensuring
-compatibility with LM Studio even if it doesn't accept raw HTTP URLs.
-SSRF protection blocks localhost and private IP ranges.
+- Registered with @tool (not in skills/) so MCP server discovers it at startup.
+- Uses llm.call() directly because it needs multimodal messages.
+- JSON mode uses llm.call()'s built-in parsing (response_format + fence stripping)
+  rather than duplicating the logic.
+- URL sources are automatically downloaded and converted to a data URI, ensuring
+  compatibility with LM Studio even if it doesn't accept raw HTTP URLs.
+- SSRF protection blocks localhost and private IP ranges.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+
 from registry import tool
 import logging
 from core.config import cfg
@@ -29,14 +30,11 @@ from core.llm import llm
 from core.tracer import tracer
 
 logger = logging.getLogger(__name__)
-_SSRF_WARNED = False
-
 
 # ── Constants ────────────────────────────────────────────────────────────────
 HTTP_TIMEOUT = 30.0  # seconds
 MAX_IMAGE_BYTES = int(os.environ.get("VISION_MAX_FILE_BYTES", 20_000_000))
 MAX_BASE64_LEN = int(os.environ.get("VISION_MAX_BASE64_LEN", 10_000_000))
-
 
 # ── System prompts ───────────────────────────────────────────────────────────
 _VISION_SYSTEM = """
@@ -52,64 +50,14 @@ Notable Details: patterns, colours, anomalies
 _VISION_JSON_SYSTEM = """
 You are a precise visual analysis specialist. Output ONLY valid JSON — no prose, no markdown fences.
 {
- "overview": "one sentence",
- "elements": ["visible", "elements"],
- "text_content": "readable text or null",
- "colors": ["dominant", "colors"],
- "details": "patterns or anomalies",
- "confidence": "high|medium|low"
+  "overview": "one sentence",
+  "elements": ["visible", "elements"],
+  "text_content": "readable text or null",
+  "colors": ["dominant", "colors"],
+  "details": "patterns or anomalies",
+  "confidence": "high|medium|low"
 }
 """
-
-
-# ── SSRF Protection ─────────────────────────────────────────────────────────
-def _is_private_or_localhost(hostname: str) -> bool:
-    """Block by network scope. Respects ALLOWED_INTERNAL_HOSTS allowlist."""
-    global _SSRF_WARNED
-    if not _SSRF_WARNED and cfg.allowed_internal_hosts:
-        logger.warning(
-            "SSRF: localhost access allowed by default for development. "
-            "Set ALLOWED_INTERNAL_HOSTS='' in .env for production."
-        )
-        _SSRF_WARNED = True
-
-    hostname = hostname.lower().strip()
-    
-    # Handle IPv6 with port: [::1]:8080 → ::1
-    if hostname.startswith("[") and "]:" in hostname:
-        hostname = hostname.split("]:")[0].lstrip("[")
-    # Handle IPv4 with port: 127.0.0.1:3000 → 127.0.0.1
-    # But NOT IPv6 without brackets (like ::1) - don't strip colons from IPv6
-    elif ":" in hostname and not hostname.startswith("[") and "::" not in hostname:
-        hostname = hostname.split(":")[0]
-    
-    # Allow explicitly permitted hosts FIRST (short-circuit for performance)
-    if hostname in cfg.allowed_internal_hosts:
-        return False
-    
-    # Loopback variants (any port)
-    if hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
-        return True
-    
-    # Reserved TLDs (mDNS, test domains, RFC 6761/6762)
-    if hostname.endswith((".local", ".test", ".localhost", ".invalid")):
-        return True
-    
-    # IP address validation using stdlib ipaddress module
-    try:
-        ip = ipaddress.ip_address(hostname)
-        return bool(
-            ip.is_private or      # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-            ip.is_loopback or     # 127.0.0.0/8, ::1
-            ip.is_link_local or   # 169.254.0.0/16, fe80::/10
-            ip.is_reserved        # 192.0.2.0/24, 2001:db8::/32, etc.
-        )
-    except ValueError:
-        # Not a valid IP address — already handled by hostname checks above
-        pass
-    
-    return False
-
 
 # ── Validation ───────────────────────────────────────────────────────────────
 def _validate_vision_inputs(file_path: str, base64_str: str, url: str) -> tuple[bool, str]:
@@ -122,17 +70,18 @@ def _validate_vision_inputs(file_path: str, base64_str: str, url: str) -> tuple[
         return False, "Exactly one image source (file_path, base64, or url) is required."
     if len(sources) > 1:
         return False, "Provide exactly ONE image source, not multiple."
-        
+
     if url:
         parsed = urlparse(url)
         hostname = parsed.hostname or ""
         if not hostname:
             return False, "Invalid URL: missing hostname"
+            
         # SSRF Protection: Network-scope blocking + allowlist
-        from core.security import is_safe_network_address
         if not is_safe_network_address(hostname):
             tracer.warning("SSRF", {"action": "blocked", "url": url, "hostname": hostname, "reason": "private_network"})
             return False, f"SSRF blocked: {url} points to private/localhost network"
+            
         if parsed.scheme not in ("http", "https"):
             return False, f"Invalid URL scheme: {parsed.scheme}. Only http/https allowed."
             
@@ -151,7 +100,6 @@ def _validate_vision_inputs(file_path: str, base64_str: str, url: str) -> tuple[
 
     return True, ""
 
-
 # ── Image helpers ────────────────────────────────────────────────────────────
 _MIME_MAP = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -165,6 +113,7 @@ def _file_to_block(file_path: str) -> tuple[dict, str]:
     mime = _MIME_MAP.get(p.suffix.lower(), "image/jpeg")
     if not _MIME_MAP.get(p.suffix.lower()):
         print(f"[vision] Unknown extension {p.suffix}, defaulting to image/jpeg", file=sys.stderr)
+        
     try:
         data = _b64.b64encode(p.read_bytes()).decode("utf-8")
         return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}, ""
@@ -192,14 +141,14 @@ def _download_image_to_data_uri(url: str, timeout: float = HTTP_TIMEOUT) -> tupl
         return "", f"HTTP error {e.response.status_code} downloading image."
     except Exception as e:
         return "", f"Download error: {e}"
+        
     content_type = resp.headers.get("content-type", "image/jpeg")
     if not content_type.startswith("image/"):
         suffix = Path(url.split("?")[0]).suffix.lower()
         content_type = _MIME_MAP.get(suffix, "image/jpeg")
-
+        
     b64 = _b64.b64encode(resp.content).decode("utf-8")
     return f"data:{content_type};base64,{b64}", ""
-
 
 # ── Tool ─────────────────────────────────────────────────────────────────────
 @tool
@@ -221,7 +170,7 @@ def vision(
     if not cfg.vision_model:
         return {
             "status": "error",
-            "error":  "VISION_MODEL not set in .env — add it to your .env file",
+            "error": "VISION_MODEL not set in .env — add it to your .env file",
             "trace_id": trace_id,
         }
 
@@ -272,7 +221,7 @@ def vision(
 
     if not result.ok:
         return {
-            "status":   "error",
+            "status":    "error",
             "error":   result.error,
             "model":   result.model,
             "elapsed": result.elapsed,
@@ -280,7 +229,7 @@ def vision(
         }
 
     response: dict = {
-        "status":   "success",
+        "status":    "success",
         "text":    result.text,
         "model":   result.model,
         "elapsed": result.elapsed,
