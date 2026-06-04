@@ -112,8 +112,8 @@ def node_done(state: WorkflowState, result: str, artifacts: list = None) -> Work
     tid = state.get("trace_id", "")
     if tid:
         tracer.finish(tid, success=True, result=result[:200])
-    from workflows.helpers.checkpoint import mark_complete
-    mark_complete(tid)
+        from workflows.helpers.checkpoint import mark_complete
+        mark_complete(tid)
     return {
         **state,
         "status":     "success",
