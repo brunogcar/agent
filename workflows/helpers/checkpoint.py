@@ -63,8 +63,18 @@ def sanitize_state(state: Any, _seen: set = None) -> Any:
         except TypeError:
             return [sanitize_state(v, _seen) for v in state]
     else:
-        # Drop non-serializable objects (httpx clients, locks, CircuitBreakers)
-        return f"<unserializable: {type(state).__name__}>"
+    # Drop non-serializable objects (httpx clients, locks, CircuitBreakers).
+    # Returns None (falsy) to prevent truthy-string crashes on resume.
+    # 
+    # 🏗️ ARCHITECTURAL BEST PRACTICE FOR FUTURE NODES:
+    # If a LangGraph node requires an unserializable object, it MUST reconstruct 
+    # it on entry if missing.
+    # Example:
+    #   client = state.get("http_client")
+    #   if client is None:
+    #       client = httpx.Client()
+    #       state["http_client"] = client
+        return None
 
 def save_checkpoint(trace_id: str, node_name: str, state: dict) -> None:
     """Append a checkpoint to the workflow's JSONL journal."""

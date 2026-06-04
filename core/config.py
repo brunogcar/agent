@@ -329,7 +329,7 @@ class Config:
             target_name = os.path.normcase(target.name)
             for pf in self.protected_files:
                 if target_name == os.path.normcase(Path(pf).name):
-                    if target == Path(pf).resolve():
+                    if target == (agent_root_resolved / pf).resolve():
                         return True
         except (ValueError, OSError, RuntimeError):
             pass
