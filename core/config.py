@@ -223,7 +223,7 @@ class Config:
 
         # -- Timeouts ----------------------------------------------------------
         self.planner_timeout = int(os.getenv("PLANNER_TIMEOUT", "180"))
-        self.router_timeout = int(os.getenv("ROUTER_TIMEOUT", "60"))
+        self.router_timeout = int(os.getenv("ROUTER_TIMEOUT", "15"))
         self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
         self.max_retries = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
 

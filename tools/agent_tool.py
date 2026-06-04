@@ -138,7 +138,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         '"corrected_patch": "corrected code if verdict is REVISE, else null"}'
     ),
 
-    "consultor ": (
+    "consultor": (
         "You are an expert advisory consultant. Provide clear, concise, and highly actionable advice. "
         "Focus on architectural soundness, best practices, and potential pitfalls. "
         "Do not write code unless explicitly asked. Keep responses structured and easy to read. "
@@ -180,7 +180,7 @@ _ROLE_TO_LLM: dict[str, str] = {
     "code":      "code",       # Executor     — 120s
     "review":    "review",     # Executor     — 90s
     "plan":      "planner",    # Planner      — 90s
-    "consultor": "consultor ", # Consultor    — 60s
+    "consultor": "consultor",  # Consultor    — 60s
 
     # vision delegates to tools/vision.py — not a direct llm role
 }

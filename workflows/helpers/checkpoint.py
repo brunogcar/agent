@@ -64,7 +64,7 @@ def sanitize_state(state: Any, _seen: set = None) -> Any:
             return [sanitize_state(v, _seen) for v in state]
     else:
         # Drop non-serializable objects (httpx clients, locks, CircuitBreakers)
-        return None
+        return f"<unserializable: {type(state).__name__}>"
 
 def save_checkpoint(trace_id: str, node_name: str, state: dict) -> None:
     """Append a checkpoint to the workflow's JSONL journal."""
