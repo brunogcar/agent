@@ -179,16 +179,13 @@ class TaskRouter:
         r = llm.complete(
             role   = "router",
             system = (
-                "You are a task router. Output ONLY a JSON object wrapped in <tool_call> tags.  "
                 "No thinking. No explanation.\n"
-                "<tool_call>\n"
                 '{"workflow": "research or data or autocode",'
                 '   "tool": "web or python or file or git or memory or agent or notify or report or workflow",'
                 '   "complexity":5,'
                 '   "reason": "one sentence",'
                 '   "confidence": "high or medium or low",'
                 '   "clarifying_questions": ["question1", "question2"]}\n'
-                "</tool_call>\n"
                 "\n\nRouting rules:"
                 "\n- research: finding info, summarising, reading docs, Q&A"
                 "\n- data: pandas, analysis, calculations, charts, spreadsheets"
@@ -210,21 +207,15 @@ class TaskRouter:
         text = r.text.strip()
         clean = text
 
-        # 🔴 Consensus Item 4: Tool-Call Envelopes (Prompt Injection Mitigation)
-        # Prefer explicit <tool_call> tags if the model followed instructions
-        envelope_match = re.search(r'<tool_call>(.*?)</tool_call>', text, re.DOTALL | re.IGNORECASE)
-        if envelope_match:
-            clean = envelope_match.group(1).strip()
-        else:
-            # Fallback: Strip markdown fences and use deterministic bracket-counting parser
-            for fence in ("```json", "```"):
-                if clean.startswith(fence):
-                    clean = clean[len(fence):]
-            clean = clean.strip().rstrip("`").strip()
+        # Strip markdown fences and use deterministic JSON extractor
+        for fence in ("```json", "```"):
+            if clean.startswith(fence):
+                clean = clean[len(fence):]
+        clean = clean.strip().rstrip("`").strip()
 
-            extracted = self._extract_first_json(clean)
-            if extracted:
-                clean = extracted
+        extracted = self._extract_first_json(clean)
+        if extracted:
+            clean = extracted
 
         try:
             data = json.loads(clean)
