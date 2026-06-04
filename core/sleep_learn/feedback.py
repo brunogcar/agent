@@ -154,7 +154,7 @@ def process_feedback() -> dict:
                     trace_data = tracer.get(tid)
                     if trace_data:
                         # If the analysis itself failed, it's an infrastructure issue
-                        if not trace_data.get("impact_analysis_failed", False):
+                        if not trace_data.get("analyze_impact_failed", False):
                             for step in trace_data.get("steps", []):
                                 # Only penalize if the node explicitly flagged agent_fault=True
                                 if step.get("node") == "analyze_impact" and step.get("has_agent_fault"):

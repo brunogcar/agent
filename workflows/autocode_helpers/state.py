@@ -75,7 +75,7 @@ class AutocodeState(TypedDict, total=False):
     # Impact Analysis (Phase: AST Dependency Graphing)
     impact_warnings: list[str]
     targeted_test_cmd: str | None
-    impact_analysis_failed: bool
+    analyze_impact_failed: bool
 
     # Debug
     debug_notes: str

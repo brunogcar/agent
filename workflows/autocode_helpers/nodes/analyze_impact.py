@@ -19,7 +19,7 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
     project_root = state.get("project_root", "")
     
     if not files_map:
-        return {"impact_warnings": [], "targeted_test_cmd": None, "impact_analysis_failed": False}
+        return {"impact_warnings": [], "targeted_test_cmd": None, "analyze_impact_failed": False}
 
     tracer.step(tid, "analyze_impact", f"Analyzing impact for {len(files_map)} files")
     modified_files = list(files_map.keys())
@@ -132,7 +132,7 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
         return {
             "impact_warnings": impact_warnings,
             "targeted_test_cmd": targeted_test_cmd,
-            "impact_analysis_failed": False
+            "analyze_impact_failed": False
         }
         
     except Exception as e:
@@ -144,5 +144,5 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
                 "agent_fault": False
             }],
             "targeted_test_cmd": "pytest",
-            "impact_analysis_failed": True
+            "analyze_impact_failed": True
         }

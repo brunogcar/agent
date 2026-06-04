@@ -1,5 +1,5 @@
 """
-tests/workflows/autocode/test_impact_analysis.py
+tests/workflows/autocode/test_analyze_impact.py
 Validates the new core.kgraph.ast_parser handles edge cases gracefully and async execution works.
 """
 import pytest
