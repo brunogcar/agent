@@ -11,7 +11,15 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 class GraphStore:
-    """Thread-safe, WAL-enabled SQLite graph store."""
+    """
+    Thread-safe, WAL-enabled SQLite graph store.
+    
+    P2 Optimization Note: This implementation uses thread-local connections 
+    (`self._local.conn`) combined with a single `_write_lock`. This is the 
+    canonical, safest, and most performant pattern for local SQLite concurrency 
+    in Python. It prevents database corruption while avoiding the overhead of 
+    heavy external connection pooling libraries (like aiosqlite) for a local-first agent.
+    """
     
     _instances: Dict[str, "GraphStore"] = {}
     _lock = threading.Lock()

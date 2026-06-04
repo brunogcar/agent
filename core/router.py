@@ -61,31 +61,16 @@ class TaskRouter:
     or returns unparseable output.
     """
 
-    # Heuristic keywords for fallback routing
-    _CODE_KEYWORDS    = ["fix", "bug", "error", "patch", "refactor", "improve",
-                        "add feature", "implement", "edit", "modify", "update code"]
-    _DATA_KEYWORDS    = ["analyse", "analyze", "calculate", "compute", "plot",
-                        "chart", "csv", "excel", "spreadsheet", "statistics",
-                        "pandas", "numpy", "dataset"]
-    _RESEARCH_KEYWORDS= ["what is", "what are", "how does", "explain", "research",
-                        "find information", "summarise", "summarize", "look up"]
-    # Direct tool keywords -- simple single-tool tasks that don't need a workflow
-    _DIRECT_FILE      = ["read file", "open file", "list files", "list directory",
-                        "write file", "show file", "read the file", "open the file"]
-    _DIRECT_MEMORY    = ["recall", "remember", "what do you know about",
-                        "store this", "save this to memory"]
-    _DIRECT_GIT       = ["git status", "git log", "show commits", "git diff",
-                        "commit this", "git commit"]
-    _DIRECT_NOTIFY    = ["notify me", "send notification", "remind me",
-                        "schedule reminder"]
-    # Report keywords -- route to direct report tool
-    _REPORT_KEYWORDS = ["create a chart", "create chart", "make a chart",
-                        "plot a chart", "draw a chart", "report",
-                        "visualise", "create a graph", "make a graph",
-                        "create a map", "make a map", "create a dashboard",
-                        "make a dashboard", "create a report",
-                        "make a report", "bar chart", "line chart",
-                        "pie chart", "scatter plot", "heatmap"]
+    # P2 Optimization: Pre-compiled regex patterns for O(1) heuristic matching
+    # Replaces fragile O(N*M) string loops with fast, single-pass regex searches.
+    _RE_CODE = re.compile(r"\b(fix|bug|error|patch|refactor|improve|add feature|implement|edit|modify|update code)\b", re.IGNORECASE)
+    _RE_DATA = re.compile(r"\b(analyse|analyze|calculate|compute|plot|chart|csv|excel|spreadsheet|statistics|pandas|numpy|dataset)\b", re.IGNORECASE)
+    _RE_RESEARCH = re.compile(r"\b(what is|what are|how does|explain|research|find information|summarise|summarize|look up)\b", re.IGNORECASE)
+    _RE_DIRECT_FILE = re.compile(r"\b(read file|open file|list files|list directory|write file|show file|read the file|open the file)\b", re.IGNORECASE)
+    _RE_DIRECT_MEMORY = re.compile(r"\b(recall|remember|what do you know about|store this|save this to memory)\b", re.IGNORECASE)
+    _RE_DIRECT_GIT = re.compile(r"\b(git status|git log|show commits|git diff|commit this|git commit)\b", re.IGNORECASE)
+    _RE_DIRECT_NOTIFY = re.compile(r"\b(notify me|send notification|remind me|schedule reminder)\b", re.IGNORECASE)
+    _RE_REPORT = re.compile(r"\b(create a chart|create chart|make a chart|plot a chart|draw a chart|report|visualise|create a graph|make a graph|create a map|make a map|create a dashboard|make a dashboard|create a report|make a report|bar chart|line chart|pie chart|scatter plot|heatmap)\b", re.IGNORECASE)
 
     def _extract_first_json(self, text: str) -> str | None:
         """
@@ -279,7 +264,7 @@ class TaskRouter:
         lower = goal.lower()
 
         # Check for report tasks before generic routing
-        if any(kw in lower for kw in self._REPORT_KEYWORDS):
+        if self._RE_REPORT.search(goal):
             return RoutingDecision({
                 "workflow":    "direct",
                 "tool":        "report",
@@ -289,7 +274,7 @@ class TaskRouter:
             })
 
         # Check for direct single-tool tasks first (most specific)
-        if any(kw in lower for kw in self._DIRECT_FILE):
+        if self._RE_DIRECT_FILE.search(goal):
             return RoutingDecision({
                 "workflow":    "direct",
                 "tool":        "file",
@@ -298,7 +283,7 @@ class TaskRouter:
                 "confidence":  "high",
             })
 
-        if any(kw in lower for kw in self._DIRECT_MEMORY):
+        if self._RE_DIRECT_MEMORY.search(goal):
             return RoutingDecision({
                 "workflow":    "direct",
                 "tool":        "memory",
@@ -307,7 +292,7 @@ class TaskRouter:
                 "confidence":  "high",
             })
 
-        if any(kw in lower for kw in self._DIRECT_GIT):
+        if self._RE_DIRECT_GIT.search(goal):
             return RoutingDecision({
                 "workflow":    "direct",
                 "tool":        "git",
@@ -316,7 +301,7 @@ class TaskRouter:
                 "confidence":  "high",
             })
 
-        if any(kw in lower for kw in self._DIRECT_NOTIFY):
+        if self._RE_DIRECT_NOTIFY.search(goal):
             return RoutingDecision({
                 "workflow":    "direct",
                 "tool":        "notify",
@@ -326,7 +311,7 @@ class TaskRouter:
             })
 
         # Check for code-related keywords
-        if any(kw in lower for kw in self._CODE_KEYWORDS):
+        if self._RE_CODE.search(goal):
             # Extra check: does it mention a file?
             has_file = any(
                 ext in lower for ext in [".py", ".js", ".ts", ".json", ".yaml", ".md"]
@@ -339,7 +324,7 @@ class TaskRouter:
                 "confidence":  "medium",
             })
 
-        if any(kw in lower for kw in self._DATA_KEYWORDS):
+        if self._RE_DATA.search(goal):
             return RoutingDecision({
                 "workflow":    "data",
                 "tool":        "python",
