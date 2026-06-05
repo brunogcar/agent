@@ -46,6 +46,8 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
     if _collection.count() == 0:
         return []
 
+    rules = []
+    
     try:
         results = _collection.query(
             query_texts=[query],
@@ -54,7 +56,6 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
             include=["documents", "metadatas", "distances"]
         )
         
-        rules = []
         if results and results['ids'] and results['ids'][0]:
             for i, rule_id in enumerate(results['ids'][0]):
                 rules.append({
@@ -63,7 +64,6 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
                     "confidence": results['metadatas'][0][i].get("confidence_score", 0.0),
                     "distance": results['distances'][0][i] if results.get('distances') else 0.0
                 })
-        return rules
     except Exception as e:
         tracer.error("daemon", "sleep_learn_injector", f"Failed to query rules: {e}")
     

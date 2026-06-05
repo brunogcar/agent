@@ -20,8 +20,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
     """Refine the spec using the appropriate system prompt for the task type."""
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
-        return {
-        "files": files_update,}
+        return {}
     
     task_type = state.get("task_type", "feature")
     tracer.step(tid, "brainstorm", f"starting for {task_type}")

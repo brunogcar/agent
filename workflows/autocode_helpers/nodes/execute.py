@@ -52,7 +52,7 @@ def node_execute_step(state: AutocodeState) -> dict:
     # Derive modified_files from generated code JSON (only when not dry_run)
     if not state.get("dry_run", False):
         try:
-            code_data = json.loads(state.get("tdd_source_code", "{}"))
+            code_data = json.loads(code)
             modified = []
             for patch in code_data.get("patches", []):
                 modified.append(patch.get("path", ""))
