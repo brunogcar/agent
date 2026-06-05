@@ -13,7 +13,7 @@ def route_after_classify(state: AutocodeState) -> str:
     elif task_type == "create_skill":
         return "node_create_skill"
     else:
-        return "node_brainstorm"
+        return "node_validate_input"
 
 def route_after_brainstorm(state: AutocodeState) -> str:
     """Route after brainstorming node."""

@@ -113,3 +113,69 @@ def is_safe_network_address(hostname: str) -> bool:
             return False
             
     return True
+
+def _is_private_or_localhost(hostname: str) -> bool:
+    """Legacy compatibility alias. Returns True if hostname is private/localhost.
+    
+    Differs from is_safe_network_address on semantics:
+    - True  = hostname IS private/localhost (should be blocked)
+    - False = hostname is NOT private/localhost (allowed or unknown)
+    
+    For invalid/empty hostnames and DNS resolution failures, returns False
+    (permissive fallback) to match original behavior.
+    
+    New code should use is_safe_network_address() which returns True for safe
+    addresses and False for blocked/unknown (secure-by-default).
+    """
+    if not hostname or not isinstance(hostname, str):
+        return False
+    h = hostname.strip()
+    if not h:
+        return False
+    
+    # Handle IPv6 with port: [::1]:8080 -> ::1
+    if h.startswith("[") and "]:" in h:
+        h = h.split("]:")[0].lstrip("[")
+    # Handle IPv4 with port: 127.0.0.1:3000 -> 127.0.0.1
+    elif ":" in h and not h.startswith("[") and "::" not in h:
+        h = h.split(":")[0]
+    
+    # Allowlist check (short-circuit)
+    if h in cfg.allowed_internal_hosts:
+        return False  # Allowed = not private
+    
+    # Known loopback variants
+    if h in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        return True
+    
+    # Reserved TLDs
+    if h.endswith((".local", ".test", ".localhost", ".invalid")):
+        return True
+    
+    # IP address check
+    try:
+        ip = ipaddress.ip_address(h)
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            return True
+        return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
+    except ValueError:
+        pass
+    
+    # DNS resolution — permissive fallback on failure (old behavior)
+    infos = _resolve_safe(h, timeout=2.0)
+    if not infos:
+        return False
+    
+    for _, _, _, _, sockaddr in infos:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+                return True
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return True
+        except ValueError:
+            pass
+    
+    return False
+

@@ -18,7 +18,7 @@ def node_distill_memory(state: AutocodeState) -> dict:
     hypothesis = state.get("hypothesis", "")
     defense_note = state.get("defense_note", "")
     error_log = state.get("error_log", "")
-    modified_files = state.get("modified_files", {})
+    modified_files = state.get("modified_files", [])
     
     tracer.step(tid, "node_distill_memory", "Starting procedural distillation...")
 
@@ -40,7 +40,7 @@ def node_distill_memory(state: AutocodeState) -> dict:
     if error_log:
         trace_parts.append(f"ERRORS ENCOUNTERED:\n{error_log[:1000]}")
     if modified_files:
-        trace_parts.append(f"FILES MODIFIED: {', '.join(modified_files.keys())}")
+        trace_parts.append(f"FILES MODIFIED: {', '.join(modified_files)}")
         
     trace_text = "\n\n".join(trace_parts)
 

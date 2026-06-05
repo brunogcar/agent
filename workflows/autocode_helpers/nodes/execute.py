@@ -4,10 +4,12 @@ Execution node for autocode workflow.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from core.config import cfg
 from core.tracer import tracer
+from workflows.autocode_helpers.constants import CODER_SYSTEM
 from workflows.autocode_helpers.helpers import _call, _write_files
 from workflows.autocode_helpers.state import AutocodeState
 
@@ -28,10 +30,7 @@ def node_execute_step(state: AutocodeState) -> dict:
         return {"status": "error", "error": "No plan step to execute"}
 
     # Use your actual config attributes
-    system = """
-You are an expert Python developer. Generate clean, production-ready code.
-Return ONLY the code in a code block, no explanations.
-"""
+    system = CODER_SYSTEM
     user = f"Plan step: {current_step.get('description', '')}\nCurrent files:\n{state.get('files_context', '')}"
     try:
         code = _call(
@@ -50,14 +49,19 @@ Return ONLY the code in a code block, no explanations.
     # Store generated code for TDD loop
     updates = {"tdd_source_code": code}
 
-    # Write files if not dry run
+    # Derive modified_files from generated code JSON (only when not dry_run)
     if not state.get("dry_run", False):
-        write_result = _write_files(state)
-        if write_result.get("error"):
-            updates.update({"status": "error", "error": write_result["error"]})
-            return updates
-        updates["modified_files"] = write_result.get("files_written", [])
+        try:
+            code_data = json.loads(state.get("tdd_source_code", "{}"))
+            modified = []
+            for patch in code_data.get("patches", []):
+                modified.append(patch.get("path", ""))
+            modified.extend(code_data.get("new_files", {}).keys())
+            updates["modified_files"] = [m for m in modified if m]
+        except Exception:
+            updates["modified_files"] = []
 
     tracer.step(tid, "execute_step", "Code generated and written")
     updates["execution_notes"] = f"Executed step: {current_step.get('description', '')}"
+    updates["current_step"] = current_step_idx + 1
     return updates

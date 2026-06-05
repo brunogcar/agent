@@ -92,6 +92,7 @@ def build_graph() -> StateGraph:
         route_after_write_files,
         {
             "node_analyze_impact": "node_analyze_impact",
+            "node_verify": "node_verify",  # Added by Kimi
         },
     )
 
@@ -115,7 +116,7 @@ def build_graph() -> StateGraph:
     )
 
     # Debug loop
-    workflow.add_edge("node_systematic_debug", "node_run_tests")
+    workflow.add_edge("node_systematic_debug", "node_write_files")
 
     # Route after verification
     workflow.add_conditional_edges(

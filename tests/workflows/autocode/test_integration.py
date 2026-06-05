@@ -50,7 +50,7 @@ class TestGraphStructureAndWiring:
         # LangGraph stores these in the graph's internal branch mapping
         # We test by ensuring the routing functions are callable and return expected strings
         assert route_after_classify({"task_type": "unclear"}) == "END"
-        assert route_after_classify({"task_type": "feature"}) == "node_brainstorm"
+        assert route_after_classify({"task_type": "feature"}) == "node_validate_input"
         
         assert route_after_run_tests({"tdd_status": "passed"}) == "node_verify"
         assert route_after_run_tests({"tdd_status": "failed"}) == "node_systematic_debug"

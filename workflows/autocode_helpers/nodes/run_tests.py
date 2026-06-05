@@ -73,7 +73,9 @@ def node_run_tests(state: AutocodeState) -> dict:
         return {"status": "error", "error": "No test files to run"}
 
     # Run tests
-    test_results = run_tests_on_disk(test_files)
+    project_root = state.get("project_root", None)
+    targeted_cmd = state.get("targeted_test_cmd", None)
+    test_results = run_tests_on_disk(test_files, project_root=project_root, targeted_cmd=targeted_cmd)
     current_iter = state.get("tdd_iteration", 0) + 1
 
     # Build partial update dict instead of mutating state directly

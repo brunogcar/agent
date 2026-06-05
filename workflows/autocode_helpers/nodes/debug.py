@@ -7,7 +7,7 @@ from typing import Any
 from core.config import cfg
 from core.memory import memory
 from core.tracer import tracer
-from workflows.autocode_helpers.helpers import _call
+from workflows.autocode_helpers.helpers import _call, _parse_json
 from workflows.autocode_helpers.state import AutocodeState
 from core.kgraph.queries import get_dependencies, get_callers
 
@@ -94,12 +94,13 @@ def node_systematic_debug(state: AutocodeState) -> dict:
         clean_response = debug_response.strip()
         debug_data = json.loads(clean_response)
     except json.JSONDecodeError:
-        match = re.search(r'\{[^{}]*\}', clean_response, re.DOTALL)
-        debug_data = json.loads(match.group(0)) if match else {
-            "root_cause": "Unknown",
-            "defense_notes": "",
-            "fix": ""
-        }
+        debug_data = _parse_json(clean_response)
+        if not debug_data:
+            debug_data = {
+                "root_cause": "Unknown",
+                "defense_notes": "",
+                "fix": ""
+            }
 
     root_cause = debug_data.get("root_cause", "Unknown root cause")
     defense_notes = debug_data.get("defense_notes", "")

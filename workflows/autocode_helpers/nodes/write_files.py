@@ -44,13 +44,13 @@ def node_write_files(state: AutocodeState) -> dict:
         old_text = p.get("old", "")
         new_text = p.get("new", "")
 
-        if cfg.is_protected(rel_path):
-            tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
-            continue
-
         # Use project_root from state if available, otherwise workspace_root
         base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
         target = base_path / rel_path
+
+        if cfg.is_protected(target):
+            tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
+            continue
 
         if not target.exists():
             tracer.step(tid, "write_files",
@@ -74,13 +74,13 @@ def node_write_files(state: AutocodeState) -> dict:
         new_files = data
 
     for rel_path, content in new_files.items():
-        if cfg.is_protected(rel_path):
-            tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
-            continue
-
         # Use project_root from state if available, otherwise workspace_root
         base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
         target = base_path / rel_path
+
+        if cfg.is_protected(target):
+            tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
+            continue
 
         target.parent.mkdir(parents=True, exist_ok=True)
         lock_path = str(target) + ".lock"
@@ -111,15 +111,23 @@ def node_write_files(state: AutocodeState) -> dict:
         test_file.parent.mkdir(parents=True, exist_ok=True)
         try:
             with FileLock(lock_path, timeout=10):
-                test_file.write_text(state["test_code"], encoding="utf-8")
+                test_code = state["test_code"]
+                if isinstance(test_code, list):
+                    test_code = "\n\n".join(test_code)
+                test_file.write_text(test_code, encoding="utf-8")
             tracer.step(tid, "write_files", "test file persisted")
         except Timeout:
             tracer.step(tid, "write_files", "lock timeout on test file")
         except Exception as e:
             tracer.step(tid, "write_files", f"test file write error: {e}")
 
-    # Return partial update: only return patch_errors if they exist
-    return {"patch_errors": patch_errors} if patch_errors else {}
+    # Build partial update dict
+    updates = {}
+    if patch_errors:
+        updates["patch_errors"] = patch_errors
+    if state.get("test_code"):
+        updates["test_files"] = ["autocode/test_autocode_feature.py"]
+    return updates
 
 def node_write_files_with_flag_reset(state: AutocodeState) -> dict:
     """Write files and reset retry flags."""

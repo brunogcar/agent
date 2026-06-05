@@ -18,20 +18,27 @@ from core.sleep_learn.config import (
 from core.tracer import tracer
 from core.config import cfg
 
-# Connect to the isolated sleep_learn ChromaDB
-_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
+# Lazy-initialized ChromaDB client (avoid import-time side effects)
+_client = None
+_collection = None
 
-# Safely get the collection (might not exist if Phase 2 hasn't populated it yet)
-try:
-    _collection = _client.get_collection(name=SLEEP_LEARN_COLLECTION_NAME)
-except Exception:
-    _collection = None
+def _ensure_client():
+    """Lazy init: create ChromaDB client and collection on first use."""
+    global _client, _collection
+    if _client is not None:
+        return
+    _client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
+    try:
+        _collection = _client.get_collection(name=SLEEP_LEARN_COLLECTION_NAME)
+    except Exception:
+        _collection = None
 
 def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> List[Dict[str, Any]]:
     """
     Queries the procedural_meta collection for rules relevant to the current task.
     Returns a list of rule dictionaries, sorted by relevance (distance).
     """
+    _ensure_client()
     if not SLEEP_LEARN_INJECT_ENABLED or _collection is None:
         return []
     if not query or not query.strip():
@@ -59,7 +66,32 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
         return rules
     except Exception as e:
         tracer.error("daemon", "sleep_learn_injector", f"Failed to query rules: {e}")
-        return []
+    
+    # [FIX 8] Split-brain fallback: also query main memory's procedural collection
+    # so rules from meta_learning.py are visible to the injector
+    try:
+        from core.memory import memory
+        main_results = memory.recall(
+            query=query,
+            collections=["procedural"],
+            top_k=k,
+            min_score=0.0
+        )
+        for ex in main_results:
+            if ex.get("text"):
+                # Avoid duplicates by checking ID
+                rule_id = ex.get("id", ex.get("text", "")[:30])
+                if not any(r.get("id") == rule_id for r in rules):
+                    rules.append({
+                        "id": rule_id,
+                        "rule": ex["text"],
+                        "confidence": ex.get("metadata", {}).get("importance", 5) / 10.0,
+                        "distance": ex.get("distance", 0.5)
+                    })
+    except Exception:
+        pass  # Non-fatal: main memory may not be available
+    
+    return rules
 
 def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") -> str:
     """

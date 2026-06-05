@@ -20,7 +20,8 @@ def node_brainstorm(state: AutocodeState) -> dict:
     """Refine the spec using the appropriate system prompt for the task type."""
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
-        return {}
+        return {
+        "files": files_update,}
     
     task_type = state.get("task_type", "feature")
     tracer.step(tid, "brainstorm", f"starting for {task_type}")
@@ -73,7 +74,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
                 
                 # Merge KG files into state["files"]
                 if kg_files:
-                    state["files"] = {**kg_files, **state.get("files", {})}
+                    files_update = {**kg_files, **state.get("files", {})}
         except Exception as e:
             tracer.warning(tid, "brainstorm", f"KG query failed: {e}")
 

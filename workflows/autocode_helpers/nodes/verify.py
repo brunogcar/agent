@@ -104,11 +104,19 @@ def node_verify(state: AutocodeState) -> dict:
                 f"lint={'OK' if lint_passed else 'WARN'}) ")
 
     # LLM review (for spec coverage and cleanliness) - WITH ERROR HANDLING
+    # [FIX] tdd_source_code is JSON patches/new_files, not raw Python.
+    # Build a clean implementation context from the actual generated artifacts.
+    impl_ctx = ""
     try:
-        # [FIX 2] Use tdd_source_code instead of non-existent generated_code
-        impl_ctx = state.get("tdd_source_code", "")
+        code_data = json.loads(state.get("tdd_source_code", "{}"))
+        parts = []
+        for patch in code_data.get("patches", []):
+            parts.append(f"# Patch: {patch.get('path', '')}\n```python\n{patch.get('new', '')[:1500]}\n```")
+        for path, content in code_data.get("new_files", {}).items():
+            parts.append(f"# New file: {path}\n```python\n{str(content)[:1500]}\n```")
+        impl_ctx = "\n\n".join(parts) if parts else state.get("tdd_source_code", "")[:3000]
     except Exception:
-        impl_ctx = state.get("tdd_source_code", "")
+        impl_ctx = state.get("tdd_source_code", "")[:3000]
 
     try:
         raw = _call(

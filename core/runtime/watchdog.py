@@ -123,26 +123,26 @@ class RuntimeWatchdog:
         if not cmd:
             logger.error(f"[Watchdog] No restart command configured for {self.provider.name}. Cannot restart.")
             return
-            
-        # Windows-specific detachment
-        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
+        kwargs = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        
+        # Windows-specific detachment (Linux/macOS lack these attributes)
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            kwargs["startupinfo"] = startupinfo
         
         try:
             # Split command if it's a string with spaces (e.g., "lms server start")
             args = cmd.split()
-            subprocess.Popen(
-                args,
-                creationflags=creationflags,
-                startupinfo=startupinfo,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True
-            )
+            subprocess.Popen(args, **kwargs)
             logger.info(f"[Watchdog] Restart command issued: {cmd}")
         except Exception as e:
             logger.error(f"[Watchdog] Failed to execute restart command: {e}")

@@ -58,7 +58,7 @@ def _memory_stats() -> str:
     """Get memory statistics."""
     store = _mem()
     try:
-        stats = store.get_stats()
+        stats = store.stats()
         return "\n".join(f"{col}: {cnt} entries" for col, cnt in stats.items())
     except Exception as e:
         return f"Memory error: {e}"
