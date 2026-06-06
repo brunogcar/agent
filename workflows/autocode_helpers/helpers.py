@@ -1,6 +1,4 @@
-﻿"""
-Helpers for autocode workflow.
-"""
+"""Helpers for autocode workflow."""
 from __future__ import annotations
 import json
 import os
@@ -9,12 +7,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from core.config import cfg
-from core.llm import llm
 from core.tracer import tracer
 
 def _extract_code(text: str) -> list[str]:
     """Extract code blocks from text."""
-    pattern = r'```(?:[^\n]*\n)?(.*?)```'
+    pattern = r"```(?:[^\n]*\n)?(.*?)```"
     matches = re.finditer(pattern, text, re.DOTALL)
     return [m.group(1).strip() for m in matches]
 
@@ -95,19 +92,19 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
 def _write_files(state: dict) -> dict:
     """
     Write files with EXPLICIT base directory resolution:
-    - If project_root is set, uses ProjectManager to resolve source_root 
+    - If project_root is set, uses ProjectManager to resolve source_root
       (either cfg.agent_root OR cfg.workspace_root/projects/X/code).
     - Fallback: legacy heuristic based on 'workspace/' string.
     """
     files_map = state.get("files_map") or state.get("files", {})
     if not files_map:
         return {"error": "No files to write"}
-    
+
     backups = {}
     written = []
     tid = state.get("trace_id", "")
     project_root = state.get("project_root", "")
-    
+
     # 1. Determine the absolute base directory for writing
     if project_root:
         try:
@@ -150,7 +147,7 @@ def _write_files(state: dict) -> dict:
 
             os.replace(tmp_path, full_path)
             written.append(file_path)
- 
+
         except Exception as e:
             if 'tmp_path' in locals() and tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
@@ -164,3 +161,30 @@ def _write_files(state: dict) -> dict:
             return {"error": f"Write failed: {e}", "partial_written": written, "backups": backups}
 
     return {"files_written": written, "backups": backups}
+
+def _get_autocode_run_path(trace_id: str) -> Path:
+    """Return per-run autocode directory: workspace/autocode/YYYYMMDD/{trace_id}/"""
+    from datetime import datetime
+    date_str = datetime.now().strftime("%Y%m%d")
+    run_dir = cfg.workspace_root / "autocode" / date_str / trace_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+def _cleanup_old_autocode_runs(max_age_days: int = 7) -> None:
+    """Delete autocode run folders older than max_age_days. Called on-demand."""
+    import shutil
+    from datetime import datetime, timedelta
+    autocode_base = cfg.workspace_root / "autocode"
+    if not autocode_base.exists():
+        return
+    cutoff = datetime.now() - timedelta(days=max_age_days)
+    for date_dir in autocode_base.iterdir():
+        if not date_dir.is_dir() or not date_dir.name.isdigit() or len(date_dir.name) != 8:
+            continue
+        try:
+            dir_date = datetime.strptime(date_dir.name, "%Y%m%d")
+            if dir_date < cutoff:
+                shutil.rmtree(date_dir, ignore_errors=True)
+                tracer.step("autocode", "cleanup", f"Removed old autocode dir: {date_dir}")
+        except (ValueError, OSError):
+            continue

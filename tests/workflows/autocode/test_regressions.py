@@ -1,5 +1,4 @@
-"""
-tests/workflows/autocode/test_regressions.py
+"""tests/workflows/autocode/test_regressions.py
 Regression tests for bugs fixed in commits b04e6cd and 1ee46dd.
 These tests verify that fixed bugs do not reoccur.
 """
@@ -15,7 +14,6 @@ from workflows.autocode_helpers.nodes.write_files import node_write_files
 from workflows.autocode_helpers.nodes.run_tests import node_run_tests
 from workflows.autocode_helpers.nodes.debug import node_systematic_debug
 from workflows.autocode_helpers.state import AutocodeState
-
 
 class TestDebugLoopRouting:
     """A.2: Debug loop must route through write_files before re-running tests."""
@@ -33,8 +31,12 @@ class TestDebugLoopRouting:
 class TestWriteFilesPopulatesTestFiles:
     """A.3: write_files must return test_files so run_tests knows what to execute."""
 
-    def test_write_files_returns_test_files_when_test_code_present(self, tmp_path):
+    def test_write_files_returns_test_files_when_test_code_present(self, tmp_path, monkeypatch):
         """When state contains test_code, write_files must return test_files path."""
+        import core.config
+        monkeypatch.setattr(core.config.cfg, "workspace_root", tmp_path)
+        monkeypatch.setattr(core.config.cfg, "agent_root", tmp_path)
+
         state: AutocodeState = {
             "trace_id": "test",
             "project_root": str(tmp_path),
@@ -46,10 +48,15 @@ class TestWriteFilesPopulatesTestFiles:
             "node_write_files must return 'test_files' when test_code is present "
             "so that node_run_tests knows which files to execute"
         )
-        assert result["test_files"] == ["autocode/test_autocode_feature.py"]
+        assert result["test_files"][0].startswith("autocode/")
+        assert result["test_files"][0].endswith("/test_autocode_feature.py")
 
-    def test_write_files_no_test_files_when_no_test_code(self, tmp_path):
+    def test_write_files_no_test_files_when_no_test_code(self, tmp_path, monkeypatch):
         """When state has no test_code, test_files should not be returned."""
+        import core.config
+        monkeypatch.setattr(core.config.cfg, "workspace_root", tmp_path)
+        monkeypatch.setattr(core.config.cfg, "agent_root", tmp_path)
+
         state: AutocodeState = {
             "trace_id": "test",
             "project_root": str(tmp_path),
@@ -60,12 +67,15 @@ class TestWriteFilesPopulatesTestFiles:
             "test_files should not be returned when test_code is absent"
         )
 
-
 class TestTestCodeListCoercion:
     """A.6: test_code is list[str] from _extract_code but write_text expects str."""
 
-    def test_test_code_list_joined_to_string(self, tmp_path):
+    def test_test_code_list_joined_to_string(self, tmp_path, monkeypatch):
         """If test_code is a list, it must be joined with newlines before writing."""
+        import core.config
+        monkeypatch.setattr(core.config.cfg, "workspace_root", tmp_path)
+        monkeypatch.setattr(core.config.cfg, "agent_root", tmp_path)
+
         state: AutocodeState = {
             "trace_id": "test",
             "project_root": str(tmp_path),
@@ -75,13 +85,14 @@ class TestTestCodeListCoercion:
         result = node_write_files(state)
         assert result.get("test_files") is not None
         # Verify file was written with joined content
-        test_file = tmp_path / "autocode" / "test_autocode_feature.py"
+        assert "autocode_run_path" in result
+        run_path = Path(result["autocode_run_path"])
+        test_file = run_path / "test_autocode_feature.py"
         assert test_file.exists()
         content = test_file.read_text(encoding="utf-8")
         assert "def test_a(): pass" in content
         assert "def test_b(): pass" in content
         assert "\n\n" in content, "List elements should be joined with double newlines"
-
 
 class TestExecuteStepIncrementsCurrentStep:
     """A.9: execute_step must increment current_step so the plan advances."""
@@ -98,12 +109,12 @@ class TestExecuteStepIncrementsCurrentStep:
         with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
             mock_call.return_value = json.dumps({"patches": [], "new_files": {}})
             result = node_execute_step(state)
-        assert "current_step" in result, (
-            "node_execute_step must return 'current_step' so the plan advances"
-        )
-        assert result["current_step"] == 1, (
-            f"current_step should be 1, got {result.get('current_step')}"
-        )
+            assert "current_step" in result, (
+                "node_execute_step must return 'current_step' so the plan advances"
+            )
+            assert result["current_step"] == 1, (
+                f"current_step should be 1, got {result.get('current_step')}"
+            )
 
     def test_execute_step_does_not_increment_beyond_plan(self):
         """When current_step exceeds plan length, execute_step should return error."""
@@ -115,7 +126,6 @@ class TestExecuteStepIncrementsCurrentStep:
         }
         result = node_execute_step(state)
         assert result.get("status") == "error"
-
 
 class TestDryRunSkipsModifiedFiles:
     """P1 #3: dry_run=True must not populate modified_files."""
@@ -135,10 +145,10 @@ class TestDryRunSkipsModifiedFiles:
                 "new_files": {}
             })
             result = node_execute_step(state)
-        assert "modified_files" not in result, (
-            "dry_run=True must not return modified_files — "
-            "disk writes are skipped"
-        )
+            assert "modified_files" not in result, (
+                "dry_run=True must not return modified_files — "
+                "disk writes are skipped"
+            )
 
     def test_dry_run_false_populates_modified_files(self):
         """When dry_run is False, modified_files should be populated."""
@@ -155,12 +165,11 @@ class TestDryRunSkipsModifiedFiles:
                 "new_files": {"bar.py": "print(1)"}
             })
             result = node_execute_step(state)
-        assert "modified_files" in result, (
-            "dry_run=False must return modified_files"
-        )
-        assert "foo.py" in result["modified_files"]
-        assert "bar.py" in result["modified_files"]
-
+            assert "modified_files" in result, (
+                "dry_run=False must return modified_files"
+            )
+            assert "foo.py" in result["modified_files"]
+            assert "bar.py" in result["modified_files"]
 
 class TestRunTestsWiresTargetedCmd:
     """A.13: run_tests must pass targeted_test_cmd from state to run_tests_on_disk."""
@@ -176,15 +185,14 @@ class TestRunTestsWiresTargetedCmd:
         with patch("workflows.autocode_helpers.nodes.run_tests.run_tests_on_disk") as mock_run:
             mock_run.return_value = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
             node_run_tests(state)
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args
-        assert call_args.kwargs.get("targeted_cmd") == "pytest tests/test_a.py -x", (
-            "targeted_test_cmd from state must be passed to run_tests_on_disk"
-        )
-        assert call_args.kwargs.get("project_root") == "/tmp/project", (
-            "project_root from state must be passed to run_tests_on_disk"
-        )
-
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args
+            assert call_args.kwargs.get("targeted_cmd") == "pytest tests/test_a.py -x", (
+                "targeted_test_cmd from state must be passed to run_tests_on_disk"
+            )
+            assert call_args.kwargs.get("project_root") == "/tmp/project", (
+                "project_root from state must be passed to run_tests_on_disk"
+            )
 
 class TestDebugParsesNestedJson:
     """P2 #18: debug node must handle nested JSON without crashing."""
@@ -198,14 +206,15 @@ class TestDebugParsesNestedJson:
             "debug.py must import _parse_json for JSON extraction fallback"
         )
         # Verify the old brittle regex pattern is not used
-        assert "re.search(r'\\{[^\\{}]*\\}'" not in source, (
+        old_pattern = r"re.search(r'\{[^\{\}]*\}'"
+        assert old_pattern not in source, (
             "debug.py must not use the brittle regex that cannot match nested JSON"
         )
 
     def test_json_loads_parses_nested_structure(self):
         """json.loads correctly parses nested JSON with escaped newlines."""
         import json
-        
+
         # Use json.dumps to create valid JSON with escaped newlines
         data = {
             "root_cause": "Missing import",
@@ -218,7 +227,7 @@ class TestDebugParsesNestedJson:
         }
         json_str = json.dumps(data, indent=2)
         result = json.loads(json_str)
-        
+
         assert "root_cause" in result
         assert "fix" in result
         assert "patches" in result["fix"]
@@ -251,20 +260,19 @@ class TestFileToolModeFiltering:
         """When mode is empty string, it must not be passed to handlers."""
         import inspect
         from tools.file import file
-        
+
         sig = inspect.signature(file)
         params = sig.parameters
-        
+
         # mode should exist in signature (for backward compat)
         assert "mode" in params, "file tool must accept mode parameter for backward compatibility"
-        
+
         # mode default should be empty string so it gets filtered
         mode_param = params["mode"]
         assert mode_param.default == "", (
             "mode default must be '' so it gets filtered from params dict, "
             "since no handler accepts a 'mode' keyword argument"
         )
-
 
 class TestAbsolutePathTraversalBlocked:
     """A.12: Absolute paths outside project_root must be blocked."""
@@ -284,7 +292,6 @@ class TestAbsolutePathTraversalBlocked:
             "Absolute paths outside project_root must be blocked"
         )
 
-
 class TestProtectedFileBypassBlocked:
     """A.12: Relative path traversal to protected files must be blocked."""
 
@@ -303,7 +310,6 @@ class TestProtectedFileBypassBlocked:
             "Relative path traversal to protected files must be blocked"
         )
 
-
 class TestInvalidJsonFromLlm:
     """A.1: Malformed tdd_source_code JSON must be preserved for downstream handling."""
 
@@ -320,15 +326,14 @@ class TestInvalidJsonFromLlm:
         with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
             mock_call.return_value = bad_json
             result = node_execute_step(state)
-        
-        # execute_step does not validate JSON; it stores the raw string
-        assert result.get("tdd_source_code") == bad_json, (
-            "Malformed JSON from LLM must be preserved in tdd_source_code for downstream handling"
-        )
-        assert "modified_files" not in result, (
-            "Malformed JSON must not populate modified_files in execute_step"
-        )
 
+            # execute_step does not validate JSON; it stores the raw string
+            assert result.get("tdd_source_code") == bad_json, (
+                "Malformed JSON from LLM must be preserved in tdd_source_code for downstream handling"
+            )
+            assert "modified_files" not in result, (
+                "Malformed JSON must not populate modified_files in execute_step"
+            )
 
 class TestBrainstormEarlyReturn:
     """A.8: needs_clarification must return empty dict without NameError."""
@@ -336,7 +341,7 @@ class TestBrainstormEarlyReturn:
     def test_needs_clarification_returns_empty_dict(self):
         """When status is needs_clarification, brainstorm must return {}."""
         from workflows.autocode_helpers.nodes.brainstorm import node_brainstorm
-        
+
         state: AutocodeState = {
             "trace_id": "test",
             "status": "needs_clarification",

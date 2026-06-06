@@ -1,6 +1,4 @@
-"""
-Verification node.
-"""
+"""Verification node."""
 
 from __future__ import annotations
 
@@ -30,7 +28,7 @@ def node_verify(state: AutocodeState) -> dict:
         try:
             from core.memory import memory
             memory.store(
-                text=f"Verification skipped due to TDD exhaustion on task: '{state.get('task')}'. Error: {state.get('tdd_error', 'Unknown')}",
+                text=f"Verification skipped due to TDD exhaustion on task: '{state.get('task', 'Unknown')}'. Error: {state.get('tdd_error', 'Unknown')}",
                 memory_type="procedural",
                 importance=8,
                 tags="tdd_failure,verify_skipped,autocode",
@@ -52,13 +50,20 @@ def node_verify(state: AutocodeState) -> dict:
 
     tracer.step(tid, "verify", "running automated checks")
 
-    # Fresh pytest on agent root
+    # Fresh pytest on autocode run directory
     tests_passed = False
     fresh_output = ""
-    base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
-    test_file = base_path / "autocode" / "test_autocode_feature.py"
-    tests_dir = base_path / "autocode" / "tests"
 
+    tid = state.get("trace_id", "")
+    run_path = state.get("autocode_run_path", "")
+    if run_path:
+        run_dir = Path(run_path)
+    else:
+        from workflows.autocode_helpers.helpers import _get_autocode_run_path
+        run_dir = _get_autocode_run_path(tid)
+
+    test_file = run_dir / "test_autocode_feature.py"
+    tests_dir = run_dir / "tests"
 
     try:
         cmd = [sys.executable, "-m", "pytest", "--tb=short", "--color=no", "-q"]
@@ -67,7 +72,9 @@ def node_verify(state: AutocodeState) -> dict:
         if test_file.exists():
             cmd.append(str(test_file))
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding='utf-8')
+        # Run from project root so imports resolve correctly
+        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding='utf-8', cwd=str(base_path))
         fresh_output = (result.stdout + result.stderr).strip()
         tests_passed = result.returncode == 0
     except FileNotFoundError:
@@ -94,14 +101,14 @@ def node_verify(state: AutocodeState) -> dict:
         lint_passed = result.returncode == 0
     except Exception as e:
         lint_output = f"ruff not available: {e}"
-        lint_passed = True  # non-fatal
+        lint_passed = True # non-fatal
 
-    automated_ok = tests_passed  # lint is advisory only
+    automated_ok = tests_passed # lint is advisory only
 
     tracer.step(tid, "verify",
-                f"automated: {'PASS' if automated_ok else 'FAIL'}   "
-                f"(pytest={'OK' if tests_passed else 'FAIL'},   "
-                f"lint={'OK' if lint_passed else 'WARN'}) ")
+        f"automated: {'PASS' if automated_ok else 'FAIL'} "
+        f"(pytest={'OK' if tests_passed else 'FAIL'}, "
+        f"lint={'OK' if lint_passed else 'WARN'}) ")
 
     # LLM review (for spec coverage and cleanliness) - WITH ERROR HANDLING
     # [FIX] tdd_source_code is JSON patches/new_files, not raw Python.
@@ -120,9 +127,9 @@ def node_verify(state: AutocodeState) -> dict:
 
     try:
         raw = _call(
-            role    = "executor",
-            system  = VERIFY_SYSTEM,
-            user    = (
+            role = "executor",
+            system = VERIFY_SYSTEM,
+            user = (
                 f"Spec:\n{state.get('spec', '')}\n\n"
                 f"Implementation:\n```python\n{impl_ctx[:3000]}\n```\n\n"
                 f"Tests:\n```python\n{state.get('test_code', '')[:1000]}\n```\n\n"
@@ -149,21 +156,21 @@ def node_verify(state: AutocodeState) -> dict:
 
     # Final decision: automated_ok (real) AND llm_checks_ok (spec/cleanliness)
     all_passed = automated_ok and llm_checks_ok
-    summary    = data.get("summary", "verification incomplete")
-    notes      = json.dumps(data.get("checks", {}), indent=2) if data else "No LLM checks available"
+    summary = data.get("summary", "verification incomplete")
+    notes = json.dumps(data.get("checks", {}), indent=2) if data else "No LLM checks available"
 
     tracer.step(tid, "verify", f"result: {'PASS' if all_passed else 'FAIL'} -- {summary[:80]}")
     # Return partial update without {**state, ...}
     return {
         "verification_passed": all_passed,
         "verification_notes": (
-            f"Automated: {'PASS' if automated_ok else 'FAIL'} |   "
+            f"Automated: {'PASS' if automated_ok else 'FAIL'} | "
             f"LLM: {'PASS' if llm_checks_ok else 'FAIL'}\n"
             f"{summary}\n\n{notes}"
         ),
         "evidence_outputs": {
-            "tests":      fresh_output[:2000],
-            "lint":       lint_output[:500],
+            "tests": fresh_output[:2000],
+            "lint": lint_output[:500],
             "regression": fresh_output[:2000],
         },
         "trace_id": tid

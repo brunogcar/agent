@@ -1,6 +1,4 @@
-"""
-State definitions and defaults for autocode workflow.
-"""
+"""State definitions and defaults for autocode workflow."""
 
 from __future__ import annotations
 
@@ -8,7 +6,7 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import AnyMessage
 from typing import Annotated, TypedDict, Optional
 
-from core.config import cfg  # [FIX 4] Added to read timeout config from env
+from core.config import cfg # [FIX 4] Added to read timeout config from env
 
 # # Constants (Centralized in core.config.cfg, referenced here for local defaults)
 MAX_RETRIES = cfg.autocode_max_retries
@@ -28,11 +26,11 @@ NODE_TIMEOUTS = {
 
 class FileSnapshot(TypedDict):
     """Memory-safe snapshot for LangGraph state to prevent bloat."""
-    content_preview: str      # First 8KB — enough for import extraction
-    preview_md5: str          # MD5 of the 8KB preview (for state comparison)
-    full_md5: str             # MD5 of the full file (for graph integrity)
-    size: int                 # Full file size
-    truncated: bool           # True if content_preview < full content
+    content_preview: str # First 8KB — enough for import extraction
+    preview_md5: str # MD5 of the 8KB preview (for state comparison)
+    full_md5: str # MD5 of the full file (for graph integrity)
+    size: int # Full file size
+    truncated: bool # True if content_preview < full content
 
 class AutocodeState(TypedDict, total=False):
     """State for the autocode workflow."""
@@ -47,13 +45,14 @@ class AutocodeState(TypedDict, total=False):
 
     # Classification
     task_type: str
-    project_root: str  # [GIT SCOPING] Isolated repo root for workspace projects
+    project_root: str # [GIT SCOPING] Isolated repo root for workspace projects
+    autocode_run_path: str # Absolute path to per-run autocode directory
 
     # Brainstorm/Plan
     brainstorm_notes: str
     plan: list[dict]
     plan_accepted: bool
-    spec: str  # [FIX] Added to prevent LangGraph from stripping it
+    spec: str # [FIX] Added to prevent LangGraph from stripping it
 
     # TDD loop
     tdd_iteration: int
@@ -61,8 +60,8 @@ class AutocodeState(TypedDict, total=False):
     tdd_error: str
     tdd_status: str
     max_retries: int
-    files_map: dict[str, FileSnapshot]  # path -> FileSnapshot
-    current_step: int  # [FIX] Added for TDD step indexing
+    files_map: dict[str, FileSnapshot] # path -> FileSnapshot
+    current_step: int # [FIX] Added for TDD step indexing
 
     # Execution
     execution_notes: str
@@ -71,7 +70,7 @@ class AutocodeState(TypedDict, total=False):
     # Test results
     test_results: dict
     tests_written: bool
-    
+
     # Impact Analysis (Phase: AST Dependency Graphing)
     impact_warnings: list[str]
     targeted_test_cmd: str | None
@@ -117,9 +116,10 @@ def _default_state(
         "trace_id": "",
         "dry_run": dry_run,
         "task_type": "",
-        "project_root": "",  # [GIT SCOPING] Defaults to agent_root if empty
+        "project_root": "", # [GIT SCOPING] Defaults to agent_root if empty
+        "autocode_run_path": "",
         "brainstorm_notes": "",
-        "plan": [],  # [FIX] Must be a list for TDD step indexing
+        "plan": [], # [FIX] Must be a list for TDD step indexing
         "plan_accepted": False,
         "spec": "",
         "tdd_iteration": 0,
@@ -127,8 +127,8 @@ def _default_state(
         "tdd_error": "",
         "tdd_status": "",
         "max_retries": MAX_RETRIES,
-        "files_map": {},  # dict[str, FileSnapshot]
-        "current_step": 0,  # [FIX] Added for TDD step indexing
+        "files_map": {}, # dict[str, FileSnapshot]
+        "current_step": 0, # [FIX] Added for TDD step indexing
         "execution_notes": "",
         "modified_files": [],
         "test_results": {},

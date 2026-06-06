@@ -1,5 +1,4 @@
-﻿"""
-tests/workflows/autocode/test_nodes.py
+"""tests/workflows/autocode/test_nodes.py
 Unit tests for execute and write_files nodes.
 Guarantees:
 - LLM calls are mocked; no external requests
@@ -14,7 +13,6 @@ import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-
 @pytest.fixture
 def temp_workspace(tmp_path, monkeypatch):
     """Patch cfg.workspace_root to tmp_path for safe file writes."""
@@ -22,7 +20,6 @@ def temp_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(core.config.cfg, "workspace_root", tmp_path)
     monkeypatch.setattr(core.config.cfg, "agent_root", tmp_path)
     yield tmp_path
-
 
 @pytest.fixture
 def base_state(temp_workspace):
@@ -40,7 +37,6 @@ def base_state(temp_workspace):
         "tdd_source_code": "",
         "files_context": "# empty",
     }
-
 
 class TestNodeExecuteStep:
     """Validate execute node reads plan as list, calls LLM, sets tdd_source_code."""
@@ -79,7 +75,6 @@ class TestNodeExecuteStep:
             # dry_run=True should skip _write_files, so modified_files stays unset
             assert "modified_files" not in result
 
-
 class TestNodeWriteFiles:
     """Validate write_files reads tdd_source_code, applies patches, handles errors."""
 
@@ -94,12 +89,28 @@ class TestNodeWriteFiles:
         from workflows.autocode_helpers.nodes.write_files import node_write_files
         payload = {"new_files": {"test_output.py": "# generated"}}
         base_state["tdd_source_code"] = json.dumps(payload)
-        base_state["dry_run"] = False  # Allow actual write to tmp_path
+        base_state["dry_run"] = False
+        base_state["test_code"] = "def test_feature(): assert True"
 
         result = node_write_files(base_state)
         # File should exist in temp workspace
         assert (temp_workspace / "test_output.py").exists()
         assert (temp_workspace / "test_output.py").read_text() == "# generated"
+
+        # Test file should be in per-run autocode directory
+        assert "autocode_run_path" in result
+        run_path = Path(result["autocode_run_path"])
+        test_file = run_path / "test_autocode_feature.py"
+        assert test_file.exists()
+        assert "test_feature" in test_file.read_text()
+
+        # generated_code.json should exist
+        assert (run_path / "generated_code.json").exists()
+
+        # test_files should contain relative path
+        assert "test_files" in result
+        assert result["test_files"][0].endswith("/test_autocode_feature.py")
+        assert result["test_files"][0].startswith("autocode/")
 
     def test_write_files_handles_invalid_json_gracefully(self, base_state):
         from workflows.autocode_helpers.nodes.write_files import node_write_files
@@ -108,4 +119,38 @@ class TestNodeWriteFiles:
         # LangGraph partial update: empty dict means no changes
         assert result == {}
 
+class TestAutocodePathHelpers:
+    """Validate per-run autocode directory structure and cleanup."""
 
+    def test_get_autocode_run_path_creates_directory(self, temp_workspace):
+        from workflows.autocode_helpers.helpers import _get_autocode_run_path
+        run_dir = _get_autocode_run_path("test-trace-123")
+        assert run_dir.exists()
+        assert run_dir.name == "test-trace-123"
+        # Should be under workspace/autocode/YYYYMMDD/
+        assert run_dir.parent.parent.name == "autocode"
+        assert run_dir.parent.parent.parent == temp_workspace
+
+    def test_cleanup_old_autocode_runs_removes_stale_dirs(self, temp_workspace, monkeypatch):
+        from workflows.autocode_helpers.helpers import _cleanup_old_autocode_runs
+        import shutil
+        from datetime import datetime, timedelta
+        import core.tracer
+        monkeypatch.setattr(core.tracer.tracer, "step", lambda *args, **kwargs: None)
+
+        # Create an old run directory
+        old_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+        old_dir = temp_workspace / "autocode" / old_date / "old-trace"
+        old_dir.mkdir(parents=True, exist_ok=True)
+        (old_dir / "test.py").write_text("pass", encoding="utf-8")
+
+        # Create a recent run directory
+        recent_date = datetime.now().strftime("%Y%m%d")
+        recent_dir = temp_workspace / "autocode" / recent_date / "recent-trace"
+        recent_dir.mkdir(parents=True, exist_ok=True)
+        (recent_dir / "test.py").write_text("pass", encoding="utf-8")
+
+        _cleanup_old_autocode_runs(max_age_days=7)
+
+        assert not old_dir.exists(), "Old autocode dir should be cleaned up"
+        assert recent_dir.exists(), "Recent autocode dir should be preserved"

@@ -1,6 +1,4 @@
-"""
-Test runner node for autocode workflow.
-"""
+"""Test runner node for autocode workflow."""
 
 from __future__ import annotations
 
@@ -20,7 +18,7 @@ def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_
     """
     if project_root is None:
         project_root = str(cfg.workspace_root)
-    
+
     if targeted_cmd:
         # targeted_cmd is like "pytest tests/test_a.py tests/test_b.py"
         parts = targeted_cmd.split()
@@ -29,7 +27,12 @@ def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_
         else:
             cmd = parts
     else:
-        test_paths = [str(Path(project_root) / tf) for tf in test_files]
+        test_paths = []
+        for tf in test_files:
+            if tf.startswith("autocode/"):
+                test_paths.append(str(cfg.workspace_root / tf))
+            else:
+                test_paths.append(str(Path(project_root) / tf))
         cmd = [sys.executable, "-m", "pytest", "-v", "--tb=short", *test_paths]
 
     try:
@@ -38,7 +41,7 @@ def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_
             capture_output=True,
             text=True,
             timeout=cfg.sandbox_timeout,
-            cwd=project_root  # Run in the project root directory
+            cwd=project_root # Run in the project root directory
         )
         return {
             "success": result.returncode == 0,
@@ -101,7 +104,7 @@ def node_run_tests(state: AutocodeState) -> dict:
                 outcome="success"
             )
         except Exception:
-            pass  # Non-fatal: memory storage failure should not break the workflow
+            pass # Non-fatal: memory storage failure should not break the workflow
 
     else:
         updates["tdd_status"] = "failed"
