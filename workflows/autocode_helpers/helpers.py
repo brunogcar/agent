@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from core.config import cfg
+from core.llm import llm
 from core.tracer import tracer
 
 def _extract_code(text: str) -> list[str]:
@@ -70,9 +71,8 @@ def _should_copy_file(path: str | Path, protected_files: frozenset[str]) -> bool
 
 def _call(role: str, system: str, user: str, timeout: int | None = None, temperature: float | None = None) -> str:
     """Call the LLM with the given role, system prompt, and user message."""
-    from workflows.autocode_helpers.state import NODE_TIMEOUTS
     if timeout is None:
-        timeout = NODE_TIMEOUTS.get(role, NODE_TIMEOUTS["default"])
+        timeout = cfg.model_registry.get(role, {}).get("timeout", cfg.execution_timeout)
     try:
         response = llm.complete(
             role=role,
@@ -91,10 +91,7 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
 
 def _write_files(state: dict) -> dict:
     """
-    Write files with EXPLICIT base directory resolution:
-    - If project_root is set, uses ProjectManager to resolve source_root
-      (either cfg.agent_root OR cfg.workspace_root/projects/X/code).
-    - Fallback: legacy heuristic based on 'workspace/' string.
+    Write files with EXPLICIT base directory resolution.
     """
     files_map = state.get("files_map") or state.get("files", {})
     if not files_map:
@@ -105,11 +102,9 @@ def _write_files(state: dict) -> dict:
     tid = state.get("trace_id", "")
     project_root = state.get("project_root", "")
 
-    # 1. Determine the absolute base directory for writing
     if project_root:
         try:
             from core.kgraph.project import ProjectManager, is_same_path
-            # Check if the project_root IS the agent_root
             is_agent = is_same_path(Path(project_root), cfg.agent_root)
             pm = ProjectManager(project_root, is_agent_root=is_agent)
             base = pm.source_root
@@ -118,7 +113,6 @@ def _write_files(state: dict) -> dict:
             tracer.warning(tid, "write_files", f"ProjectManager failed ({e}), falling back to cfg.agent_root")
             base = cfg.agent_root
     else:
-        # Fallback legacy behavior if project_root is not provided
         if any("workspace" in str(p) for p in files_map.keys()):
             base = cfg.workspace_root
         else:
@@ -151,7 +145,6 @@ def _write_files(state: dict) -> dict:
         except Exception as e:
             if 'tmp_path' in locals() and tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
-            # Best-effort rollback if write fails mid-loop
             for orig_str, backup_path in backups.items():
                 try:
                     Path(orig_str).write_text(Path(backup_path).read_text(encoding="utf-8"), encoding="utf-8")
