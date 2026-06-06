@@ -39,7 +39,7 @@ class TestTracerPublicAPI:
         # Mock the file writer to prevent disk I/O during tests
         with patch("core.tracer._writer") as mock_writer:
             tid = tracer.new_trace("autocode", goal="fix bug")
-            assert len(tid) == 8
+            assert len(tid) == 12
             assert mock_writer.write.called
 
     def test_generate_trace_id_length(self):

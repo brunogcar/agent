@@ -16,6 +16,7 @@ def test_default_state_structure(tmp_path):
     """Ensure _default_state creates the correct initial structure."""
     project_path = tmp_path / "test_proj"
     project_path.mkdir()
+    (project_path / "code").mkdir()  # Workspace projects need source root
     
     state = _default_state(str(project_path), is_agent_root=False)
     
@@ -29,6 +30,7 @@ async def test_node_init_project_creates_dirs(tmp_path):
     """Ensure node_init_project creates the .understand directory and kg.db."""
     project_path = tmp_path / "test_proj"
     project_path.mkdir()
+    (project_path / "code").mkdir()  # Workspace projects need source root
     
     state = _default_state(str(project_path), is_agent_root=False)
     result = await node_init_project(state)

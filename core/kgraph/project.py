@@ -62,6 +62,7 @@ class ProjectManager:
         """Create the artifact directory structure if it doesn't exist and run cleanup."""
         self.artifact_root.mkdir(parents=True, exist_ok=True)
         (self.artifact_root / "cache").mkdir(exist_ok=True)
+        self.source_root.mkdir(parents=True, exist_ok=True)
         
         # NOTE: We do NOT create self.source_root here for workspace projects.
         # If the 'code' directory is missing, we want node_init_project to catch 

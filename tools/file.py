@@ -80,7 +80,9 @@ def file(
     query: str = "",
     max_chars: int | None = None,
     max_results: int | None = None,
-    mode: str = "full",
+    mode: str = "",
+    old: str = "",
+    new: str = "",
     trace_id: str = "",
 ) -> dict:
     """
@@ -159,6 +161,8 @@ def file(
         "max_chars": max_chars,
         "max_results": max_results,
         "mode": mode,
+        "old": old,
+        "new": new,
     }
     params = {k: v for k, v in params.items() if v not in ("", None, [])}
     
