@@ -264,3 +264,85 @@ class TestFileToolModeFiltering:
             "mode default must be '' so it gets filtered from params dict, "
             "since no handler accepts a 'mode' keyword argument"
         )
+
+
+class TestAbsolutePathTraversalBlocked:
+    """A.12: Absolute paths outside project_root must be blocked."""
+
+    def test_absolute_path_blocked(self, tmp_path):
+        """Absolute paths like /etc/passwd must not be writable."""
+        (tmp_path / "project").mkdir(parents=True, exist_ok=True)
+        state: AutocodeState = {
+            "trace_id": "test",
+            "project_root": str(tmp_path / "project"),
+            "tdd_source_code": json.dumps({
+                "patches": [{"path": "/etc/passwd", "old": "", "new": "evil"}]
+            }),
+        }
+        result = node_write_files(state)
+        assert "patch_errors" in result, (
+            "Absolute paths outside project_root must be blocked"
+        )
+
+
+class TestProtectedFileBypassBlocked:
+    """A.12: Relative path traversal to protected files must be blocked."""
+
+    def test_relative_traversal_to_protected_blocked(self, tmp_path):
+        """Paths like ../../agent/core/config.py must be blocked."""
+        (tmp_path / "project").mkdir(parents=True, exist_ok=True)
+        state: AutocodeState = {
+            "trace_id": "test",
+            "project_root": str(tmp_path / "project"),
+            "tdd_source_code": json.dumps({
+                "patches": [{"path": "../../agent/core/config.py", "old": "", "new": "evil"}]
+            }),
+        }
+        result = node_write_files(state)
+        assert "patch_errors" in result, (
+            "Relative path traversal to protected files must be blocked"
+        )
+
+
+class TestInvalidJsonFromLlm:
+    """A.1: Malformed tdd_source_code JSON must be preserved for downstream handling."""
+
+    def test_malformed_json_preserved_in_tdd_source_code(self):
+        """When LLM returns invalid JSON, execute_step preserves it for write_files to handle."""
+        state: AutocodeState = {
+            "trace_id": "test",
+            "plan": [{"description": "step 1"}],
+            "current_step": 0,
+            "files_context": "# empty",
+            "dry_run": True,
+        }
+        bad_json = "This is not JSON at all { broken"
+        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
+            mock_call.return_value = bad_json
+            result = node_execute_step(state)
+        
+        # execute_step does not validate JSON; it stores the raw string
+        assert result.get("tdd_source_code") == bad_json, (
+            "Malformed JSON from LLM must be preserved in tdd_source_code for downstream handling"
+        )
+        assert "modified_files" not in result, (
+            "Malformed JSON must not populate modified_files in execute_step"
+        )
+
+
+class TestBrainstormEarlyReturn:
+    """A.8: needs_clarification must return empty dict without NameError."""
+
+    def test_needs_clarification_returns_empty_dict(self):
+        """When status is needs_clarification, brainstorm must return {}."""
+        from workflows.autocode_helpers.nodes.brainstorm import node_brainstorm
+        
+        state: AutocodeState = {
+            "trace_id": "test",
+            "status": "needs_clarification",
+            "task": "test task",
+        }
+        result = node_brainstorm(state)
+        assert result == {}, (
+            "needs_clarification must return empty dict without referencing undefined variables"
+        )

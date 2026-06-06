@@ -38,3 +38,20 @@ async def test_node_init_project_creates_dirs(tmp_path):
     assert result["status"] == "running"
     assert (project_path / ".understand").exists()
     assert (project_path / ".understand" / "kg.db").exists()
+
+@pytest.mark.asyncio
+async def test_node_init_project_fails_without_code_dir(tmp_path):
+    """Workspace projects without code/ directory must fail with clear error."""
+    project_path = tmp_path / "bad_proj"
+    project_path.mkdir()
+    # Intentionally do NOT create code/ directory
+    
+    state = _default_state(str(project_path), is_agent_root=False)
+    result = await node_init_project(state)
+    
+    assert result.get("status") == "failed", (
+        "node_init_project must fail when source_root (code/) is missing"
+    )
+    assert "error" in result or "source" in str(result).lower(), (
+        "Error message must mention the missing source directory"
+    )
