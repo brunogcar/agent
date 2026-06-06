@@ -1,16 +1,16 @@
-"""
-workflows/base.py -- Shared state TypedDict and node utilities.
+"""workflows/base.py -- Shared state TypedDict and node utilities.
 All three workflows (research, data, autocode) share:
-WorkflowState TypedDict
-_step() and _error() node helpers that write to the trace
-run_workflow() dispatcher that routes by type
+  WorkflowState TypedDict
+  _step() and _error() node helpers that write to the trace
+  run_workflow() dispatcher that routes by type
+
 Usage from a tool or the agent meta-tool:
-from workflows.base import run_workflow
-result = run_workflow(
-    workflow_type="research",
-    goal="What is LangGraph?",
-    trace_id="abc123",
-)
+    from workflows.base import run_workflow
+    result = run_workflow(
+        workflow_type="research",
+        goal="What is LangGraph?",
+        trace_id="abc123",
+    )
 """
 from __future__ import annotations
 import time
@@ -22,37 +22,36 @@ from core.config import cfg
 # -- Shared workflow state ----------------------------------------------------
 class WorkflowState(TypedDict, total=False):
     # Identity
-    workflow:    str        # "research" | "data" | "autocode"
-    goal:        str        # what we are trying to accomplish
-    trace_id:    str        # tracer ID for this run
+    workflow: str          # "research" | "data" | "autocode"
+    goal: str              # what we are trying to accomplish
+    trace_id: str          # tracer ID for this run
     # Inputs
-    code:        str        # initial code for data workflow
-    target_file: str        # file to edit (autocode)
-    mode:        str        # autocode mode: fix_error | improve | add_feature
-    error_msg:   str        # error traceback (autocode fix_error)
+    code: str              # initial code for data workflow
+    target_file: str       # file to edit (autocode)
+    mode: str              # autocode mode: fix_error | improve | add_feature
+    error_msg: str         # error traceback (autocode fix_error)
     feature_desc:str        # feature description (autocode add_feature)
 
     # Accumulated context
-    memory_context: str     # recalled memories (formatted string)
-    file_content:   str     # current file content (autocode)
-    search_results: str     # web search results
-    analysis:       str     # agent(analyze) output
-    patch:          str     # generated patch (autocode)
-    review:         dict    # agent(review) structured output
+    memory_context: str      # recalled memories (formatted string)
+    file_content: str        # current file content (autocode)
+    search_results: str      # web search results
+    analysis: str            # agent(analyze) output
+    patch: str               # generated patch (autocode)
+    review: dict             # agent(review) structured output
 
     # Execution
-    output:      str        # python execution output
-    exec_error:  str        # execution error if any
+    output: str              # python execution output
+    exec_error: str          # execution error if any
 
     # Control
-    retries:     int        # current retry count
-    error:       str        # fatal workflow error
-    status:      str        # "running" | "success" | "failed"
+    retries: int             # current retry count
+    error: str               # fatal workflow error
+    status: str              # "running" | "success" | "failed"
 
     # Result
-    result:      str        # final result summary
-    artifacts:   list       # files created, commits made, etc.
-
+    result: str              # final result summary
+    artifacts: list          # files created, commits made, etc.
 
 # -- Node helpers -------------------------------------------------------------
 def trim_state(state: WorkflowState) -> WorkflowState:
@@ -74,14 +73,13 @@ def trim_state(state: WorkflowState) -> WorkflowState:
             )
             new_state[key] = f"[Evicted: {len(val) // 4} tokens saved to episodic memory. Use memory tool to recall.]"
             evicted_keys.append(key)
-            
+
     if evicted_keys:
         tid = state.get("trace_id", "")
         if tid:
             tracer.step(tid, "eviction", f"Evicted {evicted_keys} to episodic memory")
-            
-    return new_state
 
+    return new_state
 
 def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = False, **kwargs) -> None:
     """Log a workflow step to the active trace."""
@@ -92,41 +90,39 @@ def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = 
         from workflows.helpers.checkpoint import save_checkpoint
         save_checkpoint(tid, node, state)
 
-
-def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> WorkflowState:
-    """Mark state as failed and log to trace. Message is never empty."""
+def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> dict:
+    """Mark state as failed and log to trace. Message is never empty.
+    Returns a PARTIAL dict (LangGraph best practice — only changed keys)."""
     if not message or not message.strip():
         message = f"Unspecified error in node '{node}'"
     tid = state.get("trace_id", "")
     if tid:
         tracer.error(tid, node, message, **kwargs)
         from workflows.helpers.checkpoint import save_checkpoint
-        save_checkpoint(tid, node, {**state, "status": "failed", "error": message})
+        save_checkpoint(tid, node, {"status": "failed", "error": message})
 
-    return {**state, "status": "failed", "error": message}
+    return {"status": "failed", "error": message}
 
-
-def node_done(state: WorkflowState, result: str, artifacts: list = None) -> WorkflowState:
-    """Mark state as succeeded."""
+def node_done(state: WorkflowState, result: str, artifacts: list = None) -> dict:
+    """Mark state as succeeded.
+    Returns a PARTIAL dict (LangGraph best practice — only changed keys)."""
     tid = state.get("trace_id", "")
     if tid:
         tracer.finish(tid, success=True, result=result[:200])
         from workflows.helpers.checkpoint import mark_complete
         mark_complete(tid)
     return {
-        **state,
-        "status":     "success",
-        "result":     result,
-        "artifacts":  artifacts or [],
+        "status": "success",
+        "result": result,
+        "artifacts": artifacts or [],
     }
-
 
 # -- Workflow dispatcher ------------------------------------------------------
 def run_workflow(
     workflow_type: str,
-    goal:          str,
-    trace_id:      str  = "",
-    resume:        bool = False,
+    goal: str,
+    trace_id: str = "",
+    resume: bool = False,
     **kwargs,
 ) -> dict:
     """
@@ -138,7 +134,7 @@ def run_workflow(
     **kwargs      : workflow-specific inputs (see each workflow module)
 
     Returns the final WorkflowState as a plain dict with at minimum:
-      {status: "success" | "failed", result: str, error: str, artifacts: list}
+        {status: "success" | "failed", result: str, error: str, artifacts: list}
     """
     wf_type = workflow_type.strip().lower()
 
@@ -147,14 +143,14 @@ def run_workflow(
         trace_id = tracer.new_trace(wf_type, goal=goal)
 
     initial_state: WorkflowState = {
-        "workflow":   wf_type,
-        "goal":       goal,
-        "trace_id":   trace_id,
-        "retries":    0,
-        "status":     "running",
-        "error":      "",
-        "result":     "",
-        "artifacts":  [],
+        "workflow": wf_type,
+        "goal": goal,
+        "trace_id": trace_id,
+        "retries": 0,
+        "status": "running",
+        "error": "",
+        "result": "",
+        "artifacts": [],
         **kwargs,
     }
 
@@ -181,36 +177,36 @@ def run_workflow(
             from workflows.research import build_research_graph
             graph = build_research_graph()
             result = graph.invoke(initial_state)
-        
+
         elif wf_type == "data":
             from workflows.data import build_data_graph
             graph = build_data_graph()
             result = graph.invoke(initial_state)
-        
+
         elif wf_type == "autocode":
             from workflows.autocode import build_autocode_graph
             graph = build_autocode_graph()
             result = graph.invoke(initial_state)
-        
+
         elif wf_type == "understand":
             from pathlib import Path
             from workflows.understand import run_understand_workflow_sync
             from core.kgraph.project import is_same_path
-            
+
             project_root = initial_state.get("project_root", "")
             is_agent = is_same_path(Path(project_root), cfg.agent_root) if project_root else False
             result = run_understand_workflow_sync(project_root, is_agent_root=is_agent)
-        
+
         else:
             tracer.error(trace_id, "dispatch", f"Unknown workflow type: {wf_type!r}")
             tracer.finish(trace_id, success=False)
             return {
-                "status":    "failed",
-                "error":     f"Unknown workflow type '{wf_type}'. Use: research | data | autocode",
-                "result":    "",
+                "status": "failed",
+                "error": f"Unknown workflow type '{wf_type}'. Use: research | data | autocode",
+                "result": "",
                 "artifacts": [],
             }
-        
+
         return dict(result)
 
     except Exception as e:
@@ -218,8 +214,8 @@ def run_workflow(
         tracer.error(trace_id, "dispatch", msg)
         tracer.finish(trace_id, success=False, result=msg)
         return {
-            "status":    "failed",
-            "error":     msg,
-            "result":    "",
+            "status": "failed",
+            "error": msg,
+            "result": "",
             "artifacts": [],
         }
