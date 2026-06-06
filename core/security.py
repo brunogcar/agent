@@ -136,6 +136,9 @@ def _is_private_or_localhost(hostname: str) -> bool:
     # Handle IPv6 with port: [::1]:8080 -> ::1
     if h.startswith("[") and "]:" in h:
         h = h.split("]:")[0].lstrip("[")
+    # Handle bare IPv6 brackets (no port): [::1] -> ::1
+    elif h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
     # Handle IPv4 with port: 127.0.0.1:3000 -> 127.0.0.1
     elif ":" in h and not h.startswith("[") and "::" not in h:
         h = h.split(":")[0]

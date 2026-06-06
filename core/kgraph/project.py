@@ -64,9 +64,8 @@ class ProjectManager:
         (self.artifact_root / "cache").mkdir(exist_ok=True)
         self.source_root.mkdir(parents=True, exist_ok=True)
         
-        # NOTE: We do NOT create self.source_root here for workspace projects.
-        # If the 'code' directory is missing, we want node_init_project to catch 
-        # it and fail explicitly, preventing silent empty graphs.
+        # NOTE: source_root is created here so tests and init_project can rely on it.
+        # For workspace projects, this is the 'code/' subdirectory.
          
         # 🔴 Phase 7 Step 3: Run cleanup on startup to prevent WAL/cache bloat
         try:

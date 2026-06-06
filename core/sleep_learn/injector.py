@@ -5,6 +5,7 @@ Retrieves relevant learned rules and injects them into the Planner's context.
 """
 from __future__ import annotations
 import json
+import threading
 from typing import List, Dict, Any
 
 import chromadb
@@ -21,13 +22,17 @@ from core.config import cfg
 # Lazy-initialized ChromaDB client (avoid import-time side effects)
 _client = None
 _collection = None
+_init_lock = threading.Lock()
 
 def _ensure_client():
     """Lazy init: create ChromaDB client and collection on first use."""
     global _client, _collection
     if _client is not None:
         return
-    _client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
+    with _init_lock:
+        if _client is not None:
+            return
+        _client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
     try:
         _collection = _client.get_collection(name=SLEEP_LEARN_COLLECTION_NAME)
     except Exception:
