@@ -33,10 +33,10 @@ def _ensure_client():
         if _client is not None:
             return
         _client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
-    try:
-        _collection = _client.get_collection(name=SLEEP_LEARN_COLLECTION_NAME)
-    except Exception:
-        _collection = None
+        try:
+            _collection = _client.get_collection(name=SLEEP_LEARN_COLLECTION_NAME)
+        except Exception:
+            _collection = None
 
 def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> List[Dict[str, Any]]:
     """
@@ -44,17 +44,18 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
     Returns a list of rule dictionaries, sorted by relevance (distance).
     """
     _ensure_client()
-    if not SLEEP_LEARN_INJECT_ENABLED or _collection is None:
+    col = _collection  # snapshot: avoids TOCTOU if _collection ever reset
+    if not SLEEP_LEARN_INJECT_ENABLED or col is None:
         return []
     if not query or not query.strip():
         return []
-    if _collection.count() == 0:
+    if col.count() == 0:
         return []
 
     rules = []
-    
+
     try:
-        results = _collection.query(
+        results = col.query(
             query_texts=[query],
             n_results=k,
             where={"confidence_score": {"$gte": SLEEP_LEARN_MIN_CONFIDENCE}},
@@ -73,7 +74,10 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
         tracer.error("daemon", "sleep_learn_injector", f"Failed to query rules: {e}")
     
     # [FIX 8] Split-brain fallback: also query main memory's procedural collection
-    # so rules from meta_learning.py are visible to the injector
+    # so rules learned by meta_learning.py daemon are visible here.
+    # Runs unconditionally (not just on exception) so both collections are merged.
+    # seen_ids: O(n) dedup vs O(n^2) any() scan
+    seen_ids = {r["id"] for r in rules}
     try:
         from core.memory import memory
         main_results = memory.recall(
@@ -84,13 +88,17 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
         )
         for ex in main_results:
             if ex.get("text"):
-                # Avoid duplicates by checking ID
                 rule_id = ex.get("id", ex.get("text", "")[:30])
-                if not any(r.get("id") == rule_id for r in rules):
+                if rule_id not in seen_ids:
+                    seen_ids.add(rule_id)
+                    # importance scale: _decay_score writes 0.0-1.0, not 0-10
+                    # clamp to [0,1] to be safe regardless of source scale
+                    raw_conf = ex.get("metadata", {}).get("importance", 0.5)
+                    confidence = min(float(raw_conf), 1.0)
                     rules.append({
                         "id": rule_id,
                         "rule": ex["text"],
-                        "confidence": ex.get("metadata", {}).get("importance", 5) / 10.0,
+                        "confidence": confidence,
                         "distance": ex.get("distance", 0.5)
                     })
     except Exception:
@@ -118,10 +126,10 @@ def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") 
     rules_text += "------------------------------"
 
     tracer.step(
-        "daemon", "sleep_learn_injector", "rules_injected",
+        trace_id or "daemon", "sleep_learn_injector", "rules_injected",
         goal_preview=goal[:50],
         rules_count=len(rules),
-        rule_ids=[r['id'] for r in rules]
+        rule_ids=[r["id"] for r in rules]
     )
 
     # Log injection for the Feedback Loop (Path 2)
