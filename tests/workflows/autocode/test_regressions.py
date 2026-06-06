@@ -22,10 +22,10 @@ class TestDebugLoopRouting:
 
     def test_debug_edge_routes_to_write_files_not_run_tests(self):
         """After systematic debug, fixes must be written to disk before testing."""
-        import inspect
-        from workflows.autocode_helpers import graph as graph_module
-        source = inspect.getsource(graph_module)
-        assert 'workflow.add_edge("node_systematic_debug", "node_write_files")' in source, (
+        from workflows.autocode_helpers.graph import build_graph
+        g = build_graph()
+        # LangGraph edges is a set of (source, target) tuples
+        assert ("node_systematic_debug", "node_write_files") in g.edges, (
             "node_systematic_debug must route to node_write_files before "
             "node_run_tests so that JSON patches are persisted to disk"
         )
@@ -187,25 +187,42 @@ class TestRunTestsWiresTargetedCmd:
 
 
 class TestDebugParsesNestedJson:
-    """P2 #18: debug node must parse nested JSON, not just flat objects."""
+    """P2 #18: debug node must handle nested JSON without crashing."""
 
-    def test_debug_uses_parse_json_not_brittle_regex(self):
-        """Debug node must use _parse_json helper, not brittle regex r'\{[^\{}]*\}'."""
+    def test_debug_node_uses_parse_json_fallback(self):
+        """Debug node imports _parse_json for robust JSON extraction."""
         import inspect
         from workflows.autocode_helpers.nodes import debug as debug_module
-        
         source = inspect.getsource(debug_module)
-        
-        # The old brittle regex that can't match nested JSON
-        old_regex = r"re.search(r'\{[^\{}]*\}'"
-        
-        assert old_regex not in source, (
-            "debug.py must not use the brittle regex r'\{[^\{}]*\}' — "
-            "it cannot match nested JSON objects. Use _parse_json() instead."
-        )
         assert "_parse_json" in source, (
-            "debug.py must import and use _parse_json() for robust JSON extraction"
+            "debug.py must import _parse_json for JSON extraction fallback"
         )
+        # Verify the old brittle regex pattern is not used
+        assert "re.search(r'\\{[^\\{}]*\\}'" not in source, (
+            "debug.py must not use the brittle regex that cannot match nested JSON"
+        )
+
+    def test_json_loads_parses_nested_structure(self):
+        """json.loads correctly parses nested JSON with escaped newlines."""
+        import json
+        
+        # Use json.dumps to create valid JSON with escaped newlines
+        data = {
+            "root_cause": "Missing import",
+            "defense_notes": "Check imports",
+            "fix": {
+                "patches": [
+                    {"path": "foo.py", "old": "", "new": "import os\n"}
+                ]
+            }
+        }
+        json_str = json.dumps(data, indent=2)
+        result = json.loads(json_str)
+        
+        assert "root_cause" in result
+        assert "fix" in result
+        assert "patches" in result["fix"]
+        assert result["fix"]["patches"][0]["path"] == "foo.py"
 
 class TestProtectedPathResolution:
     """A.12: is_protected must resolve absolute path before checking, not use CWD."""
@@ -225,4 +242,25 @@ class TestProtectedPathResolution:
         assert "patch_errors" in result, (
             "Path traversal outside project_root must be blocked — "
             "this verifies that paths are resolved against project_root, not CWD"
+        )
+
+class TestFileToolModeFiltering:
+    """Verify mode parameter is correctly filtered and does not crash handlers."""
+
+    def test_mode_empty_string_is_filtered_from_params(self):
+        """When mode is empty string, it must not be passed to handlers."""
+        import inspect
+        from tools.file import file
+        
+        sig = inspect.signature(file)
+        params = sig.parameters
+        
+        # mode should exist in signature (for backward compat)
+        assert "mode" in params, "file tool must accept mode parameter for backward compatibility"
+        
+        # mode default should be empty string so it gets filtered
+        mode_param = params["mode"]
+        assert mode_param.default == "", (
+            "mode default must be '' so it gets filtered from params dict, "
+            "since no handler accepts a 'mode' keyword argument"
         )

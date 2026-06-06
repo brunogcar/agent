@@ -80,7 +80,7 @@ def file(
     query: str = "",
     max_chars: int | None = None,
     max_results: int | None = None,
-    mode: str = "",
+    mode: str = "",  # Legacy param: no handler accepts mode, so default "" filters it out
     old: str = "",
     new: str = "",
     trace_id: str = "",
@@ -153,6 +153,8 @@ def file(
 
     # Pack explicit parameters back into a dict for the dispatcher
     # Filter out empty strings/None to keep params clean
+    # Build params dict — only pass non-empty values to handlers
+    # mode is legacy: no handler accepts it, so it gets filtered when empty
     params = {
         "path": path,
         "paths": paths,
