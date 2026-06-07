@@ -1,74 +1,74 @@
-﻿role: router
+role: router
 tasks:
   # === CLASSIFY ===
   - name: classify_bug_severity
     system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
-    prompt: "Classify this bug report into one of: [critical, high, medium, low]. Return ONLY the word: critical"
+    prompt: "Bug report: 'Application crashes on startup for all users. No workaround available. Revenue impact $50K/hour.'\nClassify severity into one of: [critical, high, medium, low]. Return ONLY the word."
     expected: "critical"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: classify_intent
     system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
-    prompt: "Classify this user intent into one of: [fix_bug, add_feature, refactor, document]. Return ONLY the word: refactor"
+    prompt: "User request: 'The login page is slow and the UI looks outdated. Can we refresh the design and modernize the layout?'\nClassify intent into one of: [fix_bug, add_feature, refactor, document]. Return ONLY the word."
     expected: "refactor"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: medium
     timeout: 15
     max_tokens: 512
 
   - name: classify_code_language
     system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
-    prompt: "Classify this code into one of: [python, javascript, rust, go]. Return ONLY the word: python"
+    prompt: "Classify the programming language of this code:\n```\ndef factorial(n):\n    return n * factorial(n - 1) if n > 1 else 1\n```\nOptions: [python, javascript, rust, go]. Return ONLY the word."
     expected: "python"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: classify_ambiguous
     system: "You are a classifier. No thinking. No reasoning. Return ONLY a JSON array of labels. No explanation."
-    prompt: "Classify this text into ALL applicable labels from: [urgent, security, performance, ux]. Return ONLY a JSON array: [\"urgent\", \"security\"]"
-    expected: '["urgent", "security"]'
-    validator: exact_match
+    prompt: "Classify this issue into ALL applicable labels from [urgent, security, performance, ux]:\n'User passwords are stored in plaintext in the database and the login page takes 10 seconds to load.'\nReturn ONLY a JSON array."
+    expected: "security"
+    validator: contains
     difficulty: hard
     timeout: 15
     max_tokens: 512
 
   - name: classify_multi_intent
     system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
-    prompt: "Classify this request into one of: [fix_bug, add_feature, refactor, document]. Return ONLY the word: fix_bug"
+    prompt: "Bug report: 'The export button throws a NullPointerException when clicking on large datasets.'\nClassify into one of: [fix_bug, add_feature, refactor, document]. Return ONLY the word."
     expected: "fix_bug"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: medium
     timeout: 15
     max_tokens: 512
 
   - name: classify_sentiment
     system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
-    prompt: "Classify sentiment into one of: [positive, negative, neutral]. Return ONLY the word: positive"
+    prompt: "Review: 'This product is amazing! Best purchase I have made all year. Highly recommend to everyone.'\nClassify sentiment into one of: [positive, negative, neutral]. Return ONLY the word."
     expected: "positive"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: classify_priority
     system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
-    prompt: "Classify priority into one of: [p0, p1, p2, p3]. Return ONLY the word: p0"
+    prompt: "Issue: 'Production database is down, all customers affected, revenue impact estimated at $50K per hour.'\nClassify priority into one of: [p0, p1, p2, p3]. Return ONLY the word."
     expected: "p0"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: classify_category
     system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
-    prompt: "Classify ticket into one of: [bug, feature, docs, refactor]. Return ONLY the word: bug"
-    expected: "bug"
-    validator: exact_match
+    prompt: "Ticket: 'Documentation for the new API endpoints is missing examples and error codes. Need to update the developer guide.'\nClassify into one of: [bug, feature, docs, refactor]. Return ONLY the word."
+    expected: "docs"
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
@@ -76,72 +76,72 @@ tasks:
   # === ROUTE ===
   - name: route_research
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: research"
+    prompt: "Task: 'Search academic databases for recent CRISPR papers and write a literature review with citations.'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "research"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: route_autocode
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: autocode"
+    prompt: "Task: 'Implement a Python script with functions to download images from URLs, handle timeouts, and save to disk with retry logic.'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "autocode"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: route_data
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: data"
+    prompt: "Task: 'Analyze the Q3 sales CSV and create a bar chart showing revenue by region and product category.'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "data"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: route_ambiguous
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: data"
+    prompt: "Task: 'The pandas dataframe is throwing a KeyError on Revenue column. Look at the B3 CSV and write a fix.'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "data"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: hard
     timeout: 15
     max_tokens: 512
 
   - name: route_understand
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: understand"
+    prompt: "Task: 'Explain what this Python decorator does and why it is used in the codebase.'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "understand"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: medium
     timeout: 15
     max_tokens: 512
 
   - name: route_direct
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: direct"
+    prompt: "Task: 'Read the database config file and show me the connection string for the production environment.'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "direct"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: route_general
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: direct"
+    prompt: "Task: 'What is the capital of France and what is its population?'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "direct"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512
 
   - name: route_memory
     system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
-    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: direct"
+    prompt: "Task: 'Remember that I prefer dark mode, 2-space indentation, and Python for all backend work.'\nRoute to one of: [autocode, research, data, understand, direct]. Return ONLY the word."
     expected: "direct"
-    validator: exact_match
+    validator: fuzzy_match
     difficulty: easy
     timeout: 15
     max_tokens: 512

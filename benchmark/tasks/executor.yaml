@@ -1,4 +1,4 @@
-﻿role: executor
+role: executor
 tasks:
   - name: extract_simple_json
     system: "Return ONLY valid JSON. No explanation."
@@ -26,8 +26,8 @@ tasks:
 
   - name: extract_regex
     system: "Return ONLY the extracted value. No explanation."
-    prompt: "Extract email from: Contact us at support@example.com or sales@company.org. Return ONLY the first email."
-    expected: "support@example.com"
+    prompt: "Extract the first email address from: Reach us at contact@mydomain.net or help@support.io. Return ONLY the email."
+    expected: "contact@mydomain.net"
     validator: exact_match
     difficulty: easy
     timeout: 60
@@ -35,7 +35,7 @@ tasks:
 
   - name: code_fizzbuzz
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
-    prompt: "def fizzbuzz(n): pass"
+    prompt: "Write a Python function fizzbuzz(n) that prints numbers from 1 to n. For multiples of 3 print 'Fizz', for multiples of 5 print 'Buzz', for multiples of both print 'FizzBuzz'. Return ONLY the function."
     validator: python_ast
     difficulty: easy
     timeout: 120
@@ -43,7 +43,7 @@ tasks:
 
   - name: code_palindrome
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
-    prompt: "def is_palindrome(s): pass"
+    prompt: "Write a Python function is_palindrome(s) that returns True if string s is a palindrome (reads same forwards and backwards), ignoring case and non-alphanumeric characters. Return ONLY the function."
     validator: python_ast
     difficulty: easy
     timeout: 120
@@ -51,7 +51,7 @@ tasks:
 
   - name: code_fibonacci
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
-    prompt: "def fibonacci(n): pass"
+    prompt: "Write a Python function fibonacci(n) that returns the nth Fibonacci number. Use an efficient approach (not naive recursion). Return ONLY the function."
     validator: python_ast
     difficulty: easy
     timeout: 120
@@ -59,7 +59,7 @@ tasks:
 
   - name: code_sort
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
-    prompt: "def quicksort(arr): pass"
+    prompt: "Write a Python function quicksort(arr) that sorts a list of numbers using the quicksort algorithm. Return ONLY the function."
     validator: python_ast
     difficulty: medium
     timeout: 120
@@ -67,7 +67,7 @@ tasks:
 
   - name: code_factorial
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
-    prompt: "def factorial(n): pass"
+    prompt: "Write a Python function factorial(n) that returns n factorial. Handle n=0 (return 1) and negative inputs (return None). Return ONLY the function."
     validator: python_ast
     difficulty: easy
     timeout: 120
@@ -97,9 +97,7 @@ tasks:
     system: "Answer the question. Return ONLY the answer."
     prompt: "What is the capital of France?"
     expected: "Paris"
-    validator: keyword_coverage
-    validator_args:
-      expected_keywords: ["paris"]
+    validator: contains
     difficulty: easy
     timeout: 120
     max_tokens: 256
@@ -108,9 +106,7 @@ tasks:
     system: "Answer the question. Return ONLY the answer."
     prompt: "In what year did World War II end?"
     expected: "1945"
-    validator: keyword_coverage
-    validator_args:
-      expected_keywords: ["1945"]
+    validator: contains
     difficulty: easy
     timeout: 120
     max_tokens: 256

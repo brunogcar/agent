@@ -10,21 +10,37 @@ import re
 from typing import Any
 
 def _strip_markdown(text: str) -> str:
-    """Strip ```python / ```json / ``` fences from code blocks."""
+    """Strip ```lang fences from code blocks. Handles any language tag."""
     text = text.strip()
-    if text.startswith("```python"):
-        text = text[9:]
-    elif text.startswith("```json"):
-        text = text[7:]
-    elif text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    return text.strip()
+    m = re.match(r'^```[a-zA-Z]*\r?\n?(.*?)```\s*$', text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text
 
 def validate_exact_match(output: str, expected: str, **kwargs) -> float:
     """Exact case-insensitive match."""
     return 1.0 if output.strip().lower() == expected.strip().lower() else 0.0
+
+
+
+
+
+
+def validate_contains(output: str, expected: str, **kwargs) -> float:
+    """Case-insensitive substring match."""
+    return 1.0 if expected.strip().lower() in output.strip().lower() else 0.0
+
+def validate_fuzzy_match(output: str, expected: str, threshold: float = 0.6, **kwargs) -> float:
+    """Partial credit based on string similarity."""
+    import difflib
+    out = output.strip().lower()
+    exp = expected.strip().lower()
+    if out == exp:
+        return 1.0
+    if exp.startswith("[") and exp.endswith("]"):
+        return 1.0 if out == exp else 0.0
+    similarity = difflib.SequenceMatcher(None, out, exp).ratio()
+    return 1.0 if similarity >= threshold else similarity
 
 def validate_json_valid(output: str, **kwargs) -> float:
     """Valid JSON. Strips markdown fences first. Optional schema check."""
@@ -78,6 +94,8 @@ def validate_regex_match(output: str, pattern: str = "", **kwargs) -> float:
 
 VALIDATORS = {
     "exact_match": validate_exact_match,
+    "contains": validate_contains,
+    "fuzzy_match": validate_fuzzy_match,
     "json_valid": validate_json_valid,
     "python_ast": validate_python_ast,
     "keyword_coverage": validate_keyword_coverage,

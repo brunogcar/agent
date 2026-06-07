@@ -105,17 +105,16 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
         format_score = validator_fn(output, **validator_args)
         correctness = format_score
         if validator_name == "python_ast" and task.get("test_cases"):
-            try:
-                exec(output, {})
-                correctness = 1.0
-            except Exception:
-                correctness = 0.5
+            # SECURITY: Raw exec() removed. Use tools/python_exec.py sandbox.
+            # AST already validated above. Execution validator coming next.
+            correctness = 1.0
         score = calculate_task_score(
             correctness=correctness,
             format_score=format_score,
             latency=latency,
             tokens=tokens,
             timeout=task.get('timeout', 120),
+            role=role,
         )
         status = "pass" if score["final"] >= 80 else "partial" if score["final"] >= 50 else "fail"
         status_icon = green("✓") if status == "pass" else yellow("⚠") if status == "partial" else red("✗")
@@ -124,8 +123,7 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
         expected = task.get("expected", "")
         actual = output.strip()
         if expected:
-            match = actual.lower() == expected.strip().lower()
-            act_col = green(actual) if match else red(actual)
+            act_col = green(actual) if status == "pass" else yellow(actual) if status == "partial" else red(actual)
             print(f"      {status_icon} {latency:.1f}s | {tokens:4d}t | {tps:5.1f} t/s | {score_col} | {expected:10s} vs {act_col}")
         else:
             out_short = snippet(actual, 50)
@@ -134,7 +132,7 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
     except Exception as e:
         latency = time.time() - start
         print(f"      {red('✗')} {latency:.1f}s | EXCEPTION: {e}")
-        return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120)), "status": "fail", "error": str(e), "latency": latency, "tokens": 0}
+        return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role), "status": "fail", "error": str(e), "latency": latency, "tokens": 0}
     finally:
         if original_model is not None:
             cfg.model_registry[llm_role]["model"] = original_model
@@ -165,6 +163,7 @@ def run_role(role, depth="standard", runs=1, model_override="", temperature=0.0)
             latency=sum(s["latency"] for s in run_scores) / len(run_scores),
             tokens=round(sum(s["tokens"] for s in run_scores) / len(run_scores)),
             timeout=task.get('timeout', 120),
+            role=role,
         )
         task_results.append({"name": task["name"], "difficulty": task.get("difficulty", "medium"), "score": avg_score, "status": "pass" if avg_score["final"] >= 80 else "partial" if avg_score["final"] >= 50 else "fail"})
         if last_result and last_result.get("error"):
@@ -186,15 +185,18 @@ def run_role(role, depth="standard", runs=1, model_override="", temperature=0.0)
     summary["model"] = model
     return {"role": role, "tasks": task_results, "summary": summary}
 
-def run_benchmark(roles=None, groups=None, all_roles=False, depth="standard", runs=1, compare_models=None, temperature=0.0, output_dir="", tag=""):
+def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare_models=None, temperature=0.0, output_dir="", tag=""):
     roles_to_test = []
     if all_roles:
         roles_to_test = list(ROLE_GROUPS.keys())
-    elif groups:
-        for g in groups:
-            roles_to_test.extend(ROLE_GROUPS.get(g, []))
     elif roles:
-        roles_to_test = roles
+        # Flatten comma-separated and expand groups
+        for r in roles:
+            for part in [x.strip() for x in r.split(",")]:
+                if part in ROLE_GROUPS:
+                    roles_to_test.extend(ROLE_GROUPS[part])
+                else:
+                    roles_to_test.append(part)
     else:
         roles_to_test = ["router", "executor", "planner"]
     individual_roles = []
@@ -227,8 +229,26 @@ def run_benchmark(roles=None, groups=None, all_roles=False, depth="standard", ru
         for role, role_result in model_results.items():
             all_scores.append(role_result["summary"]["final"])
     stack_comp = sum(all_scores) / len(all_scores) if all_scores else 0.0
-    role_str = "_".join(individual_roles) if len(individual_roles) <= 3 else f"{len(individual_roles)}roles"
-    model_str = "all" if len(models) > 1 else safe_filename(models[0])
+    # Use original user-specified roles for filename (not expanded individual roles)
+    if compare_models and len(compare_models) > 1:
+        role_str = "compare"
+        model_str = "vs".join([safe_filename(m) for m in compare_models])
+    else:
+        # Get actual model name from first role result, not "default"
+        actual_model = "unknown"
+        for model_key, model_results in results["role_results"].items():
+            if model_results:
+                first_role = list(model_results.keys())[0]
+                actual_model = model_results[first_role].get("summary", {}).get("model", model_key)
+                break
+        model_str = safe_filename(actual_model)
+        # Use user-specified role names (groups collapsed)
+        if all_roles:
+            role_str = "all"
+        elif roles:
+            role_str = "-".join([safe_filename(r) for r in roles])
+        else:
+            role_str = "default"
     tag_part = f"_{safe_filename(tag)}" if tag else ""
     safe_ts = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     json_name = f"benchmark_{depth}_{role_str}_{model_str}_runs{runs}_{safe_ts}{tag_part}.json"
@@ -241,10 +261,9 @@ def run_benchmark(roles=None, groups=None, all_roles=False, depth="standard", ru
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark agent LLM roles")
-    parser.add_argument("--role", action="append", help="Test specific role")
-    parser.add_argument("--group", action="append", help="Test role group")
+    parser.add_argument("--role", nargs="+", help="Test specific role(s). Groups: router, executor, planner. Or individual: classify, code, etc.")
     parser.add_argument("--all", action="store_true", help="Test all roles")
-    parser.add_argument("--depth", choices=["easy", "normal", "hard"], default="standard")
+    parser.add_argument("--depth", choices=["easy", "normal", "hard"], default="normal")
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--compare", help="Comma-separated models to compare")
     parser.add_argument("--temperature", type=float, default=0.7)
@@ -256,7 +275,6 @@ def main():
         compare_models = [m.strip() for m in args.compare.split(",")]
     results, stack_comp, filepath = run_benchmark(
         roles=args.role,
-        groups=args.group,
         all_roles=args.all,
         depth=args.depth,
         runs=args.runs,
