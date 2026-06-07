@@ -35,8 +35,8 @@ def bold(s: str) -> str:   return f"{BOLD}{s}{RESET}"
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
-from core.config import Config as Cfg
-from core.llm import LLMClient
+from core.config import cfg
+from core.llm import llm
 
 # ── tokenizer ───────────────────────────────────────────────────────
 try:
@@ -214,10 +214,8 @@ def run_benchmark(roles, depth, runs=1, tag=""):
     prompts = {"router": ROUTER_SYSTEM, "executor": EXECUTOR_SYSTEM, "planner": PLANNER_SYSTEM}
     max_tokens_map = {"router": 200, "executor": 1024, "planner": 2048}
     timeouts = {"router": 30, "executor": 60, "planner": 60}
-    cfg = Cfg()
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results = {}
-    llm = LLMClient()
 
     model_str = "all" if len(roles) == 3 else "_".join([f"{r}-{safe_filename(getattr(cfg, f'{r}_model', 'unknown'))}" for r in roles if r in test_map])
     tag_part = f"_{safe_filename(tag)}" if tag else ""

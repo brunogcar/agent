@@ -1,0 +1,147 @@
+﻿role: router
+tasks:
+  # === CLASSIFY ===
+  - name: classify_bug_severity
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
+    prompt: "Classify this bug report into one of: [critical, high, medium, low]. Return ONLY the word: critical"
+    expected: "critical"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: classify_intent
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
+    prompt: "Classify this user intent into one of: [fix_bug, add_feature, refactor, document]. Return ONLY the word: refactor"
+    expected: "refactor"
+    validator: exact_match
+    difficulty: medium
+    timeout: 15
+    max_tokens: 512
+
+  - name: classify_code_language
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
+    prompt: "Classify this code into one of: [python, javascript, rust, go]. Return ONLY the word: python"
+    expected: "python"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: classify_ambiguous
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY a JSON array of labels. No explanation."
+    prompt: "Classify this text into ALL applicable labels from: [urgent, security, performance, ux]. Return ONLY a JSON array: [\"urgent\", \"security\"]"
+    expected: '["urgent", "security"]'
+    validator: exact_match
+    difficulty: hard
+    timeout: 15
+    max_tokens: 512
+
+  - name: classify_multi_intent
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
+    prompt: "Classify this request into one of: [fix_bug, add_feature, refactor, document]. Return ONLY the word: fix_bug"
+    expected: "fix_bug"
+    validator: exact_match
+    difficulty: medium
+    timeout: 15
+    max_tokens: 512
+
+  - name: classify_sentiment
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
+    prompt: "Classify sentiment into one of: [positive, negative, neutral]. Return ONLY the word: positive"
+    expected: "positive"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: classify_priority
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
+    prompt: "Classify priority into one of: [p0, p1, p2, p3]. Return ONLY the word: p0"
+    expected: "p0"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: classify_category
+    system: "You are a classifier. No thinking. No reasoning. Return ONLY the classification word. No explanation, no punctuation, no quotes."
+    prompt: "Classify ticket into one of: [bug, feature, docs, refactor]. Return ONLY the word: bug"
+    expected: "bug"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  # === ROUTE ===
+  - name: route_research
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: research"
+    expected: "research"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: route_autocode
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: autocode"
+    expected: "autocode"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: route_data
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: data"
+    expected: "data"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: route_ambiguous
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: data"
+    expected: "data"
+    validator: exact_match
+    difficulty: hard
+    timeout: 15
+    max_tokens: 512
+
+  - name: route_understand
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: understand"
+    expected: "understand"
+    validator: exact_match
+    difficulty: medium
+    timeout: 15
+    max_tokens: 512
+
+  - name: route_direct
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: direct"
+    expected: "direct"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: route_general
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: direct"
+    expected: "direct"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
+
+  - name: route_memory
+    system: "You are a task router. No thinking. No reasoning. Return ONLY the workflow name. No explanation, no punctuation, no quotes."
+    prompt: "Route this task to the correct workflow: [autocode, research, data, understand, direct]. Return ONLY the word: direct"
+    expected: "direct"
+    validator: exact_match
+    difficulty: easy
+    timeout: 15
+    max_tokens: 512
