@@ -31,7 +31,7 @@ def _find_env_file() -> Optional[Path]:
 
 _env_file = _find_env_file()
 if _env_file:
-    load_dotenv(_env_file)
+    load_dotenv(_env_file, override=True)
 
 # -- Intelligent Provider & Model Resolution -----------------------------
 def _resolve_role(value: str) -> tuple[str, str]:
@@ -345,6 +345,12 @@ class Config:
 
         return False
 
+    def reload(self) -> None:
+        """Re-read .env and rebuild model_registry. Call after changing .env."""
+        _env_file = _find_env_file()
+        if _env_file:
+            load_dotenv(_env_file, override=True)
+        self.__init__()
     def __repr__(self) -> str:
         return (
             f"Config(env={self.env!r}, agent_root={self.agent_root}, "
