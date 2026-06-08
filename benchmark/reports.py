@@ -1,4 +1,4 @@
-"""reports.py — Terminal and JSON report generation."""
+﻿"""reports.py — Terminal and JSON report generation."""
 from __future__ import annotations
 
 import json
@@ -36,12 +36,21 @@ def print_task_result(name: str, score: float, latency: float, tokens: int, stat
 def print_role_summary(role: str, scores: dict):
     final = scores["final"]
     final_col = color(f"{final:.1f}", GREEN if final >= 80 else YELLOW if final >= 50 else RED)
-    print(f"\n  {color(role.upper(), BOLD)}: {final_col} avg | {scores['latency']:.1f}s | {scores['tokens']:.0f} tok | {scores['tasks']} tasks")
+    lat = scores.get("latency", 0)
+    tok = scores.get("tokens", 0)
+    tps = tok / lat if lat > 0 else 0
+    acc = scores.get("accuracy", 0)
+    print(f"\n  {color(role.upper(), BOLD)}: {final_col} avg | {lat:.1f}s | {tok:.0f} tok | {tps:.1f} t/s | {acc:.0f}% acc | {scores['tasks']} tasks")
 
 def print_comparison(model_a: str, scores_a: dict, model_b: str, scores_b: dict, role: str):
     print(f"\n{color('COMPARISON', BOLD + CYAN)}: {role}")
-    print(f"  {model_a:20s} {scores_a['final']:>6.1f}")
-    print(f"  {model_b:20s} {scores_b['final']:>6.1f}")
+    print(f"  {'Model':<<20} {'Score':>7} {'Time':>7} {'Tokens':>7} {'T/S':>9}")
+    print(f"  {'─'*50}")
+    for m, s in [(model_a, scores_a), (model_b, scores_b)]:
+        lat = s.get("latency", 0)
+        tok = s.get("tokens", 0)
+        tps = tok / lat if lat > 0 else 0
+        print(f"  {m:<20} {s['final']:>7.1f} {lat:>6.1f}s {tok:>6.0f} {tps:>8.1f} t/s")
     delta = scores_b["final"] - scores_a["final"]
     winner = model_b if scores_b["final"] > scores_a["final"] else model_a
     print(f"  Winner: {color(winner, GREEN)} (Δ {delta:+.1f})")

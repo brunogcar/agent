@@ -3,9 +3,11 @@ tasks:
   - name: plan_simple_feature
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan steps to add user authentication to a Flask app. Return ONLY a numbered list (1., 2., 3.)."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 3
+      required_keywords: ["auth", "login", "flask", "route", "session"]
     difficulty: easy
     timeout: 180
     max_tokens: 2048
@@ -13,9 +15,14 @@ tasks:
   - name: plan_migration
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan migration from SQLite to PostgreSQL with testing and rollback. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 5
+      required_keywords: ["backup", "test", "rollback", "schema", "data", "migrate"]
+      must_appear_before:
+        - ["backup", "migrate"]
+        - ["test", "deploy"]
     difficulty: medium
     timeout: 180
     max_tokens: 2048
@@ -23,9 +30,11 @@ tasks:
   - name: plan_complex_system
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan a real-time chat system with WebSockets. Include backend, frontend, database, deployment. Return ONLY a numbered list with at least 5 steps."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 5
+      required_keywords: ["websocket", "backend", "frontend", "database", "deployment"]
     difficulty: hard
     timeout: 180
     max_tokens: 2048
@@ -33,9 +42,11 @@ tasks:
   - name: plan_incident_response
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan response to a production database outage. Include immediate actions, communication, recovery, post-mortem. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 4
+      required_keywords: ["immediate", "communication", "recovery", "post-mortem", "database"]
     difficulty: medium
     timeout: 180
     max_tokens: 2048
@@ -43,9 +54,11 @@ tasks:
   - name: plan_api_design
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan a REST API for a todo app. Include endpoints, authentication, data model. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 4
+      required_keywords: ["endpoint", "auth", "model", "rest", "todo"]
     difficulty: easy
     timeout: 180
     max_tokens: 2048
@@ -53,9 +66,11 @@ tasks:
   - name: plan_deployment
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan deployment of a Python FastAPI app to AWS. Include CI/CD, Docker, monitoring. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 4
+      required_keywords: ["ci/cd", "docker", "aws", "monitoring", "fastapi"]
     difficulty: medium
     timeout: 180
     max_tokens: 2048
@@ -63,9 +78,11 @@ tasks:
   - name: plan_testing
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan a testing strategy for a microservices architecture. Include unit, integration, e2e, load testing. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 4
+      required_keywords: ["unit", "integration", "e2e", "load", "microservice"]
     difficulty: medium
     timeout: 180
     max_tokens: 2048
@@ -73,9 +90,11 @@ tasks:
   - name: plan_onboarding
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan onboarding for a new backend engineer. Include environment setup, codebase tour, first ticket, mentoring. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 4
+      required_keywords: ["environment", "codebase", "ticket", "mentoring", "setup"]
     difficulty: easy
     timeout: 180
     max_tokens: 2048
@@ -83,9 +102,14 @@ tasks:
   - name: plan_refactor
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan refactoring a 10K line monolith into services. Include risk assessment, incremental steps, testing. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 5
+      required_keywords: ["risk", "incremental", "testing", "monolith", "service"]
+      must_appear_before:
+        - ["assessment", "incremental"]
+        - ["test", "deploy"]
     difficulty: hard
     timeout: 180
     max_tokens: 2048
@@ -93,9 +117,11 @@ tasks:
   - name: plan_security_audit
     system: "You are a planner. No thinking. No reasoning. Return ONLY a numbered list."
     prompt: "Plan a security audit for a web application. Include scope, tools, penetration testing, remediation. Return ONLY a numbered list."
-    validator: regex_match
+    validator: composite
     validator_args:
       pattern: '^\d+\.'
+      min_steps: 4
+      required_keywords: ["scope", "tools", "penetration", "remediation", "web"]
     difficulty: medium
     timeout: 180
     max_tokens: 2048

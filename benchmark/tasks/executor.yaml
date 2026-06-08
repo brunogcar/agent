@@ -10,7 +10,7 @@ tasks:
 
   - name: extract_table
     system: "Return ONLY valid JSON array. No explanation."
-    prompt: "Extract as JSON array: Apple 1.20 100, Banana 0.50 150. Return ONLY JSON."
+    prompt: "Extract the data as a single valid JSON array. Each row should be an inner array: Apple 1.20 100, Banana 0.50 150. Return ONLY JSON."
     validator: json_valid
     difficulty: medium
     timeout: 60
@@ -35,8 +35,14 @@ tasks:
 
   - name: code_fizzbuzz
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
-    prompt: "Write a Python function fizzbuzz(n) that prints numbers from 1 to n. For multiples of 3 print 'Fizz', for multiples of 5 print 'Buzz', for multiples of both print 'FizzBuzz'. Return ONLY the function."
-    validator: python_ast
+    prompt: "Write a Python function fizzbuzz(n) that returns the correct string for a single number n: 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, 'FizzBuzz' for both, or the number as a string. Return ONLY the function."
+    validator: python_execution
+    validator_args:
+      test_cases:
+        - "assert fizzbuzz(15) == 'FizzBuzz'"
+        - "assert fizzbuzz(3) == 'Fizz'"
+        - "assert fizzbuzz(5) == 'Buzz'"
+        - "assert fizzbuzz(7) == '7'"
     difficulty: easy
     timeout: 120
     max_tokens: 1024
@@ -44,7 +50,12 @@ tasks:
   - name: code_palindrome
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
     prompt: "Write a Python function is_palindrome(s) that returns True if string s is a palindrome (reads same forwards and backwards), ignoring case and non-alphanumeric characters. Return ONLY the function."
-    validator: python_ast
+    validator: python_execution
+    validator_args:
+      test_cases:
+        - "assert is_palindrome('A man a plan a canal Panama') == True"
+        - "assert is_palindrome('hello') == False"
+        - "assert is_palindrome('Racecar') == True"
     difficulty: easy
     timeout: 120
     max_tokens: 1024
@@ -52,7 +63,13 @@ tasks:
   - name: code_fibonacci
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
     prompt: "Write a Python function fibonacci(n) that returns the nth Fibonacci number. Use an efficient approach (not naive recursion). Return ONLY the function."
-    validator: python_ast
+    validator: python_execution
+    validator_args:
+      test_cases:
+        - "assert fibonacci(0) == 0"
+        - "assert fibonacci(1) == 1"
+        - "assert fibonacci(10) == 55"
+        - "assert fibonacci(20) == 6765"
     difficulty: easy
     timeout: 120
     max_tokens: 1024
@@ -60,7 +77,12 @@ tasks:
   - name: code_sort
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
     prompt: "Write a Python function quicksort(arr) that sorts a list of numbers using the quicksort algorithm. Return ONLY the function."
-    validator: python_ast
+    validator: python_execution
+    validator_args:
+      test_cases:
+        - "assert quicksort([3, 1, 4, 1, 5, 9, 2, 6]) == [1, 1, 2, 3, 4, 5, 6, 9]"
+        - "assert quicksort([]) == []"
+        - "assert quicksort([5]) == [5]"
     difficulty: medium
     timeout: 120
     max_tokens: 1024
@@ -68,7 +90,13 @@ tasks:
   - name: code_factorial
     system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
     prompt: "Write a Python function factorial(n) that returns n factorial. Handle n=0 (return 1) and negative inputs (return None). Return ONLY the function."
-    validator: python_ast
+    validator: python_execution
+    validator_args:
+      test_cases:
+        - "assert factorial(0) == 1"
+        - "assert factorial(5) == 120"
+        - "assert factorial(-1) is None"
+        - "assert factorial(1) == 1"
     difficulty: easy
     timeout: 120
     max_tokens: 1024
@@ -76,9 +104,11 @@ tasks:
   - name: summarize_bullet_points
     system: "Summarize into 3-5 bullet points. Be concise."
     prompt: "Summarize Python 3.12 features: improved error messages, new type parameter syntax, faster bytecode, flexible f-strings, asyncio performance improvements."
-    validator: keyword_coverage
+    validator: composite
     validator_args:
-      expected_keywords: ["python 3.12", "error", "f-string", "asyncio", "type"]
+      pattern: '^\\s*[-•*]\\s+'
+      min_steps: 3
+      required_keywords: ["python 3.12", "error", "f-string", "asyncio", "type"]
     difficulty: medium
     timeout: 60
     max_tokens: 512
@@ -114,9 +144,11 @@ tasks:
   - name: critique_code
     system: "Critique the code. List issues as bullet points."
     prompt: "def divide(a, b): return a / b"
-    validator: keyword_coverage
+    validator: composite
     validator_args:
-      expected_keywords: ["zero", "error", "exception", "check", "divide"]
+      pattern: '^\\s*[-•*]\\s+'
+      min_steps: 2
+      required_keywords: ["zero", "error", "exception", "check", "divide"]
     difficulty: medium
     timeout: 90
     max_tokens: 512
@@ -124,9 +156,11 @@ tasks:
   - name: critique_naming
     system: "Critique the code. List issues as bullet points."
     prompt: "def fn(x, y): return x + y"
-    validator: keyword_coverage
+    validator: composite
     validator_args:
-      expected_keywords: ["name", "descriptive", "parameter", "unclear"]
+      pattern: '^\\s*[-•*]\\s+'
+      min_steps: 2
+      required_keywords: ["name", "descriptive", "parameter", "unclear"]
     difficulty: easy
     timeout: 90
     max_tokens: 512
@@ -134,9 +168,11 @@ tasks:
   - name: analyze_memory_leak
     system: "Analyze and list 3 likely causes as bullet points."
     prompt: "Python process grows 100MB/hour. List 3 likely causes."
-    validator: keyword_coverage
+    validator: composite
     validator_args:
-      expected_keywords: ["memory", "leak", "cache", "gc", "object", "reference"]
+      pattern: '^\\s*[-•*]\\s+'
+      min_steps: 3
+      required_keywords: ["memory", "leak", "cache", "gc", "object", "reference"]
     difficulty: hard
     timeout: 90
     max_tokens: 512
@@ -144,9 +180,11 @@ tasks:
   - name: analyze_slow_query
     system: "Analyze and list 3 likely causes as bullet points."
     prompt: "SQL query takes 30 seconds. List 3 likely causes."
-    validator: keyword_coverage
+    validator: composite
     validator_args:
-      expected_keywords: ["index", "query", "optimization", "database", "slow"]
+      pattern: '^\\s*[-•*]\\s+'
+      min_steps: 3
+      required_keywords: ["index", "query", "optimization", "database", "slow"]
     difficulty: medium
     timeout: 90
     max_tokens: 512
@@ -154,9 +192,11 @@ tasks:
   - name: review_security
     system: "Review for security issues. List findings as bullet points."
     prompt: 'query = f"SELECT * FROM users WHERE id = {user_id}"'
-    validator: keyword_coverage
+    validator: composite
     validator_args:
-      expected_keywords: ["injection", "sql", "input", "unsafe", "user"]
+      pattern: '^\\s*[-•*]\\s+'
+      min_steps: 2
+      required_keywords: ["injection", "sql", "input", "unsafe", "user"]
     difficulty: medium
     timeout: 90
     max_tokens: 512
@@ -164,9 +204,11 @@ tasks:
   - name: review_secrets
     system: "Review for security issues. List findings as bullet points."
     prompt: 'API_KEY = "sk-1234567890abcdef"'
-    validator: keyword_coverage
+    validator: composite
     validator_args:
-      expected_keywords: ["secret", "hardcoded", "key", "exposed", "credential"]
+      pattern: '^\\s*[-•*]\\s+'
+      min_steps: 2
+      required_keywords: ["secret", "hardcoded", "key", "exposed", "credential"]
     difficulty: easy
     timeout: 90
     max_tokens: 512

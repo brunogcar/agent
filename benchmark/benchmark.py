@@ -1,4 +1,4 @@
-"""benchmark.py — Main benchmark runner."""
+﻿"""benchmark.py — Main benchmark runner."""
 from __future__ import annotations
 
 import argparse
@@ -145,7 +145,7 @@ def run_role(role, depth="standard", runs=1, model_override="", temperature=0.0)
     count = DEPTH_TASKS.get(depth, 8)
     selected = tasks[:count]
     llm_role = ROLE_TO_GROUP.get(role, role)
-    model = model_override or cfg.model_registry.get(llm_role, {}).get("model", "unknown")
+    model = model_override or cfg.model_registry.get(role, {}).get("model") or cfg.model_registry.get(llm_role, {}).get("model", "unknown")
     print(f"\n  {bold(role.upper())} ({cyan(model)})")
     print("  " + "─"*66)
     task_results = []
@@ -178,10 +178,16 @@ def run_role(role, depth="standard", runs=1, model_override="", temperature=0.0)
     total_runs = len(task_results) * runs
     pass_tasks = sum(1 for t in task_results if t["status"] == "pass")
     partial_tasks = sum(1 for t in task_results if t["status"] == "partial")
+    fail_tasks = len(task_results) - pass_tasks - partial_tasks
     accuracy = (pass_tasks * runs + partial_tasks * (runs // 2)) / total_runs * 100 if total_runs else 0
     acc_col = green(f"{accuracy:.0f}%") if accuracy >= 80 else yellow(f"{accuracy:.0f}%") if accuracy >= 50 else red(f"{accuracy:.0f}%")
     comp_col = green(f"{final:.1f}") if final >= 80 else yellow(f"{final:.1f}") if final >= 50 else red(f"{final:.1f}")
-    print(f"  Accuracy: {acc_col}  avg {yellow(f'{avg_tps:.1f} t/s')}  Score: {comp_col}  {summary['tasks']} tasks")
+    print()
+    print(f"  Accuracy: {acc_col} | Avg: {avg_lat:.1f}s · {avg_tok:.0f} tok · {yellow(f'{avg_tps:.1f} t/s')} | Score: {comp_col} | {summary['tasks']} tasks")
+    summary["pass"] = pass_tasks
+    summary["partial"] = partial_tasks
+    summary["fail"] = fail_tasks
+    summary["accuracy"] = accuracy
     summary["model"] = model
     return {"role": role, "tasks": task_results, "summary": summary}
 
@@ -190,7 +196,6 @@ def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare
     if all_roles:
         roles_to_test = list(ROLE_GROUPS.keys())
     elif roles:
-        # Flatten comma-separated and expand groups
         for r in roles:
             for part in [x.strip() for x in r.split(",")]:
                 if part in ROLE_GROUPS:
@@ -220,7 +225,17 @@ def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare
     for model in models:
         model_override = model if model != "default" else ""
         model_results = {}
+        current_group = None
         for role in individual_roles:
+            group = ROLE_TO_GROUP.get(role, role)
+            if group != current_group:
+                if current_group is not None:
+                    print()
+                current_group = group
+                print(f"{'─'*68}")
+                print(f"{group.upper()}")
+                print(f"{'─'*68}")
+                print()
             role_result = run_role(role, depth, runs, model_override, temperature)
             model_results[role] = role_result
         results["role_results"][model] = model_results
@@ -229,12 +244,10 @@ def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare
         for role, role_result in model_results.items():
             all_scores.append(role_result["summary"]["final"])
     stack_comp = sum(all_scores) / len(all_scores) if all_scores else 0.0
-    # Use original user-specified roles for filename (not expanded individual roles)
     if compare_models and len(compare_models) > 1:
         role_str = "compare"
         model_str = "vs".join([safe_filename(m) for m in compare_models])
     else:
-        # Get actual model name from first role result, not "default"
         actual_model = "unknown"
         for model_key, model_results in results["role_results"].items():
             if model_results:
@@ -242,7 +255,6 @@ def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare
                 actual_model = model_results[first_role].get("summary", {}).get("model", model_key)
                 break
         model_str = safe_filename(actual_model)
-        # Use user-specified role names (groups collapsed)
         if all_roles:
             role_str = "all"
         elif roles:
@@ -296,17 +308,40 @@ def main():
                 llm_role = ROLE_TO_GROUP.get(first_role, first_role)
                 display_model = cfg.model_registry.get(llm_role, {}).get("model", model_key)
         print(f"\n  Model: {cyan(display_model)}")
+        print(f"  {'─'*68}")
+        print(f"  {'Role':<20} {'Accuracy':>8} {'Time':>7} {'Tokens':>6} {'T/S':>12}  {'Score':>7}")
+        print(f"  {'─'*68}")
+        all_scores = []
+        all_acc = []
+        all_lat = 0.0
+        all_tok = 0.0
         for role, role_result in model_results.items():
-            final = role_result["summary"]["final"]
+            s = role_result["summary"]
+            final = s["final"]
+            lat = s.get("latency", 0)
+            tok = s.get("tokens", 0)
+            tps = tok / lat if lat > 0 else 0
+            acc = s.get("accuracy", 0)
+            all_scores.append(final)
+            all_acc.append(acc)
+            all_lat += lat
+            all_tok += tok
             final_col = green(f"{final:.1f}") if final >= 80 else yellow(f"{final:.1f}") if final >= 50 else red(f"{final:.1f}")
-            print(f"    {role:12s} {final_col}")
+            role_display = ROLE_TO_GROUP.get(role, role).upper() + " - " + role
+            print(f"  {role_display:<20} {acc:>7.0f}% {lat:>6.1f}s {tok:>6.0f} {tps:>8.1f} t/s  {final_col:>7}")
+        if all_scores:
+            print(f"  {'─'*68}")
+            avg_final = sum(all_scores) / len(all_scores)
+            avg_acc = sum(all_acc) / len(all_acc)
+            avg_tps = all_tok / all_lat if all_lat > 0 else 0
+            overall_col = green(f"{avg_final:.1f}") if avg_final >= 80 else yellow(f"{avg_final:.1f}") if avg_final >= 50 else red(f"{avg_final:.1f}")
+            print(f"  {'Overall':<20} {avg_acc:>7.0f}% {all_lat:>6.1f}s {all_tok:>6.0f} {avg_tps:>8.1f} t/s  {overall_col:>7}")
+            print(f"  {'─'*68}")
     stack_col = green(f"{stack_comp:.3f}") if stack_comp >= 0.80 else yellow(f"{stack_comp:.3f}") if stack_comp >= 0.50 else red(f"{stack_comp:.3f}")
-    print(f"\n  {'-'*68}")
-    print(f"  {bold('Overall Score:')} {bold(stack_col)}")
+
     print(f"\n{bold('=')*70}")
     print(f"  {bold('Report ->')} {filepath}")
     print(f"{bold('=')*70}\n")
 
 if __name__ == "__main__":
     main()
-
