@@ -5,8 +5,11 @@ Each validator returns a float 0.0-1.0.
 from __future__ import annotations
 
 import ast
+import difflib
+import io
 import json
 import re
+import sys
 from typing import Any
 
 def _strip_markdown(text: str) -> str:
@@ -27,7 +30,6 @@ def validate_contains(output: str, expected: str, **kwargs) -> float:
 
 def validate_fuzzy_match(output: str, expected: str, threshold: float = 0.6, **kwargs) -> float:
     """Partial credit based on string similarity."""
-    import difflib
     out = output.strip().lower()
     exp = expected.strip().lower()
     if out == exp:
@@ -64,44 +66,63 @@ def validate_python_ast(output: str, **kwargs) -> float:
         return 0.0
 
 def validate_python_execution(output: str, test_cases: list[str] = None, **kwargs) -> float:
-    """Execute Python code and run test cases. Restricted namespace, no stdout leak."""
+    """Execute Python code and run test cases. Restricted namespace, no stdout leak.
+
+    Uses a finally block to guarantee stdout is always restored even on unexpected
+    exceptions. Restricted builtins prevent dangerous calls (no print/open/import)
+    while including common exceptions so correct implementations still work.
+    """
     if not test_cases:
         return validate_python_ast(output)
     clean = _strip_markdown(output)
     if not clean:
         return 0.0
+
+    # Restricted namespace: no print/open/import, but common exceptions allowed
+    # so implementations that raise IndexError, KeyError, etc. internally still run.
+    restricted = {
+        "__builtins__": {
+            "range": range, "len": len, "str": str, "int": int, "float": float,
+            "list": list, "dict": dict, "set": set, "tuple": tuple, "type": type,
+            "isinstance": isinstance, "abs": abs, "min": min, "max": max,
+            "sum": sum, "round": round, "sorted": sorted, "enumerate": enumerate,
+            "zip": zip, "map": map, "filter": filter, "any": any, "all": all,
+            "chr": chr, "ord": ord, "pow": pow, "divmod": divmod, "bool": bool,
+            # Base exceptions
+            "Exception": Exception, "BaseException": BaseException,
+            "AssertionError": AssertionError, "ValueError": ValueError,
+            "TypeError": TypeError, "RuntimeError": RuntimeError,
+            # Common exceptions implementations may raise internally
+            "IndexError": IndexError, "KeyError": KeyError,
+            "AttributeError": AttributeError, "NotImplementedError": NotImplementedError,
+            "StopIteration": StopIteration, "ZeroDivisionError": ZeroDivisionError,
+            "OverflowError": OverflowError, "RecursionError": RecursionError,
+            "True": True, "False": False, "None": None,
+        }
+    }
+
+    old_stdout = sys.stdout
     try:
-        import io
-        import sys
-        
-        # Suppress stdout during execution
-        old_stdout = sys.stdout
-        sys.stdout = io.StringIO()
-        
-        # Restricted namespace — no print, no dangerous builtins
-        restricted = {"__builtins__": {"range": range, "len": len, "str": str, "int": int, "float": float, "list": list, "dict": dict, "set": set, "tuple": tuple, "type": type, "isinstance": isinstance, "abs": abs, "min": min, "max": max, "sum": sum, "round": round, "sorted": sorted, "enumerate": enumerate, "zip": zip, "map": map, "filter": filter, "any": any, "all": all, "chr": chr, "ord": ord, "pow": pow, "divmod": divmod, "bool": bool, "Exception": Exception, "AssertionError": AssertionError, "ValueError": ValueError, "TypeError": TypeError, "RuntimeError": RuntimeError, "True": True, "False": False, "None": None}}
+        sys.stdout = io.StringIO()  # suppress any print() in submitted code
         ns = {}
         exec(clean, restricted, ns)
-        
+
         passed = 0
         for test in test_cases:
             try:
                 exec(test, restricted, ns)
                 passed += 1
-            except AssertionError:
+            except (AssertionError, Exception):
                 pass
-            except Exception:
-                pass
-        
-        # Restore stdout
-        sys.stdout = old_stdout
+
         return passed / len(test_cases)
+
     except SyntaxError:
-        sys.stdout = old_stdout
         return 0.0
     except Exception:
-        sys.stdout = old_stdout
         return 0.0
+    finally:
+        sys.stdout = old_stdout  # always restored, even on unexpected exceptions
 
 def validate_keyword_coverage(output: str, expected_keywords: list[str] = None, **kwargs) -> float:
     """Coverage of expected keywords. Case-insensitive, whole-word match."""

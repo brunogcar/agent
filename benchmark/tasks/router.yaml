@@ -31,8 +31,11 @@ tasks:
   - name: classify_ambiguous
     system: "You are a classifier. No thinking. No reasoning. Return ONLY a JSON array of labels. No explanation."
     prompt: "Classify this issue into ALL applicable labels from [urgent, security, performance, ux]:\n'User passwords are stored in plaintext in the database and the login page takes 10 seconds to load.'\nReturn ONLY a JSON array."
-    expected: "security"
-    validator: contains
+    # Both security (plaintext passwords) AND performance (10s load) are correct.
+    # keyword_coverage gives partial credit if model only catches one issue.
+    validator: keyword_coverage
+    validator_args:
+      expected_keywords: ["security", "performance"]
     difficulty: hard
     timeout: 15
     max_tokens: 512

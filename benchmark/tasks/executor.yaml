@@ -172,7 +172,8 @@ tasks:
     validator_args:
       pattern: '^\\s*[-•*]\\s+'
       min_steps: 3
-      required_keywords: ["memory", "leak", "cache", "gc", "object", "reference"]
+      # "gc" matches abbreviation; "garbage" matches "garbage collection" phrasing.
+      required_keywords: ["memory", "leak", "cache", "garbage", "object", "reference"]
     difficulty: hard
     timeout: 90
     max_tokens: 512

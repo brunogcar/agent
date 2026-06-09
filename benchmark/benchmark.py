@@ -92,22 +92,22 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
         if not response.ok:
             error_msg = response.error or "Unknown LLM error"
             print(f"      {red('X')} {latency:.1f}s | {error_msg}")
-            return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120)), "status": "fail", "error": error_msg, "latency": latency, "tokens": 0}
+            return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role), "status": "fail", "error": error_msg, "latency": latency, "tokens": 0}
         if not output.strip():
             empty_msg = f"EMPTY | model={response.model} text={repr(response.text[:50])}"
             print(f"      {yellow('?')} {latency:.1f}s | {empty_msg}")
-            return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120)), "status": "fail", "error": empty_msg, "latency": latency, "tokens": 0}
+            return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role), "status": "fail", "error": empty_msg, "latency": latency, "tokens": 0}
         validator_name = task.get("validator", "exact_match")
         validator_fn = VALIDATORS.get(validator_name, VALIDATORS["exact_match"])
-        validator_args = task.get("validator_args", {})
+        # Shallow copy: task dict is shared YAML state across all runs.
+        # Mutating it in-place corrupts subsequent runs (--runs N).
+        validator_args = dict(task.get("validator_args", {}))
         if "expected" in task:
             validator_args["expected"] = task["expected"]
         format_score = validator_fn(output, **validator_args)
+        # correctness == format_score for most validators.
+        # python_execution validator returns partial credit based on test cases.
         correctness = format_score
-        if validator_name == "python_ast" and task.get("test_cases"):
-            # SECURITY: Raw exec() removed. Use tools/python_exec.py sandbox.
-            # AST already validated above. Execution validator coming next.
-            correctness = 1.0
         score = calculate_task_score(
             correctness=correctness,
             format_score=format_score,
@@ -278,7 +278,7 @@ def main():
     parser.add_argument("--depth", choices=["easy", "normal", "hard"], default="normal")
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--compare", help="Comma-separated models to compare")
-    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--output", help="Output directory")
     parser.add_argument("--tag", help="Label for this run")
     args = parser.parse_args()
@@ -337,7 +337,8 @@ def main():
             overall_col = green(f"{avg_final:.1f}") if avg_final >= 80 else yellow(f"{avg_final:.1f}") if avg_final >= 50 else red(f"{avg_final:.1f}")
             print(f"  {'Overall':<20} {avg_acc:>7.0f}% {all_lat:>6.1f}s {all_tok:>6.0f} {avg_tps:>8.1f} t/s  {overall_col:>7}")
             print(f"  {'─'*68}")
-    stack_col = green(f"{stack_comp:.3f}") if stack_comp >= 0.80 else yellow(f"{stack_comp:.3f}") if stack_comp >= 0.50 else red(f"{stack_comp:.3f}")
+    stack_col = green(f"{stack_comp:.1f}") if stack_comp >= 80 else yellow(f"{stack_comp:.1f}") if stack_comp >= 50 else red(f"{stack_comp:.1f}")
+    print(f"  Stack Score: {stack_col} / 100")
 
     print(f"\n{bold('=')*70}")
     print(f"  {bold('Report ->')} {filepath}")
