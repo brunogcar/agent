@@ -40,6 +40,8 @@ def route_after_run_tests(state: AutocodeState) -> str:
     test_results = state.get("test_results", {})
     if tdd_status == "passed" or test_results.get("success"):
         return "node_verify"
+    elif tdd_status == "max_retries_exceeded":
+        return "node_verify"
     else:
         return "node_systematic_debug"
 

@@ -42,7 +42,7 @@ graph TD
     F --> L["routing/router.py<br/>Task classifier"]
     F --> M["workflows/<br/>research, data, autocode"]
     
-    D --> N["External: SearXNG, FS, Git, Notifications"]
+    D --> N["External: SearXNG, FS, Notifications"]
     B --> O["core/tracer.py → JSONL logs"]
 ```
 
@@ -185,7 +185,6 @@ To connect the agent to an MCP host (like LM Studio, Claude Desktop, or Cursor),
 ### Configure Additional MCP Servers (Optional)
 The agent works standalone, but you can enhance it by adding community MCP servers to your host's configuration file (e.g., `mcp.json` or `claude_desktop_config.json`):
 - **Filesystem** (`@modelcontextprotocol/server-filesystem`): Native MCP file-system access.
-- **Git** (`@cyanheads/git-mcp-server`): Advanced git context and history capabilities.
 - **Time** (`@mcpcentral/mcp-time`): Current date/time awareness.
 
 **How to install:**

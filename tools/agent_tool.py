@@ -194,6 +194,19 @@ _PROMPT_JSON_ROLES = {"route", "plan", "code", "review"}
 # All roles where JSON parsing is attempted
 _JSON_ROLES = _API_JSON_ROLES | _PROMPT_JSON_ROLES
 
+# ── Context trimming helper ───────────────────────────────────────────────────
+_MAX_CONTEXT_CHARS = 6000  # Keep last ~6K chars of background context
+
+def _trim_context(text: str, max_chars: int = _MAX_CONTEXT_CHARS) -> str:
+    """Cheap sliding-window trim for MCP conversation history."""
+    if not text or len(text) <= max_chars:
+        return text
+    tail = text[-max_chars:]
+    idx = tail.find("\n")
+    if idx != -1:
+        tail = tail[idx + 1:]
+    return f"[... {len(text) - len(tail)} chars of prior context truncated ...]\n\n" + tail
+
 
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
 
@@ -325,12 +338,16 @@ def agent(
     if max_tokens > 0:
         call_kwargs["max_tokens"] = max_tokens
 
+        # Trim unbounded MCP conversation history before it reaches the LLM
+    trimmed_context = _trim_context(context)
+    trimmed_content = _trim_context(content, max_chars=4000)
+
     result = llm.complete(
         role      = llm_role,
         system    = system_prompt,
         user      = task,
-        context   = context,
-        content   = content,
+        context   = trimmed_context,
+        content   = trimmed_content,
         json_mode = json_mode,
         trace_id  = trace_id,
         **call_kwargs,

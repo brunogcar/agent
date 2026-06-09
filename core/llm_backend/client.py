@@ -19,6 +19,22 @@ from core.llm_backend.circuit_breaker import CircuitBreaker
 from core.llm_backend.provider import ProviderRegistry
 from core.llm_backend.config import RoleConfig, _build_role_configs
 
+_ROLE_BUDGETS = {
+    "planner":   32000,
+    "executor":  12000,
+    "router":     4000,
+    "classify":   4000,
+    "route":      4000,
+    "summarize": 16000,
+    "research":  16000,
+    "code":      16000,
+    "analyze":   12000,
+    "critique":  12000,
+    "review":    12000,
+    "extract":    8000,
+    "consultor":  8000,
+}
+
 class LLMClient:
     """
     The single LLM client used by everything in the agent.
@@ -78,7 +94,7 @@ class LLMClient:
             # Intercept messages to ensure they fit the context window.
             # This prevents OOM crashes and attention dilution.
             from core.memory_backend.budget import budget_messages
-            messages = budget_messages(messages, cfg.max_context_tokens)
+            messages = budget_messages(messages, _ROLE_BUDGETS.get(role, cfg.max_context_tokens))
 
             if trace_id:
                 tracer.step(
