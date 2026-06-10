@@ -203,10 +203,15 @@ def _trim_context(text: str, max_chars: int = _MAX_CONTEXT_CHARS) -> str:
     """Head+tail trim: preserves objective (head) and recent state (tail)."""
     if not text or len(text) <= max_chars:
         return text
-    if len(text) <= _KEEP_HEAD_CHARS + _KEEP_TAIL_CHARS:
-        return text
-    head = text[:_KEEP_HEAD_CHARS]
-    tail = text[-_KEEP_TAIL_CHARS:]
+    # Adjust head/tail proportions for custom budgets
+    if max_chars < _KEEP_HEAD_CHARS + _KEEP_TAIL_CHARS:
+        head_budget = max_chars // 3
+        tail_budget = max_chars - head_budget
+    else:
+        head_budget = _KEEP_HEAD_CHARS
+        tail_budget = _KEEP_TAIL_CHARS
+    head = text[:head_budget]
+    tail = text[-tail_budget:]
     head_break = head.rfind("\n\n")
     if head_break != -1:
         head = head[:head_break]
