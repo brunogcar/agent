@@ -15,30 +15,30 @@ class TestCliSanitization:
     def test_sanitization_null_bytes(self):
         """Null bytes should be rejected at CLI level."""
         result = cli("ls\x00/tmp")
-        assert "invalid" in result.lower()
+        assert "invalid" in result.get("data", "").lower()
 
     def test_sanitization_control_chars(self):
         """Control characters should be rejected."""
         result = cli("ls\x01")
-        assert "invalid" in result.lower()
+        assert "invalid" in result.get("data", "").lower()
 
     def test_sanitization_too_long(self):
         """Commands exceeding cfg.cli_max_command_chars (4096) should be rejected."""
         long_cmd = "echo " + "a" * 5000
         result = cli(long_cmd)
-        assert "invalid" in result.lower() or "too long" in result.lower()
+        assert "invalid" in result.get("data", "").lower() or "too long" in result.lower()
 
     def test_sanitization_too_many_args(self):
         """Commands with too many arguments should be rejected."""
         many_args = " ".join(["arg"] * 50)
         result = cli(many_args)
-        assert "invalid" in result.lower()
+        assert "invalid" in result.get("data", "").lower()
 
     def test_sanitization_valid_command(self):
         """Valid commands should pass through sanitization."""
         result = cli("echo hello")
-        assert "null bytes" not in result.lower()
-        assert "control characters" not in result.lower()
+        data = result.get("data") or ""; assert "null bytes" not in data.lower()
+        data = result.get("data") or ""; assert "control characters" not in data.lower()
 
 
 class TestCliDispatch:
@@ -47,22 +47,23 @@ class TestCliDispatch:
     def test_pattern_match_layer(self):
         """Test that pattern-matched commands are handled directly."""
         result = cli("git status")
-        assert "Escalated to Executor" not in result
+        assert "Escalated to Executor" not in result.get("data", "")
 
     def test_shell_exec_layer(self):
         """Test that shell commands are executed."""
-        result = cli("echo test")
-        assert "test" in result or "Echo:" in result
+        result = cli("python --version")
+        data = result.get("data") or ""
+        assert "Python" in data or "python" in data.lower()
 
     def test_router_layer_dispatch(self):
         """Test that unrecognized commands go to router."""
         result = cli("find all python files modified today")
-        assert isinstance(result, str)
+        assert isinstance(result, dict)
 
     def test_router_layer_escalate(self):
         """Test that very complex commands escalate to executor."""
         result = cli("analyze the codebase architecture and suggest improvements")
-        assert "Escalated" in result or isinstance(result, str)
+        assert "Escalated" in result.get("data", "")
 
 
 class TestCliActions:
@@ -74,7 +75,7 @@ class TestCliActions:
     def test_file_read_action(self):
         """Test file read action dispatch."""
         result = cli("read test.txt")
-        assert "file content" in result or "test.txt" in result
+        assert "file content" in result.get("data", "") or "test.txt" in result.get("data", "")
 
     @patch('tools.cli_ops.DISPATCH', {
         'git': {'status': lambda action, **kwargs: {"status": "success", "output": "clean"}}
@@ -91,9 +92,9 @@ class TestCliWorkspaceDetection:
     def test_workspace_detection(self):
         """Test that workspace paths are detected."""
         result = cli("list workspace/")
-        assert isinstance(result, str)
+        assert isinstance(result, dict)
 
     def test_agent_detection(self):
         """Test that agent paths are detected."""
         result = cli("list tools/")
-        assert isinstance(result, str)
+        assert isinstance(result, dict)

@@ -42,13 +42,13 @@ class TestRealGitLifecycle:
 
         # 2. Status (clean)
         r_status = git(action="status", root=root)
-        assert r_status["status"] == "ok"
+        assert r_status["status"] == "success"
         assert r_status["clean"] is True
 
         # 3. Modify file & Diff
         (repo / ".gitignore").write_text("# modified\n__pycache__/\n*.pyc\n", encoding="utf-8")
         r_diff = git(action="diff", root=root)
-        assert r_diff["status"] == "ok"
+        assert r_diff["status"] == "success"
         assert r_diff["has_changes"] is True
 
         # 4. Snapshot
@@ -64,7 +64,7 @@ class TestRealGitLifecycle:
 
         # 6. Log
         r_log = git(action="log", n=5, root=root)
-        assert r_log["status"] == "ok"
+        assert r_log["status"] == "success"
         assert r_log["count"] >= 2
         messages = [c["message"] for c in r_log["commits"]]
         assert any("v2" in m for m in messages)
@@ -80,7 +80,7 @@ class TestRealGitLifecycle:
 
         # 9. Show
         r_show = git(action="show", message="v2.0", root=root)
-        assert r_show["status"] == "ok"
+        assert r_show["status"] == "success"
         assert "v2.0" in r_show["output"] or "v2" in r_show["output"]
 
         # 10. Rollback (safe)

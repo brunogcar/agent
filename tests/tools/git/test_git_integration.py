@@ -30,7 +30,7 @@ class TestGitDispatch:
     def test_status_dispatch(self, git_repo):
         """Verify dispatcher routes to status and returns expected schema."""
         result = git(operation="status", root=str(git_repo))
-        assert result.get("status") == "ok"
+        assert result.get("status") == "success"
         assert "head" in result
         assert "changes" in result
         assert result.get("root") == str(git_repo)

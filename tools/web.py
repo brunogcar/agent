@@ -37,6 +37,7 @@ except ImportError:
 import logging
 from core.config import cfg
 from registry import tool
+from core.contracts import ok, fail
 
 logger = logging.getLogger(__name__)
 
@@ -156,14 +157,14 @@ def _do_search(query: str, max_results: int = 5) -> dict:
                     "snippet": snippet[:cfg.web_snippet_chars],
                     "engine":  r.get("engine", ""),
                 })
-            return {"status": "success", "results": results,
-                    "count": len(results), "query": query}
+            return ok({"results": results,
+                    "count": len(results), "query": query})
     except httpx.TimeoutException:
-        return {"status": "error", "error": f"SearXNG timeout at {cfg.searxng_url}"}
+        return fail(f"SearXNG timeout at {cfg.searxng_url}")
     except httpx.ConnectError:
-        return {"status": "error", "error": f"Cannot reach SearXNG at {cfg.searxng_url}"}
+        return fail(f"Cannot reach SearXNG at {cfg.searxng_url}")
     except Exception as e:
-        return {"status": "error", "error": f"Search failed: {type(e).__name__}: {e}"}
+        return fail(f"Search failed: {type(e).__name__}: {e}")
 
 def _do_scrape(url: str, max_chars: Optional[int] = None) -> dict:
     """Fetch URL and return clean extracted text."""
@@ -172,20 +173,19 @@ def _do_scrape(url: str, max_chars: Optional[int] = None) -> dict:
         
     html, err = _fetch_html(url)
     if err:
-        return {"status": "error", "url": url, "error": err}
+        return fail(err, url=url)
         
     text, title = _html_to_text(html, max_chars)
     if not text:
-        return {"status": "error", "url": url, "error": "No text content extracted"}
+        return fail("No text content extracted", url=url)
 
-    return {
-        "status":        "success",
+    return ok({
         "url":        url,
         "title":      title,
         "text":       text,
         "word_count": len(text.split()),
         "truncated":     "[...truncated" in text,
-    }
+    })
 
 @tool
 def web(
@@ -231,7 +231,7 @@ def web(
 
     if action == "search":
         if not query:
-            return {"status": "error", "error": "action='search' requires query="}
+            return fail("action='search' requires query=")
         return _do_search(query, max_results)
 
     if action in ("scrape", "read"):
@@ -244,21 +244,18 @@ def web(
 
     if action == "search_and_read":
         if not query:
-            return {"status": "error",
-                    "error": "action='search_and_read' requires query="}
+            return fail("action='search_and_read' requires query=")
 
         # [P2] Upper bound from config (default 10, allows deep research up to cfg limit)
         n = min(max_results, cfg.web_max_search_results)
         search_result = _do_search(query, n)
-        if search_result["status"] != "success" or not search_result["results"]:
-            return {"status": "error",
-                    "error": search_result.get("error", "No search results"),
-                    "query": query}
+        if search_result.get("status") != "success" or not search_result.get("data", {}).get("results", []):
+            return fail(search_result.get("error") or "No search results", query=query)
 
         # [P2] Deduplicate URLs while preserving rank order
         seen_urls = set()
         urls = []
-        for r in search_result["results"]:
+        for r in search_result.get("data", {}).get("results", []):
             u = r.get("url", "")
             if u and u not in seen_urls:
                 seen_urls.add(u)
@@ -279,29 +276,25 @@ def web(
         scraped = []
         for u in urls:
             result = results_map.get(u, {})
-            if result.get("status") == "success" and result.get("text"):
+            if result.get("status") == "success" and result.get("data", {}).get("text"):
                 scraped.append({
-                    "url":        u,
-                    "title":      result.get("title", ""),
-                    "text":       result["text"],
-                    "word_count": result.get("word_count", 0),
+                    "url": u,
+                    "title": result.get("data", {}).get("title", ""),
+                    "text": result["data"]["text"],
+                    "word_count": result.get("data", {}).get("word_count", 0),
                 })
 
-        result = {
-            "status":            "success",
+        result = ok({
             "query":            query,
             "results":          scraped,
             "scraped_count":    len(scraped),
             "attempted":        len(urls),
-            "duplicates_removed": len(search_result["results"]) - len(urls),
-        }
+            "duplicates_removed": len(search_result.get("data", {}).get("results", [])) - len(urls),
+        })
         from core.memory_backend.pruner import prune_tool_dict
         return prune_tool_dict("web", result, trace_id)
 
-    return {
-        "status": "error",
-        "error": (
-            f"Unknown action '{action}'. "
-            "Use: search | scrape | read | search_and_read"
-        ),
-    }
+    return fail(
+        f"Unknown action '{action}'. "
+        "Use: search | scrape | read | search_and_read"
+    )

@@ -144,8 +144,8 @@ class TestRecallAction:
     def test_successful_recall(self, mock_config, mock_store):
         result = memory(action="recall", query="python", top_k=3)
         assert result["status"] == "success"
-        assert result["count"] == 1
-        assert len(result["results"]) == 1
+        assert result["data"]["count"] == 1
+        assert len(result["data"]["results"]) == 1
 
 
 # =============================================================================
@@ -173,7 +173,7 @@ class TestOtherActions:
     def test_stats(self, mock_config, mock_store):
         result = memory(action="stats")
         assert result["status"] == "success"
-        assert result["total"] == 35  # 10 + 20 + 5
+        assert result["data"]["total"] == 35  # 10 + 20 + 5
 
     def test_unknown_action(self, mock_config, mock_store):
         result = memory(action="invalid_action")

@@ -70,10 +70,11 @@ class TestFuzzInputs:
         """Ensure no crashes with malicious input."""
         try:
             result = cli(command)
-            # Should return a string, not crash
-            assert isinstance(result, str)
+            # Should return a dict, not crash
+            assert isinstance(result, dict)
             # Should not execute dangerous commands
             assert result is not None
+            assert result.get("status") is not None
         except Exception as e:
             # Acceptable: validation errors
             assert "Invalid" in str(e) or "Error" in str(e)
@@ -91,6 +92,7 @@ class TestFuzzInputs:
             "etc/passwd",
             "chmod 777",
         ]
+        output_text = str(result.get("data", "")) + str(result.get("error", ""))
         for pattern in dangerous_patterns:
-            assert pattern not in result.lower(), \
+            assert pattern not in output_text.lower(), \
                 f"Dangerous pattern '{pattern}' found in output for command: {command[:50]}"

@@ -65,9 +65,9 @@ class TestURLDeduplication:
         result = web(action="search_and_read", query="test query", max_results=3)
 
         assert result["status"] == "success"
-        assert result["attempted"] == 2  # Only 2 unique URLs
-        assert result["duplicates_removed"] == 1
-        assert len(result["results"]) == 2
+        assert result["data"]["attempted"] == 2  # Only 2 unique URLs
+        assert result["data"]["duplicates_removed"] == 1
+        assert len(result["data"]["results"]) == 2
 
     def test_search_and_read_preserves_order(self, mock_config, mock_httpx):
         """Test that URL order is preserved after deduplication."""
@@ -92,7 +92,7 @@ class TestURLDeduplication:
 
         assert result["status"] == "success"
         # Check order is preserved (first, second - the duplicate 'first' is dropped)
-        urls = [r["url"] for r in result["results"]]
+        urls = [r["url"] for r in result["data"]["results"]]
         assert urls == [
             "https://example.com/first",
             "https://example.com/second",
@@ -120,8 +120,8 @@ class TestURLDeduplication:
         result = web(action="search_and_read", query="test", max_results=3)
 
         assert result["status"] == "success"
-        assert result["attempted"] == 1
-        assert result["duplicates_removed"] == 2
+        assert result["data"]["attempted"] == 1
+        assert result["data"]["duplicates_removed"] == 2
 
 
 # =============================================================================
@@ -142,8 +142,8 @@ class TestSearch:
         result = web(action="search", query="test query")
 
         assert result["status"] == "success"
-        assert result["count"] == 1
-        assert result["results"][0]["url"] == "https://example.com"
+        assert result["data"]["count"] == 1
+        assert result["data"]["results"][0]["url"] == "https://example.com"
 
     def test_search_missing_query(self, mock_config):
         """Test search without query parameter."""
@@ -185,8 +185,8 @@ class TestScrape:
         result = web(action="scrape", url="https://example.com")
 
         assert result["status"] == "success"
-        assert result["title"] == "Test"
-        assert "Content" in result["text"]
+        assert result["data"]["title"] == "Test"
+        assert "Content" in result["data"]["text"]
 
     def test_scrape_missing_url(self, mock_config):
         """Test scrape without URL parameter."""

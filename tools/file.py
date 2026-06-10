@@ -23,6 +23,7 @@ from tools.file_ops._registry import DISPATCH
 from core.path_guard import resolve_path, check_protected_file, make_path_error
 from core.tracer import tracer
 from core.utils import compress_result
+from core.contracts import ok, fail
 
 def _safe_dispatch_file(action: str, trace_id: str = "", **params) -> dict:
     """
@@ -67,11 +68,14 @@ def _safe_dispatch_file(action: str, trace_id: str = "", **params) -> dict:
         
         try:
             result = func(trace_id=trace_id, **params)
+            # Ensure trace_id is present in success responses
+            if isinstance(result, dict) and trace_id and "trace_id" not in result:
+                result["trace_id"] = trace_id
             return compress_result(result)
         except Exception as e:
-            return {"status": "error", "error": str(e), "trace_id": trace_id}
+            return fail(str(e), trace_id=trace_id)
 
-    return {"status": "error", "error": f"Unknown file action: {action}", "trace_id": trace_id}
+    return fail(f"Unknown file action: {action}", trace_id=trace_id)
 
 @tool
 def file(

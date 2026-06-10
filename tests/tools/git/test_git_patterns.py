@@ -34,14 +34,14 @@ def git_repo(tmp_path):
 class TestStatusPatterns:
     def test_status_clean(self, git_repo):
         result = git(action="status", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert result["clean"] is True
         assert result["count"] == 0
 
     def test_status_with_changes(self, git_repo):
         (git_repo / "file.txt").write_text("modified", encoding="utf-8")
         result = git(action="status", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert result["clean"] is False
         assert result["count"] > 0
 
@@ -49,26 +49,26 @@ class TestStatusPatterns:
 class TestLogPatterns:
     def test_log_default(self, git_repo):
         result = git(action="log", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert result["count"] == 1
         assert "initial" in result["commits"][0]["message"]
 
     def test_log_custom_limit(self, git_repo):
         result = git(action="log", n=1, root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert result["count"] <= 1
 
 
 class TestDiffPatterns:
     def test_diff_no_changes(self, git_repo):
         result = git(action="diff", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert result["has_changes"] is False
 
     def test_diff_with_changes(self, git_repo):
         (git_repo / "file.txt").write_text("changed content", encoding="utf-8")
         result = git(action="diff", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert result["has_changes"] is True
         assert "changed content" in result["diff"]
 
@@ -150,20 +150,20 @@ class TestRestorePatterns:
 class TestShowPatterns:
     def test_show_head(self, git_repo):
         result = git(action="show", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert "initial" in result["output"]
 
     def test_show_specific_commit(self, git_repo):
         log = git(action="log", n=1, root=str(git_repo))
         head_hash = log["commits"][0]["hash"]
         result = git(action="show", message=head_hash, root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
 
 
 class TestTagPatterns:
     def test_tag_list(self, git_repo):
         result = git(action="tag", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert isinstance(result["tags"], list)
 
     def test_tag_create(self, git_repo):
@@ -175,7 +175,7 @@ class TestTagPatterns:
 class TestBranchPatterns:
     def test_branch_list(self, git_repo):
         result = git(action="branch", root=str(git_repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert any(b["current"] for b in result["branches"])
 
     def test_branch_create(self, git_repo):

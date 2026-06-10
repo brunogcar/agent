@@ -148,6 +148,43 @@ def _warmup_chromadb() -> None:
 import threading as _threading
 _threading.Thread(target=_warmup_chromadb, daemon=True).start()
 
+
+# -- Warm up LLM models in background (avoids cold-start latency per role) -----
+def _warmup_models() -> None:
+    """Send a 1-token ping to each role to warm up model weights."""
+    try:
+        from core.llm_backend.client import LLMClient
+        client = LLMClient()
+        roles = client.list_roles()
+        warmed = 0
+        failed = 0
+        for role_info in roles:
+            role = role_info["role"]
+            try:
+                # 1-token ping — minimal cost, just loads model into VRAM
+                resp = client.complete(
+                    role=role,
+                    system="You are a helpful assistant.",
+                    user="ping",
+                    max_tokens=1,
+                    timeout=10,
+                )
+                if resp.ok:
+                    warmed += 1
+                else:
+                    failed += 1
+                    print(f"[server] Warmup failed for {role}: {resp.text[:100]}", file=sys.stderr)
+            except Exception as e:
+                failed += 1
+                print(f"[server] Warmup error for {role}: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"[server] Model warmup: {warmed}/{len(roles)} roles ready ({failed} failed)", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Model warmup skipped: {e}", file=sys.stderr)
+
+_threading.Thread(target=_warmup_models, daemon=True).start()
+
+
+
 # -- Start Meta-Learning Daemon ----------------------------------------------
 def _start_meta_learner() -> None:
     try:

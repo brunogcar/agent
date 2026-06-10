@@ -17,6 +17,7 @@ from typing import Optional, Tuple
 
 from core.config import cfg
 from core.tracer import tracer
+from core.contracts import fail
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 READ_OPERATIONS = frozenset({

@@ -14,6 +14,16 @@ Cross-platform:
   Windows → plyer (native toast notifications)
   Linux   → notify-send (libnotify) if available, else print to console
   Fallback→ always prints to console so nothing is silently swallowed
+
+STATUS SCHEMA NOTE:
+ notify.py uses special status values that are semantically correct for
+ notifications and are NOT mapped to the generic "success" value:
+   "sent"      — immediate notification delivered
+   "scheduled" — reminder queued for future delivery
+   "ok"        — query/list operation succeeded
+   "cancelled" — scheduled job removed
+   "error"     — operation failed
+ These are documented in ToolResult as valid notification-specific states.
 """
 
 from __future__ import annotations

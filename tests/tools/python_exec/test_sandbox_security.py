@@ -14,7 +14,7 @@ class TestSandboxSecurity:
         """Basic safe code should run and return output."""
         result = python(mode="run", code="x = 2 + 2\nprint(x)")
         assert result["status"] == "success"
-        assert result["output"] == "4"
+        assert result["data"] == "4"
         assert result["mode"] == "sandbox"
 
     def test_blocks_direct_import(self):
@@ -70,13 +70,13 @@ class TestSandboxSecurity:
         """Only print() output should be captured, not variable assignments."""
         result = python(mode="run", code="x = 10\ny = 20\nprint(x + y)")
         assert result["status"] == "success"
-        assert result["output"] == "30"
+        assert result["data"] == "30"
 
     def test_no_output_returns_locals(self):
         """If no print() is used, return local variables as string."""
         result = python(mode="run", code="x = 42\ny = 'test'")
         assert result["status"] == "success"
-        assert "42" in result["output"] or "x" in result["output"]
+        assert "42" in result["data"] or "x" in result["data"]
 
     def test_string_concat_does_not_bypass_ast(self):
         """Verify that obvious eval() patterns are blocked.
@@ -109,7 +109,7 @@ class TestRunDataImportRouting:
         result = python(mode="run_data", code="import json\nprint(json.dumps({'a': 1}))")
         assert result["status"] == "success"
         assert result["mode"] == "in_process"
-        assert '{"a": 1}' in result["output"]
+        assert '{"a": 1}' in result["data"]
 
     def test_blocked_import_rejected(self):
         """os/sys/subprocess must be blocked even in run_data."""

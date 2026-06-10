@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from registry import tool
 from core.config import cfg
+from core.contracts import ok, fail
+from core.utils import compress_result
 from core.memory_backend.janitor import archive_old_episodes
 from core.sleep_learn.janitor import purge_stale_rules
 
@@ -148,82 +150,89 @@ def memory(
         epi_stats = archive_old_episodes()
         rule_stats = purge_stale_rules()
         
-        return {
-            "status": "success",
+        return compress_result(ok({
             "episodic_archived": epi_stats["archived"],
             "rules_purged": rule_stats["purged"],
             "errors": [e for e in [epi_stats.get("error"), rule_stats.get("error")] if e]
-        }
+        }, trace_id=trace_id))
 
     # ONLY load the memory store if we actually need it (prevents chromadb import on janitor action)
     store = _mem()
 
     if action == "store":
         if not text or not text.strip():
-            return {"status": "error", "error": "text is required for store"}
+            return fail("text is required for store")
         if importance < 1 or importance > 10:
-            return {"status": "error", "error": f"importance must be 1-10, got {importance}"}
+            return fail(f"importance must be 1-10, got {importance}")
         
         # Guard against storing huge blobs that bloat the vector DB
         text_bytes = len(text.encode("utf-8"))
         if text_bytes > cfg.memory_max_entry_bytes:
-            return {
-                "status": "error",
-                "error": (
-                    f"text is {text_bytes} bytes -- exceeds {cfg.memory_max_entry_bytes} byte limit.  "
-                    "Summarise or chunk the content before storing."
-                ),
-            }
+            return fail(
+                f"text is {text_bytes} bytes -- exceeds {cfg.memory_max_entry_bytes} byte limit.  "
+                "Summarise or chunk the content before storing."
+            )
         
         # MED-05: Validate tags for store operation (uses cfg.max_tags_per_entry)
         is_valid, err = _validate_tags(tags, max_count=cfg.max_tags_per_entry)
         if not is_valid:
-            return {"status": "error", "error": err}
+            return fail(err)
 
-        return store.store(
+        result = store.store(
             text=text, memory_type=memory_type, importance=importance,
             tags=tags, trace_id=trace_id, goal=goal, outcome=outcome,
             tools_used=tools_used, source=source,
         )
+        if isinstance(result, dict) and trace_id and "trace_id" not in result:
+            result["trace_id"] = trace_id
+        return compress_result(result)
 
     if action == "recall":
         if not query:
-            return {"status": "error", "error": "query is required for recall"}
+            return fail("query is required for recall")
         # MED-05: Validate tags_filter parameter (same validation, relaxed limit)
         is_valid, err = _validate_tags(tags_filter or "", max_count=10)
         if not is_valid:
-            return {"status": "error", "error": err}
+            return fail(err)
 
         results = store.recall(
             query=query, top_k=top_k, collections=collections,
             min_score=min_score, tags_filter=tags_filter, trace_id=trace_id,
         )
-        return {"status": "success", "count": len(results), "results": results}
+        return compress_result(ok({"count": len(results), "results": results}, trace_id=trace_id))
 
     if action == "delete":
         if not query:
-            return {"status": "error", "error": "query is required for delete"}
-        return store.delete(
+            return fail("query is required for delete")
+        result = store.delete(
             query=query, collections=collections,
             threshold=threshold or None, confirm_ids=confirm_ids,
         )
+        if isinstance(result, dict) and trace_id and "trace_id" not in result:
+            result["trace_id"] = trace_id
+        return compress_result(result)
 
     if action == "prune":
-        return store.prune(
+        result = store.prune(
             max_age_days=max_age_days, min_importance=min_importance,
             dry_run=dry_run, collections=collections,
         )
+        if isinstance(result, dict) and trace_id and "trace_id" not in result:
+            result["trace_id"] = trace_id
+        return compress_result(result)
 
     if action == "summarize":
-        return store.summarize(collections=collections, trace_id=trace_id)
+        result = store.summarize(collections=collections, trace_id=trace_id)
+        if isinstance(result, dict) and trace_id and "trace_id" not in result:
+            result["trace_id"] = trace_id
+        return compress_result(result)
 
     if action == "stats":
         raw   = store.stats()
         total = sum(v.get("count", 0) for v in raw.values())
-        return {"status": "success", "collections": raw, "total": total}
+        return compress_result(ok({"collections": raw, "total": total}, trace_id=trace_id))
 
-    return {
-        "status": "error",
-        "error": (f"Unknown action '{action}'.  "
-                  "Use: store | recall | delete | prune | summarize | stats | janitor"),
-    }
+    return fail(
+        f"Unknown action '{action}'.  "
+        "Use: store | recall | delete | prune | summarize | stats | janitor"
+    )

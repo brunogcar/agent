@@ -41,6 +41,7 @@ import shlex
 
 from registry import tool
 from core.config import cfg
+from core.contracts import ok, fail
 
 # Import from cli_ops package
 from tools.cli_ops.helpers import (
@@ -55,7 +56,7 @@ from tools.cli_ops import router
 
 
 @tool
-def cli(command: str, trace_id: str = "") -> str:
+def cli(command: str, trace_id: str = "") -> dict:
     """
     Natural-language command dispatcher.
     """
@@ -106,4 +107,8 @@ def cli(command: str, trace_id: str = "") -> str:
 
     final_result = _cli_logic()
     from core.memory_backend.pruner import prune_text
-    return prune_text("cli", final_result, trace_id)
+    pruned = prune_text("cli", final_result, trace_id)
+    # Defensive: pruner returns None when no pruning needed; use original
+    if pruned is None:
+        pruned = final_result if final_result is not None else ""
+    return ok(pruned, trace_id=trace_id)

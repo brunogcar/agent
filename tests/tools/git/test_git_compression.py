@@ -92,7 +92,7 @@ class TestGitCompressionIntegration:
         (repo / "bigfile.txt").write_text("modified\n" * 2000, encoding="utf-8")
 
         result = git(action="diff", root=str(repo))
-        assert result["status"] == "ok"
+        assert result["status"] == "success"
         assert result["has_changes"] is True
         # The diff should be compressed if >4000 chars
         if len(result["diff"]) > 4000:

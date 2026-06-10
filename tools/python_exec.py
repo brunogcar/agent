@@ -32,6 +32,7 @@ from pathlib import Path
 
 from core.config import cfg
 from registry import tool
+from core.contracts import ok, fail
 
 # ── Sandbox config ────────────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ def _run_inprocess(code: str, import_names: list[str]) -> dict:
         try:
             exec_globals[name] = importlib.import_module(name)
         except ImportError as e:
-            return {"status": "error", "error": f"Import failed: {e}"}
+            return fail(f"Import failed: {e}")
 
     old_stdout = sys.stdout
     sys.stdout  = captured = io.StringIO()
@@ -173,13 +174,12 @@ def _run_inprocess(code: str, import_names: list[str]) -> dict:
     try:
         exec(code, exec_globals)
         output = captured.getvalue().strip()
-        return {
-            "status": "success",
-            "output": output if output else "(no output — use print() to return results)",
-            "mode":   "in_process",
-        }
+        return ok(
+            output if output else "(no output — use print() to return results)",
+            mode="in_process",
+        )
     except Exception as e:
-        return {"status": "error", "error": str(e), "mode": "in_process"}
+        return fail(str(e), mode="in_process")
     finally:
         sys.stdout = old_stdout
 
@@ -204,23 +204,21 @@ def _run_subprocess(code: str) -> dict:
 
         if result.returncode != 0:
             error = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-            return {"status": "error", "error": error, "mode": "subprocess"}
+            return fail(error, mode="subprocess")
 
         output = result.stdout.strip()
-        return {
-            "status": "success",
-            "output": output if output else "(no output — use print() to return results)",
-            "mode":   "subprocess",
-        }
+        return ok(
+            output if output else "(no output — use print() to return results)",
+            mode="subprocess",
+        )
 
     except subprocess.TimeoutExpired:
-        return {
-            "status": "error",
-            "error":  f"Timed out after {cfg.execution_timeout}s. Simplify or reduce data size.",
-            "mode":   "subprocess",
-        }
+        return fail(
+            f"Timed out after {cfg.execution_timeout}s. Simplify or reduce data size.",
+            mode="subprocess",
+        )
     except Exception as e:
-        return {"status": "error", "error": str(e), "mode": "subprocess"}
+        return fail(str(e), mode="subprocess")
     finally:
         if tmp and tmp.exists():
             try:
@@ -271,25 +269,22 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
     mode = mode.strip().lower()
 
     if not code or not code.strip():
-        return {"status": "error", "error": "No code provided"}
+        return fail("No code provided")
 
     # ── run (sandbox) ─────────────────────────────────────────────────────────
     if mode == "run":
         # Fast-path string check (cheap, catches obvious violations)
         for token in FORBIDDEN_IN_SANDBOX:
             if token in code:
-                return {
-                    "status": "error",
-                    "error": (
-                        f"Forbidden token '{token}' in sandbox mode. "
-                        "Use mode='run_data' for code that needs imports or file access."
-                    ),
-                }
+                return fail(
+                    f"Forbidden token '{token}' in sandbox mode. "
+                    "Use mode='run_data' for code that needs imports or file access."
+                )
     
         # 🔴 Authoritative AST validation (blocks obfuscated bypasses)
         ast_safe, ast_err = _validate_sandbox_ast(code)
         if not ast_safe:
-            return {"status": "error", "error": ast_err}
+            return fail(ast_err)
 
         try:
             old_stdout = sys.stdout
@@ -302,14 +297,10 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
             final_output = output if output else str({k: str(v) for k, v in local_env.items()})
             if output: # Only prune actual stdout, not env dumps
                 final_output = prune_text("python_exec", final_output, trace_id)
-            return {
-                "status": "success",
-                "output": final_output,
-                "mode":     "sandbox",
-            }
+            return ok(final_output, mode="sandbox")
         except Exception as e:
             sys.stdout = old_stdout
-            return {"status": "error", "error": str(e), "mode": "sandbox"}
+            return fail(str(e), mode="sandbox")
 
     # ── run_data ──────────────────────────────────────────────────────────────
     if mode == "run_data":
@@ -317,37 +308,27 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
         try:
             ast.parse(code)
         except SyntaxError as e:
-            return {
-                "status": "error",
-                "error":  f"SyntaxError line {e.lineno}: {e.msg}",
-                "mode":   "run_data",
-            }
+            return fail(f"SyntaxError line {e.lineno}: {e.msg}", mode="run_data")
 
         imports = _parse_imports(code)
         # Check blocked imports first (security boundary)
         dangerous = [n for n in imports if n in BLOCKED_IMPORTS]
         if dangerous:
-            return {
-                "status": "error",
-                "error": (
-                    f"Import(s) blocked for security: {dangerous}. "
-                    "These modules can access filesystem, processes, or network. "
-                    "Use the file(), git(), or web() tools instead."
-                ),
-                "mode": "run_data",
-            }
+            return fail(
+                f"Import(s) blocked for security: {dangerous}. "
+                "These modules can access filesystem, processes, or network. "
+                "Use the file(), git(), or web() tools instead.",
+                mode="run_data",
+            )
 
         blocked = [n for n in imports if n not in ALL_ALLOWED and n not in ("__future__",)]
         if blocked:
-            return {
-                "status": "error",
-                "error": (
-                    f"Import(s) not in allowed list: {blocked}. "
-                    f"Allowed stdlib: {sorted(STDLIB_IMPORTS)}. "
-                    f"Allowed heavy: {sorted(HEAVY_IMPORTS)}."
-                ),
-                "mode": "run_data",
-            }
+            return fail(
+                f"Import(s) not in allowed list: {blocked}. "
+                f"Allowed stdlib: {sorted(STDLIB_IMPORTS)}. "
+                f"Allowed heavy: {sorted(HEAVY_IMPORTS)}.",
+                mode="run_data",
+            )
 
         needs_heavy = any(n in HEAVY_IMPORTS for n in imports)
         if needs_heavy:
@@ -355,12 +336,9 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
         else:
             result = _run_inprocess(code, imports)
         
-        if result.get("status") == "success" and result.get("output"):
+        if result.get("status") == "success" and result.get("data"):
             from core.memory_backend.pruner import prune_text
-            result["output"] = prune_text("python_exec", result["output"], trace_id)
+            result["data"] = prune_text("python_exec", result["data"], trace_id)
         return result
 
-    return {
-        "status": "error",
-        "error":  f"Unknown mode '{mode}'. Use: run | run_data",
-    }
+    return fail(f"Unknown mode '{mode}'. Use: run | run_data")

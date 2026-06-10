@@ -20,9 +20,9 @@ def test_janitor_action_does_not_load_memory_store(mock_purge, mock_archive):
 
     # Verify it returns the combined stats
     assert result["status"] == "success"
-    assert result["episodic_archived"] == 5
-    assert result["rules_purged"] == 2
-    assert result["errors"] == []
+    assert result["data"]["episodic_archived"] == 5
+    assert result["data"]["rules_purged"] == 2
+    assert result["data"]["errors"] == []
 
     # Verify the janitor functions were called
     mock_archive.assert_called_once()

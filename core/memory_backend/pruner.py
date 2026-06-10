@@ -84,19 +84,22 @@ def prune_text(tool_name: str, text: str, trace_id: str = "") -> str:
 def prune_tool_dict(tool_name: str, data: dict, trace_id: str = "") -> dict:
     """
     Prune string fields inside a tool's return dictionary.
-    Used by tools that return dicts (web, python_exec).
-    Injects structured metadata keys instead of polluting the string.
+    Supports both flat dicts (legacy) and ok()/fail() schema with nested "data" key.
+    Injects structured metadata keys at the top level of the passed dict.
     """
     if not isinstance(data, dict):
         return data
-        
+
+    # Support new ok()/fail() schema: content is nested under "data" key
+    target = data.get("data") if isinstance(data.get("data"), dict) else data
+
     def _prune_field(key: str, text: str) -> tuple[str, dict]:
         if len(text) <= MAX_CHARS:
             return text, {}
-            
+
         artifact_path = _save_artifact(tool_name, text, trace_id)
         truncated = _truncate_text(tool_name, text)
-        
+
         metadata = {
             "_pruned": True,
             "_original_chars": len(text),
@@ -105,25 +108,31 @@ def prune_tool_dict(tool_name: str, data: dict, trace_id: str = "") -> dict:
         if artifact_path:
             metadata["_artifact_path"] = artifact_path
             metadata["_recovery_hint"] = f"Use file(path='{artifact_path}') to read full output."
-            
+
         return truncated, metadata
 
+    # Collect metadata to add to the top-level dict
+    all_meta = {}
+
     # Handle web scrape/read and python_exec
-    if "text" in data and isinstance(data["text"], str):
-        data["text"], meta = _prune_field("text", data["text"])
-        data.update(meta)
-        
-    if "output" in data and isinstance(data["output"], str):
-        data["output"], meta = _prune_field("output", data["output"])
-        data.update(meta)
-        
+    if "text" in target and isinstance(target["text"], str):
+        target["text"], meta = _prune_field("text", target["text"])
+        all_meta.update(meta)
+
+    if "output" in target and isinstance(target["output"], str):
+        target["output"], meta = _prune_field("output", target["output"])
+        all_meta.update(meta)
+
     # Handle web search_and_read
-    if "results" in data and isinstance(data["results"], list):
-        for item in data["results"]:
+    if "results" in target and isinstance(target["results"], list):
+        for item in target["results"]:
             if isinstance(item, dict) and "text" in item and isinstance(item["text"], str):
                 item["text"], meta = _prune_field("text", item["text"])
-                item.update(meta)
-                
+                all_meta.update(meta)
+
+    if all_meta:
+        data.update(all_meta)
+
     return data
 
 def cleanup_old_artifacts(max_age_days: int = 7):

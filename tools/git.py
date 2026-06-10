@@ -31,6 +31,7 @@ from tools.git_ops.helpers import _resolve_root, _check_repo
 from core.path_guard import check_git_operation, make_path_error
 from core.tracer import tracer
 from core.utils import compress_result
+from core.contracts import ok, fail
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dynamic Docstring Builder
@@ -129,17 +130,16 @@ def git(
     git_ops = DISPATCH.get("git", {})
     op_info = git_ops.get(action)
     if not op_info:
-        return {
-            "status": "error",
-            "error": f"Unknown action '{action}'. Valid: {' | '.join(sorted(git_ops.keys()))}",
-            "trace_id": trace_id,
-        }
+        return fail(
+            f"Unknown action '{action}'. Valid: {' | '.join(sorted(git_ops.keys()))}",
+            trace_id=trace_id,
+        )
 
     # 4. Validate repository if the action requires it
     if op_info.get("needs_repo"):
         ok, err = _check_repo(actual_cwd)
         if not ok:
-            return {"status": "error", "error": err, "trace_id": trace_id}
+            return fail(err, trace_id=trace_id)
 
     # 5. Prepare kwargs exactly as original handlers expect
     kwargs = {
@@ -157,9 +157,14 @@ def git(
     # 6. Execute handler safely
     try:
         result = op_info["func"](**kwargs)
+        if isinstance(result, dict):
+            if result.get("status") == "ok":
+                result["status"] = "success"
+            if trace_id and "trace_id" not in result:
+                result["trace_id"] = trace_id
         return compress_result(result)
     except Exception as e:
-        return {"status": "error", "error": str(e), "trace_id": trace_id}
+        return fail(str(e), trace_id=trace_id)
 
 # Attach dynamic docstring so MCP/LLM sees the formatted help text
 git.__doc__ = _build_doc()
