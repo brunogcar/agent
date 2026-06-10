@@ -195,17 +195,30 @@ _PROMPT_JSON_ROLES = {"route", "plan", "code", "review"}
 _JSON_ROLES = _API_JSON_ROLES | _PROMPT_JSON_ROLES
 
 # ── Context trimming helper ───────────────────────────────────────────────────
-_MAX_CONTEXT_CHARS = 6000  # Keep last ~6K chars of background context
+_MAX_CONTEXT_CHARS = 6000  # Total budget for background context
+_KEEP_HEAD_CHARS = 2000    # Preserve original goal/objective
+_KEEP_TAIL_CHARS = 4000    # Preserve recent tool interactions
 
 def _trim_context(text: str, max_chars: int = _MAX_CONTEXT_CHARS) -> str:
-    """Cheap sliding-window trim for MCP conversation history."""
+    """Head+tail trim: preserves objective (head) and recent state (tail)."""
     if not text or len(text) <= max_chars:
         return text
-    tail = text[-max_chars:]
-    idx = tail.find("\n")
-    if idx != -1:
-        tail = tail[idx + 1:]
-    return f"[... {len(text) - len(tail)} chars of prior context truncated ...]\n\n" + tail
+    if len(text) <= _KEEP_HEAD_CHARS + _KEEP_TAIL_CHARS:
+        return text
+    head = text[:_KEEP_HEAD_CHARS]
+    tail = text[-_KEEP_TAIL_CHARS:]
+    head_break = head.rfind("\n\n")
+    if head_break != -1:
+        head = head[:head_break]
+    tail_break = tail.find("\n")
+    if tail_break != -1:
+        tail = tail[tail_break + 1:]
+    truncated = len(text) - len(head) - len(tail)
+    return (
+        head
+        + f"\n\n[... {truncated} chars of intermediate context truncated ...]\n\n"
+        + tail
+    )
 
 
 # ── Meta-tool ─────────────────────────────────────────────────────────────────

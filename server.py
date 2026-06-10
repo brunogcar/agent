@@ -57,6 +57,9 @@ from registry import register_all_tools
 try:
     mcp = FastMCP("agent")
     _tool_count = register_all_tools(mcp)
+    logger.info("MCP tools registered: %d", _tool_count)
+    if _tool_count > 20:
+        logger.warning("High tool count (%d) -- watch for LM Studio grammar issues", _tool_count)
 
     # -- Boot log (all goes to stderr via the redirect above) --------------------
     _boot_tid = tracer.new_trace("startup", goal="server boot")

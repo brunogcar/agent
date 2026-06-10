@@ -30,6 +30,7 @@ from tools.git_ops._registry import DISPATCH
 from tools.git_ops.helpers import _resolve_root, _check_repo
 from core.path_guard import check_git_operation, make_path_error
 from core.tracer import tracer
+from core.utils import compress_result
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dynamic Docstring Builder
@@ -155,7 +156,8 @@ def git(
 
     # 6. Execute handler safely
     try:
-        return op_info["func"](**kwargs)
+        result = op_info["func"](**kwargs)
+        return compress_result(result)
     except Exception as e:
         return {"status": "error", "error": str(e), "trace_id": trace_id}
 

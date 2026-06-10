@@ -6,9 +6,13 @@ EXTRACTION NOTE (LLM Phase 1): Extracted from core/llm.py.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import time
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 import httpx
 
@@ -94,7 +98,10 @@ class LLMClient:
             # Intercept messages to ensure they fit the context window.
             # This prevents OOM crashes and attention dilution.
             from core.memory_backend.budget import budget_messages
-            messages = budget_messages(messages, _ROLE_BUDGETS.get(role, cfg.max_context_tokens))
+            _budget = _ROLE_BUDGETS.get(role, cfg.max_context_tokens)
+            estimated = sum(len(m.get("content", "")) for m in messages) // 4
+            logger.info("LLM call: role=%s messages=%d est_tokens=%d budget=%d", role, len(messages), estimated, _budget)
+            messages = budget_messages(messages, _budget)
 
             if trace_id:
                 tracer.step(

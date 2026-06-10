@@ -22,6 +22,7 @@ from registry import tool
 from tools.file_ops._registry import DISPATCH
 from core.path_guard import resolve_path, check_protected_file, make_path_error
 from core.tracer import tracer
+from core.utils import compress_result
 
 def _safe_dispatch_file(action: str, trace_id: str = "", **params) -> dict:
     """
@@ -65,7 +66,8 @@ def _safe_dispatch_file(action: str, trace_id: str = "", **params) -> dict:
         params.pop("action", None)
         
         try:
-            return func(trace_id=trace_id, **params)
+            result = func(trace_id=trace_id, **params)
+            return compress_result(result)
         except Exception as e:
             return {"status": "error", "error": str(e), "trace_id": trace_id}
 
