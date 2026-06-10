@@ -18,22 +18,22 @@ from tools.cli_ops._registry import register_action
 @register_action("git", "snapshot")
 @register_action("git", "commit")
 @register_action("git", "rollback")
-def _git(operation: str, **kw: Any) -> str:
+def _git(action: str, **kw: Any) -> str:
     """Proxy to tools/git.py with formatted output."""
     from tools.git import git
 
-    r = git(operation=operation, **kw)
+    r = git(action=action, **kw)
     if not isinstance(r, dict):
         return str(r)
 
-    if operation == "log":
+    if action == "log":
         cs = r.get("commits", [])
         return "\n".join(
             f"{c.get('hash','')[:7]}  {c.get('message','').splitlines()[0][:70]}"
             for c in cs[:10]
         ) or "No commits."
 
-    if operation == "diff":
+    if action == "diff":
         return r.get("diff", str(r))
 
     if r.get("status") == "error":
