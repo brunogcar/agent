@@ -6,14 +6,16 @@ No dependency on registry.py. Pure execution logic.
 from __future__ import annotations
 
 import concurrent.futures
+import threading
 from typing import Any, Callable
 
 from core.contracts import ok, fail
 
 # Tools that are safe to run in parallel (conservative default)
+_parallel_depth = threading.local()
+
 PARALLEL_SAFE = frozenset({
-    "web", "git", "file", "python", "python_exec", "notify",
-    "memory", "memory_tool", "cli",
+    "web", "file", "python", "python_exec", "notify",
 })
 
 
@@ -31,29 +33,47 @@ def dispatch_parallel(
     if max_workers > 8:
         max_workers = 8
 
+    # Prevent nested parallel calls
+    if getattr(_parallel_depth, "value", 0) > 0:
+        return fail("Nested parallel calls are not allowed", trace_id=trace_id)
+
     results = []
     errors = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {}
-        for name, fn, args in calls:
-            future = executor.submit(_safe_run, name, fn, args)
-            futures[future] = name
+    _parallel_depth.value = getattr(_parallel_depth, "value", 0) + 1
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for name, fn, args in calls:
+                future = executor.submit(_safe_run, name, fn, args)
+                futures[future] = name
 
-        for future in concurrent.futures.as_completed(futures):
-            name = futures[future]
-            try:
-                result = future.result(timeout=30)
-                results.append({
-                    "tool": name,
-                    "status": result.get("status", "success") if isinstance(result, dict) else "success",
-                    "result": result,
-                })
-            except Exception as e:
+            # Enforce real global timeout using wait(), not as_completed()
+            done, not_done = concurrent.futures.wait(futures, timeout=30)
+
+            for future in done:
+                name = futures[future]
+                try:
+                    result = future.result()
+                    results.append({
+                        "tool": name,
+                        "status": result.get("status", "success") if isinstance(result, dict) else "success",
+                        "result": result,
+                    })
+                except Exception as e:
+                    errors.append({
+                        "tool": name,
+                        "error": f"{type(e).__name__}: {e}",
+                    })
+
+            for future in not_done:
+                name = futures[future]
                 errors.append({
                     "tool": name,
-                    "error": f"{type(e).__name__}: {e}",
+                    "error": "Timed out after 30 seconds",
                 })
+    finally:
+        _parallel_depth.value -= 1
 
     return ok({
         "results": results,

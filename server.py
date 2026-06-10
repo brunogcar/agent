@@ -153,33 +153,39 @@ _threading.Thread(target=_warmup_chromadb, daemon=True).start()
 def _warmup_models() -> None:
     """Send a 1-token ping to each role to warm up model weights."""
     try:
-        from core.llm_backend.client import LLMClient
-        client = LLMClient()
-        roles = client.list_roles()
+        from core.llm import llm
+        from core.config import cfg
+        import time
+
+        if getattr(cfg, "disable_model_warmup", False):
+            print("[server] Model warmup disabled via DISABLE_MODEL_WARMUP", file=sys.stderr)
+            return
+
+        roles = llm.list_roles()
         warmed = 0
         failed = 0
         for role_info in roles:
             role = role_info["role"]
             try:
-                # 1-token ping — minimal cost, just loads model into VRAM
-                resp = client.complete(
+                resp = llm.complete(
                     role=role,
                     system="You are a helpful assistant.",
                     user="ping",
                     max_tokens=1,
-                    timeout=10,
+                    timeout=30,
                 )
                 if resp.ok:
                     warmed += 1
                 else:
                     failed += 1
-                    print(f"[server] Warmup failed for {role}: {resp.text[:100]}", file=sys.stderr)
+                    print(f"[server] Warmup failed for {role}: {resp.error[:100]}", file=sys.stderr)
             except Exception as e:
                 failed += 1
-                print(f"[server] Warmup error for {role}: {type(e).__name__}: {e}", file=sys.stderr)
+                print(f"[server] Warmup error for {role}: {type(e).__name__}: {str(e)[:100]}", file=sys.stderr)
+            time.sleep(0.5)  # Stagger to avoid rate limits
         print(f"[server] Model warmup: {warmed}/{len(roles)} roles ready ({failed} failed)", file=sys.stderr)
     except Exception as e:
-        print(f"[server] Model warmup skipped: {e}", file=sys.stderr)
+        print(f"[server] Model warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
 
 _threading.Thread(target=_warmup_models, daemon=True).start()
 

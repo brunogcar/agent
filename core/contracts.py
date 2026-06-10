@@ -53,18 +53,18 @@ class ToolResult(TypedDict, total=False):
     usage: Optional[dict]       # Token usage
 
 
-def ok(data: Any, trace_id: str = "", **meta) -> dict:
+def ok(data: Any, trace_id: str = "", status: str = "success", **meta) -> dict:
     """Construct a standardized success response."""
-    result: dict = {"status": "success", "data": data, "error": None}
+    result: dict = {"status": status, "data": data, "error": None}
     if trace_id:
         result["trace_id"] = trace_id
     result.update(meta)
     return result
 
 
-def fail(error: str, trace_id: str = "", **meta) -> dict:
+def fail(error: str, trace_id: str = "", status: str = "error", **meta) -> dict:
     """Construct a standardized error response."""
-    result: dict = {"status": "error", "data": None, "error": error}
+    result: dict = {"status": status, "data": None, "error": error}
     if trace_id:
         result["trace_id"] = trace_id
     result.update(meta)

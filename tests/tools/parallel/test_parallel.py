@@ -89,7 +89,7 @@ class TestParallelExecution:
         with patch.dict(_TOOL_MAP, mock_tools, clear=False):
             result = parallel(tools=[
                 {"name": "web", "args": {"action": "search", "query": "test"}},
-                {"name": "git", "args": {"action": "status", "root": "."}},
+                {"name": "file", "args": {"action": "list", "path": "."}},
             ])
 
             assert result["status"] == "success"
@@ -98,7 +98,7 @@ class TestParallelExecution:
             assert len(result["data"]["results"]) == 2
 
             mock_tools["web"].assert_called_once_with(action="search", query="test")
-            mock_tools["git"].assert_called_once_with(action="status", root=".")
+            mock_tools["file"].assert_called_once_with(action="list", path=".")
 
     def test_tool_error_captured(self):
         mock_fn = MagicMock(side_effect=RuntimeError("boom"))

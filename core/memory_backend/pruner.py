@@ -114,6 +114,11 @@ def prune_tool_dict(tool_name: str, data: dict, trace_id: str = "") -> dict:
     # Collect metadata to add to the top-level dict
     all_meta = {}
 
+    # Handle case where data["data"] is a string (python_exec, cli output)
+    if "data" in data and isinstance(data.get("data"), str):
+        data["data"], meta = _prune_field("data", data["data"])
+        all_meta.update(meta)
+
     # Handle web scrape/read and python_exec
     if "text" in target and isinstance(target["text"], str):
         target["text"], meta = _prune_field("text", target["text"])

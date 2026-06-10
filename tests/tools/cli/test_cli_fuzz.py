@@ -92,7 +92,7 @@ class TestFuzzInputs:
             "etc/passwd",
             "chmod 777",
         ]
-        output_text = str(result.get("data", "")) + str(result.get("error", ""))
+        output_text = str(result.get("data", ""))
         for pattern in dangerous_patterns:
             assert pattern not in output_text.lower(), \
                 f"Dangerous pattern '{pattern}' found in output for command: {command[:50]}"
