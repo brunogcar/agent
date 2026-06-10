@@ -8,6 +8,8 @@ from typing import Annotated, TypedDict, Optional
 
 from core.config import cfg
 
+AGENT_ROOT = None  # Set via cfg
+
 # Constants (Centralized in core.config.cfg, referenced here for local defaults)
 MAX_RETRIES = cfg.autocode_max_retries
 MAX_FILE_CHARS = cfg.autocode_max_file_chars

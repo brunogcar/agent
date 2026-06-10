@@ -184,7 +184,7 @@ def run_workflow(
             result = graph.invoke(initial_state)
 
         elif wf_type == "autocode":
-            from workflows.autocode import build_autocode_graph
+            from workflows.autocode import build_graph as build_autocode_graph
             graph = build_autocode_graph()
             result = graph.invoke(initial_state)
 
