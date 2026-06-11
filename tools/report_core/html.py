@@ -1,4 +1,4 @@
-"""
+﻿"""
 report_core/html.py - Jinja2 renderer.
 
 Thread-safe: instantiates a new Environment per render call.
@@ -29,6 +29,29 @@ def render_template(template_name: str, context: dict, output_path: Path) -> Non
     template = env.get_template(template_name)
     rendered = template.render(**context)
     output_path.write_text(rendered, encoding="utf-8")
+
+
+def _write_manifest(
+    trace_id: str,
+    action: str,
+    title: str,
+    files: list,
+    config: dict,
+) -> None:
+    """Write manifest.json alongside the HTML report."""
+    from tools.report_core.paths import report_out_dir
+    out_dir = report_out_dir(trace_id)
+    manifest = {
+        "trace_id": trace_id,
+        "action": action,
+        "title": title,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "files": files,
+        "preset": config.get("preset", ""),
+        "theme": config.get("theme", "dark"),
+    }
+    manifest_path = out_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def build_report(
@@ -64,6 +87,8 @@ def build_report(
         "trace_id": trace_id,
     }
     render_template("report.html", ctx, html_path)
+
+    _write_manifest(trace_id, action="report", title=title, files=[html_path.name], config=config)
 
     return {
         "type": "report",
@@ -109,6 +134,8 @@ def build_dashboard(
         "trace_id": trace_id,
     }
     render_template("dashboard.html", ctx, html_path)
+
+    _write_manifest(trace_id, action="dashboard", title=title, files=[html_path.name], config=config)
 
     return {
         "type": "dashboard",

@@ -1,4 +1,4 @@
-"""
+﻿"""
 tools/report.py - Report meta-tool.
 
 Thin @tool facade. Dispatches to report_core builders.
@@ -83,6 +83,19 @@ def report(
             data=data,
             config=config,
         )
+        # Memory hook - store episodic record of report generation
+        try:
+            from core.memory import memory
+            memory.store_episodic(
+                text=f"Generated {action} report: '{title}' at {result.get('html_path', 'unknown')}",
+                importance=5,
+                goal=title,
+                outcome="success",
+                tools_used=f"report,{action}",
+                trace_id=trace_id,
+            )
+        except Exception:
+            pass  # Never fail the report if memory storage fails
         return report_ok(result, trace_id=trace_id)
     except Exception as e:
         return report_fail(f"{type(e).__name__}: {e}", trace_id=trace_id)

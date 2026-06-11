@@ -1,11 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en" data-theme="{{ theme | default('dark') }}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ title | default('Report') }}</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" onerror="chartJsFallback()"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -132,6 +132,8 @@
     padding: 18px;
     transition: border-color 0.2s, box-shadow 0.2s;
     margin-bottom: 16px;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
   .card:hover {
     border-color: var(--brand);
@@ -244,16 +246,6 @@
     color: var(--text-sec);
   }
   .collapsible.open .collapsible-header .chevron { transform: rotate(180deg); }
-  .collapsible-body {
-    max-height: 0;
-    overflow: hidden;
-    transition: max-height 0.4s ease, padding 0.4s ease;
-    padding: 0 18px;
-  }
-  .collapsible.open .collapsible-body {
-    max-height: 2000px;
-    padding: 14px 18px;
-  }
 
   .bug-card {
     border-radius: 10px;
@@ -366,6 +358,7 @@
     overflow-x: auto;
     line-height: 1.6;
     margin: 10px 0;
+    position: relative;
   }
   .code-block .c { color: #94a3b8; }
   .code-block .k { color: #f472b6; }
@@ -462,6 +455,7 @@
   </main>
 </div>
 <script>
+  // ── Theme toggle ──
   function toggleTheme() {
     const html = document.documentElement;
     const current = html.getAttribute('data-theme') || 'dark';
@@ -478,6 +472,7 @@
   }
   mermaid.initialize({ startOnLoad: true, theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default' });
 
+  // ── Tabs ──
   function showTab(btn, panelId) {
     const container = btn.closest('.view-section') || document;
     container.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -486,9 +481,85 @@
     const panel = document.getElementById(panelId);
     if (panel) panel.classList.add('active');
   }
+
+  // ── Collapsible (fixed: dynamic height, no 2000px cap) ──
   function toggleCollapsible(header) {
-    header.closest('.collapsible').classList.toggle('open');
+    const coll = header.closest('.collapsible');
+    const body = coll.querySelector('.collapsible-body');
+    const isOpen = coll.classList.contains('open');
+    if (isOpen) {
+      body.style.maxHeight = '0px';
+      body.style.padding = '0 18px';
+      coll.classList.remove('open');
+    } else {
+      body.style.maxHeight = (body.scrollHeight + 20) + 'px';
+      body.style.padding = '14px 18px';
+      coll.classList.add('open');
+    }
   }
+
+  // ── Chart.js CDN fallback ──
+  function chartJsFallback() {
+    document.querySelectorAll('.chart-box').forEach(box => {
+      const canvas = box.querySelector('canvas');
+      if (!canvas) return;
+      const tableId = canvas.id + '-fallback';
+      let fallback = document.getElementById(tableId);
+      if (!fallback) {
+        fallback = document.createElement('div');
+        fallback.id = tableId;
+        fallback.innerHTML = '<p style="color:var(--text-sec);padding:20px;font-family:ui-monospace,monospace;font-size:12px;">Chart CDN failed to load. Raw data available in page source.</p>';
+        box.appendChild(fallback);
+      }
+      fallback.style.display = 'block';
+    });
+  }
+
+  // ── Keyboard navigation ──
+  document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const items = Array.from(document.querySelectorAll('.nav-item'));
+    const active = document.querySelector('.nav-item.active');
+    let idx = active ? items.indexOf(active) : -1;
+    if (e.key === 'j' || e.key === 'J') {
+      e.preventDefault();
+      const next = items[(idx + 1) % items.length];
+      if (next) next.click();
+    } else if (e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      const prev = items[(idx - 1 + items.length) % items.length];
+      if (prev) prev.click();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const summary = document.querySelector('.nav-item[data-target="view-overview"]') || items[0];
+      if (summary) summary.click();
+    }
+  });
+
+  // ── Copy to clipboard on code blocks ──
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.code-block').forEach(block => {
+      const btn = document.createElement('button');
+      btn.textContent = 'Copy';
+      btn.style.cssText = 'position:absolute;top:8px;right:8px;font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-sec);cursor:pointer;opacity:0;transition:opacity 0.2s;z-index:10;';
+      block.appendChild(btn);
+      block.addEventListener('mouseenter', () => btn.style.opacity = '1');
+      block.addEventListener('mouseleave', () => btn.style.opacity = '0');
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const text = Array.from(block.childNodes)
+          .filter(n => n.nodeType === Node.TEXT_NODE || (n.nodeType === Node.ELEMENT_NODE && n.tagName !== 'BUTTON'))
+          .map(n => n.textContent).join('').trim();
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = 'Copied!';
+          setTimeout(() => btn.textContent = 'Copy', 1500);
+        }).catch(() => {
+          btn.textContent = 'Failed';
+          setTimeout(() => btn.textContent = 'Copy', 1500);
+        });
+      });
+    });
+  });
 </script>
 {% block scripts %}{% endblock %}
 </body>
