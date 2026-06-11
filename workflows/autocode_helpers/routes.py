@@ -54,6 +54,6 @@ def route_after_debug(state: AutocodeState) -> str:
 def route_after_verify(state: AutocodeState) -> str:
     """Route after verification node."""
     if state.get("verification_passed", False):
-        return "node_commit"
+        return "report"
     else:
         return "END"

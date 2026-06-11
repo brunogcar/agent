@@ -22,6 +22,7 @@ from workflows.autocode_helpers.nodes.verify import node_verify
 from workflows.autocode_helpers.nodes.commit import node_commit
 from workflows.autocode_helpers.nodes.memory import node_distill_memory
 from workflows.autocode_helpers.nodes.create_skill import node_create_skill
+from workflows.autocode_helpers.nodes.report import node_report
 from workflows.autocode_helpers.routes import (
     route_after_classify,
     route_after_brainstorm,
@@ -58,6 +59,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_commit", node_commit)
     workflow.add_node("node_distill_memory", node_distill_memory)
     workflow.add_node("node_create_skill", node_create_skill)
+    workflow.add_node("node_report", node_report)
 
     # Set entry point
     workflow.set_entry_point("node_classify_task")
@@ -86,13 +88,12 @@ def build_graph() -> StateGraph:
     workflow.add_edge("node_execute_step", "node_write_files")
 
     # Route after write_files (TDD loop vs verification)
-    # CHANGED: Route to analyze_impact first instead of run_tests
     workflow.add_conditional_edges(
         "node_write_files",
         route_after_write_files,
         {
             "node_analyze_impact": "node_analyze_impact",
-            "node_verify": "node_verify",  # Added by Kimi
+            "node_verify": "node_verify",
         },
     )
 
@@ -123,12 +124,13 @@ def build_graph() -> StateGraph:
         "node_verify",
         route_after_verify,
         {
-            "node_commit": "node_commit",
+            "report": "node_report",
             "END": END,
         },
     )
 
-    # Final steps
+    # Report -> commit -> distill -> END
+    workflow.add_edge("node_report", "node_commit")
     workflow.add_edge("node_commit", "node_distill_memory")
     workflow.add_edge("node_distill_memory", END)
 

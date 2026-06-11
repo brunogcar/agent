@@ -46,7 +46,7 @@ async def node_init_project(state: UnderstandState) -> dict:
     tid = "understand_init"
     tracer.step(tid, "init", f"Initializing project {state['project_path']}")
     pm = ProjectManager(state["project_path"], is_agent_root=state["is_agent_root"])
-    
+
     if not pm.is_agent_root and not pm.source_root.exists():
         return {"status": "failed", "errors": [f"Source root does not exist: {pm.source_root}. Did the git clone fail?"]}
 
@@ -55,10 +55,10 @@ async def node_init_project(state: UnderstandState) -> dict:
         return {"status": "failed", "errors": ["Project too large for indexing."]}
 
     await asyncio.to_thread(pm.ensure_initialized)
-    
+
     db_path = pm.artifact_root / "kg.db"
     _ = await asyncio.to_thread(GraphStore, db_path)
-    
+
     return {"status": "running"}
 
 async def node_discover_files(state: UnderstandState) -> dict:
@@ -84,22 +84,22 @@ async def node_discover_files(state: UnderstandState) -> dict:
                         continue
                 except OSError:
                     continue
-                
+
                 rel_path = full_path.relative_to(pm.source_root).as_posix()
-                
+
                 node = store.read(
                     "SELECT content_hash, last_modified, file_size FROM nodes WHERE project_id = ? AND path = ?",
                     (state["project_id"], rel_path)
                 )
-                
+
                 if node:
                     row = node[0]
                     if math.isclose(row["last_modified"], stat.st_mtime, abs_tol=0.001) and row["file_size"] == stat.st_size:
                         continue
-                
+
                 current_hash = hashlib.md5(full_path.read_bytes()).hexdigest()
                 stored_hash = store.get_file_hash(state["project_id"], rel_path)
-                
+
                 if current_hash != stored_hash:
                     discovered.append((str(full_path), rel_path, current_hash, stat.st_mtime, stat.st_size))
         return discovered
@@ -114,9 +114,9 @@ async def node_parse_and_store(state: UnderstandState) -> dict:
     if not files_to_parse:
         tracer.step(tid, "parse", "No files changed. Graph is up to date.")
         return {"status": "completed"}
-        
+
     tracer.step(tid, "parse", f"Parsing {len(files_to_parse)} changed files...")
-    
+
     pm = ProjectManager(state["project_path"], is_agent_root=state["is_agent_root"])
     db_path = pm.artifact_root / "kg.db"
     store = GraphStore(db_path)
@@ -131,23 +131,23 @@ async def node_parse_and_store(state: UnderstandState) -> dict:
         tasks = []
         for full_path, rel_path, current_hash, mtime, size in batch:
             tasks.append(parse_file_dependencies(state["project_id"], full_path))
-            
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         for (full_path, rel_path, current_hash, mtime, size), deps in zip(batch, results):
             if isinstance(deps, Exception):
                 errors.append(f"Failed to parse {rel_path}: {deps}")
                 continue
-                
+
             target_paths = []
             for dep in deps:
                 target_paths.append(dep.replace(".", "/") + ".py")
                 target_paths.append(dep)
-                
+
             await asyncio.to_thread(store.upsert_file_graph, state["project_id"], rel_path, current_hash, target_paths, mtime, size)
             parsed += 1
             edges += len(target_paths)
-            
+
     tracer.step(tid, "parse", f"Completed. Parsed {parsed} files, created {edges} edges.")
     return {
         "files_parsed": parsed,
@@ -156,24 +156,61 @@ async def node_parse_and_store(state: UnderstandState) -> dict:
         "status": "completed" if not errors else "completed_with_errors"
     }
 
+async def node_report(state: UnderstandState) -> dict:
+    """Generate codebase overview report."""
+    from tools.report import report as report_tool
+
+    tid = state.get("trace_id", "understand")
+    project_path = state.get("project_path", "")
+    files_parsed = state.get("files_parsed", 0)
+    edges_created = state.get("edges_created", 0)
+    errors = state.get("errors", [])
+
+    sections = [
+        {"title": "Project", "content": f"`{project_path}`"},
+        {"title": "Indexing Summary", "content": f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}"},
+    ]
+
+    if errors:
+        sections.append({
+            "title": "Errors",
+            "content": "\n".join(f"- {e}" for e in errors[:20])
+        })
+
+    try:
+        report_tool(
+            action="report",
+            trace_id=tid,
+            title=f"Codebase Overview: {Path(project_path).name}",
+            data=None,
+            config={"sections": sections},
+            preset="code_audit",
+        )
+    except Exception:
+        pass
+
+    return {}
+
 def build_understand_graph() -> StateGraph:
     workflow = StateGraph(UnderstandState)
     workflow.add_node("node_init_project", node_init_project)
     workflow.add_node("node_discover_files", node_discover_files)
     workflow.add_node("node_parse_and_store", node_parse_and_store)
+    workflow.add_node("node_report", node_report)
     workflow.set_entry_point("node_init_project")
     workflow.add_edge("node_init_project", "node_discover_files")
     workflow.add_edge("node_discover_files", "node_parse_and_store")
-    workflow.add_edge("node_parse_and_store", END)
+    workflow.add_edge("node_parse_and_store", "node_report")
+    workflow.add_edge("node_report", END)
     return workflow.compile()
 
 async def run_understand_workflow(project_path: str, is_agent_root: bool = False) -> dict[str, Any]:
     tid = tracer.new_trace("understand", goal=f"Index codebase at {project_path}")
     try:
-        # 🔴 BULLETPROOF OVERRIDE: Force is_agent_root=True if path matches agent_root
+        # Force is_agent_root=True if path matches agent_root
         if is_same_path(project_path, cfg.agent_root):
             is_agent_root = True
-            
+
         graph = build_understand_graph()
         initial_state = _default_state(project_path, is_agent_root=is_agent_root)
         final_state = await graph.ainvoke(initial_state)

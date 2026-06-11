@@ -1,9 +1,9 @@
-"""
+﻿"""
 tests/workflows/autocode/test_integration.py
 Integration tests for the autocode workflow graph structure.
 Validates:
 - Graph compilation and singleton behavior
-- Exact node count and presence of all 15 nodes
+- Exact node count and presence of all 17 nodes
 - Conditional edge wiring matches routes.py
 - Entry and exit points are correctly configured
 Zero real git/LLM calls. No brittle .invoke() loops.
@@ -17,7 +17,7 @@ from langgraph.graph import StateGraph, END
 class TestGraphStructureAndWiring:
     """Validate the compiled graph architecture without invoking it."""
 
-    def test_graph_has_exactly_15_nodes(self):
+    def test_graph_has_exactly_17_nodes(self):
         from workflows.autocode_helpers.graph import build_graph
         g = build_graph()
         expected_nodes = {
@@ -26,8 +26,7 @@ class TestGraphStructureAndWiring:
             "node_execute_step", "node_run_tests", "node_systematic_debug",
             "node_write_files", "node_write_files_with_flag_reset",
             "node_verify", "node_commit", "node_distill_memory", "node_create_skill",
-            "node_analyze_impact"
-        }
+            "node_analyze_impact", "node_report"}
         assert set(g.nodes.keys()) == expected_nodes, \
             f"Node mismatch. Missing: {expected_nodes - set(g.nodes.keys())}"
 
@@ -58,7 +57,7 @@ class TestGraphStructureAndWiring:
         assert route_after_write_files({"task_type": "feature"}) == "node_analyze_impact"
         assert route_after_write_files({"task_type": "audit"}) == "node_verify"
         
-        assert route_after_verify({"verification_passed": True}) == "node_commit"
+        assert route_after_verify({"verification_passed": True}) == "report"
         assert route_after_verify({"verification_passed": False}) == "END"
 
     def test_tdd_loop_edges_exist(self):
@@ -117,3 +116,6 @@ class TestStateSchemaIntegration:
         hints = typing.get_type_hints(AutocodeState)
         assert "project_root" in hints, "AutocodeState missing project_root for git scoping"
         assert "spec" in hints, "AutocodeState missing spec field (causes KeyError in node_write_tests)"
+
+
+
