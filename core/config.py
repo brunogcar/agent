@@ -229,6 +229,7 @@ class Config:
         self.autocode_max_retries = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
         self.autocode_max_file_chars = int(os.getenv("AUTOCODE_MAX_FILE_CHARS", "6000"))
         self.autocode_debug = os.getenv("AUTOCODE_DEBUG", "0") == "1"
+        self.disable_model_warmup = os.getenv("DISABLE_MODEL_WARMUP", "0") == "1"
 
         # -- Timeouts ------------------------------------------------------------
         self.planner_timeout = int(os.getenv("PLANNER_TIMEOUT", "180"))
