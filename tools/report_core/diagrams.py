@@ -1,0 +1,68 @@
+"""
+report_core/diagrams.py - Mermaid.js diagram builders.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from tools.report_core.paths import report_out_dir
+
+
+def build(
+    trace_id: str,
+    title: str,
+    data: Any,
+    config: dict,
+) -> dict:
+    """Build a Mermaid diagram report and return HTML path."""
+    diagram_type = config.get("diagram_type", "flowchart").lower()
+
+    # data can be raw mermaid syntax string, or a dict with nodes/edges
+    if isinstance(data, str):
+        mermaid_src = data
+    elif isinstance(data, dict):
+        mermaid_src = _dict_to_mermaid(data, diagram_type)
+    else:
+        mermaid_src = "flowchart TD\n    A[Start] --> B[End]"
+
+    out_dir = report_out_dir(trace_id)
+    safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in (title or "diagram"))
+    html_path = out_dir / f"{safe_title}.html"
+
+    from tools.report_core import html
+    ctx = {
+        "title": title,
+        "mermaid_src": mermaid_src,
+        "theme": config.get("theme", "dark"),
+        "accent": config.get("accent", "#0d9488"),
+    }
+    html.render_template("diagram.html", ctx, html_path)
+
+    return {
+        "type": "diagram",
+        "title": title,
+        "html_path": str(html_path),
+        "diagram_type": diagram_type,
+    }
+
+
+def _dict_to_mermaid(data: dict, diagram_type: str) -> str:
+    """Convert a simple dict representation to Mermaid syntax."""
+    nodes = data.get("nodes", [])
+    edges = data.get("edges", [])
+    lines = [f"{diagram_type} TD"]
+    for n in nodes:
+        nid = n.get("id", "A")
+        label = n.get("label", nid)
+        lines.append(f"    {nid}[{label}]")
+    for e in edges:
+        src = e.get("from", "A")
+        dst = e.get("to", "B")
+        label = e.get("label", "")
+        if label:
+            lines.append(f"    {src} -->|{label}| {dst}")
+        else:
+            lines.append(f"    {src} --> {dst}")
+    return "\n".join(lines)
