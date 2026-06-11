@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block sidebar %}
+<div class="nav-section-label">Scorecard</div>
+<button class="nav-item ok active" data-target="view-overview" onclick="showView(this)">
+  <span class="nav-dot"></span> Overview
+</button>
+<button class="nav-item ok" data-target="view-radar" onclick="showView(this)">
+  <span class="nav-dot"></span> Radar Chart
+</button>
+<button class="nav-item ok" data-target="view-details" onclick="showView(this)">
+  <span class="nav-dot"></span> Details
+</button>
+{% endblock %}
+{% block content %}
+<section id="view-overview" class="view-section active">
+  <div class="mb-6">
+    <div class="text-xs font-mono text-brand-600 uppercase tracking-widest mb-2">// health scorecard</div>
+    <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-3">{{ title }}</h1>
+    {% if subtitle %}<p class="text-slate-500 dark:text-slate-400 text-base">{{ subtitle }}</p>{% endif %}
+  </div>
+  <div class="card mb-6" style="border-left: 4px solid {{ overall_color }};">
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="card-title">Overall Score</div>
+        <div class="text-5xl font-bold" style="color:{{ overall_color }};">{{ overall_score }}<span class="text-lg text-slate-400">/100</span></div>
+      </div>
+      <div class="text-right">
+        <span class="px-3 py-1 rounded text-sm font-bold"
+          style="background:{{ overall_color }}20;color:{{ overall_color }};border:1px solid {{ overall_color }}40;">
+          {{ overall_status | upper }}
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="kpi-row" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+    {% for d in dimensions %}
+    <div class="card" style="border-top: 4px solid {{ d.color }};">
+      <div class="card-title">{{ d.name }}</div>
+      <div class="text-3xl font-bold" style="color:{{ d.color }};">{{ d.score }}<span class="text-sm text-slate-400">/{{ d.target }}</span></div>
+      <div class="flex items-center gap-2 mt-2">
+        <span class="px-2 py-0.5 rounded text-xs font-bold" style="background:{{ d.color }}20;color:{{ d.color }};">{{ d.status | upper }}</span>
+        {% if d.delta > 0 %}<span class="text-xs font-mono" style="color:#22c55e;">+{{ d.delta }}</span>{% elif d.delta < 0 %}<span class="text-xs font-mono" style="color:#ef4444;">{{ d.delta }}</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+<section id="view-radar" class="view-section">
+  <div class="mb-6">
+    <div class="text-xs font-mono text-brand-600 uppercase tracking-widest mb-2">// radar analysis</div>
+    <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-3">{{ title }} — Radar</h1>
+  </div>
+  <div class="card">
+    <div class="card-title">Current vs Target</div>
+    <div class="chart-box" style="height:400px;"><canvas id="radarChart"></canvas></div>
+  </div>
+</section>
+<section id="view-details" class="view-section">
+  <div class="mb-6">
+    <div class="text-xs font-mono text-brand-600 uppercase tracking-widest mb-2">// dimension breakdown</div>
+    <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-3">{{ title }} — Details</h1>
+  </div>
+  <div class="card">
+    <div class="card-title">Dimension Breakdown</div>
+    <table class="data-table">
+      <thead><tr><th>Dimension</th><th>Score</th><th>Target</th><th>Delta</th><th>Weight</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for d in dimensions %}
+        <tr>
+          <td><strong>{{ d.name }}</strong></td>
+          <td class="font-mono">{{ d.score }}</td>
+          <td class="font-mono text-slate-400">{{ d.target }}</td>
+          <td class="font-mono {% if d.delta > 0 %}text-green-500{% elif d.delta < 0 %}text-red-500{% else %}text-slate-400{% endif %}">{% if d.delta > 0 %}+{% endif %}{{ d.delta }}</td>
+          <td class="font-mono">{{ d.weight }}</td>
+          <td><span class="px-2 py-0.5 rounded text-xs font-bold" style="background:{{ d.color }}20;color:{{ d.color }};">{{ d.status | upper }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<script>
+function showView(btn) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  btn.classList.add('active');
+  const target = btn.getAttribute('data-target');
+  document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+  document.getElementById(target).classList.add('active');
+}
+const radarConfig = {{ radar_config_json | safe }};
+const ctx = document.getElementById('radarChart').getContext('2d');
+new Chart(ctx, radarConfig);
+</script>
+{% endblock %}

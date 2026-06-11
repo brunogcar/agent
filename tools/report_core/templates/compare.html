@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block sidebar %}
+<div class="nav-section-label">Compare</div>
+<button class="nav-item ok active" data-target="view-compare" onclick="showView(this)">
+  <span class="nav-dot"></span> Comparison
+</button>
+{% endblock %}
+{% block content %}
+<section id="view-compare" class="view-section active">
+  <div class="mb-6">
+    <div class="text-xs font-mono text-brand-600 uppercase tracking-widest mb-2">// side-by-side diff</div>
+    <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-3">{{ title }}</h1>
+    {% if subtitle %}<p class="text-slate-500 dark:text-slate-400 text-base">{{ subtitle }}</p>{% endif %}
+  </div>
+  <div class="card mb-6">
+    <div class="card-title">Legend</div>
+    <div class="flex gap-4 text-xs">
+      <span class="px-2 py-1 rounded" style="background:rgba(34,197,94,0.15);color:#22c55e;">&#9650; Improved / Added</span>
+      <span class="px-2 py-1 rounded" style="background:rgba(239,68,68,0.15);color:#ef4444;">&#9660; Worsened / Removed</span>
+      <span class="px-2 py-1 rounded" style="background:rgba(148,163,184,0.15);color:#94a3b8;">&#8212; Unchanged</span>
+    </div>
+  </div>
+  {% if mode == 'dict' %}
+  <div class="card">
+    <div class="card-title">Key Comparison</div>
+    <table class="data-table">
+      <thead><tr><th>Key</th><th style="color:#94a3b8">{{ before_label }}</th><th style="color:#0d9488">{{ after_label }}</th><th>Delta</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td><code>{{ row.key }}</code></td>
+          <td>{{ row.before }}</td>
+          <td style="font-weight:600;">{{ row.after }}</td>
+          <td>
+            <span class="px-2 py-0.5 rounded text-xs font-mono font-bold"
+              style="{% if row.delta_class == 'pos' %}background:rgba(34,197,94,0.15);color:#22c55e;{% elif row.delta_class == 'neg' %}background:rgba(239,68,68,0.15);color:#ef4444;{% else %}background:rgba(148,163,184,0.15);color:#94a3b8;{% endif %}">
+              {{ row.delta }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% if mode == 'table' %}
+  <div class="card">
+    <div class="card-title">Row-by-Row Comparison</div>
+    {% for row in rows %}
+    <div class="mb-4">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="font-mono text-xs font-bold text-brand-600">{{ row.row_key }}</span>
+        {% if row.status == 'added' %}<span class="px-2 py-0.5 rounded text-xs" style="background:rgba(34,197,94,0.15);color:#22c55e;">ADDED</span>{% elif row.status == 'removed' %}<span class="px-2 py-0.5 rounded text-xs" style="background:rgba(239,68,68,0.15);color:#ef4444;">REMOVED</span>{% else %}<span class="px-2 py-0.5 rounded text-xs" style="background:rgba(148,163,184,0.15);color:#94a3b8;">CHANGED</span>{% endif %}
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Column</th><th style="color:#94a3b8">{{ before_label }}</th><th style="color:#0d9488">{{ after_label }}</th><th>Delta</th></tr></thead>
+        <tbody>
+          {% for cell in row.cells %}
+          <tr>
+            <td><code>{{ cell.col }}</code></td>
+            <td>{{ cell.before }}</td>
+            <td style="font-weight:600;">{{ cell.after }}</td>
+            <td>
+              <span class="px-2 py-0.5 rounded text-xs font-mono font-bold"
+                style="{% if cell.delta_class == 'pos' %}background:rgba(34,197,94,0.15);color:#22c55e;{% elif cell.delta_class == 'neg' %}background:rgba(239,68,68,0.15);color:#ef4444;{% else %}background:rgba(148,163,184,0.15);color:#94a3b8;{% endif %}">
+                {{ cell.delta }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if mode == 'list' %}
+  <div class="card">
+    <div class="card-title">List Comparison</div>
+    <table class="data-table">
+      <thead><tr><th>#</th><th style="color:#94a3b8">{{ before_label }}</th><th style="color:#0d9488">{{ after_label }}</th><th>Delta</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.index }}</td>
+          <td>{{ row.before }}</td>
+          <td style="font-weight:600;">{{ row.after }}</td>
+          <td>
+            <span class="px-2 py-0.5 rounded text-xs font-mono font-bold"
+              style="{% if row.delta_class == 'pos' %}background:rgba(34,197,94,0.15);color:#22c55e;{% elif row.delta_class == 'neg' %}background:rgba(239,68,68,0.15);color:#ef4444;{% else %}background:rgba(148,163,184,0.15);color:#94a3b8;{% endif %}">
+              {{ row.delta }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+<script>
+function showView(btn) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+{% endblock %}

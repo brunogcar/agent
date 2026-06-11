@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block sidebar %}
+<div class="nav-section-label">Timeline</div>
+<button class="nav-item ok active" data-target="view-timeline" onclick="showView(this)">
+  <span class="nav-dot"></span> Gantt Chart
+</button>
+<button class="nav-item ok" data-target="view-events" onclick="showView(this)">
+  <span class="nav-dot"></span> Event List
+</button>
+{% endblock %}
+{% block content %}
+<section id="view-timeline" class="view-section active">
+  <div class="mb-6">
+    <div class="text-xs font-mono text-brand-600 uppercase tracking-widest mb-2">// project timeline</div>
+    <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-3">{{ title }}</h1>
+    {% if subtitle %}<p class="text-slate-500 dark:text-slate-400 text-base">{{ subtitle }}</p>{% endif %}
+  </div>
+  <div class="card">
+    <div class="card-title">Gantt Chart</div>
+    <div style="overflow-x:auto;">{{ svg_html | safe }}</div>
+  </div>
+  <div class="card mt-4">
+    <div class="card-title">Legend</div>
+    <div class="flex gap-4 text-xs flex-wrap">
+      <span class="flex items-center gap-1"><span style="width:10px;height:10px;border-radius:2px;background:#22c55e;display:inline-block;"></span> Done</span>
+      <span class="flex items-center gap-1"><span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block;"></span> Active</span>
+      <span class="flex items-center gap-1"><span style="width:10px;height:10px;border-radius:2px;background:#94a3b8;display:inline-block;"></span> Pending</span>
+      <span class="flex items-center gap-1"><span style="width:10px;height:10px;border-radius:2px;background:#ef4444;display:inline-block;"></span> Blocked</span>
+      <span class="flex items-center gap-1"><span style="width:10px;height:10px;border-radius:2px;background:#ef4444;display:inline-block;"></span> Today marker</span>
+    </div>
+  </div>
+</section>
+<section id="view-events" class="view-section">
+  <div class="mb-6">
+    <div class="text-xs font-mono text-brand-600 uppercase tracking-widest mb-2">// events</div>
+    <h1 class="text-3xl font-bold text-slate-900 dark:text-white mb-3">{{ title }} — Events</h1>
+  </div>
+  <div class="card">
+    <div class="card-title">Event List</div>
+    <table class="data-table">
+      <thead><tr><th>#</th><th>Label</th><th>Start</th><th>End</th><th>Status</th><th>Duration</th></tr></thead>
+      <tbody>
+        {% for ev in events %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ ev.label }}</td>
+          <td>{{ ev.start }}</td>
+          <td>{{ ev.end }}</td>
+          <td>
+            <span class="px-2 py-0.5 rounded text-xs font-bold"
+              style="{% if ev.status == 'done' %}background:rgba(34,197,94,0.15);color:#22c55e;{% elif ev.status == 'active' %}background:rgba(59,130,246,0.15);color:#3b82f6;{% elif ev.status == 'blocked' %}background:rgba(239,68,68,0.15);color:#ef4444;{% else %}background:rgba(148,163,184,0.15);color:#94a3b8;{% endif %}">
+              {{ ev.status | upper }}
+            </span>
+          </td>
+          <td class="font-mono text-xs">{{ ev.duration | default('—') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<script>
+function showView(btn) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  btn.classList.add('active');
+  const target = btn.getAttribute('data-target');
+  document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+  document.getElementById(target).classList.add('active');
+}
+</script>
+{% endblock %}

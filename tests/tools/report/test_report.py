@@ -1,4 +1,4 @@
-﻿"""
+"""
 tests/tools/report/test_report.py - Report tool tests.
 """
 
@@ -13,17 +13,15 @@ from tools.report_core.contracts import report_ok, report_fail
 from tools.report_core.paths import report_out_dir
 from tools.report_core.data import load_data
 
-
 class TestRegistry:
     def test_dispatch_keys(self):
-        assert set(DISPATCH.keys()) == {"chart", "map", "report", "dashboard", "diagram", "export"}
+        assert set(DISPATCH.keys()) == {"chart", "map", "report", "dashboard", "diagram", "export", "compare", "timeline", "scorecard"}
 
     def test_metadata_covers_all_actions(self):
         assert set(DISPATCH_METADATA.keys()) == set(DISPATCH.keys())
 
     def test_presets_exist(self):
-        assert set(PRESETS.keys()) == {"financial", "code_audit", "research", "system_health"}
-
+        assert set(PRESETS.keys()) == {"financial", "code_audit", "research", "system_health", "compare", "timeline", "scorecard"}
 
 class TestContracts:
     def test_report_ok_injects_trace_id(self):
@@ -38,7 +36,6 @@ class TestContracts:
         assert r["trace_id"] == "abc123"
         assert "boom" in r["error"]
 
-
 class TestPaths:
     def test_report_out_dir_returns_path(self, tmp_path, monkeypatch):
         from core.config import cfg
@@ -47,7 +44,6 @@ class TestPaths:
         assert d.exists()
         assert d.name == "test-trace-123"
         assert d.parent.name == "reports"
-
 
 class TestDataLoader:
     def test_inline_data(self):
@@ -85,7 +81,7 @@ class TestDataLoader:
         p.write_text("\n".join(csv_lines), encoding="utf-8")
         data, err = load_data(data_path=str(p))
         assert err == ""
-        assert hasattr(data, "columns")  # pandas DataFrame
+        assert hasattr(data, "columns") # pandas DataFrame
 
     def test_unsupported_suffix(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tools.report_core.data.resolve_path", lambda p: (pathlib.Path(p), ""))
@@ -95,13 +91,12 @@ class TestDataLoader:
         assert data is None
         assert "Unsupported" in err
 
-
 class TestChartsBuilder:
     def test_generate_palette(self):
         from tools.report_core.charts import _generate_palette
         pal = _generate_palette(5, "#0d9488")
         assert len(pal) == 5
-        assert len(set(pal)) == 5  # distinct colors
+        assert len(set(pal)) == 5 # distinct colors
 
     def test_chartjs_config_bar(self):
         from tools.report_core.charts import _to_chartjs_config
@@ -116,7 +111,6 @@ class TestChartsBuilder:
         assert cfg["type"] == "pie"
         assert len(cfg["data"]["datasets"][0]["backgroundColor"]) == 2
 
-
 class TestDiagramsBuilder:
     def test_dict_to_mermaid(self):
         from tools.report_core.diagrams import _dict_to_mermaid
@@ -127,7 +121,6 @@ class TestDiagramsBuilder:
         assert "A[Start]" in src
         assert "B[End]" in src
         assert "A --> B" in src
-
 
 class TestHtmlRenderer:
     def test_render_template_creates_file(self, tmp_path):

@@ -1,4 +1,4 @@
-"""
+﻿"""
 report_core/_registry.py - Action dispatch registry.
 
 Dispatcher pattern: action string -> builder function.
@@ -41,6 +41,18 @@ def _dispatch_export(*args, **kwargs):
     return export.run(*args, **kwargs)
 
 
+def _dispatch_compare(*args, **kwargs):
+    from tools.report_core import compare
+    return compare.build(*args, **kwargs)
+
+def _dispatch_timeline(*args, **kwargs):
+    from tools.report_core import timeline
+    return timeline.build(*args, **kwargs)
+
+def _dispatch_scorecard(*args, **kwargs):
+    from tools.report_core import scorecard
+    return scorecard.build(*args, **kwargs)
+
 DISPATCH: dict[str, Callable] = {
     "chart":      _dispatch_chart,
     "map":        _dispatch_map,
@@ -48,6 +60,9 @@ DISPATCH: dict[str, Callable] = {
     "dashboard":  _dispatch_dashboard,
     "diagram":    _dispatch_diagram,
     "export":     _dispatch_export,
+    "compare":    _dispatch_compare,
+    "timeline":   _dispatch_timeline,
+    "scorecard":  _dispatch_scorecard,
 }
 
 DISPATCH_METADATA: dict[str, dict] = {
@@ -87,8 +102,25 @@ DISPATCH_METADATA: dict[str, dict] = {
         "optional_params": ["config"],
         "config_keys": ["format", "width", "height"],
     },
+    "compare": {
+        "description": "Side-by-side diff table with delta highlighting",
+        "required_params": ["action", "title", "data"],
+        "optional_params": ["config"],
+        "config_keys": ["before_label", "after_label", "key_col", "theme"],
+    },
+    "timeline": {
+        "description": "SVG Gantt/timeline chart",
+        "required_params": ["action", "title", "data"],
+        "optional_params": ["config"],
+        "config_keys": ["width", "bar_height", "row_gap", "theme"],
+    },
+    "scorecard": {
+        "description": "RAG status dashboard with radar chart",
+        "required_params": ["action", "title", "data"],
+        "optional_params": ["config"],
+        "config_keys": ["theme", "accent"],
+    },
 }
-
 PRESETS: dict[str, dict] = {
     "financial": {
         "template": "dashboard",
@@ -115,4 +147,22 @@ PRESETS: dict[str, dict] = {
         "accent": "#14b8a6",
         "default_sections": ["overview", "metrics", "issues", "logs"],
     },
-}
+    "compare": {
+        "template": "compare",
+        "theme": "dark",
+        "accent": "#0d9488",
+        "default_sections": ["diff"],
+    },
+    "timeline": {
+        "template": "timeline",
+        "theme": "dark",
+        "accent": "#3b82f6",
+        "default_sections": ["gantt", "events"],
+    },
+    "scorecard": {
+        "template": "scorecard",
+        "theme": "dark",
+        "accent": "#14b8a6",
+        "default_sections": ["overview", "radar", "details"],
+    },
+}  
