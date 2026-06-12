@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 import threading
 
 # Import routers
-from core.gateway_backend.routes import tasks, chat, health, metrics, traces
+from core.gateway_backend.routes import tasks, chat, health, metrics, traces, reports
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,23 +24,23 @@ async def lifespan(app: FastAPI):
     Handles startup (warmup, executor init) and shutdown (executor drain).
     """
     # ── STARTUP ─────────────────────────────────────────────────────────────
-    
+
     # 1. ChromaDB warmup (Run in daemon thread to avoid blocking the async event loop)
     warmup_thread = threading.Thread(target=_warmup_memory, daemon=True)
     warmup_thread.start()
-    
+
     # 2. Initialize ThreadPoolExecutor
     from core.runtime.task_runner import init_executor
     init_executor()
-    
-    yield  # ── APP RUNS HERE ──
-    
+
+    yield # ── APP RUNS HERE ──
+
     # ── SHUTDOWN ────────────────────────────────────────────────────────────
-    
+
     # 1. Drain and shutdown ThreadPoolExecutor
     from core.runtime.task_runner import shutdown_executor
     shutdown_executor()
-    
+
     # 2. Wait for warmup thread to finish (if it hasn't already)
     warmup_thread.join(timeout=5)
 
@@ -74,7 +74,7 @@ def _warmup_memory(timeout: int = 60) -> None:
         elapsed = round(time.time() - start, 1)
         print(
             f"[startup] ChromaDB warmup TIMEOUT after {elapsed}s — proceeding in degraded mode\n"
-            f"          Memory calls may be slow on first use.",
+            f" Memory calls may be slow on first use.",
             file=sys.stderr,
         )
         # Log to tracer so it shows up in structured debugging/telemetry
@@ -83,7 +83,7 @@ def _warmup_memory(timeout: int = 60) -> None:
         elapsed = round(time.time() - start, 1)
         print(
             f"[startup] ChromaDB warmup warning after {elapsed}s: {e}\n"
-            f"          Memory calls may be slow on first use.",
+            f" Memory calls may be slow on first use.",
             file=sys.stderr,
         )
 
@@ -93,9 +93,9 @@ def create_app():
     # slowapi is a thin wrapper around limits that integrates with FastAPI.
     # If not installed, rate limiting is skipped with a startup warning.
     # Install: pip install slowapi
-    _rate_limiter  = None
-    _limit_chat    = None
-    _limit_task    = None
+    _rate_limiter = None
+    _limit_chat = None
+    _limit_task = None
 
     try:
         from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -103,18 +103,18 @@ def create_app():
         from slowapi.errors import RateLimitExceeded
 
         _rate_limiter = Limiter(key_func=get_remote_address)
-        _limit_chat   = "30/minute"
-        _limit_task   = "60/minute"
+        _limit_chat = "30/minute"
+        _limit_task = "60/minute"
     except ImportError:
         print(
             "[startup] WARNING: slowapi not installed — rate limiting disabled.\n"
-            "          Install with: pip install slowapi",
+            " Install with: pip install slowapi",
             file=sys.stderr,
         )
 
     # ── Startup guard (P0-2) -------------------------------------------------
     secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
-    env    = getattr(cfg, "env", "dev")
+    env = getattr(cfg, "env", "dev")
 
     if secret == "changeme":
         if env != "dev":
@@ -128,7 +128,7 @@ def create_app():
         else:
             print(
                 "[SECURITY WARNING] Gateway running in DEV mode with default secret.\n"
-                "                   Set GATEWAY_SECRET in .env before exposing to network.",
+                " Set GATEWAY_SECRET in .env before exposing to network.",
                 file=sys.stderr,
             )
 
@@ -139,10 +139,10 @@ def create_app():
     # ── App setup ------------------------------------------------------------
     # Note: ChromaDB warmup and Executor init are now handled in the lifespan context
     app = FastAPI(
-        title        = "MCP Agent Gateway",
-        description  = "REST API for the MCP Agent Stack",
-        version      = "1.0.0",
-        lifespan     = lifespan,  # 🔴 PHASE 2: Wire modern lifespan context
+        title = "MCP Agent Gateway",
+        description = "REST API for the MCP Agent Stack",
+        version = "1.0.0",
+        lifespan = lifespan, # 🔴 PHASE 2: Wire modern lifespan context
     )
 
     if _rate_limiter:
@@ -157,13 +157,13 @@ def create_app():
     cors_origins = getattr(cfg, "gateway_cors_origins", ["*"])
     if isinstance(cors_origins, str):
         cors_origins = [o.strip() for o in cors_origins.split(",")]
-        
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins     = cors_origins,
+        allow_origins = cors_origins,
         allow_credentials = False,
-        allow_methods     = ["*"],
-        allow_headers     = ["*"],
+        allow_methods = ["*"],
+        allow_headers = ["*"],
     )
 
     # ── Payload Size Limit (Audit Fix #2) ------------------------------------
@@ -171,9 +171,9 @@ def create_app():
     # Defaults to 10MB. Override in .env with GATEWAY_MAX_BODY_MB=50
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
-    
+
     MAX_BODY_SIZE = getattr(cfg, "gateway_max_body_mb", 10) * 1024 * 1024
-    
+
     class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         def __init__(self, app, max_body_size: int):
             super().__init__(app)
@@ -184,7 +184,7 @@ def create_app():
                 content_length = request.headers.get("content-length")
                 if content_length and int(content_length) > self.max_body_size:
                     return JSONResponse(
-                        status_code=413, 
+                        status_code=413,
                         content={"error": "Payload too large", "max_mb": self.max_body_size // (1024*1024)}
                     )
             return await call_next(request)
@@ -197,13 +197,13 @@ def create_app():
     import uuid
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
-    
+
     class RequestIDMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             # Read from header or generate new UUID
             request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
             request.state.trace_id = request_id
-            
+
             response = await call_next(request)
             response.headers["X-Request-ID"] = request_id
             return response
@@ -211,11 +211,12 @@ def create_app():
     app.add_middleware(RequestIDMiddleware)
 
     # ── Register Routers (Phase 2 Step 4: OpenAPI Tags) ----------------------
-    app.include_router(tasks.router,   tags=["Tasks"])
-    app.include_router(chat.router,    tags=["Chat"])
-    app.include_router(health.router,  tags=["Health & System"])
+    app.include_router(tasks.router, tags=["Tasks"])
+    app.include_router(chat.router, tags=["Chat"])
+    app.include_router(health.router, tags=["Health & System"])
     app.include_router(metrics.router, tags=["Telemetry"])
-    app.include_router(traces.router,  tags=["Traces"])
+    app.include_router(traces.router, tags=["Traces"])
+    app.include_router(reports.router, tags=["Reports"])
 
     # ── Centralized Exception Handlers (Phase 2 Step 2) ----------------------
     from core.gateway_backend.exceptions import TaskNotFoundError, ToolExecutionError

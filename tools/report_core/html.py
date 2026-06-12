@@ -1,4 +1,4 @@
-﻿"""
+"""
 report_core/html.py - Jinja2 renderer.
 
 Thread-safe: instantiates a new Environment per render call.
@@ -14,22 +14,19 @@ from typing import Any
 
 from core.config import cfg
 
-
 def _get_template_dir() -> Path:
     """Return the package templates directory."""
     return Path(__file__).with_suffix("").parent / "templates"
 
-
 def render_template(template_name: str, context: dict, output_path: Path) -> None:
     """Render a Jinja2 template to an HTML file."""
-    from jinja2 import Environment, FileSystemLoader  # lazy
+    from jinja2 import Environment, FileSystemLoader # lazy
 
     template_dir = _get_template_dir()
     env = Environment(loader=FileSystemLoader(str(template_dir)))
     template = env.get_template(template_name)
     rendered = template.render(**context)
     output_path.write_text(rendered, encoding="utf-8")
-
 
 def _write_manifest(
     trace_id: str,
@@ -53,6 +50,30 @@ def _write_manifest(
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
+def _write_metrics(
+    trace_id: str,
+    action: str,
+    title: str,
+    files: list,
+    config: dict,
+) -> None:
+    """Write metrics.json for Grafana/external ingestion."""
+    from tools.report_core.paths import report_out_dir
+    out_dir = report_out_dir(trace_id)
+    metrics = {
+        "trace_id": trace_id,
+        "action": action,
+        "title": title,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "files_count": len(files),
+        "preset": config.get("preset", ""),
+        "theme": config.get("theme", "dark"),
+        "accent": config.get("accent", ""),
+        "chart_engine": config.get("chart_engine", ""),
+        "has_data": bool(config.get("data_path") or config.get("sections") or config.get("tabs")),
+    }
+    metrics_path = out_dir / "metrics.json"
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 def build_report(
     trace_id: str,
@@ -89,6 +110,7 @@ def build_report(
     render_template("report.html", ctx, html_path)
 
     _write_manifest(trace_id, action="report", title=title, files=[html_path.name], config=config)
+    _write_metrics(trace_id, action="report", title=title, files=[html_path.name], config=config)
 
     return {
         "type": "report",
@@ -96,7 +118,6 @@ def build_report(
         "html_path": str(html_path),
         "sections": len(sections),
     }
-
 
 def build_dashboard(
     trace_id: str,
@@ -136,6 +157,7 @@ def build_dashboard(
     render_template("dashboard.html", ctx, html_path)
 
     _write_manifest(trace_id, action="dashboard", title=title, files=[html_path.name], config=config)
+    _write_metrics(trace_id, action="dashboard", title=title, files=[html_path.name], config=config)
 
     return {
         "type": "dashboard",

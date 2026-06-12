@@ -1,4 +1,4 @@
-﻿"""
+"""
 server.py -- MCP Agent entrypoint.
 
 stdout = MCP stdio protocol channel. NOTHING may print to stdout.
@@ -57,9 +57,9 @@ from registry import register_all_tools
 try:
     mcp = FastMCP("agent")
     _tool_count = register_all_tools(mcp)
-    logger.info("MCP tools registered: %d", _tool_count)
+    print(f"[server] MCP tools registered: {_tool_count}", file=sys.stderr)
     if _tool_count > 20:
-        logger.warning("High tool count (%d) -- watch for LM Studio grammar issues", _tool_count)
+        print(f"[server] WARNING: High tool count ({_tool_count}) -- watch for LM Studio grammar issues", file=sys.stderr)
 
     # -- Boot log (all goes to stderr via the redirect above) --------------------
     _boot_tid = tracer.new_trace("startup", goal="server boot")
@@ -87,6 +87,43 @@ finally:
     # -- Restore real stdout and hand it to FastMCP's stdio transport -------------
     sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
 
+# -- Start HTTP Gateway (background daemon, existing FastAPI app) -------------
+def _start_gateway() -> None:
+    """Start the FastAPI gateway in a background thread."""
+    try:
+        import uvicorn
+        from core.config import cfg
+
+        host = getattr(cfg, "gateway_host", "127.0.0.1")
+        port = getattr(cfg, "gateway_port", 8000)
+
+        if port == 0 or port is None:
+            print("[gateway] Gateway disabled (port=0)", file=sys.stderr)
+            return
+
+        print(f"[gateway] Starting FastAPI gateway at http://{host}:{port}/", file=sys.stderr)
+        print(f"[gateway] Reports: http://{host}:{port}/reports/<trace_id>/", file=sys.stderr)
+        print(f"[gateway] Logs: http://{host}:{port}/logs/", file=sys.stderr)
+        print(f"[gateway] Health: http://{host}:{port}/health", file=sys.stderr)
+
+        # Run uvicorn in this thread (blocks, but we're in a daemon thread)
+        uvicorn.run(
+            "core.gateway:create_app",
+            host=host,
+            port=port,
+            factory=True,
+            reload=False,
+            log_level="warning",  # Reduce noise
+            access_log=False,     # Don't spam stdout/stderr
+        )
+    except ImportError:
+        print("[gateway] uvicorn not installed — gateway disabled. Run: pip install uvicorn", file=sys.stderr)
+    except Exception as e:
+        print(f"[gateway] Failed to start: {e}", file=sys.stderr)
+
+import threading as _threading
+_threading.Thread(target=_start_gateway, daemon=True).start()
+
 # -- Cleanup old VRAM artifacts ------------------------------------------------
 def _cleanup_artifacts() -> None:
     """Delete .artifacts/ files older than 7 days on startup."""
@@ -97,7 +134,6 @@ def _cleanup_artifacts() -> None:
     except Exception as e:
         print(f"[server] Artifact cleanup skipped: {e}", file=sys.stderr)
 
-import threading as _threading
 _threading.Thread(target=_cleanup_artifacts, daemon=True).start()
 
 # -- Flush Memory Telemetry in background ------------------------------------
@@ -145,7 +181,6 @@ def _warmup_chromadb() -> None:
     except Exception as e:
         print(f"[server] ChromaDB warmup skipped: {e}", file=sys.stderr)
 
-import threading as _threading
 _threading.Thread(target=_warmup_chromadb, daemon=True).start()
 
 
@@ -188,7 +223,6 @@ def _warmup_models() -> None:
         print(f"[server] Model warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
 
 _threading.Thread(target=_warmup_models, daemon=True).start()
-
 
 
 # -- Start Meta-Learning Daemon ----------------------------------------------
@@ -235,7 +269,7 @@ def _start_diversity_enforcer() -> None:
         from core.memory_backend.maintenance import execute_diversity_maintenance
         from core.memory import memory as _mem
         from core.runtime.activity_tracker import tracker
-        
+
         last_run = 0.0
         while True:
             _time.sleep(1800) # Check every 30 mins
@@ -243,11 +277,11 @@ def _start_diversity_enforcer() -> None:
                 # 7 day cooldown
                 if (_time.time() - last_run) < (7 * 86400):
                     continue
-                    
+
                 # Check idle (4 hours)
                 if not tracker.try_acquire_background_slot(min_idle_seconds=14400):
                     continue
-                    
+
                 try:
                     print("[server] Running Memory Diversity Enforcement...", file=sys.stderr)
                     result = execute_diversity_maintenance(_mem.store)
@@ -276,4 +310,3 @@ _start_watchdog()
 # -- Run (hands stdout to FastMCP's stdio transport) ----------------------------
 if __name__ == "__main__":
     mcp.run()
-
