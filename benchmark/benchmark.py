@@ -145,6 +145,9 @@ def run_role(role, depth="standard", runs=1, model_override="", temperature=0.0)
     count = DEPTH_TASKS.get(depth, 8)
     selected = tasks[:count]
     llm_role = ROLE_TO_GROUP.get(role, role)
+    # Per-role model override: if EXTRACT_MODEL is set, use "extract" for LLM lookup
+    if not model_override and cfg.model_registry.get(role, {}).get("model"):
+        llm_role = role
     model = model_override or cfg.model_registry.get(role, {}).get("model") or cfg.model_registry.get(llm_role, {}).get("model", "unknown")
     print(f"\n  {bold(role.upper())} ({cyan(model)})")
     print("  " + "─"*66)
