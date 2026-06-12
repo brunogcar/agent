@@ -3,10 +3,10 @@ tools/tavily.py — Tavily AI research tool.
 Async client wrapped in sync @tool facade for MCP compatibility.
 
 Actions (exposed to LLM):
-  search   — AI-ranked web search with citations
-  extract  — Bulk URL content extraction
-  crawl    — Deep site traversal
-  map      — Site structure discovery
+ search — AI-ranked web search with citations
+ extract — Bulk URL content extraction
+ crawl — Deep site traversal
+ map — Site structure discovery
 
 research action is implemented as _do_research() but NOT exposed in the
 @tool DISPATCH dict. Reserved for workflows/deep_research.py.
@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import threading
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -52,20 +53,26 @@ def _run_async(coro):
 # ── Lazy Client ────────────────────────────────────────────────────────────
 
 _tavily_client = None
+_tavily_client_key = None
+_get_client_lock = threading.Lock()
 
 
 def _get_client():
     """Lazy-load AsyncTavilyClient. Keyless if no API key configured."""
-    global _tavily_client
-    if _tavily_client is None:
-        try:
-            from tavily import AsyncTavilyClient
-        except ImportError as e:
-            raise ImportError(
-                "tavily-python not installed. Run: pip install tavily-python"
-            ) from e
-        api_key = cfg.tavily_api_key or None
-        _tavily_client = AsyncTavilyClient(api_key=api_key)
+    global _tavily_client, _tavily_client_key
+    current_key = cfg.tavily_api_key or None
+    if _tavily_client is None or _tavily_client_key != current_key:
+        with _get_client_lock:
+            # Double-check after acquiring lock
+            if _tavily_client is None or _tavily_client_key != current_key:
+                try:
+                    from tavily import AsyncTavilyClient
+                except ImportError as e:
+                    raise ImportError(
+                        "tavily-python not installed. Run: pip install tavily-python"
+                    ) from e
+                _tavily_client = AsyncTavilyClient(api_key=current_key)
+                _tavily_client_key = current_key
     return _tavily_client
 
 
@@ -73,6 +80,18 @@ def _is_keyless() -> bool:
     """Return True if running without an API key."""
     return not bool(cfg.tavily_api_key)
 
+
+_keyless_warned = False
+
+
+def _warn_keyless_once():
+    """Log a single warning when keyless mode is first used."""
+    global _keyless_warned
+    if not _keyless_warned:
+        _keyless_warned = True
+        logger.warning(
+            "Tavily running in keyless mode. Set TAVILY_API_KEY in .env for higher limits."
+        )
 
 # ── SSRF Guard ─────────────────────────────────────────────────────────────
 
@@ -83,7 +102,6 @@ def _assert_safe_urls(urls: list[str]) -> Optional[str]:
         if not is_safe_network_address(hostname):
             return f"Blocked: {url} resolves to a private/internal address"
     return None
-
 
 # ── Action Implementations ─────────────────────────────────────────────────
 
@@ -100,6 +118,8 @@ def _do_search(
 ) -> dict:
     """Execute Tavily search and return pruned result."""
     keyless = _is_keyless()
+    if keyless:
+        _warn_keyless_once()
 
     # Cap max_results in keyless mode
     if keyless and max_results > 3:
@@ -156,6 +176,8 @@ def _do_extract(
         return fail(err)
 
     keyless = _is_keyless()
+    if keyless:
+        _warn_keyless_once()
 
     async def _call():
         client = _get_client()
@@ -305,7 +327,6 @@ def _do_research(
     )
     return prune_tool_dict("tavily", response, "")
 
-
 # ── Error Handling ─────────────────────────────────────────────────────────
 
 def _handle_tavily_error(e: Exception) -> dict:
@@ -324,26 +345,31 @@ def _handle_tavily_error(e: Exception) -> dict:
     except ImportError:
         TavilyAPIError = TavilyKeylessLimitError = InvalidAPIKeyError = UsageLimitExceededError = None
 
-    if TavilyKeylessLimitError and isinstance(e, TavilyKeylessLimitError):
+    # Use isinstance checks first, then name-based fallback for robustness
+    is_tavily_keyless = (TavilyKeylessLimitError and isinstance(e, TavilyKeylessLimitError)) or error_type == "TavilyKeylessLimitError"
+    is_invalid_key = (InvalidAPIKeyError and isinstance(e, InvalidAPIKeyError)) or error_type == "InvalidAPIKeyError"
+    is_usage_limit = (UsageLimitExceededError and isinstance(e, UsageLimitExceededError)) or error_type == "UsageLimitExceededError"
+    is_tavily_api = (TavilyAPIError and isinstance(e, TavilyAPIError)) or error_type == "TavilyAPIError"
+
+    if is_tavily_keyless:
         return fail(
             "Tavily keyless rate limit reached. Set TAVILY_API_KEY in .env for higher limits."
         )
 
-    if InvalidAPIKeyError and isinstance(e, InvalidAPIKeyError):
+    if is_invalid_key:
         return fail(
             "Tavily API key invalid or revoked. Check TAVILY_API_KEY in .env."
         )
 
-    if UsageLimitExceededError and isinstance(e, UsageLimitExceededError):
+    if is_usage_limit:
         return fail("Tavily monthly quota exhausted.")
 
-    if TavilyAPIError and isinstance(e, TavilyAPIError):
+    if is_tavily_api:
         status = getattr(e, "status_code", 0)
         if status == 429:
-            import time
-
-            time.sleep(2)
-            return fail("Tavily rate limit exceeded (HTTP 429). Retry failed.")
+            # Removed time.sleep(2) — blocking the ThreadPoolExecutor worker
+            # is worse than returning fast and letting the caller retry.
+            return fail("Tavily rate limit exceeded (HTTP 429). Retry after a short delay.")
         return fail(f"Tavily API error ({status}): {error_msg[:200]}")
 
     # httpx network errors
@@ -366,7 +392,6 @@ def _handle_tavily_error(e: Exception) -> dict:
             return fail(f"Tavily HTTP error {status}: {error_msg[:200]}")
 
     return fail(f"Tavily error: {error_type}: {error_msg[:200]}")
-
 
 # ── Tool Facade ─────────────────────────────────────────────────────────────
 
@@ -412,26 +437,26 @@ def tavily(
 
     ACTIONS:
     search: AI-ranked web search
-      query (required): Search query
-      max_results (default: 5): Number of results (1-10, capped at 3 in keyless)
-      search_depth (default: "basic"): "basic" or "advanced"
-      include_answer (default: True): Include AI-generated answer
+    query (required): Search query
+    max_results (default: 5): Number of results (1-10, capped at 3 in keyless)
+    search_depth (default: "basic"): "basic" or "advanced"
+    include_answer (default: True): Include AI-generated answer
 
     extract: Bulk URL content extraction
-      urls (required): List of URLs (max 10)
-      include_images (default: False): Include images in results
-      format (default: "markdown"): "markdown" or "text"
+    urls (required): List of URLs (max 10)
+    include_images (default: False): Include images in results
+    format (default: "markdown"): "markdown" or "text"
 
     crawl: Deep site traversal
-      url (required): Starting URL
-      max_depth (default: 2): Maximum link depth (1-3)
-      max_breadth (default: 10): Maximum pages per level
-      limit (default: 100): Maximum total pages
+    url (required): Starting URL
+    max_depth (default: 2): Maximum link depth (1-3)
+    max_breadth (default: 10): Maximum pages per level
+    limit (default: 100): Maximum total pages
 
     map: Site structure discovery
-      url (required): Starting URL
-      max_depth (default: 2): Maximum link depth
-      query (optional): Focus on pages matching this query
+    url (required): Starting URL
+    max_depth (default: 2): Maximum link depth
+    query (optional): Focus on pages matching this query
 
     NOTE: The "research" action (end-to-end deep research) is not exposed
     as a tool action. Use the deep_research workflow for that capability.

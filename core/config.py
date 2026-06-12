@@ -5,9 +5,9 @@ All values come from .env (loaded once at import time).
 Nothing is hardcoded except the .env file location discovery.
 
 Other modules import from here:
-    from core.config import cfg
-    print(cfg.agent_root)
-    print(cfg.planner_model)
+ from core.config import cfg
+ print(cfg.agent_root)
+ print(cfg.planner_model)
 """
 from __future__ import annotations
 
@@ -109,41 +109,41 @@ class Config:
 
         # Group mains
         executor_raw = os.getenv("EXECUTOR_MODEL") or planner_raw
-        router_raw   = os.getenv("ROUTER_MODEL") or planner_raw
-        vision_raw   = os.getenv("VISION_MODEL") or planner_raw
+        router_raw = os.getenv("ROUTER_MODEL") or planner_raw
+        vision_raw = os.getenv("VISION_MODEL") or planner_raw
         consultor_raw = os.getenv("CONSULTOR_MODEL", "").strip()
 
-        # Sub-role overrides (fallback to group main → planner)
-        classify_raw   = os.getenv("CLASSIFY_MODEL") or router_raw
-        route_raw      = os.getenv("ROUTE_MODEL") or router_raw
-        summarize_raw  = os.getenv("SUMMARIZE_MODEL") or executor_raw
-        extract_raw    = os.getenv("EXTRACT_MODEL") or executor_raw
-        research_raw   = os.getenv("RESEARCH_MODEL") or executor_raw
-        critique_raw   = os.getenv("CRITIQUE_MODEL") or executor_raw
-        analyze_raw    = os.getenv("ANALYZE_MODEL") or executor_raw
-        code_raw       = os.getenv("CODE_MODEL") or executor_raw
-        review_raw     = os.getenv("REVIEW_MODEL") or executor_raw
+        # Sub-role overrides (fallback to group main -> planner)
+        classify_raw = os.getenv("CLASSIFY_MODEL") or router_raw
+        route_raw = os.getenv("ROUTE_MODEL") or router_raw
+        summarize_raw = os.getenv("SUMMARIZE_MODEL") or executor_raw
+        extract_raw = os.getenv("EXTRACT_MODEL") or executor_raw
+        research_raw = os.getenv("RESEARCH_MODEL") or executor_raw
+        critique_raw = os.getenv("CRITIQUE_MODEL") or executor_raw
+        analyze_raw = os.getenv("ANALYZE_MODEL") or executor_raw
+        code_raw = os.getenv("CODE_MODEL") or executor_raw
+        review_raw = os.getenv("REVIEW_MODEL") or executor_raw
 
         # Resolve provider and model automatically for each role
-        planner_prov, planner_mod     = _resolve_role(planner_raw)
-        executor_prov, executor_mod   = _resolve_role(executor_raw)
-        router_prov, router_mod       = _resolve_role(router_raw)
-        vision_prov, vision_mod       = _resolve_role(vision_raw)
+        planner_prov, planner_mod = _resolve_role(planner_raw)
+        executor_prov, executor_mod = _resolve_role(executor_raw)
+        router_prov, router_mod = _resolve_role(router_raw)
+        vision_prov, vision_mod = _resolve_role(vision_raw)
         consultor_prov, consultor_mod = _resolve_role(consultor_raw)
-        classify_prov, classify_mod   = _resolve_role(classify_raw)
-        route_prov, route_mod         = _resolve_role(route_raw)
+        classify_prov, classify_mod = _resolve_role(classify_raw)
+        route_prov, route_mod = _resolve_role(route_raw)
         summarize_prov, summarize_mod = _resolve_role(summarize_raw)
-        extract_prov, extract_mod     = _resolve_role(extract_raw)
-        research_prov, research_mod   = _resolve_role(research_raw)
-        critique_prov, critique_mod   = _resolve_role(critique_raw)
-        analyze_prov, analyze_mod     = _resolve_role(analyze_raw)
-        code_prov, code_mod           = _resolve_role(code_raw)
-        review_prov, review_mod       = _resolve_role(review_raw)
+        extract_prov, extract_mod = _resolve_role(extract_raw)
+        research_prov, research_mod = _resolve_role(research_raw)
+        critique_prov, critique_mod = _resolve_role(critique_raw)
+        analyze_prov, analyze_mod = _resolve_role(analyze_raw)
+        code_prov, code_mod = _resolve_role(code_raw)
+        review_prov, review_mod = _resolve_role(review_raw)
 
-        self.planner_model   = planner_mod
-        self.executor_model  = executor_mod
-        self.router_model    = router_mod
-        self.vision_model    = vision_mod
+        self.planner_model = planner_mod
+        self.executor_model = executor_mod
+        self.router_model = router_mod
+        self.vision_model = vision_mod
         self.consultor_model = consultor_mod
 
         def _make_entry(model, prov, timeout_env, default_timeout):
@@ -155,19 +155,19 @@ class Config:
             }
 
         self.model_registry: dict[str, dict] = {
-            "planner":    _make_entry(planner_mod, planner_prov, "PLANNER_TIMEOUT", 180),
-            "executor":   _make_entry(executor_mod, executor_prov, "EXECUTOR_TIMEOUT", 120),
-            "router":     _make_entry(router_mod, router_prov, "ROUTER_TIMEOUT", 15),
-            "vision":     _make_entry(vision_mod, vision_prov, "VISION_TIMEOUT", 60),
-            "classify":   _make_entry(classify_mod, classify_prov, "CLASSIFY_TIMEOUT", 15),
-            "route":      _make_entry(route_mod, route_prov, "ROUTE_TIMEOUT", 15),
-            "summarize":  _make_entry(summarize_mod, summarize_prov, "SUMMARIZE_TIMEOUT", 60),
-            "extract":    _make_entry(extract_mod, extract_prov, "EXTRACT_TIMEOUT", 60),
-            "research":   _make_entry(research_mod, research_prov, "RESEARCH_TIMEOUT", 120),
-            "critique":   _make_entry(critique_mod, critique_prov, "CRITIQUE_TIMEOUT", 90),
-            "analyze":    _make_entry(analyze_mod, analyze_prov, "ANALYZE_TIMEOUT", 90),
-            "code":       _make_entry(code_mod, code_prov, "CODE_TIMEOUT", 120),
-            "review":     _make_entry(review_mod, review_prov, "REVIEW_TIMEOUT", 90),
+            "planner": _make_entry(planner_mod, planner_prov, "PLANNER_TIMEOUT", 180),
+            "executor": _make_entry(executor_mod, executor_prov, "EXECUTOR_TIMEOUT", 120),
+            "router": _make_entry(router_mod, router_prov, "ROUTER_TIMEOUT", 15),
+            "vision": _make_entry(vision_mod, vision_prov, "VISION_TIMEOUT", 60),
+            "classify": _make_entry(classify_mod, classify_prov, "CLASSIFY_TIMEOUT", 15),
+            "route": _make_entry(route_mod, route_prov, "ROUTE_TIMEOUT", 15),
+            "summarize": _make_entry(summarize_mod, summarize_prov, "SUMMARIZE_TIMEOUT", 60),
+            "extract": _make_entry(extract_mod, extract_prov, "EXTRACT_TIMEOUT", 60),
+            "research": _make_entry(research_mod, research_prov, "RESEARCH_TIMEOUT", 120),
+            "critique": _make_entry(critique_mod, critique_prov, "CRITIQUE_TIMEOUT", 90),
+            "analyze": _make_entry(analyze_mod, analyze_prov, "ANALYZE_TIMEOUT", 90),
+            "code": _make_entry(code_mod, code_prov, "CODE_TIMEOUT", 120),
+            "review": _make_entry(review_mod, review_prov, "REVIEW_TIMEOUT", 90),
         }
 
         # Add consultor to registry ONLY if a model is explicitly resolved
@@ -180,6 +180,10 @@ class Config:
         # -- Tavily AI Research -----------------------------------------------
         self.tavily_api_key = os.getenv("TAVILY_API_KEY", "")
         self.tavily_timeout = int(os.getenv("TAVILY_TIMEOUT", "60"))
+
+        # -- Browser Fallback (Research Workflow) -----------------------------
+        self.research_browser_fallback_max = int(os.getenv("RESEARCH_BROWSER_FALLBACK_MAX", "3"))
+        self.research_browser_fallback_timeout = int(os.getenv("RESEARCH_BROWSER_FALLBACK_TIMEOUT", "15"))
 
         # -- Memory tuning -----------------------------------------------------
         self.memory_delete_threshold = float(os.getenv("MEMORY_DELETE_THRESHOLD", "0.4"))

@@ -1,11 +1,20 @@
-﻿"""
-tests/tools/consult/test_consult.py
+"""
+❌ tests/tools/consult/test_consult.py
 Unit tests for the explicit consult advisory tool.
 """
 import pytest
 from unittest.mock import patch, MagicMock
 
 from tools.consult import consult
+
+
+class MockTiktokenEncoder:
+    """Mock encoder that returns 1 token per character, guaranteeing truncation."""
+    def encode(self, text: str) -> list[int]:
+        return list(range(len(text)))
+
+    def decode(self, tokens: list[int]) -> str:
+        return "A" * len(tokens)
 
 
 @pytest.fixture
@@ -45,7 +54,7 @@ class TestConsultGuardrails:
         mock_llm.complete.assert_not_called()
 
     def test_consult_empty_question(self, mock_cfg, mock_budget, mock_llm):
-        result = consult(question="   ")
+        result = consult(question=" ")
         assert result["status"] == "error"
         mock_llm.complete.assert_not_called()
 
@@ -64,14 +73,15 @@ class TestContextTruncation:
         mock_response.model = "gpt-4o-mini"
         mock_llm.complete.return_value = mock_response
 
-        # 10000 chars is ~2500 tokens, which is > 2000
         long_context = "A" * 10000
-        result = consult(question="Review", context=long_context)
-        
+        with patch("tools.consult._estimate_tokens", return_value=2500):
+            with patch("tiktoken.get_encoding", return_value=MockTiktokenEncoder()):
+                result = consult(question="Review", context=long_context)
+
         assert result["status"] == "success"
         assert "warnings" in result
         assert "truncated" in result["warnings"][0].lower()
-        
+
         call_kwargs = mock_llm.complete.call_args[1]
         assert len(call_kwargs["context"]) < 10000
 
@@ -84,7 +94,7 @@ class TestContextTruncation:
 
         short_context = "Normal length."
         result = consult(question="Test", context=short_context)
-        
+
         assert result["status"] == "success"
         assert "warnings" not in result
         assert mock_llm.complete.call_args[1]["context"] == short_context
@@ -99,7 +109,7 @@ class TestConsultExecution:
         mock_llm.complete.return_value = mock_response
 
         result = consult(question="How to handle DB?")
-        
+
         assert result["status"] == "success"
         assert result["advice"] == "Use a factory pattern."
         assert result["provider"] == "openai"
@@ -115,6 +125,7 @@ class TestConsultExecution:
         result = consult(question="Test?")
         assert result["status"] == "error"
         assert result["error"] == "Connection timed out"
+
 
 class TestPhase5CHardening:
     def test_concurrent_rate_limiter_stress(self, mock_cfg, mock_budget, mock_llm):

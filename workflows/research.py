@@ -2,24 +2,29 @@
 workflows/research.py -- Research workflow.
 
 Pattern:
-    recall -> search -> scrape -> synthesize -> report -> store -> distill -> notify
+ recall -> search -> scrape -> synthesize -> report -> store -> distill -> notify
 
 Each node is a pure function WorkflowState -> WorkflowState.
 LangGraph wires them into a directed graph with conditional edges.
 
+Browser Fallback (Phase 8):
+  When web(read) returns < 300 chars, the worker marks the URL for browser
+  fallback. After the parallel pool closes, browser(navigate + text_content)
+  is called sequentially (browser is NOT_PARALLEL_SAFE).
+
 Usage:
-    from workflows.base import run_workflow
+ from workflows.base import run_workflow
 
-    result = run_workflow(
-        workflow_type = "research",
-        goal = "What are the best practices for ChromaDB in production?",
-    )
-    print(result["result"])
+ result = run_workflow(
+     workflow_type = "research",
+     goal = "What are the best practices for ChromaDB in production?",
+ )
+ print(result["result"])
 """
-
 from __future__ import annotations
 
 import json
+import uuid
 
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from langgraph.graph import StateGraph, END
@@ -40,11 +45,11 @@ def node_recall(state: WorkflowState) -> WorkflowState:
     results = memory.recall(
         query=goal,
         top_k=5,
-        trace_id=state.get("trace_id", ""),
+        trace_id=state.get("trace_id", "")
     )
 
     if results:
-        ctx = "\\n".join(
+        ctx = "\n".join(
             f"[{r['type']}|score={r['score']:.1f}] {r['text']}"
             for r in results
         )
@@ -95,7 +100,8 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
 
     text = scrape_res.get("text", "")
     if len(text) < 300:
-        return {"url": url, "title": title, "status": "failed", "error": "too short"}
+        # Mark for browser fallback instead of failing immediately
+        return {"url": url, "title": title, "status": "needs_browser", "error": "too short"}
 
     # Truncate to web_max_text_chars to prevent context overflow
     text = text[:cfg.web_max_text_chars]
@@ -106,7 +112,7 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
             resp = llm.complete(
                 role="executor",
                 system="You are a research assistant. Summarize the given web page in 3-5 bullet points, focusing strictly on facts relevant to the user's goal. Do not include introductory filler.",
-                user=f"Goal: {goal}\\n\\nSummarize the following text:\\n\\n{text}",
+                user=f"Goal: {goal}\n\nSummarize the following text:\n\n{text}",
                 max_tokens=cfg.worker_max_tokens,
                 timeout=cfg.worker_timeout,
                 trace_id=trace_id
@@ -114,15 +120,77 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
             if not resp.ok:
                 return {"url": url, "title": title, "status": "failed", "error": f"LLM failed: {resp.error}"}
 
-            return {"url": url, "title": title, "status": "success", "summary": resp.text}
+        return {"url": url, "title": title, "status": "success", "summary": resp.text}
     except TimeoutError:
         return {"url": url, "title": title, "status": "failed", "error": "inference slot timeout"}
     except Exception as e:
         return {"url": url, "title": title, "status": "failed", "error": str(e)}
 
 
+def _browser_fallback_scrape(url: str, title: str, goal: str, trace_id: str) -> dict:
+    """Sequential browser fallback for JS-heavy pages. Called outside the thread pool."""
+    from tools.browser import browser
+    from core.llm import llm
+    from core.runtime.activity_tracker import tracker
+    from core.config import cfg
+
+    # Generate a stable trace ID for this fallback session so navigate + text_content
+    # share the same browser context. If trace_id is empty, use a local UUID.
+    fallback_tid = trace_id or f"fb_{uuid.uuid4().hex[:8]}"
+
+    try:
+        # Navigate
+        nav_res = browser(
+            action="navigate",
+            url=url,
+            trace_id=fallback_tid,
+            timeout=cfg.research_browser_fallback_timeout,
+        )
+        if nav_res.get("status") != "success":
+            return {"url": url, "title": title, "status": "failed", "error": nav_res.get("error", "browser navigate failed")}
+
+        # Extract text
+        text_res = browser(
+            action="text_content",
+            selector="body",
+            trace_id=fallback_tid,
+            timeout=cfg.research_browser_fallback_timeout,
+        )
+        if text_res.get("status") != "success":
+            return {"url": url, "title": title, "status": "failed", "error": text_res.get("error", "browser text_content failed")}
+
+        text = text_res.get("data", {}).get("text", "")
+        if len(text) < 300:
+            return {"url": url, "title": title, "status": "failed", "error": "browser text too short"}
+
+        text = text[:cfg.web_max_text_chars]
+
+        # Summarize
+        try:
+            with tracker.inference_slot(timeout=30.0):
+                resp = llm.complete(
+                    role="executor",
+                    system="You are a research assistant. Summarize the given web page in 3-5 bullet points, focusing strictly on facts relevant to the user's goal. Do not include introductory filler.",
+                    user=f"Goal: {goal}\n\nSummarize the following text:\n\n{text}",
+                    max_tokens=cfg.worker_max_tokens,
+                    timeout=cfg.worker_timeout,
+                    trace_id=trace_id
+                )
+                if not resp.ok:
+                    return {"url": url, "title": title, "status": "failed", "error": f"LLM failed: {resp.error}"}
+
+            return {"url": url, "title": title, "status": "success", "summary": resp.text}
+        except TimeoutError:
+            return {"url": url, "title": title, "status": "failed", "error": "inference slot timeout"}
+        except Exception as e:
+            return {"url": url, "title": title, "status": "failed", "error": str(e)}
+
+    except Exception as e:
+        return {"url": url, "title": title, "status": "failed", "error": f"browser fallback: {e}"}
+
+
 def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
-    """Coordinator: scrape and summarize URLs in parallel."""
+    """Coordinator: scrape and summarize URLs in parallel, with sequential browser fallback."""
     from core.config import cfg
     from core.citations import citations
 
@@ -142,7 +210,9 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
 
     dossier_parts = []
     citation_idx = 1
+    needs_browser = []
 
+    # 1. Parallel web scraping
     with ThreadPoolExecutor(max_workers=cfg.max_concurrent_workers) as executor:
         future_to_data = {
             executor.submit(_scrape_and_summarize, item["url"], item.get("title", ""), goal, tid): item
@@ -164,24 +234,43 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
                     citations.add(tid, url=res["url"], title=res["title"], snippet=res["summary"][:200])
 
                 dossier_parts.append(
-                    f"### [Source {citation_idx}] {res['title']}\\n"
-                    f"URL: {res['url']}\\n\\n"
-                    f"{res['summary']}\\n"
+                    f"### [Source {citation_idx}] {res['title']}\n"
+                    f"URL: {res['url']}\n\n"
+                    f"{res['summary']}\n"
                 )
                 citation_idx += 1
+            elif res["status"] == "needs_browser":
+                needs_browser.append({"url": res["url"], "title": res["title"]})
             else:
                 node_step(state, "parallel_scrape", f"worker failed for {item['url']}: {res['error']}")
+
+    # 2. Sequential browser fallback (respects browser's global lock)
+    for item in needs_browser[:cfg.research_browser_fallback_max]:
+        res = _browser_fallback_scrape(item["url"], item["title"], goal, tid)
+        if res["status"] == "success":
+            if tid and res["url"]:
+                citations.add(tid, url=res["url"], title=res["title"], snippet=res["summary"][:200])
+
+            dossier_parts.append(
+                f"### [Source {citation_idx}] {res['title']}\n"
+                f"URL: {res['url']}\n\n"
+                f"{res['summary']}\n"
+            )
+            citation_idx += 1
+            node_step(state, "parallel_scrape", f"browser fallback succeeded for {item['url']}")
+        else:
+            node_step(state, "parallel_scrape", f"browser fallback failed for {item['url']}: {res['error']}")
 
     if not dossier_parts:
         node_step(state, "parallel_scrape", "all workers failed")
         return {**state, "search_results": ""}
 
-    dossier = "\\n\\n".join(dossier_parts)
+    dossier = "\n\n".join(dossier_parts)
 
     # Hard cap the dossier to prevent context explosion at synthesis time
     max_dossier_chars = cfg.web_max_text_chars * 2
     if len(dossier) > max_dossier_chars:
-        dossier = dossier[:max_dossier_chars] + "\\n\\n[...TRUNCATED DUE TO LENGTH...]"
+        dossier = dossier[:max_dossier_chars] + "\n\n[...TRUNCATED DUE TO LENGTH...]"
 
     node_step(state, "parallel_scrape", f"built dossier with {citation_idx-1} sources ({len(dossier)} chars)")
     return {**state, "search_results": dossier}
@@ -197,32 +286,32 @@ def node_synthesize(state: WorkflowState) -> WorkflowState:
 
     if not search_results and not memory_context:
         return node_error(state, "synthesize",
-            "No source material to synthesize from")
+                          "No source material to synthesize from")
 
     # Build content block for the executor
     content_parts = []
     if memory_context:
-        content_parts.append(f"MEMORY:\\n{memory_context}")
+        content_parts.append(f"MEMORY:\n{memory_context}")
     if search_results:
-        content_parts.append(f"WEB SOURCES:\\n{search_results}")
-    content = "\\n\\n".join(content_parts)
+        content_parts.append(f"WEB SOURCES:\n{search_results}")
+    content = "\n\n".join(content_parts)
 
     node_step(state, "synthesize", "calling research agent",
-        content_chars=len(content))
+              content_chars=len(content))
 
     r = agent(
         role = "research",
         task = f"Synthesise the provided sources to answer: {goal}",
         content = content,
-        trace_id = state.get("trace_id", ""),
+        trace_id = state.get("trace_id", "")
     )
 
     if not r.get("status") == "success":
         return node_error(state, "synthesize",
-            f"Agent failed: {r.get('error', 'unknown')}")
+                          f"Agent failed: {r.get('error', 'unknown')}")
 
     node_step(state, "synthesize", "synthesis complete",
-        elapsed=r.get("elapsed", 0))
+              elapsed=r.get("elapsed", 0))
     return {**state, "result": r["text"]}
 
 
@@ -274,10 +363,10 @@ def node_store(state: WorkflowState) -> WorkflowState:
     node_step(state, "store", "saving to semantic memory")
 
     memory.store_semantic(
-        text = f"Research on '{goal}':\\n{result[:800]}",
+        text = f"Research on '{goal}':\n{result[:800]}",
         importance = 6,
         tags = "research,auto",
-        trace_id = state.get("trace_id", ""),
+        trace_id = state.get("trace_id", "")
     )
 
     memory.store_episodic(
@@ -286,7 +375,7 @@ def node_store(state: WorkflowState) -> WorkflowState:
         goal = goal,
         outcome = "success",
         tools_used = "web,agent,memory",
-        trace_id = state.get("trace_id", ""),
+        trace_id = state.get("trace_id", "")
     )
 
     return state
@@ -301,7 +390,7 @@ def node_distill(state: WorkflowState) -> WorkflowState:
     if not result or state.get("status") == "failed":
         return state
 
-    trace_text = f"GOAL: {goal}\\n\\nOUTCOME: Success\\n\\nSYNTHESIS:\\n{result[:2000]}"
+    trace_text = f"GOAL: {goal}\n\nOUTCOME: Success\n\nSYNTHESIS:\n{result[:2000]}"
 
     try:
         # Non-blocking best-effort distillation
@@ -328,7 +417,7 @@ def node_notify(state: WorkflowState) -> WorkflowState:
         message = f"{goal[:50]}: {result[:80]}...",
     )
     return node_done(state, result=result or "Research complete",
-        artifacts=[{"sources": sources}])
+                     artifacts=[{"sources": sources}])
 
 
 # -- Routing ------------------------------------------------------------------
