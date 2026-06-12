@@ -87,39 +87,38 @@ finally:
     # -- Restore real stdout and hand it to FastMCP's stdio transport -------------
     sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
 
-# -- Start HTTP Gateway (background daemon, existing FastAPI app) -------------
+# -- Start HTTP Gateway (background daemon with retry) ------------------------
 def _start_gateway() -> None:
-    """Start the FastAPI gateway in a background thread."""
-    try:
-        import uvicorn
-        from core.config import cfg
-
-        host = getattr(cfg, "gateway_host", "127.0.0.1")
-        port = getattr(cfg, "gateway_port", 8000)
-
-        if port == 0 or port is None:
-            print("[gateway] Gateway disabled (port=0)", file=sys.stderr)
+    import time as _time
+    for attempt in range(3):
+        try:
+            import uvicorn
+            from core.config import cfg
+            host = getattr(cfg, "gateway_host", "127.0.0.1")
+            port = getattr(cfg, "gateway_port", 8000)
+            if port == 0 or port is None:
+                print("[gateway] Gateway disabled (port=0)", file=sys.stderr)
+                return
+            print(f"[gateway] Starting FastAPI gateway at http://{host}:{port}/ (attempt {attempt+1}/3)", file=sys.stderr)
+            uvicorn.run(
+                "core.gateway:create_app",
+                host=host,
+                port=port,
+                factory=True,
+                reload=False,
+                log_level="warning",
+                access_log=False,
+            )
+            break  # Clean exit
+        except ImportError:
+            print("[gateway] uvicorn not installed — gateway disabled.", file=sys.stderr)
             return
-
-        print(f"[gateway] Starting FastAPI gateway at http://{host}:{port}/", file=sys.stderr)
-        print(f"[gateway] Reports: http://{host}:{port}/reports/<trace_id>/", file=sys.stderr)
-        print(f"[gateway] Logs: http://{host}:{port}/logs/", file=sys.stderr)
-        print(f"[gateway] Health: http://{host}:{port}/health", file=sys.stderr)
-
-        # Run uvicorn in this thread (blocks, but we're in a daemon thread)
-        uvicorn.run(
-            "core.gateway:create_app",
-            host=host,
-            port=port,
-            factory=True,
-            reload=False,
-            log_level="warning",  # Reduce noise
-            access_log=False,     # Don't spam stdout/stderr
-        )
-    except ImportError:
-        print("[gateway] uvicorn not installed — gateway disabled. Run: pip install uvicorn", file=sys.stderr)
-    except Exception as e:
-        print(f"[gateway] Failed to start: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"[gateway] Attempt {attempt+1}/3 failed: {e}", file=sys.stderr)
+            if attempt < 2:
+                _time.sleep(5)
+            else:
+                print("[gateway] Giving up after 3 attempts.", file=sys.stderr)
 
 import threading as _threading
 _threading.Thread(target=_start_gateway, daemon=True).start()

@@ -7,13 +7,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tools.report_core.html import render_template, _write_manifest
+from tools.report_core.html import render_template, _write_manifest, _write_metrics
 from tools.report_core.paths import report_out_dir
 
 
 def _compute_delta(before: Any, after: Any) -> tuple[str, str]:
     if before == after:
         return ("—", "neu")
+    if isinstance(before, bool) or isinstance(after, bool):
+        return ("changed", "neu")
     try:
         b = float(before) if before is not None else 0
         a = float(after) if after is not None else 0
@@ -161,6 +163,7 @@ def build(trace_id: str, title: str, data: Any, config: dict) -> dict:
     }
     render_template("compare.html", ctx, html_path)
     _write_manifest(trace_id, action="compare", title=title, files=[html_path.name], config=config)
+    _write_metrics(trace_id, action="compare", title=title, files=[html_path.name], config=config)
 
     return {
         "type": "compare",

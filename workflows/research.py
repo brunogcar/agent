@@ -2,21 +2,33 @@
 workflows/research.py -- Research workflow.
 
 Pattern:
- recall -> search -> scrape -> synthesize -> report -> store -> distill -> notify
+    recall -> search -> scrape -> synthesize -> report -> store -> distill -> notify
 
 Each node is a pure function WorkflowState -> WorkflowState.
 LangGraph wires them into a directed graph with conditional edges.
+
+Usage:
+    from workflows.base import run_workflow
+
+    result = run_workflow(
+        workflow_type = "research",
+        goal = "What are the best practices for ChromaDB in production?",
+    )
+    print(result["result"])
 """
 
 from __future__ import annotations
 
 import json
+
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from langgraph.graph import StateGraph, END
 from workflows.base import WorkflowState, node_step, node_error, node_done
 from core.citations import citations
 from core.memory_backend.procedural.distill import distill_workflow
 
+
+# -- Nodes --------------------------------------------------------------------
 
 def node_recall(state: WorkflowState) -> WorkflowState:
     """Recall relevant memories before hitting the web."""
@@ -32,7 +44,7 @@ def node_recall(state: WorkflowState) -> WorkflowState:
     )
 
     if results:
-        ctx = "\n".join(
+        ctx = "\\n".join(
             f"[{r['type']}|score={r['score']:.1f}] {r['text']}"
             for r in results
         )
@@ -65,6 +77,7 @@ def node_search(state: WorkflowState) -> WorkflowState:
         node_step(state, "search", "no valid URLs found")
         return {**state, "search_results": ""}
 
+    # Store as JSON string for the parallel scraper node
     return {**state, "search_results": json.dumps(valid_urls)}
 
 
@@ -75,6 +88,7 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
     from core.runtime.activity_tracker import tracker
     from core.config import cfg
 
+    # 1. Scrape
     scrape_res = web(action="read", url=url)
     if scrape_res.get("status") != "success":
         return {"url": url, "title": title, "status": "failed", "error": scrape_res.get("error", "scrape failed")}
@@ -83,20 +97,23 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
     if len(text) < 300:
         return {"url": url, "title": title, "status": "failed", "error": "too short"}
 
+    # Truncate to web_max_text_chars to prevent context overflow
     text = text[:cfg.web_max_text_chars]
 
+    # 2. Summarize (with inference slot)
     try:
         with tracker.inference_slot(timeout=30.0):
             resp = llm.complete(
                 role="executor",
                 system="You are a research assistant. Summarize the given web page in 3-5 bullet points, focusing strictly on facts relevant to the user's goal. Do not include introductory filler.",
-                user=f"Goal: {goal}\n\nSummarize the following text:\n\n{text}",
+                user=f"Goal: {goal}\\n\\nSummarize the following text:\\n\\n{text}",
                 max_tokens=cfg.worker_max_tokens,
                 timeout=cfg.worker_timeout,
                 trace_id=trace_id
             )
             if not resp.ok:
                 return {"url": url, "title": title, "status": "failed", "error": f"LLM failed: {resp.error}"}
+
             return {"url": url, "title": title, "status": "success", "summary": resp.text}
     except TimeoutError:
         return {"url": url, "title": title, "status": "failed", "error": "inference slot timeout"}
@@ -107,6 +124,7 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
 def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
     """Coordinator: scrape and summarize URLs in parallel."""
     from core.config import cfg
+    from core.citations import citations
 
     raw_results = state.get("search_results", "")
     if not raw_results:
@@ -141,12 +159,14 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
                 res = {"url": item["url"], "title": item.get("title", ""), "status": "failed", "error": str(e)}
 
             if res["status"] == "success":
+                # Register citation
                 if tid and res["url"]:
                     citations.add(tid, url=res["url"], title=res["title"], snippet=res["summary"][:200])
+
                 dossier_parts.append(
-                    f"### [Source {citation_idx}] {res['title']}\n"
-                    f"URL: {res['url']}\n\n"
-                    f"{res['summary']}\n"
+                    f"### [Source {citation_idx}] {res['title']}\\n"
+                    f"URL: {res['url']}\\n\\n"
+                    f"{res['summary']}\\n"
                 )
                 citation_idx += 1
             else:
@@ -156,10 +176,12 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
         node_step(state, "parallel_scrape", "all workers failed")
         return {**state, "search_results": ""}
 
-    dossier = "\n\n".join(dossier_parts)
+    dossier = "\\n\\n".join(dossier_parts)
+
+    # Hard cap the dossier to prevent context explosion at synthesis time
     max_dossier_chars = cfg.web_max_text_chars * 2
     if len(dossier) > max_dossier_chars:
-        dossier = dossier[:max_dossier_chars] + "\n\n[...TRUNCATED DUE TO LENGTH...]"
+        dossier = dossier[:max_dossier_chars] + "\\n\\n[...TRUNCATED DUE TO LENGTH...]"
 
     node_step(state, "parallel_scrape", f"built dossier with {citation_idx-1} sources ({len(dossier)} chars)")
     return {**state, "search_results": dossier}
@@ -174,28 +196,33 @@ def node_synthesize(state: WorkflowState) -> WorkflowState:
     memory_context = state.get("memory_context", "")
 
     if not search_results and not memory_context:
-        return node_error(state, "synthesize", "No source material to synthesize from")
+        return node_error(state, "synthesize",
+            "No source material to synthesize from")
 
+    # Build content block for the executor
     content_parts = []
     if memory_context:
-        content_parts.append(f"MEMORY:\n{memory_context}")
+        content_parts.append(f"MEMORY:\\n{memory_context}")
     if search_results:
-        content_parts.append(f"WEB SOURCES:\n{search_results}")
-    content = "\n\n".join(content_parts)
+        content_parts.append(f"WEB SOURCES:\\n{search_results}")
+    content = "\\n\\n".join(content_parts)
 
-    node_step(state, "synthesize", "calling research agent", content_chars=len(content))
+    node_step(state, "synthesize", "calling research agent",
+        content_chars=len(content))
 
     r = agent(
-        role="research",
-        task=f"Synthesise the provided sources to answer: {goal}",
-        content=content,
-        trace_id=state.get("trace_id", ""),
+        role = "research",
+        task = f"Synthesise the provided sources to answer: {goal}",
+        content = content,
+        trace_id = state.get("trace_id", ""),
     )
 
     if not r.get("status") == "success":
-        return node_error(state, "synthesize", f"Agent failed: {r.get('error', 'unknown')}")
+        return node_error(state, "synthesize",
+            f"Agent failed: {r.get('error', 'unknown')}")
 
-    node_step(state, "synthesize", "synthesis complete", elapsed=r.get("elapsed", 0))
+    node_step(state, "synthesize", "synthesis complete",
+        elapsed=r.get("elapsed", 0))
     return {**state, "result": r["text"]}
 
 
@@ -215,7 +242,7 @@ def node_report(state: WorkflowState) -> WorkflowState:
 
     sections = [
         {"title": "Research Goal", "content": goal},
-        {"title": "Findings", "content": result[:3000] if result else "No findings generated."},
+        {"title": "Findings", "content": result[:20000] if result else "No findings generated."},
     ]
 
     try:
@@ -247,19 +274,19 @@ def node_store(state: WorkflowState) -> WorkflowState:
     node_step(state, "store", "saving to semantic memory")
 
     memory.store_semantic(
-        text=f"Research on '{goal}':\n{result[:800]}",
-        importance=6,
-        tags="research,auto",
-        trace_id=state.get("trace_id", ""),
+        text = f"Research on '{goal}':\\n{result[:800]}",
+        importance = 6,
+        tags = "research,auto",
+        trace_id = state.get("trace_id", ""),
     )
 
     memory.store_episodic(
-        text=f"Completed research workflow: '{goal[:60]}'",
-        importance=5,
-        goal=goal,
-        outcome="success",
-        tools_used="web,agent,memory",
-        trace_id=state.get("trace_id", ""),
+        text = f"Completed research workflow: '{goal[:60]}'",
+        importance = 5,
+        goal = goal,
+        outcome = "success",
+        tools_used = "web,agent,memory",
+        trace_id = state.get("trace_id", ""),
     )
 
     return state
@@ -274,12 +301,13 @@ def node_distill(state: WorkflowState) -> WorkflowState:
     if not result or state.get("status") == "failed":
         return state
 
-    trace_text = f"GOAL: {goal}\n\nOUTCOME: Success\n\nSYNTHESIS:\n{result[:2000]}"
+    trace_text = f"GOAL: {goal}\\n\\nOUTCOME: Success\\n\\nSYNTHESIS:\\n{result[:2000]}"
 
     try:
+        # Non-blocking best-effort distillation
         distill_workflow(trace_text=trace_text, trace_id=tid)
     except Exception:
-        pass
+        pass  # Never fail the workflow if distillation fails
 
     return state
 
@@ -295,11 +323,12 @@ def node_notify(state: WorkflowState) -> WorkflowState:
     sources = citations.get_sources(tid) if tid else []
 
     notify(
-        action="send",
-        title="Research complete",
-        message=f"{goal[:50]}: {result[:80]}...",
+        action = "send",
+        title = "Research complete",
+        message = f"{goal[:50]}: {result[:80]}...",
     )
-    return node_done(state, result=result or "Research complete", artifacts=[{"sources": sources}])
+    return node_done(state, result=result or "Research complete",
+        artifacts=[{"sources": sources}])
 
 
 # -- Routing ------------------------------------------------------------------
@@ -329,7 +358,7 @@ def build_research_graph() -> StateGraph:
     g.add_node("search", node_search)
     g.add_node("parallel_scrape", node_parallel_scrape)
     g.add_node("synthesize", node_synthesize)
-    g.add_node("node_report", node_report)
+    g.add_node("report", node_report)
     g.add_node("store", node_store)
     g.add_node("distill", node_distill)
     g.add_node("notify", node_notify)
@@ -348,10 +377,10 @@ def build_research_graph() -> StateGraph:
     g.add_conditional_edges(
         "synthesize",
         route_after_synthesize,
-        {"report": "node_report", "failed": END},
+        {"report": "report", "failed": END},
     )
 
-    g.add_edge("node_report", "store")
+    g.add_edge("report", "store")
     g.add_edge("store", "distill")
     g.add_edge("distill", "notify")
     g.add_edge("notify", END)

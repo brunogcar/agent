@@ -8,9 +8,8 @@ import datetime
 from pathlib import Path
 from typing import Any
 
-from tools.report_core.html import render_template, _write_manifest
+from tools.report_core.html import render_template, _write_manifest, _write_metrics
 from tools.report_core.paths import report_out_dir
-
 
 STATUS_COLORS = {
     "done": "#22c55e",
@@ -22,6 +21,11 @@ STATUS_COLORS = {
 
 def _parse_date(d: str) -> datetime.date:
     return datetime.datetime.strptime(d, "%Y-%m-%d").date()
+
+
+def _escape_svg(text: str) -> str:
+    """Escape &, <, > for safe SVG text insertion."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _build_svg(events: list[dict], width: int = 900, bar_height: int = 32, row_gap: int = 48) -> str:
@@ -89,15 +93,28 @@ def _build_svg(events: list[dict], width: int = 900, bar_height: int = 32, row_g
         days_end = (ev["end"] - min_date).days
         x = margin_left + (days_start / total_days) * chart_width
         w = max(2, ((days_end - days_start) / total_days) * chart_width)
+        label = _escape_svg(ev["label"])
 
         svg_parts.append(
             f'  <text x="{margin_left - 10}" y="{y + bar_height / 2 + 4}" text-anchor="end"'
-            f' fill="var(--text)" font-size="11" font-family="Inter, system-ui, sans-serif">{ev["label"]}</text>'
+            f' fill="var(--text)" font-size="11" font-family="Inter, system-ui, sans-serif">{label}</text>'
         )
-        svg_parts.append(
-            f'  <rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="{bar_height}"'
-            f' rx="4" fill="{ev["color"]}" opacity="0.85"/>'
-        )
+
+        if days_end == days_start:
+            # Single-day milestone: diamond marker
+            diamond_size = 8
+            cx = x
+            cy = y + bar_height / 2
+            pts = f"{cx:.1f},{cy - diamond_size:.1f} {cx + diamond_size:.1f},{cy:.1f} {cx:.1f},{cy + diamond_size:.1f} {cx - diamond_size:.1f},{cy:.1f}"
+            svg_parts.append(
+                f'  <polygon points="{pts}" fill="{ev["color"]}" opacity="0.85"/>'
+            )
+        else:
+            svg_parts.append(
+                f'  <rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="{bar_height}"'
+                f' rx="4" fill="{ev["color"]}" opacity="0.85"/>'
+            )
+
         svg_parts.append(
             f'  <text x="{x + 6:.1f}" y="{y + bar_height / 2 + 4}"'
             f' fill="white" font-size="9" font-family="ui-monospace, monospace">'
@@ -147,6 +164,7 @@ def build(trace_id: str, title: str, data: Any, config: dict) -> dict:
     }
     render_template("timeline.html", ctx, html_path)
     _write_manifest(trace_id, action="timeline", title=title, files=[html_path.name], config=config)
+    _write_metrics(trace_id, action="timeline", title=title, files=[html_path.name], config=config)
 
     return {
         "type": "timeline",

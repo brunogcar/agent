@@ -8,11 +8,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from tools.report_core.html import render_template, _write_manifest
+from tools.report_core.html import render_template, _write_manifest, _write_metrics
 from tools.report_core.paths import report_out_dir
 
 
 def _rag_status(score: float, target: float) -> str:
+    if target == 0:
+        return "green" if score == 0 else "red"
     if score >= target:
         return "green"
     if score >= target * 0.8:
@@ -131,6 +133,7 @@ def build(trace_id: str, title: str, data: Any, config: dict) -> dict:
     }
     render_template("scorecard.html", ctx, html_path)
     _write_manifest(trace_id, action="scorecard", title=title, files=[html_path.name], config=config)
+    _write_metrics(trace_id, action="scorecard", title=title, files=[html_path.name], config=config)
 
     return {
         "type": "scorecard",

@@ -15,7 +15,7 @@ def node_report(state: AutocodeState) -> AutocodeState:
     tid = state.get("trace_id", "")
     task = state.get("task", "")
     task_type = state.get("task_type", "feature")
-    modified_files = state.get("modified_files", [])
+    modified_files = list(state.get("files_map", {}).keys())
     test_results = state.get("test_results", {})
     verification_notes = state.get("verification_notes", "")
     commit_sha = state.get("commit_sha", "")
@@ -52,4 +52,4 @@ def node_report(state: AutocodeState) -> AutocodeState:
     except Exception:
         pass  # Best-effort: never fail the workflow for report generation
 
-    return state
+    return {}

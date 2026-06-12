@@ -23,6 +23,7 @@ class TestResearchReport:
 
         result = node_report(state)
 
+        # node_report returns state (not {}), so trace_id should be present
         assert result["trace_id"] == "test-research"
         mock_report.assert_called_once()
         call_kwargs = mock_report.call_args.kwargs
@@ -64,7 +65,7 @@ class TestAutocodeReport:
             "trace_id": "test-autocode",
             "task": "Fix bug in parser",
             "task_type": "fix",
-            "modified_files": ["core/parser.py"],
+            "files_map": {"core/parser.py": {}},
             "test_results": {"success": True, "passed": 5},
             "verification_notes": "All checks passed.",
             "commit_sha": "abc123",
@@ -72,7 +73,8 @@ class TestAutocodeReport:
 
         result = node_report(state)
 
-        assert result["trace_id"] == "test-autocode"
+        # node_report returns {} (LangGraph partial-return contract)
+        assert result == {}
         mock_report.assert_called_once()
         call_kwargs = mock_report.call_args.kwargs
         assert call_kwargs["action"] == "report"
@@ -95,7 +97,7 @@ class TestAutocodeReport:
             "trace_id": "test-autocode",
             "task": "Fix bug",
             "task_type": "fix",
-            "modified_files": [],
+            "files_map": {},
             "test_results": {},
             "verification_notes": "",
             "commit_sha": "",
@@ -103,7 +105,7 @@ class TestAutocodeReport:
 
         # Should not raise
         result = node_report(state)
-        assert result["trace_id"] == "test-autocode"
+        assert result == {}
 
 
 class TestUnderstandReport:
@@ -126,6 +128,7 @@ class TestUnderstandReport:
         import asyncio
         result = asyncio.run(node_report(state))
 
+        assert result == {}
         mock_report.assert_called_once()
         call_kwargs = mock_report.call_args.kwargs
         assert call_kwargs["action"] == "report"

@@ -1,32 +1,54 @@
 """
 report_core/html.py - Jinja2 renderer.
 
-Thread-safe: instantiates a new Environment per render call.
+Thread-safe: uses a module-level singleton Environment with autoescape enabled.
 Templates live in report_core/templates/.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 from core.config import cfg
 
+_JINJA_ENV = None
+
+
 def _get_template_dir() -> Path:
     """Return the package templates directory."""
-    return Path(__file__).with_suffix("").parent / "templates"
+    return Path(__file__).resolve().parent / "templates"
+
+
+def _get_env():
+    """Lazy singleton Jinja2 Environment with autoescape."""
+    global _JINJA_ENV
+    if _JINJA_ENV is None:
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
+        _JINJA_ENV = Environment(
+            loader=FileSystemLoader(str(_get_template_dir())),
+            autoescape=select_autoescape(["html", "xml"]),
+        )
+    return _JINJA_ENV
+
 
 def render_template(template_name: str, context: dict, output_path: Path) -> None:
     """Render a Jinja2 template to an HTML file."""
-    from jinja2 import Environment, FileSystemLoader # lazy
-
-    template_dir = _get_template_dir()
-    env = Environment(loader=FileSystemLoader(str(template_dir)))
+    env = _get_env()
     template = env.get_template(template_name)
     rendered = template.render(**context)
     output_path.write_text(rendered, encoding="utf-8")
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Atomic file write via temp + os.replace."""
+    tmp = path.parent / f"{path.name}.tmp"
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(str(tmp), str(path))
+
 
 def _write_manifest(
     trace_id: str,
@@ -48,7 +70,8 @@ def _write_manifest(
         "theme": config.get("theme", "dark"),
     }
     manifest_path = out_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    _atomic_write(manifest_path, json.dumps(manifest, indent=2))
+
 
 def _write_metrics(
     trace_id: str,
@@ -73,7 +96,8 @@ def _write_metrics(
         "has_data": bool(config.get("data_path") or config.get("sections") or config.get("tabs")),
     }
     metrics_path = out_dir / "metrics.json"
-    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    _atomic_write(metrics_path, json.dumps(metrics, indent=2))
+
 
 def build_report(
     trace_id: str,
@@ -118,6 +142,7 @@ def build_report(
         "html_path": str(html_path),
         "sections": len(sections),
     }
+
 
 def build_dashboard(
     trace_id: str,
