@@ -177,6 +177,10 @@ class Config:
         # -- External services -------------------------------------------------
         self.searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8080")
 
+        # -- Tavily AI Research -----------------------------------------------
+        self.tavily_api_key = os.getenv("TAVILY_API_KEY", "")
+        self.tavily_timeout = int(os.getenv("TAVILY_TIMEOUT", "60"))
+
         # -- Memory tuning -----------------------------------------------------
         self.memory_delete_threshold = float(os.getenv("MEMORY_DELETE_THRESHOLD", "0.4"))
         self.memory_decay_days = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
@@ -266,6 +270,8 @@ class Config:
             raise ValueError(f"WEB_SNIPPET_CHARS must be 1-5000, got {self.web_snippet_chars}")
         if not (1 <= self.web_max_search_results <= 50):
             raise ValueError(f"WEB_MAX_SEARCH_RESULTS must be 1-50, got {self.web_max_search_results}")
+        if not (1 <= self.tavily_timeout <= 300):
+            raise ValueError(f"TAVILY_TIMEOUT must be 1-300, got {self.tavily_timeout}")
         if not (1 <= self.cli_max_command_chars < 50_000):
             raise ValueError(f"CLI_MAX_COMMAND_LENGTH must be 1-49999, got {self.cli_max_command_chars}")
         if not (1 <= self.cli_max_arguments <= 100):
