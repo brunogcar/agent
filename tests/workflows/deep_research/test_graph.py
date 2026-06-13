@@ -1,103 +1,182 @@
-"""Integration tests for the compiled DeepResearch graph."""
-from __future__ import annotations
-
-from unittest.mock import patch, MagicMock
-
+"""tests/workflows/deep_research/test_graph.py"""
 import pytest
-
 from workflows.deep_research_core.graph import build_deep_research_graph
 
 
-def test_graph_exits_via_hard_cap():
-    """Graph runs and exits via max_iterations hard cap."""
+def test_graph_exits_via_hard_cap(mocker):
+    """Graph should exit when iteration reaches max_iterations."""
+    mocker.patch(
+        "workflows.deep_research_core.nodes.decompose.llm.complete",
+        return_value=mocker.Mock(ok=True, text='["q1"]'),
+    )
+    mocker.patch(
+        "workflows.deep_research_core.nodes.search._execute_search_with_fallback",
+        return_value=({"status": "success", "data": {"results": []}}, "web"),
+    )
+    # 6 items: 2 iterations x 2 agent calls + 2 safety margin
+    mocker.patch(
+        "workflows.deep_research_core.nodes.synthesize.agent",
+        side_effect=[
+            {"status": "success", "text": "synth"},
+            {"status": "success", "text": "20"},
+            {"status": "success", "text": "synth"},
+            {"status": "success", "text": "20"},
+            {"status": "success", "text": "synth"},
+            {"status": "success", "text": "20"},
+        ],
+    )
+    mocker.patch(
+        "core.memory.memory.recall",
+        return_value=[],
+    )
+    mocker.patch(
+        "core.citations.citations.get_sources",
+        return_value=[],
+    )
+    mocker.patch(
+        "core.memory.memory.store_semantic",
+        return_value=None,
+    )
+
     graph = build_deep_research_graph()
-
-    def mock_agent(*, role, task, content, trace_id):
-        if role == "plan":
-            return {"status": "success", "text": '{"steps": [{"description": "q1"}]}', "role": "plan", "model": "m", "elapsed": 1}
-        elif role == "research":
-            return {"status": "success", "text": "done", "role": "research", "model": "m", "elapsed": 1}
-        elif role == "critique":
-            return {"status": "success", "text": "95", "role": "critique", "model": "m", "elapsed": 1}
-        return {"status": "error", "error": "unknown"}
-
-    mock_web = {"status": "success", "data": {"results": [{"url": "http://a", "title": "A", "content": "text"}]}}
-    mock_llm = MagicMock()
-    mock_llm.ok = True
-    mock_llm.text = "summary"
-
-    # Patch LOCAL names inside each node module
-    with patch("workflows.deep_research_core.nodes.decompose.agent", side_effect=mock_agent):
-        with patch("workflows.deep_research_core.nodes.search.web", return_value=mock_web):
-            with patch("workflows.deep_research_core.nodes.search.tavily", return_value=mock_web):
-                with patch("workflows.deep_research_core.nodes.search.llm") as mock_llm_cls:
-                    mock_llm_cls.complete.return_value = mock_llm
-                    with patch("workflows.deep_research_core.nodes.synthesize.agent", side_effect=mock_agent):
-                        result = graph.invoke(
-                            {
-                                "goal": "test",
-                                "trace_id": "t1",
-                                "iteration": 0,
-                                "max_iterations": 1,
-                                "completeness_threshold": 85.0,
-                                "knowledge_base": "",
-                                "_prev_knowledge": "",
-                                "pending_queries": [],
-                                "extracted_evidence": [],
-                                "failed_sources": [],
-                                "budget_api_calls": 10,
-                                "budget_browser_actions": 5,
-                                "budget_events": [],
-                                "synthesis": "",
-                                "report": "",
-                            }
-                        )
-                        assert result["status"] == "success"
-                        assert "done" in result["report"]
+    result = graph.invoke({
+        "goal": "test",
+        "trace_id": "t1",
+        "budget_api_calls": 2,
+        "max_iterations": 2,
+        "budget_events": [],
+        "extracted_evidence": [],
+        "failed_sources": [],
+        "knowledge_base": "",
+        "_prev_knowledge": "",
+        "completeness": 0.0,
+        "converged": False,
+        "sub_queries": [],
+        "pending_queries": [],
+        "iteration": 0,
+        "consecutive_empty_iterations": 0,
+    })
+    # Hard cap at iteration 2 (stuck-loop also fires: 2 consecutive empty >= 2)
+    assert result["iteration"] == 2
+    assert result["status"] in ("success", "incomplete")
+    assert "Budget Audit" in result.get("report", "")
 
 
-def test_graph_loops_then_exits():
-    """Graph loops once then exits via hard cap."""
+def test_graph_dual_gate_exit(mocker):
+    """Graph should exit early when completeness >= threshold AND converged."""
+    mocker.patch(
+        "workflows.deep_research_core.nodes.decompose.llm.complete",
+        return_value=mocker.Mock(ok=True, text='["q1"]'),
+    )
+    mocker.patch(
+        "workflows.deep_research_core.nodes.search._execute_search_with_fallback",
+        return_value=({"status": "success", "data": {"results": []}}, "web"),
+    )
+    # Iteration 1: evidence found (mocked), completeness=90
+    # Iteration 2: empty queries, same synthesis, converged=True
+    mocker.patch(
+        "workflows.deep_research_core.nodes.search._extract_evidence",
+        return_value=[{"query": "q1", "url": "http://x", "title": "X", "summary": "S", "tool": "web"}],
+    )
+    mocker.patch(
+        "workflows.deep_research_core.nodes.synthesize.agent",
+        side_effect=[
+            {"status": "success", "text": "synthesis v1"},
+            {"status": "success", "text": "90"},
+            {"status": "success", "text": "synthesis v1"},
+            {"status": "success", "text": "90"},
+            {"status": "success", "text": "synthesis v1"},
+            {"status": "success", "text": "90"},
+        ],
+    )
+    mocker.patch(
+        "core.memory.memory.recall",
+        return_value=[],
+    )
+    mocker.patch(
+        "core.citations.citations.get_sources",
+        return_value=[],
+    )
+    mocker.patch(
+        "core.memory.memory.store_semantic",
+        return_value=None,
+    )
+
     graph = build_deep_research_graph()
+    result = graph.invoke({
+        "goal": "test",
+        "trace_id": "t1",
+        "budget_api_calls": 10,
+        "max_iterations": 10,
+        "budget_events": [],
+        "extracted_evidence": [],
+        "failed_sources": [],
+        "knowledge_base": "",
+        "_prev_knowledge": "",
+        "completeness": 0.0,
+        "converged": False,
+        "sub_queries": [],
+        "pending_queries": [],
+        "iteration": 0,
+        "consecutive_empty_iterations": 0,
+    })
+    # Should exit at iteration 2 via dual-gate (completeness + convergence)
+    assert result["iteration"] == 2
+    assert result["status"] == "success"
 
-    def mock_agent(*, role, task, content, trace_id):
-        if role == "plan":
-            return {"status": "success", "text": '{"steps": [{"description": "q1"}]}', "role": "plan", "model": "m", "elapsed": 1}
-        elif role == "research":
-            return {"status": "success", "text": "done", "role": "research", "model": "m", "elapsed": 1}
-        elif role == "critique":
-            return {"status": "success", "text": "95", "role": "critique", "model": "m", "elapsed": 1}
-        return {"status": "error", "error": "unknown"}
 
-    mock_web = {"status": "success", "data": {"results": [{"url": "http://a", "title": "A", "content": "text"}]}}
-    mock_llm = MagicMock()
-    mock_llm.ok = True
-    mock_llm.text = "summary"
+def test_graph_stuck_loop_exit(mocker):
+    """Graph should exit when 2+ consecutive iterations produce no evidence."""
+    mocker.patch(
+        "workflows.deep_research_core.nodes.decompose.llm.complete",
+        return_value=mocker.Mock(ok=True, text='["q1"]'),
+    )
+    mocker.patch(
+        "workflows.deep_research_core.nodes.search._execute_search_with_fallback",
+        return_value=({"status": "success", "data": {"results": []}}, "web"),
+    )
+    mocker.patch(
+        "workflows.deep_research_core.nodes.synthesize.agent",
+        side_effect=[
+            {"status": "success", "text": "synth"},
+            {"status": "success", "text": "20"},
+            {"status": "success", "text": "synth"},
+            {"status": "success", "text": "20"},
+            {"status": "success", "text": "synth"},
+            {"status": "success", "text": "20"},
+        ],
+    )
+    mocker.patch(
+        "core.memory.memory.recall",
+        return_value=[],
+    )
+    mocker.patch(
+        "core.citations.citations.get_sources",
+        return_value=[],
+    )
+    mocker.patch(
+        "core.memory.memory.store_semantic",
+        return_value=None,
+    )
 
-    with patch("workflows.deep_research_core.nodes.decompose.agent", side_effect=mock_agent):
-        with patch("workflows.deep_research_core.nodes.search.web", return_value=mock_web):
-            with patch("workflows.deep_research_core.nodes.search.tavily", return_value=mock_web):
-                with patch("workflows.deep_research_core.nodes.search.llm") as mock_llm_cls:
-                    mock_llm_cls.complete.return_value = mock_llm
-                    with patch("workflows.deep_research_core.nodes.synthesize.agent", side_effect=mock_agent):
-                        result = graph.invoke(
-                            {
-                                "goal": "test",
-                                "trace_id": "t1",
-                                "iteration": 0,
-                                "max_iterations": 2,
-                                "completeness_threshold": 85.0,
-                                "knowledge_base": "",
-                                "_prev_knowledge": "",
-                                "pending_queries": [],
-                                "extracted_evidence": [],
-                                "failed_sources": [],
-                                "budget_api_calls": 10,
-                                "budget_browser_actions": 5,
-                                "budget_events": [],
-                                "synthesis": "",
-                                "report": "",
-                            }
-                        )
-                        assert result["status"] == "success"
-                        assert result["iteration"] == 2
+    graph = build_deep_research_graph()
+    result = graph.invoke({
+        "goal": "test",
+        "trace_id": "t1",
+        "budget_api_calls": 10,
+        "max_iterations": 10,
+        "budget_events": [],
+        "extracted_evidence": [],
+        "failed_sources": [],
+        "knowledge_base": "",
+        "_prev_knowledge": "",
+        "completeness": 0.0,
+        "converged": False,
+        "sub_queries": [],
+        "pending_queries": [],
+        "iteration": 0,
+        "consecutive_empty_iterations": 0,
+    })
+    # Should exit at iteration 2 due to stuck-loop detection
+    assert result["iteration"] == 2
+    assert result["consecutive_empty_iterations"] == 2

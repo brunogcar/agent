@@ -1,55 +1,53 @@
-"""Tests for the decompose node."""
-from __future__ import annotations
-
-import json
-from unittest.mock import patch
-
+"""tests/workflows/deep_research/test_decompose.py"""
 import pytest
-
 from workflows.deep_research_core.nodes.decompose import node_decompose, _parse_sub_queries
 
 
-def test_parse_sub_queries_json_steps():
-    text = json.dumps({"steps": [{"description": "q1"}, {"description": "q2"}]})
-    assert _parse_sub_queries(text) == ["q1", "q2"]
+def test_parse_sub_queries_json_object():
+    raw = '{"steps": [{"description": "q1"}, {"description": "q2"}]}'
+    assert _parse_sub_queries(raw, "fallback") == ["q1", "q2"]
 
 
 def test_parse_sub_queries_json_list():
-    text = json.dumps(["q1", "q2", "q3"])
-    assert _parse_sub_queries(text) == ["q1", "q2", "q3"]
+    raw = '["q1", "q2"]'
+    assert _parse_sub_queries(raw, "fallback") == ["q1", "q2"]
 
 
-def test_parse_sub_queries_line_heuristic():
-    text = "- q1\n- q2\n- q3\n"
-    assert _parse_sub_queries(text) == ["q1", "q2", "q3"]
+def test_parse_sub_queries_bullet_lines():
+    raw = "- q1\n- q2\n- q3"
+    assert _parse_sub_queries(raw, "fallback") == ["q1", "q2", "q3"]
 
 
-def test_parse_sub_queries_empty():
-    assert _parse_sub_queries("") == []
+def test_parse_sub_queries_numbered_lines():
+    raw = "1. q1\n2. q2\n6. q6"
+    assert _parse_sub_queries(raw, "fallback") == ["q1", "q2", "q6"]
 
 
-def test_node_decompose_success():
+def test_parse_sub_queries_step_pattern():
+    raw = "Step 1: q1\nStep 2: q2"
+    assert _parse_sub_queries(raw, "fallback") == ["q1", "q2"]
+
+
+def test_parse_sub_queries_fallback():
+    raw = "just some prose"
+    assert _parse_sub_queries(raw, "fallback") == []
+
+
+def test_node_decompose_success(mocker):
     state = {"goal": "test goal", "trace_id": "t1"}
-    mock_result = {"status": "success", "text": json.dumps({"steps": [{"description": "q1"}]}), "role": "plan", "model": "m", "elapsed": 1}
+    mocker.patch(
+        "workflows.deep_research_core.nodes.decompose.llm.complete",
+        return_value=mocker.Mock(ok=True, text='{"steps": [{"description": "q1"}]}'),
+    )
+    result = node_decompose(state)
+    assert result["sub_queries"] == ["q1"]
 
-    with patch("workflows.deep_research_core.nodes.decompose.agent", return_value=mock_result):
-        result = node_decompose(state)
-        assert result["pending_queries"] == ["q1"]
 
-
-def test_node_decompose_fallback_on_failure():
+def test_node_decompose_llm_failure(mocker):
     state = {"goal": "test goal", "trace_id": "t1"}
-    mock_result = {"status": "error", "error": "llm failed"}
-
-    with patch("workflows.deep_research_core.nodes.decompose.agent", return_value=mock_result):
-        result = node_decompose(state)
-        assert result["pending_queries"] == ["test goal"]
-
-
-def test_node_decompose_fallback_on_bad_json():
-    state = {"goal": "test goal", "trace_id": "t1"}
-    mock_result = {"status": "success", "text": "not json at all", "role": "plan", "model": "m", "elapsed": 1}
-
-    with patch("workflows.deep_research_core.nodes.decompose.agent", return_value=mock_result):
-        result = node_decompose(state)
-        assert result["pending_queries"] == ["test goal"]
+    mocker.patch(
+        "workflows.deep_research_core.nodes.decompose.llm.complete",
+        return_value=mocker.Mock(ok=False, error="timeout"),
+    )
+    result = node_decompose(state)
+    assert result["sub_queries"] == ["test goal"]

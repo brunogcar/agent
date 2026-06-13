@@ -1,101 +1,80 @@
-"""Decompose node: break a research goal into sub-queries.
-
-If the planner LLM returns malformed JSON, the node falls back to a
-single sub-query equal to the original goal so the graph never crashes.
+"""workflows/deep_research_core/nodes/decompose.py
+Goal-decomposition node.
 """
 from __future__ import annotations
-
 import json
-import logging
-
-from tools.agent_tool import agent
+import re
+from typing import List
+from workflows.deep_research_core.state import DeepResearchState
 from workflows.deep_research_core.constants import (
     DECOMPOSE_SYSTEM_PROMPT,
     DECOMPOSE_USER_TEMPLATE,
 )
-from workflows.deep_research_core.state import DeepResearchState
-from workflows.base import node_step
-
-logger = logging.getLogger(__name__)
+from core.llm import llm
+from core.config import cfg
 
 
 def node_decompose(state: DeepResearchState) -> DeepResearchState:
-    """Break the research goal into 3–5 independent sub-queries.
-
-    Uses ``agent(role="plan")`` to generate the sub-queries.  If the
-    planner returns prose, malformed JSON, or fails outright, the node
-    gracefully falls back to a single sub-query equal to the original
-    goal so the loop can continue.
-
-    Args:
-        state: Workflow state containing at least ``goal`` and ``trace_id``.
-
-    Returns:
-        Partial state update with ``pending_queries`` populated.
-    """
+    """Break the research goal into sub-queries."""
     goal = state.get("goal", "")
     tid = state.get("trace_id", "")
-    node_step(state, "decompose", "breaking goal into sub-queries", goal=goal[:60])
+    if not goal:
+        return {"status": "error", "error": "No goal provided"}
 
-    result = agent(
-        role="plan",
-        task=DECOMPOSE_SYSTEM_PROMPT,
-        content=DECOMPOSE_USER_TEMPLATE.format(goal=goal),
+    # Cap goal length to prevent context overflow / DoS
+    max_goal = getattr(cfg, "deep_research_goal_max_chars", 2000)
+    goal = goal[:max_goal]
+
+    # Call llm.complete directly so the system prompt is actually
+    # DECOMPOSE_SYSTEM_PROMPT, not the autocode plan prompt from
+    # agent_tool.py (see Bug 4 in review).
+    result = llm.complete(
+        role="planner",
+        system=DECOMPOSE_SYSTEM_PROMPT,
+        user=DECOMPOSE_USER_TEMPLATE.format(goal=goal),
         trace_id=tid,
     )
+    if not result.ok:
+        return {"sub_queries": [goal], "pending_queries": [goal], "extracted_evidence": []}
 
-    # ── Fallback path: planner failed ──────────────────────────────
-    if result.get("status") != "success":
-        node_step(state, "decompose", "plan agent failed, using single query fallback")
-        return {"pending_queries": [goal]}
-
-    text = result.get("text", "")
-    queries = _parse_sub_queries(text)
-
+    raw = result.text
+    queries = _parse_sub_queries(raw, goal)
     if not queries:
-        node_step(state, "decompose", "JSON parse failed, using single query fallback")
         queries = [goal]
-
-    node_step(state, "decompose", f"generated {len(queries)} sub-queries")
-    return {"pending_queries": queries}
+    return {"sub_queries": queries, "pending_queries": queries, "extracted_evidence": []}
 
 
-def _parse_sub_queries(text: str) -> list[str]:
-    """Extract sub-queries from planner LLM output.
+def _parse_sub_queries(text: str, fallback: str) -> List[str]:
+    """Extract sub-queries from planner output.
 
-    Tries, in order:
-    1. JSON object with ``steps`` list.
-    2. JSON list of strings.
-    3. Line-by-line heuristic (only lines starting with ``-`` or numbers).
-
-    Args:
-        text: Raw LLM output.
-
-    Returns:
-        List of non-empty query strings.  Empty list if nothing usable found.
+    Tries three strategies:
+      1. JSON object with {"steps": [{"description": "..."}]}
+      2. JSON list of strings
+      3. Line-by-line heuristic (bullets, numbers, or "Step N:" patterns)
     """
-    # 1. JSON object with "steps"
+    # Strategy 1 & 2: JSON
     try:
         data = json.loads(text)
         if isinstance(data, dict) and "steps" in data:
-            return [
-                str(s.get("description", "")).strip()
-                for s in data["steps"]
-                if str(s.get("description", "")).strip()
-            ]
+            return [s["description"] for s in data["steps"] if s.get("description")]
         if isinstance(data, list):
-            return [str(q).strip() for q in data if str(q).strip()]
-    except json.JSONDecodeError:
+            return [q for q in data if isinstance(q, str) and q.strip()]
+    except (json.JSONDecodeError, KeyError, TypeError):
         pass
 
-    # 2. Line-by-line extraction — ONLY lines that look like list items
-    lines = []
-    for line in text.splitlines():
+    # Strategy 3: line-by-line heuristic
+    lines = text.strip().splitlines()
+    queries = []
+    for line in lines:
         stripped = line.strip()
-        # Only accept lines that start with markdown bullets or numbering
-        if stripped.startswith(("- ", "* ", "1. ", "2. ", "3. ", "4. ", "5. ")):
-            stripped = stripped[2:].strip()
-            if stripped:
-                lines.append(stripped)
-
-    return lines
+        # Match bullets, numbers 1-9, or "Step N:" patterns
+        if re.match(r'^\s*([\-*•]|\d+[\.)])\s+', stripped):
+            # Strip the prefix
+            cleaned = re.sub(r'^\s*([\-*•]|\d+[\.)])\s+', '', stripped).strip()
+            if cleaned:
+                queries.append(cleaned)
+        elif re.match(r'^Step\s+\d+[\.:]?\s*', stripped, re.IGNORECASE):
+            cleaned = re.sub(r'^Step\s+\d+[\.:]?\s*', '', stripped, flags=re.IGNORECASE).strip()
+            if cleaned:
+                queries.append(cleaned)
+    return queries if queries else []

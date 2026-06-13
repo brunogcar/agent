@@ -1,286 +1,293 @@
-"""Search node: execute sub-queries, extract evidence, track budget.
-
-Runs sequentially (never in a ThreadPoolExecutor) because browser
-actions are NOT_PARALLEL_SAFE.  Tavily and web are parallel-safe, but
-for v1 we keep the loop simple and sequential to avoid state-merge
-complexity inside a single node.
+"""workflows/deep_research_core/nodes/search.py
+Iterative search node with multi-tier fallback.
 """
 from __future__ import annotations
-
-import logging
-from typing import Any
-
-from core.config import cfg
+from typing import List, Dict, Any, Set
+from workflows.deep_research_core.state import DeepResearchState
+from workflows.deep_research_core.budget import decrement_api_calls, log_event
+from workflows.deep_research_core.constants import (
+    JS_HEAVY_HINTS,
+    JS_WALL_INDICATORS,
+    SEARCH_SYSTEM_PROMPT,
+    SEARCH_USER_TEMPLATE,
+)
 from core.llm import llm
-from core.runtime.activity_tracker import tracker
+from core.citations import citations
 from tools.tavily import tavily
 from tools.web import web
-from workflows.deep_research_core.budget import (
-    decrement_api_calls,
-    is_api_budget_exhausted,
-    log_event,
-)
-from workflows.deep_research_core.constants import (
-    COMPLEX_QUERY_HINTS,
-    JS_HEAVY_HINTS,
-)
-from workflows.deep_research_core.state import DeepResearchState
-from workflows.base import node_step
+from tools.browser import browser
 
-logger = logging.getLogger(__name__)
+
+def _is_js_wall(text: str) -> bool:
+    """Detect if a page requires JavaScript to render content."""
+    if not text:
+        return True
+    lowered = text.lower()
+    return any(indicator in lowered for indicator in JS_WALL_INDICATORS)
 
 
 def node_search(state: DeepResearchState) -> DeepResearchState:
-    """Execute all pending sub-queries and extract structured evidence.
+    """Execute pending sub-queries with multi-tier fallback.
 
-    For each sub-query:
-    1. Select the best tool (Tavily vs. web) based on budget and heuristics.
-    2. Run the search.
-    3. Scrape / extract text from the top 3 result URLs.
-    4. Summarise each page with the executor LLM.
-    5. Update budget and telemetry.
+    Fallback chain per query:
+      tavily (if budget) -> web (if tavily fails/empty) -> browser (if JS wall/short)
 
-    Browser fallback is **deferred to v2**; for v1 we rely on
-    ``web(action="read")`` and Tavily's built-in content extraction.
-
-    Args:
-        state: Workflow state with ``pending_queries`` and budget fields.
-
-    Returns:
-        Partial state update with ``extracted_evidence``, cleared
-        ``pending_queries``, incremented ``iteration``, and updated budget.
+    Browser is NOT_PARALLEL_SAFE; the sequential for-loop guarantees safety.
     """
     queries = state.get("pending_queries", [])
-    tid = state.get("trace_id", "")
     goal = state.get("goal", "")
+    tid = state.get("trace_id", "")
     iteration = state.get("iteration", 0)
-    failed = list(state.get("failed_sources", []))
 
+    # Always increment iteration — even if no queries remain.
+    # This prevents the route from staying at iteration 0 forever.
     if not queries:
-        node_step(state, "search", "no pending queries to process")
         return {
             "extracted_evidence": [],
             "pending_queries": [],
             "iteration": iteration + 1,
-            "failed_sources": failed,
+            "consecutive_empty_iterations": state.get("consecutive_empty_iterations", 0) + 1,
         }
 
-    node_step(state, "search", f"processing {len(queries)} sub-queries")
-
-    evidence: list[dict[str, Any]] = []
-    updates: dict[str, Any] = {}
+    failed = list(state.get("failed_sources", []))
+    updates = {
+        "extracted_evidence": list(state.get("extracted_evidence", [])),
+        "budget_events": list(state.get("budget_events", [])),
+    }
+    seen_urls: Set[str] = set()
+    empty_this_iteration = True
+    browser_used = False
 
     for query in queries:
         tool = _select_tool(query, {**state, **updates})
-        node_step(state, "search", f"tool={tool} query={query[:40]}")
+        search_result, actual_tool = _execute_search_with_fallback(
+            query, tool, tid, {**state, **updates}
+        )
 
-        # -- Execute search ------------------------------------------
-        search_result = _execute_search(query, tool)
-
-        # -- Budget bookkeeping --------------------------------------
-        if tool == "tavily" and search_result.get("status") == "success":
+        # Only decrement API budget for tavily calls that succeeded
+        if actual_tool == "tavily" and search_result.get("status") == "success":
             updates.update(decrement_api_calls({**state, **updates}))
-            updates.update(
-                log_event(
-                    {**state, **updates},
-                    tool="tavily",
-                    action="search",
-                    reason=query[:60],
-                )
-            )
-        else:
-            updates.update(
-                log_event(
-                    {**state, **updates},
-                    tool=tool,
-                    action="search",
-                    reason=query[:60],
-                )
-            )
 
-        # -- Extract evidence from results ----------------------------
-        if search_result.get("status") == "success":
-            new_evidence = _extract_evidence(
-                search_result, query, tool, goal, tid, failed, {**state, **updates}
-            )
-            evidence.extend(new_evidence)
-        else:
-            # Log the search failure but keep looping
-            logger.warning("Search failed for query %r: %s", query, search_result.get("error"))
-            updates.update(
-                log_event(
-                    {**state, **updates},
-                    tool=tool,
-                    action="search_failed",
-                    reason=str(search_result.get("error", "unknown"))[:100],
-                )
-            )
+        new_evidence = _extract_evidence(
+            search_result, query, actual_tool, goal, tid, failed,
+            seen_urls, iteration + 1
+        )
 
-    updates.update(
-        {
-            "extracted_evidence": evidence,
-            "pending_queries": [],
-            "failed_sources": failed,
-            "iteration": iteration + 1,
-        }
-    )
+        if new_evidence:
+            empty_this_iteration = False
+            updates["extracted_evidence"].extend(new_evidence)
+            if any(ev.get("tool") == "browser" for ev in new_evidence):
+                browser_used = True
+        elif search_result.get("status") == "success":
+            # Search succeeded but nothing was extractable — log for telemetry
+            updates["budget_events"] = list(updates.get("budget_events", [])) + [
+                {"action": "empty_results", "reason": f"No extractable evidence for: {query[:60]}"}
+            ]
 
-    node_step(state, "search", f"extracted {len(evidence)} evidence items")
+    # Decrement browser budget if any fallback was used
+    if browser_used:
+        current_browser = state.get("budget_browser_calls", 0)
+        if current_browser > 0:
+            updates["budget_browser_calls"] = current_browser - 1
+
+    # Track consecutive empty iterations for stuck-loop detection
+    consecutive = state.get("consecutive_empty_iterations", 0)
+    if empty_this_iteration:
+        consecutive += 1
+    else:
+        consecutive = 0
+
+    updates["pending_queries"] = []
+    updates["failed_sources"] = failed
+    updates["iteration"] = iteration + 1
+    updates["consecutive_empty_iterations"] = consecutive
     return updates
 
 
-def _select_tool(query: str, state: dict[str, Any]) -> str:
-    """Choose the best search tool for a sub-query.
-
-    Heuristic (v1, hard-coded):
-    1. Tavily if API key is configured, budget remains, and the query looks complex.
-    2. Web (SearXNG) as the free default.
-
-    Browser is **not** used for search in v1; it will be introduced in v2
-    for known JS-heavy URLs.
-
-    Args:
-        query: Sub-query string.
-        state: Current state (used for budget checks).
-
-    Returns:
-        Tool name: ``"tavily"`` or ``"web"``.
-    """
-    if (
-        cfg.tavily_api_key
-        and not is_api_budget_exhausted(state)
-        and _is_complex_query(query)
-    ):
+def _select_tool(query: str, state: DeepResearchState) -> str:
+    """Choose primary search tool based on query complexity and budget."""
+    if not state.get("budget_api_calls", 0):
+        return "web"
+    if _is_complex_query(query) or _is_js_heavy(query):
         return "tavily"
-    return "web"
+    return "tavily"
 
 
 def _is_complex_query(query: str) -> bool:
-    """Simple heuristic: multi-part questions are complex."""
-    q = query.lower()
-    return any(hint in q for hint in COMPLEX_QUERY_HINTS)
+    return len(query) > 80 or any(hint in query.lower() for hint in JS_HEAVY_HINTS)
 
 
 def _is_js_heavy(query: str) -> bool:
-    """Simple heuristic: keywords suggesting JS-heavy sites."""
-    q = query.lower()
-    return any(hint in q for hint in JS_HEAVY_HINTS)
+    return any(hint in query.lower() for hint in JS_HEAVY_HINTS)
 
 
-def _execute_search(query: str, tool: str) -> dict[str, Any]:
-    """Dispatch a search call to the selected tool.
+def _execute_search_with_fallback(
+    query: str, preferred_tool: str, trace_id: str, state: DeepResearchState
+) -> tuple[dict, str]:
+    """Execute search with fallback: tavily -> web.
 
-    Args:
-        query: Search query string.
-        tool: ``"tavily"`` or ``"web"``.
-
-    Returns:
-        Standard tool result dict (``status``, ``data``, ``error``).
+    Returns (result, actual_tool_used).
     """
+    result = _execute_search(query, preferred_tool, trace_id)
+    if result.get("status") == "success" and result.get("data", {}).get("results"):
+        return result, preferred_tool
+
+    # Fallback to web if tavily failed or returned empty
+    if preferred_tool != "web":
+        log_event(
+            state, "fallback",
+            f"Tavily empty/failed for '{query[:60]}', falling back to web"
+        )
+        result = _execute_search(query, "web", trace_id)
+        if result.get("status") == "success":
+            return result, "web"
+
+    return result, preferred_tool
+
+
+def _execute_search(query: str, tool: str, trace_id: str) -> dict:
     if tool == "tavily":
-        return tavily(action="search", query=query, max_results=5)
-    return web(action="search", query=query, max_results=5)
+        return tavily(
+            action="search",
+            query=query,
+            max_results=5,
+            include_answer=False,
+            trace_id=trace_id,
+        )
+    return web(
+        action="search",
+        query=query,
+        max_results=5,
+        trace_id=trace_id,
+    )
 
 
 def _extract_evidence(
-    search_result: dict[str, Any],
+    search_result: dict,
     query: str,
     tool: str,
     goal: str,
-    trace_id: str,
-    failed: list[dict[str, Any]],
-    state: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Turn raw search results into structured, summarised evidence.
-
-    For each of the top 3 result URLs:
-    1. Extract text (Tavily ``content`` field or ``web(action="read")``).
-    2. Skip URLs that are already in ``failed_sources``.
-    3. Summarise with the executor LLM.
-    4. Record failures (404, no content, etc.).
+    tid: str,
+    failed: List[dict],
+    seen_urls: Set[str],
+    iteration: int,
+) -> List[dict]:
+    """Extract evidence from search results with deduplication and browser fallback.
 
     Args:
         search_result: Raw tool output dict.
-        query: The sub-query that produced these results.
-        tool: Tool name used for the search.
-        goal: Original research goal (for context in summarisation).
-        trace_id: Active trace ID.
-        failed: Mutable list of failed sources (appended in place).
-        state: Current state (for budget checks if browser fallback were used).
+        query: The sub-query that produced this result.
+        tool: Tool name that produced the result (may differ from fallback).
+        goal: Original research goal.
+        tid: Trace ID for citations.
+        failed: Mutable list of failed source records (updated in-place).
+        seen_urls: Mutable set of already-processed URLs (updated in-place).
+        iteration: Current iteration number (1-based) for telemetry.
 
     Returns:
-        List of evidence dicts, each with ``query``, ``url``, ``title``,
-        ``summary``, and ``tool_used``.
+        List of evidence dicts, each with keys: query, url, title, summary, tool.
     """
-    evidence: list[dict[str, Any]] = []
-    results: list[dict[str, Any]] = []
+    evidence = []
+    if not search_result or search_result.get("status") != "success":
+        return evidence
 
-    data = search_result.get("data") or {}
-    results = list(data.get("results", []))
+    data = search_result.get("data", {})
+    results = data.get("results", []) if isinstance(data, dict) else []
 
-    for idx, r in enumerate(results[:3], start=1):
-        url = str(r.get("url", "")).strip()
-        if not url:
+    if not results:
+        return evidence
+
+    for idx, r in enumerate(results[:3]):
+        url = r.get("url", "")
+        title = r.get("title", "")
+
+        if not url or url in seen_urls:
             continue
+        seen_urls.add(url)
 
-        # Skip previously-failed URLs
         if any(f.get("url") == url for f in failed):
             continue
 
-        title = str(r.get("title", "")).strip()
-        text = ""
+        # Get text based on primary tool
+        if tool == "tavily":
+            text = r.get("content", "") or r.get("text", "")
+        else:
+            read_result = web(action="read", url=url, trace_id=tid)
+            if read_result.get("status") != "success":
+                failed.append({
+                    "url": url,
+                    "reason": "read_failed",
+                    "iteration": iteration,
+                })
+                continue
+            text = read_result.get("data", {}).get("text", "")
 
-        # -- Text extraction strategy --------------------------------
-        if tool == "tavily" and r.get("content"):
-            text = str(r.get("content", "")).strip()
-        elif tool == "web":
-            scrape = web(action="read", url=url)
-            if scrape.get("status") == "success":
-                scrape_data = scrape.get("data") or {}
-                text = str(scrape_data.get("text", "")).strip()
-                title = str(scrape_data.get("title", title)).strip()
+        # Browser fallback for JS walls or very short content
+        if (not text or len(text) < 100 or _is_js_wall(text)) and tool != "browser":
+            browser_text = _try_browser_fallback(url, tid)
+            if browser_text and len(browser_text) >= 100:
+                text = browser_text
+                tool = "browser"
 
         if not text or len(text) < 100:
-            failed.append(
-                {
-                    "url": url,
-                    "reason": "no_content" if not text else "too_short",
-                    "iteration": state.get("iteration", 0),
-                }
-            )
+            failed.append({
+                "url": url,
+                "reason": "no_content" if not text else "too_short",
+                "iteration": iteration,
+            })
             continue
 
-        # -- Summarise with executor LLM -----------------------------
-        try:
-            with tracker.inference_slot(timeout=30.0):
-                resp = llm.complete(
-                    role="executor",
-                    system=(
-                        "You are a research assistant.  Summarise the given text "
-                        "in 2-3 bullet points relevant to the query and goal."
-                    ),
-                    user=(
-                        f"Query: {query}\n"
-                        f"Goal: {goal}\n\n"
-                        f"Text:\n{text[:4000]}"
-                    ),
-                    max_tokens=cfg.worker_max_tokens,
-                    timeout=cfg.worker_timeout,
-                    trace_id=trace_id,
-                )
-                summary = resp.text if resp.ok else text[:500]
-        except Exception as exc:
-            logger.warning("LLM summarisation failed for %s: %s", url, exc)
-            summary = text[:500]
+        summary = _summarize_evidence(text, query, goal, tid)
 
-        evidence.append(
-            {
-                "query": query,
-                "url": url,
-                "title": title,
-                "summary": summary,
-                "tool_used": tool,
-            }
-        )
+        # Register citation
+        citations.add(tid, url=url, title=title, snippet=summary[:300])
+
+        evidence.append({
+            "query": query,
+            "url": url,
+            "title": title,
+            "summary": summary,
+            "tool": tool,
+        })
 
     return evidence
+
+
+def _try_browser_fallback(url: str, trace_id: str) -> str:
+    """Attempt browser extraction for JS-heavy pages.
+
+    Browser is protected by a global threading.Lock in tools/browser.py.
+    This function is only called from the sequential node_search loop,
+    so deadlock is impossible.
+    """
+    try:
+        nav = browser(
+            action="navigate", url=url, trace_id=trace_id,
+            timeout=30, headless=True,
+        )
+        if nav.get("status") != "success":
+            return ""
+        txt = browser(
+            action="text_content", selector="body", trace_id=trace_id,
+            timeout=30,
+        )
+        if txt.get("status") == "success":
+            return txt.get("data", {}).get("text", "")
+    except Exception:
+        pass
+    return ""
+
+
+def _summarize_evidence(text: str, query: str, goal: str, tid: str) -> str:
+    """Summarise extracted text into 2–3 bullet points."""
+    prompt = SEARCH_USER_TEMPLATE.format(query=query, goal=goal, text=text[:3000])
+    result = llm.complete(
+        role="executor",
+        system=SEARCH_SYSTEM_PROMPT,
+        user=prompt,
+        trace_id=tid,
+        max_tokens=300,
+    )
+    if result.ok:
+        return result.text.strip()
+    return text[:500]
