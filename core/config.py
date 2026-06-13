@@ -184,6 +184,23 @@ class Config:
         # -- Browser Fallback (Research Workflow) -----------------------------
         self.research_browser_fallback_max = int(os.getenv("RESEARCH_BROWSER_FALLBACK_MAX", "3"))
         self.research_browser_fallback_timeout = int(os.getenv("RESEARCH_BROWSER_FALLBACK_TIMEOUT", "15"))
+        # -- Deep Research Workflow --------------------------------------------------
+        self.deep_research_max_iterations = int(
+            os.getenv("DEEP_RESEARCH_MAX_ITERATIONS", "10")
+        )
+        self.deep_research_completeness_threshold = float(
+            os.getenv("DEEP_RESEARCH_COMPLETENESS_THRESHOLD", "85")
+        )
+        self.deep_research_max_api_calls = int(
+            os.getenv("DEEP_RESEARCH_MAX_API_CALLS", "20")
+        )
+        self.deep_research_max_browser_actions = int(
+            os.getenv("DEEP_RESEARCH_MAX_BROWSER_ACTIONS", "10")
+        )
+        self.deep_research_timeout_seconds = int(
+            os.getenv("DEEP_RESEARCH_TIMEOUT_SECONDS", "300")
+        )
+
 
         # -- Memory tuning -----------------------------------------------------
         self.memory_delete_threshold = float(os.getenv("MEMORY_DELETE_THRESHOLD", "0.4"))
@@ -274,6 +291,17 @@ class Config:
             raise ValueError(f"WEB_SNIPPET_CHARS must be 1-5000, got {self.web_snippet_chars}")
         if not (1 <= self.web_max_search_results <= 50):
             raise ValueError(f"WEB_MAX_SEARCH_RESULTS must be 1-50, got {self.web_max_search_results}")
+        if not (1 <= self.deep_research_max_iterations <= 50):
+            raise ValueError(f"DEEP_RESEARCH_MAX_ITERATIONS must be 1-50, got {self.deep_research_max_iterations}")
+        if not (0 < self.deep_research_completeness_threshold <= 100):
+            raise ValueError(f"DEEP_RESEARCH_COMPLETENESS_THRESHOLD must be 0-100, got {self.deep_research_completeness_threshold}")
+        if not (0 <= self.deep_research_max_api_calls <= 100):
+            raise ValueError(f"DEEP_RESEARCH_MAX_API_CALLS must be 0-100, got {self.deep_research_max_api_calls}")
+        if not (0 <= self.deep_research_max_browser_actions <= 50):
+            raise ValueError(f"DEEP_RESEARCH_MAX_BROWSER_ACTIONS must be 0-50, got {self.deep_research_max_browser_actions}")
+        if not (1 <= self.deep_research_timeout_seconds <= 3600):
+            raise ValueError(f"DEEP_RESEARCH_TIMEOUT_SECONDS must be 1-3600, got {self.deep_research_timeout_seconds}")
+
         if not (1 <= self.tavily_timeout <= 300):
             raise ValueError(f"TAVILY_TIMEOUT must be 1-300, got {self.tavily_timeout}")
         if not (1 <= self.cli_max_command_chars < 50_000):

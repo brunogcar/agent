@@ -188,6 +188,11 @@ def run_workflow(
             graph = build_autocode_graph()
             result = graph.invoke(initial_state)
 
+        elif wf_type == "deep_research":
+            from workflows.deep_research_core import build_deep_research_graph
+            graph = build_deep_research_graph()
+            result = graph.invoke(initial_state)
+
         elif wf_type == "understand":
             from pathlib import Path
             from workflows.understand import run_understand_workflow_sync
