@@ -16,11 +16,11 @@ from workflows.deep_research_core.budget import (
     decrement_api_calls,
     decrement_browser_actions,
     log_event,
+    is_browser_budget_exhausted,
 )
 from workflows.deep_research_core.constants import JS_HEAVY_HINTS
 
 logger = logging.getLogger(__name__)
-
 
 def _is_complex_query(query: str) -> bool:
     """Heuristic: queries with 8+ words or comparison keywords are complex."""
@@ -28,18 +28,6 @@ def _is_complex_query(query: str) -> bool:
     return len(query.split()) >= 8 or any(
         w in q for w in ("compare", "vs", "versus", "difference", "pros and cons")
     )
-
-
-def _is_js_heavy(query: str) -> bool:
-    """Heuristic: queries likely to hit JS-rendered sites.
-
-    NOTE: This is used in _extract_evidence for content-based fallback,
-    NOT in _select_tool. Browser is expensive (NOT_PARALLEL_SAFE) and
-    should only be used when web returns short/empty content.
-    """
-    q = query.lower()
-    return any(h in q for h in JS_HEAVY_HINTS)
-
 
 def _is_js_wall(text: str) -> bool:
     """Heuristic: check if returned page content indicates a JS wall or is too short.
@@ -57,7 +45,6 @@ def _is_js_wall(text: str) -> bool:
     lower = text.lower()
     return any(ind in lower for ind in indicators)
 
-
 def _select_tool(state: DeepResearchState, query: str) -> str:
     """Choose search tool based on budget and complexity.
 
@@ -71,7 +58,6 @@ def _select_tool(state: DeepResearchState, query: str) -> str:
     if state.get("budget_api_calls", 0) > 0:
         return "tavily"
     return "web"
-
 
 def _execute_search(query: str, tool: str, trace_id: str) -> dict:
     """Execute a single search query with the selected tool."""
@@ -93,38 +79,50 @@ def _execute_search(query: str, tool: str, trace_id: str) -> dict:
     else:
         return {"status": "error", "error": f"Unknown tool: {tool}"}
 
+def _execute_search_with_fallback(query: str, state: DeepResearchState) -> tuple[dict, str, dict]:
+    """Execute search with tavily -> web fallback on failure or empty results.
 
-def _execute_search_with_fallback(query: str, state: DeepResearchState) -> dict:
-    """Execute search with tavily -> web fallback on failure or empty results."""
+    Returns (result, actual_tool, state_updates).
+    """
     tid = state.get("trace_id", "")
     tool = _select_tool(state, query)
+    updates: dict = {}
 
     if tool == "tavily":
         result = _execute_search(query, "tavily", tid)
         if result.get("status") != "success" or not result.get("data", {}).get("results"):
-            log_event(
+            updates = log_event(
                 state, "search", "fallback",
-                reason=f"tavily->web: {result.get('error', 'empty_results')}"
+                reason="tavily->web: " + result.get("error", "empty_results")
             )
             result = _execute_search(query, "web", tid)
-        return result
+            return result, "web", updates
+        return result, "tavily", updates
 
-    return _execute_search(query, tool, tid)
+    return _execute_search(query, tool, tid), tool, updates
 
+def _try_browser_fallback(url: str, tid: str, state: dict) -> tuple[str, dict]:
+    """Attempt to extract text via browser for JS-heavy or short-content pages.
 
-def _try_browser_fallback(url: str, tid: str) -> str:
-    """Attempt to extract text via browser for JS-heavy or short-content pages."""
+    Returns (text, state_updates). Respects browser budget.
+    """
+    updates: dict = {}
+    if is_browser_budget_exhausted(state):
+        return "", updates
     try:
+        updates.update(decrement_browser_actions(state))
+        state = {**state, **updates}
         nav = browser(action="navigate", url=url, trace_id=tid, timeout=30, headless=True)
         if nav.get("status") != "success":
-            return ""
+            return "", updates
+        updates.update(decrement_browser_actions(state))
+        state = {**state, **updates}
         txt = browser(action="text_content", selector="body", trace_id=tid, timeout=30)
         if txt.get("status") != "success":
-            return ""
-        return txt.get("data", {}).get("text", "")
+            return "", updates
+        return txt.get("data", {}).get("text", ""), updates
     except Exception:
-        return ""
-
+        return "", updates
 
 def _summarize_evidence(text: str, query: str, goal: str) -> str:
     """Summarize extracted text into 2-3 bullet points relevant to query and goal."""
@@ -147,7 +145,6 @@ Text:
         pass
     return text[:500]
 
-
 def _extract_evidence(
     search_result: dict,
     query: str,
@@ -155,14 +152,15 @@ def _extract_evidence(
     goal: str,
     trace_id: str,
     failed: list,
-    state: DeepResearchState,
+    state: dict,
     iteration: int,
     seen_urls: set,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     """Extract evidence from search results, with deduplication and fallback."""
     evidence = []
     data = search_result.get("data", {})
     results = data.get("results", [])
+    updates: dict = {}
 
     for idx, r in enumerate(results[:3]):
         url = r.get("url", "")
@@ -188,10 +186,11 @@ def _extract_evidence(
 
         # Browser fallback for JS-heavy queries or very short content
         if len(text) < 300 or _is_js_wall(text):
-            browser_text = _try_browser_fallback(url, trace_id)
+            browser_text, browser_updates = _try_browser_fallback(url, trace_id, {**state, **updates})
             if browser_text and len(browser_text) >= 100:
                 text = browser_text
                 tool = "browser"
+            updates.update(browser_updates)
 
         summary = _summarize_evidence(text, query, goal)
         try:
@@ -206,8 +205,7 @@ def _extract_evidence(
             "source": tool,
         })
 
-    return evidence
-
+    return evidence, updates
 
 def node_search(state: DeepResearchState) -> DeepResearchState:
     """Execute pending sub-queries, extract evidence, manage budget."""
@@ -217,39 +215,49 @@ def node_search(state: DeepResearchState) -> DeepResearchState:
             "extracted_evidence": [],
             "pending_queries": [],
             "failed_sources": list(state.get("failed_sources", [])),
+            "seen_urls": list(state.get("seen_urls", [])),
+            "budget_api_calls": state.get("budget_api_calls", 0),
+            "budget_browser_actions": state.get("budget_browser_actions", 0),
+            "budget_events": list(state.get("budget_events", [])),
         }
 
     tid = state.get("trace_id", "")
     goal = state.get("goal", "")
     failed = list(state.get("failed_sources", []))
-    updates: dict = {}
+    # Initialize updates with current budget state so keys are always present
+    updates: dict = {
+        "budget_api_calls": state.get("budget_api_calls", 0),
+        "budget_browser_actions": state.get("budget_browser_actions", 0),
+        "budget_events": list(state.get("budget_events", [])),
+    }
     all_evidence: list[dict] = []
-    seen_urls: set = set()
+    seen_urls: set = set(state.get("seen_urls", []))
     empty_this_iteration = True
 
     for query in queries:
-        search_result = _execute_search_with_fallback(query, {**state, **updates})
+        search_result, actual_tool, search_updates = _execute_search_with_fallback(query, {**state, **updates})
+        updates.update(search_updates)
         if search_result.get("status") == "success":
             updates.update(decrement_api_calls({**state, **updates}))
-            new_evidence = _extract_evidence(
-                search_result, query, "tavily", goal, tid, failed,
+            new_evidence, extract_updates = _extract_evidence(
+                search_result, query, actual_tool, goal, tid, failed,
                 {**state, **updates}, state.get("iteration", 0) + 1, seen_urls,
             )
+            updates.update(extract_updates)
             all_evidence.extend(new_evidence)
             if new_evidence:
                 empty_this_iteration = False
             else:
-                log_event(
+                updates.update(log_event(
                     {**state, **updates}, "search", "empty_results",
-                    reason=f"query={query}, tool=tavily"
-                )
+                    reason="query=" + query + ", tool=" + actual_tool
+                ))
         else:
-            log_event(
+            updates.update(log_event(
                 {**state, **updates}, "search", "error",
-                reason=f"query={query}, error={search_result.get('error', 'unknown')}"
-            )
+                reason="query=" + query + ", error=" + search_result.get("error", "unknown")
+            ))
 
-    updates.update(decrement_browser_actions({**state, **updates}))
     updates["extracted_evidence"] = all_evidence
     updates["pending_queries"] = []
 
@@ -262,4 +270,5 @@ def node_search(state: DeepResearchState) -> DeepResearchState:
 
     updates["failed_sources"] = failed
     updates["iteration"] = state.get("iteration", 0) + 1
+    updates["seen_urls"] = list(seen_urls)
     return updates

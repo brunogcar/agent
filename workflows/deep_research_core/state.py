@@ -38,3 +38,6 @@ class DeepResearchState(WorkflowState, total=False):
 
     # Memory (recalled context from episodic/semantic memory)
     memory_context: str
+
+    # Cross-iteration URL deduplication
+    seen_urls: list[str]

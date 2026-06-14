@@ -2,6 +2,7 @@
 DeepResearch workflow facade.
 """
 from __future__ import annotations
+import concurrent.futures
 from workflows.base import run_workflow
 from core.config import cfg
 
@@ -35,11 +36,25 @@ def run_deep_research_agent(goal: str, **kwargs) -> dict:
         "pending_queries": [],
         "extracted_evidence": [],
         "failed_sources": [],
+        "seen_urls": [],
     }
     merged.update(kwargs)
-    return run_workflow(
-        workflow_type="deep_research",
-        goal=goal,
-        trace_id=kwargs.get("trace_id", ""),
-        **merged,
-    )
+
+    timeout = kwargs.get("timeout", cfg.deep_research_timeout_seconds)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(
+            run_workflow,
+            workflow_type="deep_research",
+            goal=goal,
+            trace_id=kwargs.get("trace_id", ""),
+            **merged,
+        )
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            return {
+                "status": "timeout",
+                "error": f"Workflow exceeded {timeout}s timeout",
+                "result": "",
+                "report": "",
+            }

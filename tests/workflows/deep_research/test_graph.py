@@ -6,7 +6,6 @@ from langgraph.graph import END
 from workflows.deep_research_core.graph import build_deep_research_graph
 from workflows.deep_research_core.state import DeepResearchState
 
-
 BASE_STATE = {
     "goal": "What is LangGraph?",
     "trace_id": "test-graph-001",
@@ -26,8 +25,8 @@ BASE_STATE = {
     "pending_queries": [],
     "extracted_evidence": [],
     "failed_sources": [],
+    "seen_urls": [],
 }
-
 
 def test_graph_exits_via_hard_cap(mocker):
     """Graph should exit when iteration reaches max_iterations."""
@@ -41,20 +40,20 @@ def test_graph_exits_via_hard_cap(mocker):
     )
     mocker.patch(
         "workflows.deep_research_core.nodes.search._execute_search_with_fallback",
-        return_value={"status": "success", "data": {"results": []}},
+        return_value=({"status": "success", "data": {"results": []}}, "tavily", {}),
     )
     mocker.patch(
         "workflows.deep_research_core.nodes.search._extract_evidence",
-        return_value=[],
+        return_value=([], {}),
     )
     # 2 iterations * 2 agent calls (research + critique) = 4 total
     mocker.patch(
         "workflows.deep_research_core.nodes.synthesize.agent",
         side_effect=[
-            {"status": "success", "text": "done"},   # iter 1 research
-            {"status": "success", "text": "20"},     # iter 1 critique (low score)
-            {"status": "success", "text": "done"},   # iter 2 research
-            {"status": "success", "text": "20"},     # iter 2 critique (low score)
+            {"status": "success", "text": "done"},  # iter 1 research
+            {"status": "success", "text": "20"},   # iter 1 critique (low score)
+            {"status": "success", "text": "done"},  # iter 2 research
+            {"status": "success", "text": "20"},   # iter 2 critique (low score)
         ],
     )
 
@@ -64,7 +63,6 @@ def test_graph_exits_via_hard_cap(mocker):
     # Hard cap reached with low completeness -> status is incomplete
     assert result["status"] == "incomplete"
     assert result["iteration"] == 2
-
 
 def test_graph_dual_gate_exit(mocker):
     """Graph should exit via dual-gate (completeness + convergence) before hard cap."""
@@ -79,20 +77,25 @@ def test_graph_dual_gate_exit(mocker):
     # Consistent mocks: search returns results, extract returns evidence
     mocker.patch(
         "workflows.deep_research_core.nodes.search._execute_search_with_fallback",
-        return_value={
-            "status": "success",
-            "data": {
-                "results": [
-                    {"url": "https://example.com", "title": "Example", "text": "LangGraph is a framework."}
-                ]
-            }
-        },
+        return_value=(
+            {
+                "status": "success",
+                "data": {
+                    "results": [
+                        {"url": "https://example.com", "title": "Example", "text": "LangGraph is a framework."}
+                    ]
+                }
+            },
+            "tavily",
+            {},
+        ),
     )
     mocker.patch(
         "workflows.deep_research_core.nodes.search._extract_evidence",
-        return_value=[
-            {"query": "q1", "url": "https://example.com", "title": "Example", "summary": "LangGraph is a framework.", "source": "web"}
-        ],
+        return_value=(
+            [{"query": "q1", "url": "https://example.com", "title": "Example", "summary": "LangGraph is a framework.", "source": "web"}],
+            {},
+        ),
     )
     mocker.patch(
         "workflows.deep_research_core.nodes.synthesize.agent",
@@ -107,6 +110,10 @@ def test_graph_dual_gate_exit(mocker):
     )
     mocker.patch(
         "workflows.deep_research_core.graph.memory.store_semantic",
+        return_value=None,
+    )
+    mocker.patch(
+        "workflows.deep_research_core.graph.memory.store_episodic",
         return_value=None,
     )
     mocker.patch(
@@ -130,7 +137,6 @@ def test_graph_dual_gate_exit(mocker):
     # Dual-gate should fire: completeness >= threshold AND converged
     assert result["status"] == "success"
 
-
 def test_graph_loops_then_exits(mocker):
     """Graph should loop via decompose until max_iterations or dual-gate."""
     mocker.patch(
@@ -143,20 +149,20 @@ def test_graph_loops_then_exits(mocker):
     )
     mocker.patch(
         "workflows.deep_research_core.nodes.search._execute_search_with_fallback",
-        return_value={"status": "success", "data": {"results": []}},
+        return_value=({"status": "success", "data": {"results": []}}, "tavily", {}),
     )
     mocker.patch(
         "workflows.deep_research_core.nodes.search._extract_evidence",
-        return_value=[],
+        return_value=([], {}),
     )
     # 2 iterations * 2 agent calls = 4 total
     mocker.patch(
         "workflows.deep_research_core.nodes.synthesize.agent",
         side_effect=[
-            {"status": "success", "text": "done"},   # iter 1 research
-            {"status": "success", "text": "20"},     # iter 1 critique
-            {"status": "success", "text": "done"},   # iter 2 research
-            {"status": "success", "text": "20"},     # iter 2 critique
+            {"status": "success", "text": "done"},  # iter 1 research
+            {"status": "success", "text": "20"},   # iter 1 critique
+            {"status": "success", "text": "done"},  # iter 2 research
+            {"status": "success", "text": "20"},   # iter 2 critique
         ],
     )
     mocker.patch(
@@ -165,6 +171,10 @@ def test_graph_loops_then_exits(mocker):
     )
     mocker.patch(
         "workflows.deep_research_core.graph.memory.store_semantic",
+        return_value=None,
+    )
+    mocker.patch(
+        "workflows.deep_research_core.graph.memory.store_episodic",
         return_value=None,
     )
     mocker.patch(
@@ -182,7 +192,6 @@ def test_graph_loops_then_exits(mocker):
     # Hard cap reached with low completeness -> incomplete
     assert result["status"] == "incomplete"
     assert result["iteration"] == 2
-
 
 # -- Regression tests for previous bug fixes -----------------------------------
 
@@ -206,7 +215,6 @@ def test_node_notify_calls_notify_with_correct_signature(mocker):
     )
     assert result == state
 
-
 def test_node_distill_is_noop_pass_through():
     """Verify _node_distill is a no-op pass-through node.
 
@@ -222,7 +230,6 @@ def test_node_distill_is_noop_pass_through():
     result = _node_distill(state)
     assert result == state
 
-
 def test_report_status_incomplete_when_below_threshold(mocker):
     """Verify report node returns status='incomplete' when completeness < threshold."""
     from workflows.deep_research_core.graph import _node_report
@@ -237,7 +244,6 @@ def test_report_status_incomplete_when_below_threshold(mocker):
     assert result["status"] == "incomplete"
     assert "Partial findings" in result["report"]
 
-
 def test_report_status_success_when_above_threshold(mocker):
     """Verify report node returns status='success' when completeness >= threshold."""
     from workflows.deep_research_core.graph import _node_report
@@ -251,7 +257,6 @@ def test_report_status_success_when_above_threshold(mocker):
     result = _node_report(state)
     assert result["status"] == "success"
     assert "Complete synthesis" in result["report"]
-
 
 def test_node_recall_returns_memory_context(mocker):
     """Verify _node_recall calls memory.recall with correct signature."""
@@ -272,7 +277,6 @@ def test_node_recall_returns_memory_context(mocker):
     )
     assert "Previous research on async" in result.get("memory_context", "")
 
-
 def test_node_recall_graceful_on_failure(mocker):
     """Verify _node_recall returns empty memory_context on exception."""
     mock_recall = mocker.patch("workflows.deep_research_core.graph.memory.recall")
@@ -285,6 +289,33 @@ def test_node_recall_graceful_on_failure(mocker):
     result = _node_recall(state)
     assert result.get("memory_context", "") == ""
 
+def test_node_store_calls_both_memory_types(mocker):
+    """Verify _node_store calls store_semantic and store_episodic."""
+    mock_store_semantic = mocker.patch("workflows.deep_research_core.graph.memory.store_semantic")
+    mock_store_episodic = mocker.patch("workflows.deep_research_core.graph.memory.store_episodic")
+    from workflows.deep_research_core.graph import _node_store
+    state = {
+        "result": "Test research result",
+        "goal": "What is LangGraph?",
+        "status": "success",
+        "trace_id": "test-123",
+    }
+    result = _node_store(state)
+    mock_store_semantic.assert_called_once_with(
+        text="Deep Research: Test research result",
+        importance=6,
+        tags="deep_research",
+        trace_id="test-123",
+    )
+    mock_store_episodic.assert_called_once_with(
+        text="Completed deep research workflow: 'What is LangGraph?'",
+        importance=5,
+        goal="What is LangGraph?",
+        outcome="success",
+        tools_used="tavily,web,browser,llm",
+        trace_id="test-123",
+    )
+    assert result == state
 
 def test_facade_initializes_all_state_fields(mocker):
     """Verify run_deep_research_agent initializes state without AttributeError.
@@ -304,10 +335,8 @@ def test_facade_initializes_all_state_fields(mocker):
     assert "budget_browser_actions" in call_kwargs
     assert "budget_api_calls" in call_kwargs
     assert "max_iterations" in call_kwargs
+    assert "seen_urls" in call_kwargs
     assert result["status"] == "success"
-
-
-
 
 def test_route_returns_decompose_not_search(mocker):
     """Verify route_after_synthesize returns 'decompose' (not 'search') for continuation.
@@ -328,7 +357,6 @@ def test_route_returns_decompose_not_search(mocker):
     result = route_after_synthesize(state)
     assert result == "decompose"
 
-
 def test_facade_rejects_empty_goal(mocker):
     """Verify run_deep_research_agent rejects empty goals without crashing."""
     from workflows.deep_research import run_deep_research_agent
@@ -336,11 +364,21 @@ def test_facade_rejects_empty_goal(mocker):
     assert result["status"] == "failed"
     assert "Goal is required" in result["error"]
 
-
 def test_facade_rejects_whitespace_goal(mocker):
     """Verify run_deep_research_agent rejects whitespace-only goals."""
     from workflows.deep_research import run_deep_research_agent
-    result = run_deep_research_agent("   ")
+    result = run_deep_research_agent(" ")
     assert result["status"] == "failed"
     assert "Goal is required" in result["error"]
 
+def test_facade_timeout_enforcement(mocker):
+    """Verify run_deep_research_agent returns timeout when graph exceeds limit."""
+    mock_run = mocker.patch("workflows.deep_research.run_workflow")
+    mock_run.side_effect = lambda **kwargs: (
+        __import__("time").sleep(2),
+        {"status": "success"}
+    )[1]
+    from workflows.deep_research import run_deep_research_agent
+    result = run_deep_research_agent("What is LangGraph?", timeout=1)
+    assert result["status"] == "timeout"
+    assert "exceeded 1s timeout" in result["error"]
