@@ -75,6 +75,9 @@ def node_decompose_goal(state: DeepResearchState) -> DeepResearchState:
     kb = state.get("knowledge_base", "")
     # Cap knowledge base to avoid overflowing the planner context
     findings_section = f"Current Findings:\n{kb[:2000]}\n\n" if kb else ""
+    memory_ctx = state.get("memory_context", "")
+    if memory_ctx:
+        findings_section += f"Relevant Past Research:\n{memory_ctx[:1000]}\n\n"
 
     user_msg = DECOMPOSE_USER_TEMPLATE.format(goal=goal, findings_section=findings_section)
 

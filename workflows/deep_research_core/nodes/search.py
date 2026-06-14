@@ -184,7 +184,7 @@ def _extract_evidence(
             continue
 
         # Browser fallback for JS-heavy queries or very short content
-        if len(text) < 300 or _is_js_heavy(query):
+        if len(text) < 300 or _is_js_wall(text):
             browser_text = _try_browser_fallback(url, trace_id)
             if browser_text and len(browser_text) >= 100:
                 text = browser_text

@@ -1,6 +1,6 @@
-"""core/config.py — Single source of truth for all configuration.
+﻿"""core/config.py â€” Single source of truth for all configuration.
 
-Uses pathlib throughout — works identically on Windows and Linux.
+Uses pathlib throughout â€” works identically on Windows and Linux.
 All values come from .env (loaded once at import time).
 Nothing is hardcoded except the .env file location discovery.
 
@@ -200,6 +200,13 @@ class Config:
         self.deep_research_timeout_seconds = int(
             os.getenv("DEEP_RESEARCH_TIMEOUT_SECONDS", "300")
         )
+        self.deep_research_convergence_threshold = float(
+            os.getenv("DEEP_RESEARCH_CONVERGENCE_THRESHOLD", "0.85")
+        )
+        if not (0 < self.deep_research_convergence_threshold <= 1):
+            raise ValueError(
+                f"DEEP_RESEARCH_CONVERGENCE_THRESHOLD must be 0-1, got {self.deep_research_convergence_threshold}"
+            )
 
 
         # -- Memory tuning -----------------------------------------------------

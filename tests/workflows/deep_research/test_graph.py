@@ -284,3 +284,25 @@ def test_node_recall_graceful_on_failure(mocker):
     }
     result = _node_recall(state)
     assert result.get("memory_context", "") == ""
+
+
+def test_facade_initializes_all_state_fields(mocker):
+    """Verify run_deep_research_agent initializes state without AttributeError.
+
+    Regression test for the cfg.deep_research_convergence_threshold
+    AttributeError that fired when the facade was called directly.
+    """
+    mock_run = mocker.patch("workflows.deep_research.run_workflow")
+    mock_run.return_value = {"status": "success"}
+    from workflows.deep_research import run_deep_research_agent
+
+    result = run_deep_research_agent("What is LangGraph?")
+
+    mock_run.assert_called_once()
+    call_kwargs = mock_run.call_args[1]
+    assert "convergence_threshold" in call_kwargs
+    assert "budget_browser_actions" in call_kwargs
+    assert "budget_api_calls" in call_kwargs
+    assert "max_iterations" in call_kwargs
+    assert result["status"] == "success"
+
