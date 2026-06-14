@@ -1,8 +1,7 @@
-"""
-workflows/research.py -- Research workflow.
+"""workflows/research.py -- Research workflow.
 
 Pattern:
- recall -> search -> scrape -> synthesize -> report -> store -> distill -> notify
+  recall -> search -> scrape -> synthesize -> report -> store -> distill -> notify
 
 Each node is a pure function WorkflowState -> WorkflowState.
 LangGraph wires them into a directed graph with conditional edges.
@@ -13,17 +12,18 @@ Browser Fallback (Phase 8):
   is called sequentially (browser is NOT_PARALLEL_SAFE).
 
 Usage:
- from workflows.base import run_workflow
+  from workflows.base import run_workflow
 
- result = run_workflow(
-     workflow_type = "research",
-     goal = "What are the best practices for ChromaDB in production?",
- )
- print(result["result"])
+  result = run_workflow(
+      workflow_type = "research",
+      goal = "What are the best practices for ChromaDB in production?",
+  )
+  print(result["result"])
 """
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
@@ -31,6 +31,18 @@ from langgraph.graph import StateGraph, END
 from workflows.base import WorkflowState, node_step, node_error, node_done
 from core.citations import citations
 from core.memory_backend.procedural.distill import distill_workflow
+
+# Thread-local guard to prevent nested parallel scrape (deadlock prevention)
+_parallel_scrape_active = threading.local()
+
+
+def _is_nested_parallel() -> bool:
+    """Check if node_parallel_scrape is already active in this thread.
+
+    Prevents deadlock when a worker thread calls node_parallel_scrape
+    recursively (e.g. via autocode tool invocation).
+    """
+    return getattr(_parallel_scrape_active, "active", False)
 
 
 # -- Nodes --------------------------------------------------------------------
@@ -120,7 +132,7 @@ def _scrape_and_summarize(url: str, title: str, goal: str, trace_id: str) -> dic
             if not resp.ok:
                 return {"url": url, "title": title, "status": "failed", "error": f"LLM failed: {resp.error}"}
 
-        return {"url": url, "title": title, "status": "success", "summary": resp.text}
+            return {"url": url, "title": title, "status": "success", "summary": resp.text}
     except TimeoutError:
         return {"url": url, "title": title, "status": "failed", "error": "inference slot timeout"}
     except Exception as e:
@@ -179,7 +191,7 @@ def _browser_fallback_scrape(url: str, title: str, goal: str, trace_id: str) -> 
                 if not resp.ok:
                     return {"url": url, "title": title, "status": "failed", "error": f"LLM failed: {resp.error}"}
 
-            return {"url": url, "title": title, "status": "success", "summary": resp.text}
+                return {"url": url, "title": title, "status": "success", "summary": resp.text}
         except TimeoutError:
             return {"url": url, "title": title, "status": "failed", "error": "inference slot timeout"}
         except Exception as e:
@@ -208,28 +220,52 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
 
     node_step(state, "parallel_scrape", f"spawning {len(urls_data)} workers")
 
-    dossier_parts = []
-    citation_idx = 1
-    needs_browser = []
+    # Guard against nested parallel execution (prevents ThreadPoolExecutor deadlock)
+    if _is_nested_parallel():
+        node_step(state, "parallel_scrape", "nested parallel scrape rejected")
+        return {**state, "search_results": ""}
+    _parallel_scrape_active.active = True
+    try:
+        dossier_parts = []
+        citation_idx = 1
+        needs_browser = []
 
-    # 1. Parallel web scraping
-    with ThreadPoolExecutor(max_workers=cfg.max_concurrent_workers) as executor:
-        future_to_data = {
-            executor.submit(_scrape_and_summarize, item["url"], item.get("title", ""), goal, tid): item
-            for item in urls_data
-        }
+        # 1. Parallel web scraping
+        with ThreadPoolExecutor(max_workers=cfg.max_concurrent_workers) as executor:
+            future_to_data = {
+                executor.submit(_scrape_and_summarize, item["url"], item.get("title", ""), goal, tid): item
+                for item in urls_data
+            }
 
-        for future in as_completed(future_to_data, timeout=cfg.worker_timeout + 30):
-            item = future_to_data[future]
-            try:
-                res = future.result(timeout=cfg.worker_timeout)
-            except TimeoutError:
-                res = {"url": item["url"], "title": item.get("title", ""), "status": "failed", "error": "global timeout"}
-            except Exception as e:
-                res = {"url": item["url"], "title": item.get("title", ""), "status": "failed", "error": str(e)}
+            for future in as_completed(future_to_data, timeout=cfg.worker_timeout + 30):
+                item = future_to_data[future]
+                try:
+                    res = future.result(timeout=cfg.worker_timeout)
+                except TimeoutError:
+                    res = {"url": item["url"], "title": item.get("title", ""), "status": "failed", "error": "global timeout"}
+                except Exception as e:
+                    res = {"url": item["url"], "title": item.get("title", ""), "status": "failed", "error": str(e)}
 
+                if res["status"] == "success":
+                    # Register citation
+                    if tid and res["url"]:
+                        citations.add(tid, url=res["url"], title=res["title"], snippet=res["summary"][:200])
+
+                    dossier_parts.append(
+                        f"### [Source {citation_idx}] {res['title']}\n"
+                        f"URL: {res['url']}\n\n"
+                        f"{res['summary']}\n"
+                    )
+                    citation_idx += 1
+                elif res["status"] == "needs_browser":
+                    needs_browser.append({"url": res["url"], "title": res["title"]})
+                else:
+                    node_step(state, "parallel_scrape", f"worker failed for {item['url']}: {res['error']}")
+
+        # 2. Sequential browser fallback (respects browser's global lock)
+        for item in needs_browser[:cfg.research_browser_fallback_max]:
+            res = _browser_fallback_scrape(item["url"], item["title"], goal, tid)
             if res["status"] == "success":
-                # Register citation
                 if tid and res["url"]:
                     citations.add(tid, url=res["url"], title=res["title"], snippet=res["summary"][:200])
 
@@ -239,41 +275,25 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
                     f"{res['summary']}\n"
                 )
                 citation_idx += 1
-            elif res["status"] == "needs_browser":
-                needs_browser.append({"url": res["url"], "title": res["title"]})
+                node_step(state, "parallel_scrape", f"browser fallback succeeded for {item['url']}")
             else:
-                node_step(state, "parallel_scrape", f"worker failed for {item['url']}: {res['error']}")
+                node_step(state, "parallel_scrape", f"browser fallback failed for {item['url']}: {res['error']}")
 
-    # 2. Sequential browser fallback (respects browser's global lock)
-    for item in needs_browser[:cfg.research_browser_fallback_max]:
-        res = _browser_fallback_scrape(item["url"], item["title"], goal, tid)
-        if res["status"] == "success":
-            if tid and res["url"]:
-                citations.add(tid, url=res["url"], title=res["title"], snippet=res["summary"][:200])
+        if not dossier_parts:
+            node_step(state, "parallel_scrape", "all workers failed")
+            return {**state, "search_results": ""}
 
-            dossier_parts.append(
-                f"### [Source {citation_idx}] {res['title']}\n"
-                f"URL: {res['url']}\n\n"
-                f"{res['summary']}\n"
-            )
-            citation_idx += 1
-            node_step(state, "parallel_scrape", f"browser fallback succeeded for {item['url']}")
-        else:
-            node_step(state, "parallel_scrape", f"browser fallback failed for {item['url']}: {res['error']}")
+        dossier = "\n\n".join(dossier_parts)
 
-    if not dossier_parts:
-        node_step(state, "parallel_scrape", "all workers failed")
-        return {**state, "search_results": ""}
+        # Hard cap the dossier to prevent context explosion at synthesis time
+        max_dossier_chars = cfg.web_max_text_chars * 2
+        if len(dossier) > max_dossier_chars:
+            dossier = dossier[:max_dossier_chars] + "\n\n[...TRUNCATED DUE TO LENGTH...]"
 
-    dossier = "\n\n".join(dossier_parts)
-
-    # Hard cap the dossier to prevent context explosion at synthesis time
-    max_dossier_chars = cfg.web_max_text_chars * 2
-    if len(dossier) > max_dossier_chars:
-        dossier = dossier[:max_dossier_chars] + "\n\n[...TRUNCATED DUE TO LENGTH...]"
-
-    node_step(state, "parallel_scrape", f"built dossier with {citation_idx-1} sources ({len(dossier)} chars)")
-    return {**state, "search_results": dossier}
+        node_step(state, "parallel_scrape", f"built dossier with {citation_idx-1} sources ({len(dossier)} chars)")
+        return {**state, "search_results": dossier}
+    finally:
+        _parallel_scrape_active.active = False
 
 
 def node_synthesize(state: WorkflowState) -> WorkflowState:
