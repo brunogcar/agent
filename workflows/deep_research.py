@@ -5,7 +5,6 @@ from __future__ import annotations
 from workflows.base import run_workflow
 from core.config import cfg
 
-
 def run_deep_research_agent(goal: str, **kwargs) -> dict:
     """Run the deep research workflow for a given goal.
 
@@ -20,7 +19,7 @@ def run_deep_research_agent(goal: str, **kwargs) -> dict:
         "iteration": 0,
         "consecutive_empty_iterations": 0,
         "budget_api_calls": cfg.deep_research_max_api_calls,
-        "budget_browser_calls": cfg.deep_research_max_browser_calls,
+        "budget_browser_actions": cfg.deep_research_max_browser_actions,
         "budget_events": [],
         "max_iterations": cfg.deep_research_max_iterations,
         "completeness_threshold": cfg.deep_research_completeness_threshold,

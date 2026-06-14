@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing_extensions import TypedDict
 from workflows.base import WorkflowState
 
-
 class DeepResearchState(WorkflowState, total=False):
     # Research inputs
     goal: str
@@ -24,7 +23,7 @@ class DeepResearchState(WorkflowState, total=False):
     iteration: int
     consecutive_empty_iterations: int
     budget_api_calls: int
-    budget_browser_calls: int
+    budget_browser_actions: int
     budget_events: list[dict]
 
     # Config
@@ -36,3 +35,6 @@ class DeepResearchState(WorkflowState, total=False):
     report: str
     result: str
     status: str
+
+    # Memory (recalled context from episodic/semantic memory)
+    memory_context: str
