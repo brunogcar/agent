@@ -306,3 +306,41 @@ def test_facade_initializes_all_state_fields(mocker):
     assert "max_iterations" in call_kwargs
     assert result["status"] == "success"
 
+
+
+
+def test_route_returns_decompose_not_search(mocker):
+    """Verify route_after_synthesize returns 'decompose' (not 'search') for continuation.
+
+    Regression test: earlier versions routed to 'search', which caused the loop
+    to skip decompose and burn iterations with empty pending_queries.
+    """
+    from workflows.deep_research_core.routes import route_after_synthesize
+    state = {
+        "iteration": 1,
+        "max_iterations": 10,
+        "completeness": 50.0,
+        "completeness_threshold": 85.0,
+        "knowledge_base": "Some findings",
+        "_prev_knowledge": "",
+        "consecutive_empty_iterations": 0,
+    }
+    result = route_after_synthesize(state)
+    assert result == "decompose"
+
+
+def test_facade_rejects_empty_goal(mocker):
+    """Verify run_deep_research_agent rejects empty goals without crashing."""
+    from workflows.deep_research import run_deep_research_agent
+    result = run_deep_research_agent("")
+    assert result["status"] == "failed"
+    assert "Goal is required" in result["error"]
+
+
+def test_facade_rejects_whitespace_goal(mocker):
+    """Verify run_deep_research_agent rejects whitespace-only goals."""
+    from workflows.deep_research import run_deep_research_agent
+    result = run_deep_research_agent("   ")
+    assert result["status"] == "failed"
+    assert "Goal is required" in result["error"]
+

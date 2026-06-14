@@ -127,3 +127,40 @@ class TestNodeSearch:
         state = {"pending_queries": [], "trace_id": "t1", "iteration": 0, "budget_api_calls": 5, "budget_browser_actions": 2, "budget_events": [], "failed_sources": []}
         result = node_search(state)
         assert result["extracted_evidence"] == []
+
+
+class TestBrowserFallback:
+    def test_browser_fallback_playwright_not_installed(self, mocker):
+        """Verify _try_browser_fallback gracefully handles missing Playwright."""
+        mocker.patch(
+            "workflows.deep_research_core.nodes.search.browser",
+            side_effect=Exception("Playwright browser not found"),
+        )
+        from workflows.deep_research_core.nodes.search import _try_browser_fallback
+        text = _try_browser_fallback("http://example.com", "tid")
+        assert text == ""
+
+    def test_browser_fallback_navigate_fails(self, mocker):
+        """Verify _try_browser_fallback returns empty when navigate fails."""
+        mocker.patch(
+            "workflows.deep_research_core.nodes.search.browser",
+            return_value={"status": "error", "error": "timeout"},
+        )
+        from workflows.deep_research_core.nodes.search import _try_browser_fallback
+        text = _try_browser_fallback("http://example.com", "tid")
+        assert text == ""
+
+    def test_browser_fallback_text_content_fails(self, mocker):
+        """Verify _try_browser_fallback returns empty when text_content fails."""
+        def mock_browser(action, **kwargs):
+            if action == "navigate":
+                return {"status": "success", "data": {"title": "Example"}}
+            return {"status": "error", "error": "selector not found"}
+        mocker.patch(
+            "workflows.deep_research_core.nodes.search.browser",
+            mock_browser,
+        )
+        from workflows.deep_research_core.nodes.search import _try_browser_fallback
+        text = _try_browser_fallback("http://example.com", "tid")
+        assert text == ""
+

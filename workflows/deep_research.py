@@ -15,6 +15,9 @@ def run_deep_research_agent(goal: str, **kwargs) -> dict:
     Returns:
         Final workflow state dict with at least status, result, report.
     """
+    if not goal or not goal.strip():
+        return {"status": "failed", "error": "Goal is required"}
+
     merged = {
         "iteration": 0,
         "consecutive_empty_iterations": 0,

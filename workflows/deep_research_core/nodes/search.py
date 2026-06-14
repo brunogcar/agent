@@ -102,7 +102,10 @@ def _execute_search_with_fallback(query: str, state: DeepResearchState) -> dict:
     if tool == "tavily":
         result = _execute_search(query, "tavily", tid)
         if result.get("status") != "success" or not result.get("data", {}).get("results"):
-            log_event(state, "search_fallback", {"from": "tavily", "to": "web", "reason": result.get("error", "empty_results")})
+            log_event(
+                state, "search", "fallback",
+                reason=f"tavily->web: {result.get('error', 'empty_results')}"
+            )
             result = _execute_search(query, "web", tid)
         return result
 
@@ -191,7 +194,10 @@ def _extract_evidence(
                 tool = "browser"
 
         summary = _summarize_evidence(text, query, goal)
-        citations.add(trace_id, url=url, title=title, snippet=summary[:300])
+        try:
+            citations.add(trace_id, url=url, title=title, snippet=summary[:300])
+        except Exception:
+            pass  # Citation tracking is best-effort
         evidence.append({
             "query": query,
             "url": url,
@@ -233,9 +239,15 @@ def node_search(state: DeepResearchState) -> DeepResearchState:
             if new_evidence:
                 empty_this_iteration = False
             else:
-                log_event({**state, **updates}, "empty_results", {"query": query, "tool": "tavily"})
+                log_event(
+                    {**state, **updates}, "search", "empty_results",
+                    reason=f"query={query}, tool=tavily"
+                )
         else:
-            log_event({**state, **updates}, "search_error", {"query": query, "error": search_result.get("error", "unknown")})
+            log_event(
+                {**state, **updates}, "search", "error",
+                reason=f"query={query}, error={search_result.get('error', 'unknown')}"
+            )
 
     updates.update(decrement_browser_actions({**state, **updates}))
     updates["extracted_evidence"] = all_evidence
