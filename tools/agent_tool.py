@@ -15,18 +15,18 @@ Key fixes over old agents.py:
   6. trace_id propagated through every call for full observability.
 
 Roles:
-  classify   → ROUTER    — fast binary/category decisions (15s)
-  route      → ROUTER    — task routing decision (15s)
-  research   → EXECUTOR  — synthesise web/memory content (120s)
-  summarize  → EXECUTOR  — condense long content (60s)
-  extract    → EXECUTOR  — pull structured data from text (60s)
-  critique   → EXECUTOR  — evaluate quality, find issues (90s)
-  analyze    → EXECUTOR  — deep analysis of code/data/text (90s)
-  code       → EXECUTOR  — generate Python code/patches (120s)
-  review     → EXECUTOR  — review code for bugs/quality (90s)
-  plan       → PLANNER   — high-level task decomposition (90s)
-  consult    → CONSULTOR — Expert advisory on architecture/best practices/pitfalls (60s)
-  vision     → VISION    — image analysis (delegates to tools/vision.py)
+  classify → ROUTER — fast binary/category decisions (15s)
+  route    → ROUTER — task routing decision (15s)
+  research → EXECUTOR — synthesise web/memory content (120s)
+  summarize→ EXECUTOR — condense long content (60s)
+  extract  → EXECUTOR — pull structured data from text (60s)
+  critique → EXECUTOR — evaluate quality, find issues (90s)
+  analyze  → EXECUTOR — deep analysis of code/data/text (90s)
+  code     → EXECUTOR — generate Python code/patches (120s)
+  review   → EXECUTOR — review code for bugs/quality (90s)
+  plan     → PLANNER — high-level task decomposition (90s)
+  consult  → CONSULTOR — Expert advisory on architecture/best practices/pitfalls (60s)
+  vision   → VISION — image analysis (delegates to tools/vision.py)
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from registry import tool
 from core.llm import llm
 from core.utils import compress_result
 from core.sleep_learn import inject_rules_into_prompt
-
+from core.config import cfg
 
 # ── System prompts ────────────────────────────────────────────────────────────
 
@@ -50,7 +50,7 @@ _SYSTEM_PROMPTS: dict[str, str] = {
     "route": (
         "You are a task router. Respond with ONLY a JSON object. "
         "No thinking tags. No explanation. No markdown fences. "
-        "Start your response with { and end with }.\n"
+        "Start your response with { and end with }.\\n"
         'Format: {"workflow":"research or data or autocode or direct",'
         '"tool":"web or python or file or git or memory or agent or notify or report",'
         '"complexity":5,'
@@ -106,19 +106,19 @@ _SYSTEM_PROMPTS: dict[str, str] = {
 
     "code": (
         "You are a senior Python developer specialising in minimal, correct patches. "
-        "\n\nCODING STANDARDS (mandatory):\n"
-        "- PEP 8 formatting and PEP 484 type hints on all functions\n"
-        "- Pure functions where possible; no global state mutations\n"
-        "- Explicit input validation — never silently fail\n"
-        "- Google-style docstrings on all public functions\n"
-        "- Modular design — each function does exactly one thing\n"
-        "- If uncertain about behaviour → return a safe fallback, not a guess\n"
-        "\nOUTPUT FORMAT (mandatory JSON, no markdown fences):\n"
+        "\\n\\nCODING STANDARDS (mandatory):\\n"
+        "- PEP 8 formatting and PEP 484 type hints on all functions\\n"
+        "- Pure functions where possible; no global state mutations\\n"
+        "- Explicit input validation — never silently fail\\n"
+        "- Google-style docstrings on all public functions\\n"
+        "- Modular design — each function does exactly one thing\\n"
+        "- If uncertain about behaviour → return a safe fallback, not a guess\\n"
+        "\\nOUTPUT FORMAT (mandatory JSON, no markdown fences):\\n"
         '{"analysis": "what the problem is and why", '
         '"patch": "the complete corrected code or unified diff", '
         '"assumptions": "anything assumed about context", '
         '"tests": "how to verify this change is correct"}'
-        "\n\nWrite the minimal change that solves the problem. "
+        "\\n\\nWrite the minimal change that solves the problem. "
         "Do not rewrite unrelated code. "
         "Do not change function signatures unless the bug requires it."
     ),
@@ -126,14 +126,14 @@ _SYSTEM_PROMPTS: dict[str, str] = {
     "review": (
         "You are a senior Python code reviewer. "
         "Review the provided patch or code change. "
-        "\n\nCHECK FOR (in this order):\n"
-        "1. Correctness — does it actually solve the stated problem?\n"
-        "2. Bugs — new errors introduced, off-by-one, uncaught exceptions\n"
-        "3. Edge cases — empty input, None values, large data, concurrent access\n"
-        "4. Breaking changes — function signature changes, import changes\n"
-        "5. Style — PEP 8, type hints, docstrings\n"
-        "6. Performance — unnecessary loops, blocking calls, memory leaks\n"
-        "\nOUTPUT FORMAT (mandatory JSON, no markdown fences):\n"
+        "\\n\\nCHECK FOR (in this order):\\n"
+        "1. Correctness — does it actually solve the stated problem?\\n"
+        "2. Bugs — new errors introduced, off-by-one, uncaught exceptions\\n"
+        "3. Edge cases — empty input, None values, large data, concurrent access\\n"
+        "4. Breaking changes — function signature changes, import changes\\n"
+        "5. Style — PEP 8, type hints, docstrings\\n"
+        "6. Performance — unnecessary loops, blocking calls, memory leaks\\n"
+        "\\nOUTPUT FORMAT (mandatory JSON, no markdown fences):\\n"
         '{"verdict": "APPROVE|REVISE|REJECT", '
         '"issues": [{"severity": "critical|warning|info", "description": "...", "fix": "..."}], '
         '"corrected_patch": "corrected code if verdict is REVISE, else null"}'
@@ -143,15 +143,15 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         "You are an expert advisory consultant. Provide clear, concise, and highly actionable advice. "
         "Focus on architectural soundness, best practices, and potential pitfalls. "
         "Do not write code unless explicitly asked. Keep responses structured and easy to read. "
-    ),    
+    ),
 
     "plan": (
         "You are a task planning specialist for an autonomous AI agent. "
         "Break the given goal into a clear, ordered sequence of steps. "
         "Each step must be concrete and executable by the agent's available tools: "
-        "web, python, file, git, memory, notify, report, agent, vision.\n\n"
+        "web, python, file, git, memory, notify, report, agent, vision.\\n\\n"
         "OUTPUT: valid JSON only. No thinking tags. No markdown fences. "
-        "Start with { and end with }.\n"
+        "Start with { and end with }.\\n"
         'Format: {"goal":"restated goal",'
         '"steps":[{"step":1,"action":"tool_name","description":"what to do","inputs":{"key":"value"}}],'
         '"estimated_complexity":5,'
@@ -165,29 +165,28 @@ _SYSTEM_PROMPTS: dict[str, str] = {
     ),
 }
 
-
 # ── Role → LLM role mapping ───────────────────────────────────────────────────
 # Maps agent persona → the llm.py role (which determines model + timeout).
 # vision is NOT here — it delegates to tools/vision.py directly (see dispatch).
 
 _ROLE_TO_LLM: dict[str, str] = {
-    "classify":  "router",    # Router        — 15s
-    "route":     "router",    # Router        — 15s
-    "research":  "research",   # Executor     — 120s
-    "summarize": "summarize",  # Executor     — 60s
-    "extract":   "extract",    # Executor     — 60s
-    "critique":  "critique",   # Executor     — 90s
-    "analyze":   "analyze",    # Executor     — 90s
-    "code":      "code",       # Executor     — 120s
-    "review":    "review",     # Executor     — 90s
-    "plan":      "planner",    # Planner      — 90s
-    "consultor": "consultor",  # Consultor    — 60s
+    "classify": "router",     # Router — 15s
+    "route": "router",        # Router — 15s
+    "research": "research",   # Executor — 120s
+    "summarize": "summarize", # Executor — 60s
+    "extract": "extract",     # Executor — 60s
+    "critique": "critique",   # Executor — 90s
+    "analyze": "analyze",     # Executor — 90s
+    "code": "code",           # Executor — 120s
+    "review": "review",       # Executor — 90s
+    "plan": "planner",        # Planner — 90s
+    "consultor": "consultor", # Consultor — 60s
 
     # vision delegates to tools/vision.py — not a direct llm role
 }
 
 # Roles that use API-level json_object mode (only models that support it)
-_API_JSON_ROLES    = {"extract"}
+_API_JSON_ROLES = {"extract"}
 
 # Roles that return JSON via system prompt only (parsed post-hoc)
 _PROMPT_JSON_ROLES = {"route", "plan", "code", "review"}
@@ -196,51 +195,53 @@ _PROMPT_JSON_ROLES = {"route", "plan", "code", "review"}
 _JSON_ROLES = _API_JSON_ROLES | _PROMPT_JSON_ROLES
 
 # ── Context trimming helper ───────────────────────────────────────────────────
-_MAX_CONTEXT_CHARS = 6000  # Total budget for background context
-_KEEP_HEAD_CHARS = 2000    # Preserve original goal/objective
-_KEEP_TAIL_CHARS = 4000    # Preserve recent tool interactions
+# [BUGFIX-5] Derive char budget from cfg.max_context_tokens instead of hardcoding.
+# Approx 4 chars per token is conservative for most tokenizers.
+_MAX_CONTEXT_CHARS = cfg.max_context_tokens * 4
+_KEEP_HEAD_CHARS = 2000      # Preserve original goal/objective
+_KEEP_TAIL_CHARS = 4000      # Preserve recent tool interactions
 
 def _trim_context(text: str, max_chars: int = _MAX_CONTEXT_CHARS) -> str:
     """Head+tail trim: preserves objective (head) and recent state (tail).
-    
+
     CRITICAL: If the text contains a Python traceback, the traceback is
     preserved in full. Tracebacks are high-signal debugging content that
     must never be split across the truncation boundary.
     """
     if not text or len(text) <= max_chars:
         return text
-    
+
     # ── Traceback Preservation ─────────────────────────────────────────────
     tb_marker = "Traceback (most recent call last):"
     tb_start = text.find(tb_marker)
-    
+
     if tb_start != -1:
         # Traceback found — ensure it stays intact in the tail
         tb_text = text[tb_start:]
         # Find where traceback ends (next blank line or end of text)
-        tb_end_rel = tb_text.find("\n\n")
+        tb_end_rel = tb_text.find("\\n\\n")
         if tb_end_rel != -1:
             tb_text = tb_text[:tb_end_rel]
-        
+
         tb_len = len(tb_text)
-        
+
         if tb_len <= max_chars:
             # Full traceback fits — trim head to make room
             head_budget = max(0, max_chars - tb_len)
             head = text[:head_budget]
             # Clean break at paragraph boundary
-            head_break = head.rfind("\n\n")
+            head_break = head.rfind("\\n\\n")
             if head_break != -1:
                 head = head[:head_break]
             truncated = len(text) - len(head) - tb_len
             return (
                 head
-                + f"\n\n[... {truncated} chars of intermediate context truncated ...]\n\n"
+                + f"\\n\\n[... {truncated} chars of intermediate context truncated ...]\\n\\n"
                 + tb_text
             )
         # else: traceback exceeds entire budget — fall through to normal trim
         # (tail will still capture the error line at the end)
-    
+
     # ── Normal Head+Tail Trim ──────────────────────────────────────────────
     if max_chars < _KEEP_HEAD_CHARS + _KEEP_TAIL_CHARS:
         head_budget = max_chars // 3
@@ -248,34 +249,33 @@ def _trim_context(text: str, max_chars: int = _MAX_CONTEXT_CHARS) -> str:
     else:
         head_budget = _KEEP_HEAD_CHARS
         tail_budget = _KEEP_TAIL_CHARS
-    
+
     head = text[:head_budget]
     tail = text[-tail_budget:]
-    head_break = head.rfind("\n\n")
+    head_break = head.rfind("\\n\\n")
     if head_break != -1:
         head = head[:head_break]
-    tail_break = tail.find("\n")
+    tail_break = tail.find("\\n")
     if tail_break != -1:
         tail = tail[tail_break + 1:]
     truncated = len(text) - len(head) - len(tail)
     return (
         head
-        + f"\n\n[... {truncated} chars of intermediate context truncated ...]\n\n"
+        + f"\\n\\n[... {truncated} chars of intermediate context truncated ...]\\n\\n"
         + tail
     )
-
 
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
 
 @tool
 def agent(
-    role:        str,
-    task:        str,
-    context:     str   = "",
-    content:     str   = "",
-    trace_id:    str   = "",
+    role: str,
+    task: str,
+    context: str = "",
+    content: str = "",
+    trace_id: str = "",
     temperature: float = -1.0,
-    max_tokens:  int   = -1,
+    max_tokens: int = -1,
 ) -> dict:
     """
     Agent tool — call a specialist sub-agent for a specific cognitive task.
@@ -283,49 +283,32 @@ def agent(
     role: "classify" | "route" | "research" | "summarize" | "extract" |
           "critique" | "analyze" | "code" | "review" | "plan" | "consultor" | "vision"
 
-    task     : the instruction or question for this agent
-    context  : background information (injected before the task)
-               for vision: file_path or public URL to the image
-    content  : raw material to process (code, text, data, or base64 image)
-               for vision: base64-encoded image string
-    trace_id : attach to current workflow trace for observability
+    task    : the instruction or question for this agent
+    context : background information (injected before the task)
+              for vision: file_path or public URL to the image
+    content : raw material to process (code, text, data, or base64 image)
+              for vision: base64-encoded image string
+    trace_id: attach to current workflow trace for observability
 
     ── ROLES ────────────────────────────────────────────────────────────────────
 
-    classify  [Router,   15s]  Fast binary/category decision. Single word output.
-    route     [Router,   15s]  Workflow + tool routing. Returns JSON.
-    research  [Executor,120s]  Synthesise web/memory content into coherent answer.
-    summarize [Executor, 60s]  Dense accurate summary. No preamble.
-    extract   [Executor, 60s]  Pull structured data. Always returns JSON.
-    critique  [Executor, 90s]  Quality evaluation. APPROVE|REVISE|REJECT verdict.
-    analyze   [Executor, 90s]  Deep code/data analysis. No fixes — analysis only.
-    code      [Executor,120s]  Generate Python patch. Returns {analysis,patch,tests}.
-    review    [Executor, 90s]  Review patch. Returns {verdict,issues,corrected_patch}.
-    plan      [Planner,  90s]  Decompose goal into ordered steps. Returns JSON.
-    consultor [Consultor,60s]  Expert advisory on architecture, best practices, or pitfalls.
-    vision    [Planner,  60s]  Analyse an image. Delegates to tools/vision.py.
-                               context= file_path or URL, content= base64 string.
-
-    ── VISION EXAMPLES ──────────────────────────────────────────────────────────
-
-        # Local file
-        agent(role="vision",
-              task="What errors are shown on screen?",
-              context="workspace/screenshot.png")
-
-        # Public URL
-        agent(role="vision",
-              task="Extract all values from this chart.",
-              context="https://example.com/chart.png")
-
-        # Base64 (e.g. from python tool)
-        agent(role="vision",
-              task="Read all text in this image.",
-              content="<base64_string>")
+    classify [Router, 15s]  Fast binary/category decision. Single word output.
+    route    [Router, 15s]  Workflow + tool routing. Returns JSON.
+    research [Executor,120s] Synthesise web/memory content into coherent answer.
+    summarize[Executor, 60s] Dense accurate summary. No preamble.
+    extract  [Executor, 60s] Pull structured data. Always returns JSON.
+    critique [Executor, 90s] Quality evaluation. APPROVE|REVISE|REJECT verdict.
+    analyze  [Executor, 90s] Deep code/data analysis. No fixes — analysis only.
+    code     [Executor,120s] Generate Python patch. Returns {analysis,patch,tests}.
+    review   [Executor, 90s] Review patch. Returns {verdict,issues,corrected_patch}.
+    plan     [Planner, 90s] Decompose goal into ordered steps. Returns JSON.
+    consultor[Consultor,60s] Expert advisory on architecture, best practices, or pitfalls.
+    vision   [Planner, 60s] Analyse an image. Delegates to tools/vision.py.
+             context= file_path or URL, content= base64 string.
 
     ── STRUCTURED OUTPUT ROLES ───────────────────────────────────────────────────
     These roles always return JSON in result["parsed"]:
-        route, extract, code, review, plan
+      route, extract, code, review, plan
     """
     role = role.strip().lower()
 
@@ -336,7 +319,7 @@ def agent(
             "error": (
                 f"Unknown role '{role}'. "
                 "Use: classify | route | research | summarize | extract | "
-                "critique | analyze | code | review | plan  |  consultor | vision"
+                "critique | analyze | code | review | plan | consultor | vision"
             ),
         }
 
@@ -354,12 +337,12 @@ def agent(
         except ImportError:
             return {
                 "status": "error",
-                "error":  "tools/vision.py not found — ensure it exists and has @tool decorator.",
+                "error": "tools/vision.py not found — ensure it exists and has @tool decorator.",
             }
 
         file_path = ""
-        url       = ""
-        b64       = ""
+        url = ""
+        b64 = ""
 
         if context:
             if context.startswith(("http://", "https://")):
@@ -374,19 +357,19 @@ def agent(
 
         # FIX: parameter name in vision() is "task", NOT "prompt"!
         return _vision(
-            task    = task,
+            task = task,
             file_path = file_path,
-            base64    = b64,
-            url       = url,
-            trace_id  = trace_id,
-            context   = "",
+            base64 = b64,
+            url = url,
+            trace_id = trace_id,
+            context = "",
         )
 
     system_prompt = _SYSTEM_PROMPTS[role]
-    llm_role      = _ROLE_TO_LLM[role]
+    llm_role = _ROLE_TO_LLM[role]
     # Only use API-level json_object enforcement for models that support it.
     # The Router (classify) rejects json_object — use prompt-only for those.
-    json_mode     = role in _API_JSON_ROLES
+    json_mode = role in _API_JSON_ROLES
 
     # Build call kwargs — only pass overrides if explicitly set
     call_kwargs: dict = {}
@@ -395,37 +378,37 @@ def agent(
     if max_tokens > 0:
         call_kwargs["max_tokens"] = max_tokens
 
-        # Trim unbounded MCP conversation history before it reaches the LLM
+    # Trim unbounded MCP conversation history before it reaches the LLM
     trimmed_context = _trim_context(context)
     trimmed_content = _trim_context(content, max_chars=4000)
 
     result = llm.complete(
-        role      = llm_role,
-        system    = system_prompt,
-        user      = task,
-        context   = trimmed_context,
-        content   = trimmed_content,
+        role = llm_role,
+        system = system_prompt,
+        user = task,
+        context = trimmed_context,
+        content = trimmed_content,
         json_mode = json_mode,
-        trace_id  = trace_id,
+        trace_id = trace_id,
         **call_kwargs,
     )
 
     if not result.ok:
         return {
-            "status":   "error",
-            "role":     role,
-            "error":    result.error,
-            "elapsed":  result.elapsed,
-            "model":    result.model,
+            "status": "error",
+            "role": role,
+            "error": result.error,
+            "elapsed": result.elapsed,
+            "model": result.model,
         }
 
     response: dict = {
-        "status":  "success",
-        "role":    role,
-        "text":    result.text,
-        "model":   result.model,
+        "status": "success",
+        "role": role,
+        "text": result.text,
+        "model": result.model,
         "elapsed": result.elapsed,
-        "usage":   result.usage,
+        "usage": result.usage,
     }
 
     # Include parsed JSON for structured roles
@@ -441,7 +424,7 @@ def agent(
             for fence in ("```json", "```"):
                 if clean.startswith(fence):
                     clean = clean[len(fence):]
-            clean = clean.strip().rstrip("`").strip()
+                    clean = clean.strip().rstrip("`").strip()
             # Extract first JSON object if there is surrounding text
             match = _re.search(r"\{.*?\}", clean, _re.DOTALL)
             if match:
@@ -451,10 +434,10 @@ def agent(
             except _json.JSONDecodeError:
                 # Return empty dict so callers can safely do
                 # response.get("parsed", {}).get("field") without crashing
-                response["parsed"]        = {}
+                response["parsed"] = {}
                 response["parse_warning"] = (
                     f"Response was not valid JSON for role '{role}'. "
-                    "parsed={{}} returned. Check response.text for raw output."
+                    "parsed={} returned. Check response.text for raw output."
                 )
 
     return compress_result(response)

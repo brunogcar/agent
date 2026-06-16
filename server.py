@@ -11,7 +11,6 @@ import io
 import sys
 from pathlib import Path
 
-
 def _fix_streams() -> None:
     """
     1. Force UTF-8 on both streams (Windows cp1252 crashes on non-ASCII).
@@ -32,9 +31,8 @@ def _fix_streams() -> None:
     # Redirect stdout -> stderr during boot so nothing corrupts the channel.
     # FastMCP.run() will reclaim stdout for the stdio transport.
     # We save the real stdout so FastMCP can restore it.
-    sys._real_stdout = sys.stdout       # type: ignore[attr-defined]
-    sys.stdout = sys.stderr             # boot-time stdout -> stderr
-
+    sys._real_stdout = sys.stdout  # type: ignore[attr-defined]
+    sys.stdout = sys.stderr  # boot-time stdout -> stderr
 
 _fix_streams()
 
@@ -64,28 +62,28 @@ try:
     # -- Boot log (all goes to stderr via the redirect above) --------------------
     _boot_tid = tracer.new_trace("startup", goal="server boot")
     tracer.step(_boot_tid, "boot", "MCP Agent ready",
-        tools=_tool_count,
-        planner=cfg.planner_model,
-        executor=cfg.executor_model,
-        router=cfg.router_model)
+                tools=_tool_count,
+                planner=cfg.planner_model,
+                executor=cfg.executor_model,
+                router=cfg.router_model)
     _W = 56
     print(" ", file=sys.stderr)
     print("= " * _W, file=sys.stderr)
-    print("  MCP Agent Stack -- Ready ".center(_W), file=sys.stderr)
+    print(" MCP Agent Stack -- Ready ".center(_W), file=sys.stderr)
     print("= " * _W, file=sys.stderr)
-    print(f"  Tools     : {_tool_count} ", file=sys.stderr)
-    print(f"  Planner   : {cfg.planner_model} ", file=sys.stderr)
-    print(f"  Executor  : {cfg.executor_model} ", file=sys.stderr)
-    print(f"  Router    : {cfg.router_model} ", file=sys.stderr)
-    print(f"  Workspace : {cfg.workspace_root} ", file=sys.stderr)
-    print(f"  Memory    : {cfg.memory_chroma_path} ", file=sys.stderr)
-    print(f"  Env       : {cfg.env} ", file=sys.stderr)
+    print(f" Tools    : {_tool_count} ", file=sys.stderr)
+    print(f" Planner  : {cfg.planner_model} ", file=sys.stderr)
+    print(f" Executor : {cfg.executor_model} ", file=sys.stderr)
+    print(f" Router   : {cfg.router_model} ", file=sys.stderr)
+    print(f" Workspace: {cfg.workspace_root} ", file=sys.stderr)
+    print(f" Memory   : {cfg.memory_chroma_path} ", file=sys.stderr)
+    print(f" Env      : {cfg.env} ", file=sys.stderr)
     print("= " * _W, file=sys.stderr)
     print(" ", file=sys.stderr)
     tracer.finish(_boot_tid, success=True, result=f"{_tool_count} tools registered")
 finally:
     # -- Restore real stdout and hand it to FastMCP's stdio transport -------------
-    sys.stdout = sys._real_stdout           # type: ignore[attr-defined]
+    sys.stdout = sys._real_stdout  # type: ignore[attr-defined]
 
 # -- Start HTTP Gateway (background daemon with retry) ------------------------
 def _start_gateway() -> None:
@@ -121,6 +119,12 @@ def _start_gateway() -> None:
                 print("[gateway] Giving up after 3 attempts.", file=sys.stderr)
 
 import threading as _threading
+
+# [BUGFIX-4] Threading.Event barriers for coordinated daemon startup.
+# Dependent threads wait for these events before accessing shared resources.
+_chromadb_ready = _threading.Event()
+_model_ready = _threading.Event()
+
 _threading.Thread(target=_start_gateway, daemon=True).start()
 
 # -- Cleanup old VRAM artifacts ------------------------------------------------
@@ -142,6 +146,8 @@ def _flush_telemetry_loop() -> None:
     try:
         from core.memory_backend.telemetry import tracker
         from core.memory import memory as _mem
+        # [BUGFIX-4] Wait for ChromaDB warmup before first flush to avoid race.
+        _chromadb_ready.wait()
         while True:
             _time.sleep(60)
             try:
@@ -179,9 +185,11 @@ def _warmup_chromadb() -> None:
         print("[server] ChromaDB warmup complete", file=sys.stderr)
     except Exception as e:
         print(f"[server] ChromaDB warmup skipped: {e}", file=sys.stderr)
+    finally:
+        # [BUGFIX-4] Signal that ChromaDB is ready for dependent threads.
+        _chromadb_ready.set()
 
 _threading.Thread(target=_warmup_chromadb, daemon=True).start()
-
 
 # -- Warm up LLM models in background (avoids cold-start latency per role) -----
 def _warmup_models() -> None:
@@ -220,14 +228,18 @@ def _warmup_models() -> None:
         print(f"[server] Model warmup: {warmed}/{len(roles)} roles ready ({failed} failed)", file=sys.stderr)
     except Exception as e:
         print(f"[server] Model warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
+    finally:
+        # [BUGFIX-4] Signal that model warmup is complete.
+        _model_ready.set()
 
 _threading.Thread(target=_warmup_models, daemon=True).start()
-
 
 # -- Start Meta-Learning Daemon ----------------------------------------------
 def _start_meta_learner() -> None:
     try:
         from core.memory_backend.meta_learning import learner
+        # [BUGFIX-4] Wait for ChromaDB before starting meta-learner (uses memory.store).
+        _chromadb_ready.wait()
         _threading.Thread(target=learner.run_forever, daemon=True).start()
         print("[server] Meta-Learner daemon started", file=sys.stderr)
     except Exception as e:
@@ -239,6 +251,8 @@ _start_meta_learner()
 def _start_eviction_flusher() -> None:
     try:
         from core.memory_backend.eviction import flusher_loop
+        # [BUGFIX-4] Wait for ChromaDB before starting eviction (uses memory.store).
+        _chromadb_ready.wait()
         _threading.Thread(target=flusher_loop, daemon=True).start()
         print("[server] Eviction Flusher started", file=sys.stderr)
     except Exception as e:
@@ -269,9 +283,11 @@ def _start_diversity_enforcer() -> None:
         from core.memory import memory as _mem
         from core.runtime.activity_tracker import tracker
 
+        # [BUGFIX-4] Wait for ChromaDB before first maintenance check.
+        _chromadb_ready.wait()
         last_run = 0.0
         while True:
-            _time.sleep(1800) # Check every 30 mins
+            _time.sleep(1800)  # Check every 30 mins
             try:
                 # 7 day cooldown
                 if (_time.time() - last_run) < (7 * 86400):

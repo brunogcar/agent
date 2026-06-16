@@ -6,7 +6,6 @@ from unittest.mock import patch, MagicMock
 
 from tools.agent_tool import _trim_context, _MAX_CONTEXT_CHARS, _KEEP_HEAD_CHARS, _KEEP_TAIL_CHARS
 
-
 class TestTrimContextUnit:
     """Unit tests for _trim_context."""
 
@@ -29,8 +28,10 @@ class TestTrimContextUnit:
 
     def test_long_text_preserves_head_and_tail(self):
         """Long text should keep head and tail, truncate middle."""
+        # [BUGFIX-5] _MAX_CONTEXT_CHARS is now cfg.max_context_tokens * 4 (~32000).
+        # Use a middle section that exceeds the budget to force truncation.
         head = "GOAL: audit all files for security\n\n"
-        middle = "x" * 10000
+        middle = "x" * (_MAX_CONTEXT_CHARS + 1000)
         tail = "\n\nRecent: tool_call result here"
         text = head + middle + tail
 
@@ -41,7 +42,8 @@ class TestTrimContextUnit:
         assert middle not in result
 
     def test_truncation_notice_includes_count(self):
-        text = "x" * 10000
+        # [BUGFIX-5] Use text larger than the dynamic _MAX_CONTEXT_CHARS.
+        text = "x" * (_MAX_CONTEXT_CHARS + 1000)
         result = _trim_context(text)
         assert "chars of intermediate context truncated" in result
 
@@ -53,14 +55,13 @@ class TestTrimContextUnit:
         # Verify custom budget respected: head ~167, tail ~333, total ~500
         assert len(result) < 600
 
-
 class TestTrimContextIntegration:
     """Verify _trim_context is called in the agent() function."""
 
     def test_trim_called_on_context(self):
         """Mock _trim_context and verify it's called with context."""
         with patch("tools.agent_tool._trim_context") as mock_trim:
-            mock_trim.side_effect = lambda x, **kw: x  # pass-through
+            mock_trim.side_effect = lambda x, **kw: x # pass-through
             with patch("tools.agent_tool.llm.complete") as mock_llm:
                 mock_llm.return_value = MagicMock(ok=True, text="done", finish_reason="stop")
                 from tools.agent_tool import agent

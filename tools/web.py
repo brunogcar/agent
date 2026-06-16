@@ -7,21 +7,23 @@ Imports are lazy for bs4 (only on first call), but httpx is imported at top
 to avoid "name not defined" errors in exception handlers and type checks.
 
 Actions:
-  search          -> query SearXNG, return ranked URLs + snippets
-  scrape          -> fetch URL, return clean text (BS4, no JS/CSS noise)
-  read            -> alias for scrape
+  search -> query SearXNG, return ranked URLs + snippets
+  scrape -> fetch URL, return clean text (BS4, no JS/CSS noise)
+  read   -> alias for scrape
   search_and_read -> search + scrape top results in parallel (ThreadPoolExecutor)
 
 P1-1: Use per-request httpx.Client context manager instead of module-level client.
-      This fixes connection leaks and thread-safety (gateway runs multiple threads).
-M3:   Add 0.5s delay between requests in loop-based actions to be polite to servers.
-P2:   Added URL deduplication to search_and_read to prevent scraping the same URL
-      multiple times when SearXNG returns duplicates from different engines.
-P2:   Magic numbers centralized in core/config.py.
+  This fixes connection leaks and thread-safety (gateway runs multiple threads).
+M3: Add 0.5s delay between requests in loop-based actions to be polite to servers.
+P2: Added URL deduplication to search_and_read to prevent scraping the same URL
+  multiple times when SearXNG returns duplicates from different engines.
+P2: Magic numbers centralized in core/config.py.
 """
 from __future__ import annotations
 
+import atexit
 import re
+import threading
 import time as _time
 from typing import Optional
 from urllib.parse import urlparse
@@ -45,10 +47,62 @@ logger = logging.getLogger(__name__)
 # cfg.web_max_text_chars, cfg.web_snippet_chars, cfg.web_max_search_results
 
 _CLIENT_DEFAULTS = {
-    "headers":          {"User-Agent": "Mozilla/5.0 MCP-Agent/1.0"},
-    "timeout":          10.0,
+    "headers": {"User-Agent": "Mozilla/5.0 MCP-Agent/1.0"},
+    "timeout": 10.0,
     "follow_redirects": True,
 }
+
+# [BUGFIX-6] Module-level singleton httpx.Client with connection pooling.
+# Replaces per-request fresh Client() to avoid TCP/TLS handshake overhead.
+# httpx.Client is thread-safe; ThreadPoolExecutor in search_and_read is safe.
+_HTTP_CLIENT: Optional[httpx.Client] = None
+_HTTP_CLIENT_LOCK = threading.Lock()
+
+
+def _get_singleton_client() -> httpx.Client:
+    """Return the singleton httpx.Client, creating it on first call."""
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None:
+        with _HTTP_CLIENT_LOCK:
+            if _HTTP_CLIENT is None:
+                _HTTP_CLIENT = httpx.Client(
+                    **_CLIENT_DEFAULTS,
+                    limits=httpx.Limits(max_connections=20),
+                )
+    return _HTTP_CLIENT
+
+
+def _close_client() -> None:
+    """Close the singleton client on process exit."""
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is not None:
+        try:
+            _HTTP_CLIENT.close()
+        except Exception:
+            pass
+        _HTTP_CLIENT = None
+
+
+atexit.register(_close_client)
+
+
+class _SingletonClientContext:
+    """Context manager that yields the singleton client without closing it."""
+    def __enter__(self):
+        return _get_singleton_client()
+    def __exit__(self, *args):
+        pass  # Singleton stays alive
+
+
+def _make_client():
+    """Return a context manager yielding the pooled singleton client."""
+    return _SingletonClientContext()
+
+
+def _get_client():
+    """Legacy compatibility wrapper — returns the singleton client."""
+    return _get_singleton_client()
+
 
 def _is_safe_url(url: str) -> bool:
     """
@@ -65,19 +119,12 @@ def _is_safe_url(url: str) -> bool:
     except Exception:
         return False
 
-def _make_client():
-    """Create a fresh httpx.Client. Always use as a context manager."""
-    return httpx.Client(**_CLIENT_DEFAULTS)
-
-def _get_client():
-    """Legacy compatibility wrapper."""
-    return httpx.Client(**_CLIENT_DEFAULTS)
 
 def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
-    """Fetch URL using context-managed client, return (html, error)."""
+    """Fetch URL using pooled client, return (html, error)."""
     if not _is_safe_url(url):
         return "", f"Blocked for security: {url} resolves to a private/internal address"
-        
+
     try:
         with _make_client() as client:
             resp = client.get(url, timeout=timeout)
@@ -94,13 +141,14 @@ def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
     except Exception as e:
         return "", f"{type(e).__name__}: {e}"
 
+
 def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]:
     """Extract clean text from HTML using BeautifulSoup."""
     if max_chars is None:
         max_chars = cfg.web_max_text_chars
-        
+
     from bs4 import BeautifulSoup
-    soup  = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     title = ""
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
@@ -117,7 +165,7 @@ def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]
         soup.body or soup
     )
 
-    text  = main.get_text(separator="\n", strip=True) if main else soup.get_text()
+    text = main.get_text(separator="\n", strip=True) if main else soup.get_text()
     lines = [ln.strip() for ln in text.splitlines()]
     filtered, blanks = [], 0
     for ln in lines:
@@ -129,12 +177,13 @@ def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]
             if blanks <= 2:
                 filtered.append("")
 
-    clean     = "\n".join(filtered).strip()
+    clean = "\n".join(filtered).strip()
     truncated = len(clean) > max_chars
     if truncated:
         clean = clean[:max_chars] + f"\n\n[...truncated at {max_chars} chars]"
 
     return clean, title
+
 
 def _do_search(query: str, max_results: int = 5) -> dict:
     """Call SearXNG and return structured results. Default 5 for backward compat."""
@@ -146,19 +195,19 @@ def _do_search(query: str, max_results: int = 5) -> dict:
                 timeout=15,
             )
             resp.raise_for_status()
-            data    = resp.json()
-            raw     = data.get("results", [])[:max_results]
+            data = resp.json()
+            raw = data.get("results", [])[:max_results]
             results = []
             for r in raw:
                 snippet = r.get("content", "") or r.get("description", "")
                 results.append({
-                    "url":     r.get("url", ""),
-                    "title":   r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "title": r.get("title", ""),
                     "snippet": snippet[:cfg.web_snippet_chars],
-                    "engine":  r.get("engine", ""),
+                    "engine": r.get("engine", ""),
                 })
             return ok({"results": results,
-                    "count": len(results), "query": query})
+                       "count": len(results), "query": query})
     except httpx.TimeoutException:
         return fail(f"SearXNG timeout at {cfg.searxng_url}")
     except httpx.ConnectError:
@@ -166,40 +215,42 @@ def _do_search(query: str, max_results: int = 5) -> dict:
     except Exception as e:
         return fail(f"Search failed: {type(e).__name__}: {e}")
 
+
 def _do_scrape(url: str, max_chars: Optional[int] = None) -> dict:
     """Fetch URL and return clean extracted text."""
     if max_chars is None:
         max_chars = cfg.web_max_text_chars
-        
+
     html, err = _fetch_html(url)
     if err:
         return fail(err, url=url)
-        
+
     text, title = _html_to_text(html, max_chars)
     if not text:
         return fail("No text content extracted", url=url)
 
     return ok({
-        "url":        url,
-        "title":      title,
-        "text":       text,
+        "url": url,
+        "title": title,
+        "text": text,
         "word_count": len(text.split()),
-        "truncated":     "[...truncated" in text,
+        "truncated": "[...truncated" in text,
     })
+
 
 @tool
 def web(
-    action:      str,
-    query:       str = "",
-    url:         str = "",
+    action: str,
+    query: str = "",
+    url: str = "",
     max_results: int = 5,
-    max_chars:   Optional[int] = None,
-    trace_id:    str = "",
+    max_chars: Optional[int] = None,
+    trace_id: str = "",
 ) -> dict:
     """
     Web tool -- search the web or read web pages.
 
-    action:   "search" | "scrape" | "read" | "search_and_read"
+    action: "search" | "scrape" | "read" | "search_and_read"
 
     search
       Search SearXNG and return ranked URLs with titles and snippets.
@@ -285,10 +336,10 @@ def web(
                 })
 
         result = ok({
-            "query":            query,
-            "results":          scraped,
-            "scraped_count":    len(scraped),
-            "attempted":        len(urls),
+            "query": query,
+            "results": scraped,
+            "scraped_count": len(scraped),
+            "attempted": len(urls),
             "duplicates_removed": len(search_result.get("data", {}).get("results", [])) - len(urls),
         })
         from core.memory_backend.pruner import prune_tool_dict

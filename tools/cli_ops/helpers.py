@@ -43,6 +43,10 @@ ALLOWED_COMMANDS = frozenset({
 # Shell operators that are dangerous or useless with shell=False
 SHELL_OPERATORS = {"|", "||", "&&", ";", ">", ">>", "<", "&", "`", "$("}
 
+# [BUGFIX-3] Dangerous flags that enable arbitrary code execution even when
+# the base command is allowlisted (e.g., "python -c 'import os; os.system(...)'").
+BLOCKED_FLAGS = frozenset({"-c", "-m", "--command", "--module", "-e", "--eval"})
+
 # =============================================================================
 # Sanitization
 # =============================================================================
@@ -135,6 +139,11 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
     if base_cmd not in ALLOWED_COMMANDS:
         return f"Shell error: Command '{base_cmd}' is not in the allowlist."
 
+    # [BUGFIX-3] Block dangerous flags that enable arbitrary code execution.
+    for token in tokens[1:]:
+        if token in BLOCKED_FLAGS:
+            return f"Shell error: Flag '{token}' is blocked for security."
+
     # 3. Operator Check (Reject shell chaining)
     for token in tokens:
         if token in SHELL_OPERATORS:
@@ -189,11 +198,11 @@ def _safe_dispatch(tool_name: str, action: str, params: dict) -> str:
 
     if tool_name in DISPATCH and action in DISPATCH[tool_name]:
         action_func = DISPATCH[tool_name][action]
-        
+
         # Filter out trace_id if the handler doesn't accept it
         # This prevents "unexpected keyword argument 'trace_id'" errors
         trace_id = params.pop("trace_id", None)
-        
+
         try:
             try:
                 return action_func(action, **params)

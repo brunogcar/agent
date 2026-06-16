@@ -1,16 +1,16 @@
-﻿"""
+"""
 tools/python_exec.py — Python execution meta-tool.
 
 Replaces: run_python + run_python_data (old flat tools)
 The LLM sees ONE tool: python(mode, code)
 
 Modes:
-  run      → strict sandbox, whitelisted builtins only, no imports
-             Use for: pure logic, string ops, math, list/dict work
+  run → strict sandbox, whitelisted builtins only, no imports
+      Use for: pure logic, string ops, math, list/dict work
   run_data → two-path execution:
-               stdlib imports → in-process (fast)
-               heavy libs     → subprocess (isolated)
-             Use for: anything that needs import statements
+      stdlib imports → in-process (fast)
+      heavy libs → subprocess (isolated)
+      Use for: anything that needs import statements
 
 Key improvements over old execution.py:
   - Cleaner error messages that tell the model exactly what went wrong
@@ -22,12 +22,14 @@ Key improvements over old execution.py:
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib
 import io
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 from core.config import cfg
@@ -111,7 +113,7 @@ STDLIB_IMPORTS = {
     "collections", "itertools", "functools", "re", "csv",
     "io", "textwrap", "string", "decimal", "fractions",
     "heapq", "bisect", "pprint", "copy", "time", "uuid",
-    "hashlib",  "base64",  "struct",
+    "hashlib", "base64", "struct",
     "dataclasses", "typing", "enum", "abc",
 }
 
@@ -136,7 +138,6 @@ BLOCKED_IMPORTS = {
     "signal", "pty", "tty", "termios", "fcntl", "resource",
 }
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _parse_imports(code: str) -> list[str]:
@@ -157,6 +158,9 @@ def _parse_imports(code: str) -> list[str]:
             names.append(name if name.startswith("core.") else name.split(".")[0])
     return names
 
+# [BUGFIX-2] Thread-safe stdout capture using contextlib.redirect_stdout.
+# contextlib.redirect_stdout is reentrant and thread-safe in CPython.
+# The old pattern (sys.stdout = io.StringIO()) corrupted output across threads.
 
 def _run_inprocess(code: str, import_names: list[str]) -> dict:
     """Execute stdlib-only code in-process. Fast, no subprocess overhead."""
@@ -168,11 +172,10 @@ def _run_inprocess(code: str, import_names: list[str]) -> dict:
         except ImportError as e:
             return fail(f"Import failed: {e}")
 
-    old_stdout = sys.stdout
-    sys.stdout  = captured = io.StringIO()
-
+    captured = io.StringIO()
     try:
-        exec(code, exec_globals)
+        with contextlib.redirect_stdout(captured):
+            exec(code, exec_globals)
         output = captured.getvalue().strip()
         return ok(
             output if output else "(no output — use print() to return results)",
@@ -180,9 +183,6 @@ def _run_inprocess(code: str, import_names: list[str]) -> dict:
         )
     except Exception as e:
         return fail(str(e), mode="in_process")
-    finally:
-        sys.stdout = old_stdout
-
 
 def _run_subprocess(code: str) -> dict:
     """Execute heavy-lib code in a subprocess."""
@@ -226,7 +226,6 @@ def _run_subprocess(code: str) -> dict:
             except Exception:
                 pass
 
-
 # ── Meta-tool ─────────────────────────────────────────────────────────────────
 
 @tool
@@ -237,34 +236,24 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
     mode: "run" | "run_data"
 
     run
-        Strict sandbox — no imports allowed.
-        Only whitelisted built-ins: print, range, len, int, float, str,
-        list, dict, set, sum, min, max, abs, round, sorted, zip, etc.
-        Use for: math, string ops, list/dict manipulation, pure logic.
-        Fast — runs in the current process.
+      Strict sandbox — no imports allowed.
+      Only whitelisted built-ins: print, range, len, int, float, str,
+      list, dict, set, sum, min, max, abs, round, sorted, zip, etc.
+      Use for: math, string ops, list/dict manipulation, pure logic.
+      Fast — runs in the current process.
 
     run_data
-        Unrestricted imports from allowed module list.
-        Stdlib modules (json, math, datetime, re, csv, etc.) → in-process, fast.
-        Heavy libs (pandas, numpy, matplotlib, sklearn) → subprocess, isolated.
-        ALWAYS use print() to return output — variables are not captured.
-        Use for: data analysis, file processing, calculations with libraries.
+      Unrestricted imports from allowed module list.
+      Stdlib modules (json, math, datetime, re, csv, etc.) → in-process, fast.
+      Heavy libs (pandas, numpy, matplotlib, sklearn) → subprocess, isolated.
+      ALWAYS use print() to return output — variables are not captured.
+      Use for: data analysis, file processing, calculations with libraries.
 
     Allowed imports for run_data:
-        stdlib: random json math statistics datetime calendar collections
-                itertools functools re csv io textwrap string decimal
-                pathlib os sys hashlib base64 uuid dataclasses typing enum
-        heavy:  pandas numpy matplotlib scipy sklearn seaborn plotly
-
-    Examples:
-        python(mode="run", code="x = [i**2 for i in range(10)]\\nprint(sum(x))")
-
-        python(mode="run_data", code='''
-    import pandas as pd
-    import json
-    df = pd.DataFrame({"a": [1,2,3], "b": [4,5,6]})
-    print(df.describe().to_json())
-    ''')
+      stdlib: random json math statistics datetime calendar collections
+              itertools functools re csv io textwrap string decimal
+              pathlib os sys hashlib base64 uuid dataclasses typing enum
+      heavy: pandas numpy matplotlib scipy sklearn seaborn plotly
     """
     mode = mode.strip().lower()
 
@@ -280,26 +269,24 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
                     f"Forbidden token '{token}' in sandbox mode. "
                     "Use mode='run_data' for code that needs imports or file access."
                 )
-    
+
         # 🔴 Authoritative AST validation (blocks obfuscated bypasses)
         ast_safe, ast_err = _validate_sandbox_ast(code)
         if not ast_safe:
             return fail(ast_err)
 
+        captured = io.StringIO()
         try:
-            old_stdout = sys.stdout
-            sys.stdout = captured = io.StringIO()
-            local_env: dict = {}
-            exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
+            with contextlib.redirect_stdout(captured):
+                local_env: dict = {}
+                exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
             output = captured.getvalue().strip()
-            sys.stdout = old_stdout      
             from core.memory_backend.pruner import prune_text
             final_output = output if output else str({k: str(v) for k, v in local_env.items()})
-            if output: # Only prune actual stdout, not env dumps
+            if output:  # Only prune actual stdout, not env dumps
                 final_output = prune_text("python_exec", final_output, trace_id)
             return ok(final_output, mode="sandbox")
         except Exception as e:
-            sys.stdout = old_stdout
             return fail(str(e), mode="sandbox")
 
     # ── run_data ──────────────────────────────────────────────────────────────
@@ -335,7 +322,7 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
             result = _run_subprocess(code)
         else:
             result = _run_inprocess(code, imports)
-        
+
         if result.get("status") == "success" and result.get("data"):
             from core.memory_backend.pruner import prune_text
             result["data"] = prune_text("python_exec", result["data"], trace_id)

@@ -24,19 +24,19 @@ from core.llm_backend.provider import ProviderRegistry
 from core.llm_backend.config import RoleConfig, _build_role_configs
 
 _ROLE_BUDGETS = {
-    "planner":   32000,
-    "executor":  12000,
-    "router":     4000,
-    "classify":   4000,
-    "route":      4000,
+    "planner": 32000,
+    "executor": 12000,
+    "router": 4000,
+    "classify": 4000,
+    "route": 4000,
     "summarize": 16000,
-    "research":  16000,
-    "code":      16000,
-    "analyze":   12000,
-    "critique":  12000,
-    "review":    12000,
-    "extract":    8000,
-    "consultor":  8000,
+    "research": 16000,
+    "code": 16000,
+    "analyze": 12000,
+    "critique": 12000,
+    "review": 12000,
+    "extract": 8000,
+    "consultor": 8000,
 }
 
 class LLMClient:
@@ -49,8 +49,8 @@ class LLMClient:
 
     def __init__(self) -> None:
         self._registry = ProviderRegistry()
-        self._roles    = _build_role_configs()
-        
+        self._roles = _build_role_configs()
+
         # HIG-02: Per-role circuit breakers for resilience
         self._breakers: dict[str, CircuitBreaker] = {}
         self._build_breakers()
@@ -62,7 +62,8 @@ class LLMClient:
         # 1. Always log states to JSONL for observability
         for role, breaker in self._breakers.items():
             try:
-                tracer.log("circuit_breaker", role=role, **breaker.get_state_info())
+                # [BUGFIX-1] tracer.log() does not exist; use tracer.step() instead.
+                tracer.step("", "circuit_breaker", role=role, **breaker.get_state_info())
             except Exception as e:
                 tracer.error("", "circuit_breaker_metrics", error=str(e), role=role)
 
@@ -73,26 +74,26 @@ class LLMClient:
 
     def call(
         self,
-        role:        str,
-        messages:    list[dict],
+        role: str,
+        messages: list[dict],
         *,
         temperature: Optional[float] = None,
-        max_tokens:  Optional[int]   = None,
-        timeout:     Optional[int]   = None,
-        json_mode:   bool            = False,
-        trace_id:    str             = "",
-        **kwargs:    Any,
+        max_tokens: Optional[int] = None,
+        timeout: Optional[int] = None,
+        json_mode: bool = False,
+        trace_id: str = "",
+        **kwargs: Any,
     ) -> LLMResponse:
         """Make an LLM call by role. Always returns LLMResponse, never raises."""
         from core.runtime.activity_tracker import tracker
-        
+
         with tracker.inference_slot(timeout=60.0):
             role_cfg = self._get_role(role)
             provider = self._registry.get(role_cfg.provider)
 
             _temperature = temperature if temperature is not None else role_cfg.temperature
-            _max_tokens  = max_tokens  if max_tokens  is not None else role_cfg.max_tokens
-            _timeout     = timeout     if timeout     is not None else role_cfg.timeout
+            _max_tokens = max_tokens if max_tokens is not None else role_cfg.max_tokens
+            _timeout = timeout if timeout is not None else role_cfg.timeout
 
             # 🔴 PHASE 5: COGNITIVE BUDGETING
             # Intercept messages to ensure they fit the context window.
@@ -116,20 +117,20 @@ class LLMClient:
             breaker = self._get_breaker(role)
             if not breaker.can_execute():
                 elapsed = 0.1
-                err     = f"Circuit breaker OPEN for {role}: service degraded (fail-fast)."
+                err = f"Circuit breaker OPEN for {role}: service degraded (fail-fast)."
                 if trace_id:
                     tracer.warning(trace_id, "llm_call", err)
                 return LLMResponse.from_error(role, role_cfg.model, err, elapsed=0.1)
 
             for attempt in range(self.MAX_RETRIES + 1):
                 try:
-                    raw  = provider.chat_completion(
-                        model       = role_cfg.model,
-                        messages    = messages,
+                    raw = provider.chat_completion(
+                        model = role_cfg.model,
+                        messages = messages,
                         temperature = _temperature,
-                        max_tokens  = _max_tokens,
-                        timeout     = _timeout,
-                        json_mode   = json_mode,
+                        max_tokens = _max_tokens,
+                        timeout = _timeout,
+                        json_mode = json_mode,
                         **kwargs,
                     )
                     elapsed = round(time.time() - start, 2)
@@ -139,7 +140,7 @@ class LLMClient:
 
                 except httpx.TimeoutException:
                     elapsed = round(time.time() - start, 2)
-                    err     = f"Timeout after {elapsed}s (limit: {_timeout}s)"
+                    err = f"Timeout after {elapsed}s (limit: {_timeout}s)"
                     if breaker:
                         breaker.record_failure()
                     if trace_id:
@@ -149,7 +150,7 @@ class LLMClient:
 
                 except httpx.ConnectError:
                     elapsed = round(time.time() - start, 2)
-                    err     = f"Cannot connect to {cfg.lm_studio_base_url} - is LM Studio running?"
+                    err = f"Cannot connect to {cfg.lm_studio_base_url} - is LM Studio running?"
                     if breaker:
                         breaker.record_failure()
                     if trace_id:
@@ -169,8 +170,8 @@ class LLMClient:
                     return LLMResponse.from_error(role, role_cfg.model, err, elapsed)
 
                 except Exception as e:
-                    elapsed = round(time.time() - start, 2)  
-                    err     = f"Unexpected error: {type(e).__name__}: {e}"
+                    elapsed = round(time.time() - start, 2)
+                    err = f"Unexpected error: {type(e).__name__}: {e}"
                     if breaker:
                         breaker.record_failure()
                     if trace_id:
@@ -185,23 +186,23 @@ class LLMClient:
 
     def complete(
         self,
-        role:        str,
-        system:      str,
-        user:        str,
-        context:     str  = "",
-        content:     str  = "",
+        role: str,
+        system: str,
+        user: str,
+        context: str = "",
+        content: str = "",
         *,
         temperature: Optional[float] = None,
-        max_tokens:  Optional[int]   = None,
-        timeout:     Optional[int]   = None,
-        json_mode:   bool            = False,
-        trace_id:    str             = "",
+        max_tokens: Optional[int] = None,
+        timeout: Optional[int] = None,
+        json_mode: bool = False,
+        trace_id: str = "",
     ) -> LLMResponse:
         messages: list[dict] = [{"role": "system", "content": system}]
 
         if context:
-            messages.append({"role": "user",         "content": f"Background:\n{context}"})
-            messages.append({"role": "assistant",    "content": "Understood."})
+            messages.append({"role": "user", "content": f"Background:\n{context}"})
+            messages.append({"role": "assistant", "content": "Understood."})
 
         user_text = user
         if content:
@@ -210,13 +211,13 @@ class LLMClient:
         messages.append({"role": "user", "content": user_text})
 
         return self.call(
-            role        = role,
-            messages    = messages,
+            role = role,
+            messages = messages,
             temperature = temperature,
-            max_tokens  = max_tokens,
-            timeout     = timeout,
-            json_mode   = json_mode,
-            trace_id    = trace_id,
+            max_tokens = max_tokens,
+            timeout = timeout,
+            json_mode = json_mode,
+            trace_id = trace_id,
         )
 
     def is_available(self, role: str = "planner") -> bool:
@@ -230,12 +231,12 @@ class LLMClient:
     def list_roles(self) -> list[dict]:
         return [
             {
-                "role":        name,
-                "model":       rc.model,
-                "provider":    rc.provider,
-                "timeout":     rc.timeout,
+                "role": name,
+                "model": rc.model,
+                "provider": rc.provider,
+                "timeout": rc.timeout,
                 "temperature": rc.temperature,
-                "max_tokens":  rc.max_tokens,
+                "max_tokens": rc.max_tokens,
             }
             for name, rc in sorted(self._roles.items())
         ]
@@ -268,8 +269,8 @@ class LLMClient:
     def _get_role(self, role: str) -> RoleConfig:
         if role not in self._roles:
             tracer.error(
-                "", 
-                "llm_role_fallback", 
+                "",
+                "llm_role_fallback",
                 f"Unknown role {role!r} -- falling back to executor. Known: {sorted(self._roles.keys())}"
             )
             return self._roles["executor"]
@@ -280,12 +281,12 @@ class LLMClient:
         raw: dict, role: str, model: str, elapsed: float, json_mode: bool,
     ) -> LLMResponse:
         try:
-            choice  = raw["choices"][0]["message"]["content"].strip()
+            choice = raw["choices"][0]["message"]["content"].strip()
             usage_r = raw.get("usage", {})
-            usage   = {
-                "prompt":     usage_r.get("prompt_tokens", 0),
+            usage = {
+                "prompt": usage_r.get("prompt_tokens", 0),
                 "completion": usage_r.get("completion_tokens", 0),
-                "total":      usage_r.get("total_tokens", 0),
+                "total": usage_r.get("total_tokens", 0),
             }
         except (KeyError, IndexError) as e:
             return LLMResponse.from_error(role, model, f"Response parse error: {e}", elapsed)
@@ -297,16 +298,16 @@ class LLMClient:
             # 1. Try parsing the raw string directly (handles clean JSON, arrays, and backticks in strings)
             # 2. Try extracting from markdown code blocks
             # 3. Fall back to finding outermost JSON object/array
-            
+
             json_str = None
             choice_stripped = choice.strip()
-            
+
             # 1. Direct parse attempt (fixes arrays and backticks inside strings)
             try:
                 parsed = json.loads(choice_stripped)
             except json.JSONDecodeError:
                 pass
-            
+
             # 2. If direct parse failed, try extraction
             if parsed is None:
                 # Try markdown code block extraction
@@ -318,7 +319,7 @@ class LLMClient:
                     # Fall back to finding outermost JSON structure
                     obj_match = re.search(r'\{.*\}', choice, re.DOTALL)
                     arr_match = re.search(r'\[.*\]', choice, re.DOTALL)
-                    
+
                     # Pick the one that starts earliest in the string
                     if obj_match and arr_match:
                         json_str = obj_match.group(0) if obj_match.start() < arr_match.start() else arr_match.group(0)
@@ -328,12 +329,12 @@ class LLMClient:
                         json_str = arr_match.group(0)
                     else:
                         json_str = choice_stripped
-                
-            if json_str:
-                try:
-                    parsed = json.loads(json_str)
-                except json.JSONDecodeError:
-                    pass
+
+                if json_str:
+                    try:
+                        parsed = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        pass
 
             # 🔴 Schema Validation: Catch LLM tool call drift
             # Only validate if it looks like a tool call (has 'tool' and 'action')
@@ -347,7 +348,7 @@ class LLMClient:
                         "schema_validation_failed",
                         f"Tool call schema validation failed for {role}/{model}: {e}"
                     )
-        
+
         return LLMResponse(
             text=choice,
             role=role,
