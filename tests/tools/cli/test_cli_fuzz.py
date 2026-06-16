@@ -1,9 +1,21 @@
-"""
-Fuzz tests for cli input sanitization and edge cases.
-"""
+"""Fuzz tests for cli input sanitization and edge cases."""
 import pytest
+from unittest.mock import patch, MagicMock
 from tools.cli_ops.helpers import _sanitize_command
 from tools.cli import cli
+
+
+@pytest.fixture(autouse=True)
+def mock_cfg():
+    """Mock cfg to prevent AsyncMock leakage from other tests."""
+    with patch("tools.cli.cfg") as mock_cfg:
+        mock_cfg.cli_max_command_chars = 4096
+        mock_cfg.cli_max_arguments = 50
+        mock_cfg.workspace_root = MagicMock()
+        mock_cfg.workspace_root.resolve.return_value = MagicMock()
+        mock_cfg.workspace_root.resolve.return_value.__eq__ = lambda self, other: False
+        mock_cfg.workspace_root.resolve.return_value.parents = []
+        yield mock_cfg
 
 
 class TestSanitization:
@@ -94,5 +106,4 @@ class TestFuzzInputs:
         ]
         output_text = str(result.get("data", ""))
         for pattern in dangerous_patterns:
-            assert pattern not in output_text.lower(), \
-                f"Dangerous pattern '{pattern}' found in output for command: {command[:50]}"
+            assert pattern not in output_text.lower(),                 f"Dangerous pattern '{pattern}' found in output for command: {command[:50]}"

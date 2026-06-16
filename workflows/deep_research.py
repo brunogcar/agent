@@ -40,14 +40,19 @@ def run_deep_research_agent(goal: str, **kwargs) -> dict:
     }
     merged.update(kwargs)
 
-    timeout = kwargs.get("timeout", cfg.deep_research_timeout_seconds)
+    # [BUGFIX] Extract facade-specific arguments so they don't leak into the
+    # LangGraph state or cause "unexpected keyword argument" errors in
+    # run_workflow. trace_id and timeout are facade concerns, not state fields.
+    trace_id = merged.pop("trace_id", "")
+    timeout = merged.pop("timeout", cfg.deep_research_timeout_seconds)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         future = ex.submit(
             run_workflow,
             workflow_type="deep_research",
             goal=goal,
-            trace_id=kwargs.get("trace_id", ""),
-            **merged,
+            trace_id=trace_id,
+            **merged,  # Only valid state overrides (e.g., max_iterations)
         )
         try:
             return future.result(timeout=timeout)
