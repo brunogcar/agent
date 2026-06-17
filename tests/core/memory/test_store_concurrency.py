@@ -12,8 +12,9 @@ from unittest.mock import patch, MagicMock
 from core.memory_backend.store import MemoryStore
 from core.memory_backend.constants import COLLECTION_SEMANTIC
 
-class TestStoreConcurrency:
-    """Test MemoryStore thread safety under concurrent access."""
+
+class TestStoreConcurrencyMock:
+    """Test MemoryStore thread safety with mocked ChromaDB client."""
 
     @pytest.fixture
     def mock_client(self):
@@ -118,3 +119,65 @@ class TestStoreConcurrency:
 
         assert r_store is not None
         assert isinstance(r_recall, list)  # recall returns list, not crash
+
+
+class TestStoreConcurrencyReal:
+    """Integration test with real ChromaDB EphemeralClient.
+
+    This test verifies that MemoryStore's locking and hash deduplication
+    actually work against a real SQLite-backed ChromaDB, not just mocks.
+    Mocks can't catch real database race conditions (e.g., SQLite
+    'database is locked' errors under concurrent writes).
+
+    Skipped if chromadb is not installed or EphemeralClient fails.
+    """
+
+    @pytest.fixture
+    def real_store(self):
+        """Create a MemoryStore backed by a real in-memory ChromaDB."""
+        pytest.importorskip("chromadb", reason="chromadb not installed")
+        try:
+            import chromadb
+            client = chromadb.EphemeralClient()
+            store = MemoryStore.__new__(MemoryStore)
+            store._client = client
+            store._collections = {}
+            store._hash_cache = set()
+            store._write_lock = __import__('threading').Lock()
+            # Initialize collections
+            from core.memory_backend.constants import COLLECTION_SEMANTIC, COLLECTION_EPISODIC
+            store._get_collection(COLLECTION_SEMANTIC)
+            store._get_collection(COLLECTION_EPISODIC)
+            yield store
+        except Exception as e:
+            pytest.skip(f"EphemeralClient failed: {e}")
+
+    def test_real_concurrent_store_dedup(self, real_store):
+        """Real ChromaDB: concurrent stores of same text must deduplicate."""
+        text = "real concurrent dedup test"
+        results = []
+
+        def store_once():
+            return real_store.store(
+                text=text,
+                memory_type=COLLECTION_SEMANTIC,
+                importance=5,
+                trace_id="real-dedup",
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            futures = [ex.submit(store_once) for _ in range(10)]
+            results = [f.result(timeout=10) for f in futures]
+
+        # All should succeed
+        assert all(r is not None for r in results)
+
+        # Verify only one document exists in the collection
+        collection = real_store._get_collection(COLLECTION_SEMANTIC)
+        all_docs = collection.get()
+        # Filter to our test text (may have other docs from previous tests)
+        matching = [d for d in all_docs.get("documents", []) if d == text]
+        assert len(matching) == 1, (
+            f"Expected exactly 1 document for deduplicated text, found {len(matching)}. "
+            "Hash deduplication failed under real concurrent load."
+        )

@@ -191,10 +191,9 @@ def _parse_imports(code: str) -> list[str]:
 # [BUGFIX-2] Thread-safe stdout capture using contextlib.redirect_stdout.
 # contextlib.redirect_stdout is reentrant but NOT cross-thread-safe:
 # sys.stdout is process-global, so concurrent redirects from different
-# threads can clobber each other. This is safe in current usage because
-# python_exec is executed sequentially per tool call. If parallel execution
-# is ever enabled, add a module-level threading.Lock() around the
-# redirect_stdout + exec() block.
+# threads can clobber each other. We add a module-level lock to prevent
+# this — safe even if python_exec is added to PARALLEL_SAFE in the future.
+_STDOUT_LOCK = threading.Lock()
 
 def _run_inprocess(code: str, import_names: list[str]) -> dict:
     """Execute stdlib-only code in-process. Fast, no subprocess overhead."""
@@ -312,9 +311,10 @@ def python(mode: str, code: str, trace_id: str = "") -> dict:
 
         captured = io.StringIO()
         try:
-            with contextlib.redirect_stdout(captured):
-                local_env: dict = {}
-                exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
+            with _STDOUT_LOCK:
+                with contextlib.redirect_stdout(captured):
+                    local_env: dict = {}
+                    exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
             output = captured.getvalue().strip()
             from core.memory_backend.pruner import prune_text
             final_output = output if output else str({k: str(v) for k, v in local_env.items()})
