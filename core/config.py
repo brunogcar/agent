@@ -1,13 +1,13 @@
-﻿"""core/config.py â€” Single source of truth for all configuration.
+"""core/config.py — Single source of truth for all configuration.
 
-Uses pathlib throughout â€” works identically on Windows and Linux.
+Uses pathlib throughout — works identically on Windows and Linux.
 All values come from .env (loaded once at import time).
 Nothing is hardcoded except the .env file location discovery.
 
 Other modules import from here:
- from core.config import cfg
- print(cfg.agent_root)
- print(cfg.planner_model)
+    from core.config import cfg
+    print(cfg.agent_root)
+    print(cfg.planner_model)
 """
 from __future__ import annotations
 
@@ -37,10 +37,10 @@ if _env_file:
 def _resolve_role(value: str) -> tuple[str, str]:
     """
     Resolves a single model string into (provider, model) dynamically from .env.
-    - "openai" -> ("openai", os.getenv("OPENAI_BASE_MODEL", ""))
-    - "qwen-qwen3.5-9b" -> ("qwen", "qwen-qwen3.5-9b")
-    - "granite-4.0" -> ("lmstudio", "granite-4.0")
-    - "" -> ("lmstudio", "")
+      - "openai" -> ("openai", os.getenv("OPENAI_BASE_MODEL", ""))
+      - "qwen-qwen3.5-9b" -> ("qwen", "qwen-qwen3.5-9b")
+      - "granite-4.0" -> ("lmstudio", "granite-4.0")
+      - "" -> ("lmstudio", "")
     """
     if not value or not value.strip():
         return "lmstudio", ""
@@ -208,7 +208,6 @@ class Config:
                 f"DEEP_RESEARCH_CONVERGENCE_THRESHOLD must be 0-1, got {self.deep_research_convergence_threshold}"
             )
 
-
         # -- Memory tuning -----------------------------------------------------
         self.memory_delete_threshold = float(os.getenv("MEMORY_DELETE_THRESHOLD", "0.4"))
         self.memory_decay_days = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
@@ -221,7 +220,17 @@ class Config:
 
         # -- Context Budgeting (Phase 5) ---------------------------------------
         # Max tokens for the input context window (leaves room for output)
-        self.max_context_tokens = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
+        # [BUGFIX-5] Validated: prevents 0/negative values that would silently
+        # truncate all context to nothing in agent_tool.py.
+        _raw_max_context = os.getenv("MAX_CONTEXT_TOKENS", "8000")
+        try:
+            self.max_context_tokens = int(_raw_max_context)
+        except ValueError:
+            raise ValueError(f"MAX_CONTEXT_TOKENS must be an integer, got '{_raw_max_context}'")
+        if not (1000 <= self.max_context_tokens <= 100000):
+            raise ValueError(
+                f"MAX_CONTEXT_TOKENS must be 1000-100000, got {self.max_context_tokens}"
+            )
 
         # -- Parallel Execution (Phase 7) --------------------------------------
         self.max_concurrent_workers = int(os.getenv("MAX_CONCURRENT_WORKERS", "3"))
@@ -392,11 +401,18 @@ class Config:
         return False
 
     def reload(self) -> None:
-        """Re-read .env and rebuild model_registry. Call after changing .env."""
+        """Re-read .env and rebuild model_registry. Call after changing .env.
+
+        NOTE: This is NOT atomic. Concurrent reads during reload may see
+        a partially-updated config (e.g., new planner_model but old executor_model).
+        This is acceptable for a single-operator local agent where reloads happen
+        at controlled times, not mid-request. Do not call during active inference.
+        """
         _env_file = _find_env_file()
         if _env_file:
             load_dotenv(_env_file, override=True)
         self.__init__()
+
     def __repr__(self) -> str:
         return (
             f"Config(env={self.env!r}, agent_root={self.agent_root}, "

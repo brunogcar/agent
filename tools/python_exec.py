@@ -1,5 +1,4 @@
-"""
-tools/python_exec.py — Python execution meta-tool.
+"""tools/python_exec.py — Python execution meta-tool.
 
 Replaces: run_python + run_python_data (old flat tools)
 The LLM sees ONE tool: python(mode, code)
@@ -9,7 +8,7 @@ Modes:
       Use for: pure logic, string ops, math, list/dict work
   run_data → two-path execution:
       stdlib imports → in-process (fast)
-      heavy libs → subprocess (isolated)
+      heavy libs     → subprocess (isolated)
       Use for: anything that needs import statements
 
 Key improvements over old execution.py:
@@ -57,7 +56,8 @@ FORBIDDEN_IN_SANDBOX = ["__import__", "eval(", "exec(", "open(", "compile("]
 
 # 🔴 AST Sandbox Validation (Security P0)
 # Replaces brittle string-matching with syntax-tree analysis.
-# Blocks imports, dangerous builtins, and module attribute access.
+# Blocks imports, dangerous builtins, module attribute access, and
+# MRO traversal vectors that bypass import-based restrictions.
 DANGEROUS_BUILTINS = {
     "eval", "exec", "compile", "open", "__import__",
     "input", "breakpoint", "globals", "locals", "vars", "dir",
@@ -65,10 +65,29 @@ DANGEROUS_BUILTINS = {
 }
 DANGEROUS_MODULES = {"os", "sys", "subprocess", "shutil", "socket", "ctypes", "multiprocessing"}
 
+# Attributes that enable MRO traversal and sandbox escapes.
+# These allow finding arbitrary classes (e.g., subprocess.Popen) already
+# loaded in the interpreter without needing __import__.
+DANGEROUS_ATTRS = {
+    "__class__", "__base__", "__bases__", "__subclasses__", "__mro__",
+    "__dict__",
+}
+
+# Names that must not be accessed directly (bypass attribute checks).
+# __builtins__ is a Name in the AST, not an Attribute.
+DANGEROUS_NAMES = {"__builtins__"}
+
+
 def _validate_sandbox_ast(code: str) -> tuple[bool, str]:
     """
-    AST-based sandbox validation. Blocks imports and dangerous builtin calls.
+    AST-based sandbox validation. Blocks imports, dangerous builtin calls,
+    module attribute access, MRO traversal vectors, and dangerous name access.
+
     Returns (is_safe, error_message).
+
+    NOTE: This is defense-in-depth against LLM mistakes and prompt injection.
+    It is NOT a security boundary against determined adversarial code.
+    Do not expose to untrusted multi-tenant input without OS-level sandboxing.
     """
     try:
         tree = ast.parse(code)
@@ -80,6 +99,10 @@ def _validate_sandbox_ast(code: str) -> tuple[bool, str]:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             return False, "Imports are not allowed in sandbox mode. Use mode='run_data' for imports."
 
+        # Block dangerous name references (__builtins__)
+        if isinstance(node, ast.Name) and node.id in DANGEROUS_NAMES:
+            return False, f"Blocked sandbox escape vector: name '{node.id}' is not allowed in sandbox mode."
+
         # Block dangerous function calls
         if isinstance(node, ast.Call):
             func = node.func
@@ -90,6 +113,13 @@ def _validate_sandbox_ast(code: str) -> tuple[bool, str]:
             if isinstance(func, ast.Attribute):
                 if isinstance(func.value, ast.Name) and func.value.id in DANGEROUS_MODULES:
                     return False, f"Blocked dangerous module access: {func.value.id}.{func.attr}() in sandbox mode."
+
+        # Block MRO traversal attribute access.
+        # These bypass import restrictions by finding already-loaded classes
+        # (e.g., subprocess.Popen) via the Python class hierarchy.
+        if isinstance(node, ast.Attribute):
+            if node.attr in DANGEROUS_ATTRS:
+                return False, f"Blocked sandbox escape vector: attribute '{node.attr}' is not allowed in sandbox mode."
 
         # Block dynamic subscript resolution (e.g., __builtins__["eval"])
         if isinstance(node, ast.Subscript):
@@ -159,8 +189,12 @@ def _parse_imports(code: str) -> list[str]:
     return names
 
 # [BUGFIX-2] Thread-safe stdout capture using contextlib.redirect_stdout.
-# contextlib.redirect_stdout is reentrant and thread-safe in CPython.
-# The old pattern (sys.stdout = io.StringIO()) corrupted output across threads.
+# contextlib.redirect_stdout is reentrant but NOT cross-thread-safe:
+# sys.stdout is process-global, so concurrent redirects from different
+# threads can clobber each other. This is safe in current usage because
+# python_exec is executed sequentially per tool call. If parallel execution
+# is ever enabled, add a module-level threading.Lock() around the
+# redirect_stdout + exec() block.
 
 def _run_inprocess(code: str, import_names: list[str]) -> dict:
     """Execute stdlib-only code in-process. Fast, no subprocess overhead."""
@@ -183,6 +217,7 @@ def _run_inprocess(code: str, import_names: list[str]) -> dict:
         )
     except Exception as e:
         return fail(str(e), mode="in_process")
+
 
 def _run_subprocess(code: str) -> dict:
     """Execute heavy-lib code in a subprocess."""

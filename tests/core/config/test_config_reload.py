@@ -9,7 +9,6 @@ import tempfile
 
 import pytest
 
-
 class TestConfigReload:
     """Verify config reload correctly picks up .env changes with override=True."""
 
@@ -71,8 +70,7 @@ class TestConfigReload:
         cfg.reload()
 
         # Verify override=True was passed during reload
-        assert any(call.get("override") is True for call in load_calls), \
-            f"load_dotenv was not called with override=True during reload. Calls: {load_calls}"
+        assert any(call.get("override") is True for call in load_calls),             f"load_dotenv was not called with override=True during reload. Calls: {load_calls}"
 
     def test_config_uses_env_var_values(self):
         """Config must reflect current environment variable values."""
@@ -101,5 +99,21 @@ class TestConfigReload:
         import inspect
         source = inspect.getsource(config_module)
         assert "load_dotenv(" in source
-        assert "override=True" in source, \
-            "Module-level load_dotenv must use override=True to prevent Windows env var shadowing"
+        assert "override=True" in source,             "Module-level load_dotenv must use override=True to prevent Windows env var shadowing"
+
+    def test_reload_race_condition_documented(self):
+        """Config.reload() is NOT atomic — document the limitation.
+
+        reload() calls load_dotenv() then self.__init__() sequentially.
+        Between these steps, concurrent reads may see a partially-updated
+        config (e.g., new planner_model but old executor_model).
+
+        This is acceptable for a single-operator local agent where reloads
+        happen at controlled times, not mid-request. This test documents
+        the known limitation rather than asserting a false guarantee.
+        """
+        # This test serves as documentation. No assertion needed.
+        # If reload() ever becomes concurrent-safe, this test should be
+        # replaced with a real race-condition test (ThreadPoolExecutor
+        # with interleaved reload/read operations).
+        pass

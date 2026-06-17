@@ -1,5 +1,4 @@
-"""
-Shared utilities and helpers for cli meta-tool operations.
+"""Shared utilities and helpers for cli meta-tool operations.
 
 Includes:
 - Command sanitization and validation
@@ -23,7 +22,7 @@ from core.config import cfg
 # =============================================================================
 # [P2] Limits centralized in core/config.py
 
-_CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x1f\x7f-\x9f]')
+_CONTROL_CHAR_PATTERN = re.compile(r'[\x00--]')
 
 # ── Security: Allowlist & Denylist ─────────────────────────────────────
 # Base commands allowed for execution. shell=False prevents chaining.
@@ -45,7 +44,27 @@ SHELL_OPERATORS = {"|", "||", "&&", ";", ">", ">>", "<", "&", "`", "$("}
 
 # [BUGFIX-3] Dangerous flags that enable arbitrary code execution even when
 # the base command is allowlisted (e.g., "python -c 'import os; os.system(...)'").
+# These flags are checked after normalization (handles --command=..., -cfile.py, etc.)
 BLOCKED_FLAGS = frozenset({"-c", "-m", "--command", "--module", "-e", "--eval"})
+
+
+def _normalize_flag(token: str) -> str | None:
+    """Normalize a CLI token to its canonical flag form for blacklist checking.
+
+    Handles:
+      --command=value  → --command
+      -cfile.py        → -c
+      --co             → --co (argparse prefix, not matched unless in BLOCKED_FLAGS)
+    """
+    if not token.startswith("-"):
+        return None
+    # Handle --flag=value syntax: split on first '='
+    if "=" in token:
+        return token.split("=", 1)[0]
+    # Handle combined short flags: -cm → -c (the first flag is the dangerous one)
+    if len(token) > 2 and not token.startswith("--"):
+        return token[:2]
+    return token
 
 # =============================================================================
 # Sanitization
@@ -140,8 +159,10 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
         return f"Shell error: Command '{base_cmd}' is not in the allowlist."
 
     # [BUGFIX-3] Block dangerous flags that enable arbitrary code execution.
+    # Normalizes flags to catch --command=..., -cfile.py, and combined shorts.
     for token in tokens[1:]:
-        if token in BLOCKED_FLAGS:
+        normalized = _normalize_flag(token)
+        if normalized and normalized in BLOCKED_FLAGS:
             return f"Shell error: Flag '{token}' is blocked for security."
 
     # 3. Operator Check (Reject shell chaining)

@@ -1,7 +1,7 @@
 """Concurrency tests for MemoryStore read/write operations.
 
 Verifies that simultaneous store() and recall() operations don't corrupt
-shared state (_hash_cache, collections) via TOCTOU races.
+shared state (hash_cache, collections) via TOCTOU races.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from unittest.mock import patch, MagicMock
 
 from core.memory_backend.store import MemoryStore
 from core.memory_backend.constants import COLLECTION_SEMANTIC
-
 
 class TestStoreConcurrency:
     """Test MemoryStore thread safety under concurrent access."""
@@ -87,6 +86,13 @@ class TestStoreConcurrency:
         # Both should succeed (second may be deduplicated)
         assert r1 is not None
         assert r2 is not None
+        # The hash guard should prevent duplicate ChromaDB inserts.
+        # collection.add should be called at most once for the same hash.
+        collection = mock_client.get_or_create_collection.return_value
+        assert collection.add.call_count <= 1, (
+            f"Expected at most 1 add() call for duplicate hash, got {collection.add.call_count}. "
+            "Hash deduplication may have a TOCTOU race."
+        )
 
     def test_recall_during_store(self, mock_client):
         """Recall must not see partial/corrupt state during active store."""

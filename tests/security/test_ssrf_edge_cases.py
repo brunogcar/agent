@@ -9,13 +9,11 @@ from unittest.mock import patch
 
 from core.security import is_safe_network_address
 
-
 @pytest.fixture(autouse=True)
 def block_all_internal_hosts(monkeypatch):
     """Patch ALLOWED_INTERNAL_HOSTS to empty for all tests in this file."""
     from core import security
     monkeypatch.setattr(security.cfg, "allowed_internal_hosts", frozenset())
-
 
 class TestSSRFIPv6EdgeCases:
     """IPv6 loopback and mapped addresses must be blocked."""
@@ -44,25 +42,26 @@ class TestSSRFIPv6EdgeCases:
         """fe80::1 must be blocked."""
         assert is_safe_network_address("fe80::1") is False
 
-
 class TestSSRFDecimalIPEdgeCases:
-    """Decimal IP representations must be blocked."""
+    """Decimal IP representations are NOT valid hostnames.
+
+    is_safe_network_address expects a hostname string. Decimal IPs like
+    '2130706433' fail ip_address() parsing and fall through to DNS resolution.
+    Since DNS cannot resolve a bare integer string, they are blocked.
+
+    This is defense-in-depth (accidental blocking), not explicit validation.
+    The test documents this behavior rather than asserting a security guarantee.
+    """
 
     def test_decimal_ip_127_blocked(self):
-        """2130706433 = 127.0.0.1 must be blocked."""
-        # Note: is_safe_network_address expects a hostname string.
-        # Decimal IPs are NOT valid hostnames, so they fail ip_address() parse
-        # and fall through to DNS resolution. If resolution fails, they get blocked.
-        # This test documents the actual behavior.
+        """2130706433 (= 127.0.0.1) is not a valid hostname → DNS fails → blocked."""
         result = is_safe_network_address("2130706433")
-        # Should be False (blocked) because it's not a valid hostname and DNS fails
         assert result is False
 
     def test_decimal_ip_192168_blocked(self):
-        """3232235521 = 192.168.0.1 must be blocked."""
+        """3232235521 (= 192.168.0.1) is not a valid hostname → DNS fails → blocked."""
         result = is_safe_network_address("3232235521")
         assert result is False
-
 
 class TestSSRFReservedTLDs:
     """Reserved TLDs must be blocked."""
@@ -78,7 +77,6 @@ class TestSSRFReservedTLDs:
 
     def test_invalid_tld_blocked(self):
         assert is_safe_network_address("foo.invalid") is False
-
 
 class TestSSRFDNSRebinding:
     """DNS rebinding attacks: hostname resolves to private IP."""
@@ -110,7 +108,6 @@ class TestSSRFDNSRebinding:
         ])
 
         assert is_safe_network_address("evil.com") is False
-
 
 class TestSSRFAllowedHosts:
     """Explicitly allowed internal hosts must pass."""

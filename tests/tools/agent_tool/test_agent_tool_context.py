@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import patch, MagicMock
 
-from tools.agent_tool import _trim_context, _MAX_CONTEXT_CHARS, _KEEP_HEAD_CHARS, _KEEP_TAIL_CHARS
+from tools.agent_tool import _trim_context, _max_context_chars, _KEEP_HEAD_CHARS, _KEEP_TAIL_CHARS
 
 class TestTrimContextUnit:
     """Unit tests for _trim_context."""
@@ -18,7 +18,8 @@ class TestTrimContextUnit:
         assert _trim_context(None) is None
 
     def test_exactly_at_budget(self):
-        text = "x" * _MAX_CONTEXT_CHARS
+        """Text exactly at the dynamic budget should be returned as-is."""
+        text = "x" * _max_context_chars()
         assert _trim_context(text) == text
 
     def test_head_plus_tail_fits(self):
@@ -28,10 +29,10 @@ class TestTrimContextUnit:
 
     def test_long_text_preserves_head_and_tail(self):
         """Long text should keep head and tail, truncate middle."""
-        # [BUGFIX-5] _MAX_CONTEXT_CHARS is now cfg.max_context_tokens * 4 (~32000).
+        # [BUGFIX-5] _max_context_chars() is now cfg.max_context_tokens * 4 (~32000).
         # Use a middle section that exceeds the budget to force truncation.
         head = "GOAL: audit all files for security\n\n"
-        middle = "x" * (_MAX_CONTEXT_CHARS + 1000)
+        middle = "x" * (_max_context_chars() + 1000)
         tail = "\n\nRecent: tool_call result here"
         text = head + middle + tail
 
@@ -42,12 +43,14 @@ class TestTrimContextUnit:
         assert middle not in result
 
     def test_truncation_notice_includes_count(self):
-        # [BUGFIX-5] Use text larger than the dynamic _MAX_CONTEXT_CHARS.
-        text = "x" * (_MAX_CONTEXT_CHARS + 1000)
+        """Truncation notice should include the number of truncated chars."""
+        # [BUGFIX-5] Use text larger than the dynamic _max_context_chars().
+        text = "x" * (_max_context_chars() + 1000)
         result = _trim_context(text)
         assert "chars of intermediate context truncated" in result
 
     def test_custom_max_chars(self):
+        """Custom max_chars parameter should override the dynamic default."""
         text = "x" * 1000
         result = _trim_context(text, max_chars=500)
         assert len(result) < len(text)
@@ -61,7 +64,7 @@ class TestTrimContextIntegration:
     def test_trim_called_on_context(self):
         """Mock _trim_context and verify it's called with context."""
         with patch("tools.agent_tool._trim_context") as mock_trim:
-            mock_trim.side_effect = lambda x, **kw: x # pass-through
+            mock_trim.side_effect = lambda x, **kw: x  # pass-through
             with patch("tools.agent_tool.llm.complete") as mock_llm:
                 mock_llm.return_value = MagicMock(ok=True, text="done", finish_reason="stop")
                 from tools.agent_tool import agent

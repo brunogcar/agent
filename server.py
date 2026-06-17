@@ -1,5 +1,4 @@
-"""
-server.py -- MCP Agent entrypoint.
+"""server.py -- MCP Agent entrypoint.
 
 stdout = MCP stdio protocol channel. NOTHING may print to stdout.
 All diagnostics go to stderr or the log file.
@@ -26,7 +25,7 @@ def _fix_streams() -> None:
         ):
             setattr(sys, name,
                     io.TextIOWrapper(stream.buffer, encoding="utf-8",
-                                     errors="replace", line_buffering=True))
+                                   errors="replace", line_buffering=True))
 
     # Redirect stdout -> stderr during boot so nothing corrupts the channel.
     # FastMCP.run() will reclaim stdout for the stdio transport.
@@ -120,10 +119,12 @@ def _start_gateway() -> None:
 
 import threading as _threading
 
-# [BUGFIX-4] Threading.Event barriers for coordinated daemon startup.
-# Dependent threads wait for these events before accessing shared resources.
+# [BUGFIX-4] Threading.Event for coordinated daemon startup.
+# Dependent threads wait for this event before accessing shared resources.
+# A 60-second timeout prevents indefinite hangs if the warmup thread
+# crashes before reaching its finally block or hangs inside the try block.
+_CHROMADB_READY_TIMEOUT = 60.0
 _chromadb_ready = _threading.Event()
-_model_ready = _threading.Event()
 
 _threading.Thread(target=_start_gateway, daemon=True).start()
 
@@ -147,7 +148,10 @@ def _flush_telemetry_loop() -> None:
         from core.memory_backend.telemetry import tracker
         from core.memory import memory as _mem
         # [BUGFIX-4] Wait for ChromaDB warmup before first flush to avoid race.
-        _chromadb_ready.wait()
+        # Timeout prevents indefinite hang if warmup thread never signals.
+        if not _chromadb_ready.wait(timeout=_CHROMADB_READY_TIMEOUT):
+            print(f"[server] WARNING: ChromaDB warmup timed out after {_CHROMADB_READY_TIMEOUT}s, "
+                  "telemetry flush proceeding anyway", file=sys.stderr)
         while True:
             _time.sleep(60)
             try:
@@ -228,9 +232,6 @@ def _warmup_models() -> None:
         print(f"[server] Model warmup: {warmed}/{len(roles)} roles ready ({failed} failed)", file=sys.stderr)
     except Exception as e:
         print(f"[server] Model warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
-    finally:
-        # [BUGFIX-4] Signal that model warmup is complete.
-        _model_ready.set()
 
 _threading.Thread(target=_warmup_models, daemon=True).start()
 
@@ -239,7 +240,10 @@ def _start_meta_learner() -> None:
     try:
         from core.memory_backend.meta_learning import learner
         # [BUGFIX-4] Wait for ChromaDB before starting meta-learner (uses memory.store).
-        _chromadb_ready.wait()
+        # Timeout prevents indefinite hang if warmup thread never signals.
+        if not _chromadb_ready.wait(timeout=_CHROMADB_READY_TIMEOUT):
+            print(f"[server] WARNING: ChromaDB warmup timed out after {_CHROMADB_READY_TIMEOUT}s, "
+                  "meta-learner starting anyway", file=sys.stderr)
         _threading.Thread(target=learner.run_forever, daemon=True).start()
         print("[server] Meta-Learner daemon started", file=sys.stderr)
     except Exception as e:
@@ -252,7 +256,10 @@ def _start_eviction_flusher() -> None:
     try:
         from core.memory_backend.eviction import flusher_loop
         # [BUGFIX-4] Wait for ChromaDB before starting eviction (uses memory.store).
-        _chromadb_ready.wait()
+        # Timeout prevents indefinite hang if warmup thread never signals.
+        if not _chromadb_ready.wait(timeout=_CHROMADB_READY_TIMEOUT):
+            print(f"[server] WARNING: ChromaDB warmup timed out after {_CHROMADB_READY_TIMEOUT}s, "
+                  "eviction flusher starting anyway", file=sys.stderr)
         _threading.Thread(target=flusher_loop, daemon=True).start()
         print("[server] Eviction Flusher started", file=sys.stderr)
     except Exception as e:
@@ -284,7 +291,10 @@ def _start_diversity_enforcer() -> None:
         from core.runtime.activity_tracker import tracker
 
         # [BUGFIX-4] Wait for ChromaDB before first maintenance check.
-        _chromadb_ready.wait()
+        # Timeout prevents indefinite hang if warmup thread never signals.
+        if not _chromadb_ready.wait(timeout=_CHROMADB_READY_TIMEOUT):
+            print(f"[server] WARNING: ChromaDB warmup timed out after {_CHROMADB_READY_TIMEOUT}s, "
+                  "diversity enforcer starting anyway", file=sys.stderr)
         last_run = 0.0
         while True:
             _time.sleep(1800)  # Check every 30 mins
