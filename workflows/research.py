@@ -285,10 +285,16 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
 
         dossier = "\n\n".join(dossier_parts)
 
-        # Hard cap the dossier to prevent context explosion at synthesis time
+        # Hard cap the dossier to prevent context explosion at synthesis time.
+        # Cut at paragraph boundary to preserve markdown structure and citations.
         max_dossier_chars = cfg.web_max_text_chars * 2
         if len(dossier) > max_dossier_chars:
-            dossier = dossier[:max_dossier_chars] + "\n\n[...TRUNCATED DUE TO LENGTH...]"
+            trunc_point = dossier.rfind("\n\n", 0, max_dossier_chars)
+            if trunc_point == -1:
+                trunc_point = dossier.rfind("\n", 0, max_dossier_chars)
+            if trunc_point == -1:
+                trunc_point = max_dossier_chars
+            dossier = dossier[:trunc_point] + "\n\n[... dossier truncated: " + str(len(dossier) - trunc_point) + " chars omitted ...]"
 
         node_step(state, "parallel_scrape", f"built dossier with {citation_idx-1} sources ({len(dossier)} chars)")
         return {**state, "search_results": dossier}

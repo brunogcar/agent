@@ -47,11 +47,11 @@ class TestNodeSearch:
                 {"url": "http://b.com", "title": "B", "snippet": "snip B"}
             ]
         }
-        
+
         # Patch where it is actually imported/used
         with patch("tools.web.web", return_value=mock_web_result):
             new_state = node_search(state)
-            
+
         parsed = json.loads(new_state["search_results"])
         assert isinstance(parsed, list)
         assert len(parsed) == 2
@@ -70,22 +70,22 @@ class TestNodeParallelScrape:
         from core.config import cfg
         original_cap = cfg.web_max_text_chars
         cfg.web_max_text_chars = 50  # Force tiny cap (max dossier = 100 chars)
-        
+
         try:
             state = _base_state()
             state["search_results"] = json.dumps([
                 {"url": "http://a.com", "title": "A"},
                 {"url": "http://b.com", "title": "B"}
             ])
-            
+
             def mock_worker(url, title, goal, trace_id):
                 return {"url": url, "title": title, "status": "success", "summary": "X" * 200}
-                
+
             with patch("workflows.research._scrape_and_summarize", side_effect=mock_worker):
                 new_state = node_parallel_scrape(state)
-                
+
             dossier = new_state["search_results"]
-            assert "[...TRUNCATED DUE TO LENGTH...]" in dossier
+            assert "[... dossier truncated:" in dossier
             assert len(dossier) <= (50 * 2) + 50  # Cap * 2 + marker length
         finally:
             cfg.web_max_text_chars = original_cap
@@ -101,15 +101,15 @@ class TestNodeParallelScrape:
             {"url": "http://a.com", "title": "A"},
             {"url": "http://b.com", "title": "B"}
         ])
-        
+
         def mock_worker(url, title, goal, trace_id):
             if "b.com" in url:
                 return {"url": url, "title": title, "status": "failed", "error": "timeout"}
             return {"url": url, "title": title, "status": "success", "summary": "Good data"}
-            
+
         with patch("workflows.research._scrape_and_summarize", side_effect=mock_worker):
             new_state = node_parallel_scrape(state)
-            
+
         dossier = new_state["search_results"]
         assert "[Source 1]" in dossier, "Successful worker should be Source 1"
         assert "http://a.com" in dossier

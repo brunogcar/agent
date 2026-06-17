@@ -75,14 +75,53 @@ _browser_lock = threading.Lock()  # Serializes all browser operations
 _reaper_started = False
 
 
+# ── Screenshot Cleanup (P2) ────────────────────────────────────────────────
+# Screenshots accumulate on disk indefinitely. We clean up old ones on startup
+# and register a periodic reaper alongside the context reaper.
+
+_SCREENSHOT_MAX_AGE_DAYS = 7
+
+
+def _cleanup_old_screenshots() -> int:
+    """Delete screenshot files older than _SCREENSHOT_MAX_AGE_DAYS.
+
+    Returns number of files deleted.
+    """
+    screenshot_dir = cfg.workspace_root / "screenshots"
+    if not screenshot_dir.exists():
+        return 0
+
+    cutoff = time.time() - (_SCREENSHOT_MAX_AGE_DAYS * 86400)
+    deleted = 0
+    try:
+        for f in screenshot_dir.iterdir():
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                try:
+                    f.unlink()
+                    deleted += 1
+                except OSError:
+                    pass
+        if deleted > 0:
+            logger.info("[browser] Cleaned up %d old screenshots", deleted)
+    except OSError:
+        pass
+    return deleted
+
+
 # ── Lifecycle Management ───────────────────────────────────────────────────
 
 def _start_reaper():
-    """Start background daemon thread to close idle contexts."""
+    """Start background daemon threads:
+      1. Close idle browser contexts after 10 minutes.
+      2. Clean up old screenshot files periodically.
+    """
     global _reaper_started
     if _reaper_started:
         return
     _reaper_started = True
+
+    # Clean up old screenshots on startup
+    _cleanup_old_screenshots()
 
     def _reap():
         while True:
@@ -103,6 +142,10 @@ def _start_reaper():
                 except Exception:
                     pass
                 logger.info("[browser] Reaped idle context for trace %s", tid)
+
+            # Periodic screenshot cleanup (every ~6 hours = 360 cycles of 60s)
+            if int(now) % 21600 < 60:
+                _cleanup_old_screenshots()
 
     t = threading.Thread(target=_reap, daemon=True, name="browser-reaper")
     t.start()
@@ -223,6 +266,10 @@ def browser(
     - State persists within a trace but is isolated between traces.
     - Use action="close" to explicitly clean up.
 
+    SCREENSHOT CLEANUP:
+    - Screenshots older than 7 days are auto-deleted on startup and every 6 hours.
+    - Use action="screenshot" with explicit path= to keep important shots.
+
     ACTIONS:
     navigate: Go to URL and wait for load
     url (required): URL to navigate to
@@ -245,7 +292,7 @@ def browser(
 
     screenshot: Capture page or element
     selector (optional): CSS selector (default: full page)
-    path (optional): Save path (default: workspace/screenshots/{trace_id}.png)
+    path (optional): Save path (default: workspace/screenshots/{trace_id}_{timestamp}.png)
 
     text_content: Extract text from element
     selector (required): CSS selector (default: "body")
