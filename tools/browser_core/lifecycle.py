@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import atexit
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from core.config import cfg
-from tools.browser_core.state import _browser, _playwright, _contexts, _pages, _browser_lock, _reaper_started
+from tools.browser_core import state as _st
 from tools.browser_core.loop import _run_browser_async
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ def _cleanup_old_screenshots() -> int:
     Returns number of files deleted.
     """
     try:
-        screenshot_dir = cfg.agent_root / "tmp" / "screenshots"
+        screenshot_dir = cfg.workspace_root / "screenshots"
     except Exception:
         return 0
     if not screenshot_dir.exists():
@@ -47,13 +48,12 @@ def _cleanup_old_screenshots() -> int:
 
 def _start_reaper():
     """Start background daemon threads:
-      1. Close idle browser contexts after 10 minutes.
-      2. Clean up old screenshot files periodically.
+    1. Close idle browser contexts after 10 minutes.
+    2. Clean up old screenshot files periodically.
     """
-    global _reaper_started
-    if _reaper_started:
+    if _st._reaper_started:
         return
-    _reaper_started = True
+    _st._reaper_started = True
 
     # Clean up old screenshots on startup — swallow errors so browser can still start
     try:
@@ -66,20 +66,20 @@ def _start_reaper():
             time.sleep(60)
             now = time.time()
             to_close = []
-            with _browser_lock:
-                for tid, (ctx, last_used) in list(_contexts.items()):
+            with _st._browser_lock:
+                for tid, (ctx, last_used) in list(_st._contexts.items()):
                     if now - last_used > 600:  # 10 minutes idle
                         to_close.append((tid, ctx))
                 for tid, _ in to_close:
-                    if tid in _pages:
-                        del _pages[tid]
-                    del _contexts[tid]
-            for tid, ctx in to_close:
-                try:
-                    _run_browser_async(ctx.close(), timeout=30)
-                except Exception:
-                    pass
-                logger.info("[browser] Reaped idle context for trace %s", tid)
+                    if tid in _st._pages:
+                        del _st._pages[tid]
+                    del _st._contexts[tid]
+                for tid, ctx in to_close:
+                    try:
+                        _run_browser_async(ctx.close(), timeout=30)
+                    except Exception:
+                        pass
+                    logger.info("[browser] Reaped idle context for trace %s", tid)
 
             # Periodic screenshot cleanup (every ~6 hours = 360 cycles of 60s)
             if int(now) % 21600 < 60:
@@ -94,28 +94,27 @@ def _start_reaper():
 
 def _cleanup_all():
     """Close all browser resources. Called on process exit."""
-    global _browser, _playwright
-    with _browser_lock:
-        for tid in list(_pages.keys()):
-            _pages.pop(tid, None)
-        for tid, (ctx, _) in list(_contexts.items()):
+    with _st._browser_lock:
+        for tid in list(_st._pages.keys()):
+            _st._pages.pop(tid, None)
+        for tid, (ctx, _) in list(_st._contexts.items()):
             try:
                 _run_browser_async(ctx.close(), timeout=30)
             except Exception:
                 pass
-            _contexts.pop(tid, None)
-        if _browser:
+            _st._contexts.pop(tid, None)
+        if _st._browser:
             try:
-                _run_browser_async(_browser.close(), timeout=30)
+                _run_browser_async(_st._browser.close(), timeout=30)
             except Exception:
                 pass
-            _browser = None
-        if _playwright:
+            _st._browser = None
+        if _st._playwright:
             try:
-                _run_browser_async(_playwright.stop(), timeout=30)
+                _run_browser_async(_st._playwright.stop(), timeout=30)
             except Exception:
                 pass
-            _playwright = None
+            _st._playwright = None
 
 
 # Register atexit handler for normal process shutdown

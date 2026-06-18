@@ -48,7 +48,7 @@ def _action_navigate(
                 timeout=timeout + 5,
             )
             title = _run_browser_async(page.title(), timeout=10)
-        return ok({"url": page.url, "title": title}, trace_id=trace_id)
+            return ok({"url": page.url, "title": title}, trace_id=trace_id)
     except Exception as e:
         return fail(f"Navigation failed: {e}", trace_id=trace_id)
 
@@ -77,7 +77,7 @@ def _action_click(
                 page.click(selector, timeout=timeout * 1000),
                 timeout=timeout + 5,
             )
-        return ok({"clicked": True, "selector": selector}, trace_id=trace_id)
+            return ok({"clicked": True, "selector": selector}, trace_id=trace_id)
     except Exception as e:
         return fail(f"Click failed: {e}", trace_id=trace_id)
 
@@ -106,7 +106,7 @@ def _action_fill(
                 page.fill(selector, value, timeout=timeout * 1000),
                 timeout=timeout + 5,
             )
-        return ok({"filled": True, "selector": selector}, trace_id=trace_id)
+            return ok({"filled": True, "selector": selector}, trace_id=trace_id)
     except Exception as e:
         return fail(f"Fill failed: {e}", trace_id=trace_id)
 
@@ -135,7 +135,7 @@ def _action_type(
                 page.type(selector, value, delay=delay, timeout=timeout * 1000),
                 timeout=timeout + 5,
             )
-        return ok({"typed": True, "selector": selector}, trace_id=trace_id)
+            return ok({"typed": True, "selector": selector}, trace_id=trace_id)
     except Exception as e:
         return fail(f"Type failed: {e}", trace_id=trace_id)
 
@@ -158,7 +158,7 @@ def _action_screenshot(
     try:
         with _browser_lock:
             page = _run_browser_async(_get_page(trace_id, headless), timeout=timeout + 5)
-            screenshot_dir = cfg.agent_root / "tmp" / "screenshots"
+            screenshot_dir = cfg.workspace_root / "screenshots"
             screenshot_dir.mkdir(parents=True, exist_ok=True)
             if path:
                 save_path = Path(path)
@@ -179,7 +179,16 @@ def _action_screenshot(
                     page.screenshot(path=str(save_path), full_page=True),
                     timeout=timeout + 5,
                 )
-        return ok({"path": str(save_path)}, trace_id=trace_id)
+            result = {"path": str(save_path)}
+            # TODO: Phase 5 — implement return_base64 encoding
+            # if return_base64:
+            #     try:
+            #         with open(save_path, "rb") as f:
+            #             b64 = base64.b64encode(f.read()).decode()
+            #         result["base64"] = b64
+            #     except Exception:
+            #         pass
+            return ok(result, trace_id=trace_id)
     except Exception as e:
         return fail(f"Screenshot failed: {e}", trace_id=trace_id)
 
@@ -207,7 +216,7 @@ def _action_text_content(
                 page.text_content(target_selector, timeout=timeout * 1000),
                 timeout=timeout + 5,
             )
-        return ok({"text": text or "", "selector": target_selector}, trace_id=trace_id)
+            return ok({"text": text or "", "selector": target_selector}, trace_id=trace_id)
     except Exception as e:
         return fail(f"text_content failed: {e}", trace_id=trace_id)
 
@@ -235,7 +244,7 @@ def _action_evaluate(
             result = _run_browser_async(
                 page.evaluate(expression), timeout=timeout + 5
             )
-        return ok({"result": result, "expression": expression}, trace_id=trace_id)
+            return ok({"result": result, "expression": expression}, trace_id=trace_id)
     except Exception as e:
         return fail(f"Evaluate failed: {e}", trace_id=trace_id)
 
@@ -264,7 +273,7 @@ def _action_select_option(
                 page.select_option(selector, value, timeout=timeout * 1000),
                 timeout=timeout + 5,
             )
-        return ok({"selected": value, "selector": selector}, trace_id=trace_id)
+            return ok({"selected": value, "selector": selector}, trace_id=trace_id)
     except Exception as e:
         return fail(f"select_option failed: {e}", trace_id=trace_id)
 
@@ -290,7 +299,7 @@ def _action_keyboard_press(
         with _browser_lock:
             page = _run_browser_async(_get_page(trace_id, headless), timeout=timeout + 5)
             _run_browser_async(page.keyboard.press(key), timeout=timeout + 5)
-        return ok({"pressed": key}, trace_id=trace_id)
+            return ok({"pressed": key}, trace_id=trace_id)
     except Exception as e:
         return fail(f"keyboard_press failed: {e}", trace_id=trace_id)
 
@@ -314,7 +323,7 @@ def _action_get_url(
         with _browser_lock:
             page = _run_browser_async(_get_page(trace_id, headless), timeout=timeout + 5)
             current_url = page.url
-        return ok({"url": current_url}, trace_id=trace_id)
+            return ok({"url": current_url}, trace_id=trace_id)
     except Exception as e:
         return fail(f"get_url failed: {e}", trace_id=trace_id)
 
@@ -337,14 +346,14 @@ def _action_close(
     try:
         with _browser_lock:
             from tools.browser_core.state import _contexts, _pages
-            key = trace_id or f"anon_{uuid.uuid4().hex[:8]}"
-            if key in _pages:
-                del _pages[key]
-            if key in _contexts:
-                ctx, _ = _contexts[key]
-                del _contexts[key]
+            ctx_key = trace_id or f"anon_{uuid.uuid4().hex[:8]}"
+            if ctx_key in _pages:
+                del _pages[ctx_key]
+            if ctx_key in _contexts:
+                ctx, _ = _contexts[ctx_key]
+                del _contexts[ctx_key]
                 _run_browser_async(ctx.close(), timeout=30)
-        return ok({"closed": True}, trace_id=trace_id)
+            return ok({"closed": True}, trace_id=trace_id)
     except Exception as e:
         return fail(f"Close failed: {e}", trace_id=trace_id)
 
@@ -373,7 +382,7 @@ def _action_wait_for_selector(
                 page.wait_for_selector(selector, timeout=timeout * 1000),
                 timeout=timeout + 5,
             )
-        return ok({"waited": True, "selector": selector}, trace_id=trace_id)
+            return ok({"waited": True, "selector": selector}, trace_id=trace_id)
     except Exception as e:
         return fail(f"wait_for_selector failed: {e}", trace_id=trace_id)
 

@@ -24,7 +24,7 @@ def reset_browser_state():
 def mock_cfg_for_browser(tmp_path):
     """Mock cfg to prevent AsyncMock leakage and provide browser defaults."""
     # Patch cfg where it's imported in each browser_core module
-    with patch("tools.browser_core.lifecycle.cfg") as mock_cfg_lifecycle,          patch("tools.browser_core.init.cfg") as mock_cfg_init,          patch("tools.browser_core.actions.cfg") as mock_cfg_actions:
+    with patch("tools.browser_core.lifecycle.cfg") as mock_cfg_lifecycle, patch("tools.browser_core.init.cfg") as mock_cfg_init, patch("tools.browser_core.actions.cfg") as mock_cfg_actions:
         for mock_cfg in [mock_cfg_lifecycle, mock_cfg_init, mock_cfg_actions]:
             mock_cfg.workspace_root = tmp_path
             mock_cfg.agent_root = tmp_path

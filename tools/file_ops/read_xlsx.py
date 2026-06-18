@@ -49,14 +49,14 @@ def _handle_read_xlsx(path: str = "", max_chars: int = 50_000, trace_id: str = "
                 if num_cols:
                     stats = first_df[num_cols].describe().round(2).to_dict()
 
-            return {
-                "status":      "success",
-                "path":        str(p),
-                "sheets":      sheets,
-                "sheet_count": len(sheets),
-                "data":        result,
-                "stats":       stats,
-            }
+        return {
+            "status":      "success",
+            "path":        str(p),
+            "sheets":      sheets,
+            "sheet_count": len(sheets),
+            "data":        result,
+            "stats":       stats,
+        }
     except ImportError:
         return {"status": "error", "error": "pandas not installed. Run: pip install pandas openpyxl"}
     except Exception as e:
