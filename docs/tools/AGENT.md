@@ -189,6 +189,20 @@ result = agent(role="vision", task="Identify the error", content="data:image/png
 
 Delegates to `tools/vision.py`. Does NOT call `llm.complete()`.
 
+#### Vision Role — Known Limitations
+
+The agent facade simplifies vision to the most common use cases. The following
+`tools.vision.vision()` parameters are **not exposed** through `agent(role="vision")`:
+
+| Parameter | Status | Workaround |
+|-----------|--------|------------|
+| `mime_type` | Not exposed | Call `tools.vision.vision()` directly |
+| `json_mode` | Not exposed | Call `tools.vision.vision()` directly |
+
+For full vision control (e.g., requesting JSON-structured vision output or
+specifying a non-default MIME type), bypass the agent facade and call
+`tools.vision.vision()` directly.
+
 ---
 
 ## ✂️ Context Trimming
@@ -235,6 +249,20 @@ For prompt-only JSON roles, if the model wraps JSON in markdown fences or adds s
 ```
 
 If parsing fails entirely, returns `parsed: {}` with a `parse_warning` so callers can safely do `result.get("parsed", {}).get("field")` without crashing.
+
+**`parse_warning` field:** When JSON parsing fails, the response includes a
+`parse_warning` string explaining what went wrong. This is a diagnostic aid
+for debugging prompt issues — callers should not rely on it for control flow.
+
+```json
+{
+  "status": "success",
+  "role": "review",
+  "text": "I think this looks good...",
+  "parsed": {},
+  "parse_warning": "Response was not valid JSON for role 'review'. parsed={} returned. Check response.text for raw output."
+}
+```
 
 ---
 
@@ -349,10 +377,21 @@ If you are an AI assistant modifying the agent tool:
 |-------|--------|-------------|
 | **Phase 1** | ✅ Complete | Core roles: classify, route, research, summarize, extract, critique, analyze, code, review, plan, consultor, vision |
 | **Phase 2** | ✅ Complete | Agent split: `tools/agent_tool.py` → `tools/agent.py` + `tools/agent_core/` (prompts, roles, context) |
-| **Phase 3** | 🚧 Planned | New roles: `refactor`, `test`, `document` — for autonomous code maintenance workflows |
-| **Phase 4** | 🚧 Planned | Streaming support — partial responses for long-running research/analysis roles |
-| **Phase 5** | 🚧 Planned | Role composition — chain multiple roles in a single call (e.g., `analyze` → `code` → `review`) |
+| **Phase 3** | ✅ Complete | Bug fixes: broken imports, JSON regex → brace-counting parser, test coverage gaps |
+| **Phase 4** | ✅ Complete | Features: sleep-learn integration, `parse_warning` docs, vision limitations documented |
+
+### Future Work (Beyond Phase 4)
+
+| Priority | Item | Effort | Why |
+|----------|------|--------|-----|
+| 🔵 Future | Streaming support for `research`/`code` roles | Large | Partial responses for long-running roles; requires `core/llm.py` redesign |
+| 🔵 Future | Role composition chaining | Large | Chain multiple roles in single call: `analyze` → `code` → `review`; depends on streaming decision |
+| 🔵 Future | Vision `mime_type` / `json_mode` exposure through agent facade | Medium | Currently only accessible via direct `tools.vision.vision()` call |
+| 🔵 Future | Token-aware context trimming | Medium | Replace `* 4` char approximation with actual tokenizer count |
+| 🔵 Future | Self-improving prompts via sleep-learn feedback loop | Large | Auto-tune system prompts based on success/failure metrics |
+| 🔵 Future | Role-specific context budget overrides | Small | Allow per-role `max_context_tokens` instead of global default |
+| 🔵 Future | New roles: `refactor`, `test`, `document` | Medium each | Autonomous code maintenance workflows |
 
 ---
 
-*Last updated: Phase 2 complete. 27 agent tests passing. Architecture: thin facade + agent_core submodules.*
+*Last updated: Phase 4 complete. 34 agent tests passing. Architecture: thin facade + agent_core submodules + sleep-learn integration.*

@@ -303,8 +303,13 @@ def node_parallel_scrape(state: WorkflowState) -> WorkflowState:
 
 
 def node_synthesize(state: WorkflowState) -> WorkflowState:
-    """Synthesize web results + memory into a coherent answer."""
-    from tools.agent_tool import agent
+    """Synthesize web results + memory into a coherent answer.
+
+    Uses agent(role="research") to synthesize scraped web content and
+    recalled memories into a single coherent response. The research role
+    has a 120s timeout and uses the Executor model (capable, slower).
+    """
+    from tools.agent import agent  # thin facade; prompts/roles live in agent_core/  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
 
     goal = state.get("goal", "")
     search_results = state.get("search_results", "")

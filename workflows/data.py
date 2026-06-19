@@ -51,7 +51,12 @@ def node_recall(state: WorkflowState) -> WorkflowState:
 
 
 def node_execute(state: WorkflowState) -> WorkflowState:
-    """Execute the provided Python code."""
+    """Execute the provided Python code.
+
+    If no code is provided, delegates to agent(role="code") to generate
+    Python code from the goal. The code role returns structured JSON with
+    {analysis, patch, assumptions, tests} — we extract the "patch" field.
+    """
     from tools.python_exec import python
 
     code = state.get("code", "")
@@ -59,7 +64,7 @@ def node_execute(state: WorkflowState) -> WorkflowState:
 
     if not code:
         # No code provided -- ask executor to generate it
-        from tools.agent_tool import agent
+        from tools.agent import agent  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
         node_step(state, "execute", "no code provided -- generating")
 
         r = agent(
@@ -98,8 +103,13 @@ def node_execute(state: WorkflowState) -> WorkflowState:
 
 
 def node_critique(state: WorkflowState) -> WorkflowState:
-    """Have the executor critique the output quality."""
-    from tools.agent_tool import agent
+    """Have the executor critique the output quality.
+
+    Uses agent(role="critique") to evaluate whether the code output
+    adequately answers the user's goal. The critique role has a 90s
+    timeout and returns free-form Markdown (not JSON).
+    """
+    from tools.agent import agent  # thin facade; prompts/roles live in agent_core/  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
 
     output = state.get("output", "")
     goal   = state.get("goal", "")

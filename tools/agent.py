@@ -5,6 +5,20 @@ Split into: agent_core/prompts.py, agent_core/roles.py, agent_core/context.py
 
 The LLM sees ONE tool: agent(role, task, ...)
 All prompts, role config, and context trimming live in agent_core/.
+
+Architecture:
+  1. Validate inputs (role exists, task non-empty)
+  2. Vision role → delegate to tools.vision.vision() (multimodal, not text LLM)
+  3. Lookup system prompt + LLM role from agent_core/ modules
+  4. Trim context + content via agent_core.context._trim_context()
+  5. Call llm.complete() with role-specific model, timeout, json_mode
+  6. Parse JSON for structured-output roles (extract, route, plan, code, review)
+  7. Compress and return result dict
+
+JSON Parsing:
+  - API json_mode: extract role (model enforces JSON schema)
+  - Prompt-only JSON: route, plan, code, review (parsed post-hoc with brace-counting fallback)
+  - Non-JSON: classify, research, summarize, critique, analyze, consultor
 """
 from __future__ import annotations
 
@@ -111,7 +125,7 @@ def agent(
         if content and not b64 and not file_path and not url:
             b64 = content
 
-        # FIX: parameter name in vision() is "task", NOT "prompt"!
+        # vision() uses "task=" for the instruction (not "prompt=")
         return _vision(
             task = task,
             file_path = file_path,
@@ -173,27 +187,66 @@ def agent(
             # API json_mode parsed it already
             response["parsed"] = result.parsed
         else:
-            # Prompt-only JSON role -- try to parse the text ourselves
+            # ── JSON extraction fallback ─────────────────────────────────────────
+            # If the LLM wrapped JSON in prose or markdown fences, extract the
+            # first complete JSON object. A naive regex like \{.*?\} breaks on
+            # nested objects (e.g. {"a": {"b": 1}}). We use brace-counting that
+            # respects string boundaries so nested JSON parses correctly.
             import json as _json
-            import re as _re
             clean = result.text.strip()
             for fence in ("```json", "```"):
                 if clean.startswith(fence):
                     clean = clean[len(fence):]
                     clean = clean.strip().rstrip("`").strip()
-            # Extract first JSON object if there is surrounding text
-            match = _re.search(r"\{.*?\}", clean, _re.DOTALL)
-            if match:
-                clean = match.group(0)
+
+            def _extract_first_json(text: str) -> str | None:
+                """Extract first complete JSON object using brace counting."""
+                start = text.find("{")
+                if start == -1:
+                    return None
+                depth = 0
+                in_string = False
+                escape = False
+                for i in range(start, len(text)):
+                    c = text[i]
+                    if escape:
+                        escape = False
+                        continue
+                    if c == "\\":
+                        escape = True
+                        continue
+                    if c == '"' and not escape:
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            return text[start:i + 1]
+                return None
+
+            # Try clean parse first (fast path for well-behaved models)
             try:
                 response["parsed"] = _json.loads(clean)
             except _json.JSONDecodeError:
-                # Return empty dict so callers can safely do
-                # response.get("parsed", {}).get("field") without crashing
-                response["parsed"] = {}
-                response["parse_warning"] = (
-                    f"Response was not valid JSON for role '{role}'. "
-                    "parsed={} returned. Check response.text for raw output."
-                )
+                extracted = _extract_first_json(clean)
+                if extracted:
+                    try:
+                        response["parsed"] = _json.loads(extracted)
+                    except _json.JSONDecodeError:
+                        response["parsed"] = {}
+                        response["parse_warning"] = (
+                            f"Extracted JSON was invalid for role '{role}'. "
+                            "parsed={} returned. Check response.text for raw output."
+                        )
+                else:
+                    response["parsed"] = {}
+                    response["parse_warning"] = (
+                        f"Response was not valid JSON for role '{role}'. "
+                        "parsed={} returned. Check response.text for raw output."
+                    )
 
     return compress_result(response)

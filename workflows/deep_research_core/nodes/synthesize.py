@@ -14,7 +14,7 @@ from workflows.deep_research_core.constants import (
     EVALUATE_SYSTEM_PROMPT,
     EVALUATE_USER_TEMPLATE,
 )
-from tools.agent_tool import agent
+from tools.agent import agent  # [PHASE-4] Migrated from tools.agent_tool → tools.agent
 
 _MAX_PREV_KNOWLEDGE_CHARS = 6000
 

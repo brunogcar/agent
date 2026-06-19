@@ -68,11 +68,11 @@ def dispatch(trace_id: str, payload: dict) -> Any:
         return git(action=action, **params)
 
     if tool == "agent":
-        from tools.agent_tool import agent
+        from tools.agent import agent  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
         return agent(**params)
 
     if tool == "report":
-        from tools.report_tool import report
+        from tools.report import report  # [PHASE-3] Migrated from tools.report_tool → tools.report
         return report(**params)
 
     if tool == "notify":
