@@ -26,7 +26,7 @@ from core.security import is_safe_network_address
 from core.tracer import tracer
 from core.config import cfg
 
-from tools.browser_core.init import _get_page
+from tools.browser_core.factory import _get_page
 from tools.browser_core.loop import _run_browser_async
 from tools.browser_core.state import _browser_lock, _contexts, _pages
 
