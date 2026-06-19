@@ -20,7 +20,7 @@ The browser tool follows a **thin facade + core submodule** pattern. `tools/brow
 tools/browser.py                    # @tool facade — sync action dispatch
 tools/browser_core/
 ├── actions.py                      # Action handlers + DISPATCH dict + DISPATCH_METADATA
-├── init.py                         # _launch_browser(), _get_or_create_context(), _get_page()
+├── factory.py                      # _launch_browser(), _get_or_create_context(), _get_page()
 ├── loop.py                         # _ensure_browser_loop(), _run_browser_async()
 ├── lifecycle.py                    # _start_reaper(), _cleanup_all(), screenshot pruning
 └── state.py                        # Global state: _browser, _contexts, _pages, _browser_lock
@@ -456,7 +456,7 @@ If you are an AI assistant modifying the browser tool:
 |------|---------|
 | `tools/browser.py` | `@tool` facade, action dispatch, tracer logging |
 | `tools/browser_core/actions.py` | Action handlers, `DISPATCH`, `DISPATCH_METADATA` |
-| `tools/browser_core/init.py` | Browser/context/page lazy initialization |
+| `tools/browser_core/factory.py` | Browser/context/page lazy initialization |
 | `tools/browser_core/loop.py` | Dedicated async event loop thread |
 | `tools/browser_core/lifecycle.py` | Reaper, cleanup, screenshot pruning |
 | `tools/browser_core/state.py` | Global state variables and reset helpers |
