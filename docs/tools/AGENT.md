@@ -7,7 +7,7 @@ The `agent()` tool is the **meta-cognitive dispatcher** of the MCP Agent Stack. 
 - **Role-specialized prompts** — 12 distinct personas, each with tailored instructions
 - **Per-role model routing** — Router uses fast 2B models, Executor uses capable 9B models
 - **Per-role context budgets** — Router gets 4K tokens, Planner gets 32K tokens
-- **Token-aware context trimming** — Uses tiktoken/transformers when available, falls back to chars/4
+- **Token-aware context trimming** — Uses tiktoken when available, falls back to chars/4
 - **Response caching** — Deterministic roles (`classify`, `route`) cached with 5-min TTL
 - **Structured output enforcement** — JSON mode for `extract`, prompt-only JSON for `route`, `plan`, `code`, `review`
 - **Structured errors** — `error_code` field enables programmatic retry decisions
@@ -82,7 +82,7 @@ graph TD
 **Key design decisions:**
 - **Unified ROLE_CONFIG** — Single dict holds `llm_role`, `json_mode`, `budget_chars`, `cacheable`, `fallback_role`. Adding a role means one entry here + one prompt in `prompts.py`.
 - **Per-role context budgets** — `classify`/`route`: 16K chars (4K tokens). `plan`/`research`/`code`: 128K chars (32K tokens). Others: 48K chars (12K tokens).
-- **Token-aware trimming** — `_estimate_tokens()` tries tiktoken, then transformers, then chars/4 fallback. `_trim_context()` accepts `max_tokens` for accurate budget enforcement.
+- **Token-aware trimming** — `_estimate_tokens()` uses tiktoken (cached encoder) when available, falls back to chars/4. `_trim_context()` accepts `max_tokens` for accurate budget enforcement.
 - **Response caching** — `classify` and `route` are deterministic: same input → same output. Cached by SHA256 hash, 5-minute TTL, 100-entry LRU.
 - **Structured errors** — `error_code` field (`INVALID_ROLE`, `INVALID_INPUT`, `TIMEOUT`, `CIRCUIT_OPEN`, `RATE_LIMIT`, `MODEL_ERROR`, `PARSE_ERROR`, `MISSING_DEPENDENCY`) lets callers retry intelligently.
 - **Role fallback chains** — On transient LLM failure, automatically retry with a functionally similar role (e.g., `classify`→`route` returns structured category info).
@@ -172,7 +172,7 @@ Before any LLM call, `context` and `content` are passed through `_trim_context()
 |---------|----------|
 | **Head + Tail** | Keeps first 2000 chars (goal/objective) and last 4000 chars (recent interactions) |
 | **Per-role budget** | `classify`/`route`: 16K chars (4K tokens). `plan`/`research`/`code`: 128K chars (32K tokens). Others: 48K chars (12K tokens) |
-| **Token-aware** | `_estimate_tokens()` tries tiktoken → transformers → chars/4 fallback |
+| **Token-aware** | `_estimate_tokens()` uses tiktoken (cached encoder) when available, falls back to chars/4 |
 | **Dynamic budget** | `cfg.max_context_tokens` fallback (config-reloadable, clamped to minimum 4000 chars) |
 | **Traceback preservation** | If a Python traceback is detected, it is preserved in full within the tail. Uses line-by-line frame detection (not `\n\n` heuristics) for robustness. |
 | **Custom max_chars** | `_trim_context(text, max_chars=500)` for one-off overrides |
@@ -222,11 +222,16 @@ For prompt-only JSON roles, the parser uses a robust three-stage approach:
 2. **Brace-counting extraction** — If fast path fails, scan for all `{` and `[` positions
    and use depth tracking (respecting string boundaries and escaped quotes) to find
    the complete JSON structure. Handles nested objects, arrays at root, and braces
-   inside string values. Prefers the largest valid structure to handle prose before JSON.
+   inside string values. Prefers dicts over arrays (since agent roles expect dict-root
+   JSON), then the largest valid structure to handle prose before JSON.
 
 3. **Autonomous model escalation** — If extraction fails, the facade automatically
    retries with the planner model (heavier, more JSON-compliant) before giving up.
    If escalation succeeds, `escalated: true` is set in the response.
+
+   **Note:** Fallback + escalation can produce up to 3 sequential LLM calls
+   (primary → fallback → planner escalation). This is intentional defense-in-depth,
+   but be aware of compounding timeout risk.
 
 4. **Graceful failure** — If all attempts fail, returns `parsed: {}` with a
    `parse_warning` so callers can safely do `result.get("parsed", {}).get("field")`
@@ -309,7 +314,7 @@ Lightweight in-memory metrics are collected for every agent call:
 | `successes` | Successful completions |
 | `failures` | Failed completions (LLM error, timeout, etc.) |
 | `total_elapsed` | Cumulative wall-clock time |
-| `total_tokens` | Cumulative token consumption |
+| `total_tokens` | Cumulative token consumption (reads `usage["total"]`) |
 | `parse_failures` | JSON parse failures (prompt-only JSON roles) |
 | `last_call` | Unix timestamp of most recent call |
 
@@ -425,7 +430,7 @@ tests/tools/agent/
 - `llm.complete` is patched at `tools.agent.llm.complete` (where it is used)
 - `tools.vision.vision` is patched at `tools.vision.vision` (where it is imported inline)
 - `cfg` is patched at `tools.agent_core.context.cfg` (module-level import)
-- `mock_llm_result` is a pre-built `MagicMock` with all required attributes
+- `mock_llm_result` is a pre-built `MagicMock` with all required attributes matching `LLMResponse.usage` shape: `{"prompt": int, "completion": int, "total": int}`
 - Cache, metrics, and parse warning logs are cleared via `setup_method` in each test class
 
 ---
@@ -526,4 +531,4 @@ If you are an AI assistant modifying the agent tool:
 
 ---
 
-*Last updated: Phase 6 complete. Token-aware trimming, prompt versioning, per-role metrics, parse warning logging, autonomous model escalation, and role fallback chains all active. 80+ agent tests passing. Architecture: thin facade + agent_core submodules + advanced resilience features.*
+*Last updated: Phase 6 complete + hardening. Token-aware trimming with tiktoken caching, prompt versioning, per-role metrics with correct usage key, parse warning logging, autonomous model escalation with hardened parse_warning handling, role fallback chains, and line-by-line traceback detection. 90+ agent tests passing. Architecture: thin facade + agent_core submodules + advanced resilience features.*

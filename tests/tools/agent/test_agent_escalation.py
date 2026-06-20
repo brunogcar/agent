@@ -18,12 +18,12 @@ class TestModelEscalation:
         # First call: bad JSON
         bad_result = type("obj", (object,), {
             "ok": True, "text": "not json", "parsed": None,
-            "model": "router", "elapsed": 1.0, "usage": {"total_tokens": 10}
+            "model": "router", "elapsed": 1.0, "usage": {"prompt": 5, "completion": 5, "total": 10}
         })()
         # Escalation call: good JSON
         good_result = type("obj", (object,), {
             "ok": True, "text": '{"step": 1}', "parsed": None,
-            "model": "planner", "elapsed": 2.0, "usage": {"total_tokens": 20}
+            "model": "planner", "elapsed": 2.0, "usage": {"prompt": 10, "completion": 10, "total": 20}
         })()
 
         with patch("tools.agent.llm.complete") as mock_llm:
@@ -50,11 +50,11 @@ class TestModelEscalation:
         """If escalation also fails, original parse_warning is preserved."""
         bad_result = type("obj", (object,), {
             "ok": True, "text": "still not json", "parsed": None,
-            "model": "router", "elapsed": 1.0, "usage": {"total_tokens": 10}
+            "model": "router", "elapsed": 1.0, "usage": {"prompt": 5, "completion": 5, "total": 10}
         })()
         worse_result = type("obj", (object,), {
             "ok": True, "text": "also bad", "parsed": None,
-            "model": "planner", "elapsed": 2.0, "usage": {"total_tokens": 20}
+            "model": "planner", "elapsed": 2.0, "usage": {"prompt": 10, "completion": 10, "total": 20}
         })()
 
         with patch("tools.agent.llm.complete") as mock_llm:

@@ -180,7 +180,8 @@ def _extract_first_json(text: str) -> str | None:
     Handles nested structures, escaped quotes, and strings containing braces
     or brackets. Validates each candidate with json.loads before returning.
 
-    Prefers the largest valid JSON structure to handle arrays at root and
+    Prefers dicts over arrays (since agent roles expect dict-root JSON),
+    then the largest valid structure to handle arrays at root and
     prose with accidental {} before real JSON correctly.
     """
     try:
@@ -190,7 +191,7 @@ def _extract_first_json(text: str) -> str | None:
         pass
 
     _MATCHING = {"{": "}", "[": "]"}
-    candidates = []
+    candidates: list[tuple[str, dict | list]] = []
 
     for opener in ("{", "["):
         closer = _MATCHING[opener]
@@ -222,8 +223,8 @@ def _extract_first_json(text: str) -> str | None:
                     if not stack:
                         candidate = text[start:i + 1]
                         try:
-                            _json.loads(candidate)
-                            candidates.append(candidate)
+                            parsed = _json.loads(candidate)
+                            candidates.append((candidate, parsed))
                         except _json.JSONDecodeError:
                             pass
                         break
@@ -231,13 +232,13 @@ def _extract_first_json(text: str) -> str | None:
     if not candidates:
         return None
 
-    def _score(c):
-        parsed = _json.loads(c)
+    def _score(item):
+        candidate, parsed = item
         is_dict = isinstance(parsed, dict)
-        return (len(c), is_dict)
+        return (is_dict, len(candidate))
 
     candidates.sort(key=_score, reverse=True)
-    return candidates[0]
+    return candidates[0][0]
 
 
 @tool
@@ -423,7 +424,7 @@ def agent(
         elif "rate" in error_lower or "quota" in error_lower:
             error_code = "RATE_LIMIT"
 
-        _record_metric(role, "error", elapsed, result.usage.get("total_tokens", 0) if hasattr(result, "usage") else 0)
+        _record_metric(role, "error", elapsed, result.usage.get("total", 0) if hasattr(result, "usage") else 0)
 
         return {
             "status": "error",
@@ -481,6 +482,9 @@ def agent(
                     )
 
         # ── Autonomous model escalation on parse failure ─────────────────────────
+        # NOTE: fallback+escalation can produce up to 3 sequential LLM calls
+        # (primary → fallback → planner escalation). This is intentional
+        # defense-in-depth, but be aware of compounding timeout risk.
         if parse_failed and role_cfg.get("llm_role") != "planner":
             # Retry with planner (heavy model) for better JSON compliance
             # Only escalate once to avoid infinite loops
@@ -502,7 +506,7 @@ def agent(
                         clean = clean.strip().rstrip("`").strip()
                 try:
                     response["parsed"] = _json.loads(clean)
-                    del response["parse_warning"]
+                    response.pop("parse_warning", None)
                     parse_failed = False
                     response["escalated"] = True
                 except _json.JSONDecodeError:
@@ -510,7 +514,7 @@ def agent(
                     if extracted:
                         try:
                             response["parsed"] = _json.loads(extracted)
-                            del response["parse_warning"]
+                            response.pop("parse_warning", None)
                             parse_failed = False
                             response["escalated"] = True
                         except _json.JSONDecodeError:
@@ -520,7 +524,7 @@ def agent(
         _log_parse_warning(role, response.get("parse_warning", ""), result.text)
 
     # ── Metrics and cache ────────────────────────────────────────────────────
-    total_tokens = result.usage.get("total_tokens", 0) if hasattr(result, "usage") and result.usage else 0
+    total_tokens = result.usage.get("total", 0) if hasattr(result, "usage") and result.usage else 0
     _record_metric(role, "success", elapsed, total_tokens, parse_failed)
 
     if role_cfg.get("cacheable"):

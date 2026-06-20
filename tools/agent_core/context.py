@@ -6,12 +6,29 @@ from core.config import cfg
 _KEEP_HEAD_CHARS = 2000  # Preserve original goal/objective
 _KEEP_TAIL_CHARS = 4000  # Preserve recent tool interactions
 
+# ── Lazy tiktoken encoder singleton ─────────────────────────────────────────────
+# Caching the encoder avoids reloading the ~1.5MB BPE rank file on every call.
+_tiktoken_enc = None
+
+
+def _get_tiktoken_encoder():
+    """Return cached tiktoken encoder, or None if unavailable."""
+    global _tiktoken_enc
+    if _tiktoken_enc is not None:
+        return _tiktoken_enc
+    try:
+        import tiktoken
+        _tiktoken_enc = tiktoken.get_encoding("cl100k_base")  # GPT-4 / Claude compatible
+        return _tiktoken_enc
+    except Exception:
+        return None
+
 
 def _estimate_tokens(text: str) -> int:
     """Estimate token count for the given text.
 
-    Tries tiktoken first (fast, accurate for OpenAI models), then transformers
-    tokenizer if available, then falls back to chars/4 heuristic.
+    Tries tiktoken first (fast, accurate for OpenAI models).
+    Falls back to chars/4 heuristic if tiktoken is unavailable.
 
     The fallback is conservative: code tokenizes at ~3 chars/token, prose at ~4.
     Using 4 is safe but may under-utilize the budget for code-heavy contexts.
@@ -19,23 +36,9 @@ def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
 
-    # Try tiktoken (lightweight, no torch dependency)
-    try:
-        import tiktoken
-        enc = tiktoken.get_encoding("cl100k_base")  # GPT-4 / Claude compatible
+    enc = _get_tiktoken_encoder()
+    if enc is not None:
         return len(enc.encode(text))
-    except Exception:
-        pass
-
-    # Try transformers tokenizer (if available, e.g. for local models)
-    try:
-        from transformers import AutoTokenizer
-        # Use a generic fast tokenizer; actual model tokenizer is better
-        # but requires knowing the model name at config time.
-        tok = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
-        return len(tok.encode(text))
-    except Exception:
-        pass
 
     # Fallback: chars/4 heuristic (conservative for most content)
     return len(text) // 4
@@ -121,7 +124,7 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
             elif not line.strip():
                 tb_lines.append(line)
             elif seen_frame:
-                # First non-empty, non-indented line after frames = exception
+                # First non-empty, non-indented line after frames = exception line
                 tb_lines.append(line)
                 break
             else:

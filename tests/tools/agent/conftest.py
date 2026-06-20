@@ -22,13 +22,16 @@ def mock_cfg():
 
 @pytest.fixture
 def mock_llm_result():
-    """Return a pre-built MagicMock for a successful llm.complete() result."""
+    """Return a pre-built MagicMock for a successful llm.complete() result.
+
+    Shape matches LLMResponse.usage: {"prompt": int, "completion": int, "total": int}
+    """
     result = MagicMock()
     result.ok = True
     result.text = "mocked response"
     result.model = "test-model"
     result.elapsed = 1.0
-    result.usage = {"prompt_tokens": 10, "completion_tokens": 5}
+    result.usage = {"prompt": 10, "completion": 5, "total": 15}
     result.parsed = None
     result.finish_reason = "stop"
     return result

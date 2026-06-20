@@ -20,7 +20,7 @@ class TestRoleFallback:
         })()
         success_result = type("obj", (object,), {
             "ok": True, "text": '{"category": "bug"}', "parsed": None,
-            "model": "router", "elapsed": 2.0, "usage": {"total_tokens": 15}
+            "model": "router", "elapsed": 2.0, "usage": {"prompt": 8, "completion": 7, "total": 15}
         })()
 
         with patch("tools.agent.llm.complete") as mock_llm:
@@ -41,7 +41,7 @@ class TestRoleFallback:
         })()
         success_result = type("obj", (object,), {
             "ok": True, "text": "Analysis: code has race condition", "parsed": None,
-            "model": "analyze", "elapsed": 5.0, "usage": {"total_tokens": 100}
+            "model": "analyze", "elapsed": 5.0, "usage": {"prompt": 50, "completion": 50, "total": 100}
         })()
 
         with patch("tools.agent.llm.complete") as mock_llm:
