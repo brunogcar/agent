@@ -1,26 +1,24 @@
 """Agent tool tests — autonomous model escalation on parse failure."""
 from __future__ import annotations
 
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 from tools.agent import agent
+from tools.agent_core.cache import _clear_cache
 
 
 class TestModelEscalation:
     """Test auto-retry with planner model when JSON parsing fails."""
 
     def setup_method(self):
-        from tools.agent import _CACHE
-        _CACHE.clear()
+        _clear_cache()
 
     def test_escalation_triggered_on_parse_failure(self, mock_llm_result):
         """When primary model returns invalid JSON, planner model retries."""
-        # First call: bad JSON
         bad_result = type("obj", (object,), {
             "ok": True, "text": "not json", "parsed": None,
             "model": "router", "elapsed": 1.0, "usage": {"prompt": 5, "completion": 5, "total": 10}
         })()
-        # Escalation call: good JSON
         good_result = type("obj", (object,), {
             "ok": True, "text": '{"step": 1}', "parsed": None,
             "model": "planner", "elapsed": 2.0, "usage": {"prompt": 10, "completion": 10, "total": 20}

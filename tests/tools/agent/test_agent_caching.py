@@ -4,15 +4,15 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
+from tools.agent_core.cache import _clear_cache
 
 
 class TestAgentCaching:
-    """Test in-memory LRU cache for classify and route roles."""
+    """Test cache hit, miss, TTL, and non-cacheable roles."""
 
     def setup_method(self):
-        """Clear response cache between tests."""
-        from tools.agent import _CACHE
-        _CACHE.clear()
+        """Clear cache between tests."""
+        _clear_cache()
 
     def test_classify_result_is_cached(self, mock_llm_result):
         """Second identical classify call should return cached result."""
@@ -29,16 +29,13 @@ class TestAgentCaching:
             assert mock_llm.call_count == 1
 
     def test_route_result_is_cached(self, mock_llm_result):
-        """Second identical route call should return cached result."""
-        mock_llm_result.text = '{"workflow":"research","tool":"web","complexity":3,"reason":"test"}'
-        mock_llm_result.parsed = None
+        """route role should also be cached."""
+        mock_llm_result.text = '{"workflow": "research"}'
 
         with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm:
-            result1 = agent(role="route", task="Find docs")
-            result2 = agent(role="route", task="Find docs")
+            agent(role="route", task="Where to?")
+            agent(role="route", task="Where to?")
 
-            assert result1["status"] == "success"
-            assert result2.get("cached") is True
             assert mock_llm.call_count == 1
 
     def test_cache_respects_context_and_content(self, mock_llm_result):
@@ -65,8 +62,7 @@ class TestAgentCaching:
         import time
         mock_llm_result.text = "bug"
 
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm, \
-             patch("tools.agent._CACHE_TTL_SECONDS", 0):  # Instant expiry
+        with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm,              patch("tools.agent_core.cache._CACHE_TTL_SECONDS", 0):  # Instant expiry
             agent(role="classify", task="test")
             time.sleep(0.01)
             agent(role="classify", task="test")

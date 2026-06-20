@@ -5,14 +5,14 @@ from unittest.mock import patch
 
 from tools.agent import agent
 from tools.agent_core.context import _estimate_tokens, _trim_context
+from tools.agent_core.cache import _clear_cache
 
 
 class TestTokenAwareTrimming:
     """Test _estimate_tokens and token-aware _trim_context."""
 
     def setup_method(self):
-        from tools.agent import _CACHE
-        _CACHE.clear()
+        _clear_cache()
 
     def test_estimate_tokens_empty(self):
         assert _estimate_tokens("") == 0

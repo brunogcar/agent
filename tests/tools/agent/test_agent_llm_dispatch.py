@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
+from tools.agent_core.cache import _clear_cache
 
 
 class TestAgentLLMDispatch:
@@ -11,8 +12,7 @@ class TestAgentLLMDispatch:
 
     def setup_method(self):
         """Clear response cache between tests for cacheable roles."""
-        from tools.agent import _CACHE
-        _CACHE.clear()
+        _clear_cache()
 
     def test_successful_llm_call(self, mock_llm_result):
         with patch("tools.agent.llm.complete", return_value=mock_llm_result):

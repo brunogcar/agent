@@ -4,14 +4,14 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
+from tools.agent_core.cache import _clear_cache
 
 
 class TestPromptVersioning:
     """Test prompt_version field in successful responses."""
 
     def setup_method(self):
-        from tools.agent import _CACHE
-        _CACHE.clear()
+        _clear_cache()
 
     def test_success_response_includes_prompt_version(self, mock_llm_result):
         with patch("tools.agent.llm.complete", return_value=mock_llm_result):

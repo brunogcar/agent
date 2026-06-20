@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from tools.agent import agent, _get_metrics, _clear_metrics
-from tools.agent_core.roles import ROLE_CONFIG
+from tools.agent import agent
+from tools.agent_core.metrics import _get_metrics, _clear_metrics
 
 
 class TestPerRoleMetrics:
     """Test in-memory metrics collection for agent calls."""
 
     def setup_method(self):
-        from tools.agent import _CACHE
-        _CACHE.clear()
+        from tools.agent_core.cache import _clear_cache
+        _clear_cache()
         _clear_metrics()
 
     def test_metrics_recorded_on_success(self, mock_llm_result):

@@ -4,14 +4,14 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
+from tools.agent_core.cache import _clear_cache
 
 
 class TestRoleFallback:
     """Test fallback role retry when primary role's LLM call fails."""
 
     def setup_method(self):
-        from tools.agent import _CACHE
-        _CACHE.clear()
+        _clear_cache()
 
     def test_classify_fallback_to_route(self, mock_llm_result):
         """When classify fails, retry with route role."""
@@ -30,7 +30,6 @@ class TestRoleFallback:
         assert result["status"] == "success"
         assert result["text"] == '{"category": "bug"}'
         assert mock_llm.call_count == 2
-        # Second call should use route's system prompt
         second_call = mock_llm.call_args_list[1]
         assert "route" in second_call.kwargs["system"].lower() or "router" in second_call.kwargs["system"].lower()
 
