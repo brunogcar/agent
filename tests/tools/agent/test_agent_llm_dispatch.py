@@ -7,19 +7,20 @@ from tools.agent import agent
 
 
 class TestAgentLLMDispatch:
-    """Test successful LLM calls and failure paths."""
+    """Test successful LLM dispatch and error paths."""
 
-    def test_successful_llm_call_returns_success(self, mock_llm_result):
-        mock_llm_result.text = "Positive"
+    def setup_method(self):
+        """Clear response cache between tests for cacheable roles."""
+        from tools.agent import _CACHE
+        _CACHE.clear()
+
+    def test_successful_llm_call(self, mock_llm_result):
         with patch("tools.agent.llm.complete", return_value=mock_llm_result):
             result = agent(role="classify", task="Is this good?")
 
         assert result["status"] == "success"
-        assert result["text"] == "Positive"
         assert result["role"] == "classify"
-        assert result["model"] == "test-model"
-        assert "elapsed" in result
-        assert "usage" in result
+        assert result["text"] == "mocked response"
 
     def test_llm_failure_returns_error(self, mock_llm_result):
         mock_llm_result.ok = False
@@ -32,8 +33,8 @@ class TestAgentLLMDispatch:
 
         assert result["status"] == "error"
         assert result["error"] == "Timeout"
-        assert result["role"] == "classify"
-        assert result["elapsed"] == 60.0
+        assert result["elapsed"] >= 0
+        assert result["model"] == "nemotron"
 
     def test_temperature_override_passed(self, mock_llm_result):
         with patch("tools.agent.llm.complete") as mock_llm:

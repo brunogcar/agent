@@ -120,6 +120,9 @@ _SYSTEM_PROMPTS: dict[str, str] = {
         '"risks":["failure point 1"]}'
     ),
 
+    # Vision prompt is kept for test coverage completeness.
+    # The vision role delegates to tools.vision.vision() before prompt lookup,
+    # so this prompt is never used in the dispatch path.
     "vision": (
         "You are a precise visual analysis specialist. "
         "Describe ONLY what is visible — never hallucinate details. "

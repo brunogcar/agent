@@ -51,10 +51,10 @@ class TestAgentJSONParsing:
             mock_llm.return_value = mock_llm_result
             result = agent(role="extract", task="Extract person data")
 
-        call_kwargs = mock_llm.call_args.kwargs
-        assert call_kwargs["json_mode"] is True
-        assert result["parsed"] == {"name": "Alice", "age": 30}
-        assert "parse_warning" not in result
+            call_kwargs = mock_llm.call_args.kwargs
+            assert call_kwargs["json_mode"] is True
+            assert result["parsed"] == {"name": "Alice", "age": 30}
+            assert "parse_warning" not in result
 
     def test_json_role_extracts_from_surrounding_text(self, mock_llm_result):
         mock_llm_result.text = 'Here is the result: {"verdict": "REVISE"} Thanks!'
@@ -76,8 +76,8 @@ class TestAgentJSONParsing:
         """
         mock_llm_result.text = (
             '{"verdict": "REVISE", "issues": ['
-            '    {"severity": "critical", "description": "race condition"},'
-            '    {"severity": "minor", "description": "typo"}'
+            ' {"severity": "critical", "description": "race condition"},'
+            ' {"severity": "minor", "description": "typo"}'
             '], "corrected_patch": null}'
         )
         mock_llm_result.parsed = None
@@ -94,8 +94,8 @@ class TestAgentJSONParsing:
         """plan role with steps[].inputs nesting must parse correctly."""
         mock_llm_result.text = (
             '{"steps": ['
-            '    {"step": 1, "tool": "web", "inputs": {"query": "python best practices"}},'
-            '    {"step": 2, "tool": "python", "inputs": {"code": "print(1)"}}'
+            ' {"step": 1, "tool": "web", "inputs": {"query": "python best practices"}},'
+            ' {"step": 2, "tool": "python", "inputs": {"code": "print(1)"}}'
             ']}'
         )
         mock_llm_result.parsed = None
@@ -136,3 +136,46 @@ class TestAgentJSONParsing:
         assert result["parsed"]["verdict"] == "REVISE"
         assert result["parsed"]["issues"][0]["severity"] == "critical"
         assert "parse_warning" not in result
+
+    # ── Phase 4 additions: array-at-root and prose edge cases ───────────────
+
+    def test_json_role_parses_array_at_root(self, mock_llm_result):
+        """Array at root level is extracted and parsed correctly.
+
+        Regression guard: old parser only looked for { and would silently
+        extract the first inner object, discarding the rest.
+        """
+        mock_llm_result.text = '[{"step": 1}, {"step": 2}]'
+        mock_llm_result.parsed = None
+
+        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
+            result = agent(role="route", task="Route this")
+
+        assert result["parsed"] == [{"step": 1}, {"step": 2}]
+        assert "parse_warning" not in result
+
+    def test_json_role_prose_with_braces_before_json(self, mock_llm_result):
+        """Prose containing { before actual JSON must not mislead parser."""
+        mock_llm_result.text = (
+            "I analyzed the code. The function uses {} as a pattern.\n\n"
+            '{"verdict": "REVISE", "issues": []}'
+        )
+        mock_llm_result.parsed = None
+
+        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
+            result = agent(role="review", task="Review this")
+
+        assert result["parsed"]["verdict"] == "REVISE"
+        assert result["parsed"]["issues"] == []
+        assert "parse_warning" not in result
+
+    def test_extract_first_json_returns_none_for_no_json(self, mock_llm_result):
+        """When no JSON markers exist, parsed is empty with warning."""
+        mock_llm_result.text = "Just plain text with no JSON here."
+        mock_llm_result.parsed = None
+
+        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
+            result = agent(role="plan", task="Plan this")
+
+        assert result["parsed"] == {}
+        assert "parse_warning" in result

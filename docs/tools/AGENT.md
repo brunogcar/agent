@@ -6,9 +6,20 @@ The `agent()` tool is the **meta-cognitive dispatcher** of the MCP Agent Stack. 
 - **Single entry point** — The LLM sees one tool: `agent(role, task, ...)`
 - **Role-specialized prompts** — 12 distinct personas, each with tailored instructions
 - **Per-role model routing** — Router uses fast 2B models, Executor uses capable 9B models
+- **Per-role context budgets** — Router gets 4K tokens, Planner gets 32K tokens
+- **Token-aware context trimming** — Uses tiktoken/transformers when available, falls back to chars/4
+- **Response caching** — Deterministic roles (`classify`, `route`) cached with 5-min TTL
 - **Structured output enforcement** — JSON mode for `extract`, prompt-only JSON for `route`, `plan`, `code`, `review`
+- **Structured errors** — `error_code` field enables programmatic retry decisions
+- **Autonomous model escalation** — On JSON parse failure, auto-retries with planner model
+- **Role fallback chains** — `classify`→`route`, `critique`→`analyze`, `consultor`→`plan` on transient failure
+- **Per-role metrics** — In-memory tracking of calls, success rate, latency, tokens, parse failures
+- **Prompt versioning** — Hash of all system prompts in every response for reproducibility
+- **Parse warning logging** — Rolling log of JSON parse failures for data-driven prompt tuning
 - **Context trimming** — Head+tail truncation with traceback preservation before reaching the LLM
 - **Vision delegation** — `vision` role delegates to `tools/vision.py` for multimodal analysis
+- **Vision passthrough** — Optional `mime_type` and `vision_json_mode` for full vision control
+- **Sleep-learn integration** — Learned rules auto-injected for high-latency roles
 - **NOT_PARALLEL_SAFE** — Serialized via global LLM client queue; no concurrent agent calls
 
 ---
@@ -18,39 +29,69 @@ The `agent()` tool is the **meta-cognitive dispatcher** of the MCP Agent Stack. 
 The agent tool follows a **thin facade + core submodule** pattern. `tools/agent.py` is the only file scanned by `registry.py` for `@tool` discovery; all logic lives in `tools/agent_core/`.
 
 ```
-tools/agent.py              # @tool facade — role validation, LLM dispatch, JSON parsing
+tools/agent.py              # @tool facade — validation, dispatch, caching, metrics, JSON parsing
 tools/agent_core/
 ├── __init__.py             # Package marker
 ├── prompts.py              # _SYSTEM_PROMPTS — 12 role-specific system prompts
-├── roles.py                # _ROLE_TO_LLM, _API_JSON_ROLES, _PROMPT_JSON_ROLES, _JSON_ROLES
-└── context.py              # _trim_context(), _max_context_chars() — head+tail truncation
+├── roles.py                # ROLE_CONFIG — unified role metadata (model, json, budget, cacheable, fallback)
+└── context.py              # _trim_context(), _estimate_tokens(), _max_context_tokens() — head+tail truncation
 ```
 
 ### Dispatch Flow
 
 ```mermaid
 graph TD
-    A["agent(role, task, context, content)"] --> B{role == "vision"?}
-    B -->|Yes| C["Delegate to tools.vision.vision()"]
-    B -->|No| D{role in _ROLE_TO_LLM?}
-    D -->|No| E["Return: Unknown role error"]
-    D -->|Yes| F["Lookup system prompt + LLM role"]
-    F --> G["_trim_context(context) + _trim_context(content)"]
-    G --> H["llm.complete(role, system, user, context, content, json_mode)"]
-    H --> I{result.ok?}
-    I -->|No| J["Return: error dict with elapsed, model"]
-    I -->|Yes| K{role in _JSON_ROLES?}
-    K -->|Yes| L["Parse JSON: API parsed or regex extraction"]
-    K -->|No| M["Return: text response"]
-    L --> N["Return: response with parsed dict"]
+    A["agent(role, task, context, content, mime_type, vision_json_mode)"] --> B{role == "metrics"?}
+    B -->|Yes| C["Return metrics + parse_warnings + prompt_version"]
+    B -->|No| D{role == "vision"?}
+    D -->|Yes| E["Delegate to tools.vision.vision()"]
+    D -->|No| F{role in ROLE_CONFIG?}
+    F -->|No| G["Return: INVALID_ROLE error"]
+    F -->|Yes| H["Lookup ROLE_CONFIG[role]"]
+    H --> I{"cacheable and cache hit?"}
+    I -->|Yes| J["Return cached response"]
+    I -->|No| K["Lookup system prompt"]
+    K --> L["Inject sleep-learn rules (high-latency roles only)"]
+    L --> M["_trim_context(context, budget) + _trim_context(content)"]
+    M --> N["llm.complete(role, system, user, context, content, json_mode)"]
+    N --> O{result.ok?}
+    O -->|No| P{"fallback_role configured?"}
+    P -->|Yes| Q["Retry with fallback_role's LLM + prompt"]
+    P -->|No| R["Return: error dict with error_code"]
+    Q --> S{result.ok?}
+    S -->|No| R
+    S -->|Yes| T["Continue to JSON parsing"]
+    O -->|Yes| T
+    T --> U{role in _JSON_ROLES?}
+    U -->|Yes| V["Parse JSON: API parsed or brace-counting extraction"]
+    U -->|No| W["Return: text response"]
+    V --> X{parse failed?}
+    X -->|Yes| Y["Escalate to planner model for JSON retry"]
+    X -->|No| Z["Return: response with parsed dict"]
+    Y --> AA{escalation succeeded?}
+    AA -->|Yes| Z
+    AA -->|No| AB["Log parse_warning, return with empty parsed"]
+    Z --> AC["Record metrics"]
+    AC --> AD{"cacheable?"}
+    AD -->|Yes| AE["Store in cache"]
+    AD -->|No| AF["Skip cache"]
+    AE --> AG["Return response"]
+    AF --> AG
 ```
 
 **Key design decisions:**
-- **Thin facade** — `agent.py` only validates, looks up config, calls `llm.complete()`, and parses JSON. No business logic.
-- **Prompts in dedicated module** — `prompts.py` holds all 12 system prompts. Easy to extend: add a role → add a prompt → add to `_ROLE_TO_LLM`.
-- **Role config centralized** — `roles.py` is the single source of truth for which model handles which role and which roles enforce JSON output.
-- **Context trimming isolated** — `context.py` is reusable. The head+tail algorithm with traceback preservation is testable in isolation.
-- **Vision is special** — Cannot go through `llm.complete()` because multimodal messages require list content blocks, not strings. Delegates to `tools/vision.py`.
+- **Unified ROLE_CONFIG** — Single dict holds `llm_role`, `json_mode`, `budget_chars`, `cacheable`, `fallback_role`. Adding a role means one entry here + one prompt in `prompts.py`.
+- **Per-role context budgets** — `classify`/`route`: 16K chars (4K tokens). `plan`/`research`/`code`: 128K chars (32K tokens). Others: 48K chars (12K tokens).
+- **Token-aware trimming** — `_estimate_tokens()` tries tiktoken, then transformers, then chars/4 fallback. `_trim_context()` accepts `max_tokens` for accurate budget enforcement.
+- **Response caching** — `classify` and `route` are deterministic: same input → same output. Cached by SHA256 hash, 5-minute TTL, 100-entry LRU.
+- **Structured errors** — `error_code` field (`INVALID_ROLE`, `INVALID_INPUT`, `TIMEOUT`, `CIRCUIT_OPEN`, `RATE_LIMIT`, `MODEL_ERROR`, `PARSE_ERROR`, `MISSING_DEPENDENCY`) lets callers retry intelligently.
+- **Role fallback chains** — On transient LLM failure, automatically retry with a functionally similar role (e.g., `classify`→`route` returns structured category info).
+- **Autonomous model escalation** — If a prompt-only JSON role produces invalid JSON, the facade automatically retries with the planner model (heavier, more compliant) before giving up.
+- **Per-role metrics** — Lightweight in-memory tracking: calls, successes, failures, total elapsed, total tokens, parse failures. Query via `agent(role="metrics", task="role_name")`.
+- **Prompt versioning** — SHA256 hash of all system prompts included in every success response. Makes debugging "why did behavior change?" trivial.
+- **Parse warning logging** — Rolling log (max 50 entries) of JSON parse failures per role. Enables data-driven prompt tuning: if a role's parse failure rate spikes, tighten its system prompt.
+- **Vision passthrough** — `mime_type` and `vision_json_mode` params forwarded to `tools.vision.vision()` when set.
+- **Sleep-learn gated** — Rule injection only runs for roles with 60s+ budgets. Router roles skip it to avoid ChromaDB overhead.
 
 ---
 
@@ -59,13 +100,16 @@ graph TD
 ```python
 @tool
 def agent(
-    role: str,                    # Required. See Roles table below.
-    task: str,                    # Required. The instruction or question.
-    context: str = "",            # Background information (injected before task)
-    content: str = "",            # Raw material to process (code, text, data, base64 image)
-    trace_id: str = "",           # Trace identifier for observability
-    temperature: float = -1.0,    # Override temperature (-1 = use model default)
-    max_tokens: int = -1,         # Override max_tokens (-1 = use model default)
+    role: str,              # Required. See Roles table below.
+    task: str,              # Required. The instruction or question.
+    context: str = "",     # Background information injected before the task
+    content: str = "",     # Raw material: code, text, data, or base64 image string
+    trace_id: str = "",    # Trace identifier for observability and logging
+    temperature: float = -1.0,  # Temperature override (-1 = model default)
+    max_tokens: int = -1,   # Max tokens override (-1 = model default)
+    # Vision passthrough (optional):
+    mime_type: str = "",           # Override MIME type for image (e.g. "image/webp")
+    vision_json_mode: bool = False, # Request JSON output from vision
 ) -> dict:
     """..."""
 ```
@@ -79,6 +123,10 @@ def agent(
 | `trace_id` | `str` | `""` | Trace identifier for observability and logging |
 | `temperature` | `float` | `-1.0` | Temperature override (-1 = model default) |
 | `max_tokens` | `int` | `-1` | Max tokens override (-1 = model default) |
+| `mime_type` | `str` | `""` | **(Vision only)** Override MIME type for image |
+| `vision_json_mode` | `bool` | `False` | **(Vision only)** Request JSON output from vision |
+
+**Meta-role:** `role="metrics"`, `task="role_name"` (or empty for all) returns collected metrics and parse warnings.
 
 **For vision role:** `context` = file_path or public URL, `content` = base64-encoded image.
 
@@ -86,122 +134,33 @@ def agent(
 
 ## 🎭 Roles
 
-| Role | LLM Role | Timeout | Output | Description |
-|------|----------|---------|--------|-------------|
-| `classify` | `router` | 15s | Single word | Fast binary/category decision |
-| `route` | `router` | 15s | JSON | Workflow + tool routing decision |
-| `research` | `research` | 120s | Markdown | Synthesize web/memory content |
-| `summarize` | `summarize` | 60s | Markdown | Dense, accurate summary |
-| `extract` | `extract` | 60s | JSON | Structured data extraction (API json_mode) |
-| `critique` | `critique` | 90s | Markdown | Quality evaluation: APPROVE / REVISE / REJECT |
-| `analyze` | `analyze` | 90s | Markdown | Deep code/data analysis, no fixes |
-| `code` | `code` | 120s | JSON | Generate Python patch: `{analysis, patch, assumptions, tests}` |
-| `review` | `review` | 90s | JSON | Review patch: `{verdict, issues, corrected_patch}` |
-| `plan` | `planner` | 90s | JSON | Decompose goal into ordered steps |
-| `consultor` | `consultor` | 60s | Markdown | Expert advisory on architecture/best practices |
-| `vision` | *(delegated)* | 60s | Markdown | Image analysis via `tools/vision.py` |
+| Role | LLM Role | Timeout | Budget | Cacheable | Fallback | Output | Description |
+|------|----------|---------|--------|-----------|----------|--------|-------------|
+| `classify` | `router` | 15s | 4K tokens | ✅ | `route` | Single word | Fast binary/category decision |
+| `route` | `router` | 15s | 4K tokens | ✅ | — | JSON | Workflow + tool routing decision |
+| `research` | `research` | 120s | 32K tokens | ❌ | — | Markdown | Synthesize web/memory content |
+| `summarize` | `summarize` | 60s | 12K tokens | ❌ | — | Markdown | Dense, accurate summary |
+| `extract` | `extract` | 60s | 12K tokens | ❌ | — | JSON | Structured data extraction (API json_mode) |
+| `critique` | `critique` | 90s | 12K tokens | ❌ | `analyze` | Markdown | Quality evaluation: APPROVE / REVISE / REJECT |
+| `analyze` | `analyze` | 90s | 12K tokens | ❌ | — | Markdown | Deep code/data analysis, no fixes |
+| `code` | `code` | 120s | 32K tokens | ❌ | — | JSON | Generate Python patch: `{analysis, patch, tests}` |
+| `review` | `review` | 90s | 12K tokens | ❌ | — | JSON | Review patch: `{verdict, issues, corrected_patch}` |
+| `plan` | `planner` | 90s | 32K tokens | ❌ | — | JSON | Decompose goal into ordered steps |
+| `consultor` | `consultor` | 60s | 12K tokens | ❌ | `plan` | Markdown | Expert advisory on architecture/best practices |
+| `vision` | *(delegated)* | 60s | — | ❌ | — | Markdown | Image analysis via `tools/vision.py` |
+| `metrics` | *(internal)* | — | — | ❌ | — | JSON | Query per-role metrics and parse warnings |
 
-### Role Details
+### Fallback Chains
 
-#### `classify` — Fast Binary/Category Decision
+When a role's primary LLM call fails (timeout, circuit open, rate limit), the agent automatically retries with its fallback role:
 
-```python
-result = agent(role="classify", task="Is this a bug or a feature request?")
-```
+| Primary Role | Fallback Role | Rationale |
+|--------------|---------------|-----------|
+| `classify` | `route` | Route returns structured JSON with category info, functionally similar |
+| `critique` | `analyze` | Analysis is a subset of critique (no verdict, but identifies issues) |
+| `consultor` | `plan` | Plan provides structured advice, overlapping with consultor's advisory role |
 
-Returns a single word or short phrase. No explanation, no punctuation.
-
-```json
-{
-  "status": "success",
-  "role": "classify",
-  "text": "bug"
-}
-```
-
----
-
-#### `route` — Task Routing Decision
-
-```python
-result = agent(role="route", task="Find the latest React documentation")
-```
-
-Returns structured JSON with workflow, tool, complexity, and reason.
-
-```json
-{
-  "status": "success",
-  "role": "route",
-  "text": "{\"workflow\":\"research\",\"tool\":\"web\",\"complexity\":3,\"reason\":\"Requires web search and synthesis\"}",
-  "parsed": {
-    "workflow": "research",
-    "tool": "web",
-    "complexity": 3,
-    "reason": "Requires web search and synthesis"
-  }
-}
-```
-
----
-
-#### `code` — Generate Python Patch
-
-```python
-result = agent(
-    role="code",
-    task="Fix the off-by-one error in the loop",
-    context="Function: process_items(items)",
-    content="def process_items(items):\n    for i in range(len(items) + 1):\n        print(items[i])"
-)
-```
-
-Returns JSON with analysis, patch, assumptions, and tests.
-
-```json
-{
-  "status": "success",
-  "role": "code",
-  "text": "...",
-  "parsed": {
-    "analysis": "The loop uses range(len(items) + 1) which causes IndexError on the last iteration.",
-    "patch": "def process_items(items):\n    for i in range(len(items)):\n        print(items[i])",
-    "assumptions": "items is a list with at least one element",
-    "tests": "assert process_items([1,2,3]) == None  # prints 1, 2, 3"
-  }
-}
-```
-
----
-
-#### `vision` — Image Analysis
-
-```python
-# Via file path
-result = agent(role="vision", task="What is in this image?", context="screenshot.png")
-
-# Via URL
-result = agent(role="vision", task="Describe this chart", context="https://example.com/chart.png")
-
-# Via base64
-result = agent(role="vision", task="Identify the error", content="data:image/png;base64,abc123...")
-```
-
-Delegates to `tools/vision.py`. Does NOT call `llm.complete()`.
-
-#### Vision Role — Known Limitations
-
-The agent facade simplifies vision to the most common use cases. The following
-`tools.vision.vision()` parameters are **not exposed** through `agent(role="vision")`:
-
-| Parameter | Status | Workaround |
-|-----------|--------|------------|
-| `mime_type` | Not exposed | Call `tools.vision.vision()` directly |
-| `json_mode` | Not exposed | Call `tools.vision.vision()` directly |
-
-For full vision control (e.g., requesting JSON-structured vision output or
-specifying a non-default MIME type), bypass the agent facade and call
-`tools.vision.vision()` directly.
+Fallback is **one attempt only**. If the fallback also fails, the error is returned to the caller.
 
 ---
 
@@ -212,9 +171,23 @@ Before any LLM call, `context` and `content` are passed through `_trim_context()
 | Feature | Behavior |
 |---------|----------|
 | **Head + Tail** | Keeps first 2000 chars (goal/objective) and last 4000 chars (recent interactions) |
-| **Dynamic budget** | Derived from `cfg.max_context_tokens * 4` (config-reloadable) |
-| **Traceback preservation** | If a Python traceback is detected, it is preserved in full within the tail |
+| **Per-role budget** | `classify`/`route`: 16K chars (4K tokens). `plan`/`research`/`code`: 128K chars (32K tokens). Others: 48K chars (12K tokens) |
+| **Token-aware** | `_estimate_tokens()` tries tiktoken → transformers → chars/4 fallback |
+| **Dynamic budget** | `cfg.max_context_tokens` fallback (config-reloadable, clamped to minimum 4000 chars) |
+| **Traceback preservation** | If a Python traceback is detected, it is preserved in full within the tail. Uses line-by-line frame detection (not `\n\n` heuristics) for robustness. |
 | **Custom max_chars** | `_trim_context(text, max_chars=500)` for one-off overrides |
+| **Custom max_tokens** | `_trim_context(text, max_tokens=100)` for token-accurate trimming |
+| **Content budget** | `content` is capped at ~1000 tokens, but also constrained by remaining role-specific budget |
+
+### Content Budget
+
+The `content` parameter (raw material to process) has a dedicated budget to prevent massive code dumps from consuming the entire context budget. However, it is also dynamically constrained: if `context` already consumed most of the role-specific budget, `content` gets whatever remains.
+
+```python
+# Example: plan role budget = 128K chars
+# context = 120K chars (trimmed to ~118K after head+tail)
+# content = 5K chars → trimmed to 4K (hard cap) → then to 0 (budget exhausted)
+```
 
 ### Traceback Preservation
 
@@ -236,23 +209,35 @@ Three categories of JSON roles:
 | Category | Roles | Mechanism |
 |----------|-------|-----------|
 | **API json_mode** | `extract` | `llm.complete(json_mode=True)` — model enforces JSON schema |
-| **Prompt-only JSON** | `route`, `plan`, `code`, `review` | System prompt demands JSON; post-hoc regex extraction if model adds prose |
+| **Prompt-only JSON** | `route`, `plan`, `code`, `review` | System prompt demands JSON; post-hoc brace-counting extraction if model adds prose |
 | **Non-JSON** | `classify`, `research`, `summarize`, `critique`, `analyze`, `consultor` | Free-form text output |
 
-### JSON Parsing Fallback
+### JSON Parsing: Three-Stage Fallback
 
-For prompt-only JSON roles, if the model wraps JSON in markdown fences or adds surrounding text:
+For prompt-only JSON roles, the parser uses a robust three-stage approach:
+
+1. **Fast path** — Try `json.loads()` on the clean text (after stripping markdown fences).
+   Works for well-behaved models that output clean JSON.
+
+2. **Brace-counting extraction** — If fast path fails, scan for all `{` and `[` positions
+   and use depth tracking (respecting string boundaries and escaped quotes) to find
+   the complete JSON structure. Handles nested objects, arrays at root, and braces
+   inside string values. Prefers the largest valid structure to handle prose before JSON.
+
+3. **Autonomous model escalation** — If extraction fails, the facade automatically
+   retries with the planner model (heavier, more JSON-compliant) before giving up.
+   If escalation succeeds, `escalated: true` is set in the response.
+
+4. **Graceful failure** — If all attempts fail, returns `parsed: {}` with a
+   `parse_warning` so callers can safely do `result.get("parsed", {}).get("field")`
+   without crashing.
 
 ```python
 # Model output: "Here is the result:\n```json\n{\"verdict\": \"APPROVE\"}\n```"
 # Extracted: {"verdict": "APPROVE"}
 ```
 
-If parsing fails entirely, returns `parsed: {}` with a `parse_warning` so callers can safely do `result.get("parsed", {}).get("field")` without crashing.
-
-**`parse_warning` field:** When JSON parsing fails, the response includes a
-`parse_warning` string explaining what went wrong. This is a diagnostic aid
-for debugging prompt issues — callers should not rely on it for control flow.
+If parsing fails entirely, returns `parsed: {}` with a `parse_warning`:
 
 ```json
 {
@@ -260,8 +245,119 @@ for debugging prompt issues — callers should not rely on it for control flow.
   "role": "review",
   "text": "I think this looks good...",
   "parsed": {},
-  "parse_warning": "Response was not valid JSON for role 'review'. parsed={} returned. Check response.text for raw output."
+  "parse_warning": "Response was not valid JSON for role 'review'. Empty dict returned for parsed. Check response.text for raw output."
 }
+```
+
+**`parse_warning` field:** When JSON parsing fails, the response includes a
+`parse_warning` string explaining what went wrong. This is a diagnostic aid
+for debugging prompt issues — callers should not rely on it for control flow.
+
+---
+
+## 🧠 Sleep-Learn Integration
+
+The agent tool integrates with `core.sleep_learn.injector` to automatically
+inject learned procedural rules into system prompts for high-latency roles.
+
+**Gated roles:** `research`, `analyze`, `code`, `review`, `plan`, `consultor`
+
+**Router roles excluded:** `classify`, `route` — ChromaDB round-trip would
+consume a significant portion of their 15s budget.
+
+**Behavior:**
+- Rules are injected after system prompt lookup, before context trimming
+- If `inject_rules_into_prompt` fails (ChromaDB down, collection empty, import missing),
+  the original system prompt is used — agent call succeeds without sleep-learn rules
+- Rules are logged to `injections.jsonl` for the feedback loop
+
+**Requirements:**
+- `core.sleep_learn.injector` module must exist and export `inject_rules_into_prompt`
+- ChromaDB must have the `procedural_meta` collection populated by the sleep-learn daemon
+
+---
+
+## 💾 Response Caching
+
+Deterministic roles (`classify`, `route`) are cached to eliminate redundant LLM calls:
+
+| Feature | Behavior |
+|---------|----------|
+| **Cache key** | SHA256 hash of `role:task:context:content` |
+| **TTL** | 5 minutes |
+| **Max entries** | 100 (LRU eviction) |
+| **Cache hit marker** | Response includes `"cached": true` |
+| **Non-cacheable roles** | All others (outputs depend on dynamic content) |
+
+```python
+# First call → hits LLM
+result1 = agent(role="classify", task="Is this a bug?")
+# Second call (within 5 min) → returns from cache
+result2 = agent(role="classify", task="Is this a bug?")
+assert result2["cached"] is True
+```
+
+---
+
+## 📈 Per-Role Metrics
+
+Lightweight in-memory metrics are collected for every agent call:
+
+| Metric | Description |
+|--------|-------------|
+| `calls` | Total invocations |
+| `successes` | Successful completions |
+| `failures` | Failed completions (LLM error, timeout, etc.) |
+| `total_elapsed` | Cumulative wall-clock time |
+| `total_tokens` | Cumulative token consumption |
+| `parse_failures` | JSON parse failures (prompt-only JSON roles) |
+| `last_call` | Unix timestamp of most recent call |
+
+**Query metrics:**
+
+```python
+# Metrics for a specific role
+result = agent(role="metrics", task="classify")
+# Returns: {"status": "success", "metrics": {"calls": 42, "successes": 40, ...}}
+
+# Metrics for all roles
+result = agent(role="metrics", task="")
+# Returns: {"status": "success", "metrics": {"classify": {...}, "route": {...}}}
+```
+
+**Parse warning log:**
+
+```python
+result = agent(role="metrics", task="")
+# Also returns: {"parse_warnings": [{"timestamp": ..., "role": "plan", "warning": "...", "text_preview": "..."}]}
+```
+
+---
+
+## ⚠️ Structured Error Taxonomy
+
+All error responses include an `error_code` field for programmatic handling:
+
+| `error_code` | When | Retryable? |
+|--------------|------|------------|
+| `INVALID_ROLE` | Unknown role string | No (fix caller) |
+| `INVALID_INPUT` | Missing required `task` | No (fix caller) |
+| `TIMEOUT` | LLM call exceeded timeout | Yes (with backoff) |
+| `CIRCUIT_OPEN` | Circuit breaker open | Yes (after cooldown) |
+| `RATE_LIMIT` | API quota exceeded | Yes (after delay) |
+| `MODEL_ERROR` | Generic LLM failure | Maybe (check error text) |
+| `PARSE_ERROR` | JSON extraction failed | No (check prompt) |
+| `MISSING_DEPENDENCY` | `tools/vision.py` not found | No (install dependency) |
+
+```python
+result = agent(role="code", task="Fix bug")
+if result["status"] == "error":
+    if result["error_code"] == "TIMEOUT":
+        # Retry with exponential backoff
+        pass
+    elif result["error_code"] == "INVALID_ROLE":
+        # Log and alert — this is a bug in the caller
+        pass
 ```
 
 ---
@@ -269,8 +365,9 @@ for debugging prompt issues — callers should not rely on it for control flow.
 ## ⚙️ Configuration
 
 No dedicated `.env` variables. Uses:
-- `cfg.max_context_tokens` — drives `_max_context_chars()` (default: 8000 tokens → 32,000 chars)
+- `cfg.max_context_tokens` — fallback for `_max_context_chars()` (default: 8000 tokens → 32,000 chars)
 - Per-role model config in `core/config.py` — `ROUTER_MODEL`, `EXECUTOR_MODEL`, `PLANNER_MODEL`, etc.
+- Per-role budgets in `ROLE_CONFIG` — override global default per role
 
 ---
 
@@ -283,6 +380,9 @@ No dedicated `.env` variables. Uses:
 | **Context bounds** | `_trim_context()` prevents unbounded conversation history from reaching the LLM |
 | **Vision isolation** | Vision delegates to `tools/vision.py` — never mixed with text LLM paths |
 | **No arbitrary code execution** | All roles are prompt-based; no `eval()` or `exec()` |
+| **Sleep-learn fallback** | Rule injection failures are non-fatal; original prompt always available |
+| **Cache isolation** | Cache keyed on full input; no cross-role or cross-task leakage |
+| **Metrics privacy** | In-memory only; no persistence to disk or external services |
 
 ---
 
@@ -305,9 +405,20 @@ tests/tools/agent/
 ├── conftest.py                    # Shared fixtures (mock_cfg, mock_llm_result)
 ├── test_agent_validation.py       # Unknown role, missing task, role→prompt coverage
 ├── test_agent_vision.py           # Vision delegation to tools.vision
+├── test_agent_vision_params.py    # mime_type and vision_json_mode passthrough
 ├── test_agent_llm_dispatch.py     # Successful LLM call, LLM failure, param passthrough
 ├── test_agent_json_parsing.py     # Valid JSON, invalid JSON, markdown fences, extraction
-└── test_agent_context.py          # _trim_context unit tests + traceback preservation
+├── test_agent_context.py          # _trim_context unit tests + traceback preservation
+├── test_agent_sleep_learn.py      # Sleep-learn injection: call site, gating, fallback
+├── test_agent_roles.py            # ROLE_CONFIG validation and budget override tests
+├── test_agent_caching.py          # Response caching hit/miss/TTL tests
+├── test_agent_errors.py           # Structured error taxonomy tests
+├── test_agent_token_aware.py      # Token-aware trimming and _estimate_tokens tests
+├── test_agent_prompt_version.py   # Prompt versioning in responses
+├── test_agent_metrics.py          # Per-role metrics collection and query tests
+├── test_agent_parse_warnings.py   # Parse warning logging and retrieval tests
+├── test_agent_escalation.py       # Autonomous model escalation on parse failure
+└── test_agent_fallback.py         # Role fallback chain retry tests
 ```
 
 **Mock strategy:**
@@ -315,6 +426,7 @@ tests/tools/agent/
 - `tools.vision.vision` is patched at `tools.vision.vision` (where it is imported inline)
 - `cfg` is patched at `tools.agent_core.context.cfg` (module-level import)
 - `mock_llm_result` is a pre-built `MagicMock` with all required attributes
+- Cache, metrics, and parse warning logs are cleared via `setup_method` in each test class
 
 ---
 
@@ -322,8 +434,8 @@ tests/tools/agent/
 
 | Need | Tool | Why |
 |------|------|-----|
-| Fast classification | `agent(classify)` | 15s Router, single word output |
-| Task routing | `agent(route)` | 15s Router, structured JSON |
+| Fast classification | `agent(classify)` | 15s Router, single word output, cached |
+| Task routing | `agent(route)` | 15s Router, structured JSON, cached |
 | Web research synthesis | `agent(research)` | 120s Executor, cites sources |
 | Summarize long content | `agent(summarize)` | 60s Executor, dense output |
 | Extract structured data | `agent(extract)` | 60s Executor, API json_mode |
@@ -334,6 +446,7 @@ tests/tools/agent/
 | Decompose goal | `agent(plan)` | 90s Planner, returns ordered steps JSON |
 | Architecture advice | `agent(consultor)` | 60s Consultor, best practices |
 | Image analysis | `agent(vision)` | Delegates to `tools/vision.py` |
+| Debug metrics | `agent(metrics)` | Returns per-role metrics and parse warnings |
 
 ---
 
@@ -341,16 +454,21 @@ tests/tools/agent/
 
 If you are an AI assistant modifying the agent tool:
 
-1. **Never add business logic to `agent.py`** — the facade should only validate, dispatch, and parse. Move prompts to `prompts.py`, role config to `roles.py`, trimming to `context.py`.
+1. **Never add business logic to `agent.py`** — the facade should only validate, dispatch, cache, and parse. Move prompts to `prompts.py`, role config to `roles.py`, trimming to `context.py`.
 2. **Never strip or rewrite entire files** — only add comments, docstrings, or formatting. Preserve all existing code exactly.
-3. **Add roles in all three places** — new roles require: (a) prompt in `prompts.py`, (b) mapping in `_ROLE_TO_LLM` in `roles.py`, (c) JSON flag if applicable in `roles.py`.
+3. **Add roles in two places** — new roles require: (a) entry in `ROLE_CONFIG` in `roles.py`, (b) prompt in `prompts.py`.
 4. **Module-level cfg import** — `context.py` imports `cfg` at module level. If conftest patches it, the patch must target `tools.agent_core.context.cfg`.
 5. **Vision stays special** — never route `vision` through `llm.complete()`. Always delegate to `tools/vision.py`.
 6. **Preserve traceback logic** — `_trim_context()` traceback detection must not be broken. Tracebacks are high-signal debugging content.
 7. **Test with mock_llm_result** — new tests must use the `mock_llm_result` fixture from `conftest.py`.
-8. **JSON parsing fallback** — prompt-only JSON roles must handle markdown fences, surrounding text, and parse failures gracefully.
+8. **JSON parsing fallback** — prompt-only JSON roles must handle markdown fences, surrounding text, arrays at root, and parse failures gracefully.
 9. **No backup files** — never create `.bak` files when applying fixes.
 10. **Commit workflow** — use `git commit -m` for new work. Only `git commit --amend --no-edit` for fixing the LAST commit.
+11. **Sleep-learn gating** — if adding `inject_rules_into_prompt` calls, gate to high-latency roles only. Router roles must not pay ChromaDB overhead.
+12. **Cache invalidation** — if changing `classify`/`route` system prompts, the cache key does NOT include prompt version. Clear cache or bump version manually.
+13. **Metrics are in-memory** — `_ROLE_METRICS` and `_PARSE_WARNING_LOG` are not persisted. Do not rely on them across process restarts.
+14. **Fallback chains are one-shot** — if primary fails and fallback also fails, return error. Do not chain more than one fallback.
+15. **Escalation is one-shot** — if planner model also fails to produce valid JSON, return `parse_warning`. Do not loop.
 
 ---
 
@@ -358,40 +476,54 @@ If you are an AI assistant modifying the agent tool:
 
 | File | Purpose |
 |------|---------|
-| `tools/agent.py` | `@tool` facade: validation, dispatch, JSON parsing, vision delegation |
+| `tools/agent.py` | `@tool` facade: validation, dispatch, caching, metrics, JSON parsing, vision delegation, sleep-learn injection, error taxonomy, fallback chains, model escalation |
 | `tools/agent_core/prompts.py` | `_SYSTEM_PROMPTS` — 12 role-specific system prompts |
-| `tools/agent_core/roles.py` | `_ROLE_TO_LLM`, `_API_JSON_ROLES`, `_PROMPT_JSON_ROLES`, `_JSON_ROLES` |
-| `tools/agent_core/context.py` | `_trim_context()`, `_max_context_chars()`, `_KEEP_HEAD/TAIL_CHARS` |
+| `tools/agent_core/roles.py` | `ROLE_CONFIG` — unified role metadata: model, json_mode, budget, cacheable, fallback_role |
+| `tools/agent_core/context.py` | `_trim_context()`, `_estimate_tokens()`, `_max_context_tokens()`, `_max_context_chars()` |
 | `tests/tools/agent/conftest.py` | Test fixtures: `mock_cfg` (autouse), `mock_llm_result` |
 | `tests/tools/agent/test_agent_validation.py` | Validation and role coverage tests |
 | `tests/tools/agent/test_agent_vision.py` | Vision delegation tests |
+| `tests/tools/agent/test_agent_vision_params.py` | Vision passthrough parameter tests |
 | `tests/tools/agent/test_agent_llm_dispatch.py` | LLM dispatch and error handling tests |
 | `tests/tools/agent/test_agent_json_parsing.py` | JSON parsing fallback tests |
 | `tests/tools/agent/test_agent_context.py` | Context trimming unit tests |
+| `tests/tools/agent/test_agent_sleep_learn.py` | Sleep-learn injection integration tests |
+| `tests/tools/agent/test_agent_roles.py` | ROLE_CONFIG validation and budget override tests |
+| `tests/tools/agent/test_agent_caching.py` | Response caching hit/miss/TTL tests |
+| `tests/tools/agent/test_agent_errors.py` | Structured error taxonomy tests |
+| `tests/tools/agent/test_agent_token_aware.py` | Token-aware trimming tests |
+| `tests/tools/agent/test_agent_prompt_version.py` | Prompt versioning tests |
+| `tests/tools/agent/test_agent_metrics.py` | Per-role metrics tests |
+| `tests/tools/agent/test_agent_parse_warnings.py` | Parse warning logging tests |
+| `tests/tools/agent/test_agent_escalation.py` | Autonomous model escalation tests |
+| `tests/tools/agent/test_agent_fallback.py` | Role fallback chain tests |
 
 ---
 
 ## 🔮 Future Roadmap
+
+### ✅ Completed Phases
 
 | Phase | Status | Description |
 |-------|--------|-------------|
 | **Phase 1** | ✅ Complete | Core roles: classify, route, research, summarize, extract, critique, analyze, code, review, plan, consultor, vision |
 | **Phase 2** | ✅ Complete | Agent split: `tools/agent_tool.py` → `tools/agent.py` + `tools/agent_core/` (prompts, roles, context) |
 | **Phase 3** | ✅ Complete | Bug fixes: broken imports, JSON regex → brace-counting parser, test coverage gaps |
-| **Phase 4** | ✅ Complete | Features: sleep-learn integration, `parse_warning` docs, vision limitations documented |
+| **Phase 4** | ✅ Complete | Features: sleep-learn injection wired for high-latency roles, `parse_warning` docs, vision limitations documented |
+| **Phase 5** | ✅ Complete | Infrastructure: ROLE_CONFIG unified dict, per-role context budgets, response caching, structured errors, vision passthrough params |
+| **Phase 6** | ✅ Complete | Advanced: token-aware trimming, prompt versioning, per-role metrics, parse warning logging, autonomous model escalation, role fallback chains |
 
-### Future Work (Beyond Phase 4)
+### 🔵 Later (Blocked or Large)
 
-| Priority | Item | Effort | Why |
-|----------|------|--------|-----|
-| 🔵 Future | Streaming support for `research`/`code` roles | Large | Partial responses for long-running roles; requires `core/llm.py` redesign |
-| 🔵 Future | Role composition chaining | Large | Chain multiple roles in single call: `analyze` → `code` → `review`; depends on streaming decision |
-| 🔵 Future | Vision `mime_type` / `json_mode` exposure through agent facade | Medium | Currently only accessible via direct `tools.vision.vision()` call |
-| 🔵 Future | Token-aware context trimming | Medium | Replace `* 4` char approximation with actual tokenizer count |
-| 🔵 Future | Self-improving prompts via sleep-learn feedback loop | Large | Auto-tune system prompts based on success/failure metrics |
-| 🔵 Future | Role-specific context budget overrides | Small | Allow per-role `max_context_tokens` instead of global default |
-| 🔵 Future | New roles: `refactor`, `test`, `document` | Medium each | Autonomous code maintenance workflows |
+| Priority | Item | Effort | Why | Blocked On |
+|----------|------|--------|-----|------------|
+| 🔵 1 | Self-improving prompts via sleep-learn feedback loop | Large | Auto-tune system prompts based on success/failure metrics from per-role metrics | Per-role metrics (now available) |
+| 🔵 2 | `dry_run` / `estimate_cost` mode | Medium | Pre-flight cost estimation without calling LLM | Structured errors (available) |
+| 🔵 3 | Streaming support | Large | Partial responses for long-running roles; requires `core/llm.py` redesign | MCP stdio protocol changes |
+| 🔵 4 | Role composition chaining | Large | Chain multiple roles in single call: `analyze` → `code` → `review` | Streaming decision |
+| 🔵 5 | New roles: `refactor`, `test`, `document` | Medium each | Autonomous code maintenance workflows. Requires `core/config.py` and `.env` updates for new model entries | Centralized ROLE_CONFIG stable |
+| 🔵 6 | Parallel tool execution | Medium | Expose `core/parallel_executor.py` as a `parallel` tool for research workflows | Concrete use case demanding it |
 
 ---
 
-*Last updated: Phase 4 complete. 34 agent tests passing. Architecture: thin facade + agent_core submodules + sleep-learn integration.*
+*Last updated: Phase 6 complete. Token-aware trimming, prompt versioning, per-role metrics, parse warning logging, autonomous model escalation, and role fallback chains all active. 80+ agent tests passing. Architecture: thin facade + agent_core submodules + advanced resilience features.*
