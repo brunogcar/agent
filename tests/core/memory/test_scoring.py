@@ -1,6 +1,5 @@
-"""
-tests/core/memory/test_scoring.py -- Unit tests for memory scoring and query rewriting.
-"""
+# tests/core/memory/test_scoring.py -- Unit tests for memory scoring and query rewriting.
+"""Unit tests for memory scoring and query rewriting."""
 from __future__ import annotations
 import time
 import pytest
@@ -21,9 +20,25 @@ def test_decay_score_floor():
     assert _decay_score(5, ancient, "episodic") >= 5 * 0.3 - 0.01
 
 def test_procedural_decay_bypass():
-    """Procedural memories should bypass time decay."""
+    """
+    [P2 FIX] Procedural memories bypass FULL time decay but are subject to a floor.
+    Previously hardcoded to 1.0 (no decay at all), which allowed stale rules
+    to dominate forever. Now floored at PROCEDURAL_DECAY_FLOOR (0.7).
+
+    With default decay_days=180 and age=365 days:
+        raw_decay = 1.0 - 365/180 = -1.03
+        decay = max(0.7, -1.03) = 0.7
+        score = 8 * 0.7 = 5.6
+    """
     ancient = int(time.time()) - 365 * 86400
     score = _decay_score(8, ancient, "procedural", reinforcement_count=0)
+    # Should be ~5.6 (8 * 0.7 floor), not 8.0 (old no-decay behavior)
+    assert score == pytest.approx(5.6, abs=0.05)
+
+def test_procedural_decay_at_zero_age():
+    """Fresh procedural memories should still score at full importance."""
+    now = int(time.time())
+    score = _decay_score(8, now, "procedural", reinforcement_count=0)
     assert score == pytest.approx(8.0, abs=0.05)
 
 def test_procedural_reinforcement_boost():
@@ -32,7 +47,7 @@ def test_procedural_reinforcement_boost():
     base_score = _decay_score(8, now, "procedural", reinforcement_count=0)
     boosted_score = _decay_score(8, now, "procedural", reinforcement_count=5)
     assert boosted_score > base_score
-    
+
     # Cap check: count=10 and count=20 should yield similar scores due to min(count, 10) cap
     score_10 = _decay_score(8, now, "procedural", reinforcement_count=10)
     score_20 = _decay_score(8, now, "procedural", reinforcement_count=20)

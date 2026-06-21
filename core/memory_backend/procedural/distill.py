@@ -1,12 +1,11 @@
-"""
-core/memory_backend/procedural/distill.py — LLM lesson extraction pipeline.
-"""
+# core/memory_backend/procedural/distill.py — LLM lesson extraction pipeline.
+"""Synchronous distillation pipeline."""
 from __future__ import annotations
 
 import json
 
 from core.tracer import tracer
-from core.memory import memory  # Import the facade to store the result
+from core.memory import memory # Import the facade to store the result
 from core.memory_backend.procedural.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from core.memory_backend.procedural.validate import is_valid_rule
 
@@ -14,12 +13,12 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
     """
     Synchronous distillation pipeline.
     Calls the Planner LLM, parses JSON, validates, and stores as procedural memory.
-    
-    Relies on the httpx timeout inside core/llm.py to sever the socket and 
+
+    Relies on the httpx timeout inside core/llm.py to sever the socket and
     abort LM Studio generation, preventing VRAM "Ghost Thread" leaks.
     """
-    from core.llm import llm  # Lazy import to avoid circular deps
-    
+    from core.llm import llm # Lazy import to avoid circular deps
+
     if not trace_text or len(trace_text.strip()) < 50:
         return {"status": "skipped", "reason": "trace_too_short"}
 
@@ -28,10 +27,10 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
         trace_text = trace_text[:2000] + "\n...[TRUNCATED]...\n" + trace_text[-2000:]
 
     user_prompt = USER_PROMPT_TEMPLATE.format(trace_text=trace_text)
-    
+
     try:
-        # The timeout parameter is passed directly to llm.complete(), which passes it 
-        # to httpx.Client.post(). If it hits 15s, httpx severs the socket, 
+        # The timeout parameter is passed directly to llm.complete(), which passes it
+        # to httpx.Client.post(). If it hits 15s, httpx severs the socket,
         # instantly freeing LM Studio's VRAM. No ThreadPoolExecutor needed.
         result = llm.complete(
             role="planner",
@@ -40,10 +39,10 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
             content="",
             trace_id=trace_id,
             temperature=0.2,
-            timeout=timeout, 
+            timeout=timeout,
         )
     except Exception as e:
-        tracer.error(f"[{trace_id}] LLM call failed during distillation: {e}")
+        tracer.error(trace_id, "distill", f"LLM call failed: {e}")
         return {"status": "skipped", "reason": "llm_error"}
 
     if not result.ok:
@@ -63,7 +62,7 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError:
-        tracer.warning(f"[{trace_id}] Distillation failed to parse JSON: {raw_text[:100]}")
+        tracer.warning(trace_id, "distill", f"Failed to parse JSON: {raw_text[:100]}")
         return {"status": "skipped", "reason": "invalid_json"}
 
     if not data.get("has_insight"):
@@ -71,11 +70,11 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
 
     rule_text = data.get("rule", "")
     tags = data.get("tags", "procedural,auto")
-    
+
     # Validate
     is_valid, reason = is_valid_rule(rule_text)
     if not is_valid:
-        tracer.info(f"[{trace_id}] Distilled rule rejected: {reason}")
+        tracer.step(trace_id, "distill", f"Rule rejected: {reason}")
         return {"status": "skipped", "reason": f"validation_failed_{reason}"}
 
     # Store
@@ -87,5 +86,5 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
         goal="workflow_distillation",
         outcome="success"
     )
-    
+
     return {"status": "stored", "rule_preview": rule_text[:80], "store_result": store_result}

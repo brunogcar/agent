@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/sleep_learn/feedback.py
 Dynamic Confidence Scoring (The Feedback Loop).
 Reads injection logs and agent trace logs to update rule confidence scores.
@@ -24,19 +24,29 @@ MIN_CONFIDENCE_THRESHOLD = 0.3
 
 # Infrastructure errors that should NOT penalize rules
 INFRA_ERROR_KEYWORDS = [
-    "timeout", "connection", "ratelimit", "budget", "unreachable", 
+    "timeout", "connection", "ratelimit", "budget", "unreachable",
     "circuit breaker", "network", "lm studio"
 ]
 
+# [P1 FIX] Singleton ChromaDB client to prevent creating a new client
+# on every feedback cycle. ChromaDB PersistentClient is expensive to
+# instantiate (opens SQLite + loads embedding model metadata).
+_chroma_client = None
+_chroma_collection = None
+
 def _get_collection():
-    """Lazy load ChromaDB to prevent startup crashes."""
-    import chromadb
-    client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
-    return client.get_collection(name=SLEEP_LEARN_COLLECTION_NAME)
+    """Lazy singleton: load ChromaDB client and collection once."""
+    global _chroma_client, _chroma_collection
+    if _chroma_collection is None:
+        import chromadb
+        _chroma_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
+        _chroma_collection = _chroma_client.get_collection(name=SLEEP_LEARN_COLLECTION_NAME)
+    return _chroma_collection
 
 def _is_infra_failure(error_msg: str) -> bool:
     """Check if a trace failure was due to infrastructure, not logic."""
-    if not error_msg: return False
+    if not error_msg:
+        return False
     lower_msg = error_msg.lower()
     return any(kw in lower_msg for kw in INFRA_ERROR_KEYWORDS)
 
@@ -56,7 +66,7 @@ def update_rule_confidence(rule_id: str, success: bool, penalty_override: float 
         if new_conf < MIN_CONFIDENCE_THRESHOLD:
             collection.delete(ids=[rule_id])
             return {"status": "purged", "old_conf": current_conf, "new_conf": new_conf}
-        
+
         meta["confidence_score"] = new_conf
         meta["last_evaluated_at"] = int(time.time())
         collection.update(ids=[rule_id], metadatas=[meta])
@@ -66,7 +76,8 @@ def update_rule_confidence(rule_id: str, success: bool, penalty_override: float 
 
 def _update_recall_counts(rule_counts: Dict[str, int]):
     """Batch updates recall_count and last_accessed_at for injected rules."""
-    if not rule_counts: return
+    if not rule_counts:
+        return
     try:
         collection = _get_collection()
         for rule_id, count in rule_counts.items():
@@ -85,7 +96,7 @@ def process_feedback() -> dict:
     Updates confidence scores, recall counts, and archives processed injections.
     """
     stats = {"processed": 0, "boosted": 0, "penalized": 0, "purged": 0, "errors": 0}
-    
+
     if not INJECTIONS_LOG.exists():
         return stats
 
@@ -94,8 +105,10 @@ def process_feedback() -> dict:
     try:
         with open(INJECTIONS_LOG, "r", encoding="utf-8") as f:
             for line in f:
-                try: pending.append(json.loads(line))
-                except json.JSONDecodeError: continue
+                try:
+                    pending.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
     except PermissionError:
         return stats  # Windows file lock: skip this cycle
 
@@ -111,7 +124,7 @@ def process_feedback() -> dict:
     # 3. Scan agent logs for trace_finish events (Today + Yesterday)
     target_ids = {p["trace_id"] for p in pending if "trace_id" in p}
     outcomes = {}  # trace_id -> success (bool)
-    
+
     # Glob for today and yesterday to handle midnight rollover
     today = time.strftime('%Y%m%d')
     yesterday = time.strftime('%Y%m%d', time.localtime(time.time() - 86400))
@@ -119,9 +132,10 @@ def process_feedback() -> dict:
         cfg.agent_log_path / f"agent_{today}.jsonl",
         cfg.agent_log_path / f"agent_{yesterday}.jsonl"
     ]
-    
+
     for log_file in log_patterns:
-        if not log_file.exists(): continue
+        if not log_file.exists():
+            continue
         try:
             with open(log_file, "r", encoding="utf-8") as f:
                 for line in f:
@@ -135,7 +149,8 @@ def process_feedback() -> dict:
                                     outcomes[event["trace_id"]] = None  # Neutral: no boost/penalty
                                     continue
                             outcomes[event["trace_id"]] = event.get("success", False)
-                    except json.JSONDecodeError: continue
+                    except json.JSONDecodeError:
+                        continue
         except PermissionError:
             continue  # Windows file lock: skip this file
 
@@ -146,7 +161,7 @@ def process_feedback() -> dict:
         if tid in outcomes:
             success = outcomes[tid]
             if success is not None:  # None means infra failure (skip)
-                
+
                 # P0 Fix: Check for agent_fault in typed impact warnings.
                 # DO NOT penalize if analysis crashed or if it was a critical path/zombie test.
                 ignored_impact = False
@@ -160,14 +175,16 @@ def process_feedback() -> dict:
                                 if step.get("node") == "analyze_impact" and step.get("has_agent_fault"):
                                     ignored_impact = True
                                     break
-                
+
                 for rule_id in inj.get("rule_ids", []):
                     penalty = CONFIDENCE_PENALTY_HEAVY if ignored_impact else None
                     res = update_rule_confidence(rule_id, success, penalty_override=penalty)
                     stats["processed"] += 1
                     if res["status"] == "updated":
-                        if success: stats["boosted"] += 1
-                        else: stats["penalized"] += 1
+                        if success:
+                            stats["boosted"] += 1
+                        else:
+                            stats["penalized"] += 1
                     elif res["status"] == "purged":
                         stats["purged"] += 1
                     elif res["status"] == "error":

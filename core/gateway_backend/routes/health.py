@@ -1,6 +1,5 @@
-"""
-core/gateway_backend/routes/health.py — Health, version, and system info endpoints.
-"""
+# core/gateway_backend/routes/health.py — Health, version, and system info endpoints.
+"""Health, version, and system info endpoints."""
 from __future__ import annotations
 
 import subprocess as _sp
@@ -25,7 +24,7 @@ def version():
             cwd=str(cfg.agent_root), stderr=_sp.DEVNULL, text=True,
         ).strip()
     except Exception as e:
-        tracer.error(f"Failed to get git info: {e}")
+        tracer.error("", "git_info", f"Failed to get git info: {e}")
         commit = "unknown"
         branch = "unknown"
     return {"commit": commit, "branch": branch, "env": cfg.env}
@@ -41,10 +40,10 @@ async def health():
 async def health_autocode(deep: bool = Query(False), _: None = Depends(check_auth)):
     """[PHASE 2 FIX] Autocode workflow health check."""
     from core.memory import memory as mem
-    
+
     checks = {
         "lm_studio": "unknown",
-        "chromadb":  "unknown",
+        "chromadb": "unknown",
         "agent_root": str(cfg.agent_root),
     }
     try:
@@ -83,10 +82,10 @@ def health_models(_: None = Depends(check_auth)):
     required = {
         "planner": cfg.planner_model,
         "executor": cfg.executor_model,
-        "router":   cfg.router_model,
+        "router": cfg.router_model,
     }
     try:
-        resp   = _httpx.get(f"{cfg.lm_studio_base_url}/models", timeout=5)
+        resp = _httpx.get(f"{cfg.lm_studio_base_url}/models", timeout=5)
         loaded = [m["id"] for m in resp.json().get("data", [])]
         status = {}
         all_ok = True
@@ -96,9 +95,9 @@ def health_models(_: None = Depends(check_auth)):
             if not found:
                 all_ok = False
         return {
-            "status":           "ok" if all_ok else "degraded",
-            "all_loaded":    all_ok,
-            "models":        status,
+            "status": "ok" if all_ok else "degraded",
+            "all_loaded": all_ok,
+            "models": status,
             "loaded_models": loaded,
         }
     except Exception as e:
@@ -106,6 +105,20 @@ def health_models(_: None = Depends(check_auth)):
 
 @router.get("/tools")
 def list_tools(_: None = Depends(check_auth)):
+    """
+    [P1 FIX] Return the list of registered tools from the registry.
+    Falls back to a static list if the registry hasn't been scanned yet
+    (e.g., gateway started before MCP server booted).
+    """
+    try:
+        from registry import get_tool_names
+        names = get_tool_names()
+        if names:
+            return {"tools": names}
+    except Exception:
+        pass  # Fall back to static list
+
+    # Static fallback — kept as safety net for edge cases
     return {
         "tools": [
             "web", "python", "file", "git", "vision",

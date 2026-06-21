@@ -1,15 +1,15 @@
-﻿"""
-core/citations.py -- Citation tracker for research workflows.
+# core/citations.py -- Citation tracker for research workflows.
+"""Citation tracker for research workflows.
 
 Tracks which facts came from which sources during a research session.
 Keyed by trace_id so citations are scoped to a single workflow run.
 
 Usage:
-    from workflows.helpers.citations import citations
+    from core.citations import citations
 
     # During scraping
     citations.add(trace_id, url="https://example.com", title="Example",
-                  snippet="ChromaDB supports persistent storage")
+                   snippet="ChromaDB supports persistent storage")
 
     # When building report
     sources = citations.get_sources(trace_id)
@@ -20,7 +20,6 @@ Usage:
     marker = citations.cite(trace_id, url="https://example.com")
     # -> "[1]"
 """
-
 from __future__ import annotations
 
 import threading
@@ -39,7 +38,7 @@ class CitationTracker:
     MAX_TRACES = 100  # evict oldest when over limit
 
     def __init__(self) -> None:
-        self._lock   = threading.Lock()
+        self._lock = threading.Lock()
         # trace_id -> {"url": {"title", "snippets": [], "number": int, "added_at": float}}
         self._store: dict[str, dict[str, dict]] = {}
         self._order: list[str] = []
@@ -57,9 +56,9 @@ class CitationTracker:
     def add(
         self,
         trace_id: str,
-        url:      str,
-        title:    str    = "",
-        snippet:  str    = "",
+        url: str,
+        title: str = "",
+        snippet: str = "",
     ) -> int:
         """
         Register a source URL for this trace.
@@ -75,10 +74,10 @@ class CitationTracker:
             if url not in sources:
                 number = len(sources) + 1
                 sources[url] = {
-                    "url":      url,
-                    "title":    title or url,
+                    "url": url,
+                    "title": title or url,
                     "snippets": [],
-                    "number":   number,
+                    "number": number,
                     "added_at": time.time(),
                 }
 

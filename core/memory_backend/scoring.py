@@ -1,5 +1,15 @@
-"""
-core/memory_backend/scoring.py — Decay scoring, query rewriting, and text normalization.
+# core/memory_backend/scoring.py — Decay scoring, query rewriting, and text normalization.
+"""Decay scoring, query rewriting, and text normalization for memory retrieval.
+
+Score composition:
+  - Time decay (bypassed for procedural memories)
+  - Reinforcement boost (capped logarithmic)
+  - Recall boost (capped linear)
+
+Procedural memories (learned rules, validated fix patterns) bypass time decay
+intentionally — they represent validated knowledge that should persist.
+However, to prevent completely stale rules from dominating, a minimum floor
+of 0.7 is applied. This gives slow natural decay while preserving the intent.
 """
 from __future__ import annotations
 
@@ -11,6 +21,13 @@ import unicodedata
 
 from core.config import cfg
 
+# [P2 FIX] Minimum decay floor for procedural memories.
+# Prevents learned rules from staying at perfect 1.0 forever,
+# giving slow natural decay while still preserving validated knowledge.
+# Value chosen as middle ground: 0.7 = 30% max decay over time.
+PROCEDURAL_DECAY_FLOOR = 0.7
+
+
 def _decay_score(
     importance: int,
     timestamp: int,
@@ -20,17 +37,26 @@ def _decay_score(
 ) -> float:
     """
     Score = importance * decay_factor * reinforcement_boost * recall_boost
-    Procedural memories bypass time-based decay.
+
+    Procedural memories bypass time-based decay by default, but are subject
+    to a minimum floor (PROCEDURAL_DECAY_FLOOR) to prevent stale rules from
+    dominating indefinitely.
+
     Reinforcement uses a capped logarithmic boost.
     Recall uses a capped linear boost to elevate frequently used memories.
     """
-    # 1. Time Decay (Bypassed for procedural)
+    # 1. Time Decay (Bypassed for procedural, but floored)
     if collection == "procedural":
-        decay = 1.0
+        # [P2 FIX] Apply minimum floor to procedural decay.
+        # Previously hardcoded to 1.0 (no decay at all), which allowed
+        # stale rules to stay dominant forever. Floor of 0.7 gives
+        # slow natural decay while preserving validated knowledge.
+        age_days = (time.time() - timestamp) / 86400
+        decay = max(PROCEDURAL_DECAY_FLOOR, 1.0 - (age_days / cfg.memory_decay_days))
     else:
         age_days = (time.time() - timestamp) / 86400
         decay = max(0.3, 1.0 - (age_days / cfg.memory_decay_days))
-        
+
     # 2. Reinforcement Boost (Capped Logarithmic)
     capped_count = min(reinforcement_count, 10)
     reinforcement_boost = 1.0 + (0.15 * math.log(1 + capped_count))
@@ -46,6 +72,7 @@ def _decay_score(
 def _rewrite_query(query: str) -> str:
     """
     Lightweight query rewriting before hitting ChromaDB.
+
     Rules (no model call — keeps this fast):
     - Strip filler words that hurt semantic search
     - Expand common abbreviations
@@ -56,22 +83,22 @@ def _rewrite_query(query: str) -> str:
         "the", "a", "an", "in", "on", "at", "of", "for",
     }
     EXPANSIONS = {
-        "py":       "python",
-        "fn":       "function",
-        "func":     "function",
-        "db":       "database",
-        "chroma":   "chromadb",
-        "mem":      "memory",
-        "cfg":      "config",
-        "err":      "error",
-        "msg":      "message",
-        "repo":     "repository",
-        "dir":      "directory",
+        "py": "python",
+        "fn": "function",
+        "func": "function",
+        "db": "database",
+        "chroma": "chromadb",
+        "mem": "memory",
+        "cfg": "config",
+        "err": "error",
+        "msg": "message",
+        "repo": "repository",
+        "dir": "directory",
     }
 
-    words   = query.lower().split()
+    words = query.lower().split()
     cleaned = [EXPANSIONS.get(w, w) for w in words if w not in FILLERS]
-    result  = " ".join(cleaned).strip()
+    result = " ".join(cleaned).strip()
 
     if not result or len(result.strip()) < 2:
         return query.lower().strip() or "general"

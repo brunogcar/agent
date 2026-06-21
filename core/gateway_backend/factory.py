@@ -1,6 +1,5 @@
-"""
-core/gateway_backend/factory.py — FastAPI app factory and composition root.
-"""
+# core/gateway_backend/factory.py — FastAPI app factory and composition root.
+"""FastAPI app factory and composition root."""
 from __future__ import annotations
 
 import sys
@@ -41,7 +40,7 @@ async def lifespan(app: FastAPI):
     from core.runtime.task_runner import shutdown_executor
     shutdown_executor()
 
-    # 2. Wait for warmup thread to finish (if it hasn't already)
+    # 2. Wait for warmup thread to finish (if it hasn\'t already)
     warmup_thread.join(timeout=5)
 
 # ── ChromaDB warmup (P1-7) ---------------------------------------------------
@@ -78,7 +77,7 @@ def _warmup_memory(timeout: int = 60) -> None:
             file=sys.stderr,
         )
         # Log to tracer so it shows up in structured debugging/telemetry
-        tracer.warning("memory_warmup_timeout", timeout=timeout, elapsed=elapsed, msg="Proceeding in degraded mode")
+        tracer.warning("", "memory_warmup", f"Timeout after {timeout}s", elapsed=elapsed)
     except Exception as e:
         elapsed = round(time.time() - start, 1)
         print(
@@ -226,7 +225,7 @@ def create_app():
     @app.exception_handler(TaskNotFoundError)
     async def task_not_found_handler(request: Request, exc: TaskNotFoundError):
         trace_id = getattr(request.state, "trace_id", exc.trace_id)
-        tracer.error(event="task_not_found", node="gateway", trace_id=trace_id, error=str(exc))
+        tracer.error(trace_id, "gateway", str(exc), task="task_not_found")
         return JSONResponse(
             status_code=404,
             content={"error": "Task not found", "trace_id": trace_id, "detail": str(exc)}
@@ -235,7 +234,7 @@ def create_app():
     @app.exception_handler(ToolExecutionError)
     async def tool_execution_handler(request: Request, exc: ToolExecutionError):
         trace_id = getattr(request.state, "trace_id", exc.trace_id)
-        tracer.error(event="tool_execution_failed", node="gateway", trace_id=trace_id, tool=exc.tool, error=exc.error)
+        tracer.error(trace_id, "gateway", exc.error, task="tool_execution_failed", tool=exc.tool)
         return JSONResponse(
             status_code=500,
             content={"error": "Tool execution failed", "trace_id": trace_id, "tool": exc.tool, "detail": exc.error}
@@ -244,7 +243,7 @@ def create_app():
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         trace_id = getattr(request.state, "trace_id", "unknown")
-        tracer.error(event="unhandled_exception", node="gateway", trace_id=trace_id, error=str(exc), exc_info=True)
+        tracer.error(trace_id, "gateway", str(exc), task="unhandled_exception")
         return JSONResponse(
             status_code=500,
             content={"error": "Internal server error", "trace_id": trace_id}

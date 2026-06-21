@@ -1,8 +1,5 @@
-"""
-core/llm_backend/client.py — The core LLMClient execution engine.
-
-EXTRACTION NOTE (LLM Phase 1): Extracted from core/llm.py.
-"""
+# core/llm_backend/client.py — The core LLMClient execution engine.
+"""The core LLMClient execution engine."""
 from __future__ import annotations
 
 import json
@@ -63,9 +60,9 @@ class LLMClient:
         for role, breaker in self._breakers.items():
             try:
                 # [BUGFIX-1] tracer.log() does not exist; use tracer.step() instead.
-                tracer.step("", "circuit_breaker", role=role, **breaker.get_state_info())
+                tracer.step("", "circuit_breaker", f"State check for {role}", role=role, **breaker.get_state_info())
             except Exception as e:
-                tracer.error("", "circuit_breaker_metrics", error=str(e), role=role)
+                tracer.error("", "circuit_breaker_metrics", f"Metrics failed for {role}", error=str(e), role=role)
 
         # 2. Optionally expose via property if --metrics flag is enabled
         if getattr(cfg, "enable_metrics_endpoint", False):

@@ -7,6 +7,7 @@ import concurrent.futures
 import ipaddress
 import logging
 import socket
+import atexit
 
 from core.config import cfg
 
@@ -15,6 +16,13 @@ _SSRF_WARNED = False
 
 # Dedicated thread pool for DNS resolution to prevent blocking the event loop
 _DNS_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="dns_resolver")
+
+# [P1 FIX] Register shutdown of DNS thread pool at process exit.
+# [P3 NOTE] The TOCTOU window between DNS validation here and httpx's second
+# DNS lookup is accepted per threat model: this is a local-first agent.
+# The attack requires controlling DNS responses with 0-TTL records, which is
+# infeasible for a 127.0.0.1-bound service. Revisit if gateway is exposed.
+atexit.register(_DNS_POOL.shutdown)
 
 def _resolve_safe(hostname: str, timeout: float = 2.0) -> list:
     """Resolve hostname with a strict timeout to prevent DoS via slow DNS."""
@@ -31,15 +39,21 @@ def is_safe_network_address(hostname: str) -> bool:
     Check if a hostname is safe to connect to (i.e., NOT private, loopback, or reserved).
     Respects the ALLOWED_INTERNAL_HOSTS allowlist in config.
     Returns True if safe, False if blocked.
-    
+
     SECURITY FEATURES:
     - Blocks private, loopback, link-local, and reserved IP ranges.
     - Blocks IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1).
     - Prevents DNS Rebinding attacks by resolving hostnames to IPs and validating ALL returned records.
     - Prevents DNS DoS by enforcing a strict 2-second timeout on resolution.
+
+    KNOWN LIMITATION (accepted threat model):
+    httpx may perform a second DNS lookup after this validation, creating a
+    TOCTOU window. For a local-first agent, this risk is near-zero. If the
+    gateway is ever exposed to the network, a custom httpx transport that
+    binds to the validated IP while preserving the Host header would be needed.
     """
     global _SSRF_WARNED
-    
+
     if not _SSRF_WARNED and cfg.allowed_internal_hosts:
         logger.warning(
             "SSRF: localhost/internal access allowed by default for development. "
@@ -72,16 +86,16 @@ def is_safe_network_address(hostname: str) -> bool:
     # 1. Check if it's a bare IP address
     try:
         ip = ipaddress.ip_address(hostname)
-        
+
         # Block IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1)
         if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
             return False
-            
+
         is_unsafe = bool(
-            ip.is_private or      # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-            ip.is_loopback or     # 127.0.0.0/8, ::1
-            ip.is_link_local or   # 169.254.0.0/16, fe80::/10
-            ip.is_reserved        # 192.0.2.0/24, 2001:db8::/32, etc.
+            ip.is_private or  # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            ip.is_loopback or  # 127.0.0.0/8, ::1
+            ip.is_link_local or  # 169.254.0.0/16, fe80::/10
+            ip.is_reserved  # 192.0.2.0/24, 2001:db8::/32, etc.
         )
         return not is_unsafe
     except ValueError:
@@ -92,38 +106,38 @@ def is_safe_network_address(hostname: str) -> bool:
     # 2. DNS Resolution & Validation (Prevents DNS Rebinding)
     # We use a dedicated thread pool with a strict timeout to prevent DoS.
     infos = _resolve_safe(hostname, timeout=2.0)
-    
+
     # If resolution fails or times out (empty list), we MUST block.
     if not infos:
         return False
-        
+
     for _, _, _, _, sockaddr in infos:
         ip_str = sockaddr[0]
         try:
             ip = ipaddress.ip_address(ip_str)
-            
+
             # Block IPv4-mapped IPv6 (e.g., ::ffff:127.0.0.1)
             if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
                 return False
-                
+
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return False
         except ValueError:
             # If we can't parse the resolved IP, block it to be safe.
             return False
-            
+
     return True
 
 def _is_private_or_localhost(hostname: str) -> bool:
     """Legacy compatibility alias. Returns True if hostname is private/localhost.
-    
+
     Differs from is_safe_network_address on semantics:
-    - True  = hostname IS private/localhost (should be blocked)
+    - True = hostname IS private/localhost (should be blocked)
     - False = hostname is NOT private/localhost (allowed or unknown)
-    
+
     For invalid/empty hostnames and DNS resolution failures, returns False
     (permissive fallback) to match original behavior.
-    
+
     New code should use is_safe_network_address() which returns True for safe
     addresses and False for blocked/unknown (secure-by-default).
     """
@@ -132,7 +146,7 @@ def _is_private_or_localhost(hostname: str) -> bool:
     h = hostname.strip()
     if not h:
         return False
-    
+
     # Handle IPv6 with port: [::1]:8080 -> ::1
     if h.startswith("[") and "]:" in h:
         h = h.split("]:")[0].lstrip("[")
@@ -142,19 +156,19 @@ def _is_private_or_localhost(hostname: str) -> bool:
     # Handle IPv4 with port: 127.0.0.1:3000 -> 127.0.0.1
     elif ":" in h and not h.startswith("[") and "::" not in h:
         h = h.split(":")[0]
-    
+
     # Allowlist check (short-circuit)
     if h in cfg.allowed_internal_hosts:
         return False  # Allowed = not private
-    
+
     # Known loopback variants
     if h in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return True
-    
+
     # Reserved TLDs
     if h.endswith((".local", ".test", ".localhost", ".invalid")):
         return True
-    
+
     # IP address check
     try:
         ip = ipaddress.ip_address(h)
@@ -163,12 +177,12 @@ def _is_private_or_localhost(hostname: str) -> bool:
         return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
     except ValueError:
         pass
-    
+
     # DNS resolution — permissive fallback on failure (old behavior)
     infos = _resolve_safe(h, timeout=2.0)
     if not infos:
         return False
-    
+
     for _, _, _, _, sockaddr in infos:
         ip_str = sockaddr[0]
         try:
@@ -179,6 +193,5 @@ def _is_private_or_localhost(hostname: str) -> bool:
                 return True
         except ValueError:
             pass
-    
-    return False
 
+    return False

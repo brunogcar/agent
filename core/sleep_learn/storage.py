@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/sleep_learn/storage.py
 Saves validated rules to a physically isolated ChromaDB collection.
 GUARDRAIL: This module only WRITES. The daemon is forbidden from reading this.
@@ -9,18 +9,27 @@ import hashlib
 from typing import Dict, Any
 
 from core.sleep_learn.config import (
-    _SLEEP_LEARN_DB_PATH, 
+    _SLEEP_LEARN_DB_PATH,
     SLEEP_LEARN_COLLECTION_NAME
 )
 
+# [P1 FIX] Singleton ChromaDB client to prevent creating a new client
+# on every call. ChromaDB PersistentClient is expensive to instantiate
+# (opens SQLite + loads embedding model metadata).
+_chroma_client = None
+_chroma_collection = None
+
 def _get_collection():
-    """Lazy load ChromaDB client and collection to prevent startup crashes."""
-    import chromadb
-    client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
-    return client.get_or_create_collection(
-        name=SLEEP_LEARN_COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"}
-    )
+    """Lazy singleton: load ChromaDB client and collection once."""
+    global _chroma_client, _chroma_collection
+    if _chroma_collection is None:
+        import chromadb
+        _chroma_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
+        _chroma_collection = _chroma_client.get_or_create_collection(
+            name=SLEEP_LEARN_COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"}
+        )
+    return _chroma_collection
 
 def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) -> str:
     """
@@ -29,7 +38,7 @@ def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) ->
     """
     rule_id = hashlib.sha256(rule_text.encode("utf-8")).hexdigest()[:16]
     collection = _get_collection()
-    
+
     # Check for exact duplicates before inserting
     existing = collection.get(ids=[rule_id])
     if existing and existing['ids']:
@@ -48,7 +57,7 @@ def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) ->
             "phase": "2_active_distillation"
         }]
     )
-    
+
     return rule_id
 
 def get_collection_stats() -> dict:

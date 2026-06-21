@@ -10,6 +10,7 @@ import threading
 from typing import Any, Callable
 
 from core.contracts import ok, fail
+from core.config import cfg
 
 # Tools that are safe to run in parallel (conservative default)
 _parallel_depth = threading.local()
@@ -17,7 +18,6 @@ _parallel_depth = threading.local()
 PARALLEL_SAFE = frozenset({
     "web", "file", "python", "python_exec", "notify",
 })
-
 
 def dispatch_parallel(
     calls: list[tuple[str, Callable, dict]],
@@ -37,6 +37,10 @@ def dispatch_parallel(
     if getattr(_parallel_depth, "value", 0) > 0:
         return fail("Nested parallel calls are not allowed", trace_id=trace_id)
 
+    # [P3 FIX] Use configured worker timeout instead of hardcoded 30s.
+    # Respects cfg.worker_timeout (default 30s) so users can adjust via .env.
+    timeout = getattr(cfg, "worker_timeout", 30)
+
     results = []
     errors = []
 
@@ -49,7 +53,7 @@ def dispatch_parallel(
                 futures[future] = name
 
             # Enforce real global timeout using wait(), not as_completed()
-            done, not_done = concurrent.futures.wait(futures, timeout=30)
+            done, not_done = concurrent.futures.wait(futures, timeout=timeout)
 
             for future in done:
                 name = futures[future]
@@ -70,7 +74,7 @@ def dispatch_parallel(
                 name = futures[future]
                 errors.append({
                     "tool": name,
-                    "error": "Timed out after 30 seconds",
+                    "error": f"Timed out after {timeout} seconds",
                 })
     finally:
         _parallel_depth.value -= 1
@@ -81,7 +85,6 @@ def dispatch_parallel(
         "completed": len(results),
         "failed": len(errors),
     }, trace_id=trace_id)
-
 
 def _safe_run(name: str, fn: Callable, args: dict) -> Any:
     """Run a single tool call safely."""

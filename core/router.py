@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/router.py -- Router-based task router.
 Classifies any free-text goal into a structured routing decision
 before the workflow layer runs. The Router model is used for speed (15s timeout).
@@ -181,7 +181,9 @@ class TaskRouter:
             system = (
                 "No thinking. No explanation.\n"
                 '{"workflow": "research or data or autocode",'
-                '   "tool": "web or python or file or git or memory or agent or notify or report or workflow",'
+                # [P3 FIX] Added "vision" to the tool list to match the registry.
+                # The router prompt must stay in sync with registered tools.
+                '   "tool": "web or python or file or git or memory or agent or notify or report or vision or workflow",'
                 '   "complexity":5,'
                 '   "reason": "one sentence",'
                 '   "confidence": "high or medium or low",'

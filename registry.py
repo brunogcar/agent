@@ -34,6 +34,25 @@ def tool(fn: Any) -> Any:
     return fn
 
 
+# [P1 FIX] Module-level cache for discovered tool names.
+# Populated during register_all_tools() and consumed by get_tool_names().
+# This avoids re-scanning modules just to get a list of names.
+_registered_tool_names: list[str] = []
+
+
+def get_tool_names() -> list[str]:
+    """
+    Return the list of tool names discovered during registration.
+
+    This is used by health.py /tools endpoint to report the actual
+    registered tools instead of a hardcoded list that drifts.
+
+    If called before register_all_tools() has run, returns an empty list.
+    In that case, the caller should fall back to a static list.
+    """
+    return list(_registered_tool_names)
+
+
 def register_all_tools(mcp: FastMCP) -> int:
     """
     Discover and register all @tool-decorated functions in tools/ and skills/.
@@ -61,6 +80,8 @@ def register_all_tools(mcp: FastMCP) -> int:
         Keeping them separate makes the log output clear ("tools/" vs "skills/")
         and lets us apply different scanning rules to each package independently.
     """
+    global _registered_tool_names
+    _registered_tool_names = []  # Reset on each registration call
     registered = 0
     errors: list[str] = []
 
@@ -79,6 +100,7 @@ def register_all_tools(mcp: FastMCP) -> int:
             if callable(fn) and getattr(fn, "_is_mcp_tool", False):
                 try:
                     mcp.tool()(fn)
+                    _registered_tool_names.append(attr_name)
                     registered += 1
                 except Exception as e:
                     errors.append(f"Failed to register {full_name}.{attr_name}: {e}")
@@ -104,6 +126,7 @@ def register_all_tools(mcp: FastMCP) -> int:
                 if callable(fn) and getattr(fn, "_is_mcp_tool", False):
                     try:
                         mcp.tool()(fn)
+                        _registered_tool_names.append(attr_name)
                         registered += 1
                     except Exception as e:
                         errors.append(f"Failed to register {full_name}.{attr_name}: {e}")

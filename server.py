@@ -24,8 +24,8 @@ def _fix_streams() -> None:
             stream.encoding is None or stream.encoding.lower() != "utf-8"
         ):
             setattr(sys, name,
-                    io.TextIOWrapper(stream.buffer, encoding="utf-8",
-                                   errors="replace", line_buffering=True))
+                io.TextIOWrapper(stream.buffer, encoding="utf-8",
+                                 errors="replace", line_buffering=True))
 
     # Redirect stdout -> stderr during boot so nothing corrupts the channel.
     # FastMCP.run() will reclaim stdout for the stdio transport.
@@ -45,6 +45,19 @@ from core.config import cfg
 from core.tracer import tracer
 
 cfg.ensure_dirs()
+
+# [P1 FIX] Validate config on MCP boot (same as gateway does in factory.py)
+# Catches missing env vars, invalid paths, and model misconfigurations
+# before any tools or workflows try to use them.
+try:
+    from core.config_validation import validate_config
+    validate_config()
+    print("[server] Config validation passed", file=sys.stderr)
+except ImportError:
+    # config_validation module may not exist yet in older checkouts
+    print("[server] WARNING: config_validation not found, skipping", file=sys.stderr)
+except Exception as e:
+    print(f"[server] WARNING: Config validation failed: {e}", file=sys.stderr)
 
 # -- MCP framework ------------------------------------------------------------
 from mcp.server.fastmcp import FastMCP
@@ -250,6 +263,25 @@ def _start_meta_learner() -> None:
         print(f"[server] Meta-Learner failed to start: {e}", file=sys.stderr)
 
 _start_meta_learner()
+
+# -- Start Sleep & Learn Daemon (moved from core/__init__.py) -----------------
+# [P1 FIX] Previously started as an import side-effect in core/__init__.py,
+# which caused it to run on ANY import from core (not just server boot).
+# Moved here to run only when server.py boots, with proper ChromaDB warmup
+# coordination via _chromadb_ready Event.
+def _start_sleep_learn() -> None:
+    try:
+        from core.sleep_learn.daemon import start_background_daemon
+        # Wait for ChromaDB before starting (uses memory.store for feedback processing)
+        if not _chromadb_ready.wait(timeout=_CHROMADB_READY_TIMEOUT):
+            print(f"[server] WARNING: ChromaDB warmup timed out after {_CHROMADB_READY_TIMEOUT}s, "
+                  "sleep-learn starting anyway", file=sys.stderr)
+        start_background_daemon()
+        print("[server] Sleep & Learn daemon started", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Sleep & Learn failed to start: {e}", file=sys.stderr)
+
+_start_sleep_learn()
 
 # -- Start Eviction Flusher ----------------------------------------------------
 def _start_eviction_flusher() -> None:

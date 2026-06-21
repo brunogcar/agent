@@ -14,8 +14,8 @@ Each major subsystem has a dedicated document with architecture, API reference, 
 | Document | Subsystem | Key Topics |
 |----------|-----------|------------|
 | [CONFIG.md](CONFIG.md) | Configuration | `.env` loading, model tiers, path hierarchy, validation, gateway config |
-| [LLM_BACKEND.md](LLM_BACKEND.md) | LLM Client | Role-based dispatch, circuit breakers, context budgeting, JSON parsing, provider abstraction |
-| [MEMORY_BACKEND.md](MEMORY_BACKEND.md) | Memory System | Three collections, four-layer dedup, decay scoring, write/read ops, maintenance |
+| [LLM.md](LLM.md) | LLM Client | Role-based dispatch, circuit breakers, context budgeting, JSON parsing, provider abstraction |
+| [MEMORY.md](MEMORY.md) | Memory System | Three collections, four-layer dedup, decay scoring, write/read ops, maintenance |
 | [ROUTER.md](ROUTER.md) | Task Router | Model + heuristic routing, confidence guard, complexity scoring, JSON extraction |
 | [GATEWAY.md](GATEWAY.md) | REST Gateway | FastAPI endpoints, auth, rate limiting, middleware, SQLite task store, report serving |
 | [RUNTIME.md](RUNTIME.md) | Runtime | Activity tracking, cancellation guards, health checks, providers, watchdog, task runner |
@@ -218,7 +218,7 @@ Singleton config loaded from `.env` at import time. Tiered model strategy: large
 
 Unified interface for all model interactions. Role-based dispatch, circuit breakers, cognitive context budgeting, structured output.
 
-→ [Full documentation](LLM_BACKEND.md)
+→ [Full documentation](LLM.md)
 
 | Property | Value |
 |----------|-------|
@@ -234,7 +234,7 @@ Unified interface for all model interactions. Role-based dispatch, circuit break
 
 Three-collection ChromaDB vector store with decay scoring, four-layer dedup, and two learning subsystems.
 
-→ [Full documentation](MEMORY_BACKEND.md)
+→ [Full documentation](MEMORY.md)
 
 | Property | Value |
 |----------|-------|

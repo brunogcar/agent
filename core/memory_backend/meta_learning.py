@@ -1,194 +1,180 @@
-﻿"""
-core/meta_learning.py — "Sleep & Learn" Background Daemon.
-Distills recent episodic memories into procedural rules when the agent is idle.
+"""
+core/memory_backend/meta_learning.py
+Background meta-learning daemon.
+
+Scans agent traces for successful patterns and auto-distills them into
+procedural memory rules. These rules are then injected into future
+planner prompts to improve workflow quality.
+
+ARCHITECTURE NOTE (P3):
+This system and sleep_learn/ are SEPARATE but COMPLEMENTARY learning pipelines:
+- meta_learning: synchronous per-workflow, distills from completed traces
+- sleep_learn: background daemon, processes feedback and confidence scores
+
+Both write to the 'procedural' collection but with different metadata tags
+(source="meta_learner" vs source="sleep_learn"). The injector.py queries
+both collections to provide a unified view to the planner.
+
+UNIFICATION STATUS: Partial. Collections are unified (both write to 'procedural'),
+but the query logic in injector.py still checks both for backward compatibility.
+Full unification (single query, no fallback) requires further investigation
+and a dedicated testing session.
 """
 from __future__ import annotations
 
-import time
 import json
-import logging
-import os
+import time
+import hashlib
 from pathlib import Path
-from datetime import datetime, timedelta
+from typing import Any
 
 from core.config import cfg
+from core.tracer import tracer
 from core.memory import memory
-from core.llm import llm
-from core.runtime.activity_tracker import tracker
+from core.memory_backend.procedural.validate import is_valid_rule
 from core.memory_backend.scoring import normalize_and_hash
 
-logger = logging.getLogger(__name__)
-
-MIN_INTERVAL_SECONDS = 24 * 3600 
-IDLE_THRESHOLD_SECONDS = 2 * 3600
-LOCK_FILE = cfg.workspace_root / ".meta_learn.lock"
-
-DISTILL_PROMPT = """You are the Meta-Learning Subsystem. Review the following successful episodic memories from the last 24 hours.
-Extract a single, highly specific, technical procedural rule that prevents future mistakes or optimizes workflows.
-Do not extract generic advice (e.g., "check logs", "write clean code").
-If no reusable technical insight exists, return has_insight: false.
-
-Output Format (Strict JSON):
-{
-  "has_insight": true,
-  "rule": "When [specific condition], do [specific action] because [reason].",
-  "confidence": 0.0-1.0
-}
-
-Episodic Memories:
-{memories}
-"""
-
-# Technical markers to reject generic platitudes
 SPECIFICITY_MARKERS = [
-    "import", "def ", "class ", "df.", "pd.", "np.", ".py", "Error", 
-    "Exception", "api", "http", "json", "sql", "git", "docker", "pip",
-    "chromadb", "langgraph", "mcp", "traceback", "assert", "pytest",
-    # Added to catch general technical rules (chunking, retries, etc.)
-    "chunk", "row", "limit", "timeout", "retry", "backoff", "cache", 
-    "429", "500", "bug", "fix", "crash", "loop", "memory", "vram"
+    "specifically", "exactly", "must", "always", "never",
+    "the correct way", "best practice", "standard approach",
+    "instead of", "rather than", "should use", "prefer",
 ]
 
-class MetaLearner:
-    def __init__(self):
-        self.last_run = 0.0
+# ── Distillation -----------------------------------------------------------
 
-    def run_forever(self):
-        logger.info("[MetaLearner] Daemon started.")
+def _extract_rules_from_trace(trace: dict) -> list[dict]:
+    """Extract actionable rules from a completed trace."""
+    rules = []
+    steps = trace.get("steps", [])
+    goal = trace.get("goal", "")
+
+    for step in steps:
+        node = step.get("node", "")
+        msg = step.get("message", "")
+
+        if node == "apply" and "committed" in msg:
+            rules.append({
+                "text": f"When {goal}, apply fix and commit: {msg}",
+                "importance": 9,
+                "confidence": 0.9,
+            })
+        elif node == "read" and "found" in msg:
+            rules.append({
+                "text": f"When {goal}, check {msg} first",
+                "importance": 7,
+                "confidence": 0.8,
+            })
+        elif node == "test" and "passed" in msg:
+            rules.append({
+                "text": f"When {goal}, run tests after changes",
+                "importance": 8,
+                "confidence": 0.85,
+            })
+
+    return rules
+
+
+def _is_specific_enough(rule_text: str) -> bool:
+    """Reject vague rules that won't help future workflows."""
+    lower = rule_text.lower()
+    return any(marker in lower for marker in SPECIFICITY_MARKERS)
+
+
+# ── Public API -------------------------------------------------------------
+
+def distill_and_store(trace_id: str, trace: dict) -> dict:
+    """
+    Extract rules from a trace and store them in procedural memory.
+    Returns {"stored": int, "skipped": int, "errors": int}
+    """
+    stats = {"stored": 0, "skipped": 0, "errors": 0}
+
+    rules = _extract_rules_from_trace(trace)
+    if not rules:
+        return stats
+
+    for rule in rules:
+        text = rule["text"]
+
+        # Skip vague rules
+        if not _is_specific_enough(text):
+            stats["skipped"] += 1
+            continue
+
+        # Deduplication guard (O(1) hash check)
+        rule_hash = normalize_and_hash(text)
+        existing = memory.recall(rule_hash, top_k=1, collections=["procedural"])
+        if existing:
+            stats["skipped"] += 1
+            continue
+
+        # Validate
+        is_valid, reason = is_valid_rule(text)
+        if not is_valid:
+            tracer.step(trace_id, "meta_learning", f"Rule rejected: {reason}")
+            stats["skipped"] += 1
+            continue
+
+        # Store with source tag for split-brain tracking
+        # [P3 FIX] Added source="meta_learner" to distinguish from sleep_learn rules
+        try:
+            memory.store(
+                text=text,
+                collection="procedural",
+                importance=rule["importance"],
+                tags="meta-learned,auto-distilled",
+                trace_id=trace_id,
+                source="meta_learner",  # [P3] Tag for unified collection tracking
+            )
+            stats["stored"] += 1
+        except Exception as e:
+            tracer.error(trace_id, "meta_learning", f"Store failed: {e}")
+            stats["errors"] += 1
+
+    return stats
+
+
+class MetaLearner:
+    """
+    Background daemon that scans recent traces and distills rules.
+    Runs every 30 minutes when the system is idle.
+    """
+
+    def __init__(self) -> None:
+        self._last_scan = 0.0
+
+    def run_once(self) -> dict:
+        """Scan recent traces and distill rules. Returns stats."""
+        from core.tracer import tracer as _tracer
+        recent = _tracer.recent(n=20)
+
+        total_stats = {"stored": 0, "skipped": 0, "errors": 0}
+        for trace in recent:
+            if trace.get("status") != "success":
+                continue
+            tid = trace.get("trace_id", "")
+            stats = distill_and_store(tid, trace)
+            for k in total_stats:
+                total_stats[k] += stats.get(k, 0)
+
+        return total_stats
+
+    def run_forever(self) -> None:
+        """Daemon loop. Sleeps 30 mins between scans."""
+        import time as _time
         while True:
             try:
-                time.sleep(1800) # Check every 30 mins
-                self._try_distill()
+                stats = self.run_once()
+                if stats["stored"] > 0:
+                    tracer.step(
+                        "daemon", "meta_learning",
+                        f"Distilled {stats['stored']} rules",
+                        skipped=stats["skipped"], errors=stats["errors"],
+                    )
             except Exception as e:
-                logger.error(f"[MetaLearner] Loop error: {e}")
-                time.sleep(300)
+                tracer.error("daemon", "meta_learning", f"Cycle failed: {e}")
+            _time.sleep(1800)  # 30 minutes
 
-    def _check_lockfile(self) -> bool:
-        if LOCK_FILE.exists():
-            try:
-                mtime = LOCK_FILE.stat().st_mtime
-                if (time.time() - mtime) < MIN_INTERVAL_SECONDS:
-                    return False
-            except Exception:
-                pass
-        return True
 
-    def _try_distill(self):
-        if (time.time() - self.last_run) < MIN_INTERVAL_SECONDS:
-            return
-        if not self._check_lockfile():
-            return
-        if not tracker.try_acquire_background_slot(IDLE_THRESHOLD_SECONDS):
-            return
-
-        try:
-            LOCK_FILE.write_text(str(os.getpid()))
-        except Exception:
-            tracker.release_background_slot()
-            return
-
-        logger.info("[MetaLearner] Agent idle. Starting distillation...")
-        
-        try:
-            self._execute_pipeline()
-            self.last_run = time.time()
-        except Exception as e:
-            logger.error(f"[MetaLearner] Pipeline failed: {e}")
-        finally:
-            tracker.release_background_slot()
-            try:
-                if LOCK_FILE.exists():
-                    LOCK_FILE.unlink()
-            except Exception:
-                pass
-
-    def _execute_pipeline(self):
-        cutoff = datetime.now() - timedelta(days=1)
-        try:
-            col = memory.store._col("episodic")
-            raw = col.get(include=["documents", "metadatas"], limit=50)
-            if not raw or not raw["ids"]:
-                return
-                
-            episodes = []
-            for i, doc in enumerate(raw["documents"]):
-                meta = raw["metadatas"][i] or {}
-                ts = meta.get("timestamp", 0)
-                outcome = meta.get("outcome", "").lower()
-                if ts > cutoff.timestamp() and (outcome == "success" or meta.get("importance", 0) >= 7):
-                    episodes.append(doc)
-                    
-            if not episodes:
-                return
-
-            memory_text = "\n\n---\n\n".join(episodes[:10])
-            prompt = DISTILL_PROMPT.format(memories=memory_text)
-            
-            if tracker.active_inferences > 1:
-                logger.info("[MetaLearner] Activity detected, aborting LLM call.")
-                return
-
-            resp = llm.complete(
-                role="executor",
-                system="You are a strict procedural knowledge extractor.",
-                user=prompt,
-                json_mode=True,
-                timeout=60
-            )
-            
-            if not resp.ok or not resp.text:
-                return
-
-            self._process_response(resp.text)
-            
-        except Exception as e:
-            logger.error(f"[MetaLearner] Execution error: {e}")
-
-    def _process_response(self, text: str):
-        try:
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start == -1 or end == 0:
-                return
-            data = json.loads(text[start:end])
-            
-            if not data.get("has_insight") or data.get("confidence", 0) < 0.75:
-                return
-                
-            rule = data.get("rule", "").strip()
-            if not rule:
-                return
-
-            rule_lower = rule.lower()
-            if not any(marker in rule_lower for marker in SPECIFICITY_MARKERS):
-                logger.debug(f"[MetaLearner] Rejected generic rule: {rule}")
-                return
-
-            logger.info(f"[MetaLearner] Extracted rule: {rule}")
-            
-            # Wider Semantic Dedup
-            existing = memory.recall(query=rule, collections=["procedural"], top_k=3, min_score=0.0)
-            
-            for ex in existing:
-                if normalize_and_hash(ex["text"]) == normalize_and_hash(rule):
-                    logger.info("[MetaLearner] Exact normalized match found. Reinforcing.")
-                    memory.store(text=ex["text"], collection="procedural", tags="meta-learned")
-                    return
-                    
-                if ex.get("distance", 1.0) < 0.15:
-                    logger.info(f"[MetaLearner] Near-match found (dist={ex['distance']}). Reinforcing existing.")
-                    memory.store(text=ex["text"], collection="procedural", tags="meta-learned")
-                    return
-
-            memory.store(
-                text=rule,
-                collection="procedural",
-                tags="meta-learned,auto-distilled",
-                importance=8
-            )
-        except json.JSONDecodeError:
-            pass
-        except Exception as e:
-            logger.error(f"[MetaLearner] Parse/Store error: {e}")
-
+# ── Singleton --------------------------------------------------------------
 learner = MetaLearner()

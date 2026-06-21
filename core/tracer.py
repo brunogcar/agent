@@ -1,22 +1,22 @@
-"""
-core/tracer.py -- Structured logging and trace ID propagation.
+# core/tracer.py -- Structured logging and trace ID propagation.
+"""Structured logging and trace ID propagation.
 
 CRITICAL: This module must NEVER write to stdout.
 In MCP stdio transport mode stdout is the protocol channel.
 Any non-JSON-RPC bytes on stdout corrupt the connection.
 
 All output goes to:
-  - stderr   (structlog console output)
-  - logs/agent_YYYYMMDD.jsonl  (file, always)
+  - stderr (structlog console output)
+  - logs/agent_YYYYMMDD.jsonl (file, always)
 
 Usage:
-    from core.tracer import tracer
+  from core.tracer import tracer
 
-    tid = tracer.new_trace("autocode", goal="fix memory.py")
-    tracer.step(tid,  "read ",  "file loaded ", chars=4200)
-    tracer.error(tid,  "apply ",  "patch failed ", error="context mismatch")
-    tracer.finish(tid, success=True, result="committed abc123")
-    trace = tracer.get(tid)
+  tid = tracer.new_trace("autocode", goal="fix memory.py")
+  tracer.step(tid, "read ", "file loaded ", chars=4200)
+  tracer.error(tid, "apply ", "patch failed ", error="context mismatch")
+  tracer.finish(tid, success=True, result="committed abc123")
+  trace = tracer.get(tid)
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 import uuid
+import atexit
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -54,7 +55,7 @@ def _configure_structlog() -> None:
     """Configure structlog for stderr output only. Never touches stdout."""
     if not _HAS_STRUCTLOG:
         return  # Skip if structlog not available
-    
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -115,15 +116,20 @@ class _FileWriter:
 
 _writer = _FileWriter()
 
+# [P2 FIX] Register file writer close at process exit.
+# Ensures the JSONL log file is properly flushed and closed
+# on normal termination, preventing truncated last entries.
+atexit.register(_writer.close)
+
 # ── Trace store -------------------------------------------------------------
 class _TraceStore:
     """In-memory store for active traces. Bounded to prevent memory leak."""
     MAX_TRACES = 200
 
     def __init__(self) -> None:
-        self._lock  = threading.Lock()
+        self._lock = threading.Lock()
         self._store: dict[str, dict] = {}
-        self._order: list[str]       = []
+        self._order: list[str] = []
 
     def create(self, trace_id: str, record: dict) -> None:
         with self._lock:
@@ -162,16 +168,16 @@ class Tracer:
     Thread-safe. All output goes to stderr + log file. Never stdout.
     """
     def new_trace(self, workflow: str, goal: str = "", **kwargs: Any) -> str:
-        trace_id   = generate_trace_id()
-        ts       = time.time()
-        record   = {
-            "trace_id":    trace_id,
-            "workflow":    workflow,
-            "goal":        goal,
-            "started_at":  ts,
+        trace_id = generate_trace_id()
+        ts = time.time()
+        record = {
+            "trace_id": trace_id,
+            "workflow": workflow,
+            "goal": goal,
+            "started_at": ts,
             "started_fmt": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S"),
-            "status":       "running",
-            "steps":       [],
+            "status": "running",
+            "steps": [],
             **kwargs,
         }
         _store.create(trace_id, record)
@@ -190,20 +196,21 @@ class Tracer:
 
     def step(self, trace_id: str, node: str, message: str = "",
              **kwargs: Any) -> None:
-        ts    = time.time()
-        # [FIX] Use .get() to avoid mutating caller's kwargs dict
+        ts = time.time()
+        # Defensive: kwargs spread FIRST so hardcoded keys can't be accidentally overwritten.
+        # This prevents bugs like passing event="task_not_found" which would corrupt the event field.
         entry = {
+            **kwargs,
             "event": "step",
             "trace_id": trace_id,
             "node": node,
             "message": message,
             "ts": ts,
             "latency_ms": kwargs.get("latency_ms"),
-            **kwargs
         }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
-        if cfg.autocode_debug:          # ← now inside step()
+        if cfg.autocode_debug:  # ← now inside step()
             if _HAS_STRUCTLOG:
                 _log.debug("step", trace_id=trace_id, node=node, msg=message[:120])
             else:
@@ -211,14 +218,16 @@ class Tracer:
 
     def error(self, trace_id: str, node: str, message: str = "",
               **kwargs: Any) -> None:
-        ts    = time.time()
+        ts = time.time()
+        # Defensive: kwargs spread FIRST so hardcoded keys can't be accidentally overwritten.
+        # This prevents bugs like passing event="task_not_found" which would corrupt the event field.
         entry = {
+            **kwargs,
             "event": "error",
             "trace_id": trace_id,
             "node": node,
             "message": message,
             "ts": ts,
-            **kwargs
         }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
@@ -230,14 +239,16 @@ class Tracer:
     def warning(self, trace_id: str, node: str, message: str = "",
                 **kwargs: Any) -> None:
         """Log a warning-level event with trace context. Follows same pattern as error()."""
-        ts    = time.time()
+        ts = time.time()
+        # Defensive: kwargs spread FIRST so hardcoded keys can't be accidentally overwritten.
+        # This prevents bugs like passing event="task_not_found" which would corrupt the event field.
         entry = {
+            **kwargs,
             "event": "warning",
             "trace_id": trace_id,
             "node": node,
             "message": message,
             "ts": ts,
-            **kwargs
         }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
@@ -248,7 +259,7 @@ class Tracer:
 
     def finish(self, trace_id: str, success: bool = True,
                result: str = "", **kwargs: Any) -> None:
-        ts    = time.time()
+        ts = time.time()
         trace = _store.get(trace_id)
         elapsed = round(ts - trace["started_at"], 2) if trace else 0.0
         entry = {
@@ -256,9 +267,9 @@ class Tracer:
             "success": success, "result": result[:200],
             "elapsed_s": elapsed, "ts": ts, **kwargs,
         }
-        _store.update(trace_id, "status",   "success" if success else "failed")
+        _store.update(trace_id, "status", "success" if success else "failed")
         _store.update(trace_id, "elapsed", elapsed)
-        _store.update(trace_id, "result",  result[:200])
+        _store.update(trace_id, "result", result[:200])
         _store.append_step(trace_id, entry)
         _writer.write(entry)
         # stderr only
@@ -280,13 +291,13 @@ class Tracer:
         trace = _store.get(trace_id)
         if not trace:
             return f"trace {trace_id} not found"
-        status  = trace.get("status", "unknown")
+        status = trace.get("status", "unknown")
         elapsed = trace.get("elapsed", 0)
-        steps   = len(trace.get("steps", []))
-        goal    = trace.get("goal", "")[:60]
+        steps = len(trace.get("steps", []))
+        goal = trace.get("goal", "")[:60]
         return (
-            f"[{trace_id}] {trace['workflow']} |  "
-            f"goal={goal!r} | status={status} |  "
+            f"[{trace_id}] {trace['workflow']} | "
+            f"goal={goal!r} | status={status} | "
             f"steps={steps} | elapsed={elapsed}s"
         )
 
