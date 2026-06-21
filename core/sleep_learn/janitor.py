@@ -21,7 +21,12 @@ def _get_collection():
     if _chroma_collection is None:
         import chromadb
         _chroma_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
-        _chroma_collection = _chroma_client.get_collection(SLEEP_LEARN_COLLECTION_NAME)
+        # [P0 FIX] Use get_or_create_collection instead of get_collection to avoid
+        # ValueError when the collection doesn't exist yet (e.g., first boot).
+        _chroma_collection = _chroma_client.get_or_create_collection(
+            name=SLEEP_LEARN_COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"}
+        )
     return _chroma_collection
 
 def purge_stale_rules() -> dict:

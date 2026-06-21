@@ -38,7 +38,7 @@ def dispatch_parallel(
         return fail("Nested parallel calls are not allowed", trace_id=trace_id)
 
     # [P3 FIX] Use configured worker timeout instead of hardcoded 30s.
-    # Respects cfg.worker_timeout (default 30s) so users can adjust via .env.
+    # Respects cfg.worker_timeout (default 60s per config.py) so users can adjust via .env.
     timeout = getattr(cfg, "worker_timeout", 30)
 
     results = []

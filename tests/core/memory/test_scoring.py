@@ -19,16 +19,16 @@ def test_decay_score_floor():
     ancient = int(time.time()) - 365 * 86400
     assert _decay_score(5, ancient, "episodic") >= 5 * 0.3 - 0.01
 
-def test_procedural_decay_bypass():
+def test_procedural_decay_floored():
     """
     [P2 FIX] Procedural memories bypass FULL time decay but are subject to a floor.
     Previously hardcoded to 1.0 (no decay at all), which allowed stale rules
     to dominate forever. Now floored at PROCEDURAL_DECAY_FLOOR (0.7).
 
-    With default decay_days=180 and age=365 days:
-        raw_decay = 1.0 - 365/180 = -1.03
-        decay = max(0.7, -1.03) = 0.7
-        score = 8 * 0.7 = 5.6
+    With default decay_days=30 (cfg default) and age=365 days:
+    raw_decay = 1.0 - 365/30 = -11.17
+    decay = max(0.7, -11.17) = 0.7
+    score = 8 * 0.7 = 5.6
     """
     ancient = int(time.time()) - 365 * 86400
     score = _decay_score(8, ancient, "procedural", reinforcement_count=0)

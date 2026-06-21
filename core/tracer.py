@@ -6,17 +6,17 @@ In MCP stdio transport mode stdout is the protocol channel.
 Any non-JSON-RPC bytes on stdout corrupt the connection.
 
 All output goes to:
-  - stderr (structlog console output)
-  - logs/agent_YYYYMMDD.jsonl (file, always)
+ - stderr (structlog console output)
+ - logs/agent_YYYYMMDD.jsonl (file, always)
 
 Usage:
-  from core.tracer import tracer
+ from core.tracer import tracer
 
-  tid = tracer.new_trace("autocode", goal="fix memory.py")
-  tracer.step(tid, "read ", "file loaded ", chars=4200)
-  tracer.error(tid, "apply ", "patch failed ", error="context mismatch")
-  tracer.finish(tid, success=True, result="committed abc123")
-  trace = tracer.get(tid)
+ tid = tracer.new_trace("autocode", goal="fix memory.py")
+ tracer.step(tid, "read ", "file loaded ", chars=4200)
+ tracer.error(tid, "apply ", "patch failed ", error="context mismatch")
+ tracer.finish(tid, success=True, result="committed abc123")
+ trace = tracer.get(tid)
 """
 from __future__ import annotations
 
@@ -45,12 +45,12 @@ except ImportError:
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-# ── Trace ID generator (LOW‑05) ─────────────────────────────────────────
+# -- Trace ID generator (LOW-05) --------------------------------------------
 def generate_trace_id(length: int = 12) -> str:
     """Return a short hex trace ID, e.g. 'a3f2c0b1'."""
     return uuid.uuid4().hex[:length]
 
-# ── structlog: write to STDERR only -----------------------------------------
+# -- structlog: write to STDERR only -----------------------------------------
 def _configure_structlog() -> None:
     """Configure structlog for stderr output only. Never touches stdout."""
     if not _HAS_STRUCTLOG:
@@ -78,7 +78,7 @@ if _HAS_STRUCTLOG:
 else:
     _log = logging.getLogger("agent")
 
-# ── File log writer ---------------------------------------------------------
+# -- File log writer ---------------------------------------------------------
 class _FileWriter:
     """Thread-safe JSONL log writer. Writes to disk only -- never stdout."""
     def __init__(self) -> None:
@@ -121,7 +121,7 @@ _writer = _FileWriter()
 # on normal termination, preventing truncated last entries.
 atexit.register(_writer.close)
 
-# ── Trace store -------------------------------------------------------------
+# -- Trace store -------------------------------------------------------------
 class _TraceStore:
     """In-memory store for active traces. Bounded to prevent memory leak."""
     MAX_TRACES = 200
@@ -161,7 +161,7 @@ class _TraceStore:
 
 _store = _TraceStore()
 
-# ── Public Tracer -----------------------------------------------------------
+# -- Public Tracer -----------------------------------------------------------
 class Tracer:
     """
     Structured tracer for agent workflows.
@@ -210,7 +210,7 @@ class Tracer:
         }
         _store.append_step(trace_id, entry)
         _writer.write(entry)
-        if cfg.autocode_debug:  # ← now inside step()
+        if cfg.autocode_debug:  # <-- now inside step()
             if _HAS_STRUCTLOG:
                 _log.debug("step", trace_id=trace_id, node=node, msg=message[:120])
             else:
@@ -262,10 +262,16 @@ class Tracer:
         ts = time.time()
         trace = _store.get(trace_id)
         elapsed = round(ts - trace["started_at"], 2) if trace else 0.0
+        # [P0 FIX] kwargs spread FIRST so hardcoded keys can't be accidentally overwritten.
+        # Consistent with step(), error(), warning() fixes above.
         entry = {
-            "event": "trace_finish", "trace_id": trace_id,
-            "success": success, "result": result[:200],
-            "elapsed_s": elapsed, "ts": ts, **kwargs,
+            **kwargs,
+            "event": "trace_finish",
+            "trace_id": trace_id,
+            "success": success,
+            "result": result[:200],
+            "elapsed_s": elapsed,
+            "ts": ts,
         }
         _store.update(trace_id, "status", "success" if success else "failed")
         _store.update(trace_id, "elapsed", elapsed)
@@ -301,5 +307,5 @@ class Tracer:
             f"steps={steps} | elapsed={elapsed}s"
         )
 
-# ── Singleton ---------------------------------------------------------------
+# -- Singleton ---------------------------------------------------------------
 tracer = Tracer()

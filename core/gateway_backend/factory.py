@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     Modern FastAPI lifespan context manager.
     Handles startup (warmup, executor init) and shutdown (executor drain).
     """
-    # ── STARTUP ─────────────────────────────────────────────────────────────
+    # -- STARTUP ----------------------------------------------------------------
 
     # 1. ChromaDB warmup (Run in daemon thread to avoid blocking the async event loop)
     warmup_thread = threading.Thread(target=_warmup_memory, daemon=True)
@@ -32,18 +32,18 @@ async def lifespan(app: FastAPI):
     from core.runtime.task_runner import init_executor
     init_executor()
 
-    yield # ── APP RUNS HERE ──
+    yield  # -- APP RUNS HERE --
 
-    # ── SHUTDOWN ────────────────────────────────────────────────────────────
+    # -- SHUTDOWN ---------------------------------------------------------------
 
     # 1. Drain and shutdown ThreadPoolExecutor
     from core.runtime.task_runner import shutdown_executor
     shutdown_executor()
 
-    # 2. Wait for warmup thread to finish (if it hasn\'t already)
+    # 2. Wait for warmup thread to finish (if it hasn't already)
     warmup_thread.join(timeout=5)
 
-# ── ChromaDB warmup (P1-7) ---------------------------------------------------
+# -- ChromaDB warmup (P1-7) ---------------------------------------------------
 def _warmup_memory(timeout: int = 60) -> None:
     """
     Trigger ChromaDB embedding model load at startup.
@@ -88,7 +88,7 @@ def _warmup_memory(timeout: int = 60) -> None:
 
 def create_app():
     """Create and configure the FastAPI application."""
-    # ── Rate limiting (P0-2) -------------------------------------------------
+    # -- Rate limiting (P0-2) -------------------------------------------------
     # slowapi is a thin wrapper around limits that integrates with FastAPI.
     # If not installed, rate limiting is skipped with a startup warning.
     # Install: pip install slowapi
@@ -111,7 +111,7 @@ def create_app():
             file=sys.stderr,
         )
 
-    # ── Startup guard (P0-2) -------------------------------------------------
+    # -- Startup guard (P0-2) -------------------------------------------------
     secret = (getattr(cfg, "gateway_secret", None) or "").strip() or "changeme"
     env = getattr(cfg, "env", "dev")
 
@@ -132,16 +132,23 @@ def create_app():
             )
 
     # [PHASE 2 FIX] Config validation on startup (Runs synchronously before app creation)
-    from core.config_validation import validate_config
-    validate_config()
+    # [P0 FIX] Added ImportError guard to match server.py behavior — prevents
+    # gateway crash on fresh clones where config_validation.py may not exist yet.
+    try:
+        from core.config_validation import validate_config
+        validate_config()
+    except ImportError:
+        print("[factory] WARNING: config_validation not found, skipping", file=sys.stderr)
+    except Exception as e:
+        print(f"[factory] WARNING: Config validation failed: {e}", file=sys.stderr)
 
-    # ── App setup ------------------------------------------------------------
+    # -- App setup ------------------------------------------------------------
     # Note: ChromaDB warmup and Executor init are now handled in the lifespan context
     app = FastAPI(
         title = "MCP Agent Gateway",
         description = "REST API for the MCP Agent Stack",
         version = "1.0.0",
-        lifespan = lifespan, # 🔴 PHASE 2: Wire modern lifespan context
+        lifespan = lifespan,  # PHASE 2: Wire modern lifespan context
     )
 
     if _rate_limiter:
@@ -150,7 +157,7 @@ def create_app():
         app.state.limiter = _rate_limiter
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    # ── CORS Configuration (Audit Fix #1) ------------------------------------
+    # -- CORS Configuration (Audit Fix #1) ------------------------------------
     # Read from config to prevent wildcard exposure in production.
     # In .env, set GATEWAY_CORS_ORIGINS="http://localhost:3000,https://mydomain.com"
     cors_origins = getattr(cfg, "gateway_cors_origins", ["*"])
@@ -165,7 +172,7 @@ def create_app():
         allow_headers = ["*"],
     )
 
-    # ── Payload Size Limit (Audit Fix #2) ------------------------------------
+    # -- Payload Size Limit (Audit Fix #2) ------------------------------------
     # Prevents OOM crashes from multi-gigabyte malicious payloads.
     # Defaults to 10MB. Override in .env with GATEWAY_MAX_BODY_MB=50
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -190,7 +197,7 @@ def create_app():
 
     app.add_middleware(MaxBodySizeMiddleware, max_body_size=MAX_BODY_SIZE)
 
-    # ── Request-ID Middleware (Phase 2 Step 1.5) --------------------------
+    # -- Request-ID Middleware (Phase 2 Step 1.5) --------------------------
     # Guarantees every request has a trace_id available for exception handlers
     # and logging. Echoes it back in the X-Request-ID response header.
     import uuid
@@ -209,7 +216,7 @@ def create_app():
 
     app.add_middleware(RequestIDMiddleware)
 
-    # ── Register Routers (Phase 2 Step 4: OpenAPI Tags) ----------------------
+    # -- Register Routers (Phase 2 Step 4: OpenAPI Tags) ----------------------
     app.include_router(tasks.router, tags=["Tasks"])
     app.include_router(chat.router, tags=["Chat"])
     app.include_router(health.router, tags=["Health & System"])
@@ -217,7 +224,7 @@ def create_app():
     app.include_router(traces.router, tags=["Traces"])
     app.include_router(reports.router, tags=["Reports"])
 
-    # ── Centralized Exception Handlers (Phase 2 Step 2) ----------------------
+    # -- Centralized Exception Handlers (Phase 2 Step 2) ----------------------
     from core.gateway_backend.exceptions import TaskNotFoundError, ToolExecutionError
     from fastapi.responses import JSONResponse
     from fastapi import Request

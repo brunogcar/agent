@@ -40,7 +40,7 @@ SPECIFICITY_MARKERS = [
     "instead of", "rather than", "should use", "prefer",
 ]
 
-# ── Distillation -----------------------------------------------------------
+# -- Distillation -----------------------------------------------------------
 
 def _extract_rules_from_trace(trace: dict) -> list[dict]:
     """Extract actionable rules from a completed trace."""
@@ -57,30 +57,40 @@ def _extract_rules_from_trace(trace: dict) -> list[dict]:
                 "text": f"When {goal}, apply fix and commit: {msg}",
                 "importance": 9,
                 "confidence": 0.9,
+                "source": "template",  # [P3 FIX] Mark as template-extracted
             })
         elif node == "read" and "found" in msg:
             rules.append({
                 "text": f"When {goal}, check {msg} first",
                 "importance": 7,
                 "confidence": 0.8,
+                "source": "template",
             })
         elif node == "test" and "passed" in msg:
             rules.append({
                 "text": f"When {goal}, run tests after changes",
                 "importance": 8,
                 "confidence": 0.85,
+                "source": "template",
             })
 
     return rules
 
+def _is_specific_enough(rule_text: str, source: str = "") -> bool:
+    """Reject vague rules that won't help future workflows.
 
-def _is_specific_enough(rule_text: str) -> bool:
-    """Reject vague rules that won't help future workflows."""
+    Template-extracted rules bypass this check because they are already
+    validated by is_valid_rule() and follow known-good structural patterns.
+    LLM-extracted rules still require specificity markers.
+    """
+    # [P3 FIX] Template-extracted rules are structurally validated;
+    # skip the semantic specificity check to avoid rejecting 100% of them.
+    if source == "template":
+        return True
     lower = rule_text.lower()
     return any(marker in lower for marker in SPECIFICITY_MARKERS)
 
-
-# ── Public API -------------------------------------------------------------
+# -- Public API -------------------------------------------------------------
 
 def distill_and_store(trace_id: str, trace: dict) -> dict:
     """
@@ -95,9 +105,10 @@ def distill_and_store(trace_id: str, trace: dict) -> dict:
 
     for rule in rules:
         text = rule["text"]
+        source = rule.get("source", "")
 
-        # Skip vague rules
-        if not _is_specific_enough(text):
+        # Skip vague rules (bypassed for template-extracted rules)
+        if not _is_specific_enough(text, source=source):
             stats["skipped"] += 1
             continue
 
@@ -132,7 +143,6 @@ def distill_and_store(trace_id: str, trace: dict) -> dict:
             stats["errors"] += 1
 
     return stats
-
 
 class MetaLearner:
     """
@@ -175,6 +185,5 @@ class MetaLearner:
                 tracer.error("daemon", "meta_learning", f"Cycle failed: {e}")
             _time.sleep(1800)  # 30 minutes
 
-
-# ── Singleton --------------------------------------------------------------
+# -- Singleton --------------------------------------------------------------
 learner = MetaLearner()
