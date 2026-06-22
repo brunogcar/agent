@@ -17,42 +17,34 @@ The Task Router (`core/router.py`) is the **ultra-fast classification layer** th
 
 ```
 core/router.py
-├── RoutingDecision    # Dataclass: workflow, tool, complexity, reason, confidence
+├── ROUTER_SYSTEM_PROMPT    # Module-level constant (extracted for testability)
+├── ROUTER_TOOLS            # Module-level list: 15 registered tools
+├── ROUTER_WORKFLOWS        # Module-level list: 5 workflows
+├── RoutingDecision         # Dataclass: workflow, tool, complexity, reason, confidence
 ├── TaskRouter (singleton)
-│   ├── route()                    # Primary entry point — model → heuristic fallback
-│   ├── classify_complexity()      # Quick 1-10 complexity score
-│   ├── _model_route()             # LLM-based classification (Router role, 15s timeout)
-│   ├── _heuristic_route()         # Keyword-based fallback (pre-compiled regex)
-│   └── _extract_first_json()      # Deterministic JSON extraction (3-layer)
-└── router                         # Module-level singleton
+│   ├── route()             # Primary entry point — model → heuristic fallback
+│   ├── classify_complexity() # Quick 1-10 complexity score
+│   ├── _model_route()      # LLM-based classification (Router role, 15s timeout)
+│   ├── _heuristic_route()  # Keyword-based fallback (pre-compiled regex)
+│   └── _extract_first_json() # Deterministic JSON extraction (3-layer)
+└── router                  # Module-level singleton
 ```
 
 ### Routing Flow
 
 ```mermaid
 graph TD
-    A["User goal
-e.g., 'Fix the timeout bug in web.py'"] --> B["router.route(goal)"]
-    B --> C{Goal
-empty?}
-    C -->|Yes| D["Return default
-workflow=research, complexity=1
-+ clarifying questions"]
-    C -->|No| E["Tier 1: Model-Based
-_model_route()"]
-    E --> F{LLM call
-succeeds?}
-    F -->|Yes| G["Parse JSON
-_extract_first_json()"]
-    G --> H{Valid
-RoutingDecision?}
-    H -->|Yes| I["Return decision
-tracer.log('routed via model')"]
-    H -->|No| J["Tier 2: Heuristic
-_heuristic_route()"]
+    A["User goal\ne.g., 'Fix the timeout bug in web.py'"] --> B["router.route(goal)"]
+    B --> C{Goal\nempty?}
+    C -->|Yes| D["Return default\nworkflow=research, complexity=1\n+ clarifying questions"]
+    C -->|No| E["Tier 1: Model-Based\n_model_route()"]
+    E --> F{LLM call\nsucceeds?}
+    F -->|Yes| G["Parse JSON\n_extract_first_json()"]
+    G --> H{Valid\nRoutingDecision?}
+    H -->|Yes| I["Return decision\ntracer.step('routed via model')"]
+    H -->|No| J["Tier 2: Heuristic\n_heuristic_route()"]
     F -->|Timeout / Error| J
-    J --> K["Return decision
-tracer.log('routed via heuristic')"]
+    J --> K["Return decision\ntracer.step('routed via heuristic')"]
 ```
 
 ### Design Goals
@@ -96,26 +88,18 @@ graph LR
         E["workflow='understand'"]
     end
     subgraph "Direct Tool Execution"
-        G["workflow='direct'
-tool='file'"]
-        H["workflow='direct'
-tool='memory'"]
-        I["workflow='direct'
-tool='git'"]
-        J["workflow='direct'
-tool='notify'"]
-        K["workflow='direct'
-tool='report'"]
-        L["workflow='direct'
-tool='cli'"]
-        M["workflow='direct'
-tool='browser'"]
-        N["workflow='direct'
-tool='tavily'"]
-        O["workflow='direct'
-tool='consult'"]
-        P["workflow='direct'
-tool='parallel'"]
+        G["workflow='direct'\ntool='file'"]
+        H["workflow='direct'\ntool='memory'"]
+        I["workflow='direct'\ntool='git'"]
+        J["workflow='direct'\ntool='notify'"]
+        K["workflow='direct'\ntool='report'"]
+        L["workflow='direct'\ntool='cli'"]
+        M["workflow='direct'\ntool='browser'"]
+        N["workflow='direct'\ntool='tavily'"]
+        O["workflow='direct'\ntool='consult'"]
+        P["workflow='direct'\ntool='parallel'"]
+        Q["workflow='direct'\ntool='vision'"]
+        R["workflow='direct'\ntool='agent'"]
     end
 ```
 
@@ -132,10 +116,12 @@ tool='parallel'"]
 | **Direct tool** | `"direct"` | `"notify"` | Notify me, remind me |
 | **Direct tool** | `"direct"` | `"report"` | Create chart, plot, dashboard |
 | **Direct tool** | `"direct"` | `"cli"` | Run shell commands, system administration |
-| **Direct tool** | `"direct"` | `"browser"` | Browse JS-rendered pages, screenshots, forms |
+| **Direct tool** | `"direct"` | `"browser"` | Browse JS-rendered pages, fill forms, click buttons |
 | **Direct tool** | `"direct"` | `"tavily"` | AI-powered deep web search |
 | **Direct tool** | `"direct"` | `"consult"` | Ask another LLM for a second opinion |
 | **Direct tool** | `"direct"` | `"parallel"` | Execute multiple independent tasks concurrently |
+| **Direct tool** | `"direct"` | `"vision"` | Image analysis, OCR, screenshot description |
+| **Direct tool** | `"direct"` | `"agent"` | Delegate to sub-agent for complex sub-tasks |
 
 ### Workflow vs. Direct Routing
 
@@ -152,17 +138,11 @@ To prevent the agent from wasting 15+ minutes and massive VRAM on misunderstood 
 
 ```mermaid
 graph TD
-    A["RoutingDecision
-confidence='low'"] --> B["workflow_tool.py
-Intercepts before execution"]
-    B --> C["Return structured
-needs_clarification payload"]
-    C --> D["LLM asks user
-clarifying questions"]
-    D --> E{"User
-clarifies?"}
-    E -->|Yes| F["Re-route with
-precise goal"]
+    A["RoutingDecision\nconfidence='low'"] --> B["workflow_tool.py\nIntercepts before execution"]
+    B --> C["Return structured\nneeds_clarification payload"]
+    C --> D["LLM asks user\nclarifying questions"]
+    D --> E{"User\nclarifies?"}
+    E -->|Yes| F["Re-route with\nprecise goal"]
     E -->|No| G["Abort"]
 ```
 
@@ -184,9 +164,7 @@ precise goal"]
     "Which specific file needs fixing?",
     "What is the exact error message?"
   ],
-  "message": "To help me understand your request better, please clarify:
-- Which specific file needs fixing?
-- What is the exact error message?",
+  "message": "To help me understand your request better, please clarify:\n- Which specific file needs fixing?\n- What is the exact error message?",
   "trace_id": "abc123"
 }
 ```
@@ -258,17 +236,13 @@ Confidence rules:
 
 ```mermaid
 graph TD
-    A["Raw LLM Response"] --> B["Strip markdown fences
-```json ... ```"]
-    B --> C["Try direct parse
-json.loads(text)"]
+    A["Raw LLM Response"] --> B["Strip markdown fences\n```json ... ```"]
+    B --> C["Try direct parse\njson.loads(text)"]
     C -->|Success| D["Return RoutingDecision"]
-    C -->|Fail| E["Layer 3: raw_decode
-json.JSONDecoder().raw_decode()"]
+    C -->|Fail| E["Layer 3: raw_decode\njson.JSONDecoder().raw_decode()"]
     E -->|Find first { }| F["Parse extracted JSON"]
     F -->|Valid + has 'workflow'| D
-    F -->|Invalid| G["Return None
-Fall back to heuristics"]
+    F -->|Invalid| G["Return None\nFall back to heuristics"]
     E -->|No { } found| G
 ```
 
@@ -280,98 +254,68 @@ If the LLM call fails, times out, or returns invalid JSON, the `_heuristic_route
 
 ```mermaid
 graph TD
-    A["Goal text"] --> B{"Report?
-chart, plot, dashboard"}
-    B -->|Yes| R1["workflow='direct'
-tool='report'
-complexity=3"]
-    B -->|No| C{"Browser?
-browse, screenshot, form"}
-    C -->|Yes| R2["workflow='direct'
-tool='browser'
-complexity=4"]
-    C -->|No| D{"File op?
-read file, open file, list dir"}
-    D -->|Yes| R3["workflow='direct'
-tool='file'
-complexity=2"]
-    D -->|No| E{"Memory op?
-recall, remember, store this"}
-    E -->|Yes| R4["workflow='direct'
-tool='memory'
-complexity=1"]
-    E -->|No| F{"Git op?
-git status, show commits"}
-    F -->|Yes| R5["workflow='direct'
-tool='git'
-complexity=2"]
-    F -->|No| G{"Notify?
-notify me, remind me"}
-    G -->|Yes| R6["workflow='direct'
-tool='notify'
-complexity=1"]
-    G -->|No| H{"CLI?
-run command, terminal, bash"}
-    H -->|Yes| R7["workflow='direct'
-tool='cli'
-complexity=3"]
-    H -->|No| I{"Tavily?
-tavily, ai search"}
-    I -->|Yes| R8["workflow='direct'
-tool='tavily'
-complexity=4"]
-    I -->|No| J{"Consult?
-consult, second opinion"}
-    J -->|Yes| R9["workflow='direct'
-tool='consult'
-complexity=2"]
-    J -->|No| K{"Parallel?
-run in parallel, batch process"}
-    K -->|Yes| R10["workflow='direct'
-tool='parallel'
-complexity=5"]
-    K -->|No| L{"Deep Research?
-deep research, thorough investigation"}
-    L -->|Yes| R11["workflow='deep_research'
-complexity=8"]
-    L -->|No| M{"Understand?
-understand codebase, knowledge graph"}
-    M -->|Yes| R12["workflow='understand'
-complexity=6"]
-    M -->|No| N{"Code?
-fix, bug, refactor, implement"}
-    N -->|Yes| R13["workflow='autocode'
-complexity=5 or 7"]
-    N -->|No| O{"Data?
-analyze, pandas, csv, plot"}
-    O -->|Yes| R14["workflow='data'
-complexity=5"]
-    O -->|No| P["Default
-workflow='research'
-complexity=4"]
+    A["Goal text"] --> B{"Report?\nchart, plot, dashboard"}
+    B -->|Yes| R1["workflow='direct'\ntool='report'\ncomplexity=3"]
+    B -->|No| C{"Browser?\nbrowse, fill form, click"}
+    C -->|Yes| R2["workflow='direct'\ntool='browser'\ncomplexity=4"]
+    C -->|No| D{"File op?\nread file, open file, list dir"}
+    D -->|Yes| R3["workflow='direct'\ntool='file'\ncomplexity=2"]
+    D -->|No| E{"Memory op?\nrecall, remember, store this"}
+    E -->|Yes| R4["workflow='direct'\ntool='memory'\ncomplexity=1"]
+    E -->|No| F{"Git op?\ngit status, show commits"}
+    F -->|Yes| R5["workflow='direct'\ntool='git'\ncomplexity=2"]
+    F -->|No| G{"Notify?\nnotify me, remind me"}
+    G -->|Yes| R6["workflow='direct'\ntool='notify'\ncomplexity=1"]
+    G -->|No| H{"CLI?\nrun command, terminal, bash"}
+    H -->|Yes| R7["workflow='direct'\ntool='cli'\ncomplexity=3"]
+    H -->|No| I{"Tavily?\ntavily, ai search"}
+    I -->|Yes| R8["workflow='direct'\ntool='tavily'\ncomplexity=4"]
+    I -->|No| J{"Consult?\nconsult a different AI, second opinion"}
+    J -->|Yes| R9["workflow='direct'\ntool='consult'\ncomplexity=2"]
+    J -->|No| K{"Parallel?\nrun ... in parallel, batch process"}
+    K -->|Yes| R10["workflow='direct'\ntool='parallel'\ncomplexity=5"]
+    K -->|No| L{"Vision?\nocr, analyze image, describe photo"}
+    L -->|Yes| R11["workflow='direct'\ntool='vision'\ncomplexity=3"]
+    L -->|No| M{"Agent?\ndelegate to agent, spawn agent"}
+    M -->|Yes| R12["workflow='direct'\ntool='agent'\ncomplexity=6"]
+    M -->|No| N{"Deep Research?\ndeep research, thorough investigation"}
+    N -->|Yes| R13["workflow='deep_research'\ncomplexity=8"]
+    N -->|No| O{"Understand?\nunderstand codebase, knowledge graph"}
+    O -->|Yes| R14["workflow='understand'\ncomplexity=6"]
+    O -->|No| P{"Code?\nfix, bug, debug, refactor, implement"}
+    P -->|Yes| R15["workflow='autocode'\ncomplexity=5 or 7"]
+    P -->|No| Q{"Data?\nanalyze, pandas, csv, plot"}
+    Q -->|Yes| R16["workflow='data'\ncomplexity=5"]
+    Q -->|No| R{"Research?\nwhat is, how does, explain"}
+    R -->|Yes| R17["workflow='research'\ncomplexity=4\nconfidence=medium"]
+    R -->|No| R18["Default\nworkflow='research'\ncomplexity=4\nconfidence=low"]
 ```
 
 ### Regex Patterns (Pre-compiled)
 
 | Pattern | Regex | Routes To |
 |---------|-------|-----------|
-| `_RE_REPORT` | `\b(create a chart\|create chart\|make a chart\|plot a chart\|draw a chart\|report\|visualise\|create a graph\|make a graph\|create a map\|make a map\|create a dashboard\|make a dashboard\|create a report\|make a report\|bar chart\|line chart\|pie chart\|scatter plot\|heatmap)\b` | `direct → report` |
-| `_RE_DIRECT_BROWSER` | `\b(browse\|screenshot\|fill form\|click button\|js-rendered\|open page\|take a screenshot\|capture screen\|web automation\|headless browser)\b` | `direct → browser` |
+| `_RE_REPORT` | `\b(create a chart\|create chart\|make a chart\|plot a chart\|draw a chart\|visualise\|create a graph\|make a graph\|create a map\|make a map\|create a dashboard\|make a dashboard\|create a report\|make a report\|bar chart\|line chart\|pie chart\|scatter plot\|heatmap)\b` | `direct → report` |
+| `_RE_DIRECT_BROWSER` | `\b(browse\|fill form\|click button\|js-rendered\|open page\|take a screenshot\|capture screen\|web automation\|headless browser)\b` | `direct → browser` |
 | `_RE_DIRECT_FILE` | `\b(read file\|open file\|list files\|list directory\|write file\|show file\|read the file\|open the file)\b` | `direct → file` |
 | `_RE_DIRECT_MEMORY` | `\b(recall\|remember\|what do you know about\|store this\|save this to memory)\b` | `direct → memory` |
 | `_RE_DIRECT_GIT` | `\b(git status\|git log\|show commits\|git diff\|commit this\|git commit)\b` | `direct → git` |
 | `_RE_DIRECT_NOTIFY` | `\b(notify me\|send notification\|remind me\|schedule reminder)\b` | `direct → notify` |
 | `_RE_DIRECT_CLI` | `\b(run command\|execute shell\|terminal\|bash\|powershell\|pip install\|npm install\|yarn install\|composer install\|docker build\|docker run\|kubectl\|terraform apply\|ansible)\b` | `direct → cli` |
 | `_RE_DIRECT_TAVILY` | `\b(tavily\|ai search\|deep search\|advanced search\|ai-powered search\|intelligent search)\b` | `direct → tavily` |
-| `_RE_DIRECT_CONSULT` | `\b(consult\|ask another model\|second opinion\|get another perspective\|ask a different llm)\b` | `direct → consult` |
-| `_RE_DIRECT_PARALLEL` | `\b(run in parallel\|in parallel\|batch process\|concurrently\|at the same time\|simultaneously\|process all\|run together\|parallel execution)\b` | `direct → parallel` |
+| `_RE_DIRECT_CONSULT` | `\b(consult a different (?:ai\|llm\|model)\|ask another model\|get another perspective\|ask a different llm\|let's get a second opinion\|second opinion from (?:ai\|llm\|model))\b` | `direct → consult` |
+| `_RE_DIRECT_PARALLEL` | `\b(run\s+.*?\s+in\s+parallel\|run\s+.*?\s+at\s+the\s+same\s+time\|batch process\|concurrently\|run together\|parallel execution)\b` | `direct → parallel` |
+| `_RE_DIRECT_VISION` | `\b(ocr\|analyze\s+.*?\s+image\|describe\s+.*?\s+image\|what\s+is\s+in\s+this\s+image\|read\s+this\s+image\|image\s+description\|analyze\s+this\s+photo\|what\s+does\s+this\s+picture\s+show\|read\s+text\s+from\s+image\|screenshot\s+analysis)\b` | `direct → vision` |
+| `_RE_DIRECT_AGENT` | `\b(delegate\s+.*?\s+agent\|spawn\s+an\s+agent\|use\s+an\s+agent\|sub-agent\|agent\s+for\|let\s+an\s+agent\|have\s+an\s+agent)\b` | `direct → agent` |
 | `_RE_DEEP_RESEARCH` | `\b(deep research\|thorough investigation\|comprehensive report\|iterative research\|multi-faceted research\|extensive research\|in-depth analysis\|detailed investigation)\b` | `deep_research → workflow` |
 | `_RE_UNDERSTAND` | `\b(understand codebase\|build knowledge graph\|analyze project structure\|index codebase\|codebase overview\|project analysis\|map dependencies\|explore codebase\|scan project)\b` | `understand → workflow` |
-| `_RE_CODE` | `\b(fix\|bug\|error\|patch\|refactor\|improve\|add feature\|implement\|edit\|modify\|update code)\b` | `autocode` |
+| `_RE_CODE` | `\b(fix\|bug\|debug\|audit\|patch\|refactor\|improve\|add feature\|implement\|edit\|modify\|update code\|error message\|runtime error\|type error\|syntax error\|logic error)\b` | `autocode` |
 | `_RE_DATA` | `\b(analyse\|analyze\|calculate\|compute\|csv\|excel\|spreadsheet\|statistics\|pandas\|numpy\|dataset)\b` | `data` |
-| `_RE_RESEARCH` | `\b(what is\|what are\|how does\|explain\|research\|find information\|summarise\|summarize\|look up)\b` | `research` |
+| `_RE_RESEARCH` | `\b(what is\|what are\|how does\|explain\|research\|find information\|summarise\|summarize\|look up)\b` | `research (step 17, medium confidence)` |
 
 > ⚠️ **All patterns are case-insensitive** (`re.IGNORECASE`).
+> 
+> **Note on `_RE_RESEARCH`:** This pattern is checked at step 17 (before the default catch-all at step 18). Goals with explicit research keywords like "what is" or "explain" get `confidence="medium"` instead of the default `confidence="low"`.
 
 ### Code-File Bonus
 
@@ -391,7 +335,7 @@ The Router can independently score task complexity on a 1-10 scale. This is used
 ### The Scale
 
 | Range | Meaning | Examples |
-|-------|---------|---------|
+|-------|---------|----------|
 | **1-3** | Single tool, clear input/output | "read file X", "git status", "remember this" |
 | **4-6** | Multi-step, predictable | "summarize this URL", "analyze this CSV" |
 | **7-9** | Complex, multiple tools, uncertainty | "fix the authentication bug", "refactor the memory module" |
@@ -435,10 +379,10 @@ decision = router.route(
 **Returns:** `RoutingDecision`
 
 ```python
-decision.workflow    # "autocode"
-decision.tool        # "workflow"
+decision.workflow  # "autocode"
+decision.tool      # "workflow"
 decision.complexity  # 7
-decision.reason      # "Involves editing an existing code file to fix a bug"
+decision.reason    # "Involves editing an existing code file to fix a bug"
 decision.confidence  # "high"
 decision.clarifying_questions  # []
 ```
@@ -492,14 +436,14 @@ The Router must never block the user experience. If the model takes longer than 
 
 ```powershell
 # Run all router tests
-D:\mcp\gent\env\Scripts\pytest.exe tests/core/router/ -v -W error
+D:\mcp\agent\venv\Scripts\pytest.exe tests/core/router/ -v -W error
 ```
 
 **Test organization:**
-- `conftest.py` — Shared fixtures (mock LLM, mock registry)
+- `conftest.py` — Shared fixtures (mock LLM, mock registry, canonical expected sets)
 - `test_router_tools_complete.py` — Structural: all tools/workflows appear in prompt
 - `test_router_routing_rules.py` — Parameterized: each tool/workflow has a routing rule
-- `test_router_heuristic_fallback.py` — Behavioral: heuristic patterns route correctly
+- `test_router_heuristic_fallback.py` — Behavioral: heuristic patterns route correctly + false-positive regression tests
 - `test_router_drift.py` — CI check: prompt tool list matches expected set
 
 **Mock strategy:**
@@ -516,7 +460,7 @@ D:\mcp\gent\env\Scripts\pytest.exe tests/core/router/ -v -W error
 ### Heuristic Pattern Overlap
 
 **What exists:**
-The `_RE_REPORT` regex matches words like `chart`, `plot`, `report`, `dashboard`. The `_RE_DATA` regex also matches `csv`, `excel`, `spreadsheet`. The `_RE_DIRECT_BROWSER` matches `screenshot` which could overlap with report's `create a chart`.
+The `_RE_REPORT` regex matches words like `chart`, `plot`, `dashboard`. The `_RE_DATA` regex also matches `csv`, `excel`, `spreadsheet`. The `_RE_DIRECT_BROWSER` matches `take a screenshot` which could overlap with vision's `screenshot analysis`.
 
 **The concern:**
 Since report is checked first in `_heuristic_route()`, goals like "plot a chart of this data" will route to `direct → report` instead of `data → python`. This may or may not be the desired behavior depending on whether the user wants a static report or a data analysis workflow.
@@ -558,7 +502,7 @@ If you are an AI assistant modifying `core/router.py`:
 
 | File | Purpose |
 |------|---------|
-| `core/router.py` | `TaskRouter`, `RoutingDecision`, model + heuristic routing, JSON extraction |
+| `core/router.py` | `TaskRouter`, `RoutingDecision`, `ROUTER_SYSTEM_PROMPT`, model + heuristic routing, JSON extraction |
 | `tools/workflow_tool.py` | Confidence Guard interception (low confidence → clarifying questions) |
 | `core/llm.py` | LLM client used by `router.route()` and `router.classify_complexity()` |
 | `core/tracer.py` | Trace logging for routing decisions |
@@ -576,14 +520,18 @@ If you are an AI assistant modifying `core/router.py`:
 | ✅ Complete | Heuristic fallback | Pre-compiled regex, O(1) matching |
 | ✅ Complete | Confidence Guard | Low-confidence interception + clarifying questions |
 | ✅ Complete | Deterministic JSON extraction | 3-layer pipeline with raw_decode |
-| ✅ Complete | Browser routing | Added `_RE_DIRECT_BROWSER` for browse/screenshot/form keywords |
+| ✅ Complete | Browser routing | Added `_RE_DIRECT_BROWSER` for browse/fill form/click keywords |
 | ✅ Complete | CLI routing | Added `_RE_DIRECT_CLI` for shell command keywords |
 | ✅ Complete | Tavily routing | Added `_RE_DIRECT_TAVILY` for AI search keywords |
-| ✅ Complete | Consult routing | Added `_RE_DIRECT_CONSULT` for second-opinion keywords |
+| ✅ Complete | Consult routing | Added `_RE_DIRECT_CONSULT` for LLM-specific consultation keywords |
 | ✅ Complete | Parallel routing | Added `_RE_DIRECT_PARALLEL` for concurrent execution keywords (direct tool) |
 | ✅ Complete | Deep Research workflow | Added `deep_research` to workflow list and heuristic |
 | ✅ Complete | Understand workflow | Added `understand` to workflow list and heuristic |
+| ✅ Complete | Vision routing | Added `_RE_DIRECT_VISION` for image analysis keywords |
+| ✅ Complete | Agent routing | Added `_RE_DIRECT_AGENT` for sub-agent delegation keywords |
 | ✅ Complete | Tool registry sync | Router prompt now lists all 15 registered tools |
+| ✅ Complete | False-positive regression tests | Added adversarial tests for known misrouting cases |
+| ✅ Complete | Module-level prompt constant | `ROUTER_SYSTEM_PROMPT` extracted for direct test import |
 | 🚧 Planned | Dynamic workflow composition | Chain multiple workflows (e.g., research → data) |
 | 🚧 Planned | Few-shot prompting | Inject 2-3 past routing examples into Router prompt |
 | 🚧 Planned | Adaptive complexity thresholds | Require `high` confidence for complexity > 7 |

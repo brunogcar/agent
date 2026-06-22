@@ -23,6 +23,58 @@ import re
 from typing import Optional
 from core.llm import llm
 from core.tracer import tracer
+from core.config import cfg
+
+# -- Module-level constants for prompt and expected sets ----------------------
+# Extracted to module level so tests can import them directly instead of
+# parsing source code with inspect.getsource() + ast.literal_eval.
+ROUTER_WORKFLOWS = ["research", "data", "autocode", "deep_research", "understand"]
+ROUTER_TOOLS = [
+    "web", "python", "file", "git", "memory", "agent", "notify", "report",
+    "vision", "workflow", "cli", "browser", "tavily", "consult", "parallel",
+]
+
+# Pre-built prompt fragments for _model_route().  Kept as constants so tests
+# and docs can reference the canonical strings without source parsing.
+_ROUTER_PROMPT_WORKFLOW_LIST = " or ".join(ROUTER_WORKFLOWS)
+_ROUTER_PROMPT_TOOL_LIST = " or ".join(ROUTER_TOOLS)
+
+ROUTER_SYSTEM_PROMPT = (
+    "No thinking. No explanation.\n"
+    + '{"workflow": "' + _ROUTER_PROMPT_WORKFLOW_LIST + '",'
+    + ' "tool": "' + _ROUTER_PROMPT_TOOL_LIST + '",'
+    + ' "complexity":5,'
+    + ' "reason": "one sentence",'
+    + ' "confidence": "high or medium or low",'
+    + ' "clarifying_questions": ["question1", "question2"]}\n'
+    + "\n\nWorkflow routing rules:\n"
+    + "- research: finding info, summarising, reading docs, Q&A\n"
+    + "- data: pandas, analysis, calculations, charts, spreadsheets\n"
+    + "- autocode: fixing bugs, editing code files, adding features\n"
+    + "- deep_research: complex multi-faceted research, iterative evidence synthesis\n"
+    + "- understand: build or query codebase knowledge graph, analyze project structure\n"
+    + "\nTool routing rules (for direct workflow):\n"
+    + "- web: general web search and page reading\n"
+    + "- python: data analysis, calculations, plotting\n"
+    + "- file: read, write, list files and directories\n"
+    + "- git: git operations, commits, diffs, status\n"
+    + "- memory: recall, store, search memories\n"
+    + "- agent: delegate to sub-agent for complex sub-tasks\n"
+    + "- notify: send notifications and reminders\n"
+    + "- report: create charts, dashboards, visual reports\n"
+    + "- vision: image analysis and description\n"
+    + "- workflow: multi-step task execution via workflow engine\n"
+    + "- cli: shell commands, system administration, package management\n"
+    + "- browser: JavaScript-rendered pages, screenshots, form interaction\n"
+    + "- tavily: AI-powered deep web search\n"
+    + "- consult: ask another LLM for a second opinion\n"
+    + "- parallel: execute multiple independent tasks concurrently\n"
+    + "\nConfidence rules:\n"
+    + "- high: Clear task with specific details\n"
+    + "- medium: Understandable but could be more specific\n"
+    + "- low: Vague or ambiguous. MUST provide 1-2 clarifying questions to help the user refine their goal."
+)
+
 
 # -- Routing decision dataclass -----------------------------------------------
 class RoutingDecision:
@@ -56,6 +108,7 @@ class RoutingDecision:
             "confidence": self.confidence,
         }
 
+
 # -- Router -------------------------------------------------------------------
 class TaskRouter:
     """
@@ -64,21 +117,24 @@ class TaskRouter:
     or returns unparseable output.
 
     Heuristic priority (most specific first):
-      1. report   -> direct (chart/dashboard creation)
-      2. browser  -> direct (JS pages, screenshots, forms)
-      3. file     -> direct (read/write/list files)
-      4. memory   -> direct (recall/store memories)
-      5. git      -> direct (git operations)
-      6. notify   -> direct (notifications)
-      7. cli      -> direct (shell commands)
-      8. tavily   -> direct (AI-powered search)
-      9. consult  -> direct (ask another LLM)
-     10. parallel  -> direct (execute multiple tasks concurrently)
-     11. deep_research -> workflow (iterative research)
-     12. understand    -> workflow (knowledge graph)
-     13. autocode     -> workflow (code edits)
-     14. data         -> workflow (analysis)
-     15. research     -> workflow (default catch-all)
+      1. report       -> direct (chart/dashboard creation)
+      2. browser      -> direct (JS pages, screenshots, forms)
+      3. file         -> direct (read/write/list files)
+      4. memory       -> direct (recall/store memories)
+      5. git          -> direct (git operations)
+      6. notify       -> direct (notifications)
+      7. cli          -> direct (shell commands)
+      8. tavily       -> direct (AI-powered search)
+      9. consult      -> direct (ask another LLM)
+     10. parallel     -> direct (execute multiple tasks concurrently)
+     11. vision       -> direct (image analysis)
+     12. agent        -> direct (delegate to sub-agent)
+     13. deep_research-> workflow (iterative research)
+     14. understand   -> workflow (knowledge graph)
+     15. autocode     -> workflow (code edits)
+     16. data         -> workflow (analysis)
+     17. research     -> workflow (explicit keywords)
+     18. Default Research (catch-all)
 
     Rationale: Direct-tool keywords are more specific than workflow
     keywords. A user saying "read file X" must never be misrouted to
@@ -87,21 +143,55 @@ class TaskRouter:
 
     # P2 Optimization: Pre-compiled regex patterns for O(1) heuristic matching
     # Replaces fragile O(N*M) string loops with fast, single-pass regex searches.
-    _RE_CODE = re.compile(r"\b(fix|bug|error|patch|refactor|improve|add feature|implement|edit|modify|update code)\b", re.IGNORECASE)
-    _RE_DATA = re.compile(r"\b(analyse|analyze|calculate|compute|csv|excel|spreadsheet|statistics|pandas|numpy|dataset)\b", re.IGNORECASE)
-    _RE_RESEARCH = re.compile(r"\b(what is|what are|how does|explain|research|find information|summarise|summarize|look up)\b", re.IGNORECASE)
-    _RE_DIRECT_FILE = re.compile(r"\b(read file|open file|list files|list directory|write file|show file|read the file|open the file)\b", re.IGNORECASE)
-    _RE_DIRECT_MEMORY = re.compile(r"\b(recall|remember|what do you know about|store this|save this to memory)\b", re.IGNORECASE)
-    _RE_DIRECT_GIT = re.compile(r"\b(git status|git log|show commits|git diff|commit this|git commit)\b", re.IGNORECASE)
-    _RE_DIRECT_NOTIFY = re.compile(r"\b(notify me|send notification|remind me|schedule reminder)\b", re.IGNORECASE)
-    _RE_REPORT = re.compile(r"\b(create a chart|create chart|make a chart|plot a chart|draw a chart|report|visualise|create a graph|make a graph|create a map|make a map|create a dashboard|make a dashboard|create a report|make a report|bar chart|line chart|pie chart|scatter plot|heatmap)\b", re.IGNORECASE)
+    #
+    # [HEURISTIC FIX] Removed bare "error" to prevent false positives on research
+    # questions like "What is the error?".  Added compound phrases (error message,
+    # runtime error, etc.) and "debug"/"audit" which are unambiguously code-related.
+    _RE_CODE = re.compile(
+        r"\b(fix|bug|debug|audit|patch|refactor|improve|add feature|implement|edit|modify|update code|"
+        r"error message|runtime error|type error|syntax error|logic error)\b",
+        re.IGNORECASE,
+    )
+    _RE_DATA = re.compile(
+        r"\b(analyse|analyze|calculate|compute|csv|excel|spreadsheet|statistics|pandas|numpy|dataset)\b",
+        re.IGNORECASE,
+    )
+    _RE_RESEARCH = re.compile(
+        r"\b(what is|what are|how does|explain|research|find information|summarise|summarize|look up)\b",
+        re.IGNORECASE,
+    )
+    _RE_DIRECT_FILE = re.compile(
+        r"\b(read file|open file|list files|list directory|write file|show file|read the file|open the file)\b",
+        re.IGNORECASE,
+    )
+    _RE_DIRECT_MEMORY = re.compile(
+        r"\b(recall|remember|what do you know about|store this|save this to memory)\b",
+        re.IGNORECASE,
+    )
+    _RE_DIRECT_GIT = re.compile(
+        r"\b(git status|git log|show commits|git diff|commit this|git commit)\b",
+        re.IGNORECASE,
+    )
+    _RE_DIRECT_NOTIFY = re.compile(
+        r"\b(notify me|send notification|remind me|schedule reminder)\b",
+        re.IGNORECASE,
+    )
+    # [HEURISTIC FIX] Removed bare "report" to prevent false positives like
+    # "report a bug in server.py" routing to the report tool instead of autocode.
+    _RE_REPORT = re.compile(
+        r"\b(create a chart|create chart|make a chart|plot a chart|draw a chart|"
+        r"visualise|create a graph|make a graph|create a map|make a map|"
+        r"create a dashboard|make a dashboard|create a report|make a report|"
+        r"bar chart|line chart|pie chart|scatter plot|heatmap)\b",
+        re.IGNORECASE,
+    )
 
     # [ROUTER EXPANSION] New heuristic patterns for tools added after the
     # initial router implementation: browser, cli, tavily, consult, parallel.
     # Also adds workflow keywords for deep_research and understand.
     # All patterns are case-insensitive and pre-compiled at class load time.
     _RE_DIRECT_BROWSER = re.compile(
-        r"\b(browse|screenshot|fill form|click button|js-rendered|open page|"
+        r"\b(browse|fill form|click button|js-rendered|open page|"
         r"take a screenshot|capture screen|web automation|headless browser)\b",
         re.IGNORECASE,
     )
@@ -116,14 +206,22 @@ class TaskRouter:
         r"ai-powered search|intelligent search)\b",
         re.IGNORECASE,
     )
+    # [HEURISTIC FIX] Narrowed consult regex to avoid false positives on
+    # ordinary English like "consult the documentation" or "get a second opinion
+    # from my doctor".  Kept LLM-specific phrases only.
     _RE_DIRECT_CONSULT = re.compile(
-        r"\b(consult|ask another model|second opinion|"
-        r"get another perspective|ask a different llm)\b",
+        r"\b(consult a different (?:ai|llm|model)|ask another model|"
+        r"get another perspective|ask a different llm|"
+        r"let's get a second opinion|second opinion from (?:ai|llm|model))\b",
         re.IGNORECASE,
     )
+    # [HEURISTIC FIX] Narrowed parallel regex to avoid false positives on
+    # ordinary English like "explain how threads run simultaneously" or
+    # "research these topics in parallel".  Requires explicit action intent.
+    # Uses \b on each alternative so partial words don't match.
     _RE_DIRECT_PARALLEL = re.compile(
-        r"\b(run in parallel|in parallel|batch process|concurrently|at the same time|"
-        r"simultaneously|process all|run together|parallel execution)\b",
+        r"\b(run\s+.*?\s+in\s+parallel|run\s+.*?\s+at\s+the\s+same\s+time|"
+        r"batch process|concurrently|run together|parallel execution)\b",
         re.IGNORECASE,
     )
     _RE_DEEP_RESEARCH = re.compile(
@@ -136,6 +234,21 @@ class TaskRouter:
         r"\b(understand codebase|build knowledge graph|analyze project structure|"
         r"index codebase|codebase overview|project analysis|"
         r"map dependencies|explore codebase|scan project)\b",
+        re.IGNORECASE,
+    )
+    # [HEURISTIC FIX] Added missing heuristic patterns for vision and agent
+    # tools that were in the prompt but had no fallback coverage.
+    # Uses flexible matching so "analyze this image" and "ocr this screenshot" work.
+    _RE_DIRECT_VISION = re.compile(
+        r"\b(ocr|analyze\s+.*?\s+image|describe\s+.*?\s+image|what\s+is\s+in\s+this\s+image|"
+        r"read\s+this\s+image|image\s+description|analyze\s+this\s+photo|"
+        r"what\s+does\s+this\s+picture\s+show|read\s+text\s+from\s+image|"
+        r"screenshot\s+analysis)\b",
+        re.IGNORECASE,
+    )
+    _RE_DIRECT_AGENT = re.compile(
+        r"\b(delegate\s+.*?\s+agent|spawn\s+an\s+agent|use\s+an\s+agent|sub-agent|agent\s+for|"
+        r"let\s+an\s+agent|have\s+an\s+agent)\b",
         re.IGNORECASE,
     )
 
@@ -201,16 +314,16 @@ class TaskRouter:
         if decision:
             if trace_id:
                 tracer.step(trace_id, "router",
-                    f"routed to {decision.workflow} (model)",
-                    complexity=decision.complexity)
+                            f"routed to {decision.workflow} (model)",
+                            complexity=decision.complexity)
             return decision
 
         # Fall back to heuristics
         decision = self._heuristic_route(goal)
         if trace_id:
             tracer.step(trace_id, "router",
-                f"routed to {decision.workflow} (heuristic)",
-                complexity=decision.complexity)
+                        f"routed to {decision.workflow} (heuristic)",
+                        complexity=decision.complexity)
         return decision
 
     def classify_complexity(self, goal: str) -> int:
@@ -219,8 +332,8 @@ class TaskRouter:
         Uses the Router classify role.
         """
         r = llm.complete(
-            role = "router",
-            system = (
+            role="router",
+            system=(
                 "Rate the complexity of this task on a scale of 1-10. "
                 "Output only a single integer. Nothing else."
                 "\n1-3: single tool, clear input/output"
@@ -228,7 +341,8 @@ class TaskRouter:
                 "\n7-9: complex, multiple tools, uncertainty"
                 "\n10: requires human judgment"
             ),
-            user = goal,
+            user=goal,
+            timeout=cfg.router_timeout,
         )
         if r.ok:
             try:
@@ -244,47 +358,11 @@ class TaskRouter:
     ) -> Optional[RoutingDecision]:
         """Try to get a routing decision from the Router."""
         r = llm.complete(
-            role = "router",
-            system = (
-                "No thinking. No explanation.\n"
-                '{"workflow": "research or data or autocode or deep_research or understand",'
-                # [ROUTER EXPANSION] Tool list expanded from 10 to 15 tools.
-                # Added: cli, browser, tavily, consult, parallel.
-                # The router prompt must stay in sync with registered tools.
-                ' "tool": "web or python or file or git or memory or agent or notify or report or vision or workflow or cli or browser or tavily or consult or parallel",'
-                ' "complexity":5,'
-                ' "reason": "one sentence",'
-                ' "confidence": "high or medium or low",'
-                ' "clarifying_questions": ["question1", "question2"]}\n'
-                "\n\nWorkflow routing rules:\n"
-                "- research: finding info, summarising, reading docs, Q&A\n"
-                "- data: pandas, analysis, calculations, charts, spreadsheets\n"
-                "- autocode: fixing bugs, editing code files, adding features\n"
-                "- deep_research: complex multi-faceted research, iterative evidence synthesis\n"
-                "- understand: build or query codebase knowledge graph, analyze project structure\n"
-                "\nTool routing rules (for direct workflow):\n"
-                "- web: general web search and page reading\n"
-                "- python: data analysis, calculations, plotting\n"
-                "- file: read, write, list files and directories\n"
-                "- git: git operations, commits, diffs, status\n"
-                "- memory: recall, store, search memories\n"
-                "- agent: delegate to sub-agent for complex sub-tasks\n"
-                "- notify: send notifications and reminders\n"
-                "- report: create charts, dashboards, visual reports\n"
-                "- vision: image analysis and description\n"
-                "- workflow: multi-step task execution via workflow engine\n"
-                "- cli: shell commands, system administration, package management\n"
-                "- browser: JavaScript-rendered pages, screenshots, form interaction\n"
-                "- tavily: AI-powered deep web search\n"
-                "- consult: ask another LLM for a second opinion\n"
-                "- parallel: execute multiple independent tasks concurrently\n"
-                "\nConfidence rules:\n"
-                "- high: Clear task with specific details\n"
-                "- medium: Understandable but could be more specific\n"
-                "- low: Vague or ambiguous. MUST provide 1-2 clarifying questions to help the user refine their goal."
-            ),
-            user = goal,
-            trace_id = trace_id,
+            role="router",
+            system=ROUTER_SYSTEM_PROMPT,
+            user=goal,
+            trace_id=trace_id,
+            timeout=cfg.router_timeout,
         )
 
         if not r.ok:
@@ -328,11 +406,14 @@ class TaskRouter:
           8. Tavily (AI-powered search)
           9. Consult (ask another LLM)
          10. Parallel (execute multiple tasks concurrently)
-         11. Deep Research (iterative research)
-         12. Understand (knowledge graph)
-         13. Code (autocode workflow)
-         14. Data (data analysis workflow)
-         15. Default Research (catch-all)
+         11. Vision (image analysis)
+         12. Agent (delegate to sub-agent)
+         13. Deep Research (iterative research)
+         14. Understand (knowledge graph)
+         15. Code (autocode workflow)
+         16. Data (data analysis workflow)
+         17. Research (explicit keywords, medium confidence)
+         18. Default Research (catch-all, low confidence)
         """
         lower = goal.lower()
 
@@ -436,7 +517,27 @@ class TaskRouter:
                 "confidence": "medium",
             })
 
-        # 11. Deep Research workflow (iterative, multi-faceted research)
+        # 11. Vision tasks (image analysis)
+        if self._RE_DIRECT_VISION.search(goal):
+            return RoutingDecision({
+                "workflow": "direct",
+                "tool": "vision",
+                "complexity": 3,
+                "reason": "Image analysis task -- use vision() directly",
+                "confidence": "high",
+            })
+
+        # 12. Agent tasks (delegate to sub-agent)
+        if self._RE_DIRECT_AGENT.search(goal):
+            return RoutingDecision({
+                "workflow": "direct",
+                "tool": "agent",
+                "complexity": 6,
+                "reason": "Complex sub-task delegation -- use agent() directly",
+                "confidence": "medium",
+            })
+
+        # 13. Deep Research workflow (iterative, multi-faceted research)
         if self._RE_DEEP_RESEARCH.search(goal):
             return RoutingDecision({
                 "workflow": "deep_research",
@@ -446,7 +547,7 @@ class TaskRouter:
                 "confidence": "medium",
             })
 
-        # 12. Understand workflow (codebase knowledge graph)
+        # 14. Understand workflow (codebase knowledge graph)
         if self._RE_UNDERSTAND.search(goal):
             return RoutingDecision({
                 "workflow": "understand",
@@ -456,7 +557,7 @@ class TaskRouter:
                 "confidence": "medium",
             })
 
-        # 13. Code-related keywords (autocode workflow)
+        # 15. Code-related keywords (autocode workflow)
         if self._RE_CODE.search(goal):
             # Extra check: does it mention a file?
             has_file = any(
@@ -470,7 +571,7 @@ class TaskRouter:
                 "confidence": "medium",
             })
 
-        # 14. Data analysis keywords (data workflow)
+        # 16. Data analysis keywords (data workflow)
         if self._RE_DATA.search(goal):
             return RoutingDecision({
                 "workflow": "data",
@@ -480,7 +581,17 @@ class TaskRouter:
                 "confidence": "medium",
             })
 
-        # 15. Default to research (catch-all)
+        # 17. Explicit research keywords (higher confidence than default)
+        if self._RE_RESEARCH.search(goal):
+            return RoutingDecision({
+                "workflow": "research",
+                "tool": "web",
+                "complexity": 4,
+                "reason": "Contains research/question keywords",
+                "confidence": "medium",
+            })
+
+        # 18. Default to research (catch-all)
         return RoutingDecision({
             "workflow": "research",
             "tool": "web",
@@ -488,6 +599,7 @@ class TaskRouter:
             "reason": "No specific routing keywords matched",
             "confidence": "low",
         })
+
 
 # -- Singleton ----------------------------------------------------------------
 router = TaskRouter()
