@@ -532,8 +532,8 @@ If you are an AI assistant modifying `core/router.py`:
 | ✅ Complete | Tool registry sync | Router prompt now lists all 15 registered tools |
 | ✅ Complete | False-positive regression tests | Added adversarial tests for known misrouting cases |
 | ✅ Complete | Module-level prompt constant | `ROUTER_SYSTEM_PROMPT` extracted for direct test import |
+| 🚧 Planned | Routing telemetry | Log heuristic vs LLM route disagreements to identify real-world routing failures |
 | 🚧 Planned | Dynamic workflow composition | Chain multiple workflows (e.g., research → data) |
-| 🚧 Planned | Few-shot prompting | Inject 2-3 past routing examples into Router prompt |
 | 🚧 Planned | Adaptive complexity thresholds | Require `high` confidence for complexity > 7 |
 
 ---

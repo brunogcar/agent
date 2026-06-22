@@ -17,7 +17,6 @@ from tests.core.router.conftest import (
     ROUTER_EXPECTED_WORKFLOWS,
 )
 
-
 class TestToolRoutingRules:
     """Every tool in the prompt has a descriptive routing rule."""
 
@@ -31,7 +30,6 @@ class TestToolRoutingRules:
                 f"routing rule description (expected line: '- {tool_name}: ...')"
             )
 
-
 class TestWorkflowRoutingRules:
     """Every workflow in the prompt has a descriptive routing rule."""
 
@@ -43,7 +41,6 @@ class TestWorkflowRoutingRules:
                 f"Workflow '{workflow_name}' is listed in the prompt but has no "
                 f"routing rule description (expected line: '- {workflow_name}: ...')"
             )
-
 
 class TestPromptSectionsPresent:
     """Verify the prompt has the expected structural sections."""
@@ -61,4 +58,10 @@ class TestPromptSectionsPresent:
     def test_confidence_rules_section(self):
         assert "Confidence rules:" in ROUTER_SYSTEM_PROMPT, (
             "Missing 'Confidence rules:' section in prompt"
+        )
+
+    # [ROUTER FIX v2] Verify few-shot examples section exists
+    def test_examples_section_present(self):
+        assert "Examples:" in ROUTER_SYSTEM_PROMPT, (
+            "Missing 'Examples:' section in router system prompt"
         )

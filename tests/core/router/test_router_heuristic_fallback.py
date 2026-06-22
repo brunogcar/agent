@@ -7,11 +7,11 @@ No LLM mocking is needed -- we force fallback by making llm.complete fail.
 """
 from __future__ import annotations
 
+import json
 import pytest
 from unittest.mock import MagicMock
 
 from core.router import router, RoutingDecision
-
 
 # =============================================================================
 # Test Model-Based Routing (migrated from old test_router.py)
@@ -45,7 +45,6 @@ class TestModelRouting:
         decision = router.route("Fix the python bug in server.py", trace_id="test-789")
         assert decision.workflow == "autocode"
         assert decision.confidence == "medium"
-
 
 # =============================================================================
 # Test Heuristic Fallback -- Existing Tools (migrated from old test_router.py)
@@ -108,7 +107,6 @@ class TestHeuristicExistingTools:
         assert decision.tool == "web"
         assert decision.confidence == "low"
 
-
 # =============================================================================
 # Test Heuristic Fallback -- NEW Tools (Router Expansion)
 # =============================================================================
@@ -136,7 +134,6 @@ class TestHeuristicBrowser:
         assert decision.workflow == "direct"
         assert decision.tool == "browser"
 
-
 class TestHeuristicCLI:
     """CLI tool heuristic routing."""
 
@@ -161,7 +158,6 @@ class TestHeuristicCLI:
         assert decision.workflow == "direct"
         assert decision.tool == "cli"
 
-
 class TestHeuristicTavily:
     """Tavily tool heuristic routing."""
 
@@ -181,7 +177,6 @@ class TestHeuristicTavily:
         assert decision.workflow == "direct"
         assert decision.tool == "tavily"
 
-
 class TestHeuristicConsult:
     """Consult tool heuristic routing."""
 
@@ -192,10 +187,9 @@ class TestHeuristicConsult:
         assert decision.confidence == "high"
 
     def test_second_opinion_keyword(self, force_heuristic):
-        decision = router.route("let's get a second opinion on this code review")
+        decision = router.route("let\'s get a second opinion on this code review")
         assert decision.workflow == "direct"
         assert decision.tool == "consult"
-
 
 class TestHeuristicParallel:
     """Parallel tool heuristic routing (direct tool, not workflow)."""
@@ -221,7 +215,6 @@ class TestHeuristicParallel:
         assert decision.workflow == "direct"
         assert decision.tool == "parallel"
 
-
 class TestHeuristicVision:
     """Vision tool heuristic routing."""
 
@@ -241,7 +234,6 @@ class TestHeuristicVision:
         assert decision.workflow == "direct"
         assert decision.tool == "vision"
 
-
 class TestHeuristicAgent:
     """Agent tool heuristic routing."""
 
@@ -255,7 +247,6 @@ class TestHeuristicAgent:
         decision = router.route("spawn an agent to handle this")
         assert decision.workflow == "direct"
         assert decision.tool == "agent"
-
 
 class TestHeuristicDeepResearch:
     """Deep Research workflow heuristic routing."""
@@ -276,7 +267,6 @@ class TestHeuristicDeepResearch:
         assert decision.workflow == "deep_research"
         assert decision.tool == "workflow"
 
-
 class TestHeuristicUnderstand:
     """Understand workflow heuristic routing."""
 
@@ -295,7 +285,6 @@ class TestHeuristicUnderstand:
         decision = router.route("explore codebase structure")
         assert decision.workflow == "understand"
         assert decision.tool == "workflow"
-
 
 # =============================================================================
 # Test Heuristic Priority Order
@@ -330,7 +319,6 @@ class TestHeuristicPriority:
     def test_parallel_beats_data(self, force_heuristic):
         decision = router.route("batch process the csv files")
         assert decision.tool == "parallel"
-
 
 # =============================================================================
 # [ROUTER FIX] Test Heuristic False Positives -- Negative/Adversarial Cases
@@ -371,3 +359,52 @@ class TestHeuristicFalsePositives:
         decision = router.route("get a second opinion from my doctor")
         assert decision.tool != "consult"
         assert decision.workflow == "research"
+
+    # [HEURISTIC FIX v2] New adversarial tests for bare-word false positives
+    def test_what_is_ocr_not_vision_tool(self, force_heuristic):
+        """Bare 'ocr' in a research question must not route to vision."""
+        decision = router.route("what is OCR?")
+        assert decision.tool != "vision"
+        assert decision.workflow == "research"
+
+    def test_travel_agent_not_agent_tool(self, force_heuristic):
+        """Ordinary English 'agent for' must not route to agent tool."""
+        decision = router.route("find a travel agent for my trip")
+        assert decision.tool != "agent"
+        assert decision.workflow == "research"
+
+
+# =============================================================================
+# [ROUTER FIX v2] Few-Shot Examples -- Consistency & Presence Tests
+# =============================================================================
+class TestFewShotExamples:
+    """Verify few-shot examples are present, well-formed, and consistent."""
+
+    def test_examples_present_in_prompt(self):
+        """Few-shot examples must appear in the router system prompt."""
+        from core.router import ROUTER_SYSTEM_PROMPT
+        assert "Examples:" in ROUTER_SYSTEM_PROMPT
+        assert "->" in ROUTER_SYSTEM_PROMPT
+
+    def test_examples_are_valid_json(self):
+        """Each example\'s decision JSON must be valid and parseable."""
+        from core.router import ROUTER_FEW_SHOT_EXAMPLES
+        for goal, decision_json in ROUTER_FEW_SHOT_EXAMPLES:
+            data = json.loads(decision_json)
+            assert "workflow" in data
+            assert "tool" in data
+            assert "complexity" in data
+            assert "confidence" in data
+            assert "reason" in data
+            assert "clarifying_questions" in data
+
+    def test_examples_match_heuristic_routes(self, force_heuristic):
+        """Few-shot examples must be consistent with heuristic routing."""
+        from core.router import ROUTER_FEW_SHOT_EXAMPLES
+        for goal, decision_json in ROUTER_FEW_SHOT_EXAMPLES:
+            expected = json.loads(decision_json)
+            # Strip outer quotes from the goal string
+            clean_goal = goal.strip('"')
+            actual = router.route(clean_goal, trace_id="")
+            assert actual.workflow == expected["workflow"], f"Goal: {goal}"
+            assert actual.tool == expected["tool"], f"Goal: {goal}"
