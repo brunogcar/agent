@@ -1,8 +1,7 @@
-"""
-core/gateway_backend/dispatcher.py — Tool routing and orchestration logic.
+"""core/gateway_backend/dispatcher.py — Tool routing and orchestration logic.
 
 EXTRACTION NOTE (Gateway Phase 1): Extracted from core/gateway.py.
-Separates HTTP transport from tool orchestration. This module acts as a 
+Separates HTTP transport from tool orchestration. This module acts as a
 static router, mapping incoming payloads to the appropriate MCP tool or workflow.
 """
 from __future__ import annotations
@@ -10,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 from core.tracer import tracer
-
 
 def dispatch(trace_id: str, payload: dict) -> Any:
     """
@@ -20,9 +18,9 @@ def dispatch(trace_id: str, payload: dict) -> Any:
     Workflows that complete without raising are tagged 'success' here
     so polling clients always see a terminal status.
     """
-    tool   = payload.get("tool",  "")
+    tool = payload.get("tool", "")
     action = payload.get("action", "")
-    goal   = payload.get("goal",   "")
+    goal = payload.get("goal", "")
     params = payload.get("params", {})
 
     if tool == "workflow" or goal:
@@ -32,14 +30,14 @@ def dispatch(trace_id: str, payload: dict) -> Any:
         if wf_type == "auto":
             from core.router import router
             decision = router.route(goal, trace_id=trace_id)
-            wf_type  = decision.workflow
+            wf_type = decision.workflow
             if wf_type == "direct":
                 wf_type = "research"
 
         result = run_workflow(
             workflow_type = wf_type,
-            goal          = goal,
-            trace_id      = trace_id,
+            goal = goal,
+            trace_id = trace_id,
             **params,
         )
         # Ensure terminal status is always present (P1-3)
@@ -86,5 +84,25 @@ def dispatch(trace_id: str, payload: dict) -> Any:
     if tool == "vision":
         from tools.vision import vision
         return vision(**params)
+
+    # [ROUTER EXPANSION] Dispatch cases for tools that were previously
+    # registered but unreachable from the gateway. Added: browser, tavily,
+    # consult, parallel. These tools existed in tools/ but had no dispatch
+    # path, meaning the router could never successfully route to them.
+    if tool == "browser":
+        from tools.browser import browser
+        return browser(action=action, **params)
+
+    if tool == "tavily":
+        from tools.tavily import tavily
+        return tavily(action=action, **params)
+
+    if tool == "consult":
+        from tools.consult import consult
+        return consult(**params)
+
+    if tool == "parallel":
+        from tools.parallel import parallel
+        return parallel(**params)
 
     return {"status": "error", "error": f"Unknown tool: '{tool}'"}

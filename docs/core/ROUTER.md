@@ -17,31 +17,42 @@ The Task Router (`core/router.py`) is the **ultra-fast classification layer** th
 
 ```
 core/router.py
-├── RoutingDecision          # Dataclass: workflow, tool, complexity, reason, confidence
+├── RoutingDecision    # Dataclass: workflow, tool, complexity, reason, confidence
 ├── TaskRouter (singleton)
-│   ├── route()              # Primary entry point — model → heuristic fallback
-│   ├── classify_complexity() # Quick 1-10 complexity score
-│   ├── _model_route()       # LLM-based classification (Router role, 15s timeout)
-│   ├── _heuristic_route()   # Keyword-based fallback (pre-compiled regex)
-│   └── _extract_first_json() # Deterministic JSON extraction (3-layer)
-└── router                   # Module-level singleton
+│   ├── route()                    # Primary entry point — model → heuristic fallback
+│   ├── classify_complexity()      # Quick 1-10 complexity score
+│   ├── _model_route()             # LLM-based classification (Router role, 15s timeout)
+│   ├── _heuristic_route()         # Keyword-based fallback (pre-compiled regex)
+│   └── _extract_first_json()      # Deterministic JSON extraction (3-layer)
+└── router                         # Module-level singleton
 ```
 
 ### Routing Flow
 
 ```mermaid
 graph TD
-    A["User goal<br/>e.g., 'Fix the timeout bug in web.py'"] --> B["router.route(goal)"]
-    B --> C{Goal<br/>empty?}
-    C -->|Yes| D["Return default<br/>workflow=research, complexity=1<br/>+ clarifying questions"]
-    C -->|No| E["Tier 1: Model-Based<br/>_model_route()"]
-    E --> F{LLM call<br/>succeeds?}
-    F -->|Yes| G["Parse JSON<br/>_extract_first_json()"]
-    G --> H{Valid<br/>RoutingDecision?}
-    H -->|Yes| I["Return decision<br/>tracer.log('routed via model')"]
-    H -->|No| J["Tier 2: Heuristic<br/>_heuristic_route()"]
+    A["User goal
+e.g., 'Fix the timeout bug in web.py'"] --> B["router.route(goal)"]
+    B --> C{Goal
+empty?}
+    C -->|Yes| D["Return default
+workflow=research, complexity=1
++ clarifying questions"]
+    C -->|No| E["Tier 1: Model-Based
+_model_route()"]
+    E --> F{LLM call
+succeeds?}
+    F -->|Yes| G["Parse JSON
+_extract_first_json()"]
+    G --> H{Valid
+RoutingDecision?}
+    H -->|Yes| I["Return decision
+tracer.log('routed via model')"]
+    H -->|No| J["Tier 2: Heuristic
+_heuristic_route()"]
     F -->|Timeout / Error| J
-    J --> K["Return decision<br/>tracer.log('routed via heuristic')"]
+    J --> K["Return decision
+tracer.log('routed via heuristic')"]
 ```
 
 ### Design Goals
@@ -64,13 +75,13 @@ Every routing attempt returns a `RoutingDecision` object. This standardized outp
 
 ```python
 class RoutingDecision:
-    workflow:   str        # "research", "data", "autocode", or "direct"
-    tool:       str        # "web", "file", "git", "memory", "workflow", etc.
-    complexity: int        # 1-10 scale
-    reason:     str        # Human/LLM-readable explanation
-    confidence: str        # "high", "medium", "low"
+    workflow: str           # "research", "data", "autocode", "deep_research", "understand", or "direct"
+    tool: str               # "web", "file", "git", "memory", "workflow", "cli", "browser", etc.
+    complexity: int         # 1-10 scale
+    reason: str             # Human/LLM-readable explanation
+    confidence: str         # "high", "medium", "low"
     clarifying_questions: list[str]  # Questions for low-confidence routes
-    raw:        dict       # Original raw dict from LLM or heuristic
+    raw: dict               # Original raw dict from LLM or heuristic
 ```
 
 ### Routing Targets
@@ -81,13 +92,30 @@ graph LR
         A["workflow='research'"]
         B["workflow='data'"]
         C["workflow='autocode'"]
+        D["workflow='deep_research'"]
+        E["workflow='understand'"]
     end
     subgraph "Direct Tool Execution"
-        D["workflow='direct'<br/>tool='file'"]
-        E["workflow='direct'<br/>tool='memory'"]
-        F["workflow='direct'<br/>tool='git'"]
-        G["workflow='direct'<br/>tool='notify'"]
-        H["workflow='direct'<br/>tool='report'"]
+        G["workflow='direct'
+tool='file'"]
+        H["workflow='direct'
+tool='memory'"]
+        I["workflow='direct'
+tool='git'"]
+        J["workflow='direct'
+tool='notify'"]
+        K["workflow='direct'
+tool='report'"]
+        L["workflow='direct'
+tool='cli'"]
+        M["workflow='direct'
+tool='browser'"]
+        N["workflow='direct'
+tool='tavily'"]
+        O["workflow='direct'
+tool='consult'"]
+        P["workflow='direct'
+tool='parallel'"]
     end
 ```
 
@@ -96,15 +124,22 @@ graph LR
 | **Multi-step workflow** | `"research"` | `"workflow"` | Finding info, summarizing, reading docs, Q&A |
 | **Multi-step workflow** | `"data"` | `"workflow"` | Pandas, analysis, calculations, charts, spreadsheets |
 | **Multi-step workflow** | `"autocode"` | `"workflow"` | Fixing bugs, editing code, adding features |
+| **Multi-step workflow** | `"deep_research"` | `"workflow"` | Complex, multi-faceted research with iterative synthesis |
+| **Multi-step workflow** | `"understand"` | `"workflow"` | Build or query codebase knowledge graph |
 | **Direct tool** | `"direct"` | `"file"` | Read file, open file, list directory |
 | **Direct tool** | `"direct"` | `"memory"` | Recall, remember, store to memory |
 | **Direct tool** | `"direct"` | `"git"` | Git status, show commits, git diff |
 | **Direct tool** | `"direct"` | `"notify"` | Notify me, remind me |
 | **Direct tool** | `"direct"` | `"report"` | Create chart, plot, dashboard |
+| **Direct tool** | `"direct"` | `"cli"` | Run shell commands, system administration |
+| **Direct tool** | `"direct"` | `"browser"` | Browse JS-rendered pages, screenshots, forms |
+| **Direct tool** | `"direct"` | `"tavily"` | AI-powered deep web search |
+| **Direct tool** | `"direct"` | `"consult"` | Ask another LLM for a second opinion |
+| **Direct tool** | `"direct"` | `"parallel"` | Execute multiple independent tasks concurrently |
 
 ### Workflow vs. Direct Routing
 
-- **Workflow Routing** (`workflow="research|data|autocode"`): The task requires a multi-step LangGraph state machine. The Planner generates a plan, the Executor runs each step.
+- **Workflow Routing** (`workflow="research|data|autocode|deep_research|understand"`): The task requires a multi-step LangGraph state machine. The Planner generates a plan, the Executor runs each step.
 - **Direct Routing** (`workflow="direct"`): The task is a simple, single-step action. The router bypasses the workflow engine and tells the dispatcher to call the specific tool directly.
 
 ---
@@ -117,11 +152,17 @@ To prevent the agent from wasting 15+ minutes and massive VRAM on misunderstood 
 
 ```mermaid
 graph TD
-    A["RoutingDecision<br/>confidence='low'"] --> B["workflow_tool.py<br/>Intercepts before execution"]
-    B --> C["Return structured<br/>needs_clarification payload"]
-    C --> D["LLM asks user<br/>clarifying questions"]
-    D --> E{"User<br/>clarifies?"}
-    E -->|Yes| F["Re-route with<br/>precise goal"]
+    A["RoutingDecision
+confidence='low'"] --> B["workflow_tool.py
+Intercepts before execution"]
+    B --> C["Return structured
+needs_clarification payload"]
+    C --> D["LLM asks user
+clarifying questions"]
+    D --> E{"User
+clarifies?"}
+    E -->|Yes| F["Re-route with
+precise goal"]
     E -->|No| G["Abort"]
 ```
 
@@ -143,7 +184,9 @@ graph TD
     "Which specific file needs fixing?",
     "What is the exact error message?"
   ],
-  "message": "To help me understand your request better, please clarify:\n- Which specific file needs fixing?\n- What is the exact error message?",
+  "message": "To help me understand your request better, please clarify:
+- Which specific file needs fixing?
+- What is the exact error message?",
   "trace_id": "abc123"
 }
 ```
@@ -168,18 +211,36 @@ The Router attempts to classify the task using the lightweight Router LLM.
 
 ```
 No thinking. No explanation.
-{"workflow": "research or data or autocode",
- "tool": "web or python or file or git or memory or agent or notify or report or workflow",
+{"workflow": "research or data or autocode or deep_research or understand",
+ "tool": "web or python or file or git or memory or agent or notify or report or vision or workflow or cli or browser or tavily or consult or parallel",
  "complexity": 5,
  "reason": "one sentence",
  "confidence": "high or medium or low",
  "clarifying_questions": ["question1", "question2"]}
 
-Routing rules:
+Workflow routing rules:
 - research: finding info, summarising, reading docs, Q&A
 - data: pandas, analysis, calculations, charts, spreadsheets
 - autocode: fixing bugs, editing code files, adding features
-- direct: single-tool task (use tool field, not workflow)
+- deep_research: complex multi-faceted research, iterative evidence synthesis
+- understand: build or query codebase knowledge graph, analyze project structure
+
+Tool routing rules (for direct workflow):
+- web: general web search and page reading
+- python: data analysis, calculations, plotting
+- file: read, write, list files and directories
+- git: git operations, commits, diffs, status
+- memory: recall, store, search memories
+- agent: delegate to sub-agent for complex sub-tasks
+- notify: send notifications and reminders
+- report: create charts, dashboards, visual reports
+- vision: image analysis and description
+- workflow: multi-step task execution via workflow engine
+- cli: shell commands, system administration, package management
+- browser: JavaScript-rendered pages, screenshots, form interaction
+- tavily: AI-powered deep web search
+- consult: ask another LLM for a second opinion
+- parallel: execute multiple independent tasks concurrently
 
 Confidence rules:
 - high: Clear task with specific details
@@ -197,13 +258,17 @@ Confidence rules:
 
 ```mermaid
 graph TD
-    A["Raw LLM Response"] --> B["Strip markdown fences<br/>```json ... ```"]
-    B --> C["Try direct parse<br/>json.loads(text)"]
+    A["Raw LLM Response"] --> B["Strip markdown fences
+```json ... ```"]
+    B --> C["Try direct parse
+json.loads(text)"]
     C -->|Success| D["Return RoutingDecision"]
-    C -->|Fail| E["Layer 3: raw_decode<br/>json.JSONDecoder().raw_decode()"]
+    C -->|Fail| E["Layer 3: raw_decode
+json.JSONDecoder().raw_decode()"]
     E -->|Find first { }| F["Parse extracted JSON"]
     F -->|Valid + has 'workflow'| D
-    F -->|Invalid| G["Return None<br/>Fall back to heuristics"]
+    F -->|Invalid| G["Return None
+Fall back to heuristics"]
     E -->|No { } found| G
 ```
 
@@ -215,21 +280,75 @@ If the LLM call fails, times out, or returns invalid JSON, the `_heuristic_route
 
 ```mermaid
 graph TD
-    A["Goal text"] --> B{"Report?<br/>chart, plot, dashboard"}
-    B -->|Yes| R1["workflow='direct'<br/>tool='report'<br/>complexity=3"]
-    B -->|No| C{"File op?<br/>read file, open file, list dir"}
-    C -->|Yes| R2["workflow='direct'<br/>tool='file'<br/>complexity=2"]
-    C -->|No| D{"Memory op?<br/>recall, remember, store this"}
-    D -->|Yes| R3["workflow='direct'<br/>tool='memory'<br/>complexity=1"]
-    D -->|No| E{"Git op?<br/>git status, show commits"}
-    E -->|Yes| R4["workflow='direct'<br/>tool='git'<br/>complexity=2"]
-    E -->|No| F{"Notify?<br/>notify me, remind me"}
-    F -->|Yes| R5["workflow='direct'<br/>tool='notify'<br/>complexity=1"]
-    F -->|No| G{"Code?<br/>fix, bug, refactor, implement"}
-    G -->|Yes| R6["workflow='autocode'<br/>complexity=5 or 7"]
-    G -->|No| H{"Data?<br/>analyze, pandas, csv, plot"}
-    H -->|Yes| R7["workflow='data'<br/>complexity=5"]
-    H -->|No| I["Default<br/>workflow='research'<br/>complexity=4"]
+    A["Goal text"] --> B{"Report?
+chart, plot, dashboard"}
+    B -->|Yes| R1["workflow='direct'
+tool='report'
+complexity=3"]
+    B -->|No| C{"Browser?
+browse, screenshot, form"}
+    C -->|Yes| R2["workflow='direct'
+tool='browser'
+complexity=4"]
+    C -->|No| D{"File op?
+read file, open file, list dir"}
+    D -->|Yes| R3["workflow='direct'
+tool='file'
+complexity=2"]
+    D -->|No| E{"Memory op?
+recall, remember, store this"}
+    E -->|Yes| R4["workflow='direct'
+tool='memory'
+complexity=1"]
+    E -->|No| F{"Git op?
+git status, show commits"}
+    F -->|Yes| R5["workflow='direct'
+tool='git'
+complexity=2"]
+    F -->|No| G{"Notify?
+notify me, remind me"}
+    G -->|Yes| R6["workflow='direct'
+tool='notify'
+complexity=1"]
+    G -->|No| H{"CLI?
+run command, terminal, bash"}
+    H -->|Yes| R7["workflow='direct'
+tool='cli'
+complexity=3"]
+    H -->|No| I{"Tavily?
+tavily, ai search"}
+    I -->|Yes| R8["workflow='direct'
+tool='tavily'
+complexity=4"]
+    I -->|No| J{"Consult?
+consult, second opinion"}
+    J -->|Yes| R9["workflow='direct'
+tool='consult'
+complexity=2"]
+    J -->|No| K{"Parallel?
+run in parallel, batch process"}
+    K -->|Yes| R10["workflow='direct'
+tool='parallel'
+complexity=5"]
+    K -->|No| L{"Deep Research?
+deep research, thorough investigation"}
+    L -->|Yes| R11["workflow='deep_research'
+complexity=8"]
+    L -->|No| M{"Understand?
+understand codebase, knowledge graph"}
+    M -->|Yes| R12["workflow='understand'
+complexity=6"]
+    M -->|No| N{"Code?
+fix, bug, refactor, implement"}
+    N -->|Yes| R13["workflow='autocode'
+complexity=5 or 7"]
+    N -->|No| O{"Data?
+analyze, pandas, csv, plot"}
+    O -->|Yes| R14["workflow='data'
+complexity=5"]
+    O -->|No| P["Default
+workflow='research'
+complexity=4"]
 ```
 
 ### Regex Patterns (Pre-compiled)
@@ -237,12 +356,19 @@ graph TD
 | Pattern | Regex | Routes To |
 |---------|-------|-----------|
 | `_RE_REPORT` | `\b(create a chart\|create chart\|make a chart\|plot a chart\|draw a chart\|report\|visualise\|create a graph\|make a graph\|create a map\|make a map\|create a dashboard\|make a dashboard\|create a report\|make a report\|bar chart\|line chart\|pie chart\|scatter plot\|heatmap)\b` | `direct → report` |
+| `_RE_DIRECT_BROWSER` | `\b(browse\|screenshot\|fill form\|click button\|js-rendered\|open page\|take a screenshot\|capture screen\|web automation\|headless browser)\b` | `direct → browser` |
 | `_RE_DIRECT_FILE` | `\b(read file\|open file\|list files\|list directory\|write file\|show file\|read the file\|open the file)\b` | `direct → file` |
 | `_RE_DIRECT_MEMORY` | `\b(recall\|remember\|what do you know about\|store this\|save this to memory)\b` | `direct → memory` |
 | `_RE_DIRECT_GIT` | `\b(git status\|git log\|show commits\|git diff\|commit this\|git commit)\b` | `direct → git` |
 | `_RE_DIRECT_NOTIFY` | `\b(notify me\|send notification\|remind me\|schedule reminder)\b` | `direct → notify` |
+| `_RE_DIRECT_CLI` | `\b(run command\|execute shell\|terminal\|bash\|powershell\|pip install\|npm install\|yarn install\|composer install\|docker build\|docker run\|kubectl\|terraform apply\|ansible)\b` | `direct → cli` |
+| `_RE_DIRECT_TAVILY` | `\b(tavily\|ai search\|deep search\|advanced search\|ai-powered search\|intelligent search)\b` | `direct → tavily` |
+| `_RE_DIRECT_CONSULT` | `\b(consult\|ask another model\|second opinion\|get another perspective\|ask a different llm)\b` | `direct → consult` |
+| `_RE_DIRECT_PARALLEL` | `\b(run in parallel\|in parallel\|batch process\|concurrently\|at the same time\|simultaneously\|process all\|run together\|parallel execution)\b` | `direct → parallel` |
+| `_RE_DEEP_RESEARCH` | `\b(deep research\|thorough investigation\|comprehensive report\|iterative research\|multi-faceted research\|extensive research\|in-depth analysis\|detailed investigation)\b` | `deep_research → workflow` |
+| `_RE_UNDERSTAND` | `\b(understand codebase\|build knowledge graph\|analyze project structure\|index codebase\|codebase overview\|project analysis\|map dependencies\|explore codebase\|scan project)\b` | `understand → workflow` |
 | `_RE_CODE` | `\b(fix\|bug\|error\|patch\|refactor\|improve\|add feature\|implement\|edit\|modify\|update code)\b` | `autocode` |
-| `_RE_DATA` | `\b(analyse\|analyze\|calculate\|compute\|plot\|chart\|csv\|excel\|spreadsheet\|statistics\|pandas\|numpy\|dataset)\b` | `data` |
+| `_RE_DATA` | `\b(analyse\|analyze\|calculate\|compute\|csv\|excel\|spreadsheet\|statistics\|pandas\|numpy\|dataset)\b` | `data` |
 | `_RE_RESEARCH` | `\b(what is\|what are\|how does\|explain\|research\|find information\|summarise\|summarize\|look up)\b` | `research` |
 
 > ⚠️ **All patterns are case-insensitive** (`re.IGNORECASE`).
@@ -366,14 +492,15 @@ The Router must never block the user experience. If the model takes longer than 
 
 ```powershell
 # Run all router tests
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_router.py -v
-
-# Test heuristic fallback (no LLM needed)
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_router.py -k "heuristic" -v
-
-# Test JSON extraction edge cases
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_router.py -k "extract_json" -v
+D:\mcp\gent\env\Scripts\pytest.exe tests/core/router/ -v -W error
 ```
+
+**Test organization:**
+- `conftest.py` — Shared fixtures (mock LLM, mock registry)
+- `test_router_tools_complete.py` — Structural: all tools/workflows appear in prompt
+- `test_router_routing_rules.py` — Parameterized: each tool/workflow has a routing rule
+- `test_router_heuristic_fallback.py` — Behavioral: heuristic patterns route correctly
+- `test_router_drift.py` — CI check: prompt tool list matches expected set
 
 **Mock strategy:**
 - Mock `llm.complete()` to return controlled JSON responses
@@ -384,44 +511,29 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_router.py -k "extract_json"
 
 ## ⚠️ Known Concerns
 
-> **Note:** These are MiMo's observations from source code review. They are constructive suggestions, not definitive prescriptions.
-
-### Router Tool List vs. Dispatcher vs. Actual Tools
-
-**What exists:**
-- The router's model prompt lists 9 tools: `web, python, file, git, memory, agent, notify, report, workflow`
-- The gateway dispatcher handles 11 tools: `web, python, file, git, memory, agent, report, notify, cli, vision, workflow`
-- The actual `tools/` directory contains 15+ tools: `web, python_exec, file, git, memory_tool, agent, report, notify, cli, vision, browser, tavily, consult, parallel, workflow_tool`
-
-**The concern:**
-The router never routes to `cli`, `vision`, `browser`, `tavily`, or `consult`. The dispatcher never dispatches to `browser`, `tavily`, `consult`, or `parallel`. This means:
-
-1. **Invisible tools** — the Planner can invoke tools the router doesn't know about, but the router can never proactively select them.
-2. **Dead tools** — `consult.py`, `tavily.py`, `browser.py`, and `parallel.py` exist in `tools/` but are unreachable from the gateway dispatcher.
-3. **Implicit contracts** — the gap between router, dispatcher, and actual tools is undocumented.
-
-**Suggestion:**
-1. Add `browser`, `tavily`, `consult`, `cli`, `vision` to the router's model prompt with clear routing rules.
-2. Add the missing tools to the dispatcher's if-chain.
-3. Create a `TOOLS.md` that documents every tool, its routing rules, and its entry points.
+> **Note:** These are observations from source code review. They are constructive suggestions, not definitive prescriptions.
 
 ### Heuristic Pattern Overlap
 
 **What exists:**
-The `_RE_REPORT` regex matches words like `chart`, `plot`, `report`, `dashboard`. The `_RE_DATA` regex also matches `plot` and `chart`. This means some goals could match both patterns.
+The `_RE_REPORT` regex matches words like `chart`, `plot`, `report`, `dashboard`. The `_RE_DATA` regex also matches `csv`, `excel`, `spreadsheet`. The `_RE_DIRECT_BROWSER` matches `screenshot` which could overlap with report's `create a chart`.
 
 **The concern:**
 Since report is checked first in `_heuristic_route()`, goals like "plot a chart of this data" will route to `direct → report` instead of `data → python`. This may or may not be the desired behavior depending on whether the user wants a static report or a data analysis workflow.
 
-**Suggestion:**
-Either remove `plot` and `chart` from `_RE_DATA` (since report takes priority anyway), or add a disambiguation step when both patterns match.
+**Mitigation:**
+The priority order is intentional — direct tool requests are more specific than workflow requests. If a user says "create a chart", they likely want the report tool. If they say "analyze this CSV with pandas", the data workflow catches it because `pandas` is in `_RE_DATA` but not in `_RE_REPORT`.
 
-### Router Doesn't Know About Browser
+### Router Prompt Length
 
-The `browser` tool exists for JavaScript-rendered pages, interactive forms, and screenshots. But the router has no keyword for it. A user saying "browse this website" or "open this page" will route to `research → web` instead of using the browser tool.
+**What exists:**
+The router prompt now lists 5 workflows and 15 tools with individual routing rules. This is ~30 lines of prompt text.
 
-**Suggestion:**
-Add a `_RE_DIRECT_BROWSER` pattern for keywords like "browse", "open page", "screenshot", "fill form", "click button".
+**The concern:**
+For very small router models (e.g., 2B parameters), a longer prompt may slightly increase latency.
+
+**Mitigation:**
+The prompt is still well within the context window of gemma-2-2b-it (8K context). The routing rules are essential for accurate classification. If latency becomes an issue, the rules can be compressed into a single-line format.
 
 ---
 
@@ -431,13 +543,14 @@ If you are an AI assistant modifying `core/router.py`:
 
 1. **Never remove the Confidence Guard** — the `low` confidence interception in `tools/workflow_tool.py` prevents massive VRAM waste on misunderstood tasks.
 2. **Never remove the heuristic fallback** — if LM Studio is offline, the agent must still route basic tasks via keywords.
-3. **Do not simplify the JSON parser** — do not replace `_extract_first_json()` with `re.search(r'\{.*\}')`. The `raw_decode()` approach handles nested objects and escaped quotes safely.
+3. **Do not simplify the JSON parser** — do not replace `_extract_first_json()` with `re.search(r'{.*}')`. The `raw_decode()` approach handles nested objects and escaped quotes safely.
 4. **Keep it fast** — do not add heavy computations, file I/O, or secondary LLM calls to the routing path. This must remain ultra-lightweight.
 5. **Update keyword lists carefully** — when adding to regex patterns, ensure there is no overlap that would cause a direct tool request to be misrouted to a heavy workflow.
 6. **No hardcoded models** — always use `role="router"` in `llm.complete()`. Never hardcode model identifiers.
 7. **Trace integration** — all routing decisions must be logged via `tracer.step()` with `trace_id`.
 8. **Pre-compiled regex** — all new keyword patterns must be `re.compile()` at class level, not compiled on every call.
 9. **Check priority order** — when adding new patterns, insert them in the correct priority position in `_heuristic_route()`. More specific patterns must come before more general ones.
+10. **Keep prompt in sync** — when adding a new tool or workflow, update BOTH the system prompt AND the heuristic fallback. Also update `ROUTER.md` and the drift test.
 
 ---
 
@@ -451,6 +564,7 @@ If you are an AI assistant modifying `core/router.py`:
 | `core/tracer.py` | Trace logging for routing decisions |
 | `core/config.py` | `router_model`, `router_timeout` configuration |
 | `core/gateway_backend/dispatcher.py` | Consumes routing decisions for gateway dispatch |
+| `registry.py` | Auto-discovers `@tool` decorated functions |
 
 ---
 
@@ -462,8 +576,14 @@ If you are an AI assistant modifying `core/router.py`:
 | ✅ Complete | Heuristic fallback | Pre-compiled regex, O(1) matching |
 | ✅ Complete | Confidence Guard | Low-confidence interception + clarifying questions |
 | ✅ Complete | Deterministic JSON extraction | 3-layer pipeline with raw_decode |
-| 🚧 Planned | Browser routing | Add `_RE_DIRECT_BROWSER` for browse/screenshot/form keywords |
-| 🚧 Planned | Tool registry sync | Auto-generate router prompt from tool metadata |
+| ✅ Complete | Browser routing | Added `_RE_DIRECT_BROWSER` for browse/screenshot/form keywords |
+| ✅ Complete | CLI routing | Added `_RE_DIRECT_CLI` for shell command keywords |
+| ✅ Complete | Tavily routing | Added `_RE_DIRECT_TAVILY` for AI search keywords |
+| ✅ Complete | Consult routing | Added `_RE_DIRECT_CONSULT` for second-opinion keywords |
+| ✅ Complete | Parallel routing | Added `_RE_DIRECT_PARALLEL` for concurrent execution keywords (direct tool) |
+| ✅ Complete | Deep Research workflow | Added `deep_research` to workflow list and heuristic |
+| ✅ Complete | Understand workflow | Added `understand` to workflow list and heuristic |
+| ✅ Complete | Tool registry sync | Router prompt now lists all 15 registered tools |
 | 🚧 Planned | Dynamic workflow composition | Chain multiple workflows (e.g., research → data) |
 | 🚧 Planned | Few-shot prompting | Inject 2-3 past routing examples into Router prompt |
 | 🚧 Planned | Adaptive complexity thresholds | Require `high` confidence for complexity > 7 |
