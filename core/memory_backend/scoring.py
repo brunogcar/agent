@@ -1,15 +1,16 @@
 # core/memory_backend/scoring.py — Decay scoring, query rewriting, and text normalization.
-"""Decay scoring, query rewriting, and text normalization for memory retrieval.
+"""
+Decay scoring, query rewriting, and text normalization for memory retrieval.
 
 Score composition:
-  - Time decay (bypassed for procedural memories)
+  - Time decay (bounded for procedural memories with floor 0.7)
   - Reinforcement boost (capped logarithmic)
   - Recall boost (capped linear)
 
-Procedural memories (learned rules, validated fix patterns) bypass time decay
-intentionally — they represent validated knowledge that should persist.
-However, to prevent completely stale rules from dominating, a minimum floor
-of 0.7 is applied. This gives slow natural decay while preserving the intent.
+Procedural memories have bounded decay with a minimum floor of 0.7 — they
+decay slowly over time but are never reduced below 70% of their original
+score. This balances persistence of validated knowledge with gradual
+aging of stale rules.
 """
 from __future__ import annotations
 

@@ -113,9 +113,12 @@ def distill_and_store(trace_id: str, trace: dict) -> dict:
             continue
 
         # Deduplication guard (O(1) hash check)
-        rule_hash = normalize_and_hash(text)
-        existing = memory.recall(rule_hash, top_k=1, collections=["procedural"])
-        if existing:
+        # [P1 FIX] Use semantic search with the actual rule text for dedup.
+        # Hash-based lookup was suboptimal because the hash string has no semantic
+        # relationship to the original text. Using the text directly allows
+        # ChromaDB to find near-duplicate rules via embedding similarity.
+        existing = memory.recall(text, top_k=1, collections=["procedural"])
+        if existing and existing[0].get("score", 0) > 0.95:
             stats["skipped"] += 1
             continue
 

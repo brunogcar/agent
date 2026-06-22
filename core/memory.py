@@ -22,7 +22,7 @@ Every memory entry has a structured format:
 
 Recall uses decay scoring so old memories fade naturally:
   score = importance * max(0.3, 1 - age_days / DECAY_DAYS)
-  (Procedural memories bypass time-decay and use reinforcement boosting).
+  (Procedural memories have bounded decay with a floor of 0.7 and use reinforcement boosting).
 
 Query rewriting improves recall accuracy before hitting ChromaDB.
 

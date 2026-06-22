@@ -39,7 +39,7 @@ def dispatch_parallel(
 
     # [P3 FIX] Use configured worker timeout instead of hardcoded 30s.
     # Respects cfg.worker_timeout (default 60s per config.py) so users can adjust via .env.
-    timeout = getattr(cfg, "worker_timeout", 30)
+    timeout = cfg.worker_timeout  # Guaranteed to exist in Config
 
     results = []
     errors = []

@@ -170,7 +170,10 @@ class Tracer:
     def new_trace(self, workflow: str, goal: str = "", **kwargs: Any) -> str:
         trace_id = generate_trace_id()
         ts = time.time()
+        # [P0 FIX] kwargs spread FIRST so hardcoded keys cannot be overwritten.
+        # Consistent with step(), error(), warning(), finish() fixes.
         record = {
+            **kwargs,
             "trace_id": trace_id,
             "workflow": workflow,
             "goal": goal,
@@ -178,7 +181,6 @@ class Tracer:
             "started_fmt": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S"),
             "status": "running",
             "steps": [],
-            **kwargs,
         }
         _store.create(trace_id, record)
         _writer.write({**record, "event": "trace_start"})

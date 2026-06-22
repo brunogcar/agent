@@ -146,9 +146,6 @@ core/
 │   ├── sweeper.py        # Placeholder — not yet implemented
 │   └── janitor.py        # Purges stale/low-confidence learned rules
 │
-├── context_budget.py     # Shared context budgeting utility
-├── context_pruner.py     # Overflow-aware compression (shared by llm + tools)
-│
 ├── contracts.py          # ToolCall/ToolResult schemas, ok()/fail() helpers
 ├── security.py           # SSRF protection (is_safe_network_address)
 ├── path_guard.py         # Path validation, root scoping, protected files
