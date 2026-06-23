@@ -101,12 +101,26 @@ tasks:
     timeout: 120
     max_tokens: 1024
 
+  - name: code_merge_sort
+    system: "Write Python code. Return ONLY the function, no explanation, no markdown fences."
+    prompt: "Write a Python function merge_sort(arr) that sorts a list of numbers using the merge sort algorithm with O(n log n) complexity. Handle empty lists and single elements. Return ONLY the function."
+    validator: python_execution
+    validator_args:
+      test_cases:
+        - "assert merge_sort([3, 1, 4, 1, 5, 9, 2, 6]) == [1, 1, 2, 3, 4, 5, 6, 9]"
+        - "assert merge_sort([]) == []"
+        - "assert merge_sort([5]) == [5]"
+        - "assert merge_sort([2, 2, 2]) == [2, 2, 2]"
+    difficulty: hard
+    timeout: 120
+    max_tokens: 1024
+
   - name: summarize_bullet_points
     system: "Summarize into 3-5 bullet points. Be concise."
     prompt: "Summarize Python 3.12 features: improved error messages, new type parameter syntax, faster bytecode, flexible f-strings, asyncio performance improvements."
     validator: composite
     validator_args:
-      pattern: '^\\s*[-•*]\\s+'
+      pattern: '^\s*[-•*]\s+'
       min_steps: 3
       required_keywords: ["python 3.12", "error", "f-string", "asyncio", "type"]
     difficulty: medium
@@ -120,6 +134,28 @@ tasks:
     validator_args:
       expected_keywords: ["mars", "perseverance", "rover", "life", "samples"]
     difficulty: medium
+    timeout: 60
+    max_tokens: 512
+
+  - name: summarize_email
+    system: "Summarize in 1 sentence. Be concise."
+    prompt: "Email: 'Hey team, the deployment failed because the database migration script was missing a column. I fixed it and redeployed. Everything is green now.'"
+    validator: keyword_coverage
+    validator_args:
+      expected_keywords: ["deployment", "database", "migration", "fixed"]
+    difficulty: easy
+    timeout: 60
+    max_tokens: 256
+
+  - name: summarize_technical
+    system: "Summarize the technical document in 3-5 bullet points covering key concepts, trade-offs, and recommendations."
+    prompt: "Technical document: 'Microservices architecture offers independent deployability and scalability but introduces network latency, data consistency challenges, and operational complexity. Service meshes like Istio help manage traffic but add resource overhead. Event-driven patterns improve decoupling but require robust message durability and exactly-once semantics. Teams should start with monoliths and extract services only when bounded contexts are clear.'"
+    validator: composite
+    validator_args:
+      pattern: '^\s*[-•*]\s+'
+      min_steps: 3
+      required_keywords: ["microservices", "scalability", "latency", "consistency", "event-driven"]
+    difficulty: hard
     timeout: 60
     max_tokens: 512
 
@@ -141,12 +177,30 @@ tasks:
     timeout: 120
     max_tokens: 256
 
+  - name: research_multi_step
+    system: "Answer the question with reasoning. Return the final answer only."
+    prompt: "If a train travels 120 km in 2 hours, then stops for 30 minutes, then travels another 90 km in 1.5 hours, what is the average speed for the entire journey including the stop?"
+    expected: "52.5"
+    validator: contains
+    difficulty: medium
+    timeout: 120
+    max_tokens: 256
+
+  - name: research_inference
+    system: "Answer the question with reasoning. Return the final answer only."
+    prompt: "A chemist needs to identify an unknown substance. She observes that it melts at a temperature that is exactly 4/5 of water's boiling point at sea level. She also notes that this melting point is exactly 80°C above water's freezing point. What is the substance's melting point in Fahrenheit? Show your work, then return ONLY the final numerical answer."
+    expected: ["176", "176°F", "176 F"]
+    validator: contains
+    difficulty: hard
+    timeout: 120
+    max_tokens: 256
+
   - name: critique_code
     system: "Critique the code. List issues as bullet points."
     prompt: "def divide(a, b): return a / b"
     validator: composite
     validator_args:
-      pattern: '^\\s*[-•*]\\s+'
+      pattern: '^\s*[-•*]\s+'
       min_steps: 2
       required_keywords: ["zero", "error", "exception", "check", "divide"]
     difficulty: medium
@@ -158,10 +212,22 @@ tasks:
     prompt: "def fn(x, y): return x + y"
     validator: composite
     validator_args:
-      pattern: '^\\s*[-•*]\\s+'
+      pattern: '^\s*[-•*]\s+'
       min_steps: 2
       required_keywords: ["name", "descriptive", "parameter", "unclear"]
     difficulty: easy
+    timeout: 90
+    max_tokens: 512
+
+  - name: critique_complex
+    system: "Critique the code. List issues as bullet points."
+    prompt: "def process(data): result = []; for i in range(len(data)): if data[i] > 0: result.append(data[i] * 2); return result"
+    validator: composite
+    validator_args:
+      pattern: '^\s*[-•*]\s+'
+      min_steps: 3
+      required_keywords: ["list comprehension", "efficiency", "readability", "missing", "edge case"]
+    difficulty: hard
     timeout: 90
     max_tokens: 512
 
@@ -170,9 +236,8 @@ tasks:
     prompt: "Python process grows 100MB/hour. List 3 likely causes."
     validator: composite
     validator_args:
-      pattern: '^\\s*[-•*]\\s+'
+      pattern: '^\s*[-•*]\s+'
       min_steps: 3
-      # "gc" matches abbreviation; "garbage" matches "garbage collection" phrasing.
       required_keywords: ["memory", "leak", "cache", "garbage", "object", "reference"]
     difficulty: hard
     timeout: 90
@@ -183,10 +248,22 @@ tasks:
     prompt: "SQL query takes 30 seconds. List 3 likely causes."
     validator: composite
     validator_args:
-      pattern: '^\\s*[-•*]\\s+'
+      pattern: '^\s*[-•*]\s+'
       min_steps: 3
       required_keywords: ["index", "query", "optimization", "database", "slow"]
     difficulty: medium
+    timeout: 90
+    max_tokens: 512
+
+  - name: analyze_race_condition
+    system: "Analyze and list 2 likely causes as bullet points."
+    prompt: "Two threads increment a shared counter and the final value is sometimes wrong. List 2 likely causes."
+    validator: composite
+    validator_args:
+      pattern: '^\s*[-•*]\s+'
+      min_steps: 2
+      required_keywords: ["race condition", "lock", "atomic", "thread", "synchronization"]
+    difficulty: easy
     timeout: 90
     max_tokens: 512
 
@@ -195,7 +272,7 @@ tasks:
     prompt: 'query = f"SELECT * FROM users WHERE id = {user_id}"'
     validator: composite
     validator_args:
-      pattern: '^\\s*[-•*]\\s+'
+      pattern: '^\s*[-•*]\s+'
       min_steps: 2
       required_keywords: ["injection", "sql", "input", "unsafe", "user"]
     difficulty: medium
@@ -207,9 +284,21 @@ tasks:
     prompt: 'API_KEY = "sk-1234567890abcdef"'
     validator: composite
     validator_args:
-      pattern: '^\\s*[-•*]\\s+'
+      pattern: '^\s*[-•*]\s+'
       min_steps: 2
       required_keywords: ["secret", "hardcoded", "key", "exposed", "credential"]
     difficulty: easy
+    timeout: 90
+    max_tokens: 512
+
+  - name: review_auth
+    system: "Review for security issues. List findings as bullet points."
+    prompt: 'def login(username, password): if username == "admin" and password == "password123": return True; return False'
+    validator: composite
+    validator_args:
+      pattern: '^\s*[-•*]\s+'
+      min_steps: 3
+      required_keywords: ["hardcoded", "password", "credential", "brute force", "hash"]
+    difficulty: hard
     timeout: 90
     max_tokens: 512

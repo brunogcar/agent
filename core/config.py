@@ -114,8 +114,6 @@ class Config:
         consultor_raw = os.getenv("CONSULTOR_MODEL", "").strip()
 
         # Sub-role overrides (fallback to group main -> planner)
-        classify_raw = os.getenv("CLASSIFY_MODEL") or router_raw
-        route_raw = os.getenv("ROUTE_MODEL") or router_raw
         summarize_raw = os.getenv("SUMMARIZE_MODEL") or executor_raw
         extract_raw = os.getenv("EXTRACT_MODEL") or executor_raw
         research_raw = os.getenv("RESEARCH_MODEL") or executor_raw
@@ -123,6 +121,8 @@ class Config:
         analyze_raw = os.getenv("ANALYZE_MODEL") or executor_raw
         code_raw = os.getenv("CODE_MODEL") or executor_raw
         review_raw = os.getenv("REVIEW_MODEL") or executor_raw
+        classify_raw = os.getenv("CLASSIFY_MODEL") or router_raw
+        route_raw = os.getenv("ROUTE_MODEL") or router_raw
 
         # Resolve provider and model automatically for each role
         planner_prov, planner_mod = _resolve_role(planner_raw)

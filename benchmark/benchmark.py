@@ -1,10 +1,11 @@
-﻿"""benchmark.py — Main benchmark runner."""
+"""benchmark.py — Main benchmark runner."""
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import re
+import sys
 import time
 import yaml
 from pathlib import Path
@@ -13,7 +14,14 @@ from typing import Any
 from core.config import cfg
 from core.llm import llm
 from benchmark.validators import VALIDATORS
-from benchmark.scoring import calculate_task_score, calculate_role_score
+from benchmark.scoring import (
+    calculate_task_score,
+    calculate_role_score,
+    categorize_failure,
+    consistency_score,
+    calculate_difficulty_breakdown,
+)
+from benchmark import reports
 
 try:
     import tiktoken
@@ -22,20 +30,8 @@ try:
 except Exception:
     def count_tokens(t): return len(t.split())
 
-GREEN  = "\033[92m"
-RED    = "\033[91m"
-YELLOW = "\033[93m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-RESET  = "\033[0m"
-def green(s): return f"{GREEN}{s}{RESET}"
-def red(s): return f"{RED}{s}{RESET}"
-def yellow(s): return f"{YELLOW}{s}{RESET}"
-def cyan(s): return f"{CYAN}{s}{RESET}"
-def bold(s): return f"{BOLD}{s}{RESET}"
-
 # NOTE: vision and consultor are excluded from --all by default.
-#       They have no task YAMLs yet. Test them explicitly with --role vision or --role consultor.
+# They have no task YAMLs yet. Test them explicitly with --role vision or --role consultor.
 ROLE_GROUPS = {
     "router": ["classify", "route"],
     "executor": ["summarize", "extract", "research", "critique", "analyze", "code", "review"],
@@ -47,34 +43,67 @@ ROLE_TO_GROUP = {
     "summarize": "executor", "extract": "executor", "research": "executor",
     "critique": "executor", "analyze": "executor", "code": "executor", "review": "executor",
     "planner": "planner",
-    # "vision": "vision",       # add when vision.yaml exists
+    # "vision": "vision", # add when vision.yaml exists
     # "consultor": "consultor", # add when consultor.yaml exists
 }
 
-DEPTH_TASKS = {"easy": 5, "normal": 10, "hard": 15}  # router & executor | planner: 3/6/9
+DEPTH_TASKS = {"easy": 5, "normal": 10, "hard": 15}
+DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
+
 
 def load_tasks(role):
+    """Load tasks for a role, sorted by difficulty ascending (easy first)."""
     group = ROLE_TO_GROUP.get(role, role)
     task_file = Path(__file__).parent / "tasks" / f"{group}.yaml"
-    if not task_file.exists(): return []
+    if not task_file.exists():
+        return []
     with open(task_file, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     all_tasks = data.get("tasks", [])
-    if role == group: return all_tasks
-    return [t for t in all_tasks if t.get("name", "").startswith(f"{role}_")]
+    # Sort by difficulty ascending before slicing
+    all_tasks = sorted(
+        all_tasks,
+        key=lambda t: DIFFICULTY_ORDER.get(t.get("difficulty", "medium"), 1)
+    )
+    if role == group:
+        return all_tasks
+    filtered = [t for t in all_tasks if t.get("name", "").startswith(f"{role}_")]
+    return sorted(
+        filtered,
+        key=lambda t: DIFFICULTY_ORDER.get(t.get("difficulty", "medium"), 1)
+    )
+
 
 def snippet(text, max_len=55):
     s = text.replace("\n", " ").strip()
     return s[:max_len] + "..." if len(s) > max_len else s
 
+
 def safe_filename(text):
     return re.sub(r'[<>:"/\\|?*]', '-', text)
 
+
 def run_task(role, llm_role, task, model_override="", temperature=0.0):
+    """Run a single task and return result dict. No terminal output here."""
     original_model = None
-    if model_override and llm_role in cfg.model_registry:
+    from core.llm_backend.config import RoleConfig
+    if model_override and llm_role in llm._roles:
+        old_cfg = llm._roles[llm_role]
+        original_model = old_cfg.model
+        llm._roles[llm_role] = RoleConfig(
+            model=model_override,
+            provider=old_cfg.provider,
+            timeout=old_cfg.timeout,
+            temperature=old_cfg.temperature,
+            max_tokens=old_cfg.max_tokens,
+        )
+    elif model_override and llm_role in cfg.model_registry:
+        # Fallback if _roles doesn't have it
         original_model = cfg.model_registry[llm_role].get("model")
         cfg.model_registry[llm_role]["model"] = model_override
+    else:
+        original_model = None
+
     start = time.time()
     try:
         response = llm.complete(
@@ -89,14 +118,27 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
         output = response.text if response.ok else ""
         latency = time.time() - start
         tokens = (response.usage.get("total_tokens", 0) if hasattr(response, "usage") and response.usage else 0) or count_tokens(output)
+
         if not response.ok:
             error_msg = response.error or "Unknown LLM error"
-            print(f"      {red('X')} {latency:.1f}s | {error_msg}")
-            return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role), "status": "fail", "error": error_msg, "latency": latency, "tokens": 0}
+            result = {
+                "name": task["name"], "prompt": task["prompt"], "output": "",
+                "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role),
+                "status": "fail", "error": error_msg, "latency": latency, "tokens": 0,
+            }
+            result["failure_category"] = categorize_failure(result)
+            return result
+
         if not output.strip():
             empty_msg = f"EMPTY | model={response.model} text={repr(response.text[:50])}"
-            print(f"      {yellow('?')} {latency:.1f}s | {empty_msg}")
-            return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role), "status": "fail", "error": empty_msg, "latency": latency, "tokens": 0}
+            result = {
+                "name": task["name"], "prompt": task["prompt"], "output": "",
+                "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role),
+                "status": "fail", "error": empty_msg, "latency": latency, "tokens": 0,
+            }
+            result["failure_category"] = categorize_failure(result)
+            return result
+
         validator_name = task.get("validator", "exact_match")
         validator_fn = VALIDATORS.get(validator_name, VALIDATORS["exact_match"])
         # Shallow copy: task dict is shared YAML state across all runs.
@@ -117,49 +159,75 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
             role=role,
         )
         status = "pass" if score["final"] >= 80 else "partial" if score["final"] >= 50 else "fail"
-        status_icon = green("✓") if status == "pass" else yellow("⚠") if status == "partial" else red("✗")
-        score_col = green(f"{score['final']:.0f}") if status == "pass" else yellow(f"{score['final']:.0f}") if status == "partial" else red(f"{score['final']:.0f}")
-        tps = tokens / latency if latency > 0 else 0
-        expected = task.get("expected", "")
-        actual = output.strip()
-        if expected:
-            act_col = green(actual) if status == "pass" else yellow(actual) if status == "partial" else red(actual)
-            print(f"      {status_icon} {latency:.1f}s | {tokens:4d}t | {tps:5.1f} t/s | {score_col} | {expected:10s} vs {act_col}")
-        else:
-            out_short = snippet(actual, 50)
-            print(f"      {status_icon} {latency:.1f}s | {tokens:4d}t | {tps:5.1f} t/s | {score_col} | {out_short}")
-        return {"name": task["name"], "prompt": task["prompt"], "output": output, "score": score, "status": status, "latency": latency, "tokens": tokens}
+
+        result = {
+            "name": task["name"], "prompt": task["prompt"], "output": output,
+            "score": score, "status": status, "latency": latency, "tokens": tokens,
+        }
+        result["failure_category"] = categorize_failure(result)
+        return result
+
     except Exception as e:
         latency = time.time() - start
-        print(f"      {red('✗')} {latency:.1f}s | EXCEPTION: {e}")
-        return {"name": task["name"], "prompt": task["prompt"], "output": "", "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role), "status": "fail", "error": str(e), "latency": latency, "tokens": 0}
-    finally:
-        if original_model is not None:
-            cfg.model_registry[llm_role]["model"] = original_model
+        result = {
+            "name": task["name"], "prompt": task["prompt"], "output": "",
+            "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role),
+            "status": "fail", "error": str(e), "latency": latency, "tokens": 0,
+        }
+        result["failure_category"] = categorize_failure(result)
+        return result
 
-def run_role(role, depth="standard", runs=1, model_override="", temperature=0.0):
+    finally:
+        if original_model is not None and llm_role in llm._roles:
+            old_cfg = llm._roles[llm_role]
+            llm._roles[llm_role] = RoleConfig(
+                model=original_model,
+                provider=old_cfg.provider,
+                timeout=old_cfg.timeout,
+                temperature=old_cfg.temperature,
+                max_tokens=old_cfg.max_tokens,
+            )
+
+
+def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
+    """Run all tasks for a role and return aggregated results."""
     tasks = load_tasks(role)
     if not tasks:
-        print(f"  {yellow('?')} No tasks found for role '{role}' (looked for {ROLE_TO_GROUP.get(role, role)}.yaml)")
+        print(f"  {reports.yellow('?')} No tasks found for role '{role}' (looked for {ROLE_TO_GROUP.get(role, role)}.yaml)")
         return {"role": role, "tasks": [], "summary": {"final": 0.0, "tasks": 0}}
-    count = DEPTH_TASKS.get(depth, 8)
+
+    count = len(tasks) if depth == "hard" else DEPTH_TASKS.get(depth, 10)
     selected = tasks[:count]
     llm_role = ROLE_TO_GROUP.get(role, role)
+
     # Per-role model override: if EXTRACT_MODEL is set, use "extract" for LLM lookup
     if not model_override and cfg.model_registry.get(role, {}).get("model"):
         llm_role = role
     model = model_override or cfg.model_registry.get(role, {}).get("model") or cfg.model_registry.get(llm_role, {}).get("model", "unknown")
-    print(f"\n  {bold(role.upper())} ({cyan(model)})")
-    print("  " + "─"*66)
+
+    reports.print_role_header(role, model)
+
     task_results = []
+    failure_counts = {}
+
     for task in selected:
-        print(f"    {task['name'][:73]}{'...' if len(task['name'])>73 else ''}")
+        print(f"  {task['name'][:73]}{'...' if len(task['name'])>73 else ''}")
         run_scores = []
+        run_results = []
         last_result = None
+
         for _ in range(runs):
             result = run_task(role, llm_role, task, model_override, temperature)
             run_scores.append(result["score"])
+            run_results.append(result)
             last_result = result
+
+        # Consistency analysis
+        consistency = consistency_score(run_scores)
+        if consistency["wobble"]:
+            reports.print_wobble_warning(task["name"], consistency["std_dev"])
+
+        # Average score across runs
         avg_score = calculate_task_score(
             correctness=sum(s["correctness"] for s in run_scores) / len(run_scores),
             format_score=sum(s["format"] for s in run_scores) / len(run_scores),
@@ -168,33 +236,65 @@ def run_role(role, depth="standard", runs=1, model_override="", temperature=0.0)
             timeout=task.get('timeout', 120),
             role=role,
         )
-        task_results.append({"name": task["name"], "difficulty": task.get("difficulty", "medium"), "score": avg_score, "status": "pass" if avg_score["final"] >= 80 else "partial" if avg_score["final"] >= 50 else "fail"})
+
+        status = "pass" if avg_score["final"] >= 80 else "partial" if avg_score["final"] >= 50 else "fail"
+
+        task_result = {
+            "name": task["name"],
+            "difficulty": task.get("difficulty", "medium"),
+            "score": avg_score,
+            "status": status,
+            "consistency": consistency,
+            "run_scores": [dict(s) for s in run_scores],
+        }
+        task_results.append(task_result)
+
+        # Print first run result (all runs have same output for deterministic models)
+        first_run = run_results[0]
+        expected = task.get("expected", "")
+        reports.print_task_run(task["name"], first_run, expected)
+
         if last_result and last_result.get("error"):
-            err = str(last_result['error'])[:60]
-            print(f"      ! {err}")
+            reports.print_task_error(last_result["error"])
+
+        # Accumulate failure categories (only for non-passing runs)
+        # Count per-task failure (if any run failed, the task failed)
+        task_failed = any(rr.get("status") == "fail" for rr in run_results)
+        if task_failed:
+            # Use the most common failure category across runs, or first failure
+            fail_cats = [rr.get("failure_category", "unknown") for rr in run_results if rr.get("status") == "fail"]
+            if fail_cats:
+                cat = fail_cats[0]  # or max(set(fail_cats), key=fail_cats.count) for most common
+                failure_counts[cat] = failure_counts.get(cat, 0) + 1
+
     summary = calculate_role_score([t["score"] for t in task_results])
-    final = summary["final"]
-    final_col = green(f"{final:.1f}") if final >= 80 else yellow(f"{final:.1f}") if final >= 50 else red(f"{final:.1f}")
-    avg_lat = summary.get("latency", 0)
-    avg_tok = summary.get("tokens", 0)
-    avg_tps = avg_tok / avg_lat if avg_lat > 0 else 0
+    difficulty_breakdown = calculate_difficulty_breakdown(task_results)
+
     total_runs = len(task_results) * runs
     pass_tasks = sum(1 for t in task_results if t["status"] == "pass")
     partial_tasks = sum(1 for t in task_results if t["status"] == "partial")
     fail_tasks = len(task_results) - pass_tasks - partial_tasks
     accuracy = (pass_tasks * runs + partial_tasks * (runs // 2)) / total_runs * 100 if total_runs else 0
-    acc_col = green(f"{accuracy:.0f}%") if accuracy >= 80 else yellow(f"{accuracy:.0f}%") if accuracy >= 50 else red(f"{accuracy:.0f}%")
-    comp_col = green(f"{final:.1f}") if final >= 80 else yellow(f"{final:.1f}") if final >= 50 else red(f"{final:.1f}")
-    print()
-    print(f"  Accuracy: {acc_col} | Avg: {avg_lat:.1f}s · {avg_tok:.0f} tok · {yellow(f'{avg_tps:.1f} t/s')} | Score: {comp_col} | {summary['tasks']} tasks")
+
     summary["pass"] = pass_tasks
     summary["partial"] = partial_tasks
     summary["fail"] = fail_tasks
     summary["accuracy"] = accuracy
     summary["model"] = model
-    return {"role": role, "tasks": task_results, "summary": summary}
 
-def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare_models=None, temperature=0.0, output_dir="", tag=""):
+    reports.print_role_summary(role, summary, difficulty_breakdown, failure_counts, runs=runs)
+
+    return {
+        "role": role,
+        "tasks": task_results,
+        "summary": summary,
+        "difficulty_breakdown": difficulty_breakdown,
+        "failure_counts": failure_counts,
+    }
+
+
+def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_models=None, temperature=0.0, output_dir="", tag="", baseline_path="", regression_threshold=5.0):
+    """Run benchmark across roles and models."""
     roles_to_test = []
     if all_roles:
         roles_to_test = list(ROLE_GROUPS.keys())
@@ -207,6 +307,7 @@ def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare
                     roles_to_test.append(part)
     else:
         roles_to_test = ["router", "executor", "planner"]
+
     individual_roles = []
     for r in roles_to_test:
         if r in ROLE_GROUPS:
@@ -214,56 +315,95 @@ def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare
         else:
             individual_roles.append(r)
     individual_roles = list(dict.fromkeys(individual_roles))
+
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-    print(f"\n{bold('=')*70}")
-    print(f"{bold('  MCP AGENT BENCHMARK')}  {timestamp}")
-    print(f"  depth={depth}, runs={runs}{', tag='+tag if tag else ''}")
-    print(f"{bold('=')*70}")
+    reports.print_benchmark_header(timestamp, depth, runs, tag)
+
     results = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "config": {"depth": depth, "runs": runs, "temperature": temperature, "roles": individual_roles},
         "role_results": {},
     }
+
     models = compare_models or ["default"]
+    baseline_data = None
+    if baseline_path and os.path.exists(baseline_path):
+        with open(baseline_path, "r", encoding="utf-8") as f:
+            baseline_data = json.load(f)
+
+    regression_detected = False
+    regressions = []
+
     for model in models:
         model_override = model if model != "default" else ""
         model_results = {}
         current_group = None
+
         for role in individual_roles:
             group = ROLE_TO_GROUP.get(role, role)
             if group != current_group:
                 if current_group is not None:
                     print()
                 current_group = group
-                print(f"{'─'*68}")
+                print(f"{'─' * 68}")
                 print(f"{group.upper()}")
-                print(f"{'─'*68}")
+                print(f"{'─' * 68}")
                 print()
+
             role_result = run_role(role, depth, runs, model_override, temperature)
             model_results[role] = role_result
+
+            # Baseline delta
+            if baseline_data:
+                baseline_model_results = baseline_data.get("role_results", {})
+                # Find matching model/role in baseline
+                baseline_score = None
+                for bm_key, bm_results in baseline_model_results.items():
+                    if role in bm_results:
+                        baseline_score = bm_results[role].get("summary", {}).get("final")
+                        break
+                if baseline_score is not None:
+                    current_score = role_result["summary"]["final"]
+                    reports.print_baseline_delta(role, current_score, baseline_score)
+                    delta = current_score - baseline_score
+                    if delta < -regression_threshold:
+                        regression_detected = True
+                        regressions.append((role, delta))
+
         results["role_results"][model] = model_results
+
     all_scores = []
     for model, model_results in results["role_results"].items():
         for role, role_result in model_results.items():
             all_scores.append(role_result["summary"]["final"])
     stack_comp = sum(all_scores) / len(all_scores) if all_scores else 0.0
+
+    # Build filename
     if compare_models and len(compare_models) > 1:
-        role_str = "compare"
-        model_str = "vs".join([safe_filename(m) for m in compare_models])
+        model_str = "_vs_".join(safe_filename(m) for m in compare_models)
+    elif compare_models and len(compare_models) == 1:
+        model_str = safe_filename(compare_models[0])
     else:
-        actual_model = "unknown"
-        for model_key, model_results in results["role_results"].items():
-            if model_results:
-                first_role = list(model_results.keys())[0]
-                actual_model = model_results[first_role].get("summary", {}).get("model", model_key)
-                break
-        model_str = safe_filename(actual_model)
-        if all_roles:
-            role_str = "all"
-        elif roles:
-            role_str = "-".join([safe_filename(r) for r in roles])
+        # --all or single role: use mixed if multiple roles
+        if all_roles or len(individual_roles) > 1:
+            model_str = "mixed"
         else:
-            role_str = "default"
+            # Single role, single model — get actual model name
+            actual_model = "unknown"
+            for model_key, model_results in results["role_results"].items():
+                if model_results:
+                    first_role = list(model_results.keys())[0]
+                    actual_model = model_results[first_role].get("summary", {}).get("model", model_key)
+                    break
+            model_str = safe_filename(actual_model)
+
+    if all_roles:
+        role_str = "all"
+    elif roles:
+        role_str = "-".join(safe_filename(r) for r in roles)
+    else:
+        role_str = "default"
+
     tag_part = f"_{safe_filename(tag)}" if tag else ""
     safe_ts = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     json_name = f"benchmark_{depth}_{role_str}_{model_str}_runs{runs}_{safe_ts}{tag_part}.json"
@@ -272,7 +412,32 @@ def run_benchmark(roles=None, all_roles=False, depth="standard", runs=1, compare
     filepath = out_dir / json_name
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
-    return results, stack_comp, filepath
+
+    # Model recommendation after compare
+    if compare_models and len(compare_models) > 1:
+        recommendations = {}
+        for role in individual_roles:
+            best_model = None
+            best_score = -1
+            best_lat = 0
+            for model in compare_models:
+                model_results = results["role_results"].get(model, {})
+                if role in model_results:
+                    s = model_results[role]["summary"]
+                    if s["final"] > best_score:
+                        best_score = s["final"]
+                        best_model = model
+                        best_lat = s.get("latency", 0)
+            if best_model:
+                recommendations[role] = {"model": best_model, "score": best_score, "latency": best_lat}
+        if recommendations:
+            reports.print_recommendation(recommendations)
+
+    if regression_detected:
+        reports.print_regression_alert(regressions)
+
+    return results, stack_comp, filepath, regression_detected
+
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark agent LLM roles")
@@ -284,11 +449,15 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--output", help="Output directory")
     parser.add_argument("--tag", help="Label for this run")
+    parser.add_argument("--baseline", help="Baseline JSON file to compare against")
+    parser.add_argument("--regression-threshold", type=float, default=5.0, help="Exit non-zero if any role drops > N points from baseline")
     args = parser.parse_args()
+
     compare_models = None
     if args.compare:
         compare_models = [m.strip() for m in args.compare.split(",")]
-    results, stack_comp, filepath = run_benchmark(
+
+    results, stack_comp, filepath, regression_detected = run_benchmark(
         roles=args.role,
         all_roles=args.all,
         depth=args.depth,
@@ -297,55 +466,16 @@ def main():
         temperature=args.temperature,
         output_dir=args.output,
         tag=args.tag,
+        baseline_path=args.baseline,
+        regression_threshold=args.regression_threshold,
     )
-    print(f"\n{bold('=')*70}")
-    print(f"  {bold('BENCHMARK COMPLETE')}")
-    print(f"{bold('=')*70}")
-    for model_key, model_results in results["role_results"].items():
-        display_model = model_key
-        if model_key == "default" and model_results:
-            first_role = list(model_results.keys())[0]
-            display_model = model_results[first_role].get("summary", {}).get("model", model_key)
-            if display_model == model_key:
-                from core.config import cfg
-                llm_role = ROLE_TO_GROUP.get(first_role, first_role)
-                display_model = cfg.model_registry.get(llm_role, {}).get("model", model_key)
-        print(f"\n  Model: {cyan(display_model)}")
-        print(f"  {'─'*68}")
-        print(f"  {'Role':<20} {'Accuracy':>8} {'Time':>7} {'Tokens':>6} {'T/S':>12}  {'Score':>7}")
-        print(f"  {'─'*68}")
-        all_scores = []
-        all_acc = []
-        all_lat = 0.0
-        all_tok = 0.0
-        for role, role_result in model_results.items():
-            s = role_result["summary"]
-            final = s["final"]
-            lat = s.get("latency", 0)
-            tok = s.get("tokens", 0)
-            tps = tok / lat if lat > 0 else 0
-            acc = s.get("accuracy", 0)
-            all_scores.append(final)
-            all_acc.append(acc)
-            all_lat += lat
-            all_tok += tok
-            final_col = green(f"{final:.1f}") if final >= 80 else yellow(f"{final:.1f}") if final >= 50 else red(f"{final:.1f}")
-            role_display = ROLE_TO_GROUP.get(role, role).upper() + " - " + role
-            print(f"  {role_display:<20} {acc:>7.0f}% {lat:>6.1f}s {tok:>6.0f} {tps:>8.1f} t/s  {final_col:>7}")
-        if all_scores:
-            print(f"  {'─'*68}")
-            avg_final = sum(all_scores) / len(all_scores)
-            avg_acc = sum(all_acc) / len(all_acc)
-            avg_tps = all_tok / all_lat if all_lat > 0 else 0
-            overall_col = green(f"{avg_final:.1f}") if avg_final >= 80 else yellow(f"{avg_final:.1f}") if avg_final >= 50 else red(f"{avg_final:.1f}")
-            print(f"  {'Overall':<20} {avg_acc:>7.0f}% {all_lat:>6.1f}s {all_tok:>6.0f} {avg_tps:>8.1f} t/s  {overall_col:>7}")
-            print(f"  {'─'*68}")
-    stack_col = green(f"{stack_comp:.1f}") if stack_comp >= 80 else yellow(f"{stack_comp:.1f}") if stack_comp >= 50 else red(f"{stack_comp:.1f}")
-    print(f"  Stack Score: {stack_col} / 100")
 
-    print(f"\n{bold('=')*70}")
-    print(f"  {bold('Report ->')} {filepath}")
-    print(f"{bold('=')*70}\n")
+    reports.print_final_table(results["role_results"], stack_comp)
+    reports.print_benchmark_complete(filepath)
+
+    if regression_detected:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
