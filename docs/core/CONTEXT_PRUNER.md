@@ -144,7 +144,7 @@ When the LLM sees `_pruned: true` in a tool result, it knows to recover the full
 **LLM recovery action:**
 ```python
 # The LLM can read the full output when needed
-file(action="read", path=".artifacts/abc123_web_1a2b3c4d.txt")
+file(action="read_file", path=".artifacts/abc123_web_1a2b3c4d.txt")
 ```
 
 ---
@@ -234,7 +234,7 @@ The `MAX_CHARS` value is calibrated for **16GB VRAM hardware** with multiple mod
 |----------|----------|-----|
 | Tool output < 8,000 chars | Pass through unchanged | No overhead needed |
 | Tool output > 8,000 chars | `prune_output()` | Truncate + save artifact |
-| LLM needs full output after truncation | `file(action="read", path=artifact_path)` | Recovery via file tool |
+| LLM needs full output after truncation | `file(action="read_file", path=artifact_path)` | Recovery via file tool |
 | Context window full from conversation | `context_budget.budget_messages()` | Different system — manages message history |
 | System prompt too long | `llm_backend/context_budget.py` | Different system — manages prompt assembly |
 

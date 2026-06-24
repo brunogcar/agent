@@ -9,7 +9,7 @@
 
 > **Prerequisites**:
 > - **[Python 3.11+](https://www.python.org/downloads/)**: ⚠️ Check "Add Python to PATH" during installation.
-> - **[Node.js 18+](https://nodejs.org/)**: Required for `npx` MCP servers (fs, git, time).
+> - **[Node.js 18+](https://nodejs.org/)**: Required for `npx` MCP servers (time).
 > - **[Git](https://git-scm.com/downloads)**: Must be available on your system PATH.
 > - **[LM Studio](https://lmstudio.ai/)**: Download and load the 3 role models (Planner, Executor, Router).
 >
@@ -42,7 +42,7 @@ graph TD
     F --> L["routing/router.py<br/>Task classifier"]
     F --> M["workflows/<br/>research, data, autocode"]
     
-    D --> N["External: SearXNG, FS, Notifications"]
+    D --> N["External: SearXNG, Notifications"]
     B --> O["core/tracer.py → JSONL logs"]
 ```
 

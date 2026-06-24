@@ -1,6 +1,4 @@
-"""
-Read DOCX action handler.
-"""
+"""Read DOCX action handler."""
 
 from __future__ import annotations
 
@@ -10,8 +8,19 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-@register_action("file", "read_docx")
-def _handle_read_docx(path: str = "", max_chars: int = 50_000, trace_id: str = "") -> dict:
+
+@register_action(
+    "file",
+    "read_docx",
+    help_text="""Read a DOCX file using python-docx. Returns structured text with headings, paragraphs, tables.
+Required: path
+Optional: max_chars (default 50000)
+Returns: {text, sections, tables, paragraphs, truncated}""",
+    examples=[
+        'file(action="read_docx", path="report.docx")',
+    ],
+)
+def _handle_read_docx(path: str = "", max_chars: int = 50_000, trace_id: str = "", **kwargs) -> dict:
     """Read a DOCX file using python-docx."""
     p, err = _safe_resolve(path)
     if err:
@@ -70,13 +79,13 @@ def _handle_read_docx(path: str = "", max_chars: int = 50_000, trace_id: str = "
             flat = flat[:max_chars] + f"\n\n[...truncated]"
 
         return {
-            "status":     "success",
-            "path":       str(p),
-            "text":       flat,
-            "sections":   sections,
-            "tables":     len(tables),
+            "status": "success",
+            "path": str(p),
+            "text": flat,
+            "sections": sections,
+            "tables": len(tables),
             "paragraphs": len([s for s in sections if s["type"] == "paragraph"]),
-            "truncated":  truncated,
+            "truncated": truncated,
         }
     except ImportError:
         return {"status": "error", "error": "python-docx not installed. Run: pip install python-docx"}

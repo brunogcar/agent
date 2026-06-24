@@ -206,7 +206,7 @@ class TestDebugParsesNestedJson:
             "debug.py must import _parse_json for JSON extraction fallback"
         )
         # Verify the old brittle regex pattern is not used
-        old_pattern = r"re.search(r'\{[^\{\}]*\}'"
+        old_pattern = r"re.search(r'\{[^\{}]*\}'"
         assert old_pattern not in source, (
             "debug.py must not use the brittle regex that cannot match nested JSON"
         )
@@ -254,7 +254,7 @@ class TestProtectedPathResolution:
         )
 
 class TestFileToolModeFiltering:
-    """Verify mode parameter is correctly filtered and does not crash handlers."""
+    """Verify mode parameter is correctly handled for backward compatibility with read_multiple_files."""
 
     def test_mode_empty_string_is_filtered_from_params(self):
         """When mode is empty string, it must not be passed to handlers."""
@@ -264,14 +264,11 @@ class TestFileToolModeFiltering:
         sig = inspect.signature(file)
         params = sig.parameters
 
-        # mode should exist in signature (for backward compat)
-        assert "mode" in params, "file tool must accept mode parameter for backward compatibility"
-
-        # mode default should be empty string so it gets filtered
-        mode_param = params["mode"]
-        assert mode_param.default == "", (
-            "mode default must be '' so it gets filtered from params dict, "
-            "since no handler accepts a 'mode' keyword argument"
+        # read_multiple_files no longer accepts mode; the parameter is removed
+        # This test verifies the file tool signature does not include mode
+        assert "mode" not in params, (
+            "mode parameter should be removed from file tool signature — "
+            "read_multiple_files no longer uses it"
         )
 
 class TestAbsolutePathTraversalBlocked:

@@ -1,6 +1,4 @@
-"""
-Search action handler.
-"""
+"""Search files action handler."""
 
 from __future__ import annotations
 
@@ -9,11 +7,23 @@ from tools.file_ops.index import _get_index, _build_index
 from core.config import cfg
 from tools.file_ops._registry import register_action
 
-@register_action("file", "search")
-def _handle_search(query: str = "", max_results: int = 10, trace_id: str = "") -> dict:
+
+@register_action(
+    "file",
+    "search_files",
+    help_text="""Full-text search across agent and workspace files using SQLite FTS.
+Builds/updates the index automatically on first use.
+Required: query
+Optional: max_results (default 10)
+Returns: {results: [{path, snippet, rank}], count, indexed_files}""",
+    examples=[
+        'file(action="search_files", query="ChromaDB collection", max_results=5)',
+    ],
+)
+def _handle_search_files(query: str = "", max_results: int = 10, trace_id: str = "", **kwargs) -> dict:
     """Full-text search across agent and workspace files."""
     if not query:
-        return {"status": "error", "error": "query is required for search"}
+        return {"status": "error", "error": "query is required for search_files"}
 
     # Build/refresh index
     indexed = _build_index(cfg.workspace_root)
@@ -37,10 +47,10 @@ def _handle_search(query: str = "", max_results: int = 10, trace_id: str = "") -
         ]
 
         return {
-            "status":        "success",
-            "query":         query,
-            "results":       results,
-            "count":         len(results),
+            "status": "success",
+            "query": query,
+            "results": results,
+            "count": len(results),
             "indexed_files": indexed,
         }
     except Exception as e:

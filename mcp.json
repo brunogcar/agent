@@ -8,14 +8,6 @@
       "cwd": "D:/mcp/agent",
       "env": {}
     },
-    "fs": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "D:/mcp/agent"
-      ]
-    },
     "time": {
       "command": "npx",
       "args": [

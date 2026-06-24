@@ -1,6 +1,4 @@
-﻿"""
-Patch (str_replace) action handler.
-"""
+"""Patch (str_replace) action handler."""
 
 from __future__ import annotations
 
@@ -10,8 +8,19 @@ from tools.file_ops.helpers import _safe_resolve
 from core.config import cfg
 from tools.file_ops._registry import register_action
 
-@register_action("file", "patch")
-def _handle_patch(path: str = "", **kwargs) -> dict:
+
+@register_action(
+    "file",
+    "patch_file",
+    help_text="""Apply a targeted str_replace patch. old must appear EXACTLY ONCE.
+Add surrounding lines for uniqueness. Uses workflows/autocode_helpers/patch.
+Required: path, old, new
+Returns: {path, lines_changed, backup_path}""",
+    examples=[
+        'file(action="patch_file", path="app.py", old="def old():", new="def new():")',
+    ],
+)
+def _handle_patch_file(path: str = "", **kwargs) -> dict:
     """
     Apply a targeted str_replace patch.
     old must appear EXACTLY ONCE -- add surrounding lines for uniqueness.
@@ -19,7 +28,7 @@ def _handle_patch(path: str = "", **kwargs) -> dict:
     old_text = kwargs.get("old", "")
     new_text = kwargs.get("new", "")
     if not old_text:
-        return {"status": "error", "error": "patch requires 'old' parameter"}
+        return {"status": "error", "error": "patch_file requires 'old' parameter"}
 
     p, err = _safe_resolve(path)
     if err:

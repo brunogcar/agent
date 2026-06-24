@@ -1,6 +1,4 @@
-"""
-Write DOCX action handler.
-"""
+"""Write DOCX action handler."""
 
 from __future__ import annotations
 
@@ -10,8 +8,19 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-@register_action("file", "write_docx")
-def _handle_write_docx(path: str = "", content: str = "", title: str = "", trace_id: str = "") -> dict:
+
+@register_action(
+    "file",
+    "write_docx",
+    help_text="""Write text to a DOCX file using python-docx. Supports markdown-style formatting.
+Required: path, content
+Optional: title
+Returns: {path, size, paragraphs}""",
+    examples=[
+        'file(action="write_docx", path="report.docx", content="# Title\nBody...")',
+    ],
+)
+def _handle_write_docx(path: str = "", content: str = "", title: str = "", trace_id: str = "", **kwargs) -> dict:
     """Write text to a DOCX file using python-docx."""
     p, err = _safe_resolve(path)
     if err:
@@ -60,9 +69,9 @@ def _handle_write_docx(path: str = "", content: str = "", title: str = "", trace
         p.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(p))
         return {
-            "status":     "success",
-            "path":       str(p),
-            "size":       p.stat().st_size,
+            "status": "success",
+            "path": str(p),
+            "size": p.stat().st_size,
             "paragraphs": len(doc.paragraphs),
         }
     except ImportError:

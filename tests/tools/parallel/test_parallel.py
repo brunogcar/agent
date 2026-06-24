@@ -15,7 +15,6 @@ from unittest.mock import patch, MagicMock
 from tools.parallel import parallel, _TOOL_MAP, PARALLEL_SAFE
 from core.parallel_executor import dispatch_parallel
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -27,7 +26,6 @@ def mock_tools():
         "git": MagicMock(return_value={"status": "success", "data": "git ok"}),
         "file": MagicMock(return_value={"status": "success", "data": "file ok"}),
     }
-
 
 # =============================================================================
 # Test Input Validation
@@ -58,7 +56,6 @@ class TestValidation:
         assert result["status"] == "error"
         assert "not found" in result["error"]
 
-
 # =============================================================================
 # Test Parallel-Safe Enforcement
 # =============================================================================
@@ -80,7 +77,6 @@ class TestParallelSafe:
             assert result["status"] == "success"
             assert result["data"]["completed"] == 1
 
-
 # =============================================================================
 # Test Parallel Execution (Tool Wrapper)
 # =============================================================================
@@ -89,7 +85,7 @@ class TestParallelExecution:
         with patch.dict(_TOOL_MAP, mock_tools, clear=False):
             result = parallel(tools=[
                 {"name": "web", "args": {"action": "search", "query": "test"}},
-                {"name": "file", "args": {"action": "list", "path": "."}},
+                {"name": "file", "args": {"action": "list_directory", "path": "."}},
             ])
 
             assert result["status"] == "success"
@@ -98,7 +94,7 @@ class TestParallelExecution:
             assert len(result["data"]["results"]) == 2
 
             mock_tools["web"].assert_called_once_with(action="search", query="test")
-            mock_tools["file"].assert_called_once_with(action="list", path=".")
+            mock_tools["file"].assert_called_once_with(action="list_directory", path=".")
 
     def test_tool_error_captured(self):
         mock_fn = MagicMock(side_effect=RuntimeError("boom"))
@@ -114,7 +110,6 @@ class TestParallelExecution:
         with patch.dict(_TOOL_MAP, {"web": mock_fn}, clear=False):
             result = parallel(tools=[{"name": "web", "args": {}}], trace_id="trace-123")
             assert result.get("trace_id") == "trace-123"
-
 
 # =============================================================================
 # Test Core Executor Engine

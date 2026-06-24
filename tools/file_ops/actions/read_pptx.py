@@ -1,6 +1,4 @@
-"""
-Read PowerPoint action handler.
-"""
+"""Read PowerPoint action handler."""
 
 from __future__ import annotations
 
@@ -9,8 +7,19 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-@register_action("file", "read_pptx")
-def _handle_read_pptx(path: str = "", max_chars: int = 50_000, trace_id: str = "") -> dict:
+
+@register_action(
+    "file",
+    "read_pptx",
+    help_text="""Read a PowerPoint file using python-pptx.
+Required: path
+Optional: max_chars (default 50000)
+Returns: {text, slides, slide_count, truncated}""",
+    examples=[
+        'file(action="read_pptx", path="presentation.pptx")',
+    ],
+)
+def _handle_read_pptx(path: str = "", max_chars: int = 50_000, trace_id: str = "", **kwargs) -> dict:
     """Read a PowerPoint file using python-pptx."""
     p, err = _safe_resolve(path)
     if err:
@@ -46,7 +55,6 @@ def _handle_read_pptx(path: str = "", max_chars: int = 50_000, trace_id: str = "
                 if shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
                     images += 1
 
-            # Slide layout name
             layout = ""
             try:
                 layout = slide.slide_layout.name
@@ -61,7 +69,6 @@ def _handle_read_pptx(path: str = "", max_chars: int = 50_000, trace_id: str = "
                 "tables": tables,
             })
 
-        # Flat readable text
         flat = "\n\n".join(
             f"--- Slide {s['slide']} ---\n" + "\n".join(s["texts"])
             for s in slides

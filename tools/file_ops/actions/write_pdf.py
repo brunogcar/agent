@@ -1,6 +1,4 @@
-"""
-Write PDF action handler.
-"""
+"""Write PDF action handler."""
 
 from __future__ import annotations
 
@@ -10,8 +8,19 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-@register_action("file", "write_pdf")
-def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_chars: int = 50_000, trace_id: str = "") -> dict:
+
+@register_action(
+    "file",
+    "write_pdf",
+    help_text="""Write text to PDF using fpdf2. Supports markdown-style headings.
+Required: path, content
+Optional: title
+Returns: {path, pages, size}""",
+    examples=[
+        'file(action="write_pdf", path="report.pdf", content="# Title\nBody...")',
+    ],
+)
+def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_chars: int = 50_000, trace_id: str = "", **kwargs) -> dict:
     """Write text to PDF using fpdf2."""
     p, err = _safe_resolve(path)
     if err:
@@ -68,9 +77,9 @@ def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_ch
         pdf.output(str(p))
         return {
             "status": "success",
-            "path":   str(p),
-            "pages":  pdf.page,
-            "size":   p.stat().st_size,
+            "path": str(p),
+            "pages": pdf.page,
+            "size": p.stat().st_size,
         }
     except ImportError:
         return {"status": "error", "error": "fpdf2 not installed. Run: pip install fpdf2"}

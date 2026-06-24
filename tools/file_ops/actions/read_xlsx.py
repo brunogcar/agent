@@ -1,6 +1,4 @@
-"""
-Read Excel action handler.
-"""
+"""Read Excel action handler."""
 
 from __future__ import annotations
 
@@ -9,8 +7,18 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-@register_action("file", "read_xlsx")
-def _handle_read_xlsx(path: str = "", max_chars: int = 50_000, trace_id: str = "") -> dict:
+
+@register_action(
+    "file",
+    "read_xlsx",
+    help_text="""Read an Excel file using pandas. Returns all sheets with data and stats.
+Required: path
+Returns: {sheets, sheet_count, data, stats}""",
+    examples=[
+        'file(action="read_xlsx", path="data.xlsx")',
+    ],
+)
+def _handle_read_xlsx(path: str = "", max_chars: int = 50_000, trace_id: str = "", **kwargs) -> dict:
     """Read an Excel file using pandas."""
     p, err = _safe_resolve(path)
     if err:
@@ -50,12 +58,12 @@ def _handle_read_xlsx(path: str = "", max_chars: int = 50_000, trace_id: str = "
                     stats = first_df[num_cols].describe().round(2).to_dict()
 
             return {
-                "status":      "success",
-                "path":        str(p),
-                "sheets":      sheets,
+                "status": "success",
+                "path": str(p),
+                "sheets": sheets,
                 "sheet_count": len(sheets),
-                "data":        result,
-                "stats":       stats,
+                "data": result,
+                "stats": stats,
             }
     except ImportError:
         return {"status": "error", "error": "pandas not installed. Run: pip install pandas openpyxl"}

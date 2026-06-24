@@ -1,6 +1,4 @@
-"""
-Write Excel action handler.
-"""
+"""Write Excel action handler."""
 
 from __future__ import annotations
 
@@ -10,7 +8,17 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-@register_action("file", "write_xlsx")
+
+@register_action(
+    "file",
+    "write_xlsx",
+    help_text="""Write data to an Excel file using pandas/openpyxl. Content can be dict of sheets or list of rows.
+Required: path, content
+Returns: {path, size, sheets_written}""",
+    examples=[
+        'file(action="write_xlsx", path="data.xlsx", content={"Sheet1": [["A","B"],[1,2]]})',
+    ],
+)
 def _handle_write_xlsx(path: str = "", content: str = "", **kwargs) -> dict:
     """Write data to an Excel file using pandas."""
     p, err = _safe_resolve(path)
@@ -21,18 +29,17 @@ def _handle_write_xlsx(path: str = "", content: str = "", **kwargs) -> dict:
     if p.suffix.lower() not in (".xlsx", ".xls"):
         p = p.with_suffix(".xlsx")
 
+    if isinstance(content, str):
+        try:
+            content = _json.loads(content)
+        except Exception:
+            return {"status": "error",
+                    "error": "content string could not be parsed as JSON"}
+
     try:
         import pandas as pd
         from openpyxl.styles import Font, PatternFill, Alignment
         from openpyxl.utils import get_column_letter
-
-        # Parse content if it's a string
-        if isinstance(content, str):
-            try:
-                content = _json.loads(content)
-            except Exception:
-                return {"status": "error",
-                        "error": "content string could not be parsed as JSON"}
 
         p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -40,12 +47,10 @@ def _handle_write_xlsx(path: str = "", content: str = "", **kwargs) -> dict:
             sheets_written = []
 
             if isinstance(content, dict):
-                # Normalise keys to strings
                 content = {str(k): v for k, v in content.items()}
                 first_val = next(iter(content.values()), None)
 
                 if isinstance(first_val, list) and all(isinstance(v, list) for v in content.values()):
-                    # Multi-sheet: {"Sheet1": [rows...], "Sheet2": [rows...]}
                     for sheet_name, rows in content.items():
                         safe_name = str(sheet_name)[:31]
                         try:
@@ -61,13 +66,11 @@ def _handle_write_xlsx(path: str = "", content: str = "", **kwargs) -> dict:
                         except Exception as sheet_err:
                             sheets_written.append(f"{safe_name}(error:{sheet_err})")
                 elif "columns" in content and "rows" in content:
-                    # Raw format
                     df = pd.DataFrame(content["rows"], columns=content["columns"])
                     sheet_name = str(content.get("sheet", "Sheet1"))[:31]
                     df.to_excel(writer, sheet_name=sheet_name, index=False)
                     sheets_written.append(sheet_name)
                 else:
-                    # Single sheet from dict of lists
                     safe_content = {str(k): v for k, v in content.items()}
                     df = pd.DataFrame(safe_content)
                     df.to_excel(writer, sheet_name="Sheet1", index=False)
@@ -83,14 +86,12 @@ def _handle_write_xlsx(path: str = "", content: str = "", **kwargs) -> dict:
                 df.to_excel(writer, sheet_name="Sheet1", index=False)
                 sheets_written.append("Sheet1")
 
-            # Style header rows
             wb = writer.book
             for ws in wb.worksheets:
-                for cell in ws[1]:  # first row = header
+                for cell in ws[1]:
                     cell.font = Font(bold=True, color="FFFFFF")
                     cell.fill = PatternFill("solid", fgColor="2C3E50")
                     cell.alignment = Alignment(horizontal="center")
-                # Auto-width
                 for col_idx, col in enumerate(ws.columns, 1):
                     max_len = max(
                         (len(str(c.value)) for c in col if c.value is not None),
