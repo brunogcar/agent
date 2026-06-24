@@ -14,7 +14,7 @@ class TestDispatch:
         assert "branch_list" in result["error"] or "branch_create" in result["error"]
 
     def test_empty_action(self):
-        """Empty action should return unknown action error."""
+        """Empty action should return clear error about required param."""
         result = git(action="")
         assert result["status"] == "error"
-        assert "Unknown action" in result["error"]
+        assert "action parameter is required" in result["error"]

@@ -10,21 +10,6 @@ import pytest
 from tools.git import git
 
 
-@pytest.fixture(autouse=True)
-def mock_cfg(monkeypatch, tmp_path):
-    """Redirect agent_root and workspace_root to tmp_path.
-    Bypass path_guard for test safety.
-    """
-    monkeypatch.setattr("core.config.cfg.agent_root", tmp_path)
-    monkeypatch.setattr("core.config.cfg.workspace_root", tmp_path)
-
-    import pathlib
-    def _fake_resolve(path, default_root="agent", require_exists=False):
-        p = pathlib.Path(str(path))
-        return (p, "")
-    monkeypatch.setattr("core.path_guard.resolve_path", _fake_resolve)
-
-
 @pytest.fixture
 def fresh_repo(tmp_path):
     """Provide a clean temporary directory."""
@@ -80,7 +65,7 @@ class TestRealGitLifecycle:
         assert any("v2" in m for m in messages)
 
         # 7. Branch & Checkout (new atomic actions)
-        # Note: git init default branch is 'master'
+        # Note: git init -b main forces branch name
         git(action="branch_create", target="experimental", root=root)
         r_checkout = git(action="checkout_branch", target="experimental", root=root)
         assert r_checkout["status"] == "switched"

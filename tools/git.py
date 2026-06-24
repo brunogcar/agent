@@ -40,7 +40,28 @@ from core.contracts import ok, fail
 # Dispatcher Implementation
 # ─────────────────────────────────────────────────────────────────────────────
 @tool
-@meta_tool(DISPATCH.get("git", {}))
+@meta_tool(
+    DISPATCH.get("git", {}),
+    doc_sections=[
+        "IMPORTANT — root vs path parameter:",
+        ' root — the repo directory: "agent" (default) | "workspace" | "/absolute/path"',
+        ' DEFAULT is "agent" — the agent\'s own source code.',
+        ' Use root="workspace" for project repos.',
+        ' path — ONLY used by diff to filter a specific file. NOT the repo directory.',
+        "",
+        "Common usage patterns:",
+        ' git(action="status")              # check working tree',
+        ' git(action="log", n=5)            # recent commits',
+        ' git(action="snapshot", message="...")  # safe point before changes',
+        ' git(action="commit", message="...")    # after a successful change',
+        ' git(action="rollback")            # undo uncommitted changes',
+        "",
+        "Commands intentionally excluded from autonomous execution:",
+        " fetch, pull, merge, rebase, push",
+        " These involve remote actions, destructive history rewrites, or",
+        " conflict resolution, which require human judgement.",
+    ],
+)
 def git(
     action: str = "",
     message: str = "",
@@ -58,6 +79,13 @@ def git(
     action = action.strip().lower()
     if not trace_id:
         trace_id = tracer.new_trace("git", goal=action)
+
+    # Fast path: empty action parameter
+    if not action:
+        return fail(
+            "action parameter is required. Valid actions are listed in the tool description.",
+            trace_id=trace_id,
+        )
 
     # Cancellation Guard: Abort before any git mutations
     from core.runtime.cancellation import ensure_not_cancelled

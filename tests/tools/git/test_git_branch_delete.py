@@ -9,12 +9,12 @@ class TestBranchDelete:
     def test_branch_delete_success(self, git_repo):
         """Create branch, switch away, then delete it.
 
-        Note: git init default branch is 'master', not 'main'.
+        Note: git init -b main forces default branch name.
         """
         git(action="branch_create", target="temp", root=str(git_repo))
         git(action="checkout_branch", target="temp", root=str(git_repo))
-        # Switch back to default branch (master on fresh git init)
-        git(action="checkout_branch", target="master", root=str(git_repo))
+        # Switch back to default branch (main)
+        git(action="checkout_branch", target="main", root=str(git_repo))
 
         result = git(action="branch_delete", target="temp", root=str(git_repo))
         assert result["status"] == "deleted"
@@ -32,7 +32,7 @@ class TestBranchDelete:
         (git_repo / "new.txt").write_text("new", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=git_repo, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "wip"], cwd=git_repo, check=True, capture_output=True)
-        git(action="checkout_branch", target="master", root=str(git_repo))
+        git(action="checkout_branch", target="main", root=str(git_repo))
 
         # Safe delete should fail (unmerged)
         result = git(action="branch_delete", target="unmerged", root=str(git_repo))

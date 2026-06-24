@@ -35,10 +35,12 @@ def git_repo(tmp_path):
     - git config for user.email and user.name
     - One file (file.txt) with "initial content"
     - One commit with message "initial"
+    - Default branch forced to "main" (independent of git config)
     """
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    # Force branch name to "main" for test determinism
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@agent.local"],
         cwd=repo, check=True, capture_output=True

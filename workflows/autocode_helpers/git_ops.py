@@ -47,16 +47,33 @@ def _git_commit(message: str, tid: str = "", project_root: str = None) -> str | 
 
 
 def _git_create_branch(branch: str, tid: str = "", project_root: str = None) -> bool:
-    """Create branch using checkout_new action."""
+    """Create branch using checkout_new action.
+
+    Falls back to checkout_branch ONLY if checkout_new fails because the
+    branch already exists. All other errors (dirty working tree, invalid
+    branch name, no commits) are logged and returned as failures.
+    """
     root = project_root or str(cfg.agent_root)
     try:
         r = git(action="checkout_new", target=branch, root=root)
-        if r.get("status") != "switched":
-            # Branch may already exist -- try checkout_branch instead
+        if r.get("status") == "switched":
+            if tid:
+                tracer.step(tid, "git_branch", f"created and switched to {branch} @ {root}")
+            return True
+
+        # Only fall through to checkout_branch on "already exists" error
+        error = r.get("error", "").lower()
+        if "already exists" in error or "already a worktree" in error:
             r = git(action="checkout_branch", target=branch, root=root)
+            if r.get("status") == "switched":
+                if tid:
+                    tracer.step(tid, "git_branch", f"switched to existing {branch} @ {root}")
+                return True
+
+        # Any other error: log and fail
         if tid:
-            tracer.step(tid, "git_branch", f"branch: {branch} @ {root}")
-        return r.get("status") == "switched"
+            tracer.step(tid, "git_branch", f"failed to create {branch} @ {root}: {r.get('error', 'unknown')}")
+        return False
     except Exception as e:
         if tid:
             tracer.step(tid, "git_branch", f"branch failed: {e}")

@@ -8,7 +8,7 @@ class TestCheckoutBranch:
     def test_checkout_branch_success(self, git_repo):
         """Create branch, then switch to it.
 
-        Note: git init default branch is 'master'.
+        Note: git init -b main forces default branch name.
         """
         git(action="branch_create", target="dev", root=str(git_repo))
         result = git(action="checkout_branch", target="dev", root=str(git_repo))

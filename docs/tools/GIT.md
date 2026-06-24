@@ -218,16 +218,23 @@ from tools._meta_tool import meta_tool
 from tools.git_ops._registry import DISPATCH
 
 @tool
-@meta_tool(DISPATCH["git"])
+@meta_tool(DISPATCH["git"], doc_sections=[
+    "Custom usage notes here...",
+])
 def git(action: str = "", ...) -> dict:
     ...
 ```
 
-**Why `eval()`?** Python's `typing.Literal` requires literal values at parse time. No dynamic construction exists in the standard library. `eval()` is safe because we only eval strings constructed from validated DISPATCH keys (`^[a-z][a-z0-9_]*$`).
+**Why `eval()`?** Python's `typing.Literal` requires literal values at parse time. No dynamic construction exists in the standard library. `eval()` is safe because:
+- We only eval strings constructed from validated DISPATCH keys (`^[a-z][a-z0-9_]*$`)
+- The eval namespace is restricted: `{"Literal": Literal, "__builtins__": {}}`
+- The expression is structurally a type construction (`Literal["a", "b"]`), not executable code
 
-**Why `del fn.__signature__`?** `inspect.signature()` caches results. Stale cache won't reflect annotation mutations.
+**Why `del fn.__signature__`?** `inspect.signature()` caches results per-function-object. Stale cache won't reflect annotation mutations. Deleting the cache forces re-derivation.
 
 **Why return `fn` directly?** `@tool` is a marker decorator. Wrappers risk annotation loss through `functools.wraps`.
+
+**Decorator order matters:** `@meta_tool` must be INNER (closest to function). It mutates `__annotations__` in place. `@tool` must be OUTER. If a future decorator uses `functools.wraps` (creating a wrapper callable), `@meta_tool` must run BEFORE that wrapper is created.
 
 ---
 
@@ -235,12 +242,12 @@ def git(action: str = "", ...) -> dict:
 
 ```powershell
 # Run all git tests (real git repos, no mocking)
-D:\mcp\agent\venv\Scripts\pytest.exe tests/tools/git -v -W error
+D:\mcpgentenv\Scripts\pytest.exe tests/tools/git -v -W error
 ```
 
 **Test architecture:**
 - `conftest.py` provides `mock_cfg` (autouse, redirects roots to `tmp_path`) and `git_repo` fixture
-- `git_repo` creates a real git repo with initial commit in `tmp_path`
+- `git_repo` creates a real git repo with initial commit in `tmp_path` (branch forced to "main")
 - Tests are **fully isolated** — real git operations, no subprocess mocking, no shared state
 - One test file per action/concern
 
@@ -258,6 +265,7 @@ tests/tools/git/
 ├── test_git_checkout_branch.py          # checkout_branch action
 ├── test_git_checkout_new.py             # checkout_new action
 ├── test_git_show.py                     # show action (target param)
+├── test_git_add.py                      # add action
 ├── test_git_dispatch.py                 # Unknown action, basic dispatch
 ├── test_git_compression.py              # Result compression
 ├── test_git_real_integration.py         # Full lifecycle test
@@ -313,7 +321,7 @@ If you are an AI assistant modifying the git tool:
 16. **Never duplicate docstring sources** — DISPATCH `help_text` and `examples` are canonical. `@meta_tool` generates the rest.
 17. **Never use `message` for non-human-readable values** — `target` = commit hash, branch name, tag name.
 18. **Never forget to restart LM Studio after schema changes** — cached tool schemas require full restart.
-19. **Never skip `compileall` before `pytest`** — syntax errors crash pytest with confusing tracebacks.
+19. **Never skip `compileall` before `pytest`** — syntax errors in new files crash pytest with confusing tracebacks.
 20. **Never use `@meta_tool` without `@tool`** — `@meta_tool` alone won't register with MCP. `@tool` alone won't generate the `Literal` enum.
 21. **Never store metadata as scattered attributes** — `__tool_metadata__` single object.
 22. **Never use `needs_repo=False` for actions that require a repo** — per-action `needs_repo` lets the dispatcher validate uniformly.
@@ -337,6 +345,7 @@ If you are an AI assistant modifying the git tool:
 | `tools/git_ops/actions/*.py` | Individual atomic action handlers |
 | `registry.py` | `get_tool_names()`, `get_tool_actions()` for router introspection |
 | `tests/tools/git/conftest.py` | Test fixtures: `mock_cfg` (autouse), `git_repo` |
+| `tests/tools/test_meta_tool.py` | `@meta_tool` decorator unit tests |
 | `workflows/autocode_helpers/git_ops.py` | Autocode workflow helpers: `_git_snapshot`, `_git_commit`, `_git_create_branch` |
 
 ---
@@ -381,4 +390,22 @@ If you are an AI assistant modifying the git tool:
 
 ---
 
-*Last updated: v1 complete. 37 git tests passing, 1082 total tests passing. Architecture: thin facade + @meta_tool + atomic action modules + real git test repos.*
+## 📝 Known v1 Tradeoffs
+
+These are **intentional** design decisions for v1. Do not "fix" them without understanding why they exist.
+
+### Parameter Absorption (`**kwargs`)
+
+The dispatcher passes all kwargs (`message`, `path`, `n`, `force`, `target`) to every handler. Handlers absorb unused params via `**kwargs`. This means:
+- LLM typos (e.g., `brnach="main"`) are silently ignored rather than raising errors
+- The LLM sees all params as optional for all actions, which can cause confusion
+- **Why:** Prevents the agent from crashing on minor hallucinations. Keeps dispatcher simple.
+- **v2 plan:** Per-action parameter filtering using `inspect.signature(handler).parameters`.
+
+### Signature Cache Busting (`del fn.__signature__`)
+
+`@meta_tool` deletes `fn.__signature__` to force `inspect` to re-evaluate the mutated `Literal` annotations. This is necessary because `inspect.signature()` caches results per-function-object. **Do not remove this line.**
+
+---
+
+*Last updated: v1 complete. 37+ git tests passing, 1082 total tests passing. Architecture: thin facade + @meta_tool + atomic action modules + real git test repos.*
