@@ -1,5 +1,4 @@
-"""
-registry.py -- Auto-discovery tool registration.
+"""registry.py -- Auto-discovery tool registration.
 
 CRITICAL: All output must go to stderr only.
 stdout is the MCP stdio protocol channel -- any print() to stdout
@@ -10,11 +9,11 @@ with FastMCP automatically. Adding a new tool requires zero changes
 to server.py or this file -- just decorate the function.
 
 Usage in tool files:
-    from registry import tool
+ from registry import tool
 
-    @tool
-    def web(action: str, query: str = "") -> dict:
-        ...
+ @tool
+ def web(action: str, query: str = "") -> dict:
+     ...
 """
 
 from __future__ import annotations
@@ -39,6 +38,10 @@ def tool(fn: Any) -> Any:
 # This avoids re-scanning modules just to get a list of names.
 _registered_tool_names: list[str] = []
 
+# [GIT UN-MULTIPLEX v1] Cache for registered tool function references.
+# Used by get_tool_actions() to introspect @meta_tool-decorated tools.
+_registered_tool_fns: dict[str, Any] = {}
+
 
 def get_tool_names() -> list[str]:
     """
@@ -53,6 +56,23 @@ def get_tool_names() -> list[str]:
     return list(_registered_tool_names)
 
 
+def get_tool_actions(tool_name: str) -> list[str]:
+    """
+    Return action names for a @meta_tool-decorated tool.
+
+    Looks up the registered function by name and reads its
+    __tool_metadata__["actions"] list. Returns [] for non-meta
+    tools or unknown tools (never raises).
+
+    Used by the router to auto-generate tool capability lists
+    without hardcoding action names.
+    """
+    fn = _registered_tool_fns.get(tool_name)
+    if fn is None:
+        return []
+    return getattr(fn, "__tool_metadata__", {}).get("actions", [])
+
+
 def register_all_tools(mcp: FastMCP) -> int:
     """
     Discover and register all @tool-decorated functions in tools/ and skills/.
@@ -61,27 +81,28 @@ def register_all_tools(mcp: FastMCP) -> int:
 
     SCANNING RULES
     --------------
-    tools/   -- scanned recursively one level (flat package).
-                Every module is imported; every @tool function is registered.
+    tools/ -- scanned recursively one level (flat package).
+    Every module is imported; every @tool function is registered.
 
-    skills/  -- scanned at the TOP LEVEL ONLY (flat modules in skills/).
-                Only skills/dispatcher.py is expected to have @tool here.
-                Sub-packages (skills/b3/, skills/news/, etc.) are pure Python
-                modules -- they are NOT scanned directly. The dispatcher imports
-                them internally via its own domain discovery mechanism.
+    skills/ -- scanned at the TOP LEVEL ONLY (flat modules in skills/).
+    Only skills/dispatcher.py is expected to have @tool here.
+    Sub-packages (skills/b3/, skills/news/, etc.) are pure Python
+    modules -- they are NOT scanned directly. The dispatcher imports
+    them internally via its own domain discovery mechanism.
 
     DECISION: skills/ sub-packages are not scanned by registry
-        skills/b3/__init__.py has no @tool. Only skills/dispatcher.py does.
-        Scanning sub-packages would import domain modules at startup (slow,
-        and triggers ChromaDB/requests imports before MCP handshake completes).
-        The dispatcher uses lazy imports via importlib at call time instead.
+    skills/b3/__init__.py has no @tool. Only skills/dispatcher.py does.
+    Scanning sub-packages would import domain modules at startup (slow,
+    and triggers ChromaDB/requests imports before MCP handshake completes).
+    The dispatcher uses lazy imports via importlib at call time instead.
 
     DECISION: skills/ scan is separate from tools/ scan
-        Keeping them separate makes the log output clear ("tools/" vs "skills/")
-        and lets us apply different scanning rules to each package independently.
+    Keeping them separate makes the log output clear ("tools/" vs "skills/")
+    and lets us apply different scanning rules to each package independently.
     """
-    global _registered_tool_names
+    global _registered_tool_names, _registered_tool_fns
     _registered_tool_names = []  # Reset on each registration call
+    _registered_tool_fns = {}
     registered = 0
     errors: list[str] = []
 
@@ -101,6 +122,7 @@ def register_all_tools(mcp: FastMCP) -> int:
                 try:
                     mcp.tool()(fn)
                     _registered_tool_names.append(attr_name)
+                    _registered_tool_fns[attr_name] = fn
                     registered += 1
                 except Exception as e:
                     errors.append(f"Failed to register {full_name}.{attr_name}: {e}")
@@ -127,6 +149,7 @@ def register_all_tools(mcp: FastMCP) -> int:
                     try:
                         mcp.tool()(fn)
                         _registered_tool_names.append(attr_name)
+                        _registered_tool_fns[attr_name] = fn
                         registered += 1
                     except Exception as e:
                         errors.append(f"Failed to register {full_name}.{attr_name}: {e}")
