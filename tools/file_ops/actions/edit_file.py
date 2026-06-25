@@ -8,7 +8,6 @@ from tools.file_ops.helpers import _safe_resolve
 from core.config import cfg
 from tools.file_ops._registry import register_action
 
-
 @register_action(
     "file",
     "edit_file",
@@ -35,8 +34,8 @@ def _handle_edit_file(
     p, err = _safe_resolve(path)
     if err:
         return {"status": "error", "error": err}
-    if cfg.is_protected(path):
-        return {"status": "error", "error": f"'{path}' is protected -- cannot edit"}
+    if cfg.is_protected(str(p)):
+        return {"status": "error", "error": f"'{p}' is protected -- cannot edit"}
     if not p.exists():
         return {"status": "error", "error": f"File not found: {p}"}
 
@@ -64,7 +63,6 @@ def _handle_edit_file(
             changes.append({"oldText": old_text, "newText": new_text, "applied": True})
 
         # Build diff
-        diff_lines = []
         orig_lines = original.splitlines()
         new_lines = content.splitlines()
 
@@ -76,11 +74,6 @@ def _handle_edit_file(
         ))
 
         if not dry_run:
-            # Backup before writing
-            import shutil
-            if p.exists():
-                bak = p.with_suffix(p.suffix + ".bak")
-                shutil.copy2(p, bak)
             p.write_text(content, encoding="utf-8")
 
         return {

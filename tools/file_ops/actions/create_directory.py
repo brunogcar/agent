@@ -7,7 +7,6 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-
 @register_action(
     "file",
     "create_directory",
@@ -27,6 +26,7 @@ def _handle_create_directory(path: str = "", parents: bool = True, trace_id: str
         return {"status": "error", "error": err}
 
     try:
+        was_new = not p.exists()
         if parents:
             p.mkdir(parents=True, exist_ok=True)
         else:
@@ -34,7 +34,7 @@ def _handle_create_directory(path: str = "", parents: bool = True, trace_id: str
         return {
             "status": "success",
             "path": str(p),
-            "created": not p.exists() or p.stat().st_size == 0,
+            "created": was_new,
         }
     except FileNotFoundError:
         return {"status": "error", "error": f"Parent directory does not exist: {p.parent}"}

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import fnmatch
+import os
 from pathlib import Path
 from typing import Any
 
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
-
 
 @register_action(
     "file",
@@ -40,7 +41,6 @@ def _handle_directory_tree(
 
     def _should_exclude(name: str, rel_path: str) -> bool:
         for pattern in exclude_patterns:
-            import fnmatch
             if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(rel_path, pattern):
                 return True
         # Always exclude hidden dirs and cache
@@ -48,9 +48,16 @@ def _handle_directory_tree(
             return True
         return False
 
-    def _build_tree(current: Path, depth: int, rel_prefix: str) -> list[dict[str, Any]]:
+    def _build_tree(current: Path, depth: int, rel_prefix: str, visited: set[str]) -> list[dict[str, Any]]:
         if depth > max_depth:
             return []
+
+        # Symlink cycle guard
+        real_path = os.path.realpath(current)
+        if real_path in visited:
+            return [{"name": current.name, "type": "symlink", "error": "Symlink cycle detected"}]
+        visited = visited | {real_path}
+
         result = []
         try:
             for item in sorted(current.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
@@ -62,7 +69,7 @@ def _handle_directory_tree(
                     "type": "directory" if item.is_dir() else "file",
                 }
                 if item.is_dir():
-                    entry["children"] = _build_tree(item, depth + 1, rel)
+                    entry["children"] = _build_tree(item, depth + 1, rel, visited)
                 else:
                     try:
                         stat = item.stat()
@@ -74,7 +81,7 @@ def _handle_directory_tree(
             pass
         return result
 
-    tree = _build_tree(p, 1, "")
+    tree = _build_tree(p, 1, "", set())
 
     def _count(entries: list) -> tuple[int, int]:
         files, dirs = 0, 0

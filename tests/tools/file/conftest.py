@@ -8,13 +8,9 @@ from unittest.mock import MagicMock
 
 
 @pytest.fixture(autouse=True)
-def mock_cfg(monkeypatch):
-    """Redirect agent_root and workspace_root to D:/mcp/agent/tmp for isolation."""
-    import tempfile
-    import os
-
-    # Use a real directory under D:/mcp/agent/tmp
-    test_root = Path("D:/mcp/agent/tmp/pytest_test_root")
+def mock_cfg(monkeypatch, tmp_path):
+    """Redirect agent_root and workspace_root to tmp_path for isolation."""
+    test_root = tmp_path / "pytest_test_root"
     test_root.mkdir(parents=True, exist_ok=True)
 
     mock = MagicMock()
@@ -31,10 +27,13 @@ def mock_cfg(monkeypatch):
     mock.is_protected = _is_protected
 
     monkeypatch.setattr("core.config.cfg", mock)
+    monkeypatch.setattr("core.path_guard.cfg", mock)
+    monkeypatch.setattr("tools.file_ops.helpers.cfg", mock)
     monkeypatch.setattr("tools.file_ops.helpers._ALLOWED_ROOTS", None)
 
-    # Patch path_guard resolve_path to use our mock roots, accepting require_exists
-    def _resolve_path(path_str, default_root="agent", require_exists=True):
+    # Patch path_guard resolve_path to use our mock roots
+    # CRITICAL: Must patch tools.file.resolve_path because facade imports it at module level
+    def _resolve_path(path_str, default_root="agent", require_exists=False):
         from pathlib import Path as _Path
         p = _Path(path_str)
         if not p.is_absolute():
@@ -49,17 +48,15 @@ def mock_cfg(monkeypatch):
                 continue
         return None, f"Path outside allowed roots"
 
+    # Patch BOTH the module attribute AND the facade's imported reference
     monkeypatch.setattr("core.path_guard.resolve_path", _resolve_path)
-
-    # Patch check_protected_file to allow everything in tests
-    def _check_protected(path, operation):
-        return True, ""
-    monkeypatch.setattr("core.path_guard.check_protected_file", _check_protected)
+    monkeypatch.setattr("tools.file.resolve_path", _resolve_path)
 
     # Also patch make_path_error to return clean error dicts
     def _make_path_error(path, operation, error, trace_id=""):
         return {"status": "error", "error": error, "path": str(path), "operation": operation, "trace_id": trace_id}
     monkeypatch.setattr("core.path_guard.make_path_error", _make_path_error)
+    monkeypatch.setattr("tools.file.make_path_error", _make_path_error)
 
     yield mock
 

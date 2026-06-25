@@ -18,6 +18,8 @@ class TestEditFile:
         assert result.get("lines_changed") == 1
         content = Path(sample_txt).read_text(encoding="utf-8")
         assert "Hello Edited" in content
+        # No .bak should be created
+        assert not list(Path(sample_txt).parent.glob("*.bak"))
 
     def test_edit_file_dry_run(self, sample_txt):
         result = file(

@@ -16,7 +16,6 @@ from core.tracer import tracer
 from core.utils import compress_result
 from core.contracts import ok, fail
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Dispatcher Implementation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,10 +34,13 @@ from core.contracts import ok, fail
         ' file(action="read_multiple_files", paths=["a.py", "b.py"])',
         ' file(action="search_files", query="ChromaDB collection", max_results=5)',
         ' file(action="directory_tree", path=".", max_depth=3)',
+        ' file(action="find_files", pattern="**/*.py", path=".")',
+        ' file(action="append_file", path="logs/app.log", content="New line\n")',
         "",
         "Destructive actions require explicit flags:",
         ' delete_file — requires force=True',
         ' move_file — overwrites if force=True',
+        ' copy_file — overwrites if force=True',
     ],
 )
 def file(
@@ -47,11 +49,13 @@ def file(
     paths: list[str] | None = None,
     content: str = "",
     query: str = "",
+    pattern: str = "",
     max_chars: int | None = None,
     max_results: int | None = None,
     head: int | None = None,
     tail: int | None = None,
     max_depth: int | None = None,
+    max_bytes: int | None = None,
     exclude_patterns: list[str] | None = None,
     old: str = "",
     new: str = "",
@@ -80,8 +84,12 @@ def file(
         )
 
     # Cancellation Guard: Abort before any file mutations
-    from core.runtime.cancellation import ensure_not_cancelled
-    ensure_not_cancelled(trace_id)
+    import asyncio
+    try:
+        from core.runtime.cancellation import ensure_not_cancelled
+        ensure_not_cancelled(trace_id)
+    except asyncio.CancelledError:
+        return fail("Workflow cancelled — aborting file operation", trace_id=trace_id)
 
     # 1. Lookup action in registry
     file_ops = DISPATCH.get("file", {})
@@ -105,20 +113,30 @@ def file(
         resolved_path = str(resolved)
 
     # 3. Validate multiple paths (for read_multiple_files, etc.)
+    # NOTE: For read_multiple_files, we validate paths but allow missing ones
+    # The handler will report per-file errors instead of failing the whole batch.
     resolved_paths = None
     if paths:
         new_paths = []
         for p in paths:
             resolved, err = resolve_path(p, default_root="agent")
             if not resolved:
+                if action == "read_multiple_files":
+                    # Pass original path — handler will call _safe_resolve and report per-file error
+                    new_paths.append(p)
+                    continue
                 return make_path_error(p, action, err, trace_id)
             allowed, err = check_protected_file(resolved, action)
             if not allowed:
+                if action == "read_multiple_files":
+                    # Pass original path — handler will call _safe_resolve and report per-file error
+                    new_paths.append(p)
+                    continue
                 return make_path_error(p, action, err, trace_id)
             new_paths.append(str(resolved))
         resolved_paths = new_paths
 
-    # 4. Validate source/destination (for move_file)
+    # 4. Validate source/destination (for move_file, copy_file)
     resolved_source = None
     resolved_destination = None
     if source:
@@ -141,17 +159,19 @@ def file(
                 return make_path_error(destination, action, err, trace_id)
         resolved_destination = str(resolved)
 
-    # 5. Build kwargs — only pass non-empty values to handler
+    # 5. Build kwargs — only pass non-None values to handler
     kwargs = {
         "path": resolved_path,
         "paths": resolved_paths,
         "content": content,
         "query": query,
+        "pattern": pattern,
         "max_chars": max_chars,
         "max_results": max_results,
         "head": head,
         "tail": tail,
         "max_depth": max_depth,
+        "max_bytes": max_bytes,
         "exclude_patterns": exclude_patterns,
         "old": old,
         "new": new,
@@ -164,8 +184,9 @@ def file(
         "destination": resolved_destination,
         "trace_id": trace_id,
     }
-    # Filter out None/empty defaults so handlers only get what they need
-    kwargs = {k: v for k, v in kwargs.items() if v not in (None, "", [], False)}
+    # Filter out None defaults so handlers only get what they need
+    # Keep False, "", [] — those are explicit values, not "not provided"
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
     # 6. Execute handler safely
     try:
@@ -175,6 +196,10 @@ def file(
                 result["status"] = "success"
             if trace_id and "trace_id" not in result:
                 result["trace_id"] = trace_id
-        return compress_result(result)
+            return compress_result(result)
+        return fail(
+            f"Handler for '{action}' returned {type(result).__name__}, expected dict",
+            trace_id=trace_id,
+        )
     except Exception as e:
         return fail(str(e), trace_id=trace_id)

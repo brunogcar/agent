@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
-
 
 @register_action(
     "file",
@@ -31,7 +29,7 @@ def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_ch
         p = p.with_suffix(".pdf")
 
     try:
-        from fpdf import FPDF
+        from fpdf import FPDF, XPos, YPos
 
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
@@ -50,7 +48,6 @@ def _handle_write_pdf(path: str = "", content: str = "", title: str = "", max_ch
             if stripped.startswith("## "):
                 pdf.set_font("Helvetica", "B", 14)
                 pdf.ln(3)
-                from fpdf import XPos, YPos
                 pdf.cell(0, 9, stripped[3:], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.set_font("Helvetica", size=11)
             elif stripped.startswith("# "):

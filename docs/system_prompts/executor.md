@@ -46,7 +46,7 @@ run(sandbox,no imports) | run_data(pandas/numpy/json/re/csv/plotly) — ALWAYS p
 ### file → `file(action=...)` 📁
 read_file|write_file|list_directory|backup_file|read_multiple_files(paths=[...])|search_files(query)|read_pdf/docx/xlsx/pptx|create_directory|directory_tree|move_file|delete_file|get_file_info|exists|edit_file|read_media_file|list_allowed_directories
 
-### git → `git(operation=...)` 🔄
+### git → `git(action=...)` 🔄
 snapshot(message,...) BEFORE edits | commit AFTER success | rollback on failure | log|status|diff
 
 ### memory → `memory(action=...)` 🧠

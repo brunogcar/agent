@@ -2,9 +2,9 @@
 core/path_guard.py — Centralized path validation and root scoping guards.
 
 Security Model:
-  - AGENT_ROOT: Primary boundary (reads allowed, writes restricted)
-  - WORKSPACE_ROOT: Secondary boundary (subset of AGENT_ROOT, full access)
-  - Protected files: Read-allowed, write-blocked within AGENT_ROOT
+- AGENT_ROOT: Primary boundary (reads allowed, writes restricted)
+- WORKSPACE_ROOT: Secondary boundary (subset of AGENT_ROOT, full access)
+- Protected files: Read-allowed, write-blocked within AGENT_ROOT
 
 All guards are O(1) and use pathlib.Path.resolve() for symlink safety.
 Cross-platform: Fully compatible with Windows (NTFS/Junctions) and Linux.
@@ -22,12 +22,16 @@ from core.contracts import fail
 # ── Constants ─────────────────────────────────────────────────────────────────
 READ_OPERATIONS = frozenset({
     "read", "list", "search", "read_pdf", "read_docx", "read_xlsx", "read_pptx",
-    "exists", "stat", "head", "tail", "grep"
+    "exists", "stat", "head", "tail", "grep",
+    "read_file", "list_directory", "search_files", "read_media_file",
+    "directory_tree", "get_file_info", "find_files", "read_multiple_files",
 })
 
 WRITE_OPERATIONS = frozenset({
     "write", "edit", "delete", "backup", "patch", "append",
-    "write_pdf", "write_docx", "write_xlsx", "write_pptx", "mkdir"
+    "write_pdf", "write_docx", "write_xlsx", "write_pptx", "mkdir",
+    "write_file", "edit_file", "delete_file", "patch_file", "append_file",
+    "move_file", "copy_file", "create_directory",
 })
 
 GIT_WORKSPACE_ONLY = frozenset({"clone", "init"})
@@ -108,7 +112,7 @@ def check_protected_file(path: str | Path, operation: str) -> Tuple[bool, str]:
                 f"Write operation blocked: '{path}' is a protected infrastructure file. "
                 f"Reads are allowed, but modifications are forbidden."
             )
-            
+
     return True, ""
 
 # ── Git Scoping Guard ─────────────────────────────────────────────────────────
@@ -138,12 +142,13 @@ def check_git_operation(
                 f"'{cfg.workspace_root}', not '{resolved_cwd}'."
             ), None
 
-        if target and operation == "clone":
-            target_path, err = resolve_path(target, default_root="workspace", require_exists=False)
-            if not target_path:
-                return False, err, None
-            if not _is_within(target_path, cfg.workspace_root.resolve()):
-                return False, f"Clone target '{target}' must be within WORKSPACE_ROOT.", None
+    # Only applies to clone — guarded by inner condition
+    if target and operation == "clone":
+        target_path, err = resolve_path(target, default_root="workspace", require_exists=False)
+        if not target_path:
+            return False, err, None
+        if not _is_within(target_path, cfg.workspace_root.resolve()):
+            return False, f"Clone target '{target}' must be within WORKSPACE_ROOT.", None
 
     return True, "", resolved_cwd
 
@@ -154,7 +159,7 @@ def make_path_error(path: str | Path, operation: str, reason: str, trace_id: str
     error_msg = f"Path guard blocked {operation} on '{path}': {reason}"
     if suggestion:
         error_msg += f" Suggestion: {suggestion}"
-        
+
     return {
         "status": "error",
         "error": error_msg,
@@ -177,22 +182,22 @@ def _safe_resolve(
     """
     if not path:
         return False, None, "Path cannot be empty"
-    
+
     path_str = str(path)
     if "\x00" in path_str:
         return False, None, "Path contains null bytes"
-    
+
     try:
         # Use our existing secure resolver
         resolved, err = resolve_path(path_str, default_root="agent", require_exists=require_exists)
         if not resolved:
             return False, None, err
-            
+
         # Double-check boundary against explicit parent
         parent_resolved = parent.resolve()
         if not (parent_resolved == resolved or parent_resolved in resolved.parents):
             return False, resolved, f"Sandbox escape blocked: '{path}' outside boundary '{parent_resolved}'"
-            
+
         return True, resolved, ""
     except Exception as e:
         return False, None, f"Path resolution failed: {e}"

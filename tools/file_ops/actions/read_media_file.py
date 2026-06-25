@@ -12,7 +12,6 @@ from pathlib import Path
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
-
 MIME_TYPES: dict[str, str] = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -30,6 +29,7 @@ MIME_TYPES: dict[str, str] = {
     ".pdf": "application/pdf",
 }
 
+DEFAULT_MAX_BYTES = 5_242_880  # 5MB
 
 @register_action(
     "file",
@@ -37,12 +37,13 @@ MIME_TYPES: dict[str, str] = {
     help_text="""Read a binary file (image, audio, video) and return base64-encoded data with MIME type.
 TODO: Integrate with vision.py when vision pipeline is fully implemented.
 Required: path
+Optional: max_bytes (default 5242880 = 5MB)
 Returns: {data (base64), mime_type, type, size}""",
     examples=[
         'file(action="read_media_file", path="image.png")',
     ],
 )
-def _handle_read_media_file(path: str = "", trace_id: str = "", **kwargs) -> dict:
+def _handle_read_media_file(path: str = "", max_bytes: int = DEFAULT_MAX_BYTES, trace_id: str = "", **kwargs) -> dict:
     """Read a binary file and return base64-encoded data with MIME type."""
     p, err = _safe_resolve(path)
     if err:
@@ -51,6 +52,13 @@ def _handle_read_media_file(path: str = "", trace_id: str = "", **kwargs) -> dic
         return {"status": "error", "error": f"File not found: {p}"}
     if not p.is_file():
         return {"status": "error", "error": f"Not a file: {p}"}
+
+    stat = p.stat()
+    if stat.st_size > max_bytes:
+        return {
+            "status": "error",
+            "error": f"File too large: {stat.st_size / 1024 / 1024:.1f}MB (max {max_bytes / 1024 / 1024:.0f}MB). Use max_bytes=N or a smaller file.",
+        }
 
     ext = p.suffix.lower()
     mime_type = MIME_TYPES.get(ext, "application/octet-stream")

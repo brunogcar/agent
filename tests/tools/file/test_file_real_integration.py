@@ -31,11 +31,21 @@ class TestRealWriteReadCycle:
         assert result["content"] == "Hello World"
 
 
-class TestRealBackup:
-    def test_backup_creates_file(self, txt_file):
-        result = file(action="backup_file", path=txt_file)
+class TestRealCopy:
+    def test_copy_file(self, txt_file, mock_cfg):
+        dest = str(mock_cfg.workspace_root / "copied.txt")
+        result = file(action="copy_file", source=txt_file, destination=dest)
         assert result["status"] == "success"
-        assert Path(result["backup"]).exists()
+        assert Path(dest).exists()
+        assert Path(txt_file).exists()  # Source still exists
+
+
+class TestRealAppend:
+    def test_append_to_file(self, txt_file):
+        result = file(action="append_file", path=txt_file, content="\nAppended line")
+        assert result["status"] == "success"
+        read_result = file(action="read_file", path=txt_file)
+        assert "Appended line" in read_result["content"]
 
 
 class TestRealPatch:
@@ -66,6 +76,15 @@ class TestRealReadMultiple:
         assert result["status"] == "success"
         assert result["count"] == 3
         assert len(result["errors"]) == 0
+
+
+class TestRealFind:
+    def test_find_files(self, mock_cfg, txt_file):
+        result = file(action="find_files", pattern="*.txt", path=str(mock_cfg.workspace_root))
+        assert result["status"] == "success"
+        assert result["count"] >= 1
+        names = [f["name"] for f in result["files"]]
+        assert "test.txt" in names
 
 
 class TestRealSearch:

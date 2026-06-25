@@ -14,13 +14,14 @@ class TestWriteFile:
         assert result.get("status") == "success"
         assert Path(path).read_text(encoding="utf-8") == "new content"
 
-    def test_write_file_backup(self, mock_cfg):
+    def test_write_file_overwrite(self, mock_cfg):
         path = mock_cfg.workspace_root / "existing.txt"
         path.write_text("old", encoding="utf-8")
         result = file(action="write_file", path=str(path), content="new")
         assert result.get("status") == "success"
-        assert result.get("backup_path") != ""
-        assert Path(result["backup_path"]).exists()
+        assert Path(path).read_text(encoding="utf-8") == "new"
+        # No .bak should be created
+        assert not list(path.parent.glob("*.bak"))
 
     def test_write_file_empty_content(self, mock_cfg):
         """Empty content is valid - writes an empty file."""

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from core.config import cfg
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
+MAX_READ_SIZE = 10_000_000  # 10MB hard ceiling
 
 @register_action(
     "file",
@@ -32,39 +32,14 @@ def _read_file(
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Read a file with agent-root-first search, symlink safety, and extension validation."""
+    """Read a file with symlink safety and size limits."""
     resolved = None
 
-    # 1. If relative, try agent root first (source code lives here)
-    if not Path(path).is_absolute():
-        candidate = cfg.agent_root / path
-        if candidate.exists():
-            candidate = candidate.resolve()  # follow symlinks
-            if candidate.is_relative_to(cfg.agent_root):
-                resolved = candidate
-
-    # 2. Then try workspace root
-    if resolved is None and not Path(path).is_absolute():
-        candidate = cfg.workspace_root / path
-        if candidate.exists():
-            candidate = candidate.resolve()
-            if candidate.is_relative_to(cfg.workspace_root):
-                resolved = candidate
-
-    # 3. Fallback to absolute/explicit path via existing safe resolver
-    if resolved is None:
-        resolved = _safe_resolve(path)[0]
+    # Use _safe_resolve like every other handler
+    resolved = _safe_resolve(path)[0]
 
     if not resolved:
         return {"status": "error", "error": "File not found or access denied"}
-
-    # Extension check on the REAL file (after symlink resolution)
-    ALLOWED_EXTENSIONS = {
-        ".txt", ".py", ".md", ".json", ".yaml", ".yml", ".toml", ".cfg", ".ini",
-        ".log", ".csv", ".tsv", ".html", ".css", ".js", ".xml", ".svg",
-    }
-    if resolved.suffix.lower() not in ALLOWED_EXTENSIONS:
-        return {"status": "error", "error": f"File type not allowed: {resolved.suffix}"}
 
     if not resolved.exists():
         return {"status": "error", "error": f"File not found: {resolved}"}
@@ -80,6 +55,13 @@ def _read_file(
             "size": 0,
             "lines": 0,
             "truncated": False,
+        }
+
+    # Hard size ceiling before reading into memory
+    if stat.st_size > MAX_READ_SIZE:
+        return {
+            "status": "error",
+            "error": f"File too large: {stat.st_size / 1024 / 1024:.1f}MB (max {MAX_READ_SIZE / 1024 / 1024:.0f}MB)",
         }
 
     try:

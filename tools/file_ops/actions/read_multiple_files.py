@@ -2,27 +2,25 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from core.config import cfg
 from tools.file_ops.helpers import _safe_resolve
-from tools.file_ops.actions.read_file import _read_file
 from tools.file_ops._registry import register_action
-
 
 @register_action(
     "file",
     "read_multiple_files",
-    help_text="""Read multiple files concurrently. Returns all contents in one call.
-Required: paths (list of path strings)
+    help_text="""Read multiple files concurrently and return combined results.
+Required: paths (list of file paths)
 Optional: max_chars (default 50000)
-Returns: {files: [{path, content, size, lines, error}], count, total_size, errors}""",
+Returns: {files: [{path, content, size, lines}], count, errors: []}""",
     examples=[
         'file(action="read_multiple_files", paths=["a.py", "b.py", "c.py"])',
     ],
 )
 def _handle_read_multiple_files(
-    paths: list = None,
+    paths: list[str] | None = None,
     max_chars: int = 50_000,
     trace_id: str = "",
     **kwargs,
@@ -31,36 +29,37 @@ def _handle_read_multiple_files(
     if not paths:
         return {"status": "error", "error": "paths list is required for read_multiple_files"}
 
-    def _read_one(path_str: str) -> dict:
-        p, err = _safe_resolve(path_str)
-        if err:
-            return {"path": path_str, "error": err, "content": "", "size": 0}
-        result = _read_file(p, max_chars)
-        return {
-            "path": path_str,
-            "content": result.get("content", ""),
-            "size": result.get("size", 0),
-            "lines": result.get("lines", 0),
-            "error": result.get("error", ""),
-        }
-
     results = []
-    with ThreadPoolExecutor(max_workers=min(len(paths), 8)) as executor:
-        futures = {executor.submit(_read_one, p): p for p in paths}
-        for future in as_completed(futures):
-            results.append(future.result())
+    errors = []
 
-    # Restore original order
-    order = {p: i for i, p in enumerate(paths)}
-    results.sort(key=lambda r: order.get(r["path"], 999))
+    for p_str in paths:
+        p, err = _safe_resolve(p_str)
+        if err:
+            errors.append({"path": p_str, "error": err})
+            continue
+        if not p or not p.exists():
+            errors.append({"path": p_str, "error": f"File not found: {p_str}"})
+            continue
+        if not p.is_file():
+            errors.append({"path": p_str, "error": f"Not a file: {p_str}"})
+            continue
 
-    total_size = sum(r["size"] for r in results)
-    errors = [r["path"] for r in results if r["error"]]
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+            if len(text) > max_chars:
+                text = text[:max_chars] + f"\n\n[...truncated — {p.stat().st_size} bytes total]"
+            results.append({
+                "path": str(p),
+                "content": text,
+                "size": p.stat().st_size,
+                "lines": text.count("\n") + 1,
+            })
+        except Exception as e:
+            errors.append({"path": p_str, "error": str(e)})
 
     return {
         "status": "success",
         "files": results,
         "count": len(results),
-        "total_size": total_size,
         "errors": errors,
     }

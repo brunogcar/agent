@@ -21,5 +21,6 @@ class TestExists:
 
     def test_exists_not_found(self, mock_cfg):
         result = file(action="exists", path="nonexistent_12345.txt")
-        # Path resolution fails for nonexistent paths, so we get error
-        assert result.get("status") == "error"
+        # exists action should return exists=False, not error
+        assert result.get("status") == "success"
+        assert result.get("exists") is False
