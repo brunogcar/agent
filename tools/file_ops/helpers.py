@@ -1,82 +1,51 @@
-"""
-Path safety and resolution helpers for file operations.
-"""
+"""Path safety and resolution helpers for file operations.
 
+Thin wrapper around core.path_guard. DO NOT implement custom path resolution here.
+
+INTEGRATION GUIDE for future tool refactors:
+  This module is the canonical example of how to wrap core.path_guard for a tool.
+  It re-exports path_guard functions under the same names file action handlers expect,
+  so handlers need zero changes when switching from custom logic to centralized guards.
+
+  Old pattern (BUG — do not repeat):
+    def _resolve(path_str):          # Custom logic, diverged from path_guard
+        for root in _allowed_roots():  # Parallel security model
+            ...
+
+  New pattern (CORRECT):
+    def _safe_resolve(path_str):     # Thin wrapper calling resolve_path()
+        resolved, err = resolve_path(path_str, ...)
+        ...
+"""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
 
-from core.config import cfg
+from core.path_guard import resolve_path, check_protected_file
 
-# ── Path safety ───────────────────────────────────────────────────────────────
 
-_ALLOWED_ROOTS = None
-
-def _allowed_roots() -> list[Path]:
-    global _ALLOWED_ROOTS
-    if _ALLOWED_ROOTS is None:
-        _ALLOWED_ROOTS = [
-            cfg.agent_root.resolve(),
-            cfg.workspace_root.resolve(),
-        ]
-    return _ALLOWED_ROOTS
-
-def _resolve(path_str: str) -> Optional[Path]:
+def _safe_resolve(path_str: str, require_exists: bool = False) -> tuple[Optional[Path], str]:
     """
-    Resolve a path safely.
-    - Absolute paths are used as-is (if within allowed roots)
-    - Relative paths are resolved from agent_root FIRST, then workspace_root
-    Returns None if the path escapes allowed roots.
+    Safely resolve a path string using core.path_guard.resolve_path.
+
+    This is the single entry point for all file action handlers to resolve paths.
+    It delegates to the centralized path_guard so there is ONE source of truth
+    for path validation, symlink safety, and root scoping.
+
+    Args:
+        path_str: The raw path string from the tool parameter.
+        require_exists: If True, fail if the resolved path does not exist.
+
+    Returns:
+        (resolved_path, error_message)
+        resolved_path is None on failure; error_message is "" on success.
     """
-    # Defense-in-depth: Block null byte injection attacks
-    if "\x00" in str(path_str):
-        return None
-
-    p = Path(path_str)
-
-    # For relative paths: try agent_root first (source code lives here)
-    if not p.is_absolute():
-        for root in _allowed_roots():
-            candidate = root / p
-            if candidate.exists():
-                resolved = candidate.resolve()
-                try:
-                    resolved.relative_to(root)
-                    return resolved
-                except ValueError:
-                    continue
-        # If not found in any root, try workspace_root as fallback
-        candidate = cfg.workspace_root / p
-        resolved = candidate.resolve()
-        for root in _allowed_roots():
-            try:
-                resolved.relative_to(root)
-                return resolved
-            except ValueError:
-                continue
-        return None
-
-    # For absolute paths
-    resolved = p.resolve()
-    for root in _allowed_roots():
-        try:
-            resolved.relative_to(root)
-            return resolved
-        except ValueError:
-            continue
-    return None  # path escapes allowed roots
-
-def _safe_resolve(path_str: str) -> tuple[Optional[Path], str]:
-    """Returns (resolved_path, error_message). error is "" on success."""
     if not path_str:
         return None, "path is required"
-    if "\x00" in str(path_str):
-        return None, "Path contains invalid null bytes"
-    p = _resolve(path_str)
-    if p is None:
-        return None, (
-            f"Path '{path_str}' is outside allowed directories. "
-            f"Use paths within agent ({cfg.agent_root}) or workspace ({cfg.workspace_root})."
-        )
-    return p, ""
+
+    resolved, err = resolve_path(path_str, default_root="agent", require_exists=require_exists)
+    if not resolved:
+        return None, err
+
+    return resolved, ""

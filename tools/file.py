@@ -1,10 +1,18 @@
-"""
-tools/file.py — File meta-tool.
+"""tools/file.py — File meta-tool.
 
 The LLM sees ONE tool: file(action, ...)
 All paths are resolved relative to agent_root (the project) unless absolute
 or explicitly scoped to workspace. Paths outside workspace_root and agent_root
 are rejected for safety.
+
+Path guard integration (v1.1):
+  All path validation flows through core.path_guard:
+    - resolve_path()      -> validates root scoping and symlink safety
+    - check_protected_file() -> blocks writes on protected infrastructure files
+    - make_path_error()   -> standardized error formatting
+
+  The facade performs validation BEFORE dispatch. Handlers trust the resolved paths.
+  This is the reference pattern for all future filesystem tools.
 """
 from __future__ import annotations
 
@@ -84,11 +92,10 @@ def file(
         )
 
     # Cancellation Guard: Abort before any file mutations
-    import asyncio
     try:
         from core.runtime.cancellation import ensure_not_cancelled
         ensure_not_cancelled(trace_id)
-    except asyncio.CancelledError:
+    except BaseException:
         return fail("Workflow cancelled — aborting file operation", trace_id=trace_id)
 
     # 1. Lookup action in registry
@@ -122,21 +129,23 @@ def file(
             resolved, err = resolve_path(p, default_root="agent")
             if not resolved:
                 if action == "read_multiple_files":
-                    # Pass original path — handler will call _safe_resolve and report per-file error
-                    new_paths.append(p)
+                    new_paths.append(str(resolved) if resolved else p)
                     continue
                 return make_path_error(p, action, err, trace_id)
             allowed, err = check_protected_file(resolved, action)
             if not allowed:
                 if action == "read_multiple_files":
-                    # Pass original path — handler will call _safe_resolve and report per-file error
-                    new_paths.append(p)
+                    new_paths.append(str(resolved) if resolved else p)
                     continue
                 return make_path_error(p, action, err, trace_id)
             new_paths.append(str(resolved))
         resolved_paths = new_paths
 
     # 4. Validate source/destination (for move_file, copy_file)
+    # v1.1 fix: destination protected check runs regardless of existence.
+    # Previously, a write to a non-existent protected path would bypass the facade check.
+    # The resolved path tells us WHERE the file would land, so we check protection
+    # on that resolved path even if it doesn't exist yet.
     resolved_source = None
     resolved_destination = None
     if source:
@@ -151,12 +160,11 @@ def file(
         resolved, err = resolve_path(destination, default_root="agent")
         if not resolved:
             return make_path_error(destination, action, err, trace_id)
-        # Note: destination may not exist yet (e.g., for write_file)
-        # Only check protected if it exists
-        if resolved.exists():
-            allowed, err = check_protected_file(resolved, action)
-            if not allowed:
-                return make_path_error(destination, action, err, trace_id)
+        # v1.1: Always check protected on destination, even if it doesn't exist yet.
+        # The resolved path is where the file WOULD be written.
+        allowed, err = check_protected_file(resolved, action)
+        if not allowed:
+            return make_path_error(destination, action, err, trace_id)
         resolved_destination = str(resolved)
 
     # 5. Build kwargs — only pass non-None values to handler
@@ -197,9 +205,5 @@ def file(
             if trace_id and "trace_id" not in result:
                 result["trace_id"] = trace_id
             return compress_result(result)
-        return fail(
-            f"Handler for '{action}' returned {type(result).__name__}, expected dict",
-            trace_id=trace_id,
-        )
     except Exception as e:
         return fail(str(e), trace_id=trace_id)

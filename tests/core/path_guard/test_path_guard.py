@@ -1,7 +1,12 @@
-"""
-tests/core/path_guard/test_path_guard.py
+"""tests/core/path_guard/test_path_guard.py
+
 Comprehensive unit tests for the centralized path guard.
 Uses pytest's tmp_path fixture for cross-platform (Windows/Linux) filesystem safety.
+
+v1.1 additions:
+  - Tests for move_file, copy_file, create_directory in WRITE_OPERATIONS
+  - Tests for check_git_operation without silent fallback on missing cwd
+  - Tests for clone action scoping (workspace-only)
 """
 import os
 import pytest
@@ -14,6 +19,9 @@ from core.path_guard import (
     check_git_operation,
     make_path_error,
     _is_within,
+    WRITE_OPERATIONS,
+    READ_OPERATIONS,
+    GIT_WORKSPACE_ONLY,
 )
 
 # =============================================================================
@@ -29,23 +37,23 @@ def mock_config(tmp_path):
     agent_root.mkdir()
     workspace_root = agent_root / "workspace"
     workspace_root.mkdir()
-    
+
     # Create dummy protected files
     core_dir = agent_root / "core"
     core_dir.mkdir()
     (core_dir / "config.py").touch()
     (core_dir / "llm.py").touch()
-    
+
     with patch("core.path_guard.cfg") as mock_cfg:
         mock_cfg.agent_root = agent_root
         mock_cfg.workspace_root = workspace_root
-        
+
         # Mock the is_protected method from core.config
         def is_protected_side_effect(p):
             # Match if the path ends with core/config.py or core/llm.py
             p_str = str(p).replace("\\", "/")
             return p_str.endswith("core/config.py") or p_str.endswith("core/llm.py")
-            
+
         mock_cfg.is_protected = MagicMock(side_effect=is_protected_side_effect)
         yield mock_cfg
 
@@ -101,7 +109,7 @@ class TestResolvePath:
         outside = tmp_path / "outside" / "file.py"
         outside.parent.mkdir(parents=True, exist_ok=True)
         outside.touch()
-        
+
         resolved, err = resolve_path(str(outside))
         assert resolved is None
         assert "outside AGENT_ROOT" in err
@@ -143,13 +151,39 @@ class TestCheckProtectedFile:
         allowed, err = check_protected_file(path, "write")
         assert allowed is True
 
+    # v1.1: Test new write operations are in WRITE_OPERATIONS
+    def test_move_file_in_write_operations(self):
+        assert "move_file" in WRITE_OPERATIONS
+
+    def test_copy_file_in_write_operations(self):
+        assert "copy_file" in WRITE_OPERATIONS
+
+    def test_create_directory_in_write_operations(self):
+        assert "create_directory" in WRITE_OPERATIONS
+
+    def test_move_file_protected_blocked(self, mock_config):
+        path = "core/config.py"
+        allowed, err = check_protected_file(path, "move_file")
+        assert allowed is False
+        assert "protected" in err.lower()
+
+    def test_copy_file_protected_blocked(self, mock_config):
+        path = "core/config.py"
+        allowed, err = check_protected_file(path, "copy_file")
+        assert allowed is False
+        assert "protected" in err.lower()
+
+    # v1.1: Test read operations include new actions
+    def test_list_allowed_directories_in_read_operations(self):
+        assert "list_allowed_directories" in READ_OPERATIONS
+
 # =============================================================================
 # Test check_git_operation
 # =============================================================================
 class TestCheckGitOperation:
     def test_clone_in_workspace_allowed(self, mock_config):
         allowed, err, cwd = check_git_operation(
-            "clone", 
+            "clone",
             cwd=str(mock_config.workspace_root)
         )
         assert allowed is True
@@ -157,7 +191,22 @@ class TestCheckGitOperation:
 
     def test_clone_in_agent_root_blocked(self, mock_config):
         allowed, err, cwd = check_git_operation(
-            "clone", 
+            "clone",
+            cwd=str(mock_config.agent_root)
+        )
+        assert allowed is False
+        assert "WORKSPACE_ROOT" in err
+
+    def test_init_in_workspace_allowed(self, mock_config):
+        allowed, err, cwd = check_git_operation(
+            "init",
+            cwd=str(mock_config.workspace_root)
+        )
+        assert allowed is True
+
+    def test_init_in_agent_root_blocked(self, mock_config):
+        allowed, err, cwd = check_git_operation(
+            "init",
             cwd=str(mock_config.agent_root)
         )
         assert allowed is False
@@ -165,22 +214,28 @@ class TestCheckGitOperation:
 
     def test_diff_in_agent_allowed(self, mock_config):
         allowed, err, cwd = check_git_operation(
-            "diff", 
+            "diff",
             cwd=str(mock_config.agent_root)
         )
         assert allowed is True
 
-    def test_clone_with_target_outside_workspace(self, mock_config):
-        # Target is inside AGENT_ROOT, but outside WORKSPACE_ROOT
-        target_path = mock_config.agent_root / "my_project"
-        
+    # v1.1: Removed test_clone_with_target_outside_workspace because
+    # check_git_operation no longer validates target for clone. Target is a
+    # remote URL, not a filesystem path. Destination validation happens in the handler.
+
+    # v1.1: Test that missing cwd fails fast (no silent fallback)
+    def test_missing_cwd_fails_fast(self, mock_config):
         allowed, err, cwd = check_git_operation(
-            "clone",
-            cwd=str(mock_config.workspace_root),
-            target=str(target_path)
+            "status",
+            cwd="nonexistent_path_12345"
         )
         assert allowed is False
-        assert "WORKSPACE_ROOT" in err
+        assert err != ""
+        assert cwd is None
+
+    # v1.1: Verify clone is in GIT_WORKSPACE_ONLY
+    def test_clone_in_git_workspace_only(self):
+        assert "clone" in GIT_WORKSPACE_ONLY
 
 # =============================================================================
 # Test make_path_error

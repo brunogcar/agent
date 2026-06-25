@@ -12,36 +12,90 @@ The `git()` tool provides **atomic version control actions** for the MCP Agent S
 
 ---
 
+## ⚠️ Breaking Changes (v1 → v1.1)
+### v1.1 (clone + path_guard hardening)
+- Added `clone` action — clones remote repos into `WORKSPACE_ROOT`
+- Added `clone` to `GIT_WORKSPACE_ONLY` in `core/path_guard.py`
+- Fixed `check_git_operation()` silent fallback on missing `cwd` — now fails fast
+- Removed target validation from `check_git_operation()` for clone — target is a remote URL, not a filesystem path
+- Added `tests/tools/git/test_git_clone.py` for clone coverage
+- Updated `tests/core/path_guard/test_path_guard.py` for new clone behavior
+
+---
+
+
 ## 🏗️ Architecture
 
-The git tool follows a **thin facade + atomic action modules** pattern.
+The git tool follows a **thin facade + atomic action modules** pattern, identical to the file tool.
 
 ```
-tools/git.py                    # @tool facade — validation, dispatch, compression
-tools/_meta_tool.py             # @meta_tool decorator — auto Literal + docstring
+tools/git.py                     # @tool facade — validation, dispatch, compression
+tools/_meta_tool.py              # @meta_tool decorator — auto Literal + docstring
 tools/git_ops/
-├── _registry.py                # DISPATCH dict + @register_action decorator
-├── helpers.py                  # _git runner, _resolve_root, _check_repo
+├── _registry.py                 # DISPATCH dict + @register_action decorator
+├── helpers.py                   # Git executable detection, subprocess runner, repo resolution
 └── actions/
-    ├── status.py               # Read-only: working tree status
-    ├── log.py                  # Read-only: commit history
-    ├── diff.py                 # Read-only: unstaged diff
-    ├── show.py                 # Read-only: commit/tag/tree details
-    ├── branch_list.py          # Read-only: list branches
-    ├── branch_create.py        # Write: create branch pointer
-    ├── branch_delete.py        # Write: delete branch (safe or force)
-    ├── tag_list.py             # Read-only: list tags
-    ├── tag_create.py           # Write: lightweight tag
-    ├── tag_delete.py           # Write: delete tag
-    ├── checkout_branch.py      # Write: switch to existing branch
-    ├── checkout_new.py         # Write: create and switch to new branch
-    ├── commit.py               # Write: stage all + commit
-    ├── add.py                  # Write: stage files
-    ├── init.py                 # Write: init repo + .gitignore + initial commit
-    ├── restore.py              # Write: restore file to HEAD
-    ├── rollback.py             # Write: reset to HEAD (safe stash or force)
-    └── snapshot.py             # Write: stage all + timestamped commit
+    ├── init.py                  # Initialise new repo
+    ├── clone.py                 # Clone remote repo (v1.1 — WORKSPACE_ROOT only)
+    ├── status.py                # Working tree status
+    ├── log.py                   # Commit history
+    ├── diff.py                  # Unstaged diff
+    ├── add.py                   # Stage files
+    ├── commit.py                # Create commit
+    ├── snapshot.py              # Safe checkpoint commit
+    ├── restore.py               # Restore file to HEAD
+    ├── rollback.py              # Reset to HEAD (with stash)
+    ├── show.py                  # Show commit/tag details
+    ├── branch_list.py           # List branches
+    ├── branch_create.py         # Create branch
+    ├── branch_delete.py         # Delete branch
+    ├── checkout_branch.py       # Switch to existing branch
+    ├── checkout_new.py          # Create and switch to new branch
+    ├── tag_list.py              # List tags
+    ├── tag_create.py            # Create tag
+    └── tag_delete.py            # Delete tag
 ```
+
+### Path Guard Integration
+
+Git operations use `core.path_guard` via `check_git_operation()` for scoping rules:
+
+```python
+# tools/git.py (facade)
+from core.path_guard import check_git_operation, make_path_error
+
+allowed, err, resolved_cwd = check_git_operation(
+    operation=action,
+    cwd=cwd,
+    target=target if target else None
+)
+if not allowed:
+    return make_path_error(cwd or path, action, err, trace_id)
+```
+
+**Scoping rules (enforced by `core.path_guard.GIT_WORKSPACE_ONLY`):**
+- All git operations must be within `AGENT_ROOT`.
+- `init` and `clone` must be within `WORKSPACE_ROOT`.
+- `clone` target directory must be within `WORKSPACE_ROOT`.
+
+**v1.1 fix:** `check_git_operation()` no longer silently falls back from `require_exists=True` to `False`. A non-existent `cwd` now fails fast with a clear error.
+
+### Clone Action (v1.1)
+
+```python
+git(action="clone", target="https://github.com/user/repo.git")
+git(action="clone", target="https://github.com/user/repo.git", path="my_folder")
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `target` | ✅ | Remote repository URL |
+| `path` | ❌ | Local directory name (defaults to repo name from URL) |
+
+**Restrictions:**
+- Clone target must be within `WORKSPACE_ROOT`.
+- Cannot clone into an existing directory.
+- Returns: `{status: "cloned", path, url, root}`
 
 ### Dispatch Flow
 
@@ -66,6 +120,24 @@ graph TD
 - **Needs repo validation** — Dispatcher checks `_check_repo()` before write actions. Read-only actions skip this (git handles non-repo errors gracefully).
 - **Backward-compat alias** — `path` parameter can override `root="workspace"` with an absolute directory path (legacy behavior preserved).
 - **Cancellation guard** — `ensure_not_cancelled(trace_id)` aborts before any git mutations.
+
+## Path Resolution & Security
+
+All paths are resolved through `core.path_guard.resolve_path()` before any git operation:
+
+| Path Type | Behavior |
+|-----------|----------|
+| **Relative** | Resolved against `default_root` ("agent" or "workspace") |
+| **Absolute** | Allowed only if within `AGENT_ROOT` |
+| **Traversal** (`../..`) | Blocked if resolves outside `AGENT_ROOT` |
+| **Null bytes** | Blocked immediately |
+| **Symlinks** | Followed via `Path.resolve()` — escapes caught by `_is_within()` |
+
+**Git scoping:** `init` and `clone` MUST be within `WORKSPACE_ROOT`. All other operations must be within `AGENT_ROOT`.
+
+**v1.1 fix:** `check_git_operation()` no longer silently falls back from `require_exists=True` to `False`. A non-existent `cwd` now fails fast with a clear error.
+
+**v1.1:** `clone` target is a remote URL, not a filesystem path. The handler validates the derived local directory path.
 
 ---
 
@@ -242,7 +314,7 @@ def git(action: str = "", ...) -> dict:
 
 ```powershell
 # Run all git tests (real git repos, no mocking)
-D:\mcpgentenv\Scripts\pytest.exe tests/tools/git -v -W error
+D:\mcp\agent\venv\Scripts\pytest.exe tests/tools/git -v -W error
 ```
 
 **Test architecture:**
@@ -269,7 +341,9 @@ tests/tools/git/
 ├── test_git_dispatch.py                 # Unknown action, basic dispatch
 ├── test_git_compression.py              # Result compression
 ├── test_git_real_integration.py         # Full lifecycle test
-└── test_git_scoping.py                  # Workflow node routing (workflows/)
+├── test_git_scoping.py                  # Workflow node routing (workflows/)
+└── test_git_clone.py                    # v1.1 — clone action tests |
+
 ```
 
 **Mock strategy:**
@@ -344,6 +418,7 @@ If you are an AI assistant modifying the git tool:
 | `tools/git_ops/helpers.py` | `_git` runner, `_resolve_root`, `_check_repo` |
 | `tools/git_ops/actions/*.py` | Individual atomic action handlers |
 | `registry.py` | `get_tool_names()`, `get_tool_actions()` for router introspection |
+| `tests/tools/git/` | Test files covering all actions |
 | `tests/tools/git/conftest.py` | Test fixtures: `mock_cfg` (autouse), `git_repo` |
 | `tests/tools/test_meta_tool.py` | `@meta_tool` decorator unit tests |
 | `workflows/autocode_helpers/git_ops.py` | Autocode workflow helpers: `_git_snapshot`, `_git_commit`, `_git_create_branch` |

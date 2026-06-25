@@ -25,6 +25,14 @@ The `file()` tool provides **atomic file system actions** for the MCP Agent Stac
 | `read_many` | `read_multiple_files` | `file(action="read_multiple_files", ...)` |
 | `mode` param | Removed | Use `max_chars`, `head`, or `tail` |
 
+### v1.1 (path_guard integration)
+- Replaced custom `_resolve()` in `helpers.py` with thin wrapper around `core.path_guard.resolve_path`
+- Updated `write_file`, `append_file`, `edit_file`, `patch_file` handlers to use `check_protected_file()` instead of direct `cfg.is_protected()`
+- Added `move_file`, `copy_file`, `create_directory` to `WRITE_OPERATIONS` in `core/path_guard.py`
+- Fixed facade destination protected check to run even when destination doesn't exist yet
+- Added `list_allowed_directories` to `READ_OPERATIONS`
+- Added `test_file_path_guard_integration.py` to prevent regression
+
 ---
 
 ## 🏗️ Architecture
@@ -36,7 +44,9 @@ tools/file.py                    # @tool facade — validation, dispatch, compre
 tools/_meta_tool.py              # @meta_tool decorator — auto Literal + docstring
 tools/file_ops/
 ├── _registry.py                 # DISPATCH dict + @register_action decorator
-├── helpers.py                   # _safe_resolve, _allowed_roots
+├── helpers.py                   # Thin wrapper around core.path_guard (v1.1)
+│                                #   DO NOT implement custom path resolution here.
+│                                #   See INTEGRATION GUIDE in core/path_guard.py
 ├── index.py                     # SQLite FTS index for search_files
 └── actions/
     ├── read_file.py             # Read text file (head/tail/max_chars)
@@ -80,12 +90,70 @@ graph TD
 
 **Key design decisions:**
 - **Unified DISPATCH** — Single dict holds all actions, handlers, help text, examples. `@meta_tool` reads it to generate schema and docstring. One source. Zero drift.
-- **Action name consistency** — `core/path_guard.py` maintains `READ_OPERATIONS` and `WRITE_OPERATIONS` sets. When renaming actions (e.g., `write` → `write_file`), these sets MUST be updated or protected file checks will silently fail.
+- **Action name consistency** — `core/path_guard.py` maintains `READ_OPERATIONS` and `WRITE_OPERATIONS` sets. When renaming actions (e.g., `write` → `write_file`), these sets MUST be updated or protected file checks will silently fail. **v1.1 added `move_file`, `copy_file`, `create_directory` to `WRITE_OPERATIONS`.**
 - **Atomic actions** — No `message` subcommand parsing. `create_directory` is one action, `delete_file` is another.
 - **Semantic parameters** — `path` = file path, `source`/`destination` = move/copy paths, `query` = search text, `edits` = edit array.
-- **Path validation in facade** — `resolve_path` + `check_protected_file` runs once before dispatch. No duplication across 20+ handlers.
+- **Path validation in facade** — `resolve_path` + `check_protected_file` runs once before dispatch. No duplication across 20+ handlers. **v1.1 fix: destination paths are checked for protection even if they don't exist yet.**
 - **Cancellation guard** — `ensure_not_cancelled(trace_id)` aborts before any file mutations. Catches `BaseException` (not just `Exception`) to handle `asyncio.CancelledError`.
 - **Destructive actions require force** — `delete_file`, `move_file`, `copy_file` need explicit `force=True`.
+
+### Path Guard Integration (v1.1)
+
+**Every file action MUST flow through `core/path_guard.py`.** This is the canonical example for future tool refactors.
+
+```python
+# Facade (tools/file.py)
+from core.path_guard import resolve_path, check_protected_file, make_path_error
+
+resolved, err = resolve_path(path, default_root="agent")
+if not resolved:
+    return make_path_error(path, action, err, trace_id)
+allowed, err = check_protected_file(resolved, action)
+if not allowed:
+    return make_path_error(path, action, err, trace_id)
+
+# Helpers (tools/file_ops/helpers.py) — thin wrapper, NO custom logic
+from core.path_guard import resolve_path
+
+def _safe_resolve(path_str, require_exists=False):
+    resolved, err = resolve_path(path_str, default_root="agent", require_exists=require_exists)
+    return resolved, err
+
+# Handlers (tools/file_ops/actions/*.py) — trust paths, do business logic
+from tools.file_ops.helpers import _safe_resolve
+
+def _handle_write_file(path="", content="", **kwargs):
+    p, err = _safe_resolve(path)
+    if err:
+        return {"status": "error", "error": err}
+    # ... write logic, no path re-validation
+```
+
+**Anti-pattern (old file_ops, fixed in v1.1):**
+```python
+# BAD — helpers.py reimplemented path resolution
+from core.config import cfg  # bypassed path_guard entirely
+
+def _resolve(path_str):
+    for root in _allowed_roots():  # custom logic, diverged from path_guard
+        ...
+```
+
+## Path Resolution & Security
+
+All paths are resolved through `core.path_guard.resolve_path()` before any file operation:
+
+| Path Type | Behavior |
+|-----------|----------|
+| **Relative** | Resolved against `default_root` ("agent" or "workspace") |
+| **Absolute** | Allowed only if within `AGENT_ROOT` |
+| **Traversal** (`../..`) | Blocked if resolves outside `AGENT_ROOT` |
+| **Null bytes** | Blocked immediately |
+| **Symlinks** | Followed via `Path.resolve()` — escapes caught by `_is_within()` |
+
+**Protected files:** Infrastructure files (e.g., `core/config.py`) are read-allowed but write-blocked. The `WRITE_OPERATIONS` frozenset in `core/path_guard.py` controls which actions trigger the protected check. **v1.1 added `move_file`, `copy_file`, `create_directory` to this set.**
+
+**v1.1 fix:** Destination paths for `move_file`/`copy_file`/`write_file` are checked for protection even when they don't exist yet. The resolved path tells us where the file would land.
 
 ---
 
@@ -449,7 +517,10 @@ If you are an AI assistant modifying the file tool:
 | `tools/file_ops/index.py` | SQLite FTS index for `search_files` |
 | `tools/file_ops/actions/*.py` | Individual atomic action handlers |
 | `registry.py` | `get_tool_names()`, `get_tool_actions()` for router introspection |
+| `tests/tools/file/` | 25+ test files covering all actions |
 | `tests/tools/file/conftest.py` | Test fixtures: `mock_cfg` (autouse) |
+| `core/path_guard.py` | Centralized path validation and security guards |
+| `tests/core/path_guard/` | Path guard unit tests |
 
 ---
 

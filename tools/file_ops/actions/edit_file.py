@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from core.path_guard import check_protected_file
 from tools.file_ops.helpers import _safe_resolve
-from core.config import cfg
 from tools.file_ops._registry import register_action
 
 @register_action(
@@ -34,8 +34,12 @@ def _handle_edit_file(
     p, err = _safe_resolve(path)
     if err:
         return {"status": "error", "error": err}
-    if cfg.is_protected(str(p)):
-        return {"status": "error", "error": f"'{p}' is protected -- cannot edit"}
+
+    # v1.1: Use centralized check_protected_file instead of direct cfg.is_protected()
+    allowed, err = check_protected_file(p, "edit_file")
+    if not allowed:
+        return {"status": "error", "error": err}
+
     if not p.exists():
         return {"status": "error", "error": f"File not found: {p}"}
 

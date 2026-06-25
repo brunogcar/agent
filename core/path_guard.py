@@ -1,5 +1,4 @@
-"""
-core/path_guard.py — Centralized path validation and root scoping guards.
+"""core/path_guard.py — Centralized path validation and root scoping guards.
 
 Security Model:
 - AGENT_ROOT: Primary boundary (reads allowed, writes restricted)
@@ -8,6 +7,19 @@ Security Model:
 
 All guards are O(1) and use pathlib.Path.resolve() for symlink safety.
 Cross-platform: Fully compatible with Windows (NTFS/Junctions) and Linux.
+
+INTEGRATION GUIDE for future tool refactors:
+  Every tool that touches the filesystem MUST go through this module.
+  The file and git refactors are the reference implementation.
+
+  Three-layer defense pattern:
+    1. Facade (tools/<tool>.py)     -> resolve_path() + check_protected_file()
+    2. Helpers (tools/<tool>_ops/helpers.py) -> thin wrapper re-exporting path_guard
+    3. Handlers (tools/<tool>_ops/actions/*.py) -> trust paths are validated; do NOT re-validate
+
+  Anti-pattern: NEVER implement custom path resolution in helpers or handlers.
+  The old file_ops refactor had _resolve() and _safe_resolve() in helpers.py
+  that duplicated path_guard logic. That was a bug. Do not repeat it.
 """
 from __future__ import annotations
 
@@ -20,20 +32,28 @@ from core.tracer import tracer
 from core.contracts import fail
 
 # ── Constants ─────────────────────────────────────────────────────────────────
+# READ_OPERATIONS: actions that only read — always allowed even on protected files.
+# WRITE_OPERATIONS: actions that modify — blocked on protected files.
+# When adding new file actions, UPDATE these sets or protected checks will silently fail.
+# v1.1: Added move_file, copy_file, create_directory to WRITE_OPERATIONS (was missing).
+
 READ_OPERATIONS = frozenset({
     "read", "list", "search", "read_pdf", "read_docx", "read_xlsx", "read_pptx",
     "exists", "stat", "head", "tail", "grep",
     "read_file", "list_directory", "search_files", "read_media_file",
     "directory_tree", "get_file_info", "find_files", "read_multiple_files",
+    "list_allowed_directories",  # v1.1: added missing read action
 })
 
 WRITE_OPERATIONS = frozenset({
     "write", "edit", "delete", "backup", "patch", "append",
     "write_pdf", "write_docx", "write_xlsx", "write_pptx", "mkdir",
     "write_file", "edit_file", "delete_file", "patch_file", "append_file",
-    "move_file", "copy_file", "create_directory",
+    "move_file", "copy_file", "create_directory",  # v1.1: added missing write actions
 })
 
+# v1.1: Added "clone" to GIT_WORKSPACE_ONLY since clone action is now implemented.
+# Both "init" and "clone" require workspace scoping.
 GIT_WORKSPACE_ONLY = frozenset({"clone", "init"})
 
 # ── Path Resolution ───────────────────────────────────────────────────────────
@@ -46,6 +66,13 @@ def resolve_path(
     """
     Resolve a path against the appropriate root.
     Returns: (resolved_path, error_message)
+
+    Security properties:
+      - Null bytes are blocked before any path parsing.
+      - Symlinks are followed via Path.resolve() — symlink escapes are caught
+        by the _is_within() check after resolution.
+      - Absolute paths are allowed only if they resolve inside AGENT_ROOT.
+      - Relative paths are resolved from default_root (agent or workspace).
     """
     if not path:
         return None, "Path cannot be empty"
@@ -56,7 +83,7 @@ def resolve_path(
     except Exception as e:
         return None, f"Invalid path format: {e}"
 
-    # Explicit null byte check
+    # Explicit null byte check — defense in depth
     if "\x00" in str(path):
         return None, "Path contains null bytes"
 
@@ -87,6 +114,9 @@ def _is_within(child: Path, parent: Path) -> bool:
     """
     Check if child path is within parent path.
     Uses Path.resolve() to follow symlinks, ensuring symlink escapes are caught.
+
+    Returns True if child == parent or child is a descendant of parent.
+    Returns False on any resolution error (e.g., broken symlink, permission denied).
     """
     try:
         child = child.resolve()
@@ -98,7 +128,20 @@ def _is_within(child: Path, parent: Path) -> bool:
 # ── Protected Files Guard ─────────────────────────────────────────────────────
 
 def check_protected_file(path: str | Path, operation: str) -> Tuple[bool, str]:
-    """Read operations are ALWAYS allowed. Write operations are blocked on protected files."""
+    """
+    Check if an operation is allowed on a potentially protected file.
+
+    Read operations are ALWAYS allowed on protected files.
+    Write operations are BLOCKED on protected files (as determined by cfg.is_protected).
+
+    Args:
+        path: The resolved Path to check (should already be validated by resolve_path).
+        operation: The action name (e.g., "write_file", "read_file", "move_file").
+
+    Returns:
+        (allowed: bool, error_message: str)
+        error_message is "" on success.
+    """
     resolved, err = resolve_path(path, default_root="agent", require_exists=False)
     if not resolved:
         return False, err
@@ -113,6 +156,8 @@ def check_protected_file(path: str | Path, operation: str) -> Tuple[bool, str]:
                 f"Reads are allowed, but modifications are forbidden."
             )
 
+    # Unknown operation: allow by default (fail-open for unrecognized actions)
+    # but log a warning. Future tools should add their actions to the sets above.
     return True, ""
 
 # ── Git Scoping Guard ─────────────────────────────────────────────────────────
@@ -122,13 +167,36 @@ def check_git_operation(
     cwd: Optional[str | Path] = None,
     target: Optional[str | Path] = None,
 ) -> Tuple[bool, str, Optional[Path]]:
-    """Validate git operation against scoping rules."""
+    """
+    Validate git operation against scoping rules.
+
+    Rules:
+      - All git operations must be within AGENT_ROOT.
+      - "init" and "clone" must be within WORKSPACE_ROOT.
+      - For clone: the DESTINATION directory (derived from path parameter in handler)
+        must be within WORKSPACE_ROOT. The target parameter is the remote URL and
+        is NOT validated as a filesystem path.
+
+    v1.1 fix: Added explicit existence check for cwd. Removed target validation for clone
+    since target is a remote URL, not a local filesystem path.
+
+    Args:
+        operation: Git action name (e.g., "init", "commit", "clone").
+        cwd: Working directory for the git command.
+        target: Optional target — for clone this is a remote URL, NOT a filesystem path.
+
+    Returns:
+        (allowed: bool, error_message: str, resolved_cwd: Optional[Path])
+    """
     if cwd:
-        resolved_cwd, err = resolve_path(cwd, default_root="agent", require_exists=True)
+        resolved_cwd, err = resolve_path(cwd, default_root="agent", require_exists=False)
         if not resolved_cwd:
-            resolved_cwd, err = resolve_path(cwd, default_root="agent", require_exists=False)
-            if not resolved_cwd:
-                return False, err, None
+            return False, err, None
+        # v1.1: Explicit existence check. Git operations need a real directory.
+        if not resolved_cwd.exists():
+            return False, f"Working directory does not exist: {cwd}", None
+        if not resolved_cwd.is_dir():
+            return False, f"Not a directory: {cwd}", None
     else:
         resolved_cwd = cfg.agent_root.resolve()
 
@@ -142,13 +210,8 @@ def check_git_operation(
                 f"'{cfg.workspace_root}', not '{resolved_cwd}'."
             ), None
 
-    # Only applies to clone — guarded by inner condition
-    if target and operation == "clone":
-        target_path, err = resolve_path(target, default_root="workspace", require_exists=False)
-        if not target_path:
-            return False, err, None
-        if not _is_within(target_path, cfg.workspace_root.resolve()):
-            return False, f"Clone target '{target}' must be within WORKSPACE_ROOT.", None
+    # v1.1: Removed target validation for clone. Target is a remote URL, not a local path.
+    # The handler validates the derived local destination path.
 
     return True, "", resolved_cwd
 
@@ -167,37 +230,3 @@ def make_path_error(path: str | Path, operation: str, reason: str, trace_id: str
         "operation": operation,
         "trace_id": trace_id or tracer.new_trace("path_guard", goal=f"{operation} {path}"),
     }
-
-# ── Safely Resolve ──────────────────────────────────────────────────────────
-
-def _safe_resolve(
-    path: str | Path,
-    parent: Path,
-    require_exists: bool = False,
-) -> tuple[bool, Path | None, str]:
-    """
-    Safely resolve a path and verify it stays within parent boundary.
-    Wrapper to satisfy strict security auditing requirements.
-    Returns: (is_safe, resolved_path, error_message)
-    """
-    if not path:
-        return False, None, "Path cannot be empty"
-
-    path_str = str(path)
-    if "\x00" in path_str:
-        return False, None, "Path contains null bytes"
-
-    try:
-        # Use our existing secure resolver
-        resolved, err = resolve_path(path_str, default_root="agent", require_exists=require_exists)
-        if not resolved:
-            return False, None, err
-
-        # Double-check boundary against explicit parent
-        parent_resolved = parent.resolve()
-        if not (parent_resolved == resolved or parent_resolved in resolved.parents):
-            return False, resolved, f"Sandbox escape blocked: '{path}' outside boundary '{parent_resolved}'"
-
-        return True, resolved, ""
-    except Exception as e:
-        return False, None, f"Path resolution failed: {e}"

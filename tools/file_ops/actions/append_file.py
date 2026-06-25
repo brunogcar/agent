@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.config import cfg
+from core.path_guard import check_protected_file
 from tools.file_ops.helpers import _safe_resolve
 from tools.file_ops._registry import register_action
 
@@ -25,8 +25,11 @@ def _handle_append_file(path: str = "", content: str = "", **kwargs) -> dict:
         return {"status": "error", "error": err}
     if content is None:
         return {"status": "error", "error": "content is required for append_file"}
-    if cfg.is_protected(p):
-        return {"status": "error", "error": f"'{p.name}' is protected — edit manually"}
+
+    # v1.1: Use centralized check_protected_file instead of direct cfg.is_protected()
+    allowed, err = check_protected_file(p, "append_file")
+    if not allowed:
+        return {"status": "error", "error": err}
 
     p.parent.mkdir(parents=True, exist_ok=True)
 
