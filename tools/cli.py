@@ -1,30 +1,30 @@
 """CLI meta-tool — natural-language command dispatcher.
 
 Architecture (4 layers):
-  1. Pattern match   — regex, zero tokens, instant
-  2. Shell whitelist  — subprocess, zero tokens, real OS output
-  3. Router          — LLM decides: direct dispatch or escalate
-  4. Executor        — complex tasks handed to planner/executor workflow
+ 1. Pattern match — regex, zero tokens, instant
+ 2. Shell whitelist — subprocess, zero tokens, real OS output
+ 3. Router — LLM decides: direct dispatch or escalate
+ 4. Executor — complex tasks handed to planner/executor workflow
 
 All proxy actions auto-register via @register_action in cli_ops/actions/*.py.
 The facade coordinates the 4 layers and applies security controls:
-  - Input sanitization (_sanitize_command)
-  - Path guard integration (core.path_guard)
-  - Cancellation guard (ensure_not_cancelled)
-  - Trace propagation (trace_id)
+ - Input sanitization (_sanitize_command)
+ - Path guard integration (core.path_guard)
+ - Cancellation guard (ensure_not_cancelled)
+ - Trace propagation (trace_id)
 
 NOTE: CLI differs from git/file tools in how @meta_tool is applied:
-  - git/file: facade takes action: str → @meta_tool patches to Literal[...]
-  - cli: facade takes command: str (natural language) → @meta_tool skips
-    the Literal patch (no "action" in annotations) but still generates
-    docstring and __tool_metadata__ from DISPATCH metadata. This is
-    intentional — CLI is a meta-tool that routes natural language, not
-    a direct action dispatcher.
+ - git/file: facade takes action: str → @meta_tool patches to Literal[...]
+ - cli: facade takes command: str (natural language) → @meta_tool skips
+ the Literal patch (no "action" in annotations) but still generates
+ docstring and __tool_metadata__ from DISPATCH metadata. This is
+ intentional — CLI is a meta-tool that routes natural language, not
+ a direct action dispatcher.
 
-Proxy handlers use stacked @register_action decorators (one handler per
-namespace, multiple actions) because they are thin wrappers that forward
-the action name to the underlying tool. This differs from git/file where
-each action has its own handler function.
+IMPORT ORDER CRITICAL:
+ cli_ops/__init__.py must import all action modules BEFORE cli.py
+ is imported. This ensures DISPATCH is populated for @meta_tool.
+ If DISPATCH is empty, @meta_tool raises ValueError at import time.
 """
 from __future__ import annotations
 
@@ -42,20 +42,30 @@ from tools.cli_ops.helpers import (
 from tools.cli_ops.patterns import _match_pattern
 from tools.cli_ops.router import _call_router
 
-
 # @meta_tool expects a flat dict of {action_name: {func, help, examples}}.
 # But CLI's DISPATCH is nested by tool namespace: {tool: {action: {func, help, examples}}}.
 # Proxy actions register to their own namespace ("system", "file", "git", etc.)
 # not "cli". So we flatten all namespaces into a synthetic "cli" dispatch
 # for docstring/metadata generation. This lets the LLM see all available
 # proxy actions when deciding how to use the CLI tool.
+#
+# NOTE: If two namespaces define the same action name (e.g., git:log and
+# lms:log), the last one wins in the flattened dict. This affects the
+# @meta_tool docstring only — runtime dispatch uses the full namespace.
+# Currently git:log and lms:log both exist; lms:log wins in docstring.
+# This is acceptable since the docstring is reference, not schema.
 _CLI_META_DISPATCH = {}
 for _tool_actions in DISPATCH.values():
     _CLI_META_DISPATCH.update(_tool_actions)
 
 
 def _ok(output: str, trace_id: str = "") -> dict[str, Any]:
-    """Format successful response dict."""
+    """Format successful response dict.
+
+    NOTE: Always returns status="success" even when the routed action
+    fails. The failure is in the output string. This is intentional —
+    CLI is human-facing. Callers inspect the output text, not the status.
+    """
     return {
         "status": "success",
         "output": output,
@@ -66,13 +76,13 @@ def _ok(output: str, trace_id: str = "") -> dict[str, Any]:
 def _ensure_not_cancelled(trace_id: str) -> None:
     """Check if the current trace has been cancelled.
 
-    Tries to import from core.tracer, falls back to no-op if unavailable.
-    This avoids hard dependency on tracer for tests.
+    Tries to import from core.runtime.cancellation, falls back to no-op
+    if unavailable. This avoids hard dependency on tracer for tests.
     """
     try:
-        from core.tracer import ensure_not_cancelled as _enc
+        from core.runtime.cancellation import ensure_not_cancelled as _enc
         _enc(trace_id)
-    except ImportError:
+    except (ImportError, AttributeError):
         pass
 
 
@@ -80,20 +90,20 @@ def _ensure_not_cancelled(trace_id: str) -> None:
     _CLI_META_DISPATCH,
     doc_sections=[
         "4-Layer Dispatch Architecture:",
-        "  1. Pattern match   — regex for common commands (zero tokens)",
-        "  2. Shell whitelist  — safe subprocess execution (zero tokens)",
-        "  3. Router          — LLM classifies ambiguous commands",
-        "  4. Executor        — complex tasks escalated to planner workflow",
+        " 1. Pattern match — regex for common commands (zero tokens)",
+        " 2. Shell whitelist — safe subprocess execution (zero tokens)",
+        " 3. Router — LLM classifies ambiguous commands",
+        " 4. Executor — complex tasks escalated to planner workflow",
         "",
         "Security:",
-        "  - shell=False prevents command chaining",
-        "  - ALLOWED_COMMANDS whitelist controls binaries",
-        "  - BLOCKED_FLAGS prevents arbitrary code execution",
-        "  - core.path_guard validates all filesystem paths",
+        " - shell=False prevents command chaining",
+        " - ALLOWED_COMMANDS whitelist controls binaries",
+        " - BLOCKED_FLAGS prevents arbitrary code execution",
+        " - core.path_guard validates all filesystem paths",
         "",
         "Proxy Actions:",
-        "  Each action routes to a specific tool (file, git, web, etc.)",
-        "  and formats the result for human-readable output.",
+        " Each action routes to a specific tool (file, git, web, etc.)",
+        " and formats the result for human-readable output.",
     ],
 )
 def cli(command: str = "", trace_id: str = "") -> dict[str, Any]:
@@ -101,11 +111,12 @@ def cli(command: str = "", trace_id: str = "") -> dict[str, Any]:
 
     Args:
         command: Natural-language command string (e.g., "git status",
-                 "read file.py", "search python tutorials").
+            "read file.py", "search python tutorials").
         trace_id: Execution trace identifier for observability.
 
     Returns:
         dict with status, output, and trace_id.
+        NOTE: status is always "success" — inspect output for errors.
     """
     # Layer 0: Sanitize and validate
     command_inner = _sanitize_command(command)

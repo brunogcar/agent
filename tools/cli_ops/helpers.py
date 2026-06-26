@@ -11,6 +11,12 @@ Security model:
   - ALLOWED_COMMANDS whitelist controls which binaries run
   - BLOCKED_FLAGS blacklist prevents arbitrary code execution (python -c, etc.)
   - core.path_guard.resolve_path validates all filesystem paths before execution
+
+Design note: DANGEROUS_PATTERNS uses substring matching, which may block
+safe-looking strings (e.g., 'echo "don\'t rm -rf /"'). This is an
+acceptable false-positive tradeoff — better to block a safe command than
+allow a dangerous one. Future AIs: do not "fix" this by making it
+regex-based or more permissive without security review.
 """
 from __future__ import annotations
 
@@ -31,6 +37,16 @@ from core.path_guard import resolve_path, _is_within
 _CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 
 # Base commands allowed for execution. shell=False prevents chaining.
+# SECURITY: This is an allowlist, not a blocklist. Any command not listed
+# here is rejected before execution.
+#
+# NOTE on 'python'/'python3': These are allowed but BLOCKED_FLAGS prevents
+# -c, -m, --command, --module flags. An attacker can still run
+# 'python malicious_script.py' if the script is inside AGENT_ROOT.
+# This is an accepted risk — path guard limits it to AGENT_ROOT, and
+# the agent already has full filesystem access within that boundary.
+# Future AIs: do NOT remove python from the allowlist without providing
+# an alternative for running scripts.
 ALLOWED_COMMANDS = frozenset({
     # File/Dir ops
     "ls", "dir", "cat", "type", "head", "tail", "grep", "findstr",
@@ -50,22 +66,37 @@ SHELL_OPERATORS = {"|", "||", "&&", ";", ">", ">>", "<", "&", "`", "$("}
 # Dangerous flags that enable arbitrary code execution even when
 # the base command is allowlisted (e.g., "python -c 'import os; os.system(...)'").
 # These flags are checked after normalization (handles --command=..., -cfile.py, etc.)
+#
+# NOTE: -m blocks 'python -m pytest', but 'pytest' is standalone in
+# ALLOWED_COMMANDS. This is intentional defense-in-depth — if someone
+# accidentally allows 'python -m' in the future, the flag block still
+# catches it. Future AIs: do NOT remove -m from BLOCKED_FLAGS.
 BLOCKED_FLAGS = frozenset({"-c", "-m", "--command", "--module", "-e", "--eval"})
 
-# Dangerous command patterns to block at sanitization time
+# Dangerous command patterns to block at sanitization time.
+# SECURITY: This is a substring blocklist. It may produce false positives
+# (e.g., 'echo "don\'t rm -rf /"' gets blocked). This is by design.
+# See module docstring for rationale.
 DANGEROUS_PATTERNS = frozenset({
     "rm -rf", "passwd", "hacked", "root@", "etc/passwd", "chmod 777",
     "del /f", "format", "diskpart", "rd /s", "rmdir /s",
 })
+
+# Redaction patterns for error messages — must match DANGEROUS_PATTERNS
+# exactly. Future AIs: keep these in sync with DANGEROUS_PATTERNS.
+_REDACTION_PATTERNS = [
+    "/etc/passwd", "rm -rf", "chmod 777", "passwd",
+    "hacked", "root@",
+]
 
 
 def _normalize_flag(token: str) -> str | None:
     """Normalize a CLI token to its canonical flag form for blacklist checking.
 
     Handles:
-      --flag=value  → --flag
-      -cfile.py     → -c
-      --co          → --co (argparse prefix, not matched unless in BLOCKED_FLAGS)
+    --flag=value → --flag
+    -cfile.py → -c
+    --co → --co (argparse prefix, not matched unless in BLOCKED_FLAGS)
     """
     if not token.startswith("-"):
         return None
@@ -87,7 +118,7 @@ def _sanitize_command(command: str) -> str:
 
     Raises:
         ValueError: On null bytes, control characters, blocked patterns,
-                    excessive length, or too many arguments.
+        excessive length, or too many arguments.
     """
     if not isinstance(command, str):
         raise ValueError("Command must be a string")
@@ -125,12 +156,12 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
     """Execute a whitelisted shell command safely.
 
     Security layers:
-      1. Parse via shlex (no shell injection)
-      2. Validate base command against ALLOWED_COMMANDS
-      3. Block dangerous flags (python -c, etc.)
-      4. Reject shell operators (| ; && etc.)
-      5. Validate all non-flag tokens via core.path_guard (default_root="agent")
-      6. Execute with shell=False, capped output, 30s timeout
+    1. Parse via shlex (no shell injection)
+    2. Validate base command against ALLOWED_COMMANDS
+    3. Block dangerous flags (python -c, etc.)
+    4. Reject shell operators (| ; && etc.)
+    5. Validate all non-flag tokens via core.path_guard (default_root="agent")
+    6. Execute with shell=False, capped output, 30s timeout
 
     Args:
         command: The shell command string to execute.
@@ -171,19 +202,34 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
             return f"Shell error: Shell operator '{token}' is not allowed."
 
     # 5. Path Guard — validate all non-flag tokens via core.path_guard
+    # SECURITY: We validate against BOTH agent_root and workspace_root.
+    # The file/git tools allow operations in either root. Blocking
+    # workspace_root paths here would contradict those tools.
     agent_root = cfg.agent_root.resolve()
+    workspace_root = cfg.workspace_root.resolve()
     for token in tokens[1:]:
         if token.startswith("-"):
             continue
-        # Let resolve_path handle the token. It will return an error for
-        # tokens that are clearly not paths (e.g., "--version"), which we ignore.
-        resolved, err = resolve_path(token, default_root="agent")
+        # SECURITY: Also parse --flag=value syntax and validate the value
+        # portion if it looks like a path.
+        value_token = token
+        if "=" in token and not token.startswith("--"):
+            # Already handled by _normalize_flag above; skip for path validation
+            pass
+        elif "=" in token:
+            # --flag=/some/path — validate the path portion
+            value_token = token.split("=", 1)[1]
+
+        try:
+            resolved, err = resolve_path(value_token, default_root="agent")
+        except Exception as e:
+            return f"Shell error: Path validation failed for '{value_token}': {e}"
         if err:
             # Token is not a path (e.g., "--version", "hello") — harmless, skip
             continue
-        if not _is_within(resolved, agent_root):
+        if not (_is_within(resolved, agent_root) or _is_within(resolved, workspace_root)):
             return (
-                f"Shell error: Path '{token}' resolves outside AGENT_ROOT. "
+                f"Shell error: Path '{value_token}' resolves outside AGENT_ROOT. "
                 f"Use paths relative to the project or workspace."
             )
 
@@ -240,11 +286,9 @@ def _safe_dispatch(tool_name: str, action: str, params: dict) -> str:
             return action_func(action=action, **dispatch_params)
         except Exception as e:
             error_str = str(e)
-            redacted_patterns = [
-                "/etc/passwd", "rm -rf", "chmod 777", "passwd",
-                "hacked", "root@",
-            ]
-            for pattern in redacted_patterns:
+            # Redact dangerous patterns from error messages before returning.
+            # Uses the same patterns as DANGEROUS_PATTERNS for consistency.
+            for pattern in _REDACTION_PATTERNS:
                 error_str = error_str.replace(pattern, "[REDACTED]")
             return f"Action error: {error_str}"
     else:

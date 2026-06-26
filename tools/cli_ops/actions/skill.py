@@ -2,6 +2,15 @@
 
 Routes to skills/dispatcher.py skill() function.
 All functions auto-register via @register_action decorator.
+
+NOTE: Parameter mapping is hardcoded for the b3_api domain:
+  query → arg becomes ticker=
+  sync  → arg becomes files=
+  status → arg is ignored
+
+This is domain-specific coupling. Future AIs: if adding new skill
+ domains, generalize the parameter mapping or move it to the skill
+dispatcher itself.
 """
 from __future__ import annotations
 
@@ -29,10 +38,10 @@ def _skill_call(
 ) -> str:
     """Route to skills/dispatcher.py skill() function.
 
-    arg interpretation by mode:
-      query -> arg becomes ticker=
-      sync  -> arg becomes files=
-      status -> arg ignored
+    arg interpretation by mode (hardcoded for b3_api):
+        query -> arg becomes ticker=
+        sync  -> arg becomes files=
+        status -> arg ignored
     """
     try:
         from skills.dispatcher import skill as _skill_fn

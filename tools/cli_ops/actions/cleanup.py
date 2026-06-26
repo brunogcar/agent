@@ -31,8 +31,15 @@ def _cleanup_autocode_runs(max_age_days: int = 7, dry_run: bool = False) -> str:
             dir_date = datetime.strptime(date_dir.name, "%Y%m%d")
             if dir_date < cutoff:
                 if not dry_run:
-                    shutil.rmtree(date_dir, ignore_errors=True)
-                removed.append(str(date_dir))
+                    # SECURITY: Do not use ignore_errors=True — we want to
+                    # know if cleanup fails. Log the error and continue.
+                    try:
+                        shutil.rmtree(date_dir)
+                        removed.append(str(date_dir))
+                    except OSError as e:
+                        skipped.append(f"{date_dir.name} (rmtree error: {e})")
+                else:
+                    removed.append(str(date_dir))
             else:
                 skipped.append(str(date_dir.name))
         except (ValueError, OSError) as e:
@@ -41,11 +48,11 @@ def _cleanup_autocode_runs(max_age_days: int = 7, dry_run: bool = False) -> str:
     prefix = "[DRY RUN] Would remove" if dry_run else "Removed"
     lines = [f"{prefix} {len(removed)} old autocode date dir(s):"]
     for r in removed:
-        lines.append(f"  - {r}")
+        lines.append(f" - {r}")
     if skipped:
         lines.append(f"Kept {len(skipped)} dir(s):")
         for s in skipped:
-            lines.append(f"  - {s}")
+            lines.append(f" - {s}")
     return "\n".join(lines)
 
 
