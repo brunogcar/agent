@@ -1,7 +1,7 @@
-"""cleanup.py — Cleanup action for cli meta-tool.
+"""Cleanup proxy actions for cli meta-tool.
 
 On-demand cleanup of old autocode runs and other ephemeral artifacts.
-Auto-registers via @register_action decorator.
+All functions auto-register via @register_action decorator.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tools.cli_ops._registry import register_action
 from core.config import cfg
-from core.tracer import tracer
+
 
 def _cleanup_autocode_runs(max_age_days: int = 7, dry_run: bool = False) -> str:
     """Delete autocode run folders older than max_age_days."""
@@ -48,12 +48,22 @@ def _cleanup_autocode_runs(max_age_days: int = 7, dry_run: bool = False) -> str:
             lines.append(f"  - {s}")
     return "\n".join(lines)
 
-@register_action("cleanup", "autocode")
-def _cleanup_autocode(days: int = 7, dry_run: bool = False) -> str:
-    """Clean up old autocode runs."""
-    return _cleanup_autocode_runs(max_age_days=days, dry_run=dry_run)
 
-@register_action("cleanup", "dry_run")
-def _cleanup_dry_run(days: int = 7) -> str:
+@register_action(
+    "cleanup", "autocode",
+    help_text="Clean up old autocode runs older than N days.",
+    examples=["cleanup autocode 7", "cleanup autocode"],
+)
+def _cleanup_autocode(action: str = "", days: int = 7, **params) -> str:
+    """Clean up old autocode runs."""
+    return _cleanup_autocode_runs(max_age_days=days, dry_run=False)
+
+
+@register_action(
+    "cleanup", "dry_run",
+    help_text="Preview what autocode cleanup would remove.",
+    examples=["dry run cleanup autocode"],
+)
+def _cleanup_dry_run(action: str = "", days: int = 7, **params) -> str:
     """Preview what would be cleaned up."""
     return _cleanup_autocode_runs(max_age_days=days, dry_run=True)

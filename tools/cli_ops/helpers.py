@@ -1,10 +1,16 @@
 """Shared utilities and helpers for cli meta-tool operations.
 
 Includes:
-- Command sanitization and validation
-- Workspace/cwd detection
-- Secure shell execution wrapper (shell=False + allowlist)
-- Safe dispatch to registered actions
+  - Command sanitization and validation
+  - Secure shell execution wrapper (shell=False + allowlist)
+  - Safe dispatch to registered proxy actions
+  - Path guard integration via core.path_guard
+
+Security model:
+  - shell=False prevents shell injection (no chaining via ; | &&)
+  - ALLOWED_COMMANDS whitelist controls which binaries run
+  - BLOCKED_FLAGS blacklist prevents arbitrary code execution (python -c, etc.)
+  - core.path_guard.resolve_path validates all filesystem paths before execution
 """
 from __future__ import annotations
 
@@ -16,45 +22,50 @@ from pathlib import Path
 from typing import Any
 
 from core.config import cfg
+from core.path_guard import resolve_path, _is_within
 
 # =============================================================================
 # Constants
 # =============================================================================
-# [P2] Limits centralized in core/config.py
 
-_CONTROL_CHAR_PATTERN = re.compile(r'[\x00--]')
+_CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 
-# ── Security: Allowlist & Denylist ─────────────────────────────────────
 # Base commands allowed for execution. shell=False prevents chaining.
 ALLOWED_COMMANDS = frozenset({
     # File/Dir ops
     "ls", "dir", "cat", "type", "head", "tail", "grep", "findstr",
-    "wc", "find", "cp", "copy", "mv", "move", "mkdir", "rmdir",
+    "wc", "cp", "copy", "mv", "move", "mkdir", "rmdir",
     "touch", "stat", "du", "df", "pwd", "cd",
     # Git & Dev
     "git", "gh", "python", "python3", "pip", "pytest",
     # Text/System
-    "sed", "awk", "cut", "sort", "uniq", "tr", "tee",
     "uname", "whoami", "date", "echo", "which", "where",
-    "systeminfo", "ipconfig", "hostname", "tasklist", "ver"
+    "systeminfo", "ipconfig", "hostname", "tasklist", "ver",
+    "diff", "md5sum", "sha256sum",
 })
 
 # Shell operators that are dangerous or useless with shell=False
 SHELL_OPERATORS = {"|", "||", "&&", ";", ">", ">>", "<", "&", "`", "$("}
 
-# [BUGFIX-3] Dangerous flags that enable arbitrary code execution even when
+# Dangerous flags that enable arbitrary code execution even when
 # the base command is allowlisted (e.g., "python -c 'import os; os.system(...)'").
 # These flags are checked after normalization (handles --command=..., -cfile.py, etc.)
 BLOCKED_FLAGS = frozenset({"-c", "-m", "--command", "--module", "-e", "--eval"})
+
+# Dangerous command patterns to block at sanitization time
+DANGEROUS_PATTERNS = frozenset({
+    "rm -rf", "passwd", "hacked", "root@", "etc/passwd", "chmod 777",
+    "del /f", "format", "diskpart", "rd /s", "rmdir /s",
+})
 
 
 def _normalize_flag(token: str) -> str | None:
     """Normalize a CLI token to its canonical flag form for blacklist checking.
 
     Handles:
-      --command=value  → --command
-      -cfile.py        → -c
-      --co             → --co (argparse prefix, not matched unless in BLOCKED_FLAGS)
+      --flag=value  → --flag
+      -cfile.py     → -c
+      --co          → --co (argparse prefix, not matched unless in BLOCKED_FLAGS)
     """
     if not token.startswith("-"):
         return None
@@ -66,84 +77,74 @@ def _normalize_flag(token: str) -> str | None:
         return token[:2]
     return token
 
+
 # =============================================================================
 # Sanitization
 # =============================================================================
+
 def _sanitize_command(command: str) -> str:
-    """
-    Sanitize command input before processing.
+    """Sanitize command input before processing.
+
+    Raises:
+        ValueError: On null bytes, control characters, blocked patterns,
+                    excessive length, or too many arguments.
     """
     if not isinstance(command, str):
         raise ValueError("Command must be a string")
 
-    # [P2] Use centralized config limit (4096 chars)
     if len(command) > cfg.cli_max_command_chars:
-        raise ValueError(f"Command too long (max {cfg.cli_max_command_chars} chars)")
+        raise ValueError(
+            f"Command too long (max {cfg.cli_max_command_chars} chars)"
+        )
 
-    if '\x00' in command:
+    if "\x00" in command:
         raise ValueError("Command contains null bytes")
 
     if _CONTROL_CHAR_PATTERN.search(command):
         raise ValueError("Command contains control characters")
 
-    # Check for dangerous patterns (injection attempts)
-    DANGEROUS_PATTERNS = ['rm -rf', 'passwd', 'hacked', 'root@', 'etc/passwd', 'chmod 777']
     command_lower = command.lower()
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command_lower:
-            raise ValueError("Command contains blocked pattern")
+            raise ValueError(f"Command contains blocked pattern: {pattern}")
 
-    command = ' '.join(command.split())
+    command = " ".join(command.split())
 
     args = command.split()
-    # [P2] Use centralized config limit
     if len(args) > cfg.cli_max_arguments:
         raise ValueError("too many arguments")
 
     return command
 
-# =============================================================================
-# Workspace Detection
-# =============================================================================
-def _detect_cwd(command: str) -> Path | None:
-    """Detect working directory from command."""
-    command_lower = command.lower().strip()
-
-    if command_lower.startswith("cd "):
-        target = command[3:].strip()
-        if target:
-            try:
-                return Path(target)
-            except Exception:
-                pass
-
-    tokens = command.split()
-    for token in tokens:
-        if token.startswith("/") or token.startswith("~") or ":" in token:
-            try:
-                return Path(token)
-            except Exception:
-                continue
-
-    return None
 
 # =============================================================================
 # Shell Execution (HARDENED)
 # =============================================================================
+
 def _shell_exec(command: str, cwd: Path | None = None) -> str:
-    """
-    Execute a shell command safely.
-    - Uses shell=False to prevent injection.
-    - Validates base command against ALLOWED_COMMANDS.
-    - Validates paths against workspace_root.
+    """Execute a whitelisted shell command safely.
+
+    Security layers:
+      1. Parse via shlex (no shell injection)
+      2. Validate base command against ALLOWED_COMMANDS
+      3. Block dangerous flags (python -c, etc.)
+      4. Reject shell operators (| ; && etc.)
+      5. Validate all non-flag tokens via core.path_guard (default_root="agent")
+      6. Execute with shell=False, capped output, 30s timeout
+
+    Args:
+        command: The shell command string to execute.
+        cwd: Optional working directory. Defaults to cfg.workspace_root.
+
+    Returns:
+        Command stdout/stderr as string, or error message prefixed with "Shell error:".
     """
     if not command or not command.strip():
         return "Shell error: Empty command"
 
     # 1. Parse command
     try:
-        # posix=False on Windows handles backslashes better
-        tokens = shlex.split(command, posix=(os.name != 'nt'))
+        tokens = shlex.split(command, posix=(os.name != "nt"))
     except ValueError as e:
         return f"Shell error: Invalid syntax ({e})"
 
@@ -158,38 +159,39 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
     if base_cmd not in ALLOWED_COMMANDS:
         return f"Shell error: Command '{base_cmd}' is not in the allowlist."
 
-    # [BUGFIX-3] Block dangerous flags that enable arbitrary code execution.
-    # Normalizes flags to catch --command=..., -cfile.py, and combined shorts.
+    # 3. Block dangerous flags
     for token in tokens[1:]:
         normalized = _normalize_flag(token)
         if normalized and normalized in BLOCKED_FLAGS:
             return f"Shell error: Flag '{token}' is blocked for security."
 
-    # 3. Operator Check (Reject shell chaining)
+    # 4. Operator Check (Reject shell chaining)
     for token in tokens:
         if token in SHELL_OPERATORS:
             return f"Shell error: Shell operator '{token}' is not allowed."
 
-    # 4. Path Traversal Check
-    workspace_root = cfg.workspace_root.resolve()
+    # 5. Path Guard — validate all non-flag tokens via core.path_guard
+    agent_root = cfg.agent_root.resolve()
     for token in tokens[1:]:
         if token.startswith("-"):
             continue
-        p = Path(token)
-        if p.exists():
-            try:
-                full_path = p.resolve()
-                # Ensure path is inside workspace
-                if not (full_path == workspace_root or workspace_root in full_path.parents):
-                    return f"Shell error: Path '{token}' is outside the workspace."
-            except (OSError, ValueError):
-                pass
+        # Let resolve_path handle the token. It will return an error for
+        # tokens that are clearly not paths (e.g., "--version"), which we ignore.
+        resolved, err = resolve_path(token, default_root="agent")
+        if err:
+            # Token is not a path (e.g., "--version", "hello") — harmless, skip
+            continue
+        if not _is_within(resolved, agent_root):
+            return (
+                f"Shell error: Path '{token}' resolves outside AGENT_ROOT. "
+                f"Use paths relative to the project or workspace."
+            )
 
-    # 5. Execute
+    # 6. Execute
     try:
         result = subprocess.run(
             tokens,
-            shell=False,  # CRITICAL: Prevents shell injection
+            shell=False,
             cwd=str(cwd) if cwd else str(cfg.workspace_root),
             capture_output=True,
             text=True,
@@ -206,34 +208,44 @@ def _shell_exec(command: str, cwd: Path | None = None) -> str:
     except Exception as e:
         return f"Shell error: {e}"
 
+
 # =============================================================================
 # Dispatch
 # =============================================================================
+
 def _safe_dispatch(tool_name: str, action: str, params: dict) -> str:
+    """Look up tool_name:action in DISPATCH and execute.
+
+    Extracts trace_id from params without mutating the caller's dict,
+    then calls the handler with the remaining params.
+
+    Args:
+        tool_name: Namespace in DISPATCH (e.g., "file", "git").
+        action: Action name within the namespace.
+        params: Keyword arguments for the handler. May include trace_id.
+
+    Returns:
+        Handler result (str) or error message.
     """
-    Look up tool_name:action in whitelist and execute.
-    Filters trace_id from params to avoid 'unexpected keyword argument' errors
-    in action handlers that don't accept it.
-    """
-    from tools.cli_ops import DISPATCH
+    from tools.cli_ops._registry import DISPATCH
 
     if tool_name in DISPATCH and action in DISPATCH[tool_name]:
-        action_func = DISPATCH[tool_name][action]
+        action_func = DISPATCH[tool_name][action]["func"]
 
-        # Filter out trace_id if the handler doesn't accept it
-        # This prevents "unexpected keyword argument 'trace_id'" errors
-        trace_id = params.pop("trace_id", None)
+        # Extract trace_id without mutating caller's dict
+        dispatch_params = dict(params)
+        dispatch_params.pop("trace_id", None)
 
         try:
-            try:
-                return action_func(action, **params)
-            except TypeError:
-                return action_func(**params)
+            return action_func(action=action, **dispatch_params)
         except Exception as e:
             error_str = str(e)
-            dangerous_patterns = ['/etc/passwd', 'rm -rf', 'chmod 777', 'passwd', 'hacked', 'root@']
-            for pattern in dangerous_patterns:
-                error_str = error_str.replace(pattern, '[REDACTED]')
+            redacted_patterns = [
+                "/etc/passwd", "rm -rf", "chmod 777", "passwd",
+                "hacked", "root@",
+            ]
+            for pattern in redacted_patterns:
+                error_str = error_str.replace(pattern, "[REDACTED]")
             return f"Action error: {error_str}"
     else:
         return (

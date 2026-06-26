@@ -1,10 +1,8 @@
-"""
-skill.py — Skill dispatcher proxy for cli meta-tool.
+"""Skill dispatcher proxy for cli meta-tool.
 
 Routes to skills/dispatcher.py skill() function.
 All functions auto-register via @register_action decorator.
 """
-
 from __future__ import annotations
 
 import json
@@ -12,14 +10,28 @@ from typing import Any
 
 from tools.cli_ops._registry import register_action
 
-@register_action("skill", "call")
-def _skill_call(domain: str = "", mode: str = "", arg: str = "", **extra: Any) -> str:
-    """
-    Route to skills/dispatcher.py skill() function.
+
+@register_action(
+    "skill", "call",
+    help_text="Call a skill domain (shortcut: 'skill <domain> <mode> [arg]').",
+    examples=[
+        "skill b3_api status",
+        "skill b3_api query PETR4",
+        "skill b3_api sync files.csv",
+    ],
+)
+def _skill_call(
+    action: str = "",
+    domain: str = "",
+    mode: str = "",
+    arg: str = "",
+    **extra: Any,
+) -> str:
+    """Route to skills/dispatcher.py skill() function.
 
     arg interpretation by mode:
-      query  -> arg becomes ticker=
-      sync   -> arg becomes files=
+      query -> arg becomes ticker=
+      sync  -> arg becomes files=
       status -> arg ignored
     """
     try:

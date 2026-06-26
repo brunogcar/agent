@@ -1,20 +1,28 @@
-"""
-system.py — System actions for cli meta-tool.
+"""System actions for cli meta-tool.
 
 All functions auto-register via @register_action decorator.
 """
-
 from __future__ import annotations
 
 from tools.cli_ops._registry import register_action
 
-@register_action("system", "health")
-def _system_health() -> str:
+
+@register_action(
+    "system", "health",
+    help_text="System health check (shortcut: 'health').",
+    examples=["health"],
+)
+def _system_health(action: str = "", **params) -> str:
     """System health check."""
     return "MCP Agent Stack: all systems operational."
 
-@register_action("system", "help")
-def _system_help() -> str:
+
+@register_action(
+    "system", "help",
+    help_text="Show available CLI commands (shortcut: 'help').",
+    examples=["help"],
+)
+def _system_help(action: str = "", **params) -> str:
     """System help message."""
     return (
         "cli quick commands:\n"
@@ -25,11 +33,11 @@ def _system_help() -> str:
         "  python run <code> | calc <expr>\n"
         "  notify <message>\n"
         "  lms ls | ps | load <model> | unload [model] | log\n"
-        "  skill <domain> <mode>  -- e.g. skill b3_api status | skill b3_api sync\n"
+        "  skill <domain> <mode> [arg]  -- e.g. skill b3_api status\n"
         "  health | help\n"
         "Shell (zero tokens, real output):\n"
-        "  python <script.py> [args] | python --version | pip --version\n"
-        "  whoami | hostname | where <cmd> | dir [path] | type <file>\n"
+        "  python [args] | python --version | pip --version\n"
+        "  whoami | hostname | where | dir [path] | type <file>\n"
         "  copy <src> <dst> | move <src> <dst> | mkdir <dir> | del <file>\n"
         "Anything else -> Router decides: direct dispatch or Executor escalation."
     )

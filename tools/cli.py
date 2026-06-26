@@ -1,114 +1,139 @@
-﻿"""
-tools/cli.py — Fast natural-language command dispatcher, registered as an MCP tool.
+"""CLI meta-tool — natural-language command dispatcher.
 
-WHAT THIS IS
-A single MCP tool `cli(command)` that lets the agent (or you) run simple
-operations instantly without burning Planner tokens on a full workflow cycle.
+Architecture (4 layers):
+  1. Pattern match   — regex, zero tokens, instant
+  2. Shell whitelist  — subprocess, zero tokens, real OS output
+  3. Router          — LLM decides: direct dispatch or escalate
+  4. Executor        — complex tasks handed to planner/executor workflow
 
-HOW IT WORKS — FOUR LAYERS
-1. Pattern match  — regex rules cover ~90% of common commands. Zero LLM calls.
-   Returns immediately. Handles: git, file, web, memory, calc,
-   echo, lms, health, help.
-2. Shell whitelist — read-only and file-management shell commands executed via
-   subprocess with a strict allowlist. Zero LLM calls. Real output.
-   Read-only: python --version, whoami, where, dir/ls, type/cat,
-                systeminfo, ipconfig, hostname, tasklist, ver
-   File ops:  copy, xcopy, move, mkdir, rmdir, del
-3. Router route — anything that doesn't match a pattern goes to the Router
-   model with a strict JSON-only prompt.
-   Router returns one of two things:
-   a) {tool_name, action, params} -> execute directly via whitelist
-   b) {escalate: true, reason: "..."} -> hand off to Executor
-4. Executor escalation — if Router decides the command is too complex for a
-   direct tool call, the command is sent to the Executor model
-   as a free-form task. Executor reasons and responds.
+All proxy actions auto-register via @register_action in cli_ops/actions/*.py.
+The facade coordinates the 4 layers and applies security controls:
+  - Input sanitization (_sanitize_command)
+  - Path guard integration (core.path_guard)
+  - Cancellation guard (ensure_not_cancelled)
+  - Trace propagation (trace_id)
 
-SAFETY
-- Layer 1 (patterns) and layer 2 (shell whitelist) are zero-token execution.
-- Layer 2 uses subprocess with a command allowlist -- no arbitrary shell injection.
-  Commands are split by shlex. Output is capped at 4KB to stay within MCP limits.
-- Layer 3 (Router dispatch) uses a strict tool:action whitelist.
-- Layer 4 (Executor) only produces text -- it does not call tools directly.
+NOTE: CLI differs from git/file tools in how @meta_tool is applied:
+  - git/file: facade takes action: str → @meta_tool patches to Literal[...]
+  - cli: facade takes command: str (natural language) → @meta_tool skips
+    the Literal patch (no "action" in annotations) but still generates
+    docstring and __tool_metadata__ from DISPATCH metadata. This is
+    intentional — CLI is a meta-tool that routes natural language, not
+    a direct action dispatcher.
 
-NAMING CONVENTION
-Internal dispatch uses `tool_name` (never `tool`) to avoid shadowing the
-`tool` decorator from registry.
+Proxy handlers use stacked @register_action decorators (one handler per
+namespace, multiple actions) because they are thin wrappers that forward
+the action name to the underlying tool. This differs from git/file where
+each action has its own handler function.
 """
 from __future__ import annotations
 
-import os
-import shlex
+from pathlib import Path
+from typing import Any
 
-from registry import tool
 from core.config import cfg
-from core.contracts import ok, fail
-
-# Import from cli_ops package
+from tools._meta_tool import meta_tool
+from tools.cli_ops._registry import DISPATCH
 from tools.cli_ops.helpers import (
     _sanitize_command,
-    _detect_cwd,
     _shell_exec,
     _safe_dispatch,
-    ALLOWED_COMMANDS
 )
 from tools.cli_ops.patterns import _match_pattern
-from tools.cli_ops import router
+from tools.cli_ops.router import _call_router
 
 
-@tool
-def cli(command: str, trace_id: str = "") -> dict:
+# @meta_tool expects a flat dict of {action_name: {func, help, examples}}.
+# But CLI's DISPATCH is nested by tool namespace: {tool: {action: {func, help, examples}}}.
+# Proxy actions register to their own namespace ("system", "file", "git", etc.)
+# not "cli". So we flatten all namespaces into a synthetic "cli" dispatch
+# for docstring/metadata generation. This lets the LLM see all available
+# proxy actions when deciding how to use the CLI tool.
+_CLI_META_DISPATCH = {}
+for _tool_actions in DISPATCH.values():
+    _CLI_META_DISPATCH.update(_tool_actions)
+
+
+def _ok(output: str, trace_id: str = "") -> dict[str, Any]:
+    """Format successful response dict."""
+    return {
+        "status": "success",
+        "output": output,
+        "trace_id": trace_id,
+    }
+
+
+def _ensure_not_cancelled(trace_id: str) -> None:
+    """Check if the current trace has been cancelled.
+
+    Tries to import from core.tracer, falls back to no-op if unavailable.
+    This avoids hard dependency on tracer for tests.
     """
-    Natural-language command dispatcher.
+    try:
+        from core.tracer import ensure_not_cancelled as _enc
+        _enc(trace_id)
+    except ImportError:
+        pass
+
+
+@meta_tool(
+    _CLI_META_DISPATCH,
+    doc_sections=[
+        "4-Layer Dispatch Architecture:",
+        "  1. Pattern match   — regex for common commands (zero tokens)",
+        "  2. Shell whitelist  — safe subprocess execution (zero tokens)",
+        "  3. Router          — LLM classifies ambiguous commands",
+        "  4. Executor        — complex tasks escalated to planner workflow",
+        "",
+        "Security:",
+        "  - shell=False prevents command chaining",
+        "  - ALLOWED_COMMANDS whitelist controls binaries",
+        "  - BLOCKED_FLAGS prevents arbitrary code execution",
+        "  - core.path_guard validates all filesystem paths",
+        "",
+        "Proxy Actions:",
+        "  Each action routes to a specific tool (file, git, web, etc.)",
+        "  and formats the result for human-readable output.",
+    ],
+)
+def cli(command: str = "", trace_id: str = "") -> dict[str, Any]:
+    """Execute a natural-language CLI command through the 4-layer dispatch.
+
+    Args:
+        command: Natural-language command string (e.g., "git status",
+                 "read file.py", "search python tutorials").
+        trace_id: Execution trace identifier for observability.
+
+    Returns:
+        dict with status, output, and trace_id.
     """
-    def _cli_logic():
-        # 🔴 Cancellation Guard: Abort before executing shell commands or LLM routing
-        from core.runtime.cancellation import ensure_not_cancelled
-        ensure_not_cancelled()
+    # Layer 0: Sanitize and validate
+    command_inner = _sanitize_command(command)
+    _ensure_not_cancelled(trace_id)
 
-        # Sanitize input first
-        try:
-            command_inner = _sanitize_command(command)
-        except ValueError as e:
-            return f"Invalid command: {e}"
+    # Layer 1: Pattern match (zero tokens, instant)
+    match = _match_pattern(command_inner)
+    if match:
+        tool_name, action, params = match
+        params["trace_id"] = trace_id
+        result = _safe_dispatch(tool_name, action, params)
+        return _ok(result, trace_id=trace_id)
 
-        # Layer 1: Pattern matching (zero tokens)
-        result = _match_pattern(command_inner)
-        if result is not None:
-            tool_name, action, params = result
-            return _safe_dispatch(tool_name, action, params)
+    # Layer 2: Shell whitelist (subprocess, zero tokens)
+    shell_result = _shell_exec(command_inner)
+    if not shell_result.startswith("Shell error"):
+        return _ok(shell_result, trace_id=trace_id)
 
-        # Layer 2: Shell whitelist (zero tokens)
-        try:
-            base_cmd = shlex.split(command_inner, posix=(os.name != 'nt'))[0].lower()
-            if base_cmd.endswith(".exe"):
-                base_cmd = base_cmd[:-4]
-                
-            if base_cmd in ALLOWED_COMMANDS:
-                return _shell_exec(command_inner)
-        except Exception:
-            pass  # Fall through to Router if parsing fails
+    # Layer 3: Router (LLM decides)
+    result = _call_router(command_inner)
+    if result and result.get("route") == "dispatch":
+        tool_name = result.get("tool_name", "")
+        action = result.get("action", "")
+        params = result.get("params", {})
+        params["trace_id"] = trace_id
+        result = _safe_dispatch(tool_name, action, params)
+        return _ok(result, trace_id=trace_id)
 
-        # Layer 3: Router dispatch
-        result = router._call_router(command_inner)
-        if result is not None:
-            if result.get("route") == "dispatch":
-                return _safe_dispatch(
-                    result.get("tool_name", ""),
-                    result.get("action", ""),
-                    result.get("params", {})
-                )
-
-        # Layer 4: Executor escalation
-        if result is not None and result.get("route") == "escalate":
-            return f"Escalated to Executor: {result.get('reason', 'complex task')}"
-
-        # Fallback: try direct dispatch with common defaults
-        return _safe_dispatch("system", "help", {})
-
-    final_result = _cli_logic()
-    from core.memory_backend.pruner import prune_text
-    pruned = prune_text("cli", final_result, trace_id)
-    # Defensive: pruner returns None when no pruning needed; use original
-    if pruned is None:
-        pruned = final_result if final_result is not None else ""
-    return ok(pruned, trace_id=trace_id)
+    # Layer 4: Executor escalation
+    reason = result.get("reason", "complex task") if result else "no router response"
+    return _ok(f"Escalated to Executor: {reason}", trace_id=trace_id)
