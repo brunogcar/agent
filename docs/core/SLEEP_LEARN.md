@@ -354,8 +354,8 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/sleep_learn/test_injector.py -v
 ### Two Parallel Learning Systems
 
 **What exists:**
-- `core/meta_learning.py` — inline learning, writes to main `procedural` collection, 30% confidence threshold.
-- `core/sleep_learn/` — background daemon, writes to isolated `procedural_meta` collection, 60% confidence threshold.
+- `core/memory_backend/meta_learning.py` — inline learning, writes to main `procedural` collection. Rewritten to a heuristic/template-based extractor (no LLM call, no single confidence threshold) — each rule template carries its own fixed confidence value (0.8–0.9) as metadata.
+- `core/sleep_learn/` — background daemon, writes to isolated `procedural_meta` collection, `SLEEP_LEARN_MIN_CONFIDENCE` gate (default **0.8**, not 0.6).
 
 **The concern:**
 Both systems extract procedural rules from execution history. The injector merges both collections into the Planner prompt. This works, but:
@@ -433,9 +433,9 @@ If you are an AI assistant modifying the Sleep & Learn daemon:
 | `core/sleep_learn/injector.py` | Merge rules into Planner system prompt |
 | `core/sleep_learn/logger.py` | Parse `pending_feedback.log` for entries |
 | `core/sleep_learn/config.py` | `SLEEP_*` configuration constants |
-| `core/sleep_learn/sweeper.py` | Placeholder — not yet implemented |
-| `core/sleep_learn/janitor.py` | Placeholder — not yet implemented |
-| `core/meta_learning.py` | Inline learning (parallel system, writes to main `procedural`) |
+| `core/sleep_learn/sweeper.py` | Phase 1 only — `sweep_recent_observations()` implemented, no LLM/ChromaDB calls yet |
+| `core/sleep_learn/janitor.py` | Implemented — `purge_stale_rules()` (confidence + recall-aware) |
+| `core/memory_backend/meta_learning.py` | Inline learning (parallel system, writes to main `procedural`) |
 | `core/runtime/activity_tracker.py` | `try_acquire_background_slot()` — idle detection |
 | `core/llm_backend/client.py` | `llm.complete()` — LLM calls from distiller |
 | `core/memory_backend/store.py` | Main memory singleton |

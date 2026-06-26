@@ -20,20 +20,22 @@ The memory backend is a **three-collection ChromaDB vector store** with decay sc
 ```
 core/memory.py                          # Thin facade — re-exports singleton
 core/memory_backend/
-├── store.py                            # ChromaDBMemory: collections, stats, compact, delete
-├── write_ops.py                        # Thread-safe remember(), write_procedural_rule()
-├── read_ops.py                         # recall(), memory_search(), semantic_search()
+├── store.py                            # MemoryStore class: collections, _write_lock, stats
+├── write_ops.py                        # execute_store() — TOCTOU-safe dedup + insert
+├── read_ops.py                         # execute_recall(), execute_recall_context()
 ├── scoring.py                          # 4-factor confidence scoring + query rewriting
-├── maintenance.py                      # deduplicate(), forget(), memory_vacuum(), memory_report()
-├── telemetry.py                        # Opik integration for LLM call observability
-├── eviction.py                         # EvictionEngine: pruning, compaction, budget enforcement
-├── janitor.py                          # MaintenanceDaemon: background memory health
-├── constants.py                        # Shared constants (banned files, limits, etc.)
-└── client.py                           # get_chroma_client(), collection locking
+├── maintenance.py                      # execute_delete/prune/summarize/stats/diversity_maintenance()
+├── telemetry.py                        # RecallTracker — RAM buffer, periodic ChromaDB flush
+├── eviction.py                         # EvictionQueue class + flusher_loop() — disk spill queue
+├── janitor.py                          # archive_old_episodes() — episodic archival only
+├── constants.py                        # COLLECTION_PROCEDURAL, META_FIELDS, dedup thresholds
+├── client.py                           # get_client(timeout=60) — ChromaDB client singleton
+├── budget.py                           # Cognitive context budgeting (7-tier ContextClass:
+│                                        #   SYSTEM/USER/ERROR/PROCEDURAL/RECENT/OUTPUT/ARCHIVE)
+├── pruner.py                           # VRAM context pruning (artifact preservation + truncation)
+├── meta_learning.py                    # distill_and_store() + MetaLearner — inline learning from traces
+└── procedural/                         # distill.py, prompts.py, validate.py
 
-core/context_budget.py                  # Shared context budgeting (cognitive priority-based)
-core/context_pruner.py                  # Overflow-aware context compression
-core/meta_learning.py                   # Inline learning from high-confidence tool mistakes
 core/sleep_learn/                       # Background meta-learning daemon
 ├── daemon.py                           # start_background_daemon() — midnight scheduler
 ├── feedback.py                         # Pending feedback processing loop
@@ -659,8 +661,8 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_context_budget.py -v
 ### Two Parallel Learning Systems
 
 **What exists:**
-- `core/meta_learning.py` — inline learning, writes to main `procedural` collection, 30% confidence threshold.
-- `core/sleep_learn/` — background daemon, writes to isolated `procedural_meta` collection, 60% confidence threshold.
+- `core/memory_backend/meta_learning.py` — inline learning, writes to main `procedural` collection. Rewritten to a heuristic/template-based extractor (no LLM call, no single confidence threshold) — each rule template carries its own fixed confidence value (0.8–0.9) as metadata. A separate `>0.95` similarity check treats near-duplicates as reinforcement rather than new rules.
+- `core/sleep_learn/` — background daemon, writes to isolated `procedural_meta` collection, `SLEEP_LEARN_MIN_CONFIDENCE` gate (default **0.8**, not 0.6).
 
 **The concern:**
 Both systems extract procedural rules from execution history. The injector merges both collections into the Planner prompt. This works, but:
@@ -719,10 +721,10 @@ If you are an AI assistant modifying the memory backend:
 | `core/memory_backend/eviction.py` | `EvictionEngine`: pruning, compaction, budget enforcement |
 | `core/memory_backend/janitor.py` | `MaintenanceDaemon`: background memory health |
 | `core/memory_backend/constants.py` | Shared constants (banned files, limits) |
-| `core/memory_backend/client.py` | `get_chroma_client()`, collection locking |
-| `core/context_budget.py` | Cognitive priority-based context budgeting |
-| `core/context_pruner.py` | Overflow-aware context compression |
-| `core/meta_learning.py` | Inline learning from high-confidence mistakes |
+| `core/memory_backend/client.py` | `get_client(timeout=60)` — ChromaDB client singleton |
+| `core/memory_backend/budget.py` | Cognitive priority-based context budgeting (7-tier) |
+| `core/memory_backend/pruner.py` | Overflow-aware context compression (VRAM artifact pruning) |
+| `core/memory_backend/meta_learning.py` | Inline learning, heuristic/template-based |
 | `core/sleep_learn/daemon.py` | Background daemon startup |
 | `core/sleep_learn/feedback.py` | Pending feedback processing |
 | `core/sleep_learn/distiller.py` | Trace analysis → rule extraction |

@@ -1,6 +1,6 @@
 # 🏛️ Core Architecture Reference
 
-> **Status:** v3 — Updated with standalone files, model names removed for longevity (June 2026)
+> **Status:** v4 — Verified June 2026 against real source via curl on raw.githubusercontent.com
 > **Scope:** `core/` module. Tools (`tools/`) and workflows (`workflows/`) covered separately.
 
 The `core/` module is the **foundation layer** of the MCP Agent Stack. It provides configuration, LLM communication, memory, learning, routing, gateway, runtime governance, knowledge graph, and observability — everything the agent needs to think, remember, and act.
@@ -43,7 +43,7 @@ graph TD
         LLM_B["llm_backend/\nLLM client + circuit breakers"]
         MEM_B["memory_backend/\nChromaDB + maintenance"]
         SL["sleep_learn/\nBackground learning"]
-        ML["meta_learning.py\nInline learning"]
+        ML["memory_backend/meta_learning.py\nBackground learning (30min daemon)"]
         RT["runtime/\nWatchdog, health, activity"]
         RTR["router.py\nTask classification"]
         GW_B["gateway_backend/\nHTTP engine"]
@@ -105,46 +105,58 @@ core/
 │
 ├── llm.py                # Thin facade for LLMClient
 ├── llm_backend/          # Full LLM subsystem
-│   ├── client.py         # LLMClient: complete(), complete_with_tools(), call()
-│   ├── context_budget.py # Cognitive priority-based context budgeting
-│   ├── context_pruner.py # Overflow-aware context compression
-│   ├── budget.py         # Raw token truncation (budget_messages)
+│   ├── client.py         # LLMClient: complete(), call() — imports budget_messages
+│   │                     #   from memory_backend/budget.py (NOT llm_backend/budget.py)
 │   ├── circuit_breaker.py # Per-model failure tracking with auto-recovery
-│   ├── prompt_loader.py  # YAML system prompt loading by role
-│   ├── config.py         # RoleConfig builder from .env
-│   ├── response.py       # LLMResponse dataclass
-│   ├── models.py         # Dataclasses: LLMResponse, LLMUsage, RoleConfig
-│   ├── factory.py        # Composition root, dynamic provider registration
+│   ├── config.py         # RoleConfig + _build_role_configs() — role->provider/model resolution
+│   ├── response.py       # LLMResponse dataclass, usage normalization
+│   ├── budget.py         # Rate limiting (ThreadSafeRateLimiter) + raw token-count
+│   │                     #   truncation (truncate_by_tokens) + cost estimation.
+│   │                     #   NOT the cognitive-tier system — see memory_backend/budget.py.
+│   ├── provider.py       # BaseProvider ABC + ProviderRegistry
+│   ├── factory.py        # create_llm_client() — composition root, provider registration
 │   └── providers/
-│       ├── base.py       # BaseProvider ABC
 │       ├── lmstudio.py   # Local OpenAI-compatible provider
 │       └── openai_compat.py # Cloud provider (OpenAI, DeepSeek, etc.)
 │
 ├── memory.py             # Thin facade for ChromaDBMemory
 ├── memory_backend/       # Full memory subsystem
-│   ├── store.py          # ChromaDBMemory: collections, stats, compact, delete
-│   ├── write_ops.py      # Thread-safe remember(), write_procedural_rule()
-│   ├── read_ops.py       # recall(), memory_search(), semantic_search()
+│   ├── store.py          # MemoryStore class: collections, _write_lock, stats
+│   ├── write_ops.py      # execute_store() — TOCTOU-safe dedup + insert
+│   ├── read_ops.py       # execute_recall(), execute_recall_context()
 │   ├── scoring.py        # 4-factor confidence scoring + query rewriting
-│   ├── maintenance.py    # deduplicate(), forget(), memory_vacuum(), memory_report()
-│   ├── telemetry.py      # Opik integration for LLM call observability
-│   ├── eviction.py       # EvictionEngine: pruning, compaction, budget enforcement
-│   ├── janitor.py        # MaintenanceDaemon: background memory health
-│   ├── constants.py      # Shared constants (banned files, limits, etc.)
-│   └── client.py         # get_chroma_client(), collection locking
+│   ├── maintenance.py    # execute_delete/prune/summarize/stats/diversity_maintenance()
+│   ├── telemetry.py      # RecallTracker — RAM buffer, periodic ChromaDB flush
+│   ├── eviction.py       # EvictionQueue + flusher_loop() — crash-safe WAL disk spill
+│   │                     #   (persists evicted CONTEXT into ChromaDB, NOT a deletion mechanism)
+│   ├── janitor.py        # archive_old_episodes() — episodic archival to episodic_archive
+│   ├── constants.py      # COLLECTION_PROCEDURAL, META_FIELDS, dedup thresholds
+│   ├── client.py         # get_client(timeout=60) — ChromaDB client singleton
+│   ├── budget.py         # Cognitive context budgeting — 7-tier ContextClass priority:
+│   │                     #   SYSTEM > USER > ERROR > PROCEDURAL > RECENT > OUTPUT > ARCHIVE
+│   │                     #   Used by llm_backend/client.py via `from memory_backend.budget
+│   │                     #   import budget_messages`. File's own docstring says
+│   │                     #   "core/context_budget.py" — stale path from a prior refactor move.
+│   ├── pruner.py         # Tool-output context pruning (artifact preservation + truncation)
+│   │                     #   Real functions: prune_text(), prune_tool_dict()
+│   │                     #   File's own docstring says "core/context_pruner.py" — stale path.
+│   ├── meta_learning.py  # distill_and_store() + MetaLearner.run_forever()
+│   │                     #   Background daemon (every 30min), NOT inline/immediate.
+│   │                     #   Scans in-memory tracer.recent(20). Per-rule confidence: 0.8-0.9.
+│   │                     #   Writes to main `procedural` collection.
+│   └── procedural/       # distill.py, prompts.py, validate.py — rule distillation
 │
-├── meta_learning.py      # Inline learning from high-confidence tool mistakes
-├── sleep_learn/          # Background meta-learning daemon
-│   ├── daemon.py         # start_background_daemon() — midnight scheduler
-│   ├── feedback.py       # Pending feedback processing loop
-│   ├── distiller.py      # Trace analysis -> rule extraction (LLM, 15s timeout)
+├── sleep_learn/          # Background meta-learning daemon (separate from meta_learning.py)
+│   ├── daemon.py         # start_background_daemon() — started by server.py explicitly
+│   ├── feedback.py       # Pending feedback processing loop (confidence scoring)
+│   ├── distiller.py      # Trace analysis -> rule extraction (LLM, 15s VRAM-safety timeout)
 │   ├── filters.py        # Quality gates: new rules, dedup, contradictions
-│   ├── storage.py        # Write rules to isolated ChromaDB collection
-│   ├── injector.py       # Merge rules into Planner system prompt
+│   ├── storage.py        # Write rules to isolated ChromaDB (sleep_learn_db/)
+│   ├── injector.py       # Merge rules into Planner system prompt (live on request path)
 │   ├── logger.py         # Parse feedback.log for pending entries
 │   ├── config.py         # SLEEP_* configuration constants
-│   ├── sweeper.py        # Placeholder — not yet implemented
-│   └── janitor.py        # Purges stale/low-confidence learned rules
+│   ├── sweeper.py        # Phase-1 only — returns heartbeat, NO LLM/ChromaDB yet
+│   └── janitor.py        # Purges stale/low-confidence rules from procedural_meta collection
 │
 ├── contracts.py          # ToolCall/ToolResult schemas, ok()/fail() helpers
 ├── security.py           # SSRF protection (is_safe_network_address)
@@ -207,7 +219,7 @@ Singleton config loaded from `.env` at import time. Tiered model strategy: large
 | Pattern | Singleton (`cfg`) |
 | Validation | Fail-fast at import time |
 | Paths | `pathlib.Path` throughout |
-| Models | 12 roles across 3 tiers (names configured in `.env`, never hardcoded) |
+| Models | 14 roles across 3 tiers (names configured in `.env`, never hardcoded) |
 
 ---
 
@@ -220,8 +232,8 @@ Unified interface for all model interactions. Role-based dispatch, circuit break
 | Property | Value |
 |----------|-------|
 | Entry point | `llm.complete(role, system, user)` |
-| Circuit breaker | 3 failures -> 30s cooldown -> half-open recovery |
-| Context budgeting | 5 cognitive categories with priority-based trimming |
+| Circuit breaker | 3 failures → 60s cooldown → half-open recovery |
+| Context budgeting | 7-tier ContextClass priority (SYSTEM > USER > ERROR > PROCEDURAL > RECENT > OUTPUT > ARCHIVE). Lives in `memory_backend/budget.py`, imported by `llm_backend/client.py`. |
 | Output modes | text, json (3-layer extraction), tools (tool-loop) |
 | Providers | LM Studio, Ollama, vLLM, OpenAI-compatible cloud |
 
@@ -236,25 +248,27 @@ Three-collection ChromaDB vector store with decay scoring, four-layer dedup, and
 | Property | Value |
 |----------|-------|
 | Collections | episodic, semantic, procedural |
-| Dedup | Hash guard -> outer vector -> inner vector -> procedural reinforcement |
+| Dedup | Hash guard → outer vector → inner vector → procedural reinforcement |
 | Decay | Episodic/semantic: 30-day half-life. Procedural: bounded decay (floor 0.7) |
-| Learning | Inline (meta_learning) + Background (sleep_learn) |
+| Learning | `meta_learning.py` (30min daemon) + `sleep_learn/` (idle-gated background) |
 | Thread safety | `threading.Lock()` per collection + cancellation guards |
 
 ---
 
 ### Task Router (`router.py`)
 
-Ultra-fast classification layer (15s timeout). Model-based routing with deterministic heuristic fallback.
+Ultra-fast classification layer (15s timeout). Model-based routing with deterministic heuristic fallback. All 15 tools + 5 workflows covered.
 
 -> [Full documentation](ROUTER.md)
 
 | Property | Value |
 |----------|-------|
 | Primary | Router LLM, 15s timeout, JSON output |
-| Fallback | Pre-compiled regex keywords, O(1) |
-| Confidence guard | Low confidence -> abort + clarifying questions |
-| Targets | research, data, autocode, direct (file, memory, git, notify, report) |
+| Fallback | Pre-compiled regex keywords, 18 priority levels |
+| Tools covered | 15 (web, python, file, git, memory, agent, notify, report, vision, workflow, cli, browser, tavily, consult, parallel) |
+| Workflows | 5 (research, data, autocode, deep_research, understand) |
+| Confidence guard | Low confidence → abort + clarifying questions (intercepted in workflow_tool.py) |
+| Test constants | `ROUTER_TOOLS`, `ROUTER_WORKFLOWS`, `ROUTER_SYSTEM_PROMPT`, `ROUTER_FEW_SHOT_EXAMPLES` importable by tests |
 
 ---
 
@@ -308,22 +322,26 @@ Process governance layer. Activity tracking, watchdog, health checks, background
 
 ### Learning Subsystems (`meta_learning.py` + `sleep_learn/`)
 
-Two parallel systems extract procedural rules from execution history:
+Two parallel systems extract procedural rules from execution history. Both write with `source=` tags so `injector.py` can query both collections in one call (split-brain merge, acknowledged in code as `[FIX 8]`).
 
 -> [Full documentation: Sleep & Learn](SLEEP_LEARN.md)
 
 | System | When | Threshold | Collection | Latency |
 |--------|------|-----------|------------|---------|
-| **Inline** (`meta_learning.py`) | After tool execution | 30% confidence | Main `procedural` | Immediate |
-| **Background** (`sleep_learn/`) | During idle (>2h) | 60% + 5 repetitions | Isolated `procedural_meta` | Deferred |
+| **`meta_learning.py`** (`MetaLearner.run_forever()`) | Every 30 min (background daemon) | Per-rule: 0.8–0.9 (hardcoded in `_extract_rules_from_trace`) | Main `procedural` | ~30 min lag |
+| **`sleep_learn/`** (`start_background_daemon()`) | When idle >1h (`SLEEP_LEARN_IDLE_THRESHOLD_SEC=3600`) | 0.8 (`SLEEP_LEARN_MIN_CONFIDENCE`) | Isolated `procedural_meta` (at `memory_root/sleep_learn_db/`) | Deferred |
+
+> **Note on `meta_learning.py`:** Scans `tracer.recent(n=20)` (in-memory, bounded to 200 traces, lost on restart) — NOT the persistent ChromaDB episodic collection. Rule injection is live on the request path via `sleep_learn/injector.py` regardless of daemon state.
 
 ---
 
-### Context Pruner (`context_pruner.py`)
+### Context Pruner (`memory_backend/pruner.py`)
 
 Tool-aware middleware that truncates massive outputs before they enter the LLM context.
 
 -> [Full documentation](CONTEXT_PRUNER.md)
+
+> **Path note:** The actual file is `core/memory_backend/pruner.py`. Both the file's own docstring and older docs reference the stale path `core/context_pruner.py` — that path does not exist. Real functions: `prune_text()`, `prune_tool_dict()`, `cleanup_old_artifacts()`.
 
 | Property | Value |
 |----------|-------|
@@ -345,9 +363,10 @@ Centralized structured logging and trace ID propagation. MCP stdio safe.
 | Output | stderr (structlog) + `logs/agent_YYYYMMDD.jsonl` (JSONL, always) |
 | Safety | NEVER writes to stdout |
 | Storage | In-memory `_TraceStore` (200 traces, FIFO) + persistent JSONL |
-| Lifecycle | `new_trace()` -> `step()`/`error()`/`warning()` -> `finish()` |
+| Lifecycle | `new_trace()` → `step()`/`error()`/`warning()` → `finish()` |
 | Retrieval | `tracer.get(trace_id)`, `tracer.recent(n)` |
 | Flush | `atexit.register(_writer.close)` for graceful shutdown |
+| **API** | Methods: `step`, `error`, `warning`, `finish`, `get`, `recent`, `summary`. `tracer.log()` and `tracer.info()` do **NOT** exist — use `tracer.step()`. |
 
 ---
 
@@ -361,6 +380,7 @@ Centralized structured logging and trace ID propagation. MCP stdio safe.
 - Blocks any IP that is private, loopback, or link-local
 - Uses `_DNS_POOL` (ThreadPoolExecutor, max_workers=2) for async resolution
 - **TOCTOU note:** DNS rebinding window accepted for local-first deployment; revisit if gateway is ever exposed externally
+- **Legacy alias:** `_is_private_or_localhost()` has **inverted** boolean semantics from `is_safe_network_address()` — do not mix them. All real callers (browser, web, tavily) use the new function.
 
 ### Path Guard (`path_guard.py`)
 
@@ -377,24 +397,20 @@ Each subsystem has a dedicated test directory mirroring the source structure:
 
 ```
 tests/core/
-├── test_config.py              # Config singleton, env loading, validation
-├── test_tracer.py              # Trace lifecycle, JSONL output, MCP safety
-├── test_security.py            # SSRF, path guard, banned files
-├── test_citations.py           # Citation tracking, dedup, formatting
-├── test_parallel_executor.py   # Parallel dispatch, timeout, nesting guard
-├── test_router.py              # Routing accuracy, fallback, confidence
-├── test_router_drift.py        # Tool list sync between registry and router prompt
-├── test_context_pruner.py      # Truncation, artifact preservation
-├── test_br_validator.py        # BRL parsing, date validation, ticker lookup
-├── llm_backend/                # LLM client, circuit breakers, context budget
-├── memory_backend/             # Collections, dedup, decay, maintenance
-├── sleep_learn/                # Feedback, distillation, filters, storage
-├── gateway_backend/            # FastAPI, middleware, exception handlers
-├── runtime/                    # Watchdog, health, cancellation
-└── kgraph/                     # AST parsing, graph queries, test targeting
+├── config/          # Config singleton, env loading, validation
+├── extras/          # BRL parsing, date validation, ticker lookup
+├── gateway/         # FastAPI, middleware, exception handlers
+├── kgraph/          # AST parsing, graph queries, test targeting
+├── llm/             # LLM client, circuit breakers, context budget
+├── memory/          # Collections, dedup, decay, maintenance
+├── path_guard/      # Path validation, traversal guards
+├── router/          # Routing accuracy, fallback, confidence, drift detection
+├── runtime/         # Watchdog, health, cancellation
+├── sleep_learn/     # Feedback, distillation, filters, storage
+└── tracer/          # Trace lifecycle, JSONL output, MCP safety
 ```
 
-**Test isolation:** Each test is self-contained (no conftest.py fixtures). If AsyncMock leaks between tests, add an autouse `mock_cfg` fixture with `MagicMock` to every test file that imports `cfg`.
+**Test isolation:** Each test is self-contained (no conftest.py fixtures except where explicitly introduced, e.g. `tests/tools/browser/`). If AsyncMock leaks between tests, add an autouse `mock_cfg` fixture with `MagicMock` to every test file that imports `cfg`.
 
 ---
 
@@ -408,6 +424,7 @@ These files are self-contained utilities used across multiple subsystems:
 | `parallel_executor.py` | Parallel tool execution | `dispatch_parallel()`, `PARALLEL_SAFE` |
 | `br_validator.py` | Brazilian financial data | `parse_brl()`, `validate_ticker()`, `parse_date()` |
 | `utils.py` | Shared helpers | `truncate()`, `compress()`, `hash_content()` |
+| `config_validation.py` | Startup validation | `validate_config()` — called by both server.py (with graceful ImportError fallback) and gateway factory. |
 
 ---
 
@@ -415,13 +432,16 @@ These files are self-contained utilities used across multiple subsystems:
 
 | Priority | Concern | Location | Status | Notes |
 |----------|---------|----------|--------|-------|
-| 🟢 Low | Split-brain unification (meta_learning vs sleep_learn) | `core/memory_backend/`, `core/sleep_learn/` | Partial | Both write to `procedural` with source tags; injector.py queries both |
+| 🟡 Medium | Router drift test uses mock registry | `tests/core/router/test_router_drift.py` | Known | Tests manually-maintained `ROUTER_TOOLS` list against prompt; does not call real `register_all_tools()`. Adding a new tool to `tools/` will NOT automatically fail this test. |
+| 🟡 Medium | `meta_learning.py` scans in-memory traces only | `core/memory_backend/meta_learning.py` | Known | `tracer.recent(20)` is bounded to 200 traces and lost on restart. Old version read from persistent ChromaDB episodic collection (more durable). Restart-heavy environments lose learning context. |
+| 🟡 Medium | Three rule-extraction mechanisms coexist | `distill.py`, `meta_learning.py`, `sleep_learn/distiller.py` | Known | `distill.py`: LLM-based, per-autocode-workflow. `meta_learning.py`: pattern-matching background daemon. `sleep_learn/distiller.py`: LLM-based background daemon. No consolidation plan yet. |
+| 🟢 Low | Split-brain unification (meta_learning vs sleep_learn) | `core/memory_backend/`, `core/sleep_learn/` | Partial | Both write to `procedural` with source tags; `injector.py` queries both via `[FIX 8]` merge. Functional but two separate ChromaDB locations. |
 | 🟢 Low | Windows file lock on JSONL logs | `core/tracer.py` | Known | `PermissionError` during concurrent access; retry logic in place |
-| 🟢 Low | ChromaDB singleton thread-safety (free-threaded Python 3.13+) | `core/sleep_learn/`, `core/kgraph/` | Known | GIL protects today; add locks if moving to free-threaded |
-| 🟢 Low | Router drift test uses mock registry | `tests/core/router/test_router_drift.py` | Known | Tests manually-maintained list; needs real discovery refactor |
+| 🟢 Low | ChromaDB singleton thread-safety (free-threaded Python 3.13+) | `core/sleep_learn/`, `core/kgraph/` | Known | GIL protects today; add locks if moving to free-threaded Python |
 | 🟢 Low | DNS pool max_workers=2 may queue under parallel tool load | `core/security.py` | Known | Not a concern for local-first; revisit if gateway exposed |
 | 🟢 Low | CGNAT/multicast not blocked by SSRF | `core/security.py` | Known | `100.64.0.0/10` and multicast pass; low risk for local agent |
-| ✅ Resolved | Sleep daemon starts on any core import | `core/__init__.py` | **Fixed** | Moved to explicit startup in `server.py` |
+| 🟢 Low | Stale internal docstring paths | `memory_backend/budget.py`, `memory_backend/pruner.py`, `memory_backend/meta_learning.py`, `citations.py`, `parallel_executor.py`, `tracer_reader.py`, `runtime/watchdog.py`, `runtime/providers.py` | Known | Each file's own module docstring header references its old pre-refactor path. Cosmetic but misleads doc-generation AIs. |
+| ✅ Resolved | Sleep daemon starts on any core import | `core/__init__.py` | **Fixed** | Moved to explicit `_start_sleep_learn()` in `server.py` |
 | ✅ Resolved | Tracer kwargs merge order corruption | `core/tracer.py` | **Fixed** | kwargs spread FIRST in step/error/warning/finish |
 | ✅ Resolved | Tracer call site signature mismatches | Multiple files | **Fixed** | All 12 call sites use correct positional args |
 | ✅ Resolved | ChromaDB singleton resource leaks | Multiple files | **Fixed** | Module-level lazy init with singleton pattern |

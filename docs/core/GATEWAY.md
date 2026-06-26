@@ -3,13 +3,13 @@
 The Gateway (`core/gateway.py`) is the **HTTP edge** of the MCP Agent Stack. It exposes the agent's cognitive runtime, tools, and workflows over a REST API so external clients (second PC, phone, browser, messaging adapters) can interact with it.
 
 **Key characteristics:**
-- **Thin facade pattern** — `core/gateway.py` is ~10 lines; all logic lives in `core/gateway_backend/`
+- **Thin facade pattern** — `core/gateway.py`'s app-creation logic is one line (`app = create_app()`); the file itself is 76 lines total once you include its docstring and a standalone `uvicorn` runner block for `python -m core.gateway` usage. All actual routing/middleware/business logic lives in `core/gateway_backend/`.
 - **Async task submission** — Submit tasks, get `trace_id` immediately, poll for results
 - **Synchronous chat** — Block-and-wait for quick interactions
 - **Bearer token auth** — Configurable secret, hard-stop in production with default
 - **Rate limiting** — 30/min on `/chat`, 60/min on `/task` via slowapi
 - **Centralized error handling** — Zero try/except boilerplate in routes
-- **Contract-locked responses** — Pydantic `response_model` on every endpoint
+- **Contract-locked responses (partial)** — Pydantic `response_model` on `/task`, `/result/{id}`, and `/chat` only — see [Pydantic Contract Locking](#pydantic-contract-locking--only-3-of-16-endpoints) for the rest
 
 ---
 
@@ -92,10 +92,11 @@ graph LR
 
 ```mermaid
 graph TD
-    subgraph "Startup"
-        A["Lifespan context<br/>@asynccontextmanager"] --> B["Spawn daemon thread<br/>ChromaDB warmup"]
+    A0["create_app() called"] --> A1["Security guard + validate_config()<br/>(synchronous, BEFORE the app object exists)"]
+    A1 --> A2["FastAPI app constructed<br/>lifespan=lifespan"]
+    subgraph "Lifespan: Startup"
+        A["@asynccontextmanager<br/>lifespan(app)"] --> B["Spawn daemon thread<br/>ChromaDB warmup"]
         A --> C["init_executor()<br/>ThreadPoolExecutor(max_workers=10)"]
-        A --> D["validate_config()<br/>Secondary config check"]
     end
     subgraph "Runtime"
         E["App serves requests"]
@@ -103,9 +104,12 @@ graph TD
     subgraph "Shutdown"
         F["shutdown_executor()<br/>wait=True, cancel_futures=True"] --> G["Join warmup thread<br/>timeout=5s"]
     end
+    A2 --> A
     A --> E
     E --> F
 ```
+
+> ⚠️ `validate_config()` is **not** a lifespan startup step — it runs synchronously inside `create_app()`, before the `FastAPI` instance (and therefore the lifespan context manager) is even constructed.
 
 ### Middleware Order
 
@@ -234,11 +238,13 @@ curl -X POST http://localhost:8000/chat \
 |----------|------|-------------|
 | `GET /health` | No | Full health check (dirs, LM Studio, ChromaDB, models) |
 | `GET /health/autocode` | Bearer | Autocode-specific health (optional `?deep=true` for LM Studio probe) |
-| `GET /health/circuit-breakers` | Bearer | LLM circuit breaker states per model |
+| `GET /health/circuit-breakers` | Bearer | LLM circuit breaker states per **role** (gated behind `cfg.enable_metrics_endpoint`) |
 | `GET /health/models` | Bearer | Check if required models are loaded in LM Studio |
 | `GET /version` | No | Git commit, branch, environment |
-| `GET /tools` | Bearer | List of available tools |
+| `GET /tools` | Bearer | List of available tools — see note below |
 | `GET /memory/stats` | Bearer | ChromaDB collection counts and sizes |
+
+> ⚠️ **This is a real code gap, not just a doc gap:** `/tools`' static fallback list (used when the registry hasn't been scanned yet) is still `["web", "python", "file", "git", "vision", "memory", "agent", "notify", "report", "workflow"]` — missing `cli`, `browser`, `tavily`, `consult`, `parallel`. The dispatcher *can* route to all 14 tools; this fallback list just doesn't know about the 5 newest ones. Only matters when the registry hasn't populated yet (e.g. the gateway process started before `register_all_tools()` ran).
 
 #### Health Response
 
@@ -261,13 +267,14 @@ curl -X POST http://localhost:8000/chat \
 
 #### Circuit Breaker Monitoring
 
+> ⚠️ This endpoint returns `{"status": "ok", "breakers": null}` by default — `llm.circuit_breaker_states` returns `None` unless `cfg.enable_metrics_endpoint` is truthy. When enabled, keys are **role names** (`"planner"`, `"executor"`), not model identifiers, and the field is `failure_count`, not `failures`. Full details: [LLM.md → Circuit Breaker](./LLM.md#%EF%B8%8F-circuit-breaker).
+
 ```json
 {
   "status": "ok",
   "breakers": {
-    "gemma-4-e2b-it@q5_k_s": {"state": "closed", "failures": 0},
-    "gemma-2-2b-it": {"state": "closed", "failures": 1},
-    "lfm2-1.2b-tool": {"state": "half-open", "failures": 3}
+    "planner": {"state": "closed", "failure_count": 0, "timeout_seconds": 180, "time_since_last_failure": 0.0},
+    "executor": {"state": "half-open", "failure_count": 3, "timeout_seconds": 120, "time_since_last_failure": 121.4}
   }
 }
 ```
@@ -307,11 +314,10 @@ curl -X POST http://localhost:8000/chat \
 | `GET /logs/{filename}` | Bearer | `text/plain` | Serve specific log file |
 
 **Security:**
-- All file paths resolved and checked to stay within `workspace/reports/` or `logs/agent/`
-- Directory traversal (`..`) rejected via `Path.resolve().startswith()`
-- CSP headers on HTML responses: `default-src 'self'; frame-ancestors 'none'; connect-src 'none'`
+- All file paths resolved and checked to stay within `workspace/reports/` or `logs/agent/` — but via **two different mechanisms**, not one unified check. `trace_id` (a path *segment*) is sanitized with a character whitelist (`isalnum()` or `-`/`_`, everything else replaced with `_` — this neutralizes `..` by turning it into `__`). `filename` (within a trace dir, or in `/logs/{filename}`) is checked separately via `Path.resolve().startswith()` against the parent directory.
+- CSP headers on HTML responses — **but not the strict policy this doc previously claimed.** The real policy: `default-src 'self'; script-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.tailwindcss.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:; frame-ancestors 'none'; connect-src 'none';` — it explicitly allows inline scripts and scripts from two CDN origins, plus inline styles and data: images. If report content ever became attacker-influenced, this CSP would not block inline-script execution.
 - Cache-Control: `no-store, private` on all responses
-- Log file extension whitelist: `.jsonl`, `.json`, `.txt`, `.log`
+- Log file extension whitelist: `.jsonl`, `.json`, `.txt`, `.log` — **this whitelist only applies to `/logs/{filename}`**, not `/reports/{trace_id}/{filename}`, which serves any extension (falling back to `application/octet-stream` for unrecognized types)
 
 ---
 
@@ -327,7 +333,10 @@ graph TD
     B -->|Yes| C{workflow='auto'?}
     C -->|Yes| D["router.route(goal)<br/>→ RoutingDecision"]
     C -->|No| E["Use specified workflow"]
-    D --> F["run_workflow(wf_type, goal, ...)"]
+    D --> D2{decision.workflow<br/>== 'direct'?}
+    D2 -->|Yes| D3["Falls back to 'research'<br/>— see note below"]
+    D2 -->|No| F["run_workflow(wf_type, goal, ...)"]
+    D3 --> F
     E --> F
     B -->|No| G{tool?}
     G -->|web| H["tools.web.web()"]
@@ -335,13 +344,19 @@ graph TD
     G -->|memory| J["tools.memory_tool.memory()"]
     G -->|file| K["tools.file.file()"]
     G -->|git| L["tools.git.git()"]
-    G -->|agent| M["tools.agent_tool.agent()"]
-    G -->|report| N["tools.report_tool.report()"]
+    G -->|agent| M["tools.agent.agent()"]
+    G -->|report| N["tools.report.report()"]
     G -->|notify| O["tools.notify.notify()"]
     G -->|cli| P["tools.cli.cli()"]
     G -->|vision| Q["tools.vision.vision()"]
+    G -->|browser| Q2["tools.browser.browser()"]
+    G -->|tavily| Q3["tools.tavily.tavily()"]
+    G -->|consult| Q4["tools.consult.consult()"]
+    G -->|parallel| Q5["tools.parallel.parallel()"]
     G -->|unknown| R["error: Unknown tool"]
 ```
+
+> ⚠️ **Undocumented edge case:** if you submit `{"tool": "workflow", "goal": "...", "workflow": "auto"}` and the router's heuristics decide the goal matches a *direct tool* pattern (e.g. "read this file"), the dispatcher has no path back to actually invoking that tool from inside the workflow branch — it silently falls back to running the `research` workflow instead. This only matters for the `tool == "workflow"` / goal-based entry path; submitting via `tool="file"` directly works as expected.
 
 ### Tool List
 
@@ -352,11 +367,15 @@ graph TD
 | `memory` | `tools.memory_tool.memory()` | ChromaDB read/write |
 | `file` | `tools.file.file()` | File operations |
 | `git` | `tools.git.git()` | Git operations |
-| `agent` | `tools.agent_tool.agent()` | Agent delegation |
-| `report` | `tools.report_tool.report()` | Report generation |
+| `agent` | `tools.agent.agent()` | Agent delegation — **not** `tools.agent_tool` (renamed in Phase 3) |
+| `report` | `tools.report.report()` | Report generation — **not** `tools.report_tool` (renamed in Phase 3) |
 | `notify` | `tools.notify.notify()` | Notifications |
 | `cli` | `tools.cli.cli()` | CLI command execution |
 | `vision` | `tools.vision.vision()` | Image analysis |
+| `browser` | `tools.browser.browser()` | Browser automation — added in the router-expansion commit |
+| `tavily` | `tools.tavily.tavily()` | AI-powered search — added in the router-expansion commit |
+| `consult` | `tools.consult.consult()` | Cross-model consultation — added in the router-expansion commit |
+| `parallel` | `tools.parallel.parallel()` | Concurrent tool fan-out — added in the router-expansion commit |
 | `workflow` | `workflows.base.run_workflow()` | Multi-step workflows |
 
 **All imports are lazy** (inside the function) to avoid circular imports and reduce startup cost.
@@ -371,13 +390,15 @@ graph TD
 graph TD
     A["Request"] --> B["HTTPBearer(auto_error=False)"]
     B --> C{GATEWAY_SECRET<br/>== 'changeme'?}
-    C -->|Yes| D["Allow all<br/>(dev mode, warn to stderr)"]
+    C -->|Yes| D["Allow all<br/>(dev mode)"]
     C -->|No| E{Token<br/>matches?}
     E -->|Yes| F["Allow + tracker.touch()"]
     E -->|No| G["401 Unauthorized"]
 ```
 
-**Every auth check also calls `tracker.touch()`** to update idle detection for background daemons.
+> The "warn loudly to stderr" behavior for dev-mode-with-default-secret happens **once, at startup**, inside `create_app()` — not on every individual request. `check_auth()` itself just checks the token; it doesn't re-print a warning per call.
+
+**Every auth check also calls `tracker.touch()`** to update idle detection for background daemons — this happens unconditionally, before the secret check, regardless of auth outcome.
 
 ### Security Guards
 
@@ -464,9 +485,9 @@ All error responses follow a consistent schema:
 }
 ```
 
-### Pydantic Contract Locking
+### Pydantic Contract Locking — Only 3 of ~16 Endpoints
 
-All endpoints use `response_model` to lock the API contract:
+> ⚠️ The claim "all endpoints use `response_model`" does not hold. Verified directly against every route file: only `POST /task`, `GET /result/{id}`, and `POST /chat` actually declare a `response_model`. Every other endpoint — `/version`, `/health`, `/health/autocode`, `/health/circuit-breakers`, `/health/models`, `/tools`, `/memory/stats`, `/metrics`, `/autocode/graph`, `/traces`, `/traces/{id}`, `/api/reports`, `/reports/*`, `/logs/*` — returns either a raw `dict` or a raw `Response`/`FileResponse`/`HTMLResponse` object with no Pydantic contract at all. A refactor to any of those endpoints **could** silently strip a field a client depends on, with nothing in FastAPI to catch it.
 
 | Model | Endpoint | Fields |
 |-------|----------|--------|
@@ -474,7 +495,9 @@ All endpoints use `response_model` to lock the API contract:
 | `TaskResultResponse` | `GET /result/{id}` | `trace_id`, `status`, `result`, `error`, `elapsed` |
 | `ChatResponse` | `POST /chat` | `trace_id`, `status`, `result`, `error`, `platform` |
 
-This guarantees that internal refactors will never silently strip fields that external clients rely on.
+This guarantees contract stability for these three endpoints only — not the other ~13.
+
+> ⚠️ **Separate finding:** `ChatResponse.status` is hardcoded to `"success"` in `chat.py` whenever `dispatcher.dispatch()` returns *without raising* — it never inspects the returned `result` dict's own `status` field. A dispatch that resolves to `{"status": "error", "error": "Unknown tool: 'xyz'"}` (an error signaled via the result, not an exception) still comes back as a 200 response with the outer `"status": "success"`. Client code that checks the top-level `status` field rather than `result.status` would miss this category of failure.
 
 ---
 
@@ -504,28 +527,26 @@ GATEWAY_CORS_ORIGINS=https://myapp.com,https://admin.myapp.com
 ## 🧪 Testing
 
 ```powershell
-# Run all gateway tests
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/ -v
+# Run all gateway tests (single file, not three separate ones — see below)
+D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_gateway.py -v
 
-# Test store layer (pure unit tests, isolated SQLite)
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_store.py -v
-
-# Test routes via DI (FastAPI TestClient)
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_routes.py -v
-
-# Test integration (full lifespan startup/shutdown)
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_integration.py -v
+# Run a specific layer by test class
+D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_gateway.py -k "TestSQLiteTaskStore" -v
+D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_gateway.py -k "TestGatewayEndpoints" -v
+D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_gateway.py -k "TestReportRoutes" -v
 ```
+
+> ⚠️ There is no `test_store.py`, `test_routes.py`, or `test_integration.py` — all gateway tests live in one file, `tests/core/gateway/test_gateway.py`, organized internally into four classes: `TestWarmupMemory`, `TestSQLiteTaskStore`, `TestGatewayEndpoints`, `TestReportRoutes`.
 
 ### Testing Layers
 
 | Layer | What | How | Monkeypatch? |
 |-------|------|-----|-------------|
-| **Layer 1: Pure Unit** | `store.py` directly | Isolated `tmp_path` SQLite databases | No |
-| **Layer 2: Route Tests** | All route modules | FastAPI `TestClient` + `app.dependency_overrides` | **Forbidden** |
+| **Layer 1: Pure Unit** | `store.py` directly (`TestSQLiteTaskStore`) | Isolated `tmp_path` SQLite databases | No |
+| **Layer 2: Route Tests** | All route modules (`TestGatewayEndpoints`) | FastAPI `TestClient` + `app.dependency_overrides` | **Forbidden for route internals/dependencies** — but the test fixture itself *does* use `monkeypatch.setattr()` to silence heavy startup side-effects (`_warmup_memory`, `validate_config`) before constructing the app. The "no monkeypatching" rule is about route behavior, not startup mocking. |
 | **Layer 3: Integration** | Full lifespan | Real dependency wiring, startup/shutdown | No |
 
-**Key rule:** Route tests use `app.dependency_overrides` to inject mock stores, dispatchers, and runners. Monkeypatching is strictly forbidden — it bypasses FastAPI's DI system and produces fragile tests.
+**Key rule:** Route *behavior* tests use `app.dependency_overrides` to inject mock stores, dispatchers, and runners — never `unittest.mock.patch` on route internals. Monkeypatching heavy, unrelated startup side-effects to keep tests fast is a separate, accepted practice.
 
 ---
 
@@ -549,7 +570,23 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_integration.py -v
 
 ## ⚠️ Known Concerns
 
-> **Note:** These are MiMo's observations from source code review. They are constructive suggestions, not definitive prescriptions.
+> **Note:** These are MiMo's observations from source code review, plus several new findings from a live-source verification pass. Constructive suggestions, not definitive prescriptions.
+
+### Pydantic Contract Locking Only Covers 3 of ~16 Endpoints
+
+**What exists:** Only `/task`, `/result/{id}`, and `/chat` declare a `response_model`. Every other endpoint returns a raw dict or `Response` object.
+
+**The concern:** The doc previously claimed blanket coverage ("all endpoints use response_model") — that's not accurate, and more importantly, it means the actual protection this doc describes (refactors can't silently strip fields) only applies to 3 endpoints. A change to `/health`'s response shape, for instance, has nothing to catch a silently dropped field.
+
+**Suggestion:** Either add `response_model`s for the remaining endpoints where the shape is stable enough to lock down (e.g. `/version`, `/tools`, `/memory/stats`), or explicitly document which endpoints are intentionally unlocked (e.g. `/health` delegates to `core/runtime/health.py` and may evolve independently) so it's a documented decision rather than an undocumented gap.
+
+### `tool="workflow"` + Router Decides "Direct" Silently Falls Back to Research
+
+**What exists:** When dispatching via the goal/workflow path with `workflow="auto"`, if `router.route()` returns a `direct` decision (meaning the router thinks this goal matches a specific tool, not a workflow), `dispatcher.dispatch()` has no mechanism to actually invoke that tool from this code path — it just substitutes `wf_type = "research"`.
+
+**The concern:** A caller who submits `{"goal": "read config.py", "workflow": "auto"}` expecting smart routing could get a `research` workflow run instead of a direct file read, with no indication anything unexpected happened.
+
+**Suggestion:** Either make the dispatcher capable of invoking the decided tool directly when `decision.workflow == "direct"` (using `decision.tool`/`decision.action` if the `RoutingDecision` carries them), or log a `tracer.warning()` when this fallback triggers so it's at least visible in traces.
 
 ### SQLite Connection-Per-Call
 
@@ -576,13 +613,13 @@ Either block before yield (delays server start but guarantees warm ChromaDB), or
 ### uvicorn.run() String Reference
 
 **What exists:**
-`gateway.py` does `uvicorn.run("core.gateway:create_app", ...)` but the actual factory is in `core.gateway_backend.factory`.
+`gateway.py` does `uvicorn.run("core.gateway:create_app", ...)`, with the source itself marking this line `# [FIX] Corrected factory path` — meaning this was already deliberately corrected at some point, not an oversight.
 
-**The concern:**
-The string reference works because the facade imports `create_app` at module level, but it's fragile — if someone removes the import, uvicorn fails with an opaque error.
+**Verified this currently works correctly:** `core/gateway.py` does `from core.gateway_backend.factory import create_app`, which binds `create_app` as an importable attribute of the `core.gateway` module (in addition to using it to build the module-level `app` object via `app = create_app()`). So `"core.gateway:create_app"` resolves correctly today.
 
-**Suggestion:**
-Use the actual module path: `"core.gateway_backend.factory:create_app"`.
+**The actual fragility:** it works as a *side effect* of an import that exists for a different reason (building `app`). If a future refactor removed that import (e.g. switched to `app = gateway_backend.factory.create_app()` without a bare import), the uvicorn string reference would silently break with an unhelpful import error — and nothing would catch it until someone tried to run `python -m core.gateway` directly.
+
+**Suggestion:** Don't change the string to `"core.gateway_backend.factory:create_app"` (the original suggestion here) — that would point uvicorn at the internal module directly, bypassing the facade pattern that the rest of this doc establishes as the project's convention. Instead, make the dependency explicit: either add an explicit `__all__ = ["app", "create_app"]` in `gateway.py` with a comment explaining why both are needed, or add a one-line test asserting `core.gateway.create_app` is importable.
 
 ---
 
@@ -633,7 +670,7 @@ If you are an AI assistant modifying the gateway:
 | Status | Enhancement | Description |
 |--------|-------------|-------------|
 | ✅ Complete | Thin facade extraction | `core/gateway.py` → `core/gateway_backend/` |
-| ✅ Complete | Pydantic contract locking | `response_model` on all endpoints |
+| ⚠️ Partial | Pydantic contract locking | `response_model` on only 3 of ~16 endpoints (`/task`, `/result/{id}`, `/chat`) — see [Pydantic Contract Locking](#pydantic-contract-locking--only-3-of-16-endpoints) |
 | ✅ Complete | Centralized exception handlers | Zero try/except in routes |
 | ✅ Complete | Rate limiting | slowapi integration |
 | ✅ Complete | Request ID middleware | `X-Request-ID` header tracking |
@@ -646,4 +683,4 @@ If you are an AI assistant modifying the gateway:
 
 ---
 
-*Last updated: June 2026. All endpoints, middleware, and security guards reflect current source code in `core/gateway.py` and `core/gateway_backend/`.*
+*This file was corrected against live source — see chat history for the full list of fixes. Headline corrections: the dispatcher's tool list (10→14 tools, 2 renamed modules), the Pydantic contract-locking claim (3 of ~16 endpoints, not all), the circuit-breaker monitoring example (per-role not per-model, gated behind a config flag), and the CSP header (more permissive than previously documented).*

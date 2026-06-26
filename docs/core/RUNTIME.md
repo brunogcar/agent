@@ -42,7 +42,7 @@ graph TD
         GW["gateway_backend/<br/>task_runner for async tasks"]
         LLM["llm_backend/<br/>inference_slot for LLM calls"]
         MEM["memory_backend/<br/>cancellation guards on writes"]
-        ML["meta_learning.py<br/>background_slot for idle learning"]
+        ML["memory_backend/meta_learning.py<br/>background_slot for idle learning"]
         SL["sleep_learn/<br/>background_slot for daemon"]
     end
     GW --> TR
@@ -590,7 +590,7 @@ If you are an AI assistant modifying the runtime layer:
 | `core/gateway_backend/dependencies.py` | Calls `tracker.touch()` on every request |
 | `core/llm_backend/client.py` | Uses `tracker.inference_slot()` for LLM calls |
 | `core/memory_backend/write_ops.py` | Uses `ensure_not_cancelled()` before mutations |
-| `core/meta_learning.py` | Uses `tracker.try_acquire_background_slot()` |
+| `core/memory_backend/meta_learning.py` | Uses `tracker.try_acquire_background_slot()` |
 | `core/sleep_learn/daemon.py` | Uses `tracker.try_acquire_background_slot()` |
 
 ---

@@ -1,17 +1,12 @@
-﻿Here's the fully updated `docs/core/LLM_BACKEND.md`:
-
----
-
-```markdown
 # 🧠 LLM Backend
 
-The LLM backend is the **unified interface for all model interactions** in the agent stack. It handles role-based model selection, context budgeting, circuit breakers, structured output parsing, and tool-loop execution. Nothing else in the codebase calls the LLM server directly — everything goes through `core.llm`.
+The LLM backend is the **unified interface for all model interactions** in the agent stack. It handles role-based model selection, context budgeting, circuit breakers, and structured output parsing. Nothing else in the codebase calls the LLM server directly — everything goes through `core.llm`.
 
 **Key characteristics:**
 - **Role-based dispatch** — Callers say `"executor"` or `"router"`, not raw model strings
-- **Circuit breaker per model** — 3 failures in 5 minutes → 30s cooldown, auto-recovery via half-open
+- **Circuit breaker per role** — 3 cumulative failures (no time window) → cooldown equal to that role's own configured timeout, auto-recovery via half-open
 - **Cognitive context budgeting** — Priority-based message trimming that preserves the most important content
-- **Dual output modes** — Text and JSON with robust 3-layer extraction
+- **Dual output modes** — Text and JSON, each with their own extraction pipeline (`client.py` and `router.py` use different techniques — see [JSON Parsing](#-structured-output--json-parsing))
 - **Provider abstraction** — LM Studio, Ollama, vLLM, or any OpenAI-compatible endpoint
 - **Thread-safe singleton** — One `llm` instance, imported everywhere via `from core.llm import llm`
 
@@ -24,20 +19,21 @@ The LLM backend is the **unified interface for all model interactions** in the a
 ```
 core/llm.py                         # Thin facade — re-exports singleton
 core/llm_backend/
-├── client.py                       # LLMClient: complete(), complete_with_tools(), call()
-├── config.py                       # RoleConfig dataclass + registry builder
-├── models.py                       # LLMResponse, LLMUsage, RoleConfig dataclasses
-├── response.py                     # LLMResponse dataclass (alternate location)
-├── budget.py                       # Raw token truncation (budget_messages)
-├── context_budget.py               # Cognitive priority-based context budgeting
-├── context_pruner.py               # Overflow-aware context compression
+├── client.py                       # LLMClient: complete(), call(), circuit_breaker_states
+├── config.py                       # RoleConfig dataclass + _build_role_configs()
+├── response.py                     # LLMResponse dataclass
+├── budget.py                       # Rate limiting (ThreadSafeRateLimiter) + raw token-count
+│                                   #   truncation + cost estimation. NOT the cognitive-tier
+│                                   #   system — that lives in core/memory_backend/budget.py.
 ├── circuit_breaker.py              # Per-model failure tracking with auto-recovery
-├── prompt_loader.py                # YAML system prompt loading by role
+├── provider.py                     # BaseProvider ABC + ProviderRegistry
+├── factory.py                      # create_llm_client() — composition root
 └── providers/
-    ├── base.py                     # BaseProvider ABC
     ├── lmstudio.py                 # Local OpenAI-compatible provider
     └── openai_compat.py            # Cloud provider (OpenAI, DeepSeek, etc.)
 ```
+
+> ⚠️ There is no `context_budget.py`, `context_pruner.py`, `models.py`, `prompt_loader.py`, or `providers/base.py` anywhere in this repo. The cognitive-priority budgeting system genuinely exists but lives in `core/memory_backend/budget.py` — see [Context Budgeting](#-context-budgeting) below. There is no YAML-based prompt loader; system prompts are passed as plain strings by callers.
 
 ### Call Flow
 
@@ -46,7 +42,7 @@ graph TD
     A["Caller<br/>workflow / tool / router"] -->|"llm.complete(role='executor', ...)"| B["LLMClient<br/>core/llm_backend/client.py"]
     B --> C["Role Registry<br/>Resolve model, provider, timeout"]
     C --> D["Circuit Breaker Check<br/>can_execute()?"]
-    D -->|Blocked| E["Return LLMResponse(ok=False)<br/>'Circuit breaker open'"]
+    D -->|Blocked| E["Return LLMResponse(ok=False)<br/>'Circuit breaker OPEN for {role}'"]
     D -->|OK| F["Context Budget<br/>Fit messages to window"]
     F --> G["Provider.call()<br/>LM Studio / Ollama / Cloud"]
     G --> H["Parse Response<br/>Text / JSON / Tools"]
@@ -58,11 +54,12 @@ graph TD
 
 ### Thin Facade Pattern
 
-`core/llm.py` is a thin facade that re-exports the `LLMClient` singleton:
+`core/llm.py` is a thin facade that **constructs** the `LLMClient` singleton (there's no pre-built `llm` object inside `client.py` to import — `client.py` only defines the class):
 
 ```python
-# core/llm.py — What callers see
-from core.llm_backend.client import llm  # Singleton
+# core/llm.py — what actually happens
+from core.llm_backend.factory import create_llm_client
+llm = create_llm_client()   # constructs the singleton here, in the facade
 
 # Usage throughout the codebase
 from core.llm import llm
@@ -86,15 +83,16 @@ Every LLM call specifies a **role** (e.g., `"planner"`, `"executor"`, `"router"`
 graph TD
     subgraph "Tier 1 — Large (Complex Reasoning)"
         PL["planner<br/>Orchestration, multi-step plans, summaries"]
-        SY["synthesize<br/>Cross-source synthesis"]
         VI["vision<br/>Multimodal image analysis"]
     end
     subgraph "Tier 2 — Medium (Execution)"
-        EX["executor<br/>Code generation, analysis (default)"]
+        EX["executor<br/>Code generation, analysis (default fallback)"]
         RO["router<br/>Fast task classification"]
+        CL["classify<br/>Fast classification (falls back to router)"]
         RE["research<br/>Web research synthesis"]
         AN["analyze<br/>Data analysis"]
         CO["code<br/>Code generation"]
+        CN["consultor<br/>Second-opinion / cross-model consultation"]
     end
     subgraph "Tier 3 — Lightweight (Sub-tasks)"
         SU["summarize<br/>Text summarization"]
@@ -103,29 +101,34 @@ graph TD
         RV["review<br/>Code review"]
     end
     PL -->|delegates| EX
-    PL -->|delegates| SU
-    PL -->|delegates| ET
-    EX -->|fallback| PL
+    EX -->|fallback for unknown roles| EX
+    SU -->|falls back to| EX
+    ET -->|falls back to| EX
 ```
+
+> ⚠️ There is no `synthesize` role anywhere in the source. `core/config.py` also defines a `route` entry in `model_registry`, but `llm_backend/config.py`'s `_build_role_configs()` doesn't include it — calling `llm.complete(role="route", ...)` silently falls back to `executor`'s full config and logs a `tracer.error("llm_role_fallback", ...)`.
 
 ### Role Configuration
 
-Each role has independent settings, built from `.env` at startup:
+Each role has independent `temperature`/`max_tokens` settings hardcoded in `llm_backend/config.py`'s `_defaults` dict — these are **not** configurable via `.env`. Only `model`, `provider`, and `timeout` come from `.env` (via `cfg.model_registry`).
 
-| Role | Temperature | Max Tokens | Timeout | Typical Model Tier | Description |
-|------|-------------|------------|---------|-------------------|-------------|
-| `planner` | 0.3 | 2048 | 180s | Tier 1 (large) | Orchestration, task decomposition, memory summaries |
-| `executor` | 0.1 | 4096 | 120s | Tier 2 (medium) | Code generation, analysis, synthesis — **default fallback** |
-| `router` | 0.0 | 512 | 15s | Tier 2 (medium) | Fast task classification, tool selection |
-| `synthesize` | 0.2 | 4096 | 180s | Tier 1 (large) | Cross-source synthesis for deep research |
-| `vision` | 0.1 | 1024 | 60s | Tier 1 (large) | Multimodal image analysis |
-| `summarize` | 0.2 | 1024 | 120s | Tier 3 (lightweight) | Text summarization |
-| `extract` | 0.1 | 2048 | 120s | Tier 3 (lightweight) | Information extraction from documents |
-| `research` | 0.2 | 2048 | 120s | Tier 2 (medium) | Web research synthesis |
-| `critique` | 0.3 | 1024 | 120s | Tier 3 (lightweight) | Quality critique and feedback |
-| `analyze` | 0.1 | 2048 | 120s | Tier 2 (medium) | Data analysis |
-| `code` | 0.1 | 4096 | 120s | Tier 2 (medium) | Code generation |
-| `review` | 0.2 | 768 | 120s | Tier 3 (lightweight) | Code review |
+| Role | Temperature | Max Tokens | Timeout | Description |
+|------|-------------|------------|---------|-------------|
+| `planner` | 0.2 | 8192 | 180s | Orchestration, task decomposition, memory summaries |
+| `executor` | 0.0 | 16384 | 120s | Code generation, analysis — **default fallback for unknown roles** |
+| `router` | 0.0 | 512 | 15s | Fast task classification, tool selection |
+| `vision` | 0.2 | 4096 | 60s | Multimodal image analysis |
+| `classify` | 0.0 | 256 | 15s | Lightweight classification |
+| `summarize` | 0.2 | 8192 | 60s | Text summarization |
+| `extract` | 0.0 | 4096 | 60s | Information extraction from documents |
+| `research` | 0.2 | 16384 | 120s | Web research synthesis |
+| `critique` | 0.3 | 8192 | 90s | Quality critique and feedback |
+| `analyze` | 0.2 | 16384 | 90s | Data analysis |
+| `code` | 0.0 | 16384 | 120s | Code generation |
+| `review` | 0.2 | 8192 | 90s | Code review |
+| `consultor` | 0.2 | 4096 | 60s | Cross-model consultation (only registered if a model is explicitly configured) |
+
+All `timeout` values above are the defaults baked into both `cfg.model_registry`'s `_make_entry()` calls and `llm_backend/config.py`'s `_defaults` (kept in sync by convention — there is no single source of truth enforcing this).
 
 ### Fallback Chain
 
@@ -134,10 +137,10 @@ When a role's model is not configured in `.env`, it falls back:
 ```mermaid
 graph LR
     A["Requested Role<br/>e.g., 'summarize'"] --> B{Model<br/>configured?}
-    B -->|Yes| C["Use role-specific model<br/>]
+    B -->|Yes| C["Use role-specific model"]
     B -->|No| D{Executor<br/>configured?}
-    D -->|Yes| E["Fall back to EXECUTOR_MODEL<br/>]
-    D -->|No| F["Fall back to PLANNER_MODEL<br/>]
+    D -->|Yes| E["Fall back to EXECUTOR_MODEL"]
+    D -->|No| F["Fall back to PLANNER_MODEL"]
 ```
 
 > ⚠️ **Sub-roles fall back to executor, not planner.** Planner is expensive and reserved for complex reasoning. This is intentional.
@@ -176,32 +179,19 @@ else:
 | `role` | `str` | — | **Required.** Role name (planner, executor, router, etc.) |
 | `system` | `str` | `""` | System prompt (prepended to messages) |
 | `user` | `str` | `""` | User message |
-| `context` | `str` | `""` | Additional context (appended after system) |
+| `context` | `str` | `""` | Additional context (appended after system, as a fake assistant "Understood." turn) |
+| `content` | `str` | `""` | Additional content appended to the user message (e.g. file contents) — undocumented in the original version of this doc |
 | `json_mode` | `bool` | `False` | Parse response as JSON |
 | `trace_id` | `str` | `""` | Trace identifier for logging |
 | `temperature` | `float` | *(role default)* | Override role temperature |
 | `max_tokens` | `int` | *(role default)* | Override role max tokens |
 | `timeout` | `int` | *(role default)* | Override role timeout |
 
-### `complete_with_tools()` — Tool-Loop Execution
-
-Runs a tool-calling loop: the LLM generates tool calls, the caller executes them, results are fed back, and the loop continues until the LLM produces a final text response or max iterations are reached.
-
-```python
-result = llm.complete_with_tools(
-    role="executor",
-    system="You have access to file and web tools...",
-    user="Research ChromaDB and write a summary",
-    tools=[...],           # OpenAI-compatible tool definitions
-    execute_fn=my_exec,   # Callable that runs tool calls and returns results
-    max_iterations=5,
-    trace_id="abc123",
-)
-```
+> ⚠️ `complete_with_tools()` does not exist anywhere in this codebase (confirmed via repo-wide search). `LLMClient` exposes exactly two public call methods: `complete()` and `call()`. If a tool-calling loop is needed, it's not yet implemented at this layer.
 
 ### `call()` — Low-Level
 
-Direct call with full control over messages list and parameters. Used internally by `complete()` and `complete_with_tools()`.
+Direct call with full control over messages list and parameters. Used internally by `complete()`.
 
 ```python
 result = llm.call(
@@ -239,99 +229,97 @@ class LLMResponse:
 
 ## 📐 Context Budgeting
 
-The LLM backend has a sophisticated context management system that decides what to keep and what to trim when messages exceed the model's context window.
+The LLM backend has a sophisticated context management system that decides what to keep and what to trim when messages exceed the model's context window. **This logic lives in `core/memory_backend/budget.py`, not anywhere under `llm_backend/`** — the module's own docstring header is itself stale (still says `core/context_budget.py`, a path that hasn't existed since this code moved into `memory_backend/`).
 
 ### Architecture
 
 ```mermaid
 graph TD
-    A["Messages + System Prompt"] --> B["context_budget.budget_messages()"]
-    B --> C["Estimate total tokens<br/>len(text) // 3.5"]
-    C --> D{Exceeds<br/>context window?}
-    D -->|No| E["Return messages as-is"]
-    D -->|Yes| F["Categorize by cognitive role"]
-    F --> G["Assign priorities<br/>1 = highest, 5 = lowest"]
-    G --> H["Trim lowest priority first<br/>until fits in budget"]
-    H --> I["Return trimmed messages"]
+    A["Messages"] --> B["budget_messages(messages, max_tokens)<br/>core/memory_backend/budget.py"]
+    B --> C["Pin SYSTEM + USER messages<br/>(never dropped except as last resort)"]
+    C --> D["Classify + score every other message<br/>tier weight + recency bonus + fingerprint bonus"]
+    D --> E["Greedy selection, highest score first<br/>50% per-class cap, 80% of max_tokens budget"]
+    E --> F["Re-sort chronologically<br/>preserve conversation flow"]
+    F --> G{Still over budget?<br/>(pinned alone too large)}
+    G -->|Yes| H["Hard-truncate last USER message<br/>or drop everything except SYSTEM+USER"]
+    G -->|No| I["Return final message list"]
 ```
 
-### Cognitive Categories
+### Cognitive Categories (`ContextClass` enum, 7 tiers — not 5)
 
-Messages are categorized by their **cognitive role** — not just their position in the conversation:
+Classification is deterministic, based on `msg["role"]` and content fingerprinting (substring match), **not** position in the conversation:
 
-| Category | Priority | Trim Strategy | Max Chars | Examples |
-|----------|----------|---------------|-----------|----------|
-| `procedural` | 1 (highest) | `tail` (keep latest) | 4000 | Rules, instructions, system prompt |
-| `core_facts` | 2 | `smart` (scored) | 3000 | Key facts, entity summaries |
-| `tool_outputs` | 3 | `tail` (keep latest) | 8000 | Tool results, web scrapes |
-| `conversational` | 4 | `head` (keep earliest) | 4000 | User/assistant messages |
-| `social` | 5 (lowest) | `head` (keep earliest) | 2000 | Greetings, acknowledgments |
+| Tier | Value | Tier Weight | Classified when |
+|------|-------|-------------|------------------|
+| `SYSTEM` | 0 | 1000.0 (pinned) | `role == "system"` |
+| `USER` | 1 | 1000.0 (pinned) | `role == "user"` |
+| `ERROR` | 2 | 40.0 | content contains `"traceback"`, `"exception"`, or `"error:"` |
+| `PROCEDURAL` | 3 | 50.0 | content contains `"procedural"` or `"rule:"` |
+| `RECENT` | 4 | 20.0 | default for anything not matched above |
+| `OUTPUT` | 5 | 10.0 | `role == "tool"` |
+| `ARCHIVE` | 6 | 1.0 | never assigned by `_classify_message()` directly in the current code — reserved for future use |
 
-**Priority meaning:** Higher-priority content is preserved first. When the context window is full, lower-priority content is trimmed before higher-priority content.
+Note `PROCEDURAL` (50.0) outranks `ERROR` (40.0) in tier weight, despite the module docstring's own comment claiming error messages "must outrank procedural for debugging" — the weight values as written don't implement that stated intent.
 
-**Trim strategies:**
-- `tail` — Keep the most recent entries, trim the oldest
-- `head` — Keep the earliest entries, trim the newest
-- `smart` — Score each entry and trim lowest-scoring first
+**Scoring formula** (for every non-pinned message): `score = tier_weight + recency_bonus + fingerprint_bonus`
+- **Recency bonus**: `(index / total) * 10.0` — later messages score slightly higher
+- **Fingerprint bonus**: `+5.0` if content contains a ```` ```json ```` or ```` ```python ```` fence
+
+**Selection**: not a fixed per-category char cap. `SYSTEM`/`USER` messages are pinned outright (kept regardless of score). Everything else is sorted by score descending and greedily added until the budget fills, with a **50% per-class cap** (`CLASS_CAP = input_budget * 0.5`) so one giant traceback can't starve every other category. `input_budget` itself is **80% of `max_tokens`** (the remaining 20% is reserved headroom for the model's own output). Selected messages are then re-sorted back into chronological order before being returned, so conversation flow is preserved even though selection itself was score-based.
+
+**Overflow handling**: if `SYSTEM` + `USER` alone exceed `max_tokens`, the last `USER` message is hard-truncated (keeping system messages intact) with a 100-token safety buffer and a `"\n\n[...TRUNCATED DUE TO CONTEXT OVERFLOW...]"` marker appended. If the result is *still* over budget after all that, everything except `SYSTEM`+`USER` is dropped as a final fallback.
 
 ### Token Estimation
 
-Two estimation factors are used in different contexts:
-
-| Module | Factor | Where Used |
+| Module | Factor | Where used |
 |--------|--------|------------|
-| `context_budget.py` | `// 3.5` | Cognitive budgeting (primary) |
-| `budget.py` | `// 4` | Raw truncation (fallback) |
+| `core/memory_backend/budget.py` (`CHARS_PER_TOKEN`) | `/ 3.5` | The cognitive budgeting system above — the canonical estimate |
+| `core/llm_backend/client.py`'s `call()` | `// 4` | A separate, throwaway estimate used only for a debug `logger.info()` line before `budget_messages()` is invoked — has no effect on what gets kept/trimmed |
+| `core/llm_backend/budget.py` (`truncate_by_tokens`) | tiktoken if available, else `// 4` | Rate-limiting / cost-estimation utility, unrelated to message selection |
 
-> ⚠️ **Concern:** These two factors produce slightly different token counts for the same text. `context_budget.py` is the canonical system used by `LLMClient._call_with_budget()`. `budget.py` is a lower-level utility. See [Section 12: Known Concerns](#-known-concerns) for details.
+There genuinely are three different token-estimate code paths in this codebase, but they serve different purposes — it's not two competing systems producing inconsistent *budgeting* results, since only the first one (`/ 3.5`) actually decides what gets kept or trimmed.
 
 ### Context Pruning
 
-The `context_pruner.py` module handles overflow-aware compression. It's called when messages are too large even after budgeting:
-
-| Compression Level | Action | When |
-|-------------------|--------|------|
-| Level 1 | Truncate tool outputs to `max_chars` | Tool output > 4000 chars |
-| Level 2 | Drop lowest-priority messages | Still over budget after L1 |
-| Level 3 | Truncate system prompt tail | System prompt > 2000 chars |
-| Level 4 | Hard truncation with notice | All else fails |
+A **separate** mechanism, `core/memory_backend/pruner.py` (also has a stale internal docstring — still says `core/context_pruner.py`), handles tool-output truncation. It is not a 4-level cascading system — see [CONTEXT_PRUNER.md](./CONTEXT_PRUNER.md) for the full, verified breakdown. In short: a single 8,000-character threshold, tool-aware truncation (head+tail 4k+4k for most tools, tail-only for `python_exec`/`cli`), full output saved to disk as a recoverable artifact, and a `_recovery_hint` injected into the result. HTML-stripping for the `web` tool happens via BeautifulSoup *inside `tools/web.py` itself*, before the pruner is ever called — not inside the pruner module.
 
 ---
 
 ## 🛡️ Circuit Breaker
 
-Prevents cascading failures when a model or provider becomes unresponsive. Each model has an independent circuit breaker.
+Prevents cascading failures when a model or provider becomes unresponsive. **Each role** has an independent circuit breaker (keyed by role name — `"executor"`, `"planner"`, etc. — not by model identifier).
 
 ### State Machine
 
 ```mermaid
 stateDiagram-v2
     [*] --> CLOSED
-    CLOSED --> OPEN: 3 failures in 5 minutes
-    OPEN --> HALF_OPEN: 30s cooldown expires
+    CLOSED --> OPEN: 3 cumulative failures (no time window)
+    OPEN --> HALF_OPEN: cooldown expires (= that role's own timeout)
     HALF_OPEN --> CLOSED: Test call succeeds
     HALF_OPEN --> OPEN: Test call fails
 ```
+
+> ⚠️ There is **no 5-minute failure window** — `record_failure()` just increments a counter while CLOSED; it only resets via a full OPEN→HALF_OPEN→CLOSED cycle. The cooldown is **not a fixed 30 seconds** — each breaker is constructed with `recovery_timeout=role_cfg.timeout`, so `router`'s breaker cools down in 15s, `planner`'s in 180s. Only `failure_threshold=3` and `half_open_max_calls=1` are genuinely fixed.
 
 ### Behavior by State
 
 | State | `can_execute()` | What Happens |
 |-------|-----------------|--------------|
-| **CLOSED** | `True` | Normal operation. Failures are counted. |
-| **OPEN** | `False` | All calls rejected immediately. Returns `LLMResponse(ok=False, error="Circuit breaker open")`. |
-| **HALF_OPEN** | `True` | One test call allowed. Success → CLOSED. Failure → OPEN. |
+| **CLOSED** | `True` | Normal operation. Failures are counted (no decay). |
+| **OPEN** | `False` | All calls rejected immediately. Returns `LLMResponse(ok=False, error="Circuit breaker OPEN for {role}: service degraded (fail-fast).")` |
+| **HALF_OPEN** | `True` for one call, `False` after | One probe call allowed. Success → CLOSED. Failure → immediately back to OPEN. |
 
 ### Monitoring
 
-The gateway exposes circuit breaker states via `GET /health/circuit-breakers`:
+The gateway exposes circuit breaker states via `GET /health/circuit-breakers`, which calls `llm.circuit_breaker_states` — **this returns `None` unless `cfg.enable_metrics_endpoint` is truthy.** By default this endpoint returns `{"status": "ok", "breakers": null}`. When enabled, keys are **role names** (not model identifiers):
 
 ```json
 {
   "status": "ok",
   "breakers": {
-    "gemma-4-e2b-it@q5_k_s": {"state": "closed", "failures": 0},
-    "gemma-2-2b-it": {"state": "closed", "failures": 1},
-    "lfm2-1.2b-tool": {"state": "half-open", "failures": 3}
+    "planner": {"state": "closed", "failure_count": 0, "timeout_seconds": 180, "time_since_last_failure": 0.0},
+    "executor": {"state": "half-open", "failure_count": 3, "timeout_seconds": 120, "time_since_last_failure": 121.4}
   }
 }
 ```
@@ -340,16 +328,16 @@ The gateway exposes circuit breaker states via `GET /health/circuit-breakers`:
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| Failure threshold | 3 | Failures before opening |
-| Failure window | 5 minutes | Time window for counting failures |
-| Cooldown | 30 seconds | Time before half-open |
-| Per-model | Yes | Each model has its own breaker |
+| Failure threshold | 3 (fixed) | Cumulative failures before opening — no time window |
+| Cooldown | `role_cfg.timeout` (dynamic, per role) | e.g. 15s for `router`, 180s for `planner` |
+| `half_open_max_calls` | 1 (fixed) | Exactly one probe call allowed in HALF_OPEN |
+| Granularity | Per **role**, not per model | Keyed by role name in `LLMClient._breakers` |
 
 ---
 
 ## 🔌 Provider Abstraction
 
-### BaseProvider (Abstract)
+### BaseProvider (Abstract) — `core/llm_backend/provider.py`
 
 All LLM backends implement this interface:
 
@@ -368,14 +356,19 @@ class BaseProvider(ABC):
         json_mode: bool,
         **kwargs: Any,
     ) -> dict: ...
+
+    def is_available(self) -> bool:
+        return True
 ```
+
+`ProviderRegistry` (same file) holds the registered providers in a plain dict keyed by provider name, raising `KeyError` with the list of available providers if an unregistered name is requested.
 
 ### Available Providers
 
-| Provider | Env Detection | Health Check | Description |
-|----------|--------------|--------------|-------------|
-| `LMStudioProvider` | Default local | `GET /models` | LM Studio, Ollama, vLLM — any OpenAI-compatible endpoint |
-| `OpenAICompatibleProvider` | `*_API_KEY` present in `.env` | Provider-specific | OpenAI, DeepSeek, Mistral, Qwen, Kimi |
+| Provider | Env Detection | Description |
+|----------|--------------|-------------|
+| `LMStudioProvider` | Always registered as `"lmstudio"` | LM Studio, Ollama, vLLM — any OpenAI-compatible local endpoint |
+| `OpenAICompatibleProvider` | One registered per cloud vendor whose `*_API_KEY` is non-empty in `.env` | `openai`, `deepseek`, `mistral`, `qwen`, `kimi` — all five are checked at startup |
 
 ### Provider Selection
 
@@ -391,9 +384,12 @@ graph TD
 `core/llm_backend/factory.py` scans `cfg` at startup. If a cloud provider's `API_KEY` is present in `.env`, it automatically registers an `OpenAICompatibleProvider` for that service. No code changes needed to add new cloud vendors.
 
 ```python
-# Auto-registered at startup if API key exists:
+# Auto-registered at startup if API key exists (all 5 are checked):
 # OPENAI_API_KEY=sk-...    → registers "openai" provider
 # DEEPSEEK_API_KEY=sk-...  → registers "deepseek" provider
+# MISTRAL_API_KEY=...      → registers "mistral" provider
+# QWEN_API_KEY=...         → registers "qwen" provider
+# KIMI_API_KEY=...         → registers "kimi" provider
 ```
 
 ---
@@ -406,40 +402,33 @@ When `json_mode=True`, the response undergoes a **3-layer extraction strategy** 
 
 ```mermaid
 graph TD
-    A["Raw LLM Response"] --> B["Layer 1: Direct Parse<br/>json.loads(text)"]
+    A["Raw LLM Response"] --> B["Layer 1: Direct Parse<br/>json.loads(choice_stripped)"]
     B -->|Success| C["Return parsed JSON"]
-    B -->|Fail| D["Layer 2: Markdown Strip<br/>Remove ```json ... ``` fences"]
-    D -->|Success| C
-    D -->|Fail| E["Layer 3: Outermost Structure<br/>Find first { } or [ ] via raw_decode()"]
+    B -->|Fail| D["Layer 2: Markdown Fence Extraction<br/>regex for ```json ... ``` blocks"]
+    D -->|Found fence| C
+    D -->|No fence| E["Layer 3: Outermost {} or []<br/>regex search, earliest-starting match wins"]
     E -->|Success| C
     E -->|Fail| F["Return LLMResponse(parsed=None, ok=True)<br/>Raw text preserved"]
+    C --> G{"parsed has 'tool' + 'action' keys?"}
+    G -->|Yes| H["validate_tool_call()<br/>core/contracts.py — logs on failure, doesn't block"]
+    G -->|No| I[Done]
+    H --> I
 ```
 
 **Why 3 layers?** Small local models frequently:
 - Wrap JSON in markdown fences (` ```json ... ``` `)
 - Add explanatory text before/after the JSON
-- Include trailing commas or comments (handled by `raw_decode`)
+- Add trailing prose after a complete JSON value (this is what `raw_decode()` handles — see below — not trailing commas or comments, which plain `json.loads()` still rejects either way)
 
 ### Router-Specific JSON Extraction
 
-The router (`core/router.py`) has its own `_extract_first_json()` method with the same 3-layer strategy, optimized for the router's specific response format.
+The router (`core/router.py`) has its own, **different** `_extract_first_json()` method — it's not the same 3-layer strategy as `client.py`. It strips markdown fences, tries a direct `json.loads()`, and on failure falls back to `json.JSONDecoder().raw_decode()` (Python's native decoder, which parses a single JSON value and ignores anything after it — this is what actually handles trailing prose after the JSON, not comments or trailing commas inside it). `client.py`'s `_parse_response()`, by contrast, uses a regex search for the outermost `{...}` or `[...]` after fence-stripping fails — genuinely two different implementations for the same general problem.
 
 ---
 
 ## 📜 Prompt Loading
 
-System prompts are loaded from YAML files via `core/llm_backend/prompt_loader.py`:
-
-```python
-# Load a role's system prompt
-prompt = prompt_loader.load("executor")
-# Returns the YAML content as a string
-```
-
-Prompts are organized by role and can include:
-- Base instructions
-- Tool-specific guidelines
-- Context-aware dynamic sections
+> ⚠️ `core/llm_backend/prompt_loader.py` does not exist. There is no YAML-based prompt loading system anywhere in this repo (confirmed: no `.yaml`/`.yml` files match "prompt" in the entire codebase). System prompts are passed as plain Python strings directly by each caller (e.g. `ROUTER_SYSTEM_PROMPT` in `core/router.py` is a module-level string constant, not loaded from a file).
 
 ---
 
@@ -448,7 +437,7 @@ Prompts are organized by role and can include:
 | Component | Mechanism | Notes |
 |-----------|-----------|-------|
 | `LLMClient` | Singleton | One instance, imported everywhere |
-| `LMStudioProvider` | Thread-local `httpx.Client` | Double-checked locking for connection pooling |
+| `LMStudioProvider` | Single shared `httpx.Client`, double-checked locking | **Not** thread-local — one shared client instance across all threads. (The file's own docstring incorrectly claims "each thread gets its own client via _local" — the actual code has no `threading.local()` at all.) |
 | `CircuitBreaker` | `threading.Lock` per instance | Prevents race conditions on state transitions |
 | `ActivityTracker` | `threading.RLock` | Inference slot management (RLock prevents deadlock) |
 | Cleanup | `atexit` registered | Closes all provider clients on process exit |
@@ -462,8 +451,9 @@ Prompts are organized by role and can include:
 Every LLM call is logged via `tracer.step()`:
 
 ```python
-tracer.step(trace_id, "llm", f"calling {role} ({model})",
-            provider=provider, temperature=temp, max_tokens=max_tok)
+# Real call site (core/llm_backend/client.py, inside call()):
+tracer.step(trace_id, "llm_call", role=role, model=role_cfg.model,
+            messages=len(messages), timeout=_timeout)
 ```
 
 ### Token Tracking
@@ -484,7 +474,7 @@ autocode_llm_tokens_total{role="router"} 1250
 
 ### Circuit Breaker Monitoring
 
-Available at `GET /health/circuit-breakers` — shows state and failure count per model.
+Available at `GET /health/circuit-breakers` — per-**role** state and failure count, gated behind `cfg.enable_metrics_endpoint` (returns `null` if disabled). See [Circuit Breaker → Monitoring](#-circuit-breaker) above.
 
 ---
 
@@ -507,7 +497,7 @@ Available at `GET /health/circuit-breakers` — shows state and failure count pe
 | `REVIEW_MODEL` | review | Falls back to executor | Code review |
 | `LM_STUDIO_BASE_URL` | — | `http://localhost:1234/v1` | LLM server endpoint |
 | `PLANNER_TIMEOUT` | planner | `180` | Timeout in seconds |
-| `EXECUTION_TIMEOUT` | executor | `120` | Timeout in seconds |
+| `EXECUTOR_TIMEOUT` | executor | `120` | Timeout in seconds |
 | `ROUTER_TIMEOUT` | router | `15` | Timeout in seconds |
 | `VISION_TIMEOUT` | vision | `60` | Timeout in seconds |
 
@@ -519,10 +509,9 @@ Available at `GET /health/circuit-breakers` — shows state and failure count pe
 |----------|--------|-----|
 | Simple prompt + response | `llm.complete(role, system, user)` | High-level, handles context budgeting |
 | JSON structured output | `llm.complete(..., json_mode=True)` | 3-layer extraction, populates `result.parsed` |
-| Multi-step tool execution | `llm.complete_with_tools(...)` | Tool-loop with iteration limit |
 | Raw message control | `llm.call(role, messages)` | Low-level, no budgeting or assembly |
 | Quick classification | `llm.complete(role="router", ...)` | 15s timeout, temperature=0.0 |
-| Complex planning | `llm.complete(role="planner", ...)` | 180s timeout, temperature=0.3 |
+| Complex planning | `llm.complete(role="planner", ...)` | 180s timeout, temperature=0.2 |
 | Lightweight extraction | `llm.complete(role="extract", ...)` | Small fast model, low cost |
 
 ---
@@ -543,26 +532,31 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/llm/ -v -W error
 
 ## ⚠️ Known Concerns
 
-> **Note:** These are MiMo's observations from source code review. They are constructive suggestions, not definitive prescriptions.
+> **Note:** This section was rewritten after verifying every claim against live source. The original version (attributed to MiMo's review) was built on a file, `core/llm_backend/context_budget.py`, that doesn't exist — see below for what's actually going on.
 
-### Two Competing Context Budgeting Systems
+### There aren't two competing budgeting systems — there's one system with a stale name, plus an unrelated utility
 
-**What exists:**
-- `core/llm_backend/context_budget.py` — cognitive priority-based budgeting with categories, priorities, and per-category trim strategies. Uses `// 3.5` token estimation.
-- `core/llm_backend/budget.py` — raw token truncation with `// 4` estimation.
+The original concern described `context_budget.py` (cognitive) vs `budget.py` (raw) as two systems fighting over the same job. That's not accurate:
+- The cognitive system is real and is the only thing that decides what gets kept/trimmed — it just lives at `core/memory_backend/budget.py`, not `core/llm_backend/context_budget.py`. Its own internal docstring is itself stale (still says `core/context_budget.py`), which likely caused this confusion in the first place.
+- `core/llm_backend/budget.py` does a genuinely different job — rate limiting (`ThreadSafeRateLimiter`) and cost estimation. It is not consulted when deciding what to trim from a message list. There's no live conflict here, just confusing naming across two same-named files in two different subsystems.
 
-**The concern:**
-`LLMClient._call_with_budget()` delegates to `context_budget.budget_messages()`, which is the cognitive system. But `budget.py` also exists and may be imported by other modules. Two systems with different estimation factors can produce inconsistent results.
+**Suggestion:** rename one of the two `budget.py` files (e.g. `llm_backend/rate_limit.py`) so "budget.py" stops being ambiguous between subsystems, and fix the stale docstring in `memory_backend/budget.py`.
 
-**Suggestion:**
-Consolidate into a single public API. The cognitive budgeting system is the more sophisticated one — make it canonical. Keep `budget.py` as an internal utility that `context_budget.py` calls for raw truncation, but don't expose it to external callers.
+### `complete_with_tools()` doesn't exist
 
-### Context Pruner Has Two Homes
+Confirmed via repo-wide search. If a tool-calling loop is planned, it isn't built yet at this layer — `LLMClient` only exposes `complete()` and `call()`.
 
-`core/context_pruner.py` sits in `core/` but is primarily used by `core/llm_backend/`. All context-related modules should be co-located.
+### `core/llm_backend/prompt_loader.py` doesn't exist
 
-**Suggestion:**
-Move `context_pruner.py` into `core/llm_backend/` alongside `context_budget.py` and `budget.py`.
+No YAML-based prompt system exists anywhere in the repo. System prompts are plain Python string constants, defined ad hoc by each caller.
+
+### Circuit breaker cooldown is dynamic per role, not a documented fixed value anywhere else in this codebase
+
+Worth calling out because it's an easy thing for a future change to break silently: there's no single constant controlling cooldown — it's tied to whatever `role_cfg.timeout` happens to be for that role. A change to a role's timeout in `.env` silently changes that role's circuit-breaker cooldown too. If that coupling isn't intentional, it's worth decoupling explicitly rather than relying on it being implicit.
+
+### `/health/circuit-breakers` is silently a no-op by default
+
+Returns `{"breakers": null}` unless `cfg.enable_metrics_endpoint` is set. Worth either defaulting it on, or having the endpoint return a clear message (e.g. `"metrics endpoint disabled"`) instead of a bare `null` that looks like an empty/healthy state.
 
 ---
 
@@ -576,9 +570,9 @@ If you are an AI assistant modifying the LLM backend:
 4. **Role-based calls** — always use `llm.complete(role="...", ...)` or `llm.call(role="...", ...)`. Never construct raw HTTP requests to the LLM server.
 5. **Sub-role fallback** — new sub-role models must fall back to `executor_model`, not `planner_model`. Planner is expensive and reserved for complex reasoning.
 6. **Trace integration** — every call must log via `tracer.step()` with `trace_id`.
-7. **JSON parsing** — never assume the LLM returns clean JSON. Use the 3-layer extraction pipeline.
-8. **Context budgeting** — never truncate messages without going through `context_budget.budget_messages()`. Raw truncation loses cognitive priority information.
-9. **Token estimation** — use `// 3.5` (context_budget factor), not `// 4` (budget.py factor), for consistency with the primary system.
+7. **JSON parsing** — never assume the LLM returns clean JSON. `client.py` and `router.py` each have their own extraction pipeline (regex-outermost-match vs `raw_decode()` respectively) — use whichever already exists in the file you're editing rather than introducing a third approach.
+8. **Context budgeting** — never truncate messages without going through `core/memory_backend/budget.py`'s `budget_messages()`. Raw truncation loses cognitive priority information. (Not `llm_backend/context_budget.py` — that file doesn't exist.)
+9. **Token estimation** — `budget_messages()` uses `/ 3.5` (`CHARS_PER_TOKEN` in `memory_backend/budget.py`) — that's the only factor that affects what actually gets kept or trimmed. The `// 4` estimates elsewhere (a debug log line in `client.py`, and `llm_backend/budget.py`'s rate-limiting utility) are unrelated to budgeting decisions and don't need to match it.
 
 ---
 
@@ -587,22 +581,22 @@ If you are an AI assistant modifying the LLM backend:
 | File | Purpose |
 |------|---------|
 | `core/llm.py` | Thin facade — re-exports `llm` singleton |
-| `core/llm_backend/client.py` | `LLMClient`: `complete()`, `complete_with_tools()`, `call()`, `_call_with_budget()` |
-| `core/llm_backend/config.py` | `RoleConfig` builder from `.env` |
-| `core/llm_backend/models.py` | `LLMResponse`, `LLMUsage`, `RoleConfig` dataclasses |
-| `core/llm_backend/context_budget.py` | Cognitive priority-based context budgeting |
-| `core/llm_backend/context_pruner.py` | Overflow-aware context compression |
-| `core/llm_backend/budget.py` | Raw token truncation (`budget_messages`) |
+| `core/llm_backend/client.py` | `LLMClient`: `complete()`, `call()`, `circuit_breaker_states` property |
+| `core/llm_backend/config.py` | `RoleConfig` dataclass + `_build_role_configs()` (temp/max_tokens hardcoded, not `.env`) |
+| `core/llm_backend/response.py` | `LLMResponse` dataclass |
+| `core/memory_backend/budget.py` | Cognitive priority-based context budgeting (`budget_messages()`, 7-tier `ContextClass`) |
+| `core/memory_backend/pruner.py` | VRAM artifact pruning — see [CONTEXT_PRUNER.md](./CONTEXT_PRUNER.md) |
+| `core/llm_backend/budget.py` | Rate limiting + raw token-count truncation + cost estimation — **not** the cognitive system above |
 | `core/llm_backend/circuit_breaker.py` | Per-model circuit breaker (CLOSED → OPEN → HALF_OPEN) |
-| `core/llm_backend/prompt_loader.py` | YAML system prompt loading by role |
-| `core/llm_backend/factory.py` | Composition root, dynamic provider registration |
-| `core/llm_backend/providers/base.py` | `BaseProvider` ABC |
+| `core/llm_backend/factory.py` | `create_llm_client()` — composition root, provider registration |
+| `core/llm_backend/provider.py` | `BaseProvider` ABC + `ProviderRegistry` |
 | `core/llm_backend/providers/lmstudio.py` | `LMStudioProvider` (local OpenAI-compatible) |
 | `core/llm_backend/providers/openai_compat.py` | `OpenAICompatibleProvider` (cloud) |
-| `core/config.py` | Model names, timeouts, LLM server URL |
+| `core/config.py` | Model names, timeouts, LLM server URL, `model_registry` |
 | `core/metrics.py` | Token tracking (`track_llm_tokens`) |
 | `core/runtime/activity_tracker.py` | Inference slot management |
+| `core/contracts.py` | `validate_tool_call()` — schema validation for parsed tool-call JSON |
 
 ---
 
-*Last updated: June 2026. All role configurations, timeouts, and model names reflect current source code and `.env`.*
+*This file was substantially corrected against live source — see chat history for the full list of fabricated files/methods removed and wrong values corrected. Re-verify before trusting any specific number in this doc that isn't called out as verified.*

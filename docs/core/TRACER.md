@@ -18,7 +18,7 @@ The Tracer (`core/tracer.py`) is the **centralized, structured logging and trace
 
 ```
 core/tracer.py                      # Tracer singleton, _FileWriter, _TraceStore
-core/trace_reader.py                # Trace retrieval (memory fast-path, disk slow-path)
+core/tracer_reader.py                # Trace retrieval (memory fast-path, disk slow-path)
 core/metrics.py                     # Prometheus metrics (complementary)
 ```
 
@@ -31,7 +31,7 @@ Tracer (singleton)
 │   └── Graceful Fallback (standard logging if structlog missing)
 ├── _FileWriter (Thread-safe JSONL, daily rotation)
 ├── _TraceStore (In-memory, bounded to 200 traces)
-└── Trace Reader (core/trace_reader.py)
+└── Trace Reader (core/tracer_reader.py)
     ├── Fast Path (In-memory lookup via _TraceStore)
     └── Slow Path (Disk scan of last 14 days of JSONL logs)
 ```
@@ -263,7 +263,7 @@ tracer.summary("a3f2c0b1")
 
 ## 🔍 Trace Retrieval
 
-### Trace Reader (`core/trace_reader.py`)
+### Trace Reader (`core/tracer_reader.py`)
 
 The trace reader provides two-path retrieval:
 
@@ -399,7 +399,8 @@ graph LR
 D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_tracer.py -v
 
 # Test trace reader
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_trace_reader.py -v
+D:\mcp\agent\venv\Scripts\pytest.exe tests/core/tracer/ -v
+# Note: tracer_reader.py currently has no dedicated test file — only tests/core/tracer/test_tracer.py exists.
 
 # Test with structlog missing
 D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_tracer.py -k "fallback" -v
@@ -433,7 +434,7 @@ For non-trace-scoped logging, use `tracer.warning()` or a dedicated logging call
 JSONL files are created daily and never compressed. Over time, a busy agent can produce hundreds of megabytes of logs.
 
 **The concern:**
-No automatic compression or archival of old log files. The 14-day scan limit in `trace_reader.py` prevents performance issues, but disk usage grows unbounded.
+No automatic compression or archival of old log files. The 14-day scan limit in `tracer_reader.py` prevents performance issues, but disk usage grows unbounded.
 
 **Suggestion:**
 Add a log rotation policy: gzip files older than 7 days, delete files older than 30 days. The doc mentions this as a "Future Enhancement" but it should be prioritized for long-running deployments.
@@ -473,7 +474,7 @@ If you are an AI assistant modifying `core/tracer.py` or any file that uses it:
 | File | Purpose |
 |------|---------|
 | `core/tracer.py` | `Tracer` singleton, `_FileWriter`, `_TraceStore`, `generate_trace_id()` |
-| `core/trace_reader.py` | `read_trace()`, `list_recent_traces()` — memory + disk retrieval |
+| `core/tracer_reader.py` | `read_trace()`, `list_recent_traces()` — memory + disk retrieval |
 | `core/metrics.py` | Prometheus metrics (complementary to tracer) |
 | `core/config.py` | `log_path`, `autocode_debug` configuration |
 | `core/gateway_backend/routes/traces.py` | HTTP endpoints: `GET /traces`, `GET /traces/{id}` |

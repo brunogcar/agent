@@ -377,7 +377,7 @@ No dedicated `.env` variables. Uses:
 
 ```powershell
 # Run all browser tests (fully mocked, no Playwright needed)
-D:\mcpgentenv\Scripts\pytest.exe tests/tools/browser -v -W error
+D:\mcp\agent\venv\Scripts\pytest.exe tests/tools/browser -v -W error
 ```
 
 **Test architecture:**

@@ -1,8 +1,3 @@
-Here's the fully updated `docs/core/CONFIG.md`, restyled after the Browser template:
-
----
-
-```markdown
 # ⚙️ Configuration System
 
 The configuration system (`core/config.py`) is the **single source of truth** for all runtime settings. It uses a singleton pattern, loads from `.env` at import time, and provides validated, typed access to paths, models, limits, and feature flags.
@@ -31,7 +26,7 @@ graph TD
     C --> H["_ensure_dirs()<br/>Create missing directories"]
     B --> I["cfg singleton<br/>Exported at module level"]
     I --> J["core.llm<br/>LLMClient"]
-    I --> K["core.memory<br/>ChromaDBMemory"]
+    I --> K["core.memory<br/>MemoryStore"]
     I --> L["core.router<br/>TaskRouter"]
     I --> M["core.gateway<br/>FastAPI app"]
     I --> N["core.runtime<br/>Watchdog, Health, Activity"]
@@ -88,10 +83,12 @@ graph LR
 | `memory_root` | `MEMORY_ROOT` | `{agent_root}/memory_db` | ChromaDB and SQLite storage root |
 | `memory_chroma_path` | *(derived)* | `{memory_root}/chroma` | ChromaDB vector store location |
 | `memory_db_path` | *(derived)* | `{memory_root}/agent.db` | Agent metadata SQLite DB |
-| `task_db_path` | *(derived)* | `{memory_root}/gateway_tasks.db` | Gateway async task queue SQLite DB |
+| `task_db_path` | *(derived)* | `{memory_root}/task.db` | Gateway async task queue SQLite DB — **not** `gateway_tasks.db` |
 | `workspace_autocode` | *(derived)* | `{workspace_root}/autocode` | Autocode workflow scratch space |
 | `workspace_index` | *(derived)* | `{workspace_root}/.index` | File indexing cache |
 | `log_path` | *(derived)* | `{agent_root}/logs` | JSONL trace logs directory |
+| `agent_log_path` | *(derived)* | `{log_path}/agent` | Agent-specific log subdirectory — undocumented previously |
+| `sleep_learn_log_path` | *(derived)* | `{log_path}/sleep_learn` | Sleep & Learn daemon log subdirectory — undocumented previously |
 
 ### Path Resolution Helpers
 
@@ -126,14 +123,20 @@ graph TD
         AN["ANALYZE_MODEL<br/>Data analysis"]
         CO["CODE_MODEL<br/>Code generation"]
     end
-    subgraph "Tier 3 — Lightweight (Sub-roles)"
+    subgraph "Tier 3 — Lightweight (Sub-roles, fall back to EXECUTOR)"
         SU["SUMMARIZE_MODEL<br/>Text summarization"]
         EX["EXTRACT_MODEL<br/>Information extraction"]
         CR["CRITIQUE_MODEL<br/>Quality review"]
         RV["REVIEW_MODEL<br/>Code review"]
     end
+    subgraph "Tier 3b — Lightweight (Sub-roles, fall back to ROUTER — not Executor)"
+        CL["CLASSIFY_MODEL<br/>Fast classification"]
+        RT["ROUTE_MODEL<br/>Routing decisions"]
+    end
     P --> E
     P --> R
+    R --> CL
+    R --> RT
     E --> SU
     E --> EX
     E --> CR
@@ -148,20 +151,34 @@ graph TD
 | `executor_model` | `EXECUTOR_MODEL` | ❌ Falls back to planner | `EXECUTOR_TIMEOUT` | Code generation, analysis, synthesis |
 | `router_model` | `ROUTER_MODEL` | ❌ Falls back to planner | `ROUTER_TIMEOUT` | Fast task classification (15s default) |
 | `vision_model` | `VISION_MODEL` | ❌ Falls back to planner | `VISION_TIMEOUT` | Multimodal image analysis |
+| `consultor_model` | `CONSULTOR_MODEL` | ❌ Not registered at all if unset | `CONSULTOR_TIMEOUT` | Cross-model consultation — **only added to `model_registry` if a model is explicitly configured**; unlike the other roles, there's no fallback chain for this one |
+
+### Router Sub-Role Models (fall back to `ROUTER_MODEL`, not `EXECUTOR_MODEL`)
+
+These two are easy to miss — they're sub-roles like `summarize`/`extract` etc., but they fall back to the **router** group, not the executor group:
+
+| Config Attribute | Env Variable | Fallback | Timeout Env | Default |
+|------------------|--------------|----------|--------------|---------|
+| `classify` (via `model_registry["classify"]`) | `CLASSIFY_MODEL` | `router_model` | `CLASSIFY_TIMEOUT` | 15s |
+| `route` (via `model_registry["route"]`) | `ROUTE_MODEL` | `router_model` | `ROUTE_TIMEOUT` | 15s |
+
+> Neither `classify` nor `route` has its own `cfg.<name>_model` attribute — they only exist as entries in `cfg.model_registry`, accessed by role name through the LLM client, not as direct `Config` attributes the way `planner_model`/`executor_model`/etc. are.
 
 ### Sub-Role Models
 
 Sub-roles use smaller, faster models for lightweight tasks. Each can be overridden independently or fall back to `EXECUTOR_MODEL`.
 
-| Config Attribute | Env Variable | Fallback | Description |
-|------------------|--------------|----------|-------------|
-| `summarize_model` | `SUMMARIZE_MODEL` | `executor_model` | Text summarization |
-| `extract_model` | `EXTRACT_MODEL` | `executor_model` | Information extraction from documents |
-| `research_model` | `RESEARCH_MODEL` | `executor_model` | Web research synthesis |
-| `critique_model` | `CRITIQUE_MODEL` | `executor_model` | Quality critique and feedback |
-| `analyze_model` | `ANALYZE_MODEL` | `executor_model` | Data analysis |
-| `code_model` | `CODE_MODEL` | `executor_model` | Code generation |
-| `review_model` | `REVIEW_MODEL` | `executor_model` | Code review |
+| Config Attribute | Env Variable | Fallback | Timeout Env (Default) | Description |
+|------------------|--------------|----------|------------------------|-------------|
+| `summarize_model` | `SUMMARIZE_MODEL` | `executor_model` | `SUMMARIZE_TIMEOUT` (60s) | Text summarization |
+| `extract_model` | `EXTRACT_MODEL` | `executor_model` | `EXTRACT_TIMEOUT` (60s) | Information extraction from documents |
+| `research_model` | `RESEARCH_MODEL` | `executor_model` | `RESEARCH_TIMEOUT` (120s) | Web research synthesis |
+| `critique_model` | `CRITIQUE_MODEL` | `executor_model` | `CRITIQUE_TIMEOUT` (90s) | Quality critique and feedback |
+| `analyze_model` | `ANALYZE_MODEL` | `executor_model` | `ANALYZE_TIMEOUT` (90s) | Data analysis |
+| `code_model` | `CODE_MODEL` | `executor_model` | `CODE_TIMEOUT` (120s) | Code generation |
+| `review_model` | `REVIEW_MODEL` | `executor_model` | `REVIEW_TIMEOUT` (90s) | Code review |
+
+Each sub-role has its **own independent timeout env var** — they don't share `EXECUTOR_TIMEOUT`/`execution_timeout`, despite falling back to `executor_model` for the model name itself.
 
 ### Current Model Configuration (Example as this changes frequently, dont take this as facts)
 
@@ -201,22 +218,32 @@ CONSULTOR_MODEL=
 
 The `cfg.model_registry` dict provides per-role configuration for the LLMClient:
 
+Each entry is built by an internal `_make_entry(model, provider, timeout_env, default_timeout)` helper — every entry has **4 keys**, not 2:
+
 ```python
+# What cfg.model_registry actually looks like (verified against source) —
+# NOT the {"model":..., "timeout":...}-only shape this doc previously showed,
+# and there is no "synthesize" role anywhere in this codebase.
 cfg.model_registry = {
-    "planner":   {"model": cfg.planner_model,   "timeout": cfg.planner_timeout},
-    "executor":  {"model": cfg.executor_model,  "timeout": cfg.execution_timeout},
-    "router":    {"model": cfg.router_model,     "timeout": cfg.router_timeout},
-    "vision":    {"model": cfg.vision_model,     "timeout": cfg.vision_timeout},
-    "summarize": {"model": cfg.summarize_model,  "timeout": cfg.execution_timeout},
-    "extract":   {"model": cfg.extract_model,    "timeout": cfg.execution_timeout},
-    "research":  {"model": cfg.research_model,   "timeout": cfg.execution_timeout},
-    "critique":  {"model": cfg.critique_model,   "timeout": cfg.execution_timeout},
-    "analyze":   {"model": cfg.analyze_model,    "timeout": cfg.execution_timeout},
-    "code":      {"model": cfg.code_model,       "timeout": cfg.execution_timeout},
-    "review":    {"model": cfg.review_model,     "timeout": cfg.execution_timeout},
-    "synthesize":{"model": cfg.synthesize_model, "timeout": cfg.planner_timeout},
+    "planner":   {"model": ..., "provider": ..., "base_url": ..., "timeout": 180},  # PLANNER_TIMEOUT
+    "executor":  {"model": ..., "provider": ..., "base_url": ..., "timeout": 120},  # EXECUTOR_TIMEOUT
+    "router":    {"model": ..., "provider": ..., "base_url": ..., "timeout": 15},   # ROUTER_TIMEOUT
+    "vision":    {"model": ..., "provider": ..., "base_url": ..., "timeout": 60},   # VISION_TIMEOUT
+    "classify":  {"model": ..., "provider": ..., "base_url": ..., "timeout": 15},   # CLASSIFY_TIMEOUT
+    "route":     {"model": ..., "provider": ..., "base_url": ..., "timeout": 15},   # ROUTE_TIMEOUT
+    "summarize": {"model": ..., "provider": ..., "base_url": ..., "timeout": 60},   # SUMMARIZE_TIMEOUT
+    "extract":   {"model": ..., "provider": ..., "base_url": ..., "timeout": 60},   # EXTRACT_TIMEOUT
+    "research":  {"model": ..., "provider": ..., "base_url": ..., "timeout": 120},  # RESEARCH_TIMEOUT
+    "critique":  {"model": ..., "provider": ..., "base_url": ..., "timeout": 90},   # CRITIQUE_TIMEOUT
+    "analyze":   {"model": ..., "provider": ..., "base_url": ..., "timeout": 90},   # ANALYZE_TIMEOUT
+    "code":      {"model": ..., "provider": ..., "base_url": ..., "timeout": 120},  # CODE_TIMEOUT
+    "review":    {"model": ..., "provider": ..., "base_url": ..., "timeout": 90},   # REVIEW_TIMEOUT
+    # "consultor" is added ONLY if CONSULTOR_MODEL resolves to a non-empty model —
+    # it's conditionally present, not always there like the other 13 keys.
 }
 ```
+
+`provider` is auto-resolved per role by `_resolve_role()`: an exact match against `{"openai", "deepseek", "mistral", "qwen", "kimi"}` routes to that cloud provider (reading `{PROVIDER}_BASE_MODEL` for the actual model name); anything else is treated as a local LM Studio model name.
 
 ---
 
@@ -271,13 +298,71 @@ The background meta-learning daemon (`core/sleep_learn/`) uses these settings to
 
 ---
 
+## 🔎 Tavily AI Search
+
+Not documented anywhere in the previous version of this doc — confirmed real, in active use.
+
+| Config Attribute | Env Variable | Default | Description |
+|------------------|--------------|---------|-------------|
+| `tavily_api_key` | `TAVILY_API_KEY` | `""` | API key — `tavily` tool unavailable if unset |
+| `tavily_timeout` | `TAVILY_TIMEOUT` | `60` | Seconds, validated 1–300 |
+
+## 🌐 Browser Fallback (Research Workflow)
+
+Also previously undocumented. Controls when the `research` workflow falls back to browser automation instead of a plain HTTP fetch.
+
+| Config Attribute | Env Variable | Default | Description |
+|------------------|--------------|---------|-------------|
+| `research_browser_fallback_max` | `RESEARCH_BROWSER_FALLBACK_MAX` | `3` | Max number of browser-fallback attempts per research run |
+| `research_browser_fallback_timeout` | `RESEARCH_BROWSER_FALLBACK_TIMEOUT` | `15` | Seconds per fallback attempt |
+
+## 🔬 Deep Research Workflow
+
+An entire config block — 6 settings — missing from the previous version of this doc.
+
+| Config Attribute | Env Variable | Default | Validated Range |
+|------------------|--------------|---------|------------------|
+| `deep_research_max_iterations` | `DEEP_RESEARCH_MAX_ITERATIONS` | `10` | 1–50 |
+| `deep_research_completeness_threshold` | `DEEP_RESEARCH_COMPLETENESS_THRESHOLD` | `85` | 0–100 (exclusive of 0) |
+| `deep_research_max_api_calls` | `DEEP_RESEARCH_MAX_API_CALLS` | `20` | 0–100 |
+| `deep_research_max_browser_actions` | `DEEP_RESEARCH_MAX_BROWSER_ACTIONS` | `10` | 0–50 |
+| `deep_research_timeout_seconds` | `DEEP_RESEARCH_TIMEOUT_SECONDS` | `300` | 1–3600 |
+| `deep_research_convergence_threshold` | `DEEP_RESEARCH_CONVERGENCE_THRESHOLD` | `0.85` | 0–1 (exclusive of 0) |
+
+## 🧹 Memory Diversity (Phase 6)
+
+Backs the diversity-enforcement maintenance daemon. Also previously undocumented.
+
+| Config Attribute | Env Variable | Default | Description |
+|------------------|--------------|---------|-------------|
+| `diversity_distance_threshold` | `DIVERSITY_DISTANCE_THRESHOLD` | `0.12` | Vector-distance threshold for near-duplicate clustering |
+| `archive_age_days` | `ARCHIVE_AGE_DAYS` | `30` | Age before episodic memories become archive-eligible |
+| `purge_age_days` | `PURGE_AGE_DAYS` | `90` | Age before archived memories become purge-eligible |
+
+## 📐 Context Budgeting (Phase 5)
+
+| Config Attribute | Env Variable | Default | Description |
+|------------------|--------------|---------|-------------|
+| `max_context_tokens` | `MAX_CONTEXT_TOKENS` | `8000` | Input budget passed to `budget_messages()` — validated 1000–100,000. See [LLM.md → Context Budgeting](./LLM.md#-context-budgeting) for the full algorithm this number feeds into. |
+
 ## ⚡ Concurrency & Activity
 
 | Config Attribute | Env Variable | Default | Description |
 |------------------|--------------|---------|-------------|
 | `max_concurrent_inferences` | `MAX_CONCURRENT_INFERENCES` | `2` | Max parallel LLM calls (inference slots) |
+| `disable_model_warmup` | `DISABLE_MODEL_WARMUP` | `0` (false) | Set to `1` to skip the ChromaDB warmup thread entirely — previously undocumented |
 
-The `ActivityTracker` (`core/runtime/activity_tracker.py`) uses this to limit concurrent LLM calls and detect idle periods for background daemons.
+The `ActivityTracker` (`core/runtime/activity_tracker.py`) uses `max_concurrent_inferences` to limit concurrent LLM calls and detect idle periods for background daemons.
+
+### Parallel Execution (Phase 7)
+
+Backs the `parallel` tool. Entirely missing from the previous version of this doc.
+
+| Config Attribute | Env Variable | Default | Description |
+|------------------|--------------|---------|-------------|
+| `max_concurrent_workers` | `MAX_CONCURRENT_WORKERS` | `3` | Max concurrent sub-tasks the `parallel` tool can fan out |
+| `worker_timeout` | `WORKER_TIMEOUT` | `60` | Seconds per worker task |
+| `worker_max_tokens` | `WORKER_MAX_TOKENS` | `250` | Max tokens per worker's LLM call, if it makes one |
 
 ---
 
@@ -308,18 +393,20 @@ The `ActivityTracker` (`core/runtime/activity_tracker.py`) uses this to limit co
 
 | Config Attribute | Env Variable | Default | Description |
 |------------------|--------------|---------|-------------|
-| `execution_timeout` | `EXECUTION_TIMEOUT` | `120` | Seconds for code execution sandbox |
+| `execution_timeout` | `EXECUTOR_TIMEOUT` | `120` | Seconds for code execution sandbox |
 | `sandbox_timeout` | `SANDBOX_TIMEOUT` | `30` | Seconds for quick sandbox checks |
 | `autocode_max_retries` | `AUTOCODE_MAX_RETRIES` | `3` | Max TDD iterations before rollback |
 | `autocode_max_file_chars` | `AUTOCODE_MAX_FILE_CHARS` | `6000` | Max file size for autocode context |
 | `autocode_debug` | `AUTOCODE_DEBUG` | `0` | Set to `1` for verbose trace logging |
+
+> ⚠️ **Found in source, not previously documented:** `cfg.max_retries` also exists, reading the *same* `AUTOCODE_MAX_RETRIES` env var with the same default — it's a separate attribute that duplicates `cfg.autocode_max_retries` exactly. Looks like a leftover from a rename that was never fully cleaned up. If you're adding new code, use `cfg.autocode_max_retries` (the more descriptive name); don't introduce new readers of `cfg.max_retries`.
 
 ### Timeout Hierarchy
 
 ```mermaid
 graph LR
     A["AUTOCODE_GRAPH_TIMEOUT<br/>300s — total workflow"] --> B["PLANNER_TIMEOUT<br/>180s — planning step"]
-    A --> C["EXECUTION_TIMEOUT<br/>120s — code execution"]
+    A --> C["EXECUTOR_TIMEOUT<br/>120s — code execution"]
     A --> D["ROUTER_TIMEOUT<br/>15s — task classification"]
     A --> E["SANDBOX_TIMEOUT<br/>30s — quick checks"]
 ```
@@ -327,7 +414,7 @@ graph LR
 | Config Attribute | Env Variable | Default | Description |
 |------------------|--------------|---------|-------------|
 | `planner_timeout` | `PLANNER_TIMEOUT` | `180` | Planner LLM call timeout (seconds) |
-| `execution_timeout` | `EXECUTION_TIMEOUT` | `120` | Executor LLM call timeout (seconds) |
+| `execution_timeout` | `EXECUTOR_TIMEOUT` | `120` | Executor LLM call timeout (seconds) |
 | `router_timeout` | `ROUTER_TIMEOUT` | `15` | Router LLM call timeout (seconds) |
 | `vision_timeout` | `VISION_TIMEOUT` | `60` | Vision LLM call timeout (seconds) |
 | `autocode_graph_timeout` | `AUTOCODE_GRAPH_TIMEOUT` | `300` | Total autocode workflow timeout (seconds) |
@@ -386,7 +473,7 @@ cfg.is_protected("tools/web.py")    # False — safe to edit
 cfg.is_protected("core/config.py")  # True — protected
 ```
 
-**Implementation:** Case-insensitive filename matching. Checks both filename and relative path within `agent_root`. Handles symlinks and path normalization.
+**Implementation:** Tries an exact absolute-path match first, then falls back to filename-only matching via `os.path.normcase()`. The "case-insensitive" part is actually **platform-dependent**: `normcase()` lowercases on Windows but is a no-op on Linux — so the filename-fallback check is case-sensitive on Linux, case-insensitive on Windows. Given this stack runs on Windows 11, that distinction rarely bites in practice, but it's not a cross-platform guarantee as previously worded.
 
 ---
 
@@ -405,12 +492,13 @@ The `cfg.allowed_internal_hosts` frozenset defines which internal hosts network 
 | **Development** (default) | `localhost,127.0.0.1,::1` | Allows LM Studio, SearXNG, ChromaDB on localhost |
 | **Production** | *(empty)* | Blocks **all** private/localhost access |
 
-### Startup Warning
+### First-Use Warning (Not a Startup Warning)
 
-If `allowed_internal_hosts` is non-empty, a one-time warning is logged:
+> ⚠️ This lives in `core/security.py`, not `core/config.py`, and it doesn't fire at startup. It's gated by a one-time `_SSRF_WARNED` flag inside `is_safe_network_address()`, so it only fires the first time any tool actually performs a network-safety check — which could be seconds after startup, much later, or never, depending on when (if ever) a network-touching tool is first invoked.
+
+If `allowed_internal_hosts` is non-empty, on that first check, `logger.warning()` logs:
 ```
-[WARNING] SSRF: localhost access allowed by default for development.
-Set ALLOWED_INTERNAL_HOSTS='' for production.
+SSRF: localhost/internal access allowed by default for development. Set ALLOWED_INTERNAL_HOSTS='' in .env for production.
 ```
 
 ---
@@ -516,7 +604,7 @@ If you are an AI assistant modifying `core/config.py`:
 8. **Type hints** — all new attributes must have proper type hints.
 9. **Update this doc** — when adding new config attributes, update this CONFIG.md.
 10. **Backward compatibility** — when renaming env variables, support both old and new names for at least one release cycle.
-11. **Sub-role fallback chain** — new sub-role models must fall back to `executor_model`, not `planner_model`. Planner is expensive and reserved for complex reasoning.
+11. **Sub-role fallback chain** — new sub-role models must fall back to `executor_model`, not `planner_model`. Planner is expensive and reserved for complex reasoning. **Exception:** `classify` and `route` fall back to `router_model`, not `executor_model` — they're routing-adjacent sub-roles, not execution-adjacent ones. Don't assume all sub-roles share one fallback group.
 12. **Timeout validation** — new timeouts must be validated against `autocode_graph_timeout`.
 
 ---
@@ -531,7 +619,9 @@ If you are an AI assistant modifying `core/config.py`:
 | `core/runtime/watchdog.py` | Process watchdog (uses `runtime_provider`, `lm_studio_restart_cmd`) |
 | `core/runtime/health.py` | Health check (uses paths, models, LM Studio URL) |
 | `core/llm_backend/client.py` | LLMClient (uses `model_registry`, timeouts) |
-| `core/memory_backend/store.py` | ChromaDBMemory (uses `memory_chroma_path`, tuning params) |
+| `core/memory_backend/store.py` | `MemoryStore` class (uses `memory_chroma_path`, tuning params) — **not** "ChromaDBMemory" |
+| `core/memory_backend/budget.py` | Cognitive context budgeting (uses `max_context_tokens`) |
+| `core/security.py` | SSRF allowlist enforcement (uses `allowed_internal_hosts`) — also where the first-use warning actually lives, not `config.py` |
 | `core/sleep_learn/config.py` | Sleep & Learn constants (uses `SLEEP_*` env vars) |
 | `core/gateway_backend/factory.py` | Gateway app factory (uses gateway config) |
 
@@ -549,4 +639,4 @@ If you are an AI assistant modifying `core/config.py`:
 
 ---
 
-*Last updated: June 2026. All model names, timeouts, and limits reflect current source code.*
+*This file was corrected against live source — see chat history for the full list of fixes. Headline corrections: removed the fabricated `synthesize` role, fixed `EXECUTION_TIMEOUT`→`EXECUTOR_TIMEOUT` (3 places), added 6 previously-undocumented config sections (Tavily, Browser Fallback, Deep Research, Memory Diversity, Context Budgeting, Parallel Execution) covering ~17 real config attributes, and fixed the wrong `task_db_path` filename and `ChromaDBMemory`/`MemoryStore` class name.*

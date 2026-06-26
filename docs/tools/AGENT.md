@@ -526,7 +526,7 @@ If you are an AI assistant modifying the agent tool:
 | 🔵 2 | `dry_run` / `estimate_cost` mode | Medium | Pre-flight cost estimation without calling LLM | Structured errors (available) |
 | 🔵 3 | Streaming support | Large | Partial responses for long-running roles; requires `core/llm.py` redesign | MCP stdio protocol changes |
 | 🔵 4 | Role composition chaining | Large | Chain multiple roles in single call: `analyze` → `code` → `review` | Streaming decision |
-| 🔵 5 | New roles: `refactor`, `test`, `document` | Medium each | Autonomous code maintenance workflows. Requires `core/config.py` and `.env` updates for new model entries | Centralized ROLE_CONFIG stable |
+| 🔵 5 | New roles: `refactor`, `test`, `document` | Medium each | Autonomous code maintenance workflows. Requires `core/config.py` and `.env` and `core/llm_backend/config.py` updates for new model entries | Centralized ROLE_CONFIG stable |
 | 🔵 6 | Parallel tool execution | Medium | Expose `core/parallel_executor.py` as a `parallel` tool for research workflows | Concrete use case demanding it |
 
 ---

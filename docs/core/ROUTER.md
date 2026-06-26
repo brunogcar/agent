@@ -305,8 +305,8 @@ graph TD
 | `_RE_DIRECT_TAVILY` | `\b(tavily\|ai search\|deep search\|advanced search\|ai-powered search\|intelligent search)\b` | `direct → tavily` |
 | `_RE_DIRECT_CONSULT` | `\b(consult a different (?:ai\|llm\|model)\|ask another model\|get another perspective\|ask a different llm\|let's get a second opinion\|second opinion from (?:ai\|llm\|model))\b` | `direct → consult` |
 | `_RE_DIRECT_PARALLEL` | `\b(run\s+.*?\s+in\s+parallel\|run\s+.*?\s+at\s+the\s+same\s+time\|batch process\|concurrently\|run together\|parallel execution)\b` | `direct → parallel` |
-| `_RE_DIRECT_VISION` | `\b(ocr\|analyze\s+.*?\s+image\|describe\s+.*?\s+image\|what\s+is\s+in\s+this\s+image\|read\s+this\s+image\|image\s+description\|analyze\s+this\s+photo\|what\s+does\s+this\s+picture\s+show\|read\s+text\s+from\s+image\|screenshot\s+analysis)\b` | `direct → vision` |
-| `_RE_DIRECT_AGENT` | `\b(delegate\s+.*?\s+agent\|spawn\s+an\s+agent\|use\s+an\s+agent\|sub-agent\|agent\s+for\|let\s+an\s+agent\|have\s+an\s+agent)\b` | `direct → agent` |
+| `_RE_DIRECT_VISION` | `\b(ocr\s+(?:this\|the\|that\|these\|those\|an\|a\|my)\|analyze\s+.*?\s+image\|describe\s+.*?\s+image\|what\s+is\s+in\s+this\s+image\|read\s+this\s+image\|image\s+description\|analyze\s+this\s+photo\|what\s+does\s+this\s+picture\s+show\|read\s+text\s+from\s+image\|screenshot\s+analysis)\b` | `direct → vision` |
+| `_RE_DIRECT_AGENT` | `\b(delegate\s+.*?\s+agent\|spawn\s+an\s+agent\|use\s+an\s+agent\|sub-agent\|let\s+an\s+agent\|have\s+an\s+agent)\b` | `direct → agent` |
 | `_RE_DEEP_RESEARCH` | `\b(deep research\|thorough investigation\|comprehensive report\|iterative research\|multi-faceted research\|extensive research\|in-depth analysis\|detailed investigation)\b` | `deep_research → workflow` |
 | `_RE_UNDERSTAND` | `\b(understand codebase\|build knowledge graph\|analyze project structure\|index codebase\|codebase overview\|project analysis\|map dependencies\|explore codebase\|scan project)\b` | `understand → workflow` |
 | `_RE_CODE` | `\b(fix\|bug\|debug\|audit\|patch\|refactor\|improve\|add feature\|implement\|edit\|modify\|update code\|error message\|runtime error\|type error\|syntax error\|logic error)\b` | `autocode` |
@@ -539,3 +539,4 @@ If you are an AI assistant modifying `core/router.py`:
 ---
 
 *Last updated: June 2026. All regex patterns, model names, and routing rules reflect current source code in `core/router.py`.*
+
