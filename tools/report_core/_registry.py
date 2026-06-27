@@ -1,71 +1,64 @@
-﻿"""
-report_core/_registry.py - Action dispatch registry.
+"""Auto-registration registry for report actions.
 
-Dispatcher pattern: action string -> builder function.
-All builder imports are lazy (inside wrapper functions) to avoid
-loading heavy deps (pandas, jinja2, plotly) at MCP startup time.
+This module defines the central DISPATCH dictionary that maps
+(tool_name, action_name) pairs to their handler functions and metadata.
+
+The @register_action decorator is used by individual action modules
+to automatically register themselves in DISPATCH at import time.
+This eliminates manual wiring in a central dispatcher, making the
+system fully extensible: to add a new report action, simply:
+ 1. Create a new file in tools/report_core/actions/
+ 2. Define a handler decorated with @register_action("report", "action_name")
+ 3. The action is immediately available via the report() tool
+
+Thread Safety:
+ DISPATCH is populated at import time (single-threaded during module load).
+ No locking is required for registration. Handlers should be thread-safe
+ if called concurrently.
 """
-
 from __future__ import annotations
 
-from typing import Callable, Any
+from typing import Any, Callable, Dict, List, Optional
+
+# Global dispatch table: {"report": {"chart": {"func": ..., "help": ..., "examples": [...]}}}
+# Populated automatically via @register_action decorators at import time.
+DISPATCH: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
 
-def _dispatch_chart(*args, **kwargs):
-    from tools.report_core import charts
-    return charts.build(*args, **kwargs)
+def register_action(
+    tool_name: str,
+    action_name: str,
+    help_text: str = "",
+    examples: Optional[List[str]] = None,
+) -> Callable:
+    """
+    Decorator to register a report action handler function with metadata.
+
+    Args:
+        tool_name: Tool namespace. Always "report" for report actions.
+        action_name: Action identifier exposed to the LLM (e.g., "chart", "dashboard").
+        help_text: Help block to be included in the tool's dynamic docstring.
+        examples: List of example strings for LLM reference.
+
+    Returns:
+        The original function, unmodified, after registration.
+    """
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        if tool_name not in DISPATCH:
+            DISPATCH[tool_name] = {}
+        DISPATCH[tool_name][action_name] = {
+            "func": func,
+            "help": help_text,
+            "examples": examples or [],
+        }
+        return func
+    return decorator
 
 
-def _dispatch_map(*args, **kwargs):
-    from tools.report_core import maps
-    return maps.build(*args, **kwargs)
-
-
-def _dispatch_report(*args, **kwargs):
-    from tools.report_core import html
-    return html.build_report(*args, **kwargs)
-
-
-def _dispatch_dashboard(*args, **kwargs):
-    from tools.report_core import html
-    return html.build_dashboard(*args, **kwargs)
-
-
-def _dispatch_diagram(*args, **kwargs):
-    from tools.report_core import diagrams
-    return diagrams.build(*args, **kwargs)
-
-
-def _dispatch_export(*args, **kwargs):
-    from tools.report_core import export
-    return export.run(*args, **kwargs)
-
-
-def _dispatch_compare(*args, **kwargs):
-    from tools.report_core import compare
-    return compare.build(*args, **kwargs)
-
-def _dispatch_timeline(*args, **kwargs):
-    from tools.report_core import timeline
-    return timeline.build(*args, **kwargs)
-
-def _dispatch_scorecard(*args, **kwargs):
-    from tools.report_core import scorecard
-    return scorecard.build(*args, **kwargs)
-
-DISPATCH: dict[str, Callable] = {
-    "chart":      _dispatch_chart,
-    "map":        _dispatch_map,
-    "report":     _dispatch_report,
-    "dashboard":  _dispatch_dashboard,
-    "diagram":    _dispatch_diagram,
-    "export":     _dispatch_export,
-    "compare":    _dispatch_compare,
-    "timeline":   _dispatch_timeline,
-    "scorecard":  _dispatch_scorecard,
-}
-
-DISPATCH_METADATA: dict[str, dict] = {
+# ── Static metadata for each action (param docs, config keys) ────────────────
+# Kept separate from DISPATCH so @register_action stays simple and identical
+# to the git/file registry pattern.
+DISPATCH_METADATA: Dict[str, Dict[str, Any]] = {
     "chart": {
         "description": "Interactive Chart.js chart",
         "required_params": ["action", "title"],
@@ -120,8 +113,25 @@ DISPATCH_METADATA: dict[str, dict] = {
         "optional_params": ["config"],
         "config_keys": ["theme", "accent"],
     },
+    "list": {
+        "description": "List all available report actions",
+        "required_params": ["action"],
+        "optional_params": [],
+        "config_keys": [],
+    },
+    "help": {
+        "description": "Get detailed help for a specific report action",
+        "required_params": ["action"],
+        "optional_params": ["data"],
+        "config_keys": [],
+    },
 }
-PRESETS: dict[str, dict] = {
+
+
+# ── Presets ──────────────────────────────────────────────────────────────────
+# Global presets that merge into config before dispatch. Each preset defines
+# default template, theme, accent, chart engine, and section layout.
+PRESETS: Dict[str, Dict[str, Any]] = {
     "financial": {
         "template": "dashboard",
         "theme": "dark",
@@ -165,4 +175,4 @@ PRESETS: dict[str, dict] = {
         "accent": "#14b8a6",
         "default_sections": ["overview", "radar", "details"],
     },
-}  
+}

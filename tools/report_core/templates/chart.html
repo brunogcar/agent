@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% block sidebar %}
+<div class="nav-section-label">Chart</div>
+<button class="nav-item ok active">
+  <span class="nav-dot"></span>{{ title | default('Chart') }}
+</button>
+{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 16px;">
+  <h1 style="font-size: 24px; font-weight: 700; color: var(--text); margin: 0 0 8px;">{{ title }}</h1>
+</div>
+<div class="chart-box"><canvas id="chart-main"></canvas></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  var chartConfig = {{ chart_config_json | safe }};
+  var ctx = document.getElementById('chart-main').getContext('2d');
+  new Chart(ctx, chartConfig);
+</script>
+{% endblock %}

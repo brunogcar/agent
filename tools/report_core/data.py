@@ -1,7 +1,8 @@
-"""
-report_core/data.py - Data loading with path guard and SSRF blocking.
-"""
+"""report_core/data.py - Data loading with path guard and SSRF blocking.
 
+Blocks all remote URLs and UNC paths. Only local files within the
+allowed workspace/agent roots are permitted.
+"""
 from __future__ import annotations
 
 import json
@@ -31,6 +32,13 @@ def load_data(
         return (
             None,
             "data_path must be a local file path. Use the web tool to fetch remote data first.",
+        )
+
+    # UNC path guard: block Windows network paths
+    if lowered.startswith(("\\", "//")):
+        return (
+            None,
+            "data_path must be a local file path. UNC paths are not allowed.",
         )
 
     p, err = resolve_path(data_path)

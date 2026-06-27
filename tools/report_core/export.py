@@ -1,9 +1,7 @@
-"""
-report_core/export.py - PDF/PNG export via Playwright (optional).
+"""report_core/export.py - PDF/PNG export via Playwright (optional).
 
 Playwright is imported lazily. If not installed, returns a graceful warning.
 """
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,7 +26,8 @@ def run(
     if not html_path_str:
         raise ValueError("data must be the path to an existing HTML file")
 
-    p, err = resolve_path(html_path_str)
+    # v1.1 fix: default to workspace root since reports live in workspace/reports/
+    p, err = resolve_path(html_path_str, default_root="workspace")
     if err:
         raise ValueError(err)
     if not p.exists():

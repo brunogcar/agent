@@ -1,9 +1,7 @@
-"""
-report_core/maps.py - Leaflet.js map builders.
+"""report_core/maps.py - Leaflet.js map builders.
 
 Client-side rendering. Produces JSON config for the template.
 """
-
 from __future__ import annotations
 
 import json
@@ -52,7 +50,8 @@ def build(
     from tools.report_core import html
     ctx = {
         "title": title,
-        "map_config_json": json.dumps(map_config),
+        # Escape </script> to prevent injection when JSON is embedded in <script> tags
+        "map_config_json": json.dumps(map_config).replace("</", "<\/"),
         "theme": config.get("theme", "dark"),
     }
     html.render_template("map.html", ctx, html_path)

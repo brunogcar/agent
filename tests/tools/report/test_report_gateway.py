@@ -1,6 +1,4 @@
-"""
-tests/tools/report/test_report_gateway.py -- Gateway + metrics.json tests.
-"""
+"""tests/tools/report/test_report_gateway.py -- Gateway + metrics.json tests."""
 import json
 import pytest
 from pathlib import Path

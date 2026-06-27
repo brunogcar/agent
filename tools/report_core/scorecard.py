@@ -1,7 +1,5 @@
+"""report_core/scorecard.py — RAG status dashboard builder.
 """
-report_core/scorecard.py — RAG status dashboard builder.
-"""
-
 from __future__ import annotations
 
 import json
@@ -126,7 +124,8 @@ def build(trace_id: str, title: str, data: Any, config: dict) -> dict:
         "overall_score": round(overall, 1),
         "overall_status": overall_status,
         "overall_color": _rag_color(overall_status, theme),
-        "radar_config_json": json.dumps(radar_config),
+        # Escape </script> to prevent injection when JSON is embedded in <script> tags
+        "radar_config_json": json.dumps(radar_config).replace("</", "<\/"),
         "theme": theme,
         "accent": accent,
         "trace_id": trace_id,

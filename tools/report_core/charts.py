@@ -1,10 +1,8 @@
-"""
-report_core/charts.py - Chart.js configuration builders.
+"""report_core/charts.py - Chart.js configuration builders.
 
 All rendering is client-side. This module produces JSON config objects
 that the Jinja2 template injects into a <canvas> element.
 """
-
 from __future__ import annotations
 
 import json
@@ -38,11 +36,12 @@ def build(
     from tools.report_core import html
     ctx = {
         "title": title,
-        "chart_config_json": json.dumps(chart_config),
+        # Escape </script> to prevent injection when JSON is embedded in <script> tags
+        "chart_config_json": json.dumps(chart_config).replace("</", "<\/"),
         "theme": config.get("theme", "dark"),
         "accent": config.get("accent", "#0d9488"),
     }
-    html.render_template("report.html", ctx, html_path)
+    html.render_template("chart.html", ctx, html_path)
 
     return {
         "type": "chart",
@@ -94,8 +93,13 @@ def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> 
     }
 
 
-def _generate_palette(n: int, base: str) -> list:
-    """Generate n distinct colors."""
+def _generate_palette(n: int, base: str = "") -> list:
+    """Generate n distinct colors.
+
+    The base parameter is reserved for future theming support.
+    Currently uses a fixed palette with modulo cycling. When n > 10,
+    colors will repeat — this is expected behavior for large datasets.
+    """
     palette = [
         "#0d9488", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
         "#14b8a6", "#6366f1", "#f97316", "#ec4899", "#84cc16",

@@ -1,10 +1,11 @@
-"""
-report_core/html.py - Jinja2 renderer.
+"""report_core/html.py - Jinja2 renderer.
 
 Thread-safe: uses a module-level singleton Environment with autoescape enabled.
 Templates live in report_core/templates/.
-"""
 
+All file writes are atomic (temp file + os.replace) to prevent partial writes
+on crash or concurrent access.
+"""
 from __future__ import annotations
 
 import json
@@ -36,15 +37,19 @@ def _get_env():
 
 
 def render_template(template_name: str, context: dict, output_path: Path) -> None:
-    """Render a Jinja2 template to an HTML file."""
+    """Render a Jinja2 template to an HTML file (atomic write)."""
     env = _get_env()
     template = env.get_template(template_name)
     rendered = template.render(**context)
-    output_path.write_text(rendered, encoding="utf-8")
+    _atomic_write(output_path, rendered)
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Atomic file write via temp + os.replace."""
+    """Atomic file write via temp + os.replace.
+
+    Prevents partial/corrupted files if the process crashes mid-write
+    or if another reader accesses the file concurrently.
+    """
     tmp = path.parent / f"{path.name}.tmp"
     tmp.write_text(content, encoding="utf-8")
     os.replace(str(tmp), str(path))
