@@ -1,29 +1,69 @@
+{% extends "base.html" %}
 {% import "macros.html" as m %}
-{% for sec in tabs %}
-<div class="tab-panel {{ 'active' if loop.first else '' }}" id="tab-{{ loop.index }}">
-  <h2>{{ sec.title | default('Panel') }}</h2>
-  {% if sec.text %}
-  <div class="text-block">
-    {{ sec.text }}
+
+{% block sidebar %}
+<div class="nav-section-label">Dashboard</div>
+{% for tab in tabs %}
+<button class="nav-item {% if loop.first %}ok active{% endif %}" data-target="tab-{{ loop.index }}" onclick="showTab(this, 'tab-{{ loop.index }}')">
+  <span class="nav-dot"></span>{{ tab.name | default('Tab ' + loop.index|string) }}
+</button>
+{% endfor %}
+{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 16px;">
+  <h1 style="font-size: 24px; font-weight: 700; color: var(--text); margin: 0 0 8px;">{{ title }}</h1>
+  {% if subtitle %}<p style="color: var(--text-sec);">{{ subtitle }}</p>{% endif %}
+</div>
+
+<div class="kpi-grid">
+{% for k in kpis %}
+  {{ m.kpi_card(k.label, k.value, k.get('delta')) }}
+{% endfor %}
+</div>
+
+{% for tab in tabs %}
+<div class="tab-panel {% if loop.first %}active{% endif %}" id="tab-{{ loop.index }}">
+  <h2>{{ tab.name | default('Panel') }}</h2>
+  {% for sec in tab.sections %}
+  <div class="section">
+    {% if sec.text %}
+    <div class="text-block">
+      {{ sec.text }}
+    </div>
+    {% endif %}
+    {% if sec.type == 'table' and sec.data %}
+    {{ m.data_table(sec.data[0].keys() | list, sec.data | map('values') | list) }}
+    {% endif %}
+    {% if sec.type == 'chart' and sec.chart_data %}
+    {{ m.chart_canvas('chart-' + loop.index|string + '-' + loop.index|string) }}
+    {% endif %}
+    {% if sec.type == 'mermaid' %}
+    {{ m.mermaid_diagram(sec.mermaid_src | default(sec.data | default(''))) }}
+    {% endif %}
+    {% if sec.type == 'code' %}
+    {{ m.code_block(sec.code | default(''), sec.lang | default('python')) }}
+    {% endif %}
+    {% if sec.type == 'bug' %}
+    {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
+    {% endif %}
   </div>
-  {% endif %}
-  {% if sec.type == 'table' and sec.data %}
-  {{ m.data_table(sec.data[0].keys() | list, sec.data | map('values') | list) }}
-  {% endif %}
-  {% if sec.type == 'chart' and sec.chart_data %}
-  {{ m.chart_canvas('chart-' + loop.index|string + '-' + loop.index|string) }}
-  <script>
-    var chartData{{ loop.index }}{{ loop.index }} = {{ sec.chart_data | tojson }};
-  </script>
-  {% endif %}
-  {% if sec.type == 'mermaid' %}
-  {{ m.mermaid_diagram(sec.mermaid_src | default(sec.data | default(''))) }}
-  {% endif %}
-  {% if sec.type == 'code' %}
-  {{ m.code_block(sec.code | default(''), sec.lang | default('python')) }}
-  {% endif %}
-  {% if sec.type == 'bug' %}
-  {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
-  {% endif %}
+  {% endfor %}
 </div>
 {% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% for tab in tabs %}
+  {% for sec in tab.sections %}
+    {% if sec.type == 'chart' and sec.chart_data %}
+    <script>
+      var chartData{{ loop.index }}{{ loop.index }} = {{ sec.chart_data | tojson }};
+      var ctx{{ loop.index }}{{ loop.index }} = document.getElementById('chart-{{ loop.index }}-{{ loop.index }}').getContext('2d');
+      new Chart(ctx{{ loop.index }}{{ loop.index }}, chartData{{ loop.index }}{{ loop.index }});
+    </script>
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+{% endblock %}

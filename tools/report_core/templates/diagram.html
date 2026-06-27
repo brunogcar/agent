@@ -12,5 +12,5 @@
 <div style="margin-bottom: 16px;">
   <h1 style="font-size: 24px; font-weight: 700; color: var(--text); margin: 0 0 8px;">{{ title }}</h1>
 </div>
-<div class="mermaid">{{ mermaid_src }}</div>
+<div class="mermaid">{{ mermaid_src | safe }}</div>
 {% endblock %}

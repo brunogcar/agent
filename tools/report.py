@@ -10,6 +10,7 @@ Architecture:
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from core.tracer import tracer
@@ -66,11 +67,17 @@ def report(
         )
 
     # Cancellation Guard: Abort before any report generation
+    # Import is OUTSIDE try to avoid masking ImportError as "cancelled"
     try:
         from core.runtime.cancellation import ensure_not_cancelled
-        ensure_not_cancelled(trace_id)
-    except BaseException:
-        return report_fail("Workflow cancelled — aborting report operation", trace_id=trace_id)
+    except ImportError:
+        ensure_not_cancelled = None  # Module not available, skip cancellation check
+
+    if ensure_not_cancelled is not None:
+        try:
+            ensure_not_cancelled(trace_id)
+        except BaseException:
+            return report_fail("Workflow cancelled — aborting report operation", trace_id=trace_id)
 
     # 1. Apply preset
     config = dict(config) if config else {}
@@ -89,7 +96,8 @@ def report(
             trace_id=trace_id,
         )
 
-    # 3. Dispatch
+    # 3. Dispatch with timing
+    start_time = time.perf_counter()
     try:
         result = op_info["func"](
             trace_id=trace_id,
@@ -97,6 +105,9 @@ def report(
             data=data,
             config=config,
         )
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        result["elapsed_ms"] = elapsed_ms
+
         # Memory hook — store episodic record of report generation
         try:
             from core.memory import memory
@@ -108,8 +119,13 @@ def report(
                 tools_used=f"report,{action}",
                 trace_id=trace_id,
             )
-        except Exception:
-            pass  # Never fail the report if memory storage fails
+        except Exception as e:
+            # Log failure for debugging but never fail the report
+            try:
+                tracer.warning(f"Memory hook failed for {trace_id}: {e}")
+            except Exception:
+                pass
         return report_ok(result, trace_id=trace_id)
     except Exception as e:
-        return report_fail(f"{type(e).__name__}: {e}", trace_id=trace_id)
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        return report_fail(f"{type(e).__name__}: {e} (elapsed_ms={elapsed_ms})", trace_id=trace_id)

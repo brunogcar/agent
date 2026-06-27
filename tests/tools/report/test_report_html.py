@@ -21,7 +21,6 @@ class TestHtmlRenderer:
         }, out)
         assert out.exists()
         content = out.read_text(encoding="utf-8")
-        # Should contain rendered content from sections or kpis
         assert "Hello" in content or "K1" in content or "Test Title" in content
 
     def test_render_template_atomic_write(self, tmp_path):
@@ -33,7 +32,6 @@ class TestHtmlRenderer:
             "kpis": [], "sources": [],
             "theme": "dark", "trace_id": "", "accent": "#0d9488",
         }, out)
-        # No .tmp file should exist
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert len(tmp_files) == 0
         assert out.exists()
@@ -75,7 +73,7 @@ class TestHtmlRenderer:
             trace_id="test-dash",
             title="Dashboard",
             data={"x": 1},
-            config={"tabs": [{"title": "Tab1"}], "kpis": [], "charts": []},
+            config={"tabs": [{"name": "Tab1", "sections": [{"title": "Sec1"}]}], "kpis": [], "charts": []},
         )
         assert result["type"] == "dashboard"
         assert result["tabs"] == 1

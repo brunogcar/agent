@@ -101,6 +101,28 @@ class TestRealIntegration:
         content = html_path.read_text(encoding="utf-8")
         assert "Real Scorecard" in content
 
+    def test_real_dashboard_generation(self, tmp_path, monkeypatch):
+        """Generate a real dashboard via the facade."""
+        monkeypatch.setattr("core.config.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("core.config.cfg.agent_root", tmp_path)
+
+        result = report(
+            action="dashboard",
+            title="Real Dashboard",
+            data={"x": 1},
+            config={
+                "tabs": [{"name": "Overview", "sections": [{"title": "Summary", "text": "Hello world"}]}],
+                "kpis": [], "charts": [],
+            },
+            trace_id="real-dashboard-001",
+        )
+        assert result["status"] == "success"
+        html_path = Path(result["html_path"])
+        assert html_path.exists()
+        content = html_path.read_text(encoding="utf-8")
+        assert "Real Dashboard" in content
+        assert "Hello world" in content
+
     def test_preset_applied_in_facade(self, tmp_path, monkeypatch):
         """Verify preset merges correctly through the facade."""
         monkeypatch.setattr("core.config.cfg.workspace_root", tmp_path)
@@ -115,6 +137,5 @@ class TestRealIntegration:
             trace_id="real-preset-001",
         )
         assert result["status"] == "success"
-        # The file should exist — preset was applied before dispatch
         html_path = tmp_path / "reports" / "real-preset-001" / "Preset_Test.html"
         assert html_path.exists()

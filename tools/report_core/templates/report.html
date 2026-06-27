@@ -1,4 +1,18 @@
+{% extends "base.html" %}
 {% import "macros.html" as m %}
+
+{% block sidebar %}
+<div class="nav-section-label">Report</div>
+<button class="nav-item ok active">
+  <span class="nav-dot"></span>{{ title | default('Report') }}
+</button>
+{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 16px;">
+  <h1 style="font-size: 24px; font-weight: 700; color: var(--text); margin: 0 0 8px;">{{ title }}</h1>
+</div>
+
 {% for k in kpis %}
 {{ m.kpi_card(k.label, k.value, k.get('delta')) }}
 {% endfor %}
@@ -16,9 +30,6 @@
   {% endif %}
   {% if sec.type == 'chart' and sec.chart_data %}
   {{ m.chart_canvas('chart-' + loop.index|string) }}
-  <script>
-    var chartData{{ loop.index }} = {{ sec.chart_data | tojson }};
-  </script>
   {% endif %}
   {% if sec.type == 'mermaid' %}
   {{ m.mermaid_diagram(sec.mermaid_src | default(sec.data | default(''))) }}
@@ -28,3 +39,17 @@
   {% endif %}
 </div>
 {% endfor %}
+{% endblock %}
+
+{% block scripts %}
+{% for sec in sections %}
+  {% if sec.type == 'chart' and sec.chart_data %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    var chartData{{ loop.index }} = {{ sec.chart_data | tojson }};
+    var ctx{{ loop.index }} = document.getElementById('chart-{{ loop.index }}').getContext('2d');
+    new Chart(ctx{{ loop.index }}, chartData{{ loop.index }});
+  </script>
+  {% endif %}
+{% endfor %}
+{% endblock %}

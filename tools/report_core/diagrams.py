@@ -1,13 +1,40 @@
+"""report_core/diagrams.py - Mermaid.js diagram builders.
 """
-report_core/diagrams.py - Mermaid.js diagram builders.
-"""
-
 from __future__ import annotations
 
+import html
+import re
 from pathlib import Path
 from typing import Any
 
 from tools.report_core.paths import report_out_dir
+
+
+def _sanitize_mermaid(src: str) -> str:
+    """Sanitize a Mermaid syntax string for safe HTML rendering.
+
+    Mermaid syntax uses characters like >, |, [, ] which must NOT be
+    HTML-escaped. But we must strip actual HTML tags and event handlers
+    that could execute JavaScript in the browser context.
+
+    Strategy:
+    1. Strip <script>, <iframe>, <object>, <embed> tags entirely
+    2. Strip on* event handlers (onerror, onclick, etc.)
+    3. Strip javascript: URLs
+    4. Preserve all Mermaid syntax characters
+    """
+    # Remove dangerous HTML tags entirely
+    src = re.sub(r"<script[^>]*>.*?</script>", "", src, flags=re.IGNORECASE | re.DOTALL)
+    src = re.sub(r"<iframe[^>]*>.*?</iframe>", "", src, flags=re.IGNORECASE | re.DOTALL)
+    src = re.sub(r"<object[^>]*>.*?</object>", "", src, flags=re.IGNORECASE | re.DOTALL)
+    src = re.sub(r"<embed[^>]*>", "", src, flags=re.IGNORECASE)
+    # Remove event handlers: onerror=, onclick=, etc.
+    src = re.sub(r"\son\w+\s*=\s*[^\s>\"']+", "", src, flags=re.IGNORECASE)
+    src = re.sub(r"\son\w+\s*=\s*\"[^\"]*\"", "", src, flags=re.IGNORECASE)
+    src = re.sub(r"\son\w+\s*=\s*'[^']*'", "", src, flags=re.IGNORECASE)
+    # Remove javascript: URLs
+    src = re.sub(r"javascript:", "", src, flags=re.IGNORECASE)
+    return src
 
 
 def build(
@@ -21,11 +48,11 @@ def build(
 
     # data can be raw mermaid syntax string, or a dict with nodes/edges
     if isinstance(data, str):
-        mermaid_src = data
+        mermaid_src = _sanitize_mermaid(data)
     elif isinstance(data, dict):
         mermaid_src = _dict_to_mermaid(data, diagram_type)
     else:
-        mermaid_src = "flowchart TD\n    A[Start] --> B[End]"
+        mermaid_src = "flowchart TD\n A[Start] --> B[End]"
 
     out_dir = report_out_dir(trace_id)
     safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in (title or "diagram"))
@@ -49,20 +76,23 @@ def build(
 
 
 def _dict_to_mermaid(data: dict, diagram_type: str) -> str:
-    """Convert a simple dict representation to Mermaid syntax."""
+    """Convert a simple dict representation to Mermaid syntax.
+
+    HTML-escapes node labels to prevent XSS while preserving Mermaid syntax.
+    """
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
     lines = [f"{diagram_type} TD"]
     for n in nodes:
-        nid = n.get("id", "A")
-        label = n.get("label", nid)
-        lines.append(f"    {nid}[{label}]")
+        nid = html.escape(str(n.get("id", "A")))
+        label = html.escape(str(n.get("label", nid)))
+        lines.append(f" {nid}[{label}]")
     for e in edges:
-        src = e.get("from", "A")
-        dst = e.get("to", "B")
-        label = e.get("label", "")
+        src = html.escape(str(e.get("from", "A")))
+        dst = html.escape(str(e.get("to", "B")))
+        label = html.escape(str(e.get("label", "")))
         if label:
-            lines.append(f"    {src} -->|{label}| {dst}")
+            lines.append(f" {src} -->|{label}| {dst}")
         else:
-            lines.append(f"    {src} --> {dst}")
+            lines.append(f" {src} --> {dst}")
     return "\n".join(lines)

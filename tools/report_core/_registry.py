@@ -42,10 +42,19 @@ def register_action(
 
     Returns:
         The original function, unmodified, after registration.
+
+    Raises:
+        ValueError: If the action_name is already registered for the tool_name.
     """
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         if tool_name not in DISPATCH:
             DISPATCH[tool_name] = {}
+        # Guard against duplicate action names — silent overwrites hide bugs
+        if action_name in DISPATCH[tool_name]:
+            raise ValueError(
+                f"Duplicate action registration: '{action_name}' already exists "
+                f"in DISPATCH['{tool_name}']. Check for colliding action files."
+            )
         DISPATCH[tool_name][action_name] = {
             "func": func,
             "help": help_text,
