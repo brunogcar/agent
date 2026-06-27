@@ -275,7 +275,7 @@ Note `PROCEDURAL` (50.0) outranks `ERROR` (40.0) in tier weight, despite the mod
 |--------|--------|------------|
 | `core/memory_backend/budget.py` (`CHARS_PER_TOKEN`) | `/ 3.5` | The cognitive budgeting system above — the canonical estimate |
 | `core/llm_backend/client.py`'s `call()` | `// 4` | A separate, throwaway estimate used only for a debug `logger.info()` line before `budget_messages()` is invoked — has no effect on what gets kept/trimmed |
-| `core/llm_backend/budget.py` (`truncate_by_tokens`) | tiktoken if available, else `// 4` | Rate-limiting / cost-estimation utility, unrelated to message selection |
+| `core/llm_backend/rate_limit.py` (`truncate_by_tokens`) | tiktoken if available, else `// 4` | Rate-limiting / cost-estimation utility, unrelated to message selection |
 
 There genuinely are three different token-estimate code paths in this codebase, but they serve different purposes — it's not two competing systems producing inconsistent *budgeting* results, since only the first one (`/ 3.5`) actually decides what gets kept or trimmed.
 
@@ -534,14 +534,6 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/llm/ -v -W error
 
 > **Note:** This section was rewritten after verifying every claim against live source. The original version (attributed to MiMo's review) was built on a file, `core/llm_backend/context_budget.py`, that doesn't exist — see below for what's actually going on.
 
-### There aren't two competing budgeting systems — there's one system with a stale name, plus an unrelated utility
-
-The original concern described `context_budget.py` (cognitive) vs `budget.py` (raw) as two systems fighting over the same job. That's not accurate:
-- The cognitive system is real and is the only thing that decides what gets kept/trimmed — it just lives at `core/memory_backend/budget.py`, not `core/llm_backend/context_budget.py`. Its own internal docstring is itself stale (still says `core/context_budget.py`), which likely caused this confusion in the first place.
-- `core/llm_backend/budget.py` does a genuinely different job — rate limiting (`ThreadSafeRateLimiter`) and cost estimation. It is not consulted when deciding what to trim from a message list. There's no live conflict here, just confusing naming across two same-named files in two different subsystems.
-
-**Suggestion:** rename one of the two `budget.py` files (e.g. `llm_backend/rate_limit.py`) so "budget.py" stops being ambiguous between subsystems, and fix the stale docstring in `memory_backend/budget.py`.
-
 ### `complete_with_tools()` doesn't exist
 
 Confirmed via repo-wide search. If a tool-calling loop is planned, it isn't built yet at this layer — `LLMClient` only exposes `complete()` and `call()`.
@@ -572,7 +564,7 @@ If you are an AI assistant modifying the LLM backend:
 6. **Trace integration** — every call must log via `tracer.step()` with `trace_id`.
 7. **JSON parsing** — never assume the LLM returns clean JSON. `client.py` and `router.py` each have their own extraction pipeline (regex-outermost-match vs `raw_decode()` respectively) — use whichever already exists in the file you're editing rather than introducing a third approach.
 8. **Context budgeting** — never truncate messages without going through `core/memory_backend/budget.py`'s `budget_messages()`. Raw truncation loses cognitive priority information. (Not `llm_backend/context_budget.py` — that file doesn't exist.)
-9. **Token estimation** — `budget_messages()` uses `/ 3.5` (`CHARS_PER_TOKEN` in `memory_backend/budget.py`) — that's the only factor that affects what actually gets kept or trimmed. The `// 4` estimates elsewhere (a debug log line in `client.py`, and `llm_backend/budget.py`'s rate-limiting utility) are unrelated to budgeting decisions and don't need to match it.
+9. **Token estimation** — `budget_messages()` uses `/ 3.5` (`CHARS_PER_TOKEN` in `memory_backend/budget.py`) — that's the only factor that affects what actually gets kept or trimmed. The `// 4` estimates elsewhere (a debug log line in `client.py`, and `llm_backend/rate_limit.py`'s rate-limiting utility) are unrelated to budgeting decisions and don't need to match it.
 
 ---
 
@@ -586,7 +578,7 @@ If you are an AI assistant modifying the LLM backend:
 | `core/llm_backend/response.py` | `LLMResponse` dataclass |
 | `core/memory_backend/budget.py` | Cognitive priority-based context budgeting (`budget_messages()`, 7-tier `ContextClass`) |
 | `core/memory_backend/pruner.py` | VRAM artifact pruning — see [CONTEXT_PRUNER.md](./CONTEXT_PRUNER.md) |
-| `core/llm_backend/budget.py` | Rate limiting + raw token-count truncation + cost estimation — **not** the cognitive system above |
+| `core/llm_backend/rate_limit.py` | Rate limiting + raw token-count truncation + cost estimation — **not** the cognitive system above |
 | `core/llm_backend/circuit_breaker.py` | Per-model circuit breaker (CLOSED → OPEN → HALF_OPEN) |
 | `core/llm_backend/factory.py` | `create_llm_client()` — composition root, provider registration |
 | `core/llm_backend/provider.py` | `BaseProvider` ABC + `ProviderRegistry` |

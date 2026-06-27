@@ -1,5 +1,5 @@
 """
-core/llm_backend/budget.py - Rate limiting, token budgeting, and observability helpers.
+core/llm_backend/rate_limit.py - Rate limiting, token budgeting, and observability helpers.
 """
 from __future__ import annotations
 import time

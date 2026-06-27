@@ -1,4 +1,4 @@
-﻿"""
+"""
 tools/consult.py - Explicit Advisory Tool.
 """
 from __future__ import annotations
@@ -6,7 +6,7 @@ from __future__ import annotations
 from registry import tool
 from core.llm import llm
 from core.config import cfg
-from core.llm_backend.budget import check_rate_limit
+from core.llm_backend.rate_limit import check_rate_limit
 
 _MAX_CONTEXT_TOKENS = 2000  # Conservative default for cloud models
 

@@ -1,5 +1,5 @@
 """
-core/context_budget.py — Dynamic Cognitive Context Budgeting.
+memory_backend/budget.py — Dynamic Cognitive Context Budgeting.
 Manages the flow of information into the LLM context window to prevent
 OOM crashes and attention dilution.
 

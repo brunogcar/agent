@@ -302,15 +302,15 @@ There are genuinely two systems doing two different jobs — this pruner (per-to
 - `core/memory_backend/pruner.py` (this module)
 - `core/memory_backend/budget.py` (the cognitive budgeting system)
 
-`core/llm_backend/budget.py` is a *third*, unrelated file (rate limiting + cost estimation) that happens to share a name with the second one — that naming collision across subsystems is the real source of confusion here, not file placement. See [LLM.md's Known Concerns](./LLM.md#%EF%B8%8F-known-concerns) for the full treatment.
+`core/llm_backend/rate_limit.py` is a *third*, unrelated file (rate limiting + cost estimation) that happens to share a name with the second one — that naming collision across subsystems is the real source of confusion here, not file placement. See [LLM.md's Known Concerns](./LLM.md#%EF%B8%8F-known-concerns) for the full treatment.
 
-**Suggestion:** rename `core/llm_backend/budget.py` to something unambiguous (e.g. `rate_limit.py`), and fix both `pruner.py`'s and `memory_backend/budget.py`'s stale internal docstrings (both still self-identify by their pre-move `core/context_*.py` paths).
+**Suggestion:** rename `core/llm_backend/rate_limit.py` to something unambiguous (e.g. `rate_limit.py`), and fix both `pruner.py`'s and `memory_backend/budget.py`'s stale internal docstrings (both still self-identify by their pre-move `core/context_*.py` paths).
 
 ### Genuinely different truncation units, but not three of them
 
 - `pruner.py` truncates by raw character count (`MAX_CHARS = 8000`) — no token estimation involved at all for the pruning decision itself.
 - `memory_backend/budget.py` estimates tokens via `len(text) / 3.5`.
-- `llm_backend/budget.py` estimates tokens via tiktoken (if installed) or `len(text) // 4`, for rate-limiting/cost purposes — unrelated to either of the above.
+- `llm_backend/rate_limit.py` estimates tokens via tiktoken (if installed) or `len(text) // 4`, for rate-limiting/cost purposes — unrelated to either of the above.
 
 These don't need to be reconciled into one factor — they're solving different problems (a hard character cap for an individual tool output vs. a token budget for an entire message list vs. a cost estimate for rate limiting) and none of them currently feed into each other incorrectly.
 
@@ -341,7 +341,7 @@ If you are an AI assistant modifying the context pruner:
 | `tools/python_exec.py` | `prune_text("python_exec", text, trace_id)` |
 | `tools/cli.py` | `prune_text("cli", text, trace_id)` |
 | `core/memory_backend/budget.py` | Complementary: manages aggregate message history budget (`budget_messages()`) — **not** `core/llm_backend/context_budget.py` |
-| `core/llm_backend/budget.py` | A different, unrelated file: rate limiting + cost estimation, not message budgeting |
+| `core/llm_backend/rate_limit.py` | A different, unrelated file: rate limiting + cost estimation, not message budgeting |
 | `server.py` | Calls `cleanup_old_artifacts(max_age_days=7)` at startup |
 
 ---

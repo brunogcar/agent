@@ -106,7 +106,7 @@ core/
 ├── llm.py                # Thin facade for LLMClient
 ├── llm_backend/          # Full LLM subsystem
 │   ├── client.py         # LLMClient: complete(), call() — imports budget_messages
-│   │                     #   from memory_backend/budget.py (NOT llm_backend/budget.py)
+│   │                     #   from memory_backend/budget.py (NOT llm_backend/rate_limit.py)
 │   ├── circuit_breaker.py # Per-model failure tracking with auto-recovery
 │   ├── config.py         # RoleConfig + _build_role_configs() — role->provider/model resolution
 │   ├── response.py       # LLMResponse dataclass, usage normalization

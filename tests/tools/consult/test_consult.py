@@ -130,7 +130,7 @@ class TestConsultExecution:
 class TestPhase5CHardening:
     def test_concurrent_rate_limiter_stress(self, mock_cfg, mock_budget, mock_llm):
         """Verify rate limiter holds up under concurrent burst."""
-        from core.llm_backend.budget import check_rate_limit
+        from core.llm_backend.rate_limit import check_rate_limit
         import threading
 
         results = []
