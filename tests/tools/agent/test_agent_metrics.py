@@ -16,8 +16,8 @@ class TestPerRoleMetrics:
         _clear_metrics()
 
     def test_metrics_recorded_on_success(self, mock_llm_result):
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
-            agent(role="classify", task="test")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+            agent(action="dispatch", role="classify", task="test")
 
         metrics = _get_metrics("classify")
         assert metrics["calls"] == 1
@@ -29,8 +29,8 @@ class TestPerRoleMetrics:
         mock_llm_result.ok = False
         mock_llm_result.error = "Timeout"
 
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
-            agent(role="code", task="test")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+            agent(action="dispatch", role="code", task="test")
 
         metrics = _get_metrics("code")
         assert metrics["calls"] == 1
@@ -38,9 +38,9 @@ class TestPerRoleMetrics:
         assert metrics["failures"] == 1
 
     def test_metrics_separate_by_role(self, mock_llm_result):
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
-            agent(role="classify", task="test1")
-            agent(role="route", task="test2")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+            agent(action="dispatch", role="classify", task="test1")
+            agent(action="dispatch", role="route", task="test2")
 
         classify_m = _get_metrics("classify")
         route_m = _get_metrics("route")
@@ -48,18 +48,18 @@ class TestPerRoleMetrics:
         assert route_m["calls"] == 1
 
     def test_metrics_returns_all_when_no_role(self, mock_llm_result):
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
-            agent(role="classify", task="test")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+            agent(action="dispatch", role="classify", task="test")
 
         all_metrics = _get_metrics()
         assert "classify" in all_metrics
 
     def test_metrics_meta_role(self, mock_llm_result):
-        """agent(role='metrics') returns collected metrics."""
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result):
-            agent(role="classify", task="test")
+        """agent(action='metrics') returns collected metrics."""
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+            agent(action="dispatch", role="classify", task="test")
 
-        result = agent(role="metrics", task="classify")
+        result = agent(action="metrics", task="classify")
         assert result["status"] == "success"
         assert "metrics" in result
         assert result["metrics"]["calls"] == 1

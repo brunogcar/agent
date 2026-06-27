@@ -1,37 +1,41 @@
-"""Shared fixtures for agent tool tests.
-
-All LLM calls are fully mocked; no real LLM requests are made.
-"""
+"""Shared fixtures for agent tool tests."""
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 @pytest.fixture(autouse=True)
-def mock_cfg():
-    """Mock cfg to prevent AsyncMock leakage from other tests.
+def clear_agent_state():
+    """Clear cache and metrics between every test."""
+    from tools.agent_core.cache import _clear_cache
+    from tools.agent_core.metrics import _clear_metrics
+    from tools.agent_core.parse_warnings import _clear_parse_warnings
+    _clear_cache()
+    _clear_metrics()
+    _clear_parse_warnings()
 
-    Per test isolation rule: autouse fixture in every test file that imports cfg.
-    cfg must be patched where it is imported at module level.
-    """
-    with patch("tools.agent_core.context.cfg") as mock_cfg_ctx:
-        mock_cfg_ctx.max_context_tokens = 8000
-        yield mock_cfg_ctx
+
+@pytest.fixture
+def mock_cfg():
+    """Patch context.cfg with a minimal config object."""
+    class FakeCfg:
+        model = "test-model"
+        temperature = 0.0
+        max_tokens = 1000
+        timeout = 30
+    with patch("tools.agent_core.context.cfg", FakeCfg()):
+        yield FakeCfg()
 
 
 @pytest.fixture
 def mock_llm_result():
-    """Return a pre-built MagicMock for a successful llm.complete() result.
-
-    Shape matches LLMResponse.usage: {"prompt": int, "completion": int, "total": int}
-    """
-    result = MagicMock()
-    result.ok = True
-    result.text = "mocked response"
-    result.model = "test-model"
-    result.elapsed = 1.0
-    result.usage = {"prompt": 10, "completion": 5, "total": 15}
-    result.parsed = None
-    result.finish_reason = "stop"
-    return result
+    """Return a fake LLM result. parsed=None so JSON tests parse from text."""
+    class FakeResult:
+        ok = True
+        text = "bug"
+        model = "test-model"
+        usage = {"total": 10}
+        parsed = None   # Tests that need parsed set will override
+        error = None
+    return FakeResult()

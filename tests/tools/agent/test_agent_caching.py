@@ -18,9 +18,9 @@ class TestAgentCaching:
         """Second identical classify call should return cached result."""
         mock_llm_result.text = "bug"
 
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm:
-            result1 = agent(role="classify", task="Is this a bug?")
-            result2 = agent(role="classify", task="Is this a bug?")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+            result1 = agent(action="dispatch", role="classify", task="Is this a bug?")
+            result2 = agent(action="dispatch", role="classify", task="Is this a bug?")
 
             assert result1["status"] == "success"
             assert result2["status"] == "success"
@@ -32,9 +32,9 @@ class TestAgentCaching:
         """route role should also be cached."""
         mock_llm_result.text = '{"workflow": "research"}'
 
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm:
-            agent(role="route", task="Where to?")
-            agent(role="route", task="Where to?")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+            agent(action="dispatch", role="route", task="Where to?")
+            agent(action="dispatch", role="route", task="Where to?")
 
             assert mock_llm.call_count == 1
 
@@ -42,18 +42,18 @@ class TestAgentCaching:
         """Different context should result in separate cache entries."""
         mock_llm_result.text = "bug"
 
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm:
-            agent(role="classify", task="Is this a bug?", context="Python")
-            agent(role="classify", task="Is this a bug?", context="JavaScript")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+            agent(action="dispatch", role="classify", task="Is this a bug?", context="Python")
+            agent(action="dispatch", role="classify", task="Is this a bug?", context="JavaScript")
 
             # Two different contexts = two LLM calls
             assert mock_llm.call_count == 2
 
     def test_non_cacheable_roles_not_cached(self, mock_llm_result):
         """research role should not be cached."""
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm:
-            agent(role="research", task="Find docs")
-            agent(role="research", task="Find docs")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+            agent(action="dispatch", role="research", task="Find docs")
+            agent(action="dispatch", role="research", task="Find docs")
 
             assert mock_llm.call_count == 2
 
@@ -62,9 +62,9 @@ class TestAgentCaching:
         import time
         mock_llm_result.text = "bug"
 
-        with patch("tools.agent.llm.complete", return_value=mock_llm_result) as mock_llm,              patch("tools.agent_core.cache._CACHE_TTL_SECONDS", 0):  # Instant expiry
-            agent(role="classify", task="test")
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm, patch("tools.agent_core.cache._CACHE_TTL_SECONDS", 0):  # Instant expiry
+            agent(action="dispatch", role="classify", task="test")
             time.sleep(0.01)
-            agent(role="classify", task="test")
+            agent(action="dispatch", role="classify", task="test")
 
             assert mock_llm.call_count == 2

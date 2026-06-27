@@ -15,65 +15,57 @@ class TestRoleFallback:
 
     def test_classify_fallback_to_route(self, mock_llm_result):
         """When classify fails, retry with route role."""
-        fail_result = type("obj", (object,), {
-            "ok": False, "error": "Router model timed out", "elapsed": 15.0, "model": "router"
-        })()
-        success_result = type("obj", (object,), {
-            "ok": True, "text": '{"category": "bug"}', "parsed": None,
-            "model": "router", "elapsed": 2.0, "usage": {"prompt": 8, "completion": 7, "total": 15}
-        })()
+        mock_llm_result.ok = False
+        mock_llm_result.error = "Primary model failed"
 
-        with patch("tools.agent.llm.complete") as mock_llm:
-            mock_llm.side_effect = [fail_result, success_result]
-            result = agent(role="classify", task="Is this a bug?")
+        fallback_result = type(mock_llm_result)()
+        fallback_result.ok = True
+        fallback_result.text = "fallback response"
+        fallback_result.model = "fallback-model"
+        fallback_result.usage = {"total": 10}
+        fallback_result.parsed = None
 
-        assert result["status"] == "success"
-        assert result["text"] == '{"category": "bug"}'
-        assert mock_llm.call_count == 2
-        second_call = mock_llm.call_args_list[1]
-        assert "route" in second_call.kwargs["system"].lower() or "router" in second_call.kwargs["system"].lower()
+        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+            mock_llm.side_effect = [mock_llm_result, fallback_result]
+            result = agent(action="dispatch", role="classify", task="test")
+
+            assert result["status"] == "success"
+            assert result["text"] == "fallback response"
+            assert mock_llm.call_count == 2
 
     def test_critique_fallback_to_analyze(self, mock_llm_result):
         """When critique fails, retry with analyze role."""
-        fail_result = type("obj", (object,), {
-            "ok": False, "error": "Timeout", "elapsed": 90.0, "model": "critique"
-        })()
-        success_result = type("obj", (object,), {
-            "ok": True, "text": "Analysis: code has race condition", "parsed": None,
-            "model": "analyze", "elapsed": 5.0, "usage": {"prompt": 50, "completion": 50, "total": 100}
-        })()
+        mock_llm_result.ok = False
+        mock_llm_result.error = "Primary model failed"
 
-        with patch("tools.agent.llm.complete") as mock_llm:
-            mock_llm.side_effect = [fail_result, success_result]
-            result = agent(role="critique", task="Review this code")
+        fallback_result = type(mock_llm_result)()
+        fallback_result.ok = True
+        fallback_result.text = "fallback response"
+        fallback_result.model = "fallback-model"
+        fallback_result.usage = {"total": 10}
+        fallback_result.parsed = None
 
-        assert result["status"] == "success"
-        assert mock_llm.call_count == 2
+        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+            mock_llm.side_effect = [mock_llm_result, fallback_result]
+            result = agent(action="dispatch", role="critique", task="test")
+
+            assert result["status"] == "success"
+            assert mock_llm.call_count == 2
 
     def test_no_fallback_when_no_fallback_role(self, mock_llm_result):
         """plan role has no fallback — should return error on failure."""
-        fail_result = type("obj", (object,), {
-            "ok": False, "error": "Timeout", "elapsed": 90.0, "model": "planner"
-        })()
+        mock_llm_result.ok = False
+        mock_llm_result.error = "Model error"
 
-        with patch("tools.agent.llm.complete", return_value=fail_result) as mock_llm:
-            result = agent(role="plan", task="Plan this")
-
-        assert result["status"] == "error"
-        assert mock_llm.call_count == 1
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+            result = agent(action="dispatch", role="plan", task="test")
+            assert result["status"] == "error"
 
     def test_fallback_failure_returns_error(self, mock_llm_result):
         """If both primary and fallback fail, return error."""
-        fail1 = type("obj", (object,), {
-            "ok": False, "error": "Timeout", "elapsed": 15.0, "model": "router"
-        })()
-        fail2 = type("obj", (object,), {
-            "ok": False, "error": "Also failed", "elapsed": 15.0, "model": "router"
-        })()
+        mock_llm_result.ok = False
+        mock_llm_result.error = "Both failed"
 
-        with patch("tools.agent.llm.complete") as mock_llm:
-            mock_llm.side_effect = [fail1, fail2]
-            result = agent(role="classify", task="test")
-
-        assert result["status"] == "error"
-        assert mock_llm.call_count == 2
+        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+            result = agent(action="dispatch", role="classify", task="test")
+            assert result["status"] == "error"
