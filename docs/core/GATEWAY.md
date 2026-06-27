@@ -356,7 +356,18 @@ graph TD
     G -->|unknown| R["error: Unknown tool"]
 ```
 
-> ⚠️ **Undocumented edge case:** if you submit `{"tool": "workflow", "goal": "...", "workflow": "auto"}` and the router's heuristics decide the goal matches a *direct tool* pattern (e.g. "read this file"), the dispatcher has no path back to actually invoking that tool from inside the workflow branch — it silently falls back to running the `research` workflow instead. This only matters for the `tool == "workflow"` / goal-based entry path; submitting via `tool="file"` directly works as expected.
+### Direct Tool Dispatch
+
+When `workflow="auto"` and the router decides the goal matches a direct tool pattern (`decision.workflow == "direct"`), the dispatcher extracts `decision.tool` and invokes that tool directly via `_dispatch_direct_tool()`, bypassing the workflow engine entirely. This is faster and avoids the overhead of a full research workflow for simple tasks.
+
+**Fallback behavior:** If `decision.tool` is missing, empty, or not in the known tool map, the dispatcher logs a `tracer.warning()` and falls back to `workflow="research"`. This fallback is now visible in traces — it is no longer silent.
+
+```python
+# Example: router decides "read config.py" → direct file tool
+decision = router.route("read config.py", trace_id=trace_id)
+# decision.workflow == "direct", decision.tool == "file"
+# → dispatcher calls tools.file.file(action="read", path="config.py")
+```
 
 ### Tool List
 
@@ -497,7 +508,12 @@ All error responses follow a consistent schema:
 
 This guarantees contract stability for these three endpoints only — not the other ~13.
 
-> ⚠️ **Separate finding:** `ChatResponse.status` is hardcoded to `"success"` in `chat.py` whenever `dispatcher.dispatch()` returns *without raising* — it never inspects the returned `result` dict's own `status` field. A dispatch that resolves to `{"status": "error", "error": "Unknown tool: 'xyz'"}` (an error signaled via the result, not an exception) still comes back as a 200 response with the outer `"status": "success"`. Client code that checks the top-level `status` field rather than `result.status` would miss this category of failure.
+> ⚠️ **Fixed:** `ChatResponse.status` now propagates the inner dispatch result's `status` field instead of hardcoding `"success"`. A dispatch that returns `{"status": "error", "error": "Unknown tool: 'xyz'"}` now correctly surfaces `"status": "error"` at the top level. Clients checking `response.status` will see the real outcome.
+
+```python
+inner_status = result.get("status", "success") if isinstance(result, dict) else "success"
+# ChatResponse.status = inner_status  (was hardcoded "success")
+```
 
 ---
 
@@ -580,13 +596,13 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/gateway/test_gateway.py -k "Test
 
 **Suggestion:** Either add `response_model`s for the remaining endpoints where the shape is stable enough to lock down (e.g. `/version`, `/tools`, `/memory/stats`), or explicitly document which endpoints are intentionally unlocked (e.g. `/health` delegates to `core/runtime/health.py` and may evolve independently) so it's a documented decision rather than an undocumented gap.
 
-### `tool="workflow"` + Router Decides "Direct" Silently Falls Back to Research
+### `tool="workflow"` + Router Decides "Direct" — Fixed
 
-**What exists:** When dispatching via the goal/workflow path with `workflow="auto"`, if `router.route()` returns a `direct` decision (meaning the router thinks this goal matches a specific tool, not a workflow), `dispatcher.dispatch()` has no mechanism to actually invoke that tool from this code path — it just substitutes `wf_type = "research"`.
+**Status: FIXED.** When dispatching via the goal/workflow path with `workflow="auto"`, if `router.route()` returns a `direct` decision, the dispatcher now invokes the tool directly via `_dispatch_direct_tool()`. Only falls back to `research` if `decision.tool` is unmapped or missing, and logs a `tracer.warning()` when this happens.
 
-**The concern:** A caller who submits `{"goal": "read config.py", "workflow": "auto"}` expecting smart routing could get a `research` workflow run instead of a direct file read, with no indication anything unexpected happened.
+**Previous behavior:** A caller who submitted `{"goal": "read config.py", "workflow": "auto"}` would get a `research` workflow run instead of a direct file read, with no indication anything unexpected happened.
 
-**Suggestion:** Either make the dispatcher capable of invoking the decided tool directly when `decision.workflow == "direct"` (using `decision.tool`/`decision.action` if the `RoutingDecision` carries them), or log a `tracer.warning()` when this fallback triggers so it's at least visible in traces.
+**Fix:** The dispatcher now has a `_DIRECT_TOOL_MAP` and `_dispatch_direct_tool()` helper. Direct tool dispatch is the default path; research fallback only happens when the tool is unknown, and is always logged.
 
 ### SQLite Connection-Per-Call
 

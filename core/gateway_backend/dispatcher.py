@@ -10,6 +10,35 @@ from typing import Any
 
 from core.tracer import tracer
 
+# Direct tool dispatch map: tool name -> (module_path, callable_name)
+_DIRECT_TOOL_MAP = {
+    "web": ("tools.web", "web"),
+    "python": ("tools.python_exec", "python"),
+    "memory": ("tools.memory_tool", "memory"),
+    "file": ("tools.file", "file"),
+    "git": ("tools.git", "git"),
+    "agent": ("tools.agent", "agent"),
+    "report": ("tools.report", "report"),
+    "notify": ("tools.notify", "notify"),
+    "cli": ("tools.cli", "cli"),
+    "vision": ("tools.vision", "vision"),
+    "browser": ("tools.browser", "browser"),
+    "tavily": ("tools.tavily", "tavily"),
+    "consult": ("tools.consult", "consult"),
+    "parallel": ("tools.parallel", "parallel"),
+}
+
+
+def _dispatch_direct_tool(tool_name: str, action: str | None, params: dict, trace_id: str) -> Any:
+    """Dispatch a single tool call directly without workflow overhead."""
+    module_path, callable_name = _DIRECT_TOOL_MAP[tool_name]
+    module = __import__(module_path, fromlist=[callable_name])
+    tool_fn = getattr(module, callable_name)
+    if action:
+        return tool_fn(action=action, **params)
+    return tool_fn(**params)
+
+
 def dispatch(trace_id: str, payload: dict) -> Any:
     """
     Dispatch a task payload to the appropriate tool or workflow.
@@ -32,12 +61,19 @@ def dispatch(trace_id: str, payload: dict) -> Any:
             decision = router.route(goal, trace_id=trace_id)
             wf_type = decision.workflow
             if wf_type == "direct":
+                direct_tool = getattr(decision, "tool", None) or getattr(decision, "action", None)
+                if direct_tool and direct_tool in _DIRECT_TOOL_MAP:
+                    tracer.step(trace_id, "dispatcher",
+                                f"Router decided direct tool='{direct_tool}', dispatching directly")
+                    return _dispatch_direct_tool(direct_tool, action, params, trace_id)
+                tracer.warning(trace_id, "dispatcher",
+                               f"workflow=direct but tool={direct_tool!r} has no direct dispatch path, falling back to research")
                 wf_type = "research"
 
         result = run_workflow(
-            workflow_type = wf_type,
-            goal = goal,
-            trace_id = trace_id,
+            workflow_type=wf_type,
+            goal=goal,
+            trace_id=trace_id,
             **params,
         )
         # Ensure terminal status is always present (P1-3)

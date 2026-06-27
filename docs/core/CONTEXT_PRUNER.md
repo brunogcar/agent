@@ -7,7 +7,8 @@ The Context Pruner (`core/memory_backend/pruner.py` — **not** `core/context_pr
 - **Artifact preservation** — Full raw output saved to disk before truncation; agent can recover via `file` tool
 - **Zero overhead for small outputs** — Outputs under 8,000 chars pass through unchanged
 - **Fail-open design** — If artifact saving fails, truncated content is still returned
-- **Atomic writes** — Artifacts written to `.tmp` then renamed to prevent half-written files
+- **Atomic writes** — Artifacts written to `.tmp`, **fsync'd to disk**, then renamed to prevent half-written files and ensure durability on power loss
+- **Per-field metadata** — When multiple fields in one result are pruned, each gets its own `_artifact_path_{field}` / `_recovery_hint_{field}` keys; no overwrite
 - **Two entry points, not one** — `prune_text(tool_name, text, trace_id="")` for raw strings and `prune_tool_dict(tool_name, data, trace_id="")` for dict results — there is no single unified `prune()`/`prune_output()` function
 
 ---
@@ -49,7 +50,7 @@ There is no "Structural Clean / strip HTML" step *inside* the pruner module itse
 | **1. Size Check** | `len(text) <= 8000` → return as-is | Zero overhead for small outputs | O(1) |
 | **2. Artifact Preservation** | Save full raw text to `.artifacts/` (skipped if it exceeds `MAX_ARTIFACT_BYTES`) | Full fidelity never lost; agent can recover | O(n) disk I/O |
 | **3. Tool-Aware Truncation** | Keep critical portions based on tool type | Preserves the content that matters | O(1) |
-| **4. Metadata Injection** | Add `_pruned`, `_artifact_path`, `_recovery_hint` | Tells LLM what happened and how to recover | O(1) |
+| **4. Metadata Injection** | Add per-field metadata: `_pruned_{field}`, `_artifact_path_{field}`, `_recovery_hint_{field}` | Tells LLM what happened and how to recover per field | O(1) |
 
 ---
 

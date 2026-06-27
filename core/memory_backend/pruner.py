@@ -1,7 +1,6 @@
-"""
-core/context_pruner.py — VRAM Context Pruning Middleware.
+"""core/memory_backend/pruner.py — VRAM Context Pruning Middleware.
 Intercepts massive tool outputs before they hit the LangGraph state or MCP client.
-Saves full output to disk atomically, truncates intelligently, and injects 
+Saves full output to disk atomically, truncates intelligently, and injects
 structured recovery metadata.
 """
 from __future__ import annotations
@@ -16,28 +15,36 @@ ARTIFACT_DIR = cfg.agent_root / ".artifacts"
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ~8000 chars is roughly 2000-2500 tokens. Safe for 16GB VRAM envelope.
-MAX_CHARS = 8000 
+MAX_CHARS = 8000
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024  # 10MB limit per artifact
+
 
 def _save_artifact(tool_name: str, text: str, trace_id: str) -> str | None:
     """Save full text to disk atomically. Returns path or None."""
     # Skip saving massive artifacts to prevent disk bloat
     if len(text.encode('utf-8', errors='ignore')) > MAX_ARTIFACT_BYTES:
-        return None 
-        
+        return None
+
     artifact_name = f"{trace_id or 'notrace'}_{tool_name}_{uuid.uuid4().hex[:6]}.txt"
     artifact_path = ARTIFACT_DIR / artifact_name
     tmp_path = artifact_path.with_suffix('.tmp')
-    
+
     try:
-        tmp_path.write_text(text, encoding="utf-8")
-        os.replace(tmp_path, artifact_path) # Atomic rename (prevents partial reads)
+        # Write to temp, fsync, then atomic rename
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, artifact_path)  # Atomic rename (prevents partial reads)
         return str(artifact_path)
     except Exception:
         if tmp_path.exists():
-            try: tmp_path.unlink()
-            except Exception: pass
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
         return None
+
 
 def _truncate_text(tool_name: str, text: str) -> str:
     """Apply tool-aware truncation."""
@@ -55,6 +62,7 @@ def _truncate_text(tool_name: str, text: str) -> str:
         truncated = text[:head] + f"\n\n... [TRUNCATED {len(text) - MAX_CHARS} CHARS] ...\n\n" + text[-tail:]
     return truncated
 
+
 def prune_text(tool_name: str, text: str, trace_id: str = "") -> str:
     """
     Prune a raw string output from a tool.
@@ -62,13 +70,13 @@ def prune_text(tool_name: str, text: str, trace_id: str = "") -> str:
     """
     if not text or not isinstance(text, str):
         return text
-        
+
     if len(text) <= MAX_CHARS:
         return text
-        
+
     artifact_path = _save_artifact(tool_name, text, trace_id)
     truncated = _truncate_text(tool_name, text)
-        
+
     # For string returns, we MUST append the warning to the text
     warning = (
         f"\n\n[⚠️ CONTEXT PRUNED]\n"
@@ -78,14 +86,16 @@ def prune_text(tool_name: str, text: str, trace_id: str = "") -> str:
         warning += f"Full output saved to: {artifact_path}\nUse the 'file' tool to read the complete text if critical details are missing."
     else:
         warning += "Full output was too large to save or disk write failed."
-        
+
     return truncated + warning
+
 
 def prune_tool_dict(tool_name: str, data: dict, trace_id: str = "") -> dict:
     """
     Prune string fields inside a tool's return dictionary.
     Supports both flat dicts (legacy) and ok()/fail() schema with nested "data" key.
     Injects structured metadata keys at the top level of the passed dict.
+    Per-field artifact metadata prevents overwrite when multiple fields are pruned.
     """
     if not isinstance(data, dict):
         return data
@@ -101,13 +111,13 @@ def prune_tool_dict(tool_name: str, data: dict, trace_id: str = "") -> dict:
         truncated = _truncate_text(tool_name, text)
 
         metadata = {
-            "_pruned": True,
-            "_original_chars": len(text),
-            "_truncated_chars": len(truncated),
+            f"_pruned_{key}": True,
+            f"_original_chars_{key}": len(text),
+            f"_truncated_chars_{key}": len(truncated),
         }
         if artifact_path:
-            metadata["_artifact_path"] = artifact_path
-            metadata["_recovery_hint"] = f"Use file(path='{artifact_path}') to read full output."
+            metadata[f"_artifact_path_{key}"] = artifact_path
+            metadata[f"_recovery_hint_{key}"] = f"Use file(path='{artifact_path}') to read full {key}."
 
         return truncated, metadata
 
@@ -130,15 +140,16 @@ def prune_tool_dict(tool_name: str, data: dict, trace_id: str = "") -> dict:
 
     # Handle web search_and_read
     if "results" in target and isinstance(target["results"], list):
-        for item in target["results"]:
+        for idx, item in enumerate(target["results"]):
             if isinstance(item, dict) and "text" in item and isinstance(item["text"], str):
-                item["text"], meta = _prune_field("text", item["text"])
+                item["text"], meta = _prune_field(f"results[{idx}].text", item["text"])
                 all_meta.update(meta)
 
     if all_meta:
         data.update(all_meta)
 
     return data
+
 
 def cleanup_old_artifacts(max_age_days: int = 7):
     """Delete artifacts older than max_age_days. Call on server startup."""

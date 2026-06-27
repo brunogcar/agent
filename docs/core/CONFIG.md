@@ -399,7 +399,7 @@ Backs the `parallel` tool. Entirely missing from the previous version of this do
 | `autocode_max_file_chars` | `AUTOCODE_MAX_FILE_CHARS` | `6000` | Max file size for autocode context |
 | `autocode_debug` | `AUTOCODE_DEBUG` | `0` | Set to `1` for verbose trace logging |
 
-> ⚠️ **Found in source, not previously documented:** `cfg.max_retries` also exists, reading the *same* `AUTOCODE_MAX_RETRIES` env var with the same default — it's a separate attribute that duplicates `cfg.autocode_max_retries` exactly. Looks like a leftover from a rename that was never fully cleaned up. If you're adding new code, use `cfg.autocode_max_retries` (the more descriptive name); don't introduce new readers of `cfg.max_retries`.
+> ⚠️ **Removed:** `cfg.max_retries` was a duplicate of `cfg.autocode_max_retries` (same env var `AUTOCODE_MAX_RETRIES`, same default `3`). It has been removed. Use `cfg.autocode_max_retries` exclusively.
 
 ### Timeout Hierarchy
 

@@ -12,15 +12,16 @@ from types import ModuleType
 
 router = APIRouter()
 
+
 @router.post(
-    "/chat", 
+    "/chat",
     response_model=ChatResponse,
     summary="Synchronous chat",
     description="Submits a message and blocks until the agent returns a result. Use /task for long-running workflows.",
 )
 def chat(
     req: ChatRequest,
-    _:          None = Depends(check_auth),
+    _: None = Depends(check_auth),
     dispatcher: ModuleType = Depends(get_dispatcher)
 ):
     """
@@ -30,11 +31,11 @@ def chat(
     trace_id = tracer.new_trace("chat", goal=req.message[:60])
 
     payload = {
-        "goal":     req.message,
+        "goal": req.message,
         "workflow": "auto",
-        "params":   {},
+        "params": {},
         "platform": req.platform,
-        "user":     req.user,
+        "user": req.user,
     }
 
     from core.gateway_backend.exceptions import ToolExecutionError
@@ -44,9 +45,16 @@ def chat(
     except Exception as e:
         raise ToolExecutionError(trace_id=trace_id, tool="chat", error=str(e))
 
+    # Propagate inner status: if dispatch returned an error dict, reflect it
+    # in the outer response status instead of hardcoding "success".
+    inner_status = (
+        result.get("status", "success")
+        if isinstance(result, dict) else "success"
+    )
+
     return {
         "trace_id": trace_id,
-        "status":      "success",
-        "result":   result,
+        "status": inner_status,
+        "result": result,
         "platform": req.platform,
     }
