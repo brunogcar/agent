@@ -19,13 +19,19 @@ _CACHE_MAX = 100
 _CACHE_TTL_SECONDS = 300
 
 
-def _cache_key(role: str, task: str, context: str, content: str) -> str:
+def _cache_key(role: str, task: str, context: str, content: str, temperature: float = -1.0, max_tokens: int = -1) -> str:
     """Build a deterministic cache key from the agent call parameters.
 
     Uses SHA256 truncated to 16 hex chars for fast comparison while
     keeping collision probability negligible for 100-entry cache.
+    Includes temperature and max_tokens when they are non-default values
+    to prevent cache hits with different generation parameters.
     """
     raw = f"{role}:{task}:{context}:{content}"
+    if temperature >= 0:
+        raw += f":t={temperature}"
+    if max_tokens > 0:
+        raw += f":m={max_tokens}"
     return _hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 

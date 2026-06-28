@@ -44,7 +44,8 @@ HELP_DISPATCH = """
 dispatch
 Route a task to an LLM role for execution.
 Required: role (one of: classify, route, research, summarize, extract,
- critique, analyze, code, review, plan, consultor)
+                 critique, analyze, code, review, plan, consultor,
+                 refactor, test, document)
 Required: task (the instruction or question)
 Optional: context, content, trace_id, temperature, max_tokens
 Returns: {status, role, text, model, elapsed, usage, prompt_version}
@@ -84,7 +85,7 @@ def run_dispatch(
             "status": "error",
             "error_code": "INVALID_ROLE",
             "error": (
-                f"Unknown role '{role}'. "
+                f"Unknown role \'{role}\'. "
                 f"Use: {available}"
             ),
         }
@@ -102,10 +103,20 @@ def run_dispatch(
             "status": "error",
             "error_code": "INVALID_ROLE",
             "error": (
-                "Use action='vision_delegate' for vision tasks, "
-                "not action='dispatch'."
+                "Use action=\'vision_delegate\' for vision tasks, "
+                "not action=\'dispatch\'."
             ),
         }
+
+    # Consultor is disabled if no model is configured
+    if role == "consultor":
+        from core.config import cfg
+        if "consultor" not in cfg.model_registry:
+            return {
+                "status": "error",
+                "error_code": "INVALID_ROLE",
+                "error": "Consultor role is not configured. Set CONSULTOR_MODEL in .env.",
+            }
 
     # ── Load role config ─────────────────────────────────────────────────────
     role_data = ROLES[role]
@@ -132,12 +143,12 @@ def run_dispatch(
                 system_prompt=system_prompt,
                 trace_id=trace_id,
             )
-        except (RuntimeError, OSError, ConnectionError, Exception):
+        except Exception:
             pass  # Non-fatal: use original prompt
 
     # ── Response cache ───────────────────────────────────────────────────────
     if cacheable:
-        cache_key = _cache_key(role, task, context, content)
+        cache_key = _cache_key(role, task, context, content, temperature, max_tokens)
         cached = _get_cached(cache_key)
         if cached is not None:
             response = cached.copy()
@@ -258,7 +269,7 @@ def run_dispatch(
                         parse_failed = True
                         response["parsed"] = {}
                         response["parse_warning"] = (
-                            f"Extracted JSON was invalid for role '{role}'. "
+                            f"Extracted JSON was invalid for role \'{role}\'. "
                             "Empty dict returned for parsed. "
                             "Check response.text for raw output."
                         )
@@ -266,7 +277,7 @@ def run_dispatch(
                     parse_failed = True
                     response["parsed"] = {}
                     response["parse_warning"] = (
-                        f"Response was not valid JSON for role '{role}'. "
+                        f"Response was not valid JSON for role \'{role}\'. "
                         "Empty dict returned for parsed. "
                         "Check response.text for raw output."
                     )
@@ -297,6 +308,10 @@ def run_dispatch(
                     response.pop("parse_warning", None)
                     parse_failed = False
                     response["escalated"] = True
+                    # Update response with escalation result data
+                    response["text"] = escalation_result.text
+                    response["model"] = escalation_result.model
+                    response["usage"] = escalation_result.usage
                 except _json.JSONDecodeError:
                     extracted = _extract_first_json(clean)
                     if extracted:
@@ -305,11 +320,15 @@ def run_dispatch(
                             response.pop("parse_warning", None)
                             parse_failed = False
                             response["escalated"] = True
+                            # Update response with escalation result data
+                            response["text"] = escalation_result.text
+                            response["model"] = escalation_result.model
+                            response["usage"] = escalation_result.usage
                         except _json.JSONDecodeError:
                             pass
 
-        if parse_failed:
-            _log_parse_warning(role, response.get("parse_warning", ""), result.text)
+            if parse_failed:
+                _log_parse_warning(role, response.get("parse_warning", ""), result.text)
 
     # ── Metrics and cache ────────────────────────────────────────────────────
     total_tokens = (
@@ -320,7 +339,7 @@ def run_dispatch(
     _record_metric(role, "success", elapsed, total_tokens, parse_failed)
 
     if cacheable:
-        cache_key = _cache_key(role, task, context, content)
+        cache_key = _cache_key(role, task, context, content, temperature, max_tokens)
         _set_cached(cache_key, response.copy())
 
     return compress_result(response)

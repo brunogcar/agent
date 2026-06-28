@@ -5,9 +5,9 @@ All values come from .env (loaded once at import time).
 Nothing is hardcoded except the .env file location discovery.
 
 Other modules import from here:
-    from core.config import cfg
-    print(cfg.agent_root)
-    print(cfg.planner_model)
+ from core.config import cfg
+ print(cfg.agent_root)
+ print(cfg.planner_model)
 """
 from __future__ import annotations
 
@@ -37,10 +37,10 @@ if _env_file:
 def _resolve_role(value: str) -> tuple[str, str]:
     """
     Resolves a single model string into (provider, model) dynamically from .env.
-      - "openai" -> ("openai", os.getenv("OPENAI_BASE_MODEL", ""))
-      - "qwen-qwen3.5-9b" -> ("qwen", "qwen-qwen3.5-9b")
-      - "granite-4.0" -> ("lmstudio", "granite-4.0")
-      - "" -> ("lmstudio", "")
+    - "openai" -> ("openai", os.getenv("OPENAI_BASE_MODEL", ""))
+    - "qwen-qwen3.5-9b" -> ("qwen", "qwen-qwen3.5-9b")
+    - "granite-4.0" -> ("lmstudio", "granite-4.0")
+    - "" -> ("lmstudio", "")
     """
     if not value or not value.strip():
         return "lmstudio", ""
@@ -124,6 +124,11 @@ class Config:
         classify_raw = os.getenv("CLASSIFY_MODEL") or router_raw
         route_raw = os.getenv("ROUTE_MODEL") or router_raw
 
+        # NEW: Autonomous maintenance roles (fallback to executor/code/summarize)
+        refactor_raw = os.getenv("REFACTOR_MODEL") or code_raw
+        test_raw = os.getenv("TEST_MODEL") or code_raw
+        document_raw = os.getenv("DOCUMENT_MODEL") or summarize_raw
+
         # Resolve provider and model automatically for each role
         planner_prov, planner_mod = _resolve_role(planner_raw)
         executor_prov, executor_mod = _resolve_role(executor_raw)
@@ -139,6 +144,11 @@ class Config:
         analyze_prov, analyze_mod = _resolve_role(analyze_raw)
         code_prov, code_mod = _resolve_role(code_raw)
         review_prov, review_mod = _resolve_role(review_raw)
+
+        # NEW: Resolve new roles
+        refactor_prov, refactor_mod = _resolve_role(refactor_raw)
+        test_prov, test_mod = _resolve_role(test_raw)
+        document_prov, document_mod = _resolve_role(document_raw)
 
         self.planner_model = planner_mod
         self.executor_model = executor_mod
@@ -168,11 +178,20 @@ class Config:
             "analyze": _make_entry(analyze_mod, analyze_prov, "ANALYZE_TIMEOUT", 90),
             "code": _make_entry(code_mod, code_prov, "CODE_TIMEOUT", 120),
             "review": _make_entry(review_mod, review_prov, "REVIEW_TIMEOUT", 90),
+            # NEW: Autonomous maintenance roles
+            "refactor": _make_entry(refactor_mod, refactor_prov, "REFACTOR_TIMEOUT", 120),
+            "test": _make_entry(test_mod, test_prov, "TEST_TIMEOUT", 120),
+            "document": _make_entry(document_mod, document_prov, "DOCUMENT_TIMEOUT", 120),
         }
 
         # Add consultor to registry ONLY if a model is explicitly resolved
         if consultor_mod:
             self.model_registry["consultor"] = _make_entry(consultor_mod, consultor_prov, "CONSULTOR_TIMEOUT", 60)
+
+        # -- Derive direct timeout attributes from model_registry (single source of truth) --
+        self.planner_timeout = self.model_registry["planner"]["timeout"]
+        self.execution_timeout = self.model_registry["executor"]["timeout"]
+        self.router_timeout = self.model_registry["router"]["timeout"]
 
         # -- External services -------------------------------------------------
         self.searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8080")
@@ -273,8 +292,8 @@ class Config:
         self.disable_model_warmup = os.getenv("DISABLE_MODEL_WARMUP", "0") == "1"
 
         # -- Timeouts ------------------------------------------------------------
-        self.planner_timeout = int(os.getenv("PLANNER_TIMEOUT", "180"))
-        self.router_timeout = int(os.getenv("ROUTER_TIMEOUT", "15"))
+        # NOTE: planner_timeout, execution_timeout, router_timeout are derived from
+        # model_registry above (single source of truth). Do not set them again here.
         self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
 
         # -- Validations -------------------------------------------------------
@@ -284,8 +303,9 @@ class Config:
         if self.autocode_max_file_chars <= 0:
             raise ValueError("AUTOCODE_MAX_FILE_CHARS must be > 0")
 
-        _node_timeouts = [self.planner_timeout, self.execution_timeout, self.router_timeout]
-        if self.autocode_graph_timeout < max(_node_timeouts):
+        # Use max timeout from ALL roles in model_registry, not just 3 hardcoded ones
+        _all_timeouts = [r["timeout"] for r in self.model_registry.values()]
+        if self.autocode_graph_timeout < max(_all_timeouts):
             raise ValueError("AUTOCODE_GRAPH_TIMEOUT must be >= max(node timeouts)")
 
         if not self.agent_root.is_absolute():

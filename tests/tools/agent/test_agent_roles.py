@@ -16,6 +16,7 @@ class TestRoleConfig:
         expected = {
             "classify", "route", "research", "summarize", "extract",
             "critique", "analyze", "code", "review", "plan", "consultor", "vision",
+            "refactor", "test", "document",
         }
         for role in expected:
             assert role in ROLES, f"Missing ROLES entry for {role}"
@@ -40,9 +41,9 @@ class TestRoleConfig:
         assert api_roles == {"extract"}, f"Unexpected API json_mode roles: {api_roles}"
 
     def test_prompt_json_roles(self):
-        """route, plan, code, review should use prompt json_mode."""
+        """route, plan, code, review, refactor, test should use prompt json_mode."""
         prompt_roles = {k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "prompt"}
-        assert prompt_roles == {"route", "plan", "code", "review"}, f"Unexpected prompt json_mode roles: {prompt_roles}"
+        assert prompt_roles == {"route", "plan", "code", "review", "refactor", "test"}, f"Unexpected prompt json_mode roles: {prompt_roles}"
 
     def test_cacheable_roles_are_deterministic(self):
         """Only classify and route should be cacheable (deterministic outputs)."""
@@ -55,12 +56,20 @@ class TestRoleConfig:
         assert "classify" not in sleep_learn
         assert "route" not in sleep_learn
         assert "research" in sleep_learn
+        assert "refactor" in sleep_learn
+        assert "test" in sleep_learn
+        assert "document" in sleep_learn
 
     def test_budget_tokens_present(self):
         """All roles should have budget_tokens set."""
         for role, data in ROLES.items():
             assert "budget_tokens" in data["role_config"], f"Role '{role}' missing budget_tokens"
             assert isinstance(data["role_config"]["budget_tokens"], int), f"Role '{role}' budget_tokens must be int"
+
+    def test_new_roles_have_system_prompts(self):
+        """New roles must have non-empty system prompts."""
+        for role in ("refactor", "test", "document"):
+            assert ROLES[role]["system_prompt"], f"Missing system prompt for {role}"
 
 
 class TestBudgetOverrides:
@@ -71,15 +80,12 @@ class TestBudgetOverrides:
 
     def test_router_uses_small_budget(self, mock_llm_result):
         """classify role should trim context to budget_tokens (4K)."""
-        # Use a string that exceeds 4000 tokens even with tiktoken
-        # "word " is ~1 token each, so 5000 words = ~5000 tokens > 4000 budget
-        context = "word " * 5000  # ~25000 chars, ~5000 tokens
+        context = "word " * 5000
         with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.return_value = mock_llm_result
             agent(action="dispatch", role="classify", task="test", context=context)
 
             call_kwargs = mock_llm.call_args.kwargs
-            # Should be trimmed down from ~25000 chars
             assert len(call_kwargs["context"]) < 25000
 
     def test_planner_uses_large_budget(self, mock_llm_result):
@@ -89,5 +95,42 @@ class TestBudgetOverrides:
             agent(action="dispatch", role="plan", task="test", context="x" * 50000)
 
             call_kwargs = mock_llm.call_args.kwargs
-            # 50K chars should NOT be trimmed (fits in 128K budget, ~12.5K tokens < 32K)
             assert len(call_kwargs["context"]) == 50000
+
+    def test_budget_chars_zero_not_overridden(self, mock_llm_result):
+        """budget_chars=0 must not fall through to _max_context_chars().
+
+        The 'or' trap bug: `budget_chars = role_cfg.get("budget_chars") or _max_context_chars()`
+        would treat 0 as falsy and use _max_context_chars() instead.
+        With the fix (is None check), budget_chars=0 is respected.
+
+        We verify this by checking the context is NOT the full untrimmed text
+        (which would happen if _max_context_chars() was used and the text fit).
+        """
+        from tools.agent_core import ROLES
+        original_chars = ROLES["classify"]["role_config"].get("budget_chars")
+        original_tokens = ROLES["classify"]["role_config"].get("budget_tokens")
+        try:
+            # Remove budget_tokens so budget_chars=0 takes effect
+            ROLES["classify"]["role_config"]["budget_chars"] = 0
+            if "budget_tokens" in ROLES["classify"]["role_config"]:
+                del ROLES["classify"]["role_config"]["budget_tokens"]
+
+            with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+                mock_llm.return_value = mock_llm_result
+                agent(action="dispatch", role="classify", task="test", context="x" * 1000)
+                call_kwargs = mock_llm.call_args.kwargs
+                # If _max_context_chars() was used (the bug), "x"*1000 would fit
+                # in 32000 char budget and return unchanged (1000 chars).
+                # With budget_chars=0 respected, it should be different.
+                assert len(call_kwargs["context"]) != 1000, (
+                    "budget_chars=0 was overridden by _max_context_chars() — "
+                    "the 'or' trap bug is still present"
+                )
+        finally:
+            if original_chars is not None:
+                ROLES["classify"]["role_config"]["budget_chars"] = original_chars
+            else:
+                del ROLES["classify"]["role_config"]["budget_chars"]
+            if original_tokens is not None:
+                ROLES["classify"]["role_config"]["budget_tokens"] = original_tokens

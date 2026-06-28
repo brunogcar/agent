@@ -5,7 +5,7 @@ The `agent()` tool is the **meta-cognitive dispatcher** of the MCP Agent Stack. 
 **Key characteristics:**
 - **Single entry point** — The LLM sees one tool: `agent(action, role, task, ...)`
 - **Action-based routing** — `action` is a `@meta_tool` Literal enum: `dispatch`, `metrics`, `vision_delegate`, `clear_cache`
-- **Role-specialized prompts** — 12 distinct personas, each with tailored instructions
+- **Role-specialized prompts** — 15 distinct personas, each with tailored instructions
 - **Per-role model routing** — Router uses fast 2B models, Executor uses capable 9B models
 - **Per-role context budgets** — Router gets 4K tokens, Planner gets 32K tokens
 - **Token-aware context trimming** — Uses tiktoken when available, falls back to chars/4
@@ -43,18 +43,21 @@ tools/agent_core/
 │   ├── vision_delegate.py        # Delegate to tools.vision.vision() (multimodal)
 │   └── clear_cache.py            # Clear response cache for deterministic roles
 └── roles/
-    ├── classify.py               # SYSTEM_PROMPT + ROLE_CONFIG
-    ├── route.py
-    ├── research.py
-    ├── summarize.py
-    ├── extract.py
-    ├── critique.py
-    ├── analyze.py
-    ├── code.py
-    ├── review.py
-    ├── plan.py
-    ├── consultor.py
-    └── vision.py
+    ├── classify.py               # Fast classifier (router model, 4K budget)
+    ├── route.py                  # Task router (router model, 4K budget)
+    ├── research.py               # Research synthesizer (executor model, 32K budget)
+    ├── summarize.py              # Text summarizer (executor model, 32K budget)
+    ├── extract.py                # Information extractor (executor model, 16K budget)
+    ├── critique.py               # Quality critic (executor model, 16K budget)
+    ├── analyze.py                # Data analyst (executor model, 32K budget)
+    ├── code.py                   # Code generator (executor model, 32K budget)
+    ├── review.py                 # Code reviewer (executor model, 16K budget)
+    ├── plan.py                   # Task planner (planner model, 32K budget)
+    ├── consultor.py              # Cross-model consultant (planner model, 16K budget)
+    ├── vision.py                 # Vision persona (NOT a dispatch role — delegates to tools/vision.py)
+    ├── refactor.py               # Code refactoring specialist (executor model, 32K budget)
+    ├── test.py                   # Test generation specialist (executor model, 32K budget)
+    └── document.py               # Documentation specialist (executor model, 32K budget)
 ```
 
 ### Auto-Discovery
@@ -155,6 +158,9 @@ def agent(
 | `plan` | `planner` | 32K | 128K | ❌ | — | JSON | ✅ | Decompose goal into ordered steps |
 | `consultor` | `consultor` | 12K | 48K | ❌ | `plan` | Markdown | ✅ | Expert advisory on architecture/best practices |
 | `vision` | *(n/a)* | — | — | ❌ | — | — | ❌ | **Not dispatchable** — use `action="vision_delegate"` |
+| `refactor` | refactor | prompt | 32,000 | ❌ No | code | ✅ Yes | Autonomous code refactoring |
+| `test` | test | prompt | 32,000 | ❌ No | code | ✅ Yes | Autonomous test generation |
+| `document` | document | None | 32,000 | ❌ No | summarize | ✅ Yes | Autonomous documentation generation |
 
 ### Fallback Chains
 
@@ -633,6 +639,8 @@ If you are an AI assistant modifying the agent tool:
 | **Phase 5** | ✅ Complete | Infrastructure: ROLE_CONFIG unified dict, per-role context budgets, response caching, structured errors, vision passthrough params |
 | **Phase 6** | ✅ Complete | Advanced: token-aware trimming, prompt versioning, per-role metrics, parse warning logging, autonomous model escalation, role fallback chains |
 | **Phase 7** | ✅ Complete | `@meta_tool` refactor: thin facade (`tools/agent.py`), `actions/` directory (4 actions), `roles/` directory (12 roles), auto-discovery, dynamic `_json_roles`/`_sleep_learn_roles`, `sleep_learn` per-role config, vision guard, `budget_chars` `or` trap fix, `char_budget` multiplier fix (5→3), `_get_metrics` returns `.copy()`, `max_context_tokens` in `FakeCfg`, test robustness, 95/95 tests passing |
+| **Phase 8** | ✅ Complete | | New roles: `refactor`, `test`, `document` | Required `core/config.py` and `.env` and `core/llm_backend/config.py` updates for new model entries |
+
 
 ### 🔵 Later (Blocked or Large)
 
@@ -642,8 +650,20 @@ If you are an AI assistant modifying the agent tool:
 | 🔵 2 | `dry_run` / `estimate_cost` mode | Medium | Pre-flight cost estimation without calling LLM | Structured errors (available) |
 | 🔵 3 | Streaming support | Large | Partial responses for long-running roles; requires `core/llm.py` redesign | MCP stdio protocol changes |
 | 🔵 4 | Role composition chaining | Large | Chain multiple roles in single call: `analyze` → `code` → `review` | Streaming decision |
-| 🔵 5 | New roles: `refactor`, `test`, `document` | Medium each | Autonomous code maintenance workflows. Requires `core/config.py` and `.env` and `core/llm_backend/config.py` updates for new model entries | Centralized ROLE_CONFIG stable |
-| 🔵 6 | Parallel tool execution | Medium | Expose `core/parallel_executor.py` as a `parallel` tool for research workflows | Concrete use case demanding it |
+| 🔵 5 | Parallel tool execution | Medium | Expose `core/parallel_executor.py` as a `parallel` tool for research workflows | Concrete use case demanding it |
+
+## 📝 Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v0.1 | 2024-01-15 | Initial monolithic agent tool (~420 lines) |
+| v0.2 | 2024-02-01 | Added response cache and metrics |
+| v0.3 | 2024-02-15 | Added sleep-learn injection |
+| v0.4 | 2024-03-01 | Added vision_delegate action |
+| v0.5 | 2024-03-15 | Added token-aware context trimming |
+| v1.0 | 2024-04-01 | `@meta_tool` refactor — actions/ + roles/ directories, auto-discovery |
+| v1.1 | 2024-04-15 | Hardening pass: `**kwargs` removal, vision guard, dynamic sleep-learn config, `budget_chars` `or` trap fix, traceback scoping, char multiplier tightening, metrics `.copy()`, test budget fix, `sleep_learn` per-role flags |
+| v1.2 | 2024-05-01 | Added 3 autonomous maintenance roles: `refactor`, `test`, `document`. Timeout single source of truth. Escalation response completeness. Cache key includes temperature/max_tokens. Consultor guard. Scaled context trimming for large budgets. |
 
 ---
 

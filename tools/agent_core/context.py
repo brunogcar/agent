@@ -112,7 +112,7 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
 
     if tb_start != -1:
         # Isolate the traceback block by walking lines — much more robust
-        # than looking for \n\n, which fails on single-newline separators.
+        # than looking for \\n\\n, which fails on single-newline separators.
         tb_text = text[tb_start:]
         lines = tb_text.splitlines()
         tb_lines = [lines[0]]  # marker line
@@ -130,7 +130,7 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
             else:
                 # Non-indented line before any frame — malformed, stop here
                 break
-        tb_text = "\n".join(tb_lines)
+        tb_text = "\\n".join(tb_lines)
 
         if budget_type == "tokens":
             tb_tokens = _estimate_tokens(tb_text)
@@ -148,13 +148,13 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
                 head_budget = max(0, budget - tb_len)
                 head = text[:head_budget]
 
-            head_break = head.rfind("\n\n")
+            head_break = head.rfind("\\n\\n")
             if head_break != -1:
                 head = head[:head_break]
             truncated = len(text) - len(head) - tb_len
             return (
                 head
-                + f"\n\n[... {truncated} chars of intermediate context truncated ...]\n\n"
+                + f"\\n\\n[... {truncated} chars of intermediate context truncated ...]\\n\\n"
                 + tb_text
             )
         # else: traceback exceeds entire budget — fall through to normal trim
@@ -172,20 +172,28 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
         head_budget = char_budget // 3
         tail_budget = char_budget - head_budget
     else:
-        head_budget = _KEEP_HEAD_CHARS
-        tail_budget = _KEEP_TAIL_CHARS
+        # Scale head/tail proportionally for large budgets
+        # to better utilize the available context window
+        if char_budget >= _KEEP_HEAD_CHARS + _KEEP_TAIL_CHARS * 2:
+            # Large budget: give more to head and tail proportionally
+            scale = char_budget / (_KEEP_HEAD_CHARS + _KEEP_TAIL_CHARS)
+            head_budget = int(_KEEP_HEAD_CHARS * scale)
+            tail_budget = int(_KEEP_TAIL_CHARS * scale)
+        else:
+            head_budget = _KEEP_HEAD_CHARS
+            tail_budget = _KEEP_TAIL_CHARS
 
     head = text[:head_budget]
     tail = text[-tail_budget:]
-    head_break = head.rfind("\n\n")
+    head_break = head.rfind("\\n\\n")
     if head_break != -1:
         head = head[:head_break]
-    tail_break = tail.find("\n")
+    tail_break = tail.find("\\n")
     if tail_break != -1:
         tail = tail[tail_break + 1:]
     truncated = len(text) - len(head) - len(tail)
     return (
         head
-        + f"\n\n[... {truncated} chars of intermediate context truncated ...]\n\n"
+        + f"\\n\\n[... {truncated} chars of intermediate context truncated ...]\\n\\n"
         + tail
     )

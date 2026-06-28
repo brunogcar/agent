@@ -18,19 +18,32 @@ The configuration system (`core/config.py`) is the **single source of truth** fo
 ```mermaid
 graph TD
     A[".env file"] -->|os.getenv| B["Config.__init__()"]
-    B --> C["Path Resolution<br/>agent_root, workspace_root, ..."]
-    B --> D["Model Registry<br/>planner, executor, router, sub-roles"]
-    B --> E["Limit Validation<br/>timeouts, max_chars, retries"]
-    B --> F["Feature Flags<br/>env, runtime_provider, debug"]
-    B --> G["Protected Files<br/>frozenset of critical paths"]
-    C --> H["_ensure_dirs()<br/>Create missing directories"]
-    B --> I["cfg singleton<br/>Exported at module level"]
-    I --> J["core.llm<br/>LLMClient"]
-    I --> K["core.memory<br/>MemoryStore"]
-    I --> L["core.router<br/>TaskRouter"]
-    I --> M["core.gateway<br/>FastAPI app"]
-    I --> N["core.runtime<br/>Watchdog, Health, Activity"]
-    I --> O["tools/*<br/>All MCP tools"]
+    B --> C["Path Resolution
+             agent_root, workspace_root, ..."]
+    B --> D["Model Registry
+             planner, executor, router, sub-roles"]
+    B --> E["Limit Validation
+             timeouts, max_chars, retries"]
+    B --> F["Feature Flags
+             env, runtime_provider, debug"]
+    B --> G["Protected Files
+             frozenset of critical paths"]
+    C --> H["_ensure_dirs()
+             Create missing directories"]
+    B --> I["cfg singleton
+             Exported at module level"]
+    I --> J["core.llm
+             LLMClient"]
+    I --> K["core.memory
+             MemoryStore"]
+    I --> L["core.router
+             TaskRouter"]
+    I --> M["core.gateway
+             FastAPI app"]
+    I --> N["core.runtime
+             Watchdog, Health, Activity"]
+    I --> O["tools/*
+             All MCP tools"]
 ```
 
 ### Usage Pattern
@@ -66,12 +79,19 @@ All paths are `pathlib.Path` objects, resolved to absolute paths. The `_ensure_d
 
 ```mermaid
 graph LR
-    A["AGENT_ROOT<br/>D:/mcp/agent"] --> B["WORKSPACE_ROOT<br/>workspace/"]
-    A --> C["MEMORY_ROOT<br/>memory_db/"]
-    A --> D["LOG_PATH<br/>logs/agent/"]
-    C --> E["MEMORY_CHROMA_PATH<br/>memory_db/chroma/"]
-    B --> F["WORKSPACE_AUTOCODE<br/>workspace/autocode/"]
-    B --> G["WORKSPACE_INDEX<br/>workspace/.index/"]
+    A["AGENT_ROOT
+       D:/mcp/agent"] --> B["WORKSPACE_ROOT
+                            workspace/"]
+    A --> C["MEMORY_ROOT
+             memory_db/"]
+    A --> D["LOG_PATH
+             logs/agent/"]
+    C --> E["MEMORY_CHROMA_PATH
+             memory_db/chroma/"]
+    B --> F["WORKSPACE_AUTOCODE
+             workspace/autocode/"]
+    B --> G["WORKSPACE_INDEX
+             workspace/.index/"]
 ```
 
 ### Path Reference
@@ -113,25 +133,44 @@ Model identifiers are loaded from `.env` and must match **exactly** what appears
 ```mermaid
 graph TD
     subgraph "Tier 1 — Large (Planning & Vision)"
-        P["PLANNER_MODEL<br/>Complex reasoning, multi-step plans"]
-        V["VISION_MODEL<br/>Multimodal image analysis"]
+        P["PLANNER_MODEL
+           Complex reasoning, multi-step plans"]
+        V["VISION_MODEL
+           Multimodal image analysis"]
     end
     subgraph "Tier 2 — Medium (Execution & Routing)"
-        E["EXECUTOR_MODEL<br/>Code generation, analysis, synthesis"]
-        R["ROUTER_MODEL<br/>Fast task classification"]
-        RE["RESEARCH_MODEL<br/>Web research synthesis"]
-        AN["ANALYZE_MODEL<br/>Data analysis"]
-        CO["CODE_MODEL<br/>Code generation"]
+        E["EXECUTOR_MODEL
+           Code generation, analysis, synthesis"]
+        R["ROUTER_MODEL
+           Fast task classification"]
+        RE["RESEARCH_MODEL
+           Web research synthesis"]
+        AN["ANALYZE_MODEL
+           Data analysis"]
+        CO["CODE_MODEL
+           Code generation"]
+        RF["REFACTOR_MODEL
+           Autonomous code refactoring"]
+        TE["TEST_MODEL
+           Autonomous test generation"]
     end
     subgraph "Tier 3 — Lightweight (Sub-roles, fall back to EXECUTOR)"
-        SU["SUMMARIZE_MODEL<br/>Text summarization"]
-        EX["EXTRACT_MODEL<br/>Information extraction"]
-        CR["CRITIQUE_MODEL<br/>Quality review"]
-        RV["REVIEW_MODEL<br/>Code review"]
+        SU["SUMMARIZE_MODEL
+           Text summarization"]
+        EX["EXTRACT_MODEL
+           Information extraction"]
+        CR["CRITIQUE_MODEL
+           Quality review"]
+        RV["REVIEW_MODEL
+           Code review"]
+        DO["DOCUMENT_MODEL
+           Autonomous documentation"]
     end
     subgraph "Tier 3b — Lightweight (Sub-roles, fall back to ROUTER — not Executor)"
-        CL["CLASSIFY_MODEL<br/>Fast classification"]
-        RT["ROUTE_MODEL<br/>Routing decisions"]
+        CL["CLASSIFY_MODEL
+           Fast classification"]
+        RT["ROUTE_MODEL
+           Routing decisions"]
     end
     P --> E
     P --> R
@@ -141,6 +180,9 @@ graph TD
     E --> EX
     E --> CR
     E --> RV
+    E --> RF
+    E --> TE
+    E --> DO
 ```
 
 ### Core Roles
@@ -162,7 +204,7 @@ These two are easy to miss — they're sub-roles like `summarize`/`extract` etc.
 | `classify` (via `model_registry["classify"]`) | `CLASSIFY_MODEL` | `router_model` | `CLASSIFY_TIMEOUT` | 15s |
 | `route` (via `model_registry["route"]`) | `ROUTE_MODEL` | `router_model` | `ROUTE_TIMEOUT` | 15s |
 
-> Neither `classify` nor `route` has its own `cfg.<name>_model` attribute — they only exist as entries in `cfg.model_registry`, accessed by role name through the LLM client, not as direct `Config` attributes the way `planner_model`/`executor_model`/etc. are.
+> Neither `classify` nor `route` has its own `cfg._model` attribute — they only exist as entries in `cfg.model_registry`, accessed by role name through the LLM client, not as direct `Config` attributes the way `planner_model`/`executor_model`/etc. are.
 
 ### Sub-Role Models
 
@@ -177,16 +219,19 @@ Sub-roles use smaller, faster models for lightweight tasks. Each can be overridd
 | `analyze_model` | `ANALYZE_MODEL` | `executor_model` | `ANALYZE_TIMEOUT` (90s) | Data analysis |
 | `code_model` | `CODE_MODEL` | `executor_model` | `CODE_TIMEOUT` (120s) | Code generation |
 | `review_model` | `REVIEW_MODEL` | `executor_model` | `REVIEW_TIMEOUT` (90s) | Code review |
+| `refactor_model` | `REFACTOR_MODEL` | `code_model` | `REFACTOR_TIMEOUT` (120s) | Autonomous code refactoring |
+| `test_model` | `TEST_MODEL` | `code_model` | `TEST_TIMEOUT` (120s) | Autonomous test generation |
+| `document_model` | `DOCUMENT_MODEL` | `summarize_model` | `DOCUMENT_TIMEOUT` (120s) | Autonomous documentation generation |
 
 Each sub-role has its **own independent timeout env var** — they don't share `EXECUTOR_TIMEOUT`/`execution_timeout`, despite falling back to `executor_model` for the model name itself.
 
-### Current Model Configuration (Example as this changes frequently, dont take this as facts)
+### Current Model Configuration (Example — changes frequently, don't treat as facts)
 
 ```ini
 # ── Tier 1: Planner ─────────────────────────────────────────────────────
 PLANNER_MODEL=gemma-4-e2b-it@q5_k_s
 
-# ── Tier 2: Executor  ────────────────────────────────────────────────────
+# ── Tier 2: Executor ────────────────────────────────────────────────────
 EXECUTOR_MODEL=gemma-2-2b-it
 # Executor group (fallback: EXECUTOR_MODEL → PLANNER_MODEL)
 SUMMARIZE_MODEL=lfm2-1.2b-tool
@@ -196,6 +241,9 @@ CRITIQUE_MODEL=lfm2-1.2b-tool
 ANALYZE_MODEL=gemma-2-2b-it
 CODE_MODEL=gemma-2-2b-it
 REVIEW_MODEL=lfm2-1.2b-tool
+REFACTOR_MODEL=
+TEST_MODEL=
+DOCUMENT_MODEL=
 
 # ── Tier 3: Router ───────────────────────────────────────────────
 ROUTER_MODEL=gemma-2-2b-it
@@ -203,11 +251,11 @@ ROUTER_MODEL=gemma-2-2b-it
 CLASSIFY_MODEL=
 ROUTE_MODEL=
 
-# ── Tier 4: Vision  ───────────────────────────────────────────────
+# ── Tier 4: Vision ───────────────────────────────────────────────
 # Vision (fallback: VISION_MODEL → PLANNER_MODEL)
 VISION_MODEL=
 
-# ── Tier 5: Consultor  ───────────────────────────────────────────────
+# ── Tier 5: Consultor ───────────────────────────────────────────────
 CONSULTOR_MODEL=
 ```
 
@@ -218,7 +266,7 @@ CONSULTOR_MODEL=
 
 The `cfg.model_registry` dict provides per-role configuration for the LLMClient:
 
-Each entry is built by an internal `_make_entry(model, provider, timeout_env, default_timeout)` helper — every entry has **4 keys**, not 2:
+Each entry is built by an internal `_make_entry(model, provider, timeout_env, default_timeout)` helper — every entry has **4 keys**:
 
 ```python
 # What cfg.model_registry actually looks like (verified against source) —
@@ -238,8 +286,11 @@ cfg.model_registry = {
     "analyze":   {"model": ..., "provider": ..., "base_url": ..., "timeout": 90},   # ANALYZE_TIMEOUT
     "code":      {"model": ..., "provider": ..., "base_url": ..., "timeout": 120},  # CODE_TIMEOUT
     "review":    {"model": ..., "provider": ..., "base_url": ..., "timeout": 90},   # REVIEW_TIMEOUT
+    "refactor":  {"model": ..., "provider": ..., "base_url": ..., "timeout": 120},  # REFACTOR_TIMEOUT
+    "test":      {"model": ..., "provider": ..., "base_url": ..., "timeout": 120},  # TEST_TIMEOUT
+    "document":  {"model": ..., "provider": ..., "base_url": ..., "timeout": 120},  # DOCUMENT_TIMEOUT
     # "consultor" is added ONLY if CONSULTOR_MODEL resolves to a non-empty model —
-    # it's conditionally present, not always there like the other 13 keys.
+    # it's conditionally present, not always there like the other 16 keys.
 }
 ```
 
@@ -405,10 +456,15 @@ Backs the `parallel` tool. Entirely missing from the previous version of this do
 
 ```mermaid
 graph LR
-    A["AUTOCODE_GRAPH_TIMEOUT<br/>300s — total workflow"] --> B["PLANNER_TIMEOUT<br/>180s — planning step"]
-    A --> C["EXECUTOR_TIMEOUT<br/>120s — code execution"]
-    A --> D["ROUTER_TIMEOUT<br/>15s — task classification"]
-    A --> E["SANDBOX_TIMEOUT<br/>30s — quick checks"]
+    A["AUTOCODE_GRAPH_TIMEOUT
+       300s — total workflow"] --> B["PLANNER_TIMEOUT
+                                    180s — planning step"]
+    A --> C["EXECUTOR_TIMEOUT
+             120s — code execution"]
+    A --> D["ROUTER_TIMEOUT
+             15s — task classification"]
+    A --> E["SANDBOX_TIMEOUT
+             30s — quick checks"]
 ```
 
 | Config Attribute | Env Variable | Default | Description |
@@ -419,7 +475,7 @@ graph LR
 | `vision_timeout` | `VISION_TIMEOUT` | `60` | Vision LLM call timeout (seconds) |
 | `autocode_graph_timeout` | `AUTOCODE_GRAPH_TIMEOUT` | `300` | Total autocode workflow timeout (seconds) |
 
-> ⚠️ **Validation:** `autocode_graph_timeout` must be ≥ max(`planner_timeout`, `execution_timeout`, `router_timeout`).
+> ⚠️ **Validation:** `autocode_graph_timeout` must be ≥ max(timeout for all roles in model_registry). Previously only checked against planner/executor/router; now checks against ALL roles.
 
 ---
 
@@ -468,9 +524,9 @@ cfg.protected_files = frozenset({
 ```python
 from core.config import cfg
 
-cfg.is_protected("server.py")       # True — core infrastructure
-cfg.is_protected("tools/web.py")    # False — safe to edit
-cfg.is_protected("core/config.py")  # True — protected
+cfg.is_protected("server.py")        # True — core infrastructure
+cfg.is_protected("tools/web.py")     # False — safe to edit
+cfg.is_protected("core/config.py")   # True — protected
 ```
 
 **Implementation:** Tries an exact absolute-path match first, then falls back to filename-only matching via `os.path.normcase()`. The "case-insensitive" part is actually **platform-dependent**: `normcase()` lowercases on Windows but is a no-op on Linux — so the filename-fallback check is case-sensitive on Linux, case-insensitive on Windows. Given this stack runs on Windows 11, that distinction rarely bites in practice, but it's not a cross-platform guarantee as previously worded.
@@ -529,7 +585,7 @@ Additionally, `core/config_validation.py` runs a second pass at startup (called 
 |-------|------|
 | `autocode_max_retries` | > 0 |
 | `autocode_max_file_chars` | > 0 |
-| `autocode_graph_timeout` | ≥ max(planner_timeout, execution_timeout, router_timeout) |
+| `autocode_graph_timeout` | ≥ max(timeout for all roles in model_registry) |
 | `memory_max_entry_bytes` | 1 – 10,000,000 |
 | `max_tags_per_entry` | 1 – 50 |
 | `max_tag_length` | 1 – 200 |
@@ -606,6 +662,7 @@ If you are an AI assistant modifying `core/config.py`:
 10. **Backward compatibility** — when renaming env variables, support both old and new names for at least one release cycle.
 11. **Sub-role fallback chain** — new sub-role models must fall back to `executor_model`, not `planner_model`. Planner is expensive and reserved for complex reasoning. **Exception:** `classify` and `route` fall back to `router_model`, not `executor_model` — they're routing-adjacent sub-roles, not execution-adjacent ones. Don't assume all sub-roles share one fallback group.
 12. **Timeout validation** — new timeouts must be validated against `autocode_graph_timeout`.
+13. **Timeout single source of truth** — timeout lives in `core/config.py` only. Never add timeout to `llm_backend/config.py`. The LLM backend reads it from `cfg.model_registry[role]["timeout"]`.
 
 ---
 
@@ -639,4 +696,4 @@ If you are an AI assistant modifying `core/config.py`:
 
 ---
 
-*This file was corrected against live source — see chat history for the full list of fixes. Headline corrections: removed the fabricated `synthesize` role, fixed `EXECUTION_TIMEOUT`→`EXECUTOR_TIMEOUT` (3 places), added 6 previously-undocumented config sections (Tavily, Browser Fallback, Deep Research, Memory Diversity, Context Budgeting, Parallel Execution) covering ~17 real config attributes, and fixed the wrong `task_db_path` filename and `ChromaDBMemory`/`MemoryStore` class name.*
+*This file was corrected against live source — see chat history for the full list of fixes. Headline corrections: removed the fabricated `synthesize` role, fixed `EXECUTION_TIMEOUT`→`EXECUTOR_TIMEOUT` (3 places), added 6 previously-undocumented config sections (Tavily, Browser Fallback, Deep Research, Memory Diversity, Context Budgeting, Parallel Execution) covering ~17 real config attributes, and fixed the wrong `task_db_path` filename and `ChromaDBMemory`/`MemoryStore` class name. Added 3 new autonomous maintenance roles (refactor, test, document) with fallback chains and timeout env vars.*

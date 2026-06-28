@@ -62,3 +62,26 @@ class TestModelEscalation:
 
             assert result["status"] == "success"
             assert "parse_warning" in result
+
+    def test_escalation_updates_response_fields(self, mock_llm_result):
+        """Escalation success should update text, model, and usage from escalation result."""
+        mock_llm_result.text = "bad json"
+        mock_llm_result.parsed = None
+        mock_llm_result.model = "primary-model"
+        mock_llm_result.usage = {"total": 10}
+
+        escalation_result = type(mock_llm_result)()
+        escalation_result.ok = True
+        escalation_result.text = '{"valid": true}'
+        escalation_result.parsed = None
+        escalation_result.model = "planner-model"
+        escalation_result.usage = {"total": 25}
+
+        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+            mock_llm.side_effect = [mock_llm_result, escalation_result]
+            result = agent(action="dispatch", role="route", task="test")
+
+            assert result["status"] == "success"
+            assert result["model"] == "planner-model"
+            assert result["usage"]["total"] == 25
+            assert result.get("escalated") is True

@@ -28,14 +28,13 @@ from tools.agent_core import ROLES  # noqa: F401
 
 PARALLEL_SAFE = False
 
-
 @tool
 @meta_tool(
     DISPATCH.get("agent", {}),
     doc_sections=[
         "IMPORTANT — action vs role:",
         ' action — what operation to perform: "dispatch" | "metrics" | "vision_delegate" | "clear_cache"',
-        ' role — which LLM persona to use (only for action="dispatch"): classify | route | research | summarize | extract | critique | analyze | code | review | plan | consultor | vision',
+        ' role — which LLM persona to use (only for action="dispatch"): classify | route | research | summarize | extract | critique | analyze | code | review | plan | consultor | refactor | test | document',
         "",
         "Common usage patterns:",
         ' agent(action="dispatch", role="classify", task="Is this spam?")',
@@ -90,7 +89,7 @@ def agent(
     if not op_info:
         valid = " | ".join(sorted(agent_ops.keys()))
         return fail(
-            f"Unknown action '{action}'. Valid: {valid}",
+            f"Unknown action \'{action}\'. Valid: {valid}",
             trace_id=trace_id,
         )
 
