@@ -27,17 +27,28 @@ def _action_extract_html(
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Extract raw HTML from an element or the full page."""
+    """Extract raw HTML from an element or the full page.
+
+    When no selector is provided, returns the full page HTML (<html>...<\\/html>).
+    The response labels this as "full_page" to avoid confusion with "body".
+    """
     try:
         with _browser_lock:
-            page = _run_browser_async(_get_page(trace_id, headless), timeout=timeout + 5)
+            page = _run_browser_async(
+                _get_page(trace_id, headless), timeout=timeout + 5
+            )
             if selector:
                 html = _run_browser_async(
                     page.inner_html(selector, timeout=timeout * 1000),
                     timeout=timeout + 5,
                 )
+                selector_label = selector
             else:
                 html = _run_browser_async(page.content(), timeout=timeout + 5)
-        return ok({"html": html or "", "selector": selector or "body"}, trace_id=trace_id)
+                selector_label = "full_page"
+            return ok(
+                {"html": html or "", "selector": selector_label},
+                trace_id=trace_id,
+            )
     except Exception as e:
         return fail(f"extract_html failed: {e}", trace_id=trace_id)

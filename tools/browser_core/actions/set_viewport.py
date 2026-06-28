@@ -14,7 +14,8 @@ from tools.browser_core._registry import register_action
     "set_viewport",
     help_text="""set_viewport — Change browser viewport size for responsive testing.
 Required: none
-Optional: width, height, trace_id""",
+Optional: width, height, headless, trace_id
+Note: Viewport is per-page. New traces get the default viewport (1280x720).""",
     examples=[
         'browser(action="set_viewport", width=1920, height=1080)',
         'browser(action="set_viewport", width=375, height=812)',
@@ -23,17 +24,27 @@ Optional: width, height, trace_id""",
 def _action_set_viewport(
     width: int = 1280,
     height: int = 720,
+    headless: bool = True,
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Change browser viewport size."""
+    """Change browser viewport size.
+
+    The viewport change applies to the current page object. If a new trace
+    creates a new page, the default viewport (1280x720) is restored.
+    """
     try:
         with _browser_lock:
-            page = _run_browser_async(_get_page(trace_id, True), timeout=35)
+            page = _run_browser_async(
+                _get_page(trace_id, headless), timeout=35
+            )
             _run_browser_async(
                 page.set_viewport_size({"width": width, "height": height}),
                 timeout=10,
             )
-        return ok({"viewport_set": True, "width": width, "height": height}, trace_id=trace_id)
+            return ok(
+                {"viewport_set": True, "width": width, "height": height},
+                trace_id=trace_id,
+            )
     except Exception as e:
         return fail(f"set_viewport failed: {e}", trace_id=trace_id)

@@ -1,6 +1,8 @@
 """Browser action: extract_tables."""
 from __future__ import annotations
 
+import json
+
 from core.contracts import fail, ok
 
 from tools.browser_core.factory import _get_page
@@ -9,6 +11,8 @@ from tools.browser_core.state import _browser_lock
 from tools.browser_core._registry import register_action
 
 
+# JS template for extracting structured table data.
+# Uses json.dumps() for safe selector injection (see extract_links.py).
 _TABLES_JS = """
 (() => {
     const tables = Array.from(document.querySelectorAll(SELECTOR));
@@ -38,21 +42,29 @@ Optional: selector, timeout, headless, trace_id""",
     ],
 )
 def _action_extract_tables(
-    selector: str = "table",
+    selector: str = "",
     timeout: int = 30,
     headless: bool = True,
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Extract all tables from the page or a specific element as structured data."""
+    """Extract all tables from the page or a specific element as structured data.
+
+    When selector is empty, defaults to "table" (all table elements).
+    Uses json.dumps() for safe JS string injection.
+    """
     try:
         with _browser_lock:
-            page = _run_browser_async(_get_page(trace_id, headless), timeout=timeout + 5)
-            js = _TABLES_JS.replace("SELECTOR", repr(selector))
+            page = _run_browser_async(
+                _get_page(trace_id, headless), timeout=timeout + 5
+            )
+            # Default to "table" when selector is empty.
+            effective_selector = selector or "table"
+            js = _TABLES_JS.replace("SELECTOR", json.dumps(effective_selector))
             result = _run_browser_async(
                 page.evaluate(js), timeout=timeout + 5
             )
-        tables = result if isinstance(result, list) else []
-        return ok({"tables": tables, "count": len(tables)}, trace_id=trace_id)
+            tables = result if isinstance(result, list) else []
+            return ok({"tables": tables, "count": len(tables)}, trace_id=trace_id)
     except Exception as e:
         return fail(f"extract_tables failed: {e}", trace_id=trace_id)

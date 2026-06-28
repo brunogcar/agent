@@ -27,16 +27,21 @@ def _action_select_option(
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Select an option from a <select> dropdown."""
+    """Select an option from a <select> dropdown by its value attribute."""
     if not selector or value is None:
-        return fail("selector and value are required for select_option action", trace_id=trace_id)
+        return fail(
+            "selector and value are required for select_option action",
+            trace_id=trace_id,
+        )
     try:
         with _browser_lock:
-            page = _run_browser_async(_get_page(trace_id, headless), timeout=timeout + 5)
+            page = _run_browser_async(
+                _get_page(trace_id, headless), timeout=timeout + 5
+            )
             _run_browser_async(
                 page.select_option(selector, value, timeout=timeout * 1000),
                 timeout=timeout + 5,
             )
-        return ok({"selected": value, "selector": selector}, trace_id=trace_id)
+            return ok({"selected": value, "selector": selector}, trace_id=trace_id)
     except Exception as e:
         return fail(f"select_option failed: {e}", trace_id=trace_id)

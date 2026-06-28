@@ -17,7 +17,7 @@ class TestBrowserRegistry:
             "text_content", "evaluate", "select_option", "keyboard_press",
             "get_url", "close", "wait_for_selector", "scroll", "wait_for_url",
             "hover", "cookies", "set_viewport", "extract_html",
-            "extract_links", "extract_tables",
+            "extract_links", "extract_tables", "upload",  # NEW: upload
         }
         assert set(actions.keys()) == expected
 

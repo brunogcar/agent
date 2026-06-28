@@ -23,10 +23,8 @@ def reset_browser_state():
 @pytest.fixture(autouse=True)
 def mock_cfg_for_browser(tmp_path):
     """Mock cfg to prevent AsyncMock leakage and provide browser defaults."""
-    with patch("tools.browser_core.lifecycle.cfg") as mock_cfg_lifecycle, \
-         patch("tools.browser_core.factory.cfg") as mock_cfg_init, \
-         patch("tools.browser_core.actions.screenshot.cfg") as mock_cfg_actions:
-        for mock_cfg in [mock_cfg_lifecycle, mock_cfg_init, mock_cfg_actions]:
+    with patch("tools.browser_core.lifecycle.cfg") as mock_cfg_lifecycle,          patch("tools.browser_core.factory.cfg") as mock_cfg_init,          patch("tools.browser_core.actions.screenshot.cfg") as mock_cfg_actions:
+        for mock_cfg in (mock_cfg_lifecycle, mock_cfg_init, mock_cfg_actions):
             mock_cfg.workspace_root = tmp_path
             mock_cfg.agent_root = tmp_path
             mock_cfg.memory_root = tmp_path
@@ -56,8 +54,9 @@ def mock_browser():
     mock_page.query_selector = AsyncMock(return_value=None)
     mock_page.hover = AsyncMock(return_value=None)
     mock_page.inner_html = AsyncMock(return_value="<div>html</div>")
-    mock_page.content = AsyncMock(return_value="<html></html>")
+    mock_page.content = AsyncMock(return_value="")
     mock_page.set_viewport_size = AsyncMock(return_value=None)
+    mock_page.set_input_files = AsyncMock(return_value=None)  # NEW: upload action
     mock_page.on = MagicMock(return_value=None)
 
     mock_ctx = MagicMock()
@@ -81,9 +80,17 @@ def mock_browser():
     mock_pw.__aenter__ = AsyncMock(return_value=mock_pw)
     mock_pw.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("tools.browser_core.factory._launch_browser", new=AsyncMock(return_value=mock_browser)):
-        with patch("playwright.async_api.async_playwright", return_value=mock_pw):
-            with patch("tools.browser_core.actions.navigate.is_safe_network_address", return_value=True):
+    with patch(
+        "tools.browser_core.factory._launch_browser",
+        new=AsyncMock(return_value=mock_browser),
+    ):
+        with patch(
+            "playwright.async_api.async_playwright", return_value=mock_pw
+        ):
+            with patch(
+                "tools.browser_core.actions.navigate.is_safe_network_address",
+                return_value=True,
+            ):
                 yield {
                     "page": mock_page,
                     "context": mock_ctx,
