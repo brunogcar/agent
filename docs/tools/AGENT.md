@@ -158,9 +158,9 @@ def agent(
 | `plan` | `planner` | 32K | 128K | ❌ | — | JSON | ✅ | Decompose goal into ordered steps |
 | `consultor` | `consultor` | 12K | 48K | ❌ | `plan` | Markdown | ✅ | Expert advisory on architecture/best practices |
 | `vision` | *(n/a)* | — | — | ❌ | — | — | ❌ | **Not dispatchable** — use `action="vision_delegate"` |
-| `refactor` | refactor | prompt | 32,000 | ❌ No | code | ✅ Yes | Autonomous code refactoring |
-| `test` | test | prompt | 32,000 | ❌ No | code | ✅ Yes | Autonomous test generation |
-| `document` | document | None | 32,000 | ❌ No | summarize | ✅ Yes | Autonomous documentation generation |
+| `refactor` | `refactor` | 32K | 128K | ❌ | `code` | JSON | ✅ | Autonomous code refactoring |
+| `test` | `test` | 32K | 128K | ❌ | `code` | JSON | ✅ | Autonomous test generation |
+| `document` | `document` | 32K | 128K | ❌ | `summarize` | Markdown | ✅ | Autonomous documentation generation |
 
 ### Fallback Chains
 
@@ -431,23 +431,22 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/tools/agent -v -W error
 
 ```
 tests/tools/agent/
-├── conftest.py                 # Shared fixtures (mock_cfg, mock_llm_result)
-├── test_agent_validation.py    # Unknown action, unknown role, missing task
-├── test_agent_vision.py        # Vision delegation to tools.vision
-├── test_agent_vision_params.py # mime_type and vision_json_mode passthrough
-├── test_agent_llm_dispatch.py  # Successful LLM call, LLM failure, param passthrough
-├── test_agent_json_parsing.py  # Valid JSON, invalid JSON, markdown fences, extraction
-├── test_agent_context.py       # _trim_context unit tests + traceback preservation
-├── test_agent_sleep_learn.py   # Sleep-learn injection: call site, gating, fallback
-├── test_agent_roles.py         # ROLE_CONFIG validation and budget override tests
-├── test_agent_caching.py       # Response caching hit/miss/TTL tests
-├── test_agent_errors.py        # Structured error taxonomy tests
-├── test_agent_token_aware.py   # Token-aware trimming and _estimate_tokens tests
-├── test_agent_prompt_version.py # Prompt versioning in responses
-├── test_agent_metrics.py       # Per-role metrics collection and query tests
+├── conftest.py                  # Shared fixtures (mock_cfg, mock_llm_result)
+├── test_agent_validation.py     # Unknown action, unknown role, missing task
+├── test_agent_vision.py         # Vision delegation to tools.vision
+├── test_agent_vision_params.py  # mime_type and vision_json_mode passthrough
+├── test_agent_llm_dispatch.py   # Successful LLM call, LLM failure, param passthrough
+├── test_agent_json_parsing.py   # Valid JSON, invalid JSON, markdown fences, extraction
+├── test_agent_context.py        # _trim_context unit tests + traceback preservation
+├── test_agent_sleep_learn.py    # Sleep-learn injection: call site, gating, fallback
+├── test_agent_roles.py          # ROLE_CONFIG validation and budget override tests
+├── test_agent_caching.py        # Response caching hit/miss/TTL tests
+├── test_agent_errors.py         # Structured error taxonomy tests
+├── test_agent_token_aware.py    # Token-aware trimming and _estimate_tokens tests
+├── test_agent_metrics.py        # Per-role metrics collection and query tests
 ├── test_agent_parse_warnings.py # Parse warning logging and retrieval tests
-├── test_agent_escalation.py    # Autonomous model escalation on parse failure
-└── test_agent_fallback.py      # Role fallback chain retry tests
+├── test_agent_escalation.py     # Autonomous model escalation on parse failure
+└── test_agent_fallback.py       # Role fallback chain retry tests
 ```
 
 **Mock strategy:**
@@ -618,7 +617,6 @@ If you are an AI assistant modifying the agent tool:
 | `tests/tools/agent/test_agent_caching.py` | Response caching hit/miss/TTL tests |
 | `tests/tools/agent/test_agent_errors.py` | Structured error taxonomy tests |
 | `tests/tools/agent/test_agent_token_aware.py` | Token-aware trimming tests |
-| `tests/tools/agent/test_agent_prompt_version.py` | Prompt versioning tests |
 | `tests/tools/agent/test_agent_metrics.py` | Per-role metrics tests |
 | `tests/tools/agent/test_agent_parse_warnings.py` | Parse warning logging tests |
 | `tests/tools/agent/test_agent_escalation.py` | Autonomous model escalation tests |

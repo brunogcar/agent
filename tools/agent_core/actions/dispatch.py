@@ -48,7 +48,7 @@ Required: role (one of: classify, route, research, summarize, extract,
                  refactor, test, document)
 Required: task (the instruction or question)
 Optional: context, content, trace_id, temperature, max_tokens
-Returns: {status, role, text, model, elapsed, usage, prompt_version}
+Returns: {status, role, text, model, elapsed, usage}
 """
 
 @register_action(
