@@ -89,7 +89,7 @@ def agent(
     if not op_info:
         valid = " | ".join(sorted(agent_ops.keys()))
         return fail(
-            f"Unknown action \'{action}\'. Valid: {valid}",
+            f"Unknown action '{action}'. Valid: {valid}",
             trace_id=trace_id,
         )
 
@@ -118,5 +118,9 @@ def agent(
             if trace_id and "trace_id" not in result:
                 result["trace_id"] = trace_id
             return compress_result(result)
+        return fail(
+            f"Handler for '{action}' returned {type(result).__name__}, expected dict",
+            trace_id=trace_id,
+        )
     except Exception as e:
         return fail(str(e), trace_id=trace_id)
