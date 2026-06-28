@@ -2,10 +2,10 @@
 
 Replaces the monolithic Phase 7 agent() with a true thin facade.
 All business logic lives in agent_core/ submodules:
-  - actions/   — MCP-visible operations (dispatch, metrics, vision_delegate, clear_cache)
-  - roles/     — Per-role prompts and configs (classify, route, research, etc.)
+  - actions/ — MCP-visible operations (dispatch, metrics, vision_delegate, clear_cache)
+  - roles/ — Per-role prompts and configs (classify, route, research, etc.)
   - context.py — Context trimming and token estimation
-  - cache.py   — Response caching for deterministic roles
+  - cache.py — Response caching for deterministic roles
   - metrics.py — Per-role metrics collection
   - parse_warnings.py — JSON parse failure logging
   - json_extract.py — Brace-counting JSON extraction
@@ -20,7 +20,7 @@ from tools._meta_tool import meta_tool
 from tools.agent_core._registry import DISPATCH
 from core.tracer import tracer
 from core.utils import compress_result
-from core.contracts import ok, fail
+from core.contracts import fail
 
 # Ensure actions and roles are registered before @meta_tool runs
 # This import triggers agent_core/__init__.py auto-discovery
@@ -35,7 +35,7 @@ PARALLEL_SAFE = False
     doc_sections=[
         "IMPORTANT — action vs role:",
         ' action — what operation to perform: "dispatch" | "metrics" | "vision_delegate" | "clear_cache"',
-        ' role   — which LLM persona to use (only for action="dispatch"): classify | route | research | summarize | extract | critique | analyze | code | review | plan | consultor',
+        ' role — which LLM persona to use (only for action="dispatch"): classify | route | research | summarize | extract | critique | analyze | code | review | plan | consultor | vision',
         "",
         "Common usage patterns:",
         ' agent(action="dispatch", role="classify", task="Is this spam?")',

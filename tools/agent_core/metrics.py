@@ -66,11 +66,12 @@ def _get_metrics(role: str | None = None) -> dict:
         role: Role name to filter by, or None for all roles.
 
     Returns:
-        If role is given: the metrics dict for that role, or {} if none.
+        If role is given: a shallow copy of the metrics dict for that role,
+            or {} if none.
         If role is None: a shallow copy of the full metrics mapping.
     """
     if role:
-        return _ROLE_METRICS.get(role, {})
+        return _ROLE_METRICS.get(role, {}).copy()
     return dict(_ROLE_METRICS)
 
 

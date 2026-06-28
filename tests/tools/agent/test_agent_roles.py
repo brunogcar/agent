@@ -51,7 +51,7 @@ class TestRoleConfig:
 
     def test_sleep_learn_roles_exclude_router(self):
         """Router roles (small budget) must not be in sleep-learn set."""
-        sleep_learn = {k for k, v in ROLES.items() if v["role_config"].get("budget_chars", 0) >= 60000}
+        sleep_learn = {k for k, v in ROLES.items() if v["role_config"].get("sleep_learn")}
         assert "classify" not in sleep_learn
         assert "route" not in sleep_learn
         assert "research" in sleep_learn
@@ -70,13 +70,16 @@ class TestBudgetOverrides:
         _clear_cache()
 
     def test_router_uses_small_budget(self, mock_llm_result):
-        """classify role should trim context to budget_chars (16K)."""
+        """classify role should trim context to budget_tokens (4K)."""
+        # Use a string that exceeds 4000 tokens even with tiktoken
+        # "word " is ~1 token each, so 5000 words = ~5000 tokens > 4000 budget
+        context = "word " * 5000  # ~25000 chars, ~5000 tokens
         with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.return_value = mock_llm_result
-            agent(action="dispatch", role="classify", task="test", context="x" * 25000)
+            agent(action="dispatch", role="classify", task="test", context=context)
 
             call_kwargs = mock_llm.call_args.kwargs
-            # 25K input should be trimmed down
+            # Should be trimmed down from ~25000 chars
             assert len(call_kwargs["context"]) < 25000
 
     def test_planner_uses_large_budget(self, mock_llm_result):
@@ -86,5 +89,5 @@ class TestBudgetOverrides:
             agent(action="dispatch", role="plan", task="test", context="x" * 50000)
 
             call_kwargs = mock_llm.call_args.kwargs
-            # 50K chars should NOT be trimmed (fits in 128K budget)
+            # 50K chars should NOT be trimmed (fits in 128K budget, ~12.5K tokens < 32K)
             assert len(call_kwargs["context"]) == 50000

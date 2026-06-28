@@ -1,16 +1,16 @@
 """Agent dispatch action — core LLM orchestrator.
 
 Handles the full lifecycle of an LLM call for a given role:
- 1. Role config lookup from ROLES registry
- 2. Sleep-learn rule injection (high-latency roles only)
- 3. Response cache check (deterministic roles only)
- 4. Context trimming (token-aware or char-based)
- 5. Primary LLM call via llm.complete()
- 6. Fallback retry on transient failure (one attempt)
- 7. JSON parsing for structured-output roles
- 8. Autonomous model escalation on parse failure
- 9. Metrics recording
- 10. Response cache store (deterministic roles only)
+  1. Role config lookup from ROLES registry
+  2. Sleep-learn rule injection (high-latency roles only)
+  3. Response cache check (deterministic roles only)
+  4. Context trimming (token-aware or char-based)
+  5. Primary LLM call via llm.complete()
+  6. Fallback retry on transient failure (one attempt)
+  7. JSON parsing for structured-output roles
+  8. Autonomous model escalation on parse failure
+  9. Metrics recording
+  10. Response cache store (deterministic roles only)
 """
 from __future__ import annotations
 
@@ -40,17 +40,15 @@ from tools.agent_core.parse_warnings import (
 )
 from tools.agent_core.json_extract import _extract_first_json
 
-
 HELP_DISPATCH = """
 dispatch
 Route a task to an LLM role for execution.
 Required: role (one of: classify, route, research, summarize, extract,
-                 critique, analyze, code, review, plan, consultor)
+ critique, analyze, code, review, plan, consultor)
 Required: task (the instruction or question)
 Optional: context, content, trace_id, temperature, max_tokens
 Returns: {status, role, text, model, elapsed, usage, prompt_version}
 """
-
 
 @register_action(
     "agent",
@@ -70,7 +68,8 @@ def run_dispatch(
     trace_id: str = "",
     temperature: float = -1.0,
     max_tokens: int = -1,
-    **kwargs,
+    mime_type: str = "",
+    vision_json_mode: bool = False,
 ) -> dict:
     """Dispatch a task to the specified LLM role."""
     role = role.strip().lower()
@@ -97,6 +96,17 @@ def run_dispatch(
             "error": "task is required",
         }
 
+    # Vision is a separate action, not a dispatch role
+    if role == "vision":
+        return {
+            "status": "error",
+            "error_code": "INVALID_ROLE",
+            "error": (
+                "Use action='vision_delegate' for vision tasks, "
+                "not action='dispatch'."
+            ),
+        }
+
     # ── Load role config ─────────────────────────────────────────────────────
     role_data = ROLES[role]
     system_prompt = role_data["system_prompt"]
@@ -104,16 +114,16 @@ def run_dispatch(
 
     llm_role = role_cfg["llm_role"]
     json_mode = role_cfg.get("json_mode") == "api"
-    budget_chars = role_cfg.get("budget_chars") or _max_context_chars()
+    budget_chars = role_cfg.get("budget_chars")
+    if budget_chars is None:
+        budget_chars = _max_context_chars()
     budget_tokens = role_cfg.get("budget_tokens")
     cacheable = role_cfg.get("cacheable", False)
     fallback_role = role_cfg.get("fallback_role")
 
     # ── Sleep-learn injection ────────────────────────────────────────────────
     # Only for high-latency roles. Router roles skip to avoid ChromaDB overhead.
-    _sleep_learn_roles = {
-        "research", "analyze", "code", "review", "plan", "consultor"
-    }
+    _sleep_learn_roles = {k for k, v in ROLES.items() if v["role_config"].get("sleep_learn")}
     if role in _sleep_learn_roles:
         try:
             from core.sleep_learn.injector import inject_rules_into_prompt
@@ -122,7 +132,7 @@ def run_dispatch(
                 system_prompt=system_prompt,
                 trace_id=trace_id,
             )
-        except Exception:
+        except (RuntimeError, OSError, ConnectionError, Exception):
             pass  # Non-fatal: use original prompt
 
     # ── Response cache ───────────────────────────────────────────────────────
@@ -222,8 +232,8 @@ def run_dispatch(
     }
 
     # ── JSON parsing for structured-output roles ─────────────────────────────
-    _prompt_json_roles = {"route", "plan", "code", "review"}
-    _api_json_roles = {"extract"}
+    _prompt_json_roles = {k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "prompt"}
+    _api_json_roles = {k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "api"}
     _json_roles = _prompt_json_roles | _api_json_roles
 
     parse_failed = False

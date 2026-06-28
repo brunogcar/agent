@@ -24,6 +24,7 @@ def mock_cfg():
         temperature = 0.0
         max_tokens = 1000
         timeout = 30
+        max_context_tokens = 8000
     with patch("tools.agent_core.context.cfg", FakeCfg()):
         yield FakeCfg()
 
@@ -36,6 +37,6 @@ def mock_llm_result():
         text = "bug"
         model = "test-model"
         usage = {"total": 10}
-        parsed = None   # Tests that need parsed set will override
+        parsed = None  # Tests that need parsed set will override
         error = None
     return FakeResult()

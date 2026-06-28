@@ -118,7 +118,7 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
         tb_lines = [lines[0]]  # marker line
         seen_frame = False
         for line in lines[1:]:
-            if line.startswith("  "):
+            if line.startswith(" "):
                 tb_lines.append(line)
                 seen_frame = True
             elif not line.strip():
@@ -136,10 +136,10 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
             tb_tokens = _estimate_tokens(tb_text)
             tb_len = len(tb_text)
         else:
-            tb_tokens = len(tb_text)
+            tb_tokens = None
             tb_len = len(tb_text)
 
-        if tb_tokens <= budget:
+        if (tb_tokens is not None and tb_tokens <= budget) or (tb_tokens is None and tb_len <= budget):
             # Full traceback fits — trim head to make room
             if budget_type == "tokens":
                 head_budget_chars = int((budget - tb_tokens) * 4)
@@ -161,9 +161,10 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
 
     # ── Normal Head+Tail Trim ──────────────────────────────────────────────
     if budget_type == "tokens":
-        # Convert token budget to approximate char budget for slicing
-        # Use conservative estimate: tokens * 5 chars/token max
-        char_budget = budget * 5
+        # Convert token budget to approximate char budget for slicing.
+        # Use conservative estimate: tokens * 3 chars/token max.
+        # (Fallback heuristic is chars/4; *3 gives a safe upper bound.)
+        char_budget = budget * 3
     else:
         char_budget = budget
 
