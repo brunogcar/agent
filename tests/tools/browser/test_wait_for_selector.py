@@ -1,6 +1,6 @@
 """tests/tools/browser/test_wait_for_selector.py
 
-Phase 3: wait_for_selector action â€" waits for an element to appear in the DOM.
+Phase 3: wait_for_selector action — waits for an element to appear in the DOM.
 """
 import pytest
 
@@ -15,7 +15,7 @@ class TestWaitForSelector:
         assert result["status"] == "success"
         assert result["data"]["waited"] is True
         assert result["data"]["selector"] == "div.content"
-        mock_browser["page"].wait_for_selector.assert_called_once_with("div.content", timeout=30000)
+        mock_browser["page"].wait_for_selector.assert_called_once_with("div.content", state="visible", timeout=30000)
 
     def test_wait_for_selector_missing_selector(self, mock_browser):
         result = browser(action="wait_for_selector", trace_id="t1")

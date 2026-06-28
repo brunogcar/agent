@@ -1,6 +1,7 @@
 """Browser tool tests — navigate action."""
 from __future__ import annotations
 
+from unittest.mock import patch
 from tools.browser import browser
 
 
@@ -20,11 +21,10 @@ class TestNavigate:
         assert "url is required" in result["error"]
 
     def test_navigate_ssrf_blocked(self, mock_browser):
-        from unittest.mock import patch
-        with patch("tools.browser_core.actions.is_safe_network_address", return_value=False):
+        with patch("tools.browser_core.actions.navigate.is_safe_network_address", return_value=False):
             result = browser(action="navigate", url="http://127.0.0.1/admin", trace_id="t1")
-        assert result["status"] == "error"
-        assert "SSRF blocked" in result["error"]
+            assert result["status"] == "error"
+            assert "SSRF blocked" in result["error"]
 
     def test_navigate_timeout(self, mock_browser):
         mock_browser["page"].goto.side_effect = Exception("Timeout")

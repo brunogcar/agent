@@ -23,8 +23,9 @@ def reset_browser_state():
 @pytest.fixture(autouse=True)
 def mock_cfg_for_browser(tmp_path):
     """Mock cfg to prevent AsyncMock leakage and provide browser defaults."""
-    # Patch cfg where it's imported in each browser_core module
-    with patch("tools.browser_core.lifecycle.cfg") as mock_cfg_lifecycle, patch("tools.browser_core.factory.cfg") as mock_cfg_init, patch("tools.browser_core.actions.cfg") as mock_cfg_actions:
+    with patch("tools.browser_core.lifecycle.cfg") as mock_cfg_lifecycle, \
+         patch("tools.browser_core.factory.cfg") as mock_cfg_init, \
+         patch("tools.browser_core.actions.screenshot.cfg") as mock_cfg_actions:
         for mock_cfg in [mock_cfg_lifecycle, mock_cfg_init, mock_cfg_actions]:
             mock_cfg.workspace_root = tmp_path
             mock_cfg.agent_root = tmp_path
@@ -49,14 +50,25 @@ def mock_browser():
     mock_page.evaluate = AsyncMock(return_value="eval_result")
     mock_page.select_option = AsyncMock(return_value=None)
     mock_page.wait_for_selector = AsyncMock(return_value=None)
+    mock_page.wait_for_url = AsyncMock(return_value=None)
     mock_page.keyboard = MagicMock()
     mock_page.keyboard.press = AsyncMock(return_value=None)
     mock_page.query_selector = AsyncMock(return_value=None)
+    mock_page.hover = AsyncMock(return_value=None)
+    mock_page.inner_html = AsyncMock(return_value="<div>html</div>")
+    mock_page.content = AsyncMock(return_value="<html></html>")
+    mock_page.set_viewport_size = AsyncMock(return_value=None)
     mock_page.on = MagicMock(return_value=None)
 
     mock_ctx = MagicMock()
     mock_ctx.new_page = AsyncMock(return_value=mock_page)
     mock_ctx.close = AsyncMock(return_value=None)
+    mock_ctx.cookies = AsyncMock(return_value=[])
+    mock_ctx.add_cookies = AsyncMock(return_value=None)
+    mock_ctx.clear_cookies = AsyncMock(return_value=None)
+
+    # CRITICAL: page.context must return the mock context for cookies action
+    mock_page.context = mock_ctx
 
     mock_browser = MagicMock()
     mock_browser.new_context = AsyncMock(return_value=mock_ctx)
@@ -71,7 +83,7 @@ def mock_browser():
 
     with patch("tools.browser_core.factory._launch_browser", new=AsyncMock(return_value=mock_browser)):
         with patch("playwright.async_api.async_playwright", return_value=mock_pw):
-            with patch("tools.browser_core.actions.is_safe_network_address", return_value=True):
+            with patch("tools.browser_core.actions.navigate.is_safe_network_address", return_value=True):
                 yield {
                     "page": mock_page,
                     "context": mock_ctx,
