@@ -1,6 +1,6 @@
 """tests/workflows/deep_research/test_synthesize.py"""
 import pytest
-from workflows.deep_research_core.nodes.synthesize import (
+from workflows.deep_research_impl.nodes.synthesize import (
     node_synthesize,
     _format_evidence,
     _merge_knowledge,
@@ -82,7 +82,7 @@ def test_node_synthesize_mock(mocker):
         "iteration": 1,
     }
     mocker.patch(
-        "workflows.deep_research_core.nodes.synthesize.agent",
+        "workflows.deep_research_impl.nodes.synthesize.agent",
         side_effect=[
             {"status": "success", "text": "synthesis"},
             {"status": "success", "text": "80"},
@@ -103,7 +103,7 @@ def test_node_synthesize_agent_failure(mocker):
         "iteration": 1,
     }
     mocker.patch(
-        "workflows.deep_research_core.nodes.synthesize.agent",
+        "workflows.deep_research_impl.nodes.synthesize.agent",
         return_value={"status": "error", "error": "fail"},
     )
     result = node_synthesize(state)

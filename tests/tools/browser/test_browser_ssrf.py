@@ -10,7 +10,7 @@ class TestSSRF:
 
     def test_navigate_private_ip(self, mock_browser):
         with patch(
-            "tools.browser_core.actions.navigate.is_safe_network_address",
+            "tools.browser_ops.actions.navigate.is_safe_network_address",
             return_value=False,
         ):
             result = browser(
@@ -21,7 +21,7 @@ class TestSSRF:
 
     def test_navigate_localhost(self, mock_browser):
         with patch(
-            "tools.browser_core.actions.navigate.is_safe_network_address",
+            "tools.browser_ops.actions.navigate.is_safe_network_address",
             return_value=False,
         ):
             result = browser(

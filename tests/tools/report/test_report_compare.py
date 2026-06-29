@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core import compare
+from tools.report_ops import compare
 
 
 class TestCompare:
@@ -38,7 +38,7 @@ class TestCompare:
         assert rows[0]["delta"] == "—"
 
     def test_build_dict_compare(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = compare.build(
             trace_id="test-compare", title="Price Change",
             data={"before": {"price": 100}, "after": {"price": 120}},
@@ -54,7 +54,7 @@ class TestCompare:
         assert "20.00" in content
 
     def test_build_table_compare(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         before = [{"ticker": "PETR4", "price": 30}, {"ticker": "VALE3", "price": 65}]
         after = [{"ticker": "PETR4", "price": 32}, {"ticker": "VALE3", "price": 63}]
         result = compare.build(
@@ -67,11 +67,11 @@ class TestCompare:
         assert Path(result["html_path"]).exists()
 
     def test_build_missing_data_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         with pytest.raises(ValueError, match="compare requires"):
             compare.build(trace_id="test-missing", title="X", data={"before": {}}, config={})
 
     def test_build_unsupported_types_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         with pytest.raises(ValueError, match="Unsupported compare types"):
             compare.build(trace_id="test-bad", title="X", data={"before": "string", "after": 123}, config={})

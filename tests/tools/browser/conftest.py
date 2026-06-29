@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch, AsyncMock
 @pytest.fixture(autouse=True)
 def reset_browser_state():
     """Reset all browser module globals before each test."""
-    from tools.browser_core import state as browser_state
-    from tools.browser_core import loop as browser_loop
+    from tools.browser_ops import state as browser_state
+    from tools.browser_ops import loop as browser_loop
     browser_state.reset_state()
     browser_loop.reset_loop()
     yield
@@ -23,7 +23,7 @@ def reset_browser_state():
 @pytest.fixture(autouse=True)
 def mock_cfg_for_browser(tmp_path):
     """Mock cfg to prevent AsyncMock leakage and provide browser defaults."""
-    with patch("tools.browser_core.lifecycle.cfg") as mock_cfg_lifecycle,          patch("tools.browser_core.factory.cfg") as mock_cfg_init,          patch("tools.browser_core.actions.screenshot.cfg") as mock_cfg_actions:
+    with patch("tools.browser_ops.lifecycle.cfg") as mock_cfg_lifecycle,          patch("tools.browser_ops.factory.cfg") as mock_cfg_init,          patch("tools.browser_ops.actions.screenshot.cfg") as mock_cfg_actions:
         for mock_cfg in (mock_cfg_lifecycle, mock_cfg_init, mock_cfg_actions):
             mock_cfg.workspace_root = tmp_path
             mock_cfg.agent_root = tmp_path
@@ -81,14 +81,14 @@ def mock_browser():
     mock_pw.__aexit__ = AsyncMock(return_value=None)
 
     with patch(
-        "tools.browser_core.factory._launch_browser",
+        "tools.browser_ops.factory._launch_browser",
         new=AsyncMock(return_value=mock_browser),
     ):
         with patch(
             "playwright.async_api.async_playwright", return_value=mock_pw
         ):
             with patch(
-                "tools.browser_core.actions.navigate.is_safe_network_address",
+                "tools.browser_ops.actions.navigate.is_safe_network_address",
                 return_value=True,
             ):
                 yield {

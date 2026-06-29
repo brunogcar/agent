@@ -69,11 +69,11 @@ from core.tracer  import tracer
 from core.llm     import llm
 
 # =============================================================================
-# IMPORTS FROM autocode_helpers
+# IMPORTS FROM autocode_impl
 # =============================================================================
 
 # Constants
-from workflows.autocode_helpers.constants import (
+from workflows.autocode_impl.constants import (
     TASK_CLASSIFIER_SYSTEM,
     BRAINSTORM_SYSTEM,
     AUDIT_BRAINSTORM_SYSTEM,
@@ -89,7 +89,7 @@ from workflows.autocode_helpers.constants import (
 )
 
 # State
-from workflows.autocode_helpers.state import (
+from workflows.autocode_impl.state import (
     AutocodeState,
     _default_state,
     MAX_RETRIES,
@@ -102,7 +102,7 @@ from workflows.autocode_helpers.state import (
 )
 
 # Helpers
-from workflows.autocode_helpers.helpers import (
+from workflows.autocode_impl.helpers import (
     _files_context,
     _extract_code,
     _parse_json,
@@ -112,35 +112,35 @@ from workflows.autocode_helpers.helpers import (
 )
 
 # Test runner
-from workflows.autocode_helpers.test_runner import run_tests_on_disk
+from workflows.autocode_impl.test_runner import run_tests_on_disk
 
 # Git ops
-from workflows.autocode_helpers.git_ops import (
+from workflows.autocode_impl.git_ops import (
     _git_snapshot,
     _git_commit,
     _git_create_branch,
 )
 
 # Nodes
-from workflows.autocode_helpers.nodes.classify import node_classify_task
-from workflows.autocode_helpers.nodes.brainstorm import node_brainstorm
-from workflows.autocode_helpers.nodes.plan import node_write_plan
-from workflows.autocode_helpers.nodes.branch import node_git_branch
-from workflows.autocode_helpers.nodes.tests import node_write_tests
-from workflows.autocode_helpers.nodes.execute import node_execute_step
-from workflows.autocode_helpers.nodes.run_tests import node_run_tests
-from workflows.autocode_helpers.nodes.debug import node_systematic_debug
-from workflows.autocode_helpers.nodes.write_files import (
+from workflows.autocode_impl.nodes.classify import node_classify_task
+from workflows.autocode_impl.nodes.brainstorm import node_brainstorm
+from workflows.autocode_impl.nodes.plan import node_write_plan
+from workflows.autocode_impl.nodes.branch import node_git_branch
+from workflows.autocode_impl.nodes.tests import node_write_tests
+from workflows.autocode_impl.nodes.execute import node_execute_step
+from workflows.autocode_impl.nodes.run_tests import node_run_tests
+from workflows.autocode_impl.nodes.debug import node_systematic_debug
+from workflows.autocode_impl.nodes.write_files import (
     node_write_files,
     node_write_files_with_flag_reset,
 )
-from workflows.autocode_helpers.nodes.verify import node_verify
-from workflows.autocode_helpers.nodes.commit import node_commit
-from workflows.autocode_helpers.nodes.memory import node_distill_memory
-from workflows.autocode_helpers.nodes.create_skill import node_create_skill
+from workflows.autocode_impl.nodes.verify import node_verify
+from workflows.autocode_impl.nodes.commit import node_commit
+from workflows.autocode_impl.nodes.memory import node_distill_memory
+from workflows.autocode_impl.nodes.create_skill import node_create_skill
 
 # Routes
-from workflows.autocode_helpers.routes import (
+from workflows.autocode_impl.routes import (
     route_after_classify,
     route_after_brainstorm,
     route_after_run_tests,
@@ -150,7 +150,7 @@ from workflows.autocode_helpers.routes import (
 )
 
 # Graph
-from workflows.autocode_helpers.graph import build_graph, get_graph
+from workflows.autocode_impl.graph import build_graph, get_graph
 
 # =============================================================================
 # MAIN ENTRY POINT

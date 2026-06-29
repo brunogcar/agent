@@ -6,7 +6,7 @@ import typing
 from unittest.mock import patch, AsyncMock
 
 from tools.browser import browser
-from tools.browser_core._registry import DISPATCH
+from tools.browser_ops._registry import DISPATCH
 
 
 class TestFacade:
@@ -43,7 +43,7 @@ class TestFacade:
             assert any("action=get_url" in str(c) for c in calls)
 
     def test_screenshot_base64(self, mock_browser, tmp_path):
-        with patch("tools.browser_core.actions.screenshot.cfg") as mock_cfg:
+        with patch("tools.browser_ops.actions.screenshot.cfg") as mock_cfg:
             mock_cfg.workspace_root = tmp_path
             mock_browser["page"].screenshot = AsyncMock(return_value=None)
             result = browser(

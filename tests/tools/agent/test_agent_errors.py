@@ -4,7 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
-from tools.agent_core.cache import _clear_cache
+from tools.agent_ops.cache import _clear_cache
 
 
 class TestAgentErrorTaxonomy:
@@ -32,7 +32,7 @@ class TestAgentErrorTaxonomy:
         mock_llm_result.ok = False
         mock_llm_result.error = "Request timed out after 30s"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="classify", task="test")
             assert result["error_code"] == "TIMEOUT"
 
@@ -40,7 +40,7 @@ class TestAgentErrorTaxonomy:
         mock_llm_result.ok = False
         mock_llm_result.error = "Circuit breaker is open"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="classify", task="test")
             assert result["error_code"] == "CIRCUIT_OPEN"
 
@@ -48,7 +48,7 @@ class TestAgentErrorTaxonomy:
         mock_llm_result.ok = False
         mock_llm_result.error = "Rate limit exceeded"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="classify", task="test")
             assert result["error_code"] == "RATE_LIMIT"
 
@@ -56,7 +56,7 @@ class TestAgentErrorTaxonomy:
         mock_llm_result.ok = False
         mock_llm_result.error = "Some random error"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="classify", task="test")
             assert result["error_code"] == "MODEL_ERROR"
 
@@ -64,7 +64,7 @@ class TestAgentErrorTaxonomy:
         mock_llm_result.ok = False
         mock_llm_result.error = "Test error"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="classify", task="test")
             assert "status" in result
             assert "error_code" in result

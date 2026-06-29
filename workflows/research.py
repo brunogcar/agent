@@ -309,7 +309,7 @@ def node_synthesize(state: WorkflowState) -> WorkflowState:
     recalled memories into a single coherent response. The research role
     has a 120s timeout and uses the Executor model (capable, slower).
     """
-    from tools.agent import agent  # thin facade; prompts/roles live in agent_core/  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
+    from tools.agent import agent  # thin facade; prompts/roles live in agent_ops/  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
 
     goal = state.get("goal", "")
     search_results = state.get("search_results", "")

@@ -42,9 +42,9 @@ class TestNodeExecuteStep:
     """Validate execute node reads plan as list, calls LLM, sets tdd_source_code."""
 
     def test_execute_reads_plan_as_list(self, base_state):
-        from workflows.autocode_helpers.nodes.execute import node_execute_step
+        from workflows.autocode_impl.nodes.execute import node_execute_step
         # [FIX] Patch _call where it's USED (in execute module), not where defined
-        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
+        with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "def helper(): pass"
             result = node_execute_step(base_state)
             assert result["tdd_source_code"] == "def helper(): pass"
@@ -53,7 +53,7 @@ class TestNodeExecuteStep:
             assert set(result.keys()) >= {"tdd_source_code", "execution_notes"}
 
     def test_execute_handles_empty_plan_gracefully(self, temp_workspace):
-        from workflows.autocode_helpers.nodes.execute import node_execute_step
+        from workflows.autocode_impl.nodes.execute import node_execute_step
         state = {
             "task": "empty plan test",
             "trace_id": "t-empty",
@@ -67,9 +67,9 @@ class TestNodeExecuteStep:
         assert "No more plan steps" in result["error"]
 
     def test_execute_respects_dry_run(self, base_state):
-        from workflows.autocode_helpers.nodes.execute import node_execute_step
+        from workflows.autocode_impl.nodes.execute import node_execute_step
         base_state["dry_run"] = True
-        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
+        with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "print('dry')"
             result = node_execute_step(base_state)
             # dry_run=True should skip _write_files, so modified_files stays unset
@@ -79,14 +79,14 @@ class TestNodeWriteFiles:
     """Validate write_files reads tdd_source_code, applies patches, handles errors."""
 
     def test_write_files_skips_on_missing_tdd_source_code(self, base_state):
-        from workflows.autocode_helpers.nodes.write_files import node_write_files
+        from workflows.autocode_impl.nodes.write_files import node_write_files
         base_state.pop("tdd_source_code", None)
         result = node_write_files(base_state)
         # LangGraph partial update: empty dict means no changes
         assert result == {}
 
     def test_write_files_parses_json_and_writes(self, temp_workspace, base_state):
-        from workflows.autocode_helpers.nodes.write_files import node_write_files
+        from workflows.autocode_impl.nodes.write_files import node_write_files
         payload = {"new_files": {"test_output.py": "# generated"}}
         base_state["tdd_source_code"] = json.dumps(payload)
         base_state["dry_run"] = False
@@ -113,7 +113,7 @@ class TestNodeWriteFiles:
         assert result["test_files"][0].startswith("autocode/")
 
     def test_write_files_handles_invalid_json_gracefully(self, base_state):
-        from workflows.autocode_helpers.nodes.write_files import node_write_files
+        from workflows.autocode_impl.nodes.write_files import node_write_files
         base_state["tdd_source_code"] = "{ invalid json"
         result = node_write_files(base_state)
         # LangGraph partial update: empty dict means no changes
@@ -123,7 +123,7 @@ class TestAutocodePathHelpers:
     """Validate per-run autocode directory structure and cleanup."""
 
     def test_get_autocode_run_path_creates_directory(self, temp_workspace):
-        from workflows.autocode_helpers.helpers import _get_autocode_run_path
+        from workflows.autocode_impl.helpers import _get_autocode_run_path
         run_dir = _get_autocode_run_path("test-trace-123")
         assert run_dir.exists()
         assert run_dir.name == "test-trace-123"
@@ -132,7 +132,7 @@ class TestAutocodePathHelpers:
         assert run_dir.parent.parent.parent == temp_workspace
 
     def test_cleanup_old_autocode_runs_removes_stale_dirs(self, temp_workspace, monkeypatch):
-        from workflows.autocode_helpers.helpers import _cleanup_old_autocode_runs
+        from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs
         import shutil
         from datetime import datetime, timedelta
         import core.tracer

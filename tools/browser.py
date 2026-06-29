@@ -1,8 +1,8 @@
 """tools/browser.py — Browser automation tool (thin @tool facade).
 
-Routes all browser actions to handlers in browser_core/actions/ via the
+Routes all browser actions to handlers in browser_ops/actions/ via the
 DISPATCH dict. This is the only file scanned by registry.py for @tool
-decorators; browser_core/ submodules are invisible to the registry.
+decorators; browser_ops/ submodules are invisible to the registry.
 
 Phase 3 additions: wait_for_selector, scroll, wait_for_url
 Phase 6 additions: tracer logging, DISPATCH_METADATA (replaced by @meta_tool)
@@ -21,7 +21,7 @@ from core.tracer import tracer
 from registry import tool
 from tools._meta_tool import meta_tool
 
-from tools.browser_core._registry import DISPATCH
+from tools.browser_ops._registry import DISPATCH
 
 # Module-level flags
 PARALLEL_SAFE = False
@@ -31,14 +31,14 @@ def _try_failure_screenshot(trace_id: str) -> str | None:
     """Best-effort screenshot on failure. Returns path or None.
 
     Lazy-imports cfg to avoid creating an unpatched module-level binding
-    that breaks tests (conftest patches tools.browser_core.actions.screenshot.cfg
+    that breaks tests (conftest patches tools.browser_ops.actions.screenshot.cfg
     but not tools.browser.cfg).
     """
     try:
         from core.config import cfg  # lazy — only needed on failure path
-        from tools.browser_core.factory import _get_page
-        from tools.browser_core.loop import _run_browser_async
-        from tools.browser_core.state import _browser_lock
+        from tools.browser_ops.factory import _get_page
+        from tools.browser_ops.loop import _run_browser_async
+        from tools.browser_ops.state import _browser_lock
 
         err_path = (
             cfg.workspace_root

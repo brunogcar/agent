@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core.data import load_data
+from tools.report_ops.data import load_data
 
 
 class TestDataLoader:
@@ -51,7 +51,7 @@ class TestDataLoader:
         assert "UNC paths are not allowed" in err
 
     def test_json_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.data.resolve_path", lambda p, **kw: (Path(p), ""))
+        monkeypatch.setattr("tools.report_ops.data.resolve_path", lambda p, **kw: (Path(p), ""))
         p = tmp_path / "test.json"
         p.write_text(json.dumps({"a": 1}), encoding="utf-8")
         data, err = load_data(data_path=str(p))
@@ -59,7 +59,7 @@ class TestDataLoader:
         assert data == {"a": 1}
 
     def test_csv_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.data.resolve_path", lambda p, **kw: (Path(p), ""))
+        monkeypatch.setattr("tools.report_ops.data.resolve_path", lambda p, **kw: (Path(p), ""))
         p = tmp_path / "test.csv"
         csv_lines = ["name,value", "foo,1", "bar,2"]
         p.write_text("\n".join(csv_lines), encoding="utf-8")
@@ -68,7 +68,7 @@ class TestDataLoader:
         assert hasattr(data, "columns")  # pandas DataFrame
 
     def test_unsupported_suffix(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.data.resolve_path", lambda p, **kw: (Path(p), ""))
+        monkeypatch.setattr("tools.report_ops.data.resolve_path", lambda p, **kw: (Path(p), ""))
         p = tmp_path / "test.txt"
         p.write_text("hello", encoding="utf-8")
         data, err = load_data(data_path=str(p))
@@ -76,7 +76,7 @@ class TestDataLoader:
         assert "Unsupported" in err
 
     def test_missing_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.data.resolve_path", lambda p, **kw: (Path(p), ""))
+        monkeypatch.setattr("tools.report_ops.data.resolve_path", lambda p, **kw: (Path(p), ""))
         data, err = load_data(data_path=str(tmp_path / "missing.json"))
         assert data is None
         assert "File not found" in err

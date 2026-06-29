@@ -4,7 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
-from tools.agent_core import ROLES
+from tools.agent_ops import ROLES
 
 
 class TestAgentValidation:
@@ -33,7 +33,7 @@ class TestAgentValidation:
 
     def test_role_case_insensitive(self, mock_llm_result):
         """Role parameter should be case-insensitive."""
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="CLASSIFY", task="test")
             assert result["status"] == "success"
             assert result["role"] == "classify"

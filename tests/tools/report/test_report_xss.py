@@ -1,7 +1,7 @@
 """Tests for XSS prevention in templates."""
 from pathlib import Path
 
-from tools.report_core import html
+from tools.report_ops import html
 
 
 class TestXssPrevention:
@@ -59,7 +59,7 @@ class TestXssPrevention:
 
     def test_diagram_dict_sanitized(self, tmp_path):
         """Dict-based diagrams escape labels in _dict_to_mermaid."""
-        from tools.report_core import diagrams
+        from tools.report_ops import diagrams
         result = diagrams._dict_to_mermaid({
             "nodes": [{"id": "A", "label": "<script>alert(1)</script>"}],
             "edges": []

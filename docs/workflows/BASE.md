@@ -219,7 +219,7 @@ Routes to the correct workflow graph:
 | `research` | `workflows.research.build_research_graph()` | Standard StateGraph |
 | `data` | `workflows.data.build_data_graph()` | Standard StateGraph |
 | `autocode` | `workflows.autocode.build_graph()` | Converts `goal` → `task` |
-| `deep_research` | `workflows.deep_research_core.build_deep_research_graph()` | Standard StateGraph |
+| `deep_research` | `workflows.deep_research_impl.build_deep_research_graph()` | Standard StateGraph |
 | `understand` | `workflows.understand.run_understand_workflow_sync()` | Direct function call (not StateGraph) |
 
 **Returns:** `dict` with at minimum `{status, result, error, artifacts}`.
@@ -402,7 +402,7 @@ tests/workflows/base/
 | `workflows/research.py` | `build_research_graph()` — research workflow |
 | `workflows/data.py` | `build_data_graph()` — data workflow |
 | `workflows/autocode.py` | `build_graph()` — autocode workflow |
-| `workflows/deep_research_core/graph.py` | `build_deep_research_graph()` — deep research workflow |
+| `workflows/deep_research_impl/graph.py` | `build_deep_research_graph()` — deep research workflow |
 | `workflows/understand.py` | `run_understand_workflow_sync()` — understand workflow |
 | `tests/workflows/base/test_base_nodes.py` | Node helper + dispatcher tests |
 

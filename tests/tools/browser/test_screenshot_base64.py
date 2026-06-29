@@ -10,7 +10,7 @@ class TestScreenshotBase64:
 
     def test_screenshot_returns_base64(self, mock_browser, tmp_path):
         """Mock the file read to return PNG bytes and verify base64 is returned."""
-        with patch("tools.browser_core.actions.screenshot.cfg") as mock_cfg:
+        with patch("tools.browser_ops.actions.screenshot.cfg") as mock_cfg:
             mock_cfg.workspace_root = tmp_path
             mock_browser["page"].screenshot = AsyncMock(return_value=None)
             # Mock open() to return fake PNG bytes when the handler reads the file
@@ -25,7 +25,7 @@ class TestScreenshotBase64:
                 assert len(result["data"]["base64"]) > 0
 
     def test_screenshot_no_base64_by_default(self, mock_browser, tmp_path):
-        with patch("tools.browser_core.actions.screenshot.cfg") as mock_cfg:
+        with patch("tools.browser_ops.actions.screenshot.cfg") as mock_cfg:
             mock_cfg.workspace_root = tmp_path
             mock_browser["page"].screenshot = AsyncMock(return_value=None)
             result = browser(action="screenshot", trace_id="t1")

@@ -1,26 +1,26 @@
-﻿# 📊 Report Tool
+# ?? Report Tool
 
-The `report()` tool generates self-contained interactive HTML reports — charts, maps, dashboards, diagrams, comparisons, timelines, and scorecards. All outputs are saved to `workspace/reports/{trace_id}/` as portable HTML files that open in any browser without a server.
+The `report()` tool generates self-contained interactive HTML reports � charts, maps, dashboards, diagrams, comparisons, timelines, and scorecards. All outputs are saved to `workspace/reports/{trace_id}/` as portable HTML files that open in any browser without a server.
 
 **Key characteristics:**
-- **Atomic actions** — `chart`, `map`, `report`, `dashboard`, `diagram`, `export`, `compare`, `timeline`, `scorecard`, `list`, `help`. One action = one behavior
-- **Auto-generated schema** — `@meta_tool` decorator builds `Literal` enum and docstring from DISPATCH
-- **Lazy heavy imports** — pandas, jinja2, plotly, playwright imported inside function bodies only
-- **Path guard integration** — All file operations validate through `core.path_guard`
-- **Cancellation guard** — Aborts before any report generation if trace is cancelled
-- **XSS-safe templates** — Jinja2 autoescape + no `| safe` on user-controlled text
-- **Atomic file writes** — `_atomic_write` prevents partial/corrupted files on crash
+- **Atomic actions** � `chart`, `map`, `report`, `dashboard`, `diagram`, `export`, `compare`, `timeline`, `scorecard`, `list`, `help`. One action = one behavior
+- **Auto-generated schema** � `@meta_tool` decorator builds `Literal` enum and docstring from DISPATCH
+- **Lazy heavy imports** � pandas, jinja2, plotly, playwright imported inside function bodies only
+- **Path guard integration** � All file operations validate through `core.path_guard`
+- **Cancellation guard** � Aborts before any report generation if trace is cancelled
+- **XSS-safe templates** � Jinja2 autoescape + no `| safe` on user-controlled text
+- **Atomic file writes** � `_atomic_write` prevents partial/corrupted files on crash
 
 ---
 
-## ⚠️ Breaking Changes (v1 → v1.1)
+## ?? Breaking Changes (v1 ? v1.1)
 
 | Old | New | Migration |
 |-----|-----|-----------|
-| Manual `DISPATCH` dict with `_dispatch_*` wrappers | `@register_action` auto-discovery | No migration needed — same API |
-| Manual docstring in `report()` | `@meta_tool` auto-generated | No migration needed — same API |
-| `chart` rendered via `report.html` template | Dedicated `chart.html` template | No migration — output is identical |
-| `sec.text \| safe` in templates | Auto-escaped (no `\| safe`) | No migration — safer by default |
+| Manual `DISPATCH` dict with `_dispatch_*` wrappers | `@register_action` auto-discovery | No migration needed � same API |
+| Manual docstring in `report()` | `@meta_tool` auto-generated | No migration needed � same API |
+| `chart` rendered via `report.html` template | Dedicated `chart.html` template | No migration � output is identical |
+| `sec.text \| safe` in templates | Auto-escaped (no `\| safe`) | No migration � safer by default |
 | `mermaid_src \| safe` in diagram template | Auto-escaped with pre-sanitization | Mermaid.js parses escaped text correctly |
 | `export` resolved against `agent` root | Resolved against `workspace` root | Reports now scoped to workspace |
 | No UNC path blocking | UNC paths (`\\server\share`) blocked | Already handled by path guard |
@@ -29,9 +29,9 @@ The `report()` tool generates self-contained interactive HTML reports — charts
 ### v1.1 (security hardening + template fixes)
 - Removed `| safe` from all user-controlled template variables (`sec.text`, `mermaid_src`, `content`)
 - Added `.replace("&lt;/", "&lt;\\/")` to all JSON dumps before template render (prevents `&lt;/script&gt;` injection)
-- Added `_sanitize_mermaid()` in `diagrams.py` — strips `&lt;script&gt;`, `&lt;iframe&gt;`, `&lt;object&gt;`, `&lt;embed&gt;`, event handlers, `javascript:` URLs from raw mermaid strings
-- Added `_validate_hex_color()` in `timeline.py` — regex `^#[0-9a-fA-F]{6}$`, fallback to `STATUS_COLORS`
-- Added `_escape_svg()` quote escaping (`"` → `&quot;`) in `timeline.py`
+- Added `_sanitize_mermaid()` in `diagrams.py` � strips `&lt;script&gt;`, `&lt;iframe&gt;`, `&lt;object&gt;`, `&lt;embed&gt;`, event handlers, `javascript:` URLs from raw mermaid strings
+- Added `_validate_hex_color()` in `timeline.py` � regex `^#[0-9a-fA-F]{6}$`, fallback to `STATUS_COLORS`
+- Added `_escape_svg()` quote escaping (`"` ? `&quot;`) in `timeline.py`
 - Added UNC path block in `data.py`: `if lowered.startswith(("\\\\", "//"))`
 - Changed `export.py` to use `resolve_path(..., default_root="workspace")`
 - Added `_atomic_write` to `html.py` (temp file + `os.replace`)
@@ -40,53 +40,53 @@ The `report()` tool generates self-contained interactive HTML reports — charts
 - Added `tracer.warning()` logging for memory hook failures
 - Added duplicate action guard in `@register_action`: raises `ValueError` on collision
 - Fixed `report.html` and `dashboard.html`: added `{% extends "base.html" %}` + `{% block content %}` + `{% block scripts %}`
-- Fixed `dashboard.html` data structure: outer `for tab in tabs` → inner `for sec in tab.sections`
-- Removed Chart.js from `base.html` `&lt;head&gt;` — loaded by individual templates (`chart.html`, `scorecard.html`) to avoid double-load
+- Fixed `dashboard.html` data structure: outer `for tab in tabs` ? inner `for sec in tab.sections`
+- Removed Chart.js from `base.html` `&lt;head&gt;` � loaded by individual templates (`chart.html`, `scorecard.html`) to avoid double-load
 
 ---
 
-## 🏗️ Architecture
+## ??? Architecture
 
 ```
-tools/report.py              # @tool facade — validation, preset merge, dispatch, memory hook
-tools/_meta_tool.py         # @meta_tool decorator — auto Literal + docstring (shared)
-tools/report_core/
-├── _registry.py            # DISPATCH dict + @register_action + DISPATCH_METADATA + PRESETS
-├── __init__.py             # Auto-discovery: glob(actions/*.py) + importlib
-├── contracts.py            # report_ok / report_fail with trace_id injection
-├── paths.py                # Per-run folder resolver (workspace/reports/{trace_id}/)
-├── data.py                 # CSV/JSON/Excel/SQLite loader with SSRF + UNC guard
-├── charts.py               # Chart.js config builder (lazy jinja2 import)
-├── maps.py                 # Leaflet.js map builder (lazy jinja2 import)
-├── diagrams.py             # Mermaid.js diagram builder (lazy jinja2 import)
-├── html.py                 # Jinja2 renderer + _atomic_write + manifest/metrics writers
-├── export.py               # Playwright PDF/PNG export (lazy import, optional)
-├── compare.py              # Side-by-side diff table builder
-├── timeline.py             # SVG Gantt chart builder
-├── scorecard.py            # RAG status dashboard + radar chart builder
-└── actions/                # Atomic action wrappers (one file per action)
-    ├── chart.py            # @register_action("report", "chart")
-    ├── map.py
-    ├── report.py
-    ├── dashboard.py
-    ├── diagram.py
-    ├── export.py
-    ├── compare.py
-    ├── timeline.py
-    ├── scorecard.py
-    ├── list.py             # Returns all available actions
-    └── help.py             # Returns metadata for specific action
-└── templates/
-    ├── base.html           # Layout + sidebar + theme toggle + CSS
-    ├── macros.html         # Reusable components (kpi_card, data_table, bug_card, etc.)
-    ├── chart.html          # Dedicated Chart.js canvas template (NEW v1.1)
-    ├── report.html         # Single-scroll report sections
-    ├── dashboard.html      # Multi-panel tabs + KPIs
-    ├── map.html            # Full-screen Leaflet map
-    ├── diagram.html        # Mermaid architecture diagram
-    ├── compare.html        # Side-by-side diff with delta highlighting
-    ├── timeline.html       # SVG Gantt + event list
-    └── scorecard.html      # RAG cards + radar chart
+tools/report.py              # @tool facade � validation, preset merge, dispatch, memory hook
+tools/_meta_tool.py         # @meta_tool decorator � auto Literal + docstring (shared)
+tools/report_ops/
++-- _registry.py            # DISPATCH dict + @register_action + DISPATCH_METADATA + PRESETS
++-- __init__.py             # Auto-discovery: glob(actions/*.py) + importlib
++-- contracts.py            # report_ok / report_fail with trace_id injection
++-- paths.py                # Per-run folder resolver (workspace/reports/{trace_id}/)
++-- data.py                 # CSV/JSON/Excel/SQLite loader with SSRF + UNC guard
++-- charts.py               # Chart.js config builder (lazy jinja2 import)
++-- maps.py                 # Leaflet.js map builder (lazy jinja2 import)
++-- diagrams.py             # Mermaid.js diagram builder (lazy jinja2 import)
++-- html.py                 # Jinja2 renderer + _atomic_write + manifest/metrics writers
++-- export.py               # Playwright PDF/PNG export (lazy import, optional)
++-- compare.py              # Side-by-side diff table builder
++-- timeline.py             # SVG Gantt chart builder
++-- scorecard.py            # RAG status dashboard + radar chart builder
++-- actions/                # Atomic action wrappers (one file per action)
+    +-- chart.py            # @register_action("report", "chart")
+    +-- map.py
+    +-- report.py
+    +-- dashboard.py
+    +-- diagram.py
+    +-- export.py
+    +-- compare.py
+    +-- timeline.py
+    +-- scorecard.py
+    +-- list.py             # Returns all available actions
+    +-- help.py             # Returns metadata for specific action
++-- templates/
+    +-- base.html           # Layout + sidebar + theme toggle + CSS
+    +-- macros.html         # Reusable components (kpi_card, data_table, bug_card, etc.)
+    +-- chart.html          # Dedicated Chart.js canvas template (NEW v1.1)
+    +-- report.html         # Single-scroll report sections
+    +-- dashboard.html      # Multi-panel tabs + KPIs
+    +-- map.html            # Full-screen Leaflet map
+    +-- diagram.html        # Mermaid architecture diagram
+    +-- compare.html        # Side-by-side diff with delta highlighting
+    +-- timeline.html       # SVG Gantt + event list
+    +-- scorecard.html      # RAG cards + radar chart
 ```
 
 ### Dispatch Flow
@@ -108,31 +108,31 @@ graph TD
 ```
 
 **Key design decisions:**
-- **Unified DISPATCH** — Single dict holds all actions, handlers, help text, examples. `@meta_tool` reads it to generate schema and docstring. One source. Zero drift.
-- **Auto-discovery** — Drop a new file in `actions/` with `@register_action` and it\'s immediately available. No manual registry updates.
-- **Lazy imports** — All heavy modules (pandas, jinja2, plotly, playwright) are imported inside function bodies. MCP startup stays fast.
-- **Thin facade** — `report()` validates, merges preset, dispatches, wraps result, fires memory hook. Business logic lives in builders + action wrappers.
-- **Template safety** — All user-controlled text is auto-escaped by Jinja2. JSON blobs in `<script>` tags are `</script>`-escaped before render.
-- **Atomic writes** — All file writes use temp file + `os.replace` to prevent partial files on crash.
+- **Unified DISPATCH** � Single dict holds all actions, handlers, help text, examples. `@meta_tool` reads it to generate schema and docstring. One source. Zero drift.
+- **Auto-discovery** � Drop a new file in `actions/` with `@register_action` and it\'s immediately available. No manual registry updates.
+- **Lazy imports** � All heavy modules (pandas, jinja2, plotly, playwright) are imported inside function bodies. MCP startup stays fast.
+- **Thin facade** � `report()` validates, merges preset, dispatches, wraps result, fires memory hook. Business logic lives in builders + action wrappers.
+- **Template safety** � All user-controlled text is auto-escaped by Jinja2. JSON blobs in `<script>` tags are `</script>`-escaped before render.
+- **Atomic writes** � All file writes use temp file + `os.replace` to prevent partial files on crash.
 
 ---
 
-## 🐛 Bugs Found & Fixed During v1.1 Review
+## ?? Bugs Found & Fixed During v1.1 Review
 
 These were caught by multi-LLM review (Gemini, DeepSeek, Mistral, Qwen, GLM, mimo, Claude) and fixed in v1.1. Future editors should verify these patterns are preserved.
 
 ### Template `extends` Missing
-**Bug:** `report.html` and `dashboard.html` had no `{% extends "base.html" %}` — produced raw HTML fragments without CSS/layout.  
+**Bug:** `report.html` and `dashboard.html` had no `{% extends "base.html" %}` � produced raw HTML fragments without CSS/layout.  
 **Fix:** Added `{% extends "base.html" %}` + `{% block sidebar %}` + `{% block content %}` + `{% block scripts %}` to both templates.  
 **Lesson:** Always verify templates render standalone, not just as fragments inside other templates.
 
 ### Dashboard Data Structure Mismatch
 **Bug:** `dashboard.html` iterated `tabs` as flat sections (`for sec in tabs`), but builder passed `tabs=[{"name": "Tab1", "sections": [...]}]`. Template expected `sec.title`, builder provided `tab.name` + `tab.sections`.  
-**Fix:** Restructured to outer `for tab in tabs` → inner `for sec in tab.sections`.  
+**Fix:** Restructured to outer `for tab in tabs` ? inner `for sec in tab.sections`.  
 **Lesson:** Template variable names must match builder data structures exactly.
 
 ### Mermaid Autoescape Breaks Syntax
-**Bug:** Removing `| safe` from `mermaid_src` caused Jinja2 autoescape to convert `&gt;` → `&gt;`, breaking Mermaid.js syntax (`A --&gt; B` became `A --&gt; B`).  
+**Bug:** Removing `| safe` from `mermaid_src` caused Jinja2 autoescape to convert `&gt;` ? `&gt;`, breaking Mermaid.js syntax (`A --&gt; B` became `A --&gt; B`).  
 **Fix:** Added `| safe` back to `mermaid_src` in `diagram.html`, but added `_sanitize_mermaid()` in `diagrams.py` to strip HTML tags/event handlers before template render. Dict-based diagrams use `html.escape()` on labels.  
 **Lesson:** `| safe` is required for syntax-heavy strings, but MUST be paired with pre-sanitization.
 
@@ -144,26 +144,26 @@ These were caught by multi-LLM review (Gemini, DeepSeek, Mistral, Qwen, GLM, mim
 ### Cancellation Import Masks ImportError
 **Bug:** `from core.runtime.cancellation import ensure_not_cancelled` was inside `try/except BaseException`. If module missing, `ImportError` (a `BaseException`) was caught and reported as "Workflow cancelled."  
 **Fix:** Moved import outside try block. Set `ensure_not_cancelled = None` if `ImportError`, skip cancellation check.  
-**Lesson:** Never put imports inside `except BaseException` — it masks real errors.
+**Lesson:** Never put imports inside `except BaseException` � it masks real errors.
 
 ### Chart.js Double-Loaded
 **Bug:** `base.html` loaded Chart.js CDN in `&lt;head&gt;`. `chart.html` and `scorecard.html` also loaded it. Double load wasted bandwidth and risked initialization conflicts.  
 **Fix:** Removed Chart.js from `base.html`. Added `{% block scripts %}` at end of body. Individual templates load Chart.js in their script block.  
-**Lesson:** Shared base templates should not load library-specific scripts — let leaf templates handle it.
+**Lesson:** Shared base templates should not load library-specific scripts � let leaf templates handle it.
 
 ### Raw String Escape Bugs
 **Bug:** Regex patterns in `_sanitize_mermaid()` used raw strings with unescaped quotes: `r"[^\s&gt;"']+"` caused `SyntaxError: unterminated string literal`.  
 **Fix:** Properly escaped inner quotes: `r"[^\s&gt;\"']+"`.  
-**Lesson:** Always `compileall` before `pytest` — syntax errors in new code crash with confusing tracebacks.
+**Lesson:** Always `compileall` before `pytest` � syntax errors in new code crash with confusing tracebacks.
 
 ### Template Test Data Structure Mismatch
 **Bug:** Tests for `dashboard.html` passed `tabs=[{"title": "Tab1", "text": payload}]` but template expected `tabs=[{"name": "Tab1", "sections": [{"title": "Sec", "text": payload}]}]`. Tests passed empty content, assertions on escaped text failed.  
 **Fix:** Updated all test data to match new template structure.  
-**Lesson:** When refactoring templates, update ALL tests that render those templates — not just the builder tests.
+**Lesson:** When refactoring templates, update ALL tests that render those templates � not just the builder tests.
 
 ---
 
-## 📋 Tool Signature
+## ?? Tool Signature
 
 ```python
 @tool
@@ -294,7 +294,7 @@ report(action="list")
 ```python
 # data = action name to get help for
 report(action="help", data="chart")
-# data = empty → returns help for all actions
+# data = empty ? returns help for all actions
 report(action="help")
 ```
 
@@ -309,7 +309,7 @@ data = {"labels": ["A", "B"], "values": [30, 70]}  # pie/doughnut
 **Map data:**
 ```python
 data = {"lat": [-23.5, -22.9], "lon": [-46.6, -43.2], "labels": ["SP", "RJ"]}
-data = [{"lat": -23.5, "lon": -46.6, "popup": "São Paulo", "color": "blue"}]
+data = [{"lat": -23.5, "lon": -46.6, "popup": "S�o Paulo", "color": "blue"}]
 ```
 
 **Table data:**
@@ -342,7 +342,7 @@ data = [
 
 ---
 
-## 🎨 Presets
+## ?? Presets
 
 Presets auto-configure layout, colors, and default sections.
 
@@ -358,7 +358,7 @@ Presets auto-configure layout, colors, and default sections.
 
 ---
 
-## 🔒 Security
+## ?? Security
 
 | Feature | Implementation |
 |---------|---------------|
@@ -367,27 +367,27 @@ Presets auto-configure layout, colors, and default sections.
 | **Path guard** | All paths resolved via `core.path_guard.resolve_path()` |
 | **XSS prevention** | Jinja2 autoescape enabled; no `\| safe` on user text; JSON `</script>`-escaped |
 | **Atomic writes** | `_atomic_write` uses temp file + `os.replace` to prevent partial files |
-| **trace_id sanitization** | Whitelist `a-zA-Z0-9_-` — no path traversal possible |
+| **trace_id sanitization** | Whitelist `a-zA-Z0-9_-` � no path traversal possible |
 | **Playwright optional** | If not installed, returns graceful warning instead of crash |
 
 ### Template XSS Audit (v1.1)
 
 | Template | Variable | Status |
 |----------|----------|--------|
-| `report.html` | `sec.text` | ✅ Auto-escaped (no `\| safe`) |
-| `dashboard.html` | `sec.text` | ✅ Auto-escaped (no `\| safe`) |
-| `diagram.html` | `mermaid_src` | ✅ Auto-escaped (no `\| safe`) |
-| `macros.html` | `content` (collapsible) | ✅ Auto-escaped (no `\| safe`) |
-| `map.html` | `map_config_json` | ✅ `\| safe` kept (JSON in `<script>`) + `</script>` escaped |
-| `scorecard.html` | `radar_config_json` | ✅ `\| safe` kept (JSON in `<script>`) + `</script>` escaped |
-| `timeline.html` | `svg_html` | ✅ `\| safe` kept (builder-generated, `_escape_svg()` sanitizes text) |
+| `report.html` | `sec.text` | ? Auto-escaped (no `\| safe`) |
+| `dashboard.html` | `sec.text` | ? Auto-escaped (no `\| safe`) |
+| `diagram.html` | `mermaid_src` | ? Auto-escaped (no `\| safe`) |
+| `macros.html` | `content` (collapsible) | ? Auto-escaped (no `\| safe`) |
+| `map.html` | `map_config_json` | ? `\| safe` kept (JSON in `<script>`) + `</script>` escaped |
+| `scorecard.html` | `radar_config_json` | ? `\| safe` kept (JSON in `<script>`) + `</script>` escaped |
+| `timeline.html` | `svg_html` | ? `\| safe` kept (builder-generated, `_escape_svg()` sanitizes text) |
 
 ### Mermaid Sanitization
 | Check | Implementation |
 |-------|---------------|
 | Raw string input | `_sanitize_mermaid()` strips `<script>`, `<iframe>`, `<object>`, `<embed>`, event handlers (`onerror=`, `onclick=`), `javascript:` URLs |
 | Dict-based input | `_dict_to_mermaid()` HTML-escapes all node labels and edge labels via `html.escape()` |
-| Template render | `| safe` used on pre-sanitized string — Mermaid syntax characters (`>`, `|`, `[`, `]`) preserved |
+| Template render | `| safe` used on pre-sanitized string � Mermaid syntax characters (`>`, `|`, `[`, `]`) preserved |
 
 ### SVG Color Validation
 | Check | Implementation |
@@ -398,7 +398,7 @@ Presets auto-configure layout, colors, and default sections.
 
 ---
 
-## 📤 Output
+## ?? Output
 
 Returns:
 ```python
@@ -443,18 +443,18 @@ A `metrics.json` is also written for external ingestion:
 
 ---
 
-## 🧠 Memory Integration
+## ?? Memory Integration
 
 Successful report generation stores an episodic memory entry:
 ```
 "Generated chart report: \'Revenue\' at workspace/reports/abc123/Revenue.html"
 ```
 
-The memory hook is fire-and-forget — if storage fails, the report still returns successfully.
+The memory hook is fire-and-forget � if storage fails, the report still returns successfully.
 
 ---
 
-## 🖨️ Print / PDF / PNG
+## ??? Print / PDF / PNG
 
 - **Browser print** (`Ctrl+P`): Hides sidebar, expands all tabs/collapsible sections. Cards use `page-break-inside: avoid`.
 - **Playwright export** (`action="export"`): Captures full report including hidden tabs. Requires `pip install playwright`.
@@ -462,7 +462,7 @@ The memory hook is fire-and-forget — if storage fails, the report still return
 
 ---
 
-## 🧪 Testing
+## ?? Testing
 
 ```powershell
 # Run all report tests
@@ -471,39 +471,39 @@ D:\\mcp\\agent\\venv\\Scripts\\pytest.exe tests/tools/report/ -W error --tb=shor
 
 **Test architecture:**
 - `conftest.py` provides `mock_cfg` (autouse, redirects roots to `tmp_path`)
-- Tests are **fully isolated** — real file operations in `tmp_path`, no mocking for integration tests
+- Tests are **fully isolated** � real file operations in `tmp_path`, no mocking for integration tests
 - One test file per concern (dispatch, contracts, paths, data, each builder, XSS, cancellation, etc.)
 - `test_report_real_integration.py` exercises real `resolve_path` with real files (no monkeypatch)
 
 **Test file layout:**
 ```
 tests/tools/report/
-├── conftest.py                           # Shared fixtures (autouse cfg mock)
-├── test_report_dispatch.py               # Unknown/empty/case-insensitive actions
-├── test_report_contracts.py              # report_ok / report_fail
-├── test_report_paths.py                  # report_out_dir, sanitization, manifest paths
-├── test_report_data.py                   # load_data: inline, file, CSV, JSON, URL/UNC blocking
-├── test_report_chart.py                  # Chart.js config, palette, build
-├── test_report_map.py                    # Leaflet map build
-├── test_report_diagram.py                # Mermaid diagram build
-├── test_report_html.py                   # render_template, atomic write, manifest/metrics
-├── test_report_compare.py                # Side-by-side diff: dict, table, list modes
-├── test_report_timeline.py               # SVG Gantt: parse, build, escape
-├── test_report_scorecard.py              # RAG status, radar config, weighted score
-├── test_report_export.py                 # PDF/PNG export, Playwright fallback
-├── test_report_presets.py                # Preset merge, override, unknown preset
-├── test_report_registry.py               # DISPATCH keys, metadata coverage, PRESETS
-├── test_report_list.py                   # report.list action via facade
-├── test_report_help.py                   # report.help action via facade
-├── test_report_xss.py                    # XSS injection: text, mermaid, collapsible
-├── test_report_cancellation.py           # Cancellation guard (BaseException)
-├── test_report_real_integration.py       # Full stack: facade → builder → template → filesystem
-└── test_report_gateway.py                # metrics.json + gateway backend routes
++-- conftest.py                           # Shared fixtures (autouse cfg mock)
++-- test_report_dispatch.py               # Unknown/empty/case-insensitive actions
++-- test_report_contracts.py              # report_ok / report_fail
++-- test_report_paths.py                  # report_out_dir, sanitization, manifest paths
++-- test_report_data.py                   # load_data: inline, file, CSV, JSON, URL/UNC blocking
++-- test_report_chart.py                  # Chart.js config, palette, build
++-- test_report_map.py                    # Leaflet map build
++-- test_report_diagram.py                # Mermaid diagram build
++-- test_report_html.py                   # render_template, atomic write, manifest/metrics
++-- test_report_compare.py                # Side-by-side diff: dict, table, list modes
++-- test_report_timeline.py               # SVG Gantt: parse, build, escape
++-- test_report_scorecard.py              # RAG status, radar config, weighted score
++-- test_report_export.py                 # PDF/PNG export, Playwright fallback
++-- test_report_presets.py                # Preset merge, override, unknown preset
++-- test_report_registry.py               # DISPATCH keys, metadata coverage, PRESETS
++-- test_report_list.py                   # report.list action via facade
++-- test_report_help.py                   # report.help action via facade
++-- test_report_xss.py                    # XSS injection: text, mermaid, collapsible
++-- test_report_cancellation.py           # Cancellation guard (BaseException)
++-- test_report_real_integration.py       # Full stack: facade ? builder ? template ? filesystem
++-- test_report_gateway.py                # metrics.json + gateway backend routes
 ```
 
 ---
 
-## 🔀 When to Use vs Alternatives
+## ?? When to Use vs Alternatives
 
 | Need | Tool | Why |
 |------|------|-----|
@@ -521,63 +521,63 @@ tests/tools/report/
 
 ---
 
-## 🛡️ AI Agent Instructions
+## ??? AI Agent Instructions
 
 If you are an AI assistant modifying the report tool:
 
 ### NEVER DO
-1. **Never add subcommand parsing to action handlers** — one action = one behavior.
-2. **Never import pandas/jinja2/plotly/playwright at module level in `actions/`** — lazy imports only. Use `from tools.report_core import charts` inside the function body.
-3. **Never add `**kwargs` to the `@tool` facade** — FastMCP schema breaks. Internal dispatch wrappers can use `**kwargs`.
-4. **Never print to stdout** — MCP stdio corruption. Use `sys.stderr` if needed.
-5. **Never create `.bak` files** — forbidden by project rules.
-6. **Never use `| safe` in templates for user-controlled text** — XSS vector. Jinja2 autoescape handles it. Exception: syntax-heavy strings (Mermaid, JSON) that are pre-sanitized.
-7. **Never touch `@meta_tool` or `@register_action` shared decorators** — use `help_text` for param docs. Infrastructure changes need separate commits.
-8. **Never put non-action files in `report_core/actions/`** — auto-discovery imports everything.
-9. **Never cache `cfg.workspace_root` at module level** — breaks test mocking.
-10. **Never skip `compileall` before `pytest`** — syntax errors crash with confusing tracebacks.
-11. **Never rewrite entire files when surgical edits suffice** — preserve existing code.
-12. **Never forget `&lt;/script&gt;` escaping on JSON dumps** — `json.dumps(obj).replace("&lt;/", "&lt;\\/")`
-13. **Never register actions outside the `report` namespace** — `DISPATCH["report"]` is the only valid key.
-14. **Never put imports inside `except BaseException`** — masks real errors (e.g., `ImportError` reported as "cancelled").
-15. **Never inject user data into HTML/SVG attributes without validation** — always sanitize/validate before template render.
-16. **Never load library-specific scripts in `base.html`** — let leaf templates load their own JS in `{% block scripts %}`.
+1. **Never add subcommand parsing to action handlers** � one action = one behavior.
+2. **Never import pandas/jinja2/plotly/playwright at module level in `actions/`** � lazy imports only. Use `from tools.report_ops import charts` inside the function body.
+3. **Never add `**kwargs` to the `@tool` facade** � FastMCP schema breaks. Internal dispatch wrappers can use `**kwargs`.
+4. **Never print to stdout** � MCP stdio corruption. Use `sys.stderr` if needed.
+5. **Never create `.bak` files** � forbidden by project rules.
+6. **Never use `| safe` in templates for user-controlled text** � XSS vector. Jinja2 autoescape handles it. Exception: syntax-heavy strings (Mermaid, JSON) that are pre-sanitized.
+7. **Never touch `@meta_tool` or `@register_action` shared decorators** � use `help_text` for param docs. Infrastructure changes need separate commits.
+8. **Never put non-action files in `report_ops/actions/`** � auto-discovery imports everything.
+9. **Never cache `cfg.workspace_root` at module level** � breaks test mocking.
+10. **Never skip `compileall` before `pytest`** � syntax errors crash with confusing tracebacks.
+11. **Never rewrite entire files when surgical edits suffice** � preserve existing code.
+12. **Never forget `&lt;/script&gt;` escaping on JSON dumps** � `json.dumps(obj).replace("&lt;/", "&lt;\\/")`
+13. **Never register actions outside the `report` namespace** � `DISPATCH["report"]` is the only valid key.
+14. **Never put imports inside `except BaseException`** � masks real errors (e.g., `ImportError` reported as "cancelled").
+15. **Never inject user data into HTML/SVG attributes without validation** � always sanitize/validate before template render.
+16. **Never load library-specific scripts in `base.html`** � let leaf templates load their own JS in `{% block scripts %}`.
 
 ### ALWAYS DO
-17. **Always verify templates render standalone** — `{% extends %}` + `{% block %}` structure must be complete.
-18. **Always match template variable names to builder data structures** — `tab.name` vs `sec.title`, `tab.sections` vs flat `tabs`.
-19. **Always pair `| safe` with pre-sanitization** — if you need `| safe` for syntax, sanitize the string first.
-20. **Always update tests when refactoring templates** — test data structures must match template expectations.
-21. **Always add `{% block scripts %}` for template-specific JS** — Chart.js, Mermaid init, etc.
-22. **Always use `compileall` before `pytest`** — catches syntax errors early.
+17. **Always verify templates render standalone** � `{% extends %}` + `{% block %}` structure must be complete.
+18. **Always match template variable names to builder data structures** � `tab.name` vs `sec.title`, `tab.sections` vs flat `tabs`.
+19. **Always pair `| safe` with pre-sanitization** � if you need `| safe` for syntax, sanitize the string first.
+20. **Always update tests when refactoring templates** � test data structures must match template expectations.
+21. **Always add `{% block scripts %}` for template-specific JS** � Chart.js, Mermaid init, etc.
+22. **Always use `compileall` before `pytest`** � catches syntax errors early.
 
 ---
 
-## 🗺️ V2 Roadmap
+## ??? V2 Roadmap
 
 ### Planned Actions
 | Action | Status | Notes |
 |--------|--------|-------|
-| `compare` | ✅ v1.1 | Side-by-side diff with delta highlighting |
-| `timeline` | ✅ v1.1 | SVG Gantt chart with status colors |
-| `scorecard` | ✅ v1.1 | RAG dashboard with radar chart |
-| `list` | ✅ v1.1 | Self-discovery: all actions with metadata |
-| `help` | ✅ v1.1 | Per-action metadata lookup |
-| `@meta_tool` refactor | ✅ v1.1 | Auto-generated schema + docstring |
-| `@register_action` pattern | ✅ v1.1 | Auto-discovery via `actions/` directory |
-| `chart.html` template | ✅ v1.1 | Dedicated template for Chart.js |
-| XSS `| safe` removal | ✅ v1.1 | All user text auto-escaped |
-| `_atomic_write` | ✅ v1.1 | Temp file + `os.replace` |
-| UNC path blocking | ✅ v1.1 | `\\\\server\\share` blocked |
-| Export workspace scoping | ✅ v1.1 | `default_root="workspace"` |
-| Template standalone rendering | ✅ v1.1 | Fixed missing `{% extends %}` in report.html, dashboard.html |
-| Mermaid pre-sanitization | ✅ v1.1 | `_sanitize_mermaid()` strips HTML tags, event handlers, javascript: URLs |
-| SVG color validation | ✅ v1.1 | `_validate_hex_color()` regex + fallback |
-| Cancellation import fix | ✅ v1.1 | Import outside try block |
-| Chart.js deduplication | ✅ v1.1 | Removed from base.html, loaded per-template |
-| `elapsed_ms` timing | ✅ v1.1 | Added to all report results |
-| Memory hook logging | ✅ v1.1 | `tracer.warning()` on failure |
-| Duplicate action guard | ✅ v1.1 | `ValueError` on collision in `@register_action` |
+| `compare` | ? v1.1 | Side-by-side diff with delta highlighting |
+| `timeline` | ? v1.1 | SVG Gantt chart with status colors |
+| `scorecard` | ? v1.1 | RAG dashboard with radar chart |
+| `list` | ? v1.1 | Self-discovery: all actions with metadata |
+| `help` | ? v1.1 | Per-action metadata lookup |
+| `@meta_tool` refactor | ? v1.1 | Auto-generated schema + docstring |
+| `@register_action` pattern | ? v1.1 | Auto-discovery via `actions/` directory |
+| `chart.html` template | ? v1.1 | Dedicated template for Chart.js |
+| XSS `| safe` removal | ? v1.1 | All user text auto-escaped |
+| `_atomic_write` | ? v1.1 | Temp file + `os.replace` |
+| UNC path blocking | ? v1.1 | `\\\\server\\share` blocked |
+| Export workspace scoping | ? v1.1 | `default_root="workspace"` |
+| Template standalone rendering | ? v1.1 | Fixed missing `{% extends %}` in report.html, dashboard.html |
+| Mermaid pre-sanitization | ? v1.1 | `_sanitize_mermaid()` strips HTML tags, event handlers, javascript: URLs |
+| SVG color validation | ? v1.1 | `_validate_hex_color()` regex + fallback |
+| Cancellation import fix | ? v1.1 | Import outside try block |
+| Chart.js deduplication | ? v1.1 | Removed from base.html, loaded per-template |
+| `elapsed_ms` timing | ? v1.1 | Added to all report results |
+| Memory hook logging | ? v1.1 | `tracer.warning()` on failure |
+| Duplicate action guard | ? v1.1 | `ValueError` on collision in `@register_action` |
 | Action-level presets | v2 | Per-action override of global presets |
 | Action-level timing | v2 | `elapsed_ms` in results |
 | Conditional registration | v2 | Hide `export` if Playwright missing |
@@ -595,27 +595,27 @@ If you are an AI assistant modifying the report tool:
 
 ---
 
-## 🔗 Source Code Reference
+## ?? Source Code Reference
 
 | File | Purpose |
 |------|---------|
 | `tools/report.py` | `@tool` facade: validation, preset merge, dispatch, memory hook |
 | `tools/_meta_tool.py` | `@meta_tool` decorator: auto `Literal`, docstring (shared with git/file/cli) |
-| `tools/report_core/_registry.py` | `DISPATCH` dict, `@register_action`, `DISPATCH_METADATA`, `PRESETS` |
-| `tools/report_core/__init__.py` | Auto-discovery: glob + importlib for `actions/*.py` |
-| `tools/report_core/contracts.py` | `report_ok`, `report_fail` return contracts |
-| `tools/report_core/paths.py` | `report_out_dir()`, `report_manifest_path()` |
-| `tools/report_core/data.py` | `load_data()` with SSRF + UNC blocking |
-| `tools/report_core/charts.py` | Chart.js config builder |
-| `tools/report_core/maps.py` | Leaflet.js map builder |
-| `tools/report_core/diagrams.py` | Mermaid.js diagram builder |
-| `tools/report_core/html.py` | Jinja2 renderer, `_atomic_write`, manifest/metrics writers |
-| `tools/report_core/export.py` | Playwright PDF/PNG export (lazy, optional) |
-| `tools/report_core/compare.py` | Side-by-side diff builder |
-| `tools/report_core/timeline.py` | SVG Gantt chart builder |
-| `tools/report_core/scorecard.py` | RAG status + radar chart builder |
-| `tools/report_core/actions/*.py` | Atomic action wrappers (11 files) |
-| `tools/report_core/templates/*.html` | Jinja2 templates (10 files) |
+| `tools/report_ops/_registry.py` | `DISPATCH` dict, `@register_action`, `DISPATCH_METADATA`, `PRESETS` |
+| `tools/report_ops/__init__.py` | Auto-discovery: glob + importlib for `actions/*.py` |
+| `tools/report_ops/contracts.py` | `report_ok`, `report_fail` return contracts |
+| `tools/report_ops/paths.py` | `report_out_dir()`, `report_manifest_path()` |
+| `tools/report_ops/data.py` | `load_data()` with SSRF + UNC blocking |
+| `tools/report_ops/charts.py` | Chart.js config builder |
+| `tools/report_ops/maps.py` | Leaflet.js map builder |
+| `tools/report_ops/diagrams.py` | Mermaid.js diagram builder |
+| `tools/report_ops/html.py` | Jinja2 renderer, `_atomic_write`, manifest/metrics writers |
+| `tools/report_ops/export.py` | Playwright PDF/PNG export (lazy, optional) |
+| `tools/report_ops/compare.py` | Side-by-side diff builder |
+| `tools/report_ops/timeline.py` | SVG Gantt chart builder |
+| `tools/report_ops/scorecard.py` | RAG status + radar chart builder |
+| `tools/report_ops/actions/*.py` | Atomic action wrappers (11 files) |
+| `tools/report_ops/templates/*.html` | Jinja2 templates (10 files) |
 | `tests/tools/report/` | 21 test files + conftest.py |
 | `tests/tools/report/conftest.py` | `mock_cfg` fixture (autouse) |
 | `core/path_guard.py` | Centralized path validation |

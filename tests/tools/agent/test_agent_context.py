@@ -1,7 +1,7 @@
 """Agent tool tests — context trimming."""
 from __future__ import annotations
 
-from tools.agent_core.context import _trim_context
+from tools.agent_ops.context import _trim_context
 
 
 class TestTrimContextUnit:

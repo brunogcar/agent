@@ -1,6 +1,6 @@
 """tests/workflows/deep_research/test_decompose.py"""
 import pytest
-from workflows.deep_research_core.nodes.decompose import node_decompose_goal, _parse_sub_queries
+from workflows.deep_research_impl.nodes.decompose import node_decompose_goal, _parse_sub_queries
 
 
 def test_parse_sub_queries_json_list():
@@ -27,7 +27,7 @@ def test_node_decompose_empty_goal():
 
 def test_node_decompose_returns_queries(mocker):
     mocker.patch(
-        "workflows.deep_research_core.nodes.decompose.llm.complete",
+        "workflows.deep_research_impl.nodes.decompose.llm.complete",
         return_value=mocker.MagicMock(ok=True, text='["q1", "q2"]'),
     )
     state = {"goal": "What is X?", "trace_id": "t1"}

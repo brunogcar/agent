@@ -12,7 +12,7 @@ from tools.file_ops._registry import register_action
     "file",
     "patch_file",
     help_text="""Apply a targeted str_replace patch. old must appear EXACTLY ONCE.
-Add surrounding lines for uniqueness. Uses workflows/autocode_helpers/patch.
+Add surrounding lines for uniqueness. Uses workflows/autocode_impl/patch.
 Required: path, old, new
 Returns: {path, lines_changed}""",
     examples=[
@@ -38,7 +38,7 @@ def _handle_patch_file(path: str = "", **kwargs) -> dict:
     if not allowed:
         return {"status": "error", "error": err}
 
-    from workflows.autocode_helpers.patch import apply_patch
+    from workflows.autocode_impl.patch import apply_patch
     result = apply_patch(p, old_text, new_text)
     if result.ok:
         return {

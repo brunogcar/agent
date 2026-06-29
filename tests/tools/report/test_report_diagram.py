@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core import diagrams
+from tools.report_ops import diagrams
 
 
 class TestDiagramBuilder:
@@ -69,7 +69,7 @@ class TestDiagramBuilder:
         assert "|label|" in sanitized
 
     def test_build_from_string(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = diagrams.build(
             trace_id="test-diagram",
             title="Flow",
@@ -85,7 +85,7 @@ class TestDiagramBuilder:
         assert "mermaid" in content.lower()
 
     def test_build_from_dict(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = diagrams.build(
             trace_id="test-diagram-dict",
             title="Architecture",
@@ -96,7 +96,7 @@ class TestDiagramBuilder:
         assert Path(result["html_path"]).exists()
 
     def test_build_default_fallback(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = diagrams.build(
             trace_id="test-diagram-default",
             title="Default",

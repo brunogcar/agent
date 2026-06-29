@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 
 class TestResearchReport:
     def test_node_report_generates_dossier(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
         mock_report = MagicMock()
         monkeypatch.setattr("tools.report.report", mock_report)
@@ -33,7 +33,7 @@ class TestResearchReport:
         assert "sections" in call_kwargs["config"]
 
     def test_node_report_skips_when_no_result(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
         mock_report = MagicMock()
         monkeypatch.setattr("tools.report.report", mock_report)
@@ -54,12 +54,12 @@ class TestResearchReport:
 
 class TestAutocodeReport:
     def test_node_report_generates_audit(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
         mock_report = MagicMock()
         monkeypatch.setattr("tools.report.report", mock_report)
 
-        from workflows.autocode_helpers.nodes.report import node_report
+        from workflows.autocode_impl.nodes.report import node_report
 
         state = {
             "trace_id": "test-autocode",
@@ -83,7 +83,7 @@ class TestAutocodeReport:
         assert "sections" in call_kwargs["config"]
 
     def test_node_report_best_effort_no_crash(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
         # Simulate report tool failure
         def failing_report(*args, **kwargs):
@@ -91,7 +91,7 @@ class TestAutocodeReport:
 
         monkeypatch.setattr("tools.report.report", failing_report)
 
-        from workflows.autocode_helpers.nodes.report import node_report
+        from workflows.autocode_impl.nodes.report import node_report
 
         state = {
             "trace_id": "test-autocode",
@@ -110,7 +110,7 @@ class TestAutocodeReport:
 
 class TestUnderstandReport:
     def test_node_report_generates_overview(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
         mock_report = MagicMock()
         monkeypatch.setattr("tools.report.report", mock_report)
@@ -136,7 +136,7 @@ class TestUnderstandReport:
         assert call_kwargs["preset"] == "code_audit"
 
     def test_node_report_with_errors(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
         mock_report = MagicMock()
         monkeypatch.setattr("tools.report.report", mock_report)

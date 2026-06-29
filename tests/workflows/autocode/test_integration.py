@@ -1,4 +1,4 @@
-﻿"""
+"""
 tests/workflows/autocode/test_integration.py
 Integration tests for the autocode workflow graph structure.
 Validates:
@@ -18,7 +18,7 @@ class TestGraphStructureAndWiring:
     """Validate the compiled graph architecture without invoking it."""
 
     def test_graph_has_exactly_17_nodes(self):
-        from workflows.autocode_helpers.graph import build_graph
+        from workflows.autocode_impl.graph import build_graph
         g = build_graph()
         expected_nodes = {
             "node_classify_task", "node_validate_input", "node_brainstorm",
@@ -31,15 +31,15 @@ class TestGraphStructureAndWiring:
             f"Node mismatch. Missing: {expected_nodes - set(g.nodes.keys())}"
 
     def test_entry_point_is_classify(self):
-        from workflows.autocode_helpers.graph import build_graph
+        from workflows.autocode_impl.graph import build_graph
         g = build_graph()
         # [FIX] LangGraph's StateGraph doesn't expose .entry_point directly.
         # We verify it exists and trust the compilation step to validate wiring.
         assert "node_classify_task" in g.nodes
 
     def test_conditional_edges_match_routes_py(self):
-        from workflows.autocode_helpers.graph import build_graph
-        from workflows.autocode_helpers.routes import (
+        from workflows.autocode_impl.graph import build_graph
+        from workflows.autocode_impl.routes import (
             route_after_classify, route_after_run_tests,
             route_after_write_files, route_after_verify
         )
@@ -61,7 +61,7 @@ class TestGraphStructureAndWiring:
         assert route_after_verify({"verification_passed": False}) == "END"
 
     def test_tdd_loop_edges_exist(self):
-        from workflows.autocode_helpers.graph import build_graph
+        from workflows.autocode_impl.graph import build_graph
         g = build_graph()
         # Verify the debug loop is wired: debug -> run_tests
         # In LangGraph, static edges are stored in the graph's internal structure
@@ -70,7 +70,7 @@ class TestGraphStructureAndWiring:
         assert "node_run_tests" in g.nodes
 
     def test_terminal_nodes_route_to_end(self):
-        from workflows.autocode_helpers.graph import build_graph
+        from workflows.autocode_impl.graph import build_graph
         g = build_graph()
         # node_create_skill and node_distill_memory should route to END
         # We verify they exist and the graph compiles without errors
@@ -82,13 +82,13 @@ class TestGraphSingleton:
     """Validate get_graph() returns a cached compiled instance."""
 
     def test_get_graph_returns_same_instance(self):
-        from workflows.autocode_helpers.graph import get_graph
+        from workflows.autocode_impl.graph import get_graph
         g1 = get_graph()
         g2 = get_graph()
         assert g1 is g2, "get_graph() should return a singleton compiled graph"
 
     def test_compiled_graph_has_invoke_method(self):
-        from workflows.autocode_helpers.graph import get_graph
+        from workflows.autocode_impl.graph import get_graph
         compiled = get_graph()
         assert hasattr(compiled, "invoke")
         assert hasattr(compiled, "stream")
@@ -99,7 +99,7 @@ class TestStateSchemaIntegration:
     """Validate the state schema aligns with graph requirements."""
 
     def test_state_has_all_required_tdd_fields(self):
-        from workflows.autocode_helpers.state import AutocodeState
+        from workflows.autocode_impl.state import AutocodeState
         import typing
         hints = typing.get_type_hints(AutocodeState)
         
@@ -111,7 +111,7 @@ class TestStateSchemaIntegration:
             assert field in hints, f"AutocodeState missing required TDD field: {field}"
 
     def test_state_has_git_scoping_field(self):
-        from workflows.autocode_helpers.state import AutocodeState
+        from workflows.autocode_impl.state import AutocodeState
         import typing
         hints = typing.get_type_hints(AutocodeState)
         assert "project_root" in hints, "AutocodeState missing project_root for git scoping"

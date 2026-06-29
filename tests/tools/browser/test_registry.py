@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from tools.browser_core._registry import DISPATCH, register_action
+from tools.browser_ops._registry import DISPATCH, register_action
 
 
 class TestBrowserRegistry:

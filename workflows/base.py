@@ -189,7 +189,7 @@ def run_workflow(
             result = graph.invoke(initial_state)
 
         elif wf_type == "deep_research":
-            from workflows.deep_research_core import build_deep_research_graph
+            from workflows.deep_research_impl import build_deep_research_graph
             graph = build_deep_research_graph()
             result = graph.invoke(initial_state)
 

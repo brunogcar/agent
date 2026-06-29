@@ -29,7 +29,7 @@ class TestSetViewport:
     def test_set_viewport_passes_headless(self, mock_browser):
         """headless param must be forwarded to _get_page."""
         with patch(
-            "tools.browser_core.actions.set_viewport._get_page"
+            "tools.browser_ops.actions.set_viewport._get_page"
         ) as mock_get_page:
             mock_get_page.return_value = mock_browser["page"]
             browser(

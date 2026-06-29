@@ -4,8 +4,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
-from tools.agent_core.cache import _clear_cache
-from tools.agent_core.parse_warnings import (
+from tools.agent_ops.cache import _clear_cache
+from tools.agent_ops.parse_warnings import (
     _log_parse_warning,
     _get_parse_warnings,
     _clear_parse_warnings,
@@ -75,7 +75,7 @@ class TestParseWarningIntegration:
         mock_llm_result.text = "not valid json"
         mock_llm_result.parsed = None
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             agent(action="dispatch", role="route", task="test")
 
         warnings = _get_parse_warnings("route")
@@ -87,7 +87,7 @@ class TestParseWarningIntegration:
         mock_llm_result.text = '{"workflow": "research"}'
         mock_llm_result.parsed = None
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             agent(action="dispatch", role="route", task="test")
 
         assert _get_parse_warnings("route") == []

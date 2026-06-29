@@ -19,7 +19,7 @@ The `browser()` tool automates web browsers via Playwright — navigate, click, 
 
 | Old | New | Migration |
 |-----|-----|-----------|
-| Monolithic `browser_core/actions.py` (17.5KB) | Atomic `browser_core/actions/*.py` (20 files) | No migration needed — same API |
+| Monolithic `browser_ops/actions.py` (17.5KB) | Atomic `browser_ops/actions/*.py` (20 files) | No migration needed — same API |
 | Manual `DISPATCH` dict + `DISPATCH_METADATA` | `@register_action` auto-discovery + `@meta_tool` | No migration needed — same API |
 | Manual docstring in `browser()` | `@meta_tool` auto-generated from `help_text` + `examples` | No migration needed — same API |
 | `screenshot` base64 TODO | `return_base64=True` fully implemented | Use `return_base64=True` |
@@ -29,7 +29,7 @@ The `browser()` tool automates web browsers via Playwright — navigate, click, 
 | `extract_links`/`extract_tables` string interpolation | `json.dumps()` for safe JS injection | No migration — internal fix |
 
 ### v1 (meta_tool refactor + new actions)
-- Split monolithic `actions.py` into 20 atomic action files under `browser_core/actions/`
+- Split monolithic `actions.py` into 20 atomic action files under `browser_ops/actions/`
 - Added `@register_action` auto-discovery via `pathlib` + `importlib`
 - Added `@meta_tool` auto-generated `Literal` enum and docstring
 - Added `hover` action — hover over elements, triggers CSS `:hover` states
@@ -74,7 +74,7 @@ The `browser()` tool automates web browsers via Playwright — navigate, click, 
 ```
 tools/browser.py              # @tool facade — validation, dispatch, tracer, screenshot-on-failure
 tools/_meta_tool.py           # @meta_tool decorator — auto Literal + docstring (shared)
-tools/browser_core/
+tools/browser_ops/
 ├── _registry.py              # DISPATCH dict + @register_action decorator
 ├── __init__.py               # Auto-discovery: glob(actions/*.py) + importlib
 ├── factory.py                # Browser/context/page creation (Playwright bridge)
@@ -457,7 +457,7 @@ tests/tools/browser/
 4. **Never print to stdout** — MCP stdio corruption. Use `sys.stderr` if needed.
 5. **Never create `.bak` files** — forbidden by project rules.
 6. **Never touch `@meta_tool` or `@register_action` shared decorators** — use `help_text` for param docs. Infrastructure changes need separate commits.
-7. **Never put non-action files in `browser_core/actions/`** — auto-discovery imports everything.
+7. **Never put non-action files in `browser_ops/actions/`** — auto-discovery imports everything.
 8. **Never cache `cfg.workspace_root` at module level** — breaks test mocking. Use lazy imports in failure paths.
 9. **Never skip `compileall` before `pytest`** — syntax errors crash with confusing tracebacks.
 10. **Never rewrite entire files when surgical edits suffice** — preserve existing code.
@@ -527,13 +527,13 @@ tests/tools/browser/
 |------|---------|
 | `tools/browser.py` | `@tool` facade: validation, dispatch, tracer, screenshot-on-failure |
 | `tools/_meta_tool.py` | `@meta_tool` decorator: auto `Literal`, docstring (shared with git/file/cli/report) |
-| `tools/browser_core/_registry.py` | `DISPATCH` dict, `@register_action` |
-| `tools/browser_core/__init__.py` | Auto-discovery: glob + importlib for `actions/*.py` |
-| `tools/browser_core/factory.py` | Browser/context/page creation (Playwright bridge) |
-| `tools/browser_core/lifecycle.py` | Idle context reaper, screenshot cleanup, atexit |
-| `tools/browser_core/loop.py` | Dedicated async event loop for Playwright |
-| `tools/browser_core/state.py` | Global state: `_browser`, `_contexts`, `_pages`, `_browser_lock` |
-| `tools/browser_core/actions/*.py` | Atomic action handlers (20 files) |
+| `tools/browser_ops/_registry.py` | `DISPATCH` dict, `@register_action` |
+| `tools/browser_ops/__init__.py` | Auto-discovery: glob + importlib for `actions/*.py` |
+| `tools/browser_ops/factory.py` | Browser/context/page creation (Playwright bridge) |
+| `tools/browser_ops/lifecycle.py` | Idle context reaper, screenshot cleanup, atexit |
+| `tools/browser_ops/loop.py` | Dedicated async event loop for Playwright |
+| `tools/browser_ops/state.py` | Global state: `_browser`, `_contexts`, `_pages`, `_browser_lock` |
+| `tools/browser_ops/actions/*.py` | Atomic action handlers (20 files) |
 | `tests/tools/browser/` | 27 test files + conftest.py |
 | `tests/tools/browser/conftest.py` | `mock_browser`, `mock_cfg_for_browser`, `reset_browser_state` |
 | `core/security.py` | `is_safe_network_address` — SSRF protection |

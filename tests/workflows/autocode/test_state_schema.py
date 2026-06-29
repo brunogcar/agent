@@ -11,7 +11,7 @@ Guarantees:
 from __future__ import annotations
 
 import pytest
-from workflows.autocode_helpers.state import _default_state, AutocodeState
+from workflows.autocode_impl.state import _default_state, AutocodeState
 
 
 class TestDefaultStateStructure:

@@ -6,9 +6,9 @@ from pathlib import Path
 
 class TestMetricsJson:
     def test_write_metrics_creates_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
-        from tools.report_core.html import _write_metrics
+        from tools.report_ops.html import _write_metrics
 
         _write_metrics(
             trace_id="test-metrics",
@@ -32,9 +32,9 @@ class TestMetricsJson:
         assert "created_at" in data
 
     def test_metrics_has_data_flag(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
-        from tools.report_core.html import _write_metrics
+        from tools.report_ops.html import _write_metrics
 
         _write_metrics(
             trace_id="test-data",
@@ -49,9 +49,9 @@ class TestMetricsJson:
         assert data["has_data"] is True
 
     def test_metrics_no_data_flag(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
 
-        from tools.report_core.html import _write_metrics
+        from tools.report_ops.html import _write_metrics
 
         _write_metrics(
             trace_id="test-empty",
@@ -68,14 +68,14 @@ class TestMetricsJson:
 
 class TestGateway:
     def test_list_reports_empty(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         monkeypatch.setattr("core.config.cfg.agent_root", str(tmp_path))
 
         from core.gateway_backend.routes.reports import _list_reports
         assert _list_reports() == []
 
     def test_list_reports_with_manifest(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         monkeypatch.setattr("core.config.cfg.agent_root", str(tmp_path))
 
         report_dir = tmp_path / "reports" / "trace-123"

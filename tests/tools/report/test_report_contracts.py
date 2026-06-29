@@ -1,5 +1,5 @@
 """Tests for report_ok and report_fail contracts."""
-from tools.report_core.contracts import report_ok, report_fail
+from tools.report_ops.contracts import report_ok, report_fail
 
 
 class TestContracts:

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core import timeline
+from tools.report_ops import timeline
 
 
 class TestTimeline:
@@ -37,7 +37,7 @@ class TestTimeline:
         assert timeline._escape_svg("<tag>") == "&lt;tag&gt;"
 
     def test_build_creates_html(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = timeline.build(
             trace_id="test-timeline",
             title="Project Plan",
@@ -53,6 +53,6 @@ class TestTimeline:
         assert "Phase 1" in content
 
     def test_build_missing_data_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         with pytest.raises(ValueError, match="timeline requires"):
             timeline.build(trace_id="test-missing", title="X", data=[], config={})

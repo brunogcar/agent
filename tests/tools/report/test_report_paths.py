@@ -1,7 +1,7 @@
 """Tests for report output path resolution."""
 from pathlib import Path
 
-from tools.report_core.paths import report_out_dir, report_manifest_path
+from tools.report_ops.paths import report_out_dir, report_manifest_path
 
 
 class TestPaths:

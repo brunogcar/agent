@@ -1,6 +1,6 @@
 """Tests for preset application in report facade."""
 from tools.report import report
-from tools.report_core._registry import PRESETS
+from tools.report_ops._registry import PRESETS
 
 
 class TestPresets:
@@ -16,13 +16,13 @@ class TestPresets:
         assert "scorecard" in PRESETS
 
     def test_preset_merges_into_config(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         # Use list action (lightweight, no file generation) to test preset merge
         result = report(action="list", preset="financial", trace_id="test-preset")
         assert result["status"] == "success"
 
     def test_preset_overridden_by_explicit_config(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         # chart action with preset + explicit config override
         result = report(
             action="chart",
@@ -38,6 +38,6 @@ class TestPresets:
         assert html_path.exists()
 
     def test_unknown_preset_ignored(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = report(action="list", preset="nonexistent", trace_id="test-bad-preset")
         assert result["status"] == "success"  # Unknown preset is silently ignored

@@ -1,7 +1,7 @@
 """Tests for budget tracking utilities."""
 from __future__ import annotations
 
-from workflows.deep_research_core.budget import (
+from workflows.deep_research_impl.budget import (
     decrement_api_calls,
     decrement_browser_actions,
     log_event,

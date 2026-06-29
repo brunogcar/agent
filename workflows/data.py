@@ -1,4 +1,4 @@
-﻿"""
+"""
 workflows/data.py -- Data analysis workflow.
 
 Pattern:
@@ -64,7 +64,7 @@ def node_execute(state: WorkflowState) -> WorkflowState:
 
     if not code:
         # No code provided -- ask executor to generate it
-        from tools.agent import agent  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
+        from tools.agent import agent  # [PHASE-3] Migrated from tools.agent_tool ? tools.agent
         node_step(state, "execute", "no code provided -- generating")
 
         r = agent(
@@ -109,7 +109,7 @@ def node_critique(state: WorkflowState) -> WorkflowState:
     adequately answers the user's goal. The critique role has a 90s
     timeout and returns free-form Markdown (not JSON).
     """
-    from tools.agent import agent  # thin facade; prompts/roles live in agent_core/  # [PHASE-3] Migrated from tools.agent_tool → tools.agent
+    from tools.agent import agent  # thin facade; prompts/roles live in agent_ops/  # [PHASE-3] Migrated from tools.agent_tool ? tools.agent
 
     output = state.get("output", "")
     goal   = state.get("goal", "")

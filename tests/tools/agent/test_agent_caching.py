@@ -4,7 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
-from tools.agent_core.cache import _clear_cache
+from tools.agent_ops.cache import _clear_cache
 
 
 class TestAgentCaching:
@@ -18,7 +18,7 @@ class TestAgentCaching:
         """Second identical classify call should return cached result."""
         mock_llm_result.text = "bug"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
             result1 = agent(action="dispatch", role="classify", task="Is this a bug?")
             result2 = agent(action="dispatch", role="classify", task="Is this a bug?")
 
@@ -32,7 +32,7 @@ class TestAgentCaching:
         """route role should also be cached."""
         mock_llm_result.text = '{"workflow": "research"}'
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
             agent(action="dispatch", role="route", task="Where to?")
             agent(action="dispatch", role="route", task="Where to?")
 
@@ -42,7 +42,7 @@ class TestAgentCaching:
         """Different context should result in separate cache entries."""
         mock_llm_result.text = "bug"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
             agent(action="dispatch", role="classify", task="Is this a bug?", context="Python")
             agent(action="dispatch", role="classify", task="Is this a bug?", context="JavaScript")
 
@@ -51,7 +51,7 @@ class TestAgentCaching:
 
     def test_non_cacheable_roles_not_cached(self, mock_llm_result):
         """research role should not be cached."""
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
             agent(action="dispatch", role="research", task="Find docs")
             agent(action="dispatch", role="research", task="Find docs")
 
@@ -62,7 +62,7 @@ class TestAgentCaching:
         import time
         mock_llm_result.text = "bug"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm, patch("tools.agent_core.cache._CACHE_TTL_SECONDS", 0):  # Instant expiry
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm, patch("tools.agent_ops.cache._CACHE_TTL_SECONDS", 0):  # Instant expiry
             agent(action="dispatch", role="classify", task="test")
             time.sleep(0.01)
             agent(action="dispatch", role="classify", task="test")

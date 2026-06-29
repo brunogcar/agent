@@ -1,6 +1,6 @@
 """tools/report.py — Report meta-tool.
 
-Thin @tool facade. Dispatches to report_core builders via auto-discovered actions.
+Thin @tool facade. Dispatches to report_ops builders via auto-discovered actions.
 All heavy imports are lazy — inside action handlers.
 
 Architecture:
@@ -17,8 +17,8 @@ from core.tracer import tracer
 from registry import tool
 
 from tools._meta_tool import meta_tool
-from tools.report_core._registry import DISPATCH, PRESETS
-from tools.report_core.contracts import report_ok, report_fail
+from tools.report_ops._registry import DISPATCH, PRESETS
+from tools.report_ops.contracts import report_ok, report_fail
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dispatcher Implementation

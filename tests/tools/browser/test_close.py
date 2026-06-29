@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, AsyncMock
 from tools.browser import browser
-from tools.browser_core.state import _contexts, _pages
+from tools.browser_ops.state import _contexts, _pages
 
 
 class TestClose:

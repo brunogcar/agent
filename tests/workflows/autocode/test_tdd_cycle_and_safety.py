@@ -1,4 +1,4 @@
-﻿"""
+"""
 tests/workflows/autocode/test_tdd_cycle_and_safety.py
 Merged & expanded safety suite for Phase 3/4 autocode features.
 Validates:
@@ -29,7 +29,7 @@ def temp_workspace(tmp_path, monkeypatch):
 @pytest.fixture
 def mock_llm_call():
     """Mock _call globally to prevent LM Studio requests."""
-    with patch("workflows.autocode_helpers.helpers._call") as mock:
+    with patch("workflows.autocode_impl.helpers._call") as mock:
         mock.return_value = "def test_pass(): assert True"
         yield mock
 
@@ -65,11 +65,11 @@ class TestDryRunAndSafetyGuards:
 
     def test_dry_run_skips_disk_writes(self, base_state, temp_workspace):
         """dry_run=True must prevent _write_files execution."""
-        from workflows.autocode_helpers.nodes.execute import node_execute_step
+        from workflows.autocode_impl.nodes.execute import node_execute_step
         base_state["dry_run"] = True
         base_state["tdd_source_code"] = "new_file.py: print('hi')"
 
-        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_llm:
+        with patch("workflows.autocode_impl.nodes.execute._call") as mock_llm:
             mock_llm.return_value = "print('hi')"
             result = node_execute_step(base_state)
 
@@ -93,7 +93,7 @@ class TestDryRunAndSafetyGuards:
 
     def test_max_retries_enforced_in_state(self, base_state):
         """tdd_iteration must increment and cap at max_retries."""
-        from workflows.autocode_helpers.state import MAX_RETRIES
+        from workflows.autocode_impl.state import MAX_RETRIES
         assert base_state["tdd_iteration"] == 0
         assert MAX_RETRIES == 3  # Default from config
 
@@ -103,7 +103,7 @@ class TestSurgicalPatchingAndFileLocks:
 
     def test_apply_patch_success_creates_bak(self, temp_workspace):
         """Successful patch must create backup and modify file."""
-        from workflows.autocode_helpers.patch import apply_patch
+        from workflows.autocode_impl.patch import apply_patch
         target = temp_workspace / "patch_target.py"
         target.write_text("def old(): pass\n", encoding="utf-8")
 
@@ -114,7 +114,7 @@ class TestSurgicalPatchingAndFileLocks:
 
     def test_apply_patch_fallback_on_mismatch(self, temp_workspace):
         """Mismatched old_text must return ok=False without corrupting file."""
-        from workflows.autocode_helpers.patch import apply_patch
+        from workflows.autocode_impl.patch import apply_patch
         target = temp_workspace / "fallback_target.py"
         target.write_text("original content", encoding="utf-8")
 
@@ -169,12 +169,12 @@ class TestMemoryCallbacks:
 
 
 class TestTDDLoopConvergence:
-    """Validate state transitions that drive the execute → test → debug → verify loop."""
+    """Validate state transitions that drive the execute ? test ? debug ? verify loop."""
 
     def test_loop_converges_after_one_pass(self, base_state, mock_llm_call):
         """Passing tests must set tdd_status='passed' and route to verify."""
-        from workflows.autocode_helpers.routes import route_after_run_tests
-        from workflows.autocode_helpers.nodes.run_tests import node_run_tests
+        from workflows.autocode_impl.routes import route_after_run_tests
+        from workflows.autocode_impl.nodes.run_tests import node_run_tests
 
         base_state["tdd_status"] = "passed"
         base_state["test_results"] = {"success": True, "output": ""}
@@ -183,7 +183,7 @@ class TestTDDLoopConvergence:
 
     def test_loop_retries_until_pass(self, base_state):
         """Failing tests must route to debug and increment iteration."""
-        from workflows.autocode_helpers.routes import route_after_run_tests
+        from workflows.autocode_impl.routes import route_after_run_tests
         base_state["tdd_status"] = "failed"
         base_state["test_results"] = {"success": False}
         assert route_after_run_tests(base_state) == "node_systematic_debug"
@@ -200,17 +200,17 @@ class TestErrorPropagationAndRouting:
     """Validate conditional edges trigger correctly on state changes."""
 
     def test_test_failure_routes_to_debug(self, base_state):
-        from workflows.autocode_helpers.routes import route_after_run_tests
+        from workflows.autocode_impl.routes import route_after_run_tests
         base_state["tdd_status"] = "failed"
         base_state["test_results"]["success"] = False
         assert route_after_run_tests(base_state) == "node_systematic_debug"
 
     def test_debug_failure_routes_back_to_run_tests(self, base_state):
-        from workflows.autocode_helpers.routes import route_after_debug
+        from workflows.autocode_impl.routes import route_after_debug
         assert route_after_debug(base_state) == "node_run_tests"
 
     def test_verify_failure_routes_to_end(self, base_state):
-        from workflows.autocode_helpers.routes import route_after_verify
+        from workflows.autocode_impl.routes import route_after_verify
         base_state["verification_passed"] = False
         assert route_after_verify(base_state) == "END"
 

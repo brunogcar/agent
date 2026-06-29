@@ -8,19 +8,19 @@ from pathlib import Path
 from unittest.mock import patch
 import pytest
 
-from workflows.autocode_helpers.graph import build_graph, get_graph
-from workflows.autocode_helpers.nodes.execute import node_execute_step
-from workflows.autocode_helpers.nodes.write_files import node_write_files
-from workflows.autocode_helpers.nodes.run_tests import node_run_tests
-from workflows.autocode_helpers.nodes.debug import node_systematic_debug
-from workflows.autocode_helpers.state import AutocodeState
+from workflows.autocode_impl.graph import build_graph, get_graph
+from workflows.autocode_impl.nodes.execute import node_execute_step
+from workflows.autocode_impl.nodes.write_files import node_write_files
+from workflows.autocode_impl.nodes.run_tests import node_run_tests
+from workflows.autocode_impl.nodes.debug import node_systematic_debug
+from workflows.autocode_impl.state import AutocodeState
 
 class TestDebugLoopRouting:
     """A.2: Debug loop must route through write_files before re-running tests."""
 
     def test_debug_edge_routes_to_write_files_not_run_tests(self):
         """After systematic debug, fixes must be written to disk before testing."""
-        from workflows.autocode_helpers.graph import build_graph
+        from workflows.autocode_impl.graph import build_graph
         g = build_graph()
         # LangGraph edges is a set of (source, target) tuples
         assert ("node_systematic_debug", "node_write_files") in g.edges, (
@@ -106,7 +106,7 @@ class TestExecuteStepIncrementsCurrentStep:
             "files_context": "# empty",
             "dry_run": True,
         }
-        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
+        with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = json.dumps({"patches": [], "new_files": {}})
             result = node_execute_step(state)
             assert "current_step" in result, (
@@ -139,7 +139,7 @@ class TestDryRunSkipsModifiedFiles:
             "files_context": "# empty",
             "dry_run": True,
         }
-        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
+        with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = json.dumps({
                 "patches": [{"path": "foo.py", "old": "a", "new": "b"}],
                 "new_files": {}
@@ -159,7 +159,7 @@ class TestDryRunSkipsModifiedFiles:
             "files_context": "# empty",
             "dry_run": False,
         }
-        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
+        with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = json.dumps({
                 "patches": [{"path": "foo.py", "old": "a", "new": "b"}],
                 "new_files": {"bar.py": "print(1)"}
@@ -182,7 +182,7 @@ class TestRunTestsWiresTargetedCmd:
             "targeted_test_cmd": "pytest tests/test_a.py -x",
             "project_root": "/tmp/project",
         }
-        with patch("workflows.autocode_helpers.nodes.run_tests.run_tests_on_disk") as mock_run:
+        with patch("workflows.autocode_impl.nodes.run_tests.run_tests_on_disk") as mock_run:
             mock_run.return_value = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
             node_run_tests(state)
             mock_run.assert_called_once()
@@ -200,7 +200,7 @@ class TestDebugParsesNestedJson:
     def test_debug_node_uses_parse_json_fallback(self):
         """Debug node imports _parse_json for robust JSON extraction."""
         import inspect
-        from workflows.autocode_helpers.nodes import debug as debug_module
+        from workflows.autocode_impl.nodes import debug as debug_module
         source = inspect.getsource(debug_module)
         assert "_parse_json" in source, (
             "debug.py must import _parse_json for JSON extraction fallback"
@@ -320,7 +320,7 @@ class TestInvalidJsonFromLlm:
             "dry_run": True,
         }
         bad_json = "This is not JSON at all { broken"
-        with patch("workflows.autocode_helpers.nodes.execute._call") as mock_call:
+        with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = bad_json
             result = node_execute_step(state)
 
@@ -337,7 +337,7 @@ class TestBrainstormEarlyReturn:
 
     def test_needs_clarification_returns_empty_dict(self):
         """When status is needs_clarification, brainstorm must return {}."""
-        from workflows.autocode_helpers.nodes.brainstorm import node_brainstorm
+        from workflows.autocode_impl.nodes.brainstorm import node_brainstorm
 
         state: AutocodeState = {
             "trace_id": "test",

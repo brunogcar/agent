@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core import charts
-from tools.report_core.paths import report_out_dir
+from tools.report_ops import charts
+from tools.report_ops.paths import report_out_dir
 
 
 class TestChartBuilder:
@@ -43,7 +43,7 @@ class TestChartBuilder:
         assert cfg["data"]["datasets"][0]["data"] == [10, 20, 30]
 
     def test_build_creates_html(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = charts.build(
             trace_id="test-chart",
             title="Revenue",
@@ -59,7 +59,7 @@ class TestChartBuilder:
         assert "chart.js" in content.lower() or "Chart" in content
 
     def test_build_no_data_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         with pytest.raises(ValueError):
             charts.build(
                 trace_id="test-empty",

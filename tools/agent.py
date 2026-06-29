@@ -1,7 +1,7 @@
 """tools/agent.py — Agent meta-tool (thin @tool facade).
 
 Replaces the monolithic Phase 7 agent() with a true thin facade.
-All business logic lives in agent_core/ submodules:
+All business logic lives in agent_ops/ submodules:
   - actions/ — MCP-visible operations (dispatch, metrics, vision_delegate, clear_cache)
   - roles/ — Per-role prompts and configs (classify, route, research, etc.)
   - context.py — Context trimming and token estimation
@@ -17,14 +17,14 @@ from __future__ import annotations
 
 from registry import tool
 from tools._meta_tool import meta_tool
-from tools.agent_core._registry import DISPATCH
+from tools.agent_ops._registry import DISPATCH
 from core.tracer import tracer
 from core.utils import compress_result
 from core.contracts import fail
 
 # Ensure actions and roles are registered before @meta_tool runs
-# This import triggers agent_core/__init__.py auto-discovery
-from tools.agent_core import ROLES  # noqa: F401
+# This import triggers agent_ops/__init__.py auto-discovery
+from tools.agent_ops import ROLES  # noqa: F401
 
 PARALLEL_SAFE = False
 

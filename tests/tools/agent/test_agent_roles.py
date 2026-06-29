@@ -4,8 +4,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
-from tools.agent_core import ROLES
-from tools.agent_core.cache import _clear_cache
+from tools.agent_ops import ROLES
+from tools.agent_ops.cache import _clear_cache
 
 
 class TestRoleConfig:
@@ -81,7 +81,7 @@ class TestBudgetOverrides:
     def test_router_uses_small_budget(self, mock_llm_result):
         """classify role should trim context to budget_tokens (4K)."""
         context = "word " * 5000
-        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.return_value = mock_llm_result
             agent(action="dispatch", role="classify", task="test", context=context)
 
@@ -90,7 +90,7 @@ class TestBudgetOverrides:
 
     def test_planner_uses_large_budget(self, mock_llm_result):
         """plan role should use 128K char budget (32K tokens)."""
-        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.return_value = mock_llm_result
             agent(action="dispatch", role="plan", task="test", context="x" * 50000)
 
@@ -107,7 +107,7 @@ class TestBudgetOverrides:
         We verify this by checking the context is NOT the full untrimmed text
         (which would happen if _max_context_chars() was used and the text fit).
         """
-        from tools.agent_core import ROLES
+        from tools.agent_ops import ROLES
         original_chars = ROLES["classify"]["role_config"].get("budget_chars")
         original_tokens = ROLES["classify"]["role_config"].get("budget_tokens")
         try:
@@ -116,7 +116,7 @@ class TestBudgetOverrides:
             if "budget_tokens" in ROLES["classify"]["role_config"]:
                 del ROLES["classify"]["role_config"]["budget_tokens"]
 
-            with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+            with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
                 mock_llm.return_value = mock_llm_result
                 agent(action="dispatch", role="classify", task="test", context="x" * 1000)
                 call_kwargs = mock_llm.call_args.kwargs

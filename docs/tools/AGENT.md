@@ -25,11 +25,11 @@ The `agent()` tool is the **meta-cognitive dispatcher** of the MCP Agent Stack. 
 
 ## 🏗️ Architecture
 
-The agent tool follows the **@meta_tool + actions/roles** pattern established by `git`, `file`, `report`, and `cli`. `tools/agent.py` is a thin `@tool` facade with `@meta_tool` auto-generated docstring. All business logic lives in `tools/agent_core/`.
+The agent tool follows the **@meta_tool + actions/roles** pattern established by `git`, `file`, `report`, and `cli`. `tools/agent.py` is a thin `@tool` facade with `@meta_tool` auto-generated docstring. All business logic lives in `tools/agent_ops/`.
 
 ```
 tools/agent.py                    # @tool + @meta_tool facade — validation, dispatch
-tools/agent_core/
+tools/agent_ops/
 ├── __init__.py                   # Auto-discovers actions/*.py and roles/*.py
 ├── _registry.py                  # DISPATCH dict + @register_action decorator
 ├── context.py                    # _trim_context(), _estimate_tokens(), _max_context_chars()
@@ -62,7 +62,7 @@ tools/agent_core/
 
 ### Auto-Discovery
 
-`tools/agent_core/__init__.py` uses `pathlib` + `importlib` to auto-discover all `.py` files in `actions/` and `roles/` at import time. This means:
+`tools/agent_ops/__init__.py` uses `pathlib` + `importlib` to auto-discover all `.py` files in `actions/` and `roles/` at import time. This means:
 - **Adding an action**: drop a file in `actions/`, decorate with `@register_action("agent", "action_name")`
 - **Adding a role**: drop a file in `roles/`, export `SYSTEM_PROMPT` and `ROLE_CONFIG`
 - **No manual registration lists** — zero risk of forgetting to wire a new action or role
@@ -450,9 +450,9 @@ tests/tools/agent/
 ```
 
 **Mock strategy:**
-- `llm.complete` is patched at `tools.agent_core.actions.dispatch.llm.complete` (where it is used)
+- `llm.complete` is patched at `tools.agent_ops.actions.dispatch.llm.complete` (where it is used)
 - `tools.vision.vision` is patched at `tools.vision.vision` (where it is imported inline)
-- `cfg` is patched at `tools.agent_core.context.cfg` (module-level import)
+- `cfg` is patched at `tools.agent_ops.context.cfg` (module-level import)
 - `mock_llm_result` is a pre-built class with all required attributes matching `LLMResponse.usage` shape: `{'prompt': int, 'completion': int, 'total': int}`
 - Cache, metrics, and parse warning logs are cleared via `clear_agent_state` autouse fixture
 
@@ -567,7 +567,7 @@ If you are an AI assistant modifying the agent tool:
 2. **Never strip or rewrite entire files** — only add comments, docstrings, or formatting. Preserve all existing code exactly.
 3. **Add roles in one place** — new roles require: (a) file in `roles/`, (b) `SYSTEM_PROMPT` and `ROLE_CONFIG` exports, (c) `sleep_learn` flag set appropriately.
 4. **Add actions in one place** — new actions require: (a) file in `actions/`, (b) `@register_action("agent", "action_name")` decorator, (c) handler function.
-5. **Module-level cfg import** — `context.py` imports `cfg` at module level. If conftest patches it, the patch must target `tools.agent_core.context.cfg`.
+5. **Module-level cfg import** — `context.py` imports `cfg` at module level. If conftest patches it, the patch must target `tools.agent_ops.context.cfg`.
 6. **Vision stays special** — never route `vision` through `llm.complete()`. Always use `action="vision_delegate"`.
 7. **Preserve traceback logic** — `_trim_context()` traceback detection must not be broken. Tracebacks are high-signal debugging content.
 8. **Test with mock_llm_result** — new tests must use the `mock_llm_result` fixture from `conftest.py`.
@@ -596,18 +596,18 @@ If you are an AI assistant modifying the agent tool:
 | `core/config.py` | **New roles:** `model_registry` entry via `_make_entry()` with env var fallback. Add direct timeout attribute if consumed outside `model_registry`. |
 | `core/llm_backend/config.py` | **New roles:** Add entry to `_defaults` dict with `model`, `provider`, `timeout`, `temperature`, `max_tokens`. |
 | `tools/agent.py` | `@tool` + `@meta_tool` facade: validation, dispatch, compress_result |
-| `tools/agent_core/__init__.py` | Auto-discovers `actions/*.py` and `roles/*.py` at import time |
-| `tools/agent_core/_registry.py` | `DISPATCH` dict + `@register_action` decorator with duplicate guard |
-| `tools/agent_core/context.py` | `_trim_context()`, `_estimate_tokens()`, `_max_context_tokens()`, `_max_context_chars()` |
-| `tools/agent_core/cache.py` | `_cache_key()`, `_get_cached()`, `_set_cached()`, `_clear_cache()` |
-| `tools/agent_core/metrics.py` | `_record_metric()`, `_get_metrics()`, `_clear_metrics()` |
-| `tools/agent_core/parse_warnings.py` | `_log_parse_warning()`, `_get_parse_warnings()`, `_clear_parse_warnings()` |
-| `tools/agent_core/json_extract.py` | `_extract_first_json()` — brace-counting extraction with dict-preference scoring |
-| `tools/agent_core/actions/dispatch.py` | `@register_action("agent", "dispatch")` — core LLM orchestrator |
-| `tools/agent_core/actions/metrics.py` | `@register_action("agent", "metrics")` — query per-role metrics |
-| `tools/agent_core/actions/vision_delegate.py` | `@register_action("agent", "vision_delegate")` — delegate to tools.vision |
-| `tools/agent_core/actions/clear_cache.py` | `@register_action("agent", "clear_cache")` — clear response cache |
-| `tools/agent_core/roles/*.py` | 12 files: `SYSTEM_PROMPT` + `ROLE_CONFIG` per role |
+| `tools/agent_ops/__init__.py` | Auto-discovers `actions/*.py` and `roles/*.py` at import time |
+| `tools/agent_ops/_registry.py` | `DISPATCH` dict + `@register_action` decorator with duplicate guard |
+| `tools/agent_ops/context.py` | `_trim_context()`, `_estimate_tokens()`, `_max_context_tokens()`, `_max_context_chars()` |
+| `tools/agent_ops/cache.py` | `_cache_key()`, `_get_cached()`, `_set_cached()`, `_clear_cache()` |
+| `tools/agent_ops/metrics.py` | `_record_metric()`, `_get_metrics()`, `_clear_metrics()` |
+| `tools/agent_ops/parse_warnings.py` | `_log_parse_warning()`, `_get_parse_warnings()`, `_clear_parse_warnings()` |
+| `tools/agent_ops/json_extract.py` | `_extract_first_json()` — brace-counting extraction with dict-preference scoring |
+| `tools/agent_ops/actions/dispatch.py` | `@register_action("agent", "dispatch")` — core LLM orchestrator |
+| `tools/agent_ops/actions/metrics.py` | `@register_action("agent", "metrics")` — query per-role metrics |
+| `tools/agent_ops/actions/vision_delegate.py` | `@register_action("agent", "vision_delegate")` — delegate to tools.vision |
+| `tools/agent_ops/actions/clear_cache.py` | `@register_action("agent", "clear_cache")` — clear response cache |
+| `tools/agent_ops/roles/*.py` | 12 files: `SYSTEM_PROMPT` + `ROLE_CONFIG` per role |
 | `tests/tools/agent/conftest.py` | Test fixtures: `mock_cfg` (autouse), `mock_llm_result` |
 | `tests/tools/agent/test_agent_validation.py` | Validation and role coverage tests |
 | `tests/tools/agent/test_agent_vision.py` | Vision delegation tests |
@@ -668,5 +668,5 @@ If you are an AI assistant modifying the agent tool:
 
 ---
 
-*Last updated: Phase 7 complete — `@meta_tool` refactor with actions/roles directories, auto-discovery, dynamic config-driven behavior, 95/95 tests passing, 1212 passed full suite. Architecture: thin facade + agent_core submodules (actions, roles, context, cache, metrics, parse_warnings, json_extract) + @meta_tool pattern consistent with git/file/report/cli.*
+*Last updated: Phase 7 complete — `@meta_tool` refactor with actions/roles directories, auto-discovery, dynamic config-driven behavior, 95/95 tests passing, 1212 passed full suite. Architecture: thin facade + agent_ops submodules (actions, roles, context, cache, metrics, parse_warnings, json_extract) + @meta_tool pattern consistent with git/file/report/cli.*
 

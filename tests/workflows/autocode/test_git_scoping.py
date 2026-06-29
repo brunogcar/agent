@@ -1,4 +1,4 @@
-﻿"""
+"""
 tests/workflows/autocode/test_git_scoping.py
 Validates project_root isolation for git_ops, branch, and commit nodes.
 Guarantees:
@@ -42,7 +42,7 @@ class TestGitOpsFallback:
     """When project_root is empty/None, git ops must use cfg.agent_root."""
 
     def test_snapshot_fallback_to_agent_root(self, temp_agent_root):
-        from workflows.autocode_helpers.git_ops import _git_snapshot
+        from workflows.autocode_impl.git_ops import _git_snapshot
         with patch("tools.git.git") as mock_git:
             mock_git.return_value = {"status": "nothing_to_commit"}
             _git_snapshot("test fallback", tid="t1", project_root=None)
@@ -50,7 +50,7 @@ class TestGitOpsFallback:
             assert call_kwargs["root"] == str(temp_agent_root)
 
     def test_commit_fallback_to_agent_root(self, temp_agent_root):
-        from workflows.autocode_helpers.git_ops import _git_commit
+        from workflows.autocode_impl.git_ops import _git_commit
         with patch("tools.git.git") as mock_git:
             mock_git.side_effect = [
                 {"status": "ok", "count": 1},
@@ -67,7 +67,7 @@ class TestGitOpsOverride:
     """When project_root is set, git ops must route to it."""
 
     def test_snapshot_uses_project_root(self, tmp_path):
-        from workflows.autocode_helpers.git_ops import _git_snapshot
+        from workflows.autocode_impl.git_ops import _git_snapshot
         custom_root = str(tmp_path / "workspace_project")
         with patch("tools.git.git") as mock_git:
             mock_git.return_value = {"status": "committed"}
@@ -75,7 +75,7 @@ class TestGitOpsOverride:
             assert mock_git.call_args[1]["root"] == custom_root
 
     def test_commit_uses_project_root(self, tmp_path):
-        from workflows.autocode_helpers.git_ops import _git_commit
+        from workflows.autocode_impl.git_ops import _git_commit
         custom_root = str(tmp_path / "workspace_project")
         with patch("tools.git.git") as mock_git:
             mock_git.side_effect = [
@@ -92,7 +92,7 @@ class TestNodeGitBranchScoping:
     """node_git_branch must pass project_root to git_ops."""
 
     def test_branch_node_routes_to_project_root(self, tmp_path):
-        from workflows.autocode_helpers.nodes.branch import node_git_branch
+        from workflows.autocode_impl.nodes.branch import node_git_branch
         custom_root = str(tmp_path / "scoped_repo")
         state = {
             "task": "branch test",
@@ -102,8 +102,8 @@ class TestNodeGitBranchScoping:
             "branch": "feat/scoped",
         }
         # [FIX] Patch where the functions are USED (in branch module), not where defined
-        with patch("workflows.autocode_helpers.nodes.branch._git_snapshot") as mock_snap, \
-             patch("workflows.autocode_helpers.nodes.branch._git_create_branch") as mock_branch:
+        with patch("workflows.autocode_impl.nodes.branch._git_snapshot") as mock_snap, \
+             patch("workflows.autocode_impl.nodes.branch._git_create_branch") as mock_branch:
             mock_snap.return_value = True
             mock_branch.return_value = True
             node_git_branch(state)
@@ -117,7 +117,7 @@ class TestNodeCommitScoping:
     """node_commit must pass project_root to _git_commit."""
 
     def test_commit_node_routes_to_project_root(self, tmp_path):
-        from workflows.autocode_helpers.nodes.commit import node_commit
+        from workflows.autocode_impl.nodes.commit import node_commit
         custom_root = str(tmp_path / "commit_repo")
         state = {
             "task": "commit test",
@@ -129,7 +129,7 @@ class TestNodeCommitScoping:
             "task_type": "feature",
         }
         # [FIX] Patch where _git_commit is USED (in commit module)
-        with patch("workflows.autocode_helpers.nodes.commit._git_commit") as mock_commit:
+        with patch("workflows.autocode_impl.nodes.commit._git_commit") as mock_commit:
             mock_commit.return_value = "sha789"
             node_commit(state)
             mock_commit.assert_called_once()

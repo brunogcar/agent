@@ -261,7 +261,7 @@ Finds files whose paths match keywords in a natural language query.
 
 ```python
 files = find_relevant_files("/project", "fix the timeout in web scraper")
-# Returns: ["tools/web.py", "tools/browser_core/actions.py", "tests/tools/web/test_web_scrape.py"]
+# Returns: ["tools/web.py", "tools/browser_ops/actions.py", "tests/tools/web/test_web_scrape.py"]
 ```
 
 **How it works:**
@@ -465,7 +465,7 @@ else:
 from core.kgraph import find_relevant_files
 
 files = find_relevant_files("/path/to/project", "fix timeout in web scraper", top_k=5)
-# Returns: ["tools/web.py", "tools/browser_core/actions.py", ...]
+# Returns: ["tools/web.py", "tools/browser_ops/actions.py", ...]
 ```
 
 #### Query dependency graph

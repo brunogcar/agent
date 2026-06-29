@@ -4,7 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
-from tools.agent_core.cache import _clear_cache
+from tools.agent_ops.cache import _clear_cache
 
 
 class TestModelEscalation:
@@ -25,7 +25,7 @@ class TestModelEscalation:
         escalation_result.model = "planner"
         escalation_result.usage = {"total": 20}
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.side_effect = [mock_llm_result, escalation_result]
             result = agent(action="dispatch", role="route", task="test")
 
@@ -38,7 +38,7 @@ class TestModelEscalation:
         mock_llm_result.text = '{"workflow": "research"}'
         mock_llm_result.parsed = None
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result) as mock_llm:
             result = agent(action="dispatch", role="route", task="test")
             assert result["status"] == "success"
             assert "parsed" in result
@@ -56,7 +56,7 @@ class TestModelEscalation:
         escalation_result.model = "planner"
         escalation_result.usage = {"total": 20}
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.side_effect = [mock_llm_result, escalation_result]
             result = agent(action="dispatch", role="route", task="test")
 
@@ -77,7 +77,7 @@ class TestModelEscalation:
         escalation_result.model = "planner-model"
         escalation_result.usage = {"total": 25}
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.side_effect = [mock_llm_result, escalation_result]
             result = agent(action="dispatch", role="route", task="test")
 

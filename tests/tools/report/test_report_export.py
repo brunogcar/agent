@@ -3,24 +3,24 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core import export
+from tools.report_ops import export
 
 
 class TestExport:
     """PDF/PNG export via Playwright (optional)."""
 
     def test_export_missing_data_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         with pytest.raises(ValueError, match="data must be"):
             export.run(trace_id="test", title="X", data=None, config={})
 
     def test_export_missing_file_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         with pytest.raises(ValueError, match="not found"):
             export.run(trace_id="test", title="X", data="nonexistent.html", config={})
 
     def test_export_html_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         # Create a dummy HTML file in workspace/reports
         report_dir = tmp_path / "reports" / "test-export"
         report_dir.mkdir(parents=True)
@@ -43,7 +43,7 @@ class TestExport:
 
     def test_export_scoping_workspace(self, tmp_path, monkeypatch):
         """Export should resolve paths relative to workspace by default."""
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         report_dir = tmp_path / "reports" / "test-scope"
         report_dir.mkdir(parents=True)
         html_file = report_dir / "scope.html"

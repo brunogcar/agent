@@ -8,9 +8,9 @@ from unittest.mock import patch
 @pytest.fixture(autouse=True)
 def clear_agent_state():
     """Clear cache and metrics between every test."""
-    from tools.agent_core.cache import _clear_cache
-    from tools.agent_core.metrics import _clear_metrics
-    from tools.agent_core.parse_warnings import _clear_parse_warnings
+    from tools.agent_ops.cache import _clear_cache
+    from tools.agent_ops.metrics import _clear_metrics
+    from tools.agent_ops.parse_warnings import _clear_parse_warnings
     _clear_cache()
     _clear_metrics()
     _clear_parse_warnings()
@@ -25,7 +25,7 @@ def mock_cfg():
         max_tokens = 1000
         timeout = 30
         max_context_tokens = 8000
-    with patch("tools.agent_core.context.cfg", FakeCfg()):
+    with patch("tools.agent_ops.context.cfg", FakeCfg()):
         yield FakeCfg()
 
 

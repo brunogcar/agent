@@ -38,7 +38,7 @@ workflows/deep_research.py
 │   ├── ThreadPoolExecutor(max_workers=1)
 │   └── run_workflow()                # Dispatcher
 
-workflows/deep_research_core/
+workflows/deep_research_impl/
 ├── graph.py                          # LangGraph builder
 │   ├── _node_recall()                # Phase 1: Memory recall
 │   ├── _node_decompose()             # Phase 2: Goal decomposition
@@ -429,14 +429,14 @@ tests/workflows/deep_research/
 | File | Purpose |
 |------|---------|
 | `workflows/deep_research.py` | `run_deep_research()` — sync facade with ThreadPoolExecutor |
-| `workflows/deep_research_core/graph.py` | `build_deep_research_graph()` — 8-node LangGraph StateGraph |
-| `workflows/deep_research_core/state.py` | `DeepResearchState` — extended TypedDict with budget fields |
-| `workflows/deep_research_core/routes.py` | `route_after_synthesize()` — conditional routing logic |
-| `workflows/deep_research_core/budget.py` | `decrement_api_calls()`, `decrement_browser_actions()`, `is_budget_exhausted()` — budget tracking |
-| `workflows/deep_research_core/constants.py` | `SYNTHESIZE_SYSTEM_PROMPT`, `EVALUATE_SYSTEM_PROMPT`, `CONVERGENCE_SIMILARITY_THRESHOLD` — shared constants |
-| `workflows/deep_research_core/nodes/decompose.py` | `node_decompose_goal()` — goal decomposition |
-| `workflows/deep_research_core/nodes/search.py` | `node_search()` — multi-tool search |
-| `workflows/deep_research_core/nodes/synthesize.py` | `node_synthesize()` — synthesis + evaluation |
+| `workflows/deep_research_impl/graph.py` | `build_deep_research_graph()` — 8-node LangGraph StateGraph |
+| `workflows/deep_research_impl/state.py` | `DeepResearchState` — extended TypedDict with budget fields |
+| `workflows/deep_research_impl/routes.py` | `route_after_synthesize()` — conditional routing logic |
+| `workflows/deep_research_impl/budget.py` | `decrement_api_calls()`, `decrement_browser_actions()`, `is_budget_exhausted()` — budget tracking |
+| `workflows/deep_research_impl/constants.py` | `SYNTHESIZE_SYSTEM_PROMPT`, `EVALUATE_SYSTEM_PROMPT`, `CONVERGENCE_SIMILARITY_THRESHOLD` — shared constants |
+| `workflows/deep_research_impl/nodes/decompose.py` | `node_decompose_goal()` — goal decomposition |
+| `workflows/deep_research_impl/nodes/search.py` | `node_search()` — multi-tool search |
+| `workflows/deep_research_impl/nodes/synthesize.py` | `node_synthesize()` — synthesis + evaluation |
 | `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()` — shared infrastructure |
 | `tools/agent.py` | `agent(action="dispatch", role="research")` — synthesis |
 | `tools/agent.py` | `agent(action="dispatch", role="executor")` — evaluation |

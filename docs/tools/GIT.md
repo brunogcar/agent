@@ -421,7 +421,7 @@ If you are an AI assistant modifying the git tool:
 | `tests/tools/git/` | Test files covering all actions |
 | `tests/tools/git/conftest.py` | Test fixtures: `mock_cfg` (autouse), `git_repo` |
 | `tests/tools/test_meta_tool.py` | `@meta_tool` decorator unit tests |
-| `workflows/autocode_helpers/git_ops.py` | Autocode workflow helpers: `_git_snapshot`, `_git_commit`, `_git_create_branch` |
+| `workflows/autocode_impl/git_ops.py` | Autocode workflow helpers: `_git_snapshot`, `_git_commit`, `_git_create_branch` |
 
 ---
 

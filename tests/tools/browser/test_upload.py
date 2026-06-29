@@ -14,7 +14,7 @@ class TestUpload:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        with patch("tools.browser_core.actions.upload.resolve_path") as mock_resolve:
+        with patch("tools.browser_ops.actions.upload.resolve_path") as mock_resolve:
             mock_resolve.return_value = (test_file, None)
             mock_browser["page"].set_input_files = AsyncMock(return_value=None)
             result = browser(
@@ -34,7 +34,7 @@ class TestUpload:
 
     def test_upload_path_guard_rejects(self, mock_browser):
         """Path guard must reject paths outside workspace."""
-        with patch("tools.browser_core.actions.upload.resolve_path") as mock_resolve:
+        with patch("tools.browser_ops.actions.upload.resolve_path") as mock_resolve:
             mock_resolve.return_value = (None, "Path outside workspace")
             result = browser(
                 action="upload",

@@ -1,5 +1,5 @@
 """Tests for DISPATCH registry, metadata coverage, and PRESETS."""
-from tools.report_core._registry import DISPATCH, DISPATCH_METADATA, PRESETS
+from tools.report_ops._registry import DISPATCH, DISPATCH_METADATA, PRESETS
 
 
 class TestRegistry:
@@ -31,28 +31,28 @@ class TestRegistry:
             assert isinstance(info["help"], str), f"Action {name} help not a string"
 
     def test_list_action_returns_catalog(self):
-        from tools.report_core.actions.list import run_list
+        from tools.report_ops.actions.list import run_list
         result = run_list()
         assert result["type"] == "list"
         assert result["count"] == 11
         assert len(result["actions"]) == 11
 
     def test_help_action_specific(self):
-        from tools.report_core.actions.help import run_help
+        from tools.report_ops.actions.help import run_help
         result = run_help(data="chart")
         assert result["type"] == "help"
         assert result["action"] == "chart"
         assert "description" in result
 
     def test_help_action_all(self):
-        from tools.report_core.actions.help import run_help
+        from tools.report_ops.actions.help import run_help
         result = run_help()
         assert result["type"] == "help"
         assert result["count"] == 11
         assert "actions" in result
 
     def test_help_unknown_action(self):
-        from tools.report_core.actions.help import run_help
+        from tools.report_ops.actions.help import run_help
         result = run_help(data="nonexistent")
         assert "error" in result
         assert "known_actions" in result

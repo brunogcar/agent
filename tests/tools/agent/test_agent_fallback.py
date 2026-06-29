@@ -4,7 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from tools.agent import agent
-from tools.agent_core.cache import _clear_cache
+from tools.agent_ops.cache import _clear_cache
 
 
 class TestRoleFallback:
@@ -25,7 +25,7 @@ class TestRoleFallback:
         fallback_result.usage = {"total": 10}
         fallback_result.parsed = None
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.side_effect = [mock_llm_result, fallback_result]
             result = agent(action="dispatch", role="classify", task="test")
 
@@ -45,7 +45,7 @@ class TestRoleFallback:
         fallback_result.usage = {"total": 10}
         fallback_result.parsed = None
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete") as mock_llm:
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
             mock_llm.side_effect = [mock_llm_result, fallback_result]
             result = agent(action="dispatch", role="critique", task="test")
 
@@ -57,7 +57,7 @@ class TestRoleFallback:
         mock_llm_result.ok = False
         mock_llm_result.error = "Model error"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="plan", task="test")
             assert result["status"] == "error"
 
@@ -66,6 +66,6 @@ class TestRoleFallback:
         mock_llm_result.ok = False
         mock_llm_result.error = "Both failed"
 
-        with patch("tools.agent_core.actions.dispatch.llm.complete", return_value=mock_llm_result):
+        with patch("tools.agent_ops.actions.dispatch.llm.complete", return_value=mock_llm_result):
             result = agent(action="dispatch", role="classify", task="test")
             assert result["status"] == "error"

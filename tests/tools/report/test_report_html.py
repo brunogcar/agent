@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core import html
+from tools.report_ops import html
 
 
 class TestHtmlRenderer:
@@ -37,7 +37,7 @@ class TestHtmlRenderer:
         assert out.exists()
 
     def test_build_report_creates_manifest(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = html.build_report(
             trace_id="test-report",
             title="Q3 Analysis",
@@ -54,7 +54,7 @@ class TestHtmlRenderer:
         assert manifest["action"] == "report"
 
     def test_build_report_creates_metrics(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         html.build_report(
             trace_id="test-metrics",
             title="Metrics Test",
@@ -68,7 +68,7 @@ class TestHtmlRenderer:
         assert metrics["has_data"] is True
 
     def test_build_dashboard(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = html.build_dashboard(
             trace_id="test-dash",
             title="Dashboard",
@@ -80,7 +80,7 @@ class TestHtmlRenderer:
         assert Path(result["html_path"]).exists()
 
     def test_build_dashboard_no_data_flag(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         html.build_dashboard(
             trace_id="test-empty-dash",
             title="Empty",

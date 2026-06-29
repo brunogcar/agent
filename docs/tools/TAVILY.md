@@ -400,7 +400,7 @@ tests/tools/tavily/
 | `trace_id` propagation | Currently `""` in all action results. Pass facade `trace_id` through to `ok()`/`fail()` calls in all handlers | P1 |
 | `research` workflow integration | Formalize `_do_research()` as a node in `workflows/deep_research.py` with proper input/output contracts | P1 |
 | `_do_research()` expose or remove | Decide: (a) add `action="research"` to facade, (b) keep internal and wire directly from `deep_research`, or (c) remove if unused. Currently exists but has no caller | P1 |
-| Wire `_do_research()` into `deep_research` | Call from `deep_research_core/nodes/search.py` when iteration > 3 and completeness < 50 as accelerator | P1 |
+| Wire `_do_research()` into `deep_research` | Call from `deep_research_impl/nodes/search.py` when iteration > 3 and completeness < 50 as accelerator | P1 |
 | `tavily(search)` as primary search in research workflow | Replace `web(search)` with `tavily(search)` in `workflows/research.py` when API key is available | P2 |
 | `tavily(search)` → `browser` fallback chain | For JS-heavy results, auto-retry with `browser(navigate+text_content)` | P2 |
 | Cost tracking | Tokens × price metadata for agent budget visibility | P3 |

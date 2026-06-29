@@ -52,7 +52,7 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ---
 
-### 2. 🔬 Deep Research (`workflows/deep_research.py` + `workflows/deep_research_core/`)
+### 2. 🔬 Deep Research (`workflows/deep_research.py` + `workflows/deep_research_impl/`)
 **Purpose:** Iterative, multi-faceted research for complex questions. ReAct-style loop with self-evaluation.
 
 **Flow:** recall → decompose → search → synthesize → [route: loop or exit] → report → notify → store → distill
@@ -93,7 +93,7 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ---
 
-### 4. 🤖 Autocode (`workflows/autocode.py` + `workflows/autocode_helpers/`)
+### 4. 🤖 Autocode (`workflows/autocode.py` + `workflows/autocode_impl/`)
 **Purpose:** Autonomous code generation with TDD, git scoping, and architectural safety.
 
 **Flow:** classify → validate → brainstorm → plan → branch → tests → execute → write_files → analyze_impact → run_tests → [debug → retry] → verify → report → commit → distill

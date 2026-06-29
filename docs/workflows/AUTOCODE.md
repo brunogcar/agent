@@ -617,31 +617,31 @@ tests/workflows/autocode/
 | File | Purpose |
 |------|---------|
 | `workflows/autocode.py` | `run_autocode_agent()` — main entry point |
-| `workflows/autocode_helpers/graph.py` | `build_graph()` — 17-node LangGraph StateGraph builder |
-| `workflows/autocode_helpers/state.py` | `AutocodeState` — extended TypedDict with autocode-specific fields |
-| `workflows/autocode_helpers/routes.py` | `route_after_classify()`, `route_after_tests()` — conditional routing |
-| `workflows/autocode_helpers/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers |
-| `workflows/autocode_helpers/git_ops.py` | `_git_snapshot()`, `_git_create_branch()`, `_git_commit()` — git operations |
-| `workflows/autocode_helpers/patch.py` | `apply_patch()`, `apply_patches()`, `extract_relevant_sections()` — patch application |
-| `workflows/autocode_helpers/mermaid.py` | `export_mermaid()` — mermaid diagram export |
-| `workflows/autocode_helpers/test_mapper.py` | `get_targeted_tests()`, `_build_test_index()` — test mapping |
-| `workflows/autocode_helpers/test_runner.py` | `run_tests_on_disk()` — test execution |
-| `workflows/autocode_helpers/nodes/classify.py` | `node_classify_task()` — task classification |
-| `workflows/autocode_helpers/nodes/validate.py` | `node_validate_input()` — input validation |
-| `workflows/autocode_helpers/nodes/brainstorm.py` | `node_brainstorm()` — approach brainstorming |
-| `workflows/autocode_helpers/nodes/plan.py` | `node_write_plan()` — plan generation |
-| `workflows/autocode_helpers/nodes/branch.py` | `node_git_branch()` — git branch creation |
-| `workflows/autocode_helpers/nodes/tests.py` | `node_write_tests()` — test generation |
-| `workflows/autocode_helpers/nodes/execute.py` | `node_execute_step()` — plan step execution |
-| `workflows/autocode_helpers/nodes/write_files.py` | `node_write_files()` — file writing |
-| `workflows/autocode_helpers/nodes/run_tests.py` | `node_run_tests()` — test execution |
-| `workflows/autocode_helpers/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis |
-| `workflows/autocode_helpers/nodes/debug.py` | `node_systematic_debug()` — debug analysis |
-| `workflows/autocode_helpers/nodes/verify.py` | `node_verify()` — verification |
-| `workflows/autocode_helpers/nodes/commit.py` | `node_git_commit()` — git commit |
-| `workflows/autocode_helpers/nodes/memory.py` | `node_distill_memory()` — procedural memory storage |
-| `workflows/autocode_helpers/nodes/create_skill.py` | `node_create_skill()` — skill creation |
-| `workflows/autocode_helpers/nodes/report.py` | `node_report()` — report generation |
+| `workflows/autocode_impl/graph.py` | `build_graph()` — 17-node LangGraph StateGraph builder |
+| `workflows/autocode_impl/state.py` | `AutocodeState` — extended TypedDict with autocode-specific fields |
+| `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_tests()` — conditional routing |
+| `workflows/autocode_impl/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers |
+| `workflows/autocode_impl/git_ops.py` | `_git_snapshot()`, `_git_create_branch()`, `_git_commit()` — git operations |
+| `workflows/autocode_impl/patch.py` | `apply_patch()`, `apply_patches()`, `extract_relevant_sections()` — patch application |
+| `workflows/autocode_impl/mermaid.py` | `export_mermaid()` — mermaid diagram export |
+| `workflows/autocode_impl/test_mapper.py` | `get_targeted_tests()`, `_build_test_index()` — test mapping |
+| `workflows/autocode_impl/test_runner.py` | `run_tests_on_disk()` — test execution |
+| `workflows/autocode_impl/nodes/classify.py` | `node_classify_task()` — task classification |
+| `workflows/autocode_impl/nodes/validate.py` | `node_validate_input()` — input validation |
+| `workflows/autocode_impl/nodes/brainstorm.py` | `node_brainstorm()` — approach brainstorming |
+| `workflows/autocode_impl/nodes/plan.py` | `node_write_plan()` — plan generation |
+| `workflows/autocode_impl/nodes/branch.py` | `node_git_branch()` — git branch creation |
+| `workflows/autocode_impl/nodes/tests.py` | `node_write_tests()` — test generation |
+| `workflows/autocode_impl/nodes/execute.py` | `node_execute_step()` — plan step execution |
+| `workflows/autocode_impl/nodes/write_files.py` | `node_write_files()` — file writing |
+| `workflows/autocode_impl/nodes/run_tests.py` | `node_run_tests()` — test execution |
+| `workflows/autocode_impl/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis |
+| `workflows/autocode_impl/nodes/debug.py` | `node_systematic_debug()` — debug analysis |
+| `workflows/autocode_impl/nodes/verify.py` | `node_verify()` — verification |
+| `workflows/autocode_impl/nodes/commit.py` | `node_git_commit()` — git commit |
+| `workflows/autocode_impl/nodes/memory.py` | `node_distill_memory()` — procedural memory storage |
+| `workflows/autocode_impl/nodes/create_skill.py` | `node_create_skill()` — skill creation |
+| `workflows/autocode_impl/nodes/report.py` | `node_report()` — report generation |
 | `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()` — shared infrastructure |
 | `tools/agent.py` | `agent(action="dispatch", role="...")` — LLM calls |
 | `tools/git.py` | `git(action="snapshot")`, `git(action="commit")` — git operations |

@@ -30,8 +30,8 @@ def autocode_graph(_: None = Depends(check_auth)):
     Useful for debugging routing loops or documenting workflow structure.
     Auth: Bearer token (GATEWAY_SECRET).
     """
-    from workflows.autocode_helpers.graph import build_graph
-    from workflows.autocode_helpers.mermaid import export_mermaid
+    from workflows.autocode_impl.graph import build_graph
+    from workflows.autocode_impl.mermaid import export_mermaid
     graph = build_graph()
     mermaid = export_mermaid(graph)
     return Response(content=mermaid, media_type="text/plain")

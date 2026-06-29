@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.report_core import scorecard
+from tools.report_ops import scorecard
 
 
 class TestScorecard:
@@ -44,7 +44,7 @@ class TestScorecard:
         assert cfg["data"]["datasets"][1]["label"] == "Target"
 
     def test_build_creates_html(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = scorecard.build(
             trace_id="test-scorecard",
             title="Health Check",
@@ -61,12 +61,12 @@ class TestScorecard:
         assert "85.0" in content or "85" in content
 
     def test_build_missing_data_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         with pytest.raises(ValueError, match="scorecard requires"):
             scorecard.build(trace_id="test-missing", title="X", data=[], config={})
 
     def test_build_weighted_score(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.report_core.paths.cfg.workspace_root", tmp_path)
+        monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         result = scorecard.build(
             trace_id="test-weighted",
             title="Weighted",

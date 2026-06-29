@@ -229,7 +229,7 @@ tests/tools/consult/
 | Feature | Notes | Priority |
 |---------|-------|----------|
 | `@meta_tool` refactor | Add `action` param (`review`, `advise`, `explain`) with `Literal` validation and auto-generated schema | P0 |
-| Un-multiplex | Extract `_do_review`, `_do_advise`, `_do_explain` into atomic handlers (follow `browser_core/actions/` pattern) | P0 |
+| Un-multiplex | Extract `_do_review`, `_do_advise`, `_do_explain` into atomic handlers (follow `browser_ops/actions/` pattern) | P0 |
 | Test restructure | Add `conftest.py`, split `test_consult.py` into per-action files | P1 |
 | `trace_id` support | Inject `trace_id` into all responses for observability | P1 |
 | `format` param | `markdown` / `json` / `bullet_points` output formatting | P1 |
