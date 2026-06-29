@@ -1,14 +1,13 @@
 # 📊 Data Workflow
 
-The `data` workflow executes Python-based data analysis, calculations, and dataset generation. It is the agent's primary tool for running pandas/numpy code, performing statistical analysis, and generating data-driven insights.
+The `data` workflow handles **data analysis and visualization** tasks. It takes a natural language goal, optionally some initial Python code, and produces a data analysis result with optional visualization.
 
 **Key characteristics:**
-- **Code execution on disk** — Real Python code runs via `python_exec` tool with `mode="run_data"`
-- **Optional code generation** — If no code is provided, delegates to `agent(role="code")` to generate Python from the goal
-- **Critique layer** — `agent(role="critique")` evaluates output quality against the original goal
-- **Memory integration** — Stores both episodic (what was done) and procedural (how it was done) memories
-- **Best-effort critique** — Failed critique does not fail the workflow; output is used as-is
-- **5-node linear pipeline** — Simple, fast, no loops
+- **Goal-driven** — User describes what they want; LLM generates the analysis code
+- **Execution loop** — Generated code is executed in the sandboxed Python environment
+- **Critique loop** — If execution fails, the LLM critiques the error and generates a fix
+- **Memory integration** — Recalls relevant past analyses for context
+- **Notification** — Reports completion to the user
 
 ---
 
@@ -17,22 +16,23 @@ The `data` workflow executes Python-based data analysis, calculations, and datas
 ```python
 from workflows.base import run_workflow
 
-# With explicit code
+# Basic analysis
 result = run_workflow(
     workflow_type="data",
-    goal="Analyse monthly sales and find the top 3 months",
-    code="import pandas as pd
-df = pd.read_csv('sales.csv')
-print(df.groupby('month')['revenue'].sum().nlargest(3))",
+    goal="Analyze the top 5 most active months from the sales dataset",
+    trace_id="data_001",
 )
 
-# Without code — agent generates it
+# With initial code
 result = run_workflow(
     workflow_type="data",
-    goal="Calculate the mean and standard deviation of a list of numbers",
+    goal="Plot a bar chart of monthly revenue",
+    code="import pandas as pd; df = pd.read_csv('sales.csv')",
+    trace_id="data_002",
 )
 
-print(result["result"])  # Output + critique analysis
+print(result["status"])  # "success" | "failed"
+print(result["result"])  # "Analysis complete: Top 5 months are..."
 ```
 
 ---
@@ -41,261 +41,186 @@ print(result["result"])  # Output + critique analysis
 
 ```text
 workflows/data.py
-├── build_data_graph()              # StateGraph builder: 5 nodes + 2 conditional edges
-├── node_recall(state)              # Memory recall: episodic + semantic
-├── node_execute(state)             # Code generation (if needed) + python_exec execution
-├── node_critique(state)            # LLM critique of output quality
-├── node_store(state)               # Episodic + procedural memory storage
-├── node_notify(state)              # Desktop notification + node_done()
-├── route_after_execute(state)      # "critique" if success, "failed" if error
-└── route_after_critique(state)     # Always "store"
+├── build_data_graph()              # 5-node LangGraph StateGraph
+│   ├── node_recall()               # Phase 1: Memory recall
+│   ├── node_execute()              # Phase 2: Code generation + execution
+│   ├── route_after_execute()       # Conditional: failed → END, success → critique
+│   ├── node_critique()             # Phase 3: Review + critique
+│   ├── node_store()                # Phase 4: Store results in memory
+│   └── node_notify()               # Phase 5: Notify user
 ```
 
-### Execution Flow
+### Data Flow
 
 ```mermaid
 graph TD
- A["START"] --> B["node_recall"]
- B --> C["node_execute"]
- C --> D{"route_after_execute"}
- D -->|success| E["node_critique"]
- D -->|failed| END
- E --> F["node_store"]
- F --> G["node_notify"]
- G --> END
+    A["node_recall<br/>Phase 1: Memory"] --> B["node_execute<br/>Phase 2: Code Gen + Run"]
+    B --> C{"route_after_execute<br/>Conditional"}
+    C -->|failed| D["END<br/>Error result"]
+    C -->|success| E["node_critique<br/>Phase 3: Review"]
+    E --> F["node_store<br/>Phase 4: Memory"]
+    F --> G["node_notify<br/>Phase 5: Notify"]
+    G --> H["END<br/>Success result"]
 ```
 
 **Key design decisions:**
-- **Code generation fallback** — If `code` is not provided in state, `node_execute` delegates to `agent(role="code")` which returns structured JSON with `{analysis, patch, assumptions, tests}`. The `patch` field is extracted as the code to run. If the JSON doesn't contain a `patch`, falls back to regex extraction from markdown code blocks.
-- **Structured response parsing** — `agent(role="code")` returns JSON. `node_execute` tries `parsed["patch"]` first, then regex ````python
-(.*?)
-```
-`, then raw text. Three-level fallback for robustness.
-- **Critique is advisory** — `node_critique` uses `agent(role="critique")` with a 90s timeout. If it fails, the workflow continues with just the raw output. The critique is appended to the result as `OUTPUT:
-...
-
-ANALYSIS:
-...`.
-- **Dual memory storage** — `node_store` saves: (1) episodic memory of the analysis result, and (2) procedural memory of the working code (if code was generated and execution succeeded). This enables future reuse of successful data patterns.
-- **No loops** — Unlike `autocode` or `deep_research`, the data workflow is a straight pipeline. No retry, no iteration. Fast and deterministic.
-- **LangGraph immutability** — All nodes return partial update `dict`s. No in-place state mutation. No `**state` spreading.
+- **Memory first** — `node_recall` runs before code generation to provide relevant past analyses as context. This improves the quality of generated code.
+- **Single-pass execution** — The workflow does not loop on execution failure. If code generation fails, the workflow ends with an error. If execution fails, the error is captured but the workflow still proceeds to critique (not retry).
+- **Critique as review, not retry** — `node_critique` reviews the output and provides feedback. It does not generate a fix or retry execution. The critique is stored in memory for future reference.
+- **Procedural memory** — If code was generated and execution succeeded, the code is stored in procedural memory. This enables future recall of similar analyses.
+- **No JSON parsing** — The code role outputs raw Python code, not JSON. The workflow extracts code from markdown fences using regex.
+- **Result compression** — The execution output is compressed via `compress_result()` before being returned. This prevents oversized responses.
 
 ---
 
-## 📝 Workflow State
+## 📝 Node Reference
 
-The data workflow uses the shared `WorkflowState` from `workflows/base.py` with these data-specific keys:
+### `node_recall(state)` — Phase 1: Memory Recall
 
+**Purpose:** Recall relevant past analyses from memory.
+
+**Logic:**
 ```python
-class WorkflowState(TypedDict, total=False):
-    # Core inputs
-    goal: str              # User's data analysis goal
-    code: str              # Optional Python code to execute
-    trace_id: str          # Trace identifier
-
-    # Memory
-    memory_context: str    # Recalled memories from node_recall
-
-    # Execution
-    output: str            # stdout from python_exec
-    exec_error: str        # Error message if execution failed
-    result: str            # Final output + critique analysis
-
-    # Status
-    status: str            # "pending" | "running" | "complete" | "error" | "failed"
-    error: str             # Error message
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `goal` | `str` | User's data analysis goal or question |
-| `code` | `str` | Optional Python code. If empty, `agent(role="code")` generates it. |
-| `memory_context` | `str` | Recalled memories: `[episodic] text` or `[semantic] text` |
-| `output` | `str` | Raw stdout from `python(mode="run_data", code=...)` |
-| `exec_error` | `str` | Error message if `python` execution failed |
-| `result` | `str` | Final result: `OUTPUT:
-...
-
-ANALYSIS:
-...` (or just output if critique failed) |
-
----
-
-## ⚡ Nodes
-
-### `node_recall` — Memory Recall
-
-Queries ChromaDB memory collections before execution:
-- **Episodic:** "Have I done this analysis before?"
-- **Semantic:** "What patterns do I know about this data topic?"
-
-Results formatted as `[type] text` and injected into `memory_context`.
-
-**Output:** `"memory_context"`
-
-### `node_execute` — Code Generation + Execution
-
-**Two paths:**
-
-**Path A: Code provided**
-```python
-code = state.get("code", "")
-result = python(mode="run_data", code=code)
-```
-
-**Path B: Code generation needed**
-```python
-r = agent(
-    role="code",
-    task=f"Write Python code to: {goal}. Use print() for all output.",
-    context=state.get("memory_context", ""),
-    trace_id=state.get("trace_id", ""),
+memory.recall(
+    query=goal,
+    limit=5,
+    trace_id=state["trace_id"],
 )
-# Extract code from structured response:
-# 1. parsed["patch"] (JSON field)
-# 2. regex: ```python
-(.*?)
-``` (markdown block)
-# 3. raw text (fallback)
-code = extracted_code
-result = python(mode="run_data", code=code)
 ```
+
+**Output:** Partial dict with `memory_context`.
+
+**Error handling:** If memory recall fails, returns `{"memory_context": ""}` (empty string). The workflow proceeds without context.
+
+### `node_execute(state)` — Phase 2: Code Generation + Execution
+
+**Purpose:** Generate Python code from the goal and execute it.
+
+**Logic:**
+1. Build prompt with goal, memory context, and initial code (if provided)
+2. Call `agent(role="code", task=...)` to generate code
+3. Extract code from markdown fences using regex
+4. Execute code via `python(code=...)`
+5. Return output or error
+
+**Output:** Partial dict with `output`, `exec_error`, `code`.
 
 **Error handling:**
-- Code generation fails → `node_error(state, "execute", ...)` → END
-- Code execution fails → `exec_error` set, routed to END via `route_after_execute`
+- Code generation fails → `node_error(state, "execute", ...)` → workflow ends
+- Execution fails → `exec_error` set, output is empty string
+- Code extraction fails → `node_error(state, "execute", ...)` → workflow ends
 
-**Output:** `"output"`, `"exec_error"`, `"code"` (if generated)
-
-### `node_critique` — Output Quality Evaluation
-
-Uses `agent(role="critique")` to evaluate whether the output adequately answers the goal.
-
-**Prompt:** `"Does this output adequately answer: '{goal}'? Note any missing analysis, errors, or improvements."`
-
-**Timeout:** 90s (agent facade default).
-
-**Best-effort:** If critique fails, returns raw output as `result`. Never fails the workflow.
-
-**Output:** `"result"` — `OUTPUT:
-...
-
-ANALYSIS:
-...` (or just output)
-
-### `node_store` — Memory Persistence
-
-Stores two types of memory:
-
-**Episodic:**
+**Regex for code extraction:**
 ```python
-memory.store_episodic(
-    text=f"Data analysis: '{goal[:60]}'
-Result: {result[:400]}",
-    importance=6,
-    goal=goal,
-    outcome="success",
-    tools_used="python,agent,memory",
-    trace_id=state.get("trace_id", ""),
-)
+match = re.search(r"```python\n(.*?)\`\`\`", text, re.DOTALL)
 ```
 
-**Procedural** (only if code was generated and execution succeeded):
+> **Note:** The regex uses `\`\`\`` which is a malformed escape sequence in raw strings. This emits a `SyntaxWarning` in modern Python. Should be `\n```` or use non-raw string.
+
+### `route_after_execute(state)` — Conditional Router
+
+**Purpose:** Route to critique or END based on execution result.
+
+**Logic:**
 ```python
-memory.store_procedural(
-    text=f"Working data code for '{goal[:60]}':
-{code[:400]}",
-    importance=6,
-    tags="data,python,working-code",
-    trace_id=state.get("trace_id", ""),
-)
+if state.get("exec_error"):
+    return "failed"  # → END
+return "critique"    # → node_critique
 ```
 
-**Output:** Empty dict (side effects only)
+**Output:** String literal `"failed"` or `"critique"`.
 
-### `node_notify` — Completion Notification
+### `node_critique(state)` — Phase 3: Review + Critique
 
-Calls `notify(action="send", title="Data analysis complete", message=...)` and marks workflow done.
+**Purpose:** Review the execution output and provide feedback.
 
-**Output:** `node_done(state, result=...)`
+**Logic:**
+1. Call `agent(role="critique", task=...)` with the output
+2. Return the critique text
 
----
+**Output:** Partial dict with `result` (critique text).
 
-## 🔄 Conditional Routing
+**Guard:** If `output` is empty, returns empty state (no critique). This is a silent skip — no trace step explains why.
 
-### `route_after_execute`
+### `node_store(state)` — Phase 4: Memory Storage
 
-| Condition | Route |
-|-----------|-------|
-| `state.get("exec_error")` is truthy | → `END` (workflow fails) |
-| Otherwise | → `node_critique` |
+**Purpose:** Store the analysis result in memory.
 
-### `route_after_critique`
+**Logic:**
+1. Store semantic memory: `memory.store_semantic(text=result, ...)`
+2. Store procedural memory: `memory.store_procedural(text=code, ...)` (only if code was generated and execution succeeded)
 
-Always → `node_store` (critique is advisory, never fails workflow)
+**Output:** Empty dict (side effects only).
+
+**Note:** Procedural memory is stored for ALL successful executions, including user-provided code. The doc says "only if code was generated" but the code doesn't distinguish.
+
+### `node_notify(state)` — Phase 5: User Notification
+
+**Purpose:** Notify the user of completion.
+
+**Logic:**
+1. Call `notify(action="notify", message=...)` with the result
+2. Return `node_done(state, result=...)`
+
+**Output:** `node_done` result dict.
 
 ---
 
 ## ⚙️ Configuration
 
 ```ini
-# .env — no data-specific env vars currently
+# .env — no data-specific env vars
 # Uses shared config:
-#   EXECUTION_TIMEOUT — python_exec timeout
-#   PLANNER_TIMEOUT — agent(role="code") timeout
+# cfg.code_timeout — for agent(role="code")
+# cfg.critique_timeout — for agent(role="critique")
+# cfg.python_timeout — for python(code=...)
 ```
 
 ```python
 # core/config.py
 # No data-specific config. Uses:
-#   cfg.execution_timeout — for python_exec
-#   cfg.planner_timeout — for agent(role="code")
-#   cfg.agent_timeout — for agent(role="critique")
+# cfg.code_timeout — LLM code generation timeout
+# cfg.critique_timeout — LLM critique timeout
+# cfg.python_timeout — Python execution timeout
 ```
 
 ---
 
 ## 📤 Output
 
-The workflow returns a `WorkflowState` dict:
+The workflow returns a `dict`:
 
 ```json
 {
-  "status": "complete",
-  "result": "OUTPUT:
-Top 3 months: Jan ($120K), Mar ($115K), Dec ($110K)
-
-ANALYSIS:
-The analysis correctly identifies the top revenue months...",
-  "goal": "Analyse monthly sales and find the top 3 months",
-  "output": "Top 3 months: Jan ($120K), Mar ($115K), Dec ($110K)",
-  "exec_error": "",
-  "code": "import pandas as pd
-df = pd.read_csv('sales.csv')
-...",
-  "memory_context": "[episodic] Previous sales analysis..."
+  "status": "success",
+  "result": "Analysis complete: Top 5 months are Jan, Mar, Dec, Jun, Sep",
+  "error": "",
+  "artifacts": []
 }
 ```
 
-**Side effects:**
-- Episodic memory stored
-- Procedural memory stored (if code was generated)
-- Desktop notification sent
+**Failure:**
+```json
+{
+  "status": "failed",
+  "result": "",
+  "error": "Code generation failed: timeout",
+  "artifacts": []
+}
+```
 
 ---
 
 ## 🔄 When to Use vs Alternatives
 
-| Need | Tool/Workflow | Why |
-|------|---------------|-----|
-| Data analysis with pandas/numpy | `data` | Optimized for data workflows, memory integration |
-| Quick calculation | `python` tool | Faster, no workflow overhead |
-| Statistical modeling | `data` | Code generation + critique + memory |
-| Data visualization | `python` tool | Direct matplotlib/plotly execution |
-| ML model training | `python` tool | Direct scikit-learn/TensorFlow execution |
-| Complex multi-step analysis | `deep_research` | Iterative research, not code execution |
-| Code generation with TDD | `autocode` | Full TDD cycle, git scoping, verification |
-| File processing | `python` tool | Direct file I/O, no workflow overhead |
+| Need | Tool | Why |
+|------|------|-----|
+| Analyze data | `data` workflow | Goal-driven, generates code, executes, reviews |
+| Research a topic | `research` workflow | Web search + synthesis, no code execution |
+| Fix code | `autocode` workflow | Targeted code changes with test verification |
+| Deep research | `deep_research` workflow | Iterative search with convergence detection |
+| Understand codebase | `understand` workflow | Codebase analysis and dependency mapping |
+| Generate report | `report` workflow | Structured report generation |
 
 ---
 
@@ -307,21 +232,23 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/workflows/data/test_data_flow.py -W e
 ```
 
 **Mock strategy:**
-- Patch `core.memory.memory.recall` for recall node tests
-- Patch `tools.python_exec.python` for execution node tests
-- Patch `tools.agent.agent` for code generation and critique node tests
-- Patch `core.memory.memory.store_episodic` / `.store_procedural` for store node tests
-- Patch `tools.notify.notify` for notification tests
-- Test code extraction: JSON `patch` field, markdown block regex, raw text fallback
-- Test error routing: `exec_error` → END, critique failure → continue with raw output
+- Patch `agent(action="dispatch", role="code")` for code generation
+- Patch `python(code=...)` for execution
+- Patch `agent(action="dispatch", role="critique")` for critique
+- Patch `memory.recall()` and `memory.store_*` for memory operations
+- Patch `notify(action="notify")` for notification
+- Test `node_execute` with code extraction failure → assert error state
+- Test `route_after_execute` with `exec_error` → assert `"failed"`
+- Test `route_after_execute` without `exec_error` → assert `"critique"`
+- Test `node_store` with user-provided code → assert procedural memory NOT stored
 
 **Current test layout:**
 ```text
 tests/workflows/data/
-└── test_data_flow.py          # Single test file (all nodes + routing)
+└── test_data_flow.py  # Full workflow test
 ```
 
-> **Future:** When the workflow grows, split into `test_recall.py`, `test_execute.py`, `test_critique.py`, `test_store.py`, `test_notify.py`, and add `conftest.py`.
+> **Future:** Split into per-node files: `test_node_recall.py`, `test_node_execute.py`, `test_node_critique.py`, `test_node_store.py`, `test_node_notify.py`, plus `conftest.py`.
 
 ---
 
@@ -332,39 +259,43 @@ tests/workflows/data/
 | Feature | Status | Notes |
 |---------|--------|-------|
 | 5-node LangGraph pipeline | ✅ v1.0 | recall → execute → critique → store → notify |
-| Code execution via python_exec | ✅ v1.0 | `mode="run_data"` for data analysis |
-| Optional code generation | ✅ v1.0 | `agent(role="code")` with structured JSON response |
-| Three-level code extraction | ✅ v1.0 | JSON `patch` → markdown regex → raw text fallback |
-| LLM critique layer | ✅ v1.0 | `agent(role="critique")` with 90s timeout |
-| Best-effort critique | ✅ v1.0 | Failed critique does not fail workflow |
-| Dual memory storage | ✅ v1.0 | Episodic (result) + procedural (working code) |
-| Error routing | ✅ v1.0 | `exec_error` → END, critique failure → continue |
-| LangGraph immutability | ✅ v1.0 | Partial update dicts, no `**state` spreading |
+| Memory recall integration | ✅ v1.0 | Phase 1: recalls relevant past analyses |
+| Code generation + execution | ✅ v1.0 | Phase 2: generates Python, executes in sandbox |
+| Conditional routing | ✅ v1.0 | Execution failure → END, success → critique |
+| Critique review | ✅ v1.0 | Phase 3: LLM reviews output |
+| Memory storage | ✅ v1.0 | Phase 4: stores semantic + procedural memory |
+| User notification | ✅ v1.0 | Phase 5: notifies user of completion |
+| Result compression | ✅ v1.0 | `compress_result()` prevents oversized responses |
 
 ### 🔄 In Progress / Next Up
 
-| Feature | Notes | Priority |
-|---------|-------|----------|
-| `@meta_tool` refactor on tools used | When `python_exec`, `agent`, `notify` get `@meta_tool`, update calls | P1 |
-| Test restructure | Split `test_data_flow.py` into per-node files + `conftest.py` | P1 |
-| Configurable code generation timeout | Hardcoded agent timeout. Make configurable via `.env` | P2 |
-| Configurable critique timeout | Hardcoded 90s. Make configurable via `.env` | P2 |
-| Result artifact storage | Save generated code and output to `workspace/.artifacts/` | P2 |
-| Data validation layer | Add `agent(role="validate")` to check data quality before critique | P2 |
-| Multi-dataset analysis | Support `datasets: list[str]` input for cross-dataset analysis | P3 |
-| Visualization generation | Auto-generate matplotlib/plotly charts from analysis output | P3 |
-| Streaming output | Yield partial results as code executes instead of batch return | P3 |
+| # | Feature | Notes | Priority |
+|---|---------|-------|----------|
+| 1 | **Fix `agent()` missing `action="dispatch"`** | `node_execute` and `node_critique` call `agent()` without required `action` parameter. Always returns error. | P0 |
+| 2 | **Fix code-gen failure routing to critique instead of END** | `node_execute` returns `node_error()` on failure, but `route_after_execute` checks `exec_error` (not set by `node_error`), so workflow routes to `node_critique` instead of END. | P0 |
+| 3 | **Fix execution failure not calling `node_error`** | When `python()` execution fails, `node_execute` sets `exec_error` but never calls `node_error()`. No trace step, no error checkpoint. | P0 |
+| 4 | **Fix `**state` spreading in all nodes** | All nodes return `{**state, ...}` which violates LangGraph best practice. Should return partial dicts with only changed keys. | P0 |
+| 5 | **Add exception isolation to all nodes** | No `try/except` in any node. Tool call exceptions crash the entire workflow. | P1 |
+| 6 | **Fix `content` param misused for text in `node_critique`** | `content` is documented as "base64-encoded image string". Using it for arbitrary text is a semantic mismatch. Use `context` instead. | P1 |
+| 7 | **Fix procedural memory stored for user-provided code** | `node_store` stores procedural memory for ALL successful executions, not just LLM-generated code. Should distinguish. | P1 |
+| 8 | **Fix regex escape inconsistency in code extraction** | `r"```python\n(.*?)\`\`\``"` has malformed escape `\`\`\``. Emits `SyntaxWarning`. Should be `r"```python\n(.*?)\n```"`. | P1 |
+| 9 | **Fix silent empty output critique skip** | `node_critique` silently skips when `output` is empty. Should log reason. | P1 |
+| 10 | **Handle `notify()` failure in `node_notify`** | If `notify()` raises or returns error, `node_notify` crashes or propagates error dict. | P2 |
+| 11 | **Test restructure** | Split `test_data_flow.py` into per-node files + `conftest.py` | P1 |
+| 12 | **Configurable code generation timeout** | Hardcoded agent timeout. Make configurable via `.env` | P2 |
+| 13 | **Code extraction fallback** | If regex fails, try JSON extraction or raw text | P2 |
+| 14 | **Execution retry loop** | On execution failure, retry with fix instead of ending | P3 |
+| 15 | **Visualization support** | Detect matplotlib/plotly output and return as artifact | P3 |
 
 ### 🚫 Deferred / Out of Scope
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
-| 1 | **TDD loop** | Data analysis is exploratory, not production code. TDD overhead is unnecessary. | Skip |
-| 2 | **Git scoping** | Data analysis doesn't modify the codebase. No git operations needed. | Skip |
-| 3 | **Knowledge graph integration** | Data analysis operates on external datasets, not the codebase graph. | Skip |
-| 4 | **Browser fallback** | Data analysis doesn't fetch web pages. | Skip |
-| 5 | **Self-correcting loop** | The workflow is intentionally simple. Complex retry logic belongs in `autocode` or `deep_research`. | Skip |
-| 6 | **Store full file contents in state** | Use `FileSnapshot` (8KB preview + MD5) to prevent LangGraph checkpoint bloat. | Skip |
+| 1 | **Remove memory integration** | Memory recall improves code quality. Removing it would degrade results. | Skip |
+| 2 | **Remove critique node** | Critique provides valuable feedback. Removing it would lose quality assurance. | Skip |
+| 3 | **Add execution retry loop** | Current single-pass execution is intentional. Retry loops add complexity and may not improve reliability. | Skip |
+| 4 | **Support non-Python languages** | The workflow is specifically designed for Python data analysis. Other languages would require significant changes. | Skip |
+| 5 | **Real-time streaming output** | Streaming would require WebSocket or SSE infrastructure. Out of scope for current architecture. | Skip |
 
 ---
 
@@ -373,21 +304,24 @@ tests/workflows/data/
 ### NEVER DO
 1. **Never mutate state in-place** — LangGraph does not deep-copy. Always return partial update `dict`s.
 2. **Never spread `**state`** — Never return `{**state, "key": "value"}`. Return only the changed keys.
-3. **Never let critique failure fail the workflow** — `node_critique` is advisory. If it fails, return raw output.
-4. **Never skip memory storage** — Both episodic and procedural memories should be stored for reusable data patterns.
-5. **Never use `print()` to stdout** — MCP stdio corruption. Use `node_step()` for logging.
+3. **Never remove memory recall from `node_recall`** — Context improves code quality significantly.
+4. **Never skip `node_error` on execution failure** — Always log errors to trace and checkpoint.
+5. **Never use `print()` to stdout** — MCP stdio corruption. Use `tracer.step()` for logging.
 6. **Never create `.bak` files** — forbidden by project rules.
 7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
 8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+9. **Never call `agent()` without `action="dispatch"`** — The `agent()` facade requires `action`. Always pass `action="dispatch"` for LLM calls.
+10. **Never return `None` from LangGraph nodes** — Always return a `dict` (even empty `{}`).
 
 ### ALWAYS DO
-9. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
-10. **Always use `agent(role="code")` for code generation** — Not direct `llm.complete()`. The code role has structured JSON output.
-11. **Always extract code with three-level fallback** — JSON `patch` → markdown regex → raw text.
-12. **Always test code generation path** — Mock `agent` to return JSON without `patch` and assert regex fallback works.
-13. **Always test error routing** — Mock `python` to fail and assert `route_after_execute` returns `"failed"`.
-14. **Always test critique failure** — Mock `agent(role="critique")` to fail and assert workflow continues with raw output.
-15. **Always update this doc** when adding nodes, changing routing logic, or modifying code extraction.
+11. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
+12. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+13. **Always handle code extraction failure** — If regex fails, return error state.
+14. **Always test `route_after_execute` with both paths** — Assert `"failed"` and `"critique"`.
+15. **Always test memory storage** — Assert semantic + procedural memory stored correctly.
+16. **Always test notification** — Assert `notify()` called with correct message.
+17. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
+18. **Always use `context` parameter for text** — `content` is for base64 images. Use `context` for additional text.
 
 ---
 
@@ -395,15 +329,17 @@ tests/workflows/data/
 
 | File | Purpose |
 |------|---------|
-| `workflows/data.py` | 5-node LangGraph workflow: recall, execute, critique, store, notify |
-| `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()` |
-| `tools/python_exec.py` | `python(mode="run_data", code=...)` — code execution |
-| `tools/agent.py` | `agent(role="code")` — code generation, `agent(role="critique")` — output evaluation |
-| `core/memory.py` | `memory.recall()` / `.store_episodic()` / `.store_procedural()` — memory operations |
-| `tools/notify.py` | `notify(action="send")` — completion notification |
-| `core/config.py` | `cfg.execution_timeout`, `cfg.planner_timeout` — shared timeouts |
-| `tests/workflows/data/test_data_flow.py` | Single test file covering all nodes + routing |
+| `workflows/data.py` | `build_data_graph()` — 5-node LangGraph StateGraph for data analysis |
+| `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()` — shared infrastructure |
+| `tools/agent.py` | `agent(action="dispatch", role="code")` — code generation |
+| `tools/agent.py` | `agent(action="dispatch", role="critique")` — critique review |
+| `tools/python.py` | `python(code=...)` — sandboxed Python execution |
+| `tools/memory.py` | `memory.recall()`, `memory.store_semantic()`, `memory.store_procedural()` — memory operations |
+| `tools/notify.py` | `notify(action="notify", message=...)` — user notification |
+| `core/config.py` | `cfg.code_timeout`, `cfg.critique_timeout`, `cfg.python_timeout` — timeouts |
+| `core/utils.py` | `compress_result()` — result compression |
+| `tests/workflows/data/test_data_flow.py` | Full workflow test |
 
 ---
 
-*Architecture: 5-node LangGraph pipeline → memory recall → code generation (optional) + python_exec execution → LLM critique (best-effort) → dual memory storage → notification → conditional routing on execution error.*
+*Architecture: 5-node LangGraph pipeline (recall → execute → critique → store → notify) with memory integration, code generation, sandboxed execution, and result compression.*

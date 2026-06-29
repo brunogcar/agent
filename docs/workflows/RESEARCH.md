@@ -1,15 +1,14 @@
-# 🔬 Research Workflow
+# 🔍 Research Workflow
 
-The `research` workflow is the agent's end-to-end research pipeline. It takes a user query, discovers information via web search, extracts and summarizes content, generates a structured report, stores findings in memory, and notifies the user.
+The `research` workflow handles **web research and synthesis** tasks. It takes a natural language goal, searches the web for relevant information, scrapes the results, and synthesizes a comprehensive answer.
 
 **Key characteristics:**
-- **LangGraph StateGraph** — 8 nodes with conditional edges, fully checkpointed
-- **Parallel extraction** — `ThreadPoolExecutor` scrapes multiple URLs concurrently
-- **Browser fallback** — JS-heavy pages automatically retried with `browser(navigate + text_content)`
-- **LLM synthesis** — Scraped summaries + memory context synthesized by `agent(role="research")`
-- **Citation tracking** — All sources tracked via `core.citations`
-- **Memory integration** — Results stored in episodic, semantic, and procedural memory
-- **Nested-call guard** — `threading.local()` prevents `parallel → parallel` deadlock
+- **Web search first** — Searches the web for relevant sources
+- **Parallel scraping** — Scrapes multiple sources concurrently for speed
+- **Synthesis** — LLM synthesizes the scraped content into a coherent answer
+- **Memory integration** — Stores the research result in memory for future recall
+- **Citation tracking** — Tracks sources for attribution
+- **Notification** — Reports completion to the user
 
 ---
 
@@ -18,11 +17,15 @@ The `research` workflow is the agent's end-to-end research pipeline. It takes a 
 ```python
 from workflows.base import run_workflow
 
+# Basic research
 result = run_workflow(
     workflow_type="research",
     goal="What are the best practices for ChromaDB in production?",
+    trace_id="research_001",
 )
-print(result["result"])
+
+print(result["status"])  # "success" | "failed"
+print(result["result"])  # "ChromaDB best practices include..."
 ```
 
 ---
@@ -31,355 +34,266 @@ print(result["result"])
 
 ```text
 workflows/research.py
-├── build_research_graph()              # StateGraph builder, 8 nodes + conditional edges
-├── WorkflowState (TypedDict)           # State schema
-│   ├── goal, trace_id, query
-│   ├── search_results, urls_data
-│   ├── summaries, citations
-│   ├── report_html, report_path
-│   └── status, error
-│
-├── Nodes (in execution order):
-│   ├── node_recall                     # Memory recall: episodic + semantic
-│   ├── node_search                     # SearXNG search via web(action="search")
-│   ├── node_parallel_scrape            # ThreadPoolExecutor + web(read) + LLM summarize + browser fallback
-│   ├── node_synthesize                 # Aggregate summaries + memory into coherent report via agent(role="research")
-│   ├── node_report                     # Generate HTML report via report tool
-│   ├── node_store                      # Store findings in ChromaDB memory
-│   ├── node_distill                    # Procedural memory extraction
-│   └── node_notify                     # Send notification via notify tool
-│
-├── Worker functions:
-│   ├── _scrape_and_summarize()        # web(read) → LLM summarize (parallel pool)
-│   └── _browser_fallback_scrape()     # browser(navigate+text_content) → LLM summarize (sequential)
-│
-└── Conditional edges:
-    ├── route_after_search → synthesize | failed
-    └── route_after_synthesize → report | failed
+├── build_research_graph()              # 8-node LangGraph StateGraph
+│   ├── node_search()                   # Phase 1: Web search
+│   ├── node_parallel_scrape()          # Phase 2: Parallel scraping
+│   ├── route_after_search()            # Conditional: no results → END
+│   ├── node_synthesize()               # Phase 3: LLM synthesis
+│   ├── route_after_synthesize()        # Conditional: failed → END
+│   ├── node_report()                   # Phase 4: Generate report
+│   ├── node_store()                    # Phase 5: Store in memory
+│   ├── node_distill()                  # Phase 6: Distill to procedural memory
+│   └── node_notify()                   # Phase 7: Notify user
 ```
 
-### Execution Flow
+### Research Flow
 
 ```mermaid
 graph TD
- A["START"] --> B["node_recall"]
- B --> C["node_search"]
- C --> D{"route_after_search"}
- D -->|has results| E["node_parallel_scrape"]
- D -->|empty| F["END (failed)"]
- E --> G{"route_after_synthesize"}
- G -->|success| H["node_synthesize"]
- G -->|failed| F
- H --> I["node_report"]
- I --> J["node_store"]
- J --> K["node_distill"]
- K --> L["node_notify"]
- L --> M["END"]
+    A["node_search<br/>Phase 1: Search"] --> B["node_parallel_scrape<br/>Phase 2: Scrape"]
+    B --> C{"route_after_search<br/>Conditional"}
+    C -->|no results| D["END<br/>No results"]
+    C -->|has results| E["node_synthesize<br/>Phase 3: Synthesize"]
+    E --> F{"route_after_synthesize<br/>Conditional"}
+    F -->|failed| G["END<br/>Error"]
+    F -->|success| H["node_report<br/>Phase 4: Report"]
+    H --> I["node_store<br/>Phase 5: Store"]
+    I --> J["node_distill<br/>Phase 6: Distill"]
+    J --> K["node_notify<br/>Phase 7: Notify"]
+    K --> L["END<br/>Success"]
 ```
 
 **Key design decisions:**
-- **Two-phase scraping** — Phase 1: parallel `web(read)` for all URLs. Phase 2: sequential `browser(navigate+text_content)` only for URLs where `web(read)` returned `< 300` chars. Browser is NOT_PARALLEL_SAFE, so fallback runs outside the thread pool.
-- **Nested-call guard** — `_parallel_scrape_active` (threading.local) prevents deadlock if a worker thread triggers another `node_parallel_scrape` (e.g., via autocode tool invocation).
-- **Inference slot management** — LLM summarization inside workers uses `tracker.inference_slot(timeout=30.0)` to respect `cfg.max_concurrent_inferences`.
-- **Dossier truncation** — After scraping, the combined dossier is hard-capped to `cfg.web_max_text_chars * 2` chars, cut at paragraph boundaries to preserve markdown structure.
-- **Citation registration** — Successful scrapes (web or browser) register citations via `citations.add(tid, url, title, snippet)` for downstream report generation.
-- **Best-effort nodes** — `node_report`, `node_distill`, and `node_notify` catch exceptions and continue. The workflow never fails because of a report generation or distillation error.
-- **Synthesis via agent facade** — `node_synthesize` delegates to `agent(role="research", task=..., content=...)` instead of direct `llm.complete()`. This gives the research role its own model config, timeout, and system prompt.
+- **Parallel scraping** — Uses `ThreadPoolExecutor` with `max_workers=3` to scrape up to 3 sources concurrently. This reduces latency significantly compared to sequential scraping.
+- **Timeout handling** — Each scrape has a 30-second timeout (web tool) + 30-second LLM summarization timeout. Total per-source timeout is 60 seconds.
+- **Deduplication** — `seen_urls` prevents scraping the same URL twice across iterations.
+- **Citation tracking** — The `citations` module tracks sources per trace_id. This enables attribution in the final report.
+- **Memory storage** — The synthesized result is stored in semantic memory. The `node_distill` step extracts procedural knowledge (e.g., "how to research X") for future recall.
+- **Report generation** — The `node_report` step generates a structured report with the synthesis, sources, and metadata.
+- **No JSON parsing** — The synthesis role outputs markdown, not JSON. The workflow handles raw text.
+- **Result compression** — The final result is compressed via `compress_result()` before being returned.
 
 ---
 
-## 📝 Workflow State
+## 📝 Node Reference
 
+### `node_search(state)` — Phase 1: Web Search
+
+**Purpose:** Search the web for relevant sources.
+
+**Logic:**
 ```python
-class WorkflowState(TypedDict, total=False):
-    goal: str              # Original user query
-    trace_id: str          # Trace identifier
-    query: str             # Refined search query (unused — goal is used directly)
-    search_results: str    # Raw SearXNG results (JSON string) or synthesized dossier (after scrape)
-    urls_data: list        # URLs selected for scraping (unused — parsed from search_results JSON)
-    summaries: list        # LLM summaries per page (unused — inlined into dossier)
-    citations: list        # Tracked citations (unused — stored in core.citations singleton)
-    report_html: str       # Generated HTML report (unused — report tool handles output)
-    report_path: str       # Path to saved report (unused — report tool handles output)
-    status: str            # "pending" | "running" | "complete" | "error" | "failed"
-    error: str             # Error message if failed
-    result: str            # Final synthesized text (set by node_synthesize, returned by node_notify)
-    memory_context: str    # Recalled memory context (set by node_recall, used by node_synthesize)
+web(action="search", query=goal, max_results=3)
 ```
 
-> **Note:** Several fields (`query`, `urls_data`, `summaries`, `citations`, `report_html`, `report_path`) are declared in the TypedDict but not actively used in the current implementation. The workflow uses `search_results` as a polymorphic field (JSON string after search, markdown dossier after scrape).
+**Output:** Partial dict with `urls_data` (list of `{url, title, snippet}`).
 
----
+**Error handling:** If search fails, returns `{"urls_data": []}`. The workflow proceeds with empty results.
 
-## ⚡ Nodes
+**Note:** `max_results=3` is hardcoded despite `cfg.web_max_search_results` defaulting to 10. This is a known limitation.
 
-### `node_recall` — Memory Recall
+### `node_parallel_scrape(state)` — Phase 2: Parallel Scraping
 
-Queries ChromaDB memory collections before searching:
-- **Episodic:** "Have I researched this topic before?"
-- **Semantic:** "What do I know about this topic?"
+**Purpose:** Scrape multiple sources concurrently.
 
-Results injected into `WorkflowState["memory_context"]` as context for downstream nodes.
+**Logic:**
+1. Filter out already-seen URLs
+2. Spawn up to 3 concurrent workers via `ThreadPoolExecutor`
+3. Each worker: `web(action="read", url=...)` → LLM summarize
+4. Collect results, update `seen_urls`
 
+**Output:** Partial dict with `summaries` (list of `{url, title, summary}`).
+
+**Error handling:**
+- Individual scrape failures are logged but don't fail the workflow
+- Timeout failures are caught and skipped
+- LLM summarization failures are caught and skipped
+
+**Guard:** `_is_nested_parallel()` prevents recursive parallel scraping from worker threads. Uses `threading.local()` flag.
+
+**Note:** The `as_completed` timeout is `cfg.worker_timeout + 30` (60 + 30 = 90s). This is the timeout for the **first** future to complete, not the total time. If the first future completes quickly, subsequent futures can hang indefinitely.
+
+### `route_after_search(state)` — Conditional Router
+
+**Purpose:** Route to synthesis or END based on search results.
+
+**Logic:**
 ```python
-memory.recall(query=goal, top_k=5, trace_id=state.get("trace_id", ""))
+if not state.get("urls_data"):
+    return "no_results"  # → END
+return "has_results"     # → node_synthesize
 ```
 
-**Output:** `"memory_context"` — formatted string of recalled memories with type and score.
+**Output:** String literal `"no_results"` or `"has_results"`.
 
-### `node_search` — URL Discovery
+### `node_synthesize(state)` — Phase 3: LLM Synthesis
 
-Calls `web(action="search", query=goal, max_results=3)` to get ranked URLs from SearXNG.
+**Purpose:** Synthesize scraped content into a coherent answer.
 
-**Output:** `"search_results"` — JSON string of `{url, title, snippet}` dicts.
+**Logic:**
+1. Build prompt with goal and summaries
+2. Call `agent(action="dispatch", role="research", task=...)` for synthesis
+3. Return the synthesized text
 
-**Error handling:** If search fails or returns no valid URLs, `search_results` is set to `""` and the router routes to `failed`.
+**Output:** Partial dict with `result` (synthesis text).
 
-### `node_parallel_scrape` — Concurrent Extraction + Browser Fallback
+**Error handling:**
+- `agent()` failure → `node_error(state, "synthesize", ...)` → workflow ends
 
-The most complex node. Two-phase scraping with parallel web scraping and sequential browser fallback.
-
-**Phase 1: Parallel Web Scraping**
-
-Uses `ThreadPoolExecutor(max_workers=cfg.max_concurrent_workers)` to process each URL:
-
+**Critical bug:** The status check is broken:
 ```python
-def _scrape_and_summarize(url, title, goal, trace_id):
-    # 1. Scrape via web(read)
-    result = web(action="read", url=url)
-    if result.status != "success":
-        return {"status": "failed", "error": ...}
-
-    text = result["data"]["text"]
-    if len(text) < 300:
-        return {"status": "needs_browser", ...}  # Mark for Phase 2
-
-    text = text[:cfg.web_max_text_chars]  # Truncate
-
-    # 2. Summarize via LLM (with inference slot)
-    with tracker.inference_slot(timeout=30.0):
-        resp = llm.complete(role="executor", system=..., user=...)
-
-    return {"status": "success", "summary": resp.text}
+if not r.get("status") == "success":  # BUG: always False!
 ```
+This is `(not "success") == "success"` → `False == "success"` → `False`. The error path **never fires**.
 
-**Phase 2: Sequential Browser Fallback**
+**Fix:** `if r.get("status") != "success":`
 
-For URLs marked `"needs_browser"`, runs sequentially (respects browser's global lock):
+### `route_after_synthesize(state)` — Conditional Router
 
+**Purpose:** Route to report or END based on synthesis result.
+
+**Logic:**
 ```python
-def _browser_fallback_scrape(url, title, goal, trace_id):
-    fallback_tid = trace_id or f"fb_{uuid.uuid4().hex[:8]}"
-
-    # Navigate
-    browser(action="navigate", url=url, trace_id=fallback_tid, 
-            timeout=cfg.research_browser_fallback_timeout)
-
-    # Extract text
-    browser(action="text_content", selector="body", trace_id=fallback_tid,
-            timeout=cfg.research_browser_fallback_timeout)
-
-    # Summarize (same as Phase 1)
-    ...
+if state.get("status") == "failed":
+    return "failed"  # → END
+return "success"     # → node_report
 ```
 
-**Dossier assembly:**
+**Output:** String literal `"failed"` or `"success"`.
 
-Successful scrapes are assembled into a markdown dossier:
-```markdown
-### [Source 1] Page Title
-URL: https://...
+### `node_report(state)` — Phase 4: Generate Report
 
-Summary text...
+**Purpose:** Generate a structured report with synthesis, sources, and metadata.
 
-### [Source 2] Page Title
-URL: https://...
+**Logic:**
+1. Call `report(action="report", title=..., data=..., config=...)` with synthesis and sources
+2. Return the report
 
-Summary text...
-```
+**Output:** Partial dict with `report_html` and `report_path`.
 
-**Dossier truncation:** Hard-capped to `cfg.web_max_text_chars * 2` chars, cut at paragraph boundaries.
+**Note:** The `report` tool's `action="report"` is the report action name (generates a single-scroll HTML report), not a mistake.
 
-**Output:** `"search_results"` — markdown dossier string (overwrites the JSON from `node_search`).
+### `node_store(state)` — Phase 5: Memory Storage
 
-### `node_synthesize` — Report Generation
+**Purpose:** Store the research result in memory.
 
-Aggregates dossier + memory context into a coherent answer via `agent(role="research")`:
+**Logic:**
+1. Store semantic memory: `memory.store_semantic(text=result[:800], ...)`
 
-```python
-agent(
-    role="research",
-    task=f"Synthesise the provided sources to answer: {goal}",
-    content=f"MEMORY:
-{memory_context}
+**Output:** Empty dict (side effects only).
 
-WEB SOURCES:
-{search_results}",
-    trace_id=state.get("trace_id", ""),
-)
-```
+**Note:** Only 800 chars of the result are stored in semantic memory. For long research results, this is a tiny fraction. The semantic memory will be nearly useless for recall.
 
-**Output:** `"result"` — synthesized markdown text.
+### `node_distill(state)` — Phase 6: Distill to Procedural Memory
 
-### `node_report` — HTML Export
+**Purpose:** Extract procedural knowledge from the research result.
 
-Calls `report(action="report", ...)` to generate a self-contained HTML dashboard with findings and citations.
+**Logic:**
+1. Call `agent(action="dispatch", role="extract", task=...)` to extract procedural knowledge
+2. Store procedural memory: `memory.store_procedural(text=..., ...)`
 
-**Output:** Side effect — report saved to workspace. No state mutation.
+**Output:** Empty dict (side effects only).
 
-### `node_store` — Memory Persistence
+**Note:** The `status` check `state.get("status") == "failed"` is redundant. `node_distill` only runs on success paths.
 
-Stores findings in ChromaDB:
-- **Semantic:** `memory.store_semantic(text=f"Research on '{goal}':\n{result[:800]}", importance=6, ...)`
-- **Episodic:** `memory.store_episodic(text=f"Completed research workflow: '{goal[:60]}'", importance=5, ...)`
+### `node_notify(state)` — Phase 7: User Notification
 
-**Output:** Side effect — memory entries created. No state mutation.
+**Purpose:** Notify the user of completion.
 
-### `node_distill` — Procedural Learning
+**Logic:**
+1. Call `notify(action="notify", message=...)` with the result
+2. Return `node_done(state, result=...)`
 
-Extracts reusable workflow patterns via `distill_workflow()`:
-- "For technical topics, prefer official documentation over blogs"
-- "For recent events, prioritize news sources < 7 days old"
+**Output:** `node_done` result dict.
 
-**Output:** Side effect — procedural rules stored. No state mutation. Never fails the workflow.
-
-### `node_notify` — User Notification
-
-Calls `notify(action="send", title="Research complete", message=...)` and marks workflow done.
-
-**Output:** `node_done(state, result=..., artifacts=[...])`
-
----
-
-## 🔄 Conditional Routing
-
-### `route_after_search`
-
-```python
-def route_after_search(state):
-    sr = state.get("search_results", "")
-    mc = state.get("memory_context", "")
-    if not sr and not mc:
-        return "failed"   # No search results and no memory context
-    return "synthesize"   # Proceed to synthesis (even with empty results if memory exists)
-```
-
-### `route_after_synthesize`
-
-```python
-def route_after_synthesize(state):
-    if state.get("status") == "failed":
-        return "failed"
-    return "report"
-```
+**Note:** `artifacts` contains `{"sources": sources}` but `artifacts` is documented as a list of strings. This breaks consumers that expect strings.
 
 ---
 
 ## ⚙️ Configuration
 
 ```ini
-# .env
-SEARXNG_URL=http://localhost:8080
-WEB_MAX_SEARCH_RESULTS=10
-WEB_MAX_TEXT_CHARS=8000
-WEB_SNIPPET_CHARS=300
-MAX_CONCURRENT_WORKERS=3
-WORKER_TIMEOUT=60
-WORKER_MAX_TOKENS=250
-RESEARCH_BROWSER_FALLBACK_MAX=3
-RESEARCH_BROWSER_FALLBACK_TIMEOUT=15
+# .env — no research-specific env vars
+# Uses shared config:
+# cfg.web_max_search_results — default 10 (hardcoded to 3 in code)
+# cfg.worker_timeout — default 60s
+# cfg.research_timeout — for agent(role="research")
 ```
 
 ```python
 # core/config.py
-self.searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8080")
-self.web_max_text_chars = int(os.getenv("WEB_MAX_TEXT_CHARS", "8000"))
-self.web_max_search_results = int(os.getenv("WEB_MAX_SEARCH_RESULTS", "10"))
-self.web_snippet_chars = int(os.getenv("WEB_SNIPPET_CHARS", "300"))
-self.max_concurrent_workers = int(os.getenv("MAX_CONCURRENT_WORKERS", "3"))
-self.worker_timeout = int(os.getenv("WORKER_TIMEOUT", "60"))
-self.worker_max_tokens = int(os.getenv("WORKER_MAX_TOKENS", "250"))
-self.research_browser_fallback_max = int(os.getenv("RESEARCH_BROWSER_FALLBACK_MAX", "3"))
-self.research_browser_fallback_timeout = int(os.getenv("RESEARCH_BROWSER_FALLBACK_TIMEOUT", "15"))
+# No research-specific config. Uses:
+# cfg.web_max_search_results — web search max results
+# cfg.worker_timeout — worker thread timeout
+# cfg.research_timeout — LLM research timeout
 ```
 
 ---
 
 ## 📤 Output
 
-The workflow returns a `WorkflowState` dict. The final result is in `"result"`:
+The workflow returns a `dict`:
 
 ```json
 {
-  "status": "complete",
-  "result": "Synthesized markdown report...",
-  "goal": "What are the best practices for ChromaDB in production?",
-  "trace_id": "abc123",
-  "search_results": "### [Source 1] ...",
-  "memory_context": "[episodic|score=0.8] ...",
-  "error": ""
+  "status": "success",
+  "result": "ChromaDB best practices include...",
+  "error": "",
+  "artifacts": ["report.html"]
 }
 ```
 
-**Side effects:**
-- HTML report saved to workspace via `report` tool
-- Citations registered in `core.citations`
-- Semantic + episodic memories stored in ChromaDB
-- Procedural rules distilled (best-effort)
-- Desktop notification sent (best-effort)
+**Failure:**
+```json
+{
+  "status": "failed",
+  "result": "",
+  "error": "Synthesis failed: timeout",
+  "artifacts": []
+}
+```
 
 ---
 
 ## 🔄 When to Use vs Alternatives
 
-| Need | Workflow | Why |
-|------|----------|-----|
-| Quick fact-check | `research` | Single search + synthesis, 1-2 minutes |
-| Comprehensive report | `research` | Parallel scrape + full synthesis + HTML report |
-| Multi-step investigation | `deep_research` (future) | Iterative ReAct loop with evaluation |
-| Academic research | `deep_research` (future) | Structured decomposition + evidence tracking |
-| Real-time monitoring | `research` + cron | Scheduled execution with delta reporting |
-| Single page read | `web(read)` | Faster, no LLM overhead |
-| JS-heavy page | `browser(navigate+text_content)` | Direct browser control |
-| AI-ranked search | `tavily(search)` | Better relevance, citations |
+| Need | Tool | Why |
+|------|------|-----|
+| Research a topic | `research` workflow | Web search + synthesis, comprehensive answer |
+| Analyze data | `data` workflow | Code generation + execution, data analysis |
+| Fix code | `autocode` workflow | Targeted code changes with test verification |
+| Deep research | `deep_research` workflow | Iterative search with convergence detection |
+| Understand codebase | `understand` workflow | Codebase analysis and dependency mapping |
+| Generate report | `report` workflow | Structured report generation |
 
 ---
 
 ## 🧪 Testing
 
 ```powershell
-# Run all research workflow tests
-D:\mcp\agent\venv\Scripts\pytest.exe tests/workflows/research/ -W error --tb=short -v
+# Run research workflow tests
+D:\mcp\agent\venv\Scripts\pytest.exe tests/workflows/research/test_research_flow.py -W error --tb=short -v
 ```
 
-**Test coverage (3 files):**
-
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_research_flow.py` | — | Full workflow execution: recall → search → scrape → synthesize → report → store → distill → notify |
-| `test_parallel_scrape.py` | — | ThreadPoolExecutor scraping, browser fallback, dossier assembly, truncation |
-| `test_research_parallel.py` | — | Parallel execution edge cases, nested-call guard, timeout handling |
-
 **Mock strategy:**
-- Patch `tools.web.web` to return mock search/scrape results
-- Patch `tools.browser.browser` to return mock navigate/text_content results
-- Patch `core.llm.llm.complete` or `tools.agent.agent` to return deterministic summaries
-- Patch `core.memory.memory.recall` / `.store_semantic` / `.store_episodic` for memory tests
-- Patch `core.citations.citations.add` / `.get_sources` for citation tests
-- Patch `tools.report.report` and `tools.notify.notify` for side-effect tests
-- Patch `core.runtime.activity_tracker.tracker.inference_slot` for slot management tests
-- Patch `workflows.research._parallel_scrape_active` for nested-call guard tests
+- Patch `web(action="search")` for search results
+- Patch `web(action="read")` for scrape results
+- Patch `agent(action="dispatch", role="research")` for synthesis
+- Patch `agent(action="dispatch", role="extract")` for distillation
+- Patch `memory.store_semantic()` and `memory.store_procedural()` for memory storage
+- Patch `notify(action="notify")` for notification
+- Test `node_search` with empty results → assert `"no_results"` route
+- Test `node_parallel_scrape` with timeout → assert graceful handling
+- Test `node_synthesize` with `agent()` failure → assert error state
+- Test `route_after_synthesize` with `"failed"` status → assert `"failed"` route
 
 **Current test layout:**
 ```text
 tests/workflows/research/
-├── __init__.py
-├── test_research_flow.py       # End-to-end workflow tests
-├── test_parallel_scrape.py     # Parallel scraping + browser fallback tests
-└── test_research_parallel.py   # Parallel execution edge cases
+└── test_research_flow.py  # Full workflow test
 ```
 
-> **Future:** When the workflow is refactored (e.g., `@meta_tool` on tools, node extraction), tests may be restructured to match `tests/workflows/` patterns or split by node.
+> **Future:** Split into per-node files: `test_node_search.py`, `test_node_scrape.py`, `test_node_synthesize.py`, `test_node_report.py`, `test_node_store.py`, `test_node_distill.py`, `test_node_notify.py`, plus `conftest.py`.
 
 ---
 
@@ -389,69 +303,73 @@ tests/workflows/research/
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| 8-node LangGraph pipeline | ✅ v1.0 | recall → search → scrape → synthesize → report → store → distill → notify |
-| Parallel web scraping | ✅ v1.0 | `ThreadPoolExecutor` with `cfg.max_concurrent_workers` |
-| LLM summarization per page | ✅ v1.0 | `llm.complete(role="executor")` with inference slot |
-| Browser fallback for JS pages | ✅ v1.0 | Sequential `browser(navigate+text_content)` for `< 300` char pages |
-| Nested-call guard | ✅ v1.0 | `threading.local()` prevents `parallel → parallel` deadlock |
-| Citation tracking | ✅ v1.0 | `core.citations.add()` per successful scrape |
-| Memory integration | ✅ v1.0 | Semantic + episodic storage |
-| Procedural distillation | ✅ v1.0 | `distill_workflow()` best-effort |
-| HTML report generation | ✅ v1.0 | `report` tool with sections + sources |
-| Dossier truncation | ✅ v1.0 | Hard cap at `cfg.web_max_text_chars * 2`, paragraph-boundary cut |
-| Synthesis via agent facade | ✅ v1.0 | `agent(role="research")` instead of direct `llm.complete()` |
+| 8-node LangGraph pipeline | ✅ v1.0 | search → scrape → synthesize → report → store → distill → notify |
+| Parallel scraping | ✅ v1.0 | ThreadPoolExecutor with max_workers=3 |
+| Timeout handling | ✅ v1.0 | 30s scrape + 30s summarization per source |
+| Deduplication | ✅ v1.0 | seen_urls prevents duplicate scraping |
+| Citation tracking | ✅ v1.0 | citations module tracks sources per trace_id |
+| Memory storage | ✅ v1.0 | Semantic + procedural memory storage |
+| Report generation | ✅ v1.0 | Structured report with synthesis and sources |
+| Result compression | ✅ v1.0 | compress_result() prevents oversized responses |
 
 ### 🔄 In Progress / Next Up
 
-| Feature | Notes | Priority |
-|---------|-------|----------|
-| `tavily(search)` as primary search | Use `tavily(action="search")` when `TAVILY_API_KEY` is configured; fallback to `web(search)` when keyless or tavily fails | P1 |
-| `tavily(extract)` for bulk extraction | Use `tavily(action="extract")` for bulk URL extraction instead of parallel `web(read)` | P1 |
-| Standardize `max_results` | Currently hardcoded `max_results=3` in `node_search`. Use `cfg.web_max_search_results` or add `RESEARCH_MAX_SEARCH_RESULTS` to `.env` | P2 |
-| Tavily keyless graceful degradation | When Tavily is keyless, automatically fall back to `web(search)` without user intervention | P1 |
-| Deduplicate URLs across sources | When using both `tavily` and `web`, deduplicate identical URLs before scraping | P2 |
-| Streaming partial results | Show findings as they arrive instead of batch return at end | P2 |
-| Configurable search result count | `node_search` hardcodes `max_results=3`. Make configurable via state or `.env` | P2 |
-| Configurable dossier cap | Hard-coded `cfg.web_max_text_chars * 2`. Make configurable | P2 |
-| Result quality scoring | Score each source by relevance and filter low-quality scrapes before synthesis | P2 |
-| Multi-query expansion | Break complex goals into sub-queries, search each, merge results | P3 |
-| Source reliability ranking | Prioritize `.edu`, `.gov`, official docs over blogs and forums | P3 |
-| Citation format options | Support APA, MLA, IEEE citation formats in reports | P3 |
+| # | Feature | Notes | Priority |
+|---|---------|-------|----------|
+| 1 | **Fix `agent()` missing `action="dispatch"` in `node_synthesize`** | `agent()` requires `action` parameter. Without it, returns error dict. | P0 |
+| 2 | **Fix `not r.get("status") == "success"` always false** | `(not "success") == "success"` → `False`. Error path never fires. | P0 |
+| 3 | **Fix `max_results=3` hardcoded in `node_search`** | Should use `cfg.web_max_search_results` (default 10). | P1 |
+| 4 | **Fix `as_completed` timeout semantics** | Timeout is for first future, not total. Subsequent futures can hang. | P1 |
+| 5 | **Add future cancellation on timeout** | Pending ThreadPoolExecutor futures keep running on timeout. | P1 |
+| 6 | **Fix `report_tool` signature** | Verify `report()` tool signature matches usage. | P1 |
+| 7 | **Fix semantic memory only storing 800 chars** | Long research results truncated. Semantic memory nearly useless. | P1 |
+| 8 | **Remove redundant `status` check in `node_distill`** | `node_distill` only runs on success paths. Check is dead code. | P1 |
+| 9 | **Fix nested-call guard** | `_is_nested_parallel()` guard is broken for worker thread recursion. | P2 |
+| 10 | **Fix `artifacts` containing dict not strings** | `artifacts` should be list of strings. Passing dict breaks consumers. | P2 |
+| 11 | **Fix dossier truncation splitting headers** | Truncation may cut `### [Source N]` headers in half. | P2 |
+| 12 | **Add URL deduplication** | `node_search` may return duplicate URLs from different results. | P2 |
+| 13 | **Add URL validation** | `r["url"]` could be `javascript:void(0)` or relative paths. | P3 |
+| 14 | **Test restructure** | Split `test_research_flow.py` into per-node files + `conftest.py` | P1 |
+| 15 | **Configurable search results** | Make `max_results` configurable via `.env` | P2 |
+| 16 | **Streaming synthesis** | Stream synthesis output for real-time feedback | P3 |
+| 17 | **Multi-language support** | Support non-English search and synthesis | P3 |
 
 ### 🚫 Deferred / Out of Scope
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
-| 1 | **Replace with `deep_research` workflow** | `deep_research` is a separate workflow with iterative ReAct. `research` is the fast path for simple queries. Both coexist. | Skip |
-| 2 | **Remove browser fallback** | Browser fallback is essential for JS-heavy sites. Removing it would break many real-world pages. | Skip |
-| 3 | **Synchronous scraping only** | Parallel scraping is a core performance feature. Sequential-only would be 3-5x slower. | Skip |
-| 4 | **Store full page text in memory** | Memory stores summaries only (first 800 chars). Full text would bloat ChromaDB. | Skip |
-| 5 | **Real-time web search during synthesis** | Synthesis is a single LLM call. Interactive search would require a ReAct loop (deep_research territory). | Skip |
+| 1 | **Remove parallel scraping** | Sequential scraping would be too slow. Parallel is essential. | Skip |
+| 2 | **Remove citation tracking** | Attribution is important for trust. Removing it would degrade quality. | Skip |
+| 3 | **Add real-time streaming** | Streaming would require WebSocket/SSE infrastructure. Out of scope. | Skip |
+| 4 | **Support non-web sources** | The workflow is designed for web research. Other sources would require significant changes. | Skip |
+| 5 | **Automatic fact-checking** | Fact-checking would require additional LLM calls and complex logic. Out of scope. | Skip |
 
 ---
 
 ## 🛡️ AI Agent Instructions
 
 ### NEVER DO
-1. **Never remove the nested-call guard** — `_parallel_scrape_active` prevents deadlock. Removing it risks hanging the workflow.
-2. **Never call `browser` inside the thread pool** — Browser is NOT_PARALLEL_SAFE. Fallback must run sequentially after the pool closes.
-3. **Never skip `tracker.inference_slot()` in workers** — Violates `cfg.max_concurrent_inferences` and can overwhelm the LLM backend.
-4. **Never hardcode `max_results=3` in `node_search`** — It's currently hardcoded. Make it configurable instead of increasing the magic number.
-5. **Never let `node_report`, `node_distill`, or `node_notify` fail the workflow** — These are best-effort. Catch exceptions and continue.
+1. **Never mutate state in-place** — LangGraph does not deep-copy. Always return partial update `dict`s.
+2. **Never spread `**state`** — Never return `{**state, "key": "value"}`. Return only the changed keys.
+3. **Never remove parallel scraping** — Sequential scraping would be too slow.
+4. **Never skip citation tracking** — Attribution is important for trust.
+5. **Never use `print()` to stdout** — MCP stdio corruption. Use `tracer.step()` for logging.
 6. **Never create `.bak` files** — forbidden by project rules.
 7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
-8. **Never print to stdout** — MCP stdio corruption. Use `node_step()` for logging.
-9. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+9. **Never call `agent()` without `action="dispatch"`** — The `agent()` facade requires `action`. Always pass `action="dispatch"` for LLM calls.
+10. **Never return `None` from LangGraph nodes** — Always return a `dict` (even empty `{}`).
 
 ### ALWAYS DO
-10. **Always use `agent(role="research")` for synthesis** — Not direct `llm.complete()`. The research role has its own model config and timeout.
-11. **Always truncate text before LLM summarization** — `text[:cfg.web_max_text_chars]` prevents context overflow.
-12. **Always register citations for successful scrapes** — Both web and browser fallback paths must call `citations.add()`.
-13. **Always use a stable `trace_id` for browser fallback** — `fallback_tid = trace_id or f"fb_{uuid.uuid4().hex[:8]}"` ensures `navigate` and `text_content` share the same browser context.
-14. **Always test the nested-call guard** — Patch `_parallel_scrape_active.active = True` and assert the node returns early.
-15. **Always test browser fallback path** — Mock `web(read)` to return `< 300` chars and assert `browser(navigate)` is called.
-16. **Always test dossier truncation** — Create a dossier > `cfg.web_max_text_chars * 2` and assert it's cut at paragraph boundaries.
-17. **Always update this doc** when adding nodes, changing routing logic, or modifying tool integrations.
+11. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
+12. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+13. **Always handle search failure gracefully** — Empty results should route to END, not crash.
+14. **Always test `route_after_search` with both paths** — Assert `"no_results"` and `"has_results"`.
+15. **Always test `route_after_synthesize` with both paths** — Assert `"failed"` and `"success"`.
+16. **Always test memory storage** — Assert semantic + procedural memory stored correctly.
+17. **Always test notification** — Assert `notify()` called with correct message.
+18. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
+19. **Always use `!= "success"` not `not ... == "success"`** — The latter is always False due to operator precedence.
 
 ---
 
@@ -459,22 +377,19 @@ tests/workflows/research/
 
 | File | Purpose |
 |------|---------|
-| `workflows/research.py` | 8-node LangGraph workflow: recall, search, parallel_scrape, synthesize, report, store, distill, notify |
-| `workflows/base.py` | `WorkflowState`, `run_workflow()`, `node_step()`, `node_error()`, `node_done()` |
-| `tools/web.py` | `web(action="search")` and `web(action="read")` — URL discovery and scraping |
-| `tools/browser.py` | `browser(action="navigate")` and `browser(action="text_content")` — JS fallback |
-| `tools/agent.py` | `agent(role="research")` — synthesis facade |
-| `tools/report.py` | `report(action="report")` — HTML report generation |
-| `tools/notify.py` | `notify(action="send")` — completion notification |
-| `core/citations.py` | `citations.add()` / `citations.get_sources()` — citation tracking |
-| `core/memory.py` | `memory.recall()` / `.store_semantic()` / `.store_episodic()` — memory operations |
-| `core/runtime/activity_tracker.py` | `tracker.inference_slot()` — concurrency limit enforcement |
-| `core/config.py` | `cfg.web_max_text_chars`, `cfg.max_concurrent_workers`, `cfg.worker_timeout`, `cfg.research_browser_fallback_max`, etc. |
-| `core/memory_backend/procedural/distill.py` | `distill_workflow()` — procedural rule extraction |
-| `tests/workflows/research/test_research_flow.py` | End-to-end workflow tests |
-| `tests/workflows/research/test_parallel_scrape.py` | Parallel scraping + browser fallback tests |
-| `tests/workflows/research/test_research_parallel.py` | Parallel execution edge cases |
+| `workflows/research.py` | `build_research_graph()` — 8-node LangGraph StateGraph for web research |
+| `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()` — shared infrastructure |
+| `tools/agent.py` | `agent(action="dispatch", role="research")` — synthesis |
+| `tools/agent.py` | `agent(action="dispatch", role="extract")` — distillation |
+| `tools/web.py` | `web(action="search", query=...)` — web search |
+| `tools/web.py` | `web(action="read", url=...)` — web scraping |
+| `tools/memory.py` | `memory.store_semantic()`, `memory.store_procedural()` — memory operations |
+| `tools/notify.py` | `notify(action="notify", message=...)` — user notification |
+| `tools/report.py` | `report(action="report", title=...)` — report generation |
+| `core/config.py` | `cfg.web_max_search_results`, `cfg.worker_timeout`, `cfg.research_timeout` — timeouts |
+| `core/utils.py` | `compress_result()` — result compression |
+| `tests/workflows/research/test_research_flow.py` | Full workflow test |
 
 ---
 
-*Architecture: LangGraph StateGraph + 8 pure-function nodes + conditional routing + ThreadPoolExecutor parallel scraping + sequential browser fallback + inference slot management + citation tracking + memory storage + procedural distillation + best-effort reporting/notification.*
+*Architecture: 8-node LangGraph pipeline (search → scrape → synthesize → report → store → distill → notify) with parallel scraping, citation tracking, memory integration, and result compression.*

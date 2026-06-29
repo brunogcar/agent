@@ -1,41 +1,31 @@
 # 🔬 Deep Research Workflow
 
-The `deep_research` workflow is an **iterative, budget-aware research pipeline** that replaces the linear `research` workflow with a **ReAct-style loop**: decompose → search → extract → synthesize → evaluate → [loop or exit].
-
-It is designed for complex, multi-faceted research goals that require multiple search rounds, evidence synthesis, and self-evaluation before producing a final report.
+The `deep_research` workflow performs **iterative, deep research** on a topic. It uses a cyclic LangGraph workflow to search, synthesize, and evaluate until the research converges or the budget is exhausted.
 
 **Key characteristics:**
-- **ReAct-style loop** — 8 nodes with conditional edges: decompose → search → synthesize → [route back to decompose or exit to report]
-- **Budget-aware** — Hard caps on iterations, API calls, and browser actions
-- **Three-tier tool selection** — `tavily` → `web` → `browser` fallback chain per query
-- **Citation tracking** — Every source registered via `core.citations`
-- **Convergence detection** — Exits when knowledge stops changing (`SequenceMatcher`)
-- **Stuck-loop detection** — Exits when no evidence is found for 2 consecutive iterations
-- **Memory integration** — Recalls past research before starting, stores results after completion
-- **URL deduplication** — Cross-iteration `seen_urls` set prevents re-scraping same pages
-- **Facade timeout** — `ThreadPoolExecutor(max_workers=1)` wrapper with configurable timeout
+- **Iterative search** — Cycles between search, synthesis, and evaluation until convergence
+- **Budget management** — Tracks API calls and browser actions to prevent runaway costs
+- **Convergence detection** — Uses cosine similarity to detect when new information stops adding value
+- **Multi-tool search** — Uses Tavily API, web search, and browser fallback for comprehensive coverage
+- **Memory integration** — Recalls past research for context and stores results for future recall
+- **Report generation** — Generates a structured report with the final synthesis
 
 ---
 
 ## 🚀 Quick Start
 
 ```python
-from workflows.deep_research import run_deep_research_agent
+from workflows.base import run_workflow
 
-result = run_deep_research_agent(
-    goal="What are the trade-offs between ChromaDB and Pinecone for production RAG?",
+# Deep research on a topic
+result = run_workflow(
+    workflow_type="deep_research",
+    goal="What are the latest advancements in quantum computing error correction?",
+    trace_id="deep_research_001",
 )
-print(result["result"])
-```
 
-**With overrides:**
-```python
-result = run_deep_research_agent(
-    goal="...",
-    max_iterations=5,          # Default: 10
-    trace_id="abc123",
-    timeout=120,                 # Facade timeout in seconds
-)
+print(result["status"])  # "success" | "failed" | "incomplete"
+print(result["result"])  # "Quantum computing error correction has seen..."
 ```
 
 ---
@@ -43,254 +33,210 @@ result = run_deep_research_agent(
 ## 🏗️ Architecture
 
 ```text
-workflows/deep_research.py (facade)
-└── run_deep_research_agent(goal, **kwargs)
-    └── ThreadPoolExecutor(max_workers=1) + timeout
-        └── run_workflow("deep_research", ...)
-            └── build_deep_research_graph()
-                ├── recall ──→ decompose ──→ search ──→ synthesize ──→ [route]
-                │                                              ↑
-                │                                              └────── loop back
-                │
-                └── report ──→ notify ──→ store ──→ distill ──→ END
+workflows/deep_research.py
+├── run_deep_research()               # Sync facade (entry point)
+│   ├── ThreadPoolExecutor(max_workers=1)
+│   └── run_workflow()                # Dispatcher
 
 workflows/deep_research_core/
-├── graph.py                    # StateGraph builder, 8 nodes + conditional edges
-├── state.py                    # DeepResearchState TypedDict
-├── routes.py                   # route_after_synthesize: loop vs exit logic
-├── budget.py                   # Pure budget functions: decrement, log, check, format
-├── constants.py                # Prompts, convergence threshold, JS detection hints
+├── graph.py                          # LangGraph builder
+│   ├── _node_recall()                # Phase 1: Memory recall
+│   ├── _node_decompose()             # Phase 2: Goal decomposition
+│   ├── _node_search()                # Phase 3: Multi-tool search
+│   ├── _node_synthesize()            # Phase 4: Synthesis + evaluation
+│   ├── _node_report()                # Phase 5: Report generation
+│   ├── _node_store()                 # Phase 6: Memory storage
+│   ├── _node_distill()               # Phase 7: Distillation (placeholder)
+│   └── _node_notify()                # Phase 8: Notify user
+├── state.py                          # DeepResearchState TypedDict
+├── routes.py                         # Conditional routing logic
+├── budget.py                         # Budget tracking and audit
+├── constants.py                      # Shared constants and prompts
 └── nodes/
-    ├── decompose.py            # LLM-based goal decomposition into sub-queries
-    ├── search.py               # Tool selection, search execution, evidence extraction, browser fallback
-    └── synthesize.py           # Knowledge merging, completeness evaluation, convergence check
+    ├── decompose.py                  # Goal decomposition logic
+    ├── search.py                     # Multi-tool search logic
+    └── synthesize.py               # Synthesis + evaluation logic
 ```
 
-### Execution Flow
+### Deep Research Flow
 
 ```mermaid
 graph TD
- A["START"] --> B["recall"]
- B --> C["decompose"]
- C --> D["search"]
- D --> E["synthesize"]
- E --> F{"route_after_synthesize"}
- F -->|loop| C
- F -->|exit| G["report"]
- G --> H["notify"]
- H --> I["store"]
- I --> J["distill"]
- J --> K["END"]
+    A["_node_recall<br/>Phase 1: Memory"] --> B["_node_decompose<br/>Phase 2: Decompose"]
+    B --> C["_node_search<br/>Phase 3: Search"]
+    C --> D["_node_synthesize<br/>Phase 4: Synthesize"]
+    D --> E{"route_after_synthesize<br/>Conditional"}
+    E -->|converged| F["_node_report<br/>Phase 5: Report"]
+    E -->|budget exhausted| G["_node_report<br/>Phase 5: Report"]
+    E -->|continue| H["_node_search<br/>Phase 3: Search"]
+    F --> I["_node_store<br/>Phase 6: Store"]
+    I --> J["_node_distill<br/>Phase 7: Distill"]
+    J --> K["_node_notify<br/>Phase 8: Notify"]
+    K --> L["END<br/>Success"]
+    G --> I
+    H --> C
 ```
 
 **Key design decisions:**
-- **Thin facade with timeout** — `run_deep_research_agent()` wraps `run_workflow()` in a `ThreadPoolExecutor(max_workers=1)` with a configurable timeout. This prevents the LangGraph loop from hanging indefinitely. The facade also extracts `trace_id` and `timeout` from kwargs so they don't leak into the LangGraph state.
-- **StateGraph, not StateMachine** — Uses LangGraph's `StateGraph` with `add_conditional_edges` for the cyclic loop. This gives checkpointing, streaming, and visual debugging out of the box.
-- **Replace semantics for knowledge** — `_merge_knowledge()` replaces (not appends) the knowledge base each iteration. This prevents infinite context growth. The cap is `_MAX_PREV_KNOWLEDGE_CHARS = 6000`.
-- **Three-tier tool selection** — `_select_tool()` chooses `tavily` for complex queries with API budget, `web` for simple queries or when Tavily is exhausted, and `browser` only as a fallback for JS-walled content. Browser is never selected as the primary tool.
-- **Browser fallback respects budget** — `_try_browser_fallback()` checks `is_browser_budget_exhausted()` before any browser action. Each fallback consumes 2 browser actions (navigate + text_content).
-- **URL deduplication across iterations** — `seen_urls` is a `set` persisted in state. Prevents re-scraping the same page in different iterations.
-- **Direct `llm.complete(role="planner")` in decompose** — Bypasses `agent(role="plan")` to avoid autocode prompt leak. The planner role is used directly for sub-query generation.
-- **Synthesis via `agent(role="research")`** — Delegates to the research role facade, not direct `llm.complete()`. Gives the research role its own model config and timeout.
-- **Evaluation via `agent(role="executor")`** — Completeness scoring uses the executor role for fast, cheap evaluation.
-- **Best-effort nodes** — `report`, `notify`, `store`, `distill` all catch exceptions and continue. The workflow never fails because of a side-effect node.
-- **Budget events audit trail** — Every tool selection, fallback, and error is logged to `budget_events` for post-hoc analysis.
+- **Cyclic workflow** — The workflow loops between search and synthesis until convergence or budget exhaustion. This is the core innovation of deep research.
+- **Convergence detection** — Uses cosine similarity between the previous and current knowledge base. If similarity exceeds `CONVERGENCE_SIMILARITY_THRESHOLD` (0.85), the workflow converges.
+- **Budget tracking** — Tracks API calls (Tavily) and browser actions separately. Prevents runaway costs.
+- **Multi-tool search** — Three-tier tool selection: Tavily API → web search → browser fallback. Each tier has different cost and coverage characteristics.
+- **Goal decomposition** — The planner LLM breaks the goal into sub-queries for parallel search. This improves coverage.
+- **Evaluation** — The executor LLM evaluates the synthesis quality and completeness. This provides a stopping criterion.
+- **Memory recall** — Recalls past research for context. This prevents redundant research.
+- **Report generation** — Generates a structured report with the final synthesis, sources, and metadata.
 
 ---
 
-## 📝 Workflow State
+## 📝 Node Reference
 
+### `_node_recall(state)` — Phase 1: Memory Recall
+
+**Purpose:** Recall relevant past research from memory.
+
+**Logic:**
 ```python
-class DeepResearchState(WorkflowState, total=False):
-    # Research inputs
-    goal: str
-    sub_queries: list[str]
-    pending_queries: list[str]
-
-    # Evidence
-    extracted_evidence: list[dict]
-    failed_sources: list[dict]
-
-    # Knowledge
-    knowledge_base: str
-    _prev_knowledge: str
-    completeness: float
-    converged: bool
-
-    # Control
-    iteration: int
-    consecutive_empty_iterations: int
-    budget_api_calls: int
-    budget_browser_actions: int
-    budget_events: list[dict]
-
-    # Config
-    max_iterations: int
-    completeness_threshold: float
-    convergence_threshold: float
-
-    # Report
-    report: str
-    result: str
-    status: str
-
-    # Memory (recalled context from episodic/semantic memory)
-    memory_context: str
-
-    # Cross-iteration URL deduplication
-    seen_urls: list[str]
+memory.recall(
+    query=goal,
+    limit=5,
+    trace_id=state["trace_id"],
+)
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `goal` | `str` | Original user research question |
-| `sub_queries` | `list[str]` | Decomposed sub-queries from the planner LLM |
-| `pending_queries` | `list[str]` | Sub-queries yet to be searched in current iteration |
-| `extracted_evidence` | `list[dict]` | Evidence from current iteration (cleared after synthesize) |
-| `failed_sources` | `list[dict]` | URLs that failed extraction, with reason and iteration |
-| `knowledge_base` | `str` | Running synthesis (replaced each iteration, capped at 6K chars) |
-| `_prev_knowledge` | `str` | Snapshot of knowledge before synthesis (for convergence detection) |
-| `completeness` | `float` | 0.0–100.0 score from LLM evaluation |
-| `converged` | `bool` | `SequenceMatcher` ratio > threshold between `_prev_knowledge` and `knowledge_base` |
-| `iteration` | `int` | Current loop iteration (0, 1, 2, ...) |
-| `consecutive_empty_iterations` | `int` | Stuck-loop counter (resets on non-empty evidence) |
-| `budget_api_calls` | `int` | Remaining Tavily API calls |
-| `budget_browser_actions` | `int` | Remaining browser actions (2 per fallback: navigate + text_content) |
-| `budget_events` | `list[dict]` | Audit trail of budget decisions |
-| `max_iterations` | `int` | Hard cap on loop iterations (default: 10) |
-| `completeness_threshold` | `float` | Exit threshold for completeness score (default: 85.0) |
-| `convergence_threshold` | `float` | `SequenceMatcher` ratio threshold (default: 0.85) |
-| `report` | `str` | Final synthesized report |
-| `result` | `str` | Final result (same as report) |
-| `status` | `str` | `"success"` | `"incomplete"` | `"failed"` | `"timeout"` |
-| `memory_context` | `str` | Recalled memories from episodic/semantic collections |
-| `seen_urls` | `list[str]` | Deduplication set (stored as list for JSON serialization) |
+**Output:** Partial dict with `memory_context`.
 
----
+**Error handling:** If memory recall fails, returns `{"memory_context": ""}`. The workflow proceeds without context.
 
-## ⚡ Nodes
+### `_node_decompose(state)` — Phase 2: Goal Decomposition
 
-### `recall` — Memory Recall
+**Purpose:** Break the goal into sub-queries for parallel search.
 
-Queries ChromaDB memory collections before decomposing:
-- **Episodic:** "Have I researched this topic before?"
-- **Semantic:** "What do I know about this topic?"
+**Logic:**
+1. Build prompt with goal, memory context, and current findings
+2. Call `llm.complete(role="planner", ...)` for decomposition
+3. Parse sub-queries from JSON or bullet list
 
-Results formatted as `[type|score=0.XX] text` and injected into `memory_context`.
+**Output:** Partial dict with `queries` (list of sub-query strings).
 
-**Output:** `memory_context` — formatted string of recalled memories.
+**Error handling:**
+- LLM failure → returns `{"queries": [goal]}` (fallback to single query)
+- Parse failure → returns `{"queries": [goal]}` (fallback to single query)
 
-### `decompose` — Goal Decomposition
+**Note:** The `_parse_sub_queries` regex has a fragile character class: `r'[\-*•]'`. The `\` escape before `*` is unnecessary and may emit a `SyntaxWarning`.
 
-Uses `llm.complete(role="planner")` (not `agent(role="plan")`) to break the goal into 3-5 searchable sub-queries.
+**Note:** JSON parsing doesn't handle trailing commas. LLMs sometimes output `["query1", "query2",]` which `json.loads` rejects.
 
-**Prompt strategy:**
-- **First iteration:** Generates initial sub-queries from the goal alone.
-- **Subsequent iterations:** Includes `knowledge_base[:2000]` + `memory_context[:1000]` to generate follow-up queries that explore gaps, contradictions, or uncovered angles.
+### `_node_search(state)` — Phase 3: Multi-Tool Search
 
-**Parsing:** `_parse_sub_queries()` handles three formats:
-1. JSON array: `["query1", "query2", ...]`
-2. JSON object: `{"queries": [...]}` or `{"steps": [{"description": ...}]}`
-3. Line heuristic: bullet/numbered lists or `Step N: query` patterns
+**Purpose:** Search for information using multiple tools.
 
-**Fallback:** If parsing fails, returns `[goal]` (single sub-query = original goal).
+**Logic:**
+1. For each sub-query:
+   - Select tool: Tavily API (if budget allows) → web search → browser fallback
+   - Execute search
+   - Extract evidence (top 3 results per query)
+   - Summarize evidence
+2. Update budget tracking
 
-**Output:** `sub_queries`, `pending_queries` — list of sub-query strings.
+**Output:** Partial dict with `extracted_evidence`, `seen_urls`, `budget_api_calls`, `budget_browser_actions`.
 
-### `search` — Execute Sub-Queries, Extract Evidence
+**Error handling:**
+- Individual search failures are logged but don't fail the workflow
+- Budget exhaustion stops the search loop
+- Browser fallback failures are logged but don't fail the workflow
 
-The most complex node. Handles tool selection, search execution, evidence extraction, browser fallback, and budget management.
+**Critical bug:** API budget is decremented for ALL successful searches, including web searches (which don't consume Tavily API calls). Only Tavily searches should decrement the API budget.
 
-**Tool selection (`_select_tool`):**
+**Critical bug:** API budget is NOT decremented for failed Tavily searches. The API call was made (and consumed) but the budget doesn't reflect it.
 
-| Condition | Selected Tool | Rationale |
-|-----------|--------------|-----------|
-| No `TAVILY_API_KEY` | `web` | Tavily unavailable |
-| Complex query (8+ words, "compare", "vs") + API budget | `tavily` | Better ranking for complex queries |
-| API budget available | `tavily` | Default to AI-ranked search |
-| API budget exhausted | `web` | Free fallback |
+**Note:** `max_results=5` is hardcoded for search queries. Not configurable.
 
-**Search with fallback (`_execute_search_with_fallback`):**
-1. Try `tavily` first (if selected)
-2. If empty/error, log event and fallback to `web`
-3. Return actual tool used + state updates
+**Note:** `_is_js_wall` uses hardcoded indicators instead of `JS_HEAVY_HINTS` from `constants.py`. Dead code.
 
-**Evidence extraction (`_extract_evidence`):**
-1. Iterate top 3 results per query
-2. Skip already-seen URLs (`seen_urls` set)
-3. Skip previously failed URLs
-4. Skip URLs with no content or < 100 chars
-5. **Browser fallback** for JS walls or < 300 chars (respects browser budget)
-6. Summarize evidence via `llm.complete(role="summarize")` (2-3 bullet points)
-7. Register citation via `citations.add()`
+### `_node_synthesize(state)` — Phase 4: Synthesis + Evaluation
 
-**Budget tracking:**
-- Each successful Tavily search decrements `budget_api_calls`
-- Each browser fallback decrements `budget_browser_actions` twice (navigate + text_content)
-- Every event logged to `budget_events`
+**Purpose:** Synthesize evidence and evaluate completeness.
 
-**Output:** `extracted_evidence`, `pending_queries` (cleared), `iteration` (incremented), `consecutive_empty_iterations`, `budget_*`, `seen_urls`, `failed_sources`.
+**Logic:**
+1. Build prompt with goal, evidence, and previous knowledge
+2. Call `agent(action="dispatch", role="research", ...)` for synthesis
+3. Parse synthesis and score from JSON
+4. Call `agent(action="dispatch", role="executor", ...)` for evaluation
+5. Parse evaluation score
+6. Determine convergence
 
-### `synthesize` — Merge Evidence, Evaluate, Check Convergence
+**Output:** Partial dict with `knowledge_base`, `_prev_knowledge`, `completeness`, `extracted_evidence`, `converged`, `synthesis`.
 
-**Three-step process:**
+**Critical bug:** `agent()` calls are missing `action="dispatch"`. The `agent()` facade requires `action`.
 
-1. **Synthesize:** `agent(role="research")` merges `prev_knowledge[:1000]` + new evidence into updated knowledge.
-2. **Evaluate:** `agent(role="executor")` scores completeness 0-100 against the original goal.
-3. **Converge:** `SequenceMatcher` checks if new knowledge is similar enough to old knowledge.
+**Critical bug:** `_agent_ok` and `_agent_text` are defensive wrappers for `LLMResponse` objects, but `agent()` returns `dict`. These wrappers are dead code.
 
-**Knowledge merging:** `_merge_knowledge()` uses **replace semantics** — new synthesis always replaces old knowledge. Prevents infinite context growth.
+**Critical bug:** `task` parameter is used for the system prompt, not the user task. The `agent()` facade passes `task` to `llm.complete(user=task)`. But here `SYNTHESIZE_SYSTEM_PROMPT` is passed as the user message, and the role's system prompt is ignored. This is semantically wrong.
 
-**Knowledge capping:** `_cap_knowledge()` truncates to `_MAX_PREV_KNOWLEDGE_CHARS = 6000` chars, cutting from the head and keeping the tail. Finds sentence/paragraph boundary to avoid mid-sentence breaks.
+**Bug:** `completeness_threshold` default is `0.85` in code but `85.0` in `.env`. The node and route use different scales. The `_parse_score` returns 0-100, but `completeness_threshold` from state defaults to `0.85` (from node fallback). The route checks `completeness >= threshold` which is always true for any score >= 1.
 
-**Score parsing:** `_parse_score()` extracts the last numeric value from critique text, clamps to 0-100, ignores negative numbers.
+**Bug:** `_parse_score` removes negative numbers with `re.sub(r"-\d+", "", text)`. This removes ALL negative numbers, including legitimate ones in ranges like "score: 85-90" which becomes "score: 90".
 
-**Output:** `knowledge_base`, `_prev_knowledge`, `completeness`, `converged`, `synthesis`, `extracted_evidence` (cleared).
+### `route_after_synthesize(state)` — Conditional Router
 
-### `report` — Build Final Report
+**Purpose:** Route to report, search, or END based on synthesis result.
 
-Assembles the final report from `synthesis` or `knowledge_base`. Sets status:
-- `"success"` if `completeness >= completeness_threshold`
-- `"incomplete"` otherwise
+**Logic:**
+```python
+converged = _is_converged(prev_knowledge, knowledge_base, CONVERGENCE_SIMILARITY_THRESHOLD)
+if converged:
+    return "converged"  # → _node_report
+if is_budget_exhausted(state):
+    return "budget_exhausted"  # → _node_report
+return "continue"  # → _node_search
+```
 
-**Output:** `report`, `result`, `status`.
+**Output:** String literal `"converged"`, `"budget_exhausted"`, or `"continue"`.
 
-### `notify` — Send Completion Notification
+**Note:** `converged` is recomputed in the route, not taken from state. The `synthesize` node already computes it. This is redundant and could diverge if the threshold changes.
 
-Calls `notify(action="send", title="DeepResearch", message=result[:500])`.
+### `_node_report(state)` — Phase 5: Report Generation
 
-**Best-effort:** Catches exceptions and continues.
+**Purpose:** Generate a structured report with the final synthesis.
 
-### `store` — Save to Memory
+**Logic:**
+1. Call `report(action="report", title=..., data=..., config=...)` with synthesis and sources
+2. Return the report
 
-Stores findings in ChromaDB:
-- **Semantic:** `memory.store_semantic(text=f"Deep Research: {result[:800]}", importance=6, tags="deep_research")`
-- **Episodic:** `memory.store_episodic(text=f"Completed deep research: '{goal[:60]}'", importance=5, goal=goal, outcome=status, tools_used="tavily,web,browser,llm")`
+**Output:** Partial dict with `report_html` and `report_path`.
 
-**Best-effort:** Catches exceptions and continues.
+**Note:** If both `knowledge_base` and `synthesis` are empty, `report` is `""` and `status` is `"incomplete"`. The user gets an empty report with `"incomplete"` status — confusing.
 
-### `distill` — Workflow Distillation (Placeholder)
+### `_node_store(state)` — Phase 6: Memory Storage
 
-**No-op** until v2. `sleep_learn` does not export `distill_workflow`.
+**Purpose:** Store the research result in memory.
 
-Returns state unchanged.
+**Logic:**
+1. Store semantic memory: `memory.store_semantic(text=result[:800], ...)`
 
----
+**Output:** Empty dict (side effects only).
 
-## 🔄 Conditional Routing
+**Note:** Only 800 chars of the result are stored in semantic memory. For long research results, this is a tiny fraction.
 
-### `route_after_synthesize`
+### `_node_distill(state)` — Phase 7: Distillation
 
-Exit conditions (evaluated in order):
+**Purpose:** Extract procedural knowledge from the research result.
 
-| # | Condition | Result | Reason |
-|---|-----------|--------|--------|
-| 1 | `iteration >= max_iterations` | → `report` | Hard cap, always exits |
-| 2 | `consecutive_empty_iterations >= 2` | → `report` | Stuck-loop guard |
-| 3 | `completeness >= threshold` AND `converged` | → `report` | Dual-gate: quality + stability |
-| 4 | Otherwise | → `decompose` | Continue loop |
+**Logic:**
+Placeholder — returns state unchanged. Not wired in v1.
 
-**Convergence detection:** Uses `difflib.SequenceMatcher` with `CONVERGENCE_SIMILARITY_THRESHOLD = 0.85`. Compares `_prev_knowledge` and `knowledge_base`. If either is empty, not converged.
+**Output:** State dict (unchanged).
+
+### `_node_notify(state)` — Phase 8: User Notification
+
+**Purpose:** Notify the user of completion.
+
+**Logic:**
+1. Call `notify(action="notify", message=...)` with the result
+2. Return `node_done(state, result=...)`
+
+**Output:** `node_done` result dict.
 
 ---
 
@@ -298,122 +244,98 @@ Exit conditions (evaluated in order):
 
 ```ini
 # .env
-DEEP_RESEARCH_MAX_ITERATIONS=10
-DEEP_RESEARCH_MAX_API_CALLS=20
-DEEP_RESEARCH_MAX_BROWSER_ACTIONS=5
-DEEP_RESEARCH_COMPLETENESS_THRESHOLD=85.0
-DEEP_RESEARCH_CONVERGENCE_THRESHOLD=0.85
-DEEP_RESEARCH_TIMEOUT_SECONDS=300
+DEEP_RESEARCH_MAX_API_CALLS=15          # Max Tavily API calls per run
+DEEP_RESEARCH_MAX_BROWSER_ACTIONS=10   # Max browser actions per run
+DEEP_RESEARCH_CONVERGENCE_THRESHOLD=0.85 # Convergence similarity threshold (0-1)
+DEEP_RESEARCH_TIMEOUT_SECONDS=300       # Workflow timeout (seconds)
 ```
 
 ```python
 # core/config.py
-self.deep_research_max_iterations = int(os.getenv("DEEP_RESEARCH_MAX_ITERATIONS", "10"))
-self.deep_research_max_api_calls = int(os.getenv("DEEP_RESEARCH_MAX_API_CALLS", "20"))
-self.deep_research_max_browser_actions = int(os.getenv("DEEP_RESEARCH_MAX_BROWSER_ACTIONS", "5"))
-self.deep_research_completeness_threshold = float(os.getenv("DEEP_RESEARCH_COMPLETENESS_THRESHOLD", "85.0"))
-self.deep_research_convergence_threshold = float(os.getenv("DEEP_RESEARCH_CONVERGENCE_THRESHOLD", "0.85"))
-self.deep_research_timeout_seconds = int(os.getenv("DEEP_RESEARCH_TIMEOUT_SECONDS", "300"))
+cfg.deep_research_max_api_calls = 15      # Max Tavily API calls per run
+cfg.deep_research_max_browser_actions = 10 # Max browser actions per run
+cfg.deep_research_convergence_threshold = 0.85 # Convergence similarity threshold (0-1)
+cfg.deep_research_timeout_seconds = 300    # Workflow timeout (seconds)
 ```
 
 ---
 
 ## 📤 Output
 
-The workflow returns a `DeepResearchState` dict. The final result is in `"result"`:
+The workflow returns a `dict`:
 
 ```json
 {
   "status": "success",
-  "result": "Synthesized markdown report...",
-  "report": "Synthesized markdown report...",
-  "goal": "What are the trade-offs between ChromaDB and Pinecone?",
-  "trace_id": "abc123",
-  "knowledge_base": "...",
-  "completeness": 92.0,
-  "converged": true,
-  "iteration": 4,
-  "budget_api_calls": 16,
-  "budget_browser_actions": 3,
-  "budget_events": [
-    {"iteration": 1, "tool": "search", "action": "selected", "reason": "tavily"},
-    {"iteration": 2, "tool": "search", "action": "fallback", "reason": "tavily->web: empty_results"}
-  ],
-  "failed_sources": [
-    {"url": "https://...", "reason": "no_content", "iteration": 2}
-  ],
-  "seen_urls": ["https://...", "https://..."],
-  "error": ""
+  "result": "Quantum computing error correction has seen...",
+  "error": "",
+  "artifacts": ["report.html"]
 }
 ```
 
-**Side effects:**
-- Semantic + episodic memories stored in ChromaDB
-- Citations registered in `core.citations`
-- Desktop notification sent (best-effort)
-- Budget audit trail in `budget_events`
+**Incomplete (budget exhausted):**
+```json
+{
+  "status": "incomplete",
+  "result": "Partial research: Quantum computing error correction...",
+  "error": "",
+  "artifacts": ["report.html"]
+}
+```
+
+**Failure:**
+```json
+{
+  "status": "failed",
+  "result": "",
+  "error": "Deep research failed: timeout",
+  "artifacts": []
+}
+```
 
 ---
 
-## 🔄 Comparison with `research` Workflow
+## 🔄 When to Use vs Alternatives
 
-| Aspect | `research` (Linear) | `deep_research` (Iterative) |
-|--------|---------------------|------------------------------|
-| Structure | 8-node pipeline | Cyclic ReAct loop |
-| Search | Single query | Multiple sub-queries, sequential |
-| Extraction | Parallel scrape (all URLs) | Selective extraction with deduplication |
-| Synthesis | One-shot | Iterative, knowledge replaced each round |
-| Evaluation | None | Completeness scoring + convergence detection |
-| Tool usage | `web` only | `tavily` → `web` → `browser` fallback chain |
-| Budget | Unbounded | Explicit iteration/API/browser limits |
-| Memory | Recall + store + distill + notify | Same pattern (recall before, store after) |
-| Use case | Quick reports | Complex, multi-faceted investigations |
+| Need | Tool | Why |
+|------|------|-----|
+| Deep research on a topic | `deep_research` workflow | Iterative search with convergence detection |
+| Quick research | `research` workflow | Single-pass search + synthesis, faster |
+| Analyze data | `data` workflow | Code generation + execution, data analysis |
+| Fix code | `autocode` workflow | Targeted code changes with test verification |
+| Understand codebase | `understand` workflow | Static analysis, dependency graph |
+| Generate report | `report` workflow | Structured report generation |
 
 ---
 
 ## 🧪 Testing
 
 ```powershell
-# Run all deep research tests
-D:\mcp\agent\venv\Scripts\pytest.exe tests/workflows/deep_research/ -W error --tb=short -v
+# Run deep research tests
+D:\mcp\agent\venv\Scripts\pytest.exe tests/workflows/deep_research/test_deep_research.py -W error --tb=short -v
 ```
 
-**Test coverage (7 files):**
-
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_graph.py` | — | StateGraph construction, node wiring, conditional edges, entry point, compilation |
-| `test_search.py` | — | Tool selection, search execution, fallback chain, evidence extraction, browser fallback, budget tracking, URL deduplication |
-| `test_decompose.py` | — | Sub-query parsing (JSON array, JSON object, line heuristic), fallback to goal, LLM error handling |
-| `test_synthesize.py` | — | Knowledge merging, knowledge capping, score parsing, convergence detection, agent mocking |
-| `test_budget.py` | — | Budget decrement, exhaustion checks, event logging, audit formatting |
-| `test_seen_urls.py` | — | URL deduplication across iterations, seen_urls persistence |
-| `test_timeout.py` | — | Facade timeout, ThreadPoolExecutor wrapper, timeout error handling |
-
 **Mock strategy:**
-- Patch `core.llm.llm.complete` for decompose/summarize/evaluate tests
-- Patch `tools.agent.agent` for synthesize tests
-- Patch `tools.web.web` and `tools.tavily.tavily` for search tests
-- Patch `tools.browser.browser` for browser fallback tests
-- Patch `core.memory.memory.recall` / `.store_semantic` / `.store_episodic` for memory tests
-- Patch `core.citations.citations.add` for citation tests
-- Patch `core.config.cfg` for budget configuration tests
-- Patch `workflows.deep_research_core.routes._is_converged` for convergence tests
+- Patch `llm.complete(role="planner")` for decomposition
+- Patch `agent(action="dispatch", role="research")` for synthesis
+- Patch `agent(action="dispatch", role="executor")` for evaluation
+- Patch `web(action="search")` and `web(action="read")` for search
+- Patch `browser(action="navigate")` and `browser(action="text_content")` for browser fallback
+- Patch `memory.recall()` and `memory.store_semantic()` for memory operations
+- Patch `report(action="report")` for report generation
+- Patch `notify(action="notify")` for notification
+- Test convergence detection with similar knowledge bases → assert `"converged"` route
+- Test budget exhaustion → assert `"budget_exhausted"` route
+- Test `node_search` with Tavily failure → assert web fallback
+- Test `node_search` with browser fallback → assert text extraction
 
 **Current test layout:**
 ```text
 tests/workflows/deep_research/
-├── __init__.py
-├── test_budget.py
-├── test_decompose.py
-├── test_graph.py
-├── test_search.py
-├── test_seen_urls.py
-├── test_synthesize.py
-└── test_timeout.py
+└── test_deep_research.py  # Full workflow test
 ```
 
-> **Future:** When the workflow is refactored (e.g., parallel sub-query dispatch), tests may be restructured to add `conftest.py` and split by concern.
+> **Future:** Split into per-node files: `test_node_recall.py`, `test_node_decompose.py`, `test_node_search.py`, `test_node_synthesize.py`, `test_node_report.py`, `test_node_store.py`, `test_node_distill.py`, `test_node_notify.py`, plus `conftest.py`.
 
 ---
 
@@ -423,78 +345,82 @@ tests/workflows/deep_research/
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| 8-node LangGraph cyclic pipeline | ✅ v1.0 | recall → decompose → search → synthesize → [route] → report → notify → store → distill |
-| ReAct-style loop | ✅ v1.0 | Conditional edges: loop back to decompose or exit to report |
-| Budget tracking | ✅ v1.0 | Iteration, API call, and browser action limits with audit trail |
-| Three-tier tool selection | ✅ v1.0 | `tavily` → `web` → `browser` fallback |
-| Convergence detection | ✅ v1.0 | `SequenceMatcher` at 0.85 threshold |
-| Stuck-loop detection | ✅ v1.0 | `consecutive_empty_iterations >= 2` |
-| URL deduplication | ✅ v1.0 | Cross-iteration `seen_urls` set |
-| Citation tracking | ✅ v1.0 | `citations.add()` per successful extraction |
-| Memory integration | ✅ v1.0 | Recall before, semantic + episodic store after |
-| Facade timeout | ✅ v1.0 | `ThreadPoolExecutor(max_workers=1)` with `future.result(timeout=...)` |
-| Knowledge capping | ✅ v1.0 | `_cap_knowledge()` at 6K chars, paragraph-boundary cut |
-| Direct planner LLM in decompose | ✅ v1.0 | Bypasses `agent(role="plan")` to avoid autocode prompt leak |
-| Synthesis via agent facade | ✅ v1.0 | `agent(role="research")` instead of direct `llm.complete()` |
-| Best-effort side-effect nodes | ✅ v1.0 | report, notify, store, distill all catch exceptions |
+| Cyclic LangGraph workflow | ✅ v1.0 | Search → synthesize → evaluate → loop until convergence |
+| Budget management | ✅ v1.0 | API calls + browser actions tracked separately |
+| Convergence detection | ✅ v1.0 | Cosine similarity between knowledge bases |
+| Multi-tool search | ✅ v1.0 | Tavily → web → browser fallback |
+| Goal decomposition | ✅ v1.0 | Planner LLM breaks goal into sub-queries |
+| Evaluation | ✅ v1.0 | Executor LLM evaluates synthesis quality |
+| Memory integration | ✅ v1.0 | Recall + store for context and future use |
+| Report generation | ✅ v1.0 | Structured report with synthesis and sources |
 
 ### 🔄 In Progress / Next Up
 
-| Feature | Notes | Priority |
-|---------|-------|----------|
-| Parallel sub-query dispatch | Use LangGraph `Send` for tavily/web sub-queries (browser stays sequential) | P1 |
-| Tavily keyless graceful degradation | When Tavily is keyless, automatically fall back to `web(search)` without user intervention | P1 |
-| `_do_research()` accelerator | Tavily broad-sweep when iteration > 3 and completeness < 50 | P1 |
-| Wire `_do_research()` accelerator | Call `tavily._do_research()` directly from `deep_research_core/nodes/search.py` when iteration > 3 and completeness < 50. Bypass tool facade for internal use | P1 |
-| Standardize `max_results` | Currently hardcoded `max_results=5` in `node_search`. Use `cfg.web_max_search_results` or add `DEEP_RESEARCH_MAX_SEARCH_RESULTS` to `.env` | P2 |
-| Workflow distillation | Wire up `_node_distill` when `sleep_learn` exports `distill_workflow` | P2 |
-| Telemetry persistence | Write `budget_events` to disk per `trace_id` | P2 |
-| Streaming partial results | Yield intermediate synthesis per iteration instead of batch return | P2 |
-| Deduplicate URLs across `tavily` + `web` | When Tavily and web return overlapping URLs, deduplicate before extraction | P2 |
-| Knowledge compaction | LLM-based summarization when `knowledge_base` exceeds 8K chars | P3 |
-| Tool selection classifier | Train lightweight classifier after 100+ traces to replace heuristic | P3 |
-| Configurable decompose count | Hardcoded 3-5 sub-queries. Make configurable via `.env` | P3 |
-| Configurable evidence per query | Hardcoded top 3 results. Make configurable | P3 |
-| Result quality pre-filtering | Filter low-quality evidence before synthesis based on source reliability | P3 |
-| Multi-model synthesis | Use different LLM roles for synthesis vs evaluation (already partially done) | P3 |
+| # | Feature | Notes | Priority |
+|---|---------|-------|----------|
+| 1 | **Fix `agent()` missing `action="dispatch"` in `node_synthesize` and `node_evaluate`** | `agent()` requires `action` parameter. Without it, returns error dict. | P0 |
+| 2 | **Fix `task` parameter used for system prompt in `agent()` calls** | `task` is passed to `llm.complete(user=task)`. System prompt should be separate. | P0 |
+| 3 | **Fix API budget decremented for web searches** | `node_search` decrements `budget_api_calls` for ALL successful searches, including web. Only Tavily should decrement. | P0 |
+| 4 | **Fix API budget NOT decremented for failed Tavily searches** | Failed Tavily calls still consume API budget. Not reflected in tracking. | P0 |
+| 5 | **Fix `completeness_threshold` scale mismatch** | Node defaults to `0.85` (0-1), route and `.env` use `85.0` (0-100). Route check always true for score >= 1. | P0 |
+| 6 | **Remove `_agent_ok` and `_agent_text` dead code** | `agent()` returns `dict`, not `LLMResponse`. Wrappers are unnecessary. | P1 |
+| 7 | **Fix `**state` spreading in graph nodes** | All nodes return `{**state, ...}`. Should return partial dicts. | P1 |
+| 8 | **Fix memory failure silent in `_node_recall`** | Exception caught, returns empty context. No trace step, no error log. | P1 |
+| 9 | **Fix `_node_report` empty report not handled** | Empty `knowledge_base` + `synthesis` produces empty report with `"incomplete"` status. | P1 |
+| 10 | **Fix `_node_store` only storing 800 chars** | Long research results truncated. Semantic memory nearly useless. | P1 |
+| 11 | **Fix `route_after_synthesize` recomputing `converged`** | Already computed in `node_synthesize`. Redundant and may diverge. | P1 |
+| 12 | **Remove `format_audit` dead code** | Function exists but never called. | P3 |
+| 13 | **Remove `JS_HEAVY_HINTS` dead code** | Defined in `constants.py` but never used. `search.py` uses hardcoded indicators. | P2 |
+| 14 | **Fix `_parse_sub_queries` regex fragility** | Character class `r'[\-*•]'` has unnecessary escape. May emit `SyntaxWarning`. | P1 |
+| 15 | **Fix `_parse_sub_queries` trailing comma handling** | LLMs may output trailing commas in JSON. `json.loads` rejects them. | P1 |
+| 16 | **Fix `node_search` hardcoded `max_results=5`** | Should be configurable via `.env`. | P2 |
+| 17 | **Fix `node_search` not filtering empty queries** | Empty strings in `queries` cause searches for `""`. | P2 |
+| 18 | **Fix `_summarize_evidence` bypassing role config** | Uses custom system prompt instead of role's configured prompt. | P2 |
+| 19 | **Fix `_extract_evidence` hardcoded top 3** | Should be configurable. | P2 |
+| 20 | **Fix `_parse_score` removing negative numbers incorrectly** | `re.sub(r"-\d+", "", text)` removes numbers from ranges like "85-90". | P1 |
+| 21 | **Fix `_cap_knowledge` may exceed max after prefix** | Truncation + prefix may exceed `max_chars`. | P2 |
+| 22 | **Add `synthesis` field to `DeepResearchState`** | Field returned by `node_synthesize` but not declared in TypedDict. | P3 |
+| 23 | **Test restructure** | Split `test_deep_research.py` into per-node files + `conftest.py` | P1 |
+| 24 | **Configurable convergence threshold** | Make `CONVERGENCE_SIMILARITY_THRESHOLD` actually use `.env` value | P2 |
+| 25 | **Streaming synthesis** | Stream synthesis output for real-time feedback | P3 |
 
 ### 🚫 Deferred / Out of Scope
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
-| 1 | **Remove browser fallback** | Browser fallback is essential for JS-heavy sites. Removing it would break many real-world pages. | Skip |
-| 2 | **Synchronous search only** | Sequential search is currently required for URL deduplication and budget tracking. Parallel dispatch is P1, not skip. | Skip |
-| 3 | **Store full page text in memory** | Memory stores summaries only (first 800 chars). Full text would bloat ChromaDB. | Skip |
-| 4 | **Interactive user clarification** | Would require bidirectional communication. Out of scope for autonomous workflow. | Skip |
-| 5 | **Real-time search during synthesis** | Synthesis is a single LLM call. Interactive search would require a nested loop. | Skip |
-| 6 | **Remove facade timeout** | The timeout is the only protection against infinite loops. Removing it risks hanging the agent. | Skip |
+| 1 | **Remove cyclic workflow** | Single-pass research would miss important information. Iteration is essential. | Skip |
+| 2 | **Remove budget management** | Budget tracking prevents runaway costs. Removing it would risk excessive API usage. | Skip |
+| 3 | **Remove convergence detection** | Without convergence detection, the workflow would run indefinitely or stop prematurely. | Skip |
+| 4 | **Remove multi-tool search** | Single-tool search would have limited coverage. Multi-tool is essential. | Skip |
+| 5 | **Real-time collaboration** | Multi-user research would require complex state synchronization. Out of scope. | Skip |
 
 ---
 
 ## 🛡️ AI Agent Instructions
 
 ### NEVER DO
-1. **Never remove the facade timeout** — `ThreadPoolExecutor(max_workers=1)` + `future.result(timeout=...)` is the only protection against infinite loops.
-2. **Never call `agent(role="plan")` in decompose** — Use `llm.complete(role="planner")` directly to avoid autocode prompt leak.
-3. **Never select `browser` as primary tool** — Browser is only a fallback for JS-walled content. Primary tools are `tavily` and `web`.
-4. **Never bypass browser budget** — Always check `is_browser_budget_exhausted()` before any browser action.
-5. **Never append to `knowledge_base`** — Use `_merge_knowledge()` replace semantics. Appending causes infinite context growth.
-6. **Never skip URL deduplication** — `seen_urls` prevents re-scraping and redundant API calls.
-7. **Never let side-effect nodes fail the workflow** — `report`, `notify`, `store`, `distill` must catch exceptions and continue.
-8. **Never create `.bak` files** — forbidden by project rules.
-9. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
-10. **Never print to stdout** — MCP stdio corruption. Use `node_step()` for logging.
-11. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+1. **Never mutate state in-place** — Always return partial update `dict`s.
+2. **Never spread `**state`** — Never return `{**state, "key": "value"}`. Return only the changed keys.
+3. **Never remove budget management** — Budget tracking prevents runaway costs.
+4. **Never remove convergence detection** — Without it, the workflow would run indefinitely.
+5. **Never use `print()` to stdout** — MCP stdio corruption. Use `tracer.step()` for logging.
+6. **Never create `.bak` files** — forbidden by project rules.
+7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
+8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+9. **Never call `agent()` without `action="dispatch"`** — The `agent()` facade requires `action`. Always pass `action="dispatch"` for LLM calls.
+10. **Never use `task` parameter for system prompts** — `task` is the user message. Use role's `system_prompt` or add `system` parameter to `agent()`.
+11. **Never return `None` from LangGraph nodes** — Always return a `dict` (even empty `{}`).
 
 ### ALWAYS DO
-12. **Always use `agent(role="research")` for synthesis** — Not direct `llm.complete()`. The research role has its own model config.
-13. **Always use `agent(role="executor")` for evaluation** — Fast, cheap scoring. Separate from synthesis role.
-14. **Always cap knowledge before sending to LLM** — `_cap_knowledge()` at 6K chars prevents context overflow.
-15. **Always test the stuck-loop guard** — Patch `consecutive_empty_iterations = 2` and assert route returns `"report"`.
-16. **Always test convergence detection** — Patch `_is_converged` to `True` + `completeness >= threshold` and assert route returns `"report"`.
-17. **Always test budget exhaustion** — Patch `budget_api_calls = 0` and assert `_select_tool` returns `"web"`.
-18. **Always test browser fallback** — Mock `web` to return `< 100` chars and assert `browser(navigate)` is called.
-19. **Always update this doc** when adding nodes, changing routing logic, or modifying tool integrations.
+12. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
+13. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+14. **Always handle search failure gracefully** — Individual search failures should not fail the workflow.
+15. **Always test `route_after_synthesize` with all paths** — Assert `"converged"`, `"budget_exhausted"`, and `"continue"`.
+16. **Always test budget exhaustion** — Assert workflow stops when budget is exhausted.
+17. **Always test convergence detection** — Assert workflow stops when knowledge converges.
+18. **Always test multi-tool fallback** — Assert Tavily → web → browser fallback chain.
+19. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
+20. **Always use `llm.complete()` directly for custom system prompts** — `agent()` uses role's system prompt. Bypass for custom prompts.
 
 ---
 
@@ -502,32 +428,27 @@ tests/workflows/deep_research/
 
 | File | Purpose |
 |------|---------|
-| `workflows/deep_research.py` | Facade: `run_deep_research_agent()` with ThreadPoolExecutor timeout wrapper |
-| `workflows/deep_research_core/graph.py` | StateGraph builder: 8 nodes + conditional edges |
-| `workflows/deep_research_core/state.py` | `DeepResearchState` TypedDict |
-| `workflows/deep_research_core/routes.py` | `route_after_synthesize`: loop vs exit logic |
-| `workflows/deep_research_core/budget.py` | Pure budget functions: decrement, log, check, format |
-| `workflows/deep_research_core/constants.py` | Prompts, convergence threshold, JS detection hints |
-| `workflows/deep_research_core/nodes/decompose.py` | `node_decompose_goal`: LLM-based sub-query generation with multi-format parsing |
-| `workflows/deep_research_core/nodes/search.py` | `node_search`: tool selection, search execution, evidence extraction, browser fallback |
-| `workflows/deep_research_core/nodes/synthesize.py` | `node_synthesize`: knowledge merging, completeness evaluation, convergence check |
-| `workflows/base.py` | `WorkflowState`, `run_workflow()`, `node_step()`, `node_error()`, `node_done()` |
-| `tools/tavily.py` | `tavily(action="search")` — primary search tool |
-| `tools/web.py` | `web(action="search")` — free fallback search tool |
-| `tools/browser.py` | `browser(action="navigate")` / `browser(action="text_content")` — JS fallback |
-| `tools/agent.py` | `agent(role="research")` / `agent(role="executor")` — synthesis and evaluation |
-| `tools/notify.py` | `notify(action="send")` — completion notification |
-| `core/citations.py` | `citations.add()` / `citations.get_sources()` — citation tracking |
-| `core/memory.py` | `memory.recall()` / `.store_semantic()` / `.store_episodic()` — memory operations |
-| `core/config.py` | `cfg.deep_research_*` — all budget and threshold config |
-| `tests/workflows/deep_research/test_graph.py` | StateGraph construction tests |
-| `tests/workflows/deep_research/test_search.py` | Search node tests |
-| `tests/workflows/deep_research/test_decompose.py` | Decompose node tests |
-| `tests/workflows/deep_research/test_synthesize.py` | Synthesize node tests |
-| `tests/workflows/deep_research/test_budget.py` | Budget tracking tests |
-| `tests/workflows/deep_research/test_seen_urls.py` | URL deduplication tests |
-| `tests/workflows/deep_research/test_timeout.py` | Facade timeout tests |
+| `workflows/deep_research.py` | `run_deep_research()` — sync facade with ThreadPoolExecutor |
+| `workflows/deep_research_core/graph.py` | `build_deep_research_graph()` — 8-node LangGraph StateGraph |
+| `workflows/deep_research_core/state.py` | `DeepResearchState` — extended TypedDict with budget fields |
+| `workflows/deep_research_core/routes.py` | `route_after_synthesize()` — conditional routing logic |
+| `workflows/deep_research_core/budget.py` | `decrement_api_calls()`, `decrement_browser_actions()`, `is_budget_exhausted()` — budget tracking |
+| `workflows/deep_research_core/constants.py` | `SYNTHESIZE_SYSTEM_PROMPT`, `EVALUATE_SYSTEM_PROMPT`, `CONVERGENCE_SIMILARITY_THRESHOLD` — shared constants |
+| `workflows/deep_research_core/nodes/decompose.py` | `node_decompose_goal()` — goal decomposition |
+| `workflows/deep_research_core/nodes/search.py` | `node_search()` — multi-tool search |
+| `workflows/deep_research_core/nodes/synthesize.py` | `node_synthesize()` — synthesis + evaluation |
+| `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()` — shared infrastructure |
+| `tools/agent.py` | `agent(action="dispatch", role="research")` — synthesis |
+| `tools/agent.py` | `agent(action="dispatch", role="executor")` — evaluation |
+| `tools/web.py` | `web(action="search", query=...)` — web search |
+| `tools/web.py` | `web(action="read", url=...)` — web scraping |
+| `tools/browser.py` | `browser(action="navigate", url=...)` — browser fallback |
+| `tools/memory.py` | `memory.recall()`, `memory.store_semantic()` — memory operations |
+| `tools/notify.py` | `notify(action="notify", message=...)` — user notification |
+| `tools/report.py` | `report(action="report", title=...)` — report generation |
+| `core/config.py` | `cfg.deep_research_max_api_calls`, `cfg.deep_research_max_browser_actions`, `cfg.deep_research_convergence_threshold` — config |
+| `tests/workflows/deep_research/test_deep_research.py` | Full workflow test |
 
 ---
 
-*Architecture: thin facade with ThreadPoolExecutor timeout + LangGraph StateGraph cyclic loop + 8 pure-function nodes + conditional routing + three-tier tool selection + budget tracking + convergence detection + URL deduplication + knowledge capping + best-effort side-effect nodes + memory integration.*
+*Architecture: 8-node cyclic LangGraph StateGraph (recall → decompose → search → synthesize → evaluate → loop/report → store → distill → notify) with budget management, convergence detection, multi-tool search, and memory integration.*

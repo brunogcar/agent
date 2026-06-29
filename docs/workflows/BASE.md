@@ -3,7 +3,7 @@
 The `workflows/base.py` module provides the **shared foundation** for all agent workflows. It defines the common `WorkflowState` TypedDict, node helper utilities, and the `run_workflow()` dispatcher that routes execution to the correct workflow graph.
 
 **Key characteristics:**
-- **Shared state schema** — `WorkflowState` is the common denominator across `research`, `data`, `autocode`, `deep_research`, and `understand`
+- **Shared state schema** — `WorkflowState` is the common denominator across `research`, `data`, `autocode`, `deep_research`, and `understand` (22 fields)
 - **LangGraph immutability** — All helpers return partial update `dict`s, never mutate state in-place
 - **Checkpoint resumption** — `run_workflow(resume=True)` restores from the latest checkpoint journal
 - **Trace lifecycle** — Automatic trace creation, step logging, error tracking, and completion marking
@@ -31,8 +31,8 @@ result = run_workflow(
     resume=True,
 )
 
-print(result["status"])   # "success" | "failed"
-print(result["result"])   # Final result summary
+print(result["status"])  # "success" | "failed"
+print(result["result"])  # Final result summary
 ```
 
 ---
@@ -41,33 +41,33 @@ print(result["result"])   # Final result summary
 
 ```text
 workflows/base.py
-├── WorkflowState (TypedDict)     # Shared state schema (25+ fields)
-├── trim_state(state)             # Phase 5: Evict oversized fields to async queue
-├── node_step(state, node, msg)   # Log a workflow step to the active trace
-├── node_error(state, node, msg)  # Mark state as failed, log error, save checkpoint
-├── node_done(state, result)      # Mark state as succeeded, finish trace, mark complete
-└── run_workflow(type, goal, ...) # Dispatcher: trace creation → checkpoint resume → graph.invoke()
+├── WorkflowState (TypedDict)          # Shared state schema (22 fields)
+├── trim_state(state)                  # Phase 5: Evict oversized fields to async queue
+├── node_step(state, node, msg)        # Log a workflow step to the active trace
+├── node_error(state, node, msg)     # Mark state as failed, log error, save checkpoint
+├── node_done(state, result)           # Mark state as succeeded, finish trace, mark complete
+└── run_workflow(type, goal, ...)      # Dispatcher: trace creation → checkpoint resume → graph.invoke()
 ```
 
 ### Dispatch Flow
 
 ```mermaid
 graph TD
- A["run_workflow(type, goal, trace_id, resume, **kwargs)"] --> B{"trace_id?"}
- B -->|No| C["tracer.new_trace(type, goal=goal)"]
- B -->|Yes| D["Use existing trace_id"]
- C --> E["Build initial_state = {workflow, goal, trace_id, retries:0, status:'running', ...} + kwargs"]
- D --> E
- E --> F{"resume?"}
- F -->|Yes| G["get_latest(trace_id)"]
- G -->|Found| H["Restore state, set status='running'"]
- G -->|Not found| I["Warning: starting fresh"]
- F -->|No| J["Use initial_state"]
- H --> K["Route to workflow graph"]
- I --> K
- J --> K
- K --> L["graph.invoke(state)"]
- L --> M["Return dict(result)"]
+    A["run_workflow(type, goal, trace_id, resume, **kwargs)"] --> B{"trace_id?"}
+    B -->|No| C["tracer.new_trace(type, goal=goal)"]
+    B -->|Yes| D["Use existing trace_id"]
+    C --> E["Build initial_state = {workflow, goal, trace_id, retries:0, status:'running', ...} + kwargs"]
+    D --> E
+    E --> F{"resume?"}
+    F -->|Yes| G["get_latest(trace_id)"]
+    G -->|Found| H["Restore state, set status='running'"]
+    G -->|Not found| I["Warning: starting fresh"]
+    F -->|No| J["Use initial_state"]
+    H --> K["Route to workflow graph"]
+    I --> K
+    J --> K
+    K --> L["graph.invoke(state)"]
+    L --> M["Return dict(result)"]
 ```
 
 **Key design decisions:**
@@ -86,37 +86,37 @@ graph TD
 ```python
 class WorkflowState(TypedDict, total=False):
     # Identity
-    workflow: str          # "research" | "data" | "autocode" | "deep_research" | "understand"
-    goal: str              # What we are trying to accomplish
-    trace_id: str          # Tracer ID for this run
+    workflow: str      # "research" | "data" | "autocode" | "deep_research" | "understand"
+    goal: str          # What we are trying to accomplish
+    trace_id: str      # Tracer ID for this run
 
     # Inputs (workflow-specific)
-    code: str              # Initial code for data workflow
-    target_file: str       # File to edit (autocode)
-    mode: str              # Autocode mode: fix_error | improve | add_feature
-    error_msg: str         # Error traceback (autocode fix_error)
-    feature_desc: str      # Feature description (autocode add_feature)
+    code: str          # Initial code for data workflow
+    target_file: str   # File to edit (autocode)
+    mode: str          # Autocode mode: fix_error | improve | add_feature
+    error_msg: str     # Error traceback (autocode fix_error)
+    feature_desc: str  # Feature description (autocode add_feature)
 
     # Accumulated context
-    memory_context: str    # Recalled memories (formatted string)
-    file_content: str      # Current file content (autocode)
-    search_results: str    # Web search results
-    analysis: str          # Agent(analyze) output
-    patch: str             # Generated patch (autocode)
-    review: dict           # Agent(review) structured output
+    memory_context: str   # Recalled memories (formatted string)
+    file_content: str       # Current file content (autocode)
+    search_results: str     # Web search results
+    analysis: str           # Agent(analyze) output
+    patch: str               # Generated patch (autocode)
+    review: dict             # Agent(review) structured output
 
     # Execution
-    output: str            # Python execution output
-    exec_error: str        # Execution error if any
+    output: str              # Python execution output
+    exec_error: str          # Execution error if any
 
     # Control
-    retries: int           # Current retry count
-    error: str             # Fatal workflow error
-    status: str            # "running" | "success" | "failed"
+    retries: int             # Current retry count
+    error: str               # Fatal workflow error
+    status: str              # "running" | "success" | "failed"
 
     # Result
-    result: str            # Final result summary
-    artifacts: list        # Files created, commits made, etc.
+    result: str              # Final result summary
+    artifacts: list          # Files created, commits made, etc.
 ```
 
 | Field | Type | Description |
@@ -191,6 +191,8 @@ node_error(state, "execute", "Code generation failed: timeout")
 
 **Returns:** Partial dict with `status` and `error`.
 
+**Note:** Saves a **partial** checkpoint (`{"status": "failed", "error": ...}`), not the full state. Resume from an error checkpoint will lose all workflow context. This is a known limitation.
+
 ### `node_done(state, result, artifacts=None)` — Completion
 
 Marks state as succeeded:
@@ -234,13 +236,13 @@ Routes to the correct workflow graph:
 ```ini
 # .env — no base-specific env vars
 # Uses shared config:
-#   All timeouts from core/config.py
+# All timeouts from core/config.py
 ```
 
 ```python
 # core/config.py
 # No base-specific config. Uses:
-#   cfg.* — various timeout and limit settings
+# cfg.* — various timeout and limit settings
 ```
 
 ---
@@ -304,7 +306,7 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/workflows/base/test_base_nodes.py -W 
 **Current test layout:**
 ```text
 tests/workflows/base/
-└── test_base_nodes.py          # Node helper tests + dispatcher tests
+└── test_base_nodes.py  # Node helper tests + dispatcher tests
 ```
 
 > **Future:** When the module grows, split into `test_node_helpers.py`, `test_dispatcher.py`, `test_trim_state.py`, and add `conftest.py`.
@@ -317,7 +319,7 @@ tests/workflows/base/
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Shared `WorkflowState` TypedDict | ✅ v1.0 | 25+ fields, `total=False`, used by all workflows |
+| Shared `WorkflowState` TypedDict | ✅ v1.0 | 22 fields, `total=False`, used by all workflows |
 | `node_step()` trace logging | ✅ v1.0 | Consistent step logging with optional checkpoint |
 | `node_error()` error handling | ✅ v1.0 | Guard against empty messages, saves checkpoint |
 | `node_done()` completion | ✅ v1.0 | Finishes trace, marks complete |
@@ -331,17 +333,25 @@ tests/workflows/base/
 
 ### 🔄 In Progress / Next Up
 
-| Feature | Notes | Priority |
-|---------|-------|----------|
-| `@meta_tool` refactor on tools used | When `notify` gets `@meta_tool`, update calls in `node_done` | P1 |
-| Test restructure | Split `test_base_nodes.py` into per-concern files + `conftest.py` | P1 |
-| Configurable eviction threshold | Hardcoded `len(val) // 4 > 1000`. Make configurable via `.env` | P2 |
-| Configurable evicted fields | Hardcoded `["search_results", "output", "analysis"]`. Make configurable | P2 |
-| Workflow registration | Replace hardcoded if/elif dispatch with dynamic registry (e.g., `WORKFLOW_REGISTRY` dict) | P2 |
-| Input validation | Add `run_workflow()` input validation (non-empty goal, valid workflow_type) | P2 |
-| Timeout wrapper | Add configurable timeout around `graph.invoke()` to prevent hung workflows | P2 |
-| Result pruning | Pipe `result` through `prune_tool_dict()` before return to prevent oversized outputs | P3 |
-| Parallel workflow dispatch | Evaluate `asyncio.gather()` for parallel workflow execution | P3 |
+| # | Feature | Notes | Priority |
+|---|---------|-------|----------|
+| 1 | **Fix `node_error` partial checkpoint** | `node_error` saves only `{"status": "failed", "error": ...}` — loses all workflow context on resume. Should save full state. | P0 |
+| 2 | **Fix exception handler missing checkpoint** | `run_workflow()` `except Exception` block returns failure dict but never calls `save_checkpoint()`. State at crash time is lost. | P0 |
+| 3 | **Fix `understand` disconnect from trace/checkpoint** | `understand` workflow ignores `trace_id`, `goal`, and checkpoint system. `resume=True` is meaningless. | P0 |
+| 4 | **Fix `report` workflow missing from dispatcher** | `workflow_tool.py` accepts `"report"` in `VALID_WORKFLOWS`, but `run_workflow()` has no `elif wf_type == "report"` branch. | P0 |
+| 5 | **Fix `WorkflowState` missing `task` field** | `task` is used for autocode but not declared in `WorkflowState` TypedDict. | P0 |
+| 6 | **Fix resume overwriting `goal`** | `initial_state = {**restored, "status": "running", "goal": goal}` overwrites checkpoint's original goal. | P1 |
+| 7 | **Fix `node_step()` returns `None`** | `node_step()` returns `None` — violates LangGraph node contract. Should return `{}` or be renamed to `_log_step()`. | P1 |
+| 8 | **Fix `node_done()` no success checkpoint before complete** | `mark_complete()` may fail; success checkpoint should be saved first. | P1 |
+| 9 | **`@meta_tool` refactor on tools used** | When `notify` gets `@meta_tool`, update calls in `node_done` | P1 |
+| 10 | **Test restructure** | Split `test_base_nodes.py` into per-concern files + `conftest.py` | P1 |
+| 11 | **Configurable eviction threshold** | Hardcoded `len(val) // 4 > 1000`. Make configurable via `.env` | P2 |
+| 12 | **Configurable evicted fields** | Hardcoded `["search_results", "output", "analysis"]`. Make configurable | P2 |
+| 13 | **Workflow registration** | Replace hardcoded if/elif dispatch with dynamic registry (e.g., `WORKFLOW_REGISTRY` dict) | P2 |
+| 14 | **Input validation** | Add `run_workflow()` input validation (non-empty goal, valid workflow_type) | P2 |
+| 15 | **Timeout wrapper** | Add configurable timeout around `graph.invoke()` to prevent hung workflows | P2 |
+| 16 | **Result pruning** | Pipe `result` through `prune_tool_dict()` before return to prevent oversized outputs | P3 |
+| 17 | **Parallel workflow dispatch** | Evaluate `asyncio.gather()` for parallel workflow execution | P3 |
 
 ### 🚫 Deferred / Out of Scope
 
@@ -366,16 +376,17 @@ tests/workflows/base/
 6. **Never create `.bak` files** — forbidden by project rules.
 7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
 8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+9. **Never return `None` from LangGraph nodes** — `node_step()` returns `None` which violates the node contract. Return `{}` at minimum.
 
 ### ALWAYS DO
-9. **Always return `dict` from `node_error` and `node_done`** — Not `WorkflowState`. Partial updates only.
-10. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
-11. **Always validate checkpoint version** — `_checkpoint_version == 1` before resuming.
-12. **Always handle unknown workflow types** — Return `"failed"` with clear error, never crash.
-13. **Always test `trim_state` with oversized fields** — Assert fields are evicted and replaced with placeholder text.
-14. **Always test checkpoint resumption** — Mock `get_latest` to return valid/invalid checkpoints.
-15. **Always test autocode compatibility** — Assert `task` key exists when `workflow_type="autocode"`.
-16. **Always update this doc** when adding fields to `WorkflowState`, changing helper signatures, or modifying dispatch logic.
+10. **Always return `dict` from `node_error` and `node_done`** — Not `WorkflowState`. Partial updates only.
+11. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+12. **Always validate checkpoint version** — `_checkpoint_version == 1` before resuming.
+13. **Always handle unknown workflow types** — Return `"failed"` with clear error, never crash.
+14. **Always test `trim_state` with oversized fields** — Assert fields are evicted and replaced with placeholder text.
+15. **Always test checkpoint resumption** — Mock `get_latest` to return valid/invalid checkpoints.
+16. **Always test autocode compatibility** — Assert `task` key exists when `workflow_type="autocode"`.
+17. **Always update this doc** when adding fields to `WorkflowState`, changing helper signatures, or modifying dispatch logic.
 
 ---
 

@@ -1,39 +1,32 @@
 # 🧠 Understand Workflow
 
-The `understand` workflow builds and maintains a **deterministic, local-first Codebase Knowledge Graph** for any Python project. It scans files, parses AST dependencies, and stores the graph in SQLite for fast structural queries.
+The `understand` workflow analyzes a **project's codebase** to build a dependency graph, map file relationships, and identify architectural patterns. It is the foundation for intelligent code navigation, impact analysis, and automated refactoring suggestions.
 
 **Key characteristics:**
-- **AST-based dependency parsing** — Extracts imports and module references via Python AST (not regex)
-- **Incremental indexing** — Only parses changed/new files (MD5 hash + mtime comparison)
-- **Physical isolation** — Separate artifact directories for agent root vs workspace projects
-- **Hybrid storage** — SQLite for graph topology, ChromaDB for semantic search (vectors only, no edges)
-- **Async nodes** — All nodes are `async` with `asyncio.to_thread()` for I/O-bound operations
-- **Batch processing** — Files parsed in batches of 10 with `asyncio.gather()`
+- **Static analysis** — Parses Python AST to extract imports, class hierarchies, and function calls
+- **Dependency graph** — Builds a graph in SQLite (via `GraphStore`) for fast querying
+- **Incremental updates** — Only re-parses changed files (MD5 hash comparison)
+- **Project isolation** — Each project gets its own graph database and artifact directory
+- **Async I/O** — All file I/O uses `asyncio.to_thread()` to prevent blocking the event loop
+- **Memory integration** — Stores project metadata in procedural memory for future recall
 
 ---
 
 ## 🚀 Quick Start
 
 ```python
-from workflows.understand import run_understand_workflow_sync
-
-# Index the agent's own codebase
-result = run_understand_workflow_sync("D:/mcp/agent", is_agent_root=True)
-print(f"Parsed {result['files_parsed']} files, {result['edges_created']} edges")
-
-# Index a workspace project
-result = run_understand_workflow_sync("D:/mcp/agent/workspace/projects/my_project", is_agent_root=False)
-```
-
-**Via workflow runner:**
-```python
 from workflows.base import run_workflow
 
+# Analyze a project
 result = run_workflow(
     workflow_type="understand",
-    goal="Build the knowledge graph for the codebase",
-    project_root="D:/mcp/agent/workspace/projects/my_project",
+    goal="Analyze the codebase structure",
+    project_root="/path/to/project",
+    trace_id="understand_001",
 )
+
+print(result["status"])  # "success" | "failed"
+print(result["result"])  # "Project analysis complete: 42 files, 156 dependencies"
 ```
 
 ---
@@ -42,197 +35,160 @@ result = run_workflow(
 
 ```text
 workflows/understand.py
-├── run_understand_workflow_sync(project_path, is_agent_root)  # Sync facade: ThreadPoolExecutor + new event loop
-├── run_understand_workflow(project_path, is_agent_root)       # Async entry: builds graph + ainvoke
-├── build_understand_graph()                                    # StateGraph builder: 4 nodes + linear edges
-├── _default_state(project_path, is_agent_root)                 # Initialize UnderstandState with ProjectManager
-│
-├── Nodes (in execution order):
-│   ├── node_init_project          # ProjectManager init, size check, GraphStore creation
-│   ├── node_discover_files        # os.walk scan, MD5/mtime comparison, changed file detection
-│   ├── node_parse_and_store       # AST parse + SQLite upsert in batches of 10
-│   └── node_report                # Generate HTML report via report tool
-│
-└── External:
-    ├── core/kgraph/project.py     # ProjectManager: path resolution, size limits, artifact dirs
-    ├── core/kgraph/storage.py     # GraphStore: SQLite CRUD for nodes/edges
-    ├── core/kgraph/ast_parser.py  # parse_file_dependencies(): AST-based import extraction
-    └── core/tracer.py             # tracer.new_trace() / .step() / .finish() / .error()
+├── run_understand_workflow_sync()    # Sync facade (entry point)
+│   ├── run_understand_workflow()     # Async orchestrator
+│   │   ├── node_init_project()       # Phase 1: Init project + GraphStore
+│   │   ├── node_discover_files()     # Phase 2: File discovery + hash check
+│   │   ├── node_parse_and_store()    # Phase 3: AST parsing + graph storage
+│   │   └── node_report()             # Phase 4: Generate report
+│   └── tracer.finish()               # Mark trace complete
 ```
 
-### Execution Flow
+### Understand Flow
 
 ```mermaid
 graph TD
- A["START"] --> B["node_init_project"]
- B --> C["node_discover_files"]
- C --> D["node_parse_and_store"]
- D --> E["node_report"]
- E --> F["END"]
+    A["run_understand_workflow_sync<br/>Sync Facade"] --> B["run_understand_workflow<br/>Async Orchestrator"]
+    B --> C["node_init_project<br/>Phase 1: Init"]
+    C --> D["node_discover_files<br/>Phase 2: Discover"]
+    D --> E["node_parse_and_store<br/>Phase 3: Parse + Store"]
+    E --> F["node_report<br/>Phase 4: Report"]
+    F --> G["tracer.finish<br/>Complete"]
 ```
 
 **Key design decisions:**
-- **Sync facade with new event loop** — `run_understand_workflow_sync()` creates a new `asyncio` event loop in a `ThreadPoolExecutor` thread. Prevents `RuntimeError` when called from an already-running loop (e.g., FastAPI/FastMCP). This is the primary entry point.
-- **Async nodes, sync I/O** — All nodes are `async def` but use `asyncio.to_thread()` for SQLite and filesystem operations. Keeps the event loop responsive but doesn't require async SQLite drivers.
-- **Incremental via hash + mtime** — `node_discover_files` compares `md5(content)` + `st_mtime` + `st_size` against the SQLite `nodes` table. Only changed/new files are queued for parsing.
-- **Batch size 10** — `node_parse_and_store` processes files in batches of 10 with `asyncio.gather()`. Prevents memory explosion on large codebases while keeping CPU utilization high.
-- **AST parser returns raw deps** — `parse_file_dependencies()` returns module names (e.g., `"core.config"`). The node converts these to target paths (`"core/config.py"`) before upserting edges.
-- **ProjectManager resolves paths** — `is_agent_root=True` uses `cfg.agent_root` as source and `.understand/` as artifacts. `is_agent_root=False` uses `code/` subdirectory for source and `.understand/` for artifacts.
-- **Size rejection** — `pm.get_indexing_mode()` returns `"reject"` if the project exceeds size limits. Prevents accidental indexing of monorepos.
-- **Report is best-effort** — `node_report` catches exceptions and continues. A failed report doesn't fail the workflow.
+- **Not a LangGraph StateGraph** — Unlike other workflows, `understand` is a direct async function call. This is because the workflow is I/O-bound (file discovery, AST parsing) and doesn't need LangGraph's state management.
+- **Sync facade** — `run_understand_workflow_sync()` wraps the async orchestrator in a `ThreadPoolExecutor` with a configurable timeout. This provides a sync API for callers.
+- **GraphStore per project** — Each project gets its own SQLite database at `artifact_root / "graph.db"`. The database is created lazily on first access.
+- **MD5 hash comparison** — Files are only re-parsed if their content hash changes. This enables incremental updates.
+- **Batch processing** — Files are parsed in batches of 10 to prevent memory spikes and allow progress reporting.
+- **Skip directories** — `node_modules`, `__pycache__`, `.git`, etc. are skipped during file discovery.
+- **Memory storage** — Project metadata is stored in procedural memory for future recall.
 
 ---
 
-## 📝 Workflow State
+## 📝 Node Reference
 
-```python
-class UnderstandState(TypedDict, total=False):
-    project_path: str           # Absolute path to project root
-    is_agent_root: bool         # True for agent's own codebase
-    project_id: str             # Normalized project identifier
-    artifact_dir: str           # Path to .understand/ directory
-    status: str                 # "running" | "completed" | "completed_with_errors" | "failed"
-    files_to_parse: list        # [(full_path, rel_path, md5_hash, mtime, size), ...]
-    files_parsed: int           # Count of successfully parsed files
-    edges_created: int          # Count of dependency edges created
-    errors: list[str]           # Parse errors per file
-```
+### `node_init_project(state)` — Phase 1: Initialize Project
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `project_path` | `str` | Absolute path to project root (agent root or workspace project) |
-| `is_agent_root` | `bool` | `True` if indexing the agent's own codebase |
-| `project_id` | `str` | Normalized identifier from `ProjectManager` |
-| `artifact_dir` | `str` | Path to `.understand/` artifacts directory |
-| `status` | `str` | `"running"` → `"completed"` / `"completed_with_errors"` / `"failed"` |
-| `files_to_parse` | `list[tuple]` | Discovered files: `(full_path, rel_path, md5_hash, mtime, size)` |
-| `files_parsed` | `int` | Successfully parsed and stored files |
-| `edges_created` | `int` | Total dependency edges upserted |
-| `errors` | `list[str]` | Parse errors (e.g., `"Failed to parse x.py: SyntaxError"`) |
+**Purpose:** Initialize the project structure and GraphStore.
 
----
+**Logic:**
+1. Resolve `project_root` via `ProjectManager`
+2. Create `GraphStore` instance (lazy init)
+3. Log trace step
 
-## ⚡ Nodes
+**Output:** Partial dict with `project_id`, `project_path`, `is_agent_root`, `db_path`.
 
-### `node_init_project` — Initialize Project
+**Note:** The `GraphStore` instance is created but discarded. Later nodes create their own instances. This is wasteful but not broken.
 
-1. Creates `ProjectManager` for path resolution and artifact directory setup
-2. Checks `source_root` exists (for workspace projects)
-3. Calls `pm.get_indexing_mode()` — returns `"reject"` if too large
-4. Calls `pm.ensure_initialized()` — creates `.understand/` directory structure
-5. Creates `GraphStore(db_path)` — initializes SQLite schema
+### `node_discover_files(state)` — Phase 2: File Discovery
 
-**Output:** `"status": "running"` or `"failed"` with errors.
+**Purpose:** Discover all Python files in the project and check for changes.
 
-### `node_discover_files` — Scan for Changes
+**Logic:**
+1. Walk the project directory tree (excluding skip directories)
+2. For each `.py` file: compute MD5 hash, compare with stored hash
+3. Collect files that are new or changed
 
-1. `os.walk(pm.source_root)` skipping: `node_modules`, `__pycache__`, `.git`, `.venv`, `venv`, `.understand`, `dist`, `build`, `.pytest_cache`
-2. Only `.py` files, skip files > `ProjectManager.MAX_FILE_SIZE_BYTES`
-3. For each file, compare `st_mtime`, `st_size` against SQLite `nodes` table
-4. If mtime/size match, compare `md5(content)` against `content_hash`
-5. Queue changed/new files as `(full_path, rel_path, md5_hash, mtime, size)` tuples
+**Output:** Partial dict with `files_to_parse` (list of changed file paths).
 
-**Output:** `"files_to_parse"` — list of tuples.
+**Error handling:**
+- File read errors are logged but don't fail the workflow
+- Permission errors are logged but don't fail the workflow
 
-### `node_parse_and_store` — AST Parse + Graph Upsert
+**Note:** `os.walk` mutates `dirs` in-place to prune the walk. This is fragile — if `os.walk` implementation changes, it may silently fail.
 
-1. If `files_to_parse` is empty → `"status": "completed"` (no-op)
-2. Process in batches of 10:
-   - `asyncio.gather(*[parse_file_dependencies(project_id, full_path) for ...])`
-   - Convert module deps to target paths: `"core.config"` → `["core/config.py", "core/config"]`
-   - `store.upsert_file_graph(project_id, rel_path, md5_hash, target_paths, mtime, size)`
-3. Track `files_parsed` and `edges_created` counts
+**Note:** MD5 hash is computed by reading the entire file into memory (`read_bytes()`). For large files, this is memory-intensive.
 
-**Output:** `"files_parsed"`, `"edges_created"`, `"errors"`, `"status"`.
+### `node_parse_and_store(state)` — Phase 3: AST Parsing + Graph Storage
 
-### `node_report` — HTML Report
+**Purpose:** Parse changed files and store dependencies in the graph.
 
-Calls `report(action="report", preset="code_audit", ...)` with:
-- Project path
-- Files parsed / edges created counts
-- First 20 errors (if any)
+**Logic:**
+1. For each changed file (in batches of 10):
+   - Parse AST to extract imports
+   - Resolve imports to file paths
+   - Store file node and dependency edges in GraphStore
+2. Update `seen_urls` (actually `seen_files` — naming is from research workflow)
 
-**Best-effort:** Catches exceptions, does not fail workflow.
+**Output:** Partial dict with `files_parsed`, `edges_created`, `errors`, `status`.
+
+**Error handling:**
+- Parse errors are collected in `errors` list
+- `status` is `"completed"` if no errors, `"completed_with_errors"` if some errors
+
+**Note:** `asyncio.gather` is used for batch processing, but `parse_file_dependencies` is CPU-bound (AST parsing). Running it in `asyncio.gather` without `asyncio.to_thread()` blocks the event loop.
+
+**Note:** Duplicate target paths are created for each dependency: both `dep.replace(".", "/") + ".py"` and `dep` itself. This creates duplicate edges.
+
+### `node_report(state)` — Phase 4: Generate Report
+
+**Purpose:** Generate a report of the analysis results.
+
+**Logic:**
+1. Call `report(action="report", title=..., data=..., config=...)` with analysis results
+2. Return the report
+
+**Output:** Partial dict with `report_html` and `report_path`.
+
+**Note:** The `report` tool's `action="report"` is the report action name (generates a single-scroll HTML report), not a mistake.
 
 ---
 
 ## ⚙️ Configuration
 
 ```ini
-# .env — no understand-specific env vars currently
-# ProjectManager uses hardcoded limits:
-#   MAX_FILE_SIZE_BYTES = 1MB (files > 1MB are skipped)
-#   Size rejection threshold for get_indexing_mode()
+# .env
+UNDERSTAND_MAX_FILE_SIZE_MB=1          # Max file size to parse (MB)
+UNDERSTAND_BATCH_SIZE=10               # Files per batch
+UNDERSTAND_TIMEOUT_SECONDS=300         # Workflow timeout (seconds)
 ```
 
 ```python
 # core/config.py
-self.agent_root = os.getenv("AGENT_ROOT", "D:/mcp/agent")
-# ProjectManager resolves paths relative to agent_root
-```
-
-**Directory structure:**
-
-```text
-# Agent root
-D:/mcp/agent/
-├── .understand/
-│   ├── kg.db              # SQLite graph
-│   ├── vectors/           # ChromaDB (semantic search)
-│   └── cache/
-│       ├── test_index.json
-│       └── ast_metadata/
-└── .gitignore             # .understand/ is ignored
-
-# Workspace project
-D:/mcp/agent/workspace/projects/{name}/
-├── code/                  # Actual git clone
-│   ├── src/
-│   └── ...
-└── .understand/
-    ├── kg.db
-    ├── vectors/
-    └── cache/
+cfg.understand_max_file_size_mb = 1    # Max file size to parse (MB)
+cfg.understand_batch_size = 10          # Files per batch
+cfg.understand_timeout_seconds = 300    # Workflow timeout (seconds)
 ```
 
 ---
 
 ## 📤 Output
 
-The workflow returns an `UnderstandState` dict:
+The workflow returns a `dict`:
 
 ```json
 {
-  "status": "completed",
-  "project_path": "D:/mcp/agent/workspace/projects/my_project",
-  "is_agent_root": false,
-  "project_id": "my_project",
-  "artifact_dir": "D:/mcp/agent/workspace/projects/my_project/.understand",
-  "files_parsed": 47,
-  "edges_created": 312,
-  "errors": [],
-  "files_to_parse": []
+  "status": "success",
+  "result": "Project analysis complete: 42 files, 156 dependencies",
+  "error": "",
+  "artifacts": ["report.html"]
 }
 ```
 
-**Side effects:**
-- SQLite `kg.db` with `nodes` and `edges` tables
-- HTML report saved via `report` tool
-- Tracer steps logged
+**Failure:**
+```json
+{
+  "status": "failed",
+  "result": "",
+  "error": "Project analysis failed: timeout",
+  "artifacts": []
+}
+```
 
 ---
 
 ## 🔄 When to Use vs Alternatives
 
-| Need | Tool/Workflow | Why |
-|------|---------------|-----|
-| Index agent's own codebase | `understand` | Self-analysis for autocode improvements |
-| Index external project | `understand` | Structural context for bug fixes, refactors |
-| Query file dependencies | `understand` + graph queries | "What imports this file?" via SQLite |
-| Semantic code search | `understand` + ChromaDB vectors | "Find auth logic" via vector similarity |
-| Quick file listing | `file(action="list")` | Faster, no indexing needed |
-| Single file analysis | `python` + AST | Direct, no graph overhead |
-| Full project grep | `cli` + `grep` | Regex search, no structure |
+| Need | Tool | Why |
+|------|------|-----|
+| Analyze codebase | `understand` workflow | Static analysis, dependency graph, incremental updates |
+| Research a topic | `research` workflow | Web search + synthesis, no code analysis |
+| Fix code | `autocode` workflow | Targeted code changes with test verification |
+| Deep research | `deep_research` workflow | Iterative search with convergence detection |
+| Analyze data | `data` workflow | Code generation + execution, data analysis |
+| Generate report | `report` workflow | Structured report generation |
 
 ---
 
@@ -244,21 +200,24 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/workflows/understand/test_understand.
 ```
 
 **Mock strategy:**
-- Patch `core.kgraph.project.ProjectManager` for path resolution tests
-- Patch `core.kgraph.storage.GraphStore` for SQLite operations
-- Patch `core.kgraph.ast_parser.parse_file_dependencies` for AST parsing tests
-- Patch `core.tracer.tracer` for trace step verification
-- Patch `tools.report.report` for report generation tests
-- Create temporary directories with `.py` files for integration tests
-- Mock `os.walk` or use `tmp_path` fixture for filesystem tests
+- Patch `ProjectManager` for project resolution
+- Patch `GraphStore` for database operations
+- Patch `os.walk` for file discovery
+- Patch `hashlib.md5` for hash comparison
+- Patch `parse_file_dependencies` for AST parsing
+- Patch `report(action="report")` for report generation
+- Test `node_init_project` with invalid path → assert error state
+- Test `node_discover_files` with no Python files → assert empty `files_to_parse`
+- Test `node_parse_and_store` with parse error → assert `"completed_with_errors"` status
+- Test `node_report` with empty results → assert graceful handling
 
 **Current test layout:**
 ```text
 tests/workflows/understand/
-└── test_understand.py          # Single test file (all nodes + facade)
+└── test_understand.py  # Full workflow test
 ```
 
-> **Future:** When the workflow grows, split into `test_init.py`, `test_discover.py`, `test_parse.py`, `test_report.py`, and add `conftest.py`.
+> **Future:** Split into per-node files: `test_node_init.py`, `test_node_discover.py`, `test_node_parse.py`, `test_node_report.py`, plus `conftest.py`.
 
 ---
 
@@ -268,68 +227,75 @@ tests/workflows/understand/
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| 4-node LangGraph pipeline | ✅ v1.0 | init → discover → parse → report |
-| AST-based dependency parsing | ✅ v1.0 | `parse_file_dependencies()` via Python AST |
-| Incremental indexing | ✅ v1.0 | MD5 + mtime comparison against SQLite |
-| Physical isolation | ✅ v1.0 | Agent root vs workspace project directory structures |
-| Size rejection | ✅ v1.0 | `get_indexing_mode() == "reject"` for oversized projects |
-| Batch processing | ✅ v1.0 | Batches of 10 with `asyncio.gather()` |
-| Sync facade with new event loop | ✅ v1.0 | `run_understand_workflow_sync()` for FastMCP compatibility |
-| Best-effort report | ✅ v1.0 | Failed report doesn't fail workflow |
-| Skip directories | ✅ v1.0 | `node_modules`, `__pycache__`, `.git`, `.venv`, etc. |
-| File size limit | ✅ v1.0 | Skip files > `MAX_FILE_SIZE_BYTES` (1MB) |
+| Project initialization | ✅ v1.0 | ProjectManager resolution, GraphStore creation |
+| File discovery | ✅ v1.0 | os.walk with skip directories, MD5 hash check |
+| AST parsing | ✅ v1.0 | parse_file_dependencies for import extraction |
+| Graph storage | ✅ v1.0 | GraphStore upsert for file nodes and dependency edges |
+| Incremental updates | ✅ v1.0 | MD5 hash comparison, only re-parse changed files |
+| Batch processing | ✅ v1.0 | Batch size 10 for memory efficiency |
+| Report generation | ✅ v1.0 | Structured report with analysis results |
+| Memory storage | ✅ v1.0 | Project metadata in procedural memory |
 
 ### 🔄 In Progress / Next Up
 
-| Feature | Notes | Priority |
-|---------|-------|----------|
-| `@meta_tool` refactor on tools used | When `file`, `report`, etc. get `@meta_tool`, update calls in `node_report` | P1 |
-| Test restructure | Split `test_understand.py` into per-node files + `conftest.py` | P1 |
-| Configurable batch size | Hardcoded `batch_size = 10`. Make configurable via `.env` | P2 |
-| Configurable file size limit | Hardcoded `MAX_FILE_SIZE_BYTES = 1MB`. Make configurable via `.env` | P2 |
-| Configurable skip directories | Hardcoded `skip_dirs` set. Make configurable via `.env` | P2 |
-| Parallel batch processing | Currently `asyncio.gather()` within a batch. Evaluate `ThreadPoolExecutor` for CPU-bound AST parsing | P2 |
-| ChromaDB vector indexing | Currently GraphStore creates schema but vectors are not populated. Wire semantic indexing | P2 |
-| Graph query API | Expose `GraphStore` queries as tool actions (e.g., "find callers of X") | P3 |
-| Cross-project graph linking | Link dependencies between workspace projects and agent root | P3 |
-| Auto-reindex on git pull | Watch for file changes and trigger incremental reindex | P3 |
+| # | Feature | Notes | Priority |
+|---|---------|-------|----------|
+| 1 | **Fix hardcoded `tid` strings in all nodes** | All nodes use hardcoded `tid` (`"understand_init"`, `"understand_discover"`, etc.) instead of `state.get("trace_id", "")`. No trace correlation. | P0 |
+| 2 | **Fix `_default_state` missing `trace_id`** | `trace_id` created in `run_understand_workflow()` but never injected into `initial_state`. Nodes can't access it. | P0 |
+| 3 | **Fix `GraphStore` created but discarded in `node_init`** | `GraphStore` instance created but not stored in state. Later nodes create their own. Wasteful and risky. | P0 |
+| 4 | **Fix `GraphStore` connection leaked in `node_discover`** | No `with` statement or explicit `.close()`. SQLite connections left open until GC. | P1 |
+| 5 | **Fix `os.walk` dirs mutation fragility** | `dirs[:] = [d for d in dirs if d not in skip_dirs]` mutates in-place. Fragile if `os.walk` implementation changes. | P1 |
+| 6 | **Fix double file read for MD5** | `read_bytes()` reads entire file into memory. Should use chunked hashing. | P1 |
+| 7 | **Fix duplicate target paths in edge creation** | Both `dep.replace(".", "/") + ".py"` and `dep` added as targets. Duplicate edges. | P1 |
+| 8 | **Fix CPU-bound AST parsing without `to_thread()`** | `parse_file_dependencies` is CPU-bound. `asyncio.gather` blocks event loop. | P1 |
+| 9 | **Fix `completed_with_errors` treated as failure** | `run_understand_workflow()` checks `status == "completed"` only. `"completed_with_errors"` treated as failure. | P1 |
+| 10 | **Fix `report_tool` signature** | Verify `report()` tool signature matches usage. | P1 |
+| 11 | **Fix silent exception in `node_report`** | `try/except` around `report_tool()` with no logging. Silent failures. | P2 |
+| 12 | **Fix dangerous nested event loop in sync facade** | `ThreadPoolExecutor` + `new_event_loop()` may leak threads or hang. | P2 |
+| 13 | **Fix wrong return type on `build_understand_graph`** | Returns `CompiledGraph` but annotated as `StateGraph`. | P2 |
+| 14 | **Make `skip_dirs` configurable** | Currently hardcoded local set. Should be `.env` or `ProjectManager` config. | P3 |
+| 15 | **Add `GraphStore` init failure handling** | `node_init_project` doesn't handle `GraphStore.__init__` failure. | P3 |
+| 16 | **Test restructure** | Split `test_understand.py` into per-node files + `conftest.py` | P1 |
+| 17 | **Configurable batch size** | Make `UNDERSTAND_BATCH_SIZE` actually used in code | P2 |
+| 18 | **ChromaDB vector indexing** | Currently GraphStore creates schema but vectors are not populated | P2 |
+| 19 | **Multi-language support** | Support JavaScript, TypeScript, Go, etc. | P3 |
 
 ### 🚫 Deferred / Out of Scope
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
-| 1 | **Sleep & Learn graph mutation** | The graph is deterministic; Sleep & Learn only learns *how to use* it, not what to store | Skip |
-| 2 | **Store full file contents in LangGraph state** | Use `FileSnapshot` (8KB preview + MD5) to prevent checkpoint bloat | Skip |
-| 3 | **Default `asyncio.to_thread()` for AST parsing** | AST parsing is CPU-bound; `asyncio.to_thread()` is correct but a dedicated `ThreadPoolExecutor` (like `AST_EXECUTOR = ThreadPoolExecutor(max_workers=2)`) would be better | Skip |
-| 4 | **Cross-project cache collisions** | The AST `@lru_cache` key must include `project_id` — already enforced | Skip |
-| 5 | **Graph edges in ChromaDB** | Vector search is for semantics; SQLite is for structure. Never store edges in ChromaDB | Skip |
-| 6 | **Non-Python file parsing** | Currently `.py` only. JS/TS/Go parsing would require additional AST parsers | Skip |
+| 1 | **Remove GraphStore** | GraphStore is essential for dependency querying. Removing it would break impact analysis. | Skip |
+| 2 | **Remove incremental updates** | Full re-parse on every run would be too slow for large projects. | Skip |
+| 3 | **Remove batch processing** | Processing all files at once would cause memory spikes. | Skip |
+| 4 | **Real-time file watching** | File watching would require additional infrastructure (e.g., watchdog). Out of scope. | Skip |
+| 5 | **IDE integration** | IDE plugins would require LSP or VS Code extension development. Out of scope. | Skip |
 
 ---
 
 ## 🛡️ AI Agent Instructions
 
 ### NEVER DO
-1. **Never store full file contents in LangGraph state** — Use `FileSnapshot` (8KB preview + MD5) to prevent checkpoint bloat.
-2. **Never let Sleep & Learn mutate the graph structure** — The graph is deterministic; Sleep & Learn only learns *how to use* it.
-3. **Never store graph edges in ChromaDB** — Vector search is for semantics; SQLite is for structure.
-4. **Never skip the size check** — `get_indexing_mode() == "reject"` prevents accidental indexing of monorepos.
-5. **Never use the default `asyncio.to_thread()` executor for AST parsing** — Use a dedicated `ThreadPoolExecutor` with limited workers to prevent resource exhaustion.
-6. **Never allow cross-project cache collisions** — The AST `@lru_cache` key MUST include `project_id`.
-7. **Never parse files larger than 1MB** — Skip them silently to prevent memory issues.
-8. **Never create `.bak` files** — forbidden by project rules.
-9. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
-10. **Never print to stdout** — MCP stdio corruption. Use `tracer.step()` for logging.
-11. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+1. **Never mutate state in-place** — Always return partial update `dict`s.
+2. **Never spread `**state`** — Never return `{**state, "key": "value"}`. Return only the changed keys.
+3. **Never remove GraphStore** — Dependency graph is essential for impact analysis.
+4. **Never remove incremental updates** — Full re-parse would be too slow.
+5. **Never use `print()` to stdout** — MCP stdio corruption. Use `tracer.step()` for logging.
+6. **Never create `.bak` files** — forbidden by project rules.
+7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
+8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+9. **Never use hardcoded `tid` strings** — Always use `state.get("trace_id", "")` for trace correlation.
+10. **Never return `None` from LangGraph nodes** — Always return a `dict` (even empty `{}`).
 
 ### ALWAYS DO
-12. **Always use `run_understand_workflow_sync()` from sync contexts** — Creates a new event loop in a thread. Prevents `RuntimeError` in FastMCP.
-13. **Always check `is_same_path()` for agent root** — `run_understand_workflow()` forces `is_agent_root=True` if path matches `cfg.agent_root`.
-14. **Always use `asyncio.to_thread()` for SQLite operations** — Keeps the event loop responsive.
-15. **Always handle `get_indexing_mode() == "reject"`** — Return `"failed"` with clear error message.
-16. **Always test incremental indexing** — Mock `GraphStore` to return existing nodes and assert no re-parsing.
-17. **Always test the sync facade** — Call `run_understand_workflow_sync()` from an async context and assert no `RuntimeError`.
-18. **Always update this doc** when adding nodes, changing storage topology, or modifying the AST parser.
+11. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
+12. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+13. **Always handle file read errors gracefully** — Log and continue, don't crash.
+14. **Always test `node_discover_files` with no Python files** — Assert empty `files_to_parse`.
+15. **Always test `node_parse_and_store` with parse errors** — Assert `"completed_with_errors"` status.
+16. **Always test `node_report` with empty results** — Assert graceful handling.
+17. **Always test sync facade timeout** — Assert timeout handling.
+18. **Always update this doc** when adding nodes, changing parsing logic, or modifying error handling.
+19. **Always use `asyncio.to_thread()` for CPU-bound work** — AST parsing blocks the event loop.
 
 ---
 
@@ -337,16 +303,15 @@ tests/workflows/understand/
 
 | File | Purpose |
 |------|---------|
-| `workflows/understand.py` | 4-node LangGraph workflow: init, discover, parse, report + sync facade |
-| `workflows/base.py` | `WorkflowState`, `run_workflow()` — used by other workflows |
-| `core/kgraph/project.py` | `ProjectManager`: path resolution, size limits, artifact directory setup |
-| `core/kgraph/storage.py` | `GraphStore`: SQLite CRUD for nodes/edges, hash/mtime tracking |
-| `core/kgraph/ast_parser.py` | `parse_file_dependencies()`: AST-based import extraction |
-| `core/tracer.py` | `tracer.new_trace()` / `.step()` / `.finish()` / `.error()` — observability |
-| `core/config.py` | `cfg.agent_root` — agent root path |
-| `tools/report.py` | `report(action="report")` — HTML report generation |
-| `tests/workflows/understand/test_understand.py` | Single test file covering all nodes + facade |
+| `workflows/understand.py` | `run_understand_workflow_sync()`, `run_understand_workflow()` — sync facade + async orchestrator |
+| `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()` — shared infrastructure |
+| `core/kgraph/project.py` | `ProjectManager` — project resolution and path management |
+| `core/kgraph/storage.py` | `GraphStore` — SQLite graph database |
+| `core/kgraph/ast_parser.py` | `parse_file_dependencies()` — AST import extraction |
+| `tools/report.py` | `report(action="report", title=...)` — report generation |
+| `core/config.py` | `cfg.understand_max_file_size_mb`, `cfg.understand_batch_size`, `cfg.understand_timeout_seconds` — config |
+| `tests/workflows/understand/test_understand.py` | Full workflow test |
 
 ---
 
-*Architecture: sync facade (ThreadPoolExecutor + new event loop) → async LangGraph StateGraph → 4 nodes (init, discover, parse, report) → ProjectManager path resolution → AST parser → SQLite GraphStore → incremental MD5/mtime indexing → batch asyncio.gather processing.*
+*Architecture: 4-phase async orchestrator (init → discover → parse + store → report) with GraphStore dependency graph, incremental updates, batch processing, and memory integration. Not a LangGraph StateGraph — direct async function calls.*
