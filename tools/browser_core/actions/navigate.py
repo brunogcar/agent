@@ -37,7 +37,11 @@ def _action_navigate(
     """Navigate to a URL and wait for the page to load.
 
     Supports exponential-backoff retry on transient failures.
-    retry delay = 2^attempt seconds (1s, 2s, 4s, ...).
+    retry delay = 2^attempt seconds (1s, 2s, 4s, ...) capped at 8s.
+
+    NOTE: On retry, the same page/context is reused. If the page crashed
+    during the failed attempt, the retry will also fail. A future v2
+    improvement may close and recreate the context between retries.
     """
     if not url:
         return fail("url is required for navigate action", trace_id=trace_id)

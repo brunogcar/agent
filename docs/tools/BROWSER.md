@@ -59,6 +59,14 @@ The `browser()` tool automates web browsers via Playwright — navigate, click, 
 - **Added** `cookies` URL filter — `url` param for targeted cookie retrieval
 - **Added** `cookies` JSON validation — explicit error messages for malformed input
 
+### v1.2 (Claude audit follow-up)
+- **Fixed** `upload.py` — added `resolve_path` guard to prevent arbitrary
+  filesystem access via path parameter
+- **Fixed** `close.py` — returns `closed: False` with reason when context
+  not found (was returning `closed: True` misleadingly)
+- **Documented** `navigate.py` retry — added note that retry reuses same
+  page/context; may fail if page crashed
+
 ---
 
 ## 🏗️ Architecture
@@ -339,6 +347,7 @@ browser(action="upload", selector="#avatar", path="photo.png")
 | **Auto-cleanup** | Screenshots older than 7 days deleted automatically |
 | **Evaluate sandbox** | JavaScript runs in page context — no Node.js `require()` access (Chromium isolates page JS from Node) |
 | **Safe JS injection** | `extract_links` and `extract_tables` use `json.dumps()` (not `repr()` or f-strings) to embed selectors into JavaScript |
+| **Path guard** | `upload` validates path via `resolve_path` — rejects paths outside `workspace_root` |
 
 ---
 
@@ -506,6 +515,9 @@ tests/tools/browser/
 - `scroll` does not support smooth scrolling — use `evaluate` with `window.scrollTo({behavior: "smooth"})`
 - Very large screenshots may exceed memory — no size limit enforced yet
 - `compress_result()` not yet implemented — large `extract_html`/`extract_links`/`extract_tables` outputs may blow out LLM context window
+- `navigate` retry reuses the same page/context. If the page crashed during the
+  failed attempt, subsequent retries will also fail. A future v2 improvement may
+  close and recreate the context between retries.
 
 ---
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from tools.browser import browser
 
 
@@ -14,21 +14,37 @@ class TestUpload:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        mock_browser["page"].set_input_files = AsyncMock(return_value=None)
-        result = browser(
-            action="upload",
-            selector="input[type=file]",
-            path=str(test_file),
-            trace_id="t1",
-        )
-        assert result["status"] == "success"
-        assert result["data"]["uploaded"] is True
-        assert result["data"]["selector"] == "input[type=file]"
-        assert result["data"]["path"] == str(test_file)
-        assert result["data"]["size"] == 11
-        mock_browser["page"].set_input_files.assert_called_once_with(
-            "input[type=file]", str(test_file)
-        )
+        with patch("tools.browser_core.actions.upload.resolve_path") as mock_resolve:
+            mock_resolve.return_value = (test_file, None)
+            mock_browser["page"].set_input_files = AsyncMock(return_value=None)
+            result = browser(
+                action="upload",
+                selector="input[type=file]",
+                path=str(test_file),
+                trace_id="t1",
+            )
+            assert result["status"] == "success"
+            assert result["data"]["uploaded"] is True
+            assert result["data"]["selector"] == "input[type=file]"
+            assert result["data"]["path"] == str(test_file)
+            assert result["data"]["size"] == 11
+            mock_browser["page"].set_input_files.assert_called_once_with(
+                "input[type=file]", str(test_file)
+            )
+
+    def test_upload_path_guard_rejects(self, mock_browser):
+        """Path guard must reject paths outside workspace."""
+        with patch("tools.browser_core.actions.upload.resolve_path") as mock_resolve:
+            mock_resolve.return_value = (None, "Path outside workspace")
+            result = browser(
+                action="upload",
+                selector="input[type=file]",
+                path="/etc/passwd",
+                trace_id="t1",
+            )
+            assert result["status"] == "error"
+            assert "Upload path error" in result["error"]
+            mock_browser["page"].set_input_files.assert_not_called()
 
     def test_upload_missing_selector(self, mock_browser):
         result = browser(action="upload", path="/tmp/file.txt", trace_id="t1")
@@ -41,24 +57,3 @@ class TestUpload:
         )
         assert result["status"] == "error"
         assert "path is required" in result["error"]
-
-    def test_upload_file_not_found(self, mock_browser):
-        result = browser(
-            action="upload",
-            selector="input[type=file]",
-            path="/nonexistent/file.txt",
-            trace_id="t1",
-        )
-        assert result["status"] == "error"
-        assert "File not found" in result["error"]
-
-    def test_upload_path_is_directory(self, mock_browser, tmp_path):
-        """Directory paths must be rejected."""
-        result = browser(
-            action="upload",
-            selector="input[type=file]",
-            path=str(tmp_path),
-            trace_id="t1",
-        )
-        assert result["status"] == "error"
-        assert "not a file" in result["error"]

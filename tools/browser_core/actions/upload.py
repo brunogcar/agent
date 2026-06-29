@@ -1,9 +1,8 @@
 """Browser action: upload."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from core.contracts import fail, ok
+from core.path_guard import resolve_path
 
 from tools.browser_core.factory import _get_page
 from tools.browser_core.loop import _run_browser_async
@@ -16,7 +15,8 @@ from tools.browser_core._registry import register_action
     "upload",
     help_text="""upload — Upload file(s) to a <input type="file"> element.
 Required: selector, path
-Optional: timeout, headless, trace_id""",
+Optional: timeout, headless, trace_id
+Note: path is validated through path_guard — must be within workspace.""",
     examples=[
         'browser(action="upload", selector="input[type=file]", path="data/report.pdf")',
         'browser(action="upload", selector="#avatar", path="photo.png")',
@@ -34,18 +34,21 @@ def _action_upload(
 
     Playwright's set_input_files bypasses the native file chooser dialog
     by directly injecting the file path into the <input type="file"> DOM node.
-    The file must exist on the local filesystem.
+    The file must exist on the local filesystem and be within the workspace.
+
+    Path guard: resolve_path validates the path stays within workspace_root.
     """
     if not selector:
         return fail("selector is required for upload action", trace_id=trace_id)
     if not path:
         return fail("path is required for upload action", trace_id=trace_id)
 
-    file_path = Path(path)
-    if not file_path.exists():
-        return fail(f"File not found: {path}", trace_id=trace_id)
+    # Path guard: validate path stays within workspace, file must exist
+    file_path, err = resolve_path(path, require_exists=True)
+    if err:
+        return fail(f"Upload path error: {err}", trace_id=trace_id)
     if not file_path.is_file():
-        return fail(f"Path is not a file: {path}", trace_id=trace_id)
+        return fail(f"Upload path is not a file: {path}", trace_id=trace_id)
 
     try:
         with _browser_lock:

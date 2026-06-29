@@ -27,6 +27,9 @@ def _action_close(
     trace_id is REQUIRED. Calling close without a trace_id is an error
     because the anonymous key generated at creation time (anon_* UUID)
     cannot be deterministically reconstructed.
+
+    Returns closed: True if a context was found and closed.
+    Returns closed: False if no context was found (already closed or never created).
     """
     if not trace_id:
         return fail(
@@ -36,12 +39,20 @@ def _action_close(
 
     try:
         with _browser_lock:
+            found = False
             if trace_id in _pages:
                 del _pages[trace_id]
+                found = True
             if trace_id in _contexts:
                 ctx, _ = _contexts[trace_id]
                 del _contexts[trace_id]
                 _run_browser_async(ctx.close(), timeout=30)
-            return ok({"closed": True}, trace_id=trace_id)
+                found = True
+            if found:
+                return ok({"closed": True}, trace_id=trace_id)
+            return ok(
+                {"closed": False, "reason": "context not found (already closed or never created)"},
+                trace_id=trace_id,
+            )
     except Exception as e:
         return fail(f"Close failed: {e}", trace_id=trace_id)
