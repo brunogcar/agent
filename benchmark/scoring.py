@@ -15,8 +15,9 @@ ROLE_TARGET_LATENCY = {
     "critique": 10.0, "analyze": 10.0, "code": 15.0,
     "review": 10.0, "executor": 15.0, "planner": 20.0,
     "vision": 10.0, "consultor": 10.0,
+    # NEW: Autonomous maintenance roles
+    "refactor": 15.0, "test": 15.0, "document": 10.0,
 }
-
 
 def calculate_task_score(
     correctness: float,
@@ -53,7 +54,6 @@ def calculate_task_score(
         "final": round(final, 1),
     }
 
-
 def calculate_role_score(task_scores: list[dict]) -> dict:
     """Average scores across tasks for a role."""
     if not task_scores:
@@ -69,7 +69,6 @@ def calculate_role_score(task_scores: list[dict]) -> dict:
         "tasks": len(task_scores),
     }
     return avg
-
 
 def categorize_failure(result: dict) -> str:
     """Categorize why a task failed.
@@ -98,7 +97,6 @@ def categorize_failure(result: dict) -> str:
         return "wrong_answer"
     return "unknown"
 
-
 def consistency_score(run_scores: list[dict]) -> dict:
     """Compute consistency metrics across multiple runs of the same task.
 
@@ -117,7 +115,6 @@ def consistency_score(run_scores: list[dict]) -> dict:
     wobble = std_dev > 20.0
 
     return {"std_dev": round(std_dev, 1), "wobble": wobble}
-
 
 def calculate_difficulty_breakdown(task_results: list[dict]) -> dict:
     """Group task results by difficulty and count passes.

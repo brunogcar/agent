@@ -1,6 +1,36 @@
-# Benchmark Tool
+# Benchmark Tool v1.2
 
 🎯 Benchmark LLM roles for the agent. Measure which model is best for each role.
+
+---
+
+## 🆕 What's New in v1.2
+
+| Feature | Notes |
+|---------|-------|
+| **3 new executor sub-roles** | `refactor`, `test`, `document` — autonomous maintenance tasks |
+| **Executor task count** | 23 → 36 tasks (13 new: 3 document + 5 test + 5 refactor) |
+| **Depth behavior change** | `easy` = all easy tasks, `normal` = easy + medium, `hard` = all tasks |
+| **New target latencies** | `refactor`: 15s, `test`: 15s, `document`: 10s |
+| **Role group expansion** | `ROLE_GROUPS` and `ROLE_TO_GROUP` now include new sub-roles |
+| **Config fix** | Removed duplicate `execution_timeout` assignment in `core/config.py` |
+
+### v1.1 (June 2026)
+
+| Feature | Notes |
+|---------|-------|
+| Variance tracking across `--runs` | Std dev + wobble flag (σ > 20) |
+| Failure categorization | 6 categories: timeout, llm_error, exception, empty_output, format_error, wrong_answer |
+| Baseline pinning | `--baseline` flag + delta reporting |
+| Regression threshold | `--regression-threshold` + non-zero exit |
+| Model recommendation | After `--compare`, best model per role |
+| Difficulty sort | Tasks sorted by difficulty before `--depth` slicing |
+| Multi-reference support | `expected` as `str | list[str]` in validators |
+| New router tasks | 30 tasks covering deep_research, cli, browser, tavily, parallel, consult, vision, agent, report, notify |
+| `--depth hard` = all tasks | No longer capped at 15 |
+| `--all` → `mixed` filename | Consistent with actual behavior |
+| `--compare` → `_vs_` separator | Only when 2+ models |
+| `reports.py` extraction | All terminal formatting centralized |
 
 ---
 
@@ -39,19 +69,24 @@ python -m benchmark --all --baseline workspace/benchmarks/baseline.json --regres
 | Command | What it does |
 |---------|-------------|
 | `--role router` | Test router role (classify + route) |
-| `--role executor` | Test executor role (summarize, extract, research, critique, analyze, code, review) |
+| `--role executor` | Test executor role (summarize, extract, research, critique, analyze, code, review, refactor, test, document) |
 | `--role planner` | Test planner role |
-| `--all` | Test every role |
-| `--depth easy` | 5 easiest tasks per role (fast) |
-| `--depth normal` | 10 easiest tasks per role (default) |
+| `--role refactor` | Test refactor sub-role only |
+| `--role test` | Test test sub-role only |
+| `--role document` | Test document sub-role only |
+| `--all` | Test every role (excludes vision and consultor — no task YAMLs yet) |
+| `--depth easy` | **All** tasks with `difficulty: easy` per role |
+| `--depth normal` | **All** tasks with `difficulty: easy` or `normal` per role |
 | `--depth hard` | **All** tasks per role (thorough) |
 | `--runs 3` | 3 runs per task (consistency + wobble detection) |
 | `--compare modelA,modelB` | Compare two models side-by-side |
 | `--compare modelA` | Override all roles to one model (no .env edit) |
 | `--tag "label"` | Label the JSON report |
 | `--baseline path.json` | Compare scores vs previous run |
-| `--regression-threshold 5.0` | Exit code 1 if any role drops > N points |
+| `--regression-threshold 5.0` | Exit code 1 if any role drops more than 5 points |
 | `--temperature 0.0` | Set LLM temperature |
+
+> **Note on `--depth` behavior (v1.2+):** Previously, `--depth easy` returned the first 5 tasks regardless of difficulty mix. Now it returns **all** tasks tagged `easy`. This is more intuitive but may run more tasks than before.
 
 ---
 
@@ -60,10 +95,25 @@ python -m benchmark --all --baseline workspace/benchmarks/baseline.json --regres
 | Group | Roles included | Tasks | Difficulty Mix |
 |-------|---------------|-------|---------------|
 | `router` | classify, route | 30 | easy×12, medium×8, hard×10 |
-| `executor` | summarize, extract, research, critique, analyze, code, review | 23 | easy×10, medium×8, hard×5 |
+| `executor` | summarize, extract, research, critique, analyze, code, review, **refactor**, **test**, **document** | **36** | easy×14, medium×12, hard×10 |
 | `planner` | planner | 10 | easy×3, medium×4, hard×3 |
 
-> **Note:** `vision` and `consultor` groups are reserved but have no task YAMLs yet.
+> **Note:** `vision` and `consultor` groups are reserved but have no task YAMLs yet. Test them explicitly with `--role vision` or `--role consultor` when added.
+
+### Sub-Role Task Breakdown (executor)
+
+| Sub-Role | Tasks | Easy | Medium | Hard | Validator Pattern |
+|----------|-------|------|--------|------|-------------------|
+| summarize | 3 | 1 | 1 | 1 | `keyword_coverage` |
+| extract | 3 | 1 | 1 | 1 | `contains` / `fuzzy_match` |
+| research | 3 | 1 | 1 | 1 | `keyword_coverage` |
+| critique | 3 | 1 | 1 | 1 | `keyword_coverage` |
+| analyze | 3 | 1 | 1 | 1 | `keyword_coverage` |
+| code | 3 | 1 | 1 | 1 | `python_execution` |
+| review | 3 | 1 | 1 | 1 | `keyword_coverage` |
+| **refactor** | **5** | **2** | **2** | **1** | **`python_execution`** |
+| **test** | **5** | **2** | **2** | **1** | **`python_execution`** |
+| **document** | **3** | **1** | **1** | **1** | **`keyword_coverage`** |
 
 ---
 
@@ -77,28 +127,44 @@ python -m benchmark --all --baseline workspace/benchmarks/baseline.json --regres
 
 **Final score:** 0-100. 80+ = ✅ pass, 50-80 = ⚠️ partial, <50 = ❌ fail.
 
-**Target latencies by role:**
-- classify/route: 2s
-- summarize/extract: 5s
-- critique/analyze/review: 10s
-- research/code: 15s
-- planner: 20s
+### Target Latencies by Role
+
+| Role | Target Latency | Rationale |
+|------|---------------|-----------|
+| classify / route | 2s | Fast classification decisions |
+| summarize / extract | 5s | Short text generation |
+| critique / analyze / review / **document** | 10s | Medium text generation |
+| research / code / **refactor** / **test** | 15s | Complex reasoning or code execution |
+| planner | 20s | Multi-step planning |
 
 ---
 
 ## ✅ Validators
 
-| Validator | What it checks | Multi-reference |
-|-----------|---------------|-----------------|
-| `exact_match` | Case-insensitive string equality | ✅ `expected: ["a", "b"]` |
-| `contains` | Case-insensitive substring match | ✅ `expected: ["a", "b"]` |
-| `fuzzy_match` | `difflib.SequenceMatcher` ratio (threshold default 0.6) | ✅ `expected: ["a", "b"]` |
-| `json_valid` | Parses as JSON, optional schema required keys | ❌ |
-| `python_ast` | Parses as Python AST (strips markdown fences) | ❌ |
-| `python_execution` | **Executes code** in restricted namespace against test cases | ❌ |
-| `keyword_coverage` | Fraction of expected keywords found (whole-word match) | ❌ |
-| `regex_match` | Regex pattern match | ❌ |
-| `composite` | **Averages multiple checks:** regex + step count + keywords + ordering | ❌ |
+| Validator | What it checks | Multi-reference | Best For |
+|-----------|---------------|-----------------|----------|
+| `exact_match` | Case-insensitive string equality | ✅ `expected: ["a", "b"]` | Simple factual answers |
+| `contains` | Case-insensitive substring match | ✅ `expected: ["a", "b"]` | Keyword presence |
+| `fuzzy_match` | `difflib.SequenceMatcher` ratio (threshold default 0.6) | ✅ `expected: ["a", "b"]` | Paraphrased answers |
+| `json_valid` | Parses as JSON, optional schema required keys | ❌ | Structured output |
+| `python_ast` | Parses as Python AST (strips markdown fences) | ❌ | Syntax validation |
+| `python_execution` | **Executes code** in restricted namespace against test cases | ❌ | Code correctness |
+| `keyword_coverage` | Fraction of expected keywords found (whole-word match) | ❌ | Documentation, summaries |
+| `regex_match` | Regex pattern match | ❌ | Format validation |
+| `composite` | **Averages multiple checks:** regex + step count + keywords + ordering | ❌ | Complex structured output |
+
+### Validator Selection Guide
+
+| Task Type | Recommended Validator | Why |
+|-----------|----------------------|-----|
+| Code generation | `python_execution` | Actually runs the code, catches syntax + logic errors |
+| Code refactoring | `python_execution` | Verifies refactored code produces same output |
+| Test generation | `python_execution` | Runs the generated tests, checks they pass |
+| Documentation | `keyword_coverage` | Checks required concepts are mentioned |
+| API docs | `keyword_coverage` or `composite` | Structured docs need both content and format |
+| Planning | `composite` | Numbered steps + required keywords + ordering |
+| Classification | `exact_match` or `contains` | Deterministic labels |
+| Research summaries | `keyword_coverage` | Key facts must be present |
 
 ---
 
@@ -139,8 +205,8 @@ Wobbly tasks indicate non-deterministic models or borderline capability.
 Pass `--baseline path/to/old.json` to compare current scores vs a previous run:
 
 ```
-  ▲ +4.2 vs baseline
-  ▼ -6.1 vs baseline
+ ▲ +4.2 vs baseline
+ ▼ -6.1 vs baseline
 ```
 
 ### Regression Detection
@@ -149,8 +215,8 @@ Pass `--regression-threshold 5.0` to exit with code 1 if any role drops more tha
 
 ```
 ======================================================================
- ⚠️  REGRESSION DETECTED
-   executor: -8.1 points below baseline
+ ⚠️ REGRESSION DETECTED
+ executor: -8.1 points below baseline
 ======================================================================
 ```
 
@@ -164,10 +230,10 @@ After `--compare modelA,modelB`, the benchmark recommends the best model per rol
 
 ```
 RECOMMENDED MODELS
- Role                 Model                       Score   Latency
+ Role                 Model                     Score   Latency
  ─────────────────────────────────────────────────────────────────
- classify             gemma-2-2b-it                91.0     0.1s
- route                gemma-2-2b-it                78.0     0.1s
+ classify             gemma-2-2b-it             91.0    0.1s
+ route                gemma-2-2b-it             78.0    0.1s
 ```
 
 ---
@@ -221,14 +287,28 @@ tasks:
     max_tokens: 2048
 ```
 
+### Task Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `str` | **Yes** | Unique task identifier. Use `{subrole}_{description}` format for executor tasks |
+| `system` | `str` | No | System prompt for the LLM |
+| `prompt` | `str` | **Yes** | User prompt — the actual task |
+| `validator` | `str` | No | Validator to use. Default: `exact_match` |
+| `validator_args` | `dict` | No | Validator-specific arguments |
+| `expected` | `str \| list[str]` | No | Expected answer(s). For multi-reference, use list |
+| `difficulty` | `str` | No | `easy`, `medium`, or `hard`. Default: `medium` |
+| `timeout` | `int` | No | Task timeout in seconds. Default: 120 |
+| `max_tokens` | `int` | No | Max tokens for LLM response. Default: 1024 |
+
 ### Composite Validator Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `pattern` | str | Regex for format check (e.g., `^\d+\.` for numbered lists) |
-| `min_steps` | int | Minimum numbered steps or bullet points |
-| `required_keywords` | list[str] | Keywords that must appear (whole-word match) |
-| `must_appear_before` | list[list[str]] | Ordering constraints: `[first, second]` must appear in order |
+| `pattern` | `str` | Regex for format check (e.g., `^\d+\.` for numbered lists) |
+| `min_steps` | `int` | Minimum numbered steps or bullet points |
+| `required_keywords` | `list[str]` | Keywords that must appear (whole-word match) |
+| `must_appear_before` | `list[list[str]]` | Ordering constraints: `[first, second]` must appear in order |
 
 ### Code Tasks with Execution
 
@@ -256,48 +336,57 @@ tasks:
 For tasks with multiple acceptable answers:
 
 ```yaml
-    expected: ["Paris", "Paris, France", "the city of Paris"]
-    validator: contains  # or fuzzy_match
+  expected: ["Paris", "Paris, France", "the city of Paris"]
+  validator: contains  # or fuzzy_match
 ```
 
 The validator returns the best match across all references.
+
+### Writing Good `python_execution` Tasks
+
+**DO:**
+- Define the function at top level — the validator calls it directly
+- Use `assert` statements in `test_cases` that reference the function name
+- Keep test cases independent (each can run standalone)
+- Test edge cases: empty input, zero, negative, large values
+
+**DON'T:**
+- Ask for a `run_tests()` wrapper — models struggle with nested function definitions
+- Use complex class syntax for small models — `@dataclass`, `@property`, descriptors often fail
+- Put multiple test assertions on one line — harder to debug failures
 
 ---
 
 ## 🗺️ Roadmap
 
-### ✅ Completed (June 2026)
+### ✅ Completed
 
-| Feature | Notes |
-|---------|-------|
-| Variance tracking across `--runs` | Std dev + wobble flag (σ > 20) |
-| Failure categorization | 6 categories: timeout, llm_error, exception, empty_output, format_error, wrong_answer |
-| Baseline pinning | `--baseline` flag + delta reporting |
-| Regression threshold | `--regression-threshold` + non-zero exit |
-| Model recommendation | After `--compare`, best model per role |
-| Difficulty sort | Tasks sorted by difficulty before `--depth` slicing |
-| Multi-reference support | `expected` as `str \| list[str]` in validators |
-| New router tasks | 30 tasks covering deep_research, cli, browser, tavily, parallel, consult, vision, agent, report, notify |
-| Classify threshold 0.9 | All classify tasks use `validator_args: {threshold: 0.9}` |
-| `--depth hard` = all tasks | No longer capped at 15 |
-| `--all` → `mixed` filename | Consistent with actual behavior |
-| `--compare` → `_vs_` separator | Only when 2+ models |
-| `reports.py` extraction | All terminal formatting centralized |
-| Core LLM role fix | `route` added to `_defaults` in `core/llm_backend/config.py` |
-| Executor difficulty balance | Every sub-role has ≥3 tasks with mixed difficulty |
+| Feature | Version | Notes |
+|---------|---------|-------|
+| 3 new executor sub-roles | v1.2 | refactor, test, document |
+| Depth filter behavior | v1.2 | easy = all easy, normal = easy+medium, hard = all |
+| Variance tracking | v1.1 | Std dev + wobble flag (σ > 20) |
+| Failure categorization | v1.1 | 6 categories |
+| Baseline pinning | v1.1 | `--baseline` + delta |
+| Regression threshold | v1.1 | Non-zero exit on drop |
+| Model recommendation | v1.1 | Best model per role after compare |
+| Multi-reference support | v1.1 | `expected` as `str \| list[str]` |
+| New router tasks | v1.1 | 30 tasks for new tool types |
+| `--depth hard` = all tasks | v1.1 | No cap |
+| `reports.py` extraction | v1.1 | Centralized terminal formatting |
 
 ### 🔄 In Progress / Next Up
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
 | Baseline delta in final table | Currently shows per-role, missing from final `Model:` block | P1 |
-| Semantic similarity validator | Embedding-based (ChromaDB or sentence-transformers) for subjective tasks | P2 |
-| Token efficiency diagnostic | Add tokens/correctness ratio as informational column (not score penalty) | P2 |
-| Parameterized tasks | Jinja2 template expansion for task variety at scale | P3 |
+| Semantic similarity validator | Embedding-based for subjective tasks | P2 |
+| Token efficiency diagnostic | Tokens/correctness ratio as info column | P2 |
+| Vision tasks | Add `vision.yaml` with image description | P2 |
+| Consultor tasks | Add `consultor.yaml` with second-opinion scenarios | P2 |
+| Parameterized tasks | Jinja2 template expansion for task variety | P3 |
 | Temperature sweep mode | `--temp-sweep 0.0,0.3,0.7` convenience wrapper | P3 |
 | Parallel execution | Requires async `llm.complete()` or vLLM batching | P3 |
-| Vision tasks | Add `vision.yaml` with image description/classification | P2 |
-| Consultor tasks | Add `consultor.yaml` with second-opinion scenarios | P2 |
 
 ### 🚫 Deferred / Out of Scope
 
@@ -330,6 +419,7 @@ These items were evaluated and deferred. Future AIs should not recommend them wi
 - Test with `--all --depth easy` before declaring done
 - Test `--compare modelA,modelB` when touching model resolution
 - Run compileall on all `.py` files before testing
+- Update `BENCHMARK.md` when adding roles, validators, or changing behavior
 
 **❌ DON'T:**
 - Rewrite entire files from scratch
@@ -339,16 +429,18 @@ These items were evaluated and deferred. Future AIs should not recommend them wi
 - Add `conftest.py` fixtures — tests must be self-contained
 - Break `python -m benchmark` entry point
 - Change 70/20/10 scoring weights without explicit user approval
+- Add `run_tests()` wrappers to `python_execution` tasks — models struggle with nested definitions
+- Use complex class syntax (`@dataclass`, `@property`) for tasks targeting small models
 
 ### File Responsibilities
 
 | File | Responsibility |
 |------|---------------|
-| `benchmark.py` | Orchestration: CLI, role loops, model resolution, JSON export |
-| `reports.py` | All terminal formatting: colors, tables, summaries, comparisons |
-| `scoring.py` | Score calculation, failure categorization, consistency metrics |
-| `validators.py` | Output validation, multi-reference support |
-| `tasks/*.yaml` | Task definitions — preserve formatting, edit in-place |
+| `benchmark.py` | Orchestration: CLI, role loops, model resolution, JSON export, depth filtering |
+| `reports.py` | All terminal formatting: colors, tables, summaries, comparisons, wobble warnings |
+| `scoring.py` | Score calculation (70/20/10), failure categorization, consistency metrics, difficulty breakdown |
+| `validators.py` | Output validation, multi-reference support, restricted code execution |
+| `tasks/*.yaml` | Task definitions — preserve formatting, edit in-place, append new tasks at end |
 
 ### Testing Benchmark Changes
 
@@ -357,6 +449,11 @@ Benchmark has **no unit tests** — it IS the test. Validate by running:
 ```bash
 # Sanity
 python -m benchmark --role router --depth easy
+
+# New roles
+python -m benchmark --role refactor --depth easy
+python -m benchmark --role test --depth easy
+python -m benchmark --role document --depth easy
 
 # Full coverage
 python -m benchmark --all --depth easy
@@ -379,12 +476,16 @@ python -m benchmark --role router --baseline path/to/old.json
 - [ ] `validators.py` compiles
 - [ ] All task YAMLs parse (`yaml.safe_load`)
 - [ ] `--role router --depth easy` runs without errors
+- [ ] `--role refactor --depth easy` runs without errors
+- [ ] `--role test --depth easy` runs without errors
+- [ ] `--role document --depth easy` runs without errors
 - [ ] `--all --depth easy` runs without errors
 - [ ] `--compare` loads both models correctly
 - [ ] JSON report filename is correct (`mixed` for `--all`, `_vs_` for compare)
 - [ ] No tracer warnings for valid roles
 - [ ] Difficulty breakdown shows in per-role summary
 - [ ] Failure counts only show for actual failures (not passing tasks)
+- [ ] `BENCHMARK.md` updated with new roles/behavior
 
 ---
 
@@ -393,22 +494,36 @@ python -m benchmark --role router --baseline path/to/old.json
 ```
 benchmark/
 ├── __main__.py          # Entry point: python -m benchmark
-├── benchmark.py          # Main runner, CLI, model resolution
-├── scoring.py            # Score calculation, failure categorization
-├── validators.py         # 9 validators with multi-reference support
+├── benchmark.py          # Main runner, CLI, model resolution, depth filter, JSON export
 ├── reports.py            # All terminal formatting (extracted from benchmark.py)
+├── scoring.py            # Score calculation, failure categorization, consistency
+├── validators.py         # 9 validators with multi-reference support
 └── tasks/
     ├── router.yaml       # 30 tasks: 12 classify + 18 route
-    ├── executor.yaml     # 23 tasks: 7 sub-roles
-    └── planner.yaml      # 10 tasks
+    ├── executor.yaml     # 36 tasks: 10 sub-roles (incl. refactor, test, document)
+    ├── planner.yaml      # 10 tasks
+    ├── vision.yaml       # Reserved, minimal or empty
+    └── consultor.yaml    # Reserved, minimal or empty
 ```
 
 **Data flow:**
 
 ```
 run_benchmark() → run_role() → [run_task() × tasks × runs]
-  → calculate_task_score() → calculate_role_score()
-  → JSON dump + terminal output via reports.py
+    → calculate_task_score() → calculate_role_score()
+    → JSON dump + terminal output via reports.py
+```
+
+**Depth filtering (v1.2+):**
+
+```
+tasks = load_tasks(role)  # sorted by difficulty ascending
+if depth == "easy":
+    selected = [t for t in tasks if t["difficulty"] == "easy"]
+elif depth == "normal":
+    selected = [t for t in tasks if t["difficulty"] in ("easy", "normal")]
+else:  # hard
+    selected = tasks  # all tasks
 ```
 
 ---
@@ -416,6 +531,10 @@ run_benchmark() → run_role() → [run_task() × tasks × runs]
 ## 🔗 Cross-References
 
 - **Core LLM:** See `docs/LLM.md` for role-based dispatch, circuit breakers, context budgeting
-- **Core Config:** See `docs/CONFIG.md` for `.env` model loading, per-role configs
+- **Core Config:** See `docs/CONFIG.md` for `.env` model loading, per-role configs, timeout resolution
 - **Router:** See `docs/ROUTER.md` for task routing logic
 - **Core Architecture:** See `docs/CORE.md` for full module map and dependency rules
+
+---
+
+*Architecture: thin facade + role groups + atomic task YAMLs + filter-based depth selection + 70/20/10 scoring + restricted code execution + multi-reference validation + wobble detection + baseline comparison + model recommendation.*

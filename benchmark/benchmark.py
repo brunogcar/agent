@@ -34,7 +34,7 @@ except Exception:
 # They have no task YAMLs yet. Test them explicitly with --role vision or --role consultor.
 ROLE_GROUPS = {
     "router": ["classify", "route"],
-    "executor": ["summarize", "extract", "research", "critique", "analyze", "code", "review"],
+    "executor": ["summarize", "extract", "research", "critique", "analyze", "code", "review", "refactor", "test", "document"],
     "planner": ["planner"],
 }
 
@@ -42,14 +42,13 @@ ROLE_TO_GROUP = {
     "classify": "router", "route": "router",
     "summarize": "executor", "extract": "executor", "research": "executor",
     "critique": "executor", "analyze": "executor", "code": "executor", "review": "executor",
+    "refactor": "executor", "test": "executor", "document": "executor",
     "planner": "planner",
     # "vision": "vision", # add when vision.yaml exists
     # "consultor": "consultor", # add when consultor.yaml exists
 }
 
-DEPTH_TASKS = {"easy": 5, "normal": 10, "hard": 15}
 DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
-
 
 def load_tasks(role):
     """Load tasks for a role, sorted by difficulty ascending (easy first)."""
@@ -73,15 +72,12 @@ def load_tasks(role):
         key=lambda t: DIFFICULTY_ORDER.get(t.get("difficulty", "medium"), 1)
     )
 
-
 def snippet(text, max_len=55):
     s = text.replace("\n", " ").strip()
     return s[:max_len] + "..." if len(s) > max_len else s
 
-
 def safe_filename(text):
     return re.sub(r'[<>:"/\\|?*]', '-', text)
-
 
 def run_task(role, llm_role, task, model_override="", temperature=0.0):
     """Run a single task and return result dict. No terminal output here."""
@@ -188,16 +184,21 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
                 max_tokens=old_cfg.max_tokens,
             )
 
-
 def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
     """Run all tasks for a role and return aggregated results."""
     tasks = load_tasks(role)
     if not tasks:
-        print(f"  {reports.yellow('?')} No tasks found for role '{role}' (looked for {ROLE_TO_GROUP.get(role, role)}.yaml)")
+        print(f" {reports.yellow('?')} No tasks found for role '{role}' (looked for {ROLE_TO_GROUP.get(role, role)}.yaml)")
         return {"role": role, "tasks": [], "summary": {"final": 0.0, "tasks": 0}}
 
-    count = len(tasks) if depth == "hard" else DEPTH_TASKS.get(depth, 10)
-    selected = tasks[:count]
+    # Depth filter: easy = all easy, normal = easy + medium, hard = all tasks
+    if depth == "easy":
+        selected = [t for t in tasks if t.get("difficulty", "medium") == "easy"]
+    elif depth == "normal":
+        selected = [t for t in tasks if t.get("difficulty", "medium") in ("easy", "normal")]
+    else:  # hard
+        selected = tasks
+
     llm_role = ROLE_TO_GROUP.get(role, role)
 
     # Per-role model override: if EXTRACT_MODEL is set, use "extract" for LLM lookup
@@ -211,7 +212,7 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
     failure_counts = {}
 
     for task in selected:
-        print(f"  {task['name'][:73]}{'...' if len(task['name'])>73 else ''}")
+        print(f" {task['name'][:73]}{'...' if len(task['name'])>73 else ''}")
         run_scores = []
         run_results = []
         last_result = None
@@ -264,7 +265,7 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
             # Use the most common failure category across runs, or first failure
             fail_cats = [rr.get("failure_category", "unknown") for rr in run_results if rr.get("status") == "fail"]
             if fail_cats:
-                cat = fail_cats[0]  # or max(set(fail_cats), key=fail_cats.count) for most common
+                cat = fail_cats[0] # or max(set(fail_cats), key=fail_cats.count) for most common
                 failure_counts[cat] = failure_counts.get(cat, 0) + 1
 
     summary = calculate_role_score([t["score"] for t in task_results])
@@ -291,7 +292,6 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
         "difficulty_breakdown": difficulty_breakdown,
         "failure_counts": failure_counts,
     }
-
 
 def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_models=None, temperature=0.0, output_dir="", tag="", baseline_path="", regression_threshold=5.0):
     """Run benchmark across roles and models."""
@@ -438,7 +438,6 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
 
     return results, stack_comp, filepath, regression_detected
 
-
 def main():
     parser = argparse.ArgumentParser(description="Benchmark agent LLM roles")
     parser.add_argument("--role", nargs="+", help="Test specific role(s). Groups: router, executor, planner. Or individual: classify, code, etc.")
@@ -475,7 +474,6 @@ def main():
 
     if regression_detected:
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

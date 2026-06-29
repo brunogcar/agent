@@ -284,7 +284,6 @@ class Config:
         self.file_max_read_chars = int(os.getenv("FILE_MAX_READ_CHARS", "50000"))
 
         # -- Execution & Autocode ----------------------------------------------
-        self.execution_timeout = int(os.getenv("EXECUTOR_TIMEOUT", "120"))
         self.sandbox_timeout = int(os.getenv("SANDBOX_TIMEOUT", "30"))
         self.autocode_max_retries = int(os.getenv("AUTOCODE_MAX_RETRIES", "3"))
         self.autocode_max_file_chars = int(os.getenv("AUTOCODE_MAX_FILE_CHARS", "6000"))

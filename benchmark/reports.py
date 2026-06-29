@@ -30,6 +30,7 @@ ROLE_TO_GROUP = {
     "classify": "router", "route": "router",
     "summarize": "executor", "extract": "executor", "research": "executor",
     "critique": "executor", "analyze": "executor", "code": "executor", "review": "executor",
+    "refactor": "executor", "test": "executor", "document": "executor",
     "planner": "planner",
 }
 
@@ -38,12 +39,10 @@ def _snippet(text: str, max_len: int = 55) -> str:
     s = text.replace("\n", " ").strip()
     return s[:max_len] + "..." if len(s) > max_len else s
 
-
 def _pad_score(score_str: str, width: int = 7) -> str:
     """Manual padding for colored strings because ANSI codes break f-string width."""
     visible = len(re.sub(r'\033\[\d+m', '', score_str))
     return " " * (width - visible) + score_str
-
 
 # ── Live task output (called from benchmark.py after each task run) ─────────
 def print_task_run(name: str, result: dict, expected: str = ""):
@@ -62,24 +61,21 @@ def print_task_run(name: str, result: dict, expected: str = ""):
     if expected:
         act_col = green(output) if status == "pass" else yellow(output) if status == "partial" else red(output)
         exp_str = expected if isinstance(expected, str) else str(expected)
-        print(f"  {status_icon} {latency:.1f}s | {tokens:4d}t | {tps:5.1f} t/s | {score_col} | {exp_str:10s} vs {act_col}")
+        print(f" {status_icon} {latency:.1f}s | {tokens:4d}t | {tps:5.1f} t/s | {score_col} | {exp_str:10s} vs {act_col}")
     else:
         out_short = _snippet(output, 50)
-        print(f"  {status_icon} {latency:.1f}s | {tokens:4d}t | {tps:5.1f} t/s | {score_col} | {out_short}")
-
+        print(f" {status_icon} {latency:.1f}s | {tokens:4d}t | {tps:5.1f} t/s | {score_col} | {out_short}")
 
 def print_task_error(error_msg: str):
     """Print a task error line (e.g. timeout, exception)."""
     err = str(error_msg)[:60]
-    print(f"  ! {err}")
-
+    print(f" ! {err}")
 
 # ── Role summaries ──────────────────────────────────────────────────────────
 def print_role_header(role: str, model: str):
     """Print role section header."""
     print(f"\n {bold(role.upper())} ({cyan(model)})")
     print(" " + "─" * 66)
-
 
 def print_role_summary(role: str, summary: dict, difficulty_breakdown: dict = None, failure_counts: dict = None, runs: int = 1):
     """Print per-role summary line with optional difficulty and failure info."""
@@ -95,7 +91,7 @@ def print_role_summary(role: str, summary: dict, difficulty_breakdown: dict = No
 
     runs_part = f" | {runs} run{'s' if runs > 1 else ''}" if runs > 1 else ""
 
-    print(f"  Accuracy: {green(f'{acc:.0f}%') if acc >= 80 else yellow(f'{acc:.0f}%') if acc >= 50 else red(f'{acc:.0f}%')} | "
+    print(f" Accuracy: {green(f'{acc:.0f}%') if acc >= 80 else yellow(f'{acc:.0f}%') if acc >= 50 else red(f'{acc:.0f}%')} | "
           f"Avg: {lat:.1f}s · {tok:.0f} tok · {yellow(f'{tps:.1f} t/s')} | "
           f"Score: {final_col} | {summary['tasks']} tasks{runs_part}")
 
@@ -106,19 +102,17 @@ def print_role_summary(role: str, summary: dict, difficulty_breakdown: dict = No
                 d = difficulty_breakdown[diff]
                 parts.append(f"{diff}: {d['pass']}/{d['total']}")
         if parts:
-            print(f"  {cyan(' | '.join(parts))}")
+            print(f" {cyan(' | '.join(parts))}")
 
     if failure_counts:
         active = {k: v for k, v in failure_counts.items() if v > 0}
         if active:
             parts = [f"{v} {k}" for k, v in active.items()]
-            print(f"  {red('Failures: ' + ' | '.join(parts))}")
-
+            print(f" {red('Failures: ' + ' | '.join(parts))}")
 
 def print_wobble_warning(task_name: str, std_dev: float):
     """Print a wobble warning for inconsistent task results."""
-    print(f"  {yellow('⚠')} {task_name[:50]} wobbly (σ={std_dev:.1f})")
-
+    print(f" {yellow('⚠')} {task_name[:50]} wobbly (σ={std_dev:.1f})")
 
 # ── Comparison ────────────────────────────────────────────────────────────────
 def print_comparison(model_a: str, scores_a: dict, model_b: str, scores_b: dict, role: str):
@@ -135,16 +129,14 @@ def print_comparison(model_a: str, scores_a: dict, model_b: str, scores_b: dict,
     winner = model_b if scores_b["final"] > scores_a["final"] else model_a
     print(f" Winner: {color(winner, GREEN)} (Δ {delta:+.1f})")
 
-
 # ── Baseline delta ──────────────────────────────────────────────────────────
 def print_baseline_delta(role: str, current: float, baseline: float):
     """Print score delta vs baseline for a role."""
     delta = current - baseline
     if delta >= 0:
-        print(f"  {green('▲ +' + f'{delta:.1f}')} vs baseline")
+        print(f" {green('▲ +' + f'{delta:.1f}')} vs baseline")
     else:
-        print(f"  {red('▼ ' + f'{delta:.1f}')} vs baseline")
-
+        print(f" {red('▼ ' + f'{delta:.1f}')} vs baseline")
 
 # ── Recommendation ────────────────────────────────────────────────────────────
 def print_recommendation(recommendations: dict):
@@ -155,16 +147,14 @@ def print_recommendation(recommendations: dict):
     for role, rec in recommendations.items():
         print(f" {role:<20} {rec['model']:<25} {rec['score']:>7.1f} {rec['latency']:>7.1f}s")
 
-
 # ── Regression alert ────────────────────────────────────────────────────────
 def print_regression_alert(regressions: list[tuple]):
     """Print regression warning banner. regressions: list of (role, delta)."""
     print(f"\n{RED}{BOLD}{'=' * 70}{RESET}")
-    print(f" {RED}{BOLD}⚠️  REGRESSION DETECTED{RESET}")
+    print(f" {RED}{BOLD}⚠️ REGRESSION DETECTED{RESET}")
     for role, delta in regressions:
-        print(f"   {role}: {red(f'{delta:.1f}')} points below baseline")
+        print(f" {role}: {red(f'{delta:.1f}')} points below baseline")
     print(f"{RED}{BOLD}{'=' * 70}{RESET}")
-
 
 # ── Final benchmark table ───────────────────────────────────────────────────
 def print_benchmark_header(timestamp: str, depth: str, runs: int, tag: str = ""):
@@ -175,7 +165,6 @@ def print_benchmark_header(timestamp: str, depth: str, runs: int, tag: str = "")
     print(f" depth={depth}, runs={runs}{tag_part}")
     print(f"{bold('=') * 70}")
 
-
 def print_benchmark_complete(filepath: str):
     """Print benchmark completion footer."""
     print(f"\n{bold('=') * 70}")
@@ -183,7 +172,6 @@ def print_benchmark_complete(filepath: str):
     print(f"{bold('=') * 70}\n")
     print(f" {bold('Report ->')} {filepath}")
     print(f"{bold('=') * 70}\n")
-
 
 def print_final_table(model_results: dict, stack_comp: float):
     """Print the final per-role summary table."""
@@ -229,16 +217,15 @@ def print_final_table(model_results: dict, stack_comp: float):
         print(f" {'─' * 72}")
         print(f" Stack Score: {model_stack_col} / 100")
 
-    # Global summary only when single model (not compare)
-    if len(model_results) == 1 and all_scores:
-        print(f"\n {'─' * 72}")
-        avg_final = sum(all_scores) / len(all_scores)
-        avg_acc = sum(all_acc) / len(all_acc)
-        avg_tps = all_tok / all_lat if all_lat > 0 else 0
-        overall_col = green(f"{avg_final:.1f}") if avg_final >= 80 else yellow(f"{avg_final:.1f}") if avg_final >= 50 else red(f"{avg_final:.1f}")
-        print(f" {'Overall':<20} {avg_acc:>7.0f}% {all_lat:>6.1f}s {all_tok:>6.0f} {avg_tps:>8.1f} t/s {_pad_score(overall_col)}")
-        print(f" {'─' * 72}")
-
+        # Global summary only when single model (not compare)
+        if len(model_results) == 1 and all_scores:
+            print(f"\n {'─' * 72}")
+            avg_final = sum(all_scores) / len(all_scores)
+            avg_acc = sum(all_acc) / len(all_acc)
+            avg_tps = all_tok / all_lat if all_lat > 0 else 0
+            overall_col = green(f"{avg_final:.1f}") if avg_final >= 80 else yellow(f"{avg_final:.1f}") if avg_final >= 50 else red(f"{avg_final:.1f}")
+            print(f" {'Overall':<20} {avg_acc:>7.0f}% {all_lat:>6.1f}s {all_tok:>6.0f} {avg_tps:>8.1f} t/s {_pad_score(overall_col)}")
+            print(f" {'─' * 72}")
 
 # ── JSON export (kept for compatibility, but benchmark.py does its own dump) ─
 def save_json_report(results: dict, output_dir: str, tag: str = "") -> str:
@@ -253,12 +240,10 @@ def save_json_report(results: dict, output_dir: str, tag: str = "") -> str:
         json.dump(results, f, indent=2, ensure_ascii=False)
     return str(filepath)
 
-
 # ── Legacy compatibility functions ──────────────────────────────────────────
 def print_header(title: str):
     print(f"\n{color(title, BOLD + CYAN)}")
     print("=" * 60)
-
 
 def print_task_result(name: str, score: float, latency: float, tokens: int, status: str):
     """Legacy function — kept for compatibility."""

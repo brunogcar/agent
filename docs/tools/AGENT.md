@@ -592,6 +592,9 @@ If you are an AI assistant modifying the agent tool:
 
 | File | Purpose |
 |------|---------|
+| `.env` | **New roles:** Add `NEWROLE_MODEL=` (empty = fallback chain) |
+| `core/config.py` | **New roles:** `model_registry` entry via `_make_entry()` with env var fallback. Add direct timeout attribute if consumed outside `model_registry`. |
+| `core/llm_backend/config.py` | **New roles:** Add entry to `_defaults` dict with `model`, `provider`, `timeout`, `temperature`, `max_tokens`. |
 | `tools/agent.py` | `@tool` + `@meta_tool` facade: validation, dispatch, compress_result |
 | `tools/agent_core/__init__.py` | Auto-discovers `actions/*.py` and `roles/*.py` at import time |
 | `tools/agent_core/_registry.py` | `DISPATCH` dict + `@register_action` decorator with duplicate guard |
