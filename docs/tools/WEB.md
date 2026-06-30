@@ -7,7 +7,7 @@ The `web()` tool provides web search and content extraction via **SearXNG** (sel
 - **Static HTML only** — JavaScript-rendered pages may return empty/short text
 - **Parallel scraping** — `search_and_read` fans out to `ThreadPoolExecutor` for concurrent page fetching
 - **Lightweight** — pure Python (`httpx` + `BS4`), no browser overhead
-- **Connection pooling** — module-level singleton `httpx.Client` reuses TCP/TLS connections across calls
+- **Connection pooling** — singleton `httpx.Client` reuses TCP/TLS connections across calls
 - **SSRF protection** — all URLs validated via `core.security.is_safe_network_address` before any HTTP request
 
 ---
@@ -32,43 +32,52 @@ web(action="search_and_read", query="ChromaDB persistent client", max_results=5)
 
 ## 🏗️ Architecture
 
+### v1 Refactored Structure
+
 ```text
 tools/web.py
-├── web(action, ...)                    # @tool facade — action dispatch, validation
-├── _do_search(query, max_results)      # SearXNG query via httpx
-├── _do_scrape(url, max_chars)          # Fetch + BS4 clean → {url, title, text, word_count, truncated}
-├── _fetch_html(url, timeout=20)        # httpx GET with SSRF guard → (html, error)
-├── _is_safe_url(url)                   # SSRF: blocks private IPs via core.security
-├── _html_to_text(html, max_chars)    # BS4 extraction → (clean_text, title)
-├── _get_singleton_client()             # Module-level httpx.Client with connection pooling
-├── _SingletonClientContext             # Context manager yielding singleton (no close on exit)
-└── _close_client()                     # atexit hook to close singleton on process exit
+├── web(action, ...)          # @tool + @meta_tool facade — action dispatch, validation
+tools/web_ops/
+├── __init__.py               # Auto-discovers actions/*.py at import time
+├── _registry.py              # DISPATCH dict + @register_action decorator
+├── state.py                  # _HTTP_CLIENT, _HTTP_CLIENT_LOCK, reset_state(), reset_loop()
+├── client.py                 # Singleton httpx.Client: _get_singleton_client(), _make_client(), _close_client()
+├── utils.py                  # _is_safe_url() — SSRF guard, shared by search + scrape
+└── actions/
+    ├── search.py             # _action_search() — SearXNG query
+    ├── scrape.py             # _action_scrape() — Fetch + BS4 clean → {url, title, text, word_count, truncated}
+    ├── read.py               # _action_read() — Alias: scrape + prune_tool_dict()
+    └── search_and_read.py    # _action_search_and_read() — Search → dedup → parallel scrape → prune
 ```
 
 ### Dispatch Flow
 
 ```mermaid
 graph TD
- A["web(action, ...)"] --> B{"action?"}
- B -->|search| C["_do_search(query, max_results)"]
- B -->|scrape| D["_do_scrape(url, max_chars)"]
- B -->|read| E["_do_scrape(url, max_chars) → prune_tool_dict()"]
- B -->|search_and_read| F["_do_search → dedup URLs → ThreadPoolExecutor → _do_scrape each → prune_tool_dict()"]
- B -->|unknown| G["Return fail('Unknown action ...')"]
- C --> H["Return ok({results, count, query})"]
- D --> I["Return ok({url, title, text, word_count, truncated})"]
- E --> J["Return pruned dict from core.memory_backend.pruner"]
- F --> K["Return ok({query, results, scraped_count, attempted, duplicates_removed})"]
+    A["web(action, ...) @meta_tool facade"] --> B{"action?"}
+    B -->|search| C["_action_search() in search.py"]
+    B -->|scrape| D["_action_scrape() in scrape.py"]
+    B -->|read| E["_action_read() in read.py → _action_scrape() → prune_tool_dict()"]
+    B -->|search_and_read| F["_action_search_and_read() in search_and_read.py → search → dedup → ThreadPoolExecutor → scrape → prune_tool_dict()"]
+    B -->|unknown| G["Return fail('Unknown action ...')"]
+    C --> H["Return ok({results, count, query})"]
+    D --> I["Return ok({url, title, text, word_count, truncated})"]
+    E --> J["Return pruned dict from core.memory_backend.pruner"]
+    F --> K["Return ok({query, results, scraped_count, attempted, duplicates_removed})"]
 ```
 
 **Key design decisions:**
-- **Module-level singleton client** — `_HTTP_CLIENT` is created once with `httpx.Limits(max_connections=20)` and reused across all calls. `atexit.register(_close_client)` ensures cleanup on process exit. Thread-safe for `ThreadPoolExecutor` usage.
-- **Lazy BS4 import** — `from bs4 import BeautifulSoup` only happens inside `_html_to_text` on first call. Keeps startup fast if web tool is never used.
-- **`read` = `scrape` + pruning** — The `read` action is identical to `scrape` but pipes the result through `prune_tool_dict()` from `core.memory_backend.pruner`. This truncates oversized outputs and saves full content to `workspace/.artifacts/`.
-- **`scrape` = raw extraction** — Returns the full unpruned result. Useful when the caller wants the complete text without truncation.
+- **Thin `@tool` + `@meta_tool` facade** — `tools/web.py` is the only file scanned by `registry.py`. `web_ops/` submodules are invisible to the registry. The facade looks up handlers in `DISPATCH["web"]` and routes parameters.
+- **Auto-discovery via `@register_action`** — Action modules in `web_ops/actions/*.py` self-register into `DISPATCH` at import time. Adding a new action = create a file + add decorator. No central wiring needed.
+- **Singleton client in `client.py`** — `_HTTP_CLIENT` created once with `httpx.Limits(max_connections=20)` and reused across all calls. `atexit.register(_close_client)` ensures cleanup on process exit. Thread-safe for `ThreadPoolExecutor` usage.
+- **State isolation in `state.py`** — `reset_state()` closes the singleton and nullifies the reference for test isolation. `reset_loop()` is a no-op for compatibility with browser test fixtures.
+- **SSRF in `utils.py`** — `_is_safe_url()` is shared by both `search.py` (validates SearXNG URL) and `scrape.py` (validates target URLs). Calls `core.security.is_safe_network_address`.
+- **Lazy BS4 import** — `from bs4 import BeautifulSoup` only happens inside `_html_to_text()` on first call. Keeps startup fast if web tool is never used.
+- **`read` = `scrape` + pruning** — The `read` action calls `_action_scrape()` internally, then pipes the result through `prune_tool_dict()` from `core.memory_backend.pruner`. This truncates oversized outputs and saves full content to `workspace/.artifacts/`.
+- **`scrape` = raw extraction** — Returns the full unpruned result. Exposed as a public action for callers that want complete text without truncation.
 - **URL deduplication in `search_and_read`** — SearXNG often returns the same URL from multiple engines. `search_and_read` deduplicates while preserving rank order before scraping.
-- **`as_completed` in `search_and_read`** — Uses `concurrent.futures.as_completed()` (not `wait()`). This is acceptable here because each future has its own timeout via `_fetch_html(timeout=20)`. The global timeout is implicit through the individual scrape timeouts.
-- **SSRF at the HTTP layer** — `_is_safe_url()` is called inside `_fetch_html()`, not at the facade level. This means any internal helper that calls `_fetch_html()` is automatically protected.
+- **`concurrent.futures.wait()` in `search_and_read`** — Uses `wait()` with `cfg.worker_timeout` global timeout (not `as_completed()`). Handles `not_done` futures as timeout errors. Follows the `parallel_executor.py` pattern.
+- **Pruning in action files** — `read.py` and `search_and_read.py` apply `prune_tool_dict()` inside their handlers. This keeps the facade thin and avoids the facade needing to know which actions prune.
 
 ---
 
@@ -76,22 +85,16 @@ graph TD
 
 ```python
 @tool
+@meta_tool(DISPATCH["web"], doc_sections=[...])
 def web(
-    action: str,
+    action: str,              # Literal["search", "scrape", "read", "search_and_read"]
     query: str = "",
     url: str = "",
     max_results: int = 5,
-    max_chars: Optional[int] = None,
+    max_chars: int = 0,       # 0 = use cfg.web_max_text_chars (resolved in handlers)
     trace_id: str = "",
 ) -> dict:
-    """Web tool -- search the web or read web pages.
-
-    action: "search" | "scrape" | "read" | "search_and_read"
-
-    search: Search SearXNG and return ranked URLs with titles and snippets.
-    scrape / read: Fetch a URL and return clean text (JS/CSS removed).
-    search_and_read: Search then scrape the top results in parallel.
-    """
+    """Web meta-tool — atomic actions for search and scraping."""
 ```
 
 | Parameter | Type | Required | Description |
@@ -100,7 +103,7 @@ def web(
 | `query` | `str` | No | Search query. **Required** for `search` and `search_and_read`. |
 | `url` | `str` | No | Target URL. **Required** for `scrape` and `read`. |
 | `max_results` | `int` | No | Max search results. Default: 5. Upper bound: `cfg.web_max_search_results`. |
-| `max_chars` | `int` | No | Max characters per scraped page. Default: `cfg.web_max_text_chars`. |
+| `max_chars` | `int` | No | Max characters per scraped page. Default: 0 (resolved to `cfg.web_max_text_chars` in handlers). |
 | `trace_id` | `str` | No | Trace identifier for logging and pruning artifacts. |
 
 > **Note:** There is no `summarize` or `include_raw` parameter. The old doc incorrectly listed these. `search_and_read` returns raw scraped text, not LLM summaries. Raw HTML is never included in responses.
@@ -142,6 +145,8 @@ WEB_SNIPPET_CHARS=300
 | `engine` | `str` | Source search engine (e.g., `google`, `bing`, `duckduckgo`) |
 
 **Error cases:**
+- Missing query → `fail("action='search' requires query=")`
+- SSRF blocked SearXNG URL → `fail("SSRF blocked: SearXNG URL ...")`
 - SearXNG timeout → `fail("SearXNG timeout at {url}")`
 - SearXNG unreachable → `fail("Cannot reach SearXNG at {url}")`
 - General failure → `fail("Search failed: {exception}")`
@@ -175,6 +180,8 @@ Identical to `scrape`, but the result is piped through `prune_tool_dict()` from 
 
 **Return:** Same shape as `scrape`, but potentially truncated with artifact path.
 
+> **Note:** `read` is the preferred action for reading web pages. Use `scrape` only when you need the raw unpruned text.
+
 ### `search_and_read` — Parallel search + scrape (most powerful)
 
 Runs `search`, deduplicates URLs while preserving rank order, then fans out to `scrape` each result in parallel via `ThreadPoolExecutor(max_workers=min(len(urls), 4))`.
@@ -182,13 +189,16 @@ Runs `search`, deduplicates URLs while preserving rank order, then fans out to `
 **Flow:**
 ```text
 search(query, n) → [url1, url2, url3]
-  ├─ Deduplicate URLs (preserve rank order)
-  ├─ ThreadPoolExecutor(max_workers=min(len(urls), 4))
-  │   ├─ Worker 1: _do_scrape(url1) → result1
-  │   ├─ Worker 2: _do_scrape(url2) → result2
-  │   └─ Worker 3: _do_scrape(url3) → result3
-  ├─ Reassemble in original URL order
-  └─ prune_tool_dict() on final result
+ ├─ Deduplicate URLs (preserve rank order)
+ ├─ ThreadPoolExecutor(max_workers=min(len(urls), 4))
+ │   ├─ Worker 1: _action_scrape(url1) → result1
+ │   ├─ Worker 2: _action_scrape(url2) → result2
+ │   └─ Worker 3: _action_scrape(url3) → result3
+ ├─ Reassemble in original URL order
+ ├─ concurrent.futures.wait() with cfg.worker_timeout global timeout
+ │   ├─ done futures: collect results
+ │   └─ not_done futures: report as timeout errors
+ └─ prune_tool_dict() on final aggregated result
 ```
 
 **Return:**
@@ -221,7 +231,7 @@ search(query, n) → [url1, url2, url3]
 
 ### SSRF Guard (`_is_safe_url`)
 
-All URL parameters pass through `_is_safe_url()` inside `_fetch_html()` before any HTTP request:
+All URL parameters pass through `_is_safe_url()` in `web_ops/utils.py` before any HTTP request:
 
 ```python
 def _is_safe_url(url: str) -> bool:
@@ -235,6 +245,11 @@ def _is_safe_url(url: str) -> bool:
 - Loopback (`127.0.0.1`, `localhost`)
 - Link-local (`169.254.x.x`)
 - IPv6 loopback (`::1`)
+
+**Applied to:**
+- SearXNG URL in `search` (validates the configured endpoint itself)
+- Target URLs in `scrape` / `read`
+- All URLs in `search_and_read` (via internal `_action_scrape` calls)
 
 ### HTTP Client
 
@@ -284,36 +299,75 @@ All actions return `ok()/fail()` dicts from `core/contracts.py`.
 D:\mcp\agent\venv\Scripts\pytest.exe tests/tools/web/ -W error --tb=short -v
 ```
 
-**Test coverage (5 files):**
+**Test coverage (9 files):**
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| `test_web_search.py` | — | SearXNG query building, result parsing, timeout, connection error |
-| `test_web_scrape.py` | — | HTML extraction, title parsing, text cleaning, truncation |
-| `test_web_search_and_read.py` | — | URL deduplication, parallel execution, result ordering, empty result handling |
-| `test_web_error_handling.py` | — | SSRF blocking, HTTP errors, timeout, connection error, malformed HTML |
-| `test_web_singleton.py` | — | Singleton client creation, thread safety, atexit cleanup |
+| `conftest.py` | — | Shared fixtures: `reset_web_state()`, `mock_cfg_for_web()`, `mock_httpx()` |
+| `test_search.py` | — | SearXNG query building, result parsing, timeout, connection error, SSRF on SearXNG URL |
+| `test_scrape.py` | — | HTML extraction, title parsing, text cleaning, truncation, missing URL |
+| `test_read.py` | — | Alias behavior: scrape + prune_tool_dict() call, missing URL |
+| `test_search_and_read.py` | — | URL deduplication, parallel execution, result ordering, empty result handling, timeout |
+| `test_error_handling.py` | — | Unknown action, no search results, HTTP errors, SSRF blocking, invalid hostnames |
+| `test_client.py` | — | Singleton creation, thread safety, context manager, connection limits, close/reset |
+| `test_registry.py` | — | DISPATCH auto-discovery, action metadata, duplicate registration guard |
+| `test_facade.py` | — | `@meta_tool` Literal enum generation, unknown action error, tracer step calls |
 
 **Mock strategy:**
-- Mock `httpx.Client` at module level (patch `tools.web._get_singleton_client` or `_HTTP_CLIENT`)
+- Mock `httpx.Client` at the action module level (patch `tools.web_ops.actions.{search,scrape}._make_client`)
 - Mock `cfg` with explicit integers (no `MagicMock` comparison errors for `cfg.web_max_text_chars`, `cfg.web_snippet_chars`)
-- Test SSRF blocking with `192.168.1.1`, `127.0.0.1`, `localhost`
+- Test SSRF blocking by patching `core.security.is_safe_network_address` or `tools.web_ops.actions.{search,scrape}._is_safe_url`
 - Test timeout and connection error handling via `httpx.TimeoutException`, `httpx.ConnectError`
 - Test action dispatch (`search`, `scrape`, `read`, `search_and_read`, unknown action)
 - Test `_html_to_text` with various HTML structures (no `bs4` mock needed — it's pure HTML parsing)
+
+**Test patch path migration (old → new):**
+
+| Old Patch | New Patch |
+|-----------|-----------|
+| `tools.web.cfg` | `tools.web_ops.actions.search.cfg` / `tools.web_ops.actions.scrape.cfg` |
+| `tools.web._make_client` | `tools.web_ops.actions.search._make_client` / `tools.web_ops.actions.scrape._make_client` |
+| `tools.web._get_singleton_client` | `tools.web_ops.client._get_singleton_client` |
+| `tools.web._HTTP_CLIENT` | `tools.web_ops.state._HTTP_CLIENT` |
+| `tools.web._is_safe_url` | `tools.web_ops.utils._is_safe_url` |
+| `tools.web._do_search` | `tools.web_ops.actions.search._action_search` |
+| `tools.web._do_scrape` | `tools.web_ops.actions.scrape._action_scrape` |
 
 **Current test layout:**
 ```text
 tests/tools/web/
 ├── __init__.py
-├── test_web_error_handling.py
-├── test_web_scrape.py
-├── test_web_search.py
-├── test_web_search_and_read.py
-└── test_web_singleton.py
+├── conftest.py                 # Shared fixtures (reset_web_state, mock_cfg_for_web, mock_httpx)
+├── test_search.py              # Search action tests
+├── test_scrape.py              # Scrape action tests
+├── test_read.py                # Read alias tests
+├── test_search_and_read.py     # Parallel search+scrape tests
+├── test_error_handling.py      # SSRF, HTTP error, timeout, unknown action
+├── test_client.py              # Singleton client lifecycle tests
+├── test_registry.py            # DISPATCH registry tests
+└── test_facade.py              # @meta_tool facade tests
 ```
 
-> **Future:** When the tool is refactored to `@meta_tool` + un-multiplex, this will expand to `conftest.py` + per-action test files under `tests/tools/web/` following the `tests/tools/browser/` and `tests/tools/git/` patterns. Some existing tests may be merged or deleted during the restructure.
+---
+
+## ⚠️ Breaking Changes (v1)
+
+### v1 (`@meta_tool` refactor + atomic actions)
+
+- **Split monolithic `tools/web.py` into `tools/web_ops/` subpackage** — `web_ops/_registry.py`, `web_ops/__init__.py`, `web_ops/state.py`, `web_ops/client.py`, `web_ops/utils.py`, and `web_ops/actions/{search,scrape,read,search_and_read}.py`
+- **Added `@register_action` auto-discovery** via `pathlib` + `importlib` in `web_ops/__init__.py`
+- **Added `@meta_tool` auto-generated `Literal` enum and docstring** — `action` parameter is now `Literal["search", "scrape", "read", "search_and_read"]`
+- **Moved singleton client logic to `web_ops/client.py`** — `_get_singleton_client()`, `_make_client()`, `_close_client()`, `_SingletonClientContext`
+- **Moved global state to `web_ops/state.py`** — `_HTTP_CLIENT`, `_HTTP_CLIENT_LOCK`, `reset_state()`, `reset_loop()`
+- **Extracted `_is_safe_url` to `web_ops/utils.py`** — Shared SSRF guard used by both `search` and `scrape` actions
+- **Replaced `as_completed` with `concurrent.futures.wait()`** in `search_and_read` — Global timeout via `cfg.worker_timeout`, `not_done` futures reported as timeout errors
+- **`max_chars` facade default changed** — Old: `Optional[int] = None`. New: `int = 0` (0 = use `cfg.web_max_text_chars`). Callers passing `max_chars=0` now get cfg default instead of unlimited text.
+- **`atexit.register(_close_client)` moved to `client.py`** — Was in `web.py`. Now only in `client.py` module level.
+- **`reset_state()` now closes sockets** — Calls `._close()` before nullifying `_HTTP_CLIENT`. Prevents connection leaks in tests.
+- **`sorted()` in `__init__.py` glob** — `sorted(_actions_dir.glob("*.py"))` for deterministic import order across filesystems.
+- **Test restructure** — Added `conftest.py` with shared fixtures, split into 9 focused test files matching action structure
+- **Added `test_registry.py`** — Verifies all 4 actions registered in `DISPATCH`
+- **Added `test_facade.py`** — Verifies `@meta_tool` generates `Literal` enum, unknown action error, param filtering
 
 ---
 
@@ -324,35 +378,34 @@ tests/tools/web/
 | Feature | Status | Notes |
 |---------|--------|-------|
 | 4 actions (`search`, `scrape`, `read`, `search_and_read`) | ✅ v1.0 | `read` is `scrape` + pruning alias |
+| `@meta_tool` + `@register_action` auto-discovery | ✅ v1.0 | `Literal` enum, dynamic docstring, no central wiring |
 | SearXNG integration | ✅ v1.0 | `httpx` GET to `/search?format=json` |
 | BeautifulSoup4 extraction | ✅ v1.0 | Decomposes `script`, `style`, `nav`, `footer`, `header`, `aside`, `noscript`, `iframe`; targets `main`/`article`/content id/class |
 | Module-level singleton `httpx.Client` | ✅ v1.0 | Connection pooling, `atexit` cleanup, thread-safe |
 | SSRF protection | ✅ v1.0 | `_is_safe_url` → `core.security.is_safe_network_address` |
 | URL deduplication in `search_and_read` | ✅ v1.0 | Preserves rank order, counts `duplicates_removed` |
-| Parallel scraping | ✅ v1.0 | `ThreadPoolExecutor(max_workers=min(len(urls), 4))` |
+| Parallel scraping with global timeout | ✅ v1.0 | `ThreadPoolExecutor` + `concurrent.futures.wait()` + `cfg.worker_timeout` |
 | Config-driven limits | ✅ v1.0 | `cfg.web_max_text_chars`, `cfg.web_snippet_chars`, `cfg.web_max_search_results`, `cfg.searxng_url` |
 | `prune_tool_dict` integration | ✅ v1.0 | `read` and `search_and_read` pipe through pruner |
+| Test restructure with conftest.py | ✅ v1.0 | 9 focused test files, shared fixtures, no duplication |
 
 ### 🔄 In Progress / Next Up
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| `@meta_tool` refactor | Add `Literal` action validation and auto-generated schema/docstring (follow `browser` pattern) | P0 |
-| Un-multiplex | Extract `_do_search`, `_do_scrape`, `_do_search_and_read` into atomic handlers under `web_core/actions/` with auto-discovery | P0 |
-| Test restructure | Add `conftest.py`, split into per-action files (`test_search.py`, `test_scrape.py`, `test_read.py`, `test_search_and_read.py`), merge `test_web_singleton.py` into `conftest.py` or `test_facade.py` | P1 |
-| `search_and_read` timeout hardening | Replace `as_completed` with `concurrent.futures.wait()` + configurable global timeout (follow `parallel_executor` pattern) | P1 |
-| Browser fallback in `search_and_read` | When `_do_scrape` returns `< 300` chars, auto-retry with `browser(navigate+text_content)` for JS-rendered pages (run sequentially after thread pool, NOT inside workers) | P1 |
+| Content-type guard in `_fetch_html` | Detect `application/pdf`, `application/json`, `text/plain` — return clean structured error instead of passing garbage to BeautifulSoup | P1 |
+| Retry with exponential backoff on transient errors | `_fetch_html` has zero retry. One 503 or timeout drops the URL. Add one retry with backoff before hard-failing | P1 |
+| Browser fallback in `search_and_read` | When `_do_scrape` returns `< 300` chars, auto-retry with `browser(navigate+text_content)` for JS-rendered pages. Run sequentially after `ThreadPoolExecutor` closes, NOT inside workers | P1 |
 | Standardize `max_results` defaults | Use `cfg.web_max_search_results` consistently across `web/search`, `research`, and `deep_research` nodes. Currently `web` defaults to 5, `research` hardcodes 3, `deep_research` hardcodes 5 | P2 |
-| PDF handling | Detect `.pdf` URLs, download to `workspace/.artifacts/`, return structured reference instead of garbage HTML | P2 |
-| HTTP connection pooling optimization | Reuse `httpx.Client` across `search_and_read` workers more efficiently; evaluate `Limits` tuning | P2 |
-| `read` vs `scrape` consolidation | `read` is just `scrape` + `prune_tool_dict`. Consider making `read` the default and `scrape` an internal helper, or adding a `prune` flag to `scrape` | P2 |
+| PDF handling | Detect `.pdf` URLs, download to `workspace/.artifacts/`, return structured reference. Or route to `file(action="read_pdf")` | P2 |
+| `read` vs `scrape` consolidation discussion | `read` is `scrape` + `prune_tool_dict`. Consider making `read` the default and `scrape` internal, or adding a `prune` flag | P2 |
+| SearXNG circuit breaker / Tavily fallback | If SearXNG fails (timeout, 503, connection error), auto-fallback to `tavily(action="search")` if `TAVILY_API_KEY` is configured | P2 |
+| LRU cache for `read` | `functools.lru_cache` or disk-backed cache keyed by URL hash. Avoids re-fetching the same page twice in a trace | P2 |
 | Cached read | `web(action="cached_read", url=...)` — check local cache before fetching, TTL-based invalidation | P3 |
-| Content-type detection | Auto-detect `application/pdf`, `application/json`, `text/plain` and route to appropriate handlers | P3 |
-| Robots.txt respect | Check `robots.txt` before scraping to avoid getting blocked | P3 |
-
-| `search_and_read` timeout hardening | Replace `as_completed` with `concurrent.futures.wait()` + configurable global timeout (follow `parallel_executor` pattern) | P1 |
-| Browser fallback in `search_and_read` | When `_do_scrape` returns `< 300` chars, auto-retry with `browser(navigate+text_content)` for JS-rendered pages (run sequentially after thread pool, NOT inside workers) | P1 |
-| Standardize `max_results` defaults | Use `cfg.web_max_search_results` consistently across `web/search`, `research`, and `deep_research` nodes. Currently `web` defaults to 5, `research` hardcodes 3, `deep_research` hardcodes 5 | P2 |
+| Robots.txt respect | Check `robots.txt` before scraping to avoid getting blocked. Cache parsed robots.txt per domain | P3 |
+| User-agent rotation | Some sites block default `python-httpx` UA. Rotate UAs from a small pool | P3 |
+| Rate limiting per domain | Track request timestamps per domain. Sleep if exceeding N requests/second. Prevents 429 bans | P3 |
+| Extract `_html_to_text` to `core/html.py` | Pure HTML→text converter. Extract when a second consumer appears (email tool, RSS reader, etc.) | P3 |
 
 ### 🚫 Deferred / Out of Scope
 
@@ -361,10 +414,12 @@ tests/tools/web/
 | 1 | **LLM summarization in `search_and_read`** | The old doc incorrectly claimed this exists. It was never implemented. Summarization belongs in the `research` workflow, not the web tool. | Skip |
 | 2 | **`include_raw` parameter** | Never existed in the code. Raw HTML bloats context windows. Use `browser(extract_html)` if DOM structure is needed. | Skip |
 | 3 | **Structured extraction (`headers`, `links`, `images`)** | The old LLM draft fabricated this. `scrape` only returns `url`, `title`, `text`, `word_count`, `truncated`. Use `browser(extract_links)` / `browser(extract_tables)` for structured extraction. | Skip |
-| 4 | **JavaScript rendering** | Out of scope for the web tool. Use `browser` for JS-rendered pages. | Skip |
+| 4 | **JavaScript rendering in web tool** | Out of scope. Use `browser` for JS-rendered pages. | Skip |
 | 5 | **Rate limiting / politeness delay** | `search_and_read` already has implicit politeness via connection pooling. Explicit delays would slow down parallel scraping. | Skip |
 | 6 | **Proxy / SOCKS5 support** | Not needed for current deployment. Can be added via `httpx` proxy config if required. | Skip |
-| 7 | **Browser fallback inside thread pool workers** | Browser is NOT_PARALLEL_SAFE. Fallback must run sequentially after `ThreadPoolExecutor` closes, not inside worker threads. | Skip |
+| 7 | **Browser fallback inside thread pool workers** | Browser is `NOT_PARALLEL_SAFE`. Fallback must run sequentially after `ThreadPoolExecutor` closes, not inside worker threads. | Skip |
+| 8 | **HTTP connection pooling optimization** | Already optimal. Singleton `httpx.Client` with `Limits(max_connections=20)` is reused across all threads. Nothing to tune. | Skip |
+| 9 | **Response compression** | `httpx` already handles gzip/brotli transparently via `Accept-Encoding`. No action needed. | Skip |
 
 ---
 
@@ -381,14 +436,18 @@ tests/tools/web/
 8. **Never add `**kwargs` to the `@tool` facade** — FastMCP schema breaks.
 9. **Never print to stdout** — MCP stdio corruption. Return dicts only.
 10. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+11. **Never call `future.cancel()` on running threads** — `ThreadPoolExecutor` futures that are `not_done` after `wait()` are already running. `.cancel()` is a no-op. Report them as timeout errors instead.
 
 ### ALWAYS DO
-11. **Always use `_make_client()` context manager** — yields the singleton without closing it. Never use `httpx.Client()` directly in new code.
-12. **Always call `prune_tool_dict()` for `read` and `search_and_read`** — these are the user-facing actions that may return large text. `scrape` is the raw internal helper.
-13. **Always test SSRF blocking** — patch `core.security.is_safe_network_address` and assert blocked URLs return `fail`.
-14. **Always test with explicit `cfg` values** — `MagicMock` causes comparison errors with `cfg.web_max_text_chars`. Use `patch.object(cfg, 'web_max_text_chars', 8000)`.
-15. **Always test the unknown action path** — `web(action="nonsense")` must return `fail` with the usage hint.
-16. **Always update this doc** when adding actions, changing return shapes, or modifying the singleton client.
+12. **Always use `_make_client()` context manager** — yields the singleton without closing it. Never use `httpx.Client()` directly in new code.
+13. **Always call `prune_tool_dict()` for `read` and `search_and_read`** — these are the user-facing actions that may return large text. `scrape` is the raw internal helper.
+14. **Always test SSRF blocking** — patch `core.security.is_safe_network_address` or action-level `_is_safe_url` and assert blocked URLs return `fail`.
+15. **Always test with explicit `cfg` values** — `MagicMock` causes comparison errors with `cfg.web_max_text_chars`. Use `patch.object(cfg, 'web_max_text_chars', 8000)`.
+16. **Always test the unknown action path** — `web(action="nonsense")` must return `fail` with the usage hint.
+17. **Always patch where the name is looked up** — `tools.web_ops.actions.search._make_client`, not `tools.web._make_client`.
+18. **Always update this doc** when adding actions, changing return shapes, or modifying the singleton client.
+19. **Always use `sorted()` in `__init__.py` glob** — `sorted(_actions_dir.glob("*.py"))` for deterministic import order across filesystems.
+20. **Always lazy-import `prune_tool_dict`** — Import inside the handler function, not at module top, to avoid circular imports with `core.memory_backend.pruner`.
 
 ---
 
@@ -396,17 +455,22 @@ tests/tools/web/
 
 | File | Purpose |
 |------|---------|
-| `tools/web.py` | `@tool` facade: action dispatch, `_do_search`, `_do_scrape`, `_fetch_html`, `_html_to_text`, singleton client management |
+| `tools/web.py` | `@tool` + `@meta_tool` facade: action dispatch, validation, tracer steps |
+| `tools/web_ops/_registry.py` | `DISPATCH` dict, `@register_action` decorator with duplicate guard |
+| `tools/web_ops/__init__.py` | Auto-discovers `actions/*.py` via `pathlib` + `importlib` |
+| `tools/web_ops/state.py` | `_HTTP_CLIENT`, `_HTTP_CLIENT_LOCK`, `reset_state()`, `reset_loop()` |
+| `tools/web_ops/client.py` | Singleton `httpx.Client`: `_get_singleton_client()`, `_make_client()`, `_close_client()`, `_get_client()` (legacy) |
+| `tools/web_ops/utils.py` | `_is_safe_url()` — SSRF guard shared by search and scrape |
+| `tools/web_ops/actions/search.py` | `_action_search()` — SearXNG query handler |
+| `tools/web_ops/actions/scrape.py` | `_action_scrape()`, `_fetch_html()`, `_html_to_text()` — fetch + extract |
+| `tools/web_ops/actions/read.py` | `_action_read()` — scrape + `prune_tool_dict()` alias |
+| `tools/web_ops/actions/search_and_read.py` | `_action_search_and_read()` — composite: search → dedup → parallel scrape → prune |
 | `core/security.py` | `is_safe_network_address()` — SSRF protection |
 | `core/contracts.py` | `ok()` / `fail()` — standardized return dicts with `trace_id` injection |
-| `core/config.py` | `cfg.searxng_url`, `cfg.web_max_text_chars`, `cfg.web_snippet_chars`, `cfg.web_max_search_results` |
+| `core/config.py` | `cfg.searxng_url`, `cfg.web_max_text_chars`, `cfg.web_snippet_chars`, `cfg.web_max_search_results`, `cfg.worker_timeout` |
 | `core/memory_backend/pruner.py` | `prune_tool_dict()` — head+tail truncation, artifact storage |
-| `tests/tools/web/test_web_search.py` | Search action tests |
-| `tests/tools/web/test_web_scrape.py` | Scrape/read action tests |
-| `tests/tools/web/test_web_search_and_read.py` | Parallel search+scrape tests |
-| `tests/tools/web/test_web_error_handling.py` | SSRF, HTTP error, timeout tests |
-| `tests/tools/web/test_web_singleton.py` | Singleton client lifecycle tests |
+| `core/parallel_executor.py` | `concurrent.futures.wait()` pattern for global timeout handling |
 
 ---
 
-*Architecture: thin @tool facade + action dispatch + SearXNG search + httpx singleton client + BeautifulSoup4 extraction + ThreadPoolExecutor parallel scraping + SSRF guard + prune_tool_dict truncation + atexit cleanup.*
+*Architecture: thin `@tool` + `@meta_tool` facade → `DISPATCH` registry → atomic action handlers in `web_ops/actions/` → singleton `httpx.Client` → BeautifulSoup4 extraction → `ThreadPoolExecutor` parallel scraping → SSRF guard → `prune_tool_dict` truncation → `atexit` cleanup.*
