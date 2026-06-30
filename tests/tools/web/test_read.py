@@ -11,6 +11,7 @@ class TestRead:
         mock_response = MagicMock()
         mock_response.text = "<html><head><title>Test</title></head><body><p>Content</p></body></html>"
         mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "text/html"}
         mock_httpx.get.return_value = mock_response
         with patch("core.memory_backend.pruner.prune_tool_dict") as mock_prune:
             mock_prune.return_value = {"status": "success", "data": {"pruned": True}}

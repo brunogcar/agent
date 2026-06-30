@@ -19,19 +19,24 @@ def reset_web_state():
 
 @pytest.fixture(autouse=True)
 def mock_cfg_for_web(tmp_path):
-    """Mock cfg to prevent AsyncMock leakage and provide web defaults."""
+    """Mock cfg to prevent AsyncMock leakage and provide web defaults.
+
+    Yields a single shared mock object patched into all action modules
+    that import cfg directly. This ensures mutations (e.g., setting
+    searxng_url) are visible to every handler.
+    """
+    cfg_mock = MagicMock()
+    cfg_mock.web_max_text_chars = 8000
+    cfg_mock.web_snippet_chars = 300
+    cfg_mock.web_max_search_results = 10
+    cfg_mock.searxng_url = "http://localhost:8080"
+    cfg_mock.worker_timeout = 60
     with (
-        patch("tools.web_ops.actions.search.cfg") as mock_cfg_search,
-        patch("tools.web_ops.actions.scrape.cfg") as mock_cfg_scrape,
-        patch("tools.web_ops.actions.search_and_read.cfg") as mock_cfg_sar,
+        patch("tools.web_ops.actions.search.cfg", cfg_mock),
+        patch("tools.web_ops.actions.scrape.cfg", cfg_mock),
+        patch("tools.web_ops.actions.search_and_read.cfg", cfg_mock),
     ):
-        for mock_cfg in (mock_cfg_search, mock_cfg_scrape, mock_cfg_sar):
-            mock_cfg.web_max_text_chars = 8000
-            mock_cfg.web_snippet_chars = 300
-            mock_cfg.web_max_search_results = 10
-            mock_cfg.searxng_url = "http://localhost:8080"
-            mock_cfg.worker_timeout = 60
-        yield mock_cfg_sar
+        yield cfg_mock
 
 
 @pytest.fixture

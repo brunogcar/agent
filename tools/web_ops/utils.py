@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from core.security import is_safe_network_address
+# Allowed URL schemes. Anything else (file://, ftp://, etc.) is rejected.
+_ALLOWED_SCHEMES = {"http", "https"}
 
 
 def _is_safe_url(url: str) -> bool:
@@ -17,9 +18,14 @@ def _is_safe_url(url: str) -> bool:
     any HTTP request is made.
     """
     try:
-        hostname = urlparse(url).hostname
+        parsed = urlparse(url)
+        if parsed.scheme not in _ALLOWED_SCHEMES:
+            return False
+        hostname = parsed.hostname
         if not hostname:
             return False
+        # Lazy import to avoid loading core.security at web_ops import time
+        from core.security import is_safe_network_address
         return is_safe_network_address(hostname)
     except Exception:
         return False

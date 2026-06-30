@@ -35,21 +35,38 @@ class TestErrorHandling:
 
 class TestHelperFunctions:
     def test_is_safe_url_blocks_loopback(self):
-        """Test _is_safe_url blocks loopback by mocking the underlying security check."""
+        """_is_safe_url blocks loopback by delegating to is_safe_network_address."""
         from tools.web_ops import utils
-        with patch.object(utils, "_is_safe_url", return_value=False):
+        with patch("core.security.is_safe_network_address", return_value=False):
             assert utils._is_safe_url("http://127.0.0.1/admin") is False
             assert utils._is_safe_url("http://localhost/admin") is False
 
+    def test_is_safe_url_allows_public(self):
+        """_is_safe_url allows public addresses when is_safe_network_address returns True."""
+        from tools.web_ops import utils
+        with patch("core.security.is_safe_network_address", return_value=True):
+            assert utils._is_safe_url("http://example.com") is True
+            assert utils._is_safe_url("https://docs.python.org") is True
+
     def test_is_safe_url_blocks_private(self):
         from tools.web_ops import utils
-        with patch.object(utils, "_is_safe_url", return_value=False):
+        with patch("core.security.is_safe_network_address", return_value=False):
             assert utils._is_safe_url("http://192.168.1.1") is False
             assert utils._is_safe_url("http://10.0.0.1") is False
             assert utils._is_safe_url("http://172.16.0.1") is False
 
     def test_is_safe_url_invalid_hostname(self):
         from tools.web_ops import utils
-        with patch.object(utils, "_is_safe_url", return_value=False):
-            assert utils._is_safe_url("not-a-url") is False
-            assert utils._is_safe_url("") is False
+        # Invalid URLs have no hostname, so _is_safe_url returns False
+        # without ever calling is_safe_network_address
+        assert utils._is_safe_url("not-a-url") is False
+        assert utils._is_safe_url("") is False
+
+    def test_is_safe_url_blocks_non_http_schemes(self):
+        """file://, ftp://, etc. are rejected regardless of hostname."""
+        from tools.web_ops import utils
+        # Even with is_safe_network_address returning True, non-http schemes are blocked
+        with patch("core.security.is_safe_network_address", return_value=True):
+            assert utils._is_safe_url("file:///etc/passwd") is False
+            assert utils._is_safe_url("ftp://example.com") is False
+            assert utils._is_safe_url("javascript:alert(1)") is False

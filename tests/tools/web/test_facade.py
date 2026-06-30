@@ -50,3 +50,29 @@ class TestFacade:
             web(action="nonsense")
             calls = [c[0] for c in mock_step.call_args_list]
             assert any("action=nonsense" in str(c) for c in calls)
+
+    def test_max_chars_none_not_passed_to_handler(self, mock_cfg_for_web, mock_httpx):
+        """When max_chars is omitted, the facade should NOT include it in kwargs.
+
+        This verifies the fix for the max_chars=0 sentinel bug: handlers
+        resolve cfg.web_max_text_chars when max_chars is absent.
+        """
+        from unittest.mock import MagicMock
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"results": []}
+        mock_response.raise_for_status = MagicMock()
+        mock_httpx.get.return_value = mock_response
+
+        # Patch the handler function inside the DISPATCH registry entry.
+        # The facade looks up handler = DISPATCH["web"]["search"]["func"]
+        # and calls it directly, so we patch the func attribute.
+        original_handler = DISPATCH["web"]["search"]["func"]
+        mock_handler = MagicMock(return_value={"status": "success", "data": {}})
+        try:
+            DISPATCH["web"]["search"]["func"] = mock_handler
+            web(action="search", query="test")
+            assert mock_handler.called
+            call_kwargs = mock_handler.call_args[1]  # kwargs dict
+            assert "max_chars" not in call_kwargs
+        finally:
+            DISPATCH["web"]["search"]["func"] = original_handler

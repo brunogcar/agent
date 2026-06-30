@@ -8,6 +8,8 @@ PARALLEL_SAFE = True because httpx.Client is thread-safe.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from core.contracts import fail
 from core.tracer import tracer
 from registry import tool
@@ -43,7 +45,7 @@ def web(
     query: str = "",
     url: str = "",
     max_results: int = 5,
-    max_chars: int = 0,  # 0 means "use cfg default" (resolved in handlers)
+    max_chars: Optional[int] = None,  # None = use cfg.web_max_text_chars (resolved in handlers)
     trace_id: str = "",
 ) -> dict:
     """Web meta-tool — atomic actions for search and scraping."""
@@ -61,15 +63,16 @@ def web(
 
     handler = op_info["func"]
 
-    # Build kwargs from facade params. max_chars=0 is a sentinel for "use cfg default";
-    # pass it through and let handlers resolve cfg.web_max_text_chars if needed.
+    # Build kwargs from facade params. Only pass max_chars when explicitly
+    # provided; handlers resolve cfg.web_max_text_chars when max_chars is None.
     kwargs = {
         "query": query,
         "url": url,
         "max_results": max_results,
-        "max_chars": max_chars,
         "trace_id": trace_id,
     }
+    if max_chars is not None:
+        kwargs["max_chars"] = max_chars
 
     try:
         result = handler(**kwargs)

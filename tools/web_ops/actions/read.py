@@ -19,7 +19,7 @@ from tools.web_ops.actions.scrape import _action_scrape
 Required: url
 Optional: max_chars (default from cfg.web_max_text_chars)
 Note: This is the preferred action for reading web pages. Use 'scrape' only
-      when you need the raw unpruned text.""",
+ when you need the raw unpruned text.""",
     examples=[
         'web(action="read", url="https://docs.python.org/3/library/pathlib.html")',
     ],

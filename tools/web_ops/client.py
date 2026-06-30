@@ -8,16 +8,30 @@ atexit.register(_close_client) ensures the client is closed on process exit.
 from __future__ import annotations
 
 import atexit
+import random
 
 import httpx
 
 from tools.web_ops.state import _HTTP_CLIENT, _HTTP_CLIENT_LOCK
 
+# Rotating user-agent pool to reduce 403 blocks from sites that filter
+# on the default UA string.
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+]
+
 _CLIENT_DEFAULTS = {
-    "headers": {"User-Agent": "Mozilla/5.0 MCP-Agent/1.0"},
     "timeout": 10.0,
     "follow_redirects": True,
 }
+
+
+def _pick_user_agent() -> str:
+    """Return a random user agent from the rotation pool."""
+    return random.choice(_USER_AGENTS)
 
 
 def _get_singleton_client() -> httpx.Client:
@@ -27,6 +41,7 @@ def _get_singleton_client() -> httpx.Client:
         with _HTTP_CLIENT_LOCK:
             if _HTTP_CLIENT is None:
                 _HTTP_CLIENT = httpx.Client(
+                    headers={"User-Agent": _pick_user_agent()},
                     **_CLIENT_DEFAULTS,
                     limits=httpx.Limits(max_connections=20),
                 )

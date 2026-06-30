@@ -3,6 +3,11 @@
 Composite action: runs search, deduplicates URLs while preserving rank order,
 then fans out to scrape each result in parallel via ThreadPoolExecutor.
 The final aggregated result is piped through prune_tool_dict().
+
+NOTE: This action directly imports _action_search and _action_scrape from
+sibling modules. This is intentional cross-action coupling for performance
+(direct calls avoid facade overhead). If search/scrape signatures change,
+update this file accordingly.
 """
 from __future__ import annotations
 
@@ -76,7 +81,8 @@ def _action_search_and_read(
         return u, _action_scrape(url=u, max_chars=max_chars, trace_id=trace_id)
 
     results_map: dict[str, dict] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(urls), 4)) as ex:
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(urls), 4))
+    try:
         futures = {ex.submit(_fetch_one, u): u for u in urls}
         # Global timeout via wait() — not as_completed()
         done, not_done = concurrent.futures.wait(
@@ -94,6 +100,11 @@ def _action_search_and_read(
         for future in not_done:
             u = futures[future]
             results_map[u] = fail(f"Scrape timeout for {u}", url=u)
+    finally:
+        # shutdown(wait=False) prevents blocking on slow threads after
+        # wait() has already returned. The threads will finish in background
+        # and be cleaned up by the executor.
+        ex.shutdown(wait=False)
 
     # Phase 4: Reassemble in original URL order
     scraped = []
