@@ -12,7 +12,7 @@ import random
 
 import httpx
 
-from tools.web_ops.state import _HTTP_CLIENT, _HTTP_CLIENT_LOCK
+import tools.web_ops.state as state
 
 # Rotating user-agent pool to reduce 403 blocks from sites that filter
 # on the default UA string.
@@ -36,27 +36,25 @@ def _pick_user_agent() -> str:
 
 def _get_singleton_client() -> httpx.Client:
     """Return the singleton httpx.Client, creating it on first call."""
-    global _HTTP_CLIENT
-    if _HTTP_CLIENT is None:
-        with _HTTP_CLIENT_LOCK:
-            if _HTTP_CLIENT is None:
-                _HTTP_CLIENT = httpx.Client(
+    if state._HTTP_CLIENT is None:
+        with state._HTTP_CLIENT_LOCK:
+            if state._HTTP_CLIENT is None:
+                state._HTTP_CLIENT = httpx.Client(
                     headers={"User-Agent": _pick_user_agent()},
                     **_CLIENT_DEFAULTS,
                     limits=httpx.Limits(max_connections=20),
                 )
-    return _HTTP_CLIENT
+    return state._HTTP_CLIENT
 
 
 def _close_client() -> None:
     """Close the singleton client and reset the reference to None."""
-    global _HTTP_CLIENT
-    if _HTTP_CLIENT is not None:
+    if state._HTTP_CLIENT is not None:
         try:
-            _HTTP_CLIENT.close()
+            state._HTTP_CLIENT.close()
         except Exception:
             pass
-        _HTTP_CLIENT = None
+        state._HTTP_CLIENT = None
 
 
 # Register cleanup exactly once, here in client.py.
