@@ -1,68 +1,87 @@
-"""Tavily action: map — Site structure discovery."""
+"""tools/tavily_ops/actions/map.py — Tavily map action handler.
+
+Calls AsyncTavilyClient.map() to discover and map URLs from a starting point.
+SDK 0.7.26 compatibility: facade `query` param is translated to SDK `instructions=`.
+"""
 from __future__ import annotations
 
-from core.contracts import ok, fail
-from tools.tavily_ops._registry import register_action
-from tools.tavily_ops.bridge import _run_async
 import tools.tavily_ops.client as _client
-from tools.tavily_ops.errors import _handle_tavily_error, _assert_safe_urls
+from core.contracts import fail, ok
+from core.tracer import tracer
+from tools.tavily_ops._registry import register_action
+from tools.tavily_ops.errors import _assert_safe_urls, _handle_tavily_error
+from tools.tavily_ops import bridge
 
 
 @register_action(
-    "tavily", "map",
-    help_text="""map — Site structure discovery. Requires API key.
+    "tavily",
+    "map",
+    help_text="""map — Discover and map URLs from a starting point.
 Required: url
-Optional: max_depth, max_breadth, limit, query""",
+Optional: query (contextual instructions), max_depth, max_breadth, limit""",
     examples=[
         'tavily(action="map", url="https://example.com")',
-        'tavily(action="map", url="https://example.com", query="API docs")',
+        'tavily(action="map", url="https://docs.python.org", query="API reference pages")',
     ],
 )
 def _action_map(
     url: str = "",
     query: str = "",
-    max_depth: int = 2,
+    max_depth: int = 3,
     max_breadth: int = 10,
-    limit: int = 100,
+    limit: int = 50,
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Execute Tavily map. Requires API key (keyless not supported)."""
-    target_url = url or query
-    if not target_url:
-        return fail(
-            "url or query is required for map action", trace_id=trace_id
-        )
+    """Map a website and return discovered URLs.
 
-    err = _assert_safe_urls([target_url])
+    v1.1 FIX: Removed 'url or query' fallback. 'url' is required per the
+    docstring; 'query' is only for contextual instructions. Previously,
+    passing only 'query' would use it as the target URL, producing a
+    misleading SSRF error instead of a clear "url required" message.
+    """
+    if not url:
+        return fail("action='map' requires url=", trace_id=trace_id)
+
+    # v1.1: Only pass query as instructions when url was explicitly provided.
+    instructions = query if query else None
+
+    err = _assert_safe_urls([url])
     if err:
         return fail(err, trace_id=trace_id)
 
-    if _client._is_keyless():
+    client = _client._get_singleton_client()
+    is_keyless = _client._is_keyless_mode()
+
+    if is_keyless:
         return fail(
-            "map action requires a Tavily API key. "
-            "Set TAVILY_API_KEY in .env or use search/extract instead.",
+            "action='map' requires a Tavily API key. Set TAVILY_API_KEY in .env.",
             trace_id=trace_id,
         )
 
-    async def _call():
-        client = _client._get_singleton_client()
-        # SDK 0.7.26 uses 'instructions' not 'query' for map
-        return await client.map(
-            url=target_url,
-            instructions=query if query else None,
+    def _call():
+        return client.map(
+            url=url,
+            instructions=instructions,
             max_depth=max_depth,
             max_breadth=max_breadth,
             limit=limit,
         )
 
     try:
-        result = _run_async(_call())
+        # v1.1: Use _run_async_with_resilience for circuit breaker + retry
+        result = bridge._run_async_with_resilience(_call(), trace_id=trace_id)
     except Exception as e:
-        return _handle_tavily_error(e)
+        return _handle_tavily_error(e, trace_id=trace_id)
 
+    # v1.1: Include keyless flag for test compatibility and LLM context.
     response = ok(
-        {"results": result.get("results", []), "keyless": False},
+        {
+            "results": result.get("results", []),
+            "url": url,
+            "query": query,
+            "keyless": is_keyless,
+        },
         trace_id=trace_id,
     )
 

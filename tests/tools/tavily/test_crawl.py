@@ -19,12 +19,19 @@ class TestCrawl:
     def test_crawl_missing_url(self, mock_tavily_client):
         result = tavily(action="crawl")
         assert result["status"] == "error"
-        assert "url or query is required" in result["error"]
+        # v1.1: Updated to match new error message (url is now strictly required)
+        assert "action='crawl' requires url=" in result["error"]
 
-    def test_crawl_uses_query_as_url_fallback(self, mock_tavily_client):
-        result = tavily(action="crawl", query="https://example.com")
+    # v1.1: REMOVED test_crawl_uses_query_as_url_fallback — this behavior was
+    # a bug. query is now purely for instructions, not a URL substitute.
+    # Passing only query without url returns an error.
+
+    def test_crawl_query_as_instructions(self, mock_tavily_client):
+        """v1.1: query is passed as instructions, not as URL fallback."""
+        result = tavily(action="crawl", url="https://example.com", query="find API docs")
         assert result["status"] == "success"
         call_kwargs = mock_tavily_client.crawl.call_args[1]
+        assert call_kwargs["instructions"] == "find API docs"
         assert call_kwargs["url"] == "https://example.com"
 
     def test_crawl_keyless_blocked(self, mock_tavily_client):
@@ -34,7 +41,9 @@ class TestCrawl:
         assert "requires a Tavily API key" in result["error"]
 
     def test_crawl_ssrf_blocked(self, mock_tavily_client):
-        with patch("tools.tavily_ops.errors.is_safe_network_address", return_value=False):
+        # v1.1: Patch core.security.is_safe_network_address since
+        # _assert_safe_urls was moved there for cross-tool sharing.
+        with patch("core.security.is_safe_network_address", return_value=False):
             result = tavily(action="crawl", url="http://192.168.1.1/admin")
         assert result["status"] == "error"
         assert "Blocked" in result["error"]

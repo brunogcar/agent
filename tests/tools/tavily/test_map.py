@@ -19,12 +19,18 @@ class TestMap:
     def test_map_missing_url(self, mock_tavily_client):
         result = tavily(action="map")
         assert result["status"] == "error"
-        assert "url or query is required" in result["error"]
+        # v1.1: Updated to match new error message (url is now strictly required)
+        assert "action='map' requires url=" in result["error"]
 
-    def test_map_uses_query_as_url_fallback(self, mock_tavily_client):
-        result = tavily(action="map", query="https://example.com")
+    # v1.1: REMOVED test_map_uses_query_as_url_fallback — same fix as crawl.
+    # query is now purely for instructions, not a URL substitute.
+
+    def test_map_query_as_instructions(self, mock_tavily_client):
+        """v1.1: query is passed as instructions, not as URL fallback."""
+        result = tavily(action="map", url="https://example.com", query="API reference pages")
         assert result["status"] == "success"
         call_kwargs = mock_tavily_client.map.call_args[1]
+        assert call_kwargs["instructions"] == "API reference pages"
         assert call_kwargs["url"] == "https://example.com"
 
     def test_map_keyless_blocked(self, mock_tavily_client):
@@ -34,8 +40,9 @@ class TestMap:
         assert "requires a Tavily API key" in result["error"]
 
     def test_map_ssrf_blocked(self, mock_tavily_client):
-        with patch("tools.tavily_ops.errors.is_safe_network_address", return_value=False):
-            result = tavily(action="map", url="http://192.168.1.1/admin")
+        # v1.1: Patch core.security.is_safe_network_address
+        with patch("core.security.is_safe_network_address", return_value=False):
+            result = tavily(action="map", url="http://10.0.0.1/internal")
         assert result["status"] == "error"
         assert "Blocked" in result["error"]
 

@@ -1,6 +1,4 @@
-"""
-core/security.py — Centralized security policies and network validation.
-"""
+"""core/security.py — Centralized security policies and network validation."""
 from __future__ import annotations
 
 import concurrent.futures
@@ -24,6 +22,7 @@ _DNS_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_pre
 # infeasible for a 127.0.0.1-bound service. Revisit if gateway is exposed.
 atexit.register(_DNS_POOL.shutdown)
 
+
 def _resolve_safe(hostname: str, timeout: float = 2.0) -> list:
     """Resolve hostname with a strict timeout to prevent DoS via slow DNS."""
     future = _DNS_POOL.submit(socket.getaddrinfo, hostname, None)
@@ -33,6 +32,7 @@ def _resolve_safe(hostname: str, timeout: float = 2.0) -> list:
         return []
     except Exception:
         return []
+
 
 def is_safe_network_address(hostname: str) -> bool:
     """
@@ -128,6 +128,7 @@ def is_safe_network_address(hostname: str) -> bool:
 
     return True
 
+
 def _is_private_or_localhost(hostname: str) -> bool:
     """Legacy compatibility alias. Returns True if hostname is private/localhost.
 
@@ -195,3 +196,25 @@ def _is_private_or_localhost(hostname: str) -> bool:
             pass
 
     return False
+
+
+# v1.1: Extracted from tavily_ops/errors.py for cross-tool sharing.
+# Both web_ops and tavily_ops should import this from core.security instead
+# of duplicating the logic.
+def _assert_safe_urls(urls):
+    """Block private/internal URLs before sending to any external API.
+
+    Args:
+        urls: Iterable of URL strings to validate.
+
+    Returns:
+        (True, "") if all URLs are safe.
+        (False, error_message) if any URL is blocked.
+    """
+    from urllib.parse import urlparse
+
+    for url in urls:
+        hostname = urlparse(url).hostname or ""
+        if not is_safe_network_address(hostname):
+            return False, f"Blocked: {url} resolves to a private/internal address"
+    return True, ""

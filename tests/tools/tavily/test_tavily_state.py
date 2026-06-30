@@ -24,11 +24,15 @@ class TestStateOwnership:
         assert c1 is not c2
 
     def test_reset_state_clears_keyless_warned(self, mock_tavily_client):
-        import logging
+        """Verify reset_state() clears the _KEYLESS_WARNED flag."""
         from tools.tavily import tavily
+        # Ensure flag is reset before test
+        state._KEYLESS_WARNED = False
         with patch("tools.tavily_ops.client.cfg.tavily_api_key", ""):
-            with patch("tools.tavily_ops.client.logger") as mock_logger:
+            with patch("tools.tavily_ops.errors.cfg.tavily_api_key", ""):
                 tavily(action="search", query="test")
+                # After a keyless call, the flag should be set
                 assert state._KEYLESS_WARNED is True
+        # After reset, it should be cleared
         state.reset_state()
         assert state._KEYLESS_WARNED is False

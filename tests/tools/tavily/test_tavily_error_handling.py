@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tools.tavily import tavily
 from tools.tavily_ops.errors import _handle_tavily_error
@@ -29,7 +29,7 @@ class TestErrorHandling:
         mock_tavily_client.search.side_effect = InvalidAPIKeyError("Invalid key")
         result = tavily(action="search", query="test")
         assert result["status"] == "error"
-        assert "API key invalid" in result["error"]
+        assert "api key invalid" in result["error"].lower()
 
     def test_usage_limit_exceeded_error(self, mock_tavily_client):
         try:
@@ -74,7 +74,7 @@ class TestErrorHandling:
         )
         result = tavily(action="search", query="test")
         assert result["status"] == "error"
-        assert "authentication" in result["error"].lower()
+        assert "unauthorized" in result["error"].lower() or "401" in result["error"]
 
     def test_httpx_http_status_error_403(self, mock_tavily_client):
         import httpx
@@ -85,7 +85,7 @@ class TestErrorHandling:
         )
         result = tavily(action="search", query="test")
         assert result["status"] == "error"
-        assert "authentication" in result["error"].lower() or "403" in result["error"]
+        assert "forbidden" in result["error"].lower() or "403" in result["error"]
 
     def test_httpx_http_status_error_429(self, mock_tavily_client):
         import httpx
@@ -102,12 +102,47 @@ class TestErrorHandling:
         mock_tavily_client.search.side_effect = Exception("Something weird")
         result = tavily(action="search", query="test")
         assert result["status"] == "error"
-        assert "Tavily error" in result["error"]
+        assert "tavily error" in result["error"].lower()
 
     def test_handler_returns_non_dict(self, mock_tavily_client):
-        """Guard: non-dict handler return must be caught."""
-        mock_tavily_client.search.return_value = "not a dict"
-        result = tavily(action="search", query="test")
-        # The mock returns a string, which the action handler wraps in ok()
-        # but if a handler ever returned a non-dict directly, the facade catches it
+        """Guard: non-dict handler return must be caught by facade."""
+        with patch("tools.tavily.DISPATCH") as mock_dispatch:
+            mock_dispatch.get.return_value.get.return_value = {
+                "func": lambda **kw: "not a dict"
+            }
+            result = tavily(action="search", query="test")
         assert result["status"] == "error"
+        assert "returned str" in result["error"]
+
+    def test_api_key_not_in_error_message(self, mock_tavily_client):
+        """API key must never leak into error messages returned to LLM."""
+        secret_key = "tvly-secret-key-abc123"
+        with patch("tools.tavily_ops.client.cfg.tavily_api_key", secret_key):
+            with patch("tools.tavily_ops.errors.cfg.tavily_api_key", secret_key):
+                mock_tavily_client.search.side_effect = Exception(
+                    f"Auth failed for key {secret_key}"
+                )
+                result = tavily(action="search", query="test")
+        assert result["status"] == "error"
+        assert secret_key not in result["error"]
+        assert "***" in result["error"]
+
+    def test_rate_limit_backoff_retries(self, mock_tavily_client):
+        """RateLimitError triggers up to 3 retry attempts with exponential backoff."""
+        try:
+            from tavily.errors import RateLimitError
+        except ImportError:
+            pytest.skip("tavily-python not installed")
+
+        call_count = [0]
+        async def _side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                raise RateLimitError("Too many requests")
+            return {"results": [{"url": "https://example.com"}], "answer": "OK"}
+
+        mock_tavily_client.search.side_effect = _side_effect
+
+        result = tavily(action="search", query="test")
+        assert result["status"] == "success"
+        assert call_count[0] == 3

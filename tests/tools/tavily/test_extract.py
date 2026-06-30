@@ -11,6 +11,7 @@ class TestExtract:
     """Test tavily extract action."""
 
     def test_extract_success(self, mock_tavily_client):
+        # v1.1: urls is now a facade param, passed through to handler
         result = tavily(
             action="extract",
             urls=["https://example.com"],
@@ -31,7 +32,8 @@ class TestExtract:
         assert "cannot exceed 10 items" in result["error"]
 
     def test_extract_ssrf_blocked(self, mock_tavily_client):
-        with patch("tools.tavily_ops.errors.is_safe_network_address", return_value=False):
+        # v1.1: Patch core.security.is_safe_network_address
+        with patch("core.security.is_safe_network_address", return_value=False):
             result = tavily(action="extract", urls=["http://127.0.0.1/secret"])
         assert result["status"] == "error"
         assert "Blocked" in result["error"]
