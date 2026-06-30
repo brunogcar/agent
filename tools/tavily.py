@@ -1,407 +1,52 @@
-"""
-tools/tavily.py — Tavily AI research tool.
-Async client wrapped in sync @tool facade for MCP compatibility.
+"""tools/tavily.py — Tavily AI research tool.
+Thin @tool + @meta_tool facade for MCP compatibility.
 
 Actions (exposed to LLM):
- search — AI-ranked web search with citations
- extract — Bulk URL content extraction
- crawl — Deep site traversal
- map — Site structure discovery
+  search, extract, crawl, map
 
-research action is implemented as _do_research() but NOT exposed in the
-@tool DISPATCH dict. Reserved for workflows/deep_research.py.
-See docs/TAVILY.md for full documentation.
-
-Keyless mode: AsyncTavilyClient() with no API key supports search and
-extract with lower limits. Response includes "keyless": true.
+research action is implemented in tavily_ops/actions/research.py but NOT
+exposed in the facade. Reserved for workflows/deep_research_impl/.
 """
 from __future__ import annotations
-
-import asyncio
-import concurrent.futures
-import logging
-import threading
-from typing import Any, Optional
-from urllib.parse import urlparse
+from typing import Optional
 
 from registry import tool
-from core.config import cfg
-from core.contracts import ok, fail
-from core.security import is_safe_network_address
+from tools._meta_tool import meta_tool
+from tools.tavily_ops._registry import DISPATCH
+from core.contracts import fail
 
-logger = logging.getLogger(__name__)
+# Import to trigger auto-discovery before @meta_tool reads DISPATCH
+import tools.tavily_ops  # noqa: F401
 
-# Module-level flag for parallel dispatcher
 PARALLEL_SAFE = True
 
-# ── Async-to-Sync Bridge ───────────────────────────────────────────────────
-
-def _run_async(coro):
-    """
-    Run an async coroutine from a sync context.
-    Handles the case where a thread may or may not have a running event loop.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # Running loop exists — run in fresh thread to avoid nested loop error
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        future = ex.submit(asyncio.run, coro)
-        return future.result(timeout=cfg.tavily_timeout + 10)
-
-# ── Lazy Client ────────────────────────────────────────────────────────────
-
-_tavily_client = None
-_tavily_client_key = None
-_get_client_lock = threading.Lock()
-
-
-def _get_client():
-    """Lazy-load AsyncTavilyClient. Keyless if no API key configured."""
-    global _tavily_client, _tavily_client_key
-    current_key = cfg.tavily_api_key or None
-    if _tavily_client is None or _tavily_client_key != current_key:
-        with _get_client_lock:
-            # Double-check after acquiring lock
-            if _tavily_client is None or _tavily_client_key != current_key:
-                try:
-                    from tavily import AsyncTavilyClient
-                except ImportError as e:
-                    raise ImportError(
-                        "tavily-python not installed. Run: pip install tavily-python"
-                    ) from e
-                _tavily_client = AsyncTavilyClient(api_key=current_key)
-                _tavily_client_key = current_key
-    return _tavily_client
-
-
-def _is_keyless() -> bool:
-    """Return True if running without an API key."""
-    return not bool(cfg.tavily_api_key)
-
-
-_keyless_warned = False
-
-
-def _warn_keyless_once():
-    """Log a single warning when keyless mode is first used."""
-    global _keyless_warned
-    if not _keyless_warned:
-        _keyless_warned = True
-        logger.warning(
-            "Tavily running in keyless mode. Set TAVILY_API_KEY in .env for higher limits."
-        )
-
-# ── SSRF Guard ─────────────────────────────────────────────────────────────
-
-def _assert_safe_urls(urls: list[str]) -> Optional[str]:
-    """Return error string if any URL is unsafe, else None."""
-    for url in urls:
-        hostname = urlparse(url).hostname or ""
-        if not is_safe_network_address(hostname):
-            return f"Blocked: {url} resolves to a private/internal address"
-    return None
-
-# ── Action Implementations ─────────────────────────────────────────────────
-
-def _do_search(
-    query: str,
-    max_results: int = 5,
-    search_depth: str = "basic",
-    topic: Optional[str] = None,
-    time_range: Optional[str] = None,
-    include_domains: Optional[list[str]] = None,
-    exclude_domains: Optional[list[str]] = None,
-    include_answer: bool = True,
-    include_raw_content: bool = False,
-) -> dict:
-    """Execute Tavily search and return pruned result."""
-    keyless = _is_keyless()
-    if keyless:
-        _warn_keyless_once()
-
-    # Cap max_results in keyless mode
-    if keyless and max_results > 3:
-        max_results = 3
-
-    async def _call():
-        client = _get_client()
-        return await client.search(
-            query=query,
-            max_results=max_results,
-            search_depth=search_depth,
-            topic=topic,
-            time_range=time_range,
-            include_domains=include_domains or [],
-            exclude_domains=exclude_domains or [],
-            include_answer=include_answer,
-            include_raw_content=include_raw_content,
-        )
-
-    try:
-        result = _run_async(_call())
-    except Exception as e:
-        return _handle_tavily_error(e)
-
-    # Strip raw_content by default unless explicitly requested
-    if not include_raw_content and "results" in result:
-        for r in result.get("results", []):
-            r.pop("raw_content", None)
-
-    response = ok(
-        {
-            "results": result.get("results", []),
-            "answer": result.get("answer", ""),
-            "query": query,
-            "keyless": keyless,
-        },
-        trace_id="",
-    )
-
-    from core.memory_backend.pruner import prune_tool_dict
-
-    return prune_tool_dict("tavily", response, "")
-
-
-def _do_extract(
-    urls: list[str],
-    include_images: bool = False,
-    extract_depth: str = "basic",
-    format: str = "markdown",
-) -> dict:
-    """Execute Tavily extract and return pruned result."""
-    err = _assert_safe_urls(urls)
-    if err:
-        return fail(err)
-
-    keyless = _is_keyless()
-    if keyless:
-        _warn_keyless_once()
-
-    async def _call():
-        client = _get_client()
-        return await client.extract(
-            urls=urls,
-            include_images=include_images,
-            extract_depth=extract_depth,
-            format=format,
-        )
-
-    try:
-        result = _run_async(_call())
-    except Exception as e:
-        return _handle_tavily_error(e)
-
-    response = ok(
-        {"results": result.get("results", []), "keyless": keyless},
-        trace_id="",
-    )
-
-    from core.memory_backend.pruner import prune_tool_dict
-
-    return prune_tool_dict("tavily", response, "")
-
-
-def _do_crawl(
-    url: str,
-    max_depth: int = 2,
-    max_breadth: int = 10,
-    limit: int = 100,
-) -> dict:
-    """Execute Tavily crawl. Requires API key (keyless not supported)."""
-    err = _assert_safe_urls([url])
-    if err:
-        return fail(err)
-
-    if _is_keyless():
-        return fail(
-            "crawl action requires a Tavily API key. "
-            "Set TAVILY_API_KEY in .env or use search/extract instead."
-        )
-
-    async def _call():
-        client = _get_client()
-        return await client.crawl(
-            url=url,
-            max_depth=max_depth,
-            max_breadth=max_breadth,
-            limit=limit,
-        )
-
-    try:
-        result = _run_async(_call())
-    except Exception as e:
-        return _handle_tavily_error(e)
-
-    response = ok(
-        {"results": result.get("results", []), "keyless": False},
-        trace_id="",
-    )
-
-    from core.memory_backend.pruner import prune_tool_dict
-
-    return prune_tool_dict("tavily", response, "")
-
-
-def _do_map(
-    url: str,
-    max_depth: int = 2,
-    max_breadth: int = 10,
-    limit: int = 100,
-    query: Optional[str] = None,
-) -> dict:
-    """Execute Tavily map. Requires API key (keyless not supported)."""
-    err = _assert_safe_urls([url])
-    if err:
-        return fail(err)
-
-    if _is_keyless():
-        return fail(
-            "map action requires a Tavily API key. "
-            "Set TAVILY_API_KEY in .env or use search/extract instead."
-        )
-
-    async def _call():
-        client = _get_client()
-        return await client.map(
-            url=url,
-            max_depth=max_depth,
-            max_breadth=max_breadth,
-            limit=limit,
-            query=query,
-        )
-
-    try:
-        result = _run_async(_call())
-    except Exception as e:
-        return _handle_tavily_error(e)
-
-    response = ok(
-        {"results": result.get("results", []), "keyless": False},
-        trace_id="",
-    )
-
-    from core.memory_backend.pruner import prune_tool_dict
-
-    return prune_tool_dict("tavily", response, "")
-
-
-def _do_research(
-    input: str,
-    model: Optional[str] = None,
-    citation_format: str = "apa",
-) -> dict:
-    """
-    Execute Tavily research (end-to-end deep research).
-    NOT exposed in the @tool DISPATCH — reserved for workflow use.
-    """
-    if _is_keyless():
-        return fail(
-            "research action requires a Tavily API key. "
-            "Set TAVILY_API_KEY in .env."
-        )
-
-    async def _call():
-        client = _get_client()
-        return await client.research(
-            input=input,
-            model=model,
-            citation_format=citation_format,
-        )
-
-    try:
-        result = _run_async(_call())
-    except Exception as e:
-        return _handle_tavily_error(e)
-
-    from core.memory_backend.pruner import prune_tool_dict
-
-    response = ok(
-        {
-            "answer": result.get("answer", ""),
-            "citations": result.get("citations", []),
-            "keyless": False,
-        },
-        trace_id="",
-    )
-    return prune_tool_dict("tavily", response, "")
-
-# ── Error Handling ─────────────────────────────────────────────────────────
-
-def _handle_tavily_error(e: Exception) -> dict:
-    """Map Tavily and network exceptions to standardized fail responses."""
-    error_type = type(e).__name__
-    error_msg = str(e)
-
-    # Tavily-specific exceptions (imported lazily to avoid hard dependency)
-    try:
-        from tavily.errors import (
-            TavilyAPIError,
-            TavilyKeylessLimitError,
-            InvalidAPIKeyError,
-            UsageLimitExceededError,
-        )
-    except ImportError:
-        TavilyAPIError = TavilyKeylessLimitError = InvalidAPIKeyError = UsageLimitExceededError = None
-
-    # Use isinstance checks first, then name-based fallback for robustness
-    is_tavily_keyless = (TavilyKeylessLimitError and isinstance(e, TavilyKeylessLimitError)) or error_type == "TavilyKeylessLimitError"
-    is_invalid_key = (InvalidAPIKeyError and isinstance(e, InvalidAPIKeyError)) or error_type == "InvalidAPIKeyError"
-    is_usage_limit = (UsageLimitExceededError and isinstance(e, UsageLimitExceededError)) or error_type == "UsageLimitExceededError"
-    is_tavily_api = (TavilyAPIError and isinstance(e, TavilyAPIError)) or error_type == "TavilyAPIError"
-
-    if is_tavily_keyless:
-        return fail(
-            "Tavily keyless rate limit reached. Set TAVILY_API_KEY in .env for higher limits."
-        )
-
-    if is_invalid_key:
-        return fail(
-            "Tavily API key invalid or revoked. Check TAVILY_API_KEY in .env."
-        )
-
-    if is_usage_limit:
-        return fail("Tavily monthly quota exhausted.")
-
-    if is_tavily_api:
-        status = getattr(e, "status_code", 0)
-        if status == 429:
-            # Removed time.sleep(2) — blocking the ThreadPoolExecutor worker
-            # is worse than returning fast and letting the caller retry.
-            return fail("Tavily rate limit exceeded (HTTP 429). Retry after a short delay.")
-        return fail(f"Tavily API error ({status}): {error_msg[:200]}")
-
-    # httpx network errors
-    try:
-        import httpx
-    except ImportError:
-        httpx = None
-
-    if httpx:
-        if isinstance(e, httpx.TimeoutException):
-            return fail(f"Tavily request timed out after {cfg.tavily_timeout}s.")
-        if isinstance(e, httpx.ConnectError):
-            return fail("Failed to connect to Tavily API. Check network.")
-        if isinstance(e, httpx.HTTPStatusError):
-            status = e.response.status_code if hasattr(e, "response") else 0
-            if status == 429:
-                return fail("Tavily rate limit exceeded (HTTP 429).")
-            if status in (401, 403):
-                return fail("Tavily authentication failed. Check API key.")
-            return fail(f"Tavily HTTP error {status}: {error_msg[:200]}")
-
-    return fail(f"Tavily error: {error_type}: {error_msg[:200]}")
-
-# ── Tool Facade ─────────────────────────────────────────────────────────────
 
 @tool
+@meta_tool(
+    DISPATCH.get("tavily", {}),
+    doc_sections=[
+        "WHEN TO USE THIS TOOL:",
+        " | Need | Tool | Why |",
+        " |------|------|-----|",
+        " | Quick search (free) | web(search) | SearXNG, no API costs |",
+        " | AI-ranked search | tavily(search) | Better relevance, citations |",
+        " | Single static page (free) | web(read) | Fast, no API costs |",
+        " | Bulk URL extraction | tavily(extract) | Up to 10 URLs, AI-powered |",
+        " | Site crawling | tavily(crawl) | Follows links (API key required) |",
+        " | Site structure | tavily(map) | Hierarchy only (API key required) |",
+        " | Deep research | workflows/deep_research.py | Not a tool action |",
+        " | JS-rendered page | browser(navigate+text_content) | Renders JS |",
+        "",
+        "Requires TAVILY_API_KEY in .env for full functionality. Keyless",
+        "mode supports search/extract with lower limits (max_results capped at 3).",
+        "PARALLEL_SAFE = True — pure network I/O, no shared mutable state.",
+    ],
+)
 def tavily(
     action: str,
     query: str = "",
     urls: Optional[list[str]] = None,
     url: str = "",
-    input: str = "",
     max_results: int = 5,
     search_depth: str = "basic",
     topic: Optional[str] = None,
@@ -416,111 +61,46 @@ def tavily(
     max_depth: int = 2,
     max_breadth: int = 10,
     limit: int = 100,
-    model: Optional[str] = None,
-    citation_format: str = "apa",
     trace_id: str = "",
 ) -> dict:
-    """
-    Tavily AI research tool — AI-ranked search, extraction, and deep research.
-
-    WHEN TO USE THIS TOOL:
-    | Need | Tool | Why |
-    |------|------|-----|
-    | Quick search (5-10 results) | web(search) | Fast, uses SearXNG, no API costs |
-    | AI-ranked search | tavily(search) | Better relevance, citations, AI answer |
-    | Single page text (static) | web(read) | Simple, no JS, no API costs |
-    | Bulk URL extraction | tavily(extract) | Optimized for batch, AI-powered |
-    | Site crawling | tavily(crawl) | Follows links, discovers pages |
-    | Site structure | tavily(map) | Discovers site hierarchy |
-    | JS page text | browser(navigate+text_content) | Renders JavaScript |
-    | Interactive forms | browser(click, fill) | Supports user interaction |
-
-    ACTIONS:
-    search: AI-ranked web search
-    query (required): Search query
-    max_results (default: 5): Number of results (1-10, capped at 3 in keyless)
-    search_depth (default: "basic"): "basic" or "advanced"
-    include_answer (default: True): Include AI-generated answer
-
-    extract: Bulk URL content extraction
-    urls (required): List of URLs (max 10)
-    include_images (default: False): Include images in results
-    format (default: "markdown"): "markdown" or "text"
-
-    crawl: Deep site traversal
-    url (required): Starting URL
-    max_depth (default: 2): Maximum link depth (1-3)
-    max_breadth (default: 10): Maximum pages per level
-    limit (default: 100): Maximum total pages
-
-    map: Site structure discovery
-    url (required): Starting URL
-    max_depth (default: 2): Maximum link depth
-    query (optional): Focus on pages matching this query
-
-    NOTE: The "research" action (end-to-end deep research) is not exposed
-    as a tool action. Use the deep_research workflow for that capability.
-
-    Requires TAVILY_API_KEY in .env for full functionality. Keyless mode
-    supports search and extract with lower limits.
-    """
+    """Tavily AI research tool — atomic actions for search/extract/crawl/map."""
     action = action.strip().lower()
 
-    if action == "search":
-        if not query:
-            return fail("query is required for search action", trace_id=trace_id)
-        return _do_search(
-            query=query,
-            max_results=max_results,
-            search_depth=search_depth,
-            topic=topic,
-            time_range=time_range,
-            include_domains=include_domains,
-            exclude_domains=exclude_domains,
-            include_answer=include_answer,
-            include_raw_content=include_raw_content,
+    op_info = DISPATCH.get("tavily", {}).get(action)
+    if op_info is None:
+        valid = " | ".join(sorted(DISPATCH.get("tavily", {}).keys()))
+        return fail(f"Unknown action '{action}'. Use: {valid}", trace_id=trace_id)
+
+    kwargs = {
+        "query": query,
+        "urls": urls,
+        "url": url,
+        "max_results": max_results,
+        "search_depth": search_depth,
+        "topic": topic,
+        "time_range": time_range,
+        "include_domains": include_domains,
+        "exclude_domains": exclude_domains,
+        "include_answer": include_answer,
+        "include_raw_content": include_raw_content,
+        "include_images": include_images,
+        "extract_depth": extract_depth,
+        "format": format,
+        "max_depth": max_depth,
+        "max_breadth": max_breadth,
+        "limit": limit,
+        "trace_id": trace_id,
+    }
+
+    try:
+        result = op_info["func"](**kwargs)
+    except Exception as e:
+        return fail(f"Tavily action failed: {e}", trace_id=trace_id)
+
+    if not isinstance(result, dict):
+        return fail(
+            f"Handler for '{action}' returned {type(result).__name__}, expected dict",
+            trace_id=trace_id,
         )
 
-    if action == "extract":
-        if not urls:
-            return fail("urls is required for extract action", trace_id=trace_id)
-        if len(urls) > 10:
-            return fail("urls cannot exceed 10 items", trace_id=trace_id)
-        return _do_extract(
-            urls=urls,
-            include_images=include_images,
-            extract_depth=extract_depth,
-            format=format,
-        )
-
-    if action == "crawl":
-        target_url = url or query
-        if not target_url:
-            return fail(
-                "url or query is required for crawl action", trace_id=trace_id
-            )
-        return _do_crawl(
-            url=target_url,
-            max_depth=max_depth,
-            max_breadth=max_breadth,
-            limit=limit,
-        )
-
-    if action == "map":
-        target_url = url or query
-        if not target_url:
-            return fail(
-                "url or query is required for map action", trace_id=trace_id
-            )
-        return _do_map(
-            url=target_url,
-            max_depth=max_depth,
-            max_breadth=max_breadth,
-            limit=limit,
-            query=query,
-        )
-
-    return fail(
-        f"Unknown action '{action}'. Use: search | extract | crawl | map",
-        trace_id=trace_id,
-    )
+    return result
