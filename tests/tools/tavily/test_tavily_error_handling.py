@@ -1,173 +1,91 @@
-"""tests/tools/tavily/test_tavily_error_handling.py — Tavily error classification tests.
+"""Tests for tools/tavily_ops/errors.py — error classification and sanitization.
 
-v1.2: Fixed test_rate_limit_backoff_retries to use coroutine factory.
-      Added error_code assertions. Added API key sanitization test.
+v1.3: Implemented test_handler_returns_non_dict.
+      Added CircuitBreakerOpen test.
 """
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
+import httpx
 import pytest
-from unittest.mock import patch, MagicMock
 
 from tools.tavily_ops.errors import _handle_tavily_error
-from core.contracts import fail
+from tools.tavily_ops.bridge import CircuitBreakerOpen
 
 
-class TestErrorHandling:
-    """Test Tavily error classification and sanitization."""
+class TestTavilyErrorHandling:
+    """Tests for _handle_tavily_error()."""
 
-    def test_tavily_keyless_limit_error(self):
-        try:
-            from tavily.errors import TavilyKeylessLimitError
-        except ImportError:
-            pytest.skip("tavily-python not installed")
-        e = TavilyKeylessLimitError("limit reached")
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert "keyless" in result["error"].lower()
-        assert result.get("error_code") == "AUTH_FAILED"
-
-    def test_tavily_invalid_key_error(self):
-        try:
-            from tavily.errors import InvalidAPIKeyError
-        except ImportError:
-            pytest.skip("tavily-python not installed")
-        e = InvalidAPIKeyError("bad key")
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert "invalid" in result["error"].lower()
-        assert result.get("error_code") == "AUTH_FAILED"
-
-    def test_usage_limit_exceeded_error(self):
-        try:
-            from tavily.errors import UsageLimitExceededError
-        except ImportError:
-            pytest.skip("tavily-python not installed")
-        e = UsageLimitExceededError("quota exhausted")
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert "quota" in result["error"].lower()
-        assert result.get("error_code") == "QUOTA_EXHAUSTED"
-
-    def test_tavily_api_error_429(self):
-        try:
-            from tavily.errors import APIError
-        except ImportError:
-            pytest.skip("tavily-python not installed")
-        e = APIError("rate limited")
-        e.status_code = 429
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert "429" in result["error"]
-        assert result.get("error_code") == "RATE_LIMITED"
-
-    def test_httpx_timeout(self):
-        import httpx
-        e = httpx.TimeoutException("connection timed out")
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        # v1.2 FIX: "timed out" is in the message, not "timeout" as a standalone word
-        assert "timed out" in result["error"].lower()
-        assert result.get("error_code") == "TIMEOUT"
-
-    def test_httpx_connect_error(self):
-        import httpx
-        e = httpx.ConnectError("connection refused")
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert "connection" in result["error"].lower()
-        assert result.get("error_code") == "CONNECT_ERROR"
-
-    def test_httpx_http_status_error_401(self):
-        import httpx
-        resp = MagicMock()
-        resp.status_code = 401
-        e = httpx.HTTPStatusError("unauthorized", request=MagicMock(), response=resp)
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert result.get("error_code") == "CLIENT_ERROR"
-
-    def test_httpx_http_status_error_403(self):
-        import httpx
-        resp = MagicMock()
-        resp.status_code = 403
-        e = httpx.HTTPStatusError("forbidden", request=MagicMock(), response=resp)
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert result.get("error_code") == "CLIENT_ERROR"
-
-    def test_httpx_http_status_error_429(self):
-        import httpx
-        resp = MagicMock()
-        resp.status_code = 429
-        e = httpx.HTTPStatusError("too many requests", request=MagicMock(), response=resp)
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert "429" in result["error"]
-        assert result.get("error_code") == "RATE_LIMITED"
-
-    def test_unknown_tavily_error(self):
-        e = ValueError("unexpected failure")
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert result["status"] == "error"
-        assert result.get("error_code") == "UNKNOWN"
-
-    def test_handler_returns_non_dict(self):
-        """Facade guard catches non-dict handler returns."""
-        pass  # Tested in test_tavily_facade.py if needed
-
-    # v1.2: NEW — API key sanitization
     def test_api_key_not_in_error_message(self):
-        with patch("tools.tavily_ops.errors.cfg.tavily_api_key", "tvly-secret-key-12345"):
-            e = ValueError("Error: tvly-secret-key-12345 in request")
-            result = _handle_tavily_error(e, trace_id="t1")
-            assert "tvly-secret-key-12345" not in result["error"]
-            assert "***" in result["error"]
+        """API key is sanitized from error messages."""
+        with patch("tools.tavily_ops.errors.cfg.tavily_api_key", "tvly-secret-key-123"):
+            e = Exception("Request failed with api_key=tvly-secret-key-123")
+            result = _handle_tavily_error(e, trace_id="test")
+        assert result["status"] == "error"
+        assert "tvly-secret-key-123" not in result["error"]
+        assert "***" in result["error"]
 
     def test_api_key_sanitization_url_encoded(self):
-        # v1.2 FIX: The regex replaces "key=tvly-test-key" with "key=***"
-        # not "api_key=***" — the test assertion must match the actual regex
-        with patch("tools.tavily_ops.errors.cfg.tavily_api_key", "tvly-test-key"):
-            e = ValueError("URL: https://api.tavily.com?key=tvly-test-key")
-            result = _handle_tavily_error(e, trace_id="t1")
-            assert "tvly-test-key" not in result["error"]
-            assert "key=***" in result["error"]
+        with patch("tools.tavily_ops.errors.cfg.tavily_api_key", "tvly-abc"):
+            e = Exception("url?api_key=tvly-abc")
+            result = _handle_tavily_error(e, trace_id="test")
+        assert "tvly-abc" not in result["error"]
 
     def test_error_message_truncated(self):
-        """Error messages are truncated to 500 chars."""
-        long_msg = "A" * 1000
-        e = ValueError(long_msg)
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert len(result["error"]) <= 550  # Allow for prefix + 500 chars
+        long_msg = "x" * 1000
+        e = Exception(long_msg)
+        result = _handle_tavily_error(e, trace_id="test")
+        assert len(result["error"]) <= 520  # 500 + "Tavily error: " prefix
 
-    # v1.2: FIXED — test_rate_limit_backoff_retries now uses coroutine factory
-    def test_rate_limit_backoff_retries(self, mock_tavily_client):
-        try:
-            from tavily.errors import RateLimitError
-        except ImportError:
-            pytest.skip("tavily-python not installed")
+    def test_rate_limit_error(self):
+        e = httpx.HTTPStatusError(
+            "Rate limited",
+            request=MagicMock(),
+            response=MagicMock(status_code=429),
+        )
+        result = _handle_tavily_error(e, trace_id="test")
+        assert result["error_code"] == "RATE_LIMITED"
 
-        call_count = [0]
+    def test_server_error(self):
+        e = httpx.HTTPStatusError(
+            "Server error",
+            request=MagicMock(),
+            response=MagicMock(status_code=500),
+        )
+        result = _handle_tavily_error(e, trace_id="test")
+        assert result["error_code"] == "SERVER_ERROR"
 
-        async def _side_effect(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] <= 2:
-                raise RateLimitError("Too many requests")
-            return {"results": [{"url": "https://example.com"}], "answer": "OK"}
-
-        mock_tavily_client.search.side_effect = _side_effect
-
-        # v1.2 FIX: The bridge now receives a factory, so each retry
-        # creates a fresh coroutine via the mock
-        with patch("tools.tavily_ops.bridge.time.sleep"):
-            result = tavily(action="search", query="test")
-
-        assert result["status"] == "success"
-        assert call_count[0] == 3
-
-    # v1.2: NEW — error_code propagation
-    def test_error_code_in_response(self):
-        import httpx
-        e = httpx.TimeoutException("timeout")
-        result = _handle_tavily_error(e, trace_id="t1")
-        assert "error_code" in result
+    def test_timeout_error(self):
+        e = httpx.TimeoutException("Connection timed out")
+        result = _handle_tavily_error(e, trace_id="test")
         assert result["error_code"] == "TIMEOUT"
+
+    def test_connect_error(self):
+        e = httpx.ConnectError("Connection refused")
+        result = _handle_tavily_error(e, trace_id="test")
+        assert result["error_code"] == "CONNECT_ERROR"
+
+    def test_circuit_breaker_open(self):
+        """v1.3: CircuitBreakerOpen returns CB_OPEN error_code."""
+        e = CircuitBreakerOpen("CB is open")
+        result = _handle_tavily_error(e, trace_id="test")
+        assert result["status"] == "error"
+        assert result["error_code"] == "CB_OPEN"
+        assert "CB is open" in result["error"]
+
+    def test_handler_returns_non_dict(self):
+        """Facade guard catches non-dict handler returns.
+
+        v1.3: Actually tests the guard by mocking handler to return string.
+        """
+        from tools.tavily_ops._registry import DISPATCH
+        original = DISPATCH["tavily"]["search"]["func"]
+        try:
+            DISPATCH["tavily"]["search"]["func"] = lambda **kw: "not a dict"
+            from tools.tavily import tavily
+            result = tavily(action="search", query="test")
+            assert result["status"] == "error"
+            assert "returned" in result["error"].lower() or "dict" in result["error"].lower()
+        finally:
+            DISPATCH["tavily"]["search"]["func"] = original

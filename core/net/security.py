@@ -2,9 +2,13 @@
 
 v1.1: Moved from core/security.py; added _assert_safe_urls.
 v1.2: Fixed empty hostname bypass, IPv6 port stripping, scheme validation.
+v1.3: Restored DNS timeout via ThreadPoolExecutor (socket.getaddrinfo has no timeout kwarg).
+      Added _is_private_or_localhost back for cross-tool use.
+      FIXED: IPv6 bracket parsing (was broken by split(':') on IPv6 addresses).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import ipaddress
 import re
 import socket
@@ -12,20 +16,82 @@ from urllib.parse import urlparse
 
 from core.config import cfg
 
+# v1.3: Dedicated DNS thread pool for timeout-controlled resolution
+_DNS_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="dns_resolve"
+)
+
 
 def _resolve_safe(hostname: str, timeout: float = 2.0):
     """Resolve hostname to IPs, returning empty list on any failure.
 
     Prevents DNS rebinding by resolving before connecting.
+    v1.3 FIX: socket.getaddrinfo does NOT accept a timeout keyword argument.
+    Use ThreadPoolExecutor + future.result(timeout=) instead.
     """
+    future = _DNS_POOL.submit(socket.getaddrinfo, hostname, None)
     try:
-        return socket.getaddrinfo(hostname, None, timeout=timeout)
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        return []
     except Exception:
         return []
 
 
-def _is_private_or_localhost(ip_str: str) -> bool:
-    """Check if an IP string is private, loopback, link-local, or reserved."""
+def _is_private_or_localhost(hostname: str) -> bool:
+    """Check if a hostname resolves to or is a private, loopback, or reserved address.
+
+    v1.3: Restored for cross-tool use (web_ops, browser, tavily).
+    v1.3 FIX: Proper IPv6 bracket parsing (was broken by naive split(':')).
+    Handles IP literals directly and resolves domain names for DNS rebinding checks.
+    """
+    if not hostname or not isinstance(hostname, str):
+        return True  # Empty/invalid is treated as unsafe
+
+    hostname = hostname.rstrip(".")
+
+    # ── IPv6 literal with brackets ──────────────────────────────────────────
+    if hostname.startswith("["):
+        bracket_end = hostname.find("]")
+        if bracket_end == -1:
+            return True  # Malformed IPv6
+        ip_part = hostname[1:bracket_end]
+        # Validate: after closing bracket, either end of string or ":port"
+        if bracket_end + 1 < len(hostname):
+            if not hostname[bracket_end + 1:].startswith(":"):
+                return True  # Malformed: unexpected chars after ]
+        try:
+            ip = ipaddress.ip_address(ip_part)
+            return (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+            )
+        except ValueError:
+            return True
+
+    # ── IPv6 literal without brackets ───────────────────────────────────────
+    if ":" in hostname:
+        try:
+            ip = ipaddress.ip_address(hostname)
+            return (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+            )
+        except ValueError:
+            pass  # Not an IPv6 literal, might be IPv4 with port
+
+    # ── IPv4 literal with port ─────────────────────────────────────────────
+    if ":" in hostname:
+        ip_str = hostname.split(":")[0]
+    else:
+        ip_str = hostname
+
     try:
         ip = ipaddress.ip_address(ip_str)
         return (
@@ -34,10 +100,31 @@ def _is_private_or_localhost(ip_str: str) -> bool:
             or ip.is_link_local
             or ip.is_reserved
             or ip.is_multicast
-            or getattr(ip, "is_global", False) is False
         )
     except ValueError:
-        return False
+        pass  # Not an IP literal, fall through to DNS
+
+    # ── DNS resolution ──────────────────────────────────────────────────────
+    addrs = _resolve_safe(hostname)
+    if not addrs:
+        return True  # Cannot resolve — treat as unsafe
+
+    for _, _, _, _, sockaddr in addrs:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+            ):
+                return True
+        except ValueError:
+            continue
+
+    return False
 
 
 def is_safe_network_address(hostname: str) -> bool:
@@ -52,9 +139,6 @@ def is_safe_network_address(hostname: str) -> bool:
     if not hostname or not isinstance(hostname, str):
         return False
 
-    # v1.2: Whitelist http/https schemes only
-    # NOTE: This function receives hostname only; scheme check is in _assert_safe_urls
-
     # Dev mode: allow explicitly configured internal hosts
     allowed = getattr(cfg, "allowed_internal_hosts", set())
     if hostname.lower() in {h.lower() for h in allowed}:
@@ -63,60 +147,8 @@ def is_safe_network_address(hostname: str) -> bool:
     # Strip trailing dot (FQDN)
     hostname = hostname.rstrip(".")
 
-    # ── IPv6 literal ──────────────────────────────────────────────────────────
-    if hostname.startswith("["):
-        # v1.2 FIX: Handle IPv6 with port: [::1]:8080 → ::1
-        if "]:" in hostname:
-            ip_part = hostname.split(":")[1].split("]")[0]
-            # Reconstruct with brackets for ipaddress module
-            ip_str = f"[{ip_part}]"
-        elif hostname.endswith("]"):
-            ip_str = hostname
-        else:
-            return False  # Malformed IPv6
-        try:
-            ip = ipaddress.ip_address(ip_str)
-            return not (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_reserved
-                or ip.is_multicast
-            )
-        except ValueError:
-            return False
-
-    # ── IPv4 literal ──────────────────────────────────────────────────────────
-    if ":" in hostname and not hostname.startswith("["):
-        # IPv4 with port: strip port
-        ip_str = hostname.split(":")[0]
-    else:
-        ip_str = hostname
-
-    try:
-        ip = ipaddress.ip_address(ip_str)
-        return not (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-        )
-    except ValueError:
-        pass  # Not an IP literal, fall through to DNS
-
-    # ── DNS resolution ─────────────────────────────────────────────────────────
-    addrs = _resolve_safe(hostname)
-    if not addrs:
-        # Cannot resolve — treat as unsafe to prevent SSRF via unresolvable hosts
-        return False
-
-    for _, _, _, _, sockaddr in addrs:
-        ip_str = sockaddr[0]
-        if _is_private_or_localhost(ip_str):
-            return False
-
-    return True
+    # Delegate to _is_private_or_localhost and invert
+    return not _is_private_or_localhost(hostname)
 
 
 def _assert_safe_urls(urls: list[str]) -> tuple[bool, str]:

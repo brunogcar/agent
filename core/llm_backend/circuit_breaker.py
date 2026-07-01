@@ -1,6 +1,9 @@
 """core/llm_backend/circuit_breaker.py — Shared circuit breaker for LLM + tool resilience.
 
 v1.2: Added reset() method for testability.
+v1.3: Fixed record_failure() missing self._lock. Added _half_open_calls reset
+      on HALF_OPEN → OPEN transition. Guarded _failure_count increment.
+      FIXED: can_execute() now counts OPEN→HALF_OPEN transition against half_open_max_calls.
 """
 from __future__ import annotations
 
@@ -39,8 +42,10 @@ class CircuitBreaker:
                 if time.time() - self._last_failure_time >= self.recovery_timeout:
                     self._state = self.HALF_OPEN
                     self._half_open_calls = 0
-                    return True
-                return False
+                    # v1.3 FIX: Fall through to HALF_OPEN check instead of returning True
+                    # This ensures the transition call counts against half_open_max_calls
+                else:
+                    return False
             if self._state == self.HALF_OPEN:
                 if self._half_open_calls < self.half_open_max_calls:
                     self._half_open_calls += 1
@@ -57,12 +62,27 @@ class CircuitBreaker:
             # In CLOSED state, success is a no-op (we don't track success count)
 
     def record_failure(self) -> None:
+        """Record a failure and potentially open the circuit.
+
+        v1.3 FIX: Now acquires self._lock for thread safety.
+        v1.3 FIX: Resets _half_open_calls when transitioning from HALF_OPEN.
+        v1.3 FIX: Only increments _failure_count when not already OPEN.
+        """
         with self._lock:
-            self._failure_count += 1
             self._last_failure_time = time.time()
+
             if self._state == self.HALF_OPEN:
                 self._state = self.OPEN
-            elif self._failure_count >= self.failure_threshold:
+                self._half_open_calls = 0
+                self._failure_count = self.failure_threshold
+                return
+
+            if self._state == self.OPEN:
+                # Already open; just update timestamp. Don't increment count.
+                return
+
+            self._failure_count += 1
+            if self._failure_count >= self.failure_threshold:
                 self._state = self.OPEN
 
     def get_state_info(self) -> dict:

@@ -5,6 +5,9 @@ v1.2 FIXES:
 - Fix API key sanitization (regex + length guard + URL patterns).
 - Truncate error messages to 500 chars to prevent token waste.
 - Use core/net/errors for HTTP classification.
+v1.3 FIXES:
+- Handle CircuitBreakerOpen exception with CB_OPEN error_code.
+- Wire budget tracking into error responses.
 """
 from __future__ import annotations
 
@@ -13,7 +16,7 @@ import re
 from core.config import cfg
 from core.contracts import fail
 from core.net.security import _assert_safe_urls as _core_assert_safe_urls
-
+from tools.tavily_ops.bridge import CircuitBreakerOpen
 
 def _assert_safe_urls(urls):
     """Wrapper: delegate to core.net.security._assert_safe_urls.
@@ -29,9 +32,18 @@ def _handle_tavily_error(e, trace_id=""):
     """Classify and sanitize a Tavily exception into a fail() dict.
 
     v1.2: Enhanced API key sanitization, error truncation, structured error_code.
+    v1.3: Added CircuitBreakerOpen handling.
     """
     error_type = type(e).__name__
     raw_msg = str(e)
+
+    # v1.3: Handle circuit breaker open first (before sanitization)
+    if isinstance(e, CircuitBreakerOpen):
+        return fail(
+            str(e),
+            trace_id=trace_id,
+            error_code="CB_OPEN",
+        )
 
     # ── API Key Sanitization ────────────────────────────────────────────────
     api_key = getattr(cfg, "tavily_api_key", None)

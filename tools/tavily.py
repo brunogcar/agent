@@ -6,6 +6,8 @@ tavily_ops/ submodules are invisible to the registry.
 
 v1.2: Restored max_depth, max_breadth, limit facade params.
       Added error_code support in fail() responses.
+v1.3: Added include_domains/exclude_domains validation.
+      citation_format only passed to research action.
 
 PARALLEL_SAFE = True because AsyncTavilyClient is thread-safe.
 """
@@ -80,6 +82,23 @@ def tavily(
 
     handler = op_info["func"]
 
+    # v1.3: Validate include_domains/exclude_domains are lists
+    for param_name, param_val in [("include_domains", include_domains), ("exclude_domains", exclude_domains)]:
+        if param_val is not None and not isinstance(param_val, list):
+            return fail(
+                f"{param_name} must be a list of strings, got {type(param_val).__name__}",
+                trace_id=trace_id,
+                error_code="INVALID_PARAM",
+            )
+        if param_val is not None:
+            for item in param_val:
+                if not isinstance(item, str):
+                    return fail(
+                        f"{param_name} must contain only strings, found {type(item).__name__}",
+                        trace_id=trace_id,
+                        error_code="INVALID_PARAM",
+                    )
+
     kwargs = {
         "query": query,
         "url": url,
@@ -90,7 +109,6 @@ def tavily(
         "include_images": include_images,
         "extract_depth": extract_depth,
         "format": format,
-        "citation_format": citation_format,
         "topic": topic,
         "time_range": time_range,
         # v1.2: Pass through restored params
@@ -105,6 +123,10 @@ def tavily(
         kwargs["urls"] = urls
     if max_chars is not None:
         kwargs["max_chars"] = max_chars
+
+    # v1.3: Only pass citation_format to research action
+    if action == "research":
+        kwargs["citation_format"] = citation_format
 
     try:
         result = handler(**kwargs)

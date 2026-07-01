@@ -1,5 +1,8 @@
-# core/net/defaults.py
-"""Shared default values for tavily, web_ops, browser, research, deep_research."""
+# core/net/default.py
+"""Shared default values for tavily, web_ops, browser, research, deep_research.
+
+v1.3: Fixed header comment (was "defaults.py").
+"""
 
 # Search
 SEARCH_MAX_RESULTS: int = 5

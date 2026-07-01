@@ -5,6 +5,10 @@ v1.2 FIXES:
 - Use core/net/errors.py for unified retry classification.
 - Always use ThreadPoolExecutor (removes fast path that breaks in pytest/event loops).
 - Shorter default backoff to prevent worker pool exhaustion.
+v1.3 FIXES:
+- Use retry_async_factory from core.net.retry for unified retry logic.
+- Added CircuitBreakerOpen exception for proper error_code propagation.
+- Removed dead code after retry loop.
 """
 from __future__ import annotations
 
@@ -14,7 +18,15 @@ import asyncio
 
 from core.config import cfg
 from core.net.errors import is_retryable_error, get_retry_delay
+from core.net.retry import retry_async_factory
 from tools.tavily_ops.client import _TAVILY_CB
+
+class CircuitBreakerOpen(Exception):
+    """Raised when the Tavily circuit breaker is OPEN.
+
+    v1.3: Dedicated exception so _handle_tavily_error can return error_code=CB_OPEN.
+    """
+    pass
 
 
 def _run_async(coro):
@@ -37,40 +49,32 @@ def _run_async_with_resilience(coro_factory, trace_id=""):
     Args:
         coro_factory: A callable that returns a fresh coroutine each time.
             Pass the function itself, NOT the result of calling it:
-            CORRECT:   _run_async_with_resilience(_call, trace_id=...)
-            WRONG:     _run_async_with_resilience(_call(), trace_id=...)
+            CORRECT: _run_async_with_resilience(_call, trace_id=...)
+            WRONG: _run_async_with_resilience(_call(), trace_id=...)
         trace_id: Optional trace ID for observability.
 
     Returns:
         The coroutine's return value.
 
     Raises:
-        Exception: If circuit breaker is OPEN or all retries are exhausted.
+        CircuitBreakerOpen: If circuit breaker is OPEN.
+        Exception: If all retries are exhausted.
     """
     if not _TAVILY_CB.can_execute():
-        raise Exception(
+        raise CircuitBreakerOpen(
             "Tavily circuit breaker is OPEN — too many consecutive failures. "
             "Try again later or use web(search) as fallback."
         )
 
-    last_exception = None
-    for attempt in range(3):
-        try:
-            # v1.2 FIX: Create fresh coroutine from factory each attempt
-            coro = coro_factory()
-            result = _run_async(coro)
-            _TAVILY_CB.record_success()
-            return result
-        except Exception as e:
-            last_exception = e
-            if is_retryable_error(e) and attempt < 2:
-                # v1.2: Use unified backoff (shorter default: 2s base)
-                backoff = get_retry_delay(attempt, base_delay=2.0, max_delay=10.0)
-                time.sleep(backoff)
-                continue
-            _TAVILY_CB.record_failure()
-            raise
-
-    # Dead code — loop always returns or raises inside
-    _TAVILY_CB.record_failure()
-    raise last_exception
+    # v1.3: Use unified retry_async_factory from core.net.retry
+    return retry_async_factory(
+        coro_factory,
+        run_async=_run_async,
+        max_retries=3,
+        base_delay=2.0,
+        max_delay=10.0,
+        jitter=True,
+        is_retryable=is_retryable_error,
+        on_success=_TAVILY_CB.record_success,
+        on_failure=_TAVILY_CB.record_failure,
+    )

@@ -19,7 +19,7 @@ from core.net.security import is_safe_network_address
 @pytest.fixture(autouse=True)
 def block_all_internal_hosts(monkeypatch):
     """Patch ALLOWED_INTERNAL_HOSTS to empty for all tests in this file."""
-    from core import security
+    from core.net import security
     monkeypatch.setattr(security.cfg, "allowed_internal_hosts", frozenset())
 
 
@@ -119,7 +119,7 @@ class TestSSRFDNSRebinding:
     def test_dns_rebinding_to_private_ip(self, monkeypatch):
         """A public-looking hostname that resolves to 192.168.1.1 must be blocked."""
         import socket
-        from core import security
+        from core.net import security
         monkeypatch.setattr(security, '_resolve_safe', lambda hostname, timeout=2.0: [
             (socket.AF_INET, socket.SOCK_STREAM, 0, '', ('192.168.1.1', 0))
         ])
@@ -129,7 +129,7 @@ class TestSSRFDNSRebinding:
     def test_dns_rebinding_to_loopback(self, monkeypatch):
         """A public-looking hostname that resolves to 127.0.0.1 must be blocked."""
         import socket
-        from core import security
+        from core.net import security
         monkeypatch.setattr(security, '_resolve_safe', lambda hostname, timeout=2.0: [
             (socket.AF_INET, socket.SOCK_STREAM, 0, '', ('127.0.0.1', 0))
         ])
@@ -142,12 +142,12 @@ class TestSSRFAllowedHosts:
 
     def test_allowed_internal_host(self, monkeypatch):
         """Hosts in ALLOWED_INTERNAL_HOSTS must be permitted."""
-        from core import security
+        from core.net import security
         monkeypatch.setattr(security.cfg, 'allowed_internal_hosts', frozenset({'myinternal'}))
         assert is_safe_network_address("myinternal") is True
 
     def test_allowed_internal_host_case_insensitive(self, monkeypatch):
         """Allowed hosts check must be case-insensitive."""
-        from core import security
+        from core.net import security
         monkeypatch.setattr(security.cfg, 'allowed_internal_hosts', frozenset({'myinternal'}))
         assert is_safe_network_address("MYINTERNAL") is True
