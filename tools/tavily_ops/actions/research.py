@@ -2,16 +2,21 @@
 
 NOT registered in DISPATCH — not exposed as a tool action.
 Workflows should import directly:
-  from tools.tavily_ops.actions.research import run_research
+    from tools.tavily_ops.actions.research import run_research
+
+v1.3 FIXES:
+- Wire _run_async_with_resilience for CB + retry (was bypassing all resilience).
+- Wire core/net/default constants.
+- Wire budget tracking.
 """
 from __future__ import annotations
 from typing import Optional
 
 from core.contracts import ok, fail
-from tools.tavily_ops.bridge import _run_async
-import tools.tavily_ops.client as _client
+from core.net.budget import record_tool_call, check_budget
 from tools.tavily_ops.errors import _handle_tavily_error
-
+import tools.tavily_ops.client as _client
+from tools.tavily_ops import bridge
 
 # Valid citation formats per tavily-python SDK 0.7.26
 _CITATION_FORMATS = ("numbered", "mla", "apa", "chicago")
@@ -27,6 +32,8 @@ def run_research(
     """
     Execute Tavily research (end-to-end deep research).
     NOT exposed in the @tool facade — reserved for workflow use.
+
+    v1.3: Now uses _run_async_with_resilience for circuit breaker + retry.
     """
     if _client._is_keyless():
         return fail(
@@ -44,18 +51,30 @@ def run_research(
     if not input:
         return fail("input is required for research action", trace_id=trace_id)
 
-    async def _call():
+    # v1.3: Budget check
+    if not check_budget("tavily.research"):
+        return fail(
+            "Tavily research budget exhausted. Try again tomorrow.",
+            trace_id=trace_id,
+            error_code="QUOTA_EXHAUSTED",
+        )
+
+    def _call():
         client = _client._get_singleton_client()
-        return await client.research(
+        return client.research(
             input=input,
             model=model,
             citation_format=citation_format,
         )
 
     try:
-        result = _run_async(_call())
+        # v1.3 FIX: Use _run_async_with_resilience instead of _run_async(_call())
+        result = bridge._run_async_with_resilience(_call, trace_id=trace_id)
     except Exception as e:
-        return _handle_tavily_error(e)
+        return _handle_tavily_error(e, trace_id=trace_id)
+
+    # v1.3: Record successful API call
+    record_tool_call("tavily.research")
 
     from core.memory_backend.pruner import prune_tool_dict
 

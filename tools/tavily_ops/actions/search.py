@@ -4,6 +4,10 @@ v1.2 FIXES:
 - Pass coroutine factory (_call) not coroutine object (_call()) to resilience.
 - Restore raw_content stripping when include_raw_content=False.
 - Use core/net/errors for retry classification.
+v1.3 FIXES:
+- Wire core/net/default constants.
+- Wire budget tracking (record_tool_call after success).
+- Wire URL normalization (for cache key consistency).
 """
 from __future__ import annotations
 
@@ -11,6 +15,9 @@ from typing import List, Optional
 
 import tools.tavily_ops.client as _client
 from core.contracts import fail, ok
+from core.net.budget import record_tool_call, check_budget
+from core.net.default import SEARCH_MAX_RESULTS
+from core.net.url import normalize_url
 from core.tracer import tracer
 from tools.tavily_ops._registry import register_action
 from tools.tavily_ops.errors import _handle_tavily_error
@@ -29,7 +36,7 @@ Optional: max_results (default 5), search_depth (basic|advanced), include_answer
 )
 def _action_search(
     query: str = "",
-    max_results: int = 5,
+    max_results: int = SEARCH_MAX_RESULTS,
     search_depth: str = "basic",
     include_answer: bool = True,
     include_raw_content: bool = False,
@@ -46,6 +53,9 @@ def _action_search(
     v1.2 CHANGES:
     - Fixed coroutine factory pattern for retry compatibility.
     - Restored raw_content stripping for token efficiency.
+    v1.3 CHANGES:
+    - Wired default constants from core.net.default.
+    - Wired budget tracking.
     """
     if not query:
         return fail("action='search' requires query=", trace_id=trace_id)
@@ -54,6 +64,14 @@ def _action_search(
         return fail("max_results must be >= 1", trace_id=trace_id)
     if max_results > 20:
         return fail("max_results must be <= 20", trace_id=trace_id)
+
+    # v1.3: Budget check
+    if not check_budget("tavily.search"):
+        return fail(
+            "Tavily search budget exhausted. Try again tomorrow or use web(search).",
+            trace_id=trace_id,
+            error_code="QUOTA_EXHAUSTED",
+        )
 
     client = _client._get_singleton_client()
     is_keyless = _client._is_keyless_mode()
@@ -88,6 +106,9 @@ def _action_search(
     if not include_raw_content and "results" in result:
         for r in result.get("results", []):
             r.pop("raw_content", None)
+
+    # v1.3: Record successful API call
+    record_tool_call("tavily.search")
 
     response = ok(
         {

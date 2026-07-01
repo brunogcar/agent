@@ -5,6 +5,10 @@ v1.2 FIXES:
 - _get_singleton_client closes old client on key change (prevents leak).
 - Restore api_key or None for keyless mode safety.
 - Log exceptions in _close_client instead of swallowing.
+v1.3 FIXES:
+- Use _run_async for client.close() instead of fresh ThreadPoolExecutor.
+- Register Tavily SDK RateLimitError as retryable.
+- FIXED: _warn_keyless_once() now uses state._KEYLESS_WARNED for proper reset_state() support.
 """
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ import logging
 
 from core.config import cfg
 from core.llm_backend.circuit_breaker import CircuitBreaker
+from core.net.errors import register_retryable_exception
 from tools.tavily_ops import state
 
 logger = logging.getLogger(__name__)
@@ -31,7 +36,7 @@ def _get_singleton_client():
     """Return the singleton AsyncTavilyClient, creating it if needed.
 
     Thread-safe via _CLIENT_LOCK.
-    v1.2: Closes old client when API key changes to prevent pool leak.
+    v1.2 FIX: Closes old client when API key changes to prevent pool leak.
     """
     from tavily import AsyncTavilyClient
 
@@ -62,19 +67,15 @@ def _close_client():
 
 
 def _close_client_locked():
-    """Internal: close client while holding _CLIENT_LOCK."""
+    """Internal: close client while holding _CLIENT_LOCK.
+
+    v1.3 FIX: Use _run_async() instead of creating a fresh ThreadPoolExecutor.
+    """
     if state._TAVILY_CLIENT is not None:
         try:
             if hasattr(state._TAVILY_CLIENT, "close"):
-                # v1.2: Use shutdown(wait=True) for guaranteed cleanup
-                import concurrent.futures
-                import asyncio
-                ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                future = ex.submit(asyncio.run, state._TAVILY_CLIENT.close())
-                try:
-                    future.result(timeout=5)
-                finally:
-                    ex.shutdown(wait=True)
+                from tools.tavily_ops.bridge import _run_async
+                _run_async(state._TAVILY_CLIENT.close())
         except Exception as e:
             # v1.2 FIX: Log instead of silently swallowing
             logger.warning("Failed to close Tavily client: %s", e)
@@ -86,7 +87,6 @@ def _close_client_locked():
 # v1.1: Register atexit handler for clean shutdown
 atexit.register(_close_client)
 
-
 # ── Circuit Breaker ──────────────────────────────────────────────────────────
 _TAVILY_CB = CircuitBreaker(
     failure_threshold=5,
@@ -94,17 +94,22 @@ _TAVILY_CB = CircuitBreaker(
     half_open_max_calls=1,
 )
 
-
-# v1.1: One-time keyless warning flag
-_KEYLESS_WARNED = False
+# v1.3: Register Tavily SDK exceptions as retryable
+try:
+    from tavily.errors import RateLimitError
+    register_retryable_exception(RateLimitError)
+except ImportError:
+    pass  # tavily-python not installed
 
 
 def _warn_keyless_once():
-    """Log a one-time warning when running in keyless mode."""
-    global _KEYLESS_WARNED
-    if not _KEYLESS_WARNED:
+    """Log a one-time warning when running in keyless mode.
+
+    v1.3 FIX: Uses state._KEYLESS_WARNED so reset_state() properly clears it.
+    """
+    if not state._KEYLESS_WARNED:
         logger.warning(
             "Tavily running in keyless mode. "
             "Set TAVILY_API_KEY in .env for full access."
         )
-        _KEYLESS_WARNED = True
+        state._KEYLESS_WARNED = True

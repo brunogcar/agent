@@ -1,76 +1,67 @@
-"""Shared fixtures for tavily tests."""
+"""Shared fixtures for Tavily tool tests."""
 from __future__ import annotations
 
+import warnings
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-
-def _async_return(value):
-    """Create a real async function that returns value.
-
-    v1.1: Used as side_effect for MagicMock to avoid AsyncMock GC warnings
-    while preserving call_args, assert_called_once, etc.
-    """
-    async def _inner(*args, **kwargs):
-        return value
-    return _inner
+from tools.tavily_ops.client import _TAVILY_CB
 
 
 @pytest.fixture(autouse=True)
 def reset_tavily_state():
-    """Reset Tavily client singleton and circuit breaker before each test."""
-    import tools.tavily_ops.state as state
-    from tools.tavily_ops.client import _TAVILY_CB
+    """Reset Tavily singleton state before each test."""
+    from tools.tavily_ops import state
+    from core.net.budget import _budget_tracker
     state.reset_state()
-    _TAVILY_CB._state = "closed"
-    _TAVILY_CB._failure_count = 0
-    _TAVILY_CB._last_failure_time = 0.0
-    _TAVILY_CB._half_open_calls = 0
+    _TAVILY_CB.reset()
+    _budget_tracker._calls.clear()
+    _budget_tracker._configs.clear()
+    _budget_tracker._last_reset_date = __import__("datetime").date.today()
     yield
     state.reset_state()
-    _TAVILY_CB._state = "closed"
-    _TAVILY_CB._failure_count = 0
-    _TAVILY_CB._last_failure_time = 0.0
-    _TAVILY_CB._half_open_calls = 0
+    _TAVILY_CB.reset()
+    _budget_tracker._calls.clear()
+    _budget_tracker._configs.clear()
 
 
 @pytest.fixture(autouse=True)
-def mock_cfg_for_tavily():
-    """Mock cfg to prevent real API calls."""
-    with patch("tools.tavily_ops.client.cfg") as mock_cfg:
-        mock_cfg.tavily_api_key = "tvly-test-key-123"
-        mock_cfg.tavily_timeout = 60
-        with patch("tools.tavily_ops.errors.cfg", mock_cfg):
-            yield mock_cfg
+def filter_resource_warnings():
+    """Suppress asyncio resource warnings on Windows."""
+    warnings.filterwarnings("ignore", category=ResourceWarning)
+    warnings.filterwarnings("ignore", message="unclosed transport", category=Warning)
+    warnings.filterwarnings("ignore", message="unclosed <socket", category=Warning)
+    yield
 
 
 @pytest.fixture
 def mock_tavily_client():
-    """Return a mock AsyncTavilyClient with awaitable async methods.
+    """Mock AsyncTavilyClient for action tests.
 
-    v1.1: Uses MagicMock with side_effect=_async_return(...) instead of
-    AsyncMock to avoid 'coroutine never awaited' warnings while preserving
-    call_args, assert_called_once, and side_effect override capability.
+    v1.3 FIX: Uses AsyncMock for async methods so _run_async_with_resilience
+    gets actual coroutines, while tests can still use assert_called_once/call_args.
+    Also patches cfg.tavily_api_key so _is_keyless_mode() returns False by default.
     """
-    client = MagicMock()
-    client.search = MagicMock(side_effect=_async_return({
-        "results": [
-            {"url": "https://example.com", "title": "Example", "content": "Hello"}
-        ],
+    mock_client = MagicMock()
+    mock_client.search = AsyncMock(return_value={
+        "results": [{"title": "Test", "url": "https://example.com", "raw_content": "Full HTML"}],
         "answer": "Test answer",
-    }))
-    client.extract = MagicMock(side_effect=_async_return({
-        "results": [{"url": "https://example.com", "raw_content": "Extracted text"}]
-    }))
-    client.crawl = MagicMock(side_effect=_async_return({
-        "results": [{"url": "https://example.com/page1", "title": "Page 1"}]
-    }))
-    client.map = MagicMock(side_effect=_async_return({
-        "results": [{"url": "https://example.com/sitemap", "title": "Sitemap"}]
-    }))
-    client.research = MagicMock(side_effect=_async_return({
+    })
+    mock_client.extract = AsyncMock(return_value={
+        "results": [{"content": "Test content"}],
+    })
+    mock_client.crawl = AsyncMock(return_value={
+        "results": [{"title": "Test", "url": "https://example.com"}],
+    })
+    mock_client.map = AsyncMock(return_value={
+        "results": [{"url": "https://example.com"}],
+    })
+    mock_client.research = AsyncMock(return_value={
         "answer": "Research answer",
-        "citations": [{"url": "https://example.com", "title": "Cite"}],
-    }))
-    with patch("tools.tavily_ops.client._get_singleton_client", return_value=client):
-        yield client
+        "citations": [],
+    })
+    mock_client.close = MagicMock()
+
+    with patch("tools.tavily_ops.client._get_singleton_client", return_value=mock_client):
+        with patch("tools.tavily_ops.client.cfg.tavily_api_key", "tvly-test-key"):
+            yield mock_client

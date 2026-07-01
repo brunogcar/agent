@@ -15,10 +15,28 @@ The `tavily()` tool provides **AI-optimized web search and content extraction** 
 - **Structured error codes** — Every error response includes `error_code` for programmatic fallback decisions
 - **API budget tracking** — Per-tool cost counter with configurable limits and auto-block
 - **Shared network infrastructure** — `core/net/` modules used by tavily, web_ops, browser
+- **v1.3: `extract` + `research` now use `_run_async_with_resilience()`** — Was bypassing all resilience in v1.2 (coroutine reuse bug)
+- **v1.3: `include_domains`/`exclude_domains` validated as `list[str]`** — Rejected with `INVALID_PARAMS` if wrong type
+- **v1.3: `citation_format` only passed to `research`** — No longer leaked to other actions
+- **v1.3: URL normalization** — `extract` and `crawl` use `normalize_url()` from `core/net/url.py`
+- **v1.3: Budget tracking wired to all 5 actions** — `check_budget()` before, `record_tool_call()` after
+- **v1.3: `CB_OPEN` error code** — Properly returned when circuit breaker is OPEN (was `UNKNOWN` in v1.2)
 
 ---
 
 ## ⚠️ Breaking Changes
+
+### v1.3
+
+| Old | New | Migration |
+|-----|-----|-----------|
+| `extract`/`research` bypassed `_run_async_with_resilience()` | Now uses it correctly (factory pattern) | No migration — internal fix |
+| `include_domains`/`exclude_domains` accepted any type | Must be `list[str]` | Pass lists, not strings or tuples |
+| `citation_format` passed to all actions | Only passed to `research` | No migration — internal fix |
+| `core/net/security.py` IPv6 parsing broken | Fixed bracket + unbracketed IPv6 handling | No migration — internal fix |
+| `core/net/errors.py` `NetworkError` → `CONNECT_ERROR` | Now correctly returns `NETWORK_ERROR` | No migration — internal fix |
+| `can_execute()` OPEN→HALF_OPEN didn't count against `half_open_max_calls` | Now counts correctly | No migration — internal fix |
+| `get_status()` returned `{}` when no budget config | Now returns tool info with `used` count | No migration — internal fix |
 
 ### v1.2
 
@@ -100,25 +118,50 @@ tools/tavily_ops/
 ├── state.py                 # _TAVILY_CLIENT, _CLIENT_LOCK, _KEYLESS_WARNED, reset_state()
 ├── client.py                # _get_singleton_client(), _close_client(), _TAVILY_CB
 │                            # v1.2: closes old client on key change, lock on close
+│                            # v1.3: _warn_keyless_once() uses state._KEYLESS_WARNED
+│                            # v1.3: registers Tavily RateLimitError as retryable
 ├── bridge.py                # _run_async() + _run_async_with_resilience() (CB + retry)
 │                            # v1.2: accepts coroutine factory, uses core/net/retry.py
+│                            # v1.3: uses retry_async_factory() from core/net/retry.py
+│                            # v1.3: raises CircuitBreakerOpen exception
 ├── errors.py                # _handle_tavily_error(), error_code, API key sanitization
 │                            # v1.2: regex sanitization, 500-char truncation
+│                            # v1.3: handles CircuitBreakerOpen → error_code="CB_OPEN"
+│                            # v1.3: wires budget tracking into error responses
 └── actions/
     ├── search.py            # @register_action("tavily", "search", ...)
+    │                        # v1.3: imports SEARCH_MAX_RESULTS from core.net.default
+    │                        # v1.3: check_budget() + record_tool_call() wired
+    │                        # v1.3: validates include_domains/exclude_domains as list[str]
     ├── extract.py           # @register_action("tavily", "extract", ...)
+    │                        # v1.3: NOW uses _run_async_with_resilience (was bypassing)
+    │                        # v1.3: normalize_url() on URLs, budget wired
+    │                        # v1.3: imports EXTRACT_MAX_URLS/EXTRACT_DEPTH from defaults
     ├── crawl.py             # @register_action("tavily", "crawl", ...)
+    │                        # v1.3: normalize_url() on URL, budget wired
+    │                        # v1.3: imports CRAWL_* constants from defaults
     ├── map.py               # @register_action("tavily", "map", ...)
+    │                        # v1.3: imports CRAWL_* constants from defaults, budget wired
     └── research.py          # PLAIN function, NO @register_action (workflow-only)
+                             # v1.3: NOW uses _run_async_with_resilience (was bypassing)
+                             # v1.3: budget wired, citation_format only passed here
 
 core/net/                    # v1.2: Shared network infrastructure
-├── __init__.py              # Package init
-├── errors.py                # classify_http_error(), is_retryable_error(), get_retry_delay(), BOT_BLOCKED
+│                            # v1.3: __init__.py re-exports all modules for cross-tool use
+├── __init__.py              # v1.3 NEW: public re-exports for `from core.net import ...`
+├── errors.py                # classify_http_error(), is_retryable_error(), get_retry_delay()
+│                            # v1.3: NetworkError → NETWORK_ERROR (not CONNECT_ERROR)
+│                            # v1.3: 408 → RATE_LIMITED, Read/WriteError → NETWORK_ERROR
 ├── security.py              # is_safe_network_address(), _assert_safe_urls() — SSRF guard
-├── retry.py                 # retry_sync() — unified retry with backoff
+│                            # v1.3: Fixed IPv6 bracket parsing, DNS timeout via ThreadPoolExecutor
+├── retry.py                 # retry_sync() + retry_async_factory() — unified retry with CB hooks
+│                            # v1.3: Added retry_async_factory() for async coroutine retry
 ├── budget.py                # APICostTracker — cost tracking per tool
+│                            # v1.3: Lock() → RLock(), daily reset, get_status() fix
 ├── url.py                   # normalize_url(), extract_domain(), is_same_domain()
-└── default.py               # Shared defaults: SEARCH_MAX_RESULTS, CRAWL_MAX_DEPTH, RETRY_BASE_DELAY, etc.
+│                            # v1.3: is_same_domain strips www. prefix
+└── default.py               # Shared defaults: SEARCH_MAX_RESULTS, CRAWL_MAX_DEPTH, etc.
+                             # v1.3: Fixed header comment (defaults.py → default.py)
 ```
 
 ### Dispatch Flow
@@ -126,10 +169,10 @@ core/net/                    # v1.2: Shared network infrastructure
 ```mermaid
 graph TD
     A["tavily(action, ...)"] --> B{"action?"}
-    B -->|search| C["_action_search → _run_async_with_resilience → prune_tool_dict"]
-    B -->|extract| D["Validate urls (≤10) → _assert_safe_urls → _action_extract → _run_async_with_resilience → prune_tool_dict"]
-    B -->|crawl| E["Validate url → _assert_safe_urls → keyless check → _action_crawl → _run_async_with_resilience → prune_tool_dict"]
-    B -->|map| F["Validate url → _assert_safe_urls → keyless check → _action_map → _run_async_with_resilience → prune_tool_dict"]
+    B -->|search| C["check_budget() → _action_search → _run_async_with_resilience → record_tool_call() → prune_tool_dict"]
+    B -->|extract| D["Validate urls (≤10) → _assert_safe_urls → check_budget() → _action_extract → _run_async_with_resilience → record_tool_call() → prune_tool_dict"]
+    B -->|crawl| E["Validate url → _assert_safe_urls → keyless check → check_budget() → _action_crawl → _run_async_with_resilience → record_tool_call() → prune_tool_dict"]
+    B -->|map| F["Validate url → _assert_safe_urls → keyless check → check_budget() → _action_map → _run_async_with_resilience → record_tool_call() → prune_tool_dict"]
     B -->|unknown| G["Return fail('Unknown action ...')"]
     C --> H["Return ok({results, answer, query, keyless})"]
     D --> I["Return ok({results, keyless})"]
@@ -139,21 +182,25 @@ graph TD
 
 **Key design decisions:**
 - **Async-to-sync bridge** — `_run_async()` handles two cases: (1) no running loop → `asyncio.run(coro)`; (2) running loop (e.g., inside MCP) → spawns a `ThreadPoolExecutor(max_workers=1)` and runs `asyncio.run` in a fresh thread. Timeout: `cfg.tavily_timeout + 10` seconds. Deliberately uses per-call ThreadPoolExecutor instead of a persistent background loop — Tavily calls are short network requests, not long Playwright sessions.
-- **v1.2: _run_async_with_resilience()** — Wraps `_run_async()` with circuit breaker (`_TAVILY_CB`) and automatic retry on all retryable errors (3 attempts, exponential backoff via `core/net/retry.py:get_retry_delay()`). **Accepts a coroutine factory (callable), not a coroutine object** — ensures fresh coroutine per retry attempt. Centralized in `bridge.py` so every action gets resilience without per-action edits.
+- **v1.2: `_run_async_with_resilience()`** — Wraps `_run_async()` with circuit breaker (`_TAVILY_CB`) and automatic retry on all retryable errors (3 attempts, exponential backoff via `core/net/retry.py:get_retry_delay()`). **Accepts a coroutine factory (callable), not a coroutine object** — ensures fresh coroutine per retry attempt. Centralized in `bridge.py` so every action gets resilience without per-action edits.
+- **v1.3: `retry_async_factory()`** — Extracted from bridge pattern to `core/net/retry.py` for reuse by web_ops/browser. `bridge.py` now delegates to it.
 - **Lazy client with key caching** — `_get_singleton_client()` caches the `AsyncTavilyClient` instance and re-creates it only if the API key changes. Thread-safe via `_CLIENT_LOCK` (double-checked locking). Keyless mode uses `api_key=None`.
 - **v1.2: Client lifecycle** — `_get_singleton_client()` closes the old client before creating a new one when the API key changes. `_close_client()` acquires `_CLIENT_LOCK` and logs exceptions instead of silently swallowing.
+- **v1.3: Client close** — `_close_client_locked()` uses `_run_async()` instead of creating a fresh ThreadPoolExecutor.
 - **State ownership** — `state.py` owns `_TAVILY_CLIENT`, `_CLIENT_LOCK`, `_KEYLESS_WARNED`. `client.py` does `import tools.tavily_ops.state as state` and reads/writes `state._TAVILY_CLIENT` directly. This prevents the name-binding divergence bug that broke `web_ops`'s `reset_state()`.
-- **Keyless warning once** — `_warn_keyless_once()` logs a single `logger.warning` on first keyless invocation to avoid log spam. `state.reset_state()` clears `_KEYLESS_WARNED` for test isolation.
-- **SSRF at action level** — `_assert_safe_urls()` is called inside `_action_extract`, `_action_crawl`, and `_action_map` (not at the facade level). `search` does not need SSRF since it doesn't fetch arbitrary URLs. v1.2: `_assert_safe_urls` moved to `core/net/security.py` with scheme validation, empty hostname rejection, and IPv6 port stripping.
+- **v1.3: Keyless warning** — `_warn_keyless_once()` uses `state._KEYLESS_WARNED` directly so `reset_state()` properly clears it.
+- **SSRF at action level** — `_assert_safe_urls()` is called inside `_action_extract`, `_action_crawl`, and `_action_map` (not at the facade level). `search` does not need SSRF since it doesn't fetch arbitrary URLs. v1.2: `_assert_safe_urls` moved to `core/net/security.py` with scheme validation, empty hostname rejection, and IPv6 port stripping. v1.3: Fixed IPv6 bracket parsing (`[::1]:8080`, `2001:db8::1`).
 - **Raw content stripping** — `_action_search` strips `raw_content` from all results unless `include_raw_content=True`. Prevents context window explosion.
 - **v1.2: Error type detection + sanitization** — `_handle_tavily_error()` uses both `isinstance` checks (with lazy tavily imports) and `type(e).__name__` string fallback. API key is stripped via regex (exact match, URL-encoded, Authorization header, query param) from all error messages before returning to the LLM. Error messages truncated to 500 chars to prevent context window bloat.
-- **v1.2: Error codes** — `core/contracts.py:fail()` accepts an `error_code` parameter. Tavily returns standardized codes: `CB_OPEN`, `RATE_LIMITED`, `AUTH_FAILED`, `QUOTA_EXHAUSTED`, `TIMEOUT`, `CONNECT_ERROR`, `SERVER_ERROR`, `CLIENT_ERROR`, `API_ERROR`, `UNKNOWN`.
+- **v1.2: Error codes** — `core/contracts.py:fail()` accepts an `error_code` parameter. Tavily returns standardized codes: `CB_OPEN`, `RATE_LIMITED`, `AUTH_FAILED`, `QUOTA_EXHAUSTED`, `TIMEOUT`, `CONNECT_ERROR`, `SERVER_ERROR`, `CLIENT_ERROR`, `NETWORK_ERROR`, `API_ERROR`, `UNKNOWN`.
+- **v1.3: Budget tracking** — Every action calls `check_budget("tavily.{action}")` before execution and `record_tool_call("tavily.{action}")` after success. Daily limits auto-reset at midnight.
 - **`research` is workflow-only** — `run_research()` in `actions/research.py` exists but is NOT exposed in the `@tool` facade. Not registered in `DISPATCH`. Reserved for `workflows/deep_research_impl/nodes/search.py`.
 - **All outputs pruned** — Every action result passes through `prune_tool_dict()` from `core.memory_backend.pruner` before return.
 - **trace_id propagation** — `trace_id` is threaded from facade through `ok()` / `fail()` / `prune_tool_dict()` in all action handlers.
 - **Non-dict handler guard** — Facade checks `isinstance(result, dict)` after handler call. Returns `fail()` if handler returns non-dict (regression guard from prior refactors).
 - **v1.2: Coroutine factory pattern** — `_run_async_with_resilience()` accepts a callable that produces a fresh coroutine (`_call`), not an already-instantiated coroutine (`_call()`). This prevents `RuntimeError: cannot reuse already awaited coroutine` on retry attempts.
 - **v1.2: Unified network infrastructure** — All HTTP error classification, retry logic, SSRF guards, and budget tracking live in `core/net/`. Adopted by tavily_ops; web_ops and browser adoption scheduled.
+- **v1.3: Cross-tool adoption ready** — `core/net/__init__.py` re-exports all modules. `register_retryable_exception()` allows SDK-specific exception registration.
 
 ---
 
@@ -179,8 +226,8 @@ def tavily(
     extract_depth: str = "basic",
     format: str = "markdown",
     max_depth: int = 3,          # v1.2: restored, default 3
-    max_breadth: int = 10,       # v1.2: restored
-    limit: int = 50,             # v1.2: restored, default 50
+    max_breadth: int = 10,      # v1.2: restored
+    limit: int = 50,            # v1.2: restored, default 50
     trace_id: str = "",
 ) -> dict:
     """Tavily AI research tool — atomic actions for search/extract/crawl/map."""
@@ -196,8 +243,8 @@ def tavily(
 | `search_depth` | `str` | No | `"basic"` or `"advanced"`. Default: `"basic"`. |
 | `topic` | `str` | No | Topic filter for search: `"general"`, `"news"`, `"finance"`. Default: `"general"`. **v1.1** |
 | `time_range` | `str` | No | Time range filter for search. |
-| `include_domains` | `list[str]` | No | Whitelist domains for search. **v1.1** |
-| `exclude_domains` | `list[str]` | No | Blacklist domains for search. **v1.1** |
+| `include_domains` | `list[str]` | No | Whitelist domains for search. **v1.1**. **v1.3: validated as `list[str]`.** |
+| `exclude_domains` | `list[str]` | No | Blacklist domains for search. **v1.1**. **v1.3: validated as `list[str]`.** |
 | `include_answer` | `bool` | No | Include AI-generated answer in search. Default: `True`. |
 | `include_raw_content` | `bool` | No | Include full page text in search results. Default: `False`. **Large!** |
 | `include_images` | `bool` | No | Include images in search results. Default: `False`. **v1.1: Now passed to SDK.** |
@@ -234,6 +281,12 @@ Queries Tavily and returns AI-ranked results with titles, URLs, snippets, and an
 - `raw_content` stripped from results when `include_raw_content=False` (restored v1.0 behavior)
 - Facade accepts `max_depth`, `max_breadth`, `limit` again (was removed in v1.1)
 
+**v1.3 additions:**
+- `include_domains`/`exclude_domains` validated as `list[str]` — rejected with `INVALID_PARAMS` if not
+- `check_budget("tavily.search")` guard before execution
+- `record_tool_call("tavily.search")` after success
+- `SEARCH_MAX_RESULTS` imported from `core.net.default`
+
 **Return:**
 ```json
 {
@@ -260,11 +313,19 @@ Queries Tavily and returns AI-ranked results with titles, URLs, snippets, and an
 - Invalid API key → `fail("Tavily API key is invalid...")` with `error_code="AUTH_FAILED"`
 - Timeout → `fail("Tavily request timed out...")` with `error_code="TIMEOUT"`
 - Connection error → `fail("Tavily connection failed...")` with `error_code="CONNECT_ERROR"`
+- **v1.3: Network error → `fail("Tavily network error...")` with `error_code="NETWORK_ERROR"`**
 - Circuit breaker OPEN → `fail("Tavily circuit breaker is OPEN...")` with `error_code="CB_OPEN"`
+- **v1.3: Budget exhausted → `fail("Tavily budget exhausted...")` with `error_code="QUOTA_EXHAUSTED"`**
 
 ### `extract` — Bulk URL content extraction
 
 Accepts up to 10 URLs and returns extracted content with citations for each.
+
+**v1.3 additions:**
+- Now uses `_run_async_with_resilience()` (was bypassing all resilience in v1.2)
+- URLs normalized via `normalize_url()` before extraction
+- `EXTRACT_MAX_URLS`/`EXTRACT_DEPTH` imported from `core.net.default`
+- Budget tracking wired
 
 **Return:**
 ```json
@@ -294,6 +355,11 @@ Follows links from a starting URL up to `max_depth` levels. **Requires API key.*
 
 **v1.2:** Facade accepts `max_depth`, `max_breadth`, `limit` again.
 
+**v1.3 additions:**
+- URL normalized via `normalize_url()` before crawl
+- `CRAWL_*` constants imported from `core.net.default`
+- Budget tracking wired
+
 **Return:**
 ```json
 {
@@ -319,6 +385,10 @@ Discovers site hierarchy without fetching full content. **Requires API key.**
 **v1.1 breaking change:** Same as `crawl` — `url` is strictly required, `query` is only for contextual instructions.
 
 **v1.2:** Facade accepts `max_depth`, `max_breadth`, `limit` again.
+
+**v1.3 additions:**
+- `CRAWL_*` constants imported from `core.net.default`
+- Budget tracking wired
 
 **Return:**
 ```json
@@ -350,6 +420,11 @@ result = run_research(
 
 Requires API key. Validates `citation_format` against SDK Literal type (`"numbered" | "mla" | "apa" | "chicago"`).
 
+**v1.3 additions:**
+- Now uses `_run_async_with_resilience()` (was bypassing all resilience in v1.2)
+- Budget tracking wired
+- `citation_format` is **only** passed to `research` action (not leaked to others)
+
 ---
 
 ## 🔒 Security
@@ -371,7 +446,7 @@ def _assert_safe_urls(urls: list[str]) -> tuple[bool, str]:
     return True, ""
 ```
 
-Uses `core.net.security.is_safe_network_address` — same guard as `web.py`. v1.2: `_assert_safe_urls` moved to `core/net/security.py` with scheme validation, empty hostname rejection, and IPv6 port stripping. Cross-tool shared — adopted by tavily_ops; web_ops and browser adoption scheduled.
+Uses `core.net.security.is_safe_network_address` — same guard as `web.py`. v1.2: `_assert_safe_urls` moved to `core/net/security.py` with scheme validation, empty hostname rejection, and IPv6 port stripping. v1.3: Fixed IPv6 bracket parsing (`[::1]:8080`, `2001:db8::1`). Cross-tool shared — adopted by tavily_ops; web_ops and browser adoption scheduled.
 
 **Note:** `search` does not call `_assert_safe_urls()` because it does not fetch arbitrary URLs — it queries the Tavily API with a search string.
 
@@ -408,6 +483,7 @@ This prevents accidental key leakage into logs, traces, or LLM context windows. 
 | Tavily API error (other) | `APIError` | `API_ERROR` | `"Tavily API error: ..."` |
 | HTTP timeout | `httpx.TimeoutException` | `TIMEOUT` | `"Tavily request timed out: ..."` |
 | HTTP connection error | `httpx.ConnectError` | `CONNECT_ERROR` | `"Tavily connection failed: ..."` |
+| **v1.3: HTTP network error** | **`httpx.NetworkError`** | **`NETWORK_ERROR`** | **`"Tavily network error: ..."`** |
 | HTTP 401/403 | `httpx.HTTPStatusError` | `AUTH_FAILED` | `"Tavily authentication failed..."` |
 | HTTP other 4xx | `httpx.HTTPStatusError` | `CLIENT_ERROR` | `"Tavily HTTP error (HTTP {status}): ..."` |
 | Circuit breaker OPEN | `_TAVILY_CB.can_execute()` | `CB_OPEN` | `"Tavily circuit breaker is OPEN..."` |
@@ -419,10 +495,17 @@ This prevents accidental key leakage into logs, traces, or LLM context windows. 
 - After **5** consecutive failures, the circuit breaker opens and all Tavily calls fail fast with: `"Tavily circuit breaker is OPEN. Service temporarily unavailable. Try again later or use web(search) as fallback."` (error_code: `CB_OPEN`)
 - After 60 seconds, the circuit enters HALF_OPEN and allows 1 test call.
 - Success → CLOSED; failure → OPEN again.
+- **v1.3 FIX: OPEN→HALF_OPEN transition now counts against `half_open_max_calls` (was allowing 1 extra call).**
 
 **v1.2: Retry policy:**
 - All retryable errors (HTTP 429, 408, 5xx, timeouts, connection errors, network errors, and registered SDK exceptions) trigger up to 3 retry attempts with exponential backoff via `core/net/retry.py:get_retry_delay()` (2s base, 30s max, 0-25% jitter).
 - Non-retryable errors (4xx client errors, auth failures) trip the circuit breaker immediately.
+
+**v1.3: Budget tracking integration:**
+- Each action calls `check_budget("tavily.{action}")` before execution.
+- On budget exhaustion: returns `QUOTA_EXHAUSTED` error immediately.
+- Each action calls `record_tool_call("tavily.{action}")` after success.
+- Daily limit auto-resets at midnight (date change detection in `record_call()`).
 
 ---
 
@@ -473,12 +556,12 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/net/ -W error --tb=short -v
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| `conftest.py` | — | Shared fixtures: reset_state, mock_cfg, mock_tavily_client |
-| `test_search.py` | 8 | Search action, result parsing, keyless capping, trace_id propagation, **raw_content stripping, facade params** |
-| `test_extract.py` | 5 | Extract action, URL validation, batch processing, format handling, SSRF |
-| `test_crawl.py` | 9 | Crawl action, keyless rejection, URL requirement, extract_depth/format, SDK translation, **facade params, coroutine factory** |
-| `test_map.py` | 7 | Map action, keyless rejection, URL requirement, SDK translation, **facade params** |
-| `test_tavily_error_handling.py` | 14 | All error types + non-dict handler guard, **sanitization, truncation, error_code** |
+| `conftest.py` | — | Shared fixtures: reset_state, mock_tavily_client, budget reset, resource warning filter |
+| `test_search.py` | 8 | Search action, result parsing, keyless capping, trace_id propagation, raw_content stripping, facade params |
+| `test_extract.py` | 5 | Extract action, URL validation, batch processing, SSRF, keyless mode |
+| `test_crawl.py` | 9 | Crawl action, keyless rejection, URL requirement, extract_depth/format, SDK translation, facade params, coroutine factory |
+| `test_map.py` | 7 | Map action, keyless rejection, URL requirement, SDK translation, facade params |
+| `test_tavily_error_handling.py` | 14 | All error types + non-dict handler guard, sanitization, truncation, error_code, CB_OPEN |
 | `test_tavily_keyless_mode.py` | 5 | Keyless search/extract, keyless crawl/map rejection, warning once |
 | `test_tavily_ssrf.py` | 4 | `_assert_safe_urls` blocking across extract/crawl/map, search exempt |
 | `test_tavily_client.py` | 3 | Lazy client creation, key change detection, thread safety |
@@ -487,32 +570,32 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/core/net/ -W error --tb=short -v
 | `test_registry.py` | 6 | Duplicate guard, research not in DISPATCH, all actions registered |
 | `test_bridge_timeout.py` | 2 | Timeout actually fires |
 | `test_circuit_breaker.py` | 7 | **v1.2:** State transitions, half_open_max_calls, reset, record_success noop |
-| `test_bridge_resilience.py` | 6 | **v1.2:** Coroutine factory, retry, CB integration, unified backoff |
-| `test_client.py` | 5 | **v1.2:** Singleton, key change, close logging, old client cleanup |
+| `test_bridge_resilience.py` | 6 | **v1.2/v1.3:** Coroutine factory, retry, CB integration, unified backoff |
+| `test_client.py` | 5 | **v1.2/v1.3:** Singleton, key change, close logging, old client cleanup, lock verification |
 
 **Core/net tests (`tests/core/net/`):**
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| `test_security.py` | 12 | SSRF guard, IPv6, empty hostname, scheme validation |
-| `test_web_errors.py` | 12 | Classification, BOT_BLOCKED, 408, SDK duck-typing, retry delay |
-| `test_retry.py` | 6 | Success, retry, exhaust, non-retryable, custom predicate, backoff |
-| `test_budget.py` | 6 | Record, afford, warning, status, thread safety |
-| `test_url.py` | 7 | Normalize, domain extract, same domain |
-| `test_path_validation.py` | — | Existing (moved from tests/core/) |
-| `test_ssrf_edge_cases.py` | — | Existing (moved from tests/core/) |
-| `test_ssrf_protection.py` | — | Existing (moved from tests/core/) |
+| `test_security.py` | 12 | SSRF guard, IPv6 (loopback + public), empty hostname, scheme validation |
+| `test_web_errors.py` | 12 | Classification, BOT_BLOCKED, 408, SDK duck-typing, retry delay, NetworkError |
+| `test_retry.py` | 6 | Success, retry, exhaust, non-retryable, custom predicate, backoff, jitter |
+| `test_budget.py` | 6 | Record, afford, warning, status, thread safety, daily reset |
+| `test_url.py` | 7 | Normalize, domain extract, same domain (www stripping) |
+| `test_path_validation.py` | 5 | Path-specific SSRF validation |
+| `test_ssrf_edge_cases.py` | — | Edge cases (moved from `tests/core/`) |
+| `test_ssrf_protection.py` | 7 | SSRF protection tests |
 
 **Mock strategy:**
-- Patch `tools.tavily_ops.client._get_singleton_client` to return `MagicMock` with `side_effect=_async_return(...)` (no `tavily` package installation required for unit tests)
-- Patch `tools.tavily_ops.client.cfg.tavily_api_key` to `""` for keyless mode tests
+- Patch `tools.tavily_ops.client._get_singleton_client` to return `MagicMock` with **v1.3: `AsyncMock`** for async methods (search/extract/crawl/map/research return coroutines)
 - Patch `tools.tavily_ops.client.cfg.tavily_api_key` to `"tvly-test"` for keyed mode tests
+- Patch `tools.tavily_ops.client.cfg.tavily_api_key` to `""` for keyless mode tests
+- **v1.3: Patch `tools.tavily_ops.client._is_keyless_mode` / `_is_keyless` for keyless behavior tests**
 - Patch `core.net.security.is_safe_network_address` for SSRF tests (or mock `_assert_safe_urls` directly)
-- Mock `AsyncTavilyClient.search()` / `.extract()` / `.crawl()` / `.map()` / `.research()` to return deterministic responses
 - Test `_handle_tavily_error()` with both real and mocked exception types
 - Reset state via `tools.tavily_ops.state.reset_state()` (not direct module var poking)
 - Reset circuit breaker via `tools.tavily_ops.client._TAVILY_CB.reset()` between tests
-- Reset `_KEYLESS_WARNED` via `tools.tavily_ops.client._KEYLESS_WARNED = False` before keyless warning tests
+- **v1.3: Reset budget tracker via `core.net.budget._budget_tracker._calls.clear()` between tests**
 
 **Current test layout:**
 ```text
@@ -531,14 +614,15 @@ tests/tools/tavily/
 ├── test_registry.py
 ├── test_bridge_timeout.py
 ├── test_circuit_breaker.py
-├── test_bridge_resilience.py    # v1.2
-└── test_client.py               # v1.2
+├── test_bridge_resilience.py     # v1.2/v1.3
+└── test_client.py                # v1.2/v1.3
 
-tests/core/net/                   # v1.2
+tests/core/net/                   # v1.2/v1.3
+├── conftest.py                   # v1.3: budget tracker reset fixture
 ├── test_security.py
 ├── test_web_errors.py
-├── test_retry.py
-├── test_budget.py
+├── test_retry.py                 # v1.3: retry_async_factory tests
+├── test_budget.py                # v1.3: daily reset, RLock tests
 ├── test_url.py
 ├── test_path_validation.py
 ├── test_ssrf_edge_cases.py
@@ -611,6 +695,24 @@ tests/core/net/                   # v1.2
 | **API key sanitization v2** | ✅ **v1.2** | Regex, URL-encoded, header, and query param patterns |
 | **BOT_BLOCKED classification** | ✅ **v1.2** | Cloudflare/cf-ray detection in `core/net/errors.py` |
 | **Default constants** | ✅ **v1.2** | `core/net/default.py` — shared across tavily, web_ops, browser |
+| **`extract`/`research` use `_run_async_with_resilience()`** | ✅ **v1.3** | Was bypassing all resilience (coroutine reuse bug) |
+| **`CB_OPEN` error code** | ✅ **v1.3** | Properly returned when circuit breaker is OPEN |
+| **Budget tracking wired to all 5 actions** | ✅ **v1.3** | `check_budget()` + `record_tool_call()` on every action |
+| **`include_domains`/`exclude_domains` validation** | ✅ **v1.3** | Must be `list[str]` — rejected with `INVALID_PARAMS` |
+| **`citation_format` only for `research`** | ✅ **v1.3** | No longer leaked to other actions |
+| **`normalize_url()` in `extract`/`crawl`** | ✅ **v1.3** | URLs normalized before extraction/crawl |
+| **`core/net/__init__.py` re-exports** | ✅ **v1.3** | `from core.net import ...` for cross-tool adoption |
+| **`retry_async_factory()` in `core/net/retry.py`** | ✅ **v1.3** | Async coroutine retry with CB hooks for web_ops/browser reuse |
+| **`RLock` in budget tracker** | ✅ **v1.3** | Prevents deadlock in nested `get_status()` calls |
+| **Daily reset in budget tracker** | ✅ **v1.3** | Date change detection in `record_call()` |
+| **`_is_private_or_localhost()` restored** | ✅ **v1.3** | Cross-tool IP check for web_ops/browser adoption |
+| **DNS timeout via ThreadPoolExecutor** | ✅ **v1.3** | `socket.getaddrinfo` has no `timeout` kwarg |
+| **`can_execute()` HALF_OPEN fix** | ✅ **v1.3** | OPEN→HALF_OPEN transition counts against `half_open_max_calls` |
+| **`NetworkError` → `NETWORK_ERROR`** | ✅ **v1.3** | Fixed classification in `core/net/errors.py` |
+| **408 → `RATE_LIMITED`** | ✅ **v1.3** | HTTP 408 is in `RETRYABLE_STATUS_CODES` |
+| **`is_same_domain` strips `www.`** | ✅ **v1.3** | `www.example.com` and `example.com` match |
+| **`state._KEYLESS_WARNED` sync** | ✅ **v1.3** | `client.py` uses `state._KEYLESS_WARNED` for proper reset |
+| **`RateLimitError` registered as retryable** | ✅ **v1.3** | Tavily SDK exception auto-registered |
 
 ### 🔄 In Progress / Next Up
 
@@ -665,19 +767,23 @@ tests/core/net/                   # v1.2
 14. **Never pass `_call()` to `_run_async_with_resilience()`** — Always pass `_call` (the factory). Passing `_call()` creates a single coroutine that cannot be reused on retry.
 15. **Never hardcode backoff math** — Use `core/net/retry.py:get_retry_delay()` for all retry timing.
 16. **Never skip `error_code` in `fail()` calls** — Every error response must include a structured `error_code` for programmatic consumers.
+17. **Never forget to call `record_tool_call()` after paid API success** — Budget tracking requires it.
+18. **Never forget to call `check_budget()` before paid API execution** — Prevents quota overruns.
 
 ### ALWAYS DO
-17. **Always pass `trace_id` to `ok()` and `fail()`** — Threaded from facade through all action handlers.
-18. **Always use `_run_async_with_resilience()` for Tavily client calls** — Handles circuit breaker, rate-limit retry, and nested event loops.
-19. **Always strip `raw_content` by default** — `_action_search` must pop `raw_content` from results unless `include_raw_content=True`.
-20. **Always test keyless and keyed modes** — Patch `cfg.tavily_api_key` to `""` and `"tvly-test"` respectively.
-21. **Always test error paths with both real and mocked exceptions** — `_handle_tavily_error()` uses both `isinstance` and name matching.
-22. **Always update this doc** when adding actions, changing return shapes, or modifying the client lifecycle.
-23. **Always add the non-dict handler return fallback** in the facade — `if not isinstance(result, dict): return fail(...)`.
-24. **Always reset the circuit breaker between tests** — `tools.tavily_ops.client._TAVILY_CB.reset()` must be in a known state.
-25. **Always use `core/net/` imports** — `core.net.security`, `core.net.errors`, `core.net.retry`, `core.net.budget`. Not the backward-compat wrappers.
-26. **Always register SDK exceptions** — If a tool wraps a new SDK, call `register_retryable_exception()` for its retryable exception types.
-27. **Always record paid API calls** — After every successful Tavily call, call `record_tool_call("tavily.search")` (or appropriate tool name).
+19. **Always pass `trace_id` to `ok()` and `fail()`** — Threaded from facade through all action handlers.
+20. **Always use `_run_async_with_resilience()` for Tavily client calls** — Handles circuit breaker, rate-limit retry, and nested event loops.
+21. **Always strip `raw_content` by default** — `_action_search` must pop `raw_content` from results unless `include_raw_content=True`.
+22. **Always test keyless and keyed modes** — Patch `cfg.tavily_api_key` to `""` and `"tvly-test"` respectively.
+23. **Always test error paths with both real and mocked exceptions** — `_handle_tavily_error()` uses both `isinstance` and name matching.
+24. **Always update this doc** when adding actions, changing return shapes, or modifying the client lifecycle.
+25. **Always add the non-dict handler return fallback** in the facade — `if not isinstance(result, dict): return fail(...)`.
+26. **Always reset the circuit breaker between tests** — `tools.tavily_ops.client._TAVILY_CB.reset()` must be in a known state.
+27. **Always use `core/net/` imports** — `core.net.security`, `core.net.errors`, `core.net.retry`, `core.net.budget`. Not the backward-compat wrappers.
+28. **Always register SDK exceptions** — If a tool wraps a new SDK, call `register_retryable_exception()` for its retryable exception types.
+29. **Always record paid API calls** — After every successful Tavily call, call `record_tool_call("tavily.search")` (or appropriate tool name).
+30. **Always reset the budget tracker between tests** — `core.net.budget._budget_tracker._calls.clear()` prevents singleton pollution.
+31. **Always use `AsyncMock` for async client methods in tests** — `_run_async_with_resilience` calls `asyncio.run(coro)`, so mock methods must return coroutines.
 
 ---
 
@@ -697,14 +803,13 @@ tests/core/net/                   # v1.2
 | `tools/tavily_ops/actions/crawl.py` | `@register_action("tavily", "crawl")` handler |
 | `tools/tavily_ops/actions/map.py` | `@register_action("tavily", "map")` handler |
 | `tools/tavily_ops/actions/research.py` | `run_research()` — workflow-only, NOT registered |
+| `core/net/__init__.py` | **v1.3:** Public re-exports for `from core.net import ...` |
 | `core/net/security.py` | `is_safe_network_address()`, `_assert_safe_urls()` — cross-tool SSRF protection |
 | `core/net/errors.py` | `classify_http_error()`, `is_retryable_error()`, `get_retry_delay()`, `register_retryable_exception()` — shared HTTP error classification |
-| `core/net/retry.py` | `retry_sync()` — unified retry with exponential backoff |
+| `core/net/retry.py` | `retry_sync()` + `retry_async_factory()` — unified retry with CB hooks |
 | `core/net/budget.py` | `APICostTracker`, `record_tool_call()`, `check_budget()` — cost tracking |
 | `core/net/url.py` | `normalize_url()`, `extract_domain()`, `is_same_domain()` — URL utilities |
 | `core/net/default.py` | `SEARCH_MAX_RESULTS`, `CRAWL_MAX_DEPTH`, `RETRY_BASE_DELAY`, `CB_FAILURE_THRESHOLD` — shared defaults |
-| `core/net/security.py` | BACKWARD COMPAT — re-exports from `core.net.security` (remove after migration) |
-| `core/net/retry.py` | BACKWARD COMPAT — re-exports from `core.net.errors` (remove after migration) |
 | `core/contracts.py` | `ok()` / `fail()` — standardized return dicts with `trace_id` + `error_code` injection |
 | `core/config.py` | `cfg.tavily_api_key`, `cfg.tavily_timeout` |
 | `core/memory_backend/pruner.py` | `prune_tool_dict()` — head+tail truncation, artifact storage |
@@ -723,15 +828,15 @@ tests/core/net/                   # v1.2
 | `tests/tools/tavily/test_registry.py` | `DISPATCH` auto-discovery + duplicate guard |
 | `tests/tools/tavily/test_bridge_timeout.py` | Timeout regression tests |
 | `tests/tools/tavily/test_circuit_breaker.py` | Circuit breaker state tests |
-| `tests/tools/tavily/test_bridge_resilience.py` | **v1.2** — Coroutine factory + retry integration tests |
-| `tests/tools/tavily/test_client.py` | **v1.2** — Client lifecycle, key change, close logging tests |
-| `tests/core/net/test_security.py` | **v1.2** — SSRF guard tests (moved from `tests/core/`) |
-| `tests/core/net/test_web_errors.py` | **v1.2** — Error classification tests (moved from `tests/core/`) |
-| `tests/core/net/test_retry.py` | **v1.2** — Retry/backoff tests |
-| `tests/core/net/test_budget.py` | **v1.2** — Budget tracking tests |
-| `tests/core/net/test_url.py` | **v1.2** — URL normalization tests |
+| `tests/tools/tavily/test_bridge_resilience.py` | **v1.2/v1.3** — Coroutine factory + retry integration tests |
+| `tests/tools/tavily/test_client.py` | **v1.2/v1.3** — Client lifecycle, key change, close logging tests |
+| `tests/core/net/test_security.py` | **v1.2/v1.3** — SSRF guard tests (moved from `tests/core/`) |
+| `tests/core/net/test_web_errors.py` | **v1.2/v1.3** — Error classification tests (moved from `tests/core/`) |
+| `tests/core/net/test_retry.py` | **v1.2/v1.3** — Retry/backoff tests |
+| `tests/core/net/test_budget.py` | **v1.2/v1.3** — Budget tracking tests |
+| `tests/core/net/test_url.py` | **v1.2/v1.3** — URL normalization tests |
 | `workflows/deep_research_impl/nodes/search.py` | Uses `tavily(action="search")` facade |
 
 ---
 
-*Architecture: thin @tool + @meta_tool facade + @register_action auto-discovery + lazy AsyncTavilyClient with key caching + double-checked locking + async-to-sync bridge with circuit breaker + rate-limit retry + SSRF guard + comprehensive error handler with API key sanitization + prune_tool_dict truncation + keyless mode with warning + trace_id propagation + non-dict handler guard + coroutine factory pattern + structured error codes + unified network infrastructure + budget tracking.*
+*Architecture: thin @tool + @meta_tool facade + @register_action auto-discovery + lazy AsyncTavilyClient with key caching + double-checked locking + async-to-sync bridge with circuit breaker + rate-limit retry + SSRF guard + comprehensive error handler with API key sanitization + prune_tool_dict truncation + keyless mode with warning + trace_id propagation + non-dict handler guard + coroutine factory pattern + structured error codes + unified network infrastructure + budget tracking + URL normalization + cross-tool adoption ready.*

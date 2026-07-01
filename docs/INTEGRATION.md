@@ -1,62 +1,126 @@
-# Cross-Tool Integration Roadmap
 
-## Tavily v1.1 → v1.2 Integration Checklist
+# 🔗 Integration Roadmap — Adopting core/net/ Across the Stack
 
-### P0 — Block v1.2 Release
-- [ ] **Fix coroutine reuse in `_run_async_with_resilience`**
-  - Change signature to accept `coro_factory` callable, not coroutine object
-  - Update call sites: `search.py`, `crawl.py`, `map.py` — pass `_call` not `_call()`
-- [ ] **Fix empty hostname SSRF bypass in `core/net/security.py`**
-  - Reject `hostname = ""` before `is_safe_network_address()` call
-- [ ] **Fix IPv6 port stripping in `core/net/security.py`**
-  - Change `"]:/"` to `"]:"` in hostname check (or use regex)
-- [ ] **Restore facade params**: `max_depth`, `max_breadth`, `limit`
-  - Add back to `tools/tavily.py` facade signature and `kwargs` dict
-  - Document default changes: max_depth 2→3, limit 100→50
-- [ ] **Restore `raw_content` stripping in `search.py`**
-  - When `include_raw_content=False`, strip `raw_content` from each result
-- [ ] **Fix `_close_client` race**
-  - Acquire `_CLIENT_LOCK` before closing
-  - Log exceptions instead of `pass`
+How to migrate `web`, `browser`, and workflow tools to use the unified `core/net/` infrastructure.
 
-### P1 — v1.2 Integration (Tavily)
-- [ ] **Adopt `core/net/errors.py` in `bridge.py`**
-  - Use `is_retryable_error()` for retry decisions (covers HTTP 429, ConnectError, etc.)
-- [ ] **Add `error_code` field to `fail()` dicts**
-  - Extend `core/contracts.py:fail()` with optional `error_code` parameter
-  - Tavily returns: `CB_OPEN`, `RATE_LIMITED`, `AUTH_FAILED`, `TIMEOUT`, `SERVER_ERROR`
-- [ ] **Add `get_retry_delay()` to `core/net/retry.py`**
-  - Unified exponential backoff with jitter
-  - Replace hardcoded `5 * (2 ** attempt)` in bridge.py
+**Reference doc:** `docs/core/NET.md` — full API reference, patterns, and AI instructions for `core/net/`.
 
-### P1 — v1.2 Integration (Web Ops — next time you edit these files)
-- [ ] **Adopt `core/net/errors.py` in `web_ops/actions/scrape.py`**
-  - Replace inline retry logic with `is_retryable_error()` + `get_retry_delay()`
-  - Add `JSWallError` / `BOT_BLOCKED` detection for Cloudflare responses
-- [ ] **Adopt `core/net/errors.py` in `web_ops/actions/search.py`**
-  - Use `classify_http_error()` for consistent error messages
-- [ ] **Adopt `core/net/security.py` in `web_ops/utils.py`**
-  - Replace `_is_safe_url()` with `_assert_safe_urls()` tuple API
-  - Remove duplicated SSRF logic
+---
 
-### P1 — v1.2 Integration (Browser — next time you edit these files)
-- [ ] **Add `classify_browser_error()` to `core/net/errors.py`**
-  - Map Playwright errors: `TimeoutError` → `TIMEOUT`, `SelectorNotFound` → `NOT_FOUND`
-- [ ] **Use unified retry policy for browser navigation**
-  - Apply `get_retry_delay()` for page reloads on transient failures
+## 🗺️ Adoption Status
 
-### P2 — v1.3 Shared Infrastructure
-- [ ] **Implement automatic fallback chain**
-  - Facade/router level: tavily(search) → web(search) when CB open / no key / rate limited
-  - Use `error_code` to trigger fallback without parsing strings
-- [ ] **Add `@cached` decorator**
-  - LRU cache keyed by `(tool, action, normalized_params_hash)`
-  - TTL: 300s for search, 1800s for extract/scrape
-- [ ] **Add URL normalization to `core/net/url.py`**
-  - Strip trailing slashes, sort query params, lowercase domain
+| Tool | Status | Notes |
+|------|--------|-------|
+| **tavily** | ✅ **Complete v1.3** | Reference implementation. All 6 modules adopted. |
+| **web** | ⏳ **Pending** | Needs `errors.py`, `security.py`, `retry.py`, `url.py`, `default.py` |
+| **browser** | ⏳ **Pending** | Needs `errors.py`, `security.py`, `retry.py`, `url.py`, `default.py` |
+| **workflows/research** | ⏳ **Pending** | Needs `errors.py`, `retry.py` for HTTP calls |
+| **workflows/deep_research** | ⏳ **Pending** | Needs `errors.py`, `retry.py` for HTTP calls |
 
-### P3 — Cost Tracking / Budget Awareness
-- [ ] **Add `core/net/budget.py`**
-  - Counter per paid API (Tavily)
-  - Configurable daily limit, auto-CB-open on exhaustion
-  - Expose via `system_status` tool or tracer metrics
+---
+
+## 📋 Per-Tool Integration Tasks
+
+### web
+
+**What to do:**
+- Replace `core/security.py` imports with `core/net/security.py`
+- Replace `core/web_errors.py` imports with `core/net/errors.py`
+- Replace hardcoded retry/backoff with `retry_sync()` + `get_retry_delay()`
+- Replace hardcoded constants with `core.net.default` imports
+- Add `register_retryable_exception()` for any SDK-specific errors
+- Use `normalize_url()` for cache keys in `web_ops/actions/scrape.py`
+- Add `_assert_safe_urls()` before any URL fetch in `web_ops/actions/*.py`
+
+**What to check:**
+- `web_ops` structure mirrors `tavily_ops` (thin facade + `actions/` subfolder)
+- Verify `web_ops/actions/search.py` doesn't duplicate Tavily search logic
+- Check if `web_ops` has its own SSRF logic that conflicts with `core/net/security.py`
+
+**What to avoid:**
+- Don't create a second `web_errors.py` — use `core/net/errors.py`
+- Don't hardcode timeout values — import from `core.net.default`
+- Don't skip `register_retryable_exception()` if wrapping a new SDK
+
+### browser
+
+**What to do:**
+- Same as web: replace security, errors, retry imports with `core/net/` equivalents
+- Use `classify_http_error()` for Playwright navigation errors
+- Use `get_retry_delay()` for browser nav retries
+- Use `normalize_url()` for page URL comparison
+
+**What to check:**
+- `browser_ops` structure mirrors `tavily_ops` (thin facade + `actions/` subfolder)
+- Playwright errors may need custom `register_retryable_exception()` mapping
+- Browser timeouts may differ from network timeouts — check `BROWSER_TIMEOUT` in `default.py`
+
+**What to avoid:**
+- Don't treat all Playwright errors as retryable — `TimeoutError` from page load is different from `ConnectError`
+- Don't use `retry_sync()` for interactive operations (click, fill) — only for navigation/fetch
+
+### workflows/research + workflows/deep_research
+
+**What to do:**
+- Replace inline HTTP error classification with `classify_http_error()`
+- Use `is_retryable_error()` for workflow retry decisions
+- Use `get_retry_delay()` for workflow backoff calculations
+- Use `check_budget()` + `record_tool_call()` if workflows call paid APIs directly
+
+**What to check:**
+- Workflows may call `tavily(action="search")` facade — already uses `core/net/`
+- `deep_research_impl/nodes/search.py` uses `tavily(search)` — verify it gets budget tracking
+- Workflows may have their own retry logic — consolidate with `core/net/retry.py`
+
+**What to avoid:**
+- Don't bypass the Tavily facade to call `run_research()` directly unless intentional
+- Don't duplicate budget tracking — if calling through facade, it's already tracked
+
+---
+
+## 🔄 Suggested Implementation Order
+
+```text
+Phase 1: web tool (highest impact, most shared code)
+  → errors.py, security.py, retry.py, url.py, default.py
+  → Update tests: patch imports, add conftest fixtures
+
+Phase 2: browser tool
+  → errors.py, security.py, retry.py, url.py, default.py
+  → Playwright-specific exception registration
+  → Update tests: patch imports, add conftest fixtures
+
+Phase 3: workflows
+  → errors.py, retry.py for workflow-level HTTP calls
+  → Budget tracking if workflows call APIs directly
+  → Verify deep_research uses tavily facade (already tracked)
+```
+
+---
+
+## ⚠️ Common Pitfalls
+
+| Pitfall | Why It Happens | Fix |
+|---------|---------------|-----|
+| `socket.getaddrinfo(timeout=...)` crash | socket has no timeout kwarg | Use `ThreadPoolExecutor` + `future.result(timeout=)` |
+| Coroutine reuse crash | Passing `_call()` instead of `_call` to `retry_async_factory` | Pass factory callable, not coroutine object |
+| Budget deadlock | Using `Lock()` instead of `RLock()` in nested calls | Use `threading.RLock()` |
+| Test pollution | Budget tracker singleton not reset between tests | `_budget_tracker._calls.clear()` in conftest |
+| IPv6 test failures | `2001:db8::1` is reserved in Python | Use `2001:4860:4860::8888` for public IPv6 tests |
+| Mock coroutine errors | MagicMock returns MagicMock, not coroutine | Use `AsyncMock` for async methods |
+| Keyless mode leaks | `_is_keyless_mode` not patched in tests | Patch `cfg.tavily_api_key` or module-level function |
+
+---
+
+## 📝 Notes for Future Sessions
+
+- **web** and **browser** have the same structure as tavily (thin facade + `actions/` subfolder)
+- Both need to integrate `core/net/` modules but may have tool-specific exceptions
+- Workflows are different structure — focus on `errors.py` and `retry.py` integration
+- Check `docs/core/NET.md` for full API details, patterns, and AI instructions
+- The original `docs/INTEGRATION.md` had general suggestions — verify against actual source before implementing
+- Tavily v1.3 is the **reference implementation** — copy patterns from `tools/tavily_ops/`
+
+---
+
+*Last updated: Tavily v1.3 / core/net v1.3*
