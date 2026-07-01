@@ -536,7 +536,7 @@ tests/tools/browser/
 | `tools/browser_ops/actions/*.py` | Atomic action handlers (20 files) |
 | `tests/tools/browser/` | 27 test files + conftest.py |
 | `tests/tools/browser/conftest.py` | `mock_browser`, `mock_cfg_for_browser`, `reset_browser_state` |
-| `core/security.py` | `is_safe_network_address` — SSRF protection |
+| `core/net/security.py` | `is_safe_network_address` — SSRF protection |
 | `core/tracer.py` | `tracer.step()` — observability |
 
 ---

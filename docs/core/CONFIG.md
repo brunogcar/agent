@@ -550,7 +550,7 @@ The `cfg.allowed_internal_hosts` frozenset defines which internal hosts network 
 
 ### First-Use Warning (Not a Startup Warning)
 
-> ⚠️ This lives in `core/security.py`, not `core/config.py`, and it doesn't fire at startup. It's gated by a one-time `_SSRF_WARNED` flag inside `is_safe_network_address()`, so it only fires the first time any tool actually performs a network-safety check — which could be seconds after startup, much later, or never, depending on when (if ever) a network-touching tool is first invoked.
+> ⚠️ This lives in `core/net/security.py`, not `core/config.py`, and it doesn't fire at startup. It's gated by a one-time `_SSRF_WARNED` flag inside `is_safe_network_address()`, so it only fires the first time any tool actually performs a network-safety check — which could be seconds after startup, much later, or never, depending on when (if ever) a network-touching tool is first invoked.
 
 If `allowed_internal_hosts` is non-empty, on that first check, `logger.warning()` logs:
 ```
@@ -678,7 +678,7 @@ If you are an AI assistant modifying `core/config.py`:
 | `core/llm_backend/client.py` | LLMClient (uses `model_registry`, timeouts) |
 | `core/memory_backend/store.py` | `MemoryStore` class (uses `memory_chroma_path`, tuning params) — **not** "ChromaDBMemory" |
 | `core/memory_backend/budget.py` | Cognitive context budgeting (uses `max_context_tokens`) |
-| `core/security.py` | SSRF allowlist enforcement (uses `allowed_internal_hosts`) — also where the first-use warning actually lives, not `config.py` |
+| `core/net/security.py` | SSRF allowlist enforcement (uses `allowed_internal_hosts`) — also where the first-use warning actually lives, not `config.py` |
 | `core/sleep_learn/config.py` | Sleep & Learn constants (uses `SLEEP_*` env vars) |
 | `core/gateway_backend/factory.py` | Gateway app factory (uses gateway config) |
 

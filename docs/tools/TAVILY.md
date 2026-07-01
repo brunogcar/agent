@@ -25,7 +25,7 @@ The `tavily()` tool provides **AI-optimized web search and content extraction** 
 | Old | New | Migration |
 |-----|-----|-----------|
 | `_run_async_with_resilience(coro)` takes coroutine object | Takes **coroutine factory** callable | Pass `_call` not `_call()` at all action call sites |
-| `core/security.py` + `core/web_errors.py` standalone | Moved to `core/net/` package | Update imports: `core.security` → `core.net.security`, `core.web_errors` → `core.net.errors` |
+| `core/security.py` + `core/web_errors.py` standalone | Moved to `core/net/` package | Update imports: `core.net.security` → `core.net.security`, `core.net.retry` → `core.net.errors` |
 | `max_depth` default 2, `limit` default 100 | `max_depth` default 3, `limit` default 50 | No migration — facade now accepts params again; defaults changed |
 | `raw_content` always included in search results | Stripped when `include_raw_content=False` | No migration — restored v1.0 behavior |
 | Error messages plain strings | All errors include `error_code` field | Consumers can now check `error_code` instead of parsing strings |
@@ -119,13 +119,6 @@ core/net/                    # v1.2: Shared network infrastructure
 ├── budget.py                # APICostTracker — cost tracking per tool
 ├── url.py                   # normalize_url(), extract_domain(), is_same_domain()
 └── default.py               # Shared defaults: SEARCH_MAX_RESULTS, CRAWL_MAX_DEPTH, RETRY_BASE_DELAY, etc.
-
-core/security.py             # BACKWARD COMPAT: re-exports from core.net.security (remove after migration)
-core/web_errors.py           # BACKWARD COMPAT: re-exports from core.net.errors (remove after migration)
-
-EDIT: 
-- files deleted
-- need to check for missing imports
 ```
 
 ### Dispatch Flow
@@ -603,8 +596,8 @@ tests/core/net/                   # v1.2
 | **`include_domains`/`exclude_domains`** | ✅ **v1.1** | Domain-scoped research |
 | **`topic` parameter surfaced** | ✅ **v1.1** | News/current-events filtering |
 | **API key sanitization** | ✅ **v1.1** | Key stripped from all error messages |
-| **`_assert_safe_urls` in `core/security.py`** | ✅ **v1.1** | Cross-tool shared SSRF guard |
-| **`core/web_errors.py` shared module** | ✅ **v1.1** | `classify_http_error()`, `is_retryable_error()` for web + tavily |
+| **`_assert_safe_urls` in `core/net/security.py`** | ✅ **v1.1** | Cross-tool shared SSRF guard |
+| **`core/net/retry.py` shared module** | ✅ **v1.1** | `classify_http_error()`, `is_retryable_error()` for web + tavily |
 | **`_close_client()` actually closes** | ✅ **v1.1** | Properly awaits `client.close()` via bridge |
 | **`crawl`/`map` URL strictly required** | ✅ **v1.1** | Removed misleading `url or query` fallback |
 | **Coroutine factory pattern** | ✅ **v1.2** | Prevents coroutine reuse crash on retry; `_call` not `_call()` |
@@ -630,7 +623,7 @@ tests/core/net/                   # v1.2
 | `tavily(search)` as primary search in research workflow | Replace `web(search)` with `tavily(search)` in `workflows/research.py` when API key present | P2 |
 | Add `@cached` decorator | LRU cache for search/extract results (TTL 300s/1800s) | P2 |
 | URL normalization module | `core/net/url.py` — strip slashes, sort params, lowercase domain | P2 |
-| Remove backward-compat wrappers | Delete `core/security.py` and `core/web_errors.py` re-exports once web_ops/browser migrate | P3 |
+| Remove backward-compat wrappers | Delete `core/net/security.py` and `core/net/retry.py` re-exports once web_ops/browser migrate | P3 |
 | Search result deduplication | Similar to `web(search_and_read)`, deduplicate identical URLs across Tavily result pages | P3 |
 | Response caching | Cache Tavily responses (TTL-based) to avoid redundant API calls | P3 |
 | Client-side batching for `extract` | Split >10 URLs into batches of 10, execute concurrently, merge results | P2 |
@@ -710,8 +703,8 @@ tests/core/net/                   # v1.2
 | `core/net/budget.py` | `APICostTracker`, `record_tool_call()`, `check_budget()` — cost tracking |
 | `core/net/url.py` | `normalize_url()`, `extract_domain()`, `is_same_domain()` — URL utilities |
 | `core/net/default.py` | `SEARCH_MAX_RESULTS`, `CRAWL_MAX_DEPTH`, `RETRY_BASE_DELAY`, `CB_FAILURE_THRESHOLD` — shared defaults |
-| `core/security.py` | BACKWARD COMPAT — re-exports from `core.net.security` (remove after migration) |
-| `core/web_errors.py` | BACKWARD COMPAT — re-exports from `core.net.errors` (remove after migration) |
+| `core/net/security.py` | BACKWARD COMPAT — re-exports from `core.net.security` (remove after migration) |
+| `core/net/retry.py` | BACKWARD COMPAT — re-exports from `core.net.errors` (remove after migration) |
 | `core/contracts.py` | `ok()` / `fail()` — standardized return dicts with `trace_id` + `error_code` injection |
 | `core/config.py` | `cfg.tavily_api_key`, `cfg.tavily_timeout` |
 | `core/memory_backend/pruner.py` | `prune_tool_dict()` — head+tail truncation, artifact storage |

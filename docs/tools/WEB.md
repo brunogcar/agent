@@ -8,7 +8,7 @@ The `web()` tool provides web search and content extraction via **SearXNG** (sel
 - **Parallel scraping** — `search_and_read` fans out to `ThreadPoolExecutor` for concurrent page fetching
 - **Lightweight** — pure Python (`httpx` + `BS4`), no browser overhead
 - **Connection pooling** — singleton `httpx.Client` reuses TCP/TLS connections across calls
-- **SSRF protection** — all URLs validated via `core.security.is_safe_network_address` before any HTTP request
+- **SSRF protection** — all URLs validated via `core.net.security.is_safe_network_address` before any HTTP request
 - **Content-type guard** — rejects PDFs, images, and oversized responses before parsing
 - **Retry with backoff** — one retry on transient errors (503, 429, timeout) with exponential backoff
 - **User-agent rotation** — rotates through a pool of browser UAs to reduce 403 blocks
@@ -75,7 +75,7 @@ graph TD
 - **Singleton client in `client.py`** — `_HTTP_CLIENT` created once with `httpx.Limits(max_connections=20)` and reused across all calls. `atexit.register(_close_client)` ensures cleanup on process exit. Thread-safe for `ThreadPoolExecutor` usage.
 - **User-agent rotation** — `_pick_user_agent()` selects from a pool of 4 realistic browser UAs on singleton creation. Reduces 403 blocks from sites filtering on default `python-httpx` UA.
 - **State isolation in `state.py`** — `reset_state()` closes the singleton and nullifies the reference for test isolation. `reset_loop()` is a no-op for compatibility with browser test fixtures.
-- **SSRF in `utils.py`** — `_is_safe_url()` is shared by both `search.py` (validates SearXNG URL) and `scrape.py` (validates target URLs). Calls `core.security.is_safe_network_address`. Also enforces an `http`/`https` scheme allowlist — rejects `file://`, `ftp://`, `javascript:`, etc.
+- **SSRF in `utils.py`** — `_is_safe_url()` is shared by both `search.py` (validates SearXNG URL) and `scrape.py` (validates target URLs). Calls `core.net.security.is_safe_network_address`. Also enforces an `http`/`https` scheme allowlist — rejects `file://`, `ftp://`, `javascript:`, etc.
 - **Lazy BS4 import** — `from bs4 import BeautifulSoup` only happens inside `_html_to_text()` on first call. Keeps startup fast if web tool is never used.
 - **`read` = `scrape` + pruning** — The `read` action calls `_action_scrape()` internally, then pipes the result through `prune_tool_dict()` from `core.memory_backend.pruner`. This truncates oversized outputs and saves full content to `workspace/.artifacts/`.
 - **`scrape` = raw extraction** — Returns the full unpruned result. Exposed as a public action for callers that want complete text without truncation.
@@ -265,7 +265,7 @@ def _is_safe_url(url: str) -> bool:
     hostname = parsed.hostname
     if not hostname:
         return False
-    from core.security import is_safe_network_address
+    from core.net.security import is_safe_network_address
     return is_safe_network_address(hostname)
 ```
 
@@ -348,7 +348,7 @@ D:\\mcp\\agent\\venv\\Scripts\\pytest.exe tests/tools/web/ -W error --tb=short -
 - Mock `httpx.Client` at the action module level (patch `tools.web_ops.actions.{search,scrape}._make_client`)
 - Mock `cfg` with explicit integers (no `MagicMock` comparison errors for `cfg.web_max_text_chars`, `cfg.web_snippet_chars`)
 - Use a **single shared mock** patched into all action modules — ensures mutations are visible to every handler
-- Test SSRF blocking by patching `core.security.is_safe_network_address` (not the wrapper)
+- Test SSRF blocking by patching `core.net.security.is_safe_network_address` (not the wrapper)
 - Test timeout and connection error handling via `httpx.TimeoutException`, `httpx.ConnectError`
 - Test action dispatch (`search`, `scrape`, `read`, `search_and_read`, unknown action)
 - Test `_html_to_text` with various HTML structures (no `bs4` mock needed — it\'s pure HTML parsing)
@@ -395,7 +395,7 @@ tests/tools/web/
 - **PDF pre-flight detection** — URLs ending in `.pdf` are rejected before any HTTP request. Previously, PDFs were fetched and passed to BeautifulSoup.
 - **User-agent rotation added** — Singleton client now uses a rotating pool of 4 browser UAs. Previously, a single hardcoded UA was used.
 - **Scheme allowlist in `_is_safe_url`** — Only `http://` and `https://` are allowed. Previously, `file:///etc/passwd` could bypass hostname checks.
-- **`is_safe_network_address` lazy import** — Moved from module-level to inside `_is_safe_url()`. Prevents `core.security` from being loaded at `web_ops` import time.
+- **`is_safe_network_address` lazy import** — Moved from module-level to inside `_is_safe_url()`. Prevents `core.net.security` from being loaded at `web_ops` import time.
 - **`ThreadPoolExecutor` shutdown fix** — `search_and_read` now uses explicit `ex.shutdown(wait=False)` after `wait()` returns. Previously, the `with` context manager called `shutdown(wait=True)`, blocking until all threads finished and making `cfg.worker_timeout` ineffective.
 
 ### v1 (`@meta_tool` refactor + atomic actions)
@@ -427,7 +427,7 @@ tests/tools/web/
 | SearXNG integration | ✅ v1.0 | `httpx` GET to `/search?format=json` |
 | BeautifulSoup4 extraction | ✅ v1.0 | Decomposes `script`, `style`, `nav`, `footer`, `header`, `aside`, `noscript`, `iframe`; targets `main`/`article`/content id/class |
 | Module-level singleton `httpx.Client` | ✅ v1.0 | Connection pooling, `atexit` cleanup, thread-safe |
-| SSRF protection | ✅ v1.0 | `_is_safe_url` → `core.security.is_safe_network_address` |
+| SSRF protection | ✅ v1.0 | `_is_safe_url` → `core.net.security.is_safe_network_address` |
 | URL deduplication in `search_and_read` | ✅ v1.0 | Preserves rank order, counts `duplicates_removed` |
 | Parallel scraping with global timeout | ✅ v1.0 | `ThreadPoolExecutor` + `concurrent.futures.wait()` + `cfg.worker_timeout` |
 | Config-driven limits | ✅ v1.0 | `cfg.web_max_text_chars`, `cfg.web_snippet_chars`, `cfg.web_max_search_results`, `cfg.searxng_url` |
@@ -492,7 +492,7 @@ tests/tools/web/
 ### ALWAYS DO
 12. **Always use `_make_client()` context manager** — yields the singleton without closing it. Never use `httpx.Client()` directly in new code.
 13. **Always call `prune_tool_dict()` for `read` and `search_and_read`** — these are the user-facing actions that may return large text. `scrape` is the raw internal helper.
-14. **Always test SSRF blocking** — patch `core.security.is_safe_network_address` (not the wrapper) and assert blocked URLs return `fail`.
+14. **Always test SSRF blocking** — patch `core.net.security.is_safe_network_address` (not the wrapper) and assert blocked URLs return `fail`.
 15. **Always test with explicit `cfg` values** — `MagicMock` causes comparison errors with `cfg.web_max_text_chars`. Use `patch.object(cfg, \'web_max_text_chars\', 8000)`.
 16. **Always test the unknown action path** — `web(action="nonsense")` must return `fail` with the usage hint.
 17. **Always patch where the name is looked up** — `tools.web_ops.actions.search._make_client`, not `tools.web._make_client`.
@@ -520,7 +520,7 @@ tests/tools/web/
 | `tools/web_ops/actions/scrape.py` | `_action_scrape()`, `_fetch_html()` (guards + retry), `_html_to_text()` — fetch + extract |
 | `tools/web_ops/actions/read.py` | `_action_read()` — scrape + `prune_tool_dict()` alias |
 | `tools/web_ops/actions/search_and_read.py` | `_action_search_and_read()` — composite: search → dedup → parallel scrape → prune |
-| `core/security.py` | `is_safe_network_address()` — SSRF protection |
+| `core/net/security.py` | `is_safe_network_address()` — SSRF protection |
 | `core/contracts.py` | `ok()` / `fail()` — standardized return dicts with `trace_id` injection |
 | `core/config.py` | `cfg.searxng_url`, `cfg.web_max_text_chars`, `cfg.web_snippet_chars`, `cfg.web_max_search_results`, `cfg.worker_timeout` |
 | `core/memory_backend/pruner.py` | `prune_tool_dict()` — head+tail truncation, artifact storage |

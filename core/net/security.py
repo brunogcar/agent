@@ -1,6 +1,6 @@
 """core/net/security.py — SSRF prevention and URL safety checks.
 
-v1.1: Moved from core/net/security.py; added _assert_safe_urls.
+v1.1: Moved from core/security.py; added _assert_safe_urls.
 v1.2: Fixed empty hostname bypass, IPv6 port stripping, scheme validation.
 """
 from __future__ import annotations

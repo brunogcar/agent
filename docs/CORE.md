@@ -438,8 +438,8 @@ These files are self-contained utilities used across multiple subsystems:
 | 🟢 Low | Split-brain unification (meta_learning vs sleep_learn) | `core/memory_backend/`, `core/sleep_learn/` | Partial | Both write to `procedural` with source tags; `injector.py` queries both via `[FIX 8]` merge. Functional but two separate ChromaDB locations. |
 | 🟢 Low | Windows file lock on JSONL logs | `core/tracer.py` | Known | `PermissionError` during concurrent access; retry logic in place |
 | 🟢 Low | ChromaDB singleton thread-safety (free-threaded Python 3.13+) | `core/sleep_learn/`, `core/kgraph/` | Known | GIL protects today; add locks if moving to free-threaded Python |
-| 🟢 Low | DNS pool max_workers=2 may queue under parallel tool load | `core/security.py` | Known | Not a concern for local-first; revisit if gateway exposed |
-| 🟢 Low | CGNAT/multicast not blocked by SSRF | `core/security.py` | Known | `100.64.0.0/10` and multicast pass; low risk for local agent |
+| 🟢 Low | DNS pool max_workers=2 may queue under parallel tool load | `core/net/security.py` | Known | Not a concern for local-first; revisit if gateway exposed |
+| 🟢 Low | CGNAT/multicast not blocked by SSRF | `core/net/security.py` | Known | `100.64.0.0/10` and multicast pass; low risk for local agent |
 | 🟢 Low | Stale internal docstring paths | `memory_backend/budget.py`, `memory_backend/pruner.py`, `memory_backend/meta_learning.py`, `citations.py`, `parallel_executor.py`, `tracer_reader.py`, `runtime/watchdog.py`, `runtime/providers.py` | Known | Each file's own module docstring header references its old pre-refactor path. Cosmetic but misleads doc-generation AIs. |
 | ✅ Resolved | Sleep daemon starts on any core import | `core/__init__.py` | **Fixed** | Moved to explicit `_start_sleep_learn()` in `server.py` |
 | ✅ Resolved | Tracer kwargs merge order corruption | `core/tracer.py` | **Fixed** | kwargs spread FIRST in step/error/warning/finish |

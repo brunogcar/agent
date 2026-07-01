@@ -1,5 +1,5 @@
-﻿"""
-SSRF Protection Tests — Self-contained, no conftest.py dependencies.
+"""
+SSRF Protection Tests � Self-contained, no conftest.py dependencies.
 Tests the network-scope blocking logic in tools/vision.py and tools/web.py.
 Run with: pytest tests/security/test_ssrf_protection.py -v --tb=short
 """
