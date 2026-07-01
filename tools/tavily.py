@@ -4,6 +4,9 @@ Routes all tavily actions to handlers in tavily_ops/actions/ via the DISPATCH di
 This is the only file scanned by registry.py for @tool decorators;
 tavily_ops/ submodules are invisible to the registry.
 
+v1.2: Restored max_depth, max_breadth, limit facade params.
+      Added error_code support in fail() responses.
+
 PARALLEL_SAFE = True because AsyncTavilyClient is thread-safe.
 """
 from __future__ import annotations
@@ -16,11 +19,9 @@ from registry import tool
 from tools._meta_tool import meta_tool
 
 # Import tavily_ops to trigger DISPATCH auto-discovery before @meta_tool reads it.
-# This must happen before the facade is defined.
 from tools import tavily_ops  # noqa: F401
 from tools.tavily_ops._registry import DISPATCH
 
-# Module-level flags
 PARALLEL_SAFE = True
 
 
@@ -43,8 +44,6 @@ def tavily(
     action: str,
     query: str = "",
     url: str = "",
-    # v1.1: urls is a facade param for the extract action.
-    # Must be in the signature so tavily(action="extract", urls=[...]) works.
     urls: Optional[List[str]] = None,
     max_results: int = 5,
     search_depth: str = "basic",
@@ -56,7 +55,10 @@ def tavily(
     citation_format: str = "numbered",
     topic: str = "general",
     time_range: str = "",
-    # v1.1: Domain filtering for research scoping
+    # v1.2: Restored facade params for crawl/map control
+    max_depth: int = 3,
+    max_breadth: int = 10,
+    limit: int = 50,
     include_domains: Optional[List[str]] = None,
     exclude_domains: Optional[List[str]] = None,
     max_chars: Optional[int] = None,
@@ -73,6 +75,7 @@ def tavily(
         return fail(
             f"Unknown action '{action}'. Use: {valid_actions}",
             trace_id=trace_id,
+            error_code="INVALID_ACTION",
         )
 
     handler = op_info["func"]
@@ -90,12 +93,14 @@ def tavily(
         "citation_format": citation_format,
         "topic": topic,
         "time_range": time_range,
-        # v1.1: Pass domain filtering through to action handlers
+        # v1.2: Pass through restored params
+        "max_depth": max_depth,
+        "max_breadth": max_breadth,
+        "limit": limit,
         "include_domains": include_domains,
         "exclude_domains": exclude_domains,
         "trace_id": trace_id,
     }
-    # v1.1: Only pass urls when explicitly provided (extract action)
     if urls is not None:
         kwargs["urls"] = urls
     if max_chars is not None:
@@ -105,12 +110,13 @@ def tavily(
         result = handler(**kwargs)
     except Exception as e:
         tracer.step(trace_id, "tavily", f"action={action}:failed")
-        return fail(f"Tavily action failed: {e}", trace_id=trace_id)
+        return fail(f"Tavily action failed: {e}", trace_id=trace_id, error_code="INTERNAL_ERROR")
 
     if not isinstance(result, dict):
         return fail(
             f"Handler returned {type(result).__name__}, expected dict.",
             trace_id=trace_id,
+            error_code="INTERNAL_ERROR",
         )
 
     if result.get("status") == "error":

@@ -25,7 +25,7 @@ import httpx
 from registry import tool
 import logging
 from core.config import cfg
-from core.security import is_safe_network_address
+from core.net.security import is_safe_network_address
 from core.llm import llm
 from core.tracer import tracer
 

@@ -1,4 +1,8 @@
-"""Tavily action: extract — Bulk URL content extraction."""
+"""tools/tavily_ops/actions/extract.py — Tavily extract action handler.
+
+v1.2: Consistency fix — use coroutine factory pattern even though extract
+doesn't use _run_async_with_resilience (keyless mode uses plain _run_async).
+"""
 from __future__ import annotations
 from typing import Optional
 
@@ -7,7 +11,6 @@ from tools.tavily_ops._registry import register_action
 from tools.tavily_ops.bridge import _run_async
 import tools.tavily_ops.client as _client
 from tools.tavily_ops.errors import _handle_tavily_error, _assert_safe_urls
-
 
 @register_action(
     "tavily", "extract",
@@ -53,7 +56,7 @@ def _action_extract(
     try:
         result = _run_async(_call())
     except Exception as e:
-        return _handle_tavily_error(e)
+        return _handle_tavily_error(e, trace_id=trace_id)
 
     response = ok(
         {"results": result.get("results", []), "keyless": keyless},

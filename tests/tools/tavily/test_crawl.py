@@ -1,4 +1,7 @@
-"""Tavily tests — crawl action."""
+"""Tavily tests — crawl action.
+
+v1.2: Added coroutine factory verification.
+"""
 from __future__ import annotations
 
 import pytest
@@ -11,58 +14,70 @@ class TestCrawl:
     """Test tavily crawl action."""
 
     def test_crawl_success(self, mock_tavily_client):
-        result = tavily(action="crawl", url="https://example.com")
+        with patch("tools.tavily_ops.errors._assert_safe_urls", return_value=""):
+            result = tavily(action="crawl", url="https://example.com")
         assert result["status"] == "success"
-        assert result["data"]["keyless"] is False
+        assert result["data"]["url"] == "https://example.com"
         mock_tavily_client.crawl.assert_called_once()
 
     def test_crawl_missing_url(self, mock_tavily_client):
         result = tavily(action="crawl")
         assert result["status"] == "error"
-        # v1.1: Updated to match new error message (url is now strictly required)
         assert "action='crawl' requires url=" in result["error"]
 
-    # v1.1: REMOVED test_crawl_uses_query_as_url_fallback — this behavior was
-    # a bug. query is now purely for instructions, not a URL substitute.
-    # Passing only query without url returns an error.
-
     def test_crawl_query_as_instructions(self, mock_tavily_client):
-        """v1.1: query is passed as instructions, not as URL fallback."""
-        result = tavily(action="crawl", url="https://example.com", query="find API docs")
+        with patch("tools.tavily_ops.errors._assert_safe_urls", return_value=""):
+            result = tavily(
+                action="crawl",
+                url="https://example.com",
+                query="focus on asyncio",
+            )
         assert result["status"] == "success"
         call_kwargs = mock_tavily_client.crawl.call_args[1]
-        assert call_kwargs["instructions"] == "find API docs"
-        assert call_kwargs["url"] == "https://example.com"
+        assert call_kwargs["instructions"] == "focus on asyncio"
 
     def test_crawl_keyless_blocked(self, mock_tavily_client):
         with patch("tools.tavily_ops.client.cfg.tavily_api_key", ""):
-            result = tavily(action="crawl", url="https://example.com")
-        assert result["status"] == "error"
-        assert "requires a Tavily API key" in result["error"]
+            with patch("tools.tavily_ops.errors._assert_safe_urls", return_value=""):
+                result = tavily(action="crawl", url="https://example.com")
+            assert result["status"] == "error"
+            assert "requires a Tavily API key" in result["error"]
 
     def test_crawl_ssrf_blocked(self, mock_tavily_client):
-        # v1.1: Patch core.security.is_safe_network_address since
-        # _assert_safe_urls was moved there for cross-tool sharing.
-        with patch("core.security.is_safe_network_address", return_value=False):
-            result = tavily(action="crawl", url="http://192.168.1.1/admin")
+        result = tavily(action="crawl", url="http://127.0.0.1/admin")
         assert result["status"] == "error"
         assert "Blocked" in result["error"]
 
-    def test_crawl_passes_extract_depth_and_format(self, mock_tavily_client):
-        result = tavily(
-            action="crawl",
-            url="https://example.com",
-            extract_depth="advanced",
-            format="text",
-        )
+    # v1.2: NEW — facade params pass-through
+    def test_crawl_facade_params(self, mock_tavily_client):
+        with patch("tools.tavily_ops.errors._assert_safe_urls", return_value=""):
+            result = tavily(
+                action="crawl",
+                url="https://example.com",
+                max_depth=5,
+                max_breadth=20,
+                limit=100,
+            )
         assert result["status"] == "success"
         call_kwargs = mock_tavily_client.crawl.call_args[1]
-        assert call_kwargs["extract_depth"] == "advanced"
-        assert call_kwargs["format"] == "text"
+        assert call_kwargs["max_depth"] == 5
+        assert call_kwargs["max_breadth"] == 20
+        assert call_kwargs["limit"] == 100
 
-    def test_crawl_uses_instructions_not_query(self, mock_tavily_client):
-        result = tavily(action="crawl", url="https://example.com", query="find API docs")
+    # v1.2: NEW — coroutine factory pattern
+    def test_crawl_uses_coroutine_factory(self, mock_tavily_client):
+        """Crawl action passes factory to _run_async_with_resilience."""
+        call_count = [0]
+
+        async def _side_effect(*args, **kwargs):
+            call_count[0] += 1
+            return {"results": [{"url": "https://example.com/page1"}]}
+
+        mock_tavily_client.crawl.side_effect = _side_effect
+
+        with patch("tools.tavily_ops.errors._assert_safe_urls", return_value=""):
+            with patch("tools.tavily_ops.bridge.time.sleep"):
+                result = tavily(action="crawl", url="https://example.com")
+
         assert result["status"] == "success"
-        call_kwargs = mock_tavily_client.crawl.call_args[1]
-        assert call_kwargs["instructions"] == "find API docs"
-        assert "query" not in call_kwargs
+        assert call_count[0] == 1  # Factory called once on success

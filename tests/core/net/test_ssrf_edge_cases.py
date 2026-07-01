@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import patch
 
-from core.security import is_safe_network_address
+from core.net.security import is_safe_network_address
 
 
 @pytest.fixture(autouse=True)

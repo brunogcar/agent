@@ -1,7 +1,6 @@
 """tests/tools/tavily/test_circuit_breaker.py — Circuit breaker integration tests.
 
-v1.1: Added to verify the Tavily circuit breaker state machine:
-CLOSED → OPEN → HALF_OPEN → CLOSED.
+v1.2: Added reset() method usage, half_open_max_calls enforcement test.
 """
 from __future__ import annotations
 
@@ -16,10 +15,7 @@ class TestCircuitBreaker:
 
     def setup_method(self):
         """Reset CB to known state before each test."""
-        _TAVILY_CB._state = "closed"
-        _TAVILY_CB._failure_count = 0
-        _TAVILY_CB._last_failure_time = 0.0
-        _TAVILY_CB._half_open_calls = 0
+        _TAVILY_CB.reset()
 
     def test_initial_state_is_closed(self):
         assert _TAVILY_CB.get_state_info()["state"] == "closed"
@@ -59,3 +55,35 @@ class TestCircuitBreaker:
         _TAVILY_CB.record_success()
         assert _TAVILY_CB.get_state_info()["state"] == "closed"
         assert _TAVILY_CB._failure_count == 0
+
+    # v1.2: NEW — test half_open_max_calls enforcement
+    def test_half_open_max_calls_enforced(self):
+        """Only half_open_max_calls are allowed in HALF_OPEN state."""
+        _TAVILY_CB._state = "half-open"
+        _TAVILY_CB._half_open_calls = 0
+        _TAVILY_CB.half_open_max_calls = 2
+
+        assert _TAVILY_CB.can_execute() is True   # 1st call
+        assert _TAVILY_CB.can_execute() is True   # 2nd call
+        assert _TAVILY_CB.can_execute() is False  # 3rd call blocked
+
+    # v1.2: NEW — test reset() method
+    def test_reset_clears_all_state(self):
+        _TAVILY_CB.record_failure()
+        _TAVILY_CB.record_failure()
+        _TAVILY_CB.record_failure()
+        assert _TAVILY_CB.get_state_info()["state"] == "open"
+
+        _TAVILY_CB.reset()
+        assert _TAVILY_CB.get_state_info()["state"] == "closed"
+        assert _TAVILY_CB._failure_count == 0
+        assert _TAVILY_CB._last_failure_time == 0.0
+        assert _TAVILY_CB._half_open_calls == 0
+
+    # v1.2: NEW — test record_success in CLOSED is no-op
+    def test_record_success_in_closed_is_noop(self):
+        _TAVILY_CB._state = "closed"
+        _TAVILY_CB._failure_count = 2
+        _TAVILY_CB.record_success()
+        assert _TAVILY_CB._failure_count == 2  # Unchanged
+        assert _TAVILY_CB.get_state_info()["state"] == "closed"

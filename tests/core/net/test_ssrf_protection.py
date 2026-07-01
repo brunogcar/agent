@@ -8,7 +8,7 @@ import pytest
 from urllib.parse import urlparse
 
 # Import the function under test directly
-from core.security import _is_private_or_localhost
+from core.net.security import _is_private_or_localhost
 
 
 class TestSSRFNetworkScopeBlocking:
@@ -83,8 +83,8 @@ class TestSSRFNetworkScopeBlocking:
         """Test that ALLOWED_INTERNAL_HOSTS='' blocks all localhost/private access."""
         monkeypatch.setenv("ALLOWED_INTERNAL_HOSTS", "")
         
-        import core.security
-        monkeypatch.setattr(core.security.cfg, "allowed_internal_hosts", frozenset())
+        import core.net.security as core_security
+        monkeypatch.setattr(core.net.security.cfg, "allowed_internal_hosts", frozenset())
         
         # All localhost variants should be blocked
         assert _is_private_or_localhost("localhost") is True

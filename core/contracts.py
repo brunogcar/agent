@@ -1,16 +1,16 @@
-"""
-core/contracts.py — Strict data contracts for inter-model communication.
+"""core/contracts.py — Strict data contracts for inter-model communication.
 
 Prevents silent failures from schema drift between Planner, Router, and Executor.
 If a model outputs an outdated or malformed tool call, we catch it here immediately
 instead of letting it crash downstream or execute the wrong action.
+
+v1.2: Added error_code parameter to fail() for structured error classification.
 """
 from __future__ import annotations
 
 from typing import Literal, Any, TypedDict, Optional
 from pydantic import BaseModel, Field, ValidationError, ConfigDict
 
-# Bump this when you intentionally change the tool call structure
 SCHEMA_VERSION = "1.0"
 
 
@@ -25,32 +25,22 @@ class ToolCall(BaseModel):
 
 
 def validate_tool_call(payload: dict) -> ToolCall:
-    """
-    Validate tool call against current schema version.
-    
-    Raises ValidationError if payload doesn't match expected structure.
-    This prevents silent failures from model version drift or schema incompatibility.
-    """
-    # Inject default version if the LLM forgot to include it (backward compatibility)
+    """Validate tool call against current schema version."""
     if "_version" not in payload and "schema_version" not in payload:
         payload["_version"] = SCHEMA_VERSION
-        
     return ToolCall.model_validate(payload)
 
-# ── ToolResult Standard Schema ───────────────────────────────────────────────
-# Every tool must return a dict matching this shape.
 
 class ToolResult(TypedDict, total=False):
-    """
-    Standard return schema for ALL tools.
-    """
+    """Standard return schema for ALL tools."""
     status: Literal["success", "error", "routed", "needs_clarification", "sent", "scheduled"]
-    data: Optional[Any]           # Primary payload
-    error: Optional[str]         # Error message if status != "success"
-    trace_id: Optional[str]      # Always include for observability
-    model: Optional[str]         # LLM model used
-    elapsed: Optional[float]     # Execution time in seconds
-    usage: Optional[dict]       # Token usage
+    data: Optional[Any]
+    error: Optional[str]
+    trace_id: Optional[str]
+    error_code: Optional[str]  # v1.2: Structured error classification
+    model: Optional[str]
+    elapsed: Optional[float]
+    usage: Optional[dict]
 
 
 def ok(data: Any, trace_id: str = "", status: str = "success", **meta) -> dict:
@@ -62,11 +52,18 @@ def ok(data: Any, trace_id: str = "", status: str = "success", **meta) -> dict:
     return result
 
 
-def fail(error: str, trace_id: str = "", status: str = "error", **meta) -> dict:
-    """Construct a standardized error response."""
+def fail(error: str, trace_id: str = "", status: str = "error", error_code: str = "", **meta) -> dict:
+    """Construct a standardized error response.
+
+    v1.2: Added error_code for programmatic error classification.
+          Standard codes: TIMEOUT, CONNECT_ERROR, RATE_LIMITED, SERVER_ERROR,
+          CLIENT_ERROR, AUTH_FAILED, QUOTA_EXHAUSTED, INVALID_ACTION,
+          INTERNAL_ERROR, UNKNOWN
+    """
     result: dict = {"status": status, "data": None, "error": error}
     if trace_id:
         result["trace_id"] = trace_id
+    if error_code:
+        result["error_code"] = error_code
     result.update(meta)
     return result
-

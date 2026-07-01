@@ -1,7 +1,6 @@
 """tools/tavily_ops/actions/map.py — Tavily map action handler.
 
-Calls AsyncTavilyClient.map() to discover and map URLs from a starting point.
-SDK 0.7.26 compatibility: facade `query` param is translated to SDK `instructions=`.
+v1.2 FIX: Pass coroutine factory instead of coroutine object.
 """
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ from core.tracer import tracer
 from tools.tavily_ops._registry import register_action
 from tools.tavily_ops.errors import _assert_safe_urls, _handle_tavily_error
 from tools.tavily_ops import bridge
-
 
 @register_action(
     "tavily",
@@ -33,17 +31,10 @@ def _action_map(
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Map a website and return discovered URLs.
-
-    v1.1 FIX: Removed 'url or query' fallback. 'url' is required per the
-    docstring; 'query' is only for contextual instructions. Previously,
-    passing only 'query' would use it as the target URL, producing a
-    misleading SSRF error instead of a clear "url required" message.
-    """
+    """Map a website and return discovered URLs."""
     if not url:
         return fail("action='map' requires url=", trace_id=trace_id)
 
-    # v1.1: Only pass query as instructions when url was explicitly provided.
     instructions = query if query else None
 
     err = _assert_safe_urls([url])
@@ -69,12 +60,11 @@ def _action_map(
         )
 
     try:
-        # v1.1: Use _run_async_with_resilience for circuit breaker + retry
-        result = bridge._run_async_with_resilience(_call(), trace_id=trace_id)
+        # v1.2 FIX: Pass factory (_call) not coroutine (_call())
+        result = bridge._run_async_with_resilience(_call, trace_id=trace_id)
     except Exception as e:
         return _handle_tavily_error(e, trace_id=trace_id)
 
-    # v1.1: Include keyless flag for test compatibility and LLM context.
     response = ok(
         {
             "results": result.get("results", []),

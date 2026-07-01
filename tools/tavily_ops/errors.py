@@ -1,151 +1,144 @@
-"""tools/tavily_ops/errors.py — Tavily error handling and SSRF guards.
+"""tools/tavily_ops/errors.py — Tavily error sanitization + classification.
 
-v1.1: _assert_safe_urls has been moved to core.security for cross-tool sharing.
-This module re-exports it for backward compatibility with action files.
-API key sanitization added to prevent accidental key leakage in error messages.
+v1.2 FIXES:
+- Remove dead TavilyError import.
+- Fix API key sanitization (regex + length guard + URL patterns).
+- Truncate error messages to 500 chars to prevent token waste.
+- Use core/net/errors for HTTP classification.
 """
 from __future__ import annotations
 
+import re
+
 from core.config import cfg
 from core.contracts import fail
-
-# v1.1: Import shared SSRF guard from core.security.
-# Re-export is_safe_network_address for backward compatibility — existing tests
-# patch tools.tavily_ops.errors.is_safe_network_address and action files
-# import from here.
-from core.security import is_safe_network_address
+from core.net.security import _assert_safe_urls as _core_assert_safe_urls
 
 
 def _assert_safe_urls(urls):
-    """Block private/internal URLs before sending to any external API.
+    """Wrapper: delegate to core.net.security._assert_safe_urls.
 
-    v1.1: Delegates to core.security._assert_safe_urls (tuple API) and
-    converts back to the original string-return API for backward
-    compatibility with existing action file callers.
-
-    Returns:
-        Empty string "" if all URLs are safe.
-        Error message string if any URL is blocked.
+    Maintains backward-compatible string return for action handlers.
+    v1.2: Direct import from core.net.security (no lazy import needed).
     """
-    from core.security import _assert_safe_urls as _core_assert
-    safe, err = _core_assert(urls)
+    safe, err = _core_assert_safe_urls(urls)
     return err if not safe else ""
 
 
 def _handle_tavily_error(e, trace_id=""):
-    """Convert a Tavily SDK or httpx exception into a clean fail() dict.
+    """Classify and sanitize a Tavily exception into a fail() dict.
 
-    v1.1: Added API key sanitization — strips the Tavily API key from error
-    messages before returning to the LLM, preventing accidental leakage into
-    logs or context windows.
+    v1.2: Enhanced API key sanitization, error truncation, structured error_code.
     """
-    # Lazy import fallback strategy: if tavily-python isn't installed,
-    # we still produce a clean error dict without crashing on import.
-    try:
-        from tavily import TavilyError
-        # v1.1 FIX: Added TavilyKeylessLimitError to the import.
-        from tavily.errors import APIError, RateLimitError, TavilyKeylessLimitError
-        import httpx
-    except ImportError:
-        TavilyError = APIError = RateLimitError = TavilyKeylessLimitError = None
-        httpx = None
-
-    # v1.1: Sanitize API key from error messages before returning to LLM.
-    raw_msg = str(e)
-    api_key = cfg.tavily_api_key
-    if api_key and api_key in raw_msg:
-        raw_msg = raw_msg.replace(api_key, "***")
-
-    # Determine if this is a keyless-limit error (free tier exhausted)
     error_type = type(e).__name__
-    is_tavily_keyless = (
-        (TavilyKeylessLimitError and isinstance(e, TavilyKeylessLimitError))
-        or error_type == "TavilyKeylessLimitError"
-    )
+    raw_msg = str(e)
 
-    if is_tavily_keyless:
+    # ── API Key Sanitization ────────────────────────────────────────────────
+    api_key = getattr(cfg, "tavily_api_key", None)
+    if api_key and len(api_key) > 4:
+        # Replace exact key and URL-encoded variants
+        escaped_key = re.escape(api_key)
+        raw_msg = re.sub(escaped_key, "***", raw_msg)
+        # URL-encoded variant
+        raw_msg = re.sub(re.escape(api_key.replace("-", "%2D")), "***", raw_msg)
+        # Strip Authorization header patterns
+        raw_msg = re.sub(r"Authorization:\s*Bearer\s+[^\s]+", "Authorization: Bearer ***", raw_msg)
+        # Strip query param patterns
+        raw_msg = re.sub(r"[?&]api_key=[^&\s]+", "api_key=***", raw_msg)
+
+    # Truncate to prevent token waste in LLM context
+    raw_msg = raw_msg[:500]
+
+    # ── Classification ───────────────────────────────────────────────────────
+    if error_type == "TavilyKeylessLimitError":
         return fail(
             "Tavily keyless rate limit reached. Set TAVILY_API_KEY in .env for full access.",
             trace_id=trace_id,
+            error_code="AUTH_FAILED",
         )
 
-    if RateLimitError and isinstance(e, RateLimitError):
-        return fail(
-            "Tavily rate limit exceeded. Please wait a moment and retry.",
-            trace_id=trace_id,
-        )
-
-    # v1.1: Handle specific SDK error types that tests expect.
     if error_type == "InvalidAPIKeyError":
         return fail(
-            "Tavily API key invalid. Check TAVILY_API_KEY in .env.",
+            "Tavily API key is invalid. Check TAVILY_API_KEY in .env.",
             trace_id=trace_id,
-        )
-    if error_type == "UsageLimitExceededError":
-        return fail(
-            "Tavily quota exhausted. Upgrade your plan or wait for reset.",
-            trace_id=trace_id,
+            error_code="AUTH_FAILED",
         )
 
-    if APIError and isinstance(e, APIError):
+    if error_type == "UsageLimitExceededError":
+        return fail(
+            "Tavily monthly quota exhausted. Upgrade your plan or wait for reset.",
+            trace_id=trace_id,
+            error_code="QUOTA_EXHAUSTED",
+        )
+
+    # Tavily SDK RateLimitError
+    if error_type == "RateLimitError":
+        return fail(
+            f"Tavily rate limit: {raw_msg}",
+            trace_id=trace_id,
+            error_code="RATE_LIMITED",
+        )
+
+    # Tavily SDK APIError — check status code
+    if error_type == "APIError":
         status = getattr(e, "status_code", None)
         if status == 429:
             return fail(
-                "Tavily rate limit exceeded (429). Please wait a moment and retry.",
+                f"Tavily rate limit (HTTP {status}): {raw_msg}",
                 trace_id=trace_id,
+                error_code="RATE_LIMITED",
             )
-        if status == 401:
+        if status and status >= 500:
             return fail(
-                "Tavily authentication failed (401). Check your API key.",
+                f"Tavily server error (HTTP {status}): {raw_msg}",
                 trace_id=trace_id,
-            )
-        if status == 403:
-            return fail(
-                "Tavily access denied (403). Check your API key or plan.",
-                trace_id=trace_id,
+                error_code="SERVER_ERROR",
             )
         return fail(
             f"Tavily API error: {raw_msg}",
             trace_id=trace_id,
+            error_code="API_ERROR",
         )
 
-    if httpx and isinstance(e, httpx.TimeoutException):
+    # httpx exceptions
+    import httpx
+    if isinstance(e, httpx.TimeoutException):
         return fail(
-            f"Tavily request timed out after {cfg.tavily_timeout}s.",
+            f"Tavily request timed out: {raw_msg}",
             trace_id=trace_id,
+            error_code="TIMEOUT",
         )
 
-    if httpx and isinstance(e, httpx.ConnectError):
+    if isinstance(e, httpx.ConnectError):
         return fail(
-            "Cannot connect to Tavily API. Check your network or API endpoint.",
+            f"Tavily connection failed: {raw_msg}",
             trace_id=trace_id,
+            error_code="CONNECT_ERROR",
         )
 
-    # v1.1: Handle httpx.HTTPStatusError with status-specific messages.
-    if httpx and isinstance(e, httpx.HTTPStatusError):
-        status = e.response.status_code
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code if e.response else None
         if status == 429:
             return fail(
-                "Tavily rate limit exceeded (429). Please wait a moment and retry.",
+                f"Tavily rate limit (HTTP 429): {raw_msg}",
                 trace_id=trace_id,
+                error_code="RATE_LIMITED",
             )
-        if status == 401:
+        if status and status >= 500:
             return fail(
-                "Tavily authentication failed (401). Check your API key.",
+                f"Tavily server error (HTTP {status}): {raw_msg}",
                 trace_id=trace_id,
-            )
-        if status == 403:
-            return fail(
-                "Tavily access denied (403). Check your API key or plan.",
-                trace_id=trace_id,
+                error_code="SERVER_ERROR",
             )
         return fail(
-            f"Tavily HTTP error {status}: {raw_msg}",
+            f"Tavily HTTP error (HTTP {status}): {raw_msg}",
             trace_id=trace_id,
+            error_code="CLIENT_ERROR",
         )
 
-    # Fallback for any other exception
+    # Fallback
     return fail(
         f"Tavily error: {raw_msg}",
         trace_id=trace_id,
+        error_code="UNKNOWN",
     )

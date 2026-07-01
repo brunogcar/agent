@@ -24,8 +24,8 @@ def _is_safe_url(url: str) -> bool:
         hostname = parsed.hostname
         if not hostname:
             return False
-        # Lazy import to avoid loading core.security at web_ops import time
-        from core.security import is_safe_network_address
+        # Lazy import to avoid loading core.net.security at web_ops import time
+        from core.net.security import is_safe_network_address
         return is_safe_network_address(hostname)
     except Exception:
         return False

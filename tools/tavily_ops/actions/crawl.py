@@ -1,8 +1,6 @@
 """tools/tavily_ops/actions/crawl.py — Tavily crawl action handler.
 
-Calls AsyncTavilyClient.crawl() to recursively crawl a website and extract
-content from linked pages. SDK 0.7.26 compatibility: facade `query` param
-is translated to SDK `instructions=`.
+v1.2 FIX: Pass coroutine factory instead of coroutine object.
 """
 from __future__ import annotations
 
@@ -12,7 +10,6 @@ from core.tracer import tracer
 from tools.tavily_ops._registry import register_action
 from tools.tavily_ops.errors import _assert_safe_urls, _handle_tavily_error
 from tools.tavily_ops import bridge
-
 
 @register_action(
     "tavily",
@@ -36,19 +33,10 @@ def _action_crawl(
     trace_id: str = "",
     **kwargs,
 ) -> dict:
-    """Crawl a website and return extracted content from linked pages.
-
-    v1.1 FIX: Removed 'url or query' fallback. 'url' is required per the
-    docstring; 'query' is only for contextual instructions. Previously, passing
-    only 'query' (e.g., a search string) would use it as the target URL,
-    producing a misleading SSRF error instead of a clear "url required" message.
-    """
+    """Crawl a website and return extracted content from linked pages."""
     if not url:
         return fail("action='crawl' requires url=", trace_id=trace_id)
 
-    # v1.1: Only pass query as instructions when url was explicitly provided.
-    # Since url is now required, query is purely instructions. When empty,
-    # instructions is None so the SDK uses its default behavior.
     instructions = query if query else None
 
     err = _assert_safe_urls([url])
@@ -76,12 +64,11 @@ def _action_crawl(
         )
 
     try:
-        # v1.1: Use _run_async_with_resilience for circuit breaker + retry
-        result = bridge._run_async_with_resilience(_call(), trace_id=trace_id)
+        # v1.2 FIX: Pass factory (_call) not coroutine (_call())
+        result = bridge._run_async_with_resilience(_call, trace_id=trace_id)
     except Exception as e:
         return _handle_tavily_error(e, trace_id=trace_id)
 
-    # v1.1: Include keyless flag for test compatibility and LLM context.
     response = ok(
         {
             "results": result.get("results", []),
