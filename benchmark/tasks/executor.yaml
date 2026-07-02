@@ -293,6 +293,16 @@ tasks:
 
   - name: review_auth
     system: "Review for security issues. List findings as bullet points."
+    prompt: 'def login(username, password): if username == "admin" and password == "password123": return True; return False'
+    validator: composite
+    validator_args:
+      pattern: '^\s*[-•*]\s+'
+      min_steps: 3
+      required_keywords: ["hardcoded", "password", "credential", "brute force", "hash"]
+    difficulty: hard
+    timeout: 90
+    max_tokens: 512
+  
   # === DOCUMENT ===
   - name: document_docstring
     system: "Write documentation. Return ONLY the docstring text, no explanation."
