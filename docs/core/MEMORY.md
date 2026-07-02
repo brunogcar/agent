@@ -484,7 +484,7 @@ graph TD
 
 ## 🔍 Tag Validation
 
-Tags are validated in `tools/memory_tool.py` before passing to the backend:
+Tags are validated in `tools/memory.py` before passing to the backend:
 
 | Rule | Validation |
 |------|------------|
@@ -761,7 +761,7 @@ Consolidate into a single module. Make `core/llm_backend/rate_limit.py` the publ
 5. **Never skip procedural duplicates** — Always increment `reinforcement_count` inside the write lock.
 6. **Never apply time-decay to `collection == "procedural"`** — Decay bypass is intentional.
 7. **Never remove `ensure_not_cancelled(trace_id)` guards** — All write operations must check cancellation before mutating.
-8. **Never validate tags in the backend** — Tag validation belongs in `tools/memory_tool.py` before passing to the backend.
+8. **Never validate tags in the backend** — Tag validation belongs in `tools/memory.py` before passing to the backend.
 9. **Never add LLM calls to `_rewrite_query()`** — Query rewriting is model-free for speed.
 10. **Never manually delete or merge procedural rules** — The background Diversity Enforcer handles this autonomously.
 11. **Never prune `procedural` collection or memories tagged `"summary"`, `"critical"`, `"protected"`** — These are immune to automatic pruning.

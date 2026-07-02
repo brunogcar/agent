@@ -346,7 +346,7 @@ def purge_stale_rules() -> dict:
 
 - Uses lazy singleton ChromaDB client (consistent with `storage.py`/`feedback.py`)
 - `get_or_create_collection()` guard for first-boot safety
-- Called by `tools/memory_tool.py` janitor action alongside `archive_old_episodes()`
+- Called by `tools/memory.py` janitor action alongside `archive_old_episodes()`
 
 ---
 

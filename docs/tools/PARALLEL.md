@@ -160,8 +160,8 @@ PARALLEL_SAFE = frozenset({
 | `python` | `tools.python_exec.python` | ✅ Yes |
 | `python_exec` | `tools.python_exec.python` (alias) | ✅ Yes |
 | `notify` | `tools.notify.notify` | ✅ Yes |
-| `memory` | `tools.memory_tool.memory` | ❌ No |
-| `memory_tool` | `tools.memory_tool.memory` (alias) | ❌ No |
+| `memory` | `tools.memory.memory` | ❌ No |
+| `memory` | `tools.memory.memory` | ❌ No |
 | `cli` | `tools.cli.cli` | ❌ No |
 
 ### Override (Use with Caution)

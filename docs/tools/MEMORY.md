@@ -1,25 +1,28 @@
 # 🧠 Memory Tool
 
-The `memory()` tool is the **LLM-facing interface** to the agent's persistent memory backend. It wraps `core.memory_engine.MemoryStore` in a single `@tool` function with if/elif dispatch, providing the LLM with a unified API for storing, recalling, and maintaining memories across three collections.
+The `memory()` tool is the **LLM-facing interface** to the agent's persistent memory backend. It wraps `core.memory_engine.MemoryStore` in a single `@tool` function with `@meta_tool` auto-discovery dispatch, providing the LLM with a unified API for storing, recalling, and maintaining memories across three collections.
 
 **Key characteristics:**
-- **Monolithic dispatch** — Single `memory(action, ...)` function with if/elif branching (pre-v1.0 pattern)
-- **Lazy loading** — ChromaDB is only imported on first non-janitor call via `_mem()` closure
+- **Atomic action dispatch** — `@meta_tool` + `@register_action` auto-discovery (v1.0)
+- **Lazy loading** — ChromaDB is only imported on first non-janitor call via `_mem()` in `helpers.py`
 - **Janitor bypass** — `archive_old_episodes()` and `purge_stale_rules()` run without touching the memory store (avoids ChromaDB load)
 - **Tag validation** — MED-05 compliant: XSS/injection prevention, length limits, character whitelist
 - **Result compression** — All responses pass through `compress_result()` to prevent context window bloat
 - **Trace ID threading** — `trace_id` propagated through all action results for observability
+- **Fail-fast validation** — Invalid `memory_type` and empty `collections=[]` rejected at tool layer, not silently coerced
 
 ---
 
-## ⚠️ Breaking Changes (pre-v1.0)
+## ⚠️ Breaking Changes (v1.0)
 
 | Old | New | Migration |
 |-----|-----|-----------|
 | `core/memory.py` import | `core/memory_engine.py` | Internal change — no LLM-facing impact |
-| `tools/memory_tool.py` | `tools/memory/` (planned) | File will be renamed to `tools/memory.py` or split into `tools/memory_ops/` |
-| Monolithic if/elif dispatch | `@meta_tool` + `@register_action` auto-discovery | Planned v1.0 refactor — same API surface |
-| `tests/tools/memory_tool/` | `tests/tools/memory/` | Test folder rename planned |
+| `tools/memory_tool.py` | `tools/memory.py` | Facade renamed; all imports updated |
+| `tools/memory_tool.py` monolith | `tools/memory_ops/actions/*.py` | Logic split into 8 atomic action files |
+| `tests/tools/memory_tool/` | `tests/tools/memory/` | Test folder renamed; monolithic tests split |
+| Monolithic if/elif dispatch | `@meta_tool` + `@register_action` auto-discovery | Same API surface; internal architecture changed |
+| 7 actions | 8 actions | Added `recall_context` (formatted string for prompt injection) |
 
 ---
 
@@ -38,9 +41,11 @@ memory(
     trace_id="abc123"
 )
 
-# Recall procedural rules
+# Recall procedural rules`nmemory(`n    action="recall",`n    query="how to fix syntax errors",`n    collections=["procedural"],`n    top_k=3`n)`n`n# Get formatted context for prompt injection`nmemory(`n    action="recall_context",`n    query="how to fix syntax errors",`n    collections=["procedural"],`n    top_k=3`n)
+
+# Get formatted context for prompt injection
 memory(
-    action="recall",
+    action="recall_context",
     query="how to fix syntax errors",
     collections=["procedural"],
     top_k=3
@@ -55,60 +60,89 @@ memory(action="janitor")
 ## 🏗️ Architecture
 
 ```text
-tools/memory_tool.py          # @tool facade — monolithic dispatch (pre-v1.0)
-├── _mem()                    # Lazy import: from core.memory_engine import memory
-├── _validate_tags()          # MED-05 tag validation (XSS/injection prevention)
-└── memory(action, ...)       # if/elif dispatch to 7 actions
-    ├── store → store.store()
-    ├── recall → store.recall()
-    ├── delete → store.delete()
-    ├── prune → store.prune()
-    ├── summarize → store.summarize()
-    ├── stats → store.stats()
-    └── janitor → archive_old_episodes() + purge_stale_rules() (bypasses store)
+tools/memory.py                    # @tool + @meta_tool facade — pure dispatch
+tools/memory_ops/
+├── __init__.py                    # Auto-imports actions to trigger @register_action
+├── _registry.py                   # DISPATCH dict + @register_action decorator
+├── state.py                       # Singleton store instance + reset_state()
+├── helpers.py                     # _mem(), _validate_tags(), _validate_memory_type(), _validate_collections()
+└── actions/
+    ├── store.py                   # @register_action("memory", "store")
+    ├── recall.py                  # @register_action("memory", "recall")
+    ├── recall_context.py          # @register_action("memory", "recall_context") — NEW v1.0
+    ├── delete.py                  # @register_action("memory", "delete")
+    ├── prune.py                   # @register_action("memory", "prune")
+    ├── summarize.py               # @register_action("memory", "summarize")
+    ├── stats.py                   # @register_action("memory", "stats")
+    └── janitor.py                 # @register_action("memory", "janitor") — NEVER calls _mem()
 
-core/memory_engine.py         # Thin facade — re-exports MemoryStore singleton
-core/memory_backend/          # Implementation (see docs/core/MEMORY.md)
+core/memory_engine.py              # Thin facade — re-exports MemoryStore singleton
+core/memory_backend/               # Implementation (see docs/core/MEMORY.md)
 ```
 
 ### Dispatch Flow
 
 ```mermaid
 graph TD
-    A["memory(action, ...)") --> B{"action?"}
-    B -->|"janitor"| C["archive_old_episodes()\npurge_stale_rules()\nNO store load"]
-    B -->|other| D["_mem() → lazy load store"]
+    A["memory(action, ...)"] --> B{"action?"}
+    B -->|"janitor"| C["archive_old_episodes()\npurge_stale_rules()\nNO _mem() call"]
+    B -->|"other"| D["op_info['func'](**kwargs)"]
     D --> E{"action?"}
-    E -->|store| F["_validate_tags()\nstore.store()"]
-    E -->|recall| G["_validate_tags(tags_filter)\nstore.recall()"]
-    E -->|delete| H["store.delete()"]
-    E -->|prune| I["store.prune()"]
-    E -->|summarize| J["store.summarize()"]
-    E -->|stats| K["store.stats()"]
-    E -->|unknown| L["fail('Unknown action ...')"]
-    C --> M["compress_result(ok({...}))"]
-    F --> M
-    G --> M
-    H --> M
-    I --> M
-    J --> M
-    K --> M
-    L --> N["fail('Unknown action ...')"]
+    E -->|store| F["_validate_tags()\n_validate_memory_type()\n_validate_collections()\n_mem().store()"]
+    E -->|recall| G["_validate_tags(tags_filter)\n_validate_collections()\n_mem().recall()"]
+    E -->|recall_context| H["_validate_collections()\n_mem().recall_context()"]
+    E -->|delete| I["_mem().delete()"]
+    E -->|prune| J["_mem().prune()"]
+    E -->|summarize| K["_mem().summarize()"]
+    E -->|stats| L["_mem().stats()"]
+    E -->|unknown| M["fail('Unknown action ...')"]
+    C --> N["compress_result(ok({...}))"]
+    F --> N
+    G --> N
+    H --> N
+    I --> N
+    J --> N
+    K --> N
+    L --> N
+    M --> O["fail('Unknown action ...')"]
+    N --> P["trace_id injected if missing"]
 ```
 
 ### Lazy Loading Pattern
 
 ```python
-def _mem():
-    """Lazy import of memory store -- avoids slow chromadb load at startup."""
-    from core.memory_engine import memory as _memory
-    return _memory
+# tools/memory_ops/helpers.py
+import tools.memory_ops.state as state
+
+def _mem() -> "MemoryStore":
+    """Lazy import of memory store — avoids slow ChromaDB load at startup."""
+    with state._store_lock:
+        if state._store is None:
+            from core.memory_engine import MemoryStore
+            state._store = MemoryStore()
+        return state._store
 ```
 
-The `janitor` action is handled **before** `_mem()` is called. This means:
+The `janitor` action is handled by a separate handler that **never** calls `_mem()`. This means:
 - `memory(action="janitor")` never imports ChromaDB
 - Server startup is fast even if ChromaDB is not installed
 - The janitor operates on the filesystem (JSONL logs) and isolated ChromaDB instance, not the main store
+
+### State Ownership Pattern
+
+```python
+# tools/memory_ops/state.py
+_store: "MemoryStore | None" = None
+_store_lock = threading.Lock()
+
+def reset_state() -> None:
+    """Clear the cached store instance. Call between tests."""
+    global _store
+    with _store_lock:
+        _store = None
+```
+
+All access to `_store` goes through `state._store`. Tests clear it via `state.reset_state()`. No cross-module reference divergence possible.
 
 ---
 
@@ -116,6 +150,7 @@ The `janitor` action is handled **before** `_mem()` is called. This means:
 
 ```python
 @tool
+@meta_tool(DISPATCH.get("memory", {}), doc_sections=[...])
 def memory(
     action: str,
     text: str = "",
@@ -138,12 +173,12 @@ def memory(
     min_importance: int = 3,
     dry_run: bool = True,
 ) -> dict:
-    """Memory tool -- store, recall, and manage agent memories."""
+    """Memory meta-tool — atomic actions."""
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | `str` | **Yes** | One of: `store`, `recall`, `delete`, `prune`, `summarize`, `stats`, `janitor` |
+| `action` | `Literal[...]` | **Yes** | One of: `store`, `recall`, `recall_context`, `delete`, `prune`, `summarize`, `stats`, `janitor` |
 | `text` | `str` | No | Memory content. **Required** for `store`. |
 | `memory_type` | `str` | No | Target collection: `episodic` / `semantic` / `procedural`. Default: `semantic`. |
 | `importance` | `int` | No | Base score 1–10. Default: `5`. Higher = slower decay. |
@@ -153,9 +188,9 @@ def memory(
 | `outcome` | `str` | No | `success` / `failure` / `partial` / `unknown`. Default: `unknown`. |
 | `tools_used` | `str` | No | Comma-separated tool names (episodic). |
 | `source` | `str` | No | Source attribution (semantic), e.g. URL. |
-| `query` | `str` | No | Search query. **Required** for `recall` and `delete`. |
-| `top_k` | `int` | No | Max results for `recall`. Default: `5`. |
-| `collections` | `list` | No | Filter to specific collections. Default: all. |
+| `query` | `str` | No | Search query. **Required** for `recall`, `recall_context`, and `delete`. |
+| `top_k` | `int` | No | Max results for `recall` / `recall_context`. Default: `5`. |
+| `collections` | `list` | No | Filter to specific collections. Default: all. `[]` is **rejected**. |
 | `min_score` | `float` | No | Minimum decay score for `recall`. Default: `0.5`. |
 | `tags_filter` | `str` | No | Comma-separated — only return memories with ANY of these tags. |
 | `threshold` | `float` | No | Similarity threshold for `delete`. |
@@ -177,6 +212,8 @@ Stores text into one of three typed collections with deduplication, decay scorin
 - `importance` outside 1–10 → `fail("importance must be 1-10, got ...")`
 - Text exceeds `cfg.memory_max_entry_bytes` → `fail("text is ... bytes -- exceeds ...")`
 - Invalid tags → `fail("Tags cannot contain: ...")` or `fail("Tag contains invalid characters: ...")`
+- Invalid `memory_type` → `fail("Invalid memory_type '...'. Must be one of: episodic, procedural, semantic")`
+- Empty `collections=[]` → `fail("collections cannot be empty — omit or pass None for all")`
 
 **Typed helpers in backend:**
 - `memory_type="episodic"` → `store.store_episodic(...)` — task runs, outcomes
@@ -217,6 +254,7 @@ Searches across memory collections using ChromaDB vector similarity, ranked by d
 **Validation:**
 - Missing `query` → `fail("query is required for recall")`
 - Invalid `tags_filter` → `fail("Tags cannot contain: ...")`
+- Empty `collections=[]` → `fail("collections cannot be empty — omit or pass None for all")`
 
 **Return:**
 ```json
@@ -234,6 +272,24 @@ Searches across memory collections using ChromaDB vector similarity, ranked by d
         "id": "uuid"
       }
     ]
+  }
+}
+```
+
+### `recall_context` — Formatted Context for Prompt Injection *(NEW v1.0)*
+
+Returns a pre-formatted string of top memories, not a JSON list. Use this when you need to inject memory context directly into a system prompt.
+
+**Validation:**
+- Missing `query` → `fail("query is required for recall_context")`
+- Empty `collections=[]` → `fail("collections cannot be empty — omit or pass None for all")`
+
+**Return:**
+```json
+{
+  "status": "success",
+  "data": {
+    "context": "1. [procedural] To fix SyntaxError...\n2. [semantic] ChromaDB supports..."
   }
 }
 ```
@@ -311,7 +367,7 @@ All tag inputs (`tags` for `store`, `tags_filter` for `recall`) pass through `_v
 | **Max tag length** | `cfg.max_tag_length` (default 50) |
 | **Must start with** | Letter `[a-zA-Z]` |
 | **Allowed characters** | Letters, numbers, hyphens, dots, underscores, spaces |
-| **Pattern** | `^[a-zA-Z][a-zA-Z0-9_.\\s-]*$` |
+| **Pattern** | `^[a-zA-Z][a-zA-Z0-9_.\s-]*$` |
 
 ```python
 def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
@@ -320,6 +376,11 @@ def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
     Empty string is valid (no tags).
     """
 ```
+
+**[DESIGN] `_validate_tags()` uses different limits for store vs recall:**
+- `store`: `cfg.max_tags_per_entry` (default 6) — strict, enforced at write time
+- `recall tags_filter`: hardcoded 10 — relaxed, read-only query parameter
+This is intentional. Do not "simplify" both to the same config value.
 
 ---
 
@@ -331,6 +392,9 @@ All action results pass through `compress_result()` from `core.utils`:
 - Full content saved to `workspace/.artifacts/`
 - Structured metadata always preserved
 - `trace_id` threaded through for observability
+
+**[DESIGN] `compress_result()` is called in the facade, not individual actions.**
+The facade applies it uniformly to all handler outputs (both success and error). This is infrastructure, not business logic.
 
 ---
 
@@ -347,39 +411,33 @@ All action results pass through `compress_result()` from `core.utils`:
 ## 🧪 Testing
 
 ```powershell
-# Run all memory tool tests (current folder: tests/tools/memory_tool/)
-D:\mcp\agent\venv\Scripts\pytest.exe tests/tools/memory_tool/ -v -W error --tb=short
+# Run all memory tool tests
+D:\mcpgentenv\Scripts\pytest.exe tests/tools/memory/ -v -W error --tb=short
 ```
 
-**Current test layout:**
+**Test layout:**
 ```text
-tests/tools/memory_tool/          # Will be renamed to tests/tools/memory/
-├── __init__.py
-├── test_memory_tool.py           # Main tool tests (monolithic dispatch)
-└── test_memory_tool_janitor.py   # Janitor-specific tests
-```
-
-**Planned v1.0 test layout:**
-```text
-tests/tools/memory/               # Renamed folder
-├── conftest.py                   # Shared fixtures: reset_memory_state, mock_store
-├── test_facade.py                # @meta_tool metadata, action Literal, unknown action
-├── test_registry.py              # DISPATCH, @register_action, duplicate guard
-├── test_store.py                 # store action: validation, dedup, size limits
-├── test_recall.py                # recall action: search, filtering, tags
-├── test_delete.py                # delete action: similarity, confirm_ids
-├── test_prune.py                 # prune action: dry_run, age/importance filters
-├── test_summarize.py             # summarize action
-├── test_stats.py                 # stats action
-├── test_janitor.py               # janitor action: bypass, archive, purge
-└── test_tag_validation.py        # MED-05: XSS, length, character rules
+tests/tools/memory/
+├── conftest.py              # Shared fixtures: reset_memory_state, mock_store, mock_cfg
+├── test_facade.py           # @meta_tool metadata, action Literal, unknown action, trace_id, compress_result
+├── test_registry.py         # DISPATCH, @register_action, duplicate guard
+├── test_store.py            # store action: validation, dedup, size limits, memory_type fail-fast, collections guard
+├── test_recall.py           # recall action: search, filtering, tags_filter
+├── test_recall_context.py   # recall_context action: formatted string, collections guard
+├── test_delete.py           # delete action: similarity, confirm_ids
+├── test_prune.py            # prune action: dry_run, age/importance filters
+├── test_summarize.py        # summarize action
+├── test_stats.py            # stats action
+├── test_janitor.py          # janitor action: bypass (assert _mem never called), archive, purge
+└── test_tag_validation.py   # MED-05: XSS, length, character rules
 ```
 
 **Mock strategy:**
-- Patch `core.memory_engine.memory` with `MagicMock` for all unit tests
+- Patch `tools.memory_ops.helpers._mem` with `MagicMock` for all unit tests
 - Patch `core.memory_backend.janitor.archive_old_episodes` for janitor tests
 - Patch `core.sleep_learn.janitor.purge_stale_rules` for janitor tests
-- Patch `cfg.memory_max_entry_bytes` and `cfg.max_tags_per_entry` for validation tests
+- Patch `cfg.memory_max_entry_bytes`, `cfg.max_tags_per_entry`, `cfg.max_tag_length` for validation tests
+- Call `tools.memory_ops.state.reset_state()` between tests (autouse fixture)
 
 ---
 
@@ -396,38 +454,49 @@ tests/tools/memory/               # Renamed folder
 | Result compression | ✅ pre-v1 | `compress_result()` on all outputs |
 | Trace ID threading | ✅ pre-v1 | Propagated through all action results |
 | Janitor bypass optimization | ✅ pre-v1 | `archive_old_episodes()` + `purge_stale_rules()` without store load |
+| `@meta_tool` + `@register_action` auto-discovery | ✅ v1.0 | `Literal` enum, dynamic docstring, no central wiring |
+| Un-multiplex to `memory_ops/actions/*.py` | ✅ v1.0 | 8 atomic action files |
+| Rename `tools/memory_tool.py` → `tools/memory.py` | ✅ v1.0 | Facade renamed; all imports updated |
+| Rename test folder `memory_tool/` → `memory/` | ✅ v1.0 | Monolithic tests split into per-action files |
+| Add `conftest.py` with shared fixtures | ✅ v1.0 | `reset_memory_state`, `mock_store`, `mock_cfg` |
+| Split tests into per-action files | ✅ v1.0 | `test_store.py`, `test_recall.py`, etc. |
+| Add `test_tag_validation.py` | ✅ v1.0 | Dedicated MED-05 coverage |
+| Add `test_facade.py` | ✅ v1.0 | `@meta_tool` metadata, action Literal, unknown action guard |
+| Add `test_registry.py` | ✅ v1.0 | `DISPATCH` dict, `@register_action`, duplicate guard |
+| Add `recall_context` action | ✅ v1.0 | Formatted string for direct prompt injection |
+| Fail-fast `memory_type` validation | ✅ v1.0 | Reject invalid types instead of silent coercion to "semantic" |
+| Reject empty `collections=[]` | ✅ v1.0 | Prevent silent all-collections fallback |
+| `state.py` singleton pattern | ✅ v1.0 | Isolated `_store` with `reset_state()` for tests |
 
-### 🔄 In Progress / Next Up
+### 🔄 In Progress / Next Up (v1.1)
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| `@meta_tool` + `@register_action` auto-discovery | `Literal` enum, dynamic docstring, no central wiring. Follows git/file/cli/tavily pattern. | P0 |
-| Un-multiplex to `memory_ops/actions/*.py` | Atomic action files: store, recall, delete, prune, summarize, stats, janitor | P0 |
-| Rename `tools/memory_tool.py` → `tools/memory.py` | Align with `_ops`/`_backend` naming convention | P0 |
-| Rename test folder `memory_tool/` → `memory/` | Match new tool name | P0 |
-| Add `conftest.py` with shared fixtures | `reset_memory_state`, `mock_store`, `mock_janitor` | P0 |
-| Split tests into per-action files | `test_store.py`, `test_recall.py`, etc. | P1 |
-| Add `test_tag_validation.py` | Dedicated MED-05 coverage | P1 |
-| Add `test_facade.py` | `@meta_tool` metadata, action Literal, unknown action guard | P1 |
-| Add `test_registry.py` | `DISPATCH` dict, `@register_action`, duplicate guard | P1 |
+| `export`/`import` actions | JSONL backup/restore for collections. Needs file path validation (path guard). | P1 |
+| AND-based tag filtering (`tags_required`) | Current `tags_filter` is OR-based. AND filtering for precise procedural recall. | P1 |
+| `memory(action="health")` | Lightweight ChromaDB connectivity check. | P2 |
+| `store_batch` action | Store multiple memories in one call. Cap at 20 entries. | P2 |
 
 ### 🚫 Deferred / Out of Scope
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
 | 1 | Streaming memory writes | ChromaDB does not support streaming inserts | Skip |
-| 2 | Batch store action | Current `store` handles one entry; batch would require API change | Skip |
-| 3 | Real-time memory sync | No multi-agent deployment currently | Skip |
-| 4 | Custom embedding models | `all-MiniLM-L6-v2` is fast and accurate enough | Skip |
-| 5 | Memory graph queries | Relationship tracking belongs in backend, not tool | Skip |
-| 6 | Configurable action list | Hardcoded 7 actions cover all use cases | Skip |
+| 2 | Real-time memory sync | No multi-agent deployment currently | Skip |
+| 3 | Custom embedding models | `all-MiniLM-L6-v2` is fast and accurate enough | Skip |
+| 4 | Memory graph queries | Relationship tracking belongs in backend, not tool | Skip |
+| 5 | Typed convenience actions (`store_episodic`, etc.) | Bloats schema; LLM handles `memory_type` fine | Skip |
+| 6 | Tag auto-completion | Complex, low ROI; LLM generates tags well from context | Skip |
+| 7 | Memory versioning / diffs | Complex; audit trails belong in UI layer | Skip |
+| 8 | Collection migration | Only needed if schema changes; rare | Skip |
+| 9 | Namespace isolation | Only needed for multi-tenant deployments | Skip |
 
 ---
 
 ## 🛡️ AI Agent Instructions
 
 ### NEVER DO
-1. **Never add logic to `tools/memory_tool.py`** — Logic belongs in `core.memory_backend/` or `core.memory_engine`. The tool is a thin facade.
+1. **Never add logic to `tools/memory.py`** — Logic belongs in `core.memory_backend/` or `core.memory_engine`. The facade is pure dispatch.
 2. **Never remove the janitor bypass** — `archive_old_episodes()` and `purge_stale_rules()` must run without loading the memory store.
 3. **Never skip `_validate_tags()`** — All tag inputs must pass MED-05 validation before reaching the backend.
 4. **Never remove `compress_result()`** — All tool outputs must be compressed to prevent context window bloat.
@@ -437,15 +506,18 @@ tests/tools/memory/               # Renamed folder
 8. **Never add `**kwargs` to the `@tool` facade** — FastMCP schema breaks.
 9. **Never print to stdout** — MCP stdio corruption. Return dicts only.
 10. **Never skip `compileall` before `pytest`** — Catches syntax errors early.
+11. **Never call `_mem()` from `janitor.py`** — The janitor action must remain completely isolated from the main store.
+12. **Never rely on backend silent coercion** — The backend defaults invalid `memory_type` to "semantic". The tool layer must reject invalid types explicitly.
 
 ### ALWAYS DO
-11. **Always use `_mem()` for lazy loading** — Never import `core.memory_engine` at module level.
-12. **Always handle `janitor` before `_mem()`** — Preserve the ChromaDB bypass optimization.
-13. **Always thread `trace_id` through all results** — For observability and result correlation.
-14. **Always validate `tags` and `tags_filter` with `_validate_tags()`** — MED-05 compliance is mandatory.
-15. **Always return `fail()` with clear messages** — Unknown actions, missing params, validation errors.
-16. **Always run `compileall` after editing tool files** — Verify syntax before running tests.
-17. **Always run targeted tests (`tests/tools/memory_tool/`) after changes** — Current coverage before refactor.
+13. **Always use `_mem()` for lazy loading** — Never import `core.memory_engine` at module level.
+14. **Always handle `janitor` before `_mem()`** — Preserve the ChromaDB bypass optimization.
+15. **Always thread `trace_id` through all results** — For observability and result correlation.
+16. **Always validate `tags` and `tags_filter` with `_validate_tags()`** — MED-05 compliance is mandatory.
+17. **Always return `fail()` with clear messages** — Unknown actions, missing params, validation errors.
+18. **Always run `compileall` after editing tool files** — Verify syntax before running tests.
+19. **Always run targeted tests (`tests/tools/memory/`) after changes** — Per-action coverage.
+20. **Always reject empty `collections=[]`** — Prevent silent all-collections fallback.
 
 ---
 
@@ -453,7 +525,19 @@ tests/tools/memory/               # Renamed folder
 
 | File | Purpose |
 |------|---------|
-| `tools/memory_tool.py` | `@tool` facade — monolithic dispatch (pre-v1.0) |
+| `tools/memory.py` | `@tool` + `@meta_tool` facade — pure dispatch (v1.0) |
+| `tools/memory_ops/__init__.py` | Auto-imports actions to trigger `@register_action` |
+| `tools/memory_ops/_registry.py` | `DISPATCH` dict + `@register_action` decorator |
+| `tools/memory_ops/state.py` | Singleton store instance + `reset_state()` |
+| `tools/memory_ops/helpers.py` | `_mem()`, `_validate_tags()`, `_validate_memory_type()`, `_validate_collections()` |
+| `tools/memory_ops/actions/store.py` | Store action handler |
+| `tools/memory_ops/actions/recall.py` | Recall action handler |
+| `tools/memory_ops/actions/recall_context.py` | Recall context action handler (v1.0) |
+| `tools/memory_ops/actions/delete.py` | Delete action handler |
+| `tools/memory_ops/actions/prune.py` | Prune action handler |
+| `tools/memory_ops/actions/summarize.py` | Summarize action handler |
+| `tools/memory_ops/actions/stats.py` | Stats action handler |
+| `tools/memory_ops/actions/janitor.py` | Janitor action handler — NEVER calls `_mem()` |
 | `core/memory_engine.py` | Thin facade — re-exports `MemoryStore` singleton |
 | `core/memory_backend/store.py` | `MemoryStore` class — collections, stats, write lock |
 | `core/memory_backend/write_ops.py` | `execute_store()` — dedup pipeline |
@@ -467,4 +551,4 @@ tests/tools/memory/               # Renamed folder
 
 ---
 
-*Last updated: July 2026. Tool signature and action behaviors reflect current `tools/memory_tool.py` source.*
+*Last updated: July 2026. Tool signature and action behaviors reflect current `tools/memory.py` source (v1.0).*

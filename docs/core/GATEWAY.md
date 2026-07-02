@@ -341,7 +341,7 @@ graph TD
     B -->|No| G{tool?}
     G -->|web| H["tools.web.web()"]
     G -->|python| I["tools.python_exec.python()"]
-    G -->|memory| J["tools.memory_tool.memory()"]
+    G -->|memory| J["tools.memory.memory()"]
     G -->|file| K["tools.file.file()"]
     G -->|git| L["tools.git.git()"]
     G -->|agent| M["tools.agent.agent()"]
@@ -375,7 +375,7 @@ decision = router.route("read config.py", trace_id=trace_id)
 |------|--------|-------------|
 | `web` | `tools.web.web()` | Web scraping, search |
 | `python` | `tools.python_exec.python()` | Python code execution |
-| `memory` | `tools.memory_tool.memory()` | ChromaDB read/write |
+| `memory` | `tools.memory.memory()` | ChromaDB read/write |
 | `file` | `tools.file.file()` | File operations |
 | `git` | `tools.git.git()` | Git operations |
 | `agent` | `tools.agent.agent()` | Agent delegation — **not** `tools.agent_tool` (renamed in Phase 3) |

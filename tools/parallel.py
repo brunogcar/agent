@@ -16,7 +16,7 @@ from tools.git import git
 from tools.file import file
 from tools.python_exec import python
 from tools.notify import notify
-from tools.memory_tool import memory
+from tools.memory import memory
 from tools.cli import cli
 
 _TOOL_MAP = {
@@ -27,7 +27,7 @@ _TOOL_MAP = {
     "python_exec": python,
     "notify": notify,
     "memory": memory,
-    "memory_tool": memory,
+    "memory": memory,
     "cli": cli,
 }
 

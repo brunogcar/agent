@@ -14,7 +14,7 @@ from core.tracer import tracer
 _DIRECT_TOOL_MAP = {
     "web": ("tools.web", "web"),
     "python": ("tools.python_exec", "python"),
-    "memory": ("tools.memory_tool", "memory"),
+    "memory": ("tools.memory", "memory"),
     "file": ("tools.file", "file"),
     "git": ("tools.git", "git"),
     "agent": ("tools.agent", "agent"),
@@ -90,7 +90,7 @@ def dispatch(trace_id: str, payload: dict) -> Any:
         return python(**params)
 
     if tool == "memory":
-        from tools.memory_tool import memory
+        from tools.memory import memory
         return memory(action=action, **params)
 
     if tool == "file":
