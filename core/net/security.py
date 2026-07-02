@@ -5,6 +5,7 @@ v1.2: Fixed empty hostname bypass, IPv6 port stripping, scheme validation.
 v1.3: Restored DNS timeout via ThreadPoolExecutor (socket.getaddrinfo has no timeout kwarg).
       Added _is_private_or_localhost back for cross-tool use.
       FIXED: IPv6 bracket parsing (was broken by split(':') on IPv6 addresses).
+v1.4: Added is_unspecified check to block 0.0.0.0 and ::.
 """
 from __future__ import annotations
 
@@ -43,6 +44,7 @@ def _is_private_or_localhost(hostname: str) -> bool:
 
     v1.3: Restored for cross-tool use (web_ops, browser, tavily).
     v1.3 FIX: Proper IPv6 bracket parsing (was broken by naive split(':')).
+    v1.4 FIX: Block 0.0.0.0 and :: via is_unspecified.
     Handles IP literals directly and resolves domain names for DNS rebinding checks.
     """
     if not hostname or not isinstance(hostname, str):
@@ -68,6 +70,7 @@ def _is_private_or_localhost(hostname: str) -> bool:
                 or ip.is_link_local
                 or ip.is_reserved
                 or ip.is_multicast
+                or ip.is_unspecified
             )
         except ValueError:
             return True
@@ -82,6 +85,7 @@ def _is_private_or_localhost(hostname: str) -> bool:
                 or ip.is_link_local
                 or ip.is_reserved
                 or ip.is_multicast
+                or ip.is_unspecified
             )
         except ValueError:
             pass  # Not an IPv6 literal, might be IPv4 with port
@@ -100,6 +104,7 @@ def _is_private_or_localhost(hostname: str) -> bool:
             or ip.is_link_local
             or ip.is_reserved
             or ip.is_multicast
+            or ip.is_unspecified
         )
     except ValueError:
         pass  # Not an IP literal, fall through to DNS
@@ -119,6 +124,7 @@ def _is_private_or_localhost(hostname: str) -> bool:
                 or ip.is_link_local
                 or ip.is_reserved
                 or ip.is_multicast
+                or ip.is_unspecified
             ):
                 return True
         except ValueError:
@@ -131,9 +137,9 @@ def is_safe_network_address(hostname: str) -> bool:
     """Return True if hostname resolves to a public, non-internal IP.
 
     Checks:
-    1. Explicit allowlist (dev mode)
-    2. IPv4 / IPv6 literal (bypasses DNS)
-    3. DNS resolution (catches CNAME → private IP rebinding)
+      1. Explicit allowlist (dev mode)
+      2. IPv4 / IPv6 literal (bypasses DNS)
+      3. DNS resolution (catches CNAME → private IP rebinding)
     """
     # v1.2: Reject empty/None hostnames explicitly
     if not hostname or not isinstance(hostname, str):

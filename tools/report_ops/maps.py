@@ -51,7 +51,8 @@ def build(
     ctx = {
         "title": title,
         # Escape </script> to prevent injection when JSON is embedded in <script> tags
-        "map_config_json": json.dumps(map_config).replace("</", "<\/"),
+        # v1.4 FIX: Use raw string to avoid invalid escape sequence \/.
+        "map_config_json": json.dumps(map_config).replace("</", r"<\/"),
         "theme": config.get("theme", "dark"),
     }
     html.render_template("map.html", ctx, html_path)

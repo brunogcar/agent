@@ -1,4 +1,3 @@
-
 # 🔗 core/net/ — Shared Network Infrastructure
 
 Unified HTTP error classification, SSRF protection, retry/backoff policies, API budget tracking, URL normalization, and shared default constants for all web-facing tools (tavily, web, browser) and workflows.
@@ -11,6 +10,7 @@ Unified HTTP error classification, SSRF protection, retry/backoff policies, API 
 - **DNS timeout safety** — `ThreadPoolExecutor` + `future.result(timeout=)` (socket.getaddrinfo has no `timeout` kwarg)
 - **IPv6 aware** — Handles bracketed `[::1]:8080` and unbracketed `2001:db8::1` correctly
 - **Daily budget reset** — Automatic date change detection in `record_call()`
+- **v1.4: `0.0.0.0` and `::` blocked** — `is_unspecified` check added to all IP validation paths
 
 ---
 
@@ -18,13 +18,13 @@ Unified HTTP error classification, SSRF protection, retry/backoff policies, API 
 
 ```text
 core/net/
-├── __init__.py    # v1.3 NEW: Public re-exports for cross-tool adoption
-├── errors.py      # HTTP error classification, retryable detection, backoff calculation
-├── security.py    # SSRF prevention, URL safety checks, IP validation
-├── retry.py       # Synchronous and async retry wrappers with circuit breaker hooks
-├── budget.py      # API cost tracking and budget enforcement
-├── url.py         # URL normalization and domain extraction
-└── default.py     # Shared default constants across all network tools
+├── __init__.py          # Public re-exports for cross-tool adoption
+├── errors.py            # HTTP error classification, retryable detection, backoff calculation
+├── security.py          # SSRF prevention, URL safety checks, IP validation
+├── retry.py             # Synchronous and async retry wrappers with circuit breaker hooks
+├── budget.py            # API cost tracking and budget enforcement
+├── url.py               # URL normalization and domain extraction
+└── default.py           # Shared default constants across all network tools
 ```
 
 | Module | Purpose | Adopted By |
@@ -44,12 +44,12 @@ core/net/
 
 ```python
 from core.net.errors import (
-    classify_http_error,      # Exception -> canonical error category string
-    is_retryable_error,      # Exception -> bool (should we retry?)
-    get_retry_delay,         # (attempt, base_delay, max_delay, jitter) -> float
+    classify_http_error,       # Exception -> canonical error category string
+    is_retryable_error,        # Exception -> bool (should we retry?)
+    get_retry_delay,           # (attempt, base_delay, max_delay, jitter) -> float
     register_retryable_exception,  # Register SDK-specific retryable exceptions
-    RETRYABLE_STATUS_CODES,  # {408, 429, 500, 502, 503, 504}
-    RETRYABLE_EXCEPTIONS,    # Tuple of httpx exception types
+    RETRYABLE_STATUS_CODES,    # {408, 429, 500, 502, 503, 504}
+    RETRYABLE_EXCEPTIONS,      # Tuple of httpx exception types
 )
 ```
 
@@ -58,7 +58,11 @@ from core.net.errors import (
 **v1.3 fixes:**
 - `NetworkError` now correctly returns `NETWORK_ERROR` (was incorrectly grouped with `CONNECT_ERROR`)
 - `ReadError`/`WriteError`/`RemoteProtocolError` return `NETWORK_ERROR` (checked before `NetworkError` since they subclass it)
-- HTTP 408 returns `RATE_LIMITED` (it's in `RETRYABLE_STATUS_CODES`)
+- HTTP 408 returns `RATE_LIMITED` (it\'s in `RETRYABLE_STATUS_CODES`)
+
+**v1.4 fixes:**
+- `ReadError`/`WriteError`/`RemoteProtocolError`/`NetworkError` explicitly handled in Tavily error handler (tools/tavily_ops/errors.py)
+- HTTP 408 mapped to `RATE_LIMITED` in Tavily handler to align with `classify_http_error()`
 
 **SDK registration:**
 ```python
@@ -71,10 +75,10 @@ register_retryable_exception(RateLimitError)
 
 ```python
 from core.net.security import (
-    is_safe_network_address,  # hostname -> bool (public = True)
-    _assert_safe_urls,        # [urls] -> (bool, error_msg)
-    _is_private_or_localhost, # hostname -> bool (private = True)
-    _resolve_safe,            # hostname -> [(family, type, proto, canonname, sockaddr)]
+    is_safe_network_address,   # hostname -> bool (public = True)
+    _assert_safe_urls,         # [urls] -> (bool, error_msg)
+    _is_private_or_localhost,  # hostname -> bool (private = True)
+    _resolve_safe,             # hostname -> [(family, type, proto, canonname, sockaddr)]
 )
 ```
 
@@ -83,32 +87,40 @@ from core.net.security import (
 - Unbracketed IPv6 literals (`2001:db8::1`) bypass DNS and use `ipaddress` module directly
 - DNS timeout uses `ThreadPoolExecutor` + `future.result(timeout=)` (socket.getaddrinfo has no `timeout` kwarg)
 
-**Important:** `2001:db8::/32` is **reserved** in Python's `ipaddress` module (RFC 3849 documentation range). Use `2001:4860:4860::8888` (Google DNS) or `2606:4700:4700::1111` (Cloudflare) for truly public IPv6 test addresses.
+**v1.4 fixes:**
+- Added `ip.is_unspecified` check to all 4 IP validation blocks (IPv6 bracket, IPv6 no-bracket, IPv4 literal, DNS resolution loop)
+- Blocks `0.0.0.0` and `::` which previously bypassed the guard (none of `is_private`, `is_loopback`, `is_link_local`, `is_reserved`, `is_multicast` catch these)
+
+**Important:** `2001:db8::/32` is **reserved** in Python\'s `ipaddress` module (RFC 3849 documentation range). Use `2001:4860:4860::8888` (Google DNS) or `2606:4700:4700::1111` (Cloudflare) for truly public IPv6 test addresses.
 
 ### `core/net/retry.py`
 
 ```python
 from core.net.retry import (
-    retry_sync,           # (fn, max_retries=3, ...) -> result
-    retry_async_factory,  # (coro_factory, run_async, max_retries=3, ...) -> result
+    retry_sync,              # (fn, max_retries=3, ...) -> result
+    retry_async_factory,     # (coro_factory, run_async, max_retries=3, ...) -> result
 )
 ```
 
 **`retry_async_factory` signature:**
 ```python
 def retry_async_factory(
-    coro_factory: Callable,           # Returns fresh coroutine each call
+    coro_factory: Callable,  # Returns fresh coroutine each call
     *,
-    run_async: Callable,              # Runs coroutine (e.g., bridge._run_async)
+    run_async: Callable,     # Runs coroutine (e.g., bridge._run_async)
     max_retries: int = 3,
     base_delay: float = 2.0,
     max_delay: float = 10.0,
     jitter: bool = True,
     is_retryable: Callable = is_retryable_error,
-    on_success: Optional[Callable] = None,   # e.g., CB.record_success
-    on_failure: Optional[Callable] = None,   # e.g., CB.record_failure
+    on_success: Optional[Callable] = None,  # e.g., CB.record_success
+    on_failure: Optional[Callable] = None,  # e.g., CB.record_failure
 )
 ```
+
+**v1.4 fixes:**
+- `on_failure()` only fires for **retryable** errors. Previously it fired on EVERY exception, including validation errors and 4xx client errors, causing the circuit breaker to trip on non-retryable failures.
+- Removed unreachable `raise last_exception` after the for loop (every path returns or raises inside the loop).
 
 **Critical rule:** The factory must create a **fresh coroutine** on each call. Never pass an already-created coroutine.
 
@@ -125,12 +137,12 @@ factory = lambda: coro  # same coroutine — cannot be awaited twice
 
 ```python
 from core.net.budget import (
-    APICostTracker,      # Thread-safe singleton (usually use helpers below)
-    BudgetConfig,        # dataclass: daily_limit, warning_threshold, auto_block
-    record_tool_call,    # (tool, cost=1) -> None
-    check_budget,        # (tool) -> bool
-    get_budget_status,   # (tool="") -> dict
-    set_tool_budget,     # (tool, daily_limit=0, warning_threshold=0.8) -> None
+    APICostTracker,          # Thread-safe singleton (usually use helpers below)
+    BudgetConfig,            # dataclass: daily_limit, warning_threshold, auto_block
+    record_tool_call,        # (tool, cost=1) -> None
+    check_budget,            # (tool) -> bool
+    get_budget_status,       # (tool="") -> dict
+    set_tool_budget,         # (tool, daily_limit=0, warning_threshold=0.8) -> None
 )
 ```
 
@@ -164,36 +176,38 @@ _budget_tracker._last_reset_date = datetime.date.today()
 
 ```python
 from core.net.url import (
-    normalize_url,    # url -> normalized_url (lowercase, strip slash, sort params)
-    extract_domain,   # url -> hostname
-    is_same_domain,   # (url1, url2) -> bool (strips www. prefix)
+    normalize_url,           # url -> normalized_url (lowercase, strip slash, sort params)
+    extract_domain,          # url -> hostname
+    is_same_domain,          # (url1, url2) -> bool (strips www. prefix)
 )
 ```
 
 **v1.3:** `is_same_domain` now considers `www.example.com` and `example.com` as the same domain.
 
+**v1.4 fix:** Boundary check on `www.` strip. `www2.example.com` no longer becomes `2.example.com`. Only strips when `d.startswith("www.") and d.count(".") >= 2`.
+
 ### `core/net/default.py`
 
 ```python
 from core.net.default import (
-    SEARCH_MAX_RESULTS,   # 5
-    SEARCH_TIMEOUT,       # 30
-    CRAWL_MAX_DEPTH,      # 3
-    CRAWL_MAX_BREADTH,    # 10
-    CRAWL_LIMIT,          # 50
-    EXTRACT_MAX_URLS,     # 10
-    EXTRACT_DEPTH,        # "basic"
-    SCRAPE_TIMEOUT,       # 30
-    SCRAPE_MAX_RETRIES,   # 3
-    BROWSER_TIMEOUT,      # 30
-    BROWSER_NAV_RETRIES,  # 2
-    RETRY_MAX_ATTEMPTS,   # 3
-    RETRY_BASE_DELAY,     # 2.0
-    RETRY_MAX_DELAY,      # 30.0
-    RETRY_JITTER,         # True
-    CB_FAILURE_THRESHOLD,      # 5
-    CB_RECOVERY_TIMEOUT,       # 60.0
-    CB_HALF_OPEN_MAX_CALLS,    # 1
+    SEARCH_MAX_RESULTS,      # 5
+    SEARCH_TIMEOUT,          # 30
+    CRAWL_MAX_DEPTH,         # 3
+    CRAWL_MAX_BREADTH,       # 10
+    CRAWL_LIMIT,             # 50
+    EXTRACT_MAX_URLS,        # 10
+    EXTRACT_DEPTH,           # "basic"
+    SCRAPE_TIMEOUT,          # 30
+    SCRAPE_MAX_RETRIES,      # 3
+    BROWSER_TIMEOUT,         # 30
+    BROWSER_NAV_RETRIES,     # 2
+    RETRY_MAX_ATTEMPTS,      # 3
+    RETRY_BASE_DELAY,        # 2.0
+    RETRY_MAX_DELAY,         # 30.0
+    RETRY_JITTER,            # True
+    CB_FAILURE_THRESHOLD,    # 5
+    CB_RECOVERY_TIMEOUT,     # 60.0
+    CB_HALF_OPEN_MAX_CALLS,  # 1
 )
 ```
 
@@ -210,7 +224,7 @@ _MY_CB = CircuitBreaker(failure_threshold=5, recovery_timeout=60.0)
 def _run_with_resilience(coro_factory):
     if not _MY_CB.can_execute():
         raise CircuitBreakerOpen("Service unavailable")
-    
+
     return retry_async_factory(
         coro_factory,
         run_async=_run_async,
@@ -223,6 +237,7 @@ def _run_with_resilience(coro_factory):
 - Call `can_execute()` before every protected operation
 - Call `record_success()` only on final success (retry handles intermediate failures)
 - Call `record_failure()` on every retryable failure (retry_async_factory calls this automatically)
+- **v1.4 CRITICAL:** `retry_async_factory` only calls `on_failure()` for retryable errors. Non-retryable errors (validation, 4xx) raise immediately without touching the CB.
 - Reset CB in tests with `_MY_CB.reset()`
 - **v1.3 FIX:** OPEN→HALF_OPEN transition counts against `half_open_max_calls` (was allowing 1 extra call)
 
@@ -239,7 +254,7 @@ set_tool_budget("my_tool.search", daily_limit=100, warning_threshold=0.8)
 def my_action():
     if not check_budget("my_tool.search"):
         return fail("Budget exhausted", error_code="QUOTA_EXHAUSTED")
-    
+
     result = call_api()
     record_tool_call("my_tool.search")
     return ok(result)
@@ -264,6 +279,10 @@ key = normalize_url("https://Example.COM:443/PATH/?Z=1&A=2")
 # Domain comparison
 is_same_domain("https://www.example.com/a", "https://example.com/b")
 # -> True (www. stripped)
+
+# v1.4: Boundary check
+is_same_domain("https://www2.example.com/a", "https://example.com/b")
+# -> False (www2. NOT stripped)
 ```
 
 ---
@@ -335,6 +354,47 @@ from core.net.default import SEARCH_MAX_RESULTS
 
 ---
 
+## 🧪 Testing
+
+```powershell
+# Run all core/net tests
+D:\\mcp\\agent\\venv\\Scripts\\pytest.exe tests/core/net/ -W error --tb=short -v
+```
+
+**Test coverage:**
+
+**Core/net tests (`tests/core/net/`):**
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_security.py` | 12 | SSRF guard, IPv6 (loopback + public), empty hostname, scheme validation |
+| `test_web_errors.py` | 12 | Classification, BOT_BLOCKED, 408, SDK duck-typing, retry delay, NetworkError |
+| `test_retry.py` | 6 | Success, retry, exhaust, non-retryable, custom predicate, backoff, jitter |
+| `test_budget.py` | 6 | Record, afford, warning, status, thread safety, daily reset |
+| `test_url.py` | 7 | Normalize, domain extract, same domain (www stripping) |
+| `test_path_validation.py` | 5 | Path-specific SSRF validation |
+| `test_ssrf_edge_cases.py` | — | Edge cases (moved from `tests/core/`) |
+| `test_ssrf_protection.py` | 7 | SSRF protection tests |
+
+
+**Current test layout:**
+```text
+tests/core/net/                  # v1.2/v1.3
+├── conftest.py                  # v1.3: budget tracker reset fixture
+├── test_security.py
+├── test_web_errors.py
+├── test_retry.py                # v1.3: retry_async_factory tests
+├── test_budget.py               # v1.3: daily reset, RLock tests
+├── test_url.py
+├── test_path_validation.py
+├── test_ssrf_edge_cases.py
+└── test_ssrf_protection.py
+```
+
+
+
+
+
 ## 🧪 Testing Integration
 
 ### Shared test fixtures
@@ -389,17 +449,41 @@ def filter_resource_warnings():
 7. **Never forget to register SDK exceptions** — Call `register_retryable_exception()` for new SDK wrappers.
 8. **Never skip `check_budget()` before paid API calls** — Prevents quota overruns.
 9. **Never skip `record_tool_call()` after paid API success** — Budget tracking requires it.
-10. **Never use `2001:db8::1` as a public IPv6 test address** — It's reserved in Python's `ipaddress` module. Use `2001:4860:4860::8888` instead.
+10. **Never use `2001:db8::1` as a public IPv6 test address** — It\'s reserved in Python\'s `ipaddress` module. Use `2001:4860:4860::8888` instead.
+11. **Never call `on_failure()` before `is_retryable()`** — Non-retryable errors must NOT trip the circuit breaker. `retry_async_factory` handles this correctly; don\'t bypass it.
+12. **Never forget `ip.is_unspecified` in IP checks** — `0.0.0.0` and `::` are NOT caught by `is_private`/`is_loopback`/`is_reserved`/`is_multicast`.
 
 ### ALWAYS DO
-11. **Always import from `core.net` package** — `from core.net import ...` not `core.security` or `core.web_errors`.
-12. **Always use `normalize_url()` for cache keys** — Deterministic, sortable, consistent.
-13. **Always patch `allowed_internal_hosts` to empty in security tests** — Prevents environment config from interfering.
-14. **Always reset circuit breakers between tests** — `_MY_CB.reset()` must be in a known state.
-15. **Always use `AsyncMock` for async client methods in tests** — `_run_async_with_resilience` calls `asyncio.run(coro)`.
-16. **Always include `error_code` in `fail()` calls** — Every error response must be programmatically consumable.
-17. **Always check `can_execute()` before CB-protected operations** — Fail fast when circuit is open.
-18. **Always fall through to HALF_OPEN check after OPEN→HALF_OPEN transition** — Don't return True immediately (v1.3 fix).
+13. **Always import from `core.net` package** — `from core.net import ...` not `core.security` or `core.web_errors`.
+14. **Always use `normalize_url()` for cache keys** — Deterministic, sortable, consistent.
+15. **Always patch `allowed_internal_hosts` to empty in security tests** — Prevents environment config from interfering.
+16. **Always reset circuit breakers between tests** — `_MY_CB.reset()` must be in a known state.
+17. **Always use `AsyncMock` for async client methods in tests** — `_run_async_with_resilience` calls `asyncio.run(coro)`.
+18. **Always include `error_code` in `fail()` calls** — Every error response must be programmatically consumable.
+19. **Always check `can_execute()` before CB-protected operations** — Fail fast when circuit is open.
+20. **Always fall through to HALF_OPEN check after OPEN→HALF_OPEN transition** — Don\'t return True immediately (v1.3 fix).
+21. **Always verify `www.` strip boundary** — `www2.example.com` must NOT become `2.example.com`. Use `startswith("www.") and count(".") >= 2`.
+22. **Always use raw strings for `</` → `<\/` replacement** — `.replace("</", r"<\/")` avoids invalid escape sequence SyntaxError under `-W error`.
+
+---
+
+## 🔗 Source Code Reference
+
+| File | Purpose |
+|------|---------|
+| `core/net/__init__.py` | **v1.3:** Public re-exports for `from core.net import ...` |
+| `core/net/security.py` | `is_safe_network_address()`, `_assert_safe_urls()` — cross-tool SSRF protection |
+| `core/net/errors.py` | `classify_http_error()`, `is_retryable_error()`, `get_retry_delay()`, `register_retryable_exception()` — shared HTTP error classification |
+| `core/net/retry.py` | `retry_sync()` + `retry_async_factory()` — unified retry with CB hooks |
+| `core/net/budget.py` | `APICostTracker`, `record_tool_call()`, `check_budget()` — cost tracking |
+| `core/net/url.py` | `normalize_url()`, `extract_domain()`, `is_same_domain()` — URL utilities |
+| `core/net/default.py` | `SEARCH_MAX_RESULTS`, `CRAWL_MAX_DEPTH`, `RETRY_BASE_DELAY`, `CB_FAILURE_THRESHOLD` — shared defaults |
+| `core/contracts.py` | `ok()` / `fail()` — standardized return dicts with `trace_id` + `error_code` injection |
+| `tools/tavily.py` | `@tool` + `@meta_tool` facade: action dispatch, validation |
+| `core/config.py` | `cfg.tavily_api_key`, `cfg.tavily_timeout` |
+| `tests/tools/tavily/` | Tavily test suite |
+| `tests/core/net/` | Net test suite |
+| `workflows/deep_research_impl/nodes/search.py` | Uses `tavily(action="search")` facade |
 
 ---
 

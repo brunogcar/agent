@@ -2,7 +2,7 @@
 
 v1.2: Extracted from bridge.py and web_ops/scrape.py.
 v1.3: Added retry_async_factory() for async coroutine retry with circuit breaker hooks.
-      This is the pattern used by Tavily and will be adopted by web_ops/browser.
+v1.4: Fixed on_failure called for non-retryable errors. Removed dead raise.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import time
 from typing import Callable, Any, Optional
 
 from core.net.errors import is_retryable_error, get_retry_delay
+
 
 def retry_sync(
     fn: Callable,
@@ -47,7 +48,6 @@ def retry_sync(
                 time.sleep(delay)
             else:
                 raise
-    raise last_exception
 
 
 def retry_async_factory(
@@ -66,6 +66,8 @@ def retry_async_factory(
 
     v1.3: Extracted from bridge.py _run_async_with_resilience for reuse
     across tools (tavily, web_ops, browser).
+    v1.4: on_failure only fires for retryable errors; CB no longer tripped
+    by validation failures or 4xx client errors.
 
     Args:
         coro_factory: Callable that returns a fresh coroutine each time.
@@ -94,11 +96,13 @@ def retry_async_factory(
             return result
         except Exception as e:
             last_exception = e
-            if on_failure is not None:
-                on_failure()
-            if attempt < max_retries and is_retryable(e):
-                delay = get_retry_delay(attempt, base_delay, max_delay, jitter)
-                time.sleep(delay)
+            if is_retryable(e):
+                if on_failure is not None:
+                    on_failure()
+                if attempt < max_retries:
+                    delay = get_retry_delay(attempt, base_delay, max_delay, jitter)
+                    time.sleep(delay)
+                else:
+                    raise
             else:
                 raise
-    raise last_exception

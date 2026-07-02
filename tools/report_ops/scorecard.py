@@ -125,7 +125,8 @@ def build(trace_id: str, title: str, data: Any, config: dict) -> dict:
         "overall_status": overall_status,
         "overall_color": _rag_color(overall_status, theme),
         # Escape </script> to prevent injection when JSON is embedded in <script> tags
-        "radar_config_json": json.dumps(radar_config).replace("</", "<\/"),
+        # v1.4 FIX: Use raw string to avoid invalid escape sequence \/.
+        "radar_config_json": json.dumps(radar_config).replace("</", r"<\/"),
         "theme": theme,
         "accent": accent,
         "trace_id": trace_id,

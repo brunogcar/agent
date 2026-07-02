@@ -2,6 +2,7 @@
 
 v1.2: Added for consistent cache keys and URL comparison.
 v1.3: Fixed is_same_domain to consider www.example.com and example.com as same domain.
+v1.4: Fixed www. strip boundary check (www2.example.com no longer stripped).
 """
 from __future__ import annotations
 
@@ -46,10 +47,13 @@ def is_same_domain(url1: str, url2: str) -> bool:
     """Check if two URLs share the same domain.
 
     v1.3: www.example.com and example.com are considered the same domain.
+    v1.4: Boundary check — www2.example.com is NOT stripped to 2.example.com.
     """
     d1 = extract_domain(url1).lower()
     d2 = extract_domain(url2).lower()
-    # Strip www. prefix for comparison
-    d1 = d1.removeprefix("www.")
-    d2 = d2.removeprefix("www.")
+    # Strip www. prefix for comparison, but only for true www. subdomains
+    if d1.startswith("www.") and d1.count(".") >= 2:
+        d1 = d1[4:]
+    if d2.startswith("www.") and d2.count(".") >= 2:
+        d2 = d2[4:]
     return d1 == d2

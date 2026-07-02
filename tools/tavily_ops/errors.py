@@ -1,13 +1,8 @@
 """tools/tavily_ops/errors.py — Tavily error sanitization + classification.
 
-v1.2 FIXES:
-- Remove dead TavilyError import.
-- Fix API key sanitization (regex + length guard + URL patterns).
-- Truncate error messages to 500 chars to prevent token waste.
-- Use core/net/errors for HTTP classification.
-v1.3 FIXES:
-- Handle CircuitBreakerOpen exception with CB_OPEN error_code.
-- Wire budget tracking into error responses.
+v1.2: Remove dead TavilyError import, fix API key sanitization, truncate messages.
+v1.3: Handle CircuitBreakerOpen, wire budget tracking.
+v1.4: Added httpx network error handlers, fixed 408 classification.
 """
 from __future__ import annotations
 
@@ -17,6 +12,7 @@ from core.config import cfg
 from core.contracts import fail
 from core.net.security import _assert_safe_urls as _core_assert_safe_urls
 from tools.tavily_ops.bridge import CircuitBreakerOpen
+
 
 def _assert_safe_urls(urls):
     """Wrapper: delegate to core.net.security._assert_safe_urls.
@@ -33,6 +29,8 @@ def _handle_tavily_error(e, trace_id=""):
 
     v1.2: Enhanced API key sanitization, error truncation, structured error_code.
     v1.3: Added CircuitBreakerOpen handling.
+    v1.4: Added ReadError/WriteError/RemoteProtocolError/NetworkError handlers.
+           Fixed 408 mapped to RATE_LIMITED (retryable) instead of CLIENT_ERROR.
     """
     error_type = type(e).__name__
     raw_msg = str(e)
@@ -128,11 +126,42 @@ def _handle_tavily_error(e, trace_id=""):
             error_code="CONNECT_ERROR",
         )
 
+    # v1.4: Catch remaining httpx network errors (NetworkError is base class;
+    # ConnectError above already matched, so these are the non-connect variants)
+    if isinstance(e, httpx.NetworkError):
+        return fail(
+            f"Tavily network error: {raw_msg}",
+            trace_id=trace_id,
+            error_code="NETWORK_ERROR",
+        )
+
+    if isinstance(e, httpx.ReadError):
+        return fail(
+            f"Tavily read error: {raw_msg}",
+            trace_id=trace_id,
+            error_code="NETWORK_ERROR",
+        )
+
+    if isinstance(e, httpx.WriteError):
+        return fail(
+            f"Tavily write error: {raw_msg}",
+            trace_id=trace_id,
+            error_code="NETWORK_ERROR",
+        )
+
+    if isinstance(e, httpx.RemoteProtocolError):
+        return fail(
+            f"Tavily protocol error: {raw_msg}",
+            trace_id=trace_id,
+            error_code="NETWORK_ERROR",
+        )
+
     if isinstance(e, httpx.HTTPStatusError):
         status = e.response.status_code if e.response else None
-        if status == 429:
+        # v1.4: 408 is retryable — align with classify_http_error() in core/net/errors.py
+        if status == 429 or status == 408:
             return fail(
-                f"Tavily rate limit (HTTP 429): {raw_msg}",
+                f"Tavily rate limit (HTTP {status}): {raw_msg}",
                 trace_id=trace_id,
                 error_code="RATE_LIMITED",
             )

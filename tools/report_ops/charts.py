@@ -37,7 +37,8 @@ def build(
     ctx = {
         "title": title,
         # Escape </script> to prevent injection when JSON is embedded in <script> tags
-        "chart_config_json": json.dumps(chart_config).replace("</", "<\/"),
+        # v1.4 FIX: Use raw string to avoid invalid escape sequence \/."""
+        "chart_config_json": json.dumps(chart_config).replace("</", r"<\/"),
         "theme": config.get("theme", "dark"),
         "accent": config.get("accent", "#0d9488"),
     }

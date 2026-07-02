@@ -8,6 +8,7 @@ v1.2: Restored max_depth, max_breadth, limit facade params.
       Added error_code support in fail() responses.
 v1.3: Added include_domains/exclude_domains validation.
       citation_format only passed to research action.
+v1.4: Removed dead max_chars param and dead research action block.
 
 PARALLEL_SAFE = True because AsyncTavilyClient is thread-safe.
 """
@@ -63,7 +64,6 @@ def tavily(
     limit: int = 50,
     include_domains: Optional[List[str]] = None,
     exclude_domains: Optional[List[str]] = None,
-    max_chars: Optional[int] = None,
     trace_id: str = "",
 ) -> dict:
     """Tavily meta-tool — atomic actions for AI search, extraction, and crawling."""
@@ -121,12 +121,6 @@ def tavily(
     }
     if urls is not None:
         kwargs["urls"] = urls
-    if max_chars is not None:
-        kwargs["max_chars"] = max_chars
-
-    # v1.3: Only pass citation_format to research action
-    if action == "research":
-        kwargs["citation_format"] = citation_format
 
     try:
         result = handler(**kwargs)
