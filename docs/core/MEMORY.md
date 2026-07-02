@@ -1,4 +1,4 @@
-﻿# 🧠 Memory Backend
+# 🧠 Memory Backend
 
 The memory backend is a **three-collection ChromaDB vector store** with decay scoring, query rewriting, thread-safe write operations, and two learning subsystems. It provides persistent knowledge storage across **episodic** (events), **semantic** (facts), and **procedural** (skills) collections.
 
@@ -13,51 +13,101 @@ The memory backend is a **three-collection ChromaDB vector store** with decay sc
 
 ---
 
+## ⚠️ Breaking Changes (pre-v1.0)
+
+| Old | New | Migration |
+|-----|-----|-----------|
+| `core/memory.py` facade | `core/memory_engine.py` | Update all imports: `from core.memory import memory` → `from core.memory_engine import memory` |
+| `memory.remember(text, collection=...)` | `memory.store(text, memory_type=...)` | Use `store()` with `memory_type` param, or typed helpers `store_episodic()` / `store_semantic()` / `store_procedural()` |
+| `memory.write_procedural_rule()` | `memory.store_procedural()` | Same API, different method name |
+| `memory.forget(query, ...)` | `memory.delete(query, ...)` | Same behavior, renamed for clarity |
+| `memory.memory_vacuum()` | `memory.prune()` | Prune handles stale entry removal |
+| `memory.memory_report()` | `memory.stats()` | Stats returns collection counts and health |
+| `memory.compact()` | Not implemented | Use `memory.stats()` to check collection health |
+| `memory.deduplicate()` | Not implemented | Dedup happens automatically on every write |
+| `memory.memory_search()` | `memory.recall()` | Same behavior, `recall()` is the unified search |
+| `memory.semantic_search()` | `memory.recall()` | Same behavior |
+| `core/context_budget.py` | `core/llm_backend/rate_limit.py` | Context budgeting moved to LLM backend |
+
+---
+
+## 🚀 Quick Start
+
+```python
+from core.memory_engine import memory
+
+# Store episodic (what happened)
+memory.store_episodic(
+    text="Fixed bug in memory.py -- missing colon after def",
+    importance=8, goal="fix scraping bug", outcome="success",
+    tools_used="python,git", trace_id="abc123"
+)
+
+# Store semantic (what you know)
+memory.store_semantic(
+    text="ChromaDB get_or_create_collection is idempotent",
+    importance=7, tags="chromadb,startup"
+)
+
+# Store procedural (how to do it)
+memory.store_procedural(
+    text="To fix SyntaxError: always check line N-2 for unclosed bracket",
+    importance=9, tags="syntax,debug"
+)
+
+# Recall (searches all collections by default)
+results = memory.recall("how to fix syntax errors", top_k=5)
+for r in results:
+    print(r["text"], r["score"])
+```
+
+---
+
 ## 🏗️ Architecture
 
-### Component Map
-
-```
-core/memory.py                          # Thin facade — re-exports singleton
+```text
+core/memory_engine.py          # Thin facade — re-exports MemoryStore singleton
 core/memory_backend/
-├── store.py                            # MemoryStore class: collections, _write_lock, stats
-├── write_ops.py                        # execute_store() — TOCTOU-safe dedup + insert
-├── read_ops.py                         # execute_recall(), execute_recall_context()
-├── scoring.py                          # 4-factor confidence scoring + query rewriting
-├── maintenance.py                      # execute_delete/prune/summarize/stats/diversity_maintenance()
-├── telemetry.py                        # RecallTracker — RAM buffer, periodic ChromaDB flush
-├── eviction.py                         # EvictionQueue class + flusher_loop() — disk spill queue
-├── janitor.py                          # archive_old_episodes() — episodic archival only
-├── constants.py                        # COLLECTION_PROCEDURAL, META_FIELDS, dedup thresholds
-├── client.py                           # get_client(timeout=60) — ChromaDB client singleton
-├── budget.py                           # Cognitive context budgeting (7-tier ContextClass:
-│                                        #   SYSTEM/USER/ERROR/PROCEDURAL/RECENT/OUTPUT/ARCHIVE)
-├── pruner.py                           # VRAM context pruning (artifact preservation + truncation)
-├── meta_learning.py                    # distill_and_store() + MetaLearner — inline learning from traces
-└── procedural/                         # distill.py, prompts.py, validate.py
+├── store.py                   # MemoryStore class: collections, _write_lock, stats
+├── write_ops.py               # execute_store() — TOCTOU-safe dedup + insert
+├── read_ops.py                # execute_recall(), execute_recall_context()
+├── scoring.py                 # _decay_score() + _rewrite_query() (model-free)
+├── maintenance.py             # execute_delete/prune/summarize/stats/diversity_maintenance()
+├── telemetry.py               # RecallTracker — RAM buffer, periodic ChromaDB flush
+├── eviction.py                # EvictionQueue class + flusher_loop() — disk spill queue
+├── janitor.py                 # archive_old_episodes() — episodic archival only
+├── constants.py               # COLLECTION_*, META_FIELDS, dedup thresholds
+├── client.py                  # get_client(timeout=60) — ChromaDB client singleton
+├── budget.py                  # Cognitive context budgeting (7-tier ContextClass)
+├── pruner.py                  # VRAM context pruning (artifact preservation + truncation)
+├── meta_learning.py           # distill_and_store() + MetaLearner — inline learning from traces
+└── procedural/                # distill.py, prompts.py, validate.py
 
-core/sleep_learn/                       # Background meta-learning daemon
-├── daemon.py                           # start_background_daemon() — midnight scheduler
-├── feedback.py                         # Pending feedback processing loop
-├── distiller.py                        # Trace analysis → rule extraction
-├── filters.py                          # New rules, deduplication, contradictions
-├── storage.py                          # Write rules to isolated ChromaDB collection
-├── injector.py                         # Merge rules into Planner system prompt
-├── logger.py                           # Parse feedback.log for pending entries
-├── config.py                           # SLEEP_* configuration constants
-├── sweeper.py                          # Placeholder — not yet implemented
-└── janitor.py                          # Placeholder — not yet implemented
+core/sleep_learn/              # Background meta-learning daemon
+├── daemon.py                  # start_background_daemon() — startup + midnight scheduler
+├── feedback.py                # process_feedback() — confidence scoring loop
+├── distiller.py               # distill_observation() — LLM rule extraction (60s timeout)
+├── filters.py                 # is_quality_rule() — generic/dangerous rule rejection
+├── storage.py                 # save_rule() — write to isolated ChromaDB collection
+├── injector.py                # inject_rules_into_prompt() + get_relevant_rules()
+├── logger.py                  # log_event() — structured JSONL logging
+├── config.py                  # SLEEP_* configuration constants
+├── sweeper.py                 # sweep_recent_observations() — Phase 1 passive event gathering
+└── janitor.py                 # purge_stale_rules() — confidence + age-based rule purging
 ```
 
 ### Thin Facade Pattern
 
 ```python
-# core/memory.py — What callers see
-from core.memory_backend.store import memory  # Singleton
+# core/memory_engine.py — What callers see
+from core.memory_backend.store import MemoryStore
+
+# Singleton export
+memory = MemoryStore()
 
 # Usage throughout the codebase
-from core.memory import memory
-memory.remember("ChromaDB uses cosine similarity", collection="semantic")
+from core.memory_engine import memory
+memory.store(text="...", memory_type="semantic")
 results = memory.recall("How does ChromaDB work?", top_k=5)
 ```
 
@@ -65,19 +115,19 @@ results = memory.recall("How does ChromaDB work?", top_k=5)
 
 ```mermaid
 graph TD
-    A["Caller<br/>tool / workflow / planner"] -->|"memory.remember(text, ...)"| B["write_ops.remember()"]
-    B --> C["ensure_not_cancelled()<br/>Ghost mutation guard"]
-    C --> D["O(1) Hash Guard<br/>store._hash_cache"]
-    D -->|Exact match| E["Return skip payload<br/>status: 'skipped_duplicate'"]
-    D -->|No match| F["Semantic Dedup<br/>ChromaDB query, cosine > threshold"]
+    A["Caller (tool / workflow / planner)"] -->|"memory.store(text, ...)"| B["write_ops.execute_store()"]
+    B --> C["ensure_not_cancelled()\nGhost mutation guard"]
+    C --> D["O(1) Hash Guard\nstore._hash_cache"]
+    D -->|Exact match| E["Return skip payload\nstatus: 'skipped_duplicate'"]
+    D -->|No match| F["Semantic Dedup\nChromaDB query, cosine < threshold"]
     F -->|Match found| G{Collection?}
-    G -->|"procedural"| H["Reinforce existing<br/>increment reinforcement_count"]
+    G -->|"procedural"| H["Reinforce existing\nincrement reinforcement_count"]
     G -->|"episodic / semantic"| E
     F -->|No match| I["Acquire _write_lock"]
-    I --> J["Re-check Hash + Vector<br/>Inside lock (double-check)"]
+    I --> J["Re-check Hash + Vector\nInside lock (double-check)"]
     J -->|Match| E
-    J -->|No match| K["col.add()<br/>Insert into ChromaDB"]
-    K --> L["Update _hash_cache<br/>Add hash to set"]
+    J -->|No match| K["col.add()\nInsert into ChromaDB"]
+    K --> L["Update _hash_cache\nAdd hash to set"]
     L --> M["Return success payload"]
 ```
 
@@ -85,12 +135,12 @@ graph TD
 
 ```mermaid
 graph TD
-    A["Caller"] -->|"memory.recall(query, top_k)"| B["read_ops.recall()"]
-    B --> C["_rewrite_query()<br/>Strip filler, expand abbreviations"]
-    C --> D["Scoring.query_with_score()<br/>ChromaDB similarity search"]
-    D --> E["Apply decay scoring<br/>episodic/semantic: time-decay<br/>procedural: bypass"]
-    E --> F["Filter archived<br/>exclude archived=true"]
-    F --> G["Sort by composite score<br/>descending"]
+    A["Caller"] -->|"memory.recall(query, top_k)"| B["read_ops.execute_recall()"]
+    B --> C["_rewrite_query()\nStrip filler, expand abbreviations"]
+    C --> D["Scoring.query_with_score()\nChromaDB similarity search"]
+    D --> E["Apply decay scoring\nepisodic/semantic: time-decay\nprocedural: bypass"]
+    E --> F["Filter archived\nexclude archived=true"]
+    F --> G["Sort by composite score\ndescending"]
     G --> H["Return top_k results"]
 ```
 
@@ -100,9 +150,9 @@ graph TD
 
 | Collection | Purpose | Use Cases | Dedup Threshold | Decay | Pruning |
 |------------|---------|-----------|-----------------|-------|---------|
-| **episodic** | What happened | Task runs, workflow outcomes, errors, evicted context | 0.85 cosine sim | Yes (30-day half-life) | Archived after 30 days |
-| **semantic** | What you know | Facts, research, domain knowledge, documentation | 0.85 cosine sim | Yes (30-day half-life) | Vacuum removes low-scored |
-| **procedural** | How to do it | Fix patterns, solutions, reusable approaches | 0.85 cosine sim | **No** (bypass) | Protected from pruning |
+| **episodic** | What happened | Task runs, workflow outcomes, errors, evicted context | 0.05 cosine sim | Yes (30-day half-life) | Archived after 30 days |
+| **semantic** | What you know | Facts, research, domain knowledge, documentation | 0.15 cosine sim | Yes (30-day half-life) | Vacuum removes low-scored |
+| **procedural** | How to do it | Fix patterns, solutions, reusable approaches | 0.08 cosine sim | **No** (bypass) | Protected from pruning |
 
 ### Collection Lifecycle
 
@@ -137,15 +187,15 @@ Every write passes through four dedup layers before touching ChromaDB:
 
 ```mermaid
 graph TD
-    A["Incoming text"] --> B["Layer 1: Hash Guard<br/>O(1) set lookup<br/>No lock, no I/O"]
+    A["Incoming text"] --> B["Layer 1: Hash Guard\nO(1) set lookup\nNo lock, no I/O"]
     B -->|Hit| Z["Return skip payload"]
-    B -->|Miss| C["Layer 2: Outer Vector<br/>ChromaDB cosine query<br/>No lock, best-effort"]
+    B -->|Miss| C["Layer 2: Outer Vector\nChromaDB cosine query\nNo lock, best-effort"]
     C -->|Hit| Z
-    C -->|Miss| D["Layer 3: Inner Vector<br/>Re-query inside _write_lock<br/>Catches race conditions"]
+    C -->|Miss| D["Layer 3: Inner Vector\nRe-query inside _write_lock\nCatches race conditions"]
     D -->|Hit| Z
-    D -->|Miss| E["Layer 4: Procedural Reinforcement<br/>If procedural + match exists<br/>Increment reinforcement_count"]
+    D -->|Miss| E["Layer 4: Procedural Reinforcement\nIf procedural + match exists\nIncrement reinforcement_count"]
     E -->|Reinforced| Z2["Return reinforce payload"]
-    E -->|New| F["col.add()<br/>Insert + update hash cache"]
+    E -->|New| F["col.add()\nInsert + update hash cache"]
 ```
 
 ### Layer Details
@@ -195,8 +245,8 @@ Every memory has a composite confidence score calculated from four factors:
 confidence = (
     source_trust_weight      # 0.0-1.0: Trust level of the source
     × quality_score          # 0.0-1.0: Content quality (length, coherence)
-    × verification_bonus     # 0.0-1.0: Whether it was verified/reinforced
-    × time_decay             # 0.0-1.0: Age-based decay (episodic/semantic only)
+    × verification_bonus       # 0.0-1.0: Whether it was verified/reinforced
+    × time_decay               # 0.0-1.0: Age-based decay (episodic/semantic only)
 )
 ```
 
@@ -206,11 +256,11 @@ confidence = (
 graph LR
     subgraph "Episodic / Semantic"
         A["score = importance × max(0.3, 1 - age_days / DECAY_DAYS)"]
-        B["Floor: 0.3<br/>Old memories retain 30%"]
+        B["Floor: 0.3\nOld memories retain 30%"]
     end
     subgraph "Procedural (No Decay)"
         C["score = importance × (1.0 + 0.15 × log(1 + min(reinforcement, 10)))"]
-        D["Capped logarithmic growth<br/>Prevents monopolies"]
+        D["Capped logarithmic growth\nPrevents monopolies"]
     end
 ```
 
@@ -241,11 +291,11 @@ Before hitting ChromaDB, queries pass through a **model-free** rewrite step in `
 
 ```mermaid
 graph TD
-    A["remember() called"] --> B["Hash Guard check<br/>No lock — O(1)"]
-    B --> C["Outer Vector check<br/>No lock — best effort"]
+    A["remember() called"] --> B["Hash Guard check\nNo lock — O(1)"]
+    B --> C["Outer Vector check\nNo lock — best effort"]
     C --> D["Acquire _write_lock"]
-    D --> E["Re-check Hash<br/>Inside lock"]
-    E --> F["Re-check Vector<br/>Inside lock"]
+    D --> E["Re-check Hash\nInside lock"]
+    E --> F["Re-check Vector\nInside lock"]
     F --> G["col.add() or col.update()"]
     G --> H["Release lock"]
     H --> I["Update _hash_cache"]
@@ -290,11 +340,11 @@ graph TD
     subgraph "Background Learning (sleep_learn/)"
         F["Agent idle > 2 hours"] --> G["Process pending_feedback.log"]
         G --> H["Analyze traces for patterns"]
-        H --> I{"Confidence > 60%<br/>AND repetitions > 5?"}
+        H --> I{"Confidence > 60%\nAND repetitions > 5?"}
         I -->|Yes| J["Write to isolated procedural_meta"]
         I -->|No| K["Skip"]
     end
-    D --> L["Injector merges both<br/>into Planner prompt"]
+    D --> L["Injector merges both\ninto Planner prompt"]
     J --> L
 ```
 
@@ -302,8 +352,8 @@ graph TD
 
 | Aspect | Inline (`meta_learning.py`) | Background (`sleep_learn/`) |
 |--------|---------------------------|---------------------------|
-| **When** | After successful tool execution | During idle periods (>2h) or midnight |
-| **Threshold** | 30% confidence | 60% confidence + 5+ repetitions |
+| **When** | After successful tool execution | During idle periods (>2h) or at startup + midnight |
+| **Threshold** | 30% confidence (heuristic) | 60% confidence + 5+ repetitions |
 | **Collection** | Main `procedural` | Isolated `procedural_meta` |
 | **Latency** | Immediate effect | Deferred (next session) |
 | **Source** | Single execution context | Cross-trace pattern analysis |
@@ -316,7 +366,7 @@ Both systems converge at the **injector** (`sleep_learn/injector.py`), which mer
 ```python
 # Injector reads from both collections
 rules_main = memory.recall("", collection="procedural", top_k=20)
-rules_sleep = memory_sleep.recall("", collection="procedural_meta", top_k=20)
+rules_sleep = get_relevant_rules(query, k=SLEEP_LEARN_MAX_INJECTED_RULES)
 
 # Merges by hash dedup, injects into Planner prompt
 prompt = base_prompt + "\n\n# Learned Rules\n" + merged_rules
@@ -327,7 +377,7 @@ prompt = base_prompt + "\n\n# Learned Rules\n" + merged_rules
 ```
 Tool execution → success/failure logged to pending_feedback.log
     → Sleep daemon processes feedback (every 10min during idle)
-    → Distiller extracts rules via LLM (15s timeout)
+    → Distiller extracts rules via LLM (60s timeout)
     → Filters: new rules only, dedup, contradiction check
     → Storage: write to procedural_meta collection
     → Injector: merge into Planner prompt
@@ -353,7 +403,7 @@ To prevent procedural memory pollution (near-duplicate or contradictory rules):
 
 ### Janitor Daemon
 
-Runs during Sleep & Learn idle cycles or manually via `memory(action="janitor")`:
+Runs during Sleep & Learn cycles or manually via `memory(action="janitor")`:
 
 | Operation | Default Threshold | Action |
 |-----------|-------------------|--------|
@@ -373,7 +423,7 @@ When working memory exceeds the context budget:
 ### Memory Vacuum
 
 ```python
-memory.memory_vacuum()
+memory.prune()
 # Removes: low-scored episodic (>30 days), stale semantic (>60 days)
 # Preserves: procedural (protected), critical/protected tags
 ```
@@ -409,14 +459,14 @@ The context budget system decides what information enters the LLM's context wind
 
 ```mermaid
 graph TD
-    A["All messages<br/>system + context + history"] --> B["Categorize by cognitive role"]
-    B --> C["Estimate tokens<br/>len(text) // 3.5"]
-    C --> D{Fits in<br/>context window?}
+    A["All messages\nsystem + context + history"] --> B["Categorize by cognitive role"]
+    B --> C["Estimate tokens\nlen(text) // 3.5"]
+    C --> D{Fits in\ncontext window?}
     D -->|Yes| E["Return as-is"]
     D -->|No| F["Trim lowest priority first"]
     F --> G["Apply per-class soft caps"]
     G --> H{Still over?}
-    H -->|Yes| I["Context pruner<br/>Level 1-4 compression"]
+    H -->|Yes| I["Context pruner\nLevel 1-4 compression"]
     H -->|No| J["Return trimmed messages"]
     I --> J
 ```
@@ -450,14 +500,14 @@ Tags are validated in `tools/memory_tool.py` before passing to the backend:
 
 ### Write Operations
 
-#### `remember()` — Store a Memory
+#### `store()` — Store a Memory
 
 ```python
-result = memory.remember(
+result = memory.store(
     text="ChromaDB uses cosine similarity for vector search",
-    collection="semantic",
-    tags=["chromadb", "vector-search"],
-    importance=0.8,
+    memory_type="semantic",
+    tags="chromadb,vector-search",
+    importance=7,
     trace_id="abc123",
 )
 ```
@@ -465,25 +515,21 @@ result = memory.remember(
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `text` | `str` | — | **Required.** Memory content |
-| `collection` | `str` | `"episodic"` | Target collection |
-| `tags` | `list[str]` | `[]` | Tags for filtering |
-| `importance` | `float` | `0.5` | Base importance score (0.0–1.0) |
+| `memory_type` | `str` | `"semantic"` | Target collection: `episodic` / `semantic` / `procedural` |
+| `tags` | `str` | `""` | Comma-separated tags |
+| `importance` | `int` | `5` | Base importance score (1–10) |
 | `trace_id` | `str` | `""` | Trace identifier |
 | `source` | `str` | `""` | Source attribution |
-| `metadata` | `dict` | `{}` | Additional metadata |
+| `goal` | `str` | `""` | What was being attempted (episodic/procedural) |
+| `outcome` | `str` | `"unknown"` | `success` / `failure` / `partial` / `unknown` |
+| `tools_used` | `str` | `""` | Comma-separated tool names (episodic) |
 
-**Returns:** `dict` — `{"status": "success", "id": "uuid"}` or `{"status": "skipped_duplicate", ...}`
+**Typed helpers:**
+- `store_episodic(text, importance=5, tags="", trace_id="", goal="", outcome="unknown", tools_used="")`
+- `store_semantic(text, importance=5, tags="", trace_id="", source="")`
+- `store_procedural(text, importance=7, tags="", trace_id="", goal="", outcome="success")`
 
-#### `write_procedural_rule()` — Store a Rule
-
-```python
-result = memory.write_procedural_rule(
-    rule="When ChromaDB returns empty results, check if the collection was compacted",
-    source="autocode_workflow",
-    confidence=0.85,
-    trace_id="abc123",
-)
-```
+**Returns:** `dict` — `{"status": "stored", "id": "uuid"}` or `{"status": "skipped_duplicate", ...}` or `{"status": "reinforced", ...}`
 
 ### Read Operations
 
@@ -493,7 +539,7 @@ result = memory.write_procedural_rule(
 results = memory.recall(
     query="How does ChromaDB deduplication work?",
     top_k=5,
-    collection="semantic",
+    collections=["semantic"],
     trace_id="abc123",
 )
 ```
@@ -502,44 +548,33 @@ results = memory.recall(
 |-------|------|---------|-------------|
 | `query` | `str` | — | **Required.** Natural language query |
 | `top_k` | `int` | `cfg.memory_top_k` | Max results to return |
-| `collection` | `str` | `None` | Specific collection, or `None` for all |
+| `collections` | `list[str]` | `None` | Specific collections, or `None` for all |
 | `trace_id` | `str` | `""` | Trace identifier |
-| `min_score` | `float` | `0.0` | Minimum confidence threshold |
+| `min_score` | `float` | `0.5` | Minimum confidence threshold |
+| `tags_filter` | `str` | `""` | Comma-separated — only return memories with ANY of these tags |
 
 **Returns:** `list[dict]` — Each result has `text`, `collection`, `score`, `tags`, `metadata`, `id`
 
-#### `memory_search()` — Search with Filters
+#### `recall_context()` — Formatted Context String
 
 ```python
-results = memory.memory_search(
-    query="timeout fix",
-    tags=["python", "timeout"],
-    collection="procedural",
-    top_k=10,
+context = memory.recall_context(
+    query="how to fix syntax errors",
+    top_k=3,
+    collections=["procedural"],
 )
-```
-
-#### `semantic_search()` — Raw ChromaDB Query
-
-```python
-results = memory.semantic_search(
-    query="vector database configuration",
-    collection="semantic",
-    top_k=5,
-)
+# Returns: "[procedural | score=0.95 | 2d ago] To fix SyntaxError..."
 ```
 
 ### Maintenance Operations
 
 | Operation | Method | Description |
 |-----------|--------|-------------|
-| Deduplicate | `memory.deduplicate()` | Cross-collection deduplication |
-| Forget | `memory.forget(query, collection)` | Remove specific memories |
-| Vacuum | `memory.memory_vacuum()` | Remove stale/low-scored entries |
-| Report | `memory.memory_report()` | Statistics and health |
-| Compact | `memory.compact()` | Force ChromaDB compaction |
+| Delete | `memory.delete(query, collections, threshold, confirm_ids)` | Remove specific memories by similarity |
+| Prune | `memory.prune(max_age_days, min_importance, dry_run, collections)` | Remove stale/low-scored entries |
+| Summarize | `memory.summarize(collections, top_n, store_result, trace_id)` | LLM summary of top memories |
 | Stats | `memory.stats()` | Collection counts and sizes |
-| Janitor | `memory(action="janitor")` | Run maintenance daemon |
+| Diversity | `memory.execute_diversity_maintenance(dry_run)` | Cluster and merge procedural rules |
 
 ---
 
@@ -562,13 +597,13 @@ results = memory.semantic_search(
 
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
-| `SLEEP_MIN_IDLE_SECONDS` | `7200` (2h) | Minimum idle time before background learning |
-| `SLEEP_CHECK_INTERVAL` | `600` (10min) | How often to check if agent is idle |
-| `SLEEP_FEEDBACK_MIN_AGE_HOURS` | `24` | Minimum age of feedback before processing |
-| `SLEEP_MAX_TRACES` | `50` | Maximum traces to analyze per session |
-| `SLEEP_CONFIDENCE_THRESHOLD` | `0.6` | Minimum confidence for rule extraction |
-| `SLEEP_REPETITION_THRESHOLD` | `5` | Minimum repetitions before a pattern becomes a rule |
-| `SLEEP_RULE_MAX_CHARS` | `1000` | Maximum characters per extracted rule |
+| `SLEEP_LEARN_ENABLED` | `true` | Toggle the entire daemon |
+| `SLEEP_LEARN_IDLE_THRESHOLD_SEC` | `3600` (1h) | Minimum idle time before background learning |
+| `SLEEP_LEARN_MIN_RULE_WORDS` | `10` | Minimum words per extracted rule |
+| `SLEEP_LEARN_MAX_DAILY_DISTILLATIONS` | `20` | Max distillation runs per day |
+| `SLEEP_LEARN_INJECT_ENABLED` | `true` | Kill switch for rule injection |
+| `SLEEP_LEARN_MIN_CONFIDENCE` | `0.8` | Minimum confidence for rule extraction |
+| `SLEEP_LEARN_MAX_INJECTED_RULES` | `3` | Max rules injected into Planner prompt |
 
 ---
 
@@ -580,23 +615,20 @@ results = memory.semantic_search(
 stats = memory.stats()
 # Returns:
 # {
-#   "episodic": {"count": 1234, "size_bytes": 456789},
-#   "semantic": {"count": 567, "size_bytes": 234567},
-#   "procedural": {"count": 89, "size_bytes": 12345},
-#   "procedural_meta": {"count": 23, "size_bytes": 5678},
+#   "episodic": {"count": 1234},
+#   "semantic": {"count": 567},
+#   "procedural": {"count": 89},
 # }
 ```
 
 ### Memory Report
 
 ```python
-report = memory.memory_report()
-# Returns detailed health report including:
-# - Collection sizes and counts
-# - Average confidence scores
-# - Oldest/newest entry ages
-# - Dedup hit rates
-# - Archival statistics
+report = memory.summarize(collections=["episodic", "semantic"], top_n=30)
+# Returns detailed summary including:
+# - Top memories by decay score
+# - Key patterns and fixes learned
+# - Active goals and outcomes
 ```
 
 ### Telemetry (Opik Integration)
@@ -616,15 +648,15 @@ The `telemetry.py` module integrates with Opik for LLM call observability:
 
 | Scenario | Collection | Method |
 |----------|-----------|--------|
-| Store a conversation outcome | `episodic` | `memory.remember(text, collection="episodic")` |
-| Store a research finding | `semantic` | `memory.remember(text, collection="semantic")` |
-| Store a reusable pattern | `procedural` | `memory.write_procedural_rule(rule, ...)` |
-| Search for facts | `semantic` | `memory.recall(query, collection="semantic")` |
-| Search for how-to patterns | `procedural` | `memory.recall(query, collection="procedural")` |
+| Store a conversation outcome | `episodic` | `memory.store_episodic(text, ...)` |
+| Store a research finding | `semantic` | `memory.store_semantic(text, ...)` |
+| Store a reusable pattern | `procedural` | `memory.store_procedural(text, ...)` |
+| Search for facts | `semantic` | `memory.recall(query, collections=["semantic"])` |
+| Search for how-to patterns | `procedural` | `memory.recall(query, collections=["procedural"])` |
 | Search across everything | All | `memory.recall(query)` (no collection filter) |
-| Remove stale entries | — | `memory.memory_vacuum()` |
-| Check memory health | — | `memory.memory_report()` |
-| Force cleanup | — | `memory(action="janitor")` |
+| Remove stale entries | — | `memory.prune()` |
+| Check memory health | — | `memory.stats()` |
+| Force cleanup | — | `memory(action="janitor")` via tool |
 
 ---
 
@@ -632,19 +664,7 @@ The `telemetry.py` module integrates with Opik for LLM call observability:
 
 ```powershell
 # Run all memory backend tests
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/memory_backend/ -v
-
-# Test write operations and dedup
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/memory_backend/test_write_ops.py -v
-
-# Test scoring and query rewriting
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/memory_backend/test_scoring.py -v
-
-# Test maintenance and vacuum
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/memory_backend/test_maintenance.py -v
-
-# Test context budgeting
-D:\mcp\agent\venv\Scripts\pytest.exe tests/core/test_context_budget.py -v
+D:\mcp\agent\venv\Scripts\pytest.exe tests/core/memory/ -v -W error --tb=short
 ```
 
 **Mock strategy:**
@@ -670,40 +690,95 @@ Both systems extract procedural rules from execution history. The injector merge
 1. **Semantic duplicates** — the same rule expressed differently in both collections will both be injected. Hash-based dedup catches exact matches, but not paraphrases.
 2. **Authority ambiguity** — when rules conflict, there's no resolution mechanism.
 3. **Maintenance burden** — two codebases, two sets of filters, two storage paths.
-4. **Incomplete implementation** — `sleep_learn/sweeper.py` and `sleep_learn/janitor.py` are placeholders. SLEEP_LEARN.md describes a 5-phase architecture but only feedback processing and distiller are operational.
+4. **Incomplete implementation** — The sweeper and janitor in `sleep_learn/` are partially implemented (sweeper is Phase 1 passive observation only; janitor has full purge logic). Full unification requires a dedicated testing session.
 
 **Suggestion:**
-Consider consolidating into a single pipeline with two modes (fast/deep) writing to the same collection with `source` metadata. The sweeper and janitor should either be implemented or removed from docs.
+Consider consolidating into a single pipeline with two modes (fast/deep) writing to the same collection with `source` metadata. The sweeper needs tracer/memory integration to become operational.
 
 ### Two Context Budgeting Systems
 
 **What exists:**
-- `core/context_budget.py` — cognitive priority-based budgeting with categories and trim strategies. Uses `// 3.5` token estimation.
-- `core/memory_backend/budget.py` — raw token truncation with `// 4` estimation.
+- `core/llm_backend/rate_limit.py` — Rate limiting, token budgeting, and cost estimation. Uses `// 4` token estimation fallback. Handles `truncate_by_tokens()` with tiktoken and fallback.
+- `core/memory_backend/budget.py` — Cognitive priority-based context budgeting with 7-tier `ContextClass` categories and trim strategies.
 
 **The concern:**
-Two systems with different estimation factors produce inconsistent results. `context_budget.py` is the canonical system used by `LLMClient`, but `budget.py` exists separately.
+Two systems with different estimation factors produce inconsistent results. `core/llm_backend/rate_limit.py` is the canonical system used by `LLMClient`, but `core/memory_backend/budget.py` exists separately for memory-specific context operations.
 
 **Suggestion:**
-Consolidate into a single module. Make `context_budget.py` the public API, keep `budget.py` as an internal utility.
+Consolidate into a single module. Make `core/llm_backend/rate_limit.py` the public API, keep `core/memory_backend/budget.py` as an internal utility or merge it.
+
+---
+
+## 🗺️ Roadmap
+
+### ✅ Completed
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Three-collection architecture | ✅ pre-v1 | Episodic, semantic, procedural |
+| Four-layer dedup | ✅ pre-v1 | Hash guard + outer vector + inner vector + procedural reinforcement |
+| Decay scoring | ✅ pre-v1 | Time-decay with procedural bypass |
+| Context budgeting | ✅ pre-v1 | Cognitive priority-based message trimming (7-tier) |
+| Diversity enforcement | ✅ pre-v1 | Autonomous procedural collection cleanup |
+| Inline meta-learning | ✅ pre-v1 | `meta_learning.py` — fast, low-threshold |
+| Background sleep-learning | ✅ pre-v1 | Daemon, feedback, distiller, filters, storage, injector |
+| Thread-safe writes | ✅ pre-v1 | `_write_lock` with double-check locking |
+| Cancellation guards | ✅ pre-v1 | `ensure_not_cancelled()` on all writes |
+| Telemetry integration | ✅ pre-v1 | Opik observability for latency and dedup metrics |
+
+### 🔄 In Progress / Next Up
+
+| Feature | Notes | Priority |
+|---------|-------|----------|
+| Sweeper integration | Phase 1 passive observation only; needs tracer/memory integration | P1 |
+| Janitor consolidation | `sleep_learn/janitor.py` has purge logic; `memory_backend/janitor.py` handles episodic archival | P1 |
+| Consolidated learning pipeline | Merge inline + background into single system with `source` metadata | P2 |
+| Context budget unification | Merge `core/memory_backend/budget.py` into `core/llm_backend/rate_limit.py` | P2 |
+| Multi-modal memory | Image and audio embeddings | P3 |
+| Memory graph | Relationship tracking between memories | P3 |
+| Cross-session learning | Share learned rules across agent instances | P3 |
+
+### 🚫 Deferred / Out of Scope
+
+| # | Feature | Why Deferred | Priority |
+|---|---------|------------|----------|
+| 1 | Streaming memory writes | ChromaDB does not support streaming inserts | Skip |
+| 2 | Distributed memory | Single-node ChromaDB is sufficient for current scale | Skip |
+| 3 | Persistent event loop for writes | ThreadPoolExecutor per write is sufficient | Skip |
+| 4 | Custom embedding models | `all-MiniLM-L6-v2` is fast and accurate enough | Skip |
+| 5 | Real-time sync across agents | No multi-agent deployment currently | Skip |
+| 6 | Configurable decay half-life | Hardcoded 30 days is appropriate for all use cases | Skip |
 
 ---
 
 ## 🛡️ AI Agent Instructions
 
-If you are an AI assistant modifying the memory backend:
+### NEVER DO
+1. **Never add logic to `core/memory_engine.py` or `store.py`** — Logic belongs in `write_ops.py`, `read_ops.py`, `scoring.py`, `maintenance.py`, etc.
+2. **Never remove the `_write_lock` or double-check locking pattern** — Never lock `recall()` operations.
+3. **Never remove the `store._hash_cache` synchronization** — Call `.discard()` on delete/prune to prevent ghost entries.
+4. **Never return a blind `{"status": "skipped_duplicate"}`** — Always use the structured payload with `directive` and `matched_snippet`.
+5. **Never skip procedural duplicates** — Always increment `reinforcement_count` inside the write lock.
+6. **Never apply time-decay to `collection == "procedural"`** — Decay bypass is intentional.
+7. **Never remove `ensure_not_cancelled(trace_id)` guards** — All write operations must check cancellation before mutating.
+8. **Never validate tags in the backend** — Tag validation belongs in `tools/memory_tool.py` before passing to the backend.
+9. **Never add LLM calls to `_rewrite_query()`** — Query rewriting is model-free for speed.
+10. **Never manually delete or merge procedural rules** — The background Diversity Enforcer handles this autonomously.
+11. **Never prune `procedural` collection or memories tagged `"summary"`, `"critical"`, `"protected"`** — These are immune to automatic pruning.
+12. **Never create `.bak` files** — Forbidden by project rules.
+13. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
+14. **Never add `**kwargs` to the `@tool` facade** — FastMCP schema breaks.
+15. **Never print to stdout** — MCP stdio corruption. Return dicts only.
+16. **Never skip `compileall` before `pytest`** — Catches syntax errors early.
 
-1. **Thin orchestrator** — never add logic to `core/memory.py` or `store.py`. Logic belongs in `write_ops.py`, `read_ops.py`, etc.
-2. **Write-only lock** — never remove the `_write_lock` or the double-check locking pattern. Never lock `recall()` operations.
-3. **O(1) hash guard** — never remove the `store._hash_cache` synchronization. Call `.discard()` on delete/prune.
-4. **Contextual feedback** — never return a blind `{"status": "skipped_duplicate"}`. Always use the structured payload with `directive` and `matched_snippet`.
-5. **Procedural reinforcement** — never skip procedural duplicates. Always increment `reinforcement_count` inside the write lock.
-6. **Decay bypass** — never apply time-decay to `collection == "procedural"`.
-7. **Cancellation guards** — all write operations must check `ensure_not_cancelled(trace_id)` before mutating. Never remove these guards.
-8. **Tag validation** — always validate tags in `tools/memory_tool.py` before passing to the backend. Block `< > " ' \ |`.
-9. **Query rewriting** — the `_rewrite_query()` function is model-free for speed. Do not add LLM calls here.
-10. **Diversity enforcement** — never manually delete or merge procedural rules. The background Diversity Enforcer handles this autonomously.
-11. **Protected pruning** — never prune `procedural` collection or memories tagged `"summary"`, `"critical"`, `"protected"`.
+### ALWAYS DO
+17. **Always use `from core.memory_engine import memory`** — The facade is the only public API surface.
+18. **Always thread `trace_id` through all operations** — For observability and cancellation.
+19. **Always call `ensure_not_cancelled(trace_id)` before writes** — Prevents ghost mutations.
+20. **Always use typed helpers (`store_episodic`, `store_semantic`, `store_procedural`)** — Clearer intent than raw `store()`.
+21. **Always include `error_code` in `fail()` calls** — Every error response must include a structured code.
+22. **Always run `compileall` after editing memory files** — Verify syntax before running tests.
+23. **Always run targeted tests (`tests/core/memory/`) after changes** — 41 tests cover the full backend.
 
 ---
 
@@ -711,15 +786,15 @@ If you are an AI assistant modifying the memory backend:
 
 | File | Purpose |
 |------|---------|
-| `core/memory.py` | Thin facade — re-exports `memory` singleton |
-| `core/memory_backend/store.py` | `ChromaDBMemory`: collections, stats, compact, delete |
-| `core/memory_backend/write_ops.py` | `remember()`, `write_procedural_rule()`, dedup pipeline |
-| `core/memory_backend/read_ops.py` | `recall()`, `memory_search()`, `semantic_search()` |
+| `core/memory_engine.py` | Thin facade — re-exports `memory` singleton |
+| `core/memory_backend/store.py` | `MemoryStore`: collections, stats, compact, delete |
+| `core/memory_backend/write_ops.py` | `execute_store()` — dedup pipeline |
+| `core/memory_backend/read_ops.py` | `execute_recall()`, `execute_recall_context()` |
 | `core/memory_backend/scoring.py` | 4-factor confidence scoring, query rewriting |
-| `core/memory_backend/maintenance.py` | `deduplicate()`, `forget()`, `memory_vacuum()`, `memory_report()` |
+| `core/memory_backend/maintenance.py` | `execute_delete/prune/summarize/stats/diversity_maintenance()` |
 | `core/memory_backend/telemetry.py` | Opik integration for observability |
 | `core/memory_backend/eviction.py` | `EvictionEngine`: pruning, compaction, budget enforcement |
-| `core/memory_backend/janitor.py` | `MaintenanceDaemon`: background memory health |
+| `core/memory_backend/janitor.py` | `archive_old_episodes()`: episodic archival only |
 | `core/memory_backend/constants.py` | Shared constants (banned files, limits) |
 | `core/memory_backend/client.py` | `get_client(timeout=60)` — ChromaDB client singleton |
 | `core/memory_backend/budget.py` | Cognitive priority-based context budgeting (7-tier) |
@@ -732,27 +807,11 @@ If you are an AI assistant modifying the memory backend:
 | `core/sleep_learn/storage.py` | Write rules to isolated collection |
 | `core/sleep_learn/injector.py` | Merge rules into Planner prompt |
 | `core/sleep_learn/config.py` | SLEEP_* configuration constants |
+| `core/sleep_learn/sweeper.py` | Phase 1: Passive observation gathering |
+| `core/sleep_learn/janitor.py` | Purge stale rules from isolated collection |
 | `core/runtime/cancellation.py` | `ensure_not_cancelled()` — ghost mutation guard |
 | `core/config.py` | Memory tuning params, ChromaDB paths |
 
 ---
 
-## 🔮 Future Roadmap
-
-| Status | Enhancement | Description |
-|--------|-------------|-------------|
-| ✅ Complete | Three-collection architecture | Episodic, semantic, procedural |
-| ✅ Complete | Four-layer dedup | Hash guard + outer vector + inner vector + procedural reinforcement |
-| ✅ Complete | Decay scoring | Time-decay with procedural bypass |
-| ✅ Complete | Context budgeting | Cognitive priority-based message trimming |
-| ✅ Complete | Diversity enforcement | Autonomous procedural collection cleanup |
-| ✅ Complete | Inline meta-learning | `meta_learning.py` — fast, low-threshold |
-| 🚧 Partial | Background sleep-learning | Daemon works, sweeper/janitor are placeholders |
-| 🚧 Planned | Consolidated learning pipeline | Merge inline + background into single system |
-| 🚧 Planned | Multi-modal memory | Image and audio embeddings |
-| 🚧 Planned | Memory graph | Relationship tracking between memories |
-| 🚧 Planned | Cross-session learning | Share learned rules across agent instances |
-
----
-
-*Last updated: June 2026. All collection names, scoring formulas, and configuration values reflect current source code.*
+*Last updated: July 2026. All collection names, scoring formulas, and configuration values reflect current source code.*

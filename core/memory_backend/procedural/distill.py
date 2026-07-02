@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from core.tracer import tracer
-from core.memory import memory # Import the facade to store the result
+from core.memory_engine import memory # Import the facade to store the result
 from core.memory_backend.procedural.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from core.memory_backend.procedural.validate import is_valid_rule
 

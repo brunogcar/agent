@@ -159,7 +159,7 @@ def _flush_telemetry_loop() -> None:
     import time as _time
     try:
         from core.memory_backend.telemetry import tracker
-        from core.memory import memory as _mem
+        from core.memory_engine import memory as _mem
         # [BUGFIX-4] Wait for ChromaDB warmup before first flush to avoid race.
         # Timeout prevents indefinite hang if warmup thread never signals.
         if not _chromadb_ready.wait(timeout=_CHROMADB_READY_TIMEOUT):
@@ -184,7 +184,7 @@ def _shutdown_flush() -> None:
     """Force final telemetry flush before process dies."""
     try:
         from core.memory_backend.telemetry import tracker
-        from core.memory import memory as _mem
+        from core.memory_engine import memory as _mem
         flushed = tracker.flush(_mem.store)
         if flushed > 0:
             print(f"[server] Final telemetry flush: {flushed} updates", file=sys.stderr)
@@ -196,7 +196,7 @@ _atexit.register(_shutdown_flush)
 def _warmup_chromadb() -> None:
     """Load ChromaDB embedding model before first tool call."""
     try:
-        from core.memory import memory as _mem
+        from core.memory_engine import memory as _mem
         # Tiny no-op query to trigger embedding model load
         _mem.recall("warmup", top_k=1, min_score=0.0)
         print("[server] ChromaDB warmup complete", file=sys.stderr)
@@ -319,7 +319,7 @@ def _start_diversity_enforcer() -> None:
     import time as _time
     try:
         from core.memory_backend.maintenance import execute_diversity_maintenance
-        from core.memory import memory as _mem
+        from core.memory_engine import memory as _mem
         from core.runtime.activity_tracker import tracker
 
         # [BUGFIX-4] Wait for ChromaDB before first maintenance check.

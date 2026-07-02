@@ -2,7 +2,7 @@
 tests/core/memory/test_maintenance.py -- Unit tests for memory maintenance.
 """
 from __future__ import annotations
-from core.memory import memory
+from core.memory_engine import memory
 
 def test_stats_structure():
     stats = memory.stats()
@@ -25,7 +25,7 @@ def test_prune_protects_procedural_by_default():
 
 def test_hash_cache_syncs_on_delete():
     """Deleting a memory MUST remove its hash from the O(1) in-memory guard."""
-    from core.memory import memory
+    from core.memory_engine import memory
     text = "Ghost Hash Test: This text will be deleted and re-stored."
     
     # 1. Store it

@@ -54,7 +54,7 @@ def _warmup_memory(timeout: int = 60) -> None:
     """
     def _do_warmup() -> None:
         """Inner function to run warmup in isolated thread."""
-        from core.memory import memory as _mem
+        from core.memory_engine import memory as _mem
         # A recall with no results is fine -- we just need the model loaded
         _mem.recall("warmup", top_k=1)
 

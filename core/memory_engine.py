@@ -1,5 +1,5 @@
 ﻿"""
-core/memory.py — Three-collection ChromaDB memory system.
+core/memory_engine.py — Three-collection ChromaDB memory system.
 
 Collections:
   episodic   → what happened  (task runs, workflow outcomes, errors)
@@ -27,7 +27,7 @@ Recall uses decay scoring so old memories fade naturally:
 Query rewriting improves recall accuracy before hitting ChromaDB.
 
 Usage:
-  from core.memory import memory
+  from core.memory_engine import memory
 
   # Store
   memory.store_episodic("Fixed bug in memory.py", importance=8,
@@ -48,7 +48,7 @@ from __future__ import annotations
 
 # The entire memory engine is now located in core/memory_backend/.
 # This file serves purely as a stable public facade to maintain 
-# the `from core.memory import memory` import pattern across the codebase.
+# the `from core.memory_engine import memory` import pattern across the codebase.
 
 from core.memory_backend.store import MemoryStore
 

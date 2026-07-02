@@ -5,7 +5,7 @@ from __future__ import annotations
 import json, re
 from typing import Any
 from core.config import cfg
-from core.memory import memory
+from core.memory_engine import memory
 from core.tracer import tracer
 from workflows.autocode_impl.helpers import _call, _parse_json
 from workflows.autocode_impl.state import AutocodeState

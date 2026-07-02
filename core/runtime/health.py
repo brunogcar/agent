@@ -67,7 +67,7 @@ def get_health() -> Dict[str, Any]:
 
     # Check ChromaDB
     try:
-        from core.memory import memory
+        from core.memory_engine import memory
         health["checks"]["chromadb"] = {
             "status": "ok",
             "client": "initialized"

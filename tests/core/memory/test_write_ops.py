@@ -3,7 +3,7 @@ tests/core/memory/test_write_ops.py -- Unit tests for the new deduplication and 
 """
 from __future__ import annotations
 import pytest
-from core.memory import memory
+from core.memory_engine import memory
 
 def test_hash_guard_exact_match():
     """O(1) Hash Guard should catch exact text matches instantly."""
@@ -48,7 +48,7 @@ def test_procedural_reinforcement():
 
 def test_procedural_reinforcement_updates_metadata():
     """Semantic duplicate procedural memories must increment reinforcement_count in ChromaDB."""
-    from core.memory import memory
+    from core.memory_engine import memory
     text_base = "To fix a LangGraph state mutation, always return a new dict. ReinforcementMathTest"
     text_dup  = "To fix a LangGraph state mutation, always return a new dictionary. ReinforcementMathTest"
     
@@ -68,7 +68,7 @@ def test_procedural_reinforcement_updates_metadata():
 
 def test_contextual_feedback_payload_strictness():
     """Semantic duplicate payload MUST contain directive and retry_recommended=False."""
-    from core.memory import memory
+    from core.memory_engine import memory
     text_a = "FastAPI requires async def for endpoints that use await. PayloadStrictnessTest"
     text_b = "FastAPI requires async def for endpoints that use await internally. PayloadStrictnessTest"
     

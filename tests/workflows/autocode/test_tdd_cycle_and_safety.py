@@ -37,7 +37,7 @@ def mock_llm_call():
 @pytest.fixture
 def mock_memory_store():
     """Mock memory.store to verify callback triggers."""
-    with patch("core.memory.memory.store") as mock:
+    with patch("core.memory_engine.memory.store") as mock:
         mock.return_value = {"status": "stored", "id": "mem-001"}
         yield mock
 
@@ -128,7 +128,7 @@ class TestMemoryCallbacks:
 
     def test_memory_stored_on_tdd_success(self, base_state, mock_memory_store):
         """Memory must store with correct tags/importance on pass."""
-        from core.memory import memory
+        from core.memory_engine import memory
         base_state["tdd_status"] = "passed"
         base_state["tdd_iteration"] = 2
         base_state["task"] = "add validation"
@@ -149,7 +149,7 @@ class TestMemoryCallbacks:
 
     def test_memory_stored_on_retry_exhaustion(self, base_state, mock_memory_store):
         """Memory must store high-importance error on max retries."""
-        from core.memory import memory
+        from core.memory_engine import memory
         base_state["tdd_status"] = "max_retries_exceeded"
         base_state["tdd_iteration"] = 3
         base_state["tdd_error"] = "AssertionError"

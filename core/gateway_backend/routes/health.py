@@ -39,7 +39,7 @@ async def health():
 @router.get("/health/autocode")
 async def health_autocode(deep: bool = Query(False), _: None = Depends(check_auth)):
     """[PHASE 2 FIX] Autocode workflow health check."""
-    from core.memory import memory as mem
+    from core.memory_engine import memory as mem
 
     checks = {
         "lm_studio": "unknown",
@@ -128,5 +128,5 @@ def list_tools(_: None = Depends(check_auth)):
 
 @router.get("/memory/stats")
 def memory_stats(_: None = Depends(check_auth)):
-    from core.memory import memory
+    from core.memory_engine import memory
     return memory.stats()

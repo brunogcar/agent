@@ -79,7 +79,7 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
     # seen_ids: O(n) dedup vs O(n^2) any() scan
     seen_ids = {r["id"] for r in rules}
     try:
-        from core.memory import memory
+        from core.memory_engine import memory
         main_results = memory.recall(
             query=query,
             collections=["procedural"],

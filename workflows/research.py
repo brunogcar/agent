@@ -49,7 +49,7 @@ def _is_nested_parallel() -> bool:
 
 def node_recall(state: WorkflowState) -> WorkflowState:
     """Recall relevant memories before hitting the web."""
-    from core.memory import memory
+    from core.memory_engine import memory
 
     goal = state.get("goal", "")
     node_step(state, "recall", "checking memory", goal=goal[:60])
@@ -383,7 +383,7 @@ def node_report(state: WorkflowState) -> WorkflowState:
 
 def node_store(state: WorkflowState) -> WorkflowState:
     """Store research findings in semantic memory."""
-    from core.memory import memory
+    from core.memory_engine import memory
 
     result = state.get("result", "")
     goal = state.get("goal", "")

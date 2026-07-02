@@ -109,7 +109,7 @@ eviction_queue = EvictionQueue()
 
 def flusher_loop():
     """Background thread that flushes the queue to ChromaDB."""
-    from core.memory import memory
+    from core.memory_engine import memory
 
     logger.info("[Eviction] Flusher thread started.")
     while True:

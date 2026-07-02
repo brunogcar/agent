@@ -1,6 +1,6 @@
 ﻿"""
 tools/memory_tool.py — Memory meta-tool.
-Exposes core/memory.py to the LLM as a single tool.
+Exposes core/memory_engine.py to the LLM as a single tool.
 The LLM sees ONE tool: memory(action, ...)
 Imports are lazy -- chromadb is only loaded on first actual call,
 not at module registration time. This keeps server startup fast.
@@ -16,7 +16,7 @@ from core.sleep_learn.janitor import purge_stale_rules
 
 def _mem():
     """Lazy import of memory store -- avoids slow chromadb load at startup."""
-    from core.memory import memory as _memory
+    from core.memory_engine import memory as _memory
     return _memory
 
 # ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────

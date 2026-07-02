@@ -30,7 +30,7 @@ from typing import Any
 
 from core.config import cfg
 from core.tracer import tracer
-from core.memory import memory
+from core.memory_engine import memory
 from core.memory_backend.procedural.validate import is_valid_rule
 from core.memory_backend.scoring import normalize_and_hash
 

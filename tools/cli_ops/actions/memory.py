@@ -1,6 +1,6 @@
 """Memory tool proxy for cli meta-tool.
 
-Direct ChromaDB access via core/memory.py singleton.
+Direct ChromaDB access via core/memory_engine.py singleton.
 All functions auto-register via @register_action decorator.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from tools.cli_ops._registry import register_action
 
 def _mem():
     """Lazy import of ChromaDB store."""
-    from core.memory import memory as _store
+    from core.memory_engine import memory as _store
     return _store
 
 

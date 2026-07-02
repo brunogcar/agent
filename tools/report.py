@@ -110,7 +110,7 @@ def report(
 
         # Memory hook — store episodic record of report generation
         try:
-            from core.memory import memory
+            from core.memory_engine import memory
             memory.store_episodic(
                 text=f"Generated {action} report: '{title}' at {result.get('html_path', 'unknown')}",
                 importance=5,

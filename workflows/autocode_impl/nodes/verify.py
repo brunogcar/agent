@@ -26,7 +26,7 @@ def node_verify(state: AutocodeState) -> dict:
     if state.get("tdd_status") == "max_retries_exceeded":
         tracer.error(tid, "verify", f"Verification skipped: TDD exhausted after {state.get('max_retries', cfg.autocode_max_retries)} attempts")
         try:
-            from core.memory import memory
+            from core.memory_engine import memory
             memory.store(
                 text=f"Verification skipped due to TDD exhaustion on task: '{state.get('task', 'Unknown')}'. Error: {state.get('tdd_error', 'Unknown')}",
                 memory_type="procedural",

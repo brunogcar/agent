@@ -77,7 +77,7 @@ class EvictionQueue:
 eviction_queue = EvictionQueue()
 
 def flusher_loop():
-    from core.memory import memory
+    from core.memory_engine import memory
     logger.info("[Eviction] Flusher thread started.")
     while True:
         time.sleep(5)

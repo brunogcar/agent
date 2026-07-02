@@ -94,7 +94,7 @@ def node_run_tests(state: AutocodeState) -> dict:
 
         # [PHASE 3 FIX] Wire success callback: store procedural memory on convergence
         try:
-            from core.memory import memory
+            from core.memory_engine import memory
             memory.store(
                 text=f"TDD converged after {current_iter} iterations for task: '{state.get('task', '')}'",
                 memory_type="procedural",

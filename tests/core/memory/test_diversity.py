@@ -1,6 +1,6 @@
 """tests/core/memory/test_diversity.py — Phase 6 diversity enforcement tests."""
 from __future__ import annotations
-from core.memory import memory
+from core.memory_engine import memory
 from core.memory_backend.maintenance import execute_diversity_maintenance
 
 def test_diversity_dry_run_returns_metrics():

@@ -31,7 +31,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
 
     # -- Memory recall (all tasks) --
     try:
-        from core.memory import memory as _mem
+        from core.memory_engine import memory as _mem
         results = _mem.recall(
             query=state["task"][:150],
             top_k=3,

@@ -12,7 +12,7 @@ from workflows.deep_research_impl.nodes.synthesize import node_synthesize
 from workflows.deep_research_impl.routes import route_after_synthesize
 from workflows.deep_research_impl.budget import log_event
 from core.config import cfg
-from core.memory import memory
+from core.memory_engine import memory
 from tools.notify import notify
 
 def build_deep_research_graph() -> StateGraph:
