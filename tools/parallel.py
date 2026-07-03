@@ -27,10 +27,8 @@ _TOOL_MAP = {
     "python_exec": python,
     "notify": notify,
     "memory": memory,
-    "memory": memory,
     "cli": cli,
 }
-
 
 @tool
 def parallel(

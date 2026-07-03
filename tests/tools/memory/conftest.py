@@ -17,11 +17,7 @@ def reset_memory_state():
 
 @pytest.fixture
 def mock_cfg():
-    """Patch cfg attributes used by memory actions.
-
-    We patch tools.memory_ops.helpers.cfg since that's where _validate_tags
-    and store.py access it from (via attribute lookup).
-    """
+    """Patch cfg attributes used by memory actions."""
     with patch("tools.memory_ops.helpers.cfg") as mock_cfg:
         mock_cfg.memory_max_entry_bytes = 50000  # 50KB
         mock_cfg.max_tags_per_entry = 6
@@ -30,8 +26,10 @@ def mock_cfg():
 
 
 @pytest.fixture
-def mock_store():
-    """Mock the lazy-loaded memory store in ALL action modules."""
+def mock_store(request):
+    """Mock the lazy-loaded memory store in ALL action modules.
+    v1.1: Uses request.addfinalizer for safer cleanup if yield raises.
+    """
     store = MagicMock()
     store.store.return_value = {"status": "stored", "id": "test-id"}
     store.recall.return_value = [{"id": "1", "text": "result", "score": 0.9}]
@@ -58,6 +56,10 @@ def mock_store():
     ]
     for p in patches:
         p.start()
+
+    def cleanup():
+        for p in patches:
+            p.stop()
+    request.addfinalizer(cleanup)
+
     yield store
-    for p in patches:
-        p.stop()

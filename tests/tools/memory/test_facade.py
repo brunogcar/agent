@@ -36,6 +36,26 @@ class TestFacadeDispatch:
         # Should be a Literal type
         assert hasattr(action_hint, "__args__")
 
+    def test_action_literal_args_match_dispatch(self):
+        """v1.1: Verify Literal args match DISPATCH keys exactly."""
+        from typing import get_type_hints
+        hints = get_type_hints(memory)
+        action_hint = hints.get("action")
+        assert action_hint is not None
+        assert hasattr(action_hint, "__args__")
+        expected = set(DISPATCH["memory"].keys())
+        actual = set(action_hint.__args__)
+        assert actual == expected, f"Literal args mismatch: expected {expected}, got {actual}"
+
+    def test_handler_exception_caught(self, mock_cfg):
+        """v1.1: Facade must catch exceptions from action handlers."""
+        with patch("tools.memory_ops.actions.stats._mem", side_effect=RuntimeError("boom")):
+            result = memory(action="stats", trace_id="exc-test")
+            assert result["status"] == "error"
+            assert "Handler 'stats' failed" in result["error"]
+            assert "boom" in result["error"]
+            assert result["trace_id"] == "exc-test"
+
 
 class TestFacadeTraceId:
     def test_trace_id_injected_into_success_result(self, mock_cfg, mock_store):
@@ -64,3 +84,9 @@ class TestFacadeCompression:
         result = memory(action="store", text="")
         assert result["status"] == "error"
         # compress_result on fail dict should be safe
+
+    def test_compress_result_skipped_on_error(self, mock_cfg, mock_store):
+        """v1.1: compress_result should not mutate error responses."""
+        result = memory(action="store", text="", trace_id="compress-test")
+        assert result["status"] == "error"
+        assert result["error"] == "text is required for store"

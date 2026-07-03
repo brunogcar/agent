@@ -1,7 +1,33 @@
-"""Tests for the prune action."""
+"""Tests for the prune action.
+v1.1: Added collections validation, range check tests.
+"""
 from __future__ import annotations
 
 from tools.memory import memory
+
+
+class TestPruneValidation:
+    def test_empty_collections_rejected(self, mock_cfg, mock_store):
+        """v1.1: Empty collections list must be rejected."""
+        result = memory(action="prune", collections=[])
+        assert result["status"] == "error"
+        assert "cannot be empty" in result["error"]
+
+    def test_negative_max_age_days_rejected(self, mock_cfg, mock_store):
+        """v1.1: Negative max_age_days must be rejected."""
+        result = memory(action="prune", max_age_days=-1)
+        assert result["status"] == "error"
+        assert "max_age_days must be >= 0" in result["error"]
+
+    def test_min_importance_out_of_range_rejected(self, mock_cfg, mock_store):
+        """v1.1: min_importance must be 1-10."""
+        result = memory(action="prune", min_importance=0)
+        assert result["status"] == "error"
+        assert "min_importance must be 1-10" in result["error"]
+
+        result = memory(action="prune", min_importance=11)
+        assert result["status"] == "error"
+        assert "min_importance must be 1-10" in result["error"]
 
 
 class TestPruneSuccess:

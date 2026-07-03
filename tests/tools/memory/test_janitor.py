@@ -1,7 +1,7 @@
 """Tests for the janitor action — critical bypass test.
-
 The janitor action must NEVER call _mem() or trigger ChromaDB import.
 This is the most important regression guard in the memory test suite.
+v1.1: Added non-dict return guard test.
 """
 from __future__ import annotations
 
@@ -50,3 +50,19 @@ class TestJanitorBypass:
                 result = memory(action="janitor")
 
                 assert result["data"]["errors"] == []
+
+    def test_janitor_with_non_dict_returns(self, mock_cfg):
+        """v1.1: Janitor must handle non-dict returns from archive/purge gracefully."""
+        with patch("tools.memory_ops.actions.janitor.archive_old_episodes") as mock_archive:
+            with patch("tools.memory_ops.actions.janitor.purge_stale_rules") as mock_purge:
+                mock_archive.return_value = None  # Not a dict
+                mock_purge.return_value = "invalid"  # Not a dict
+
+                result = memory(action="janitor")
+
+                assert result["status"] == "success"
+                assert result["data"]["episodic_archived"] == 0
+                assert result["data"]["rules_purged"] == 0
+                assert len(result["data"]["errors"]) == 2
+                assert "Unexpected return type" in result["data"]["errors"][0]
+                assert "Unexpected return type" in result["data"]["errors"][1]

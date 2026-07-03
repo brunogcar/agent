@@ -1,57 +1,43 @@
-"""Janitor action — memory compaction without loading the main store.
-
-[DESIGN] JANITOR BYPASS — This file must NEVER import from helpers.py or call _mem().
-The janitor action is deliberately isolated to avoid importing ChromaDB
-(via memory_engine.py). Both archive_old_episodes() and purge_stale_rules()
-are top-level imports here, NOT lazy imports, because they themselves do NOT
-import ChromaDB at module level. The facade dispatches 'janitor' directly to
-this handler BEFORE calling _mem() anywhere.
-
-Verified: core/memory_backend/janitor.py and core/sleep_learn/janitor.py are
-ChromaDB-free at module level.
-DO NOT add any call to _mem() or store.* in this file under any circumstances.
+"""tools/memory_ops/actions/janitor.py — Janitor action handler.
+CRITICAL: This file must NEVER import helpers.py or call _mem().
+It operates on the filesystem and isolated collections, not the main store.
+v1.1: Added exception handling and non-dict return guards.
 """
 from __future__ import annotations
 
-from core.contracts import ok
 from core.memory_backend.janitor import archive_old_episodes
 from core.sleep_learn.janitor import purge_stale_rules
-
 from tools.memory_ops._registry import register_action
-
-HELP_JANITOR = """
-janitor — Run memory compaction without loading ChromaDB.
-
-Archives old episodic memories and purges stale learned rules.
-This is the fastest memory action because it bypasses the main store entirely.
-
-Parameters:
-  trace_id: Trace identifier for logging and correlation.
-
-Examples:
-  memory(action="janitor")
-"""
+from core.contracts import ok
 
 
-@register_action(
-    "memory", "janitor",
-    help_text=HELP_JANITOR,
-    examples=[
-        'memory(action="janitor")',
-    ],
-)
-def run_janitor(
-    trace_id: str = "",
-    **kwargs,
-) -> dict:
-    """Run memory compaction: archive old episodes, purge stale rules."""
-    epi_stats = archive_old_episodes()
-    rule_stats = purge_stale_rules()
+@register_action("memory", "janitor", help_text="Run memory maintenance (archive + purge) — no store load")
+def run_janitor(trace_id: str = "", **kwargs):
+    try:
+        epi_stats = archive_old_episodes()
+    except Exception as e:
+        epi_stats = {"archived": 0, "error": str(e)}
+
+    try:
+        rule_stats = purge_stale_rules()
+    except Exception as e:
+        rule_stats = {"purged": 0, "error": str(e)}
+
+    if not isinstance(epi_stats, dict):
+        epi_stats = {"archived": 0, "error": f"Unexpected return type: {type(epi_stats).__name__}"}
+    if not isinstance(rule_stats, dict):
+        rule_stats = {"purged": 0, "error": f"Unexpected return type: {type(rule_stats).__name__}"}
+
+    errors = []
+    epi_err = epi_stats.get("error")
+    rule_err = rule_stats.get("error")
+    if epi_err:
+        errors.append(epi_err)
+    if rule_err:
+        errors.append(rule_err)
 
     return ok({
         "episodic_archived": epi_stats.get("archived", 0),
         "rules_purged": rule_stats.get("purged", 0),
-        "errors": [
-            e for e in [epi_stats.get("error"), rule_stats.get("error")] if e
-        ],
+        "errors": errors,
     }, trace_id=trace_id)

@@ -1,24 +1,13 @@
 """tools/memory.py — Memory meta-tool facade.
-
-Exposes core/memory_engine.py to the LLM as a single @tool.
-All logic lives in tools/memory_ops/actions/; this file is pure dispatch.
-
-The LLM sees ONE tool: memory(action, ...)
-
-Key design:
-  - Lazy loading: ChromaDB is only loaded on first non-janitor call.
-  - Janitor bypass: archive_old_episodes() + purge_stale_rules() run without
-    touching the memory store (avoids ChromaDB import).
-  - MED-05: Tag validation at tool layer before passing to backend.
-  - Result compression: All responses pass through compress_result().
-  - Trace ID threading: trace_id propagated through all action results.
+Pure dispatch: no logic, no _mem() call. All work delegated to action handlers.
+v1.1: Added facade exception handling, compress_result guards success-only.
 """
 from __future__ import annotations
 
-from registry import tool
-from tools._meta_tool import meta_tool
-from core.contracts import fail
 from core.utils import compress_result
+from core.contracts import ok, fail
+from tools._meta_tool import meta_tool
+from registry import tool
 
 # Import action modules to trigger @register_action auto-discovery
 from tools.memory_ops import DISPATCH  # noqa: F401
@@ -29,13 +18,13 @@ from tools.memory_ops import DISPATCH  # noqa: F401
     DISPATCH.get("memory", {}),
     doc_sections=[
         "IMPORTANT — collections parameter:",
-        '  collections — Filter to specific collections. Omit or pass None for all.',
-        '  collections=[] is REJECTED (empty list is ambiguous).',
+        "  collections — Filter to specific collections. Omit or pass None for all.",
+        "  collections=[] is REJECTED (empty list is ambiguous).",
         "",
         "Memory types:",
-        '  episodic — things that happened (task runs, outcomes)',
-        '  semantic — things you know (facts, research, knowledge)',
-        '  procedural — how to do things (fix patterns, solutions)',
+        "  episodic — things that happened (task runs, outcomes)",
+        "  semantic — things you know (facts, research, knowledge)",
+        "  procedural — how to do things (fix patterns, solutions)",
         "",
         "Actions intentionally excluded from autonomous execution:",
         "  None — all 8 actions are safe for autonomous use.",
@@ -79,7 +68,6 @@ def memory(
             trace_id=trace_id,
         )
 
-    # Build kwargs from all parameters — handlers use **kwargs to absorb unused ones
     kwargs = {
         "text": text,
         "memory_type": memory_type,
@@ -102,7 +90,10 @@ def memory(
         "dry_run": dry_run,
     }
 
-    result = op_info["func"](**kwargs)
+    try:
+        result = op_info["func"](**kwargs)
+    except Exception as e:
+        return fail(f"Handler '{action}' failed: {e}", trace_id=trace_id)
 
     if not isinstance(result, dict):
         return fail(
@@ -110,8 +101,9 @@ def memory(
             trace_id=trace_id,
         )
 
-    # Thread trace_id through all results for observability
     if trace_id and "trace_id" not in result:
         result["trace_id"] = trace_id
 
-    return compress_result(result)
+    if result.get("status") == "success":
+        result = compress_result(result)
+    return result

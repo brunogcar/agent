@@ -1,32 +1,17 @@
-"""Shared helpers for memory action handlers.
-
-Contains lazy store loader, MED-05 tag validation, and memory-type guards.
-All validation belongs at the tool layer, NOT the backend.
+"""tools/memory_ops/helpers.py — Shared helpers for memory action handlers.
+v1.1: Added isinstance(collections, list) guard in _validate_collections.
 """
 from __future__ import annotations
 
 import re
 from typing import Tuple
 
-from core.config import cfg
-from core.contracts import fail
-
 import tools.memory_ops.state as state
-
-# ── MED-05: Tag Validation (Input Sanitization) ────────────────────────────
-TAG_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.\s-]*$')
-
-# ── Memory Type Validation ─────────────────────────────────────────────────
-VALID_MEMORY_TYPES = {"episodic", "semantic", "procedural"}
+from core.config import cfg
 
 
 def _mem() -> "MemoryStore":
-    """Lazy import of memory store — avoids slow ChromaDB load at startup.
-
-    [DESIGN] This function is the ONLY entry point to the MemoryStore
-    singleton. Actions call it internally; the facade never calls it.
-    The janitor action bypasses this entirely.
-    """
+    """Lazy import of memory store — avoids slow ChromaDB load at startup."""
     with state._store_lock:
         if state._store is None:
             from core.memory_engine import MemoryStore
@@ -35,73 +20,45 @@ def _mem() -> "MemoryStore":
 
 
 def _validate_tags(tags: str, max_count: int = 6) -> Tuple[bool, str]:
-    """Validate tags to prevent injection/XSS attacks.
-
-    Args:
-        tags: Comma-separated tag string (may be empty).
-        max_count: Maximum tags allowed per entry.
-
-    Returns:
-        Tuple of (is_valid, error_message). Returns (True, "") if valid.
-
-    Validation rules:
-      - Reject dangerous chars: < > " ' ` | newline
-      - Each tag must start with letter, contain only letters/numbers/
-        hyphens/dots/underscores/spaces
-      - Max N tags (from max_count), max cfg.max_tag_length chars each
-    """
+    """MED-05 tag validation."""
     if not tags:
-        return True, ""  # Empty is fine
+        return True, ""
 
-    # Reject dangerous characters immediately (including newline)
-    danger_list = ['<', '>', '"', "'", '`', '|', '\n']
-    for bad_char in danger_list:
-        if bad_char in tags:
-            return False, f"Tags cannot contain: {bad_char.replace(chr(10), 'newline')}"
+    danger_list = {"<", ">", "\"", "'", "`", "|", "\n", "\r", "\t"}
+    for ch in danger_list:
+        if ch in tags:
+            return False, f"Tags cannot contain: {ch!r}"
 
-    # Split by comma and validate each tag
     parts = [t.strip() for t in re.split(r'[,\s]+', tags) if t.strip()]
-
     if not parts:
         return False, "No valid tags found"
 
     if len(parts) > max_count:
-        return False, f"Too many tags (max {max_count})"
+        return False, f"Too many tags ({len(parts)} > {max_count})"
 
-    for tag in parts:
-        if len(tag) > cfg.max_tag_length:
-            return False, (
-                f"Tag exceeds length limit ({len(tag)} > {cfg.max_tag_length})"
-            )
-        if not TAG_PATTERN.fullmatch(tag):
-            bad_chars = set(tag) - set(
-                'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.- '
-            )
-            return False, f"Tag contains invalid characters: {bad_chars}"
+    for p in parts:
+        if len(p) > cfg.max_tag_length:
+            return False, f"Tag '{p[:20]}...' exceeds length limit ({cfg.max_tag_length})"
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_.\s-]*$', p):
+            return False, f"Tag '{p}' contains invalid characters"
 
     return True, ""
 
 
 def _validate_memory_type(memory_type: str) -> Tuple[bool, str]:
-    """Fail-fast validation for memory_type parameter.
-
-    The backend silently coerces invalid types to 'semantic'.
-    We validate at the tool layer so the LLM gets a clear error.
-    """
-    if memory_type and memory_type not in VALID_MEMORY_TYPES:
-        return False, (
-            f"Invalid memory_type '{memory_type}'. "
-            f"Must be one of: {', '.join(sorted(VALID_MEMORY_TYPES))}"
-        )
+    """Reject invalid memory_type before backend silently coerces to 'semantic'."""
+    valid = {"episodic", "semantic", "procedural"}
+    if memory_type and memory_type not in valid:
+        return False, f"Invalid memory_type '{memory_type}'. Must be one of: {', '.join(sorted(valid))}"
     return True, ""
 
 
 def _validate_collections(collections) -> Tuple[bool, str]:
     """Reject empty collections list to prevent silent all-collections fallback.
-
-    The backend treats [] as falsy and falls back to ALL_COLLECTIONS.
-    We catch this at the tool layer to prevent confusion.
-    """
-    if collections is not None and len(collections) == 0:
-        return False, "collections cannot be empty — omit or pass None for all"
+    v1.1: Also rejects non-list types (e.g., strings) to prevent TypeError."""
+    if collections is not None:
+        if not isinstance(collections, list):
+            return False, f"collections must be a list, got {type(collections).__name__}"
+        if len(collections) == 0:
+            return False, "collections cannot be empty — omit or pass None for all"
     return True, ""

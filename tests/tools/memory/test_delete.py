@@ -1,14 +1,29 @@
-"""Tests for the delete action."""
+"""Tests for the delete action.
+v1.1: Added collections validation, confirm_ids-only, threshold=0.0 tests.
+"""
 from __future__ import annotations
 
 from tools.memory import memory
 
 
 class TestDeleteValidation:
-    def test_missing_query_error(self, mock_cfg, mock_store):
+    def test_missing_query_and_confirm_ids_error(self, mock_cfg, mock_store):
+        """v1.1: Both query and confirm_ids missing must fail."""
         result = memory(action="delete", query="")
         assert result["status"] == "error"
-        assert "query is required" in result["error"]
+        assert "query or confirm_ids is required" in result["error"]
+
+    def test_empty_collections_rejected(self, mock_cfg, mock_store):
+        """v1.1: Empty collections list must be rejected."""
+        result = memory(action="delete", query="test", collections=[])
+        assert result["status"] == "error"
+        assert "cannot be empty" in result["error"]
+
+    def test_collections_type_error(self, mock_cfg, mock_store):
+        """v1.1: Non-list collections must be rejected."""
+        result = memory(action="delete", query="test", collections="semantic")
+        assert result["status"] == "error"
+        assert "must be a list" in result["error"]
 
 
 class TestDeleteSuccess:
@@ -22,7 +37,19 @@ class TestDeleteSuccess:
         call_kwargs = mock_store.delete.call_args.kwargs
         assert call_kwargs["confirm_ids"] == ["id1", "id2"]
 
+    def test_delete_with_confirm_ids_only(self, mock_cfg, mock_store):
+        """v1.1: delete with confirm_ids but no query should succeed."""
+        result = memory(action="delete", confirm_ids=["id1", "id2"])
+        assert result["status"] == "success"
+        mock_store.delete.assert_called_once()
+
     def test_delete_with_threshold(self, mock_cfg, mock_store):
         memory(action="delete", query="test", threshold=0.7)
         call_kwargs = mock_store.delete.call_args.kwargs
         assert call_kwargs["threshold"] == 0.7
+
+    def test_threshold_zero_not_none(self, mock_cfg, mock_store):
+        """v1.1: threshold=0.0 must be passed as 0.0, not converted to None."""
+        memory(action="delete", query="test", threshold=0.0)
+        call_kwargs = mock_store.delete.call_args.kwargs
+        assert call_kwargs["threshold"] == 0.0

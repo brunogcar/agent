@@ -1,46 +1,24 @@
-"""Prune action — remove stale or low-importance memories."""
+"""tools/memory_ops/actions/prune.py — Prune action handler.
+v1.1: Added collections validation, max_age_days/min_importance range checks.
+"""
 from __future__ import annotations
 
-from core.contracts import ok
-
+from tools.memory_ops.helpers import _mem, _validate_collections
 from tools.memory_ops._registry import register_action
-from tools.memory_ops.helpers import _mem
-
-HELP_PRUNE = """
-prune — Remove stale or low-importance memories.
-
-Defaults to dry_run=True for safety. Review results before setting dry_run=False.
-
-Parameters:
-  max_age_days (default 30): Max age before removal.
-  min_importance (default 3): Minimum importance to keep.
-  dry_run (default True): Preview deletions without executing.
-  collections: Filter to specific collections. Omit for all.
-  trace_id: Trace identifier for logging and correlation.
-
-Examples:
-  memory(action="prune", dry_run=True)
-  memory(action="prune", max_age_days=7, min_importance=5, dry_run=False)
-"""
+from core.contracts import ok, fail
 
 
-@register_action(
-    "memory", "prune",
-    help_text=HELP_PRUNE,
-    examples=[
-        'memory(action="prune", dry_run=True)',
-        'memory(action="prune", max_age_days=7, min_importance=5, dry_run=False)',
-    ],
-)
-def run_prune(
-    max_age_days: int = 30,
-    min_importance: int = 3,
-    dry_run: bool = True,
-    collections=None,
-    trace_id: str = "",
-    **kwargs,
-) -> dict:
-    """Prune stale or low-importance memories."""
+@register_action("memory", "prune", help_text="Remove stale or low-importance memories")
+def run_prune(max_age_days=30, min_importance=3, dry_run=True, collections=None, trace_id: str = "", **kwargs):
+    is_valid, err = _validate_collections(collections)
+    if not is_valid:
+        return fail(err, trace_id=trace_id)
+
+    if max_age_days < 0:
+        return fail("max_age_days must be >= 0", trace_id=trace_id)
+    if min_importance < 1 or min_importance > 10:
+        return fail("min_importance must be 1-10", trace_id=trace_id)
+
     store = _mem()
     result = store.prune(
         max_age_days=max_age_days,
@@ -48,5 +26,4 @@ def run_prune(
         dry_run=dry_run,
         collections=collections,
     )
-
     return ok(result, trace_id=trace_id)
