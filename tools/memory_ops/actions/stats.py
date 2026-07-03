@@ -1,10 +1,12 @@
-"""Stats action — return collection statistics without loading vectors."""
+"""Stats action — return collection statistics without loading vectors.
+v1.2: Added collections validation for consistency with other actions.
+"""
 from __future__ import annotations
 
-from core.contracts import ok
+from core.contracts import ok, fail
 
 from tools.memory_ops._registry import register_action
-from tools.memory_ops.helpers import _mem
+from tools.memory_ops.helpers import _mem, _validate_collections
 
 HELP_STATS = """
 stats — Return counts for all collections without loading ChromaDB vectors.
@@ -16,7 +18,6 @@ Examples:
   memory(action="stats")
 """
 
-
 @register_action(
     "memory", "stats",
     help_text=HELP_STATS,
@@ -25,10 +26,15 @@ Examples:
     ],
 )
 def run_stats(
+    collections=None,
     trace_id: str = "",
     **kwargs,
 ) -> dict:
     """Return collection statistics."""
+    is_valid, err = _validate_collections(collections)
+    if not is_valid:
+        return fail(err, trace_id=trace_id)
+
     store = _mem()
     raw = store.stats()
     # Handle both nested dicts {"episodic": {"count": N}} and flat {"episodic": N}

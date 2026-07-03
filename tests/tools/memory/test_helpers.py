@@ -1,6 +1,5 @@
 """Tests for memory helpers — validation, lazy loading, singleton.
-v1.1: NEW file. Covers _validate_collections, _validate_memory_type, _validate_tags,
-      and _mem() singleton behavior.
+v1.2: _mem() tests now mock MemoryStore to avoid real ChromaDB dependency.
 """
 from __future__ import annotations
 
@@ -9,7 +8,6 @@ from unittest.mock import patch, MagicMock
 
 from tools.memory_ops.helpers import _validate_tags, _validate_memory_type, _validate_collections
 import tools.memory_ops.state as mem_state
-
 
 class TestValidateCollections:
     def test_none_is_valid(self):
@@ -33,7 +31,6 @@ class TestValidateCollections:
         assert is_valid is True
         assert err == ""
 
-
 class TestValidateMemoryType:
     def test_empty_is_valid(self):
         is_valid, err = _validate_memory_type("")
@@ -53,7 +50,6 @@ class TestValidateMemoryType:
         assert "semantic" in err
         assert "procedural" in err
 
-
 class TestValidateTags:
     def test_empty_is_valid(self):
         is_valid, err = _validate_tags("")
@@ -71,17 +67,32 @@ class TestValidateTags:
         assert is_valid is False
         assert "Too many tags" in err
 
+    def test_multi_word_tag_preserved(self):
+        """v1.2: Comma-separated multi-word tags must stay intact."""
+        is_valid, err = _validate_tags("my tag, another tag")
+        assert is_valid is True
+        assert err == ""
+
+    def test_single_word_no_comma(self):
+        """v1.2: Single word without comma is one tag."""
+        is_valid, err = _validate_tags("python")
+        assert is_valid is True
+        assert err == ""
 
 class TestMemLazyLoading:
     def test_mem_creates_instance(self):
         mem_state.reset_state()
-        from tools.memory_ops.helpers import _mem
-        store = _mem()
-        assert store is not None
+        with patch("core.memory_engine.MemoryStore") as MockStore:
+            from tools.memory_ops.helpers import _mem
+            store = _mem()
+            assert store is not None
+            MockStore.assert_called_once()
 
     def test_mem_returns_same_instance(self):
         mem_state.reset_state()
-        from tools.memory_ops.helpers import _mem
-        store1 = _mem()
-        store2 = _mem()
-        assert store1 is store2
+        with patch("core.memory_engine.MemoryStore") as MockStore:
+            from tools.memory_ops.helpers import _mem
+            store1 = _mem()
+            store2 = _mem()
+            assert store1 is store2
+            MockStore.assert_called_once()

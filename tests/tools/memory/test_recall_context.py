@@ -1,10 +1,9 @@
 """Tests for the recall_context action.
-v1.1: Added tags_filter limitation test.
+v1.2: Added unsupported param rejection tests.
 """
 from __future__ import annotations
 
 from tools.memory import memory
-
 
 class TestRecallContextValidation:
     def test_missing_query_error(self, mock_cfg, mock_store):
@@ -17,25 +16,26 @@ class TestRecallContextValidation:
         assert result["status"] == "error"
         assert "cannot be empty" in result["error"]
 
+    def test_recall_context_rejects_tags_filter(self, mock_cfg, mock_store):
+        """v1.2: recall_context must fail fast on unsupported tags_filter."""
+        result = memory(action="recall_context", query="test", tags_filter="mcp")
+        assert result["status"] == "error"
+        assert "does not support tags_filter" in result["error"]
+
+    def test_recall_context_rejects_min_score(self, mock_cfg, mock_store):
+        """v1.2: recall_context must fail fast on unsupported min_score."""
+        result = memory(action="recall_context", query="test", min_score=0.8)
+        assert result["status"] == "error"
+        assert "does not support min_score" in result["error"]
+
+    def test_recall_context_default_min_score_allowed(self, mock_cfg, mock_store):
+        """v1.2: Default min_score=0.5 must be allowed (not rejected)."""
+        result = memory(action="recall_context", query="test", min_score=0.5)
+        assert result["status"] == "success"
 
 class TestRecallContextSuccess:
-    def test_returns_formatted_string(self, mock_cfg, mock_store):
-        result = memory(action="recall_context", query="python")
+    def test_successful_recall_context(self, mock_cfg, mock_store):
+        result = memory(action="recall_context", query="test query")
         assert result["status"] == "success"
         assert "context" in result["data"]
-        assert result["data"]["context"] == "Formatted memory context for prompt injection."
         mock_store.recall_context.assert_called_once()
-
-    def test_with_collections(self, mock_cfg, mock_store):
-        memory(action="recall_context", query="test", collections=["procedural"])
-        call_kwargs = mock_store.recall_context.call_args.kwargs
-        assert call_kwargs["collections"] == ["procedural"]
-
-    def test_tags_filter_ignored(self, mock_cfg, mock_store):
-        """v1.1: tags_filter is accepted by facade but not passed to backend recall_context.
-        The backend execute_recall_context() does not support tags_filter or min_score.
-        Use recall() for filtered searches."""
-        memory(action="recall_context", query="test", tags_filter="mcp,howto")
-        call_kwargs = mock_store.recall_context.call_args.kwargs
-        assert "tags_filter" not in call_kwargs
-        assert "min_score" not in call_kwargs

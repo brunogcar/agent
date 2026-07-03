@@ -1,16 +1,17 @@
 # 🧠 Memory Tool
 
-The `memory()` tool is the **LLM-facing interface** to the agent\'s persistent memory backend. It wraps `core.memory_engine.MemoryStore` in a single `@tool` function with `@meta_tool` auto-discovery dispatch, providing the LLM with a unified API for storing, recalling, and maintaining memories across three collections.
+The `memory()` tool is the **LLM-facing interface** to the agent\\'s persistent memory backend. It wraps `core.memory_engine.MemoryStore` in a single `@tool` function with `@meta_tool` auto-discovery dispatch, providing the LLM with a unified API for storing, recalling, and managing memories across three collections.
 
 **Key characteristics:**
 - **Atomic action dispatch** — `@meta_tool` + `@register_action` auto-discovery (v1.0)
 - **Lazy loading** — ChromaDB is only imported on first non-janitor call via `_mem()` in `helpers.py`
 - **Janitor bypass** — `archive_old_episodes()` and `purge_stale_rules()` run without touching the memory store (avoids ChromaDB load)
 - **Tag validation** — MED-05 compliant: XSS/injection prevention, length limits, character whitelist
-- **Result compression** — Success responses pass through `compress_result()` to prevent context window bloat (v1.1: skipped for errors)
+- **Result compression** — Success responses pass through `compress_result()` to prevent context window bloat (v1.1: skipped for errors; v1.2: crash caught)
 - **Trace ID threading** — `trace_id` propagated through all action results for observability
 - **Fail-fast validation** — Invalid `memory_type` and empty `collections=[]` rejected at tool layer, not silently coerced
 - **Facade exception handling** — v1.1: Handler exceptions caught and returned as structured `fail()` responses
+- **Duration tracking** — v1.2: `duration_ms` included in all responses for performance monitoring
 
 ---
 
@@ -38,6 +39,20 @@ The `memory()` tool is the **LLM-facing interface** to the agent\'s persistent m
 | `janitor` handles exceptions and non-dict returns | Previously crashed on unexpected return types |
 | `compress_result()` only on success | Error responses no longer shallow-copied by compressor |
 | Facade catches handler exceptions | Previously uncaught exceptions crashed the tool |
+
+### v1.2
+
+| Change | Impact |
+|--------|--------|
+| `compress_result()` crash caught | If compression fails, returns structured `fail()` instead of leaking exception |
+| `duration_ms` in all responses | Performance monitoring for every action |
+| `delete` validates `confirm_ids` type | String `confirm_ids` rejected — prevents character-wise iteration |
+| `delete` validates `threshold` range | `threshold` must be 0.0–1.0 |
+| `recall_context` rejects `tags_filter`/`min_score` | Previously silently ignored; now fails fast with clear error |
+| `stats` validates `collections` | Consistent with all other actions |
+| Tag splitting comma-only | Multi-word tags preserved: `"my tag, another tag"` |
+| Janitor errors forced to strings | Prevents JSON serialization failures |
+| Destructive actions marked in docs | `delete` and `prune` flagged for human confirmation |
 
 ---
 
@@ -81,24 +96,24 @@ memory(action="janitor")
 ## 🏗️ Architecture
 
 ```text
-tools/memory.py                    # @tool + @meta_tool facade — pure dispatch
+tools/memory.py              # @tool + @meta_tool facade — pure dispatch
 tools/memory_ops/
-├── __init__.py                    # Auto-imports actions to trigger @register_action
-├── _registry.py                   # DISPATCH dict + @register_action decorator
-├── state.py                       # Singleton store instance + reset_state()
-├── helpers.py                     # _mem(), _validate_tags(), _validate_memory_type(), _validate_collections()
+├── __init__.py              # Auto-imports actions to trigger @register_action
+├── _registry.py             # DISPATCH dict + @register_action decorator
+├── state.py                 # Singleton store instance + reset_state()
+├── helpers.py               # _mem(), _validate_tags(), _validate_memory_type(), _validate_collections()
 └── actions/
-    ├── store.py                   # @register_action("memory", "store")
-    ├── recall.py                  # @register_action("memory", "recall")
-    ├── recall_context.py          # @register_action("memory", "recall_context") — NEW v1.0
-    ├── delete.py                  # @register_action("memory", "delete")
-    ├── prune.py                   # @register_action("memory", "prune")
-    ├── summarize.py               # @register_action("memory", "summarize")
-    ├── stats.py                   # @register_action("memory", "stats")
-    └── janitor.py                 # @register_action("memory", "janitor") — NEVER calls _mem()
+    ├── store.py             # @register_action("memory", "store")
+    ├── recall.py            # @register_action("memory", "recall")
+    ├── recall_context.py    # @register_action("memory", "recall_context") — NEW v1.0
+    ├── delete.py            # @register_action("memory", "delete")
+    ├── prune.py             # @register_action("memory", "prune")
+    ├── summarize.py         # @register_action("memory", "summarize")
+    ├── stats.py             # @register_action("memory", "stats")
+    └── janitor.py           # @register_action("memory", "janitor") — NEVER calls _mem()
 
-core/memory_engine.py              # Thin facade — re-exports MemoryStore singleton
-core/memory_backend/               # Implementation (see docs/core/MEMORY.md)
+core/memory_engine.py        # Thin facade — re-exports MemoryStore singleton
+core/memory_backend/         # Implementation (see docs/core/MEMORY.md)
 ```
 
 ### Dispatch Flow
@@ -106,17 +121,17 @@ core/memory_backend/               # Implementation (see docs/core/MEMORY.md)
 ```mermaid
 graph TD
     A["memory(action, ...)"] --> B{"action?"}
-    B -->|"janitor"| C["archive_old_episodes()\npurge_stale_rules()\nNO _mem() call"]
-    B -->|"other"| D["op_info[\'func\'](**kwargs)"]
+    B -->|"janitor"| C["archive_old_episodes()\\npurge_stale_rules()\\nNO _mem() call"]
+    B -->|"other"| D["op_info['func'](**kwargs)"]
     D --> E{"action?"}
-    E -->|store| F["_validate_tags()\n_validate_memory_type()\n_validate_collections()\n_mem().store()"]
-    E -->|recall| G["_validate_tags(tags_filter)\n_validate_collections()\n_mem().recall()"]
-    E -->|recall_context| H["_validate_collections()\n_mem().recall_context()"]
-    E -->|delete| I["_validate_collections()\n_mem().delete()"]
-    E -->|prune| J["_validate_collections()\nrange checks\n_mem().prune()"]
-    E -->|summarize| K["_validate_collections()\n_mem().summarize()"]
-    E -->|stats| L["_mem().stats()"]
-    E -->|unknown| M["fail(\'Unknown action ...\')"]
+    E -->|store| F["_validate_tags()\\n_validate_memory_type()\\n_validate_collections()\\n_mem().store()"]
+    E -->|recall| G["_validate_tags(tags_filter)\\n_validate_collections()\\n_mem().recall()"]
+    E -->|recall_context| H["_validate_collections()\\nreject tags_filter/min_score\\n_mem().recall_context()"]
+    E -->|delete| I["_validate_collections()\\nconfirm_ids type guard\\nthreshold range\\n_mem().delete()"]
+    E -->|prune| J["_validate_collections()\\nrange checks\\n_mem().prune()"]
+    E -->|summarize| K["_validate_collections()\\n_mem().summarize()"]
+    E -->|stats| L["_validate_collections()\\n_mem().stats()"]
+    E -->|unknown| M["fail('Unknown action ...')"]
     C --> N["ok({...})"]
     F --> N
     G --> N
@@ -125,8 +140,8 @@ graph TD
     J --> N
     K --> N
     L --> N
-    M --> O["fail(\'Unknown action ...\')"]
-    N --> P["if success: compress_result()\ntrace_id injected if missing"]
+    M --> O["fail('Unknown action ...')"]
+    N --> P["if success: compress_result()\\ntrace_id injected if missing\\nduration_ms added"]
 ```
 
 ### Lazy Loading Pattern
@@ -203,7 +218,7 @@ def memory(
 | `text` | `str` | No | Memory content. **Required** for `store`. |
 | `memory_type` | `str` | No | Target collection: `episodic` / `semantic` / `procedural`. Default: `semantic`. |
 | `importance` | `int` | No | Base score 1–10. Default: `5`. Higher = slower decay. |
-| `tags` | `str` | No | Comma or space-separated tags. Max `cfg.max_tags_per_entry`. |
+| `tags` | `str` | No | Comma-separated tags. Max `cfg.max_tags_per_entry`. Multi-word tags supported: `"my tag, another tag"`. |
 | `trace_id` | `str` | No | Trace identifier for logging and correlation. |
 | `goal` | `str` | No | What was being attempted (episodic/procedural). |
 | `outcome` | `str` | No | `success` / `failure` / `partial` / `unknown`. Default: `unknown`. |
@@ -214,8 +229,8 @@ def memory(
 | `collections` | `list` | No | Filter to specific collections. Default: all. `[]` is **rejected**. Must be a **list**, not a string. |
 | `min_score` | `float` | No | Minimum decay score for `recall`. Default: `0.5`. |
 | `tags_filter` | `str` | No | Comma-separated — only return memories with ANY of these tags. **Not supported by `recall_context`**. |
-| `threshold` | `float` | No | Similarity threshold for `delete`. `0.0` is preserved as `0.0`, not converted to `None`. |
-| `confirm_ids` | `list` | No | Specific IDs to delete (bypasses similarity search). |
+| `threshold` | `float` | No | Similarity threshold for `delete`. Must be 0.0–1.0. `0.0` is preserved as `0.0`, not converted to `None`. |
+| `confirm_ids` | `list` | No | Specific IDs to delete (bypasses similarity search). Must be a list. |
 | `max_age_days` | `int` | No | For `prune`: max age before removal. Must be `>= 0`. Default: `30`. |
 | `min_importance` | `int` | No | For `prune`: minimum importance to keep. Must be 1–10. Default: `3`. |
 | `dry_run` | `bool` | No | For `prune`: preview deletions without executing. Default: `True`. |
@@ -251,7 +266,8 @@ Stores text into one of three typed collections with deduplication, decay scorin
     "data": {
         "status": "stored",
         "id": "uuid",
-        "trace_id": "abc123"
+        "trace_id": "abc123",
+        "duration_ms": 45
     }
 }
 ```
@@ -267,7 +283,8 @@ Or if duplicate detected:
         "matched_snippet": "First 200 chars...",
         "existing_id": "uuid",
         "retry_recommended": false
-    }
+    },
+    "duration_ms": 12
 }
 ```
 
@@ -297,7 +314,8 @@ Searches across memory collections using ChromaDB vector similarity, ranked by d
                 "id": "uuid"
             }
         ]
-    }
+    },
+    "duration_ms": 23
 }
 ```
 
@@ -307,11 +325,14 @@ Returns a pre-formatted string of top memories, not a JSON list. Use this when y
 
 **Limitations:**
 - `tags_filter` and `min_score` are **not supported**. The backend `execute_recall_context()` does not accept these parameters. Use `recall()` for filtered searches, then format manually if needed.
+- v1.2: Passing `tags_filter` or `min_score != 0.5` returns a clear error instead of silently ignoring the parameter.
 
 **Validation:**
 - Missing `query` → `fail("query is required for recall_context")`
 - Empty `collections=[]` → `fail("collections cannot be empty — omit or pass None for all")`
 - Non-list `collections` → `fail("collections must be a list, got ...")`
+- `tags_filter` provided → `fail("recall_context does not support tags_filter...")`
+- `min_score` != 0.5 → `fail("recall_context does not support min_score...")`
 
 **Return:**
 ```json
@@ -319,7 +340,8 @@ Returns a pre-formatted string of top memories, not a JSON list. Use this when y
     "status": "success",
     "data": {
         "context": "1. [procedural] To fix SyntaxError...\\n2. [semantic] ChromaDB supports..."
-    }
+    },
+    "duration_ms": 18
 }
 ```
 
@@ -329,8 +351,10 @@ Removes memories by similarity query or explicit IDs.
 
 **Validation:**
 - Missing `query` AND missing `confirm_ids` → `fail("query or confirm_ids is required for delete")`
+- `confirm_ids` not a list → `fail("confirm_ids must be a list, got ...")`
 - Empty `collections=[]` → `fail("collections cannot be empty — omit or pass None for all")`
 - Non-list `collections` → `fail("collections must be a list, got ...")`
+- `threshold` outside 0.0–1.0 → `fail("threshold must be between 0.0 and 1.0")`
 
 **Note:** `threshold=0.0` is preserved as `0.0` and passed to the backend. It is **not** converted to `None`.
 
@@ -362,6 +386,10 @@ Generates an LLM summary of top memories across collections.
 
 Returns counts for all collections without loading ChromaDB vectors.
 
+**Validation:**
+- Empty `collections=[]` → `fail("collections cannot be empty — omit or pass None for all")`
+- Non-list `collections` → `fail("collections must be a list, got ...")`
+
 **Return:**
 ```json
 {
@@ -373,7 +401,8 @@ Returns counts for all collections without loading ChromaDB vectors.
             "procedural": {"count": 89}
         },
         "total": 1890
-    }
+    },
+    "duration_ms": 5
 }
 ```
 
@@ -388,6 +417,7 @@ Runs maintenance without loading the main memory store. This is the **fastest** 
 **Resilience:**
 - v1.1: If either function raises an exception, the janitor catches it and continues
 - v1.1: If either function returns a non-dict, the janitor handles it gracefully with a clear error
+- v1.2: Errors are forced to strings to prevent JSON serialization failures
 
 **Return:**
 ```json
@@ -397,7 +427,8 @@ Runs maintenance without loading the main memory store. This is the **fastest** 
         "episodic_archived": 42,
         "rules_purged": 7,
         "errors": []
-    }
+    },
+    "duration_ms": 8
 }
 ```
 
@@ -415,6 +446,7 @@ All tag inputs (`tags` for `store`, `tags_filter` for `recall`) pass through `_v
 | **Must start with** | Letter `[a-zA-Z]` |
 | **Allowed characters** | Letters, numbers, hyphens, dots, underscores, spaces |
 | **Pattern** | `^[a-zA-Z][a-zA-Z0-9_.\s-]*$` |
+| **Separator** | Comma `,` — multi-word tags supported: `"my tag, another tag"` |
 
 ```python
 def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
@@ -429,7 +461,7 @@ def _validate_tags(tags: str, max_count: int = 6) -> tuple[bool, str]:
 - `recall tags_filter`: hardcoded 10 — relaxed, read-only query parameter
 This is intentional. Do not "simplify" both to the same config value.
 
-**[DESIGN] Tag splitting:** The regex `re.split(r'[,\s]+', tags)` treats both commas AND spaces as separators. This means `"tag1 tag2"` and `"tag1,tag2"` are equivalent. The LLM can use either format. Do not tighten to comma-only — LLMs frequently generate space-separated tags.
+**[DESIGN] Tag splitting:** Tags are comma-separated. Multi-word tags are supported: `"my tag, another tag"` produces `["my tag", "another tag"]`. Do not pass space-separated tags — each comma defines a tag boundary.
 
 ---
 
@@ -443,7 +475,7 @@ Success responses pass through `compress_result()` from `core.utils`:
 - `trace_id` threaded through for observability
 
 **[DESIGN] `compress_result()` is called in the facade, not individual actions.**
-The facade applies it only to **success** responses (v1.1). Error responses are returned as-is without compression. This avoids unnecessary shallow-copy overhead on small error dicts and preserves exact error messages.
+The facade applies it only to **success** responses (v1.1). Error responses are returned as-is without compression. v1.2: If `compress_result()` itself crashes, the facade returns a structured `fail()` instead of leaking the exception.
 
 ---
 
@@ -468,18 +500,18 @@ D:\\mcp\\agent\\venv\\Scripts\\pytest.exe tests/tools/memory/ -v -W error --tb=s
 ```text
 tests/tools/memory/
 ├── conftest.py              # Shared fixtures: reset_memory_state, mock_store, mock_cfg
-├── test_facade.py           # @meta_tool metadata, action Literal, unknown action, trace_id, compress_result
+├── test_facade.py           # @meta_tool metadata, action Literal, unknown action, trace_id, compress_result, duration_ms
 ├── test_registry.py         # DISPATCH, @register_action, duplicate guard
 ├── test_store.py            # store action: validation, dedup, size limits, memory_type fail-fast, collections guard
 ├── test_recall.py           # recall action: search, filtering, tags_filter
-├── test_recall_context.py   # recall_context action: formatted string, collections guard, tags_filter limitation
-├── test_delete.py           # delete action: similarity, confirm_ids, collections validation, threshold=0.0
+├── test_recall_context.py   # recall_context action: formatted string, collections guard, unsupported param rejection
+├── test_delete.py           # delete action: similarity, confirm_ids, collections validation, threshold=0.0, threshold range
 ├── test_prune.py            # prune action: dry_run, age/importance filters, collections validation, range checks
 ├── test_summarize.py        # summarize action: collections validation, trace_id pass-through
-├── test_stats.py            # stats action
+├── test_stats.py            # stats action: collections validation
 ├── test_janitor.py          # janitor action: bypass (assert _mem never called), archive, purge, non-dict guards
-├── test_tag_validation.py   # MED-05: XSS, length, character rules
-└── test_helpers.py          # v1.1 NEW: _validate_collections, _validate_memory_type, _validate_tags, _mem() singleton
+├── test_tag_validation.py   # MED-05: XSS, length, character rules, multi-word tags
+└── test_helpers.py          # v1.1: _validate_collections, _validate_memory_type, _validate_tags, _mem() singleton
 ```
 
 **Mock strategy:**
@@ -488,6 +520,7 @@ tests/tools/memory/
 - Patch `core.sleep_learn.janitor.purge_stale_rules` for janitor tests
 - Patch `cfg.memory_max_entry_bytes`, `cfg.max_tags_per_entry`, `cfg.max_tag_length` for validation tests
 - Call `tools.memory_ops.state.reset_state()` between tests (autouse fixture)
+- Patch `core.memory_engine.MemoryStore` in `test_helpers.py` to avoid real ChromaDB dependency
 
 **[DESIGN] conftest.py maintenance:** Each action module does `from tools.memory_ops.helpers import _mem`, creating a local binding. The conftest must patch each binding individually. When adding a new action, update the `patches` list in `conftest.py` or tests for that action will use the real `MemoryStore`.
 
@@ -529,8 +562,17 @@ tests/tools/memory/
 | `summarize` `collections` validation | ✅ v1.1 | Empty list rejected |
 | `summarize` `trace_id` pass-through | ✅ v1.1 | Passed to backend `store.summarize()` |
 | `test_helpers.py` | ✅ v1.1 | Dedicated tests for validation functions and singleton |
+| `compress_result` crash caught | ✅ v1.2 | Returns structured `fail()` instead of leaking exception |
+| `duration_ms` in all responses | ✅ v1.2 | Performance monitoring for every action |
+| `delete` `confirm_ids` type guard | ✅ v1.2 | String `confirm_ids` rejected |
+| `delete` `threshold` range check | ✅ v1.2 | Must be 0.0–1.0 |
+| `recall_context` rejects unsupported params | ✅ v1.2 | `tags_filter`/`min_score` fail fast |
+| `stats` `collections` validation | ✅ v1.2 | Consistent with other actions |
+| Tag splitting comma-only | ✅ v1.2 | Multi-word tags preserved |
+| Janitor errors forced to strings | ✅ v1.2 | Prevents JSON serialization failures |
+| Destructive actions documented | ✅ v1.2 | `delete`/`prune` flagged for human confirmation |
 
-### 🔄 In Progress / Next Up (v1.2)
+### 🔄 In Progress / Next Up (v1.3)
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
@@ -539,6 +581,11 @@ tests/tools/memory/
 | `memory(action="health")` | Lightweight ChromaDB connectivity check. | P2 |
 | `store_batch` action | Store multiple memories in one call. Cap at 20 entries. | P2 |
 | `recall_context` `tags_filter`/`min_score` support | Requires backend `execute_recall_context()` to accept these params. | P2 |
+| `update` action | Modify existing memory by ID without losing history or changing ID. | P1 |
+| `recent` action | Time-based retrieval (last N entries or N days). No similarity search needed. | P2 |
+| `search` action (exact/keyword) | ChromaDB `$contains` search for exact phrases. Complement to semantic `recall`. | P2 |
+| Query audit log | Append every recall/recall_context to `workspace/.artifacts/memory_queries.log`. | P2 |
+| Decay score in recall results | Expose time/importance decay score alongside vector similarity. | P2 |
 
 ### 🚫 Rejected / Out of Scope
 
@@ -579,19 +626,25 @@ tests/tools/memory/
 11. **Never call `_mem()` from `janitor.py`** — The janitor action must remain completely isolated from the main store.
 12. **Never rely on backend silent coercion** — The backend defaults invalid `memory_type` to "semantic". The tool layer must reject invalid types explicitly.
 13. **Never add `PARALLEL_SAFE` for memory** — ChromaDB SQLite is not thread-safe for concurrent writes. Keep `memory` out of `PARALLEL_SAFE`.
+14. **Never allow string `confirm_ids`** — Must be a list. Strings iterate character-wise in the backend.
+15. **Never silently ignore unsupported params** — `recall_context` must reject `tags_filter`/`min_score` with clear errors.
 
 ### ALWAYS DO
-14. **Always use `_mem()` for lazy loading** — Never import `core.memory_engine` at module level.
-15. **Always handle `janitor` before `_mem()`** — Preserve the ChromaDB bypass optimization.
-16. **Always thread `trace_id` through all results** — For observability and result correlation.
-17. **Always validate `tags` and `tags_filter` with `_validate_tags()`** — MED-05 compliance is mandatory.
-18. **Always return `fail()` with clear messages** — Unknown actions, missing params, validation errors.
-19. **Always run `compileall` after editing tool files** — Verify syntax before running tests.
-20. **Always run targeted tests (`tests/tools/memory/`) after changes** — Per-action coverage.
-21. **Always reject empty `collections=[]`** — Prevent silent all-collections fallback.
-22. **Always reject non-list `collections`** — `isinstance(collections, list)` guard prevents TypeError.
-23. **Always catch exceptions in action handlers** — Wrap backend calls in `try/except` and return `fail()`.
-24. **Always document `**kwargs` absorption trade-off** — If a handler accepts `**kwargs`, misspelled params are silently ignored. This is the established pattern. Document it.
+16. **Always use `_mem()` for lazy loading** — Never import `core.memory_engine` at module level.
+17. **Always handle `janitor` before `_mem()`** — Preserve the ChromaDB bypass optimization.
+18. **Always thread `trace_id` through all results** — For observability and result correlation.
+19. **Always validate `tags` and `tags_filter` with `_validate_tags()`** — MED-05 compliance is mandatory.
+20. **Always return `fail()` with clear messages** — Unknown actions, missing params, validation errors.
+21. **Always run `compileall` after editing tool files** — Verify syntax before running tests.
+22. **Always run targeted tests (`tests/tools/memory/`) after changes** — Per-action coverage.
+23. **Always reject empty `collections=[]`** — Prevent silent all-collections fallback.
+24. **Always reject non-list `collections`** — `isinstance(collections, list)` guard prevents TypeError.
+25. **Always catch exceptions in action handlers** — Wrap backend calls in `try/except` and return `fail()`.
+26. **Always document `**kwargs` absorption trade-off** — If a handler accepts `**kwargs`, misspelled params are silently ignored. This is the established pattern. Document it.
+27. **Always include `duration_ms` in responses** — v1.2: Performance monitoring for every action.
+28. **Always force janitor errors to strings** — v1.2: Prevents JSON serialization failures.
+29. **Always validate `threshold` range** — v1.2: Must be 0.0–1.0 for meaningful similarity search.
+30. **Always use comma-only tag splitting** — v1.2: Multi-word tags are supported and preserved.
 
 ---
 
@@ -625,4 +678,4 @@ tests/tools/memory/
 
 ---
 
-*Last updated: July 2026. Tool signature and action behaviors reflect current `tools/memory.py` source (v1.1).*
+*Last updated: July 2026. Tool signature and action behaviors reflect current `tools/memory.py` source (v1.2).*

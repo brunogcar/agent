@@ -1,10 +1,10 @@
 """Tests for the delete action.
 v1.1: Added collections validation, confirm_ids-only, threshold=0.0 tests.
+v1.2: Added confirm_ids type guard, threshold range tests.
 """
 from __future__ import annotations
 
 from tools.memory import memory
-
 
 class TestDeleteValidation:
     def test_missing_query_and_confirm_ids_error(self, mock_cfg, mock_store):
@@ -25,6 +25,21 @@ class TestDeleteValidation:
         assert result["status"] == "error"
         assert "must be a list" in result["error"]
 
+    def test_confirm_ids_string_rejected(self, mock_cfg, mock_store):
+        """v1.2: String confirm_ids must be rejected to prevent character-wise iteration."""
+        result = memory(action="delete", confirm_ids="abc123")
+        assert result["status"] == "error"
+        assert "confirm_ids must be a list" in result["error"]
+
+    def test_threshold_out_of_range_rejected(self, mock_cfg, mock_store):
+        """v1.2: threshold outside 0.0-1.0 must be rejected."""
+        result = memory(action="delete", query="test", threshold=-0.1)
+        assert result["status"] == "error"
+        assert "threshold must be between 0.0 and 1.0" in result["error"]
+
+        result = memory(action="delete", query="test", threshold=1.5)
+        assert result["status"] == "error"
+        assert "threshold must be between 0.0 and 1.0" in result["error"]
 
 class TestDeleteSuccess:
     def test_successful_delete(self, mock_cfg, mock_store):

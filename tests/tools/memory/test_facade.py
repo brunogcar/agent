@@ -7,7 +7,6 @@ from unittest.mock import patch, MagicMock
 from tools.memory import memory
 from tools.memory_ops import DISPATCH
 
-
 class TestFacadeDispatch:
     def test_unknown_action_returns_error(self, mock_cfg, mock_store):
         result = memory(action="invalid_action")
@@ -56,7 +55,6 @@ class TestFacadeDispatch:
             assert "boom" in result["error"]
             assert result["trace_id"] == "exc-test"
 
-
 class TestFacadeTraceId:
     def test_trace_id_injected_into_success_result(self, mock_cfg, mock_store):
         result = memory(action="stats", trace_id="abc123")
@@ -72,7 +70,6 @@ class TestFacadeTraceId:
         error = memory(action="store", text="", trace_id="t2")
         assert success["trace_id"] == "t1"
         assert error["trace_id"] == "t2"
-
 
 class TestFacadeCompression:
     def test_compress_result_applied_to_success(self, mock_cfg, mock_store):
@@ -90,3 +87,26 @@ class TestFacadeCompression:
         result = memory(action="store", text="", trace_id="compress-test")
         assert result["status"] == "error"
         assert result["error"] == "text is required for store"
+
+class TestFacadeV12:
+    def test_compress_result_crash_caught(self, mock_cfg, mock_store):
+        """v1.2: compress_result failure must return structured fail(), not crash."""
+        with patch("tools.memory.compress_result", side_effect=RuntimeError("compressor boom")):
+            result = memory(action="stats", trace_id="compress-test")
+            assert result["status"] == "error"
+            assert "compression failed" in result["error"].lower()
+            assert result["trace_id"] == "compress-test"
+
+    def test_duration_ms_present(self, mock_cfg, mock_store):
+        """v1.2: All results include duration_ms."""
+        result = memory(action="stats", trace_id="duration-test")
+        assert "duration_ms" in result
+        assert isinstance(result["duration_ms"], int)
+        assert result["duration_ms"] >= 0
+
+    def test_duration_ms_present_on_error(self, mock_cfg, mock_store):
+        """v1.2: Error results also include duration_ms."""
+        result = memory(action="store", text="", trace_id="duration-err")
+        assert "duration_ms" in result
+        assert isinstance(result["duration_ms"], int)
+        assert result["duration_ms"] >= 0
