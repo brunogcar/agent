@@ -1,8 +1,19 @@
 # 🔄 Workflows Architecture & Orchestration Guide
 
+> **Status:** v3 — Verified July 2026 against real source via `workflows/` directory and per-tool docs..
+
 Workflows are long-running, multi-step orchestration pipelines built on **LangGraph**. They coordinate multiple tools, LLM calls, and memory operations to achieve complex goals that require sequential reasoning, error recovery, and state management.
 
 This document provides a **high-level overview** of all workflows and serves as an **index** to the detailed workflow docs. For deep-dive state machines, node-by-node breakdowns, and tool-specific details, see the dedicated docs in `docs/workflows/`.
+
+| Document | Workflow | Key Topics |
+|----------|----------|------------|
+| [BASE.md](workflows/BASE.md) | Foundation | WorkflowState, node helpers, checkpoint resumption, exception isolation |
+| [RESEARCH.md](workflows/RESEARCH.md) | Research | Single-query pipeline, browser fallback, citation tracking |
+| [DEEP_RESEARCH.md](workflows/DEEP_RESEARCH.md) | Deep Research | ReAct loop, budget tracking, convergence detection, three-tier tools |
+| [DATA.md](workflows/DATA.md) | Data | Python execution, critique layer, dual memory storage |
+| [AUTOCODE.md](workflows/AUTOCODE.md) | Autocode | TDD, git scoping, surgical patching, 17-node state machine |
+| [UNDERSTAND.md](workflows/UNDERSTAND.md) | Understand | AST parsing, incremental indexing, knowledge graph |
 
 ---
 
@@ -25,15 +36,78 @@ All workflows inherit from a shared foundation defined in `workflows/base.py`.
 - **Checkpoint resumption** — `resume=True` restores from the checkpoint journal with version validation (`_checkpoint_version == 1`).
 - **Exception isolation** — The entire dispatch is wrapped in try/except. Workflow crashes return clean failure dicts, never leak exceptions.
 
-See `docs/workflows/BASE.md` for full details.
+**Known limitations:**
+- `node_error()` saves only `{"status": "failed", "error": ...}` — loses all workflow context on resume. Should save full state.
+- `run_workflow()` exception handler returns failure dict but never calls `save_checkpoint()`. State at crash time is lost.
+- `understand` workflow ignores `trace_id`, `goal`, and checkpoint system. `resume=True` is meaningless.
+- `report` workflow accepted by `workflow_tool.py` but missing from `run_workflow()` dispatcher.
+
+See [workflows/BASE.md](workflows/BASE.md) for full details.
+
+---
+
+## 📁 Module Map
+
+```
+workflows/
+├── base.py                 # Shared WorkflowState + node helpers + dispatcher
+├── research.py             # 8-node linear pipeline
+├── data.py                 # 5-node linear pipeline
+├── autocode.py             # Thin facade → autocode_impl/
+├── deep_research.py        # Thin facade → deep_research_impl/
+├── understand.py           # Direct async function calls (not LangGraph)
+├── helpers/
+│   └── checkpoint.py       # Checkpoint journal: save, get_latest, mark_complete
+├── autocode_impl/          # 17-node subpackage
+│   ├── constants.py
+│   ├── git_ops.py
+│   ├── graph.py
+│   ├── helpers.py
+│   ├── mermaid.py
+│   ├── patch.py
+│   ├── routes.py
+│   ├── state.py
+│   ├── test_mapper.py
+│   ├── test_runner.py
+│   └── nodes/
+│       ├── analyze_impact.py
+│       ├── brainstorm.py
+│       ├── branch.py
+│       ├── classify.py
+│       ├── commit.py
+│       ├── create_skill.py
+│       ├── debug.py
+│       ├── execute.py
+│       ├── memory.py
+│       ├── plan.py
+│       ├── report.py
+│       ├── run_tests.py
+│       ├── tests.py
+│       ├── validate.py
+│       ├── verify.py
+│       └── write_files.py
+└── deep_research_impl/     # ReAct loop subpackage
+    ├── budget.py
+    ├── constants.py
+    ├── graph.py
+    ├── routes.py
+    ├── state.py
+    └── nodes/
+        ├── decompose.py
+        ├── search.py
+        └── synthesize.py
+```
 
 ---
 
 ## 📚 Workflow Catalog
 
-The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or the `workflow()` meta-tool.
+The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or the `workflow()` meta-tool.
 
-### 1. 🔍 Research (`workflows/research.py`)
+### 1. 🔍 Research — [workflows/RESEARCH.md](workflows/RESEARCH.md)
+
+**Status:** Pre-v1.0 — Monolithic `workflows/research.py`. Will be split into subpackage with per-node modules following `deep_research_impl/` pattern.
+
 **Purpose:** Quick information gathering and synthesis. Single search → parallel scrape → one-shot synthesis.
 
 **Flow:** recall → search → parallel_scrape → synthesize → report → store → distill → notify
@@ -48,11 +122,22 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 **Safety:** SSRF protection, citation tracking, prune_tool_dict truncation.
 
-**Doc:** `docs/workflows/RESEARCH.md`
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "ChromaDB best practices include...",
+  "error": "",
+  "artifacts": ["report.html"]
+}
+```
 
 ---
 
-### 2. 🔬 Deep Research (`workflows/deep_research.py` + `workflows/deep_research_impl/`)
+### 2. 🔬 Deep Research — [workflows/DEEP_RESEARCH.md](workflows/DEEP_RESEARCH.md)
+
+**Status:** v1.0 — Already split into `workflows/deep_research_impl/` subpackage with per-node modules.
+
 **Purpose:** Iterative, multi-faceted research for complex questions. ReAct-style loop with self-evaluation.
 
 **Flow:** recall → decompose → search → synthesize → [route: loop or exit] → report → notify → store → distill
@@ -69,11 +154,22 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 **Safety:** Nested-call guard, URL deduplication, knowledge capping at 6K chars.
 
-**Doc:** `docs/workflows/DEEP_RESEARCH.md`
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Quantum computing error correction has seen...",
+  "error": "",
+  "artifacts": ["report.html"]
+}
+```
 
 ---
 
-### 3. 📊 Data (`workflows/data.py`)
+### 3. 📊 Data — [workflows/DATA.md](workflows/DATA.md)
+
+**Status:** v1.0 — 5-node LangGraph pipeline.
+
 **Purpose:** Python-based data analysis, calculations, and dataset generation.
 
 **Flow:** recall → execute → critique → store → notify
@@ -89,11 +185,22 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 **Safety:** Sandboxed execution, best-effort critique (never fails workflow).
 
-**Doc:** `docs/workflows/DATA.md`
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Analysis complete: Top 5 months are Jan, Mar, Dec, Jun, Sep",
+  "error": "",
+  "artifacts": []
+}
+```
 
 ---
 
-### 4. 🤖 Autocode (`workflows/autocode.py` + `workflows/autocode_impl/`)
+### 4. 🤖 Autocode — [workflows/AUTOCODE.md](workflows/AUTOCODE.md)
+
+**Status:** v1.0 — Already split into `workflows/autocode_impl/` subpackage with 17 per-node modules.
+
 **Purpose:** Autonomous code generation with TDD, git scoping, and architectural safety.
 
 **Flow:** classify → validate → brainstorm → plan → branch → tests → execute → write_files → analyze_impact → run_tests → [debug → retry] → verify → report → commit → distill
@@ -104,8 +211,8 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 - **Git scoping** — Workspace-scoped branches and commits
 - **Protected files** — Blocks writes to `server.py`, `core/*`, `registry.py`
 - **Self-correcting** — Debug → retry with temperature jitter
-- **17 nodes** — Most complex workflow in the agent (doc says 16, but graph has 17)
-- **Critical bug:** `.bak` files created (violates user rule #54)
+- **17 nodes** — Most complex workflow in the agent
+- **Critical bug:** `.bak` files created (violates user rule)
 - **Critical bug:** `git(action="snapshot")` doesn't exist (removed in un-multiplex refactor)
 - **Critical bug:** `files_map` never populated — `analyze_impact` never runs
 - **Critical bug:** `node_analyze_impact` is async in sync graph — may fail or hang
@@ -113,11 +220,25 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 **Safety:** Protected files, git snapshot/rollback, AST validation, retry limits, hallucination guard.
 
-**Doc:** `docs/workflows/AUTOCODE.md`
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Code changes applied successfully: Added retry logic to web search",
+  "error": "",
+  "artifacts": ["web.py", "test_web.py"],
+  "commit_sha": "abc123",
+  "test_passed": true,
+  "lint_passed": true
+}
+```
 
 ---
 
-### 5. 🧠 Understand (`workflows/understand.py`)
+### 5. 🧠 Understand — [workflows/UNDERSTAND.md](workflows/UNDERSTAND.md)
+
+**Status:** Pre-v1.0 — Monolithic `workflows/understand.py`. Not a LangGraph StateGraph — direct async function calls.
+
 **Purpose:** Build and maintain a deterministic Codebase Knowledge Graph for Python projects.
 
 **Flow:** init_project → discover_files → parse_and_store → report
@@ -134,21 +255,15 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 **Safety:** Size rejection, file size limits, skip directories.
 
-**Doc:** `docs/workflows/UNDERSTAND.md`
-
----
-
-### 6. 🏗️ Base (`workflows/base.py`)
-**Purpose:** Shared infrastructure — not a user-facing workflow, but the foundation all others build on.
-
-**Components:** `WorkflowState`, `node_step()`, `node_error()`, `node_done()`, `trim_state()`, `run_workflow()`
-
-**Critical bug:** `node_error` saves partial checkpoint (loses all workflow context on resume)
-**Critical bug:** Exception handler in `run_workflow()` doesn't save checkpoint on crash
-**Critical bug:** `understand` workflow disconnects from trace/checkpoint system
-**Critical bug:** `report` workflow missing from dispatcher
-
-**Doc:** `docs/workflows/BASE.md`
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Project analysis complete: 42 files, 156 dependencies",
+  "error": "",
+  "artifacts": ["report.html"]
+}
+```
 
 ---
 
@@ -156,7 +271,8 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 | Aspect | Research | Deep Research | Data | Autocode | Understand |
 |--------|----------|---------------|------|----------|------------|
-| **Structure** | 8-node pipeline | Cyclic ReAct loop | 5-node pipeline | 17-node state machine | 4-node pipeline (not LangGraph) |
+| **Status** | Pre-v1.0 | v1.0 | v1.0 | v1.0 | Pre-v1.0 |
+| **Structure** | 8-node pipeline | 8-node cyclic ReAct | 5-node pipeline | 17-node state machine | 4-node pipeline (not LangGraph) |
 | **Primary tools** | `web`, `browser` | `tavily`, `web`, `browser` | `python_exec`, `agent` | `agent`, `python_exec`, `git` | `python` (AST), `GraphStore` |
 | **LLM roles** | `research` | `planner`, `research`, `executor` | `code`, `critique` | `router`, `planner`, `executor`, `test` | N/A |
 | **Loop type** | Linear | Cyclic (decompose→search→synthesize) | Linear | Cyclic (debug→retry) | Linear |
@@ -168,6 +284,40 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 | **Use case** | Quick facts | Complex research | Data analysis | Code generation | Codebase indexing |
 | **Typical duration** | 1-2 min | 3-10 min | 30s-2 min | 2-10 min | 1-5 min |
 | **Critical bugs** | 2 P0 | 5 P0 | 4 P0 | 11 P0 | 3 P0 |
+
+---
+
+## 📋 Unified Return Schema
+
+All workflows return the same dict shape from `run_workflow()`. The `trace_id` is propagated through the state and present in the final result.
+
+**Success:**
+```json
+{
+  "status": "success",
+  "result": "Final result summary...",
+  "error": "",
+  "artifacts": ["report.html", "fix.patch"],
+  "trace_id": "abc123"
+}
+```
+
+**Failure:**
+```json
+{
+  "status": "failed",
+  "result": "",
+  "error": "Workflow 'research' crashed: KeyError: ...",
+  "artifacts": [],
+  "trace_id": "abc123"
+}
+```
+
+**Guaranteed keys:** `status`, `result`, `error`, `artifacts`, `trace_id`.
+
+**Workflow-specific extra keys** (when applicable):
+- `commit_sha` — Autocode only
+- `test_passed` / `lint_passed` — Autocode only
 
 ---
 
@@ -244,95 +394,26 @@ Creating `.bak` backup files is forbidden by project rules. Use atomic writes (`
 
 ---
 
-## 📁 Documentation Map
+## 🧪 Testing Quick Reference
 
-| Workflow | Doc File | Nodes | Key Tools | Critical Bugs |
-|----------|----------|-------|-----------|---------------|
-| Base (shared) | `docs/workflows/BASE.md` | 3 helpers + dispatcher | `tracer`, `checkpoint` | 4 P0 |
-| Research | `docs/workflows/RESEARCH.md` | 8 | `web`, `browser`, `agent` | 2 P0 |
-| Deep Research | `docs/workflows/DEEP_RESEARCH.md` | 8 + cyclic | `tavily`, `web`, `browser`, `agent` | 5 P0 |
-| Data | `docs/workflows/DATA.md` | 5 | `python_exec`, `agent` | 4 P0 |
-| Autocode | `docs/workflows/AUTOCODE.md` | 17 | `agent`, `python_exec`, `git`, `report` | 11 P0 |
-| Understand | `docs/workflows/UNDERSTAND.md` | 4 | `python` (AST), `GraphStore` | 3 P0 |
-
----
-
-## 🗺️ Cross-Workflow Roadmap
-
-### ✅ Completed
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Shared `WorkflowState` + helpers | ✅ v1.0 | `workflows/base.py` — all workflows use common foundation (22 fields) |
-| Checkpoint resumption | ✅ v1.0 | `run_workflow(resume=True)` with version validation |
-| Trace lifecycle management | ✅ v1.0 | Auto-creation, step logging, error tracking, completion |
-| 5 user-facing workflows | ✅ v1.0 | research, deep_research, data, autocode, understand |
-| LangGraph immutability | ✅ v1.0 | Partial updates, no in-place mutation, no `**state` |
-| Memory bookend pattern | ✅ v1.0 | Recall before, store after — all workflows |
-| Exception isolation | ✅ v1.0 | Try/except in dispatcher, clean failure dicts |
-
-### 🔄 In Progress / Next Up
-
-| # | Feature | Notes | Priority |
-|---|---------|-------|----------|
-| 1 | **Fix `agent()` missing `action="dispatch"`** | Found in `data.py`, `research.py`, `deep_research/synthesize.py`. `agent()` facade requires `action`. | P0 |
-| 2 | **Fix `not r.get("status") == "success"` always false** | `research.py` line 67: `(not "success") == "success"` → `False`. Error path never fires. | P0 |
-| 3 | **Remove `.bak` file creation** | Violates user rule #54. Found in `patch.py`, `write_files.py`, `helpers.py`. | P0 |
-| 4 | **Fix `git(action="snapshot")` doesn't exist** | Removed in un-multiplex refactor. `git_ops.py` still calls it. | P0 |
-| 5 | **Fix `node_error` partial checkpoint** | Saves only `{"status": "failed", "error": ...}` — loses all workflow context on resume. | P0 |
-| 6 | **Fix exception handler missing checkpoint** | `run_workflow()` `except Exception` returns failure dict but never calls `save_checkpoint()`. | P0 |
-| 7 | **Fix `understand` disconnect from trace/checkpoint** | Ignores `trace_id`, `goal`, and checkpoint system. `resume=True` is meaningless. | P0 |
-| 8 | **Fix `report` workflow missing from dispatcher** | `workflow_tool.py` accepts `"report"` but `run_workflow()` has no `elif wf_type == "report"`. | P0 |
-| 9 | **Fix `files_map` never populated** | No node sets `files_map`. `analyze_impact` always returns early with empty warnings. | P0 |
-| 10 | **Fix `node_analyze_impact` async in sync graph** | LangGraph `StateGraph.add_node` expects sync. Async function may fail or hang. | P0 |
-| 11 | **Fix `node_write_files` `run_dir` NameError** | If `test_code` missing but `tdd_source_code` exists, `run_dir` undefined. | P0 |
-| 12 | **Fix `node_execute_step` uses non-existent `files_context`** | `state.get("files_context", "")` — field doesn't exist in `AutocodeState`. | P0 |
-| 13 | **Fix `node_brainstorm` loses KG files** | Merges `kg_files` but stores original `state["files"]` instead of merged. | P0 |
-| 14 | **Fix `impact_warnings` type mismatch** | `state.py` says `list[str]`, `analyze_impact.py` returns `list[dict]`. | P0 |
-| 15 | **Fix `AGENT_ROOT = None` never set** | `state.py` line 10: `AGENT_ROOT = None # Set via cfg`. Never actually set. | P0 |
-| 16 | **Fix `node_commit` uses `defense_note` not `defense_notes`** | State field is `defense_notes` (plural). Always empty. | P0 |
-| 17 | **Fix `node_distill_memory` uses `hypothesis`/`defense_note` never set** | Debug node sets `root_cause` and `defense_notes`, not `hypothesis` or `defense_note`. | P0 |
-| 18 | **Fix hardcoded `tid` strings in `understand`** | All nodes use hardcoded `tid` instead of `state.get("trace_id", "")`. | P0 |
-| 19 | **Fix `trace_id` never injected into `understand` initial state** | `trace_id` created in `run_understand_workflow()` but never passed to nodes. | P0 |
-| 20 | **Fix `GraphStore` created but discarded in `understand`** | `GraphStore` instance created in `node_init` but not stored in state. | P0 |
-| 21 | **Fix API budget decremented for web searches in deep_research** | `node_search` decrements `budget_api_calls` for ALL successful searches. Only Tavily should decrement. | P0 |
-| 22 | **Fix API budget NOT decremented for failed Tavily in deep_research** | Failed Tavily calls still consume API budget. Not reflected in tracking. | P0 |
-| 23 | **Fix `completeness_threshold` scale mismatch in deep_research** | Node defaults to 0.85 (0-1), route uses 85.0 (0-100). Route check always true for score >= 1. | P0 |
-| 24 | **Fix code-gen failure routing to critique in data** | `node_execute` returns `node_error()` on failure, but `route_after_execute` checks `exec_error` (not set by `node_error`), so workflow routes to `node_critique` instead of END. | P0 |
-| 25 | **Fix `**state` spreading in all nodes** | All nodes return `{**state, ...}` which violates LangGraph best practice. Should return partial dicts. | P0 |
-| 26 | **Workflow registry** | Replace hardcoded if/elif in `run_workflow()` with dynamic `WORKFLOW_REGISTRY` dict | P1 |
-| 27 | **Unified test structure** | All workflow tests should follow `conftest.py` + per-node file pattern (like `tests/tools/git/`) | P1 |
-| 28 | **Workflow composition** | Enable workflows to call other workflows (e.g., `deep_research` → `autocode` for implementation) | P2 |
-| 29 | **Streaming partial results** | Yield intermediate results per node instead of batch return at end | P2 |
-| 30 | **Configurable timeouts per workflow** | Currently shared timeouts. Add workflow-specific timeout overrides | P2 |
-| 31 | **Workflow telemetry** | Aggregate metrics: avg duration, success rate, node failure distribution | P3 |
-| 32 | **Workflow scheduling** | Cron-like scheduling for periodic workflows (e.g., daily research reports) | P3 |
-
-### 🚫 Deferred / Out of Scope
-
-| # | Feature | Why Deferred | Priority |
-|---|---------|------------|----------|
-| 1 | **Remove LangGraph dependency** | LangGraph provides checkpointing, streaming, and visual debugging. Replacing it would require reimplementing all of that. | Skip |
-| 2 | **Merge all workflows into one mega-workflow** | Each workflow has distinct goals, safety requirements, and tool sets. Merging would create unmaintainable complexity. | Skip |
-| 3 | **Remove checkpoint system** | Checkpoints are essential for resumability and debugging across all workflows. | Skip |
-| 4 | **Remove trace auto-creation** | Trace IDs are required for observability. Manual management would burden every caller. | Skip |
-| 5 | **Remove TDD from autocode** | TDD ensures test coverage and code quality. Removing it would degrade results. | Skip |
-| 6 | **Remove debug loop from autocode** | Iteration catches edge cases and fixes errors. Single-pass would miss many issues. | Skip |
-| 7 | **Remove impact analysis from autocode** | Blast radius analysis prevents unintended side effects. Essential for safety. | Skip |
-| 8 | **Remove git integration from autocode** | Git branches and commits are essential for version control and rollback. | Skip |
-| 9 | **Remove memory integration** | Memory recall improves context and quality. Removing it would degrade all workflows. | Skip |
-| 10 | **Remove budget tracking from deep_research** | Budget tracking prevents runaway API costs. Essential for safety. | Skip |
-| 11 | **Remove convergence detection from deep_research** | Without it, the workflow would run indefinitely or stop prematurely. | Skip |
-| 12 | **Remove multi-tool search from deep_research** | Single-tool search would have limited coverage. Multi-tool is essential. | Skip |
-| 13 | **Remove incremental indexing from understand** | Full re-parse on every run would be too slow for large projects. | Skip |
-| 14 | **Remove batch processing from understand** | Processing all files at once would cause memory spikes. | Skip |
-| 15 | **Real-time collaboration** | Multi-user research would require complex state synchronization. Out of scope. | Skip |
-| 16 | **IDE integration** | LSP or VS Code extension development. Out of scope. | Skip |
-| 17 | **Real-time streaming** | Streaming would require WebSocket or SSE infrastructure. Out of scope. | Skip |
-| 18 | **Support non-Python languages** | The workflows are designed for Python. Other languages would require significant changes. | Skip |
-| 19 | **Automatic fact-checking** | Fact-checking would require additional LLM calls and complex logic. Out of scope. | Skip |
-| 20 | **File watching** | File watching would require additional infrastructure (e.g., watchdog). Out of scope. | Skip |
+| Workflow | Test Command |
+|----------|-------------|
+| Base | `.\venv\Scripts\python tests/workflows/base/ -W error --tb=short -v` |
+| Research | `.\venv\Scripts\python tests/workflows/research/ -W error --tb=short -v` |
+| Deep Research | `.\venv\Scripts\python tests/workflows/deep_research/ -W error --tb=short -v` |
+| Data | `.\venv\Scripts\python tests/workflows/data/ -W error --tb=short -v` |
+| Autocode | `.\venv\Scripts\python tests/workflows/autocode/ -W error --tb=short -v` |
+| Understand | `.\venv\Scripts\python tests/workflows/understand/ -W error --tb=short -v` |
 
 ---
 
-*Architecture: shared WorkflowState + node helpers + dispatcher → 5 distinct LangGraph workflows + 1 async orchestrator → memory bookend pattern → checkpoint resumption → exception isolation → best-effort side effects.*
+*Architecture: shared WorkflowState + node helpers + dispatcher → 5 distinct workflows → memory bookend pattern → checkpoint resumption → exception isolation → best-effort side effects.*
+
+---
+
+## 🔗 Cross-References
+
+- **Tools:** See `docs/TOOLS.md`
+- **Core:** See `docs/CORE.md`
+- **Skills:** See `docs/SKILLS.md`
+- **Environment:** See `.env.example` in repo root

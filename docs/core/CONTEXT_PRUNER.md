@@ -302,9 +302,9 @@ There are genuinely two systems doing two different jobs — this pruner (per-to
 - `core/memory_backend/pruner.py` (this module)
 - `core/memory_backend/budget.py` (the cognitive budgeting system)
 
-`core/llm_backend/rate_limit.py` is a *third*, unrelated file (rate limiting + cost estimation) that happens to share a name with the second one — that naming collision across subsystems is the real source of confusion here, not file placement. See [LLM.md's Known Concerns](./LLM.md#%EF%B8%8F-known-concerns) for the full treatment.
+`core/llm_backend/budget.py` is a *third*, unrelated file (rate limiting + cost estimation) that happens to share a name with the second one — that naming collision across subsystems is the real source of confusion here, not file placement. See [LLM.md's Known Concerns](./LLM.md#%EF%B8%8F-known-concerns) for the full treatment.
 
-**Suggestion:** rename `core/llm_backend/rate_limit.py` to something unambiguous (e.g. `rate_limit.py`), and fix both `pruner.py`'s and `memory_backend/budget.py`'s stale internal docstrings (both still self-identify by their pre-move `core/context_*.py` paths).
+**Suggestion:** rename `core/llm_backend/budget.py` to something unambiguous (e.g. `rate_limit.py`), and fix both `pruner.py`'s and `memory_backend/budget.py`'s stale internal docstrings (both still self-identify by their pre-move `core/context_*.py` paths).
 
 ### Genuinely different truncation units, but not three of them
 

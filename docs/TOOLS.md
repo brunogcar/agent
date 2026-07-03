@@ -1,8 +1,764 @@
 # 🛠️ Tools Architecture & Meta-Tool Inventory
 
-Tools are the atomic actions the LLM can execute. They act as the "hands" of the agent, interacting with the file system, web, git, local sandbox, and external APIs.
+> **Status:** v2 — Verified July 2026 against real source via `tools/` directory and per-tool docs.
 
-## 🏗️ Tool Creation Guidelines
+Tools are the **atomic actions** the LLM can execute. They are the "hands" of the agent — interacting with the file system, web, git, local sandbox, external APIs, and browser automation. Most tools follow a shared **meta-tool pattern** (`@meta_tool` + `DISPATCH` registry) for zero-config auto-discovery via `registry.py`.
+
+This document provides a **high-level overview** of all tools and serves as an **index** to the detailed tool docs. For deep-dive API references, action-by-action breakdowns, and security details, see the dedicated docs in `docs/tools/`.
+
+| Document | Tool | Key Topics |
+|----------|------|------------|
+| [AGENT.md](tools/AGENT.md) | Agent | 15 specialist roles, role-based dispatch, caching, context budgets |
+| [BROWSER.md](tools/BROWSER.md) | Browser | Playwright automation, 20 atomic actions, session isolation, SSRF |
+| [CLI.md](tools/CLI.md) | CLI | 4-layer NL→shell dispatch, proxy routing, human-readable output |
+| [CONSULT.md](tools/CONSULT.md) | Consult | Cloud LLM advisory, kill-switch, rate-limit guard |
+| [FILE.md](tools/FILE.md) | File | 25+ atomic FS actions, path guard, cancellation guard, compression |
+| [GIT.md](tools/GIT.md) | Git | 20+ atomic VCS actions, semantic params, stash-based rollback |
+| [MEMORY.md](tools/MEMORY.md) | Memory | 3 ChromaDB collections, tag validation, janitor, lazy loading |
+| [NOTIFY.md](tools/NOTIFY.md) | Notify | Cross-platform alerts, APScheduler, graceful console fallback |
+| [PARALLEL.md](tools/PARALLEL.md) | Parallel | ThreadPoolExecutor, global timeout, nested-call guard, allowlist |
+| [PYTHON.md](tools/PYTHON.md) | Python | Dual-mode execution, AST sandbox, import allowlisting |
+| [REPORT.md](tools/REPORT.md) | Report | 11 atomic actions, HTML dashboards, XSS-safe templates, lazy imports |
+| [TAVILY.md](tools/TAVILY.md) | Tavily | AI-ranked search, bulk extraction, keyless mode, API budget tracking |
+| [VISION.md](tools/VISION.md) | Vision | Multimodal analysis, 3 input sources, SSRF protection, JSON mode |
+| [WEB.md](tools/WEB.md) | Web | SearXNG search, BeautifulSoup, parallel scraping, connection pooling |
+| [WORKFLOW.md](tools/WORKFLOW.md) | Workflow | LangGraph launcher, 6 workflow types, auto-routing, resume support |
+
+---
+
+## 🏗️ The Foundation Layer
+
+Most tools share a common foundation defined in `tools/_meta_tool.py` and the registry pattern.
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **`@meta_tool`** | `tools/_meta_tool.py` | Auto-generates `Literal[...]` action enums and docstrings from a `DISPATCH` dict. Used by `browser`, `file`, `git`, `memory`, `report`, `tavily`, `web`, and `cli` (special case). |
+| **`DISPATCH`** | `tools/*_ops/_registry.py` | Maps action names → handler metadata. Validated by `^[a-z][a-z0-9_]*$` regex. |
+| **`@register_action`** | `tools/*_ops/actions/*.py` | Decorator that auto-discovers action handlers into the registry. |
+| **`path_guard`** | `core/path_guard.py` | Validates all filesystem paths. Blocks traversal outside `agent_root` / `workspace_root`. |
+| **`is_safe_network_address`** | `core/security.py` | SSRF protection. Blocks private IPs, localhost, and invalid URL schemes. |
+| **`compress_result()`** | `tools/*_ops/helpers.py` | Auto-truncates large outputs to prevent MCP context overflow. |
+| **`ensure_not_cancelled()`** | `core/runtime/cancellation.py` | Aborts mutating actions if the trace is cancelled. |
+
+**Key design decisions:**
+- **Atomic actions** — One action = one behavior. No subcommand parsing, no overloaded parameters.
+- **Auto-discovery** — `@tool` + `@meta_tool` + `@register_action` = zero manual wiring in `server.py`.
+- **Semantic naming** — `target` = entity name, `message` = human-readable text, `path` = file path, `query` = search text.
+- **Lazy loading** — Heavy imports (pandas, plotly, playwright, chromadb) happen inside function bodies, not at module load time.
+- **Thread safety** — `threading.Lock()` and `threading.local()` used where concurrent access is possible (browser, parallel, python stdout).
+
+**Known limitations:**
+- `cli()` is a **router**, not a direct tool. It delegates to other tools and returns human-readable `str`, not structured `dict`.
+- `workflow()` accepts `report` in `VALID_WORKFLOWS` but `report` is missing from `run_workflow()` dispatcher (see `workflows/BASE.md`).
+- `understand` workflow ignores `trace_id` and checkpoint system (see `workflows/UNDERSTAND.md`).
+
+---
+
+## 📁 Module Map
+
+```
+tools/
+├── _meta_tool.py           # @meta_tool decorator — Literal enum + docstring generation
+│
+├── agent.py                # Meta-cognitive dispatcher (15 roles)
+├── agent_ops/
+│   ├── _registry.py
+│   ├── cache.py
+│   ├── context.py
+│   ├── json_extract.py
+│   ├── metrics.py
+│   ├── parse_warnings.py
+│   ├── actions/
+│   │   ├── clear_cache.py
+│   │   ├── dispatch.py
+│   │   ├── metrics.py
+│   │   └── vision_delegate.py
+│   └── roles/
+│       ├── analyze.py
+│       ├── classify.py
+│       ├── code.py
+│       ├── consultor.py
+│       ├── critique.py
+│       ├── document.py
+│       ├── extract.py
+│       ├── plan.py
+│       ├── refactor.py
+│       ├── research.py
+│       ├── review.py
+│       ├── route.py
+│       ├── summarize.py
+│       ├── test.py
+│       └── vision.py
+│
+├── browser.py              # Playwright facade (20 atomic actions)
+├── browser_ops/
+│   ├── _registry.py
+│   ├── factory.py
+│   ├── lifecycle.py
+│   ├── loop.py
+│   ├── state.py
+│   └── actions/
+│       ├── click.py
+│       ├── close.py
+│       ├── cookies.py
+│       ├── evaluate.py
+│       ├── extract_html.py
+│       ├── extract_links.py
+│       ├── extract_tables.py
+│       ├── fill.py
+│       ├── get_url.py
+│       ├── hover.py
+│       ├── keyboard_press.py
+│       ├── navigate.py
+│       ├── screenshot.py
+│       ├── scroll.py
+│       ├── select_option.py
+│       ├── set_viewport.py
+│       ├── text_content.py
+│       ├── type.py
+│       ├── upload.py
+│       ├── wait_for_selector.py
+│       └── wait_for_url.py
+│
+├── cli.py                  # NL→shell router (4-layer dispatch)
+├── cli_ops/
+│   ├── _registry.py
+│   ├── helpers.py
+│   ├── patterns.py
+│   ├── router.py
+│   └── actions/
+│       ├── cleanup.py
+│       ├── file.py
+│       ├── git.py
+│       ├── lms.py
+│       ├── memory.py
+│       ├── notify.py
+│       ├── python.py
+│       ├── skill.py
+│       ├── system.py
+│       └── web.py
+│
+├── consult.py              # Cloud LLM advisory (opt-in, kill-switch)
+│
+├── file.py                 # File system meta-tool (25+ atomic actions)
+├── file_ops/
+│   ├── _registry.py
+│   ├── helpers.py
+│   ├── index.py
+│   └── actions/
+│       ├── append_file.py
+│       ├── copy_file.py
+│       ├── create_directory.py
+│       ├── delete_file.py
+│       ├── directory_tree.py
+│       ├── edit_file.py
+│       ├── exists.py
+│       ├── find_files.py
+│       ├── get_file_info.py
+│       ├── list_allowed_directories.py
+│       ├── list_directory.py
+│       ├── move_file.py
+│       ├── patch_file.py
+│       ├── read_docx.py
+│       ├── read_file.py
+│       ├── read_media_file.py
+│       ├── read_multiple_files.py
+│       ├── read_pdf.py
+│       ├── read_pptx.py
+│       ├── read_xlsx.py
+│       ├── search_files.py
+│       ├── write_docx.py
+│       ├── write_file.py
+│       ├── write_pdf.py
+│       ├── write_pptx.py
+│       └── write_xlsx.py
+│
+├── git.py                  # Git meta-tool (20+ atomic actions)
+├── git_ops/
+│   ├── _registry.py
+│   ├── helpers.py
+│   └── actions/
+│       ├── add.py
+│       ├── branch_create.py
+│       ├── branch_delete.py
+│       ├── branch_list.py
+│       ├── checkout_branch.py
+│       ├── checkout_new.py
+│       ├── clone.py
+│       ├── commit.py
+│       ├── diff.py
+│       ├── init.py
+│       ├── log.py
+│       ├── restore.py
+│       ├── rollback.py
+│       ├── show.py
+│       ├── snapshot.py
+│       ├── status.py
+│       ├── tag_create.py
+│       ├── tag_delete.py
+│       └── tag_list.py
+│
+├── memory.py               # Memory meta-tool (8 atomic actions)
+├── memory_ops/
+│   ├── _registry.py
+│   ├── helpers.py
+│   ├── state.py
+│   └── actions/
+│       ├── delete.py
+│       ├── janitor.py
+│       ├── prune.py
+│       ├── recall.py
+│       ├── recall_context.py
+│       ├── stats.py
+│       ├── store.py
+│       └── summarize.py
+│
+├── notify.py               # Desktop notifications & scheduler
+│
+├── parallel.py             # Concurrent tool execution
+│
+├── python_exec.py          # Python dual-mode execution
+│
+├── report.py               # Report meta-tool (11 atomic actions)
+├── report_ops/
+│   ├── _registry.py
+│   ├── charts.py
+│   ├── compare.py
+│   ├── contracts.py
+│   ├── data.py
+│   ├── diagrams.py
+│   ├── export.py
+│   ├── html.py
+│   ├── maps.py
+│   ├── paths.py
+│   ├── scorecard.py
+│   ├── timeline.py
+│   ├── templates/
+│   │   ├── base.html
+│   │   ├── chart.html
+│   │   ├── compare.html
+│   │   ├── dashboard.html
+│   │   ├── diagram.html
+│   │   ├── macros.html
+│   │   ├── map.html
+│   │   ├── report.html
+│   │   ├── scorecard.html
+│   │   └── timeline.html
+│   └── actions/
+│       ├── chart.py
+│       ├── compare.py
+│       ├── dashboard.py
+│       ├── diagram.py
+│       ├── export.py
+│       ├── help.py
+│       ├── list.py
+│       ├── map.py
+│       ├── report.py
+│       ├── scorecard.py
+│       └── timeline.py
+│
+├── tavily.py               # Tavily AI search meta-tool (5 actions)
+├── tavily_ops/
+│   ├── _registry.py
+│   ├── bridge.py
+│   ├── client.py
+│   ├── errors.py
+│   ├── state.py
+│   └── actions/
+│       ├── crawl.py
+│       ├── extract.py
+│       ├── map.py
+│       ├── research.py
+│       └── search.py
+│
+├── vision.py               # Multimodal image analysis
+│
+├── web.py                  # Web search & scraping meta-tool (4 actions)
+├── web_ops/
+│   ├── _registry.py
+│   ├── client.py
+│   ├── state.py
+│   ├── utils.py
+│   └── actions/
+│       ├── read.py
+│       ├── scrape.py
+│       ├── search.py
+│       └── search_and_read.py
+│
+└── workflow_tool.py        # LangGraph workflow launcher
+```
+
+---
+
+## 📚 Tool Catalog
+
+The agent currently exposes **15 tools** to the LLM.
+
+### 1. 🤖 Agent — [tools/AGENT.md](tools/AGENT.md)
+
+**Status:** v1.0 — 15 specialist roles with per-role model routing and context budgets.
+
+**Purpose:** Meta-cognitive dispatcher that routes tasks to specialist sub-agents based on `role`.
+
+**Key characteristics:**
+- **15 roles** — `classify`, `route`, `research`, `summarize`, `extract`, `critique`, `analyze`, `code`, `review`, `plan`, `consultor`, `document`, `refactor`, `test`, `vision`
+- **Per-role model routing** — Router uses fast 2B models, Executor uses 9B models, Planner uses 32K context
+- **Per-role context budgets** — Router: 4K tokens, Planner: 32K tokens
+- **Structured output** — JSON mode for `extract`, prompt-only JSON for `route`, `plan`, `code`, `review`
+- **Response caching** — Deterministic roles (`classify`, `route`) cached with 5-min TTL
+- **NOT_PARALLEL_SAFE** — Serialized via global LLM client queue
+
+**Safety:** Context trimming via `tiktoken`, JSON extraction fallback, parse warning tracking.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "APPROVE",
+  "role": "critique",
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 2. 🌐 Browser — [tools/BROWSER.md](tools/BROWSER.md)
+
+**Status:** v1.0 — 20 atomic Playwright actions with session isolation.
+
+**Purpose:** Automate web browsers for JavaScript-rendered pages, interactive forms, and screenshots.
+
+**Key characteristics:**
+- **20 atomic actions** — `navigate`, `click`, `fill`, `type`, `screenshot`, `text_content`, `evaluate`, `select_option`, `keyboard_press`, `get_url`, `close`, `wait_for_selector`, `scroll`, `wait_for_url`, `hover`, `cookies`, `set_viewport`, `extract_html`, `extract_links`, `extract_tables`, `upload`
+- **Session isolation** — Each `trace_id` gets its own `BrowserContext` (isolated cookies, localStorage)
+- **Global singleton** — One Chromium instance shared; contexts are per-trace
+- **Screenshot auto-cleanup** — Files older than 7 days deleted on startup and every 6 hours
+- **Screenshot-on-failure** — Failed actions automatically capture debug screenshots
+- **Navigate retry** — Exponential backoff on transient failures (1s, 2s, 4s, ... capped at 8s)
+
+**Safety:** SSRF protection (`is_safe_network_address`), URL scheme validation (blocks `file://`, `javascript:`, `data:`), safe JS injection via Playwright's `evaluate`.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Page text content...",
+  "screenshot_path": "workspace/screenshots/abc123_navigate.png",
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 3. 🖥️ CLI — [tools/CLI.md](tools/CLI.md)
+
+**Status:** v1.0 — 4-layer natural-language dispatch.
+
+**Purpose:** Translate natural-language commands into shell operations by routing to other tools.
+
+**Key characteristics:**
+- **4-layer dispatch** — Patterns (zero tokens) → Shell whitelist (zero tokens) → Router LLM → Executor LLM
+- **Meta-tool router** — `cli("git status")` → pattern match → `git:status` proxy → `tools/git.py`
+- **Human-readable output** — Returns formatted `str`, not structured `dict`
+- **No `action` parameter** — `@meta_tool` skips `Literal` patch, generates docstring from flattened dispatch
+- **Delegates only** — Does not perform operations itself; routes to `git`, `file`, `web`, `python`, `memory`, `notify`
+
+**Safety:** Shell whitelist, flag blocking, operator rejection, path guard integration, `shell=False` subprocess.
+
+**Output:**
+```
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update...)
+        modified:   tools/web.py
+```
+
+---
+
+### 4. 🔍 Consult — [tools/CONSULT.md](tools/CONSULT.md)
+
+**Status:** v1.0 — Opt-in cloud LLM advisory.
+
+**Purpose:** High-stakes tasks requiring stronger reasoning, domain expertise, or external validation.
+
+**Key characteristics:**
+- **Cloud LLM dispatch** — Routes to dedicated `CONSULTOR_MODEL` via separate provider chain
+- **Kill-switch ready** — Returns `{"status": "disabled"}` if `CONSULTOR_MODEL` is empty
+- **Rate-limit guard** — Pre-flight `check_rate_limit()` prevents accidental API quota burn
+- **Token-aware truncation** — `tiktoken` (cl100k_base) pruning before dispatch
+- **NOT_PARALLEL_SAFE** — Excluded from aggressive routing
+
+**Safety:** No fallback chain — if unset, role does not exist in registry. Clear error messages for all disabled states.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "The trade-offs between async and sync drivers...",
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 5. 📁 File — [tools/FILE.md](tools/FILE.md)
+
+**Status:** v1.0 — 25+ atomic file system actions.
+
+**Purpose:** CRUD operations, directory traversal, document parsing, and SQLite FTS search.
+
+**Key characteristics:**
+- **25+ atomic actions** — `read_file`, `write_file`, `append_file`, `create_directory`, `list_directory`, `directory_tree`, `search_files`, `find_files`, `move_file`, `copy_file`, `delete_file`, `get_file_info`, `exists`, `patch_file`, `edit_file`, `read_media_file`, `read_pdf`, `read_docx`, `read_xlsx`, `read_pptx`, `write_pdf`, `write_docx`, `write_xlsx`, `write_pptx`, and more
+- **Path guard integration** — All operations validate through `core.path_guard`; blocks protected files
+- **Cancellation guard** — Mutating actions abort if trace is cancelled
+- **Result compression** — Large outputs auto-truncate to prevent MCP context overflow
+- **10MB read limit** — `read_file` capped; `read_media_file` capped at 5MB
+
+**Safety:** Null-byte injection protection, protected file list (`server.py`, `core/*`, `registry.py`), atomic writes (no `.bak` garbage), XSS-safe output.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "file content...",
+  "path": "tools/web.py",
+  "size": 4096,
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 6. 🌿 Git — [tools/GIT.md](tools/GIT.md)
+
+**Status:** v1.0 — 20+ atomic version control actions.
+
+**Purpose:** Atomic git operations with semantic parameter names and stash-based safety.
+
+**Key characteristics:**
+- **20+ atomic actions** — `status`, `log`, `diff`, `commit`, `init`, `restore`, `rollback`, `snapshot`, `show`, `branch_create`, `branch_delete`, `branch_list`, `checkout_branch`, `checkout_new`, `tag_create`, `tag_delete`, `tag_list`, `add`, `clone`
+- **Semantic parameters** — `target` = entity name, `message` = human-readable text, `root` = repo directory
+- **Stash-based rollback** — `rollback` defaults to safe stash recovery; `force=True` for permanent discard
+- **System git via subprocess** — NOT GitPython; uses `subprocess` for reliability
+- **Auto-generated schema** — `@meta_tool` builds `Literal` enum from `DISPATCH`
+
+**Safety:** Path guard integration, cancellation guard on mutating actions, protected files, stash-based recovery prevents data loss.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Committed 3 files with message 'Fix web search retry'",
+  "commit_sha": "a1b2c3d",
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 7. 🧠 Memory — [tools/MEMORY.md](tools/MEMORY.md)
+
+**Status:** v1.0 — LLM-facing interface to 3-collection ChromaDB store.
+
+**Purpose:** Store, recall, delete, prune, summarize, and get stats across episodic, semantic, and procedural collections.
+
+**Key characteristics:**
+- **8 atomic actions** — `store`, `recall`, `recall_context`, `delete`, `prune`, `summarize`, `stats`, `janitor`
+- **Lazy loading** — ChromaDB imported only on first non-janitor call
+- **Janitor bypass** — `archive_old_episodes()` and `purge_stale_rules()` run without touching memory store
+- **Tag validation** — MED-05 compliant: rejects `< > " ' \` |`, max 6 tags, alphanumeric/hyphens only
+- **Result compression** — Success responses pass through `compress_result()`; errors skipped (v1.1)
+- **Duration tracking** — `duration_ms` included in all responses (v1.2)
+
+**Safety:** Write-only lock pattern (MED-01) for 30-50% throughput boost, XSS/injection prevention via tag validation, fail-fast on invalid `memory_type`.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Memory stored successfully",
+  "collection": "episodic",
+  "duration_ms": 45,
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 8. 🔔 Notify — [tools/NOTIFY.md](tools/NOTIFY.md)
+
+**Status:** v1.0 — Cross-platform desktop notifications with scheduling.
+
+**Purpose:** Send immediate alerts and schedule delayed reminders.
+
+**Key characteristics:**
+- **Cross-platform** — Windows (`plyer`), Linux (`notify-send`), universal console fallback
+- **Graceful fallback** — Never silently fails; prints to console if desktop APIs fail
+- **Scheduler integration** — APScheduler `BackgroundScheduler` for delayed reminders
+- **Job registry** — In-memory tracking of scheduled jobs with metadata
+- **Special status schema** — Uses `sent`/`scheduled`/`ok`/`cancelled`/`error` (not generic `success`)
+
+**Safety:** No destructive operations, optional dependencies (`apscheduler`, `plyer`), clear error on missing deps.
+
+**Output:**
+```json
+{
+  "status": "sent",
+  "result": "Notification delivered",
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 9. ⚡ Parallel — [tools/PARALLEL.md](tools/PARALLEL.md)
+
+**Status:** v1.0 — Concurrent tool execution with safety allowlist.
+
+**Purpose:** Execute multiple independent tool calls in parallel to reduce latency.
+
+**Key characteristics:**
+- **ThreadPoolExecutor** — Real concurrent execution with `cfg.worker_timeout` (default 60s)
+- **Global timeout** — `concurrent.futures.wait()` with real timeout; NOT broken `as_completed()` per-future timeout
+- **Nested-call guard** — `threading.local()` prevents `parallel → parallel` recursion / deadlock
+- **Conservative allowlist** — `PARALLEL_SAFE = {web, file, python, python_exec, notify}` only
+- **Explicit tool mapping** — `_TOOL_MAP` imports functions directly; no runtime discovery
+
+**Safety:** Write-heavy tools (`git`, `memory`, `file` write ops) excluded by design. Nested `parallel()` calls blocked. Timeout prevents runaway execution.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": [
+    {"status": "success", "result": "...", "tool": "web"},
+    {"status": "success", "result": "...", "tool": "file"}
+  ],
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 10. 🐍 Python — [tools/PYTHON.md](tools/PYTHON.md)
+
+**Status:** v1.0 — Dual-mode sandboxed code execution.
+
+**Purpose:** Execute Python code with either strict sandbox or controlled data-science imports.
+
+**Key characteristics:**
+- **Dual-mode** — `run` (strict sandbox, no imports) and `run_data` (controlled imports, subprocess for heavy libs)
+- **AST-based sandbox** — `validate_sandbox_ast()` blocks imports, dangerous builtins, `getattr`/`setattr`, metaclass attacks, context managers, subscript access to `__builtins__`
+- **Thread-safe stdout** — Module-level `_STDOUT_LOCK` prevents cross-thread clobbering in `parallel()`
+- **Import allowlisting** — `STDLIB_IMPORTS` + `HEAVY_IMPORTS` + `CORE_ALLOWED` with `BLOCKED_IMPORTS` boundary
+- **Result pruning** — `prune_text()` prevents MCP context overflow
+
+**Safety:** Two-layer defense (fast-path string check + deep AST tree walking), 16 pytest security cases, subprocess isolation for heavy libs, timeout enforcement.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "42",
+  "stdout": "42\n",
+  "stderr": "",
+  "locals": {"x": 42},
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 11. 📊 Report — [tools/REPORT.md](tools/REPORT.md)
+
+**Status:** v1.0 — 11 atomic actions for interactive HTML reports.
+
+**Purpose:** Generate self-contained interactive HTML dashboards, charts, maps, and diagrams.
+
+**Key characteristics:**
+- **11 atomic actions** — `chart`, `map`, `report`, `dashboard`, `diagram`, `export`, `compare`, `timeline`, `scorecard`, `list`, `help`
+- **Lazy heavy imports** — pandas, jinja2, plotly, playwright imported inside function bodies only
+- **XSS-safe templates** — Jinja2 autoescape + no `| safe` on user-controlled text
+- **Atomic file writes** — `_atomic_write` prevents partial/corrupted files on crash
+- **Output root** — `workspace/reports/{trace_id}/`
+
+**Safety:** Path guard integration, cancellation guard, XSS-safe templates, atomic writes, optional Playwright for PDF/PNG export.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Report generated",
+  "path": "workspace/reports/abc123/revenue_chart.html",
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 12. 🔬 Tavily — [tools/TAVILY.md](tools/TAVILY.md)
+
+**Status:** v1.0 — AI-optimized web search and bulk extraction.
+
+**Purpose:** Superior ranking and citations via Tavily API; complements `web` for research queries.
+
+**Key characteristics:**
+- **5 atomic actions** — `search`, `extract`, `crawl`, `map`, `research`
+- **AI-ranked results** — Superior relevance vs raw SearXNG for research queries
+- **Automatic citations** — Every result includes URL, title, and confidence score
+- **Bulk extraction** — `extract` processes up to 10 URLs in one call
+- **Keyless mode** — Works without API key for `search` and `extract` (rate-limited)
+- **Resilient** — Circuit breaker, rate-limit retry, structured error codes, API budget tracking
+
+**Safety:** SSRF protection, timeout enforcement, clear error codes for API key issues, rate-limit handling.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "data": {
+    "keyless": true,
+    "results": [
+      {"title": "...", "url": "...", "content": "...", "score": 0.95}
+    ]
+  },
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 13. 👁️ Vision — [tools/VISION.md](tools/VISION.md)
+
+**Status:** v1.0 — Multimodal image analysis.
+
+**Purpose:** Analyze images via local file, base64, or URL using a dedicated vision model.
+
+**Key characteristics:**
+- **3 input sources** — `file_path`, `base64`, or `url` (exactly one required)
+- **Multimodal LLM dispatch** — Routes to `cfg.vision_model` via `llm.call(role="vision")`
+- **JSON mode** — Structured output with schema validation
+- **Context support** — Optional `context` parameter for background information
+- **Kill-switch ready** — Clear error if `VISION_MODEL` is unset
+
+**Safety:** SSRF protection (`is_safe_network_address()`) for URL inputs, file size limits (`VISION_MAX_FILE_BYTES` = 20MB), base64 length limits (`VISION_MAX_BASE64_LEN` = 10M chars).
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "The image shows a login form with username and password fields...",
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 14. 🌐 Web — [tools/WEB.md](tools/WEB.md)
+
+**Status:** v1.0 — SearXNG search and BeautifulSoup scraping.
+
+**Purpose:** Free, self-hosted web search and static HTML content extraction.
+
+**Key characteristics:**
+- **4 atomic actions** — `search`, `read`, `scrape`, `search_and_read`
+- **Free / self-hosted** — Requires only a running SearXNG instance (no API keys)
+- **Parallel scraping** — `search_and_read` fans out to `ThreadPoolExecutor` for concurrent page fetching
+- **Connection pooling** — Singleton `httpx.Client` reuses TCP/TLS connections
+- **User-agent rotation** — Rotates through browser UAs to reduce 403 blocks
+- **Retry with backoff** — One retry on transient errors (503, 429, timeout)
+
+**Safety:** SSRF protection (`is_safe_network_address`), content-type guard (rejects PDFs/images/oversized responses), URL validation.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "results": [
+    {"title": "...", "url": "...", "snippet": "..."}
+  ],
+  "trace_id": "abc123"
+}
+```
+
+---
+
+### 15. 🔄 Workflow — [tools/WORKFLOW.md](tools/WORKFLOW.md)
+
+**Status:** v1.0 — LangGraph workflow launcher.
+
+**Purpose:** Trigger long-running multi-step workflows (research, data, autocode, etc.).
+
+**Key characteristics:**
+- **6 workflow types** — `research`, `data`, `autocode`, `report`, `understand`, `auto`
+- **Strict type validation** — `VALID_WORKFLOWS` frozenset prevents LLM hallucination
+- **Auto-routing** — `type="auto"` lazily imports Router model to classify goal and select workflow
+- **Fail-fast guards** — Autocode validates `target_file`, `error_msg`, `feature_desc` BEFORE git snapshots
+- **Guaranteed observability** — Every return dict contains `trace_id` (auto-generated if not provided)
+- **Resume support** — `resume=True` continues interrupted workflows from checkpoint
+
+**Safety:** Parameter validation before any side effects, structured error messages, trace ID propagation.
+
+**Output:**
+```json
+{
+  "status": "success",
+  "result": "Research complete: 5 sources synthesized",
+  "trace_id": "abc123",
+  "artifacts": ["report.html"]
+}
+```
+
+---
+
+## 🔄 Tool Comparison
+
+| Aspect | Agent | Browser | CLI | Consult | File | Git | Memory | Notify | Parallel | Python | Report | Tavily | Vision | Web | Workflow |
+|--------|-------|---------|-----|---------|------|-----|--------|--------|----------|--------|--------|--------|--------|-----|----------|
+| **Interface** | `role` param | `action` param | `command` str | `question` str | `action` param | `action` param | `action` param | `action` param | `tools` list | `mode` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
+| **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
+| **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
+| **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ Data mode | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
+| **Lazy imports** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
+| **Primary use** | Specialist LLM | JS page automation | NL command router | Cloud advisory | File CRUD | Version control | Memory I/O | Alerts | Concurrent execution | Code execution | HTML reports | AI search | Image analysis | Web search | Workflow orchestration |
+
+---
+
+## 📋 Unified Return Schema
+
+All tools MUST return a dictionary with at least:
+
+**Success:**
+```json
+{
+  "status": "success",
+  "result": "...",
+  "trace_id": "abc123"
+}
+```
+
+**Error:**
+```json
+{
+  "status": "error",
+  "error": "Descriptive error message",
+  "trace_id": "abc123"
+}
+```
+
+**Special status schemas** (non-standard):
+- **Notify** — `sent`, `scheduled`, `ok`, `cancelled`, `error`
+- **Consult** — `disabled`, `rate_limited`
+- **Workflow** — `success` | `failed` (from graph, not tool layer)
+
+**Guaranteed keys for all tools:** `status`, `trace_id`.
+
+---
+
+## 🛠️ Tool Creation Guidelines
 
 ### The `@tool` Auto-Discovery Pattern
 
@@ -26,112 +782,107 @@ def my_custom_tool(action: str, param: str = "", dry_run: bool = False) -> dict:
     """
     if not param:
         return {"status": "error", "error": "Parameter 'param' is required."}
-        
+
     if action == "do_something":
         if dry_run:
             return {"status": "success", "preview": f"Would do something with {param}"}
         return {"status": "success", "result": f"Done something with {param}"}
-        
+
     return {"status": "error", "error": f"Unknown action '{action}'"}
 ```
 
-### 🚨 Critical Safety & Architecture Rules
+### The `@meta_tool` Pattern (for multi-action tools)
 
-1. **MCP Stdio Safety (CRITICAL)**: NEVER use `print()` or write to `sys.stdout` inside any tool. The MCP protocol uses `stdout` for JSON-RPC communication. Writing to stdout will corrupt the payload and crash the server. Use `core.tracer` or `sys.stderr` for all logging.
+For tools with multiple atomic actions, use `@meta_tool` to auto-generate the `Literal` enum and docstring:
 
-2. **Standardized Returns**: Always return a dictionary containing at least `{"status": "success"}` or `{"status": "error", "error": "descriptive message"}`.
-
-3. **Input Validation**: Always validate file paths (prevent directory traversal outside `WORKSPACE_ROOT`) and sanitize inputs to prevent injection attacks.
-
-4. **Timeouts**: Wrap external HTTP calls, subprocess executions, and heavy computations in timeouts to prevent blocking the LLM execution loops.
-
----
-
-## 📦 Core Meta-Tool Inventory
-
-The agent currently exposes **11 primary meta-tools** to the LLM.
-
-| Tool Name | Source File(s) | Purpose & Key Mechanics |
-|-----------|----------------|-------------------------|
-| **web** | `tools/web.py` | **Web Search & Scraping.** Integrates with a local SearXNG instance for privacy-focused search and uses BeautifulSoup for HTML parsing. Includes strict SSRF protection via `core/path_guard.py` to block requests to local/private IP ranges (127.0.0.0/8, 10.0.0.0/8, 192.168.0.0/16, etc.). Supports both `search` (query-based) and `scrape` (URL-based) actions. |
-| **python** | `tools/python_exec.py` | **Sandboxed Code Execution.** Two modes: <br>• **`run` mode**: Executes Python with AST-validated sandbox (blocks imports, `eval`/`exec`, file I/O, `getattr`/`setattr`, metaclasses, context managers). Fast-path string check + deep AST tree walking. <br>• **`run_data` mode**: Executes data-science code (pandas/numpy/matplotlib) in an isolated subprocess with whitelisted imports. Returns stdout, stderr, and local variables. |
-| **file** | `tools/file.py` & `tools/file_ops/` | **File System Operations.** Plugin-based dispatcher routing to action handlers in `file_ops/`. Full CRUD operations (read, write, list, delete, backup), directory traversal, PDF text extraction via `pypdf`, Office file parsing (docx/xlsx/pptx), and SQLite FTS (Full Text Search). **Strictly blocks access to protected core files** via `core/path_guard.py`. Null-byte injection protection on all path operations. |
-| **git** | `tools/git.py` & `tools/git_ops/` | **Version Control.** Plugin-based dispatcher with dynamically discovered action handlers in `git_ops/actions/`. Supports: `status`, `log`, `diff`, `commit`, `init`, `restore`, `rollback` (with automatic stash-based safety net), `snapshot`, `show`, `tag`, `branch`, `checkout`. Uses system `git` via `subprocess` (NOT GitPython) for reliability. Rollback defaults to safe stash-based recovery; `force=True` for permanent discard. |
-| **notify** | `tools/notify.py` | **Desktop Notifications.** Cross-platform alerts via `plyer`. Supports immediate sending, scheduling (with delay), canceling pending notifications, and listing queued alerts. Useful for long-running workflow completion signals. |
-| **report** | `tools/report_tool.py` | **Data Visualization & Reporting.** Generates interactive charts (Plotly), geographical maps (Folium), and premium tabbed HTML dashboards using templates from `tools/report_templates.py`. Can export to PDF via WeasyPrint (requires GTK3 on Windows) or PNG via Kaleido (pinned to 0.2.1 for stability). |
-| **vision** | `tools/vision.py` | **Multimodal Image Analysis.** Routes base64-encoded images, local file paths, or URLs to the **Planner** model (or dedicated Vision model if configured) for image understanding, OCR, and visual reasoning. Respects `VISION_MAX_FILE_BYTES` limit (default 20MB). |
-| **memory** | `tools/memory.py` | **Persistent Knowledge Base.** LLM-facing wrapper for `core/memory.py`. Allows the agent to `store`, `recall`, `delete`, `prune`, `summarize`, and get `stats` across 3 ChromaDB collections (episodic, semantic, procedural). Enforces MED-05 tag validation (rejects `< > " ' \` |`, max 6 tags, alphanumeric/hyphens only). Uses Write-Only Lock pattern (MED-01) for 30-50% throughput boost. |
-| **agent** | `tools/agent_tool.py` | **Specialist Sub-Agents.** Invokes 10 specialized LLM roles: `classify`, `route`, `research`, `summarize`, `extract`, `critique`, `analyze`, `code`, `review`, `plan`. Each role has tailored system prompts and output schemas. Routes to Planner, Executor, or Router based on the specific sub-task complexity. |
-| **cli** | `tools/cli.py` & `tools/cli_ops/` | **Natural Language to Shell.** Translates NL requests into shell commands using a 4-layer dispatch system: <br>1. Regex pattern matching (fast path for common commands) <br>2. Shell command whitelist (safe operations only) <br>3. Router model classification (Nemotron for intent detection) <br>4. Executor model escalation (Hermes for complex command generation). <br>Includes safety checks to prevent destructive operations without explicit confirmation. |
-| **workflow** | `tools/workflow_tool.py` | **State Machine Trigger.** Launches long-running LangGraph workflows (`research`, `data`, `autocode`). Handles async task tracking via SQLite and routing via the Router model if `type="auto"`. Returns `trace_id` immediately for polling. Each workflow emits structured traces to `logs/agent_*.jsonl`. |
-
----
-
-## 🔐 Recent Security Hardening (May 2026)
-
-### AST Sandbox Validation (`tools/python_exec.py`)
-
-The Python execution sandbox was hardened against advanced bypass techniques:
-
-**Blocked Attack Vectors:**
-- Direct imports (`import os`, `from sys import path`)
-- Dangerous builtins (`eval`, `exec`, `compile`, `open`, `__import__`, `input`, `breakpoint`)
-- Dynamic resolution (`getattr`, `setattr`, `delattr`) to prevent `getattr(__builtins__, "eval")`
-- Subscript access (`__builtins__["eval"]`) via string-constant AST inspection
-- Module attribute calls (`os.system()`, `subprocess.run()`)
-- **Definition-time execution**: `ast.ClassDef` (metaclass attacks), `ast.With`/`ast.AsyncWith` (context managers), `ast.AsyncFunctionDef`
-
-**Two-Layer Defense:**
-1. **Fast-path string check**: Catches obvious patterns like `eval(`, `exec(`, `import os`
-2. **AST tree walking**: Deep inspection of all `ast.Call`, `ast.Import`, `ast.Attribute`, `ast.Subscript` nodes
-
-**Test Coverage:** 16 pytest cases in `tests/tools/python_exec/test_sandbox_security.py` verify blocking of obfuscated attacks.
-
-### Git Rollback Safety (`tools/git_ops/actions/rollback.py`)
-
-Default `rollback` action now uses **stash-based recovery**:
-- Automatically stashes uncommitted changes before `git reset --hard HEAD`
-- Returns `stash_ref` for manual recovery via `git stash pop`
-- Only `force=True` performs permanent discard + `git clean -fd`
-
-### Gateway ForwardRef Resolution (`core/gateway.py`)
-
-Fixed FastAPI 422 errors by moving Pydantic models (`TaskRequest`, `ChatRequest`) to module level, resolving `from __future__ import annotations` ForwardRef issues in the factory pattern.
-
----
-
-## 🧩 Internal / Helper Modules
-
-These are not exposed directly to the LLM as tools, but provide critical backing logic:
-
-- **`tools/report_templates.py`**: Premium, tabbed HTML/CSS templates for market analysis and code review dashboards.
-- **`tools/git_ops/`**: Directory of discrete Python files acting as plugins for the `git` meta-tool. Each file in `actions/` registers via `@register_action` decorator.
-- **`tools/file_ops/`**: Similar plugin structure for file operations (read, write, list, pdf, office, sqlite).
-- **`tools/cli_ops/`**: Command handlers and routing logic for the CLI meta-tool.
-- **`core/path_guard.py`**: Centralized path validation, SSRF protection, and null-byte injection prevention used by `web`, `file`, and `git` tools.
-
----
-
-## 📝 Tool Return Schema
-
-All tools MUST return a dictionary with at least:
-
-**Success:**
 ```python
-{
-    "status": "success",
-    "result": "...",  # or "output", "data", etc.
-    "trace_id": "abc123"  # optional but recommended
-}
+from tools._meta_tool import meta_tool
+from tools.my_tool_ops._registry import DISPATCH
+from registry import tool
+
+@tool
+@meta_tool(DISPATCH["my_tool"], doc_sections=["Usage notes here"])
+def my_tool(action: str = "", ...) -> dict:
+    """Facade auto-populated by @meta_tool."""
+    ...
 ```
 
-**Error:**
-```python
-{
-    "status": "error",
-    "error": "Descriptive error message",
-    "trace_id": "abc123"
-}
-```
+---
 
-This standardization allows workflows and the LLM to reliably parse tool outcomes and make routing decisions.
+## 🛡️ Security & Architecture Rules
+
+### 1. MCP Stdio Safety (CRITICAL)
+NEVER use `print()` or write to `sys.stdout` inside any tool. The MCP protocol uses `stdout` for JSON-RPC communication. Writing to stdout will corrupt the payload and crash the server. Use `core.tracer` or `sys.stderr` for all logging.
+
+### 2. Standardized Returns
+Always return a dictionary containing at least `{"status": "success"}` or `{"status": "error", "error": "descriptive message"}`. Include `trace_id` in all responses for observability.
+
+### 3. Input Validation
+Always validate file paths (prevent directory traversal outside `WORKSPACE_ROOT`) and sanitize inputs to prevent injection attacks. Use `core.path_guard` for filesystem operations and `core.security.is_safe_network_address` for network URLs.
+
+### 4. Timeouts
+Wrap external HTTP calls, subprocess executions, and heavy computations in timeouts to prevent blocking the LLM execution loops. Respect `cfg.worker_timeout` and `cfg.execution_timeout`.
+
+### 5. No `.bak` Files
+Creating `.bak` backup files is forbidden by project rules. Use atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) instead.
+
+### 6. AST Sandbox Validation (Python Tool)
+The Python execution sandbox blocks:
+- Direct imports, dangerous builtins (`eval`, `exec`, `compile`, `open`)
+- Dynamic resolution (`getattr`, `setattr`, `delattr`)
+- Subscript access to `__builtins__`
+- Module attribute calls (`os.system()`)
+- Definition-time execution (`ast.ClassDef`, `ast.With`, `ast.AsyncFunctionDef`)
+
+Two-layer defense: fast-path string check + deep AST tree walking. 16 pytest cases verify blocking of obfuscated attacks.
+
+### 7. Git Rollback Safety
+Default `rollback` action uses stash-based recovery: stashes uncommitted changes before `git reset --hard HEAD`. Returns `stash_ref` for manual recovery. Only `force=True` performs permanent discard + `git clean -fd`.
+
+### 8. Path Guard
+All filesystem paths must:
+- Resolve relative to `cfg.agent_root` or `cfg.workspace_root`
+- Validate symlinks (must resolve inside root)
+- Block protected files (`server.py`, `core/*`, `registry.py`)
+- Reject Windows ADS (Alternate Data Streams)
+- Reject null-byte injection
+
+### 9. Cancellation Guard
+Mutating actions (write, delete, commit, rollback) must call `ensure_not_cancelled()` before executing. Prevents ghost mutations on cancelled traces.
+
+---
+
+## 🧪 Testing Quick Reference
+
+| Tool | Test Command |
+|------|-------------|
+| Agent | `.\venv\Scripts\pytest tests/tools/agent/ -W error --tb=short -v` |
+| Browser | `.\venv\Scripts\pytest tests/tools/browser/ -W error --tb=short -v` |
+| CLI | `.\venv\Scripts\pytest tests/tools/cli/ -W error --tb=short -v` |
+| Consult | `.\venv\Scripts\pytest tests/tools/consult/ -W error --tb=short -v` |
+| File | `.\venv\Scripts\pytest tests/tools/file/ -W error --tb=short -v` |
+| Git | `.\venv\Scripts\pytest tests/tools/git/ -W error --tb=short -v` |
+| Memory | `.\venv\Scripts\pytest tests/tools/memory/ -W error --tb=short -v` |
+| Notify | `.\venv\Scripts\pytest tests/tools/notify/ -W error --tb=short -v` |
+| Parallel | `.\venv\Scripts\pytest tests/tools/parallel/ -W error --tb=short -v` |
+| Python | `.\venv\Scripts\pytest tests/tools/python_exec/ -W error --tb=short -v` |
+| Report | `.\venv\Scripts\pytest tests/tools/report/ -W error --tb=short -v` |
+| Tavily | `.\venv\Scripts\pytest tests/tools/tavily/ -W error --tb=short -v` |
+| Vision | `.\venv\Scripts\pytest tests/tools/vision/ -W error --tb=short -v` |
+| Web | `.\venv\Scripts\pytest tests/tools/web/ -W error --tb=short -v` |
+| Workflow | `.\venv\Scripts\pytest tests/tools/workflow/ -W error --tb=short -v` |
+
+> **Note:** Verify exact test directory names against `tests/tools/` on disk. Some tools may share test directories or have different naming conventions.
+
+---
+
+*Architecture: @meta_tool + DISPATCH registry + atomic actions + path guard + cancellation guard + standardized returns + MCP stdio safety.*
+
+---
+
+## 🔗 Cross-References
+
+- **Core:** See `docs/CORE.md`
+- **Workflows:** See `docs/WORKFLOWS.md`
+- **Skills:** See `docs/SKILLS.md`
+- **Environment:** See `.env.example` in repo root

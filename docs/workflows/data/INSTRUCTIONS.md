@@ -1,0 +1,43 @@
+<- Back to [Data Overview](../DATA.md)
+
+# 🛡️ AI Instructions
+
+## ❌ NEVER DO
+
+1. **Never mutate state in-place** — LangGraph does not deep-copy. Always return partial update `dict`s.
+2. **Never spread `**state`** — Never return `{**state, "key": "value"}`. Return only the changed keys.
+3. **Never remove memory recall from `node_recall`** — Context improves code quality significantly.
+4. **Never skip `node_error` on execution failure** — Always log errors to trace and checkpoint.
+5. **Never use `print()` to stdout** — MCP stdio corruption. Use `tracer.step()` for logging.
+6. **Never create `.bak` files** — forbidden by project rules.
+7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
+8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+9. **Never call `agent()` without `action="dispatch"`** — The `agent()` facade requires `action`. Always pass `action="dispatch"` for LLM calls.
+10. **Never return `None` from LangGraph nodes** — Always return a `dict` (even empty `{}`).
+
+## ✅ ALWAYS DO
+
+11. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
+12. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+13. **Always handle code extraction failure** — If regex fails, return error state.
+14. **Always test `route_after_execute` with both paths** — Assert `"failed"` and `"critique"`.
+15. **Always test memory storage** — Assert semantic + procedural memory stored correctly.
+16. **Always test notification** — Assert `notify()` called with correct message.
+17. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
+18. **Always use `context` parameter for text** — `content` is for base64 images. Use `context` for additional text.
+
+---
+
+## 🚫 Anti-Patterns & Lessons Learned
+
+*(Fill this section with relevant info from edits and refactors. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
+
+> - **What happened:** The symptom or bug
+> - **Why it matters:** The impact
+> - **Fix:** The solution or pattern to follow
+
+*Fill this section with relevant information during edits and refactors.)*
+
+---
+
+*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

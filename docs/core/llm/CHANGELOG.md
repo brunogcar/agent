@@ -1,0 +1,53 @@
+<- Back to [LLM Overview](../LLM.md)
+
+# 🗺️ Changelog
+
+## 📝 Version History
+
+| Version | Date | Notes |
+|---------|------|-------|
+| Pre-v1 | 2026-07-04 | Initial implementation. Role-based dispatch, circuit breaker per role, cognitive context budgeting, provider abstraction, thread-safe singleton. |
+
+---
+
+## ⚠️ Breaking Changes
+
+*(No breaking changes yet. Add entries here when versions are released.)*
+
+---
+
+## ✅ Completed
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Role-based dispatch | ✅ Pre-v1 | 16 roles with independent temperature/max_tokens |
+| Circuit breaker per role | ✅ Pre-v1 | 3 cumulative failures, dynamic cooldown per role |
+| Cognitive context budgeting | ✅ Pre-v1 | 7-tier `ContextClass` in `core/memory_backend/budget.py` |
+| Provider abstraction | ✅ Pre-v1 | `BaseProvider` + `LMStudioProvider` + `OpenAICompatibleProvider` |
+| Thread-safe singleton | ✅ Pre-v1 | `LLMClient` singleton with double-checked locking |
+| Dual JSON extraction | ✅ Pre-v1 | `client.py` 3-layer + `router.py` `raw_decode()` |
+| Dynamic factory registration | ✅ Pre-v1 | Auto-registers cloud providers based on `*_API_KEY` env vars |
+| Token tracking | ✅ Pre-v1 | Prometheus metrics via `core/metrics.py` |
+
+---
+
+## 🔄 In Progress / Next Up
+
+| Feature | Notes | Priority |
+|---------|-------|----------|
+| `complete_with_tools()` | Tool-calling loop not yet implemented at this layer | P1 |
+| YAML-based prompt loader | Currently system prompts are plain Python string constants | P3 |
+| Decouple circuit breaker cooldown from role timeout | Cooldown is tied to `role_cfg.timeout` — a change to timeout silently changes cooldown | P2 |
+| Enable `/health/circuit-breakers` by default | Currently returns `null` unless `cfg.enable_metrics_endpoint` is set | P2 |
+| Fix `PROCEDURAL` vs `ERROR` tier weight | `PROCEDURAL` (50.0) outranks `ERROR` (40.0) but docstring claims the opposite | P3 |
+| Fix stale docstring paths | `memory_backend/budget.py` still references `core/context_budget.py` | P3 |
+
+---
+
+## 🚫 Deferred / Out of Scope
+
+*(No deferred items yet. Add entries here as decisions are made.)*
+
+---
+
+*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
