@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.5 | 2026-07-05 | `on_failure()` fires only on final raise (retry exhaustion), not per attempt — prevents CB opening on successful-but-retried calls. Preserves v1.4 retryable-only semantics. |
 | v1.4 | — | `0.0.0.0`/`::` blocked, `on_failure()` retryable-only, `www.` strip boundary, Tavily error handler alignment |
 | v1.3 | — | `RLock`, daily reset, IPv6 bracket parsing, unbracketed IPv6, `get_status()` no-config fallback, `__init__.py` re-exports |
 | v1.2 | — | Initial package structure, test suite |
@@ -17,6 +18,12 @@
 ---
 
 ## ⚠️ Breaking Changes
+
+### v1.5
+
+| Change | Impact |
+|--------|--------|
+| `on_failure()` per-attempt → final-raise only | `retry_async_factory` no longer calls `on_failure()` on each retry attempt that is later retried. It fires exactly once on retry exhaustion (still retryable-only). CB `failure_count` no longer accumulates transient noise from successful-but-retried calls. No migration — internal fix; existing callers see strictly fewer CB trips, never more. |
 
 ### v1.4
 

@@ -9,6 +9,9 @@ v1.2: Restored max_depth, max_breadth, limit facade params.
 v1.3: Added include_domains/exclude_domains validation.
       citation_format only passed to research action.
 v1.4: Removed dead max_chars param and dead research action block.
+v1.5: Removed dead citation_format facade param. research action is not in
+      DISPATCH (workflow-only), so the param never reached any handler.
+      research.py keeps its own citation_format kwarg with "apa" default.
 
 PARALLEL_SAFE = True because AsyncTavilyClient is thread-safe.
 """
@@ -55,7 +58,6 @@ def tavily(
     include_images: bool = False,
     extract_depth: str = "basic",
     format: str = "markdown",
-    citation_format: str = "numbered",
     topic: str = "general",
     time_range: str = "",
     # v1.2: Restored facade params for crawl/map control

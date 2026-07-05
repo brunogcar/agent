@@ -3,6 +3,10 @@
 v1.2: Extracted from bridge.py and web_ops/scrape.py.
 v1.3: Added retry_async_factory() for async coroutine retry with circuit breaker hooks.
 v1.4: Fixed on_failure called for non-retryable errors. Removed dead raise.
+v1.5: Fixed on_failure accumulating per-retry-attempt on retryable errors.
+      Now fires only on final raise (retry exhaustion), preserving v1.4 semantics
+      (non-retryable errors still don't trip CB). Prevents CB from opening on
+      successful-but-retried calls.
 """
 from __future__ import annotations
 
@@ -68,6 +72,9 @@ def retry_async_factory(
     across tools (tavily, web_ops, browser).
     v1.4: on_failure only fires for retryable errors; CB no longer tripped
     by validation failures or 4xx client errors.
+    v1.5: on_failure only fires on final raise (retry exhaustion), not per
+    retry attempt. Prevents CB failure_count from accumulating on
+    successful-but-retried calls.
 
     Args:
         coro_factory: Callable that returns a fresh coroutine each time.
@@ -96,13 +103,22 @@ def retry_async_factory(
             return result
         except Exception as e:
             last_exception = e
-            if is_retryable(e):
-                if on_failure is not None:
-                    on_failure()
-                if attempt < max_retries:
-                    delay = get_retry_delay(attempt, base_delay, max_delay, jitter)
-                    time.sleep(delay)
-                else:
-                    raise
-            else:
-                raise
+            # Retryable errors: retry if attempts remain, otherwise fall through to raise.
+            if is_retryable(e) and attempt < max_retries:
+                delay = get_retry_delay(attempt, base_delay, max_delay, jitter)
+                time.sleep(delay)
+                continue
+            # Final raise — either retries exhausted (retryable) or non-retryable error.
+            #
+            # [DESIGN] on_failure is called ONLY on final raise, not per retry attempt.
+            # Calling it per-attempt means transient failures accumulate CB failure_count
+            # even on overall successful calls (3 calls × 2 retries = 6 record_failure()
+            # calls → CB opens despite every call succeeding). record_success() is a no-op
+            # in CLOSED CB state by design, so interim failures never cancel out.
+            # DO NOT move this back inside the per-attempt loop.
+            #
+            # [v1.4 SEMANTICS] on_failure only fires for retryable errors. Non-retryable
+            # errors (validation, 4xx) raise immediately without tripping the CB.
+            if is_retryable(e) and on_failure is not None:
+                on_failure()
+            raise

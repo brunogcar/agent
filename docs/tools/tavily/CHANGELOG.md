@@ -12,10 +12,18 @@
 | v1.2 | 2024-05-01 | Coroutine factory, shared `core/net/` infrastructure, structured error codes, API budget tracking, unified retry/backoff, IPv6 SSRF fixes, client lifecycle fixes, error truncation, sanitization v2, BOT_BLOCKED, default constants |
 | v1.3 | 2024-05-15 | `extract`/`research` resilience fix, `CB_OPEN` error code, budget on all actions, `include_domains` validation, `citation_format` isolation, URL normalization, `core/net/__init__.py` re-exports, `retry_async_factory()`, `RLock`, daily reset, DNS timeout, HALF_OPEN fix, `NetworkError` classification, 408 fix, `www.` strip, state sync, `RateLimitError` registration |
 | v1.4 | 2024-06-01 | `on_failure` only for retryable, HTTP 408 -> `RATE_LIMITED`, `httpx` network errors -> `NETWORK_ERROR`, `max_chars` removed, `research` block removed, `www.` boundary fix, `0.0.0.0`/`::` blocked |
+| v1.5 | 2026-07-05 | Removed dead `citation_format` facade param (was never forwarded to any handler — `research` is workflow-only, not in DISPATCH). `core/net/retry.py` v1.5 fix inherited: CB no longer accumulates failure_count from successful-but-retried calls. |
 
 ---
 
 ## ⚠️ Breaking Changes
+
+### v1.5
+
+| Old | New | Migration |
+|-----|-----|-----------|
+| `citation_format: str = "numbered"` in `tavily()` facade signature | Removed | No migration — was dead param. v1.4 removed the `if action == "research": kwargs["citation_format"] = ...` block, so the param never reached any handler. `research` is workflow-only (not in `DISPATCH`, not LLM-accessible). `research.py` keeps its own `citation_format` kwarg with `"apa"` default. |
+| CB `failure_count` accumulated per retry attempt on retryable errors | `on_failure()` fires only on final raise (retry exhaustion) | No migration — internal fix in `core/net/retry.py` v1.5. Existing callers see strictly fewer CB trips, never more. |
 
 ### v1.4
 

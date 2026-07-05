@@ -189,3 +189,103 @@ class TestRetryAsyncFactory:
         )
         assert len(successes) == 1
         assert len(failures) == 0
+
+    def test_on_failure_not_called_on_retried_success(self):
+        """v1.5 regression: on_failure must NOT fire on retry attempts that
+        eventually succeed.
+
+        Previously on_failure was called per-attempt, so a call that needed
+        2 retries to succeed would record 2 failures permanently. Three such
+        calls would open the CB despite every call succeeding overall.
+        record_success() is a no-op in CLOSED CB state, so interim failures
+        never cancel out.
+        """
+        successes = []
+        failures = []
+        call_count = [0]
+
+        def factory():
+            call_count[0] += 1
+            async def coro():
+                # Fail twice, then succeed on the 3rd attempt.
+                if call_count[0] < 3:
+                    raise httpx.TimeoutException(f"transient #{call_count[0]}")
+                return "ok"
+            return coro()
+
+        def run_async(coro):
+            import asyncio
+            return asyncio.run(coro)
+
+        result = retry_async_factory(
+            factory,
+            run_async=run_async,
+            max_retries=3,
+            on_success=lambda: successes.append(1),
+            on_failure=lambda: failures.append(1),
+        )
+
+        assert result == "ok"
+        assert call_count[0] == 3  # initial + 2 retries
+        assert len(successes) == 1
+        assert len(failures) == 0, (
+            f"on_failure must NOT fire on per-attempt retries that succeed overall; "
+            f"got {len(failures)} failure callbacks. This regresses the v1.5 CB fix."
+        )
+
+    def test_on_failure_called_once_on_retry_exhaustion(self):
+        """v1.5 regression: on_failure fires exactly once when retries are
+        exhausted, not once per attempt."""
+        failures = []
+        call_count = [0]
+
+        def factory():
+            call_count[0] += 1
+            async def coro():
+                raise httpx.TimeoutException(f"fail #{call_count[0]}")
+            return coro()
+
+        def run_async(coro):
+            import asyncio
+            return asyncio.run(coro)
+
+        with patch("core.net.retry.time.sleep"):
+            with pytest.raises(httpx.TimeoutException):
+                retry_async_factory(
+                    factory,
+                    run_async=run_async,
+                    max_retries=2,
+                    on_failure=lambda: failures.append(1),
+                )
+
+        assert call_count[0] == 3  # initial + 2 retries
+        assert len(failures) == 1, (
+            f"on_failure must fire exactly once on retry exhaustion, not per attempt; "
+            f"got {len(failures)} callbacks."
+        )
+
+    def test_on_failure_not_called_on_non_retryable(self):
+        """v1.4 semantics preserved: non-retryable errors raise immediately
+        without tripping the CB."""
+        failures = []
+
+        def factory():
+            async def coro():
+                raise ValueError("non-retryable validation error")
+            return coro()
+
+        def run_async(coro):
+            import asyncio
+            return asyncio.run(coro)
+
+        with pytest.raises(ValueError):
+            retry_async_factory(
+                factory,
+                run_async=run_async,
+                max_retries=3,
+                on_failure=lambda: failures.append(1),
+            )
+
+        assert len(failures) == 0, (
+            "on_failure must NOT fire for non-retryable errors (v1.4 semantics)."
+        )
