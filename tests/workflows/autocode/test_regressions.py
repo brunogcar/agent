@@ -182,7 +182,9 @@ class TestRunTestsWiresTargetedCmd:
             "targeted_test_cmd": "pytest tests/test_a.py -x",
             "project_root": "/tmp/project",
         }
-        with patch("workflows.autocode_impl.nodes.run_tests.run_tests_on_disk") as mock_run:
+        # [P2 #14] run_tests now filters missing files — mock Path.exists to return True
+        with patch("workflows.autocode_impl.nodes.run_tests.run_tests_on_disk") as mock_run, \
+             patch("pathlib.Path.exists", return_value=True):
             mock_run.return_value = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
             node_run_tests(state)
             mock_run.assert_called_once()
@@ -592,3 +594,212 @@ class TestDefenseNotesPlural:
             "memory.py must use root_cause (not hypothesis) in actual code — matches what debug.py sets"
         )
         assert "root_cause" in code_str, "memory.py must reference root_cause in actual code"
+
+
+# =============================================================================
+# P1/P2 Bug fixes (v1.0.2)
+# =============================================================================
+
+class TestReportTypeAnnotation:
+    """P1 #2: node_report must return dict, not AutocodeState."""
+
+    def test_report_returns_dict_annotation(self):
+        import inspect
+        from workflows.autocode_impl.nodes.report import node_report
+        sig = inspect.signature(node_report)
+        assert sig.return_annotation is dict or "dict" in str(sig.return_annotation), (
+            "node_report return annotation must be dict, not AutocodeState"
+        )
+
+
+class TestCreateSkillFixes:
+    """P1 #3, P2 #15/#16/#17: create_skill project root, validation, syntax, flag."""
+
+    def test_skill_name_sanitized(self):
+        from workflows.autocode_impl.nodes.create_skill import _sanitize_skill_name
+        assert _sanitize_skill_name("my/skill") == "my_skill"
+        assert _sanitize_skill_name("skill.py") == "skill_py"
+        assert _sanitize_skill_name("") == "unnamed_skill"
+        assert _sanitize_skill_name("valid_name") == "valid_name"
+
+    def test_python_syntax_validation(self):
+        from workflows.autocode_impl.nodes.create_skill import _validate_python_syntax
+        ok, _ = _validate_python_syntax("x = 1")
+        assert ok is True
+        ok, err = _validate_python_syntax("def broken(")
+        assert ok is False
+        assert "SyntaxError" in err
+
+    def test_skill_created_flag_set(self):
+        """create_skill must set skill_created=True on success."""
+        import inspect
+        from workflows.autocode_impl.nodes.create_skill import node_create_skill
+        source = inspect.getsource(node_create_skill)
+        assert "skill_created" in source, "create_skill must set skill_created flag"
+
+
+class TestDeadRoutesRemoved:
+    """P1 #4: route_after_brainstorm and route_after_debug must be removed."""
+
+    def test_dead_routes_not_in_routes_module(self):
+        from workflows.autocode_impl import routes
+        assert not hasattr(routes, "route_after_brainstorm"), "route_after_brainstorm must be removed"
+        assert not hasattr(routes, "route_after_debug"), "route_after_debug must be removed"
+
+    def test_dead_routes_not_imported_in_graph(self):
+        import inspect
+        from workflows.autocode_impl import graph
+        source = inspect.getsource(graph)
+        assert "route_after_brainstorm" not in source, "graph must not import route_after_brainstorm"
+        assert "route_after_debug" not in source, "graph must not import route_after_debug"
+
+
+class TestMermaidGetattrGuards:
+    """P1 #5: mermaid.py must use getattr() for LangGraph internals."""
+
+    def test_mermaid_uses_getattr(self):
+        import inspect
+        from workflows.autocode_impl.mermaid import export_mermaid
+        source = inspect.getsource(export_mermaid)
+        assert "getattr" in source, "mermaid must use getattr() for LangGraph internal attributes"
+
+
+class TestTestRunnerProtectedFiles:
+    """P1 #6: _should_copy_file must be called with cfg.protected_files, not workspace Path."""
+
+    def test_test_runner_uses_protected_files(self):
+        import inspect
+        from workflows.autocode_impl import test_runner
+        source = inspect.getsource(test_runner)
+        assert "cfg.protected_files" in source, (
+            "test_runner must pass cfg.protected_files (frozenset) to _should_copy_file"
+        )
+
+
+class TestVerifyLintPassedNone:
+    """P1 #7: lint_passed must be None (not True) when ruff is missing."""
+
+    def test_verify_lint_none_on_missing_ruff(self):
+        import inspect
+        from workflows.autocode_impl.nodes.verify import node_verify
+        source = inspect.getsource(node_verify)
+        # Must not have lint_passed = True as the ruff-missing fallback
+        assert "lint_passed = True" not in source or "lint_passed = None" in source, (
+            "verify must use lint_passed = None (not True) when ruff is missing"
+        )
+
+
+class TestWriteFilesErrorStatus:
+    """P1 #9: write_files must return error status on JSON parse failure."""
+
+    def test_write_files_returns_error_on_bad_json(self):
+        from workflows.autocode_impl.nodes.write_files import node_write_files
+        state = {"trace_id": "test", "tdd_source_code": "not json{"}
+        result = node_write_files(state)
+        assert result.get("status") == "error", (
+            "write_files must return status=error on JSON parse failure"
+        )
+
+
+class TestGitBranchErrorHandling:
+    """P1 #10: node_git_branch must check branch creation return value."""
+
+    def test_git_branch_returns_error_on_failure(self):
+        from workflows.autocode_impl.nodes.branch import node_git_branch
+        from unittest.mock import patch
+        state = {
+            "trace_id": "test",
+            "status": "running",
+            "branch": "feat/test",
+            "project_root": "",
+        }
+        with patch("workflows.autocode_impl.nodes.branch._git_create_branch", return_value=False):
+            result = node_git_branch(state)
+        assert result.get("status") == "error", (
+            "node_git_branch must return error status when branch creation fails"
+        )
+
+
+class TestValidatePathTraversal:
+    """P1 #11: validate_input must catch Windows absolute and URL-encoded paths."""
+
+    def test_windows_absolute_blocked(self):
+        from workflows.autocode_impl.nodes.validate import node_validate_input
+        state = {"task": "test", "files": {"C:\\secret": "content"}}
+        result = node_validate_input(state)
+        assert result.get("status") == "error", "Windows absolute path must be blocked"
+
+    def test_url_encoded_traversal_blocked(self):
+        from workflows.autocode_impl.nodes.validate import node_validate_input
+        state = {"task": "test", "files": {"..%2f..%2fsecret": "content"}}
+        result = node_validate_input(state)
+        assert result.get("status") == "error", "URL-encoded traversal must be blocked"
+
+
+class TestSlugFallback:
+    """P1 #12: slug must fallback to 'autocode' when empty."""
+
+    def test_slug_fallback_on_non_alphanumeric(self):
+        from workflows.autocode_impl.nodes.plan import node_write_plan
+        from unittest.mock import patch
+        # Task with only non-alphanumeric chars — slug will be empty
+        state = {"task": "中文测试", "trace_id": "test", "spec": "test"}
+        # NOTE: plan.py imports _parse_json_array (not _parse_json) from helpers.
+        # Also imports _call and get_callers — patch all to avoid real LLM/kgraph calls.
+        with patch("workflows.autocode_impl.nodes.plan._call", return_value='[]'), \
+             patch("workflows.autocode_impl.nodes.plan._parse_json_array", return_value=[]), \
+             patch("workflows.autocode_impl.nodes.plan.get_callers", return_value=[]):
+            result = node_write_plan(state)
+        branch = result.get("branch", "")
+        assert branch != "autocode/", "Branch must not be 'autocode/' (empty slug)"
+        assert "autocode/" in branch, "Branch must start with 'autocode/'"
+
+
+class TestRunTestsFileCheck:
+    """P2 #14: run_tests must filter out missing test files."""
+
+    def test_run_tests_filters_missing_files(self):
+        import inspect
+        from workflows.autocode_impl.nodes.run_tests import node_run_tests
+        source = inspect.getsource(node_run_tests)
+        assert "exists()" in source or "exists" in source, (
+            "run_tests must check file existence before running pytest"
+        )
+
+
+class TestNoClassificationDeadCode:
+    """P2 #28: memory.py must not reference classification field."""
+
+    def test_no_classification_in_memory(self):
+        import inspect
+        import ast
+        from workflows.autocode_impl.nodes.memory import node_distill_memory
+        source = inspect.getsource(node_distill_memory)
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                if (node.body and isinstance(node.body[0], ast.Expr) and
+                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
+        code_only = ast.unparse(tree)
+        code_lines = [line for line in code_only.split('\n') if not line.strip().startswith('#')]
+        code_str = '\n'.join(code_lines)
+        assert "classification" not in code_str, (
+            "memory.py must not reference 'classification' — field never set in AutocodeState"
+        )
+
+
+class TestGraphTimeoutWrapper:
+    """P2 #30: invoke_with_timeout must exist and use cfg.autocode_graph_timeout."""
+
+    def test_invoke_with_timeout_exists(self):
+        from workflows.autocode_impl.graph import invoke_with_timeout
+        assert callable(invoke_with_timeout), "invoke_with_timeout must exist"
+
+    def test_invoke_with_timeout_uses_cfg(self):
+        import inspect
+        from workflows.autocode_impl.graph import invoke_with_timeout
+        source = inspect.getsource(invoke_with_timeout)
+        assert "autocode_graph_timeout" in source, (
+            "invoke_with_timeout must use cfg.autocode_graph_timeout"
+        )

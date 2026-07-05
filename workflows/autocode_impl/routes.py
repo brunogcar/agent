@@ -15,12 +15,6 @@ def route_after_classify(state: AutocodeState) -> str:
     else:
         return "node_validate_input"
 
-def route_after_brainstorm(state: AutocodeState) -> str:
-    """Route after brainstorming node."""
-    if state.get("status") == "needs_clarification":
-        return "END"
-    return "node_write_plan"
-
 def route_after_write_files(state: AutocodeState) -> str:
     """Route after writing files node."""
     task_type = state.get("task_type", "feature")
@@ -44,12 +38,6 @@ def route_after_run_tests(state: AutocodeState) -> str:
         return "node_verify"
     else:
         return "node_systematic_debug"
-
-def route_after_debug(state: AutocodeState) -> str:
-    """Route after debugging node."""
-    if state.get("tdd_status") == "max_retries_exceeded":
-        return "node_verify"  # Fail gracefully and exit the TDD loop
-    return "node_run_tests"
 
 def route_after_verify(state: AutocodeState) -> str:
     """Route after verification node."""

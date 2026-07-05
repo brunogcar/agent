@@ -8,7 +8,7 @@ import json
 from workflows.autocode_impl.state import AutocodeState
 
 
-def node_report(state: AutocodeState) -> AutocodeState:
+def node_report(state: AutocodeState) -> dict:  # [P1 #2] Was AutocodeState — actually returns dict
     """Generate a code audit report with modified files, tests, and verification."""
     from tools.report import report as report_tool
 

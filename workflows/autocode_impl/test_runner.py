@@ -31,9 +31,11 @@ def run_tests_on_disk(
         test_dir = Path(tempfile.mkdtemp(prefix="autocode_test_"))
         try:
             # Copy workspace context (so imports from the real project work)
+            # [P1 #6] _should_copy_file expects (path, protected_files: frozenset),
+            # not (path, workspace: Path). Pass cfg.protected_files.
             if workspace and workspace.exists():
                 for src in workspace.rglob("*"):
-                    if src.is_file() and _should_copy_file(src, workspace):
+                    if src.is_file() and _should_copy_file(src, cfg.protected_files):
                         dst = test_dir / src.relative_to(workspace)
                         dst.parent.mkdir(parents=True, exist_ok=True)
                         try:

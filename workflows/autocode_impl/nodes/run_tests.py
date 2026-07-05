@@ -75,10 +75,25 @@ def node_run_tests(state: AutocodeState) -> dict:
     if not test_files:
         return {"status": "error", "error": "No test files to run"}
 
-    # Run tests
+    # [P2 #14] Filter out test files that don't exist on disk —
+    # write_files may have failed to write them, causing pytest to crash.
+    from pathlib import Path as _Path
+    from core.config import cfg as _cfg
+    existing_test_files = []
+    for tf in test_files:
+        base = _Path(state.get("project_root", "")) if state.get("project_root") else _cfg.workspace_root
+        full_path = base / tf
+        if full_path.exists():
+            existing_test_files.append(tf)
+        else:
+            tracer.step(tid, "run_tests", f"test file missing, skipping: {tf}")
+    if not existing_test_files:
+        return {"status": "error", "error": "All test files missing from disk"}
+
+    # Run tests with existing files only
     project_root = state.get("project_root", None)
     targeted_cmd = state.get("targeted_test_cmd", None)
-    test_results = run_tests_on_disk(test_files, project_root=project_root, targeted_cmd=targeted_cmd)
+    test_results = run_tests_on_disk(existing_test_files, project_root=project_root, targeted_cmd=targeted_cmd)
     current_iter = state.get("tdd_iteration", 0) + 1
 
     # Build partial update dict instead of mutating state directly

@@ -28,7 +28,9 @@ def node_write_files(state: AutocodeState) -> dict:
         data = json.loads(state["tdd_source_code"])
     except Exception as e:
         tracer.step(tid, "write_files", f"JSON parse failed: {e}")
-        return {} # LangGraph partial update: no changes needed
+        # [P1 #9] Was: return {} (no status — workflow continues silently).
+        # Now returns error status so downstream nodes know write_files failed.
+        return {"status": "error", "error": f"write_files JSON parse failed: {e}"}
 
     from workflows.autocode_impl.patch import apply_patch
 
@@ -82,26 +84,32 @@ def node_write_files(state: AutocodeState) -> dict:
         lock_path = str(target) + ".lock"
 
         # [Bug #1] Atomic write — no .bak backup (violates project rules).
-        # Git provides versioning; tempfile + os.replace prevents corruption.
+        # [P2 #13] Added 1 retry on lock timeout — was no retry, silently skipped.
         import tempfile
         import os
-        try:
-            with FileLock(lock_path, timeout=10):
-                with tempfile.NamedTemporaryFile(
-                    mode='w', encoding='utf-8', dir=target.parent,
-                    delete=False, suffix='.tmp'
-                ) as tmp:
-                    tmp.write(str(content))
-                    tmp_path = Path(tmp.name)
-                os.replace(tmp_path, target)
-                tracer.step(tid, "write_files",
-                    f"wrote {rel_path} ({len(content)} chars)")
-        except Timeout:
-            tracer.step(tid, "write_files", f"lock timeout: {rel_path}")
-        except Exception as e:
-            if 'tmp_path' in locals() and tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
-            tracer.step(tid, "write_files", f"write error {rel_path}: {e}")
+        for _attempt in range(2):  # 1 initial + 1 retry
+            try:
+                with FileLock(lock_path, timeout=10):
+                    with tempfile.NamedTemporaryFile(
+                        mode='w', encoding='utf-8', dir=target.parent,
+                        delete=False, suffix='.tmp'
+                    ) as tmp:
+                        tmp.write(str(content))
+                        tmp_path = Path(tmp.name)
+                    os.replace(tmp_path, target)
+                    tracer.step(tid, "write_files",
+                        f"wrote {rel_path} ({len(content)} chars)")
+                break  # Success — exit retry loop
+            except Timeout:
+                if _attempt == 0:
+                    tracer.step(tid, "write_files", f"lock timeout (retrying): {rel_path}")
+                    continue  # Retry
+                tracer.step(tid, "write_files", f"lock timeout (giving up): {rel_path}")
+            except Exception as e:
+                if 'tmp_path' in locals() and tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+                tracer.step(tid, "write_files", f"write error {rel_path}: {e}")
+                break  # Non-timeout error — don't retry
 
     if patch_errors:
         tracer.step(tid, "write_files",

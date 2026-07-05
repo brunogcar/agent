@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.0.2 | 2026-07-05 | P1/P2 bugfix batch: node_report type annotation (#2), create_skill project root + filename validation + syntax check + skill_created flag (#3/#15/#16/#17), removed dead route functions (#4), mermaid.py getattr guards (#5), test_runner protected_files arg (#6), lint_passed=None when ruff missing (#7), write_files error status on JSON parse (#9), git_branch error handling (#10), path traversal Windows/Unicode (#11), slug fallback (#12), FileLock retry (#13), run_tests file existence check (#14), classification dead code (#28), AUTOCODE_GRAPH_TIMEOUT wired (#30) |
 | v1.0.1 | 2026-07-05 | P0 bugfix batch: removed .bak files (#1), removed git snapshot (#2), populate files_map (#3), sync analyze_impact (#4), fix files_context (#6), fix KG file merge (#7), fix impact_warnings type (#8), remove dead AGENT_ROOT (#9), fix defense_notes (#10/#11) |
 | v1.0 | — | Released — 17-node LangGraph StateGraph with TDD-first, debug loop, impact analysis, git integration, memory storage |
 
@@ -48,28 +49,28 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 1 | **Fix `node_write_files` `run_dir` NameError** | Reported as P0 but verified as FALSE POSITIVE — `run_dir` is always set inside the `if test_code:` block where it's used. | ✅ Fixed (false positive) |
-| 2 | **Fix `node_report` type annotation wrong** | Returns `AutocodeState` but returns `{}`. | P1 |
-| 3 | **Fix `node_create_skill` writes to agent_root regardless of project** | Should use `project_root` or `workspace_root` for non-agent projects. | P1 |
-| 4 | **Remove `route_after_debug` and `route_after_brainstorm` dead code** | Graph builder uses direct edges, not these route functions. | P1 |
-| 5 | **Fix `mermaid.py` uses LangGraph internals** | `graph.nodes`, `graph.edges`, `graph.conditional_edges` are internal APIs. Fragile. | P1 |
-| 6 | **Fix `test_runner.py` `_should_copy_file` wrong arg type** | Called with `Path` (workspace) instead of `frozenset` (protected files). | P1 |
-| 7 | **Fix `node_verify` `lint_passed=True` when ruff missing** | Missing ruff should be `False` or `None`, not `True`. | P1 |
-| 8 | **Fix `node_report` `modified_files` empty due to `files_map`** | Was P1 — now fixed in v1.0.1 (files_map populated by write_files). | ✅ Fixed |
-| 9 | **Fix `node_write_files` doesn't return `status` on error** | JSON parse failure returns `{}`. Workflow continues as if nothing happened. | P1 |
-| 10 | **Fix `node_git_branch` no error handling** | Snapshot/branch creation failures not checked. Silent failures. | P1 |
-| 11 | **Fix `node_validate_input` path traversal incomplete** | Doesn't catch absolute Windows paths or Unicode traversal. | P1 |
-| 12 | **Fix `node_write_plan` slug may be empty** | If `task[:40]` is all non-alphanumeric, `slug` is `""`. Invalid branch name. | P1 |
-| 13 | **Fix `node_write_files` `FileLock` no retry logic** | Timeout 10s, no retry. May skip writes under contention. | P2 |
-| 14 | **Fix `node_run_tests` test file path may not exist** | `test_files` set by `node_write_files` but may not exist if write failed. | P2 |
-| 15 | **Fix `node_create_skill` no filename validation** | `skill_name` with `/` or `\` may escape `skills/` directory. | P2 |
-| 16 | **Fix `node_create_skill` no syntax check** | Skill code written without validating it's valid Python. | P2 |
-| 17 | **Fix `node_create_skill` `skill_created` never set** | `autocode.py` checks for it but never set by any node. | P2 |
-| 28 | **Fix `node_distill_memory` `classification` dead code** | `state.get("classification", {})` — field never set. | P2 |
-| 29 | **Test restructure** | Split `test_autocode.py` into per-node files + `conftest.py` | P1 |
-| 30 | **Configurable timeout** | Make `AUTOCODE_GRAPH_TIMEOUT` actually used in code | P2 |
-| 31 | **Remove `__all__` internal constants** | `MAX_RETRIES`, `MAX_FILE_CHARS`, etc. are config values, not API surface. | P2 |
-| 32 | **IDE integration** | LSP or VS Code extension for autocode | P3 |
+| 1 | **Fix `node_write_files` `run_dir` NameError** | Reported as P0 but verified as FALSE POSITIVE. | ✅ Fixed (v1.0.1) |
+| 2 | **Fix `node_report` type annotation wrong** | Changed `AutocodeState` → `dict`. | ✅ Fixed (v1.0.2) |
+| 3 | **Fix `node_create_skill` writes to agent_root** | Now resolves via `project_root` or `workspace_root`. | ✅ Fixed (v1.0.2) |
+| 4 | **Remove dead route functions** | Removed `route_after_brainstorm` and `route_after_debug`. | ✅ Fixed (v1.0.2) |
+| 5 | **Fix `mermaid.py` uses LangGraph internals** | Added `getattr()` guards for all internal attributes. | ✅ Fixed (v1.0.2) |
+| 6 | **Fix `test_runner.py` `_should_copy_file` wrong arg** | Now passes `cfg.protected_files` (frozenset) instead of workspace Path. | ✅ Fixed (v1.0.2) |
+| 7 | **Fix `node_verify` `lint_passed=True` when ruff missing** | Changed to `None`. | ✅ Fixed (v1.0.2) |
+| 8 | **Fix `node_report` `modified_files` empty** | Fixed in v1.0.1 (files_map populated). | ✅ Fixed (v1.0.1) |
+| 9 | **Fix `node_write_files` doesn't return `status` on error** | Now returns `{"status": "error", "error": "..."}` on JSON parse failure. | ✅ Fixed (v1.0.2) |
+| 10 | **Fix `node_git_branch` no error handling** | Now checks return value and returns error status on failure. | ✅ Fixed (v1.0.2) |
+| 11 | **Fix `node_validate_input` path traversal incomplete** | Now catches Windows absolute, URL-encoded separators, and Unicode. | ✅ Fixed (v1.0.2) |
+| 12 | **Fix `node_write_plan` slug may be empty** | Fallback to `"autocode"` when slug is empty. | ✅ Fixed (v1.0.2) |
+| 13 | **Fix `node_write_files` `FileLock` no retry** | Added 1 retry on timeout. | ✅ Fixed (v1.0.2) |
+| 14 | **Fix `node_run_tests` test file may not exist** | Now filters missing files before running pytest. | ✅ Fixed (v1.0.2) |
+| 15 | **Fix `node_create_skill` no filename validation** | Added `_sanitize_skill_name()` — replaces non-alphanumeric with `_`. | ✅ Fixed (v1.0.2) |
+| 16 | **Fix `node_create_skill` no syntax check** | Added `ast.parse()` validation before writing. | ✅ Fixed (v1.0.2) |
+| 17 | **Fix `node_create_skill` `skill_created` never set** | Now sets `skill_created: True` on success. | ✅ Fixed (v1.0.2) |
+| 28 | **Fix `node_distill_memory` `classification` dead code** | Removed — field never set in AutocodeState. | ✅ Fixed (v1.0.2) |
+| 29 | **Test restructure** | Split test files into per-node modules + `conftest.py`. | P1 |
+| 30 | **Configurable timeout** | Added `invoke_with_timeout()` wrapper using `cfg.autocode_graph_timeout`. | ✅ Fixed (v1.0.2) |
+| 31 | **Remove `__all__` internal constants** | `MAX_RETRIES`, `MAX_FILE_CHARS` etc. are config values, not API surface. | P2 |
+| 32 | **IDE integration** | LSP or VS Code extension for autocode. | P3 |
 
 ---
 

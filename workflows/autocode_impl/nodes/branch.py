@@ -31,7 +31,14 @@ def node_git_branch(state: AutocodeState) -> dict:
     root = state.get("project_root")
 
     # Create branch (the branch IS the snapshot — no separate snapshot needed)
+    # [P1 #10] Check return value — if branch creation fails, return error status
+    # so the workflow doesn't continue writing to the wrong branch.
     if state.get("branch"):
-        _git_create_branch(state["branch"], tid, root)
+        success = _git_create_branch(state["branch"], tid, root)
+        if not success:
+            return {
+                "status": "error",
+                "error": f"Failed to create git branch: {state['branch']}",
+            }
 
     return {}

@@ -207,8 +207,14 @@ class TestErrorPropagationAndRouting:
         assert route_after_run_tests(base_state) == "node_systematic_debug"
 
     def test_debug_failure_routes_back_to_run_tests(self, base_state):
-        from workflows.autocode_impl.routes import route_after_debug
-        assert route_after_debug(base_state) == "node_run_tests"
+        # [P1 #4] route_after_debug was removed — test graph edge instead.
+        # The graph has a direct edge from node_systematic_debug to node_write_files
+        # (not a conditional route). Verify the edge exists.
+        from workflows.autocode_impl.graph import build_graph
+        g = build_graph()
+        assert ("node_systematic_debug", "node_write_files") in g.edges, (
+            "node_systematic_debug must route to node_write_files (debug -> write fixes -> re-test)"
+        )
 
     def test_verify_failure_routes_to_end(self, base_state):
         from workflows.autocode_impl.routes import route_after_verify

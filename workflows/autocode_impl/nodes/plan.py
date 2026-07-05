@@ -66,6 +66,10 @@ def node_write_plan(state: AutocodeState) -> dict:
         ]
 
     slug   = re.sub(r"[^a-z0-9]+", "-", state["task"][:40].lower()).strip("-")
+    # [P1 #12] If task is all non-alphanumeric (e.g., Chinese text), slug is empty.
+    # Fallback to "autocode" to prevent invalid branch name "autocode/".
+    if not slug:
+        slug = "autocode"
     branch = f"autocode/{slug}"
 
     tracer.step(tid, "write_plan", f"{len(plan)} steps, branch: {branch}")

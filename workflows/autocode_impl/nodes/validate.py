@@ -54,8 +54,20 @@ def node_validate_input(state: AutocodeState) -> dict:
                 tracer.step(tid, "validate_input", f"FAILED: {error}")
                 return {"status": "error", "error": error}
 
-            # Prevent path traversal
-            if ".." in file_path or file_path.startswith("/") or file_path.startswith("\\"):
+            # [P1 #11] Prevent path traversal — catch Unix, Windows, and Unicode.
+            # Old code only checked ".." and leading "/" or "\". Missed:
+            #   - Windows absolute paths (C:\...)
+            #   - Unicode separators (%2f, %5c)
+            #   - Encoded traversal (..%2f..%2f)
+            import re as _re
+            normalized = file_path.replace("\\", "/").lower()
+            if (
+                ".." in normalized
+                or normalized.startswith("/")
+                or _re.match(r"[a-z]:[\\/]", normalized)  # Windows absolute (C:\, D:/)
+                or "%2f" in normalized  # URL-encoded /
+                or "%5c" in normalized  # URL-encoded \
+            ):
                 error = f"Invalid file path (traversal detected): {file_path}"
                 tracer.step(tid, "validate_input", f"FAILED: {error}")
                 return {"status": "error", "error": error}

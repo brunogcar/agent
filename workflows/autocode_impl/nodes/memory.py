@@ -14,7 +14,9 @@ def node_distill_memory(state: AutocodeState) -> dict:
     """
     tid = state.get("trace_id", "")
     task = state.get("task", "")
-    task_type = state.get("task_type", state.get("classification", {}).get("task_type", "feature"))
+    # [P2 #28] Removed dead classification lookup — field never set in AutocodeState.
+    # task_type is set by node_classify_task directly.
+    task_type = state.get("task_type", "feature")
     # [Bug #11] Changed hypothesis -> root_cause and defense_note -> defense_notes
     # to match what debug.py actually sets. Previously always empty.
     root_cause = state.get("root_cause", "")

@@ -116,8 +116,9 @@ class TestNodeWriteFiles:
         from workflows.autocode_impl.nodes.write_files import node_write_files
         base_state["tdd_source_code"] = "{ invalid json"
         result = node_write_files(base_state)
-        # LangGraph partial update: empty dict means no changes
-        assert result == {}
+        # [P1 #9] Now returns error status (was silent {} — workflow continued as if nothing happened)
+        assert result.get("status") == "error"
+        assert "JSON parse" in result.get("error", "")
 
 class TestAutocodePathHelpers:
     """Validate per-run autocode directory structure and cleanup."""

@@ -101,7 +101,7 @@ def node_verify(state: AutocodeState) -> dict:
         lint_passed = result.returncode == 0
     except Exception as e:
         lint_output = f"ruff not available: {e}"
-        lint_passed = True # non-fatal
+        lint_passed = None  # [P1 #7] Was True — missing ruff should not report as pass
 
     automated_ok = tests_passed # lint is advisory only
 

@@ -25,9 +25,7 @@ from workflows.autocode_impl.nodes.create_skill import node_create_skill
 from workflows.autocode_impl.nodes.report import node_report
 from workflows.autocode_impl.routes import (
     route_after_classify,
-    route_after_brainstorm,
     route_after_run_tests,
-    route_after_debug,
     route_after_write_files,
     route_after_verify,
     route_after_analyze_impact,
@@ -145,3 +143,35 @@ def get_graph():
         workflow = build_graph()
         _COMPILED_GRAPH = workflow.compile()
     return _COMPILED_GRAPH
+
+
+def invoke_with_timeout(initial_state: dict) -> dict:
+    """Invoke the autocode graph with the configured AUTOCODE_GRAPH_TIMEOUT.
+
+    [P2 #30] cfg.autocode_graph_timeout was defined but never used.
+    Now wraps graph.invoke() with a threading-based timeout to prevent
+    hung workflows from blocking forever.
+    """
+    import threading
+    from core.config import cfg
+
+    graph = get_graph()
+    result = {"status": "failed", "error": "Graph invocation timed out"}
+    timeout = getattr(cfg, "autocode_graph_timeout", 300)
+
+    def _invoke():
+        nonlocal result
+        result = graph.invoke(initial_state)
+
+    thread = threading.Thread(target=_invoke, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+
+    if thread.is_alive():
+        # Thread is still running — timeout exceeded
+        return {
+            "status": "failed",
+            "error": f"Autocode graph timed out after {timeout}s",
+            "trace_id": initial_state.get("trace_id", ""),
+        }
+    return result
