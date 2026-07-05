@@ -155,10 +155,19 @@ def check_protected_file(path: str | Path, operation: str) -> Tuple[bool, str]:
                 f"Write operation blocked: '{path}' is a protected infrastructure file. "
                 f"Reads are allowed, but modifications are forbidden."
             )
+        # File is not protected — write allowed
+        return True, ""
 
-    # Unknown operation: allow by default (fail-open for unrecognized actions)
-    # but log a warning. Future tools should add their actions to the sets above.
-    return True, ""
+    # Unknown operation: deny by default (fail-closed).
+    # [Bug #2] Previously this returned True (allow) for unrecognized actions,
+    # which meant a new write action added to a tool but forgotten in
+    # WRITE_OPERATIONS would silently bypass protection on protected files.
+    # Fail-closed is safer: new actions must be explicitly added to
+    # READ_OPERATIONS or WRITE_OPERATIONS to be allowed on protected files.
+    return False, (
+        f"Operation '{operation}' is not in READ_OPERATIONS or WRITE_OPERATIONS. "
+        f"Add it to core/path_guard.py to allow it on protected files."
+    )
 
 # ── Git Scoping Guard ─────────────────────────────────────────────────────────
 

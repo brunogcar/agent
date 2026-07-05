@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| Pre-v1.1 | 2026-07-05 | `check_protected_file` now fails-closed on unknown operations (Bug #2). Was fail-open, which allowed new write actions to silently bypass protection on protected files. |
 | Pre-v1 | — | Initial standalone modules created |
 
 *(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
@@ -14,7 +15,11 @@
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes recorded yet. Add entries here as they occur.)*
+### Pre-v1.1 — 2026-07-05
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| `check_protected_file` fails-closed on unknown operations | Unknown action names (not in `READ_OPERATIONS` or `WRITE_OPERATIONS`) now return `(False, error_msg)` instead of `(True, "")`. New tools must explicitly add their actions to the operation sets in `core/path_guard.py`. | Add any new tool actions to `READ_OPERATIONS` or `WRITE_OPERATIONS` in `core/path_guard.py`. The error message names the missing action. |
 
 ---
 

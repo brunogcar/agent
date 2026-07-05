@@ -173,6 +173,35 @@ class TestCheckProtectedFile:
         assert allowed is False
         assert "protected" in err.lower()
 
+    # Bug #2: Unknown operations must fail-closed (was fail-open)
+    def test_unknown_operation_fail_closed_on_protected(self, mock_config):
+        """Unknown operations must be DENIED on protected files (fail-closed).
+
+        Previously returned (True, '') — fail-open — which meant a new write
+        action added to a tool but forgotten in WRITE_OPERATIONS would silently
+        bypass protection on protected files.
+        """
+        path = "core/config.py"
+        allowed, err = check_protected_file(path, "totally_new_action")
+        assert allowed is False, (
+            "Unknown operations must fail-closed on protected files. "
+            "Was fail-open — security risk for new tools with unregistered actions."
+        )
+        assert "totally_new_action" in err
+
+    def test_unknown_operation_fail_closed_on_unprotected(self, mock_config):
+        """Unknown operations must also be DENIED on unprotected files.
+
+        Fail-closed applies regardless of whether the file is protected —
+        the operation itself is unrecognized, so we can't know if it's safe.
+        """
+        path = "tools/file.py"
+        allowed, err = check_protected_file(path, "totally_new_action")
+        assert allowed is False, (
+            "Unknown operations must fail-closed even on unprotected files."
+        )
+        assert "totally_new_action" in err
+
     # v1.1: Test read operations include new actions
     def test_list_allowed_directories_in_read_operations(self):
         assert "list_allowed_directories" in READ_OPERATIONS

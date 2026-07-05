@@ -396,8 +396,19 @@ class Config:
         return target
 
     def resolve_workspace_path(self, relative: str) -> Path:
+        # [Bug #1] Path traversal guard — mirrors resolve_agent_path.
+        # Without this, a path like '../../secrets.txt' escapes the workspace
+        # sandbox. The agent_root version (above) has this check; the workspace
+        # version was missing it.
         clean = relative.replace("\\", "/").lstrip("/")
-        return (self.workspace_root / clean).resolve()
+        target = (self.workspace_root / clean).resolve()
+        try:
+            target.relative_to(self.workspace_root.resolve())
+        except ValueError as e:
+            raise PermissionError(
+                f"Path '{relative}' resolves outside WORKSPACE_ROOT"
+            ) from e
+        return target
 
     def is_protected(self, path: str | Path) -> bool:
         """Check if path matches protected file list (Cross-platform, bulletproof)."""

@@ -187,3 +187,58 @@ class TestConfigNaming:
     def test_web_limits_use_chars_suffix(self):
         assert hasattr(cfg, "web_max_text_chars")
         assert hasattr(cfg, "web_snippet_chars")
+
+
+# =============================================================================
+# Path Traversal Guards (Bug #1)
+# =============================================================================
+class TestPathTraversalGuards:
+    """resolve_workspace_path must have the same traversal guard as resolve_agent_path.
+
+    Previously resolve_workspace_path lacked the _is_within check, allowing
+    paths like '../../secrets.txt' to escape the workspace sandbox.
+    """
+
+    def _make_config(self, reload_config, tmp_path):
+        """Helper: create directories BEFORE Config() (constructor validates existence)."""
+        agent_root = tmp_path / "agent"
+        workspace_root = agent_root / "workspace"
+        memory_root = agent_root / "memory"
+        agent_root.mkdir(parents=True, exist_ok=True)
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        memory_root.mkdir(parents=True, exist_ok=True)
+        return reload_config({
+            "AGENT_ROOT": str(agent_root),
+            "WORKSPACE_ROOT": str(workspace_root),
+            "MEMORY_ROOT": str(memory_root),
+            "PLANNER_MODEL": "test",
+            "EXECUTOR_MODEL": "test",
+            "ROUTER_MODEL": "test",
+        })
+
+    def test_resolve_workspace_path_blocks_traversal(self, reload_config, tmp_path):
+        """'../../etc/passwd' must raise PermissionError, not escape workspace."""
+        c = self._make_config(reload_config, tmp_path)
+        with pytest.raises(PermissionError, match="WORKSPACE_ROOT"):
+            c.resolve_workspace_path("../../etc/passwd")
+
+    def test_resolve_workspace_path_blocks_absolute(self, reload_config, tmp_path):
+        """Absolute paths outside workspace must raise PermissionError."""
+        c = self._make_config(reload_config, tmp_path)
+        outside = tmp_path / "outside.txt"
+        with pytest.raises(PermissionError, match="WORKSPACE_ROOT"):
+            c.resolve_workspace_path(str(outside))
+
+    def test_resolve_workspace_path_allows_valid_relative(self, reload_config, tmp_path):
+        """Valid relative paths inside workspace must resolve without error."""
+        c = self._make_config(reload_config, tmp_path)
+        resolved = c.resolve_workspace_path("subdir/file.txt")
+        assert str(resolved).startswith(str(c.workspace_root.resolve()))
+
+    def test_resolve_workspace_path_matches_agent_path_guard(self, reload_config, tmp_path):
+        """Both resolve_*_path methods must have the same traversal guard behavior."""
+        c = self._make_config(reload_config, tmp_path)
+        with pytest.raises(PermissionError):
+            c.resolve_agent_path("../../etc/passwd")
+        with pytest.raises(PermissionError):
+            c.resolve_workspace_path("../../etc/passwd")

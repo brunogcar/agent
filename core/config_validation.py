@@ -60,6 +60,62 @@ def validate_config() -> None:
     if not cfg.lm_studio_base_url.startswith(("http://", "https://")):
         errors.append(f"lm_studio_base_url must be a valid URL: {cfg.lm_studio_base_url}")
 
+    # -- model_registry entries must have non-empty model strings (Bug #17) --
+    # Catches misconfigured .env where a *_MODEL var is set but resolves to
+    # an empty string (e.g., "EXECUTOR_MODEL=" with no value).
+    for role_name, entry in cfg.model_registry.items():
+        if not entry.get("model"):
+            errors.append(
+                f"model_registry['{role_name}'] has empty 'model' — "
+                f"check the corresponding *_MODEL env var in .env"
+            )
+        if not entry.get("provider"):
+            errors.append(
+                f"model_registry['{role_name}'] has empty 'provider'"
+            )
+        if entry.get("timeout", 0) <= 0:
+            errors.append(
+                f"model_registry['{role_name}'] has invalid 'timeout' "
+                f"(got: {entry.get('timeout')})"
+            )
+
+    # -- All agent roles must have a model_registry entry (Bug #17) --
+    # Catches typos in role configs (e.g., llm_role='cod' instead of 'code')
+    # at startup instead of at first dispatch call.
+    # Skip if tools.agent_ops isn't importable yet (early validation passes).
+    try:
+        from tools.agent_ops import ROLES
+        for role_name, role_data in ROLES.items():
+            llm_role = role_data.get("role_config", {}).get("llm_role", "")
+            if llm_role and llm_role not in cfg.model_registry:
+                # Opt-in roles (e.g., consultor when CONSULTOR_MODEL is unset)
+                # are expected to be absent — warn but don't error.
+                # Required roles with missing entries are errors.
+                if role_name == "consultor":
+                    continue  # opt-in, skip
+                errors.append(
+                    f"Role '{role_name}' has llm_role='{llm_role}' which is not "
+                    f"in model_registry. Valid: {sorted(cfg.model_registry.keys())}"
+                )
+    except ImportError:
+        pass  # tools.agent_ops not importable yet — skip ROLES check
+
+    # -- allowed_internal_hosts must be a frozenset of strings (Bug #17) --
+    # Catches malformed ALLOWED_INTERNAL_HOSTS env var (e.g., non-string entries
+    # after splitting). The frozenset comprehension in config.py filters empty
+    # strings, but a non-string value would slip through.
+    if not isinstance(cfg.allowed_internal_hosts, (frozenset, set, list)):
+        errors.append(
+            f"allowed_internal_hosts must be a set/list, got "
+            f"{type(cfg.allowed_internal_hosts).__name__}"
+        )
+    else:
+        for host in cfg.allowed_internal_hosts:
+            if not isinstance(host, str) or not host:
+                errors.append(
+                    f"allowed_internal_hosts contains invalid entry: {host!r}"
+                )
+
     # -- Raise if any errors --
     if errors:
         error_msg = "Config validation failed:\n  - " + "\n  - ".join(errors)
