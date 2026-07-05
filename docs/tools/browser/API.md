@@ -17,7 +17,7 @@ def browser(
     value: str = "",
     path: str = "",
     wait_until: str = "domcontentloaded",
-    timeout: int = 30,
+    timeout: int = BROWSER_TIMEOUT,  # [core/net] from core/net/default.py (30)
     delay: int = 50,
     key: str = "",
     expression: str = "",
@@ -31,7 +31,7 @@ def browser(
     height: int = 720,
     cookies_json: str = "",
     action_detail: str = "get",
-    retries: int = 0,          # NEW v1.1: navigate retry count
+    retries: int = BROWSER_NAV_RETRIES,  # [core/net] from core/net/default.py (2)
 ) -> dict:
     \"\"\"...\"\"\"
 ```
@@ -44,7 +44,7 @@ def browser(
 | `value` | `str` | No | Text value for `fill`, `type`, `select_option`. |
 | `path` | `str` | No | Save path for `screenshot` or upload path for `upload`. Default: `workspace/screenshots/{trace_id}_{timestamp}.png`. |
 | `wait_until` | `str` | No | Navigation wait condition: `domcontentloaded` (default), `networkidle`, `load`. |
-| `timeout` | `int` | No | Timeout in seconds. Default: 30. |
+| `timeout` | `int` | No | Timeout in seconds. Default: `BROWSER_TIMEOUT` from `core/net/default.py` (30). |
 | `delay` | `int` | No | Keystroke delay in ms for `type`. Default: 50. |
 | `key` | `str` | No | Key name for `keyboard_press`: `Enter`, `Tab`, `Escape`, etc. |
 | `expression` | `str` | No | JavaScript code for `evaluate`. |
@@ -58,7 +58,7 @@ def browser(
 | `height` | `int` | No | Viewport height for `set_viewport`. Default: 720. |
 | `cookies_json` | `str` | No | JSON string of cookies for `cookies` action (set mode). Must be a JSON array of objects with `name`, `value`, and either `url` or `domain`+`path`. |
 | `action_detail` | `str` | No | Sub-action for `cookies`: `get` (default), `set`, `clear`. |
-| `retries` | `int` | No | Retry count for `navigate` on transient failure. Backoff: 1s, 2s, 4s, ... capped at 8s. Default: 0 (no retry). |
+| `retries` | `int` | No | Retry count for `navigate` on transient failure. Uses `get_retry_delay()` from `core/net/errors.py` with jitter. Default: `BROWSER_NAV_RETRIES` from `core/net/default.py` (2). |
 
 ---
 

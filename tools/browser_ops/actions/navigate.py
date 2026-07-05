@@ -1,4 +1,11 @@
-"""Browser action: navigate."""
+"""Browser action: navigate.
+
+[core/net adoption] Uses get_retry_delay() from core/net/errors.py for unified
+backoff (was hardcoded min(2^attempt, 8)). Constants from core/net/default.py.
+Keeps hand-rolled retry loop (not retry_sync) because browser retry has special
+semantics: same page reuse, Playwright errors aren't in is_retryable_error(),
+and retries parameter is caller-controlled.
+"""
 from __future__ import annotations
 
 import time
@@ -6,6 +13,8 @@ from urllib.parse import urlparse
 
 from core.contracts import fail, ok
 from core.net.security import is_safe_network_address
+from core.net.errors import get_retry_delay
+from core.net.default import BROWSER_TIMEOUT, BROWSER_NAV_RETRIES, RETRY_BASE_DELAY, RETRY_MAX_DELAY
 
 from tools.browser_ops.factory import _get_page
 from tools.browser_ops.loop import _run_browser_async
@@ -28,20 +37,24 @@ Optional: wait_until, timeout, headless, trace_id, retries""",
 def _action_navigate(
     url: str = "",
     wait_until: str = "domcontentloaded",
-    timeout: int = 30,
+    timeout: int = BROWSER_TIMEOUT,  # [core/net] Was hardcoded 30
     headless: bool = True,
     trace_id: str = "",
-    retries: int = 0,
+    retries: int = BROWSER_NAV_RETRIES,  # [core/net] Was hardcoded 0
     **kwargs,
 ) -> dict:
     """Navigate to a URL and wait for the page to load.
 
-    Supports exponential-backoff retry on transient failures.
-    retry delay = 2^attempt seconds (1s, 2s, 4s, ...) capped at 8s.
+    Supports retry on transient failures with unified backoff via
+    get_retry_delay() from core/net/errors.py.
 
     NOTE: On retry, the same page/context is reused. If the page crashed
     during the failed attempt, the retry will also fail. A future v2
     improvement may close and recreate the context between retries.
+
+    NOTE: Uses hand-rolled retry loop (not retry_sync) because browser
+    retry has special semantics: Playwright errors aren't in
+    is_retryable_error(), and the retries parameter is caller-controlled.
     """
     if not url:
         return fail("url is required for navigate action", trace_id=trace_id)
@@ -75,8 +88,9 @@ def _action_navigate(
         except Exception as e:
             last_error = e
             if attempt < retries:
-                # Exponential backoff: 1s, 2s, 4s, ... capped at 8s.
-                delay = min(2 ** attempt, 8)
+                # [core/net] Unified backoff via get_retry_delay() with jitter.
+                # Was: min(2 ** attempt, 8) — hardcoded, no jitter.
+                delay = get_retry_delay(attempt, RETRY_BASE_DELAY, RETRY_MAX_DELAY, jitter=True)
                 time.sleep(delay)
             continue
 

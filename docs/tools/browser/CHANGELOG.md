@@ -6,6 +6,10 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.3 | 2026-07-05 | **core/net adoption:** navigate.py uses `get_retry_delay()` from `core/net/errors.py` (was hardcoded `min(2^attempt, 8)`). Constants from `core/net/default.py` (`BROWSER_TIMEOUT=30`, `BROWSER_NAV_RETRIES=2`, `RETRY_BASE_DELAY`, `RETRY_MAX_DELAY`). Default `retries` changed from 0 to 2. Default `timeout` source changed from hardcoded 30 to `BROWSER_TIMEOUT`. |
+
+| Version | Date | Changes |
+|---------|------|---------|
 
 *(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
 
@@ -41,6 +45,14 @@
 - Added `state` param to `wait_for_selector` (`"attached"`, `"detached"`, `"visible"`, `"hidden"`)
 - Added duplicate action guard in `@register_action`: raises `ValueError` on collision
 - Preserved "WHEN TO USE THIS TOOL" decision table via `doc_sections`
+
+### v1.3 — 2026-07-05 (core/net adoption)
+
+| Change | Impact |
+|--------|--------|
+| `navigate.py` backoff moved to `core/net/errors.py` | Was `min(2^attempt, 8)` (no jitter). Now `get_retry_delay()` with jitter. |
+| `navigate.py` constants from `core/net/default.py` | `timeout` default source: hardcoded 30 → `BROWSER_TIMEOUT` (30). `retries` default: hardcoded 0 → `BROWSER_NAV_RETRIES` (2). |
+| Default `retries` changed from 0 to 2 | Navigate now retries twice by default (was: no retry). Callers passing `retries=0` explicitly are unaffected. |
 
 ### v1.1 (bug fixes + upload + retry)
 

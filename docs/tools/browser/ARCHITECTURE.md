@@ -18,6 +18,8 @@
 | `tests/tools/browser/` | 27 test files + conftest.py |
 | `tests/tools/browser/conftest.py` | `mock_browser`, `mock_cfg_for_browser`, `reset_browser_state` |
 | `core/net/security.py` | `is_safe_network_address` — SSRF protection |
+| `core/net/errors.py` | `get_retry_delay()` — unified backoff for navigate retry |
+| `core/net/default.py` | `BROWSER_TIMEOUT`, `BROWSER_NAV_RETRIES`, `RETRY_BASE_DELAY`, `RETRY_MAX_DELAY` — shared constants |
 | `core/tracer.py` | `tracer.step()` — observability |
 
 ---

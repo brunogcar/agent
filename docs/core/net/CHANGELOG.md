@@ -74,12 +74,12 @@
 | Replace inline HTTP error checks in `web` | Use `classify_http_error()` in `web/actions/*.py` | P1 |
 | Replace hardcoded backoff in `web` | Use `get_retry_delay()` instead of `time.sleep(2 ** attempt)` | P1 |
 | Replace duplicated SSRF logic in `web` | Use `_assert_safe_urls()` in `web/utils.py` | P1 |
-| Replace inline HTTP error checks in `browser` | Use `classify_http_error()` in `browser/actions/*.py` | P2 |
-| Replace duplicated SSRF logic in `browser` | Use `_assert_safe_urls()` in `browser/actions/*.py` | P2 |
+| ~~Replace inline HTTP error checks in `browser`~~ | ✅ N/A — browser doesn't make HTTP calls directly (Playwright handles internally). Only `navigate.py` uses backoff, now via `get_retry_delay()`. | ✅ Done |
+| ~~Replace duplicated SSRF logic in `browser`~~ | ✅ Already uses `core/net/security.is_safe_network_address()` | ✅ Done |
 | Add `check_budget()` + `record_tool_call()` for paid APIs in `web` | If web tool ever calls paid APIs | P2 |
 | Use `normalize_url()` for cache keys in `research`/`deep_research` | Any tool with response caching | P2 |
-| Import constants from `core.net.default` in `web`/`browser` | Replace hardcoded timeouts, retries, thresholds | P2 |
-| Update `web`/`browser` tests to use `tests/core/net/conftest.py` fixtures | Shared fixtures | P2 |
+| ~~Import constants from `core.net.default` in `web`/`browser`~~ | ✅ Both now import from `core/net/default.py` | ✅ Done |
+| Update `web`/`browser` tests to use `tests/core/net/conftest.py` fixtures | Shared fixtures — low priority, current tests work fine | P3 |
 
 ---
 

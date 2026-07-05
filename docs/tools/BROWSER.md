@@ -11,7 +11,7 @@ The `browser()` tool automates web browsers via Playwright — navigate, click, 
 - **Screenshot auto-cleanup** — Files older than 7 days deleted on startup and every 6 hours
 - **Screenshot-on-failure** — Failed actions (except `screenshot` and `close`) automatically capture a debug screenshot
 - **Tracer spans** — Every action logs `action={name}`, `action={name}:complete`, and `action={name}:failed`
-- **Navigate retry** — Exponential backoff on transient failures (1s, 2s, 4s, ... capped at 8s)
+- **Navigate retry** — Uses `get_retry_delay()` from `core/net/errors.py` with unified constants from `core/net/default.py` (`BROWSER_TIMEOUT=30`, `BROWSER_NAV_RETRIES=2`)
 
 ---
 
@@ -59,4 +59,4 @@ The `browser()` tool automates web browsers via Playwright — navigate, click, 
 
 ---
 
-*Architecture: thin facade + @meta_tool + atomic action modules + auto-discovery + dedicated async loop + thread-safe lock + trace isolation + SSRF protection + URL scheme validation + safe JS injection + screenshot-on-failure + navigate retry.*
+*Architecture: thin facade + @meta_tool + atomic action modules + auto-discovery + dedicated async loop + thread-safe lock + trace isolation + SSRF protection + URL scheme validation + safe JS injection + screenshot-on-failure + navigate retry + core/net adoption.*

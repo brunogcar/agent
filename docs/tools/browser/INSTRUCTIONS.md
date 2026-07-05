@@ -22,6 +22,8 @@
 
 ## ✅ ALWAYS DO
 
+1. **Always use `get_retry_delay()` from `core/net/errors.py` for backoff** — Never hardcode `2 ** attempt`. Use constants from `core/net/default.py` (`BROWSER_TIMEOUT`, `BROWSER_NAV_RETRIES`).
+
 16. **Always verify tests mock the correct import path** — `mock.patch` targets where the name is **looked up**, not where it is defined.
 17. **Always add `trace_id` to tracer steps** — `tracer.step(trace_id, "browser", ...)` not `tracer.step("browser", ...)`.
 18. **Always use `compileall` before `pytest`** — catches syntax errors early.
@@ -45,4 +47,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-053. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
