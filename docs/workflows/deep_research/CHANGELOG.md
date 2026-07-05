@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.0.2 | 2026-07-05 | **Bug fix:** API budget (`budget_api_calls`) now only decremented for Tavily searches, not web (SearXNG) searches. Previously both consumed API budget, exhausting it prematurely. |
 | v1.0.1 | 2026-07-05 | **Bug fix:** Both `agent()` calls in `node_synthesize` (synthesize + evaluate) now pass `action="dispatch"`. Previously both returned `Unknown action ''` error — synthesis fell back to `prev_knowledge` (always `""` on first iteration), and evaluate always returned `score=0.0` (completeness permanently 0). Also removed dead `completeness_threshold = 0.85` local (was 0-1 scale, never used; real threshold comparison is `85.0` on 0-100 scale in `routes.py` and `graph.py`). |
 | v1.0 | — | Released — 8-node cyclic LangGraph StateGraph with budget management, convergence detection, multi-tool search, and memory integration |
 

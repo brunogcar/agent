@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| Pre-v1.0 | 2026-07-05 | **Bug fix:** `node_search` now uses `cfg.web_max_search_results` (default 10) instead of hardcoded `max_results=3`. `node_synthesize` error check changed from confusing `not r.get("status") == "success"` to explicit `r.get("status") != "success"` for readability. |
 | Pre-v1.0 | — | In development — Monolithic `workflows/research.py` with 8-node pipeline. Will be split into subpackage with per-node modules following `deep_research_impl/` and `autocode_impl/` patterns. |
 
 ---

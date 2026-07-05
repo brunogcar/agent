@@ -279,3 +279,104 @@ class TestBrowserFallback:
         text, updates = _try_browser_fallback("http://example.com", "tid", {"budget_browser_actions": 0})
         assert text == ""
         assert updates == {}
+
+
+class TestApiBudgetOnlyForTavily:
+    """Bug fix: API budget must only be decremented for Tavily, not web searches."""
+
+    def test_web_search_does_not_decrement_api_budget(self, mocker):
+        """When web (SearXNG) search succeeds, API budget must NOT be decremented.
+
+        Web searches are free (SearXNG). Only Tavily calls consume API budget.
+        """
+        from workflows.deep_research_impl.nodes.search import node_search
+        from workflows.deep_research_impl.budget import decrement_api_calls
+
+        # Mock web search to succeed (free, no API cost)
+        mocker.patch(
+            "workflows.deep_research_impl.nodes.search.web",
+            return_value={"status": "success", "data": {"results": []}},
+        )
+        mocker.patch(
+            "workflows.deep_research_impl.nodes.search.tavily",
+            side_effect=Exception("Should not be called"),
+        )
+        # Mock _select_tool to return "web"
+        mocker.patch(
+            "workflows.deep_research_impl.nodes.search._select_tool",
+            return_value="web",
+        )
+
+        # Track if decrement_api_calls was called
+        mock_decrement = mocker.patch(
+            "workflows.deep_research_impl.nodes.search.decrement_api_calls",
+            return_value={"budget_api_calls": 10},
+        )
+
+        state = {
+            "pending_queries": ["test query"],
+            "budget_api_calls": 10,
+            "budget_browser_actions": 5,
+            "seen_urls": [],
+            "failed_sources": [],
+            "budget_events": [],
+            "trace_id": "test",
+            "goal": "test",
+            "iteration": 0,
+        }
+        node_search(state)
+
+        assert not mock_decrement.called, (
+            "decrement_api_calls must NOT be called for web searches — "
+            "only Tavily (paid API) should consume API budget"
+        )
+
+    def test_tavily_search_decrements_api_budget(self, mocker):
+        """When Tavily search succeeds, API budget MUST be decremented."""
+        from workflows.deep_research_impl.nodes.search import node_search
+
+        # Return non-empty results so tavily doesn't fall back to web
+        mocker.patch(
+            "workflows.deep_research_impl.nodes.search.tavily",
+            return_value={
+                "status": "success",
+                "data": {"results": [{"url": "http://example.com", "title": "Test", "text": "A" * 200}]},
+            },
+        )
+        mocker.patch(
+            "workflows.deep_research_impl.nodes.search._select_tool",
+            return_value="tavily",
+        )
+        # Mock _extract_evidence to avoid kgraph/citations deps
+        mocker.patch(
+            "workflows.deep_research_impl.nodes.search._extract_evidence",
+            return_value=([], {}),
+        )
+        # Mock _summarize_evidence to avoid LLM call
+        mocker.patch(
+            "workflows.deep_research_impl.nodes.search._summarize_evidence",
+            return_value="summary",
+        )
+
+        mock_decrement = mocker.patch(
+            "workflows.deep_research_impl.nodes.search.decrement_api_calls",
+            return_value={"budget_api_calls": 9},
+        )
+
+        state = {
+            "pending_queries": ["test query"],
+            "budget_api_calls": 10,
+            "budget_browser_actions": 5,
+            "seen_urls": [],
+            "failed_sources": [],
+            "budget_events": [],
+            "trace_id": "test",
+            "goal": "test",
+            "iteration": 0,
+        }
+        node_search(state)
+
+        assert mock_decrement.called, (
+            "decrement_api_calls MUST be called for Tavily searches — "
+            "Tavily is a paid API and consumes budget"
+        )

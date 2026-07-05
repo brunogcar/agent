@@ -10,14 +10,13 @@
 
 **Logic:**
 ```python
-web(action="search", query=goal, max_results=3)
+# Uses cfg.web_max_search_results (default 10) — was hardcoded to 3
+web(action="search", query=goal, max_results=cfg.web_max_search_results)
 ```
 
 **Output:** Partial dict with `urls_data` (list of `{url, title, snippet}`).
 
 **Error handling:** If search fails, returns `{"urls_data": []}`. The workflow proceeds with empty results.
-
-**Note:** `max_results=3` is hardcoded despite `cfg.web_max_search_results` defaulting to 10. This is a known limitation.
 
 ---
 
@@ -73,13 +72,7 @@ return "has_results"     # → node_synthesize
 **Error handling:**
 - `agent()` failure → `node_error(state, "synthesize", ...)` → workflow ends
 
-**Critical bug:** The status check is broken:
-```python
-if not r.get("status") == "success":  # BUG: always False!
-```
-This is `(not "success") == "success"` → `False == "success"` → `False`. The error path **never fires**.
-
-**Fix:** `if r.get("status") != "success":`
+**Note (fixed):** The status check was previously `not r.get("status") == "success"` — confusing operator precedence (functionally correct but hard to read). Changed to explicit `r.get("status") != "success"`.
 
 ---
 

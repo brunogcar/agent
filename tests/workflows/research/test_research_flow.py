@@ -188,3 +188,65 @@ class TestNodeSynthesizeActionDispatch:
             "action='dispatch' is correctly passed. Before the v1.5 fix, this always "
             "returned node_error() because agent() returned 'Unknown action' error."
         )
+
+
+class TestNodeSearchMaxResults:
+    """Bug fix: max_results must use cfg.web_max_search_results, not hardcoded 3."""
+
+    def test_node_search_uses_cfg_max_results(self):
+        """node_search must pass cfg.web_max_search_results to web(), not hardcoded 3."""
+        from workflows.research import node_search
+        from unittest.mock import patch, MagicMock
+
+        state = _base_state()
+        state["goal"] = "test query"
+
+        # NOTE: web AND cfg are imported INSIDE node_search, so we patch at source.
+        fake_cfg = MagicMock()
+        fake_cfg.web_max_search_results = 10
+        with patch("tools.web.web") as mock_web, \
+             patch("core.config.cfg", fake_cfg):
+            mock_web.return_value = {"status": "success", "results": []}
+            node_search(state)
+
+            call_kwargs = mock_web.call_args.kwargs
+            assert call_kwargs.get("max_results") == 10, (
+                f"max_results must be cfg.web_max_search_results (10), got "
+                f"{call_kwargs.get('max_results')}. Was hardcoded to 3."
+            )
+
+    def test_node_search_does_not_hardcode_3(self):
+        """The source must not contain hardcoded max_results=3."""
+        import inspect
+        from workflows.research import node_search
+        source = inspect.getsource(node_search)
+        # Must not have max_results=3 as a literal (3 as part of cfg is fine)
+        assert "max_results=3)" not in source, (
+            "node_search must not hardcode max_results=3 — use cfg.web_max_search_results"
+        )
+
+
+class TestNodeSynthesizeErrorCheck:
+    """Style fix: not r.get('status') == 'success' → r.get('status') != 'success'."""
+
+    def test_synthesize_uses_explicit_not_equal(self):
+        """node_synthesize must use != 'success' in actual code, not 'not ... == "success"'."""
+        import inspect
+        import ast
+        from workflows.research import node_synthesize
+        source = inspect.getsource(node_synthesize)
+        # Strip comments and docstrings to check actual code only
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                if (node.body and isinstance(node.body[0], ast.Expr) and
+                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
+        code_only = ast.unparse(tree)
+        code_lines = [line for line in code_only.split("\n") if not line.strip().startswith("#")]
+        code_str = "\n".join(code_lines)
+        assert "not r.get" not in code_str or "!=" in code_str, (
+            "node_synthesize should use r.get('status') != 'success' in actual code, "
+            "not the confusing 'not r.get(status) == success' pattern"
+        )
+

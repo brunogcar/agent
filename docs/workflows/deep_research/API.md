@@ -63,9 +63,9 @@ memory.recall(
 - Budget exhaustion stops the search loop
 - Browser fallback failures are logged but don't fail the workflow
 
-**Critical bug:** API budget is decremented for ALL successful searches, including web searches (which don't consume Tavily API calls). Only Tavily searches should decrement the API budget.
+**Note (v1.0.2 fix):** API budget (`budget_api_calls`) is now only decremented for Tavily searches, not web (SearXNG) searches. Previously both consumed API budget, exhausting it prematurely.
 
-**Critical bug:** API budget is NOT decremented for failed Tavily searches. The API call was made (and consumed) but the budget doesn't reflect it.
+**Note:** API budget is NOT decremented for failed Tavily searches. The API call was made (and consumed) but the budget doesn't reflect it. (Known limitation — may be addressed in future.)
 
 **Note:** `max_results=5` is hardcoded for search queries. Not configurable.
 

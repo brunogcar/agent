@@ -31,14 +31,14 @@
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(Fill this section with relevant info from edits and refactors. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
+> - **What happened:** `node_search` hardcoded `max_results=3` for web searches, ignoring `cfg.web_max_search_results` (default 10). Users got only 3 results per query regardless of config.
+> - **Why it matters:** Research quality suffered — 3 results is too few for complex topics. The config existed but was never used.
+> - **Fix:** Pass `cfg.web_max_search_results` to `web(action="search", ...)`. Never hardcode limits that already have config vars.
 
-> - **What happened:** The symptom or bug
-> - **Why it matters:** The impact
-> - **Fix:** The solution or pattern to follow
-
-*Fill this section with relevant information during edits and refactors.)*
+> - **What happened:** `node_synthesize` used `not r.get("status") == "success"` — confusing operator precedence. While functionally correct (`not (x == "success")`), it looked like `(not x) == "success"` which would always be False.
+> - **Why it matters:** Confusing code leads to misdiagnosis. A developer reading this might think the error path never fires (it does), or "fix" it incorrectly.
+> - **Fix:** Use explicit `r.get("status") != "success"` — same behavior, unambiguous.
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -27,19 +27,24 @@
 18. **Always test multi-tool fallback** — Assert Tavily → web → browser fallback chain.
 19. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
 20. **Always use `llm.complete()` directly for custom system prompts** — `agent()` uses role's system prompt. Bypass for custom prompts.
+21. **Always decrement API budget only for paid APIs** — `decrement_api_calls()` is for Tavily only. Web (SearXNG) and browser searches are free and must NOT consume API budget.
 
 ---
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(Fill this section with relevant info from edits and refactors. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
+> - **What happened:** `decrement_api_calls()` was called for ALL successful searches, including web (SearXNG) searches. Web searches are free — only Tavily is a paid API.
+> - **Why it matters:** The API budget was exhausted prematurely. A 20-call Tavily budget would be consumed by web searches, leaving no room for actual Tavily queries.
+> - **Fix:** Guard the decrement with `if actual_tool == "tavily":` — only paid API calls consume budget.
 
-> - **What happened:** The symptom or bug
-> - **Why it matters:** The impact
-> - **Fix:** The solution or pattern to follow
+> - **What happened:** Both `agent()` calls in `node_synthesize` (synthesize + evaluate) were missing `action="dispatch"`. The agent facade requires it — without it, every call returned "Unknown action" error.
+> - **Why it matters:** Synthesis fell back to `prev_knowledge` (always `""` on first iteration), and evaluate always returned `score=0.0`. The knowledge base never advanced and completeness was permanently 0.
+> - **Fix:** Add `action="dispatch"` as the first keyword argument to every `agent()` call.
 
-*Fill this section with relevant information during edits and refactors.)*
+> - **What happened:** A dead `completeness_threshold = state.get("completeness_threshold", 0.85)` local was read but never used. The real threshold comparison lives in `routes.py` (default `85.0` on 0-100 scale).
+> - **Why it matters:** The `0.85` (0-1 scale) was misleading — it looked like a scale mismatch but was actually dead code. Real comparison uses `85.0` (0-100 scale), matching `_parse_score()` output.
+> - **Fix:** Removed the dead local. Added explanatory comment to prevent re-introduction.
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

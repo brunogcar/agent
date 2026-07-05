@@ -238,7 +238,10 @@ def node_search(state: DeepResearchState) -> DeepResearchState:
         search_result, actual_tool, search_updates = _execute_search_with_fallback(query, {**state, **updates})
         updates.update(search_updates)
         if search_result.get("status") == "success":
-            updates.update(decrement_api_calls({**state, **updates}))
+            # [Bug fix] Only decrement API budget for Tavily calls (paid API).
+            # Web searches use SearXNG (free) — should NOT consume API budget.
+            if actual_tool == "tavily":
+                updates.update(decrement_api_calls({**state, **updates}))
             new_evidence, extract_updates = _extract_evidence(
                 search_result, query, actual_tool, goal, tid, failed,
                 {**state, **updates}, state.get("iteration", 0) + 1, seen_urls,

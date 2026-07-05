@@ -75,10 +75,12 @@ def node_recall(state: WorkflowState) -> WorkflowState:
 def node_search(state: WorkflowState) -> WorkflowState:
     """Search the web for relevant URLs."""
     from tools.web import web
+    from core.config import cfg
     goal = state.get("goal", "")
     node_step(state, "search", "searching web for URLs", query=goal[:60])
 
-    result = web(action="search", query=goal, max_results=3)
+    # [Bug fix] Was hardcoded max_results=3 — now uses cfg.web_max_search_results (default 10)
+    result = web(action="search", query=goal, max_results=cfg.web_max_search_results)
 
     if result.get("status") != "success" or not result.get("results"):
         err = result.get("error", "no results returned")
@@ -338,7 +340,9 @@ def node_synthesize(state: WorkflowState) -> WorkflowState:
         trace_id = state.get("trace_id", ""),
     )
 
-    if not r.get("status") == "success":
+    # [Style fix] Was: `not r.get("status") == "success"` — confusing operator precedence.
+    # Changed to explicit `!= "success"` for readability.
+    if r.get("status") != "success":
         return node_error(state, "synthesize",
                           f"Agent failed: {r.get('error', 'unknown')}")
 
