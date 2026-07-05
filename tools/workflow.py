@@ -1,5 +1,5 @@
 ﻿"""
-tools/workflow_tool.py — Launch LangGraph workflows (research, data, autocode).
+tools/workflow.py — Launch LangGraph workflows (research, data, autocode).
 Registered via @tool so MCP auto-discovers it.
 
 ARCHITECTURE & SAFETY (P0-3 Hardening):

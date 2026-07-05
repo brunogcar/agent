@@ -215,7 +215,7 @@ graph TD
     E --> F
     B -->|No| G{tool?}
     G -->|web| H["tools.web.web()"]
-    G -->|python| I["tools.python_exec.python()"]
+    G -->|python| I["tools.python.python()"]
     G -->|memory| J["tools.memory.memory()"]
     G -->|file| K["tools.file.file()"]
     G -->|git| L["tools.git.git()"]
@@ -249,7 +249,7 @@ decision = router.route("read config.py", trace_id=trace_id)
 | Tool | Import | Description |
 |------|--------|-------------|
 | `web` | `tools.web.web()` | Web scraping, search |
-| `python` | `tools.python_exec.python()` | Python code execution |
+| `python` | `tools.python.python()` | Python code execution |
 | `memory` | `tools.memory.memory()` | ChromaDB read/write |
 | `file` | `tools.file.file()` | File operations |
 | `git` | `tools.git.git()` | Git operations |

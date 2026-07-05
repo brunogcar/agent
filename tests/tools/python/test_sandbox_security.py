@@ -1,10 +1,10 @@
 """
-pytest suite for python_exec sandbox security and AST validation.
+pytest suite for python sandbox security and AST validation.
 Verifies that dangerous patterns are blocked even when obfuscated.
-Run with: pytest tests/tools/python_exec/test_sandbox_security.py -v
+Run with: pytest tests/tools/python/test_sandbox_security.py -v
 """
 import pytest
-from tools.python_exec import python
+from tools.python import python
 
 
 class TestSandboxSecurity:

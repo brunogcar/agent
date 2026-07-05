@@ -57,7 +57,7 @@ def node_execute(state: WorkflowState) -> WorkflowState:
     Python code from the goal. The code role returns structured JSON with
     {analysis, patch, assumptions, tests} — we extract the "patch" field.
     """
-    from tools.python_exec import python
+    from tools.python import python
 
     code = state.get("code", "")
     goal = state.get("goal", "")

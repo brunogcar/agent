@@ -81,7 +81,7 @@ def cli(
 | `scrape` | `scrape ` | `url` | Scrape webpage (first 3000 chars) |
 | `read` | `read ` | `url` | Read webpage (first 3000 chars) |
 
-### Python (routes to `tools/python_exec.py`)
+### Python (routes to `tools/python.py`)
 
 | Action | Shortcut | Required Params | Optional Params | Description |
 |--------|----------|-----------------|-----------------|-------------|

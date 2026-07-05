@@ -1,4 +1,4 @@
-"""Thread-safety tests for python_exec sandbox.
+"""Thread-safety tests for python sandbox.
 
 [BUGFIX-2] Covers the contextlib.redirect_stdout thread-safety fix.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 import concurrent.futures
 import pytest
 
-from tools.python_exec import python
+from tools.python import python
 
 
 class TestThreadSafeStdout:

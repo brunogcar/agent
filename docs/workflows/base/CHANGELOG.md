@@ -36,7 +36,7 @@
 | Understand special case | ✅ Pre-v1.0 | Direct function call instead of StateGraph |
 | Exception isolation | ✅ Pre-v1.0 | Try/except wrapper, clean failure dicts |
 | LangGraph immutability | ✅ Pre-v1.0 | Partial update dicts, no in-place mutation |
-| `report` removed from `VALID_WORKFLOWS` | ✅ Pre-v1.1 | `report` is a tool, not a workflow — removed from `workflow_tool.py` to prevent LLM from calling `workflow(type="report")` which always failed |
+| `report` removed from `VALID_WORKFLOWS` | ✅ Pre-v1.1 | `report` is a tool, not a workflow — removed from `workflow.py` to prevent LLM from calling `workflow(type="report")` which always failed |
 | `deep_research` added to `VALID_WORKFLOWS` | ✅ Pre-v1.1 | Was handled by `run_workflow()` but missing from `VALID_WORKFLOWS` — LLM can now invoke directly |
 | `run_workflow()` error message updated | ✅ Pre-v1.1 | Stale message said `Use: research \| data \| autocode` — now lists all 5 valid types |
 

@@ -1,12 +1,12 @@
-﻿"""
-tests/tools/workflow_tool/test_workflow_tool.py
+"""
+tests/tools/workflow/test_workflow.py
 Tests for the Workflow meta-tool, focusing on P0-3 hardening 
 (strict type validation, fail-fast parameter guards, and guaranteed trace_id observability).
 """
 import pytest
 from unittest.mock import patch, MagicMock
 
-from tools.workflow_tool import workflow, _make_error, VALID_WORKFLOWS
+from tools.workflow import workflow, _make_error, VALID_WORKFLOWS
 
 # =============================================================================
 # 1. Helper & Basic Validation Tests
@@ -23,7 +23,7 @@ class TestMakeError:
         assert err["valid_types"] == ["a", "b"]
 
 class TestWorkflowValidation:
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     def test_generates_trace_id_if_missing(self, mock_tracer):
         mock_tracer.new_trace.return_value = "generated-trace"
         # Invalid type to trigger early return
@@ -31,7 +31,7 @@ class TestWorkflowValidation:
         assert res["trace_id"] == "generated-trace"
         mock_tracer.new_trace.assert_called_once()
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     def test_invalid_workflow_type(self, mock_tracer):
         res = workflow(type="coding", goal="test", trace_id="t1")
         assert res["status"] == "error"
@@ -39,7 +39,7 @@ class TestWorkflowValidation:
         assert res["trace_id"] == "t1"
         assert "valid_types" in res
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     def test_missing_goal(self, mock_tracer):
         res = workflow(type="research", goal="", trace_id="t2")
         assert res["status"] == "error"
@@ -50,19 +50,19 @@ class TestWorkflowValidation:
 # 2. Autocode Fail-Fast Guards
 # =============================================================================
 class TestAutocodeValidation:
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     def test_missing_target_file(self, mock_tracer):
         res = workflow(type="autocode", goal="fix it", trace_id="t3")
         assert res["status"] == "error"
         assert "target_file is required" in res["error"]
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     def test_fix_error_missing_msg(self, mock_tracer):
         res = workflow(type="autocode", goal="fix it", target_file="a.py", mode="fix_error", trace_id="t4")
         assert res["status"] == "error"
         assert "error_msg is required" in res["error"]
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     def test_add_feature_missing_desc(self, mock_tracer):
         res = workflow(type="autocode", goal="add it", target_file="a.py", mode="add_feature", trace_id="t5")
         assert res["status"] == "error"
@@ -82,7 +82,7 @@ class TestAutoRouting:
         mock_decision.reason = "simple search"
         mock_route.return_value = mock_decision
         
-        with patch("tools.workflow_tool.tracer"):
+        with patch("tools.workflow.tracer"):
             res = workflow(type="auto", goal="search web", trace_id="t6")
         
         assert res["status"] == "routed"
@@ -100,7 +100,7 @@ class TestAutoRouting:
         
         mock_run.return_value = {"status": "success", "data": "done"}
         
-        with patch("tools.workflow_tool.tracer"):
+        with patch("tools.workflow.tracer"):
             res = workflow(type="auto", goal="research ai", trace_id="t7")
         
         assert res["status"] == "success"
@@ -115,7 +115,7 @@ class TestAutoRouting:
 # 4. Execution & Observability
 # =============================================================================
 class TestWorkflowExecution:
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     @patch("workflows.base.run_workflow")
     def test_successful_execution_adds_trace_id(self, mock_run, mock_tracer):
         """Ensure trace_id is injected into successful workflow results."""
@@ -125,7 +125,7 @@ class TestWorkflowExecution:
         assert res["status"] == "success"
         assert res["trace_id"] == "t8"
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     @patch("workflows.base.run_workflow")
     def test_execution_exception_returns_clean_error(self, mock_run, mock_tracer):
         """Ensure LangGraph crashes are caught and returned as clean error dicts."""
@@ -146,7 +146,7 @@ class TestWorkflowTypeLiteral:
     def test_workflow_type_includes_understand(self):
         """The WorkflowType Literal must include 'understand' for type checkers."""
         from typing import get_args
-        from tools.workflow_tool import WorkflowType
+        from tools.workflow import WorkflowType
         args = get_args(WorkflowType)
         assert "understand" in args, (
             f"WorkflowType Literal must include 'understand'. Got: {args}"
@@ -155,7 +155,7 @@ class TestWorkflowTypeLiteral:
     def test_workflow_type_includes_deep_research(self):
         """The WorkflowType Literal must include 'deep_research'."""
         from typing import get_args
-        from tools.workflow_tool import WorkflowType
+        from tools.workflow import WorkflowType
         args = get_args(WorkflowType)
         assert "deep_research" in args, (
             f"WorkflowType Literal must include 'deep_research'. Got: {args}"
@@ -164,7 +164,7 @@ class TestWorkflowTypeLiteral:
     def test_workflow_type_excludes_report(self):
         """The WorkflowType Literal must NOT include 'report' — it's a tool, not a workflow."""
         from typing import get_args
-        from tools.workflow_tool import WorkflowType
+        from tools.workflow import WorkflowType
         args = get_args(WorkflowType)
         assert "report" not in args, (
             f"WorkflowType Literal must NOT include 'report' (it's a tool). Got: {args}"
@@ -185,7 +185,7 @@ class TestWorkflowTypeLiteral:
     def test_workflow_type_matches_valid_workflows(self):
         """WorkflowType Literal should match VALID_WORKFLOWS (minus 'auto' which is a mode)."""
         from typing import get_args
-        from tools.workflow_tool import WorkflowType
+        from tools.workflow import WorkflowType
         args = set(get_args(WorkflowType))
         # Every Literal value should be in VALID_WORKFLOWS
         assert args.issubset(VALID_WORKFLOWS), (
@@ -198,7 +198,7 @@ class TestUnderstandDocstring:
 
     def test_docstring_includes_understand(self):
         """The workflow() docstring must list 'understand' for LLM discovery."""
-        from tools.workflow_tool import workflow
+        from tools.workflow import workflow
         assert "understand" in workflow.__doc__.lower(), (
             "workflow() docstring must mention 'understand' — LLM uses the docstring "
             "to discover available workflows."
@@ -208,7 +208,7 @@ class TestUnderstandDocstring:
 class TestUnderstandProjectRoot:
     """Bug #3: understand workflow must forward project_root to run_workflow."""
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     @patch("workflows.base.run_workflow")
     def test_understand_forwards_project_root(self, mock_run, mock_tracer):
         """project_root must be passed to run_workflow for understand workflow.
@@ -231,7 +231,7 @@ class TestUnderstandProjectRoot:
             "project_root must be forwarded to run_workflow for understand workflow."
         )
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     def test_understand_missing_project_root_returns_error(self, mock_tracer):
         """project_root is required for understand workflow."""
         res = workflow(type="understand", goal="test", trace_id="t-no-root")
@@ -246,7 +246,7 @@ class TestAutoRoutingLowConfidenceGap:
     questions were empty/None, low confidence fell through to execution.
     """
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     @patch("core.router.router.route")
     def test_low_confidence_no_questions_still_aborts(self, mock_route, mock_tracer):
         """Low confidence with empty clarifying_questions must still abort."""
@@ -269,7 +269,7 @@ class TestAutoRoutingLowConfidenceGap:
         # Should provide a default question when none were given
         assert len(res["clarifying_questions"]) >= 1
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     @patch("core.router.router.route")
     def test_low_confidence_with_questions_aborts(self, mock_route, mock_tracer):
         """Low confidence with clarifying_questions must abort and forward questions."""
@@ -286,7 +286,7 @@ class TestAutoRoutingLowConfidenceGap:
         assert res["clarifying_questions"] == ["What scope?", "Which files?"]
         mock_run.assert_not_called()
 
-    @patch("tools.workflow_tool.tracer")
+    @patch("tools.workflow.tracer")
     @patch("core.router.router.route")
     @patch("workflows.base.run_workflow")
     def test_high_confidence_proceeds_to_execution(self, mock_run, mock_route, mock_tracer):

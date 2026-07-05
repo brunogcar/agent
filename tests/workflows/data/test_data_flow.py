@@ -63,10 +63,10 @@ class TestActionDispatchRegression:
         }
 
         # NOTE: agent and python are imported INSIDE node_execute
-        # (`from tools.agent import agent`, `from tools.python_exec import python`),
+        # (`from tools.agent import agent`, `from tools.python import python`),
         # so we patch at the source modules, not at workflows.data.<name>.
         with patch("tools.agent.agent") as mock_agent, \
-             patch("tools.python_exec.python") as mock_python:
+             patch("tools.python.python") as mock_python:
             mock_agent.return_value = {
                 "status": "success",
                 "text": "```python\nprint(sum([1,2,3]))\n```",

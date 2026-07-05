@@ -13,7 +13,7 @@ from core.tracer import tracer
 # Direct tool dispatch map: tool name -> (module_path, callable_name)
 _DIRECT_TOOL_MAP = {
     "web": ("tools.web", "web"),
-    "python": ("tools.python_exec", "python"),
+    "python": ("tools.python", "python"),
     "memory": ("tools.memory", "memory"),
     "file": ("tools.file", "file"),
     "git": ("tools.git", "git"),
@@ -86,7 +86,7 @@ def dispatch(trace_id: str, payload: dict) -> Any:
         return web(action=action, **params)
 
     if tool == "python":
-        from tools.python_exec import python
+        from tools.python import python
         return python(**params)
 
     if tool == "memory":

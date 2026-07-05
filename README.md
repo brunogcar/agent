@@ -127,7 +127,7 @@ All workflows emit structured traces to `logs/agent_*.jsonl` and follow the memo
 | [**web**](docs/tools/WEB.md) | `tools/web.py` | SearXNG search, BeautifulSoup scraping, SSRF protection, parallel `search_and_read` |
 | [**tavily**](docs/tools/TAVILY.md) | `tools/tavily.py` | AI-ranked search, bulk URL extraction, keyless mode, API budget tracking |
 | [**browser**](docs/tools/BROWSER.md) | `tools/browser.py` | Playwright automation (20 atomic actions), session isolation, screenshot-on-failure |
-| [**python**](docs/tools/PYTHON.md) | `tools/python_exec.py` | Dual-mode execution: strict AST sandbox (`run`) or data-science subprocess (`run_data`) |
+| [**python**](docs/tools/PYTHON.md) | `tools/python.py` | Dual-mode execution: strict AST sandbox (`run`) or data-science subprocess (`run_data`) |
 | [**file**](docs/tools/FILE.md) | `tools/file.py` + `file_ops/` | 25+ atomic FS actions: CRUD, directory traversal, document parsing, SQLite FTS |
 | [**git**](docs/tools/GIT.md) | `tools/git.py` + `git_ops/` | 20+ atomic VCS actions: commit, diff, rollback, snapshot, branch/tag management |
 | [**cli**](docs/tools/CLI.md) | `tools/cli.py` + `cli_ops/` | 4-layer NL→shell dispatch: patterns → shell whitelist → router LLM → executor LLM |
@@ -138,7 +138,7 @@ All workflows emit structured traces to `logs/agent_*.jsonl` and follow the memo
 | [**consult**](docs/tools/CONSULT.md) | `tools/consult.py` | Cloud LLM advisory (opt-in, kill-switch, rate-limit guard) |
 | [**parallel**](docs/tools/PARALLEL.md) | `tools/parallel.py` | Concurrent tool execution with `PARALLEL_SAFE` allowlist and global timeout |
 | [**notify**](docs/tools/NOTIFY.md) | `tools/notify.py` | Cross-platform desktop alerts, APScheduler reminders, graceful console fallback |
-| [**workflow**](docs/tools/WORKFLOW.md) | `tools/workflow_tool.py` | LangGraph workflow launcher with auto-routing and resume support |
+| [**workflow**](docs/tools/WORKFLOW.md) | `tools/workflow.py` | LangGraph workflow launcher with auto-routing and resume support |
 
 See [`docs/TOOLS.md`](docs/TOOLS.md) for the full catalog, return schema, security rules, and testing commands.
 
@@ -331,12 +331,12 @@ agent/
 │   ├── memory.py + memory_ops/      # 8 atomic memory actions
 │   ├── notify.py                    # Desktop notifications & scheduler
 │   ├── parallel.py                  # Concurrent tool execution
-│   ├── python_exec.py               # Dual-mode Python sandbox
+│   ├── python.py               # Dual-mode Python sandbox
 │   ├── report.py + report_ops/      # 11 atomic report actions
 │   ├── tavily.py + tavily_ops/      # 5 atomic AI-search actions
 │   ├── vision.py                    # Multimodal image analysis
 │   ├── web.py + web_ops/            # 4 atomic web actions
-│   └── workflow_tool.py             # LangGraph workflow launcher
+│   └── workflow.py             # LangGraph workflow launcher
 │
 ├── workflows/             # 5 LangGraph state machines
 │   ├── base.py            # Shared WorkflowState + node helpers + dispatcher

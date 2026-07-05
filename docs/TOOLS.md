@@ -216,7 +216,7 @@ tools/
 │
 ├── parallel.py             # Concurrent tool execution
 │
-├── python_exec.py          # Python dual-mode execution
+├── python.py          # Python dual-mode execution
 │
 ├── report.py               # Report meta-tool (11 atomic actions)
 ├── report_ops/
@@ -284,7 +284,7 @@ tools/
 │       ├── search.py
 │       └── search_and_read.py
 │
-└── workflow_tool.py        # LangGraph workflow launcher
+└── workflow.py        # LangGraph workflow launcher
 ```
 
 ---
@@ -864,7 +864,7 @@ Mutating actions (write, delete, commit, rollback) must call `ensure_not_cancell
 | Memory | `.\venv\Scripts\pytest tests/tools/memory/ -W error --tb=short -v` |
 | Notify | `.\venv\Scripts\pytest tests/tools/notify/ -W error --tb=short -v` |
 | Parallel | `.\venv\Scripts\pytest tests/tools/parallel/ -W error --tb=short -v` |
-| Python | `.\venv\Scripts\pytest tests/tools/python_exec/ -W error --tb=short -v` |
+| Python | `.\venv\Scripts\pytest tests/tools/python/ -W error --tb=short -v` |
 | Report | `.\venv\Scripts\pytest tests/tools/report/ -W error --tb=short -v` |
 | Tavily | `.\venv\Scripts\pytest tests/tools/tavily/ -W error --tb=short -v` |
 | Vision | `.\venv\Scripts\pytest tests/tools/vision/ -W error --tb=short -v` |

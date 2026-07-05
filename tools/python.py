@@ -1,4 +1,4 @@
-"""tools/python_exec.py — Python execution meta-tool.
+"""tools/python.py — Python execution meta-tool.
 
 Replaces: run_python + run_python_data (old flat tools)
 The LLM sees ONE tool: python(mode, code)

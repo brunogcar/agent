@@ -6,7 +6,7 @@
 
 | File | Purpose |
 |------|---------|
-| `tools/workflow_tool.py` | `@tool` facade: validation, auto-routing, parameter guards, workflow dispatch |
+| `tools/workflow.py` | `@tool` facade: validation, auto-routing, parameter guards, workflow dispatch |
 | `core/router.py` | `router.route()` — auto-routing for `type="auto"` |
 | `core/tracer.py` | `tracer.new_trace()`, `tracer.step()`, `tracer.error()` — observability |
 | `workflows/base.py` | `run_workflow()` — base workflow execution engine |
@@ -15,14 +15,14 @@
 | `workflows/autocode_impl/` | Autocode workflow implementation (TDD + safety) |
 | `workflows/deep_research_impl/` | Deep research workflow implementation (ReAct loop) |
 | `workflows/understand.py` | Codebase understanding workflow implementation |
-| `tests/tools/workflow_tool/` | Test files |
+| `tests/tools/workflow/` | Test files |
 
 ---
 
 ## 🌳 Module Tree
 
 ```text
-tools/workflow_tool.py
+tools/workflow.py
 ├── workflow(type, goal, ...)           # @tool facade — validation, routing, dispatch
 ├── _make_error(error, trace_id, ...)   # Standardized error response builder
 └── VALID_WORKFLOWS                     # frozenset of allowed workflow types
@@ -98,8 +98,8 @@ graph TD
 
 **Current test layout:**
 ```text
-tests/tools/workflow_tool/
-└── test_workflow_tool.py     # All workflow tool tests (validation, routing, execution)
+tests/tools/workflow/
+└── test_workflow.py     # All workflow tool tests (validation, routing, execution)
 ```
 
 **Mock strategy:**
@@ -111,7 +111,7 @@ tests/tools/workflow_tool/
 
 **Future test restructure (see roadmap):**
 ```text
-tests/tools/workflow_tool/
+tests/tools/workflow/
 ├── conftest.py                          # Shared fixtures: mock_tracer, mock_router, mock_run_workflow
 ├── test_workflow_validation.py          # Type validation, goal validation, parameter guards
 ├── test_workflow_autocode_params.py     # Autocode-specific: target_file, error_msg, feature_desc

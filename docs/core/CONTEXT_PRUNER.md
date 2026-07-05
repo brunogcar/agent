@@ -29,7 +29,7 @@ When the agent scrapes a web page or runs a Python script that generates a massi
 
 ```mermaid
 graph TD
-    A["Tool Logic<br/>web.py / python_exec.py / cli.py"] --> A2["web.py only: BeautifulSoup HTML extraction<br/>happens BEFORE the pruner, inside web.py itself"]
+    A["Tool Logic<br/>web.py / python.py / cli.py"] --> A2["web.py only: BeautifulSoup HTML extraction<br/>happens BEFORE the pruner, inside web.py itself"]
     A2 --> B["prune_text() or prune_tool_dict()<br/>core/memory_backend/pruner.py"]
     B --> C{Size check<br/>len(text) <= 8000?}
     C -->|Yes| D["Return unchanged<br/>Zero overhead"]
@@ -338,7 +338,7 @@ If you are an AI assistant modifying the context pruner:
 |------|---------|
 | `core/memory_backend/pruner.py` | `prune_text()`, `prune_tool_dict()`, `cleanup_old_artifacts()` — **not** `prune_output()`, and **not** `core/context_pruner.py` |
 | `tools/web.py` | `_html_to_text()` (BeautifulSoup extraction, separate from the pruner) then `prune_tool_dict("web", result, trace_id)` |
-| `tools/python_exec.py` | `prune_text("python_exec", text, trace_id)` |
+| `tools/python.py` | `prune_text("python_exec", text, trace_id)` |
 | `tools/cli.py` | `prune_text("cli", text, trace_id)` |
 | `core/memory_backend/budget.py` | Complementary: manages aggregate message history budget (`budget_messages()`) — **not** `core/llm_backend/context_budget.py` |
 | `core/llm_backend/rate_limit.py` | A different, unrelated file: rate limiting + cost estimation, not message budgeting |

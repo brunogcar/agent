@@ -14,7 +14,7 @@ from core.parallel_executor import dispatch_parallel, PARALLEL_SAFE
 from tools.web import web
 from tools.git import git
 from tools.file import file
-from tools.python_exec import python
+from tools.python import python
 from tools.notify import notify
 from tools.memory import memory
 from tools.cli import cli

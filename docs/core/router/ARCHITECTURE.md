@@ -7,7 +7,7 @@
 | File | Purpose |
 |------|---------|
 | `core/router.py` | `TaskRouter`, `RoutingDecision`, `ROUTER_SYSTEM_PROMPT`, model + heuristic routing, JSON extraction |
-| `tools/workflow_tool.py` | Confidence Guard interception (low confidence → clarifying questions) |
+| `tools/workflow.py` | Confidence Guard interception (low confidence → clarifying questions) |
 | `core/llm.py` | LLM client used by `router.route()` and `router.classify_complexity()` |
 | `core/tracer.py` | Trace logging for routing decisions |
 | `core/config.py` | `router_model`, `router_timeout` configuration |
@@ -58,7 +58,7 @@ graph TD
 
 - **Speed-first** — 15s hard timeout on LLM call; heuristic fallback is O(1) regex. The Router must never block the user experience.
 - **Dual-mode routing** — Model-based (primary) + keyword heuristics (fallback). Works even when LM Studio is completely offline.
-- **Confidence Guard** — Low-confidence decisions are intercepted by `tools/workflow_tool.py` before launching expensive workflows, preventing VRAM waste on misunderstood tasks.
+- **Confidence Guard** — Low-confidence decisions are intercepted by `tools/workflow.py` before launching expensive workflows, preventing VRAM waste on misunderstood tasks.
 - **Robust JSON extraction** — `client.py` uses a 3-layer strategy (direct parse → markdown fence → outermost regex). `router.py` uses a different approach (`json.JSONDecoder().raw_decode()`). These are intentionally separate implementations for the same general problem.
 - **Zero hardcoding** — All model references use `cfg.router_model`. No model identifiers in the router code.
 - **Pre-compiled regex** — All keyword patterns are `re.compile()` at class level, not compiled on every call.

@@ -40,7 +40,7 @@ workflow(type="understand", goal="Map the auth module", project_root="D:\mcp\age
 
 | Config | Source | Default | Description |
 |--------|--------|---------|-------------|
-| `VALID_WORKFLOWS` | `tools/workflow_tool.py` | `{"research", "data", "autocode", "deep_research", "understand", "auto"}` | Strict allowlist of workflow types |
+| `VALID_WORKFLOWS` | `tools/workflow.py` | `{"research", "data", "autocode", "deep_research", "understand", "auto"}` | Strict allowlist of workflow types |
 | `trace_id` | Caller / auto-generated | — | Execution trace identifier. Auto-generated if not provided. |
 
 ---

@@ -4,7 +4,7 @@
 
 ## ❌ NEVER DO
 
-1. **Never remove the Confidence Guard** — the `low` confidence interception in `tools/workflow_tool.py` prevents massive VRAM waste on misunderstood tasks.
+1. **Never remove the Confidence Guard** — the `low` confidence interception in `tools/workflow.py` prevents massive VRAM waste on misunderstood tasks.
 2. **Never remove the heuristic fallback** — if LM Studio is offline, the agent must still route basic tasks via keywords.
 3. **Do not simplify the JSON parser** — do not replace `_extract_first_json()` with `re.search(r'{.*}')`. The `raw_decode()` approach handles nested objects and escaped quotes safely.
 4. **Never add heavy computations to the routing path** — do not add file I/O or secondary LLM calls. This must remain ultra-lightweight.

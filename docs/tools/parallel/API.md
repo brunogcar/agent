@@ -78,8 +78,8 @@ PARALLEL_SAFE = frozenset({
 | `web` | `tools.web.web` | ✅ Yes |
 | `git` | `tools.git.git` | ❌ No |
 | `file` | `tools.file.file` | ✅ Yes |
-| `python` | `tools.python_exec.python` | ✅ Yes |
-| `python_exec` | `tools.python_exec.python` (alias) | ✅ Yes |
+| `python` | `tools.python.python` | ✅ Yes |
+| `python_exec` | `tools.python.python` (alias) | ✅ Yes |
 | `notify` | `tools.notify.notify` | ✅ Yes |
 | `memory` | `tools.memory.memory` | ❌ No |
 | `memory` | `tools.memory.memory` | ❌ No |

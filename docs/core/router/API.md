@@ -131,7 +131,7 @@ To prevent the agent from wasting 15+ minutes and massive VRAM on misunderstood 
 
 ```mermaid
 graph TD
-    A["RoutingDecision<br/>confidence='low'"] --> B["workflow_tool.py<br/>Intercepts before execution"]
+    A["RoutingDecision<br/>confidence='low'"] --> B["workflow.py<br/>Intercepts before execution"]
     B --> C["Return structured<br/>needs_clarification payload"]
     C --> D["LLM asks user<br/>clarifying questions"]
     D --> E{"User<br/>clarifies?"}
