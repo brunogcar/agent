@@ -105,6 +105,36 @@ These are hard-won lessons from the Phase 7 `@meta_tool` refactor. Read before m
 
 **Fix:** Add dedicated unit tests for `_trim_context` with `max_tokens` parameter, testing both with and without tiktoken.
 
+### 13. Never call `on_failure()` per retry attempt
+
+**What happened:** `retry_async_factory` called `on_failure()` on every retryable exception inside the loop. A call that needed 2 retries to succeed recorded 2 CB failures permanently. Since `record_success()` is a no-op in CLOSED CB state, 3 successful-but-retried calls would open the CB.
+
+**Fix:** Call `on_failure()` only on final raise (retry exhaustion), not per-attempt. Preserves v1.4 semantics: non-retryable errors still don't trip the CB.
+
+### 14. Never build role sets at module load time
+
+**What happened:** `_SLEEP_LEARN_ROLES`, `_JSON_ROLES` were built at module import, but `ROLES` wasn't populated yet (`__init__.py` imports actions before roles). The sets were empty, so JSON parsing and sleep-learn injection were silently skipped.
+
+**Fix:** Use lazy init — build the sets on first `run_dispatch()` call via `_ensure_role_sets_initialized()`, then cache. Idempotent after first call.
+
+### 15. Never reuse primary's trimmed context for fallback role
+
+**What happened:** When the primary LLM call failed and fallback was triggered, the fallback reused the primary's trimmed context. If the fallback role had a smaller budget, it received oversized context.
+
+**Fix:** Re-trim context/content for the fallback role's budget using the same 70% content budget fraction.
+
+### 16. Never hardcode `json_mode=False` for escalation
+
+**What happened:** Escalation to planner hardcoded `json_mode=False` while requesting JSON output. Also used the original role's system prompt instead of the plan role's prompt.
+
+**Fix:** Use `ROLES["plan"]["role_config"]["json_mode"] == "api"` for escalation's json_mode, and `ROLES["plan"]["system_prompt"]` for the system prompt. The plan role is designed for structured output.
+
+### 17. Never fail-open on unknown operations in `check_protected_file`
+
+**What happened:** `check_protected_file` returned `(True, "")` (allow) for unknown operations. New write actions added to tools but forgotten in `WRITE_OPERATIONS` would silently bypass protection on protected files.
+
+**Fix:** Fail-closed — return `(False, error_msg)` for unknown operations. New actions must be explicitly added to `READ_OPERATIONS` or `WRITE_OPERATIONS`.
+
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

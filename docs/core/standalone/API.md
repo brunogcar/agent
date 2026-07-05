@@ -171,7 +171,7 @@ GIT_WORKSPACE_ONLY = frozenset({"clone", "init"})
 
 ### 🛡️ Protected Files
 
-`cfg.is_protected(resolved_path)` determines if a file is infrastructure-protected. Write operations are blocked; read operations are always allowed. Unknown operations fail-open with a warning.
+`cfg.is_protected(resolved_path)` determines if a file is infrastructure-protected. Write operations are blocked; read operations are always allowed. Unknown operations fail-closed with an error (v1.5: was fail-open, which allowed new write actions to silently bypass protection).
 
 ### 🛡️ Git Scoping
 

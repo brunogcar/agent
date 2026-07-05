@@ -155,16 +155,17 @@ Before any LLM call, `context` and `content` are passed through `_trim_context()
 | **Traceback preservation** | If a Python traceback is detected, it is preserved in full. Uses line-by-line frame detection (not `\n\n` heuristics) for robustness. |
 | **Custom max_chars** | `_trim_context(text, max_chars=500)` for one-off overrides |
 | **Custom max_tokens** | `_trim_context(text, max_tokens=100)` for token-accurate trimming |
-| **Content budget** | `content` is capped at ~1000 tokens, but also constrained by remaining role-specific budget |
+| **Content budget** | `content` is allocated 70% of remaining tokens/chars (after `context` is trimmed), leaving 30% headroom. Previously capped at `min(1000, remaining)` which silently truncated large code files. |
 
 ### Content Budget
 
-The `content` parameter (raw material to process) has a dedicated budget to prevent massive code dumps from consuming the entire context budget. However, it is also dynamically constrained: if `context` already consumed most of the role-specific budget, `content` gets whatever remains.
+The `content` parameter (raw material to process) has a dedicated budget to prevent massive code dumps from consuming the entire context budget. It is allocated **70% of remaining budget** after `context` is trimmed, leaving 30% headroom for the LLM's output.
 
 ```python
 # Example: plan role budget = 32K tokens
-# context = 30K tokens worth of text -> trimmed to ~30K tokens
-# content = 5K tokens -> trimmed to 2K (remaining budget) -> then to min(1000, 2000) = 1000
+# context = 30K tokens -> trimmed to ~30K tokens
+# remaining = 32K - 30K = 2K tokens
+# content = 5K tokens -> trimmed to int(2K * 0.70) = 1400 tokens
 ```
 
 ### Traceback Preservation
@@ -205,7 +206,11 @@ For prompt-only JSON roles, the parser uses a robust three-stage approach:
 
 3. **Autonomous model escalation** -- If extraction fails, the facade automatically
  retries with the planner model (heavier, more JSON-compliant) before giving up.
- If escalation succeeds, `escalated: true` is set in the response.
+ Escalation uses the **plan role's** system prompt (not the original role's prompt)
+ since the plan role is designed for structured output.
+ If escalation succeeds, `escalated: true` and `escalated_from: {"role": "...", "model": "..."}`
+ are set in the response, so callers can detect that the primary model failed and
+ identify which model originally produced the unparseable output.
 
  **Note:** Fallback + escalation can produce up to 3 sequential LLM calls
  (primary -> fallback -> planner escalation). This is intentional defense-in-depth,
@@ -265,9 +270,9 @@ Deterministic roles (`classify`, `route`) are cached to eliminate redundant LLM 
 
 | Feature | Behavior |
 |---------|----------|
-| **Cache key** | SHA256 hash of `role:task:context:content` |
-| **TTL** | 5 minutes |
-| **Max entries** | 100 (LRU eviction) |
+| **Cache key** | SHA256 hash of `role:task:context:content` + optional `:mdl={model}` (v1.3: includes model name to prevent stale hits on model swap) |
+| **TTL** | 5 minutes (configurable via `AGENT_CACHE_TTL_SECONDS` env var) |
+| **Max entries** | 100 (configurable via `AGENT_CACHE_MAX` env var, LRU eviction) |
 | **Cache hit marker** | Response includes `"cached": true` |
 | **Non-cacheable roles** | All others (outputs depend on dynamic content) |
 
@@ -294,6 +299,11 @@ Lightweight in-memory metrics are collected for every agent call:
 | `total_tokens` | Cumulative token consumption (reads `usage["total"]`) |
 | `parse_failures` | JSON parse failures (prompt-only JSON roles) |
 | `last_call` | Unix timestamp of most recent call |
+
+**v1.3 additions:**
+- **JSONL persistence** — Metrics are appended to `.agent_metrics.jsonl` in the workspace root on each call, surviving process restarts. Set `AGENT_METRICS_PERSIST=0` in `.env` to disable. The in-memory dict remains the primary store for fast reads; the JSONL is an append-only audit log.
+- **Aggregation** — `_get_aggregate_metrics()` returns cross-role totals: `total_calls`, `total_successes`, `total_failures`, `overall_success_rate`, `avg_latency`, `total_tokens`, `total_parse_failures`, `roles_tracked`.
+- **Parse warning severity** — `_get_parse_warnings_by_severity()` groups warnings by frequency: `high` (>=5), `medium` (>=2), `low` (<2). Useful for prioritizing which role prompts need tightening.
 
 ---
 

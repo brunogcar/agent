@@ -36,14 +36,14 @@
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(No entries yet. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
+> - **What happened:** `check_protected_file` returned `(True, "")` (allow) for unknown operations. New write actions added to tools but forgotten in `WRITE_OPERATIONS` would silently bypass protection on protected files.
+> - **Why it matters:** A new tool action like `compress_file` (a write operation) would be allowed on `server.py` or `core/config.py` without any check, potentially corrupting infrastructure files.
+> - **Fix:** Fail-closed — return `(False, error_msg)` for unknown operations. New actions must be explicitly added to `READ_OPERATIONS` or `WRITE_OPERATIONS` in `core/path_guard.py`.
 
-> - **What happened:** The symptom or bug
-> - **Why it matters:** The impact
-> - **Fix:** The solution or pattern to follow
-
-*Fill this section with relevant information during edits and refactors.)*
+> - **What happened:** `resolve_workspace_path` lacked the path traversal guard that `resolve_agent_path` had. A path like `../../secrets.txt` would escape the workspace sandbox.
+> - **Why it matters:** Malicious or buggy code could read/write files outside the workspace, violating the sandbox boundary.
+> - **Fix:** Added `target.relative_to(self.workspace_root.resolve())` check, mirroring `resolve_agent_path`. Raises `PermissionError` on traversal.
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history.*

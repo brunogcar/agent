@@ -456,9 +456,30 @@ Additionally, `core/config_validation.py` runs a second pass at startup (called 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `ensure_dirs()` | `() -> None` | Creates all required directories if they don't exist |
-| `resolve_agent_path()` | `(relative: str) -> Path` | Resolves a relative path within `agent_root` |
-| `resolve_workspace_path()` | `(relative: str) -> Path` | Resolves a relative path within `workspace_root` |
-| `is_protected()` | `(path: str | Path) -> bool` | Checks if a path matches the protected files list |
+| `resolve_agent_path()` | `(relative: str) -> Path` | Resolves a relative path within `agent_root`. Raises `PermissionError` on path traversal |
+| `resolve_workspace_path()` | `(relative: str) -> Path` | Resolves a relative path within `workspace_root`. Raises `PermissionError` on path traversal (v1.5: now mirrors `resolve_agent_path` guard) |
+| `is_protected()` | `(path: str \| Path) -> bool` | Checks if a path matches the protected files list |
+
+### `validate_config()` — Startup validation
+
+`core/config_validation.py` runs a second validation pass at startup (called from `server.py` and `gateway_backend/factory.py`). Raises `RuntimeError` with all accumulated errors if any check fails.
+
+**Checks performed:**
+- Critical paths exist (`agent_root`, `workspace_root`, `memory_root`, etc.)
+- Required models configured (`PLANNER_MODEL`, `EXECUTOR_MODEL`, `ROUTER_MODEL`)
+- Timeouts positive (`sandbox_timeout`, `execution_timeout`, etc.)
+- `lm_studio_base_url` is a valid URL
+- **v1.5: `model_registry` entries** — each entry has non-empty `model`, non-empty `provider`, positive `timeout`
+- **v1.5: Agent role `llm_role` exists in `model_registry`** — catches typos like `llm_role='cod'` instead of `'code'`. Opt-in roles (consultor when `CONSULTOR_MODEL` is unset) are skipped.
+- **v1.5: `allowed_internal_hosts` type** — must be a frozenset of non-empty strings
+
+### Agent cache env vars (v1.3)
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `AGENT_CACHE_MAX` | `100` | Max entries in the agent response cache (LRU eviction) |
+| `AGENT_CACHE_TTL_SECONDS` | `300` | TTL for agent cache entries (seconds) |
+| `AGENT_METRICS_PERSIST` | `1` | Set to `0` to disable metrics JSONL persistence |
 
 ---
 

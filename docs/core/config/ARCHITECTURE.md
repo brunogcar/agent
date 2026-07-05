@@ -27,7 +27,7 @@ core/config.py
 ├── Config class — singleton, .env loading, validation, path resolution
 ├── _ensure_dirs() — create missing directories at startup
 ├── resolve_agent_path() — resolve relative paths within agent_root
-├── resolve_workspace_path() — resolve relative paths within workspace_root
+├── resolve_workspace_path() — resolve relative paths within workspace_root (raises PermissionError on traversal)
 ├── is_protected() — check against protected files frozenset
 └── model_registry — per-role model + provider + timeout config dict
 

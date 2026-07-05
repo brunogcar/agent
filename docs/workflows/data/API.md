@@ -29,7 +29,7 @@ memory.recall(
 
 **Logic:**
 1. Build prompt with goal, memory context, and initial code (if provided)
-2. Call `agent(role="code", task=...)` to generate code
+2. Call `agent(action="dispatch", role="code", task=...)` to generate code
 3. Extract code from markdown fences using regex
 4. Execute code via `python(code=...)`
 5. Return output or error
@@ -71,7 +71,7 @@ return "critique"    # → node_critique
 **Purpose:** Review the execution output and provide feedback.
 
 **Logic:**
-1. Call `agent(role="critique", task=...)` with the output
+1. Call `agent(action="dispatch", role="critique", task=...)` with the output
 2. Return the critique text
 
 **Output:** Partial dict with `result` (critique text).

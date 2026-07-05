@@ -87,15 +87,12 @@ memory.recall(
 
 **Output:** Partial dict with `knowledge_base`, `_prev_knowledge`, `completeness`, `extracted_evidence`, `converged`, `synthesis`.
 
-**Critical bug:** `agent()` calls are missing `action="dispatch"`. The `agent()` facade requires `action`.
+**Note (v1.0.1 fixes):** The `agent()` calls now correctly pass `action="dispatch"` (was missing, causing both calls to return errors). The dead `completeness_threshold = 0.85` local was removed — the real threshold comparison lives in `routes.py` (default `85.0` on 0-100 scale, matching `_parse_score()`'s output).
 
-**Critical bug:** `_agent_ok` and `_agent_text` are defensive wrappers for `LLMResponse` objects, but `agent()` returns `dict`. These wrappers are dead code.
-
-**Critical bug:** `task` parameter is used for the system prompt, not the user task. The `agent()` facade passes `task` to `llm.complete(user=task)`. But here `SYNTHESIZE_SYSTEM_PROMPT` is passed as the user message, and the role's system prompt is ignored. This is semantically wrong.
-
-**Bug:** `completeness_threshold` default is `0.85` in code but `85.0` in `.env`. The node and route use different scales. The `_parse_score` returns 0-100, but `completeness_threshold` from state defaults to `0.85` (from node fallback). The route checks `completeness >= threshold` which is always true for any score >= 1.
-
-**Bug:** `_parse_score` removes negative numbers with `re.sub(r"-\d+", "", text)`. This removes ALL negative numbers, including legitimate ones in ranges like "score: 85-90" which becomes "score: 90".
+**Known remaining issues:**
+- `_agent_ok` and `_agent_text` are defensive wrappers for `LLMResponse` objects, but `agent()` returns `dict`. These wrappers are dead code.
+- `task` parameter is used for the system prompt, not the user task. The `agent()` facade passes `task` to `llm.complete(user=task)`. But here `SYNTHESIZE_SYSTEM_PROMPT` is passed as the user message, and the role's system prompt is ignored. This is semantically wrong.
+- `_parse_score` removes negative numbers with `re.sub(r"-\d+", "", text)`. This removes ALL negative numbers, including legitimate ones in ranges like "score: 85-90" which becomes "score: 90".
 
 ---
 

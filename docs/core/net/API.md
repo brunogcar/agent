@@ -96,6 +96,9 @@ def retry_async_factory(
 - `on_failure()` only fires for **retryable** errors. Previously it fired on EVERY exception, including validation errors and 4xx client errors, causing the circuit breaker to trip on non-retryable failures.
 - Removed unreachable `raise last_exception` after the for loop (every path returns or raises inside the loop).
 
+**v1.5 fix:**
+- `on_failure()` now fires only on **final raise** (retry exhaustion), not per-attempt. Previously it fired on every retryable exception, so a call that needed 2 retries to succeed would record 2 failures permanently. Since `record_success()` is a no-op in CLOSED CB state, interim failures never cancelled out — 3 successful-but-retried calls would open the CB. Now `on_failure` fires exactly once on retry exhaustion (still retryable-only, preserving v1.4 semantics).
+
 **Critical rule:** The factory must create a **fresh coroutine** on each call. Never pass an already-created coroutine.
 
 ```python

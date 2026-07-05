@@ -34,14 +34,14 @@
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(No entries yet. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
+> - **What happened:** `on_failure()` was called per retry attempt inside the loop, so a call that needed 2 retries to succeed would record 2 CB failures permanently. Three successful-but-retried calls would open the circuit breaker despite every call succeeding.
+> - **Why it matters:** `record_success()` is a no-op in CLOSED CB state by design, so interim failures never cancelled out. The CB appeared to "randomly" open under flaky network conditions.
+> - **Fix:** Move `on_failure()` out of the per-attempt loop — fire it only on final raise (retry exhaustion). Preserves v1.4 semantics: non-retryable errors still don't trip the CB.
 
-> - **What happened:** The symptom or bug
-> - **Why it matters:** The impact
-> - **Fix:** The solution or pattern to follow
-
-*Fill this section with relevant information during edits and refactors.)*
+> - **What happened:** `on_failure()` fired on ALL exceptions, including `ValueError` (validation) and 4xx client errors. The CB would trip on bad input, not just network failures.
+> - **Why it matters:** A user passing an invalid URL could open the CB and block all subsequent valid calls for 60 seconds.
+> - **Fix:** Guard `on_failure()` with `is_retryable(e)` — only retryable errors (timeouts, connection errors, 5xx) trip the CB.
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history.*

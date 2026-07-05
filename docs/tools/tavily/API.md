@@ -56,7 +56,7 @@ def tavily(
 | `limit` | `int` | No | Max total pages for crawl/map. Default: **50**. **v1.2: restored.** |
 | `trace_id` | `str` | No | Trace identifier for logging and result correlation. Threaded through all handlers. |
 
-> **Note:** `input`, `model`, `citation_format`, `max_chars` params were removed from the facade. `citation_format` only existed for `research`, which is not exposed as a tool action. Call `run_research()` directly from workflows.
+> **Note:** `input`, `model`, `citation_format`, `max_chars` params were removed from the facade in v1.4/v1.5. `citation_format` only existed for `research` (which is not exposed as a tool action — call `run_research()` directly from workflows). The `research.py` handler retains its own `citation_format` kwarg with `"apa"` default.
 
 ---
 
