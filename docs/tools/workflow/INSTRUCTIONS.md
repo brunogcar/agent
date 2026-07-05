@@ -30,14 +30,22 @@
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(Fill this section with relevant information from edits and refactors. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
+> - **What happened:** `report` was listed in `VALID_WORKFLOWS` but no `report` workflow existed — `run_workflow()` returned "Unknown workflow type" when the LLM called `workflow(type="report")`.
+> - **Why it matters:** The LLM would attempt to use `workflow(type="report")` based on the docstring, waste a turn, and get a confusing error. Report generation is a tool (`report(action="...")`), not a workflow.
+> - **Fix:** Removed `report` from `VALID_WORKFLOWS`, `WorkflowType` Literal, and docstring. The `report` tool is called directly when needed.
 
-> - **What happened:** The symptom or bug
-> - **Why it matters:** The impact
-> - **Fix:** The solution or pattern to follow
+> - **What happened:** `deep_research` workflow existed and `run_workflow()` handled it, but it was missing from `VALID_WORKFLOWS` — the LLM couldn't invoke it directly, only via `type="auto"` routing.
+> - **Why it matters:** Users couldn't explicitly request deep research; they had to hope the router would pick it. For known-complex research tasks, explicit invocation is better.
+> - **Fix:** Added `deep_research` to `VALID_WORKFLOWS`, `WorkflowType` Literal, and docstring.
 
-*Fill this section with relevant information during edits and refactors.)*
+> - **What happened:** `WorkflowType` Literal was missing `"understand"` even though `VALID_WORKFLOWS` included it — type checkers and IDE autocomplete missed it.
+> - **Why it matters:** Developers writing `workflow(type="understand")` would get type errors despite the runtime accepting it.
+> - **Fix:** Added `"understand"` to the `WorkflowType` Literal. The Literal now matches `VALID_WORKFLOWS` exactly.
+
+> - **What happened:** Auto-routing low-confidence guard only aborted if `clarifying_questions` was non-empty. Low confidence with empty questions fell through to execution.
+> - **Why it matters:** The guard's purpose is to prevent wasting 15+ minutes on misunderstood tasks. Empty questions shouldn't bypass that protection.
+> - **Fix:** Abort on low confidence regardless of whether questions exist. Provide a default question ("Please provide more details...") when none were given.
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

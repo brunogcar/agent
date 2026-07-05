@@ -6,34 +6,34 @@
 
 | File | Purpose |
 |------|---------|
-| `tools/workflow.py` | `@tool` facade: validation, auto-routing, parameter guards, workflow dispatch |
+| `tools/workflow_tool.py` | `@tool` facade: validation, auto-routing, parameter guards, workflow dispatch |
 | `core/router.py` | `router.route()` — auto-routing for `type="auto"` |
 | `core/tracer.py` | `tracer.new_trace()`, `tracer.step()`, `tracer.error()` — observability |
 | `workflows/base.py` | `run_workflow()` — base workflow execution engine |
-| `workflows/research/` | Research workflow implementation |
-| `workflows/data/` | Data analysis workflow implementation |
+| `workflows/research.py` | Research workflow implementation |
+| `workflows/data.py` | Data analysis workflow implementation |
 | `workflows/autocode_impl/` | Autocode workflow implementation (TDD + safety) |
-| `workflows/report/` | Report generation workflow implementation |
-| `workflows/understand/` | Codebase understanding workflow implementation |
-| `tests/tools/workflow/` | Test files (to be restructured — see roadmap) |
+| `workflows/deep_research_impl/` | Deep research workflow implementation (ReAct loop) |
+| `workflows/understand.py` | Codebase understanding workflow implementation |
+| `tests/tools/workflow_tool/` | Test files |
 
 ---
 
 ## 🌳 Module Tree
 
 ```text
-tools/workflow.py
+tools/workflow_tool.py
 ├── workflow(type, goal, ...)           # @tool facade — validation, routing, dispatch
 ├── _make_error(error, trace_id, ...)   # Standardized error response builder
 └── VALID_WORKFLOWS                     # frozenset of allowed workflow types
 
 workflows/
 ├── base.py                             # run_workflow() — base execution engine
-├── research/                           # Research workflow
-├── data/                               # Data analysis workflow
+├── research.py                         # Research workflow
+├── data.py                             # Data analysis workflow
 ├── autocode_impl/                      # Autocode workflow (TDD + safety)
-├── report/                             # Report generation workflow
-└── understand/                         # Codebase understanding (Knowledge Graph)
+├── deep_research_impl/                 # Deep research workflow (ReAct loop)
+└── understand.py                       # Codebase understanding (Knowledge Graph)
 ```
 
 ---
@@ -98,8 +98,8 @@ graph TD
 
 **Current test layout:**
 ```text
-tests/tools/workflow/
-└── test_workflow.py          # Single monolithic test file (all paths in one)
+tests/tools/workflow_tool/
+└── test_workflow_tool.py     # All workflow tool tests (validation, routing, execution)
 ```
 
 **Mock strategy:**
@@ -111,7 +111,7 @@ tests/tools/workflow/
 
 **Future test restructure (see roadmap):**
 ```text
-tests/tools/workflow/
+tests/tools/workflow_tool/
 ├── conftest.py                          # Shared fixtures: mock_tracer, mock_router, mock_run_workflow
 ├── test_workflow_validation.py          # Type validation, goal validation, parameter guards
 ├── test_workflow_autocode_params.py     # Autocode-specific: target_file, error_msg, feature_desc
@@ -124,4 +124,4 @@ tests/tools/workflow/
 
 ---
 
-*Last updated: 2026-07-03. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-05. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

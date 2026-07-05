@@ -41,12 +41,12 @@ VALID_WORKFLOWS: frozenset[str] = frozenset({
     "research",
     "data",
     "autocode",
-    "report",
+    "deep_research",
     "understand",  # Codebase Knowledge Graph builder
     "auto",
 })
 
-WorkflowType = Literal["research", "data", "autocode", "report", "understand", "auto"]
+WorkflowType = Literal["research", "data", "autocode", "deep_research", "understand", "auto"]
 
 def _make_error(error: str, trace_id: str, **extra) -> dict:
     """
@@ -81,7 +81,7 @@ def workflow(
     - research: Gather info from web, synthesize findings.
     - data: Analyze datasets with pandas/numpy, generate reports.
     - autocode: Fix bugs, add features, refactor code (TDD + safety).
-    - report: Generate comprehensive HTML/PDF dashboards.
+    - deep_research: Iterative multi-faceted research with ReAct loop.
     - understand: Build a Codebase Knowledge Graph via AST parsing.
     - auto: Let the Router classify the task and choose the workflow.
     """

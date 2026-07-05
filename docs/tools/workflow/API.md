@@ -27,7 +27,7 @@ def workflow(
     - research: Gather info from web, synthesize findings.
     - data: Analyse datasets with pandas/numpy, generate reports.
     - autocode: Fix bugs, add features, refactor code (TDD + safety).
-    - report: Generate comprehensive HTML/PDF dashboards.
+    - deep_research: Iterative multi-faceted research with ReAct loop.
     - understand: Build codebase Knowledge Graph.
     - auto: Let the Router classify the task and choose the workflow.
     """
@@ -35,7 +35,7 @@ def workflow(
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | `str` | **Yes** | — | Workflow type. Valid: `research`, `data`, `autocode`, `report`, `understand`, `auto`. Empty defaults to `auto`. |
+| `type` | `str` | **Yes** | — | Workflow type. Valid: `research`, `data`, `autocode`, `deep_research`, `understand`, `auto`. Empty defaults to `auto`. |
 | `goal` | `str` | **Yes** | — | Human-readable task description |
 | `code` | `str` | No | `""` | Python code for `data` workflow (e.g., pandas analysis) |
 | `target_file` | `str` | No | `""` | File path for `autocode` workflow. **Required** when `type="autocode"`. |
@@ -46,7 +46,7 @@ def workflow(
 | `trace_id` | `str` | No | `""` | Trace identifier. Auto-generated if not provided. |
 | `resume` | `bool` | No | `False` | Continue interrupted workflow from checkpoint |
 
-**WorkflowType Literal:** `Literal["research", "data", "autocode", "report", "auto"]` (note: `understand` is in `VALID_WORKFLOWS` but not in the `WorkflowType` Literal — this is a known inconsistency to be fixed in refactor).
+**WorkflowType Literal:** `Literal["research", "data", "autocode", "deep_research", "understand", "auto"]`
 
 ---
 
@@ -76,13 +76,13 @@ Fixes bugs, adds features, or refactors code with TDD and safety checks (git sna
 |----------|----------|-------------|
 | `goal`, `target_file` | `mode`, `error_msg`, `feature_desc`, `trace_id`, `resume` | `mode` controls behaviour. `error_msg` required for `fix_error`. `feature_desc` required for `add_feature`. |
 
-### `report`
+### `deep_research`
 
-Generates comprehensive HTML/PDF dashboards from data or research findings.
+Iterative, multi-faceted research for complex questions. Uses a ReAct-style loop with self-evaluation, budget tracking, and convergence detection.
 
 | Required | Optional | Description |
 |----------|----------|-------------|
-| `goal` | `trace_id`, `resume` | Report topic or data source |
+| `goal` | `trace_id`, `resume` | Research question. The workflow decomposes, searches, and synthesizes iteratively until convergence or max iterations. |
 
 ### `understand`
 
@@ -150,9 +150,9 @@ Lets the Router classify the goal and dynamically select the correct workflow.
 ```json
 {
   "status": "error",
-  "error": "Invalid workflow type 'coding'. Valid types: ['auto', 'autocode', 'data', 'report', 'research', 'understand']",
+  "error": "Invalid workflow type 'coding'. Valid types: ['auto', 'autocode', 'data', 'deep_research', 'research', 'understand']",
   "trace_id": "abc123",
-  "valid_types": ["auto", "autocode", "data", "report", "research", "understand"]
+  "valid_types": ["auto", "autocode", "data", "deep_research", "research", "understand"]
 }
 ```
 
@@ -180,4 +180,4 @@ Lets the Router classify the goal and dynamically select the correct workflow.
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

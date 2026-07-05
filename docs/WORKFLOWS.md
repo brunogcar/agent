@@ -40,7 +40,6 @@ All workflows inherit from a shared foundation defined in `workflows/base.py`.
 - `node_error()` saves only `{"status": "failed", "error": ...}` — loses all workflow context on resume. Should save full state.
 - `run_workflow()` exception handler returns failure dict but never calls `save_checkpoint()`. State at crash time is lost.
 - `understand` workflow ignores `trace_id`, `goal`, and checkpoint system. `resume=True` is meaningless.
-- `report` workflow accepted by `workflow_tool.py` but missing from `run_workflow()` dispatcher.
 
 See [workflows/BASE.md](workflows/BASE.md) for full details.
 

@@ -1,9 +1,9 @@
 # 🔄 Workflow Tool
 
-The `workflow()` tool launches **multi-step autonomous LangGraph workflows** for complex tasks: research, data analysis, autocode, report generation, and codebase understanding. It acts as the primary entry point for long-running operations that require planning, execution, and iteration.
+The `workflow()` tool launches **multi-step autonomous LangGraph workflows** for complex tasks: research, data analysis, autocode, deep research, and codebase understanding. It acts as the primary entry point for long-running operations that require planning, execution, and iteration.
 
 **Key characteristics:**
-- **Workflow dispatch** — Routes to `research`, `data`, `autocode`, `report`, `understand`, or `auto` (router-classified)
+- **Workflow dispatch** — Routes to `research`, `data`, `autocode`, `deep_research`, `understand`, or `auto` (router-classified)
 - **Strict type validation** — `VALID_WORKFLOWS` frozenset prevents LLM hallucination of non-existent workflow types
 - **Fail-fast parameter guards** — Autocode validates `target_file`, `error_msg`, `feature_desc` BEFORE taking git snapshots or invoking the Planner
 - **Auto-routing** — `type="auto"` (or omitted) lazily imports the Router model to classify the goal and select the correct workflow
@@ -40,7 +40,7 @@ workflow(type="understand", goal="Map the auth module", project_root="D:\mcp\age
 
 | Config | Source | Default | Description |
 |--------|--------|---------|-------------|
-| `VALID_WORKFLOWS` | `tools/workflow.py` | `{"research", "data", "autocode", "report", "understand", "auto"}` | Strict allowlist of workflow types |
+| `VALID_WORKFLOWS` | `tools/workflow_tool.py` | `{"research", "data", "autocode", "deep_research", "understand", "auto"}` | Strict allowlist of workflow types |
 | `trace_id` | Caller / auto-generated | — | Execution trace identifier. Auto-generated if not provided. |
 
 ---
@@ -55,7 +55,8 @@ workflow(type="understand", goal="Map the auth module", project_root="D:\mcp\age
 | Multi-step research | `workflow(type="research")` | Planning, web search, synthesis, citation |
 | Data analysis pipeline | `workflow(type="data")` | Pandas, numpy, chart generation |
 | Code fix / feature | `workflow(type="autocode")` | TDD, git snapshots, safety checks |
-| Report generation | `workflow(type="report")` | HTML/PDF dashboard generation |
+| Iterative deep research | `workflow(type="deep_research")` | ReAct loop, budget tracking, convergence detection |
+| Report/dashboard generation | `report` tool | HTML/PDF dashboards — call `report(action="...")` directly, not via workflow |
 | Codebase mapping | `workflow(type="understand")` | Knowledge graph, dependency analysis |
 | Unclear task | `workflow(type="auto")` | Router classifies and selects workflow |
 
@@ -72,4 +73,4 @@ workflow(type="understand", goal="Map the auth module", project_root="D:\mcp\age
 
 ---
 
-*Last updated: 2026-07-03. See subfiles for detailed documentation.*
+*Last updated: 2026-07-05. See subfiles for detailed documentation.*

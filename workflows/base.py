@@ -207,7 +207,7 @@ def run_workflow(
             tracer.finish(trace_id, success=False)
             return {
                 "status": "failed",
-                "error": f"Unknown workflow type '{wf_type}'. Use: research | data | autocode",
+                "error": f"Unknown workflow type '{wf_type}'. Use: research | data | autocode | deep_research | understand",
                 "result": "",
                 "artifacts": [],
             }

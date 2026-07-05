@@ -152,6 +152,36 @@ class TestWorkflowTypeLiteral:
             f"WorkflowType Literal must include 'understand'. Got: {args}"
         )
 
+    def test_workflow_type_includes_deep_research(self):
+        """The WorkflowType Literal must include 'deep_research'."""
+        from typing import get_args
+        from tools.workflow_tool import WorkflowType
+        args = get_args(WorkflowType)
+        assert "deep_research" in args, (
+            f"WorkflowType Literal must include 'deep_research'. Got: {args}"
+        )
+
+    def test_workflow_type_excludes_report(self):
+        """The WorkflowType Literal must NOT include 'report' — it's a tool, not a workflow."""
+        from typing import get_args
+        from tools.workflow_tool import WorkflowType
+        args = get_args(WorkflowType)
+        assert "report" not in args, (
+            f"WorkflowType Literal must NOT include 'report' (it's a tool). Got: {args}"
+        )
+
+    def test_valid_workflows_excludes_report(self):
+        """VALID_WORKFLOWS must NOT include 'report'."""
+        assert "report" not in VALID_WORKFLOWS, (
+            "VALID_WORKFLOWS must not include 'report' — it's a tool, not a workflow."
+        )
+
+    def test_valid_workflows_includes_deep_research(self):
+        """VALID_WORKFLOWS must include 'deep_research'."""
+        assert "deep_research" in VALID_WORKFLOWS, (
+            "VALID_WORKFLOWS must include 'deep_research' — it's a real workflow."
+        )
+
     def test_workflow_type_matches_valid_workflows(self):
         """WorkflowType Literal should match VALID_WORKFLOWS (minus 'auto' which is a mode)."""
         from typing import get_args

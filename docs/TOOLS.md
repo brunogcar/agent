@@ -49,7 +49,6 @@ Most tools share a common foundation defined in `tools/_meta_tool.py` and the re
 
 **Known limitations:**
 - `cli()` is a **router**, not a direct tool. It delegates to other tools and returns human-readable `str`, not structured `dict`.
-- `workflow()` accepts `report` in `VALID_WORKFLOWS` but `report` is missing from `run_workflow()` dispatcher (see `workflows/BASE.md`).
 - `understand` workflow ignores `trace_id` and checkpoint system (see `workflows/UNDERSTAND.md`).
 
 ---
@@ -692,7 +691,7 @@ Changes not staged for commit:
 **Purpose:** Trigger long-running multi-step workflows (research, data, autocode, etc.).
 
 **Key characteristics:**
-- **6 workflow types** — `research`, `data`, `autocode`, `report`, `understand`, `auto`
+- **6 workflow types** — `research`, `data`, `autocode`, `deep_research`, `understand`, `auto`
 - **Strict type validation** — `VALID_WORKFLOWS` frozenset prevents LLM hallucination
 - **Auto-routing** — `type="auto"` lazily imports Router model to classify goal and select workflow
 - **Fail-fast guards** — Autocode validates `target_file`, `error_msg`, `feature_desc` BEFORE git snapshots

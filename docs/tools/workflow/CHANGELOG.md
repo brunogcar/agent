@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| Pre-v1.2 | 2026-07-05 | Added `deep_research` to `VALID_WORKFLOWS`, `WorkflowType` Literal, and docstring (was missing — LLM couldn't invoke directly). Removed `report` from all three (no `report` workflow exists — it's a tool, not a workflow). |
 | Pre-v1.1 | 2026-07-05 | Bugfix batch: `WorkflowType` Literal now includes `understand` (#4); docstring lists `understand` for LLM discovery (#5); `understand` workflow now forwards `project_root` to `run_workflow` (#3); auto-routing low-confidence guard now aborts even when `clarifying_questions` is empty (#6). |
 
 *(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
@@ -13,6 +14,13 @@
 ---
 
 ## ⚠️ Breaking Changes
+
+### Pre-v1.2 — 2026-07-05
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| Removed `report` from `VALID_WORKFLOWS` | `workflow(type="report")` now returns "Invalid workflow type" instead of reaching `run_workflow()` and failing there. | Use the `report` tool directly: `report(action="dashboard", ...)` instead of `workflow(type="report")`. |
+| Added `deep_research` to `VALID_WORKFLOWS` | LLM can now invoke deep research directly via `workflow(type="deep_research")`. Previously only reachable via `type="auto"` routing. | No migration — additive. |
 
 ### Pre-v1.1 — 2026-07-05
 
