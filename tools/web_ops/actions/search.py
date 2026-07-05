@@ -1,10 +1,14 @@
-"""Web action: search — Query SearXNG and return ranked results."""
+"""Web action: search — Query SearXNG and return ranked results.
+
+[core/net adoption] Now uses SEARCH_TIMEOUT from core/net/default.py (was hardcoded 15).
+"""
 from __future__ import annotations
 
 import httpx
 
 from core.config import cfg
 from core.contracts import fail, ok
+from core.net.default import SEARCH_TIMEOUT
 from tools.web_ops._registry import register_action
 from tools.web_ops.client import _make_client
 from tools.web_ops.utils import _is_safe_url
@@ -47,7 +51,7 @@ def _action_search(
             resp = client.get(
                 f"{searxng_url}/search",
                 params={"q": query, "format": "json", "categories": "general"},
-                timeout=15,
+                timeout=SEARCH_TIMEOUT,  # [core/net] Was hardcoded 15
             )
             resp.raise_for_status()
             data = resp.json()

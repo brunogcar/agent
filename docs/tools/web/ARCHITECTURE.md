@@ -13,10 +13,13 @@
 | `tools/web_ops/client.py` | Singleton `httpx.Client`: `_get_singleton_client()`, `_make_client()`, `_close_client()`, `_pick_user_agent()`, `_USER_AGENTS` |
 | `tools/web_ops/utils.py` | `_is_safe_url()` — SSRF guard with scheme allowlist, shared by search and scrape |
 | `tools/web_ops/actions/search.py` | `_action_search()` — SearXNG query handler |
-| `tools/web_ops/actions/scrape.py` | `_action_scrape()`, `_fetch_html()` (guards + retry), `_html_to_text()` — fetch + extract |
+| `tools/web_ops/actions/scrape.py` | `_action_scrape()`, `_fetch_html()` (guards), `_do_fetch()` (retry-wrapped), `_html_to_text()` — fetch + extract |
 | `tools/web_ops/actions/read.py` | `_action_read()` — scrape + `prune_tool_dict()` alias |
 | `tools/web_ops/actions/search_and_read.py` | `_action_search_and_read()` — composite: search → dedup → parallel scrape → prune |
 | `core/net/security.py` | `is_safe_network_address()` — SSRF protection |
+| `core/net/retry.py` | `retry_sync()` — unified retry with backoff |
+| `core/net/errors.py` | `is_retryable_error()`, `get_retry_delay()` — error classification |
+| `core/net/default.py` | `SCRAPE_TIMEOUT`, `SCRAPE_MAX_RETRIES`, `SEARCH_TIMEOUT` — shared constants |
 | `core/contracts.py` | `ok()` / `fail()` — standardized return dicts with `trace_id` injection |
 | `core/config.py` | `cfg.searxng_url`, `cfg.web_max_text_chars`, `cfg.web_snippet_chars`, `cfg.web_max_search_results`, `cfg.worker_timeout` |
 | `core/memory_backend/pruner.py` | `prune_tool_dict()` — head+tail truncation, artifact storage |
@@ -37,7 +40,7 @@ tools/web_ops/
 ├── utils.py         # _is_safe_url() — SSRF guard, scheme allowlist, shared by search + scrape
 └── actions/
     ├── search.py           # _action_search() — SearXNG query
-    ├── scrape.py           # _action_scrape() — Fetch + guards + retry + BS4 clean → {url, title, text, word_count, truncated}
+    ├── scrape.py           # _action_scrape() — Fetch + guards + retry_sync() + BS4 clean → {url, title, text, word_count, truncated}
     ├── read.py             # _action_read() — Alias: scrape + prune_tool_dict()
     └── search_and_read.py  # _action_search_and_read() — Search → dedup → parallel scrape → prune
 ```
@@ -78,7 +81,7 @@ graph TD
 - **Pruning in action files** — `read.py` and `search_and_read.py` apply `prune_tool_dict()` inside their handlers. This keeps the facade thin and avoids the facade needing to know which actions prune.
 - **Content-type guard in `_fetch_html`** — After receiving headers, rejects `application/pdf` and `image/*` with structured errors. Suggests using `file(action="read_pdf")` or `browser(action="screenshot")` respectively.
 - **Response size guard** — Rejects responses with `Content-Length > 10 MB` before reading body. Prevents memory exhaustion from malicious/misconfigured servers.
-- **Retry with exponential backoff** — `_fetch_html` retries once on transient errors (HTTP 429/500/502/503/504, `TimeoutException`, `ConnectError`, `NetworkError`) with `sleep(min(2^attempt, 8))` seconds. Does NOT retry client errors (4xx except 429) or permanent failures.
+- **Retry via core/net** — `_fetch_html` uses `retry_sync()` from `core/net/retry.py` with `is_retryable_error()` from `core/net/errors.py`. Retries on HTTP 429/500/502/503/504, `TimeoutException`, `ConnectError`, `NetworkError`. Uses `get_retry_delay()` with jitter. Constants from `core/net/default.py` (`SCRAPE_MAX_RETRIES=3`, `SCRAPE_TIMEOUT=30`, `RETRY_BASE_DELAY=2.0`, `RETRY_MAX_DELAY=30.0`). Does NOT retry client errors (4xx except 429).
 
 ---
 
@@ -113,7 +116,7 @@ graph TD
 - Test timeout and connection error handling via `httpx.TimeoutException`, `httpx.ConnectError`
 - Test action dispatch (`search`, `scrape`, `read`, `search_and_read`, unknown action)
 - Test `_html_to_text` with various HTML structures (no `bs4` mock needed — it\'s pure HTML parsing)
-- Test retry backoff by mocking `time.sleep` and asserting call count
+- Test retry by mocking `core.net.retry.time.sleep` and asserting call count (retry_sync lives in core/net/retry.py)
 - Test content-type guards by setting `response.headers = {"content-type": "..."}`
 
 **Test patch path migration (old → new):**

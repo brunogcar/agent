@@ -10,7 +10,7 @@ The `web()` tool provides web search and content extraction via **SearXNG** (sel
 - **Connection pooling** — singleton `httpx.Client` reuses TCP/TLS connections across calls
 - **SSRF protection** — all URLs validated via `core.net.security.is_safe_network_address` before any HTTP request
 - **Content-type guard** — rejects PDFs, images, and oversized responses before parsing
-- **Retry with backoff** — one retry on transient errors (503, 429, timeout) with exponential backoff
+- **Retry with backoff** — uses `retry_sync()` from `core/net/retry.py` with unified `is_retryable_error()` classification and configurable constants from `core/net/default.py`
 - **User-agent rotation** — rotates through a pool of browser UAs to reduce 403 blocks
 
 ---

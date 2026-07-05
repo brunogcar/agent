@@ -91,7 +91,7 @@ class TestScrape:
         assert "too large" in result["error"].lower()
 
     def test_scrape_retry_on_503(self, mock_cfg_for_web, mock_httpx):
-        """Transient 503 triggers one retry with exponential backoff."""
+        """Transient 503 triggers retry via retry_sync() with backoff."""
         mock_response_ok = MagicMock()
         mock_response_ok.text = "<html><body>OK</body></html>"
         mock_response_ok.raise_for_status = MagicMock()
@@ -103,14 +103,15 @@ class TestScrape:
         exc_503 = httpx.HTTPStatusError("Service Unavailable", request=MagicMock(), response=error_503)
 
         mock_httpx.get.side_effect = [exc_503, mock_response_ok]
-        with patch("tools.web_ops.actions.scrape.time.sleep") as mock_sleep:
+        # [core/net] retry_sync() sleeps in core/net/retry.py, not scrape.py
+        with patch("core.net.retry.time.sleep") as mock_sleep:
             result = web(action="scrape", url="https://example.com", max_chars=8000)
         assert result["status"] == "success"
-        assert mock_httpx.get.call_count == 2
-        mock_sleep.assert_called_once_with(1)  # 2^0 = 1s backoff
+        assert mock_httpx.get.call_count == 2  # 1 fail + 1 success
+        mock_sleep.assert_called_once()  # 1 retry = 1 sleep
 
     def test_scrape_retry_on_timeout(self, mock_cfg_for_web, mock_httpx):
-        """Transient timeout triggers one retry with exponential backoff."""
+        """Transient timeout triggers retry via retry_sync() with backoff."""
         import httpx
         mock_response_ok = MagicMock()
         mock_response_ok.text = "<html><body>OK</body></html>"
@@ -118,11 +119,12 @@ class TestScrape:
         mock_response_ok.headers = {"content-type": "text/html"}
 
         mock_httpx.get.side_effect = [httpx.TimeoutException("Timeout"), mock_response_ok]
-        with patch("tools.web_ops.actions.scrape.time.sleep") as mock_sleep:
+        # [core/net] retry_sync() sleeps in core/net/retry.py, not scrape.py
+        with patch("core.net.retry.time.sleep") as mock_sleep:
             result = web(action="scrape", url="https://example.com", max_chars=8000)
         assert result["status"] == "success"
-        assert mock_httpx.get.call_count == 2
-        mock_sleep.assert_called_once_with(1)
+        assert mock_httpx.get.call_count == 2  # 1 fail + 1 success
+        mock_sleep.assert_called_once()  # 1 retry = 1 sleep
 
     def test_scrape_no_retry_on_404(self, mock_cfg_for_web, mock_httpx):
         """404 (client error) does NOT trigger retry — fails immediately."""
@@ -131,10 +133,13 @@ class TestScrape:
         error_404.status_code = 404
         exc_404 = httpx.HTTPStatusError("Not Found", request=MagicMock(), response=error_404)
         mock_httpx.get.side_effect = exc_404
-        result = web(action="scrape", url="https://example.com/notfound", max_chars=8000)
+        # [core/net] retry_sync() uses is_retryable_error() which rejects 4xx
+        with patch("core.net.retry.time.sleep") as mock_sleep:
+            result = web(action="scrape", url="https://example.com/notfound", max_chars=8000)
         assert result["status"] == "error"
         assert "404" in result["error"]
         mock_httpx.get.assert_called_once()  # Only one call, no retry
+        mock_sleep.assert_not_called()  # No retry = no sleep
 
 
 class TestSSRFProtection:

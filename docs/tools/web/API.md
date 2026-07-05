@@ -84,7 +84,7 @@ Fetches HTML via `httpx`, parses with BeautifulSoup4, and returns clean text + m
 - PDF pre-flight: URLs ending in `.pdf` rejected before HTTP request
 - Content-type: `application/pdf` and `image/*` rejected after headers arrive
 - Size: `Content-Length > 10 MB` rejected before reading body
-- Retry: one retry with exponential backoff on transient errors
+- Retry: uses `retry_sync()` from `core/net/retry.py` with `is_retryable_error()` classification. Constants from `core/net/default.py` (`SCRAPE_MAX_RETRIES=3`, `SCRAPE_TIMEOUT=30`)
 
 **Return:**
 ```json
@@ -200,7 +200,7 @@ def _is_safe_url(url: str) -> bool:
 
 The singleton `httpx.Client` is configured with:
 - `headers`: rotating User-Agent from a pool of 4 realistic browser UAs
-- `timeout`: 10.0s (client default; individual requests override: `_fetch_html` uses 20s, `_do_search` uses 15s)
+- `timeout`: 10.0s (client default; individual requests override: `_fetch_html` uses `SCRAPE_TIMEOUT=30` from `core/net/default.py`, `_do_search` uses `SEARCH_TIMEOUT=30` from `core/net/default.py`)
 - `follow_redirects`: `True`
 - `limits`: `httpx.Limits(max_connections=20)`
 

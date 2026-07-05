@@ -2,34 +2,29 @@
 
 Includes _fetch_html() and _html_to_text() helpers. These are private to
 this module; other actions that need scraping should call _action_scrape().
+
+[core/net adoption] Now uses retry_sync() from core/net/retry.py for unified
+retry behavior. Hardcoded constants replaced with core/net/default.py imports.
+Error classification uses is_retryable_error() from core/net/errors.py.
 """
 from __future__ import annotations
 
 import re
-import time
 from typing import Optional
 
 import httpx
 
 from core.config import cfg
 from core.contracts import fail, ok
+from core.net.retry import retry_sync
+from core.net.errors import is_retryable_error, get_retry_delay
+from core.net.default import SCRAPE_TIMEOUT, SCRAPE_MAX_RETRIES, RETRY_BASE_DELAY, RETRY_MAX_DELAY
 from tools.web_ops._registry import register_action
 from tools.web_ops.client import _make_client, _pick_user_agent
 from tools.web_ops.utils import _is_safe_url
 
 # Hard ceiling: reject responses larger than 10 MB before reading body.
 _MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024
-
-# Max retry attempts for transient failures (total tries = 1 + _MAX_RETRIES).
-_MAX_RETRIES = 1
-
-# Retryable status codes and exceptions.
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_RETRYABLE_EXCEPTIONS = (
-    httpx.TimeoutException,
-    httpx.ConnectError,
-    httpx.NetworkError,
-)
 
 
 @register_action(
@@ -77,12 +72,33 @@ def _action_scrape(
     })
 
 
-def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
+def _do_fetch(url: str, timeout: int) -> httpx.Response:
+    """Single HTTP GET attempt. Raises on error — retry_sync handles retries.
+
+    [core/net adoption] This is the function that retry_sync() wraps.
+    Only the HTTP fetch is inside the retry boundary. Response validation
+    (size, content-type) happens AFTER retry succeeds, in _fetch_html().
+    """
+    with _make_client() as client:
+        resp = client.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": _pick_user_agent()},
+        )
+        resp.raise_for_status()
+        return resp
+
+
+def _fetch_html(url: str, timeout: int = SCRAPE_TIMEOUT) -> tuple[str, str]:
     """Fetch URL using the pooled singleton client, return (html, error).
 
     Applies SSRF guard, response-size guard, content-type guard, and
-    one retry with exponential backoff on transient errors.
+    unified retry via retry_sync() on transient errors.
     Per-request User-Agent rotation to reduce 403 blocks.
+
+    [core/net adoption] Replaced hand-rolled retry loop with retry_sync()
+    from core/net/retry.py. Uses is_retryable_error() for classification
+    and get_retry_delay() for backoff. Constants from core/net/default.py.
     """
     if not _is_safe_url(url):
         return "", f"Blocked for security: {url} resolves to a private/internal address"
@@ -94,67 +110,51 @@ def _fetch_html(url: str, timeout: int = 20) -> tuple[str, str]:
             "Use file(action='read_pdf') or download to workspace/.artifacts/ instead."
         )
 
-    for attempt in range(_MAX_RETRIES + 1):
+    # [core/net adoption] Use retry_sync() from core/net/retry.py.
+    # max_retries and delays come from core/net/default.py.
+    # is_retryable_error() classifies httpx errors and HTTP status codes.
+    try:
+        resp = retry_sync(
+            lambda: _do_fetch(url, timeout),
+            max_retries=SCRAPE_MAX_RETRIES,
+            base_delay=RETRY_BASE_DELAY,
+            max_delay=RETRY_MAX_DELAY,
+            jitter=True,
+            is_retryable=is_retryable_error,
+        )
+    except httpx.HTTPStatusError as e:
+        return "", f"HTTP {e.response.status_code} from {url}"
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
+
+    # Response size guard — check Content-Length before reading body
+    content_length = resp.headers.get("content-length")
+    if content_length:
         try:
-            with _make_client() as client:
-                # Per-request UA rotation — overrides singleton default
-                resp = client.get(
-                    url,
-                    timeout=timeout,
-                    headers={"User-Agent": _pick_user_agent()},
+            if int(content_length) > _MAX_RESPONSE_SIZE_BYTES:
+                return "", (
+                    f"Response too large ({content_length} bytes) from {url}. "
+                    f"Max allowed: {_MAX_RESPONSE_SIZE_BYTES} bytes."
                 )
-                resp.raise_for_status()
+        except ValueError:
+            pass  # Malformed content-length header; proceed cautiously
 
-                # Response size guard — check Content-Length before reading body
-                content_length = resp.headers.get("content-length")
-                if content_length:
-                    try:
-                        if int(content_length) > _MAX_RESPONSE_SIZE_BYTES:
-                            return "", (
-                                f"Response too large ({content_length} bytes) from {url}. "
-                                f"Max allowed: {_MAX_RESPONSE_SIZE_BYTES} bytes."
-                            )
-                    except ValueError:
-                        pass  # Malformed content-length header; proceed cautiously
+    # Content-type guard — reject obvious non-HTML binary types
+    content_type = resp.headers.get("content-type", "").lower()
+    if "application/pdf" in content_type:
+        return "", (
+            f"URL returned PDF content ({content_type}) from {url}. "
+            "Use file(action='read_pdf') or download to workspace/.artifacts/ instead."
+        )
+    if "image/" in content_type:
+        return "", (
+            f"URL returned image content ({content_type}) from {url}. "
+            "Use browser(action='screenshot') for image extraction."
+        )
+    # Allow text/html, application/xhtml+xml, text/plain, and
+    # missing/unknown content-types (some servers omit the header).
 
-                # Content-type guard — reject obvious non-HTML binary types
-                content_type = resp.headers.get("content-type", "").lower()
-                if "application/pdf" in content_type:
-                    return "", (
-                        f"URL returned PDF content ({content_type}) from {url}. "
-                        "Use file(action='read_pdf') or download to workspace/.artifacts/ instead."
-                    )
-                if "image/" in content_type:
-                    return "", (
-                        f"URL returned image content ({content_type}) from {url}. "
-                        "Use browser(action='screenshot') for image extraction."
-                    )
-                # Allow text/html, application/xhtml+xml, text/plain, and
-                # missing/unknown content-types (some servers omit the header).
-
-                return resp.text, ""
-
-        except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            if status in _RETRYABLE_STATUS_CODES and attempt < _MAX_RETRIES:
-                # Exponential backoff: 1s, 2s, 4s, ... capped at 8s
-                backoff = min(2 ** attempt, 8)
-                time.sleep(backoff)
-                continue
-            return "", f"HTTP {status} from {url}"
-        except _RETRYABLE_EXCEPTIONS:
-            if attempt < _MAX_RETRIES:
-                backoff = min(2 ** attempt, 8)
-                time.sleep(backoff)
-                continue
-            return "", f"Network error fetching {url}"
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception as e:
-            return "", f"{type(e).__name__}: {e}"
-
-    # Should never reach here — every loop path returns or continues.
-    return "", f"Failed to fetch {url} after {_MAX_RETRIES + 1} attempts"
+    return resp.text, ""
 
 
 def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]:

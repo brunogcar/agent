@@ -12,7 +12,7 @@ How to migrate `web`, `browser`, and workflow tools to use the unified `core/net
 | Tool | Status | Notes |
 |------|--------|-------|
 | **tavily** | ✅ **Complete v1.3** | Reference implementation. All 6 modules adopted. |
-| **web** | ⏳ **Pending** | Needs `errors.py`, `security.py`, `retry.py`, `url.py`, `default.py` |
+| **web** | ✅ **Complete v1.0** | scrape.py uses retry_sync() + is_retryable_error() + default constants. search.py uses SEARCH_TIMEOUT. SSRF already used core/net/security.py. |
 | **browser** | ⏳ **Pending** | Needs `errors.py`, `security.py`, `retry.py`, `url.py`, `default.py` |
 | **workflows/research** | ⏳ **Pending** | Needs `errors.py`, `retry.py` for HTTP calls |
 | **workflows/deep_research** | ⏳ **Pending** | Needs `errors.py`, `retry.py` for HTTP calls |

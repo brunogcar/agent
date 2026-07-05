@@ -4,6 +4,17 @@
 
 ## ⚠️ Breaking Changes
 
+### v1.2 — 2026-07-05
+
+| Change | Impact |
+|--------|--------|
+| `scrape.py` retry moved to `core/net/retry.py` | `time.sleep` now patched in `core.net.retry`, not `tools.web_ops.actions.scrape`. Tests must update patch targets. |
+| `_MAX_RETRIES` removed | Was 1 (2 total attempts). Now uses `SCRAPE_MAX_RETRIES=3` from `core/net/default.py` (4 total attempts). |
+| `_RETRYABLE_STATUS_CODES` / `_RETRYABLE_EXCEPTIONS` removed | Now uses `is_retryable_error()` from `core/net/errors.py` — same classification, unified across tools. |
+| `timeout=20` → `SCRAPE_TIMEOUT=30` | Default scrape timeout increased from 20s to 30s. |
+| `timeout=15` → `SEARCH_TIMEOUT=30` | Default search timeout increased from 15s to 30s. |
+| Backoff changed | Was `min(2^attempt, 8)` (1s, 2s, 4s, 8s). Now `get_retry_delay()` with jitter (`RETRY_BASE_DELAY=2.0`, `RETRY_MAX_DELAY=30.0`). |
+
 ### v1.1 (Hardening + Guards)
 
 | Change | Impact |
@@ -42,6 +53,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.2 | 2026-07-05 | **core/net adoption:** scrape.py now uses `retry_sync()` from `core/net/retry.py` (was hand-rolled retry loop). Constants from `core/net/default.py`. Error classification via `is_retryable_error()` from `core/net/errors.py`. search.py uses `SEARCH_TIMEOUT` from `core/net/default.py` (was hardcoded 15). |
 
 *(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
 
