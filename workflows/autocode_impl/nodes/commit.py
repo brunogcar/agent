@@ -45,8 +45,9 @@ def node_commit(state: AutocodeState) -> dict:
     if state.get("skill_path"):
         result_lines.append(f"Skill: {state['skill_path']}")
     result_lines += [" ", state.get("verification_notes", " ")]
-    if state.get("defense_note"):
-        result_lines.append(f"\nDefense note: {state['defense_note']}")
+    # [Bug #10] Changed defense_note -> defense_notes (plural) to match state field
+    if state.get("defense_notes"):
+        result_lines.append(f"\nDefense note: {state['defense_notes']}")
 
     return {
         "status": "done",

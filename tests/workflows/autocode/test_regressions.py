@@ -348,3 +348,247 @@ class TestBrainstormEarlyReturn:
         assert result == {}, (
             "needs_clarification must return empty dict without referencing undefined variables"
         )
+
+
+# =============================================================================
+# P0 Bug fixes (Bug #1-#11)
+# =============================================================================
+
+class TestNoBakFiles:
+    """Bug #1: No .bak files should be created — atomic writes only."""
+
+    def test_patch_apply_no_bak_created(self, tmp_path):
+        """apply_patch must not create .bak files."""
+        from workflows.autocode_impl.patch import apply_patch
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def foo():\n    pass\n", encoding="utf-8")
+        result = apply_patch(test_file, "pass", "return True")
+        assert result.ok
+        assert not (tmp_path / "test.py.bak").exists(), ".bak file must not be created"
+        assert test_file.read_text() == "def foo():\n    return True\n"
+
+    def test_patch_apply_patches_no_bak_created(self, tmp_path):
+        """apply_patches must not create .bak files."""
+        from workflows.autocode_impl.patch import apply_patches
+        test_file = tmp_path / "test.py"
+        test_file.write_text("old1\nold2\n", encoding="utf-8")
+        result = apply_patches(test_file, [{"old": "old1", "new": "new1"}, {"old": "old2", "new": "new2"}])
+        assert result.ok
+        assert not (tmp_path / "test.py.bak").exists(), ".bak file must not be created"
+
+    def test_write_files_node_no_bak_created(self, tmp_path):
+        """node_write_files must not create .bak files for new files."""
+        from workflows.autocode_impl.nodes.write_files import node_write_files
+        import json
+        tdd_code = json.dumps({"new_files": {"output.py": "print('hello')"}})
+        state = {
+            "trace_id": "test-nobak",
+            "tdd_source_code": tdd_code,
+            "project_root": str(tmp_path),
+        }
+        with patch("core.config.cfg.workspace_root", tmp_path), \
+             patch("core.config.cfg.is_protected", return_value=False):
+            node_write_files(state)
+        assert not (tmp_path / "output.py.bak").exists(), ".bak file must not be created"
+        assert (tmp_path / "output.py").exists()
+
+
+class TestNoGitSnapshot:
+    """Bug #2: git(action='snapshot') removed — branch is the safety net."""
+
+    def test_git_ops_no_snapshot_function(self):
+        """_git_snapshot must not exist in git_ops."""
+        from workflows.autocode_impl import git_ops
+        assert not hasattr(git_ops, "_git_snapshot"), (
+            "_git_snapshot must be removed — snapshot action was deleted from git tool"
+        )
+
+    def test_branch_node_no_snapshot_call(self):
+        """node_git_branch must not call _git_snapshot in actual code (not comments)."""
+        import inspect
+        import ast
+        from workflows.autocode_impl.nodes.branch import node_git_branch
+        source = inspect.getsource(node_git_branch)
+        # Strip comments and docstrings to check actual code only
+        tree = ast.parse(source)
+        # Remove docstrings
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                if (node.body and isinstance(node.body[0], ast.Expr) and
+                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
+        code_only = ast.unparse(tree)
+        # Strip comments (lines starting with #)
+        code_lines = [line for line in code_only.split('\n') if not line.strip().startswith('#')]
+        code_str = '\n'.join(code_lines)
+        assert "_git_snapshot" not in code_str, (
+            "node_git_branch must not call _git_snapshot in actual code"
+        )
+
+
+class TestFilesMapPopulated:
+    """Bug #3: files_map must be populated by node_write_files."""
+
+    def test_write_files_populates_files_map(self, tmp_path):
+        """node_write_files must set files_map with file snapshots."""
+        from workflows.autocode_impl.nodes.write_files import node_write_files
+        import json
+        tdd_code = json.dumps({"new_files": {"target.py": "print('hello')"}})
+        state = {
+            "trace_id": "test-filesmap",
+            "tdd_source_code": tdd_code,
+            "project_root": str(tmp_path),
+        }
+        with patch("core.config.cfg.workspace_root", tmp_path), \
+             patch("core.config.cfg.is_protected", return_value=False):
+            result = node_write_files(state)
+        assert "files_map" in result, "files_map must be populated by write_files"
+        assert "target.py" in result["files_map"], "target.py must be in files_map"
+        assert "full_md5" in result["files_map"]["target.py"], "snapshot must have full_md5"
+
+
+class TestAnalyzeImpactSync:
+    """Bug #4: node_analyze_impact must be a sync function, not async."""
+
+    def test_analyze_impact_is_sync(self):
+        """node_analyze_impact must not be a coroutine function."""
+        import inspect
+        from workflows.autocode_impl.nodes.analyze_impact import node_analyze_impact
+        assert not inspect.iscoroutinefunction(node_analyze_impact), (
+            "node_analyze_impact must be sync (def, not async def) — "
+            "LangGraph StateGraph.add_node expects sync functions"
+        )
+
+    def test_analyze_impact_returns_dict_on_empty_files_map(self):
+        """Sync node must return dict when files_map is empty."""
+        from workflows.autocode_impl.nodes.analyze_impact import node_analyze_impact
+        state = {"trace_id": "test", "files_map": {}}
+        result = node_analyze_impact(state)
+        assert isinstance(result, dict)
+        assert result.get("analyze_impact_failed") is False
+
+
+class TestExecuteFilesContext:
+    """Bug #6: execute.py must use _files_context() helper, not state['files_context']."""
+
+    def test_execute_uses_files_context_helper(self):
+        """execute.py must import and use _files_context, not state.get('files_context')."""
+        import inspect
+        from workflows.autocode_impl.nodes import execute
+        source = inspect.getsource(execute)
+        assert "_files_context" in source, "execute.py must use _files_context() helper"
+        assert "files_context" not in source.replace("_files_context", ""), (
+            "execute.py must not reference state.get('files_context') — field doesn't exist in state"
+        )
+
+
+class TestBrainstormMergesKgFiles:
+    """Bug #7: brainstorm must store merged files_update, not original state['files']."""
+
+    def test_brainstorm_stores_merged_files(self):
+        """When kg_files are found, brainstorm must store the merged dict in code (not comments)."""
+        import inspect
+        import ast
+        from workflows.autocode_impl.nodes.brainstorm import node_brainstorm
+        source = inspect.getsource(node_brainstorm)
+        # Strip comments and docstrings to check actual code only
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                if (node.body and isinstance(node.body[0], ast.Expr) and
+                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
+        code_only = ast.unparse(tree)
+        # Must NOT store the original state["files"] when kg_files exist
+        assert 'updates["files"] = state["files"]' not in code_only, (
+            "brainstorm must not store original state['files'] in actual code — must store merged files_update"
+        )
+
+
+class TestImpactWarningsType:
+    """Bug #8: impact_warnings state type must be list[dict], not list[str]."""
+
+    def test_state_impact_warnings_is_list_dict(self):
+        """AutocodeState.impact_warnings must be typed as list[dict]."""
+        import inspect
+        from workflows.autocode_impl.state import AutocodeState
+        annotations = AutocodeState.__annotations__
+        assert annotations.get("impact_warnings") == "list[dict]" or "dict" in str(annotations.get("impact_warnings")), (
+            f"impact_warnings must be list[dict], got {annotations.get('impact_warnings')}"
+        )
+
+
+class TestNoDeadAgentRoot:
+    """Bug #9: AGENT_ROOT = None must be removed from state.py."""
+
+    def test_no_agent_root_module_variable(self):
+        """state.py must not define AGENT_ROOT = None."""
+        from workflows.autocode_impl import state
+        assert not hasattr(state, "AGENT_ROOT"), (
+            "AGENT_ROOT must be removed — was dead code (never set, never used)"
+        )
+
+
+class TestDefenseNotesPlural:
+    """Bug #10: defense_note (singular) must be defense_notes (plural) everywhere."""
+
+    def test_commit_uses_defense_notes(self):
+        """commit.py must use defense_notes (plural) in actual code, not defense_note (singular)."""
+        import inspect
+        import ast
+        from workflows.autocode_impl.nodes.commit import node_commit
+        source = inspect.getsource(node_commit)
+        # Strip comments and docstrings
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                if (node.body and isinstance(node.body[0], ast.Expr) and
+                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
+        code_only = ast.unparse(tree)
+        code_lines = [line for line in code_only.split('\n') if not line.strip().startswith('#')]
+        code_str = '\n'.join(code_lines)
+        assert "defense_note" not in code_str.replace("defense_notes", ""), (
+            "commit.py must use defense_notes (plural) in actual code, not defense_note (singular)"
+        )
+
+    def test_memory_uses_defense_notes(self):
+        """memory.py must use defense_notes (plural) in actual code, not defense_note."""
+        import inspect
+        import ast
+        from workflows.autocode_impl.nodes.memory import node_distill_memory
+        source = inspect.getsource(node_distill_memory)
+        # Strip comments and docstrings
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                if (node.body and isinstance(node.body[0], ast.Expr) and
+                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
+        code_only = ast.unparse(tree)
+        code_lines = [line for line in code_only.split('\n') if not line.strip().startswith('#')]
+        code_str = '\n'.join(code_lines)
+        assert "defense_note" not in code_str.replace("defense_notes", ""), (
+            "memory.py must use defense_notes (plural) in actual code, not defense_note (singular)"
+        )
+
+    def test_memory_uses_root_cause_not_hypothesis(self):
+        """Bug #11: memory.py must use root_cause in actual code, not hypothesis."""
+        import inspect
+        import ast
+        from workflows.autocode_impl.nodes.memory import node_distill_memory
+        source = inspect.getsource(node_distill_memory)
+        # Strip comments and docstrings
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+                if (node.body and isinstance(node.body[0], ast.Expr) and
+                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
+        code_only = ast.unparse(tree)
+        code_lines = [line for line in code_only.split('\n') if not line.strip().startswith('#')]
+        code_str = '\n'.join(code_lines)
+        assert "hypothesis" not in code_str, (
+            "memory.py must use root_cause (not hypothesis) in actual code — matches what debug.py sets"
+        )
+        assert "root_cause" in code_str, "memory.py must reference root_cause in actual code"

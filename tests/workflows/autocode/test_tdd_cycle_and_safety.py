@@ -99,10 +99,10 @@ class TestDryRunAndSafetyGuards:
 
 
 class TestSurgicalPatchingAndFileLocks:
-    """Validate patch fallback, .bak creation, and lock timeout handling."""
+    """Validate patch fallback, atomic writes (no .bak), and lock timeout handling."""
 
-    def test_apply_patch_success_creates_bak(self, temp_workspace):
-        """Successful patch must create backup and modify file."""
+    def test_apply_patch_success_no_bak(self, temp_workspace):
+        """Successful patch must modify file WITHOUT creating .bak (Bug #1 fix)."""
         from workflows.autocode_impl.patch import apply_patch
         target = temp_workspace / "patch_target.py"
         target.write_text("def old(): pass\n", encoding="utf-8")
@@ -110,7 +110,8 @@ class TestSurgicalPatchingAndFileLocks:
         result = apply_patch(target, old="def old(): pass\n", new="def new(): return True\n")
         assert result.ok is True
         assert "def new():" in target.read_text()
-        assert target.with_suffix(".py.bak").exists()
+        # [Bug #1] No .bak file should be created — atomic writes only
+        assert not target.with_suffix(".py.bak").exists(), ".bak file must not be created"
 
     def test_apply_patch_fallback_on_mismatch(self, temp_workspace):
         """Mismatched old_text must return ok=False without corrupting file."""

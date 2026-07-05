@@ -1,5 +1,15 @@
 """
 Git helper functions for autocode workflow.
+
+[FUTURE] GitHub PR Integration:
+  When a `github` tool is added (planned before the autocode refactor),
+  this module will expand to support:
+    - Create PR from autocode branch
+    - Check PR status / CI results
+    - Fix PR based on review comments
+  For now, autocode relies on git branches + commits only. The branch itself
+  is the safety net — if something goes wrong, revert via git. No pre-snapshot
+  is needed since the branch isolates the changes.
 """
 
 from __future__ import annotations
@@ -11,22 +21,13 @@ from core.config import cfg
 from core.tracer import tracer
 
 
-def _git_snapshot(message: str, tid: str = "", project_root: str = None) -> bool:
-    from tools.git import git
-    root = project_root or str(cfg.agent_root)
-    try:
-        r = git(action="snapshot", message=f"autocode: before {message[:40]}", root=root)
-        ok = r.get("status") in ("committed", "nothing_to_commit")
-        if tid:
-            tracer.step(tid, "git_snapshot", f"snapshot @ {root}: {r.get('status')}")
-        return ok
-    except Exception as e:
-        if tid:
-            tracer.step(tid, "git_snapshot", f"snapshot failed: {e}")
-        return False
-
-
 def _git_commit(message: str, tid: str = "", project_root: str = None) -> str | None:
+    """Commit changes in the working tree.
+
+    [FUTURE] When GitHub PR integration is added, this will also handle
+    pushing the branch and creating/updating a PR. For now, it just commits
+    locally on the autocode branch.
+    """
     from tools.git import git
     root = project_root or str(cfg.agent_root)
     try:
@@ -38,7 +39,9 @@ def _git_commit(message: str, tid: str = "", project_root: str = None) -> str | 
                 tracer.step(tid, "git_commit", f"committed {sha} @ {root}")
             return sha
         else:
-            _git_snapshot(f"baseline: {message[:40]}", tid, root)
+            # Nothing to commit — working tree clean
+            if tid:
+                tracer.step(tid, "git_commit", f"nothing to commit @ {root}")
             return None
     except Exception as e:
         if tid:
@@ -52,7 +55,11 @@ def _git_create_branch(branch: str, tid: str = "", project_root: str = None) -> 
     Falls back to checkout_branch ONLY if checkout_new fails because the
     branch already exists. All other errors (dirty working tree, invalid
     branch name, no commits) are logged and returned as failures.
+
+    The branch itself serves as the snapshot/safety net. No separate
+    snapshot action is needed — git revert on the branch recovers state.
     """
+    from tools.git import git
     root = project_root or str(cfg.agent_root)
     try:
         r = git(action="checkout_new", target=branch, root=root)

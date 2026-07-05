@@ -129,7 +129,9 @@ def node_brainstorm(state: AutocodeState) -> dict:
     tracer.step(tid, "brainstorm", f"spec ready ({len(spec)} chars)")
     
     updates = {"memory_context": mem_ctx, "spec": spec}
+    # [Bug #7] Store the MERGED files (kg_files + original), not the original.
+    # Previously: updates["files"] = state["files"] — discarded KG files.
     if kg_files:
-        updates["files"] = state["files"]
+        updates["files"] = files_update
     
     return updates

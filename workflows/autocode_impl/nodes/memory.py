@@ -15,8 +15,10 @@ def node_distill_memory(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     task = state.get("task", "")
     task_type = state.get("task_type", state.get("classification", {}).get("task_type", "feature"))
-    hypothesis = state.get("hypothesis", "")
-    defense_note = state.get("defense_note", "")
+    # [Bug #11] Changed hypothesis -> root_cause and defense_note -> defense_notes
+    # to match what debug.py actually sets. Previously always empty.
+    root_cause = state.get("root_cause", "")
+    defense_notes = state.get("defense_notes", "")
     error_log = state.get("error_log", "")
     modified_files = state.get("modified_files", [])
     
@@ -33,10 +35,10 @@ def node_distill_memory(state: AutocodeState) -> dict:
         f"TASK DESCRIPTION: {task}",
     ]
     
-    if hypothesis:
-        trace_parts.append(f"ROOT CAUSE HYPOTHESIS: {hypothesis}")
-    if defense_note:
-        trace_parts.append(f"DEFENSE NOTE (How to prevent this in future): {defense_note}")
+    if root_cause:
+        trace_parts.append(f"ROOT CAUSE HYPOTHESIS: {root_cause}")
+    if defense_notes:
+        trace_parts.append(f"DEFENSE NOTE (How to prevent this in future): {defense_notes}")
     if error_log:
         trace_parts.append(f"ERRORS ENCOUNTERED:\n{error_log[:1000]}")
     if modified_files:

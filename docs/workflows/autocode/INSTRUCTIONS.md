@@ -40,14 +40,30 @@
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(Fill this section with relevant info from edits and refactors. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
+> - **What happened:** `.bak` backup files were created on every file write (patch.py, write_files.py, helpers.py). This violated project rules and cluttered the repo with stale backups.
+> - **Why it matters:** `.bak` files accumulate, confuse git status, and are unnecessary since git provides versioning. The project explicitly forbids `.bak` files.
+> - **Fix:** Use atomic writes (tempfile.NamedTemporaryFile + os.replace) only. No `.bak` creation anywhere. Git is the backup.
 
-> - **What happened:** The symptom or bug
-> - **Why it matters:** The impact
-> - **Fix:** The solution or pattern to follow
+> - **What happened:** `_git_snapshot()` called `git(action="snapshot")` which was removed from the git tool in the un-multiplex refactor. The call always failed silently.
+> - **Why it matters:** The "pre-autocode snapshot" was supposed to be a safety net, but it never worked. Autocode ran without any snapshot protection.
+> - **Fix:** Removed `_git_snapshot` entirely. The git branch itself is the safety net — if something goes wrong, `git checkout main` or `git revert` recovers. Future plan: add GitHub PR integration so autocode can create/fix PRs.
 
-*Fill this section with relevant information during edits and refactors.)*
+> - **What happened:** `files_map` was declared in `AutocodeState` and initialized to `{}`, but no node ever populated it. `node_analyze_impact` read it and found it empty, so impact analysis never ran.
+> - **Why it matters:** Without impact analysis, autocode can't detect regressions or target specific tests. It always falls back to running the full test suite.
+> - **Fix:** `node_write_files` now populates `files_map` with file snapshots (content_preview, md5, size) after writing files. `analyze_impact` will now actually run.
+
+> - **What happened:** `node_analyze_impact` was declared `async def` but LangGraph `StateGraph.add_node` expects sync functions. The async node may fail silently or hang the graph.
+> - **Why it matters:** Async-in-sync-graph is undefined behavior in LangGraph. The node may never execute, or may hang forever.
+> - **Fix:** Converted to `def` (sync). Async calls (`parse_dependencies_from_string`, `get_targeted_tests`) are wrapped in `_run_async()` which creates a new event loop.
+
+> - **What happened:** `node_brainstorm` merged `kg_files` into `files_update` but stored `state["files"]` (the original) instead of the merged result. Knowledge graph files were discarded.
+> - **Why it matters:** KG context (relevant files from the dependency graph) was fetched but never made available to downstream nodes. The planner and executor never saw the KG files.
+> - **Fix:** Store `files_update` (merged) instead of `state["files"]` (original).
+
+> - **What happened:** `node_distill_memory` read `hypothesis` and `defense_note` (singular), but `node_systematic_debug` sets `root_cause` and `defense_notes` (plural). Both fields were always empty.
+> - **Why it matters:** Procedural memory distillation never received root cause or defense notes — the most valuable debugging insights were discarded.
+> - **Fix:** Changed to `root_cause` and `defense_notes` to match what debug.py actually sets. Same fix in `node_commit`.
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

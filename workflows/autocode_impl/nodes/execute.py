@@ -10,7 +10,7 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.constants import CODER_SYSTEM
-from workflows.autocode_impl.helpers import _call, _write_files
+from workflows.autocode_impl.helpers import _call, _write_files, _files_context
 from workflows.autocode_impl.state import AutocodeState
 
 def node_execute_step(state: AutocodeState) -> dict:
@@ -31,7 +31,7 @@ def node_execute_step(state: AutocodeState) -> dict:
 
     # Use your actual config attributes
     system = CODER_SYSTEM
-    user = f"Plan step: {current_step.get('description', '')}\nCurrent files:\n{state.get('files_context', '')}"
+    user = f"Plan step: {current_step.get('description', '')}\nCurrent files:\n{_files_context(state.get('files', {}))}"
     try:
         code = _call(
             role="executor",

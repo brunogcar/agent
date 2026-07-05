@@ -8,7 +8,9 @@ from typing import Annotated, TypedDict, Optional
 
 from core.config import cfg
 
-AGENT_ROOT = None  # Set via cfg
+# [Bug #9] Removed dead AGENT_ROOT = None — was never set or used.
+# Autocode operates on workspace projects via target_file, and uses
+# cfg.agent_root / cfg.workspace_root directly when path resolution is needed.
 
 # Constants (Centralized in core.config.cfg, referenced here for local defaults)
 MAX_RETRIES = cfg.autocode_max_retries
@@ -70,7 +72,9 @@ class AutocodeState(TypedDict, total=False):
     tests_written: bool
 
     # Impact Analysis (Phase: AST Dependency Graphing)
-    impact_warnings: list[str]
+    # [Bug #8] Changed from list[str] to list[dict] — analyze_impact returns
+    # structured warnings: {"type": str, "message": str, "agent_fault": bool}
+    impact_warnings: list[dict]
     targeted_test_cmd: str | None
     analyze_impact_failed: bool
 

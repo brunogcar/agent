@@ -3,6 +3,10 @@ workflows/autocode_impl/nodes/analyze_impact.py
 Analyzes the impact of modified files and determines targeted tests.
 Uses the project-scoped core/kgraph/test_mapper for persistent, smart mapping.
 Includes Phase 6 Stale Graph Micro-Updates.
+
+[Bug #4] Converted from async to sync — LangGraph StateGraph.add_node expects
+sync functions. The async calls (parse_dependencies_from_string, get_targeted_tests)
+are now wrapped in asyncio.run() inside the sync function.
 """
 from __future__ import annotations
 import asyncio
@@ -13,7 +17,26 @@ from core.kgraph.test_mapper import get_targeted_tests
 from core.config import cfg
 from core.tracer import tracer
 
-async def node_analyze_impact(state: AutocodeState) -> dict:
+
+def _run_async(coro):
+    """Run an async coroutine from sync context. Creates a new event loop."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(coro)
+        loop.close()
+        return result
+    except RuntimeError:
+        # Fallback: if there's already a running loop (unlikely in LangGraph sync node)
+        return asyncio.run(coro)
+
+
+def node_analyze_impact(state: AutocodeState) -> dict:
+    """Analyze the impact of modified files and determine targeted tests.
+
+    [Bug #4] Was `async def` — LangGraph StateGraph.add_node expects sync.
+    Converted to sync, wrapping async calls in _run_async().
+    """
     tid = state.get("trace_id", "unknown")
     files_map = state.get("files_map", {})
     project_root = state.get("project_root", "")
@@ -58,19 +81,18 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
                     stored_md5 = store.get_file_hash(pm.project_id, rel_path)
                     
                     if current_md5 != stored_md5:
-                        deps = await parse_dependencies_from_string(pm.project_id, content)
+                        deps = _run_async(parse_dependencies_from_string(pm.project_id, content))
                         target_paths = []
                         for dep in deps:
                             target_paths.append(dep.replace(".", "/") + ".py")
                             target_paths.append(dep)
-                            
-                        await asyncio.to_thread(
-                            store.upsert_file_graph, 
-                            pm.project_id, 
-                            rel_path, 
-                            current_md5, 
+
+                        _run_async(store.upsert_file_graph(
+                            pm.project_id,
+                            rel_path,
+                            current_md5,
                             target_paths
-                        )
+                        ))
                         micro_updated.append(rel_path)
                         
                 if micro_updated:
@@ -83,11 +105,11 @@ async def node_analyze_impact(state: AutocodeState) -> dict:
         is_agent = (not project_root) or (Path(project_root).resolve() == cfg.agent_root.resolve())
         project_path = Path(project_root) if not is_agent else cfg.agent_root
         
-        result = await get_targeted_tests(
+        result = _run_async(get_targeted_tests(
             project_path=project_path,
             modified_files=modified_files,
             project_id=project_path.name
-        )
+        ))
         
         test_files = result.get("tests", [])
         fallback = result.get("fallback", False)

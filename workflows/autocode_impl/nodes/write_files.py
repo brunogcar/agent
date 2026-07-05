@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
-
 from pathlib import Path
 from typing import Any
 from filelock import FileLock, Timeout
@@ -82,18 +80,27 @@ def node_write_files(state: AutocodeState) -> dict:
 
         target.parent.mkdir(parents=True, exist_ok=True)
         lock_path = str(target) + ".lock"
-        bak_path = target.with_suffix(target.suffix + ".bak")
 
+        # [Bug #1] Atomic write — no .bak backup (violates project rules).
+        # Git provides versioning; tempfile + os.replace prevents corruption.
+        import tempfile
+        import os
         try:
             with FileLock(lock_path, timeout=10):
-                if target.exists():
-                    shutil.copy2(target, bak_path)
-                target.write_text(str(content), encoding="utf-8")
+                with tempfile.NamedTemporaryFile(
+                    mode='w', encoding='utf-8', dir=target.parent,
+                    delete=False, suffix='.tmp'
+                ) as tmp:
+                    tmp.write(str(content))
+                    tmp_path = Path(tmp.name)
+                os.replace(tmp_path, target)
                 tracer.step(tid, "write_files",
                     f"wrote {rel_path} ({len(content)} chars)")
         except Timeout:
             tracer.step(tid, "write_files", f"lock timeout: {rel_path}")
         except Exception as e:
+            if 'tmp_path' in locals() and tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
             tracer.step(tid, "write_files", f"write error {rel_path}: {e}")
 
     if patch_errors:
@@ -107,6 +114,33 @@ def node_write_files(state: AutocodeState) -> dict:
     updates = {}
     if patch_errors:
         updates["patch_errors"] = patch_errors
+
+    # [Bug #3] Populate files_map for analyze_impact node.
+    # Snapshot modified files (content + md5) so analyze_impact can detect
+    # changes and run targeted tests. Without this, files_map is always {}
+    # and impact analysis never runs.
+    import hashlib
+    files_map = {}
+    all_modified = list(new_files.keys()) + [p.get("path", "") for p in patches if p.get("path")]
+    for mod_path in all_modified:
+        if not mod_path:
+            continue
+        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+        full_path = base_path / mod_path
+        if full_path.exists():
+            try:
+                content = full_path.read_text(encoding="utf-8", errors="replace")
+                files_map[mod_path] = {
+                    "content_preview": content[:8000],
+                    "preview_md5": hashlib.md5(content[:8000].encode("utf-8")).hexdigest(),
+                    "full_md5": hashlib.md5(content.encode("utf-8")).hexdigest(),
+                    "size": len(content),
+                    "truncated": len(content) > 8000,
+                }
+            except Exception:
+                pass
+    if files_map:
+        updates["files_map"] = files_map
 
     # Persist test file to per-run autocode folder
     if state.get("test_code"):

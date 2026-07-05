@@ -26,8 +26,9 @@ DESIGN DECISIONS
   enough surrounding context to make the match unique. We return the occurrence
   count on failure so the caller can diagnose.
 
-- Backup before every write (.bak extension).
-  Reason: matches git(operation="rollback") semantics — always recoverable.
+- Atomic writes via tempfile.NamedTemporaryFile + os.replace.
+  Reason: .bak files violate project rules and clutter the repo. Git provides
+  versioning; atomic writes prevent corruption on crash. No .bak needed.
 
 - extract_relevant_sections uses keyword overlap + context window expansion.
   Reason: no AST needed, language-agnostic, fast, good enough for LLM hints.
@@ -38,7 +39,6 @@ DESIGN DECISIONS
 from __future__ import annotations
 
 import re
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -65,8 +65,9 @@ def apply_patch(path: Path, old: str, new: str) -> PatchResult:
     """
     Apply a single str_replace patch to `path`.
 
-    Reads the file, finds `old` exactly once, replaces with `new`, writes back.
-    Creates a .bak backup before writing.
+    Reads the file, finds `old` exactly once, replaces with `new`, writes back
+    using an atomic write (tempfile + os.replace). No .bak backup is created —
+    git provides versioning, and .bak files violate project rules.
 
     Returns PatchResult with ok=True on success, ok=False with .error on failure.
 
@@ -113,19 +114,27 @@ def apply_patch(path: Path, old: str, new: str) -> PatchResult:
 
     updated = content.replace(old, new, 1)
 
-    # Backup then write
-    bak_path = path.with_suffix(path.suffix + ".bak")
+    # [Bug #1] Atomic write — no .bak backup (violates project rules).
+    # Git provides versioning; tempfile + os.replace prevents corruption on crash.
+    import os
+    import tempfile
     try:
-        shutil.copy2(path, bak_path)
-        path.write_text(updated, encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8', dir=path.parent,
+            delete=False, suffix='.tmp'
+        ) as tmp:
+            tmp.write(updated)
+            tmp_path = Path(tmp.name)
+        os.replace(tmp_path, path)
     except Exception as e:
+        if 'tmp_path' in locals() and tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
         return PatchResult(ok=False, error=f"write error: {e}")
 
     return PatchResult(
         ok=True,
         path=str(path),
         lines_changed=lines_changed,
-        backup_path=str(bak_path),
     )
 
 
@@ -177,18 +186,26 @@ def apply_patches(path: Path, patches: list[dict]) -> PatchResult:
         content = content.replace(old, new, 1)
         total_lines += max(old.count("\n") + 1, new.count("\n") + 1 if new else 0)
 
-    bak_path = path.with_suffix(path.suffix + ".bak")
+    # [Bug #1] Atomic write — no .bak backup (violates project rules).
+    import os
+    import tempfile
     try:
-        shutil.copy2(path, bak_path)
-        path.write_text(content, encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8', dir=path.parent,
+            delete=False, suffix='.tmp'
+        ) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+        os.replace(tmp_path, path)
     except Exception as e:
+        if 'tmp_path' in locals() and tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
         return PatchResult(ok=False, error=f"write error: {e}")
 
     return PatchResult(
         ok=True,
         path=str(path),
         lines_changed=total_lines,
-        backup_path=str(bak_path),
     )
 
 

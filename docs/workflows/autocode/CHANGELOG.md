@@ -6,13 +6,24 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.0.1 | 2026-07-05 | P0 bugfix batch: removed .bak files (#1), removed git snapshot (#2), populate files_map (#3), sync analyze_impact (#4), fix files_context (#6), fix KG file merge (#7), fix impact_warnings type (#8), remove dead AGENT_ROOT (#9), fix defense_notes (#10/#11) |
 | v1.0 | — | Released — 17-node LangGraph StateGraph with TDD-first, debug loop, impact analysis, git integration, memory storage |
 
 ---
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes yet. This section is reserved for future releases.)*
+### v1.0.1 — 2026-07-05
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| Removed `.bak` file creation | No more `.bak` backup files in the repo. Atomic writes (tempfile + os.replace) used instead. Git provides versioning. | No migration — strictly better. Clean up any existing `.bak` files: `git clean -f "*.bak"` |
+| Removed `git(action="snapshot")` | `_git_snapshot()` function removed from `git_ops.py`. The branch itself is the safety net. | No migration — snapshot action was already broken (action deleted from git tool). |
+| `files_map` now populated | `node_write_files` now sets `files_map` with file snapshots. `analyze_impact` will actually run. | No migration — was always empty before (bug fix). |
+| `node_analyze_impact` converted to sync | Was `async def`, now `def` with `_run_async()` wrapper for async calls. LangGraph requires sync. | No migration — was broken (async in sync graph). |
+| `impact_warnings` type changed | `list[str]` → `list[dict]` to match what `analyze_impact` actually returns. | No migration — nothing consumed it yet (was always empty). |
+| `defense_note` → `defense_notes` | Commit and memory nodes now use `defense_notes` (plural) to match state field. | No migration — was always empty (singular never set). |
+| `hypothesis` → `root_cause` in memory | Memory node now reads `root_cause` (set by debug node) instead of `hypothesis` (never set). | No migration — was always empty. |
 
 ---
 
@@ -37,33 +48,23 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 1 | **Remove `.bak` file creation** | `.bak` files violate user rule. Found in `patch.py`, `write_files.py`, `helpers.py`. | P0 |
-| 2 | **Fix `git(action="snapshot")` doesn't exist** | `_git_snapshot` calls `git(action="snapshot")` which was removed in un-multiplex refactor. | P0 |
-| 3 | **Fix `files_map` never populated — analyze_impact never runs** | No node sets `files_map`. `node_execute_step` sets `modified_files`, not `files_map`. | P0 |
-| 4 | **Fix `node_analyze_impact` is async in sync graph** | LangGraph `StateGraph.add_node` expects sync. Async function may fail or hang. | P0 |
-| 5 | **Fix `node_write_files` `run_dir` NameError** | If `test_code` missing but `tdd_source_code` exists, `run_dir` undefined when persisting generated code. | P0 |
-| 6 | **Fix `node_execute_step` uses non-existent `files_context`** | `state.get("files_context", "")` — field doesn't exist in `AutocodeState`. | P0 |
-| 7 | **Fix `node_brainstorm` loses KG files** | Merges `kg_files` into `files_update` but stores `state["files"]` (original) instead of merged. | P0 |
-| 8 | **Fix `impact_warnings` type mismatch** | `state.py` says `list[str]`, `analyze_impact.py` returns `list[dict]`. | P0 |
-| 9 | **Fix `AGENT_ROOT = None` never set** | `state.py` line 10: `AGENT_ROOT = None # Set via cfg`. Never actually set. | P0 |
-| 10 | **Fix `node_commit` uses `defense_note` not `defense_notes`** | State field is `defense_notes` (plural). Always empty. | P0 |
-| 11 | **Fix `node_distill_memory` uses `hypothesis`/`defense_note` never set** | Debug node sets `root_cause` and `defense_notes`, not `hypothesis` or `defense_note`. | P0 |
-| 12 | **Fix `node_report` type annotation wrong** | Returns `AutocodeState` but returns `{}`. | P1 |
-| 13 | **Fix `node_create_skill` writes to agent_root regardless of project** | Should use `project_root` or `workspace_root` for non-agent projects. | P1 |
-| 14 | **Remove `route_after_debug` and `route_after_brainstorm` dead code** | Graph builder uses direct edges, not these route functions. | P1 |
-| 15 | **Fix `mermaid.py` uses LangGraph internals** | `graph.nodes`, `graph.edges`, `graph.conditional_edges` are internal APIs. Fragile. | P1 |
-| 16 | **Fix `test_runner.py` `_should_copy_file` wrong arg type** | Called with `Path` (workspace) instead of `frozenset` (protected files). | P1 |
-| 17 | **Fix `node_verify` `lint_passed=True` when ruff missing** | Missing ruff should be `False` or `None`, not `True`. | P1 |
-| 18 | **Fix `node_report` `modified_files` empty due to `files_map`** | `files_map` always empty. `modified_files` always empty. | P1 |
-| 19 | **Fix `node_write_files` doesn't return `status` on error** | JSON parse failure returns `{}`. Workflow continues as if nothing happened. | P1 |
-| 20 | **Fix `node_git_branch` no error handling** | Snapshot/branch creation failures not checked. Silent failures. | P1 |
-| 21 | **Fix `node_validate_input` path traversal incomplete** | Doesn't catch absolute Windows paths or Unicode traversal. | P1 |
-| 22 | **Fix `node_write_plan` slug may be empty** | If `task[:40]` is all non-alphanumeric, `slug` is `""`. Invalid branch name. | P1 |
-| 23 | **Fix `node_write_files` `FileLock` no retry logic** | Timeout 10s, no retry. May skip writes under contention. | P2 |
-| 24 | **Fix `node_run_tests` test file path may not exist** | `test_files` set by `node_write_files` but may not exist if write failed. | P2 |
-| 25 | **Fix `node_create_skill` no filename validation** | `skill_name` with `/` or `\` may escape `skills/` directory. | P2 |
-| 26 | **Fix `node_create_skill` no syntax check** | Skill code written without validating it's valid Python. | P2 |
-| 27 | **Fix `node_create_skill` `skill_created` never set** | `autocode.py` checks for it but never set by any node. | P2 |
+| 1 | **Fix `node_write_files` `run_dir` NameError** | Reported as P0 but verified as FALSE POSITIVE — `run_dir` is always set inside the `if test_code:` block where it's used. | ✅ Fixed (false positive) |
+| 2 | **Fix `node_report` type annotation wrong** | Returns `AutocodeState` but returns `{}`. | P1 |
+| 3 | **Fix `node_create_skill` writes to agent_root regardless of project** | Should use `project_root` or `workspace_root` for non-agent projects. | P1 |
+| 4 | **Remove `route_after_debug` and `route_after_brainstorm` dead code** | Graph builder uses direct edges, not these route functions. | P1 |
+| 5 | **Fix `mermaid.py` uses LangGraph internals** | `graph.nodes`, `graph.edges`, `graph.conditional_edges` are internal APIs. Fragile. | P1 |
+| 6 | **Fix `test_runner.py` `_should_copy_file` wrong arg type** | Called with `Path` (workspace) instead of `frozenset` (protected files). | P1 |
+| 7 | **Fix `node_verify` `lint_passed=True` when ruff missing** | Missing ruff should be `False` or `None`, not `True`. | P1 |
+| 8 | **Fix `node_report` `modified_files` empty due to `files_map`** | Was P1 — now fixed in v1.0.1 (files_map populated by write_files). | ✅ Fixed |
+| 9 | **Fix `node_write_files` doesn't return `status` on error** | JSON parse failure returns `{}`. Workflow continues as if nothing happened. | P1 |
+| 10 | **Fix `node_git_branch` no error handling** | Snapshot/branch creation failures not checked. Silent failures. | P1 |
+| 11 | **Fix `node_validate_input` path traversal incomplete** | Doesn't catch absolute Windows paths or Unicode traversal. | P1 |
+| 12 | **Fix `node_write_plan` slug may be empty** | If `task[:40]` is all non-alphanumeric, `slug` is `""`. Invalid branch name. | P1 |
+| 13 | **Fix `node_write_files` `FileLock` no retry logic** | Timeout 10s, no retry. May skip writes under contention. | P2 |
+| 14 | **Fix `node_run_tests` test file path may not exist** | `test_files` set by `node_write_files` but may not exist if write failed. | P2 |
+| 15 | **Fix `node_create_skill` no filename validation** | `skill_name` with `/` or `\` may escape `skills/` directory. | P2 |
+| 16 | **Fix `node_create_skill` no syntax check** | Skill code written without validating it's valid Python. | P2 |
+| 17 | **Fix `node_create_skill` `skill_created` never set** | `autocode.py` checks for it but never set by any node. | P2 |
 | 28 | **Fix `node_distill_memory` `classification` dead code** | `state.get("classification", {})` — field never set. | P2 |
 | 29 | **Test restructure** | Split `test_autocode.py` into per-node files + `conftest.py` | P1 |
 | 30 | **Configurable timeout** | Make `AUTOCODE_GRAPH_TIMEOUT` actually used in code | P2 |

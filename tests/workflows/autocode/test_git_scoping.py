@@ -41,14 +41,6 @@ def base_state(temp_agent_root):
 class TestGitOpsFallback:
     """When project_root is empty/None, git ops must use cfg.agent_root."""
 
-    def test_snapshot_fallback_to_agent_root(self, temp_agent_root):
-        from workflows.autocode_impl.git_ops import _git_snapshot
-        with patch("tools.git.git") as mock_git:
-            mock_git.return_value = {"status": "nothing_to_commit"}
-            _git_snapshot("test fallback", tid="t1", project_root=None)
-            call_kwargs = mock_git.call_args[1]
-            assert call_kwargs["root"] == str(temp_agent_root)
-
     def test_commit_fallback_to_agent_root(self, temp_agent_root):
         from workflows.autocode_impl.git_ops import _git_commit
         with patch("tools.git.git") as mock_git:
@@ -65,14 +57,6 @@ class TestGitOpsFallback:
 
 class TestGitOpsOverride:
     """When project_root is set, git ops must route to it."""
-
-    def test_snapshot_uses_project_root(self, tmp_path):
-        from workflows.autocode_impl.git_ops import _git_snapshot
-        custom_root = str(tmp_path / "workspace_project")
-        with patch("tools.git.git") as mock_git:
-            mock_git.return_value = {"status": "committed"}
-            _git_snapshot("test override", tid="t3", project_root=custom_root)
-            assert mock_git.call_args[1]["root"] == custom_root
 
     def test_commit_uses_project_root(self, tmp_path):
         from workflows.autocode_impl.git_ops import _git_commit
@@ -101,14 +85,10 @@ class TestNodeGitBranchScoping:
             "project_root": custom_root,
             "branch": "feat/scoped",
         }
-        # [FIX] Patch where the functions are USED (in branch module), not where defined
-        with patch("workflows.autocode_impl.nodes.branch._git_snapshot") as mock_snap, \
-             patch("workflows.autocode_impl.nodes.branch._git_create_branch") as mock_branch:
-            mock_snap.return_value = True
+        # [Bug #2] _git_snapshot removed — only patch _git_create_branch
+        with patch("workflows.autocode_impl.nodes.branch._git_create_branch") as mock_branch:
             mock_branch.return_value = True
             node_git_branch(state)
-            mock_snap.assert_called_once()
-            assert mock_snap.call_args[0][2] == custom_root
             mock_branch.assert_called_once()
             assert mock_branch.call_args[0][2] == custom_root
 
