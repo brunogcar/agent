@@ -129,3 +129,62 @@ class TestRouting:
         state["search_results"] = ""
         next_node = route_after_search(state)
         assert next_node in ("END", "failed", "__end__", "notify")
+
+
+class TestNodeSynthesizeActionDispatch:
+    """Regression tests for v1.5 fix: agent() must be called with action='dispatch'.
+
+    Previously node_synthesize called agent(role='research', ...) without
+    action='dispatch'. The agent() facade requires action='dispatch' for
+    LLM calls — without it, the call returns 'Unknown action' error and
+    node_synthesize ALWAYS falls into the error branch, making the research
+    workflow unable to produce any result.
+    """
+
+    def test_node_synthesize_calls_agent_with_action_dispatch(self):
+        """agent() must be invoked with action='dispatch'."""
+        from workflows.research import node_synthesize
+
+        state = _base_state()
+        state["search_results"] = "### [Source 1] Title\nURL: http://a.com\nGood data"
+
+        # NOTE: agent is imported INSIDE node_synthesize (`from tools.agent import agent`),
+        # so we patch at the source module, not at workflows.research.agent.
+        with patch("tools.agent.agent") as mock_agent:
+            mock_agent.return_value = {
+                "status": "success",
+                "text": "synthesized answer",
+                "elapsed": 0.1,
+            }
+            node_synthesize(state)
+
+        assert mock_agent.called, "agent() must be called from node_synthesize"
+        _, kwargs = mock_agent.call_args
+        assert kwargs.get("action") == "dispatch", (
+            f"agent() must be called with action='dispatch'; got action={kwargs.get('action')!r}. "
+            f"This regresses the v1.5 fix — without action='dispatch', the agent facade "
+            f"returns 'Unknown action' and node_synthesize always fails."
+        )
+
+    def test_node_synthesize_propagates_success_when_action_dispatch_present(self):
+        """With action='dispatch', a successful agent() response must propagate
+        to state['result'] instead of always falling into the error branch."""
+        from workflows.research import node_synthesize
+
+        state = _base_state()
+        state["search_results"] = "### [Source 1] Title\nURL: http://a.com\nGood data"
+
+        # NOTE: agent is imported INSIDE node_synthesize — patch at source.
+        with patch("tools.agent.agent") as mock_agent:
+            mock_agent.return_value = {
+                "status": "success",
+                "text": "real synthesized answer",
+                "elapsed": 0.1,
+            }
+            result = node_synthesize(state)
+
+        assert result.get("result") == "real synthesized answer", (
+            "node_synthesize must populate state['result'] from agent response when "
+            "action='dispatch' is correctly passed. Before the v1.5 fix, this always "
+            "returned node_error() because agent() returned 'Unknown action' error."
+        )

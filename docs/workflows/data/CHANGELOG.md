@@ -12,7 +12,12 @@
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes yet. This section is reserved for future releases.)*
+### Pre-v1.0 — 2026-07-05 (bug fix)
+
+| Change | Impact |
+|--------|--------|
+| `node_execute` code-gen path now calls `agent(action="dispatch", role="code", ...)` | Internal bug fix. No migration — the previous call was always broken (returned `Unknown action ''` error). Code generation from goal now actually works. |
+| `node_critique` now calls `agent(action="dispatch", role="critique", ...)` | Internal bug fix. No migration — critique was dead code before (call always failed silently); now actually evaluates output quality. |
 
 ---
 

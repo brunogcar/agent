@@ -331,10 +331,11 @@ def node_synthesize(state: WorkflowState) -> WorkflowState:
               content_chars=len(content))
 
     r = agent(
-        role = "research",
-        task = f"Synthesise the provided sources to answer: {goal}",
+        action  = "dispatch",
+        role    = "research",
+        task    = f"Synthesise the provided sources to answer: {goal}",
         content = content,
-        trace_id = state.get("trace_id", "")
+        trace_id = state.get("trace_id", ""),
     )
 
     if not r.get("status") == "success":

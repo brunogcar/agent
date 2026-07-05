@@ -12,7 +12,11 @@
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes yet. This section is reserved for future releases.)*
+### Pre-v1.0 — 2026-07-05 (bug fix)
+
+| Change | Impact |
+|--------|--------|
+| `node_synthesize` now calls `agent(action="dispatch", role="research", ...)` | Internal bug fix. No migration — the previous call was always broken (returned `Unknown action ''` error). Callers now see real synthesis results instead of `node_error()` failures. |
 
 ---
 

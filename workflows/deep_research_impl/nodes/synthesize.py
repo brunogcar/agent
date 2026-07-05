@@ -41,7 +41,11 @@ def node_synthesize(state: DeepResearchState) -> DeepResearchState:
     iteration = state.get("iteration", 0)
     prev_knowledge = state.get("knowledge_base", "")
     max_iter = state.get("max_iterations", 10)
-    completeness_threshold = state.get("completeness_threshold", 0.85)
+    # NOTE: completeness_threshold is intentionally NOT read here. The
+    # threshold comparison lives in routes.py and graph.py (default 85.0
+    # on a 0-100 scale, matching _parse_score()'s output). Reading it here
+    # would be dead code — the local was previously 0.85 (0-1 scale),
+    # which was misleading and never used. Do not re-introduce.
     convergence_threshold = state.get("convergence_threshold", CONVERGENCE_SIMILARITY_THRESHOLD)
 
     evidence_text = _format_evidence(evidence)
@@ -53,10 +57,11 @@ def node_synthesize(state: DeepResearchState) -> DeepResearchState:
 
     try:
         result = agent(
-            role="research",
-            task=SYNTHESIZE_SYSTEM_PROMPT,
-            content=user_prompt,
-            trace_id=state.get("trace_id", ""),
+            action   = "dispatch",
+            role     = "research",
+            task     = SYNTHESIZE_SYSTEM_PROMPT,
+            content  = user_prompt,
+            trace_id = state.get("trace_id", ""),
         )
         if _agent_ok(result):
             synthesis = _agent_text(result).strip()
@@ -75,10 +80,11 @@ def node_synthesize(state: DeepResearchState) -> DeepResearchState:
     )
     try:
         evaluate_result = agent(
-            role="executor",
-            task=EVALUATE_SYSTEM_PROMPT,
-            content=evaluate_prompt,
-            trace_id=state.get("trace_id", ""),
+            action   = "dispatch",
+            role     = "executor",
+            task     = EVALUATE_SYSTEM_PROMPT,
+            content  = evaluate_prompt,
+            trace_id = state.get("trace_id", ""),
         )
         if _agent_ok(evaluate_result):
             score = _parse_score(_agent_text(evaluate_result))

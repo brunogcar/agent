@@ -68,6 +68,7 @@ def node_execute(state: WorkflowState) -> WorkflowState:
         node_step(state, "execute", "no code provided -- generating")
 
         r = agent(
+            action   = "dispatch",
             role     = "code",
             task     = f"Write Python code to: {goal}. Use print() for all output.",
             context  = state.get("memory_context", ""),
@@ -120,11 +121,12 @@ def node_critique(state: WorkflowState) -> WorkflowState:
     node_step(state, "critique", "evaluating output quality")
 
     r = agent(
-        role    = "critique",
-        task    = f"Does this output adequately answer: '{goal}'? "
+        action    = "dispatch",
+        role      = "critique",
+        task      = f"Does this output adequately answer: '{goal}'? "
                   "Note any missing analysis, errors, or improvements.",
-        content = f"Code output:\n{output[:1000]}",
-        trace_id= state.get("trace_id", ""),
+        content   = f"Code output:\n{output[:1000]}",
+        trace_id  = state.get("trace_id", ""),
     )
 
     if r.get("status") == "success":

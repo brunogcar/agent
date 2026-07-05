@@ -6,13 +6,20 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.0.1 | 2026-07-05 | **Bug fix:** Both `agent()` calls in `node_synthesize` (synthesize + evaluate) now pass `action="dispatch"`. Previously both returned `Unknown action ''` error — synthesis fell back to `prev_knowledge` (always `""` on first iteration), and evaluate always returned `score=0.0` (completeness permanently 0). Also removed dead `completeness_threshold = 0.85` local (was 0-1 scale, never used; real threshold comparison is `85.0` on 0-100 scale in `routes.py` and `graph.py`). |
 | v1.0 | — | Released — 8-node cyclic LangGraph StateGraph with budget management, convergence detection, multi-tool search, and memory integration |
 
 ---
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes yet. This section is reserved for future releases.)*
+### v1.0.1 — 2026-07-05
+
+| Change | Impact |
+|--------|--------|
+| `node_synthesize` synthesize call now passes `action="dispatch"` | Internal fix. No migration — the previous call was always broken. Knowledge base now advances per iteration instead of staying empty. |
+| `node_synthesize` evaluate call now passes `action="dispatch"` | Internal fix. No migration — the previous call was always broken. Completeness score now reflects the evaluate agent's output instead of being permanently `0.0`. |
+| Removed dead `completeness_threshold = state.get("completeness_threshold", 0.85)` local | No behavior change — the local was read but never referenced. Real threshold comparison lives in `routes.py:30` and `graph.py:75` (default `85.0` on 0-100 scale, matching `_parse_score()`'s output). Replaced with an explanatory comment to prevent re-introduction. |
 
 ---
 
