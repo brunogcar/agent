@@ -68,3 +68,51 @@ class TestAgentCaching:
             agent(action="dispatch", role="classify", task="test")
 
             assert mock_llm.call_count == 2
+
+    # ─── Cache limits configurable (Bug #19) ─────────────────────────────────
+
+    def test_cache_max_read_from_cfg(self):
+        """_CACHE_MAX must reflect cfg.agent_cache_max, not be hardcoded 100."""
+        from tools.agent_ops import cache as cache_mod
+        from core.config import cfg
+        assert cache_mod._CACHE_MAX == cfg.agent_cache_max, (
+            f"_CACHE_MAX={cache_mod._CACHE_MAX} must equal cfg.agent_cache_max={cfg.agent_cache_max}"
+        )
+
+    def test_cache_ttl_read_from_cfg(self):
+        """_CACHE_TTL_SECONDS must reflect cfg.agent_cache_ttl_seconds."""
+        from tools.agent_ops import cache as cache_mod
+        from core.config import cfg
+        assert cache_mod._CACHE_TTL_SECONDS == cfg.agent_cache_ttl_seconds, (
+            f"_CACHE_TTL_SECONDS={cache_mod._CACHE_TTL_SECONDS} must equal "
+            f"cfg.agent_cache_ttl_seconds={cfg.agent_cache_ttl_seconds}"
+        )
+
+    # ─── Cache key includes model name (Bug #23) ─────────────────────────────
+
+    def test_cache_key_includes_model_name(self):
+        """Different models must produce different cache keys.
+
+        Without the model in the key, swapping models (e.g., during benchmark
+        overrides) returns stale cache hits from the previous model.
+        """
+        from tools.agent_ops.cache import _cache_key
+        key1 = _cache_key("classify", "task", "ctx", "content", model="model-a")
+        key2 = _cache_key("classify", "task", "ctx", "content", model="model-b")
+        assert key1 != key2, (
+            "Cache keys must differ when model differs — stale hits on model swap."
+        )
+
+    def test_cache_key_same_model_same_key(self):
+        """Same model must produce the same cache key."""
+        from tools.agent_ops.cache import _cache_key
+        key1 = _cache_key("classify", "task", "ctx", "content", model="model-a")
+        key2 = _cache_key("classify", "task", "ctx", "content", model="model-a")
+        assert key1 == key2
+
+    def test_cache_key_backward_compatible_without_model(self):
+        """Callers that don't pass model should get the old behavior."""
+        from tools.agent_ops.cache import _cache_key
+        key1 = _cache_key("classify", "task", "ctx", "content")
+        key2 = _cache_key("classify", "task", "ctx", "content", model="")
+        assert key1 == key2

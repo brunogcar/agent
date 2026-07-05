@@ -40,6 +40,44 @@ from tools.agent_ops.parse_warnings import (
 )
 from tools.agent_ops.json_extract import _extract_first_json
 
+# ── Module-level role set caches (Bug #12 fix) ─────────────────────────────
+# Previously rebuilt on every run_dispatch() call. Now built ONCE on first
+# use (lazy init) and cached. We can't build at import time because ROLES
+# isn't populated yet — __init__.py imports actions/ BEFORE roles/, so
+# ROLES is empty when dispatch.py loads. Lazy init defers the build until
+# the first run_dispatch() call, by which point ROLES is fully populated.
+# DO NOT move this back inside run_dispatch() per-call — that rebuilds
+# every call. DO NOT build at module load — ROLES isn't ready.
+
+_SLEEP_LEARN_ROLES: frozenset = frozenset()
+_PROMPT_JSON_ROLES: frozenset = frozenset()
+_API_JSON_ROLES: frozenset = frozenset()
+_JSON_ROLES: frozenset = frozenset()
+_ROLE_SETS_INITIALIZED: bool = False
+
+
+def _ensure_role_sets_initialized() -> None:
+    """Build role classification sets on first call, then cache.
+
+    Idempotent — safe to call multiple times. The first call populates
+    the module-level frozensets; subsequent calls are no-ops.
+    """
+    global _SLEEP_LEARN_ROLES, _PROMPT_JSON_ROLES, _API_JSON_ROLES, _JSON_ROLES, _ROLE_SETS_INITIALIZED
+    if _ROLE_SETS_INITIALIZED:
+        return
+    from tools.agent_ops import ROLES  # lazy to avoid circular import
+    _SLEEP_LEARN_ROLES = frozenset(
+        k for k, v in ROLES.items() if v["role_config"].get("sleep_learn")
+    )
+    _PROMPT_JSON_ROLES = frozenset(
+        k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "prompt"
+    )
+    _API_JSON_ROLES = frozenset(
+        k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "api"
+    )
+    _JSON_ROLES = _PROMPT_JSON_ROLES | _API_JSON_ROLES
+    _ROLE_SETS_INITIALIZED = True
+
 HELP_DISPATCH = """
 dispatch
 Route a task to an LLM role for execution.
@@ -74,6 +112,10 @@ def run_dispatch(
 ) -> dict:
     """Dispatch a task to the specified LLM role."""
     role = role.strip().lower()
+
+    # [Bug #12] Initialize role sets on first call (lazy init — ROLES isn't
+    # populated at module import time). Idempotent after first call.
+    _ensure_role_sets_initialized()
 
     # Lazy import to avoid circular import during module load
     from tools.agent_ops import ROLES
@@ -134,8 +176,8 @@ def run_dispatch(
 
     # ── Sleep-learn injection ────────────────────────────────────────────────
     # Only for high-latency roles. Router roles skip to avoid ChromaDB overhead.
-    _sleep_learn_roles = {k for k, v in ROLES.items() if v["role_config"].get("sleep_learn")}
-    if role in _sleep_learn_roles:
+    # [Bug #12] _SLEEP_LEARN_ROLES is now module-level (was rebuilt per call).
+    if role in _SLEEP_LEARN_ROLES:
         try:
             from core.sleep_learn.injector import inject_rules_into_prompt
             system_prompt = inject_rules_into_prompt(
@@ -147,8 +189,10 @@ def run_dispatch(
             pass  # Non-fatal: use original prompt
 
     # ── Response cache ───────────────────────────────────────────────────────
+    # [Bug #23] Include llm_role (the model registry key) in the cache key
+    # so that swapping models invalidates stale cache entries.
     if cacheable:
-        cache_key = _cache_key(role, task, context, content, temperature, max_tokens)
+        cache_key = _cache_key(role, task, context, content, temperature, max_tokens, model=llm_role)
         cached = _get_cached(cache_key)
         if cached is not None:
             response = cached.copy()
@@ -163,15 +207,20 @@ def run_dispatch(
         call_kwargs["max_tokens"] = max_tokens
 
     # ── Context trimming with token-aware budget ─────────────────────────────
+    # [Bug #9 fix] Content budget was capped at min(1000, remaining_tokens) /
+    # min(4000, remaining) — silently truncating large code files for roles
+    # where content IS the primary input (code, refactor, test, document).
+    # Now uses 70% of remaining budget for content, leaving 30% headroom.
+    _CONTENT_BUDGET_FRACTION = 0.70
     if budget_tokens:
         trimmed_context = _trim_context(context, max_tokens=budget_tokens)
         remaining_tokens = max(0, budget_tokens - _estimate_tokens(trimmed_context))
-        content_budget_tokens = min(1000, remaining_tokens)
+        content_budget_tokens = int(remaining_tokens * _CONTENT_BUDGET_FRACTION)
         trimmed_content = _trim_context(content, max_tokens=content_budget_tokens)
     else:
         trimmed_context = _trim_context(context, max_chars=budget_chars)
         remaining = max(0, budget_chars - len(trimmed_context))
-        content_budget = min(4000, remaining)
+        content_budget = int(remaining * _CONTENT_BUDGET_FRACTION)
         trimmed_content = _trim_context(content, max_chars=content_budget)
 
     # ── Primary LLM call ─────────────────────────────────────────────────────
@@ -188,16 +237,41 @@ def run_dispatch(
     )
 
     # ── Retry with fallback role on transient failure ────────────────────────
+    # Fallbacks are intentional escalation paths — e.g., classify→route and
+    # consultor→plan escalate to a more capable role when the primary model
+    # is blank/unconfigured or fails transiently. This is a design decision:
+    # better to return a best-effort answer from a fallback role than to fail
+    # hard when the primary is unavailable.
+    # [Bug #11] Context/content are re-trimmed for the fallback role's budget,
+    # not reused from the primary trim — prevents budget overflow when the
+    # fallback role has a smaller context window.
     if not result.ok and fallback_role and fallback_role in ROLES:
         fb_data = ROLES[fallback_role]
         fb_prompt = fb_data["system_prompt"]
         fb_cfg = fb_data["role_config"]
+        fb_budget_chars = fb_cfg.get("budget_chars")
+        if fb_budget_chars is None:
+            fb_budget_chars = _max_context_chars()
+        fb_budget_tokens = fb_cfg.get("budget_tokens")
+
+        # Re-trim context/content for the fallback role's budget
+        if fb_budget_tokens:
+            fb_trimmed_context = _trim_context(context, max_tokens=fb_budget_tokens)
+            fb_remaining_tokens = max(0, fb_budget_tokens - _estimate_tokens(fb_trimmed_context))
+            fb_content_budget_tokens = int(fb_remaining_tokens * _CONTENT_BUDGET_FRACTION)
+            fb_trimmed_content = _trim_context(content, max_tokens=fb_content_budget_tokens)
+        else:
+            fb_trimmed_context = _trim_context(context, max_chars=fb_budget_chars)
+            fb_remaining = max(0, fb_budget_chars - len(fb_trimmed_context))
+            fb_content_budget = int(fb_remaining * _CONTENT_BUDGET_FRACTION)
+            fb_trimmed_content = _trim_context(content, max_chars=fb_content_budget)
+
         result = llm.complete(
             role=fb_cfg["llm_role"],
             system=fb_prompt,
             user=task,
-            context=trimmed_context,
-            content=trimmed_content,
+            context=fb_trimmed_context,
+            content=fb_trimmed_content,
             json_mode=fb_cfg.get("json_mode") == "api",
             trace_id=trace_id,
             **call_kwargs,
@@ -243,12 +317,9 @@ def run_dispatch(
     }
 
     # ── JSON parsing for structured-output roles ─────────────────────────────
-    _prompt_json_roles = {k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "prompt"}
-    _api_json_roles = {k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "api"}
-    _json_roles = _prompt_json_roles | _api_json_roles
-
+    # [Bug #12] _JSON_ROLES is now module-level (was rebuilt per call).
     parse_failed = False
-    if role in _json_roles:
+    if role in _JSON_ROLES:
         if result.parsed is not None:
             response["parsed"] = result.parsed
         else:
@@ -283,17 +354,30 @@ def run_dispatch(
                     )
 
         # ── Autonomous model escalation on parse failure ─────────────────────
+        # [Bug #7 fix] Escalation now uses the PLAN role's system prompt (not the
+        # original role's prompt) and respects the plan role's json_mode config.
+        # The plan role is designed for structured output; using the original
+        # role's prompt (often a binary classifier or code generator) produced
+        # worse JSON than necessary.
+        # NOTE: The LLM is called with role="planner" (the model registry key),
+        # but the system prompt + json_mode come from ROLES["plan"] (the agent
+        # role key). These are different namespaces: "planner" is the LLM tier,
+        # "plan" is the agent role that configures decomposition prompts.
+        # [Bug #8 fix] Track origin model in 'escalated_from' before overwriting.
         if parse_failed and llm_role != "planner":
+            plan_data = ROLES.get("plan", {})
+            plan_prompt = plan_data.get("system_prompt", system_prompt)
+            plan_cfg = plan_data.get("role_config", {})
             escalation_result = llm.complete(
                 role="planner",
-                system=system_prompt,
+                system=plan_prompt,
                 user=(
                     f"[ESCALATION: The {llm_role} model failed to "
                     f"produce valid JSON. Please produce valid JSON only.]\n\n{task}"
                 ),
                 context=trimmed_context,
                 content=trimmed_content,
-                json_mode=False,
+                json_mode=plan_cfg.get("json_mode") == "api",
                 trace_id=trace_id,
                 **call_kwargs,
             )
@@ -308,6 +392,8 @@ def run_dispatch(
                     response.pop("parse_warning", None)
                     parse_failed = False
                     response["escalated"] = True
+                    # [Bug #8] Track origin model before overwriting
+                    response["escalated_from"] = {"role": role, "model": result.model}
                     # Update response with escalation result data
                     response["text"] = escalation_result.text
                     response["model"] = escalation_result.model
@@ -320,6 +406,8 @@ def run_dispatch(
                             response.pop("parse_warning", None)
                             parse_failed = False
                             response["escalated"] = True
+                            # [Bug #8] Track origin model before overwriting
+                            response["escalated_from"] = {"role": role, "model": result.model}
                             # Update response with escalation result data
                             response["text"] = escalation_result.text
                             response["model"] = escalation_result.model
@@ -339,7 +427,7 @@ def run_dispatch(
     _record_metric(role, "success", elapsed, total_tokens, parse_failed)
 
     if cacheable:
-        cache_key = _cache_key(role, task, context, content, temperature, max_tokens)
+        cache_key = _cache_key(role, task, context, content, temperature, max_tokens, model=llm_role)
         _set_cached(cache_key, response.copy())
 
     return compress_result(response)

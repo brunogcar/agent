@@ -62,3 +62,30 @@ def register_action(
         }
         return func
     return decorator
+
+
+def unregister_action(tool_name: str, action_name: str) -> bool:
+    """[Bug #27] Remove an action from the DISPATCH table.
+
+    Useful for:
+      - Hot-reload: unregister an old handler, then re-import the module
+        to register the updated one.
+      - Testing: remove a mock action after a test suite completes.
+      - Feature flags: disable an action at runtime without code changes.
+
+    Args:
+        tool_name: Tool namespace (e.g., "agent").
+        action_name: Action identifier to remove.
+
+    Returns:
+        True if the action was found and removed, False if it didn't exist.
+    """
+    if tool_name not in DISPATCH:
+        return False
+    if action_name not in DISPATCH[tool_name]:
+        return False
+    del DISPATCH[tool_name][action_name]
+    # Clean up empty tool namespace to keep DISPATCH tidy
+    if not DISPATCH[tool_name]:
+        del DISPATCH[tool_name]
+    return True

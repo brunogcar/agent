@@ -257,6 +257,11 @@ class Config:
         self.worker_timeout = int(os.getenv("WORKER_TIMEOUT", "60"))
         self.worker_max_tokens = int(os.getenv("WORKER_MAX_TOKENS", "250"))
 
+        # -- Agent Tool Cache (Bug #19 fix) ------------------------------------
+        # Previously hardcoded in tools/agent_ops/cache.py. Now configurable.
+        self.agent_cache_max = int(os.getenv("AGENT_CACHE_MAX", "100"))
+        self.agent_cache_ttl_seconds = int(os.getenv("AGENT_CACHE_TTL_SECONDS", "300"))
+
         # -- Tool & System Limits (P2: Centralized Magic Numbers) --------------
 
         # Memory Tool Limits

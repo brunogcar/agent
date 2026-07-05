@@ -85,3 +85,91 @@ class TestModelEscalation:
             assert result["model"] == "planner-model"
             assert result["usage"]["total"] == 25
             assert result.get("escalated") is True
+
+    # ─── Escalation prompt + json_mode (Bug #7) ──────────────────────────────
+
+    def test_escalation_uses_plan_role_system_prompt(self, mock_llm_result):
+        """Escalation must use the plan role's system prompt, not the original role's.
+
+        The plan role is designed for structured output; using the original
+        role's prompt (often a binary classifier or code generator) produced
+        worse JSON. NOTE: ROLES['plan'] configures the prompt, while
+        llm.complete is called with role='planner' (the model registry key).
+        """
+        from tools.agent_ops import ROLES
+
+        mock_llm_result.text = "not valid json"
+        mock_llm_result.parsed = None
+
+        escalation_result = type(mock_llm_result)()
+        escalation_result.ok = True
+        escalation_result.text = '{"valid": true}'
+        escalation_result.parsed = None
+        escalation_result.model = "planner"
+        escalation_result.usage = {"total": 20}
+
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
+            mock_llm.side_effect = [mock_llm_result, escalation_result]
+            agent(action="dispatch", role="route", task="test")
+
+            assert mock_llm.call_count == 2
+            escalation_kwargs = mock_llm.call_args_list[1].kwargs
+            plan_prompt = ROLES["plan"]["system_prompt"]
+            assert escalation_kwargs["system"] == plan_prompt, (
+                "Escalation must use the plan role's system prompt, not the original role's."
+            )
+
+    def test_escalation_respects_plan_role_json_mode(self, mock_llm_result):
+        """Escalation json_mode must match the plan role's config, not be hardcoded False."""
+        from tools.agent_ops import ROLES
+
+        mock_llm_result.text = "not valid json"
+        mock_llm_result.parsed = None
+
+        escalation_result = type(mock_llm_result)()
+        escalation_result.ok = True
+        escalation_result.text = '{"valid": true}'
+        escalation_result.parsed = None
+        escalation_result.model = "planner"
+        escalation_result.usage = {"total": 20}
+
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
+            mock_llm.side_effect = [mock_llm_result, escalation_result]
+            agent(action="dispatch", role="route", task="test")
+
+            escalation_kwargs = mock_llm.call_args_list[1].kwargs
+            plan_cfg = ROLES["plan"]["role_config"]
+            expected_json_mode = plan_cfg.get("json_mode") == "api"
+            assert escalation_kwargs["json_mode"] == expected_json_mode, (
+                "Escalation json_mode must match plan role's config, not be hardcoded False."
+            )
+
+    # ─── escalated_from origin tracking (Bug #8) ─────────────────────────────
+
+    def test_escalation_records_escalated_from(self, mock_llm_result):
+        """Escalation must record the origin role+model in 'escalated_from'.
+
+        Without this field, callers can't tell the primary model failed —
+        useful for debugging and metrics.
+        """
+        mock_llm_result.text = "not valid json"
+        mock_llm_result.parsed = None
+        mock_llm_result.model = "primary-model"
+
+        escalation_result = type(mock_llm_result)()
+        escalation_result.ok = True
+        escalation_result.text = '{"valid": true}'
+        escalation_result.parsed = None
+        escalation_result.model = "planner-model"
+        escalation_result.usage = {"total": 20}
+
+        with patch("tools.agent_ops.actions.dispatch.llm.complete") as mock_llm:
+            mock_llm.side_effect = [mock_llm_result, escalation_result]
+            result = agent(action="dispatch", role="route", task="test")
+
+            assert result.get("escalated") is True
+            assert "escalated_from" in result, (
+                "escalated_from must be set to track the origin model."
+            )
+            assert result["escalated_from"]["model"] == "primary-model"
+            assert result["escalated_from"]["role"] == "route"

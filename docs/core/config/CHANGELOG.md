@@ -6,23 +6,18 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-
-*(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
+| Pre-v1.0 | 2026-07-05 | Added `agent_cache_max` and `agent_cache_ttl_seconds` env vars (Bug #19) for configurable agent tool cache limits. Defaults: 100 entries, 300s TTL. |
+| Pre-v1.0 | — | *(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)* |
 
 ---
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes yet. This is a pre-v1 document. Add breaking changes here when they occur.)*
+### Pre-v1.0 — 2026-07-05
 
----
-
-## 📝 Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-
-*(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| New env vars: `AGENT_CACHE_MAX`, `AGENT_CACHE_TTL_SECONDS` | Agent tool cache limits are now configurable. Defaults match old hardcoded values (100 / 300). | Optional — add to `.env` to customize. No action needed for default behavior. |
 
 ---
 

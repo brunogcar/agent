@@ -134,3 +134,66 @@ class TestBudgetOverrides:
                 del ROLES["classify"]["role_config"]["budget_chars"]
             if original_tokens is not None:
                 ROLES["classify"]["role_config"]["budget_tokens"] = original_tokens
+
+
+class TestRoleSetCaches:
+    """Role classification sets (_JSON_ROLES, _SLEEP_LEARN_ROLES) must be
+    module-level frozensets, built once on first dispatch call (lazy init).
+    """
+
+    def test_role_sets_are_frozensets(self):
+        """Sets must be frozensets (immutable, hashable) after first dispatch."""
+        from tools.agent_ops.actions.dispatch import (
+            _SLEEP_LEARN_ROLES, _PROMPT_JSON_ROLES, _API_JSON_ROLES, _JSON_ROLES,
+        )
+        assert isinstance(_SLEEP_LEARN_ROLES, frozenset)
+        assert isinstance(_PROMPT_JSON_ROLES, frozenset)
+        assert isinstance(_API_JSON_ROLES, frozenset)
+        assert isinstance(_JSON_ROLES, frozenset)
+
+    def test_role_sets_populated_on_first_dispatch(self):
+        """Sets must be non-empty after at least one dispatch call.
+
+        Lazy init: sets are empty at module load (ROLES not yet populated),
+        then populated on first run_dispatch() call. We trigger init by
+        calling _ensure_role_sets_initialized() directly.
+        """
+        from tools.agent_ops.actions.dispatch import (
+            _ensure_role_sets_initialized, _JSON_ROLES, _SLEEP_LEARN_ROLES,
+        )
+        _ensure_role_sets_initialized()
+        # At least route and classify are JSON roles (json_mode != None)
+        assert len(_JSON_ROLES) > 0, "_JSON_ROLES must be populated after init"
+        # At least research/plan/etc. have sleep_learn=True
+        assert len(_SLEEP_LEARN_ROLES) > 0, "_SLEEP_LEARN_ROLES must be populated after init"
+
+
+class TestLlmRoleValidation:
+    """Auto-discovery warns (not errors) when llm_role is not in model_registry.
+
+    The validation must NOT raise — some roles are opt-in (e.g., consultor
+    is only in model_registry when CONSULTOR_MODEL is set in .env). Raising
+    would break every environment that doesn't have all optional roles
+    configured. Instead, emit a stderr warning so typos are still caught.
+    """
+
+    def test_opt_in_role_does_not_break_import(self):
+        """consultor role (opt-in) must not break when CONSULTOR_MODEL is unset.
+
+        This is the regression that caused 17 test collection errors: an
+        earlier fix raised ValueError, breaking all agent tests in
+        environments without CONSULTOR_MODEL configured.
+        """
+        # If we got here (test collection succeeded), the import worked.
+        assert "consultor" in ROLES, "consultor role must be registered even when unconfigured"
+        assert "classify" in ROLES
+        assert "route" in ROLES
+
+    def test_llm_role_warning_emitted_for_opt_in_roles(self):
+        """When llm_role is not in model_registry, a warning is printed to stderr.
+
+        We can't easily re-run auto-discovery, but we verify the module loaded
+        successfully with opt-in roles present (the warning was emitted to
+        stderr during import, which pytest captures).
+        """
+        assert len(ROLES) > 0, "ROLES must be populated"

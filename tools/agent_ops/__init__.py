@@ -75,6 +75,34 @@ for py_file in sorted(_roles_dir.glob("*.py")):
                 f"Check for colliding role files in tools/agent_ops/roles/."
             )
 
+        # [Bug #18] Validate llm_role exists in cfg.model_registry.
+        # Without this, a typo like "cod" instead of "code" only fails at
+        # llm.complete() runtime with a cryptic error. Warn at import.
+        #
+        # NOTE: This is a WARNING, not an error. Some roles are opt-in
+        # (e.g., consultor is only in model_registry when CONSULTOR_MODEL
+        # is set in .env). The dispatch code handles missing roles
+        # gracefully at runtime with a clear error message. Failing here
+        # would break every environment that doesn't have all optional
+        # roles configured.
+        llm_role = mod.ROLE_CONFIG.get("llm_role", "")
+        if llm_role:
+            try:
+                from core.config import cfg
+                if llm_role not in cfg.model_registry:
+                    import sys as _sys
+                    print(
+                        f"[agent_ops] WARNING: Role '{role_name}' has llm_role='{llm_role}' "
+                        f"which is not in cfg.model_registry. This is OK for opt-in roles "
+                        f"(e.g., consultor when CONSULTOR_MODEL is unset), but may indicate "
+                        f"a typo for required roles. Valid: {sorted(cfg.model_registry.keys())}.",
+                        file=_sys.stderr,
+                    )
+            except ImportError:
+                # cfg not available during partial imports (e.g., some test
+                # harnesses) — skip validation, let it fail at runtime instead.
+                pass
+
         ROLES[role_name] = {
             "system_prompt": mod.SYSTEM_PROMPT,
             "role_config": mod.ROLE_CONFIG,

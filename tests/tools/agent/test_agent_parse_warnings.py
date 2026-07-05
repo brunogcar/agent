@@ -91,3 +91,46 @@ class TestParseWarningIntegration:
             agent(action="dispatch", role="route", task="test")
 
         assert _get_parse_warnings("route") == []
+
+
+class TestParseWarningSeverity:
+    """_get_parse_warnings_by_severity groups warnings by high/medium/low (Bug #25).
+
+    Severity is based on count per role within the rolling log window:
+        high:   >= 5 warnings (urgent — prompt needs tightening)
+        medium: >= 2 warnings (degradation starting, monitor)
+        low:    < 2 warnings   (occasional failures, acceptable)
+    """
+
+    def test_get_parse_warnings_by_severity_groups(self):
+        from tools.agent_ops.parse_warnings import (
+            _log_parse_warning, _get_parse_warnings_by_severity,
+        )
+        # Log 6 warnings for role_a (high), 3 for role_b (medium), 1 for role_c (low)
+        for _ in range(6):
+            _log_parse_warning("role_a", "warn", "preview")
+        for _ in range(3):
+            _log_parse_warning("role_b", "warn", "preview")
+        _log_parse_warning("role_c", "warn", "preview")
+
+        result = _get_parse_warnings_by_severity()
+        assert len(result["high"]) == 6
+        assert all(w["severity"] == "high" for w in result["high"])
+        assert len(result["medium"]) == 3
+        assert all(w["severity"] == "medium" for w in result["medium"])
+        assert len(result["low"]) == 1
+        assert all(w["severity"] == "low" for w in result["low"])
+
+    def test_get_parse_warnings_by_severity_filtered_by_role(self):
+        from tools.agent_ops.parse_warnings import (
+            _log_parse_warning, _get_parse_warnings_by_severity,
+        )
+        for _ in range(5):
+            _log_parse_warning("role_a", "warn", "preview")
+        _log_parse_warning("role_b", "warn", "preview")
+
+        result = _get_parse_warnings_by_severity(role="role_a")
+        # role_a has 5 warnings = high severity
+        assert len(result["high"]) == 5
+        assert len(result["medium"]) == 0
+        assert len(result["low"]) == 0

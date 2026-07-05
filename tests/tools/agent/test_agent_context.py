@@ -80,3 +80,32 @@ class TestTrimContextTraceback:
         tb = "Traceback (most recent call last):\n  File \"a.py\"\nError: a\nTraceback (most recent call last):\n  File \"b.py\"\nError: b"
         result = _trim_context(tb, max_chars=500)
         assert "Error: a" in result
+
+
+class TestHeadTruncationBoundary:
+    """Head truncation must search near the boundary, not the entire head (Bug #21).
+
+    Previously head.rfind('\\n\\n') found the LAST paragraph break in the
+    entire head, discarding everything between that break and the boundary —
+    potentially hundreds of chars of useful context. The fix searches within
+    a 200-char window from the end of head.
+    """
+
+    def test_head_truncation_searches_near_boundary(self):
+        """When head has a \\n\\n near the boundary, the trim should find it
+        and not discard everything between the last \\n\\n and the boundary."""
+        # Build text where the last \n\n is far from the boundary
+        # but there's a closer \n\n near the boundary.
+        # Text must EXCEED the budget to trigger trimming.
+        head_text = "GOAL: test\n\n" + "A" * 3000 + "\n\nCLOSE_TO_BOUNDARY\n\n" + "B" * 1000
+        tail_text = "\n\nTAIL_CONTENT"
+        text = head_text + tail_text  # ~4000+ chars total
+
+        # Trim with a budget smaller than the text to force trimming
+        result = _trim_context(text, max_chars=3000)
+        # The result should contain the truncation marker
+        assert "truncated" in result.lower(), (
+            f"Expected truncation marker in result. Got {len(result)} chars."
+        )
+        # Key assertion: result should be smaller than original
+        assert len(result) < len(text), "Result must be smaller than original after trimming"

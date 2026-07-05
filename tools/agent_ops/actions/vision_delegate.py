@@ -67,7 +67,11 @@ def run_vision_delegate(
         "base64": b64,
         "url": url,
         "trace_id": trace_id,
-        "context": "",
+        # [Bug #13] Forward the caller's context — was hardcoded to "" which
+        # prevented passing additional text context (e.g., "What does this
+        # diagram show?"). The vision tool accepts context as supplementary
+        # text alongside the image.
+        "context": context or "",
     }
     if mime_type:
         vision_kwargs["mime_type"] = mime_type

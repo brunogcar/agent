@@ -148,7 +148,14 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
                 head_budget = max(0, budget - tb_len)
                 head = text[:head_budget]
 
-            head_break = head.rfind("\n\n")
+            # [Bug #21] Find the CLOSEST \n\n to the boundary, not the last
+            # one in the entire head. rfind("\n\n") on the full head would
+            # discard everything between the last paragraph break and the
+            # boundary — potentially hundreds of chars of useful context.
+            # Search within a 200-char window from the end of head.
+            _SEARCH_WINDOW = 200
+            search_start = max(0, len(head) - _SEARCH_WINDOW)
+            head_break = head.rfind("\n\n", search_start)
             if head_break != -1:
                 head = head[:head_break]
             truncated = len(text) - len(head) - tb_len
@@ -185,7 +192,13 @@ def _trim_context(text: str, max_chars: int | None = None, max_tokens: int | Non
 
     head = text[:head_budget]
     tail = text[-tail_budget:]
-    head_break = head.rfind("\n\n")
+    # [Bug #21] Find the CLOSEST \n\n to the boundary, not the last one in
+    # the entire head. rfind("\n\n") on the full head would discard everything
+    # between the last paragraph break and the boundary — potentially hundreds
+    # of chars of useful context. Search within a 200-char window from the end.
+    _SEARCH_WINDOW = 200
+    search_start = max(0, len(head) - _SEARCH_WINDOW)
+    head_break = head.rfind("\n\n", search_start)
     if head_break != -1:
         head = head[:head_break]
     tail_break = tail.find("\n")

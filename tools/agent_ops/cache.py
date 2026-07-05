@@ -12,22 +12,39 @@ from __future__ import annotations
 import hashlib as _hashlib
 import time as _time
 
+from core.config import cfg
+
 # Module-level cache storage — keyed by 16-char SHA256 prefix.
 # Value is a tuple of (response_dict, timestamp_float).
 _CACHE: dict[str, tuple[dict, float]] = {}
-_CACHE_MAX = 100
-_CACHE_TTL_SECONDS = 300
+
+# [Bug #19] Cache limits now read from cfg (was hardcoded 100 / 300).
+# Read at module load for fast access; cfg is a singleton initialized
+# before this module imports. If cfg isn't ready, fall back to defaults.
+try:
+    _CACHE_MAX = cfg.agent_cache_max
+    _CACHE_TTL_SECONDS = cfg.agent_cache_ttl_seconds
+except AttributeError:
+    _CACHE_MAX = 100
+    _CACHE_TTL_SECONDS = 300
 
 
-def _cache_key(role: str, task: str, context: str, content: str, temperature: float = -1.0, max_tokens: int = -1) -> str:
+def _cache_key(role: str, task: str, context: str, content: str, temperature: float = -1.0, max_tokens: int = -1, model: str = "") -> str:
     """Build a deterministic cache key from the agent call parameters.
 
     Uses SHA256 truncated to 16 hex chars for fast comparison while
     keeping collision probability negligible for 100-entry cache.
     Includes temperature and max_tokens when they are non-default values
     to prevent cache hits with different generation parameters.
+
+    [Bug #23] Now includes the model name when provided. This prevents
+    stale cache hits when the same role uses different models (e.g.,
+    during benchmark overrides or model swaps). Backward compatible —
+    callers that don't pass `model` get the old behavior.
     """
     raw = f"{role}:{task}:{context}:{content}"
+    if model:
+        raw += f":mdl={model}"
     if temperature >= 0:
         raw += f":t={temperature}"
     if max_tokens > 0:
