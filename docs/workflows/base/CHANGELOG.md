@@ -6,13 +6,18 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| Pre-v1.1 | 2026-07-05 | Bugfix batch in `workflows/helpers/checkpoint.py`: docstring path corrected from `core/workflow_checkpoint.py` to `workflows/helpers/checkpoint.py` (#15); `resume_count` now computed via JSON parsing instead of string-matching `'"node": "resume"'` (#16 — was producing false positives when state fields contained that literal string). |
 | Pre-Pre-v1.0 | — | Released — Shared WorkflowState, node helpers, dispatcher, checkpoint resumption, trace lifecycle |
 
 ---
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes yet. This section is reserved for future releases.)*
+### Pre-v1.1 — 2026-07-05
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| `resume_count` computed via JSON parsing | Previously used string-match (`'"node": "resume"' in line`) which produced false positives when a state field contained that literal string. Now parses each line as JSON and checks the `node` field. | No migration — strictly more accurate. Zombie-loop detection may fire less often (correct behavior — fewer false positives). |
 
 ---
 

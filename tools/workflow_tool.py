@@ -46,7 +46,7 @@ VALID_WORKFLOWS: frozenset[str] = frozenset({
     "auto",
 })
 
-WorkflowType = Literal["research", "data", "autocode", "report", "auto"]
+WorkflowType = Literal["research", "data", "autocode", "report", "understand", "auto"]
 
 def _make_error(error: str, trace_id: str, **extra) -> dict:
     """
@@ -82,6 +82,7 @@ def workflow(
     - data: Analyze datasets with pandas/numpy, generate reports.
     - autocode: Fix bugs, add features, refactor code (TDD + safety).
     - report: Generate comprehensive HTML/PDF dashboards.
+    - understand: Build a Codebase Knowledge Graph via AST parsing.
     - auto: Let the Router classify the task and choose the workflow.
     """
     # === VALIDATION: Ensure trace_id is always present ===
@@ -178,12 +179,16 @@ def workflow(
             # 🔴 ROUTER CONFIDENCE GUARD: Prevent wasting 15+ minutes on misunderstood tasks
             # If the Router says "low" confidence, it means the goal is too vague or ambiguous.
             # We abort execution and return clarifying questions to the user instead.
-            if decision.confidence == "low" and decision.clarifying_questions:
-                questions_text = "\n".join(f"- {q}" for q in decision.clarifying_questions)
+            # [Bug #6] Abort on low confidence REGARDLESS of whether clarifying_questions
+            # exist. Previously, low confidence with empty questions fell through to
+            # execution — defeating the guard's purpose.
+            if decision.confidence == "low":
+                questions = decision.clarifying_questions or ["Please provide more details about what you want to achieve."]
+                questions_text = "\n".join(f"- {q}" for q in questions)
                 return {
                     "status": "needs_clarification",
                     "reason": "The task goal is too vague or ambiguous to proceed confidently.",
-                    "clarifying_questions": decision.clarifying_questions,
+                    "clarifying_questions": questions,
                     "message": f"To help me understand your request better, please clarify:\n{questions_text}",
                     "trace_id": trace_id,
                 }
@@ -216,6 +221,12 @@ def workflow(
                 "error_msg": error_msg,
                 "feature_desc": feature_desc,
             })
+
+        # [Bug #3] understand workflow must receive project_root — previously
+        # validated above but never forwarded to run_workflow, causing it to
+        # default to agent root instead of the specified project directory.
+        elif wf_type == "understand":
+            kwargs["project_root"] = project_root
 
         result = run_workflow(
             workflow_type=wf_type,

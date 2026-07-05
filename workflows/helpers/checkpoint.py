@@ -1,5 +1,5 @@
 """
-core/workflow_checkpoint.py — Append-only JSONL journal for workflow resumability.
+workflows/helpers/checkpoint.py — Append-only JSONL journal for workflow resumability.
 Saves workflow state at critical boundaries to survive agent crashes.
 """
 from __future__ import annotations
@@ -92,11 +92,18 @@ def save_checkpoint(trace_id: str, node_name: str, state: dict) -> None:
     }
     
     try:
-        # Count existing resumes to detect zombie loops
+        # Count existing resumes to detect zombie loops.
+        # [Bug #16] Was string-matching '"node": "resume"' which produces false
+        # positives if a state field contains that literal string. Now parses
+        # each line as JSON and checks the "node" field properly.
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-                entry["resume_count"] = sum(1 for line in lines if '"node": "resume"' in line)
+                entry["resume_count"] = sum(
+                    1 for line in lines
+                    if line.strip()
+                    and json.loads(line).get("node") == "resume"
+                )
                 
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")

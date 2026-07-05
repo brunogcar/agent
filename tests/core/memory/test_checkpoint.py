@@ -59,11 +59,120 @@ def test_checkpoint_append_with_fsync():
     path = CHECKPOINT_DIR / f"{trace_id}.jsonl"
     if path.exists():
         path.unlink()
-        
+
     with patch("workflows.helpers.checkpoint.os.fsync") as mock_fsync:
         from workflows.helpers.checkpoint import save_checkpoint
         save_checkpoint(trace_id, "test_node", {"status": "running"})
-        
+
     assert mock_fsync.called, "os.fsync not called during checkpoint save"
+    if path.exists():
+        path.unlink()
+
+
+# =============================================================================
+# Bug #15: Stale docstring path
+# =============================================================================
+def test_checkpoint_docstring_path_correct():
+    """Docstring must reference workflows/helpers/checkpoint.py, not the old path.
+
+    Previously said 'core/workflow_checkpoint.py' — stale from before the
+    refactor that moved the file to workflows/helpers/.
+    """
+    from workflows.helpers import checkpoint
+    assert "workflows/helpers/checkpoint.py" in checkpoint.__doc__, (
+        "Docstring must reference the current file path (workflows/helpers/checkpoint.py). "
+        f"Got: {checkpoint.__doc__!r}"
+    )
+    assert "core/workflow_checkpoint.py" not in checkpoint.__doc__, (
+        "Docstring must NOT reference the stale 'core/workflow_checkpoint.py' path."
+    )
+
+
+# =============================================================================
+# Bug #16: Fragile resume counting (string match → JSON parse)
+# =============================================================================
+def test_resume_count_uses_json_parsing_not_string_match():
+    """resume_count must be computed by parsing JSON, not string-matching.
+
+    Previously used `'"node": "resume"' in line` which produces false
+    positives if a state field contains that literal string.
+    """
+    import json
+    from workflows.helpers.checkpoint import save_checkpoint, get_latest, CHECKPOINT_DIR
+
+    trace_id = "resume_count_string_match_test"
+    path = CHECKPOINT_DIR / f"{trace_id}.jsonl"
+    if path.exists():
+        path.unlink()
+
+    # Write a checkpoint where the STATE contains the literal string
+    # '"node": "resume"' — this must NOT be counted as a resume.
+    # (The old string-match code would count it; the JSON-parse fix won't.)
+    fake_entry = {
+        "ts": time.time(),
+        "node": "synthesize",  # NOT "resume"
+        "status": "running",
+        "state": {"note": 'this contains "node": "resume" as a literal string'},
+        "resume_count": 0,
+        "version": 1,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(fake_entry) + "\n")
+
+    # Now save another checkpoint — save_checkpoint counts existing resumes
+    save_checkpoint(trace_id, "test_node", {"status": "running"})
+
+    # Read the last line and check resume_count
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    last_entry = json.loads(lines[-1].strip())
+
+    # The state field contained '"node": "resume"' but the actual node was
+    # "synthesize". Old string-match would count 1; JSON-parse correctly counts 0.
+    assert last_entry["resume_count"] == 0, (
+        f"resume_count must be 0 (no actual resume nodes), but got "
+        f"{last_entry['resume_count']}. The string-match logic is producing "
+        f"false positives from state field content."
+    )
+
+    if path.exists():
+        path.unlink()
+
+
+def test_resume_count_counts_actual_resume_nodes():
+    """resume_count must correctly count actual 'resume' nodes."""
+    import json
+    from workflows.helpers.checkpoint import save_checkpoint, CHECKPOINT_DIR
+
+    trace_id = "resume_count_actual_test"
+    path = CHECKPOINT_DIR / f"{trace_id}.jsonl"
+    if path.exists():
+        path.unlink()
+
+    # Write 2 actual resume entries + 1 non-resume entry
+    for node_name in ["resume", "resume", "synthesize"]:
+        fake_entry = {
+            "ts": time.time(),
+            "node": node_name,
+            "status": "running",
+            "state": {},
+            "resume_count": 0,
+            "version": 1,
+        }
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(fake_entry) + "\n")
+
+    # Now save another checkpoint — should count 2 actual resumes
+    save_checkpoint(trace_id, "test_node", {"status": "running"})
+
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    last_entry = json.loads(lines[-1].strip())
+
+    assert last_entry["resume_count"] == 2, (
+        f"resume_count must be 2 (two actual 'resume' nodes), got "
+        f"{last_entry['resume_count']}."
+    )
+
     if path.exists():
         path.unlink()

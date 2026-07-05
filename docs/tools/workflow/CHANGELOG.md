@@ -4,13 +4,22 @@
 
 ## 📝 Version History
 
+| Version | Date | Changes |
+|---------|------|---------|
+| Pre-v1.1 | 2026-07-05 | Bugfix batch: `WorkflowType` Literal now includes `understand` (#4); docstring lists `understand` for LLM discovery (#5); `understand` workflow now forwards `project_root` to `run_workflow` (#3); auto-routing low-confidence guard now aborts even when `clarifying_questions` is empty (#6). |
+
 *(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
 
 ---
 
 ## ⚠️ Breaking Changes
 
-*(No breaking changes recorded for pre-v1. Add here as they occur.)*
+### Pre-v1.1 — 2026-07-05
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| Auto-routing low-confidence guard now aborts even with empty `clarifying_questions` | Previously, low confidence + empty questions fell through to execution. Now always aborts with `needs_clarification` status and provides a default question if none were given. | No migration — strictly safer behavior. Callers that handled `needs_clarification` still work; callers that relied on the fallthrough bug will now see the abort (correct behavior). |
+| `understand` workflow now forwards `project_root` to `run_workflow` | Previously `project_root` was validated but never forwarded — understand defaulted to agent root. Now correctly passes the specified project directory. | No migration — strictly better behavior. |
 
 ---
 
