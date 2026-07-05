@@ -125,8 +125,8 @@ class TestUnderstandReport:
             "errors": [],
         }
 
-        import asyncio
-        result = asyncio.run(node_report(state))
+        # [Architecture] node_report is now sync — no asyncio.run() needed
+        result = node_report(state)
 
         assert result == {}
         mock_report.assert_called_once()
@@ -151,8 +151,8 @@ class TestUnderstandReport:
             "errors": ["Failed to parse core/parser.py: SyntaxError"],
         }
 
-        import asyncio
-        asyncio.run(node_report(state))
+        # [Architecture] node_report is now sync — no asyncio.run() needed
+        node_report(state)
 
         mock_report.assert_called_once()
         config = mock_report.call_args.kwargs["config"]

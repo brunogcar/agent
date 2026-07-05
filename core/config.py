@@ -262,6 +262,10 @@ class Config:
         self.agent_cache_max = int(os.getenv("AGENT_CACHE_MAX", "100"))
         self.agent_cache_ttl_seconds = int(os.getenv("AGENT_CACHE_TTL_SECONDS", "300"))
 
+        # -- Understand Workflow (Bug #17 fix) ---------------------------------
+        # Batch size for AST parsing in the understand workflow.
+        self.understand_batch_size = int(os.getenv("UNDERSTAND_BATCH_SIZE", "10"))
+
         # -- Tool & System Limits (P2: Centralized Magic Numbers) --------------
 
         # Memory Tool Limits

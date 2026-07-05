@@ -236,7 +236,7 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 
 ### 5. 🧠 Understand — [workflows/UNDERSTAND.md](workflows/UNDERSTAND.md)
 
-**Status:** Pre-v1.0 — Monolithic `workflows/understand.py`. Not a LangGraph StateGraph — direct async function calls.
+**Status:** v1.0 — 4-node LangGraph StateGraph with sync nodes, checkpoint/resume support, trace_id propagation.
 
 **Purpose:** Build and maintain a deterministic Codebase Knowledge Graph for Python projects.
 
@@ -244,13 +244,13 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 
 **Key characteristics:**
 - **AST-based parsing** — Extracts imports via Python AST (not regex)
-- **Incremental indexing** — MD5 + mtime comparison; only changed files re-parsed
+- **Incremental indexing** — Chunked MD5 + mtime comparison; only changed files re-parsed
 - **Physical isolation** — Separate artifact directories for agent root vs workspace
-- **Batch processing** — Files parsed in batches of 10
-- **Not a LangGraph StateGraph** — Direct async function calls, not graph-based
-- **Critical bug:** Hardcoded `tid` strings in all nodes — no trace correlation
-- **Critical bug:** `trace_id` never injected into initial state
-- **Critical bug:** `GraphStore` created but discarded in `node_init`
+- **Batch processing** — Files parsed in configurable batches (UNDERSTAND_BATCH_SIZE, default 10)
+- **Sync nodes** — All nodes are `def` (sync), routed through base.py's standard `graph.invoke()`
+- **GraphStore lifecycle** — Connections properly opened and closed in each node
+- **Trace correlation** — trace_id propagated through state to all nodes
+- **Checkpoint/resume** — Supported via base.py's standard graph.invoke() path
 
 **Safety:** Size rejection, file size limits, skip directories.
 
@@ -270,8 +270,8 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 
 | Aspect | Research | Deep Research | Data | Autocode | Understand |
 |--------|----------|---------------|------|----------|------------|
-| **Status** | Pre-v1.0 | v1.0 | v1.0 | v1.0 | Pre-v1.0 |
-| **Structure** | 8-node pipeline | 8-node cyclic ReAct | 5-node pipeline | 17-node state machine | 4-node pipeline (not LangGraph) |
+| **Status** | Pre-v1.0 | v1.0 | v1.0 | v1.0 | v1.0 |
+| **Structure** | 8-node pipeline | 8-node cyclic ReAct | 5-node pipeline | 17-node state machine | 4-node LangGraph pipeline |
 | **Primary tools** | `web`, `browser` | `tavily`, `web`, `browser` | `python_exec`, `agent` | `agent`, `python_exec`, `git` | `python` (AST), `GraphStore` |
 | **LLM roles** | `research` | `planner`, `research`, `executor` | `code`, `critique` | `router`, `planner`, `executor`, `test` | N/A |
 | **Loop type** | Linear | Cyclic (decompose→search→synthesize) | Linear | Cyclic (debug→retry) | Linear |

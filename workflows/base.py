@@ -194,13 +194,18 @@ def run_workflow(
             result = graph.invoke(initial_state)
 
         elif wf_type == "understand":
+            # [Architecture] Now routes through standard graph.invoke() like all
+            # other workflows. Was: run_understand_workflow_sync() with
+            # ThreadPoolExecutor + new_event_loop() hack. Now: sync nodes, direct invoke.
             from pathlib import Path
-            from workflows.understand import run_understand_workflow_sync
+            from workflows.understand import build_understand_graph, _default_state
             from core.kgraph.project import is_same_path
 
             project_root = initial_state.get("project_root", "")
             is_agent = is_same_path(Path(project_root), cfg.agent_root) if project_root else False
-            result = run_understand_workflow_sync(project_root, is_agent_root=is_agent)
+            understand_state = _default_state(project_root, is_agent_root=is_agent, trace_id=trace_id)
+            graph = build_understand_graph()
+            result = graph.invoke(understand_state)
 
         else:
             tracer.error(trace_id, "dispatch", f"Unknown workflow type: {wf_type!r}")
