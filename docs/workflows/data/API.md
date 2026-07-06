@@ -2,107 +2,107 @@
 
 # 📝 API Reference
 
+> v1.0: All nodes live in `workflows/data_impl/nodes/` and return **partial update dicts** (only changed keys). Import nodes from `workflows.data_impl.nodes.<node>`; import `build_data_graph` / `WORKFLOW_METADATA` from the thin facade `workflows.data`.
+
 ## ⚡ Nodes
 
-### `node_recall(state)` — Phase 1: Memory Recall
+### `node_recall(state) -> dict` — Phase 1: Memory Recall
 
 **Purpose:** Recall relevant past analyses from memory.
 
 **Logic:**
 ```python
-memory.recall(
-    query=goal,
-    limit=5,
-    trace_id=state["trace_id"],
-)
+results = memory.recall(query=goal, top_k=3, trace_id=tid)
 ```
 
-**Output:** Partial dict with `memory_context`.
+**Output:** `{"memory_context": ctx}` (partial dict).
 
-**Error handling:** If memory recall fails, returns `{"memory_context": ""}` (empty string). The workflow proceeds without context.
+**Error handling:** [Fix #8] `memory.recall` is wrapped in `try/except`. On failure, logs to the trace and returns `{"memory_context": ""}` — the workflow proceeds without context. Non-fatal.
 
 ---
 
-### `node_execute(state)` — Phase 2: Code Generation + Execution
+### `node_execute(state) -> dict` — Phase 2: Code Generation + Execution
 
-**Purpose:** Generate Python code from the goal and execute it.
+**Purpose:** Generate Python code from the goal (if none provided) and execute it.
 
 **Logic:**
-1. Build prompt with goal, memory context, and initial code (if provided)
-2. Call `agent(action="dispatch", role="code", task=...)` to generate code
-3. Extract code from markdown fences using regex
-4. Execute code via `python(code=...)`
-5. Return output or error
+1. If `state["code"]` is empty → call `agent(action="dispatch", role="code", task=..., context=memory_context)` to generate code.
+2. Extract code via `_extract_code_from_response(parsed, text, trace_id)` — `parsed["patch"]` → ```python``` fence → raw text (each fallback logged).
+3. Execute via `python(mode="run_data", code=code)`.
+4. Return output, or set `exec_error` on failure.
 
-**Output:** Partial dict with `output`, `exec_error`, `code`.
+**Output (success):** `{"output": ..., "exec_error": "", "code": ..., "code_generated": bool}` (partial dict).
+
+**Output (failure):** `{**node_error(state, "execute", msg), "exec_error": msg, "output": ""}` — [Fix #2] sets `exec_error` so `route_after_execute` routes to END (both code-gen and execution failures).
+
+**`code_generated` flag:** [Fix #5] `True` when the code was LLM-generated, `False` when user-provided. Read by `node_store` to gate procedural-memory storage.
 
 **Error handling:**
-- Code generation fails → `node_error(state, "execute", ...)` → workflow ends
-- Execution fails → `exec_error` set, output is empty string
-- Code extraction fails → `node_error(state, "execute", ...)` → workflow ends
-
-**Regex for code extraction:**
-```python
-match = re.search(r"```python\n(.*?)\`\`\`", text, re.DOTALL)
-```
-
-> **Note:** The regex uses `\`\`\`` which is a malformed escape sequence in raw strings. This emits a `SyntaxWarning` in modern Python. Should be `
-\`\`\`` or use non-raw string.
+- Code-gen failure (agent returns non-success) → `exec_error` set, routes to END.
+- Execution failure (python returns non-success) → `node_error()` (trace + checkpoint) + `exec_error` set. [Fix #3]
+- Unexpected exception from `agent()`/`python()` → caught, converted to `exec_error`. [Fix #8]
 
 ---
 
-### `route_after_execute(state)` — Conditional Router
+### `route_after_execute(state) -> str` — Conditional Router
 
-**Purpose:** Route to critique or END based on execution result.
+**Purpose:** Route to critique on success, END on failure.
 
 **Logic:**
 ```python
 if state.get("exec_error"):
-    return "failed"  # → END
-return "critique"    # → node_critique
+    return "failed"   # → END
+return "critique"      # → node_critique
 ```
 
-**Output:** String literal `"failed"` or `"critique"`.
+> [Fix #10] `route_after_critique` was removed — it always returned `"store"` (dead code). `critique` → `store` is now a direct edge.
 
 ---
 
-### `node_critique(state)` — Phase 3: Review + Critique
+### `node_critique(state) -> dict` — Phase 3: Review + Critique
 
-**Purpose:** Review the execution output and provide feedback.
+**Purpose:** Evaluate whether the execution output adequately answers the goal.
 
 **Logic:**
-1. Call `agent(action="dispatch", role="critique", task=...)` with the output
-2. Return the critique text
+```python
+agent(action="dispatch", role="critique", task=..., context=f"Code output:\n{output[:1000]}", trace_id=tid)
+```
 
-**Output:** Partial dict with `result` (critique text).
+> [Fix #4] Uses `context=` (text channel), not `content=` (base64 image channel).
 
-**Guard:** If `output` is empty, returns empty state (no critique). This is a silent skip — no trace step explains why.
+**Output (success):** `{"result": f"OUTPUT:\n{output}\n\nANALYSIS:\n{r['text']}"}` (partial dict).
+**Output (empty output):** `{}` — [Fix #6] logged via `node_step` (was silent).
+**Output (critique failure):** `{"result": output}` — [Fix #7] logged via `tracer.error` (was silent fallback).
 
 ---
 
-### `node_store(state)` — Phase 4: Memory Storage
+### `node_store(state) -> dict` — Phase 4: Memory Storage
 
 **Purpose:** Store the analysis result in memory.
 
 **Logic:**
-1. Store semantic memory: `memory.store_semantic(text=result, ...)`
-2. Store procedural memory: `memory.store_procedural(text=code, ...)` (only if code was generated and execution succeeded)
+1. `memory.store_episodic(text=..., importance=6, goal=..., outcome="success", tools_used="python,agent,memory", trace_id=...)`
+2. `memory.store_procedural(text=..., importance=6, tags="data,python,working-code", trace_id=...)` — **only if `state["code_generated"]` is truthy.** [Fix #5]
 
-**Output:** Empty dict (side effects only).
+**Output:** `{}` (side effects only).
 
-**Note:** Procedural memory is stored for ALL successful executions, including user-provided code. The doc says "only if code was generated" but the code doesn't distinguish.
+**Error handling:** [Fix #8] Both `store_*` calls are wrapped in `try/except` + `tracer.error`. Storage is best-effort — a memory failure does not crash the workflow.
 
 ---
 
-### `node_notify(state)` — Phase 5: User Notification
+### `node_notify(state) -> dict` — Phase 5: User Notification
 
-**Purpose:** Notify the user of completion.
+**Purpose:** Notify the user and mark the workflow done.
 
 **Logic:**
-1. Call `notify(action="notify", message=...)` with the result
-2. Return `node_done(state, result=...)`
+```python
+notify(action="send", title="Data analysis complete", message=f"{goal[:50]}: {result[:80]}")
+return node_done(state, result=result or "Data analysis complete")
+```
 
-**Output:** `node_done` result dict.
+**Output:** `node_done(...)` → `{"status": "success", "result": ..., "artifacts": []}`.
+
+**Error handling:** [Fix #10] `notify()` is wrapped in `try/except` + `tracer.error`. A notification failure does not prevent `node_done` from marking the workflow successful — the analysis itself already succeeded.
 
 ---
 
@@ -113,19 +113,19 @@ The workflow returns a `dict`:
 ```json
 {
   "status": "success",
-  "result": "Analysis complete: Top 5 months are Jan, Mar, Dec, Jun, Sep",
+  "result": "OUTPUT:\n6\n\nANALYSIS:\nThe output correctly answers the goal.",
   "error": "",
   "artifacts": []
 }
 ```
 
-**Failure:**
+**Failure (routes to END from `execute`):**
 ```json
 {
   "status": "failed",
-  "result": "",
-  "error": "Code generation failed: timeout",
-  "artifacts": []
+  "error": "Execution failed: SyntaxError: invalid syntax",
+  "exec_error": "SyntaxError: invalid syntax",
+  "output": ""
 }
 ```
 
@@ -133,14 +133,25 @@ The workflow returns a `dict`:
 
 ## 🔒 Security
 
-*(Fill this section with relevant info from edits and refactors. Add security details as they are learned.)*
+- Code execution is sandboxed via `python(mode="run_data")` — see `tools/python.py` for the import/escape allow-lists.
+- No network I/O in this workflow (unlike `research`); `core/net` retry/SSRF helpers are not applicable here.
 
 ---
 
 ## 📝 Error Handling
 
-*(Fill this section with relevant info from edits and refactors. Add error classification as it is learned.)*
+| Failure | Node | Behavior |
+|---------|------|----------|
+| Memory recall fails | `node_recall` | Logged; proceeds with empty context (non-fatal) |
+| Code generation fails | `node_execute` | `exec_error` set → routes to END |
+| Code generation raises | `node_execute` | Caught → `exec_error` → END |
+| Execution fails | `node_execute` | `node_error()` + `exec_error` → END |
+| Execution raises | `node_execute` | Caught → `exec_error` → END |
+| Critique fails | `node_critique` | `tracer.error`; falls back to raw output |
+| Critique raises | `node_critique` | `tracer.error`; falls back to raw output |
+| Memory store fails | `node_store` | `tracer.error`; returns `{}` (non-fatal) |
+| Notify fails | `node_notify` | `tracer.error`; still returns `node_done` (non-fatal) |
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.0 split). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history.*

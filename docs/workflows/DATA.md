@@ -1,12 +1,15 @@
 # 📊 Data Workflow
 
-The `data` workflow handles **data analysis and visualization** tasks. It takes a natural language goal, optionally some initial Python code, and produces a data analysis result with optional visualization.
+The `data` workflow handles **data analysis and visualization** tasks. It takes a natural language goal, optionally some initial Python code, and produces a data analysis result.
+
+**v1.0:** Split into the `workflows/data_impl/` subpackage (per-node modules + `WORKFLOW_METADATA`), mirroring `research_impl` / `understand_impl`. See [Architecture](data/ARCHITECTURE.md).
 
 **Key characteristics:**
-- **Goal-driven** — User describes what they want; LLM generates the analysis code
-- **Execution loop** — Generated code is executed in the sandboxed Python environment
-- **Critique loop** — If execution fails, the LLM critiques the error and generates a fix
-- **Memory integration** — Recalls relevant past analyses for context
+- **Goal-driven** — User describes what they want; the LLM generates the analysis code (unless code is provided)
+- **Sandboxed execution** — Generated/provided code runs via `python(mode="run_data")`
+- **Critique layer** — `agent(role="critique")` reviews whether the output answers the goal (runs on success; best-effort, logged on failure)
+- **Memory integration** — Recalls relevant past analyses for context; stores episodic (result) + procedural (working code, only when LLM-generated)
+- **Non-fatal memory/notify** — Memory and notification failures never crash the workflow or flip a successful analysis to failed
 - **Notification** — Reports completion to the user
 
 ---

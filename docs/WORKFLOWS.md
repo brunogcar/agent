@@ -167,22 +167,20 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 
 ### 3. 📊 Data — [workflows/DATA.md](workflows/DATA.md)
 
-**Status:** v1.0 — 5-node LangGraph pipeline.
+**Status:** v1.0 — 5-node LangGraph pipeline, split into `workflows/data_impl/` subpackage (per-node modules + `WORKFLOW_METADATA`).
 
 **Purpose:** Python-based data analysis, calculations, and dataset generation.
 
-**Flow:** recall → execute → critique → store → notify
+**Flow:** recall → execute → critique → store → notify (execute has a conditional edge: failure → END)
 
 **Key characteristics:**
 - **Code execution** — Real Python via `python(mode="run_data")`
-- **Optional generation** — If no code provided, `agent(role="code")` generates it from the goal
-- **Critique layer** — `agent(role="critique")` evaluates output quality (best-effort)
-- **Dual memory** — Stores both episodic (result) and procedural (working code) memories
-- **Critical bug:** `agent()` missing `action="dispatch"` in `node_execute` and `node_critique`
-- **Critical bug:** Code-gen failure routes to critique instead of END (route checks wrong field)
-- **Critical bug:** `**state` spreading in all nodes violates LangGraph best practice
+- **Optional generation** — If no code provided, `agent(action="dispatch", role="code")` generates it from the goal
+- **Critique layer** — `agent(action="dispatch", role="critique")` evaluates output quality (best-effort, logged on failure)
+- **Dual memory** — Stores episodic (result) + procedural (working code). Procedural storage is gated on `code_generated` so user-provided code is not stored.
+- **v1.0 fixes applied:** partial-dict node returns; code-gen & execution failures now set `exec_error` (route to END, not critique); `context=` for critique text; exception isolation on memory/notify/agent; observable code-extraction fallbacks; dead `route_after_critique` removed.
 
-**Safety:** Sandboxed execution, best-effort critique (never fails workflow).
+**Safety:** Sandboxed execution; best-effort critique and non-fatal memory/notify (never flip a successful analysis to failed).
 
 **Output:**
 ```json

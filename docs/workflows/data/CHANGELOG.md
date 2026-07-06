@@ -4,20 +4,24 @@
 
 ## 📝 Version History
 
-| Version | Date | Status |
-|---------|------|--------|
-| Pre-v1.0 | — | Released — 5-node LangGraph pipeline with memory, code generation, execution, critique, and notification |
+| Version | Date | Changes |
+|---------|------|---------|
+| v1.0 | 2026-07-06 | **Subpackage split:** Split monolithic `workflows/data.py` (231 lines) into `workflows/data_impl/` subpackage with per-node modules (`recall`, `execute`, `critique`, `store`, `notify`). Added `WORKFLOW_METADATA` for MCP client introspection. Thin facade re-exports `build_data_graph`, `WORKFLOW_METADATA`. Tests split into per-node files + `conftest.py` + `TestSubpackageStructure`. Applied 12 audit fixes (see below). |
+| Pre-v1.0 | 2026-07-05 | Bug fix: `node_execute` and `node_critique` now call `agent(action="dispatch", ...)` (was missing `action`, always returned `Unknown action ''`). |
 
 ---
 
 ## ⚠️ Breaking Changes
 
-### Pre-v1.0 — 2026-07-05 (bug fix)
+### v1.0 — 2026-07-06
 
-| Change | Impact |
-|--------|--------|
-| `node_execute` code-gen path now calls `agent(action="dispatch", role="code", ...)` | Internal bug fix. No migration — the previous call was always broken (returned `Unknown action ''` error). Code generation from goal now actually works. |
-| `node_critique` now calls `agent(action="dispatch", role="critique", ...)` | Internal bug fix. No migration — critique was dead code before (call always failed silently); now actually evaluates output quality. |
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| Monolithic `workflows/data.py` → `data_impl/` subpackage | Node functions moved to `workflows/data_impl/nodes/<node>.py`. | Import nodes from `workflows.data_impl.nodes.<node>` (the facade no longer re-exports individual nodes — same as `research_impl`). `build_data_graph` and `WORKFLOW_METADATA` still importable from `workflows.data`. |
+| `route_after_critique` removed | It was dead code (always returned `"store"`). | `critique` → `store` is now a direct edge. No caller used `route_after_critique`. |
+| Nodes return partial dicts (not `{**state, ...}`) | LangGraph best practice — only changed keys. | No migration — callers consume the merged final state from `graph.invoke()`. |
+| `node_critique` uses `context=` (was `content=`) | `content` is for base64 images; `context` is for text. | No migration — both flow to `llm.complete()`, but `context` is the primary text channel. |
+| New state key `code_generated` | Set by `node_execute`, read by `node_store`. | No migration — flows as a plain dict key; not in the `WorkflowState` TypedDict. |
 
 ---
 
@@ -25,14 +29,19 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| 5-node LangGraph pipeline | ✅ Pre-v1.0 | recall → execute → critique → store → notify |
-| Memory recall integration | ✅ Pre-v1.0 | Phase 1: recalls relevant past analyses |
-| Code generation + execution | ✅ Pre-v1.0 | Phase 2: generates Python, executes in sandbox |
-| Conditional routing | ✅ Pre-v1.0 | Execution failure → END, success → critique |
-| Critique review | ✅ Pre-v1.0 | Phase 3: LLM reviews output |
-| Memory storage | ✅ Pre-v1.0 | Phase 4: stores semantic + procedural memory |
-| User notification | ✅ Pre-v1.0 | Phase 5: notifies user of completion |
-| Result compression | ✅ Pre-v1.0 | `compress_result()` prevents oversized responses |
+| Subpackage split (v1.0 pattern) | ✅ v1.0 | `data_impl/` with `graph.py`, `routes.py`, `helpers.py`, `nodes/` |
+| `WORKFLOW_METADATA` | ✅ v1.0 | MCP client introspection (nodes + conditional edges) |
+| Partial-dict node returns | ✅ v1.0 | [Fix #1] No more `{**state, ...}` |
+| Code-gen failure routes to END | ✅ v1.0 | [Fix #2] Both failure paths set `exec_error` |
+| Execution failure logged via `node_error` | ✅ v1.0 | [Fix #3] Trace + checkpoint (was only `node_step`) |
+| `context=` for critique text | ✅ v1.0 | [Fix #4] `content=` was for images |
+| Procedural memory only for generated code | ✅ v1.0 | [Fix #5] `code_generated` flag gates `store_procedural` |
+| Empty-output critique skip logged | ✅ v1.0 | [Fix #6] Was silent `return state` |
+| Critique failure logged via `tracer.error` | ✅ v1.0 | [Fix #7] Was silent fallback |
+| Exception isolation (memory/notify/agent) | ✅ v1.0 | [Fix #8] `try/except` + `tracer.error`, non-fatal |
+| Observable code extraction | ✅ v1.0 | [Fix #9] `_extract_code_from_response` helper, `tracer.warning` on fallback |
+| Dead `route_after_critique` removed | ✅ v1.0 | [Fix #10] Direct `critique` → `store` edge |
+| `notify()` failure non-fatal | ✅ v1.0 | [Fix #10] `node_done` always reached |
 
 ---
 
@@ -40,21 +49,9 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 1 | **Fix `agent()` missing `action="dispatch"`** | `node_execute` and `node_critique` call `agent()` without required `action` parameter. Always returns error. | P0 |
-| 2 | **Fix code-gen failure routing to critique instead of END** | `node_execute` returns `node_error()` on failure, but `route_after_execute` checks `exec_error` (not set by `node_error`), so workflow routes to `node_critique` instead of END. | P0 |
-| 3 | **Fix execution failure not calling `node_error`** | When `python()` execution fails, `node_execute` sets `exec_error` but never calls `node_error()`. No trace step, no error checkpoint. | P0 |
-| 4 | **Fix `**state` spreading in all nodes** | All nodes return `{**state, ...}` which violates LangGraph best practice. Should return partial dicts with only changed keys. | P0 |
-| 5 | **Add exception isolation to all nodes** | No `try/except` in any node. Tool call exceptions crash the entire workflow. | P1 |
-| 6 | **Fix `content` param misused for text in `node_critique`** | `content` is documented as "base64-encoded image string". Using it for arbitrary text is a semantic mismatch. Use `context` instead. | P1 |
-| 7 | **Fix procedural memory stored for user-provided code** | `node_store` stores procedural memory for ALL successful executions, not just LLM-generated code. Should distinguish. | P1 |
-| 8 | **Fix regex escape inconsistency in code extraction** | `r"```python\n(.*?)\`\`\`"` has malformed escape `\`\`\``. Emits `SyntaxWarning`. Should be `r"```python\n(.*?)\n```"`. | P1 |
-| 9 | **Fix silent empty output critique skip** | `node_critique` silently skips when `output` is empty. Should log reason. | P1 |
-| 10 | **Handle `notify()` failure in `node_notify`** | If `notify()` raises or returns error, `node_notify` crashes or propagates error dict. | P2 |
-| 11 | **Test restructure** | Split `test_data_flow.py` into per-node files + `conftest.py` | P1 |
-| 12 | **Configurable code generation timeout** | Hardcoded agent timeout. Make configurable via `.env` | P2 |
-| 13 | **Code extraction fallback** | If regex fails, try JSON extraction or raw text | P2 |
-| 14 | **Execution retry loop** | On execution failure, retry with fix instead of ending | P3 |
-| 15 | **Visualization support** | Detect matplotlib/plotly output and return as artifact | P3 |
+| 1 | **Execution retry loop** | On execution failure, retry with an LLM-generated fix instead of ending. | P3 |
+| 2 | **Visualization support** | Detect matplotlib/plotly output and return as an artifact. | P3 |
+| 3 | **Configurable code-gen timeout** | Hardcoded agent timeout; make configurable via `.env`. | P2 |
 
 ---
 
@@ -62,12 +59,11 @@
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
-| 1 | **Remove memory integration** | Memory recall improves code quality. Removing it would degrade results. | Skip |
-| 2 | **Remove critique node** | Critique provides valuable feedback. Removing it would lose quality assurance. | Skip |
-| 3 | **Add execution retry loop** | Current single-pass execution is intentional. Retry loops add complexity and may not improve reliability. | Skip |
-| 4 | **Support non-Python languages** | The workflow is specifically designed for Python data analysis. Other languages would require significant changes. | Skip |
-| 5 | **Real-time streaming output** | Streaming would require WebSocket or SSE infrastructure. Out of scope for current architecture. | Skip |
+| 1 | **Remove memory integration** | Memory recall improves code quality. | Skip |
+| 2 | **Remove critique node** | Critique provides quality assurance. | Skip |
+| 3 | **Support non-Python languages** | The workflow is specifically for Python data analysis. | Skip |
+| 4 | **Real-time streaming output** | Would require WebSocket/SSE infrastructure. | Skip |
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.0 split). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
