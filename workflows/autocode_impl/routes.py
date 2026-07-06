@@ -16,10 +16,16 @@ def route_after_classify(state: AutocodeState) -> str:
         return "node_validate_input"
 
 def route_after_write_files(state: AutocodeState) -> str:
-    """Route after writing files node."""
+    """Route after writing files node.
+
+    [v1.1] Added 'audit' and 'edit' to the impact-analysis path. Previously
+    these fell through to node_verify, skipping impact analysis entirely —
+    which is wrong for 'audit' (an audit IS impact analysis) and inconsistent
+    for 'edit' (the docs say edit is 'heavier than fix' but it skipped TDD).
+    Found by cross-LLM review (DeepSeek, Mistral).
+    """
     task_type = state.get("task_type", "feature")
-    if task_type in ["fix", "fix_error", "refactor", "improve", "feature"]:
-        # CHANGED: Route to analyze_impact first
+    if task_type in ["fix", "fix_error", "refactor", "improve", "feature", "audit", "edit"]:
         return "node_analyze_impact"
     else:
         return "node_verify"

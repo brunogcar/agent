@@ -55,7 +55,8 @@ class TestGraphStructureAndWiring:
         assert route_after_run_tests({"tdd_status": "failed"}) == "node_systematic_debug"
         
         assert route_after_write_files({"task_type": "feature"}) == "node_analyze_impact"
-        assert route_after_write_files({"task_type": "audit"}) == "node_verify"
+        # [v1.1] audit now routes to analyze_impact (was skipping it — audit IS impact analysis)
+        assert route_after_write_files({"task_type": "audit"}) == "node_analyze_impact"
         
         assert route_after_verify({"verification_passed": True}) == "report"
         assert route_after_verify({"verification_passed": False}) == "END"

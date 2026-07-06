@@ -17,6 +17,10 @@
 11. **Never return `None` from LangGraph nodes** — Always return a `dict` (even empty `{}`).
 12. **Never use `files_context` field** — It doesn't exist in `AutocodeState`. Use `_files_context()` helper.
 13. **Never store `files_map` as `dict[str, FileSnapshot]`** — No node populates it. Use `modified_files` instead.
+14. **Never import removed symbols in the facade** — [v1.1] The facade was broken for 2 versions because it imported `AGENT_ROOT`, `route_after_brainstorm`, `route_after_debug`, `_git_snapshot` after they were removed from their source modules. When removing a symbol from `state.py`/`routes.py`/`git_ops.py`, grep the facade and remove the import + `__all__` entry too.
+15. **Never call `.compile()` on an already-compiled graph** — [v1.1] `get_graph()` returns a `CompiledStateGraph` which has no `.compile()` method. Calling it crashes with `AttributeError`. Use `get_graph()` directly, or `build_graph().compile()` for a fresh compile.
+16. **Never let `distill_memory` fail the workflow** — [v1.1] The code is already committed by the time distill_memory runs. A ChromaDB failure there must not flip a successful workflow to failed. Use `tracer.warning`, not `tracer.error`, and return `{}`.
+17. **Never bypass `base.py`'s `run_workflow()` from the facade** — [v1.1] The facade delegates to `run_workflow("autocode")` for tracing, checkpointing, and timeout. Bypassing it (the old design) caused double trace creation and missing checkpoint support.
 
 ## ✅ ALWAYS DO
 
@@ -64,6 +68,18 @@
 > - **Why it matters:** Procedural memory distillation never received root cause or defense notes — the most valuable debugging insights were discarded.
 > - **Fix:** Changed to `root_cause` and `defense_notes` to match what debug.py actually sets. Same fix in `node_commit`.
 
+> - **What happened:** The facade (`workflows/autocode.py`) was broken for 2 versions (v1.0.1 + v1.0.2). It imported 4 symbols (`AGENT_ROOT`, `route_after_brainstorm`, `route_after_debug`, `_git_snapshot`) that were removed from their source modules during the v1.0.1/v1.0.2 refactors. No test caught it because all 106 tests imported directly from `autocode_impl/`, never from the facade.
+> - **Why it matters:** `import workflows.autocode` raised `ImportError`. `run_workflow(workflow_type="autocode")` was also broken (the dispatcher imports from the facade). The entire autocode workflow was unreachable through its documented public API for 2 versions.
+> - **Fix:** [v1.1] Removed the 4 dead imports. Added facade contract tests (`test_facade.py`) that import the facade and exercise `run_workflow("autocode")`. This guards against silent facade breakage in future refactors.
+
+> - **What happened:** `base.py`'s autocode branch did `graph = build_graph(); result = graph.invoke(state)`. But `build_graph()` returns an uncompiled `StateGraph`, which has no `.invoke()` method. This would crash with `AttributeError`.
+> - **Why it matters:** Even if the facade imported correctly, `run_workflow("autocode")` would still crash at the invoke step.
+> - **Fix:** [v1.1] `base.py` now uses `invoke_with_timeout(initial_state)` which calls `get_graph()` (returns compiled) internally. Also wires `cfg.autocode_graph_timeout`.
+
+> - **What happened:** `route_after_write_files` only routed `fix`/`fix_error`/`refactor`/`improve`/`feature` to `node_analyze_impact`. `audit` and `edit` fell through to `node_verify`, skipping impact analysis entirely.
+> - **Why it matters:** For `audit` especially, impact analysis IS the audit — skipping it made the audit task type misleading. For `edit`, the docs say it's "heavier than fix" but it skipped TDD, which was inconsistent.
+> - **Fix:** [v1.1] Added `audit` and `edit` to the impact-analysis path. Found by cross-LLM review (DeepSeek, Mistral).
+
 ---
 
-*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-06 (v1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -185,8 +185,11 @@ def run_workflow(
 
         elif wf_type == "autocode":
             from workflows.autocode import build_graph as build_autocode_graph
-            graph = build_autocode_graph()
-            result = graph.invoke(initial_state)
+            # [v1.1] build_graph() returns uncompiled StateGraph — must compile
+            # before .invoke(). Was crashing with AttributeError. Also wire
+            # invoke_with_timeout so cfg.autocode_graph_timeout is respected.
+            from workflows.autocode_impl.graph import invoke_with_timeout
+            result = invoke_with_timeout(initial_state)
 
         elif wf_type == "deep_research":
             from workflows.deep_research_impl import build_deep_research_graph

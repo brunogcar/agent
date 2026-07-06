@@ -53,7 +53,11 @@ def node_distill_memory(state: AutocodeState) -> dict:
         result = distill_workflow(trace_text=trace_text, trace_id=tid)
         tracer.step(tid, "node_distill_memory", f"Distillation result: {result.get('status')}")
     except Exception as e:
-        tracer.error(tid, "node_distill_memory", f"Distillation pipeline failed: {e}")
+        # [v1.1] Non-fatal: the code is already committed at this point.
+        # Memory distillation failure must NOT flip a successful workflow to
+        # failed. Use tracer.warning (not tracer.error) to signal non-fatal.
+        # Found by cross-LLM review (Mimo, Kimi, Qwen).
+        tracer.warning(tid, "node_distill_memory", f"Distillation failed (non-fatal): {e}")
 
     # LangGraph nodes must return a dict to update state (or empty dict)
     return {}

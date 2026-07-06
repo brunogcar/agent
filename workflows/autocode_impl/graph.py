@@ -1,5 +1,9 @@
 """
 State machine construction for autocode workflow.
+
+v1.1: Added WORKFLOW_METADATA for MCP client introspection. Includes
+explicit loops array (debug loop) and branches array (create_skill bypass)
+so MCP clients can render the graph correctly.
 """
 from __future__ import annotations
 from langgraph.graph import END, StateGraph
@@ -30,6 +34,80 @@ from workflows.autocode_impl.routes import (
     route_after_verify,
     route_after_analyze_impact,
 )
+
+
+# [v1.1] WORKFLOW_METADATA for MCP client introspection.
+# Pragmatic schema: nodes (with type), edges (with condition + loop flag),
+# explicit loops array, explicit branches array. Mirrors the pattern in
+# research/understand/data/deep_research but extended for autocode's
+# complexity (17 nodes, debug loop, create_skill bypass).
+WORKFLOW_METADATA = {
+    "name": "autocode",
+    "version": "1.1",
+    "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
+    "entry_point": "node_classify_task",
+    "nodes": [
+        {"name": "node_classify_task", "type": "llm", "role": "router", "description": "Classify task type from goal"},
+        {"name": "node_validate_input", "type": "logic", "description": "Validate input files and path safety"},
+        {"name": "node_brainstorm", "type": "llm", "role": "planner", "description": "Brainstorm spec tailored to task type"},
+        {"name": "node_write_plan", "type": "llm", "role": "planner", "description": "Write structured plan with acceptance criteria"},
+        {"name": "node_git_branch", "type": "tool", "tool": "git", "description": "Create git branch for the task"},
+        {"name": "node_write_tests", "type": "llm", "role": "executor", "description": "Write TDD tests before implementation"},
+        {"name": "node_execute_step", "type": "llm", "role": "executor", "description": "Generate implementation code from plan"},
+        {"name": "node_write_files", "type": "tool", "tool": "file", "description": "Write generated code to disk atomically"},
+        {"name": "node_write_files_with_flag_reset", "type": "tool", "tool": "file", "description": "Re-write files after debug loop, reset flags"},
+        {"name": "node_analyze_impact", "type": "llm", "role": "analyze", "description": "Blast radius analysis using dependency graph"},
+        {"name": "node_run_tests", "type": "tool", "tool": "pytest", "description": "Run TDD tests via pytest subprocess"},
+        {"name": "node_systematic_debug", "type": "llm", "role": "executor", "description": "Root-cause hypothesis + one fix at a time"},
+        {"name": "node_verify", "type": "composite", "description": "Verification gate: lint + tests + LLM spec check"},
+        {"name": "node_report", "type": "llm", "role": "summarize", "description": "Generate structured report of what was done"},
+        {"name": "node_commit", "type": "tool", "tool": "git", "description": "Commit changes to the git branch"},
+        {"name": "node_distill_memory", "type": "llm", "role": "planner", "description": "Distill procedural memory for future runs"},
+        {"name": "node_create_skill", "type": "tool", "tool": "file", "description": "Generate a new skill file (bypasses TDD, has AST validation)"},
+    ],
+    "edges": [
+        {"from": "node_classify_task", "to": "node_brainstorm", "condition": "route_after_classify: feature/fix/refactor/edit/audit"},
+        {"from": "node_classify_task", "to": "node_create_skill", "condition": "route_after_classify: create_skill"},
+        {"from": "node_classify_task", "to": "node_validate_input", "condition": "route_after_classify: validate first"},
+        {"from": "node_classify_task", "to": "END", "condition": "route_after_classify: unclear"},
+        {"from": "node_validate_input", "to": "node_brainstorm"},
+        {"from": "node_create_skill", "to": "END", "condition": "create_skill bypass (skips TDD)"},
+        {"from": "node_brainstorm", "to": "node_write_plan"},
+        {"from": "node_write_plan", "to": "node_git_branch"},
+        {"from": "node_git_branch", "to": "node_write_tests"},
+        {"from": "node_write_tests", "to": "node_execute_step"},
+        {"from": "node_execute_step", "to": "node_write_files"},
+        {"from": "node_write_files", "to": "node_analyze_impact", "condition": "route_after_write_files: fix/refactor/improve/feature/audit/edit"},
+        {"from": "node_write_files", "to": "node_verify", "condition": "route_after_write_files: other"},
+        {"from": "node_analyze_impact", "to": "node_run_tests"},
+        {"from": "node_run_tests", "to": "node_verify", "condition": "route_after_run_tests: passed or max_retries"},
+        {"from": "node_run_tests", "to": "node_systematic_debug", "condition": "route_after_run_tests: failed"},
+        {"from": "node_systematic_debug", "to": "node_write_files", "condition": "debug loop (type: loop)", "type": "loop"},
+        {"from": "node_verify", "to": "node_report", "condition": "route_after_verify: verification_passed"},
+        {"from": "node_verify", "to": "END", "condition": "route_after_verify: failed"},
+        {"from": "node_report", "to": "node_commit"},
+        {"from": "node_commit", "to": "node_distill_memory"},
+        {"from": "node_distill_memory", "to": "END"},
+    ],
+    "loops": [
+        {
+            "name": "debug_loop",
+            "nodes": ["node_write_files", "node_analyze_impact", "node_run_tests", "node_systematic_debug"],
+            "exit_condition": "tdd_status == passed OR tdd_status == max_retries_exceeded",
+            "max_iterations": "cfg.autocode_max_retries (default from .env)",
+        },
+    ],
+    "branches": [
+        {
+            "name": "create_skill",
+            "trigger": "task_type == create_skill",
+            "path": ["node_classify_task", "node_create_skill", "END"],
+            "skips": ["validate", "brainstorm", "plan", "branch", "tests", "execute", "write_files", "analyze_impact", "run_tests", "debug", "verify", "report", "commit", "distill_memory"],
+            "note": "Bypasses TDD but has AST syntax validation (v1.0.2 #16) before writing the skill file.",
+        },
+    ],
+    "safety_features": ["protected_files", "git_branch", "atomic_writes", "test_verification", "path_traversal_guard"],
+}
 
 # Global compiled graph instance
 _COMPILED_GRAPH = None
