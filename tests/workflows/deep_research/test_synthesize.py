@@ -208,3 +208,90 @@ def test_node_synthesize_completeness_advances_with_action_dispatch(mocker):
     assert result["knowledge_base"] == "Score: 92", (
         "knowledge_base must be populated from synthesis when action='dispatch' is passed."
     )
+
+
+# ─── v1.1 regression: P0 #2 — task/context must not be swapped ─────────────
+# Previously task= held the SYSTEM prompt and content= held the USER instruction.
+# That's backwards: task -> llm.complete(user=task), so the system prompt text
+# landed in the user slot, and the actual synthesis instruction (goal+evidence)
+# went to content= (tertiary input). The agent(role="research") system prompt
+# then overrode the intended framing entirely.
+
+def test_synthesize_uses_task_for_user_instruction(mocker):
+    """[P0 #2] task= must hold the user instruction (goal + evidence), not the system prompt."""
+    state = {
+        "extracted_evidence": [
+            {"title": "T1", "url": "http://x", "summary": "S1", "source": "tavily"}
+        ],
+        "knowledge_base": "",
+        "goal": "What is LangGraph?",
+        "trace_id": "t1",
+        "iteration": 0,
+    }
+    mock_agent = mocker.patch(
+        "workflows.deep_research_impl.nodes.synthesize.agent",
+        return_value={"status": "success", "text": "synthesis"},
+    )
+    node_synthesize(state)
+
+    # First call = synthesize. task= must be the user instruction (contains goal + evidence).
+    synthesize_kwargs = mock_agent.call_args_list[0].kwargs
+    assert synthesize_kwargs.get("action") == "dispatch"
+    assert "What is LangGraph?" in synthesize_kwargs.get("task", ""), (
+        "task= must carry the user instruction (goal + evidence). "
+        "Previously task= held the system prompt — backwards."
+    )
+    assert "S1" in synthesize_kwargs.get("task", ""), (
+        "task= must carry the formatted evidence. Previously this went to content=."
+    )
+
+
+def test_synthesize_uses_context_for_system_prompt(mocker):
+    """[P0 #2] context= must hold the system framing prompt, not the user instruction."""
+    from workflows.deep_research_impl.constants import SYNTHESIZE_SYSTEM_PROMPT
+    state = {
+        "extracted_evidence": [],
+        "knowledge_base": "",
+        "goal": "g",
+        "trace_id": "t1",
+        "iteration": 0,
+    }
+    mock_agent = mocker.patch(
+        "workflows.deep_research_impl.nodes.synthesize.agent",
+        return_value={"status": "success", "text": "synthesis"},
+    )
+    node_synthesize(state)
+
+    synthesize_kwargs = mock_agent.call_args_list[0].kwargs
+    # context= must be the system prompt string, NOT the user instruction.
+    assert synthesize_kwargs.get("context") == SYNTHESIZE_SYSTEM_PROMPT, (
+        "context= must carry the system framing prompt. "
+        "Previously context= was empty and content= held the user instruction."
+    )
+    # And content= must NOT carry the user instruction (that's now in task=).
+    assert "content" not in synthesize_kwargs or synthesize_kwargs.get("content") == "", (
+        "content= must not be used for the user instruction (it's for base64 images)."
+    )
+
+
+def test_evaluate_uses_task_for_user_instruction(mocker):
+    """[P0 #2] evaluate call must also use task= for the user instruction."""
+    state = {
+        "extracted_evidence": [],
+        "knowledge_base": "",
+        "goal": "What is LangGraph?",
+        "trace_id": "t1",
+        "iteration": 0,
+    }
+    mock_agent = mocker.patch(
+        "workflows.deep_research_impl.nodes.synthesize.agent",
+        return_value={"status": "success", "text": "90"},
+    )
+    node_synthesize(state)
+
+    # Second call = evaluate. task= must contain the goal + synthesis.
+    evaluate_kwargs = mock_agent.call_args_list[1].kwargs
+    assert evaluate_kwargs.get("action") == "dispatch"
+    assert "What is LangGraph?" in evaluate_kwargs.get("task", ""), (
+        "evaluate task= must carry the user instruction (goal + synthesis)."
+    )

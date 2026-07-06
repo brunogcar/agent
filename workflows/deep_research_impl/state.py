@@ -18,6 +18,7 @@ class DeepResearchState(WorkflowState, total=False):
     _prev_knowledge: str
     completeness: float
     converged: bool
+    synthesis: str  # [P1 #22] returned by node_synthesize; now declared
 
     # Control
     iteration: int

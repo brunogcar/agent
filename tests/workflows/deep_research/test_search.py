@@ -56,7 +56,11 @@ class TestExecuteSearchWithFallback:
         result, actual_tool, updates = _execute_search_with_fallback("query", state)
         assert result["status"] == "success"
         assert actual_tool == "tavily"
-        assert updates == {}
+        # [P0 #4] Tavily is a paid API — budget decrements on ATTEMPT, not success.
+        assert updates == {"budget_api_calls": 4}, (
+            "Tavily attempt must decrement API budget (paid API charges per call "
+            "regardless of outcome). Was: only decremented on success."
+        )
         mock_tavily.assert_called_once()
 
     def test_tavily_empty_fallback_to_web(self, mocker):

@@ -1,5 +1,12 @@
 """workflows/deep_research_impl/graph.py
 Build and compile the DeepResearch LangGraph StateGraph.
+
+[v1.1] Added WORKFLOW_METADATA for MCP client introspection (mirrors research /
+understand / data). Converted inline _node_* helpers to partial-dict returns
+(P1 #7). Wired citations into _node_report + _node_notify so sources collected
+by node_search actually surface in the report and artifacts (they were collected
+and discarded). Fixed _node_recall silent memory failure (P1 #8) and
+_node_store 800-char truncation (P1 #10).
 """
 from __future__ import annotations
 from typing import Optional
@@ -12,8 +19,40 @@ from workflows.deep_research_impl.nodes.synthesize import node_synthesize
 from workflows.deep_research_impl.routes import route_after_synthesize
 from workflows.deep_research_impl.budget import log_event
 from core.config import cfg
+from core.tracer import tracer
 from core.memory_engine import memory
+from core.citations import citations
 from tools.notify import notify
+
+
+# [v1.1] WORKFLOW_METADATA for MCP client introspection.
+# Deep research is cyclic: synthesize -> route (decompose loop OR report exit).
+WORKFLOW_METADATA = {
+    "name": "deep_research",
+    "version": "1.1",
+    "description": "Iterative deep research: recall -> decompose -> search -> synthesize (loop) -> report -> notify -> store -> distill",
+    "nodes": [
+        {"name": "recall", "description": "Recall relevant memories from episodic + semantic collections"},
+        {"name": "decompose", "description": "Planner LLM breaks goal into 3-5 sub-queries"},
+        {"name": "search", "description": "Execute sub-queries via Tavily -> web -> browser fallback, extract evidence"},
+        {"name": "synthesize", "description": "Synthesize evidence + evaluate completeness + check convergence"},
+        {"name": "report", "description": "Build final report from synthesis + knowledge base, append sources"},
+        {"name": "notify", "description": "Notify user of completion, surface source URLs as artifacts"},
+        {"name": "store", "description": "Store full result in semantic + episodic memory"},
+        {"name": "distill", "description": "Placeholder for sleep_learn workflow distillation"},
+    ],
+    "edges": [
+        {"from": "recall", "to": "decompose"},
+        {"from": "decompose", "to": "search"},
+        {"from": "search", "to": "synthesize"},
+        {"from": "synthesize", "to": "decompose", "condition": "continue loop (below threshold or not converged)"},
+        {"from": "synthesize", "to": "report", "condition": "exit (completeness >= threshold AND converged, OR hard cap, OR stuck)"},
+        {"from": "report", "to": "notify"},
+        {"from": "notify", "to": "store"},
+        {"from": "store", "to": "distill"},
+    ],
+}
+
 
 def build_deep_research_graph() -> StateGraph:
     """Construct and return the compiled DeepResearch LangGraph."""
@@ -48,41 +87,67 @@ def build_deep_research_graph() -> StateGraph:
 
     return workflow.compile()
 
-def _node_recall(state: DeepResearchState) -> DeepResearchState:
-    """Recall relevant memories from episodic and semantic collections."""
+def _node_recall(state: DeepResearchState) -> dict:
+    """Recall relevant memories from episodic and semantic collections.
+
+    [P1 #8] Memory failure now logged via tracer.error (was silent).
+    [P1 #7] Returns partial dict (was {**state, ...}).
+    """
     tid = state.get("trace_id", "")
     goal = state.get("goal", "")
     try:
         results = memory.recall(query=goal, top_k=5, trace_id=tid)
         if not results:
-            return {**state, "memory_context": ""}
+            return {"memory_context": ""}
         lines = []
         for r in results:
             t = r.get("type", "semantic")
             s = r.get("score", 0.0)
             txt = r.get("text", "")
             lines.append(f"[{t}|score={s:.2f}] {txt}")
-        return {**state, "memory_context": "\n".join(lines)}
-    except Exception:
-        return {**state, "memory_context": ""}
+        return {"memory_context": "\n".join(lines)}
+    except Exception as e:
+        # [P1 #8] Log the failure instead of silently returning empty context.
+        tracer.error(tid, "recall", f"memory recall failed: {e}")
+        return {"memory_context": ""}
 
-def _node_report(state: DeepResearchState) -> DeepResearchState:
-    """Build final report from knowledge base."""
+def _node_report(state: DeepResearchState) -> dict:
+    """Build final report from knowledge base + synthesis, append sources.
+
+    [v1.1] Now appends a Sources section from the citation tracker (sources
+    were collected by node_search via citations.add() but never surfaced
+    before). Returns partial dict (was {**state, ...}).
+    """
+    tid = state.get("trace_id", "")
     kb = state.get("knowledge_base", "")
     synthesis = state.get("synthesis", "")
     report = synthesis or kb
     completeness = state.get("completeness", 0.0)
     threshold = state.get("completeness_threshold", 85.0)
     status = "success" if completeness >= threshold else "incomplete"
+
+    # [v1.1] Surface collected sources in the report.
+    sources = citations.get_sources(tid) if tid else []
+    if sources:
+        src_list = "\n".join(
+            f"[{s['number']}] {s.get('title', s['url'])} — {s['url']}"
+            for s in sources
+        )
+        report = f"{report}\n\n## Sources\n{src_list}"
+
     return {
-        **state,
         "report": report,
         "result": report,
         "status": status,
     }
 
-def _node_notify(state: DeepResearchState) -> DeepResearchState:
-    """Notify user that research is complete."""
+def _node_notify(state: DeepResearchState) -> dict:
+    """Notify user that research is complete; surface source URLs as artifacts.
+
+    [P1 #7] Returns partial dict (was `return state`).
+    [v1.1] Returns artifacts = source URLs (mirrors research workflow's notify).
+    [P1 #8] notify() failure logged via tracer.error (was silent pass).
+    """
     tid = state.get("trace_id", "")
     result = state.get("result", "")
     status = state.get("status", "unknown")
@@ -93,19 +158,30 @@ def _node_notify(state: DeepResearchState) -> DeepResearchState:
             title="DeepResearch",
             message=msg[:500],
         )
-    except Exception:
-        pass
-    return state
+    except Exception as e:
+        tracer.error(tid, "notify", f"notification failed: {e}")
 
-def _node_store(state: DeepResearchState) -> DeepResearchState:
-    """Store final result to semantic and episodic memory."""
+    # [v1.1] Surface source URLs as artifacts (list[str], like research).
+    sources = citations.get_sources(tid) if tid else []
+    artifacts = [s["url"] for s in sources if s.get("url")]
+    return {"artifacts": artifacts}
+
+def _node_store(state: DeepResearchState) -> dict:
+    """Store full result to semantic and episodic memory.
+
+    [P1 #10] Store full result (was result[:800] — truncated, made semantic
+    memory nearly useless for long research; same fix as research workflow #7).
+    [P1 #7] Returns partial dict (was {**state, ...}).
+    [P1 #8] Memory failure logged via tracer.error (was silent pass).
+    """
     tid = state.get("trace_id", "")
     result = state.get("result", "")
     goal = state.get("goal", "")
     status = state.get("status", "unknown")
     try:
+        # [P1 #10] Full result — semantic memory is for content retrieval.
         memory.store_semantic(
-            text=f"Deep Research: {result[:800]}",
+            text=f"Deep Research: {result}",
             importance=6,
             tags="deep_research",
             trace_id=tid,
@@ -118,13 +194,13 @@ def _node_store(state: DeepResearchState) -> DeepResearchState:
             tools_used="tavily,web,browser,llm",
             trace_id=tid,
         )
-    except Exception:
-        pass
-    return state
+    except Exception as e:
+        tracer.error(tid, "store", f"memory store failed: {e}")
+    return {}
 
-def _node_distill(state: DeepResearchState) -> DeepResearchState:
+def _node_distill(state: DeepResearchState) -> dict:
     """Placeholder for workflow distillation (sleep_learn integration).
 
     TODO: Wire up sleep_learn.distill_workflow when available.
     """
-    return state
+    return {}

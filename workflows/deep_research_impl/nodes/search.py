@@ -89,10 +89,16 @@ def _execute_search_with_fallback(query: str, state: DeepResearchState) -> tuple
     updates: dict = {}
 
     if tool == "tavily":
+        # [P0 #4] Decrement API budget on ATTEMPT, not success. Tavily is a
+        # paid API that charges per call regardless of outcome; decrementing
+        # only on success meant failed calls consumed real quota but never
+        # reduced the tracker, so the workflow kept retrying Tavily thinking
+        # it had headroom. Web (SearXNG) is free and must NOT decrement.
+        updates.update(decrement_api_calls({**state, **updates}))
         result = _execute_search(query, "tavily", tid)
         if result.get("status") != "success" or not result.get("data", {}).get("results"):
             updates = log_event(
-                state, "search", "fallback",
+                {**state, **updates}, "search", "fallback",
                 reason="tavily->web: " + result.get("error", "empty_results")
             )
             result = _execute_search(query, "web", tid)
@@ -238,10 +244,9 @@ def node_search(state: DeepResearchState) -> DeepResearchState:
         search_result, actual_tool, search_updates = _execute_search_with_fallback(query, {**state, **updates})
         updates.update(search_updates)
         if search_result.get("status") == "success":
-            # [Bug fix] Only decrement API budget for Tavily calls (paid API).
-            # Web searches use SearXNG (free) — should NOT consume API budget.
-            if actual_tool == "tavily":
-                updates.update(decrement_api_calls({**state, **updates}))
+            # [P0 #4] API budget is now decremented in _execute_search_with_fallback
+            # at Tavily ATTEMPT time (paid API charges per call regardless of outcome).
+            # Web (SearXNG) is free and never decrements. Nothing to do here on success.
             new_evidence, extract_updates = _extract_evidence(
                 search_result, query, actual_tool, goal, tid, failed,
                 {**state, **updates}, state.get("iteration", 0) + 1, seen_urls,

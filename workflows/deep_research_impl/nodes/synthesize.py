@@ -1,11 +1,21 @@
 """workflows/deep_research_impl/nodes/synthesize.py
 Synthesis and evaluation node.
+
+[P0 #2 FIX] Both agent() calls now use the correct parameter mapping:
+  - task   = the user instruction (goal + evidence / goal + synthesis)
+  - context= the system-style framing prompt (SYNTHESIZE/EVALUATE_SYSTEM_PROMPT)
+Previously task= held the system prompt and content= held the user instruction
+— backwards. The system prompt text landed in llm.complete(user=...), and the
+actual synthesis instruction (goal+evidence) went to content= (tertiary input).
+
+[P1 #6] Removed _agent_ok / _agent_text wrappers. agent() returns a dict with
+status/text keys; the wrappers were dead code that handled a legacy
+LLMResponse shape that no longer exists.
 """
 from __future__ import annotations
 import re
 from typing import List, Dict, Any
 from workflows.deep_research_impl.state import DeepResearchState
-from workflows.deep_research_impl.budget import log_event
 from workflows.deep_research_impl.constants import (
     CONVERGENCE_SIMILARITY_THRESHOLD,
     _is_converged,
@@ -14,25 +24,10 @@ from workflows.deep_research_impl.constants import (
     EVALUATE_SYSTEM_PROMPT,
     EVALUATE_USER_TEMPLATE,
 )
-from tools.agent import agent  # [PHASE-4] Migrated from tools.agent_tool → tools.agent
+from tools.agent import agent
 
 _MAX_PREV_KNOWLEDGE_CHARS = 6000
 
-def _agent_ok(result) -> bool:
-    """Check if agent result indicates success. Handles LLMResponse objects and dict mocks."""
-    if hasattr(result, "ok"):
-        return bool(result.ok)
-    if isinstance(result, dict):
-        return result.get("status") == "success"
-    return False
-
-def _agent_text(result) -> str:
-    """Extract text from agent result. Handles LLMResponse objects and dict mocks."""
-    if hasattr(result, "text"):
-        return str(result.text)
-    if isinstance(result, dict):
-        return str(result.get("text", ""))
-    return str(result)
 
 def node_synthesize(state: DeepResearchState) -> DeepResearchState:
     """Synthesize evidence into knowledge, evaluate completeness, check convergence."""
@@ -55,16 +50,18 @@ def node_synthesize(state: DeepResearchState) -> DeepResearchState:
         prev_knowledge=prev_knowledge[:1000],
     )
 
+    # [P0 #2] task= is the user instruction; context= carries the system framing.
+    # Previously these were swapped (task=system prompt, content=user instruction).
     try:
         result = agent(
             action   = "dispatch",
             role     = "research",
-            task     = SYNTHESIZE_SYSTEM_PROMPT,
-            content  = user_prompt,
+            task     = user_prompt,
+            context  = SYNTHESIZE_SYSTEM_PROMPT,
             trace_id = state.get("trace_id", ""),
         )
-        if _agent_ok(result):
-            synthesis = _agent_text(result).strip()
+        if result.get("status") == "success":
+            synthesis = str(result.get("text", "")).strip()
         else:
             synthesis = prev_knowledge
     except Exception:
@@ -78,16 +75,17 @@ def node_synthesize(state: DeepResearchState) -> DeepResearchState:
         goal=goal,
         synthesis=synthesis,
     )
+    # [P0 #2] Same fix for the evaluate call.
     try:
         evaluate_result = agent(
             action   = "dispatch",
             role     = "executor",
-            task     = EVALUATE_SYSTEM_PROMPT,
-            content  = evaluate_prompt,
+            task     = evaluate_prompt,
+            context  = EVALUATE_SYSTEM_PROMPT,
             trace_id = state.get("trace_id", ""),
         )
-        if _agent_ok(evaluate_result):
-            score = _parse_score(_agent_text(evaluate_result))
+        if evaluate_result.get("status") == "success":
+            score = _parse_score(str(evaluate_result.get("text", "")))
         else:
             score = 0.0
     except Exception:

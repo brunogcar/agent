@@ -2,167 +2,151 @@
 
 # 📝 API Reference
 
+> v1.1: All nodes return **partial update dicts** (only changed keys). Citations are wired into report + notify. `WORKFLOW_METADATA` is available for MCP client introspection.
+
 ## ⚡ Nodes
 
-### `_node_recall(state)` — Phase 1: Memory Recall
+### `_node_recall(state) -> dict` — Phase 1: Memory Recall
 
 **Purpose:** Recall relevant past research from memory.
 
 **Logic:**
 ```python
-memory.recall(
-    query=goal,
-    limit=5,
-    trace_id=state["trace_id"],
-)
+results = memory.recall(query=goal, top_k=5, trace_id=tid)
 ```
 
-**Output:** Partial dict with `memory_context`.
+**Output:** `{"memory_context": ctx}` (partial dict).
 
-**Error handling:** If memory recall fails, returns `{"memory_context": ""}`. The workflow proceeds without context.
+**Error handling:** [v1.1/P1 #8] `memory.recall` is wrapped in `try/except` + `tracer.error`. On failure, returns `{"memory_context": ""}` — the workflow proceeds without context. Non-fatal.
 
 ---
 
-### `_node_decompose(state)` — Phase 2: Goal Decomposition
+### `node_decompose_goal(state) -> dict` — Phase 2: Goal Decomposition
 
-**Purpose:** Break the goal into sub-queries for parallel search.
+**Purpose:** Break the goal into 3-5 sub-queries for search.
 
 **Logic:**
 1. Build prompt with goal, memory context, and current findings
 2. Call `llm.complete(role="planner", ...)` for decomposition
 3. Parse sub-queries from JSON or bullet list
 
-**Output:** Partial dict with `queries` (list of sub-query strings).
+**Output:** Partial dict with `sub_queries`, `pending_queries`.
 
 **Error handling:**
-- LLM failure → returns `{"queries": [goal]}` (fallback to single query)
-- Parse failure → returns `{"queries": [goal]}` (fallback to single query)
-
-**Note:** The `_parse_sub_queries` regex has a fragile character class: `r'[\-*•]'`. The `\` escape before `*` is unnecessary and may emit a `SyntaxWarning`.
-
-**Note:** JSON parsing doesn't handle trailing commas. LLMs sometimes output `["query1", "query2",]` which `json.loads` rejects.
+- LLM failure → returns `{"sub_queries": [goal], "pending_queries": [goal]}` (fallback to single query)
+- Parse failure → same fallback
 
 ---
 
-### `_node_search(state)` — Phase 3: Multi-Tool Search
+### `node_search(state) -> dict` — Phase 3: Multi-Tool Search
 
-**Purpose:** Search for information using multiple tools.
+**Purpose:** Execute pending sub-queries via Tavily → web → browser fallback; extract evidence.
 
 **Logic:**
 1. For each sub-query:
-   - Select tool: Tavily API (if budget allows) → web search → browser fallback
-   - Execute search
-   - Extract evidence (top 3 results per query)
-   - Summarize evidence
-2. Update budget tracking
+   - Select tool: Tavily (if budget + key available) → web → browser fallback
+   - **[v1.1/P0 #4]** Decrement API budget on Tavily ATTEMPT (paid API charges per call regardless of outcome)
+   - Execute search; on Tavily failure/empty, fall back to web
+   - Extract evidence (top 3 results per query), dedup via `seen_urls` set
+   - Summarize evidence via `llm.complete(role="summarize")`
+   - Register sources via `citations.add(trace_id, url, title, snippet)`
+2. Track consecutive empty iterations for stuck-loop detection
 
-**Output:** Partial dict with `extracted_evidence`, `seen_urls`, `budget_api_calls`, `budget_browser_actions`.
+**Output:** Partial dict with `extracted_evidence`, `seen_urls`, `budget_api_calls`, `budget_browser_actions`, `budget_events`, `iteration`, `consecutive_empty_iterations`.
 
-**Error handling:**
-- Individual search failures are logged but don't fail the workflow
-- Budget exhaustion stops the search loop
-- Browser fallback failures are logged but don't fail the workflow
+**Error handling:** Individual search failures are logged via `log_event()` but don't fail the workflow. Browser fallback failures are logged but don't fail the workflow.
 
-**Note (v1.0.2 fix):** API budget (`budget_api_calls`) is now only decremented for Tavily searches, not web (SearXNG) searches. Previously both consumed API budget, exhausting it prematurely.
-
-**Note:** API budget is NOT decremented for failed Tavily searches. The API call was made (and consumed) but the budget doesn't reflect it. (Known limitation — may be addressed in future.)
-
-**Note:** `max_results=5` is hardcoded for search queries. Not configurable.
-
-**Note:** `_is_js_wall` uses hardcoded indicators instead of `JS_HEAVY_HINTS` from `constants.py`. Dead code.
+**Budget rules (v1.1):**
+- Tavily: decrements `budget_api_calls` on ATTEMPT (success or failure)
+- Web (SearXNG): free, never decrements
+- Browser: decrements `budget_browser_actions` per navigate + per text_content
 
 ---
 
-### `_node_synthesize(state)` — Phase 4: Synthesis + Evaluation
+### `node_synthesize(state) -> dict` — Phase 4: Synthesis + Evaluation
 
-**Purpose:** Synthesize evidence and evaluate completeness.
+**Purpose:** Synthesize evidence into knowledge, evaluate completeness, check convergence.
 
 **Logic:**
-1. Build prompt with goal, evidence, and previous knowledge
-2. Call `agent(action="dispatch", role="research", ...)` for synthesis
-3. Parse synthesis and score from JSON
-4. Call `agent(action="dispatch", role="executor", ...)` for evaluation
-5. Parse evaluation score
-6. Determine convergence
+1. Build user prompt with goal, evidence, and previous knowledge
+2. Call `agent(action="dispatch", role="research", task=user_prompt, context=SYNTHESIZE_SYSTEM_PROMPT)` for synthesis
+3. Merge with previous knowledge (REPLACE semantics)
+4. Call `agent(action="dispatch", role="executor", task=evaluate_prompt, context=EVALUATE_SYSTEM_PROMPT)` for evaluation
+5. Parse score (0-100), check convergence via `SequenceMatcher`
 
-**Output:** Partial dict with `knowledge_base`, `_prev_knowledge`, `completeness`, `extracted_evidence`, `converged`, `synthesis`.
+**Output:** Partial dict with `knowledge_base`, `_prev_knowledge`, `completeness`, `extracted_evidence` (cleared), `converged`, `synthesis`.
 
-**Note (v1.0.1 fixes):** The `agent()` calls now correctly pass `action="dispatch"` (was missing, causing both calls to return errors). The dead `completeness_threshold = 0.85` local was removed — the real threshold comparison lives in `routes.py` (default `85.0` on 0-100 scale, matching `_parse_score()`'s output).
+**[v1.1/P0 #2] Parameter mapping (was swapped):**
+- `task=` holds the user instruction (goal + evidence / goal + synthesis) → flows to `llm.complete(user=task)`
+- `context=` holds the system framing prompt (`SYNTHESIZE_SYSTEM_PROMPT` / `EVALUATE_SYSTEM_PROMPT`)
+- Previously `task=` held the system prompt and `content=` held the user instruction — backwards. The system prompt text landed in the `user=` slot, and the role's configured system prompt overrode the intended framing.
 
-**Known remaining issues:**
-- `_agent_ok` and `_agent_text` are defensive wrappers for `LLMResponse` objects, but `agent()` returns `dict`. These wrappers are dead code.
-- `task` parameter is used for the system prompt, not the user task. The `agent()` facade passes `task` to `llm.complete(user=task)`. But here `SYNTHESIZE_SYSTEM_PROMPT` is passed as the user message, and the role's system prompt is ignored. This is semantically wrong.
-- `_parse_score` removes negative numbers with `re.sub(r"-\d+", "", text)`. This removes ALL negative numbers, including legitimate ones in ranges like "score: 85-90" which becomes "score: 90".
+**[v1.1/P1 #6] Removed wrappers:** `_agent_ok` / `_agent_text` were defensive wrappers for a legacy `LLMResponse` shape. `agent()` returns a `dict` with `status`/`text` keys; the wrappers are dead code and have been removed. Nodes now check `result.get("status") == "success"` directly.
 
 ---
 
-### `route_after_synthesize(state)` — Conditional Router
+### `route_after_synthesize(state) -> str` — Conditional Router
 
-**Purpose:** Route to report, search, or END based on synthesis result.
+**Purpose:** Decide whether to loop back to decompose or exit to report.
 
-**Logic:**
-```python
-converged = _is_converged(prev_knowledge, knowledge_base, CONVERGENCE_SIMILARITY_THRESHOLD)
-if converged:
-    return "converged"  # → _node_report
-if is_budget_exhausted(state):
-    return "budget_exhausted"  # → _node_report
-return "continue"  # → _node_search
-```
+**Exit conditions (in order):**
+1. Hard cap: `iteration >= max_iterations` → `"report"`
+2. Stuck-loop: `consecutive_empty_iterations >= 2` → `"report"`
+3. Dual-gate: `completeness >= threshold AND converged` → `"report"`
+4. Otherwise → `"decompose"` (continue loop)
 
-**Output:** String literal `"converged"`, `"budget_exhausted"`, or `"continue"`.
-
-**Note:** `converged` is recomputed in the route, not taken from state. The `synthesize` node already computes it. This is redundant and could diverge if the threshold changes.
+**Output:** String literal `"report"` or `"decompose"`.
 
 ---
 
-### `_node_report(state)` — Phase 5: Report Generation
+### `_node_report(state) -> dict` — Phase 5: Report Generation
 
-**Purpose:** Generate a structured report with the final synthesis.
+**Purpose:** Build the final report from synthesis + knowledge base, append sources.
 
 **Logic:**
-1. Call `report(action="report", title=..., data=..., config=...)` with synthesis and sources
-2. Return the report
+1. `report = synthesis or knowledge_base`
+2. **[v1.1]** Append `## Sources` section from `citations.get_sources(trace_id)` (if any)
+3. Determine status: `"success"` if `completeness >= threshold`, else `"incomplete"`
 
-**Output:** Partial dict with `report_html` and `report_path`.
+**Output:** Partial dict with `report`, `result`, `status`.
 
-**Note:** If both `knowledge_base` and `synthesis` are empty, `report` is `""` and `status` is `"incomplete"`. The user gets an empty report with `"incomplete"` status — confusing.
+**[v1.1] Citations:** Sources collected by `node_search` via `citations.add()` are now surfaced in the report as a numbered `## Sources` section. Previously they were collected and discarded.
 
 ---
 
-### `_node_store(state)` — Phase 6: Memory Storage
+### `_node_notify(state) -> dict` — Phase 6: User Notification
 
-**Purpose:** Store the research result in memory.
+**Purpose:** Notify the user of completion; surface source URLs as artifacts.
 
 **Logic:**
-1. Store semantic memory: `memory.store_semantic(text=result[:800], ...)`
+1. `notify(action="send", title="DeepResearch", message=result[:500])`
+2. **[v1.1]** Return `artifacts` = source URLs from `citations.get_sources(trace_id)`
 
-**Output:** Empty dict (side effects only).
+**Output:** Partial dict with `artifacts` (list[str] of source URLs).
 
-**Note:** Only 800 chars of the result are stored in semantic memory. For long research results, this is a tiny fraction.
+**Error handling:** [v1.1] `notify()` wrapped in `try/except` + `tracer.error`. A notification failure does not prevent `artifacts` from being returned.
 
 ---
 
-### `_node_distill(state)` — Phase 7: Distillation
+### `_node_store(state) -> dict` — Phase 7: Memory Storage
 
-**Purpose:** Extract procedural knowledge from the research result.
+**Purpose:** Store the research result in semantic + episodic memory.
 
 **Logic:**
-Placeholder — returns state unchanged. Not wired in v1.
+1. `memory.store_semantic(text="Deep Research: " + result, ...)` — **[v1.1/P1 #10] full result, no truncation**
+2. `memory.store_episodic(text="Completed deep research workflow: ...", ...)`
 
-**Output:** State dict (unchanged).
+**Output:** `{}` (side effects only).
+
+**Error handling:** [v1.1] Both `store_*` calls wrapped in `try/except` + `tracer.error`. Non-fatal.
 
 ---
 
-### `_node_notify(state)` — Phase 8: User Notification
+### `_node_distill(state) -> dict` — Phase 8: Distillation
 
-**Purpose:** Notify the user of completion.
+**Purpose:** Placeholder for `sleep_learn.distill_workflow` integration.
 
-**Logic:**
-1. Call `notify(action="notify", message=...)` with the result
-2. Return `node_done(state, result=...)`
-
-**Output:** `node_done` result dict.
+**Output:** `{}` (no-op). Returns an empty partial dict — LangGraph merges it with no effect.
 
 ---
 
@@ -173,44 +157,37 @@ The workflow returns a `dict`:
 ```json
 {
   "status": "success",
-  "result": "Quantum computing error correction has seen...",
+  "result": "Quantum computing error correction has seen...\n\n## Sources\n[1] Source A — https://...\n[2] Source B — https://...",
   "error": "",
-  "artifacts": ["report.html"]
+  "artifacts": ["https://source-a.example", "https://source-b.example"]
 }
 ```
 
-**Incomplete (budget exhausted):**
+**Incomplete (hard cap or stuck loop reached before convergence):**
 ```json
 {
   "status": "incomplete",
-  "result": "Partial research: Quantum computing error correction...",
-  "error": "",
-  "artifacts": ["report.html"]
+  "result": "Partial research...",
+  "artifacts": ["https://source-a.example"]
 }
 ```
-
-**Failure:**
-```json
-{
-  "status": "failed",
-  "result": "",
-  "error": "Deep research failed: timeout",
-  "artifacts": []
-}
-```
-
----
-
-## 🔒 Security
-
-*(Fill this section with relevant info from edits and refactors. Add security details as they are learned.)*
 
 ---
 
 ## 📝 Error Handling
 
-*(Fill this section with relevant info from edits and refactors. Add error classification as it is learned.)*
+| Failure | Node | Behavior |
+|---------|------|----------|
+| Memory recall fails | `_node_recall` | `tracer.error`; returns empty context (non-fatal) |
+| Decompose LLM fails | `node_decompose_goal` | Falls back to `[goal]` as single sub-query |
+| Tavily search fails | `node_search` | Falls back to web; Tavily budget already decremented on attempt |
+| Web search fails | `node_search` | Logged; no evidence extracted for that query |
+| Browser fallback fails | `node_search` | Logged; raw text used if any |
+| Synthesis agent fails | `node_synthesize` | Falls back to `prev_knowledge`; score = 0 |
+| Evaluate agent fails | `node_synthesize` | Score = 0; `converged = False` |
+| Memory store fails | `_node_store` | `tracer.error`; returns `{}` (non-fatal) |
+| Notify fails | `_node_notify` | `tracer.error`; still returns `artifacts` |
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history.*
