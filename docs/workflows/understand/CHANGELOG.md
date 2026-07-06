@@ -6,7 +6,8 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v1.0 | 2026-07-05 | **Architecture conversion:** All nodes converted from `async def` to `def` (sync). Routed through `base.py`'s standard `graph.invoke()` — gives understand checkpoint/resume support and trace_id propagation like all other workflows. Removed dangerous `ThreadPoolExecutor` + `new_event_loop()` sync facade. Fixed 16 bugs: trace_id propagation (#1/#2), GraphStore lifecycle (#3/#4/#15), os.walk mutation (#5), chunked MD5 (#6), duplicate edges (#7), CPU-bound blocking (#8 — auto-fixed by sync conversion), completed_with_errors (#9), silent report exception (#11), nested event loop (#12 — auto-fixed), return type annotation (#13), configurable batch size (#17). |
+| v1.0 | 2026-07-05 | **Subpackage split:** Split monolithic `workflows/understand.py` (326 lines) into `workflows/understand_impl/` subpackage with per-node modules. Added `WORKFLOW_METADATA` for MCP client introspection. Thin facade re-exports `build_understand_graph`, `_default_state`, `WORKFLOW_METADATA`, `run_understand_workflow_sync`. Tests split into per-node files (`test_graph`, `test_state`, `test_init_project`, `test_helpers`) + `conftest.py`. |
+| Pre-v1.0 | 2026-07-05 | **Architecture conversion (pre-split):** All nodes converted from `async def` to `def` (sync). Routed through `base.py`'s standard `graph.invoke()` — gives understand checkpoint/resume support and trace_id propagation like all other workflows. Removed dangerous `ThreadPoolExecutor` + `new_event_loop()` sync facade. Fixed 16 bugs: trace_id propagation (#1/#2), GraphStore lifecycle (#3/#4/#15), os.walk mutation (#5), chunked MD5 (#6), duplicate edges (#7), CPU-bound blocking (#8 — auto-fixed by sync conversion), completed_with_errors (#9), silent report exception (#11), nested event loop (#12 — auto-fixed), return type annotation (#13), configurable batch size (#17). |
 
 ---
 
@@ -65,4 +66,4 @@
 
 ---
 
-*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-05 (v1.0 split). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

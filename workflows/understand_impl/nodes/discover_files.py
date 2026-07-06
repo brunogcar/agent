@@ -1,0 +1,62 @@
+"""Node: discover_files — Discover changed/new files that need parsing."""
+from __future__ import annotations
+
+import os
+import math
+from pathlib import Path
+
+from workflows.understand_impl.state import UnderstandState
+from workflows.understand_impl.helpers import _chunked_md5
+from core.tracer import tracer
+from core.kgraph.project import ProjectManager
+from core.kgraph.storage import GraphStore
+
+
+def node_discover_files(state: UnderstandState) -> dict:
+    """Discover changed/new files that need parsing."""
+    tid = state.get("trace_id", "understand")
+    tracer.step(tid, "discover", "Scanning for changed files...")
+
+    pm = ProjectManager(state["project_path"], is_agent_root=state["is_agent_root"])
+    db_path = pm.artifact_root / "kg.db"
+    store = GraphStore(db_path)
+
+    skip_dirs = frozenset({"node_modules", "__pycache__", ".git", ".venv", "venv", ".understand", "dist", "build", ".pytest_cache"})
+
+    discovered = []
+    try:
+        for root, dirs, files in os.walk(pm.source_root):
+            dirs[:] = sorted(set(dirs) - skip_dirs)
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                full_path = Path(root) / f
+                try:
+                    stat = full_path.stat()
+                    if stat.st_size > ProjectManager.MAX_FILE_SIZE_BYTES:
+                        continue
+                except OSError:
+                    continue
+
+                rel_path = full_path.relative_to(pm.source_root).as_posix()
+
+                node = store.read(
+                    "SELECT content_hash, last_modified, file_size FROM nodes WHERE project_id = ? AND path = ?",
+                    (state["project_id"], rel_path)
+                )
+
+                if node:
+                    row = node[0]
+                    if math.isclose(row["last_modified"], stat.st_mtime, abs_tol=0.001) and row["file_size"] == stat.st_size:
+                        continue
+
+                current_hash = _chunked_md5(full_path)
+                stored_hash = store.get_file_hash(state["project_id"], rel_path)
+
+                if current_hash != stored_hash:
+                    discovered.append((str(full_path), rel_path, current_hash, stat.st_mtime, stat.st_size))
+    finally:
+        store.close()
+
+    tracer.step(tid, "discover", f"Found {len(discovered)} changed/new files.")
+    return {"files_to_parse": discovered}

@@ -6,28 +6,28 @@
 
 | File | Purpose |
 |------|---------|
-| `workflows/understand.py` | Sync LangGraph StateGraph — 4 nodes, compiled graph, sync entry point |
+| `workflows/understand.py` | Thin facade — re-exports from understand_impl + run_understand_workflow_sync() |
 | `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths |
 | `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode |
 | `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — sync AST-based import extraction |
 | `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()` |
-| `tests/workflows/understand/` | Test files |
+| `tests/workflows/understand/` | Test files (test_graph, test_state, test_init_project, test_helpers + conftest) |
 
 ---
 
 ## 🌳 Module Tree
 
 ```text
-workflows/understand.py
-├── UnderstandState               # TypedDict — project_path, trace_id, files_to_parse, etc.
-├── _default_state()              # Create initial state with trace_id
-├── _chunked_md5()                # Memory-efficient file hashing
-├── node_init_project()           # Sync — ProjectManager init, GraphStore verification
-├── node_discover_files()         # Sync — os.walk, MD5 comparison, changed file detection
-├── node_parse_and_store()        # Sync — AST parsing, edge creation, GraphStore upsert
-├── node_report()                 # Sync — report generation with error logging
-├── build_understand_graph()      # Compile LangGraph StateGraph (4 nodes, linear)
-└── run_understand_workflow_sync() # Sync entry point — graph.invoke() with trace_id
+workflows/understand.py                    # Thin facade — re-exports + run_understand_workflow_sync
+workflows/understand_impl/
+├── state.py                               # UnderstandState TypedDict + _default_state()
+├── helpers.py                             # _chunked_md5()
+├── graph.py                               # build_understand_graph() + WORKFLOW_METADATA
+└── nodes/
+    ├── init_project.py                    # node_init_project — ProjectManager init, GraphStore verify
+    ├── discover_files.py                  # node_discover_files — os.walk, chunked MD5, changed file detection
+    ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, GraphStore upsert
+    └── report.py                          # node_report — report generation with error logging
 ```
 
 ---
@@ -74,4 +74,4 @@ graph TD
 
 ---
 
-*Last updated: 2026-07-05. See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-05 (v1.0 split). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
