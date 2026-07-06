@@ -1,53 +1,85 @@
-# ── Core MCP & LLM Orchestration ─────────────────────────────────
-langgraph
-langchain-core
-fastmcp
-openai
-pydantic>=2.0
-python-dotenv
+# ════════════════════════════════════════════════════════════════════════
+# requirements.txt — Agent project dependencies
+# ════════════════════════════════════════════════════════════════════════
+# Audited 2026-07-06 via full-codebase ast import scan (every .py walked).
+# Each line maps to a real import (or sandbox allow-list entry).
+# Comments note: import name where it differs from package name, the
+# module(s) that use it, and any audit findings ([AUDIT ...] tags).
+# Entries flagged [UNUSED?] are pinned but not found as direct imports —
+# kept for safety (may be used dynamically or in unsacked contexts); safe
+# to remove if you confirm they're unused.
+# ════════════════════════════════════════════════════════════════════════
 
-# ── Memory & Vector Database ─────────────────────────────────────
-chromadb>=0.5.0
-filelock
+# ── Core MCP & LLM Orchestration ─────────────────────────────────────────
+langgraph                    # StateGraph — all workflows (workflows/*/graph.py)
+langchain-core               # AnyMessage typing (autocode_impl/state.py, deep_research_impl/state.py)
+                             #   also provides typing_extensions transitively (see below)
+typing-extensions            # TypedDict — workflows/base.py, deep_research_impl/state.py
+                             #   [AUDIT] directly imported; transitive via langchain-core/pydantic, pin explicitly
+mcp                          # Model Context Protocol SDK — server.py, registry.py
+                             #   import: from mcp.server.fastmcp import FastMCP
+                             #   [AUDIT] directly imported package; was missing (only fastmcp was pinned)
+fastmcp                      # Higher-level MCP framework — [UNUSED?] not directly imported
+                             #   (mcp.server.fastmcp is used instead); kept for compatibility
+openai                       # [UNUSED?] openai_compat.py uses httpx directly, not the openai SDK
+                             #   kept for compatibility / future direct-SDK use
+pydantic>=2.0                # Validation — core/contracts.py, core/gateway_backend/models.py
+python-dotenv                # .env loading — core/config.py (import name: dotenv)
 
-# ── Web, Search & Scraping ───────────────────────────────────────
-requests
-beautifulsoup4
-httpx
-tavily-python>=0.5.0
+# ── Memory & Vector Database ─────────────────────────────────────────────
+chromadb>=0.5.0              # Vector store for semantic/procedural memory — core/memory_engine.py
+filelock                     # Cross-process locking — core/memory_backend/store.py
 
-# ── Data Analysis & Sandboxed Execution ──────────────────────────
-pandas
-numpy
+# ── Web, Search & Scraping ───────────────────────────────────────────────
+requests                     # HTTP client (legacy paths) — tools/web.py
+beautifulsoup4               # HTML parsing — tools/web.py (import name: bs4)
+httpx                        # Async/sync HTTP — tools/web_ops/, tools/tavily_ops/, tools/browser_ops/,
+                             #   core/llm_backend/providers/openai_compat.py
+tavily-python>=0.5.0         # Tavily AI research API — tools/tavily_ops/ (import name: tavily)
 
-# ── File Operations (PDF, Office, Images) ──────────────────────
-fpdf2
-pypdf
-pdfplumber
-openpyxl
-python-docx
-python-pptx
-Pillow
+# ── Data Analysis & Sandboxed Execution ──────────────────────────────────
+pandas                       # DataFrame analysis — python sandbox (run_data), workflows/data
+numpy                        # Numerical compute — python sandbox (run_data), workflows/data
 
-# ── Reporting, Charts & Maps ─────────────────────────────────────
-plotly
-playwright
-jinja2
+# ── File Operations (PDF, Office, Images) ────────────────────────────────
+fpdf2                        # write_pdf — tools/file_ops/actions/write_pdf.py
+pypdf                        # [UNUSED?] read_pdf.py uses pdfplumber; kept as fallback PDF reader
+pdfplumber                   # PDF text/table extraction — tools/file_ops/actions/read_pdf.py (lazy import)
+openpyxl                     # .xlsx read/write — tools/file_ops/actions/{read,write}_xlsx.py
+python-docx                  # .docx read/write — tools/file_ops/actions/{read,write}_docx.py (import name: docx)
+python-pptx                  # .pptx read/write — tools/file_ops/actions/{read,write}_pptx.py (import name: pptx)
+Pillow                       # Image handling — python sandbox allow-list, tools/vision.py (import name: PIL)
 
-# ── REST Gateway & API ───────────────────────────────────────────
-fastapi
-uvicorn
-slowapi
+# ── Reporting, Charts & Maps ─────────────────────────────────────────────
+plotly                       # [UNUSED?] not imported at module level (chart.py uses report_ops/charts.py)
+                             #   kept for dynamic/interactive chart rendering
+playwright                   # Browser automation — tools/browser_ops/ (headless Chromium)
+jinja2                       # HTML report templates — tools/report_ops/templates/
 
-# ── Logging, Notifications & Utilities ───────────────────────────
-structlog
-plyer
+# ── REST Gateway & API ───────────────────────────────────────────────────
+fastapi                      # Gateway HTTP server — core/gateway_backend/ (pulls starlette transitively)
+starlette                    # Middleware/responses — core/gateway_backend/factory.py (direct import)
+                             #   [AUDIT] directly imported; pin explicitly even though fastapi brings it
+uvicorn                      # ASGI server for fastapi — core/gateway.py
+slowapi                      # Rate limiting — core/gateway_backend/
 
-# ── Token-aware context trimming (agent tool) ────────────────────
-tiktoken>=0.7.0
+# ── Logging, Notifications & Utilities ───────────────────────────────────
+structlog                    # Structured logging (stderr only) — core/tracer.py
+plyer                        # Cross-platform desktop notifications — tools/notify.py (Windows path)
+apscheduler                  # Scheduled notifications — tools/notify.py action="schedule"
+                             #   [AUDIT GAP FILLED] try/except guarded; without it, schedule is silently disabled
+prometheus-client            # /metrics endpoint — core/metrics.py
+                             #   [AUDIT GAP FILLED] try/except guarded (_PROM_AVAILABLE); without it metrics disabled
 
-# ── Testing ────────────────────────────────────────────────────────
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-timeout>=2.4.0
-pytest-mock>=3.11.1
+# ── Config & Benchmarking ────────────────────────────────────────────────
+pyyaml                       # YAML parsing — benchmark/benchmark.py (import name: yaml)
+                             #   [AUDIT GAP FILLED] UNGUARDED top-level import — crashes without it
+
+# ── Token-aware context trimming (agent tool) ────────────────────────────
+tiktoken>=0.7.0              # Token counting for context budgets — tools/agent_ops/context.py
+
+# ── Testing ──────────────────────────────────────────────────────────────
+pytest>=7.4.0                # Test runner
+pytest-asyncio>=0.21.0       # Async test support
+pytest-timeout>=2.4.0        # Per-test timeouts
+pytest-mock>=3.11.1          # mocker fixture (deep_research, autocode, data tests)
