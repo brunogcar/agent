@@ -18,7 +18,8 @@ def _strip_comments_and_docstrings(source: str) -> str:
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
             if (node.body and isinstance(node.body[0], ast.Expr) and
-                isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                isinstance(node.body[0].value, ast.Constant) and
+                isinstance(node.body[0].value.value, str)):
                 node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
     code_only = ast.unparse(tree)
     code_lines = [line for line in code_only.split("\n") if not line.strip().startswith("#")]

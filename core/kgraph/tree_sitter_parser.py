@@ -22,10 +22,7 @@ from __future__ import annotations
 import warnings
 from typing import Optional
 
-# Silence the tree-sitter-languages deprecation warning
-warnings.filterwarnings("ignore", message=".*is deprecated.*")
-
-from tree_sitter_languages import get_parser
+from tree_sitter_languages import get_parser as _ts_get_parser
 
 
 # ─── Language detection ─────────────────────────────────────────────────────
@@ -64,9 +61,15 @@ _parsers: dict[str, object] = {}
 
 
 def _get_parser(language: str):
-    """Get or create a cached tree-sitter parser for a language."""
+    """Get or create a cached tree-sitter parser for a language.
+
+    Uses warnings.catch_warnings() to suppress the tree-sitter-languages
+    FutureWarning — this is immune to -W error on the command line.
+    """
     if language not in _parsers:
-        _parsers[language] = get_parser(language)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            _parsers[language] = _ts_get_parser(language)
     return _parsers[language]
 
 
