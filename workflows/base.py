@@ -1,7 +1,8 @@
-"""workflows/base.py -- Shared state TypedDict and node utilities.
-All three workflows (research, data, autocode) share:
+"""workflows/base.py -- Shared state TypedDict, node helpers, and dispatcher.
+
+All six workflows (research, data, autocode, deep_research, understand) share:
   WorkflowState TypedDict
-  _step() and _error() node helpers that write to the trace
+  node_step() and node_error() and node_done() helpers that write to the trace
   run_workflow() dispatcher that routes by type
 
 Usage from a tool or the agent meta-tool:
@@ -22,7 +23,7 @@ from core.config import cfg
 # -- Shared workflow state ----------------------------------------------------
 class WorkflowState(TypedDict, total=False):
     # Identity
-    workflow: str          # "research" | "data" | "autocode"
+    workflow: str          # "research" | "data" | "autocode" | "deep_research" | "understand"
     goal: str              # what we are trying to accomplish
     trace_id: str          # tracer ID for this run
     # Inputs
@@ -30,7 +31,8 @@ class WorkflowState(TypedDict, total=False):
     target_file: str       # file to edit (autocode)
     mode: str              # autocode mode: fix_error | improve | add_feature
     error_msg: str         # error traceback (autocode fix_error)
-    feature_desc:str        # feature description (autocode add_feature)
+    feature_desc: str      # feature description (autocode add_feature)
+    task: str              # [v1.2] autocode task (same as goal; autocode uses task internally)
 
     # Accumulated context
     memory_context: str      # recalled memories (formatted string)
@@ -54,6 +56,11 @@ class WorkflowState(TypedDict, total=False):
     artifacts: list          # files created, commits made, etc.
 
 # -- Node helpers -------------------------------------------------------------
+# NOTE: node_step, node_error, and node_done are HELPERS called inside node
+# functions, NOT LangGraph nodes themselves. They handle trace logging and
+# checkpointing. node_step returns None (side-effect only); node_error and
+# node_done return partial dicts for LangGraph to merge.
+
 def trim_state(state: WorkflowState) -> WorkflowState:
     """
     Phase 5: Evict low-value fields from working memory to the async queue.
@@ -82,32 +89,49 @@ def trim_state(state: WorkflowState) -> WorkflowState:
     return new_state
 
 def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = False, **kwargs) -> None:
-    """Log a workflow step to the active trace."""
+    """Log a workflow step to the active trace.
+
+    This is a HELPER (side-effect only), not a LangGraph node. Returns None.
+    """
     tid = state.get("trace_id", "")
     if tid:
         tracer.step(tid, node, message, **kwargs)
     if checkpoint and tid:
         from workflows.helpers.checkpoint import save_checkpoint
+        # [v1.2 #1] Save the FULL state, not just {status, error}. This ensures
+        # resume from an error checkpoint has the complete workflow context.
         save_checkpoint(tid, node, state)
 
 def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> dict:
     """Mark state as failed and log to trace. Message is never empty.
-    Returns a PARTIAL dict (LangGraph best practice — only changed keys)."""
+    Returns a PARTIAL dict (LangGraph best practice — only changed keys).
+
+    [v1.2 #1] Saves the FULL state as checkpoint (was only {status, error}).
+    Resume from an error checkpoint now has the complete workflow context.
+    """
     if not message or not message.strip():
         message = f"Unspecified error in node '{node}'"
     tid = state.get("trace_id", "")
     if tid:
         tracer.error(tid, node, message, **kwargs)
         from workflows.helpers.checkpoint import save_checkpoint
-        save_checkpoint(tid, node, {"status": "failed", "error": message})
+        # [v1.2 #1] Save full state for resume — was: save_checkpoint(tid, node, {"status": "failed", "error": message})
+        save_checkpoint(tid, node, {**state, "status": "failed", "error": message})
 
     return {"status": "failed", "error": message}
 
 def node_done(state: WorkflowState, result: str, artifacts: list = None) -> dict:
     """Mark state as succeeded.
-    Returns a PARTIAL dict (LangGraph best practice — only changed keys)."""
+    Returns a PARTIAL dict (LangGraph best practice — only changed keys).
+
+    [v1.2 #7] Saves a success checkpoint BEFORE mark_complete() so the final
+    state is preserved if mark_complete fails or the process dies between them.
+    """
     tid = state.get("trace_id", "")
     if tid:
+        # [v1.2 #7] Save success checkpoint first (was: no checkpoint on success)
+        from workflows.helpers.checkpoint import save_checkpoint
+        save_checkpoint(tid, "done", {**state, "status": "success", "result": result})
         tracer.finish(tid, success=True, result=result[:200])
         from workflows.helpers.checkpoint import mark_complete
         mark_complete(tid)
@@ -127,7 +151,7 @@ def run_workflow(
 ) -> dict:
     """
     Run a named workflow and return the final state as a dict.
-    workflow_type : "research" | "data" | "autocode"
+    workflow_type : "research" | "data" | "autocode" | "deep_research" | "understand"
     goal          : what to accomplish
     trace_id      : attach to existing trace (creates new one if empty)
     resume        : if True, attempt to restore from checkpoint journal
@@ -164,7 +188,11 @@ def run_workflow(
                 tracer.warning(trace_id, "resume", "Checkpoint version mismatch, starting fresh")
             else:
                 tracer.step(trace_id, "resume", "Resuming from checkpoint")
-                initial_state = {**restored, "status": "running", "goal": goal}
+                # [v1.2 #5] Don't clobber the checkpoint's original goal.
+                # Was: initial_state = {**restored, "status": "running", "goal": goal}
+                # If the caller passes a different goal on resume, that overwrites
+                # the original — making the checkpoint meaningless. Keep restored goal.
+                initial_state = {**restored, "status": "running"}
         else:
             tracer.warning(trace_id, "resume", "No checkpoint found, starting fresh")
 
@@ -225,6 +253,13 @@ def run_workflow(
     except Exception as e:
         msg = f"Workflow '{wf_type}' crashed: {type(e).__name__}: {e}"
         tracer.error(trace_id, "dispatch", msg)
+        # [v1.2 #2] Save checkpoint before returning — was: no checkpoint on crash.
+        # State at crash time is now preserved for debugging/resume.
+        try:
+            from workflows.helpers.checkpoint import save_checkpoint
+            save_checkpoint(trace_id, "dispatch_error", {**initial_state, "status": "failed", "error": msg})
+        except Exception:
+            pass  # Non-fatal: checkpoint failure shouldn't mask the original error
         tracer.finish(trace_id, success=False, result=msg)
         return {
             "status": "failed",
