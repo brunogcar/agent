@@ -37,9 +37,11 @@ from core.contracts import ok, fail
         "",
         "Common usage patterns:",
         ' file(action="read_file", path="scripts/analysis.py")',
+        ' file(action="read_file", path="paper.md", chunk=True, chunk_method="sentence")',  # v1.2
         ' file(action="write_file", path="output/report.md", content="# Report\n...")',
         ' file(action="list_directory", path=".")',
         ' file(action="read_multiple_files", paths=["a.py", "b.py"])',
+        ' file(action="count_lines", path="logs/huge.log")',  # v1.2
         ' file(action="search_files", query="ChromaDB collection", max_results=5)',
         ' file(action="directory_tree", path=".", max_depth=3)',
         ' file(action="find_files", pattern="**/*.py", path=".")',
@@ -74,6 +76,10 @@ def file(
     parents: bool = True,
     source: str = "",
     destination: str = "",
+    # v1.2 — chonkie chunking (read_file, read_multiple_files)
+    chunk: bool = False,
+    chunk_method: str = "token",
+    chunk_size: int = 512,
     trace_id: str = "",
 ) -> dict:
     """
@@ -190,6 +196,10 @@ def file(
         "parents": parents,
         "source": resolved_source,
         "destination": resolved_destination,
+        # v1.2 chunking params — always passed; handlers ignore if chunk=False
+        "chunk": chunk,
+        "chunk_method": chunk_method,
+        "chunk_size": chunk_size,
         "trace_id": trace_id,
     }
     # Filter out None defaults so handlers only get what they need

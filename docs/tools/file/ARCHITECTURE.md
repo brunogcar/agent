@@ -6,16 +6,18 @@
 
 | File | Purpose |
 |------|---------|
-| `tools/file.py` | `@tool` facade: validation, dispatch, compression |
+| `tools/file.py` | `@tool` facade: validation, dispatch, compression (v1.2: chunk params) |
 | `tools/_meta_tool.py` | `@meta_tool` decorator: auto `Literal`, docstring |
 | `tools/file_ops/_registry.py` | `DISPATCH` dict, `@register_action` decorator |
 | `tools/file_ops/helpers.py` | `_safe_resolve`, `_allowed_roots` |
 | `tools/file_ops/index.py` | SQLite FTS index for `search_files` |
-| `tools/file_ops/actions/*.py` | Individual atomic action handlers |
+| `tools/file_ops/actions/*.py` | Individual atomic action handlers (v1.2: 27 actions) |
+| `tools/file_ops/actions/read_file.py` | v1.2: encoding fallback chain + `_chunk_text()` helper (shared with read_multiple_files) |
+| `tools/file_ops/actions/count_lines.py` | v1.2 NEW: wc -l equivalent, 64KB binary chunk reads |
 | `registry.py` | `get_tool_names()`, `get_tool_actions()` for router introspection |
-| `tests/tools/file/` | 25+ test files covering all actions |
+| `tests/tools/file/` | 26 test files covering all actions (v1.2: +3 new) |
 | `tests/tools/file/conftest.py` | Test fixtures: `mock_cfg` (autouse) |
-| `core/path_guard.py` | Centralized path validation and security guards |
+| `core/path_guard.py` | Centralized path validation and security guards (v1.2: `count_lines` in READ_OPERATIONS) |
 | `tests/core/path_guard/` | Path guard unit tests |
 
 ---
@@ -47,7 +49,7 @@ tools/file_ops/
     ├── append_file.py           # Append content without reading full file
     ├── search_files.py          # Full-text search (SQLite FTS)
     ├── find_files.py            # Glob pattern matching
-    ├── read_multiple_files.py   # Concurrent multi-file read
+    ├── read_multiple_files.py   # Concurrent multi-file read (v1.2: chunking + encoding fallback)
     ├── read_media_file.py       # Binary file → base64 + MIME type
     ├── read_pdf.py              # Extract text from PDF
     ├── write_pdf.py             # Write text to PDF
@@ -56,7 +58,8 @@ tools/file_ops/
     ├── read_xlsx.py             # Read Excel spreadsheet
     ├── write_xlsx.py            # Write Excel spreadsheet
     ├── read_pptx.py             # Read PowerPoint
-    └── write_pptx.py            # Write PowerPoint
+    ├── write_pptx.py            # Write PowerPoint
+    └── count_lines.py           # v1.2 — wc -l equivalent, 64KB binary chunk reads
 ```
 
 ---
@@ -78,13 +81,17 @@ graph TD
 ## 💡 Key Design Decisions
 
 - **Unified DISPATCH** — Single dict holds all actions, handlers, help text, examples. `@meta_tool` reads it to generate schema and docstring. One source. Zero drift.
-- **Action name consistency** — `core/path_guard.py` maintains `READ_OPERATIONS` and `WRITE_OPERATIONS` sets. When renaming actions (e.g., `write` → `write_file`), these sets MUST be updated or protected file checks will silently fail. **v1.1 added `move_file`, `copy_file`, `create_directory` to `WRITE_OPERATIONS`.**
+- **Action name consistency** — `core/path_guard.py` maintains `READ_OPERATIONS` and `WRITE_OPERATIONS` sets. When renaming actions (e.g., `write` → `write_file`), these sets MUST be updated or protected file checks will silently fail. **v1.1 added `move_file`, `copy_file`, `create_directory` to `WRITE_OPERATIONS`. v1.2 added `count_lines` to `READ_OPERATIONS`.**
 - **Atomic actions** — No `message` subcommand parsing. `create_directory` is one action, `delete_file` is another.
 - **Semantic parameters** — `path` = file path, `source`/`destination` = move/copy paths, `query` = search text, `edits` = edit array.
-- **Path validation in facade** — `resolve_path` + `check_protected_file` runs once before dispatch. No duplication across 20+ handlers. **v1.1 fix: destination paths are checked for protection even if they don't exist yet.**
+- **Path validation in facade** — `resolve_path` + `check_protected_file` runs once before dispatch. No duplication across 27+ handlers. **v1.1 fix: destination paths are checked for protection even if they don't exist yet.**
 - **Cancellation guard** — `ensure_not_cancelled(trace_id)` aborts before any file mutations. Catches `BaseException` (not just `Exception`) to handle `asyncio.CancelledError`.
 - **Destructive actions require force** — `delete_file`, `move_file`, `copy_file` need explicit `force=True`.
 - **Path Guard Integration (v1.1)** — Every file action MUST flow through `core/path_guard.py`. This is the canonical example for future tool refactors.
+- **Encoding fallback chain (v1.2)** — `read_file` and `read_multiple_files` try UTF-8 (strict) first, then cp1252 (strict), then latin-1 (which never raises). The encoding that succeeded is reported in the result `encoding` field. This replaces the v1.0/v1.1 behavior of `errors="replace"` (which silently corrupted non-UTF-8 bytes to U+FFFD).
+- **Chunking via chonkie (v1.2)** — When `chunk=True`, `read_file` and `read_multiple_files` return a `chunks` list instead of `content`. Token and sentence chunkers are supported. `chonkie` is a **soft dependency** — imported lazily inside the chunking branch only. If missing, the action returns a clear `pip install chonkie` error; non-chunk reads and all other file actions work fine without it.
+- **Chunking is mutually exclusive with head/tail/max_chars (v1.2)** — When `chunk=True`, the line/char truncation params are ignored entirely. The result shape changes (no `content`, no `truncated`, instead `chunks`/`chunk_count`/`chunk_method`/`chunk_size`). Callers must pick one mode per call.
+- **Streaming reads for line counting (v1.2)** — `count_lines` reads the file in 64KB binary blocks and counts `0x0A` bytes (matches `wc -l` semantics). O(1) memory, O(n) time, encoding-independent (binary mode). Works on files larger than `read_file`'s 10MB ceiling.
 
   ```python
   # Facade (tools/file.py)
@@ -136,13 +143,16 @@ graph TD
 
 > **Note:** Ensure `pytest` resolves to your venv. If not, use `python -m pytest` or the full venv path (`venv\Scripts\pytest.exe` on Windows, `venv/bin/pytest` on Unix).
 
-**Test coverage (25+ files):**
+**Test coverage (26 files):**
 
 | File | Tests | Coverage |
 |------|-------|----------|
 | `conftest.py` | — | `mock_cfg` (autouse, redirects roots to `tmp_path`) |
 | `test_file_dispatch.py` | — | Unknown action, basic dispatch |
 | `test_file_read_file.py` | — | read_file action |
+| `test_read_file_chunking.py` | v1.2 | Encoding fallback (UTF-8→cp1252→latin-1), token + sentence chunking, chunk interplay, read_multiple_files chunking |
+| `test_count_lines.py` | v1.2 | wc -l semantics, encoding independence (binary mode), 64KB boundary, large file streaming, error paths |
+| `test_read_file_line_count.py` | v1.2 | `lines` field correctness (trailing newline, no trailing newline, head/tail/max_chars paths, read_multiple_files) |
 | `test_file_write_file.py` | — | write_file action |
 | `test_file_list_directory.py` | — | list_directory action |
 | `test_file_create_directory.py` | — | create_directory action |
@@ -170,4 +180,4 @@ graph TD
 
 ---
 
-*Last updated: 2026-07-03. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

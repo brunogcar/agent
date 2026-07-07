@@ -36,6 +36,7 @@ from core.contracts import fail
 # WRITE_OPERATIONS: actions that modify — blocked on protected files.
 # When adding new file actions, UPDATE these sets or protected checks will silently fail.
 # v1.1: Added move_file, copy_file, create_directory to WRITE_OPERATIONS (was missing).
+# v1.2: Added count_lines to READ_OPERATIONS (new read-only action).
 
 READ_OPERATIONS = frozenset({
     "read", "list", "search", "read_pdf", "read_docx", "read_xlsx", "read_pptx",
@@ -43,6 +44,7 @@ READ_OPERATIONS = frozenset({
     "read_file", "list_directory", "search_files", "read_media_file",
     "directory_tree", "get_file_info", "find_files", "read_multiple_files",
     "list_allowed_directories",  # v1.1: added missing read action
+    "count_lines",  # v1.2: wc -l equivalent, read-only
 })
 
 WRITE_OPERATIONS = frozenset({
