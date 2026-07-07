@@ -41,7 +41,7 @@
 | `tools/report.py` | `report(action="report", title=...)` — report generation |
 | `core/config.py` | `cfg.autocode_graph_timeout`, `cfg.autocode_max_retries`, etc. — config |
 | `core/utils.py` | `compress_result()` — result compression |
-| `tests/workflows/autocode/test_autocode.py` | Full workflow test |
+| `tests/workflows/autocode/` | Per-concern test files + `conftest.py` (see Testing section below) |
 
 ---
 
@@ -150,14 +150,24 @@ graph TD
 - Test `node_distill_memory` with missing hypothesis → assert graceful handling
 - Test `node_create_skill` with invalid name → assert error state
 
-**Current test layout:**
+**Test layout (per-concern, one concern per file):**
 ```text
 tests/workflows/autocode/
-└── test_autocode.py  # Full workflow test
+├── conftest.py            # base_state + temp_workspace fixtures
+├── test_graph.py          # topology + WORKFLOW_METADATA + singleton + state schema + partial-dict
+├── test_routes.py         # all 5 route_after_* functions + #39 stuck routing
+├── test_facade.py         # imports + run_workflow + #44 artifacts + #46 git-diff + #47 dry-run + distill
+├── test_execute.py        # node_execute_step + node_write_files + .bak checks
+├── test_run_tests.py      # #39 stuck detection + file-existence + budget wiring
+├── test_debug.py          # debug loop routing + JSON parsing + max-retries
+├── test_verify.py         # node_verify + lint + commit + defense_notes
+├── test_branch.py         # node_git_branch + git scoping + dry-run + no-snapshot
+├── test_create_skill.py   # name sanitization + syntax validation + skill_created flag
+├── test_helpers.py        # path helpers + patch + protected files + path traversal
+├── test_safety.py         # dry-run mode + protected files + memory callbacks + TDD loop + dead routes
+└── test_analyze_impact.py # AST parser
 ```
-
-> **Future:** Split into per-node files: `test_node_classify.py`, `test_node_validate.py`, `test_node_brainstorm.py`, `test_node_plan.py`, `test_node_git_branch.py`, `test_node_write_tests.py`, `test_node_execute.py`, `test_node_write_files.py`, `test_node_analyze_impact.py`, `test_node_run_tests.py`, `test_node_debug.py`, `test_node_verify.py`, `test_node_report.py`, `test_node_git_commit.py`, `test_node_distill_memory.py`, `test_node_create_skill.py`, plus `conftest.py`.
 
 ---
 
-*Last updated: 2026-07-04. See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (test suite reorganization). See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

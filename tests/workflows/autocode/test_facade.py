@@ -1,19 +1,17 @@
 """tests/workflows/autocode/test_facade.py
-Facade contract tests — verify the public API actually works.
-
-[v1.1] These tests exist because the facade was silently broken for 2 versions
-(v1.0.1 + v1.0.2) — dead imports made `import workflows.autocode` raise
-ImportError, but no test caught it because all 106 tests imported directly
-from autocode_impl/. These tests guard the public entry point.
+Facade contract tests — verify the public API works (import + run_workflow).
+Also includes #44 (structured artifacts), #46 (git-diff input), and #47
+(dry-run guards on the facade level).
 """
 from __future__ import annotations
 
+import os
 from unittest.mock import patch, MagicMock
 
 
-class TestFacadeImports:
-    """The facade must import without errors. Catches removed symbols."""
+# ─── Facade imports ─────────────────────────────────────────────────────────
 
+class TestFacadeImports:
     def test_facade_imports_cleanly(self):
         """import workflows.autocode must succeed (was broken for 2 versions)."""
         import workflows.autocode as facade
@@ -22,185 +20,203 @@ class TestFacadeImports:
         assert hasattr(facade, "get_graph")
         assert hasattr(facade, "WORKFLOW_METADATA")
 
-    def test_facade_all_exports_resolve(self):
-        """Every name in __all__ must actually exist on the module."""
+    def test_all_exports_resolve(self):
         import workflows.autocode as facade
         for name in facade.__all__:
-            assert hasattr(facade, name), f"__all__ lists {name!r} but it's not on the module"
+            assert hasattr(facade, name), f"__all__ lists {name!r} but not on module"
 
     def test_no_dead_imports(self):
-        """[v1.1] Verify the 4 dead imports are gone (AGENT_ROOT, route_after_brainstorm, route_after_debug, _git_snapshot)."""
+        """v1.1: 4 dead imports removed (AGENT_ROOT, route_after_brainstorm/debug, _git_snapshot)."""
         import workflows.autocode as facade
-        assert not hasattr(facade, "AGENT_ROOT"), "AGENT_ROOT was removed in v1.0.1 #9 — must not be imported"
-        assert not hasattr(facade, "route_after_brainstorm"), "route_after_brainstorm was removed in v1.0.2 #4"
-        assert not hasattr(facade, "route_after_debug"), "route_after_debug was removed in v1.0.2 #4"
-        assert not hasattr(facade, "_git_snapshot"), "_git_snapshot was removed in v1.0.1 #2"
+        assert not hasattr(facade, "AGENT_ROOT")
+        assert not hasattr(facade, "route_after_brainstorm")
+        assert not hasattr(facade, "route_after_debug")
+        assert not hasattr(facade, "_git_snapshot")
 
 
-class TestWorkflowMetadata:
-    """v1.1: WORKFLOW_METADATA must exist and have correct structure."""
-
-    def test_metadata_exists(self):
-        from workflows.autocode_impl.graph import WORKFLOW_METADATA
-        assert isinstance(WORKFLOW_METADATA, dict)
-        assert WORKFLOW_METADATA["name"] == "autocode"
-        assert WORKFLOW_METADATA["version"] == "1.1"
-
-    def test_metadata_has_17_nodes(self):
-        from workflows.autocode_impl.graph import WORKFLOW_METADATA
-        nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 17, f"Expected 17 nodes, got {len(nodes)}"
-        names = [n["name"] for n in nodes]
-        for expected in ["node_classify_task", "node_verify", "node_commit", "node_distill_memory", "node_create_skill"]:
-            assert expected in names, f"Missing node: {expected}"
-
-    def test_metadata_nodes_have_types(self):
-        from workflows.autocode_impl.graph import WORKFLOW_METADATA
-        for node in WORKFLOW_METADATA["nodes"]:
-            assert "type" in node, f"Node {node['name']} missing type"
-            assert node["type"] in ("llm", "tool", "logic", "composite"), f"Unknown type: {node['type']}"
-
-    def test_metadata_has_loops(self):
-        from workflows.autocode_impl.graph import WORKFLOW_METADATA
-        loops = WORKFLOW_METADATA["loops"]
-        assert len(loops) >= 1
-        debug_loop = loops[0]
-        assert debug_loop["name"] == "debug_loop"
-        assert "exit_condition" in debug_loop
-        assert "node_systematic_debug" in debug_loop["nodes"]
-
-    def test_metadata_has_branches(self):
-        from workflows.autocode_impl.graph import WORKFLOW_METADATA
-        branches = WORKFLOW_METADATA["branches"]
-        assert len(branches) >= 1
-        skill_branch = branches[0]
-        assert skill_branch["name"] == "create_skill"
-        assert "skips" in skill_branch
-
-    def test_metadata_has_safety_features(self):
-        from workflows.autocode_impl.graph import WORKFLOW_METADATA
-        safety = WORKFLOW_METADATA["safety_features"]
-        assert "git_branch" in safety
-        assert "atomic_writes" in safety
-
+# ─── run_workflow integration ──────────────────────────────────────────────
 
 class TestRunWorkflowAutocode:
-    """run_workflow(workflow_type='autocode') must reach the graph.
-
-    This is the integration test that was missing — it catches both the
-    dead-import ImportError AND the uncompiled-graph AttributeError.
-    """
-
-    def test_run_workflow_autocode_reaches_graph(self):
+    def test_run_workflow_reaches_graph(self):
         """run_workflow('autocode') must call invoke_with_timeout, not crash."""
         from workflows.base import run_workflow
         with patch("workflows.autocode_impl.graph.invoke_with_timeout") as mock_invoke:
             mock_invoke.return_value = {"status": "success", "result": "done"}
             result = run_workflow(
-                workflow_type="autocode",
-                goal="test task",
-                task="test task",
-                files={},
-                trace_id="test-facade-1",
+                workflow_type="autocode", goal="test task", task="test task",
+                files={}, trace_id="test-facade-1",
             )
             assert result["status"] == "success"
-            assert mock_invoke.called, "invoke_with_timeout must be called"
+            assert mock_invoke.called
 
     def test_run_autocode_agent_delegates_to_run_workflow(self):
-        """[v1.1] run_autocode_agent() is a shim that delegates to run_workflow()."""
+        """[v1.1] run_autocode_agent() is a shim → run_workflow()."""
         from workflows.autocode import run_autocode_agent
         with patch("workflows.base.run_workflow") as mock_rw:
             mock_rw.return_value = {"status": "success"}
             result = run_autocode_agent("test task", mode="feature")
-            assert mock_rw.called, "run_autocode_agent must delegate to run_workflow"
+            assert mock_rw.called
             _, kwargs = mock_rw.call_args
             assert kwargs.get("workflow_type") == "autocode"
             assert kwargs.get("goal") == "test task"
-            assert kwargs.get("task") == "test task"
             assert result["status"] == "success"
 
-    def test_run_workflow_autocode_passes_through_kwargs(self):
-        """files, mode, target_file, dry_run must reach the graph."""
+    def test_kwargs_pass_through(self):
         from workflows.base import run_workflow
         with patch("workflows.autocode_impl.graph.invoke_with_timeout") as mock_invoke:
             mock_invoke.return_value = {"status": "success"}
             run_workflow(
-                workflow_type="autocode",
-                goal="add retry",
-                task="add retry",
-                files={"tools/web.py": "content"},
-                mode="feature",
-                target_file="tools/web.py",
-                dry_run=True,
-                trace_id="t1",
+                workflow_type="autocode", goal="add retry", task="add retry",
+                files={"tools/web.py": "content"}, mode="feature",
+                target_file="tools/web.py", dry_run=True, trace_id="t1",
             )
-            _, kwargs = mock_invoke.call_args
-            state = kwargs if "status" not in kwargs else mock_invoke.call_args[0][0]
-            # invoke_with_timeout receives initial_state dict
-            call_state = mock_invoke.call_args[0][0] if mock_invoke.call_args[0] else kwargs
+            call_state = mock_invoke.call_args[0][0]
             assert call_state.get("files") == {"tools/web.py": "content"}
             assert call_state.get("mode") == "feature"
             assert call_state.get("dry_run") is True
 
 
-class TestGraphStructure:
-    """Verify the graph compiles and has all expected nodes."""
+# ─── #44: Structured artifacts ──────────────────────────────────────────────
 
-    def test_build_graph_returns_stategraph(self):
-        from workflows.autocode_impl.graph import build_graph
-        graph = build_graph()
-        assert graph is not None
-        # build_graph returns uncompiled StateGraph; must have add_node
-        assert hasattr(graph, "add_node")
+class TestStructuredArtifacts:
+    def test_shape_artifacts_extracts_fields(self):
+        from workflows.autocode import _shape_artifacts
+        final_state = {
+            "commit_sha": "abc123", "branch_name": "fix-bug",
+            "modified_files": ["a.py", "b.py"],
+            "test_results": {"success": True},
+            "tdd_status": "passed", "tdd_iteration": 2,
+            "verification_passed": True,
+        }
+        art = _shape_artifacts(final_state)
+        assert art["commit_sha"] == "abc123"
+        assert art["branch_name"] == "fix-bug"
+        assert art["modified_files"] == ["a.py", "b.py"]
+        assert art["tdd_status"] == "passed"
 
-    def test_get_graph_returns_compiled(self):
-        from workflows.autocode_impl.graph import get_graph
-        graph = get_graph()
-        assert graph is not None
-        # get_graph returns compiled graph; must have invoke, NOT add_node
-        assert hasattr(graph, "invoke")
-        assert not hasattr(graph, "add_node"), "get_graph must return compiled graph, not StateGraph"
+    def test_shape_artifacts_defaults_on_empty(self):
+        from workflows.autocode import _shape_artifacts
+        art = _shape_artifacts({})
+        assert art["commit_sha"] == ""
+        assert art["modified_files"] == []
+        assert art["verification_passed"] is False
 
-    def test_graph_has_no_double_compile(self):
-        """[v1.1] get_graph() must return a compiled graph — calling .compile() on it would crash."""
-        from workflows.autocode_impl.graph import get_graph
-        graph = get_graph()
-        assert not hasattr(graph, "compile"), (
-            "Compiled graph must not have .compile() — the old facade called it and crashed. "
-            "If this fails, get_graph() is returning an uncompiled StateGraph."
+    def test_run_autocode_agent_attaches_artifacts(self):
+        from workflows.autocode import run_autocode_agent
+        with patch("workflows.base.run_workflow") as mock_rw:
+            mock_rw.return_value = {
+                "status": "success", "commit_sha": "def456",
+                "branch_name": "feat-x", "modified_files": ["c.py"],
+                "tdd_status": "passed", "tdd_iteration": 1,
+                "verification_passed": True,
+            }
+            result = run_autocode_agent("test task")
+        assert "artifacts" in result
+        assert result["artifacts"]["commit_sha"] == "def456"
+
+
+# ─── #46: Multi-file git-diff input ─────────────────────────────────────────
+
+class TestGitDiffInput:
+    def test_no_git_diff_returns_files_as_is(self):
+        from workflows.autocode import _resolve_files_input
+        files = {"a.py": "content", "b.py": "more"}
+        assert _resolve_files_input(files, git_diff=False) == files
+
+    def test_git_diff_false_strips_all_changed_key(self):
+        from workflows.autocode import _resolve_files_input
+        assert _resolve_files_input({"all changed": "", "a.py": "content"}, git_diff=False) == {"a.py": "content"}
+
+    def test_git_diff_true_resolves_changed_files(self, tmp_path, mocker):
+        from workflows.autocode import _resolve_files_input
+        (tmp_path / "changed.py").write_text("print('hello')", encoding="utf-8")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "changed.py\n"
+        mocker.patch("subprocess.run", return_value=mock_result)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = _resolve_files_input({"all changed": ""}, git_diff=True)
+        finally:
+            os.chdir(old_cwd)
+        assert "changed.py" in result
+        assert result["changed.py"] == "print('hello')"
+
+    def test_git_diff_merges_explicit_files(self, tmp_path, mocker):
+        from workflows.autocode import _resolve_files_input
+        (tmp_path / "diff_file.py").write_text("content", encoding="utf-8")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "diff_file.py\n"
+        mocker.patch("subprocess.run", return_value=mock_result)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = _resolve_files_input(
+                {"all changed": "", "explicit.py": "explicit content"}, git_diff=True,
+            )
+        finally:
+            os.chdir(old_cwd)
+        assert "diff_file.py" in result
+        assert "explicit.py" in result
+        assert result["explicit.py"] == "explicit content"
+
+    def test_git_diff_failure_returns_empty(self, mocker):
+        from workflows.autocode import _resolve_files_input
+        mocker.patch("subprocess.run", side_effect=Exception("git not found"))
+        assert _resolve_files_input({"all changed": ""}, git_diff=True) == {}
+
+
+# ─── #47: Dry-run guards ────────────────────────────────────────────────────
+
+class TestDryRunGuards:
+    def test_write_files_skips_on_dry_run(self):
+        from workflows.autocode_impl.nodes.write_files import node_write_files
+        state = {"dry_run": True, "tdd_source_code": '{"patches": []}', "trace_id": "t1"}
+        result = node_write_files(state)
+        assert result["status"] == "dry_run"
+        assert result["modified_files"] == []
+
+    def test_commit_skips_on_dry_run(self):
+        from workflows.autocode_impl.nodes.commit import node_commit
+        with patch("workflows.autocode_impl.git_ops._git_commit") as mock_git:
+            state = {"dry_run": True, "verification_passed": True,
+                     "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1"}
+            result = node_commit(state)
+        assert result["status"] == "dry_run"
+        assert result["commit_sha"] == "(dry-run)"
+        assert not mock_git.called
+
+    def test_branch_skips_on_dry_run(self):
+        from workflows.autocode_impl.nodes.branch import node_git_branch
+        with patch("workflows.autocode_impl.git_ops._git_create_branch") as mock_branch:
+            state = {"dry_run": True, "branch": "feat-x", "trace_id": "t1"}
+            result = node_git_branch(state)
+        assert result == {}
+        assert not mock_branch.called
+
+    def test_commit_proceeds_without_dry_run(self, mocker):
+        from workflows.autocode_impl.nodes.commit import node_commit
+        mock_git_commit = mocker.patch(
+            "workflows.autocode_impl.nodes.commit._git_commit", return_value="abc123"
         )
+        state = {"dry_run": False, "verification_passed": True,
+                 "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1"}
+        result = node_commit(state)
+        assert mock_git_commit.called
+        assert result["commit_sha"] == "abc123"
 
 
-class TestRoutingFixes:
-    """v1.1 routing fixes from cross-LLM review."""
-
-    def test_audit_routes_to_impact_analysis(self):
-        """[v1.1] audit task type must go through analyze_impact (was skipping it)."""
-        from workflows.autocode_impl.routes import route_after_write_files
-        assert route_after_write_files({"task_type": "audit"}) == "node_analyze_impact"
-
-    def test_edit_routes_to_impact_analysis(self):
-        """[v1.1] edit task type must go through analyze_impact (was skipping it)."""
-        from workflows.autocode_impl.routes import route_after_write_files
-        assert route_after_write_files({"task_type": "edit"}) == "node_analyze_impact"
-
-    def test_feature_still_routes_to_impact_analysis(self):
-        """Regression: existing task types must still work."""
-        from workflows.autocode_impl.routes import route_after_write_files
-        for task_type in ["fix", "fix_error", "refactor", "improve", "feature"]:
-            assert route_after_write_files({"task_type": task_type}) == "node_analyze_impact"
-
+# ─── Distill memory non-fatal ───────────────────────────────────────────────
 
 class TestDistillMemoryNonFatal:
     """v1.1: distill_memory failure must not fail the workflow."""
 
     def test_distill_memory_uses_warning_not_error(self):
-        """[v1.1] distill_memory must use tracer.warning (non-fatal), not tracer.error."""
-        import inspect
-        import ast
+        import inspect, ast
         from workflows.autocode_impl.nodes.memory import node_distill_memory
         source = inspect.getsource(node_distill_memory)
-        # Strip comments and docstrings before checking (word "tracer.error" appears in comments)
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
@@ -210,84 +226,5 @@ class TestDistillMemoryNonFatal:
         code_only = ast.unparse(tree)
         code_lines = [line for line in code_only.split("\n") if not line.strip().startswith("#")]
         code_str = "\n".join(code_lines)
-        # Must call tracer.warning, must NOT call tracer.error
-        assert "tracer.warning" in code_str, (
-            "distill_memory must use tracer.warning for non-fatal failures"
-        )
-        assert "tracer.error(" not in code_str, (
-            "distill_memory must not call tracer.error() — it's non-fatal (code already committed)"
-        )
-
-
-class TestPartialDictReturns:
-    """[#33] All autocode nodes must return partial update dicts, not {**state, ...}.
-
-    LangGraph best practice: nodes return only the changed keys, not the whole
-    state. This was already done in v1.0.1/v1.0.2 but had no test guarding it.
-    This class locks in the clean state — a future refactor that reintroduces
-    {**state, ...} or bare `return state` will fail these tests.
-
-    Uses AST source inspection so the check is on actual code, not comments.
-    """
-
-    _NODE_MODULES = [
-        "classify", "validate", "brainstorm", "plan", "branch", "tests",
-        "execute", "write_files", "analyze_impact", "run_tests", "debug",
-        "verify", "report", "commit", "memory", "create_skill",
-    ]
-
-    def _get_node_functions(self):
-        """Yield (module_name, function_name, function_source) for all node_* funcs."""
-        import ast, importlib, inspect
-        for mod_name in self._NODE_MODULES:
-            mod = importlib.import_module(f"workflows.autocode_impl.nodes.{mod_name}")
-            for attr in dir(mod):
-                obj = getattr(mod, attr)
-                if callable(obj) and attr.startswith("node_") and not inspect.iscoroutinefunction(obj):
-                    try:
-                        source = inspect.getsource(obj)
-                        yield mod_name, attr, source
-                    except (OSError, TypeError):
-                        pass
-
-    def test_no_node_returns_star_state_spread(self):
-        """No node may return {**state, ...} — the old anti-pattern."""
-        import ast
-        violations = []
-        for mod_name, func_name, source in self._get_node_functions():
-            tree = ast.parse(source)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Return) and node.value and isinstance(node.value, ast.Dict):
-                    for k, v in zip(node.value.keys, node.value.values):
-                        # **state spread appears as key=None, value=Name('state')
-                        if k is None and isinstance(v, ast.Name) and v.id == "state":
-                            violations.append(f"{mod_name}.{func_name}")
-        assert not violations, (
-            f"These nodes return {{{{**state, ...}}}} (must return partial dict only): {violations}"
-        )
-
-    def test_no_node_returns_bare_state(self):
-        """No node may `return state` (whole state) — must return a dict of changed keys only."""
-        import ast
-        violations = []
-        for mod_name, func_name, source in self._get_node_functions():
-            tree = ast.parse(source)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Return) and node.value and isinstance(node.value, ast.Name) and node.value.id == "state":
-                    violations.append(f"{mod_name}.{func_name}")
-        assert not violations, (
-            f"These nodes do bare `return state` (must return partial dict): {violations}"
-        )
-
-    def test_all_nodes_are_sync(self):
-        """All nodes must be sync (def, not async def) — LangGraph requirement."""
-        import inspect, importlib
-        violations = []
-        for mod_name in self._NODE_MODULES:
-            mod = importlib.import_module(f"workflows.autocode_impl.nodes.{mod_name}")
-            for attr in dir(mod):
-                obj = getattr(mod, attr)
-                if callable(obj) and attr.startswith("node_"):
-                    if inspect.iscoroutinefunction(obj):
-                        violations.append(f"{mod_name}.{attr}")
-        assert not violations, f"These nodes are async (must be sync): {violations}"
+        assert "tracer.warning" in code_str
+        assert "tracer.error(" not in code_str

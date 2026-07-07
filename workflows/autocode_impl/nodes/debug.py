@@ -51,7 +51,6 @@ def node_systematic_debug(state: AutocodeState) -> dict:
 
     if project_root and modified_files:
         try:
-            from core.config import cfg
             from pathlib import Path
             is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve()))
             from core.kgraph.project import ProjectManager

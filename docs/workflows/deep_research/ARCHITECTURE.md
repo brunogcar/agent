@@ -17,7 +17,7 @@
 | `workflows/deep_research_impl/nodes/synthesize.py` | `node_synthesize()` — synthesis + evaluation + convergence |
 | `core/citations.py` | `citations.add()` / `get_sources()` — per-trace source tracker (wired in v1.1) |
 | `workflows/base.py` | `WorkflowState`, `run_workflow()` — shared infrastructure |
-| `tests/workflows/deep_research/` | Per-node test files (test_graph, test_decompose, test_search, test_synthesize, test_budget, test_seen_urls, test_timeout) |
+| `tests/workflows/deep_research/` | Per-concern test files + `conftest.py` (see Testing section below) |
 
 ---
 
@@ -91,16 +91,20 @@ graph TD
 python -m pytest tests/workflows/deep_research/ -v
 ```
 
-**Test layout (per-node, one concern per file):**
+**Test layout (per-concern, one concern per file):**
 ```text
 tests/workflows/deep_research/
-├── test_graph.py        # topology + WORKFLOW_METADATA + citations + partial dicts + recall/store/notify
-├── test_decompose.py    # goal decomposition + sub-query parsing
-├── test_search.py       # tool selection + fallback + budget (Tavily attempt v1.1)
-├── test_synthesize.py   # synthesis + evaluation + task/context mapping (P0 #2 v1.1)
-├── test_budget.py       # budget tracking functions
-├── test_seen_urls.py    # cross-iteration URL dedup
-└── test_timeout.py      # facade timeout enforcement
+├── conftest.py          # base_state fixture (DeepResearchState defaults)
+├── test_graph.py        # topology + WORKFLOW_METADATA + partial dicts + facade + timeout
+├── test_routes.py       # route_after_synthesize (all 4 exit conditions)
+├── test_recall.py       # _node_recall + graceful failure + tracer.error
+├── test_report.py       # _node_report + citations appendix
+├── test_notify.py       # _node_notify + source URLs as artifacts
+├── test_store.py        # _node_store + full-text (no 800 truncation)
+├── test_decompose.py    # node_decompose_goal + _parse_sub_queries
+├── test_search.py       # tool selection + fallback + evidence + seen_urls dedup + budget
+├── test_synthesize.py   # synthesis + evaluation + task/context mapping (P0 #2)
+└── test_budget.py       # budget tracking utilities
 ```
 
 **Mock strategy (patch at the SOURCE module — tools are imported inside nodes):**
@@ -113,4 +117,4 @@ tests/workflows/deep_research/
 
 ---
 
-*Last updated: 2026-07-06 (v1.1). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (test suite reorganization). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
