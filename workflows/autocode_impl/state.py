@@ -62,6 +62,7 @@ class AutocodeState(TypedDict, total=False):
     max_retries: int
     files_map: dict[str, FileSnapshot]
     current_step: int
+    last_test_error: str  # [#39] stuck detection: previous iteration's error signature
 
     # Execution
     execution_notes: str
@@ -131,6 +132,7 @@ def _default_state(
         "max_retries": MAX_RETRIES,
         "files_map": {},
         "current_step": 0,
+        "last_test_error": "",  # [#39] stuck detection
         "execution_notes": "",
         "modified_files": [],
         "test_results": {},

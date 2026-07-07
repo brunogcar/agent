@@ -32,6 +32,12 @@ def node_write_files(state: AutocodeState) -> dict:
         # Now returns error status so downstream nodes know write_files failed.
         return {"status": "error", "error": f"write_files JSON parse failed: {e}"}
 
+    # [#47] Dry-run: skip all file writes AFTER validation checks pass.
+    # (Guards above run first so dry_run still surfaces JSON errors, etc.)
+    if state.get("dry_run"):
+        tracer.step(tid, "write_files", "dry_run=True — skipping file writes")
+        return {"status": "dry_run", "modified_files": []}
+
     from workflows.autocode_impl.patch import apply_patch
 
     # -- Apply str_replace patches for existing files -------------------------

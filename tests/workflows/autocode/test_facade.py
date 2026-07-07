@@ -217,3 +217,77 @@ class TestDistillMemoryNonFatal:
         assert "tracer.error(" not in code_str, (
             "distill_memory must not call tracer.error() — it's non-fatal (code already committed)"
         )
+
+
+class TestPartialDictReturns:
+    """[#33] All autocode nodes must return partial update dicts, not {**state, ...}.
+
+    LangGraph best practice: nodes return only the changed keys, not the whole
+    state. This was already done in v1.0.1/v1.0.2 but had no test guarding it.
+    This class locks in the clean state — a future refactor that reintroduces
+    {**state, ...} or bare `return state` will fail these tests.
+
+    Uses AST source inspection so the check is on actual code, not comments.
+    """
+
+    _NODE_MODULES = [
+        "classify", "validate", "brainstorm", "plan", "branch", "tests",
+        "execute", "write_files", "analyze_impact", "run_tests", "debug",
+        "verify", "report", "commit", "memory", "create_skill",
+    ]
+
+    def _get_node_functions(self):
+        """Yield (module_name, function_name, function_source) for all node_* funcs."""
+        import ast, importlib, inspect
+        for mod_name in self._NODE_MODULES:
+            mod = importlib.import_module(f"workflows.autocode_impl.nodes.{mod_name}")
+            for attr in dir(mod):
+                obj = getattr(mod, attr)
+                if callable(obj) and attr.startswith("node_") and not inspect.iscoroutinefunction(obj):
+                    try:
+                        source = inspect.getsource(obj)
+                        yield mod_name, attr, source
+                    except (OSError, TypeError):
+                        pass
+
+    def test_no_node_returns_star_state_spread(self):
+        """No node may return {**state, ...} — the old anti-pattern."""
+        import ast
+        violations = []
+        for mod_name, func_name, source in self._get_node_functions():
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Return) and node.value and isinstance(node.value, ast.Dict):
+                    for k, v in zip(node.value.keys, node.value.values):
+                        # **state spread appears as key=None, value=Name('state')
+                        if k is None and isinstance(v, ast.Name) and v.id == "state":
+                            violations.append(f"{mod_name}.{func_name}")
+        assert not violations, (
+            f"These nodes return {{{{**state, ...}}}} (must return partial dict only): {violations}"
+        )
+
+    def test_no_node_returns_bare_state(self):
+        """No node may `return state` (whole state) — must return a dict of changed keys only."""
+        import ast
+        violations = []
+        for mod_name, func_name, source in self._get_node_functions():
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Return) and node.value and isinstance(node.value, ast.Name) and node.value.id == "state":
+                    violations.append(f"{mod_name}.{func_name}")
+        assert not violations, (
+            f"These nodes do bare `return state` (must return partial dict): {violations}"
+        )
+
+    def test_all_nodes_are_sync(self):
+        """All nodes must be sync (def, not async def) — LangGraph requirement."""
+        import inspect, importlib
+        violations = []
+        for mod_name in self._NODE_MODULES:
+            mod = importlib.import_module(f"workflows.autocode_impl.nodes.{mod_name}")
+            for attr in dir(mod):
+                obj = getattr(mod, attr)
+                if callable(obj) and attr.startswith("node_"):
+                    if inspect.iscoroutinefunction(obj):
+                        violations.append(f"{mod_name}.{attr}")
+        assert not violations, f"These nodes are async (must be sync): {violations}"

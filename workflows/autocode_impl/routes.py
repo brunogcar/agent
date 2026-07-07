@@ -35,12 +35,20 @@ def route_after_analyze_impact(state: AutocodeState) -> str:
     return "node_run_tests"
 
 def route_after_run_tests(state: AutocodeState) -> str:
-    """Route after running tests node."""
+    """Route after running tests node.
+
+    [#39] 'stuck' status (same error signature on consecutive iterations) now
+    routes to node_verify — skips the doomed debug loop. The debug node would
+    just regenerate the same fix for the same error.
+    """
     tdd_status = state.get("tdd_status", "")
     test_results = state.get("test_results", {})
     if tdd_status == "passed" or test_results.get("success"):
         return "node_verify"
     elif tdd_status == "max_retries_exceeded":
+        return "node_verify"
+    elif tdd_status == "stuck":
+        # [#39] Bail to verify — the debug loop is spinning on the same error.
         return "node_verify"
     else:
         return "node_systematic_debug"

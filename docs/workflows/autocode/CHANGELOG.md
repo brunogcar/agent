@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.1.2 | 2026-07-06 | **Small-fix batch:** #39 (stuck detection — same error signature on consecutive iterations bails to verify), #44 (structured artifacts in return dict), #46 (multi-file git-diff input via `files={"all changed": ""}` + `git_diff=True`), #47 (dry-run guards on write_files/commit/branch). Also folded in v1.1.1: `TestPartialDictReturns` + changelog cleanup. |
 | v1.1 | 2026-07-06 | **Facade fix + WORKFLOW_METADATA + routing fixes.** Fixed the broken facade (was unreachable for 2 versions due to 4 dead imports + double-compile + uncompiled-graph crash in base.py). Added `WORKFLOW_METADATA` (17 nodes, loops, branches, safety_features). Fixed `route_after_write_files` to include `audit`/`edit` (was skipping impact analysis). Made `distill_memory` non-fatal (`tracer.warning` not `tracer.error`). Added facade contract tests. Based on cross-LLM review (Gemini, DeepSeek, Mistral, Qwen, Kimi). |
 | v1.0.2 | 2026-07-05 | P1/P2 bugfix batch (18 items — see Completed) |
 | v1.0.1 | 2026-07-05 | P0 bugfix batch (11 items — see Completed) |
@@ -69,6 +70,12 @@
 | **Facade contract tests** | ✅ v1.1 | `test_facade.py` — import + run_workflow + graph structure + routing |
 | **`audit`/`edit` routing fix** | ✅ v1.1 | Now route to `analyze_impact` (was skipping it) |
 | **`distill_memory` non-fatal** | ✅ v1.1 | `tracer.warning` not `tracer.error` (code already committed) |
+| **#33 Partial-dict returns** | ✅ v1.1.1 | All 16 nodes already return partial dicts (done in v1.0.1/v1.0.2). Added `TestPartialDictReturns` to lock in the clean state. |
+| **#2 Checkpoint/resume** | ✅ v1.1 | Facade delegates to `run_workflow("autocode")` which has checkpoint/resume infra. |
+| **#39 Stuck detection in debug loop** | ✅ v1.1.2 | Same error signature on consecutive iterations → `tdd_status="stuck"` → routes to verify (skips doomed debug loop). `_error_signature()` normalizes stderr. |
+| **#44 Structured artifacts** | ✅ v1.1.2 | `run_autocode_agent()` now returns an `artifacts` dict: `commit_sha`, `branch_name`, `modified_files`, `test_results`, `tdd_status`, `tdd_iteration`, `verification_passed`, `skill_created`, `skill_path`. |
+| **#46 Multi-file git-diff input** | ✅ v1.1.2 | `files={"all changed": ""}` + `git_diff=True` resolves changed files via `git diff --name-only`. Merges with explicitly-passed files. |
+| **#47 Dry-run actually dry** | ✅ v1.1.2 | `dry_run=True` now guards `node_write_files`, `node_commit`, `node_git_branch`. Guards run AFTER validation checks so dry_run still surfaces JSON/verification errors. |
 
 ---
 
@@ -77,18 +84,16 @@
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
 | 32 | **IDE integration** | LSP or VS Code extension for autocode. | P3 |
-| 33 | **Partial-dict returns across 16 nodes** | LangGraph best practice; matches research/understand/data/deep_research. | P1 |
 | 34 | **Remove `run_autocode_agent()` backward-compat shim** | Once all callers use `run_workflow("autocode")` directly, remove the shim. Audit callers first. | P2 |
 | 35 | **`invoke_with_timeout` daemon-thread zombie risk** | On timeout, daemon thread keeps running (Python can't kill threads). Consider `concurrent.futures` with cancellation or `multiprocessing`. | P2 |
 | 36 | **`create_skill` smoke-test import + git commit** | Currently has AST syntax check (v1.0.2 #16) but no import test or git commit. Skills should be committed like all other code changes. | P2 |
 | 37 | **Context summarization node** | Compress debug-loop history before it overflows the LLM context window. Add a `summarize_context` node before the debug loop re-enters. | P1 |
 | 38 | **Human-in-the-Loop (HiTL) approval** | Pause graph before `commit` or `create_skill`. Send notification, wait for approve/reject via MCP. | P2 |
-| 39 | **Stuck detection in debug loop** | If the same error appears on consecutive iterations, bail to `report` instead of looping. Saves tokens. | P2 |
 | 40 | **Adaptive timeout by task type** | `create_skill`=120s, `audit`=300s, `feature`=900s. Better than one global timeout. | P2 |
 | 41 | **AST/linter pre-check before pytest** | Run `ruff`/`flake8` before `pytest`. Catch indentation errors instantly without booting the test runner. | P2 |
 | 42 | **Goal sanitization** | Enforce max length + strip control chars on `goal`/`task` input. Defense in depth (path traversal, command injection, token budget). | P2 |
 | 43 | **GitHub PR workflow** | After github tool is created, wire autocode to create PRs (branch → commit → push → open PR) instead of just commits. | P2 |
-| 44 | **Structured artifacts** | Return `{"commit_sha", "branch_name", "modified_files", "pr_url", "test_results"}` as a typed artifacts dict. | P3 |
+| 45 | **Streaming node transitions** | Stream `tracer.step` events to the client via WebSocket so the user sees progress instead of a 5-minute blank wait. Needs gateway integration. | P2 |
 
 ---
 

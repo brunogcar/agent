@@ -106,6 +106,7 @@ def node_run_tests(state: AutocodeState) -> dict:
         tracer.step(tid, "run_tests", f"Tests passed in {current_iter} iterations")
         updates["tdd_status"] = "passed"
         updates["tdd_error"] = ""
+        updates["last_test_error"] = ""  # [#39] clear on success
 
         # [PHASE 3 FIX] Wire success callback: store procedural memory on convergence
         try:
@@ -122,8 +123,36 @@ def node_run_tests(state: AutocodeState) -> dict:
             pass # Non-fatal: memory storage failure should not break the workflow
 
     else:
-        updates["tdd_status"] = "failed"
-        updates["tdd_error"] = test_results.get("stderr", "Tests failed")
-        tracer.step(tid, "run_tests", f"Tests failed (iteration {current_iter})")
+        current_error = test_results.get("stderr", "Tests failed")
+        updates["tdd_error"] = current_error
+        # [#39] Stuck detection: compare error signature to previous iteration.
+        # If the same error repeats and we're past iteration 1, the debug loop
+        # is spinning on the same mistake — bail to verify instead of looping.
+        prev_error = state.get("last_test_error", "")
+        if prev_error and current_iter > 1 and _error_signature(prev_error) == _error_signature(current_error):
+            tracer.warning(
+                tid, "run_tests",
+                f"Stuck detection: same error signature on iteration {current_iter}, bailing to verify"
+            )
+            updates["tdd_status"] = "stuck"
+        else:
+            updates["tdd_status"] = "failed"
+        updates["last_test_error"] = current_error
+        tracer.step(tid, "run_tests", f"Tests failed (iteration {current_iter}, status={updates['tdd_status']})")
 
     return updates
+
+
+def _error_signature(error_text: str) -> str:
+    """[#39] Extract a comparable error signature from test stderr.
+
+    Normalizes the error so trivial differences (file paths, line numbers,
+    tracebacks) don't mask a stuck loop. We keep the last few lines that
+    usually contain the actual assertion/error type.
+    """
+    if not error_text:
+        return ""
+    lines = [ln.strip() for ln in error_text.splitlines() if ln.strip()]
+    # Take the last 3 non-empty lines — usually the assertion + error type.
+    # This ignores path/line-number noise at the top of tracebacks.
+    return "\n".join(lines[-3:]) if lines else ""

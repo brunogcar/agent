@@ -17,6 +17,11 @@ def node_commit(state: AutocodeState) -> dict:
         return {}
     if not state.get("verification_passed"):
         return {"status": "skipped", "commit_sha": ""}
+    # [#47] Dry-run: skip the actual commit AFTER the verification gate.
+    # (The verification check above runs first so dry_run doesn't mask it.)
+    if state.get("dry_run"):
+        tracer.step(tid, "commit", "dry_run=True — skipping git commit")
+        return {"status": "dry_run", "commit_sha": "(dry-run)"}
     plan = state.get("plan", [])
     labels = ", ".join(
         s["label"] for s in plan

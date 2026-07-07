@@ -27,6 +27,10 @@ def node_git_branch(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     if state.get("status") == "needs_clarification":
         return {}
+    # [#47] Dry-run: skip branch creation. No git mutations in dry-run mode.
+    if state.get("dry_run"):
+        tracer.step(tid, "git_branch", "dry_run=True — skipping branch creation")
+        return {}
     # [GIT SCOPING] Route git ops to workspace project if set, else agent_root
     root = state.get("project_root")
 
