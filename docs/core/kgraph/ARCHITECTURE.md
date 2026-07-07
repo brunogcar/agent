@@ -14,7 +14,8 @@
 | `core/kgraph/storage.py` | `GraphStore`: SQLite graph with WAL, thread-local connections |
 | `core/kgraph/test_index.py` | `load_test_index()`, `save_test_index()`, hybrid validation |
 | `core/kgraph/test_mapper.py` | `get_targeted_tests()`, `rebuild_test_index()`, `CRITICAL_PATHS` |
-| `core/kgraph/vectors.py` | `get_project_vector_collection()`: project-specific ChromaDB |
+| `core/kgraph/embeddings.py` | `extract_definitions()` (AST chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) |
+| `core/kgraph/vectors.py` | `upsert_file_vectors()`, `query_similar_code()`: project-specific ChromaDB vector store |
 
 ---
 
@@ -30,7 +31,8 @@ core/kgraph/
 ├── storage.py          # SQLite graph store (WAL, thread-local connections, write serialization)
 ├── test_index.py       # Persistent test index with hybrid validation
 ├── test_mapper.py      # Source file → test file mapping via AST
-└── vectors.py          # Project-specific ChromaDB collections
+├── embeddings.py       # [#3] extract_definitions() + embed_texts() (LM Studio)
+└── vectors.py          # [#3] upsert_file_vectors() + query_similar_code() (ChromaDB)
 ```
 
 ---
@@ -133,4 +135,4 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-04. See [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.1 — embeddings + vectors). See [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

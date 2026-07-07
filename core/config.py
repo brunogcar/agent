@@ -84,6 +84,15 @@ class Config:
         self.lm_studio_base_url = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
         self.lm_studio_restart_cmd = os.getenv("LM_STUDIO_RESTART_CMD", "")
 
+        # -- Embedding Model (for codebase vector indexing in understand workflow) --
+        # Uses the LM Studio /v1/embeddings endpoint (OpenAI-compatible).
+        # Download a GGUF embedding model (e.g. All-MiniLM-L6-v2-Embedding-GGUF)
+        # in LM Studio, then set EMBEDDING_MODEL to the model name LM Studio shows.
+        # Set EMBEDDING_ENABLED=false to disable vector indexing entirely.
+        self.embedding_model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2-GGUF")
+        self.embedding_base_url = os.getenv("EMBEDDING_BASE_URL", self.lm_studio_base_url)
+        self.embedding_enabled = os.getenv("EMBEDDING_ENABLED", "true").lower() in ("true", "1", "yes")
+
         # -- Cloud Advisory Providers (OpenAI-Compatible APIs) -----------------
         # If the API key is present in .env, the provider is registered and available.
         # Comment out the key in .env to disable the provider.

@@ -14,6 +14,8 @@
 8. **Never mutate `state` in-place** — Always return partial update `dict`s.
 9. **Never create `.bak` files** — Forbidden by project rules.
 10. **Never skip `compileall` before `pytest`** — Catches syntax errors early.
+11. **Never let embedding failure crash the workflow** — [v1.1] `embed_texts()` returns `None` on failure; `upsert_file_vectors()` returns 0. Vector indexing is best-effort. Graph edges must still be stored. Use `tracer.warning`, not `tracer.error`.
+12. **Never embed whole files when definitions exist** — [v1.1] Use `extract_definitions()` for per-function/class chunking. Whole-file embedding defeats semantic search (you can't find "the function that does X").
 
 ## ✅ ALWAYS DO
 
@@ -25,6 +27,9 @@
 16. **Always log report generation failures** — Use `tracer.error()`, not bare `except: pass`.
 17. **Always test sync node verification** — Assert `not inspect.iscoroutinefunction(node)`.
 18. **Always update this doc** when adding nodes, changing parsing logic, or modifying storage.
+19. **Always use `extract_definitions()` for chunking** — [v1.1] Per-definition (function/class/module) embeddings, not per-file or fixed-window. Richer semantic search.
+20. **Always delete old vectors before upserting** — [v1.1] `upsert_file_vectors()` calls `collection.delete(where={"file_path": ...})` first, so renamed/deleted definitions don't leave stale vectors.
+21. **Always batch embedding calls** — [v1.1] `embed_texts()` sends all texts in one HTTP request. Don't call it per-definition in a loop.
 
 ---
 
@@ -46,6 +51,10 @@
 > - **Why it matters:** Duplicate edges inflate the edge count and can cause redundant queries in impact analysis.
 > - **Fix:** Target paths are collected in a `set()` before conversion to `list()`, eliminating duplicates.
 
+> - **What happened:** [v1.1] ChromaDB vectors were never populated — `vectors.py` had `get_project_vector_collection()` but no code called it. The understand workflow built a graph (SQLite edges) but had no semantic search capability.
+> - **Why it matters:** Without vectors, "find the function that does X" required exact import-path knowledge. Semantic search enables finding code by description, which is how developers actually think about code.
+> - **Fix:** Added `extract_definitions()` (AST chunking into functions/classes/module) + `embed_texts()` (LM Studio `/v1/embeddings`) + `upsert_file_vectors()` (delete-then-insert into ChromaDB). `parse_and_store` calls all three after parsing each file. Graceful degradation: if LM Studio is down, vectors are skipped and the workflow completes with graph edges only.
+
 ---
 
-*Last updated: 2026-07-05 (v1.0 split). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-06 (v1.1 — vector indexing). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -14,6 +14,9 @@ def test_default_state_structure(make_project):
     assert state["status"] == "running"
     assert state["files_to_parse"] == []
     assert state["files_parsed"] == 0
+    assert state["edges_created"] == 0
+    assert state["vectors_created"] == 0  # [#3]
+    assert state["errors"] == []
 
 
 def test_default_state_includes_trace_id(make_project):

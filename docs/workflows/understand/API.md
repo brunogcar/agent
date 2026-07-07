@@ -59,20 +59,24 @@ result = run_workflow(
 
 ---
 
-### `node_parse_and_store(state)` — Phase 3: AST Parsing + Graph Storage
+### `node_parse_and_store(state)` — Phase 3: AST Parsing + Graph Storage + Vector Embeddings
 
-**Purpose:** Parse changed files and store dependency edges in the knowledge graph.
+**Purpose:** Parse changed files, store dependency edges in the knowledge graph, and populate code embeddings for semantic search.
 
 **Logic:**
 1. Process files in batches (configurable via `UNDERSTAND_BATCH_SIZE`, default 10)
 2. For each file, read content and parse imports via `_parse_dependencies_sync_from_string()`
 3. Deduplicate target paths (both `dep` and `dep.replace(".", "/") + ".py"`)
 4. Upsert file graph node + dependency edges via `GraphStore.upsert_file_graph()`
-5. Close GraphStore connection when done
+5. **[v1.1]** Extract top-level definitions (functions, classes, module docstring) via `extract_definitions()`
+6. **[v1.1]** Embed each definition via LM Studio's `/v1/embeddings` endpoint and upsert into ChromaDB via `upsert_file_vectors()`
+7. Close GraphStore connection when done
 
-**Output:** Partial dict with `files_parsed`, `edges_created`, `errors`, `status`.
+**Output:** Partial dict with `files_parsed`, `edges_created`, `vectors_created`, `errors`, `status`.
 
 **Status values:** `"completed"` (no errors) or `"completed_with_errors"` (some files failed but workflow succeeded).
+
+**Graceful degradation:** If LM Studio is unavailable or the embedding model isn't loaded, `upsert_file_vectors()` returns 0 and logs a `tracer.warning`. The workflow continues — graph edges are still stored, but semantic search won't work until LM Studio is running.
 
 ---
 
@@ -98,6 +102,7 @@ result = run_workflow(
   "project_path": "/path/to/project",
   "files_parsed": 42,
   "edges_created": 156,
+  "vectors_created": 128,
   "errors": [],
   "trace_id": "abc123"
 }
@@ -110,10 +115,25 @@ result = run_workflow(
   "project_path": "/path/to/project",
   "files_parsed": 40,
   "edges_created": 150,
+  "vectors_created": 120,
   "errors": ["Failed to parse broken.py: SyntaxError: ..."],
   "trace_id": "abc123"
 }
 ```
+
+### Success (LM Studio unavailable — vectors skipped)
+```json
+{
+  "status": "completed",
+  "project_path": "/path/to/project",
+  "files_parsed": 42,
+  "edges_created": 156,
+  "vectors_created": 0,
+  "errors": [],
+  "trace_id": "abc123"
+}
+```
+> When `vectors_created` is 0 but `files_parsed` > 0, LM Studio was unavailable. Graph edges are stored; semantic search won't work until LM Studio is running with the embedding model loaded.
 
 ### Failure
 ```json
@@ -132,7 +152,12 @@ result = run_workflow(
 |--------|--------|---------|-------------|
 | `UNDERSTAND_BATCH_SIZE` | `.env` | `10` | Number of files to parse per batch |
 | `skip_dirs` | Hardcoded | `node_modules`, `__pycache__`, `.git`, etc. | Directories to skip during file discovery |
+| `EMBEDDING_MODEL` | `.env` | `all-MiniLM-L6-v2-GGUF` | LM Studio embedding model name (set to match what LM Studio shows) |
+| `EMBEDDING_BASE_URL` | `.env` | same as `LM_STUDIO_BASE_URL` | OpenAI-compatible embeddings endpoint |
+| `EMBEDDING_ENABLED` | `.env` | `true` | Set to `false` to disable vector indexing entirely |
+
+**Recommended embedding model:** [All-MiniLM-L6-v2-Embedding-GGUF](https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF) (q8 = 25MB). Download in LM Studio under Models → Embeddings.
 
 ---
 
-*Last updated: 2026-07-05 (v1.0 split). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.1 — vector indexing). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

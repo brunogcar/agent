@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.1 | 2026-07-06 | **ChromaDB vector indexing (#3):** `parse_and_store` now populates per-definition code embeddings (functions, classes, module docstrings) in ChromaDB for semantic search. Uses LM Studio's `/v1/embeddings` endpoint (OpenAI-compatible) with GGUF embedding models. Graceful degradation: if LM Studio is unavailable, vector indexing is skipped and the workflow completes with graph edges only. New modules: `core/kgraph/embeddings.py` (AST chunking + embedding client), `core/kgraph/vectors.py` (upsert + query). New config: `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED`. Also marked #2 (test restructure) as completed. |
 | v1.0 | 2026-07-05 | **Subpackage split:** Split monolithic `workflows/understand.py` (326 lines) into `workflows/understand_impl/` subpackage with per-node modules. Added `WORKFLOW_METADATA` for MCP client introspection. Thin facade re-exports `build_understand_graph`, `_default_state`, `WORKFLOW_METADATA`, `run_understand_workflow_sync`. Tests split into per-node files (`test_graph`, `test_state`, `test_init_project`, `test_helpers`) + `conftest.py`. |
 | Pre-v1.0 | 2026-07-05 | **Architecture conversion (pre-split):** All nodes converted from `async def` to `def` (sync). Routed through `base.py`'s standard `graph.invoke()` — gives understand checkpoint/resume support and trace_id propagation like all other workflows. Removed dangerous `ThreadPoolExecutor` + `new_event_loop()` sync facade. Fixed 16 bugs: trace_id propagation (#1/#2), GraphStore lifecycle (#3/#4/#15), os.walk mutation (#5), chunked MD5 (#6), duplicate edges (#7), CPU-bound blocking (#8 — auto-fixed by sync conversion), completed_with_errors (#9), silent report exception (#11), nested event loop (#12 — auto-fixed), return type annotation (#13), configurable batch size (#17). |
 
@@ -40,6 +41,8 @@
 | Trace correlation | ✅ v1.0 | trace_id propagated through state to all nodes |
 | Checkpoint/resume support | ✅ v1.0 | Routed through base.py's standard graph.invoke() path |
 | Sync nodes (no event loop) | ✅ v1.0 | All nodes are def (sync) — consistent with other workflows |
+| Test restructure | ✅ v1.0 | Per-node test files + conftest.py (done in v1.0 split) |
+| ChromaDB vector indexing | ✅ v1.1 | Per-definition embeddings via LM Studio `/v1/embeddings`. AST chunking (functions, classes, module docstrings). Graceful degradation when LM Studio is down. Semantic search via `query_similar_code()`. |
 
 ---
 
@@ -48,9 +51,7 @@
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
 | 1 | **Configurable `skip_dirs`** | Currently hardcoded local set. Should be `.env` or `ProjectManager` config. | P3 |
-| 2 | **Test restructure** | Split `test_understand.py` into per-node files + `conftest.py` | P1 |
-| 3 | **ChromaDB vector indexing** | Currently GraphStore creates schema but vectors are not populated | P2 |
-| 4 | **Multi-language support** | Support JavaScript, TypeScript, Go, etc. | P3 |
+| 4 | **Multi-language support** | Support JavaScript, TypeScript, Go, etc. via tree-sitter. Rolled out incrementally (Python first via tree-sitter, then JS/TS, then Go, then Rust). | P3 |
 
 ---
 

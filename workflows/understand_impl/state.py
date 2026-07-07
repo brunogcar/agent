@@ -21,6 +21,7 @@ class UnderstandState(TypedDict, total=False):
     files_to_parse: list[tuple[str, str, str, float, int]]
     files_parsed: int
     edges_created: int
+    vectors_created: int  # [#3] code embeddings stored in ChromaDB
     errors: list[str]
 
 
@@ -37,5 +38,6 @@ def _default_state(project_path: str, is_agent_root: bool = False, trace_id: str
         "files_to_parse": [],
         "files_parsed": 0,
         "edges_created": 0,
+        "vectors_created": 0,
         "errors": [],
     }

@@ -386,19 +386,51 @@ Manual mappings take priority over AST-derived mappings.
 
 ---
 
-### 7. Vectors (`vectors.py`)
+### 7. Embeddings (`embeddings.py`) — v1.1
+
+AST-based code chunking + LM Studio embedding client for semantic code search.
+
+```python
+from core.kgraph.embeddings import extract_definitions, embed_texts
+
+# Split Python source into top-level definitions for embedding
+definitions = extract_definitions(source_code)
+# → [{"name": "foo", "type": "function", "source": "def foo(): ...", "line_start": 1, "line_end": 5}, ...]
+
+# Embed texts via LM Studio /v1/embeddings (OpenAI-compatible)
+vectors = embed_texts(["def foo(): pass", "class Bar: pass"])
+# → [[0.1, 0.2, ...], [0.3, 0.4, ...]]  or None if LM Studio unavailable
+```
+
+**Config:** `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED` (in `.env`).
+**Recommended model:** All-MiniLM-L6-v2-Embedding-GGUF (q8, 25MB) in LM Studio.
+**Graceful degradation:** Returns `None` on failure — callers must handle this.
+
+---
+
+### 8. Vectors (`vectors.py`) — v1.1
 
 Project-specific ChromaDB collections for code embeddings, physically isolated from the main memory system.
 
 ```python
-collection = get_project_vector_collection("abc123def456")
-# Returns ChromaDB collection named "kg_abc123def456_embeddings"
-# Uses cosine similarity, stored in main ChromaDB path
+from core.kgraph.vectors import upsert_file_vectors, query_similar_code
+
+# Store embeddings for a file's definitions (delete old, insert new)
+count = upsert_file_vectors("abc123def456", "core/config.py", definitions, trace_id="t1")
+# → 5  (number of vectors stored; 0 if LM Studio unavailable)
+
+# Semantic search: find code similar to a query
+results = query_similar_code("abc123def456", "how does config loading work?", n_results=10)
+# → [{"file_path": "core/config.py", "name": "Config.__init__", "type": "function",
+#     "line_start": 50, "line_end": 120, "distance": 0.23, "source": "..."}, ...]
 ```
+
+**Collection naming:** `kg_{project_id}_embeddings` (cosine similarity, stored in main ChromaDB path).
+**Delete-then-insert:** `upsert_file_vectors` deletes old vectors for the file before inserting, so renamed/deleted definitions don't leave stale vectors.
 
 ---
 
-### 8. Cleanup (`cleanup.py`)
+### 9. Cleanup (`cleanup.py`)
 
 Prevents disk space exhaustion and WAL file bloat during long-term unattended operation.
 
@@ -410,4 +442,4 @@ Prevents disk space exhaustion and WAL file bloat during long-term unattended op
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.1 — embeddings + vectors). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

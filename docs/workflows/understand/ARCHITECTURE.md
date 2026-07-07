@@ -10,8 +10,10 @@
 | `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths |
 | `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode |
 | `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — sync AST-based import extraction |
+| `core/kgraph/embeddings.py` | `extract_definitions()` (AST chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) |
+| `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store |
 | `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()` |
-| `tests/workflows/understand/` | Test files (test_graph, test_state, test_init_project, test_helpers + conftest) |
+| `tests/workflows/understand/` | Test files (test_graph, test_state, test_init_project, test_helpers, test_embeddings + conftest) |
 
 ---
 
@@ -26,8 +28,12 @@ workflows/understand_impl/
 └── nodes/
     ├── init_project.py                    # node_init_project — ProjectManager init, GraphStore verify
     ├── discover_files.py                  # node_discover_files — os.walk, chunked MD5, changed file detection
-    ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, GraphStore upsert
+    ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, GraphStore + [#3] vector embeddings
     └── report.py                          # node_report — report generation with error logging
+
+core/kgraph/
+├── embeddings.py                           # [#3] extract_definitions() + embed_texts() (LM Studio)
+└── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() (ChromaDB)
 ```
 
 ---
@@ -53,6 +59,7 @@ graph TD
 - **Deduplicated edges** — Target paths are stored in a `set` before passing to `upsert_file_graph()`, preventing duplicate dependency edges.
 - **Trace correlation** — `trace_id` is injected into state by `_default_state()` and read by all nodes via `state.get("trace_id")`. No hardcoded tid strings.
 - **Checkpoint/resume** — Routed through `base.py`'s standard `graph.invoke()` path, which handles checkpoint save/restore automatically.
+- **Code embeddings (v1.1)** — `parse_and_store` now populates ChromaDB vector embeddings for each file's top-level definitions (functions, classes, module docstrings). Uses LM Studio's `/v1/embeddings` endpoint (OpenAI-compatible) with GGUF embedding models (e.g. `all-MiniLM-L6-v2-GGUF`, 25MB q8). Per-definition chunking (not per-file or fixed-window) gives the richest semantic search. Graceful degradation: if LM Studio is unavailable, vector indexing is skipped and the workflow completes with graph edges only. Config: `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED` in `.env`.
 
 ---
 
@@ -62,16 +69,30 @@ graph TD
 .\venv\Scripts\python tests\workflows\understand\ -W error --tb=short -v
 ```
 
+**Test layout:**
+```text
+tests/workflows/understand/
+├── conftest.py            # make_project fixture
+├── test_graph.py          # topology + WORKFLOW_METADATA
+├── test_state.py          # _default_state structure + trace_id
+├── test_init_project.py   # node_init_project
+├── test_helpers.py        # _chunked_md5 + sync nodes + trace ID + partial dicts
+└── test_embeddings.py     # [#3] extract_definitions + embed_texts + upsert_file_vectors
+```
+
 **Test coverage:**
 - Graph compilation
-- Default state structure (including trace_id)
+- Default state structure (including trace_id, vectors_created)
 - node_init_project: creates dirs, fails without code/ dir
 - Trace ID propagation (no hardcoded tid strings)
 - Sync node verification (no async def)
 - No event loop hacks (no ThreadPoolExecutor, no new_event_loop, no asyncio.gather)
 - Chunked MD5 correctness
 - completed_with_errors treated as success
+- [#3] AST chunking: function/class/module extraction, line ranges, syntax error fallback
+- [#3] Embedding client: LM Studio endpoint mock, graceful failure, disabled flag
+- [#3] Vector upsert: delete-then-insert, metadata, graceful degradation
 
 ---
 
-*Last updated: 2026-07-05 (v1.0 split). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.1 — vector indexing). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
