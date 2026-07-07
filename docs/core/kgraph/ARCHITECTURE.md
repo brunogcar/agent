@@ -7,7 +7,8 @@
 | File | Purpose |
 |------|---------|
 | `core/kgraph/__init__.py` | Public API exports |
-| `core/kgraph/ast_parser.py` | AST parsing with LRU cache, thread pool, async wrappers |
+| `core/kgraph/ast_parser.py` | AST parsing (delegates to tree-sitter for Python; backward-compatible API) |
+| `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust via tree-sitter |
 | `core/kgraph/cleanup.py` | `KGCleanup`: disk space + WAL management |
 | `core/kgraph/project.py` | `ProjectManager`: isolation, paths, indexing mode |
 | `core/kgraph/queries.py` | `find_relevant_files()`, `get_dependencies()`, `get_callers()` |
@@ -23,9 +24,10 @@
 
 ```text
 core/kgraph/
-├── __init__.py         # Public API exports
-├── ast_parser.py       # Dedicated AST parsing with caching + thread pool
-├── cleanup.py          # Disk space and WAL file management
+├── __init__.py              # Public API exports
+├── ast_parser.py            # AST parsing (delegates to tree-sitter; backward-compatible)
+├── tree_sitter_parser.py    # [#4] Multi-language: Python, JS/TS, Go, Rust
+├── cleanup.py               # Disk space and WAL file management
 ├── project.py          # Project isolation, path management, indexing mode
 ├── queries.py          # Read-only graph queries (dependencies, callers, file search)
 ├── storage.py          # SQLite graph store (WAL, thread-local connections, write serialization)
@@ -135,4 +137,4 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-06 (v1.1 — embeddings + vectors). See [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.2 — tree-sitter multi-language parser). See [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

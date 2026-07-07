@@ -1,10 +1,10 @@
 """Node: parse_and_store — Parse changed files, store dependency edges + code embeddings.
 
-[#3] Now also populates ChromaDB vector embeddings for each file's top-level
-definitions (functions, classes, module docstring). If the embedding service
-(LM Studio) is unavailable, vector indexing is skipped gracefully — the graph
-edges in SQLite are still stored. Semantic search won't work until LM Studio
-is running with the embedding model loaded.
+[#3] Populates ChromaDB vector embeddings for each file's top-level definitions.
+[#4] Multi-language support via tree-sitter (Python, JS/TS, Go, Rust).
+
+If the embedding service (LM Studio) is unavailable, vector indexing is skipped
+gracefully — the graph edges in SQLite are still stored.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from core.tracer import tracer
 from core.config import cfg
 from core.kgraph.project import ProjectManager
 from core.kgraph.storage import GraphStore
-from core.kgraph.ast_parser import _parse_dependencies_sync_from_string
+from core.kgraph.tree_sitter_parser import extract_imports, get_language_for_file, is_supported
 from core.kgraph.embeddings import extract_definitions
 from core.kgraph.vectors import upsert_file_vectors
 
@@ -46,12 +46,17 @@ def node_parse_and_store(state: UnderstandState) -> dict:
         for full_path, rel_path, current_hash, mtime, size in batch:
             try:
                 content = Path(full_path).read_text(encoding="utf-8", errors="replace")
-                deps = _parse_dependencies_sync_from_string(content)
+
+                # [#4] Detect language and use tree-sitter for imports
+                language = get_language_for_file(rel_path) or "python"
+                deps = extract_imports(content, language)
 
                 target_paths = set()
                 for dep in deps:
                     target_paths.add(dep)
-                    target_paths.add(dep.replace(".", "/") + ".py")
+                    # For Python, also add the path-form (dotted → slashes)
+                    if language == "python":
+                        target_paths.add(dep.replace(".", "/") + ".py")
 
                 store.upsert_file_graph(
                     state["project_id"], rel_path, current_hash,
@@ -61,9 +66,9 @@ def node_parse_and_store(state: UnderstandState) -> dict:
                 edges += len(target_paths)
 
                 # [#3] Populate code embeddings for semantic search.
-                # Graceful: if LM Studio is unavailable, this returns 0
-                # and the workflow continues with graph edges only.
-                definitions = extract_definitions(content)
+                # [#4] Pass the detected language for multi-language chunking.
+                # Graceful: if LM Studio is unavailable, this returns 0.
+                definitions = extract_definitions(content, language)
                 vectors += upsert_file_vectors(
                     state["project_id"], rel_path, definitions, trace_id=tid,
                 )

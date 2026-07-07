@@ -45,11 +45,11 @@ result = run_workflow(
 
 ### `node_discover_files(state)` — Phase 2: File Discovery
 
-**Purpose:** Scan the project for changed/new Python files that need indexing.
+**Purpose:** Scan the project for changed/new files that need indexing.
 
 **Logic:**
 1. Walk the source tree with `os.walk()`, skipping common directories
-2. For each `.py` file, check if it changed since last index (mtime + size)
+2. For each file with a supported extension (`.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.go`, `.rs`), check if it changed since last index (mtime + size)
 3. If changed, compute chunked MD5 hash and compare with stored hash
 4. Collect all changed files as `(full_path, rel_path, hash, mtime, size)` tuples
 
@@ -57,24 +57,28 @@ result = run_workflow(
 
 **Performance:** Uses `_chunked_md5()` (8KB chunks) instead of `read_bytes()` to avoid memory spikes on large files.
 
+**[#4] Multi-language:** Supported extensions are defined in `core/kgraph/tree_sitter_parser.SUPPORTED_EXTENSIONS`. Adding a new language is a 3-line change there.
+
 ---
 
-### `node_parse_and_store(state)` — Phase 3: AST Parsing + Graph Storage + Vector Embeddings
+### `node_parse_and_store(state)` — Phase 3: Tree-sitter Parsing + Graph Storage + Vector Embeddings
 
 **Purpose:** Parse changed files, store dependency edges in the knowledge graph, and populate code embeddings for semantic search.
 
 **Logic:**
 1. Process files in batches (configurable via `UNDERSTAND_BATCH_SIZE`, default 10)
-2. For each file, read content and parse imports via `_parse_dependencies_sync_from_string()`
-3. Deduplicate target paths (both `dep` and `dep.replace(".", "/") + ".py"`)
+2. For each file, detect the language from the extension and parse imports via tree-sitter `extract_imports(content, language)`
+3. Deduplicate target paths (for Python, both `dep` and `dep.replace(".", "/") + ".py"`)
 4. Upsert file graph node + dependency edges via `GraphStore.upsert_file_graph()`
-5. **[v1.1]** Extract top-level definitions (functions, classes, module docstring) via `extract_definitions()`
+5. **[v1.1]** Extract top-level definitions via `extract_definitions(content, language)` (tree-sitter)
 6. **[v1.1]** Embed each definition via LM Studio's `/v1/embeddings` endpoint and upsert into ChromaDB via `upsert_file_vectors()`
 7. Close GraphStore connection when done
 
 **Output:** Partial dict with `files_parsed`, `edges_created`, `vectors_created`, `errors`, `status`.
 
 **Status values:** `"completed"` (no errors) or `"completed_with_errors"` (some files failed but workflow succeeded).
+
+**[#4] Multi-language:** Language is detected per file via `get_language_for_file(rel_path)`. Tree-sitter handles Python, JavaScript/TypeScript, Go, and Rust through one API.
 
 **Graceful degradation:** If LM Studio is unavailable or the embedding model isn't loaded, `upsert_file_vectors()` returns 0 and logs a `tracer.warning`. The workflow continues — graph edges are still stored, but semantic search won't work until LM Studio is running.
 
@@ -160,4 +164,4 @@ result = run_workflow(
 
 ---
 
-*Last updated: 2026-07-06 (v1.1 — vector indexing). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.2 — multi-language support). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

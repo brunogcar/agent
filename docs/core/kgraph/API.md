@@ -386,9 +386,38 @@ Manual mappings take priority over AST-derived mappings.
 
 ---
 
+### 6b. Tree-sitter Parser (`tree_sitter_parser.py`) — v1.2
+
+[#4] Multi-language code parsing via tree-sitter. Replaces the Python-only `ast` parser with a unified API supporting Python, JavaScript/TypeScript, Go, and Rust.
+
+```python
+from core.kgraph.tree_sitter_parser import (
+    extract_imports, extract_definitions_ts,
+    get_language_for_file, is_supported, SUPPORTED_EXTENSIONS,
+)
+
+# Detect language from file extension
+lang = get_language_for_file("src/app.ts")  # → "typescript"
+
+# Extract imports (dependency edges)
+deps = extract_imports(source_code, "typescript")
+# → frozenset({"./utils", "react"})
+
+# Extract definitions (for embedding chunking)
+defs = extract_definitions_ts(source_code, "typescript")
+# → [{"name": "foo", "type": "function", "source": "...", "line_start": 1, "line_end": 5}, ...]
+```
+
+**Supported extensions:** `.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.go`, `.rs`
+**Adding a language:** 3-line change — add to `LANGUAGE_MAP`, `_IMPORT_NODE_TYPES`, `_DEFINITION_NODE_TYPES`.
+**Error recovery:** Tree-sitter handles syntax errors gracefully (extracts partial definitions, unlike `ast` which drops everything).
+**Backward compatibility:** `ast_parser.py` delegates to tree-sitter for Python — existing callers see no change.
+
+---
+
 ### 7. Embeddings (`embeddings.py`) — v1.1
 
-AST-based code chunking + LM Studio embedding client for semantic code search.
+Tree-sitter-based code chunking + LM Studio embedding client for semantic code search.
 
 ```python
 from core.kgraph.embeddings import extract_definitions, embed_texts
@@ -442,4 +471,4 @@ Prevents disk space exhaustion and WAL file bloat during long-term unattended op
 
 ---
 
-*Last updated: 2026-07-06 (v1.1 — embeddings + vectors). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.2 — tree-sitter multi-language parser). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

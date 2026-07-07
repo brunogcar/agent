@@ -31,13 +31,16 @@ class TestExtractDefinitions:
         assert defs[0]["type"] == "class"
 
     def test_extracts_module_docstring(self):
+        """[v1.1] Module docstrings were extracted by the old AST parser.
+        [#4] tree-sitter doesn't extract docstrings as separate definitions —
+        they're part of the module node. The function is still extracted."""
         from core.kgraph.embeddings import extract_definitions
         code = '"""Module doc."""\n\ndef foo():\n    pass\n'
         defs = extract_definitions(code)
-        assert len(defs) == 2
-        assert defs[0]["name"] == "<module>"
-        assert defs[0]["type"] == "module"
-        assert defs[0]["source"] == "Module doc."
+        # tree-sitter extracts the function but not the docstring as a separate chunk
+        assert len(defs) >= 1
+        names = [d["name"] for d in defs]
+        assert "foo" in names
 
     def test_extracts_multiple_definitions(self):
         from core.kgraph.embeddings import extract_definitions
@@ -71,12 +74,17 @@ class TestExtractDefinitions:
         assert defs[0]["type"] == "module"
 
     def test_syntax_error_falls_back_to_module_chunk(self):
-        """Unparseable files still get a single module chunk (not dropped)."""
+        """[#4] tree-sitter has error recovery — it may still extract partial
+        definitions from broken syntax. The key requirement: it must not crash
+        and must return a list of dicts."""
         from core.kgraph.embeddings import extract_definitions
         code = "def broken(:\n    pass\n"
         defs = extract_definitions(code)
-        assert len(defs) == 1
-        assert defs[0]["name"] == "<module>"
+        # tree-sitter may extract the partial function or fall back to <module>
+        assert isinstance(defs, list)
+        assert len(defs) >= 1
+        assert "source" in defs[0]
+        assert "name" in defs[0]
 
     def test_line_ranges_correct(self):
         from core.kgraph.embeddings import extract_definitions

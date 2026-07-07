@@ -1,6 +1,10 @@
 ﻿"""
 core/kgraph/ast_parser.py
 Dedicated, bounded AST parsing to prevent event loop blocking and memory leaks.
+
+[#4] Now delegates to tree-sitter for multi-language support. The public API
+is unchanged — _parse_dependencies_sync_from_string() still works for Python.
+New code should use core.kgraph.tree_sitter_parser directly for multi-language.
 """
 from __future__ import annotations
 import ast
@@ -10,6 +14,8 @@ from pathlib import Path
 from typing import FrozenSet
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
+
+from core.kgraph.tree_sitter_parser import extract_imports as _ts_extract_imports
 
 # Dedicated thread pool for CPU-bound AST work
 _AST_EXECUTOR = ThreadPoolExecutor(
@@ -74,19 +80,12 @@ def clear_ast_cache() -> None:
 
 # --- Phase 6: Parse from string (for micro-updates from state) ---
 def _parse_dependencies_sync_from_string(content: str) -> frozenset[str]:
-    try:
-        tree = ast.parse(content)
-        deps = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    deps.add(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    deps.add(node.module)
-        return frozenset(deps)
-    except Exception:
-        return frozenset()
+    """Extract Python imports from source string.
+
+    [#4] Now uses tree-sitter under the hood for consistency with multi-language
+    support. Returns the same frozenset of dotted module names as before.
+    """
+    return _ts_extract_imports(content, "python")
 
 @lru_cache(maxsize=512)
 def _parse_dependencies_cached(project_id: str, content_hash: str, content: str) -> frozenset[str]:

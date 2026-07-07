@@ -78,6 +78,10 @@ pyyaml                       # YAML parsing — benchmark/benchmark.py (import n
 # ── Token-aware context trimming (agent tool) ────────────────────────────
 tiktoken>=0.7.0              # Token counting for context budgets — tools/agent_ops/context.py
 
+# ── Multi-language code parsing (understand workflow) ────────────────────
+tree-sitter==0.21.3          # Parsing framework — pinned for tree-sitter-languages compat
+tree-sitter-languages==1.10.2 # Pre-built grammars: Python, JS/TS, Go, Rust, + 20 more
+
 # ── Testing ──────────────────────────────────────────────────────────────
 pytest>=7.4.0                # Test runner
 pytest-asyncio>=0.21.0       # Async test support

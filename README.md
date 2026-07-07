@@ -58,6 +58,14 @@ copy .env.example .env         # then edit model names + GATEWAY_SECRET
 2. `GATEWAY_SECRET=changeme` — must be changed or the REST API refuses to start in production.
 3. `AGENT_ROOT`, `WORKSPACE_ROOT` — point to your actual local directories.
 
+**Optional — Codebase Embeddings (semantic search):**
+The `understand` workflow can index code for semantic search ("find the function that does X"). To enable it:
+1. Download [All-MiniLM-L6-v2-Embedding-GGUF](https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF) (q8, 25MB) in LM Studio
+2. Load it under **Models → Embeddings**
+3. Set `EMBEDDING_MODEL` in `.env` to match the model name LM Studio shows
+
+If the embedding model isn't loaded, the workflow skips vector indexing gracefully — graph edges still work, just no semantic search. See [understand API docs](docs/workflows/understand/API.md) for details.
+
 **Connect to an MCP host** (LM Studio, Claude Desktop, Cursor): copy [`mcp.json`](mcp.json) into your host's MCP settings and update the `command` to point at your `venv/Scripts/python.exe`. See [§ MCP Configuration](#-configure-mcp-servers) below for details.
 
 ---

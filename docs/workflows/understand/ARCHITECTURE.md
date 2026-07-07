@@ -9,11 +9,12 @@
 | `workflows/understand.py` | Thin facade — re-exports from understand_impl + run_understand_workflow_sync() |
 | `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths |
 | `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode |
-| `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — sync AST-based import extraction |
-| `core/kgraph/embeddings.py` | `extract_definitions()` (AST chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) |
+| `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — delegates to tree-sitter (Python) |
+| `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust via tree-sitter |
+| `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) |
 | `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store |
 | `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()` |
-| `tests/workflows/understand/` | Test files (test_graph, test_state, test_init_project, test_helpers, test_embeddings + conftest) |
+| `tests/workflows/understand/` | Test files (test_graph, test_state, test_init_project, test_helpers, test_embeddings, test_tree_sitter_parser + conftest) |
 
 ---
 
@@ -32,6 +33,7 @@ workflows/understand_impl/
     └── report.py                          # node_report — report generation with error logging
 
 core/kgraph/
+├── tree_sitter_parser.py                   # [#4] Multi-language parser: Python, JS/TS, Go, Rust
 ├── embeddings.py                           # [#3] extract_definitions() + embed_texts() (LM Studio)
 └── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() (ChromaDB)
 ```
@@ -60,6 +62,7 @@ graph TD
 - **Trace correlation** — `trace_id` is injected into state by `_default_state()` and read by all nodes via `state.get("trace_id")`. No hardcoded tid strings.
 - **Checkpoint/resume** — Routed through `base.py`'s standard `graph.invoke()` path, which handles checkpoint save/restore automatically.
 - **Code embeddings (v1.1)** — `parse_and_store` now populates ChromaDB vector embeddings for each file's top-level definitions (functions, classes, module docstrings). Uses LM Studio's `/v1/embeddings` endpoint (OpenAI-compatible) with GGUF embedding models (e.g. `all-MiniLM-L6-v2-GGUF`, 25MB q8). Per-definition chunking (not per-file or fixed-window) gives the richest semantic search. Graceful degradation: if LM Studio is unavailable, vector indexing is skipped and the workflow completes with graph edges only. Config: `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED` in `.env`.
+- **Multi-language support (v1.2)** — Tree-sitter replaces Python's `ast` module as the parser. One unified API handles Python, JavaScript/TypeScript, Go, and Rust. `discover_files` finds all supported extensions; `parse_and_store` detects the language per file and uses tree-sitter for both import extraction and definition chunking. The old `ast_parser.py` API is preserved (delegates to tree-sitter) for backward compatibility. Adding a new language is a 3-line change in `tree_sitter_parser.py` (add to `LANGUAGE_MAP`, `_IMPORT_NODE_TYPES`, `_DEFINITION_NODE_TYPES`).
 
 ---
 
@@ -72,12 +75,13 @@ graph TD
 **Test layout:**
 ```text
 tests/workflows/understand/
-├── conftest.py            # make_project fixture
-├── test_graph.py          # topology + WORKFLOW_METADATA
-├── test_state.py          # _default_state structure + trace_id
-├── test_init_project.py   # node_init_project
-├── test_helpers.py        # _chunked_md5 + sync nodes + trace ID + partial dicts
-└── test_embeddings.py     # [#3] extract_definitions + embed_texts + upsert_file_vectors
+├── conftest.py                # make_project fixture
+├── test_graph.py              # topology + WORKFLOW_METADATA
+├── test_state.py              # _default_state structure + trace_id
+├── test_init_project.py       # node_init_project
+├── test_helpers.py            # _chunked_md5 + sync nodes + trace ID + partial dicts
+├── test_embeddings.py         # [#3] extract_definitions + embed_texts + upsert_file_vectors
+└── test_tree_sitter_parser.py # [#4] multi-language: Python, JS/TS, Go, Rust
 ```
 
 **Test coverage:**
@@ -92,7 +96,9 @@ tests/workflows/understand/
 - [#3] AST chunking: function/class/module extraction, line ranges, syntax error fallback
 - [#3] Embedding client: LM Studio endpoint mock, graceful failure, disabled flag
 - [#3] Vector upsert: delete-then-insert, metadata, graceful degradation
+- [#4] Multi-language: import extraction + definition extraction for Python, JS/TS, Go, Rust
+- [#4] Language detection: file extension → tree-sitter language name
 
 ---
 
-*Last updated: 2026-07-06 (v1.1 — vector indexing). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-06 (v1.2 — multi-language support). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
