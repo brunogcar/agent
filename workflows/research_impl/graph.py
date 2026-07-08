@@ -2,11 +2,16 @@
 
 v1.0: Split from monolithic workflows/research.py into research_impl/ subpackage
 with per-node modules. Adds WORKFLOW_METADATA for MCP client introspection.
+
+v1.1: Wired trim_state_node between synthesize and report. After synthesize
+produces `result`, the raw `search_results` (up to 40KB — 5 pages × 8KB) is no
+longer needed (report, store, distill, notify all use `result`). The trim node
+evicts oversized `search_results` to episodic memory, keeping a preview.
 """
 from __future__ import annotations
 
 from langgraph.graph import StateGraph, END
-from workflows.base import WorkflowState
+from workflows.base import WorkflowState, trim_state_node
 from workflows.research_impl.nodes.recall import node_recall
 from workflows.research_impl.nodes.search import node_search
 from workflows.research_impl.nodes.parallel_scrape import node_parallel_scrape
@@ -23,13 +28,14 @@ from workflows.research_impl.routes import route_after_search, route_after_synth
 # routing logic without reading source code.
 WORKFLOW_METADATA = {
     "name": "research",
-    "version": "1.0",
-    "description": "Quick web research: search → parallel scrape → synthesize → report",
+    "version": "1.1",
+    "description": "Quick web research: search → parallel scrape → synthesize → trim → report",
     "nodes": [
         {"name": "recall", "description": "Recall relevant memories from ChromaDB"},
         {"name": "search", "description": "SearXNG web search for URLs (deduplicated)"},
         {"name": "parallel_scrape", "description": "Scrape top results in parallel with browser fallback"},
         {"name": "synthesize", "description": "LLM synthesis of findings via agent(research)"},
+        {"name": "trim", "description": "Evict oversized `search_results` to episodic memory (v1.1: chonkie-aware, keeps preview)"},
         {"name": "report", "description": "Generate cited research dossier"},
         {"name": "store", "description": "Store in semantic + episodic memory"},
         {"name": "distill", "description": "Distill procedural rules for future runs"},
@@ -40,8 +46,9 @@ WORKFLOW_METADATA = {
         {"from": "search", "to": "parallel_scrape"},
         {"from": "parallel_scrape", "to": "synthesize", "condition": "has_results"},
         {"from": "parallel_scrape", "to": "END", "condition": "no_results"},
-        {"from": "synthesize", "to": "report", "condition": "success"},
+        {"from": "synthesize", "to": "trim", "condition": "success"},
         {"from": "synthesize", "to": "END", "condition": "failed"},
+        {"from": "trim", "to": "report"},
         {"from": "report", "to": "store"},
         {"from": "store", "to": "distill"},
         {"from": "distill", "to": "notify"},
@@ -76,9 +83,16 @@ def build_research_graph():
     g.add_conditional_edges(
         "synthesize",
         route_after_synthesize,
-        {"report": "report", "failed": END},
+        {"trim": "trim", "failed": END},
     )
 
+    # v1.1: trim node between synthesize and report. After synthesize produces
+    # `result`, the raw `search_results` (up to 40KB) is no longer needed —
+    # report, store, distill, and notify all use `result`. trim_state_node
+    # evicts oversized `search_results` to episodic memory, keeping a preview.
+    # Under-threshold search_results passes through unchanged (returns {}).
+    g.add_node("trim", trim_state_node)
+    g.add_edge("trim", "report")
     g.add_edge("report", "store")
     g.add_edge("store", "distill")
     g.add_edge("distill", "notify")

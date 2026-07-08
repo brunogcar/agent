@@ -4,19 +4,34 @@
 
 ## ⚡ Nodes
 
+### `node_recall(state)` — Phase 0: Recall Memories
+
+**Purpose:** Recall relevant memories from ChromaDB for context.
+
+**Logic:**
+```python
+memory.recall(query=goal, top_k=5, collections=["semantic"])
+```
+
+**Output:** Partial dict with `memory_context` (formatted string of recalled memories, or `""` if none).
+
+---
+
 ### `node_search(state)` — Phase 1: Web Search
 
 **Purpose:** Search the web for relevant sources.
 
 **Logic:**
 ```python
-# Uses cfg.web_max_search_results (default 10) — was hardcoded to 3
+# v1.0: Uses cfg.web_max_search_results (default 10) — was hardcoded to 3
 web(action="search", query=goal, max_results=cfg.web_max_search_results)
 ```
 
-**Output:** Partial dict with `urls_data` (list of `{url, title, snippet}`).
+**Output:** Partial dict with `search_results` (JSON string of `{url, title, snippet}` list, or `""` on failure).
 
-**Error handling:** If search fails, returns `{"urls_data": []}`. The workflow proceeds with empty results.
+**Error handling:** If search fails, returns `{"search_results": ""}`. The workflow proceeds — `route_after_search` checks both `search_results` and `memory_context`; if both empty, routes to END.
+
+**v1.0 fix (#12):** URLs are deduplicated via `seen_urls` set (was only deduplicated in `parallel_scrape`).
 
 ---
 
@@ -29,92 +44,119 @@ web(action="search", query=goal, max_results=cfg.web_max_search_results)
 2. Spawn up to 3 concurrent workers via `ThreadPoolExecutor`
 3. Each worker: `web(action="read", url=...)` → LLM summarize
 4. Collect results, update `seen_urls`
+5. Build dossier string with `### [Source N]` headers
+6. Hard-cap dossier at `cfg.web_max_text_chars * 2` (truncates at paragraph boundary)
 
-**Output:** Partial dict with `summaries` (list of `{url, title, summary}`).
+**Output:** Partial dict with `search_results` (dossier string — concatenated source summaries, or `""` on failure).
 
 **Error handling:**
 - Individual scrape failures are logged but don't fail the workflow
 - Timeout failures are caught and skipped
 - LLM summarization failures are caught and skipped
 
-**Guard:** `_is_nested_parallel()` prevents recursive parallel scraping from worker threads. Uses `threading.local()` flag.
+**v1.0 fixes:**
+- **#4:** Uses `concurrent.futures.wait(timeout=)` for global timeout (was `as_completed(timeout=)` — only first future)
+- **#5:** Pending futures `.cancel()` on timeout — prevents zombie threads
+- **#9:** `_is_nested_parallel()` guard fixed for worker thread recursion
 
-**Note:** The `as_completed` timeout is `cfg.worker_timeout + 30` (60 + 30 = 90s). This is the timeout for the **first** future to complete, not the total time. If the first future completes quickly, subsequent futures can hang indefinitely.
+**Guard:** `_is_nested_parallel()` prevents recursive parallel scraping from worker threads. Uses `threading.local()` flag.
 
 ---
 
 ### `route_after_search(state)` — Conditional Router
 
-**Purpose:** Route to synthesis or END based on search results.
+**Purpose:** Route to synthesis or END based on search results + memory context.
 
 **Logic:**
 ```python
-if not state.get("urls_data"):
-    return "no_results"  # → END
-return "has_results"     # → node_synthesize
+sr = state.get("search_results", "")
+mc = state.get("memory_context", "")
+if not sr and not mc:
+    return "failed"  # → END
+return "synthesize"  # → node_synthesize
 ```
 
-**Output:** String literal `"no_results"` or `"has_results"`.
+**Output:** String literal `"failed"` or `"synthesize"`.
 
 ---
 
 ### `node_synthesize(state)` — Phase 3: LLM Synthesis
 
-**Purpose:** Synthesize scraped content into a coherent answer.
+**Purpose:** Synthesize scraped content + recalled memories into a coherent answer.
 
 **Logic:**
-1. Build prompt with goal and summaries
+1. Build content block from `search_results` and `memory_context`
 2. Call `agent(action="dispatch", role="research", task=...)` for synthesis
 3. Return the synthesized text
 
 **Output:** Partial dict with `result` (synthesis text).
 
 **Error handling:**
+- No source material → `node_error(state, "synthesize", "No source material to synthesize from")`
 - `agent()` failure → `node_error(state, "synthesize", ...)` → workflow ends
 
-**Note (fixed):** The status check was previously `not r.get("status") == "success"` — confusing operator precedence (functionally correct but hard to read). Changed to explicit `r.get("status") != "success"`.
+**v1.0 fixes:**
+- **#1:** Now calls `agent(action="dispatch", role="research", ...)` (was missing `action` — always returned error)
+- **#2:** Status check is `r.get("status") != "success"` (was `not r.get("status") == "success"` — confusing precedence, functionally correct but hard to read)
 
 ---
 
 ### `route_after_synthesize(state)` — Conditional Router
 
-**Purpose:** Route to report or END based on synthesis result.
+**Purpose:** Route to trim or END based on synthesis result.
 
 **Logic:**
 ```python
 if state.get("status") == "failed":
     return "failed"  # → END
-return "success"     # → node_report
+return "trim"        # → node_trim (v1.1)
 ```
 
-**Output:** String literal `"failed"` or `"success"`.
+**Output:** String literal `"failed"` or `"trim"`.
+
+---
+
+### `node_trim(state)` — Phase 3.5: Evict Oversized Search Results (v1.1 NEW)
+
+**Purpose:** Evict oversized `search_results` to episodic memory after synthesize produces `result`.
+
+**Logic:**
+1. Calls `trim_state_node(state)` from `workflows/base.py`
+2. If `search_results` exceeds ~1000 tokens (~4000 chars):
+   - **Chonkie path:** Split into sentence-aware chunks → evict each individually → keep first chunk as preview
+   - **Fallback path:** Whole-string eviction → generic placeholder
+3. If under threshold: returns `{}` (nothing evicted, search_results passes through)
+
+**Output:** Partial dict — `{"search_results": "<placeholder/preview>"}` if evicted, `{}` if not.
+
+**Why this is safe:** After synthesize sets `result`, the raw `search_results` (up to 40KB) is no longer needed. `node_report`, `node_store`, `node_distill`, and `node_notify` all read `result` (not `search_results`). Evicting `search_results` reduces checkpoint bloat and enables precise recall later via `memory(recall, tags_filter="evicted")`.
 
 ---
 
 ### `node_report(state)` — Phase 4: Generate Report
 
-**Purpose:** Generate a structured report with synthesis, sources, and metadata.
+**Purpose:** Generate a structured research dossier with citations.
 
 **Logic:**
-1. Call `report(action="report", title=..., data=..., config=...)` with synthesis and sources
-2. Return the report
+1. Get sources from `citations.get_sources(trace_id)`
+2. Call `report(action="report", title=..., config=...)` with synthesis and sources
+3. Return empty dict (side effect: report file generated)
 
-**Output:** Partial dict with `report_html` and `report_path`.
-
-**Note:** The `report` tool's `action="report"` is the report action name (generates a single-scroll HTML report), not a mistake.
+**Output:** Empty dict (side effects only — report file generated).
 
 ---
 
 ### `node_store(state)` — Phase 5: Memory Storage
 
-**Purpose:** Store the research result in memory.
+**Purpose:** Store the research result in semantic and episodic memory.
 
 **Logic:**
-1. Store semantic memory: `memory.store_semantic(text=result[:800], ...)`
+1. Store semantic memory: `memory.store_semantic(text="Research on '{goal}':\n{result}", ...)` — **full result** (v1.0 fix #7: was `result[:800]`)
+2. Store episodic memory: `memory.store_episodic(text="Completed research workflow: '{goal[:60]}'", ...)` — short summary
 
 **Output:** Empty dict (side effects only).
 
-**Note:** Only 800 chars of the result are stored in semantic memory. For long research results, this is a tiny fraction. The semantic memory will be nearly useless for recall.
+**v1.0 fix (#7):** Semantic memory now stores the full `result` (was `result[:800]` — truncated, nearly useless for recall).
 
 ---
 
@@ -128,7 +170,7 @@ return "success"     # → node_report
 
 **Output:** Empty dict (side effects only).
 
-**Note:** The `status` check `state.get("status") == "failed"` is redundant. `node_distill` only runs on success paths.
+**v1.0 fix (#8):** Removed dead `if state.get("status") == "failed": return state` check — `node_distill` only runs on success paths, so the check was dead code.
 
 ---
 
@@ -137,12 +179,12 @@ return "success"     # → node_report
 **Purpose:** Notify the user of completion.
 
 **Logic:**
-1. Call `notify(action="notify", message=...)` with the result
+1. Call `notify(action="send", title=..., message=...)` with the result
 2. Return `node_done(state, result=...)`
 
 **Output:** `node_done` result dict.
 
-**Note:** `artifacts` contains `{"sources": sources}` but `artifacts` is documented as a list of strings. This breaks consumers that expect strings.
+**v1.0 fix (#10):** `artifacts` is now `list[str]` (was `list[dict]` — broke consumers expecting strings).
 
 ---
 
@@ -173,14 +215,24 @@ The workflow returns a `dict`:
 
 ## 🔒 Security
 
-*(Fill this section with relevant info from edits and refactors. Add security details as they are learned.)*
+- **SSRF protection** — Web scraping goes through `core/net/` SSRF guards (URL validation, internal host blocking)
+- **Citation tracking** — Sources tracked per trace_id for attribution
+- **prune_tool_dict** — Final result truncated to prevent context window overflow
 
 ---
 
 ## 📝 Error Handling
 
-*(Fill this section with relevant info from edits and refactors. Add error classification as it is learned.)*
+| Error | Handling |
+|-------|----------|
+| Search fails (no results) | `route_after_search` → END (if no memory_context either) |
+| Scrape timeout | Individual source skipped, others continue |
+| Scrape failure | Individual source skipped, others continue |
+| Synthesis failure | `node_error` → `route_after_synthesize` → END |
+| No source material | `node_error("No source material to synthesize from")` → END |
+| Memory store failure | Logged, non-fatal (workflow continues) |
+| Notify failure | Logged, non-fatal (workflow still returns success) |
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -35,6 +35,7 @@ class TestResearchGraphTopology:
         if not nodes and hasattr(graph, "get_graph"):
             nodes = graph.get_graph().nodes
         assert "parallel_scrape" in nodes, "parallel_scrape node missing from graph!"
+        assert "trim" in nodes, "trim node missing from graph (v1.1)!"
 
 
 class TestWorkflowMetadata:
@@ -44,17 +45,18 @@ class TestWorkflowMetadata:
         from workflows.research_impl.graph import WORKFLOW_METADATA
         assert isinstance(WORKFLOW_METADATA, dict)
         assert WORKFLOW_METADATA["name"] == "research"
-        assert WORKFLOW_METADATA["version"] == "1.0"
+        assert WORKFLOW_METADATA["version"] == "1.1"
 
     def test_metadata_has_nodes(self):
         from workflows.research_impl.graph import WORKFLOW_METADATA
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 8, f"Expected 8 nodes, got {len(nodes)}"
+        assert len(nodes) == 9, f"Expected 9 nodes, got {len(nodes)}"
         node_names = [n["name"] for n in nodes]
         assert "recall" in node_names
         assert "search" in node_names
         assert "parallel_scrape" in node_names
         assert "synthesize" in node_names
+        assert "trim" in node_names  # v1.1
         assert "report" in node_names
         assert "store" in node_names
         assert "distill" in node_names
@@ -63,10 +65,12 @@ class TestWorkflowMetadata:
     def test_metadata_has_edges(self):
         from workflows.research_impl.graph import WORKFLOW_METADATA
         edges = WORKFLOW_METADATA["edges"]
-        assert len(edges) >= 9, f"Expected at least 9 edges, got {len(edges)}"
+        assert len(edges) >= 10, f"Expected at least 10 edges, got {len(edges)}"
         edge_pairs = [(e["from"], e["to"]) for e in edges]
         assert ("recall", "search") in edge_pairs
         assert ("search", "parallel_scrape") in edge_pairs
+        assert ("synthesize", "trim") in edge_pairs  # v1.1
+        assert ("trim", "report") in edge_pairs       # v1.1
         assert ("notify", "END") in edge_pairs
 
     def test_metadata_nodes_have_descriptions(self):
@@ -116,7 +120,7 @@ class TestSubpackageStructure:
         assert isinstance(WORKFLOW_METADATA, dict)
 
     def test_all_nodes_are_sync(self):
-        """[Architecture] All 8 nodes must be sync (def, not async def)."""
+        """[Architecture] All 9 nodes must be sync (def, not async def)."""
         from workflows.research_impl.nodes.recall import node_recall
         from workflows.research_impl.nodes.search import node_search
         from workflows.research_impl.nodes.parallel_scrape import node_parallel_scrape
@@ -125,8 +129,10 @@ class TestSubpackageStructure:
         from workflows.research_impl.nodes.store import node_store
         from workflows.research_impl.nodes.distill import node_distill
         from workflows.research_impl.nodes.notify import node_notify
+        from workflows.base import trim_state_node
         for name, fn in [("recall", node_recall), ("search", node_search),
                          ("parallel_scrape", node_parallel_scrape), ("synthesize", node_synthesize),
+                         ("trim", trim_state_node),
                          ("report", node_report), ("store", node_store),
                          ("distill", node_distill), ("notify", node_notify)]:
             assert not inspect.iscoroutinefunction(fn), (

@@ -76,7 +76,7 @@
 | 14 | **Timeout wrapper** | Add configurable timeout around `graph.invoke()` to prevent hung workflows | P2 |
 | 15 | **Result pruning** | Pipe `result` through `prune_tool_dict()` before return to prevent oversized outputs | P3 |
 | 16 | **Parallel workflow dispatch** | Evaluate `asyncio.gather()` for parallel workflow execution | P3 |
-| 18 | **Wire `trim_state()` into workflow graphs** | `trim_state()` is a utility (v1.3: chonkie-aware). **Data workflow wired in (v1.1)** — trim node between critique and store. Research and deep_research still pending. | P1 (data ✅, research + deep_research pending) |
+| 18 | **Wire `trim_state()` into workflow graphs** | `trim_state()` is a utility (v1.3: chonkie-aware). **Data wired in (v1.1)** — trim between critique and store. **Research wired in (v1.1)** — trim between synthesize and report. Deep_research still pending (cyclic loop + `knowledge` field exclusion needed). | P1 (data ✅, research ✅, deep_research pending) |
 
 ---
 

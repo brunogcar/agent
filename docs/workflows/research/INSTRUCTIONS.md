@@ -14,18 +14,24 @@
 8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
 9. **Never call `agent()` without `action="dispatch"`** — The `agent()` facade requires `action`. Always pass `action="dispatch"` for LLM calls.
 10. **Never return `None` from LangGraph nodes** — Always return a `dict` (even empty `{}`).
+11. **Never read `search_results` in nodes after `synthesize`** — v1.1: The trim node evicts `search_results` between synthesize and report. Nodes after synthesize (report, store, distill, notify) must use `result`, not `search_results`. If you add a new node after synthesize, use `state.get("result", "")`.
+12. **Never use `as_completed(timeout=)` for parallel scraping** — v1.0 fix #4: `as_completed` timeout is per-first-future, not global. Use `concurrent.futures.wait(timeout=)` for global timeout.
+13. **Never leave pending futures running on timeout** — v1.0 fix #5: Call `.cancel()` on timed-out futures to prevent zombie threads.
 
 ## ✅ ALWAYS DO
 
-11. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
-12. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
-13. **Always handle search failure gracefully** — Empty results should route to END, not crash.
-14. **Always test `route_after_search` with both paths** — Assert `"no_results"` and `"has_results"`.
-15. **Always test `route_after_synthesize` with both paths** — Assert `"failed"` and `"success"`.
-16. **Always test memory storage** — Assert semantic + procedural memory stored correctly.
-17. **Always test notification** — Assert `notify()` called with correct message.
-18. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
-19. **Always use `!= "success"` not `not ... == "success"`** — The latter is always False due to operator precedence.
+14. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
+15. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+16. **Always handle search failure gracefully** — Empty results should route to END, not crash.
+17. **Always test `route_after_search` with both paths** — Assert `"failed"` and `"synthesize"`.
+18. **Always test `route_after_synthesize` with both paths** — Assert `"failed"` and `"trim"` (v1.1: was `"report"`).
+19. **Always test memory storage** — Assert semantic + procedural memory stored correctly.
+20. **Always test notification** — Assert `notify()` called with correct message.
+21. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
+22. **Always use `!= "success"` not `not ... == "success"`** — The latter is confusing due to operator precedence (functionally correct but hard to read).
+23. **Always use `cfg.web_max_search_results`** — Never hardcode `max_results`. The config var exists for a reason.
+24. **Always store full `result` in semantic memory** — v1.0 fix #7: Semantic memory is for content retrieval. Truncating to 800 chars made it nearly useless.
+25. **Always deduplicate URLs in `node_search`** — v1.0 fix #12: Use a `seen_urls` set to prevent duplicate scraping.
 
 ---
 
@@ -33,12 +39,28 @@
 
 > - **What happened:** `node_search` hardcoded `max_results=3` for web searches, ignoring `cfg.web_max_search_results` (default 10). Users got only 3 results per query regardless of config.
 > - **Why it matters:** Research quality suffered — 3 results is too few for complex topics. The config existed but was never used.
-> - **Fix:** Pass `cfg.web_max_search_results` to `web(action="search", ...)`. Never hardcode limits that already have config vars.
+> - **Fix (Pre-v1.0):** Pass `cfg.web_max_search_results` to `web(action="search", ...)`. Never hardcode limits that already have config vars.
 
 > - **What happened:** `node_synthesize` used `not r.get("status") == "success"` — confusing operator precedence. While functionally correct (`not (x == "success")`), it looked like `(not x) == "success"` which would always be False.
 > - **Why it matters:** Confusing code leads to misdiagnosis. A developer reading this might think the error path never fires (it does), or "fix" it incorrectly.
-> - **Fix:** Use explicit `r.get("status") != "success"` — same behavior, unambiguous.
+> - **Fix (Pre-v1.0):** Use explicit `r.get("status") != "success"` — same behavior, unambiguous.
+
+> - **What happened:** `node_synthesize` called `agent(role="research", ...)` without `action="dispatch"`. The `agent()` facade requires `action`. Without it, every synthesis call returned `Unknown action ''` error — the workflow never produced real results.
+> - **Why it matters:** The workflow was completely broken for its primary purpose. Users saw `node_error()` failures instead of research results.
+> - **Fix (Pre-v1.0):** Always pass `action="dispatch"` to `agent()`. This is now INSTRUCTIONS rule #9.
+
+> - **What happened:** `node_parallel_scrape` used `as_completed(timeout=90)`. The timeout is for the first future to complete, not the total time. If the first future completed quickly, subsequent futures could hang indefinitely.
+> - **Why it matters:** A single slow page could freeze the entire workflow with no way to cancel.
+> - **Fix (v1.0 #4/#5):** Changed to `concurrent.futures.wait(timeout=)` for global timeout. Pending futures are `.cancel()`ed on timeout to prevent zombie threads.
+
+> - **What happened:** `node_store` stored only `result[:800]` in semantic memory. For long research results (5KB+), this was a tiny fraction — semantic memory was nearly useless for recall.
+> - **Why it matters:** Semantic memory is for content retrieval. Truncating to 800 chars defeated the purpose — recall returned fragments instead of the full research.
+> - **Fix (v1.0 #7):** Store the full `result` in semantic memory. Episodic memory still stores a short summary (it's for event tracking, not content retrieval).
+
+> - **What happened:** v1.1 trim node wired between synthesize and report. Initial concern: does `node_report` or any downstream node read `search_results`?
+> - **Why it matters:** If a downstream node reads `search_results` after trim evicts it, it would get a placeholder string instead of real data → crash or garbage output.
+> - **Fix (v1.1):** Verified all 4 downstream nodes (report, store, distill, notify) read `result` (set by synthesize), not `search_results`. The trim insertion point is safe. Added `test_trim_integration.py` with field-safety tests that assert this contract via source inspection.
 
 ---
 
-*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
