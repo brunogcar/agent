@@ -88,6 +88,14 @@ chonkie>=1.0                 # TokenChunker / SentenceChunker — file(action="r
                              #   If absent, chunking returns a clear error; non-chunk reads
                              #   and all other file actions work fine without it.
 
+# ── Web crawling (web tool v1.3: crawl action — prototype) ──────────────
+crawl4ai                     # web(action="crawl") — JS-heavy pages → clean markdown
+                             #   Soft dependency: imported lazily inside crawl.py only.
+                             #   If absent, crawl returns a clear error; non-crawl web
+                             #   actions (search, scrape, read, search_and_read) work
+                             #   fine without it. Prototype for evaluating crawl4ai
+                             #   integration — see docs/TOOLS.md § "Crawl4ai integration".
+
 # ── Testing ──────────────────────────────────────────────────────────────
 pytest>=7.4.0                # Test runner
 pytest-asyncio>=0.21.0       # Async test support

@@ -73,6 +73,7 @@
 | 21 | **`_cap_knowledge` may exceed max after prefix** | Truncation + prefix may exceed `max_chars`. | P2 |
 | 24 | **Configurable convergence threshold** | Make `CONVERGENCE_SIMILARITY_THRESHOLD` actually use `.env` value | P2 |
 | 25 | **Streaming synthesis** | Stream synthesis output for real-time feedback | P3 |
+| 26 | **crawl4ai integration** | **Potential refactor:** Replace three-tier `tavily → web → browser` with two-tier `tavily → web(crawl)`. Crawl4ai handles JS-heavy pages natively, eliminating the browser tier for scraping. Browser would still be needed for interactive cases (if any). Depends on crawl4ai quality validation. See `docs/TOOLS.md` § "Crawl4ai integration" and `docs/tools/web/CHANGELOG.md` v1.3. | P2 (evaluation) |
 
 ---
 

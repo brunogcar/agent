@@ -16,6 +16,7 @@
 | `tools/web_ops/actions/scrape.py` | `_action_scrape()`, `_fetch_html()` (guards), `_do_fetch()` (retry-wrapped), `_html_to_text()` — fetch + extract |
 | `tools/web_ops/actions/read.py` | `_action_read()` — scrape + `prune_tool_dict()` alias |
 | `tools/web_ops/actions/search_and_read.py` | `_action_search_and_read()` — composite: search → dedup → parallel scrape → prune |
+| `tools/web_ops/actions/crawl.py` | `_action_crawl()` — crawl4ai integration (v1.3 prototype). JS-heavy pages → clean markdown. Soft dep. |
 | `core/net/security.py` | `is_safe_network_address()` — SSRF protection |
 | `core/net/retry.py` | `retry_sync()` — unified retry with backoff |
 | `core/net/errors.py` | `is_retryable_error()`, `get_retry_delay()` — error classification |
@@ -42,6 +43,7 @@ tools/web_ops/
     ├── search.py           # _action_search() — SearXNG query
     ├── scrape.py           # _action_scrape() — Fetch + guards + retry_sync() + BS4 clean → {url, title, text, word_count, truncated}
     ├── read.py             # _action_read() — Alias: scrape + prune_tool_dict()
+    ├── crawl.py            # _action_crawl() — crawl4ai (v1.3 prototype). JS-heavy → markdown. Soft dep.
     └── search_and_read.py  # _action_search_and_read() — Search → dedup → parallel scrape → prune
 ```
 
@@ -148,4 +150,4 @@ tests/tools/web/
 
 ---
 
-*Last updated: 2026-07-03. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

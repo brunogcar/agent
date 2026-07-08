@@ -61,6 +61,7 @@
 | 15 | **Configurable search results** | Make `max_results` configurable via `.env` (currently uses `cfg.web_max_search_results`). | P3 |
 | 16 | **Streaming synthesis** | Stream synthesis output for real-time feedback | P3 |
 | 17 | **Multi-language support** | Support non-English search and synthesis | P3 |
+| 18 | **crawl4ai integration** | **Potential refactor:** Replace `_browser_fallback_scrape` with `web(action="crawl")`. Crawl4ai handles JS-heavy pages natively (returns clean markdown), eliminating the browser fallback for JS walls. Depends on crawl4ai quality validation against real JS-heavy pages. See `docs/TOOLS.md` § "Crawl4ai integration" and `docs/tools/web/CHANGELOG.md` v1.3. | P2 (evaluation) |
 
 ---
 

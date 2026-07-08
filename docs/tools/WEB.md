@@ -6,6 +6,7 @@ The `web()` tool provides web search and content extraction via **SearXNG** (sel
 - **Free / self-hosted** — requires only a running SearXNG instance (no API keys)
 - **Static HTML only** — JavaScript-rendered pages may return empty/short text
 - **Parallel scraping** — `search_and_read` fans out to `ThreadPoolExecutor` for concurrent page fetching
+- **JS-heavy page support (v1.3 prototype)** — `crawl` action uses [crawl4ai](https://github.com/unclecode/crawl4AI) to handle React/Angular/Vue SPAs natively, returning clean markdown
 - **Lightweight** — pure Python (`httpx` + `BS4`), no browser overhead
 - **Connection pooling** — singleton `httpx.Client` reuses TCP/TLS connections across calls
 - **SSRF protection** — all URLs validated via `core.net.security.is_safe_network_address` before any HTTP request
@@ -29,6 +30,9 @@ web(action="scrape", url="https://example.com")
 
 # Search + scrape top results in parallel
 web(action="search_and_read", query="ChromaDB persistent client", max_results=5)
+
+# JS-heavy page via crawl4ai (v1.3 prototype)
+web(action="crawl", url="https://react-app-example.com")
 ```
 
 ---
@@ -51,6 +55,7 @@ WEB_SNIPPET_CHARS=300
 | Static page text (full) | `web(scrape)` | Fast, lightweight, no overhead, no pruning |
 | Static page text (pruned) | `web(read)` | Same as scrape but with truncation guard for large pages |
 | Bulk scrape from search | `web(search_and_read)` | Parallel, automated, deduplicated |
+| JS-heavy page (markdown) | `web(crawl)` | crawl4ai, handles JS natively, returns markdown (v1.3 prototype, soft dep) |
 | AI-ranked search | `tavily(search)` | Better relevance, citations, AI answer |
 | JS-rendered page | `browser(navigate+text_content)` | Renders JavaScript |
 | Bulk URL extraction | `tavily(extract)` | Optimized batch extraction |

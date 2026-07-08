@@ -35,6 +35,7 @@ def mock_cfg_for_web(tmp_path):
         patch("tools.web_ops.actions.search.cfg", cfg_mock),
         patch("tools.web_ops.actions.scrape.cfg", cfg_mock),
         patch("tools.web_ops.actions.search_and_read.cfg", cfg_mock),
+        patch("tools.web_ops.actions.crawl.cfg", cfg_mock),
     ):
         yield cfg_mock
 

@@ -15,6 +15,9 @@
 9. **Never print to stdout** — MCP stdio corruption. Return dicts only.
 10. **Never skip `compileall` before `pytest`** — catches syntax errors early.
 11. **Never call `future.cancel()` on running threads** — `ThreadPoolExecutor` futures that are `not_done` after `wait()` are already running. `.cancel()` is a no-op. Report them as timeout errors instead.
+12. **Never import crawl4ai at module top level** — v1.3: It's a soft dependency. Import it lazily inside `_action_crawl()` only. Existing tests must pass without crawl4ai installed.
+13. **Never add automatic fallback from `crawl` to `scrape`** — v1.3: The crawl action is a prototype for evaluation. Automatic fallback would hide crawl4ai failures and defeat the evaluation purpose. Caller retries explicitly.
+14. **Never run crawl4ai's `AsyncWebCrawler` in the main event loop** — v1.3: The MCP server may have its own loop. Run via `asyncio.run()` in a dedicated thread to avoid "event loop already running" errors.
 
 ## ✅ ALWAYS DO
 
@@ -46,4 +49,4 @@
 
 ---
 
-*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

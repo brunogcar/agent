@@ -12,7 +12,7 @@ class TestWebRegistry:
     def test_dispatch_not_empty(self):
         """After auto-discovery, DISPATCH must have all actions."""
         actions = DISPATCH.get("web", {})
-        expected = {"search", "scrape", "read", "search_and_read"}
+        expected = {"search", "scrape", "read", "search_and_read", "crawl"}
         assert set(actions.keys()) == expected
 
     def test_all_actions_have_metadata(self):

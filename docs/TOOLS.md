@@ -926,6 +926,55 @@ Chunking may add value in **workflows** in 2 additional places. See `docs/WORKFL
 
 ---
 
+---
+
+## 🕷️ Crawl4ai Integration (web tool v1.3 prototype)
+
+The `web` tool has a new `crawl` action (v1.3) that integrates [crawl4ai](https://github.com/unclecode/crawl4AI) — an open-source LLM-friendly web crawler. This is a **prototype** to evaluate whether crawl4ai should replace the current scrape + browser fallback chain.
+
+### What crawl4ai does
+
+| Feature | Current approach | crawl4ai |
+|---------|-----------------|----------|
+| **JS-heavy pages** (React/Angular/Vue SPAs) | `web(scrape)` fails → `browser(text_content)` fallback (2 calls) | `web(crawl)` handles JS natively (1 call) |
+| **Output format** | Plain text (BeautifulSoup extraction) | Clean LLM-ready markdown |
+| **Structured extraction** | Not supported (use `browser(extract_links/tables)`) | CSS/XPath selectors (no LLM) or LLM schema (optional, heavy deps) |
+| **Stealth mode** | User-agent rotation (4 UAs) | Bot detection evasion (mimics real users) |
+| **Cost** | Free | Free (open-source) |
+
+### Current status: prototype
+
+`web(action="crawl")` is available as a **new action** (additive — no workflow changes). It's a **soft dependency** (lazy import — non-crawl actions work without crawl4ai installed). Does NOT fall back to scrape on failure (caller retries explicitly).
+
+### Potential workflow refactoring (roadmap, not implemented)
+
+If crawl4ai quality is validated, two workflows could be simplified:
+
+| Workflow | Current | With crawl4ai | Benefit |
+|----------|---------|---------------|---------|
+| **research** | `web(read)` + `_browser_fallback_scrape` for JS walls | `web(crawl)` handles JS natively | Eliminates browser fallback — simpler graph, fewer nodes |
+| **deep_research** | Three-tier: `tavily` → `web` → `browser` | Two-tier: `tavily` → `web(crawl)` | Browser tier eliminated for scraping |
+
+**This refactoring is NOT done.** The prototype action exists to enable evaluation. After testing crawl4ai on real JS-heavy pages, a separate commit would update the workflows.
+
+### Dependency tiers
+
+| Tier | Dependencies | Already installed? | Use case |
+|------|-------------|-------------------|----------|
+| **Base (markdown + JS)** | Playwright, BeautifulSoup, lxml | ✅ All already installed (browser + web tools) | `web(action="crawl")` — returns clean markdown |
+| **LLM extraction** | transformers, PyTorch | ❌ Heavy (~2GB), not installed | `web(action="crawl", extract_schema={...})` — structured data extraction (deferred) |
+
+**Recommendation:** Only the base tier is needed for the prototype. LLM extraction is P3 in the web CHANGELOG roadmap — deferred until the base crawl action is validated.
+
+### See also
+
+- `docs/tools/web/CHANGELOG.md` → v1.3 entry + roadmap
+- `docs/tools/web/API.md` → `crawl` action section
+- `docs/workflows/research/CHANGELOG.md` → roadmap (potential refactor)
+- `docs/workflows/deep_research/CHANGELOG.md` → roadmap (potential refactor)
+
+---
+
 ## 🔗 Cross-References
 
 - **Core:** See `docs/CORE.md`

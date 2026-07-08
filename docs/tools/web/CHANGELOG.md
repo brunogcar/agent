@@ -53,9 +53,8 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.3 | 2026-07-08 | **New action: `crawl`** — Prototype integration with [crawl4ai](https://github.com/unclecode/crawl4AI). Handles JS-heavy pages natively (React/Angular/Vue SPAs), returns clean LLM-ready markdown. Soft dependency (lazy import — non-crawl actions work without it). Async→sync bridge via thread + `asyncio.run()`. Does NOT fall back to scrape on failure (prototype — caller retries explicitly). See `docs/TOOLS.md` § "Crawl4ai integration" and `docs/workflows/research/CHANGELOG.md` roadmap. |
 | v1.2 | 2026-07-05 | **core/net adoption:** scrape.py now uses `retry_sync()` from `core/net/retry.py` (was hand-rolled retry loop). Constants from `core/net/default.py`. Error classification via `is_retryable_error()` from `core/net/errors.py`. search.py uses `SEARCH_TIMEOUT` from `core/net/default.py` (was hardcoded 15). |
-
-*(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
 
 ---
 
@@ -83,6 +82,7 @@
 | Scheme allowlist | ✅ v1.1 | `http`/`https` only |
 | Lazy `is_safe_network_address` import | ✅ v1.1 | Inside `_is_safe_url()`, not module-level |
 | `ThreadPoolExecutor` shutdown fix | ✅ v1.1 | `shutdown(wait=False)` after `wait()` timeout |
+| `crawl` action (crawl4ai prototype) | ✅ v1.3 | JS-heavy pages → clean markdown. Soft dep. Async→sync bridge. |
 
 ---
 
@@ -100,6 +100,9 @@
 | Robots.txt respect | Check `robots.txt` before scraping to avoid getting blocked. Cache parsed robots.txt per domain | P3 |
 | Rate limiting per domain | Track request timestamps per domain. Sleep if exceeding N requests/second. Prevents 429 bans | P3 |
 | Extract `_html_to_text` to `core/html.py` | Pure HTML→text converter. Extract when a second consumer appears (email tool, RSS reader, etc.) | P3 |
+| crawl4ai LLM extraction | `web(action="crawl", extract_schema={...})` — structured data extraction via crawl4ai's LLM extraction. Requires transformers/PyTorch (heavy deps ~2GB). Deferred until base crawl action is validated. | P3 |
+| crawl4ai in research workflow | **Potential refactor:** Replace `_browser_fallback_scrape` in research with `web(action="crawl")`. Eliminates browser fallback for JS walls. Depends on crawl4ai quality validation. See `docs/workflows/research/CHANGELOG.md`. | P2 (evaluation) |
+| crawl4ai in deep_research workflow | **Potential refactor:** Replace three-tier `tavily → web → browser` with two-tier `tavily → web(crawl)`. Browser tier eliminated for scraping. Depends on crawl4ai quality validation. See `docs/workflows/deep_research/CHANGELOG.md`. | P2 (evaluation) |
 
 ---
 
@@ -110,7 +113,7 @@
 | 1 | **LLM summarization in `search_and_read`** | The old doc incorrectly claimed this exists. It was never implemented. Summarization belongs in the `research` workflow, not the web tool. | Skip |
 | 2 | **`include_raw` parameter** | Never existed in the code. Raw HTML bloats context windows. Use `browser(extract_html)` if DOM structure is needed. | Skip |
 | 3 | **Structured extraction (`headers`, `links`, `images`)** | The old LLM draft fabricated this. `scrape` only returns `url`, `title`, `text`, `word_count`, `truncated`. Use `browser(extract_links)` / `browser(extract_tables)` for structured extraction. | Skip |
-| 4 | **JavaScript rendering in web tool** | Out of scope. Use `browser` for JS-rendered pages. | Skip |
+| 4 | **JavaScript rendering in web tool (via browser)** | v1.3 added `web(action="crawl")` using crawl4ai for JS-heavy pages. The browser tool is still needed for interactive automation (click, fill, navigate). | Resolved (v1.3) |
 | 5 | **Rate limiting / politeness delay** | `search_and_read` already has implicit politeness via connection pooling. Explicit delays would slow down parallel scraping. | Skip |
 | 6 | **Proxy / SOCKS5 support** | Not needed for current deployment. Can be added via `httpx` proxy config if required. | Skip |
 | 7 | **Browser fallback inside thread pool workers** | Browser is `NOT_PARALLEL_SAFE`. Fallback must run sequentially after `ThreadPoolExecutor` closes, not inside worker threads. | Skip |
@@ -119,4 +122,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

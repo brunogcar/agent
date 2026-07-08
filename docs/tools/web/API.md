@@ -8,7 +8,7 @@
 @tool
 @meta_tool(DISPATCH["web"], doc_sections=[...])
 def web(
-    action: str,       # Literal["search", "scrape", "read", "search_and_read"]
+    action: str,       # Literal["search", "scrape", "read", "search_and_read", "crawl"]
     query: str = "",
     url: str = "",
     max_results: int = 5,
@@ -20,7 +20,7 @@ def web(
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | `str` | **Yes** | One of `search`, `scrape`, `read`, `search_and_read` |
+| `action` | `str` | **Yes** | One of `search`, `scrape`, `read`, `search_and_read`, `crawl` |
 | `query` | `str` | No | Search query. **Required** for `search` and `search_and_read`. |
 | `url` | `str` | No | Target URL. **Required** for `scrape` and `read`. |
 | `max_results` | `int` | No | Max search results. Default: 5. Upper bound: `cfg.web_max_search_results`. |
@@ -162,6 +162,56 @@ search(query, n) → [url1, url2, url3]
 | `duplicates_removed` | `int` | Number of duplicate URLs filtered before scraping |
 
 > **Cross-action coupling note:** `search_and_read` directly imports `_action_search` and `_action_scrape` from sibling modules. This is intentional for performance (avoids facade overhead). If `search`/`scrape` signatures change, update this file.
+
+### 🕷️ `crawl` — Fetch JS-heavy page via crawl4ai (v1.3 prototype)
+
+**Purpose:** Fetch a URL using [crawl4ai](https://github.com/unclecode/crawl4AI) and return clean LLM-ready markdown. Handles JavaScript-rendered pages (React/Angular/Vue SPAs) natively — no browser fallback needed.
+
+**When to use:**
+- JS-heavy pages where `web(scrape)` returns empty/garbage
+- Pages where you'd otherwise use `browser(text_content)` as fallback
+- When you need clean markdown for LLM consumption
+
+**When NOT to use:**
+- Static pages (use `web(scrape)` — faster, no JS overhead)
+- Interactive automation (use `browser(click/fill/navigate)`)
+- Search (use `web(search)` or `tavily(search)`)
+
+**Soft dependency:** crawl4ai must be installed (`pip install crawl4ai`). If not installed, returns a clear error. Non-crawl web actions work fine without it.
+
+**Does NOT fall back to scrape on failure.** This is a prototype — the caller retries explicitly with `web(action="scrape")` or `browser(action="text_content")` if crawl fails.
+
+```python
+# JS-heavy page
+web(action="crawl", url="https://react-app-example.com")
+
+# With character limit
+web(action="crawl", url="https://docs.example.com", max_chars=10000)
+```
+
+**Return:**
+```json
+{
+  "status": "success",
+  "url": "https://example.com",
+  "title": "Page Title",
+  "text": "# Heading\n\nMarkdown content...",
+  "word_count": 150,
+  "truncated": false,
+  "format": "markdown",
+  "crawler": "crawl4ai"
+}
+```
+
+**Error (crawl4ai not installed):**
+```json
+{
+  "status": "error",
+  "error": "crawl4ai is not installed. Run `pip install crawl4ai`..."
+}
+```
+
+**See also:** `docs/TOOLS.md` § "Crawl4ai integration", `docs/workflows/research/CHANGELOG.md` roadmap.
 
 ---
 
