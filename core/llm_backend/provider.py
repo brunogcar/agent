@@ -6,7 +6,7 @@ EXTRACTION NOTE (LLM Phase 1): Extracted from core/llm.py.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 class BaseProvider(ABC):
     """
@@ -24,6 +24,7 @@ class BaseProvider(ABC):
         max_tokens:  int,
         timeout:     int,
         json_mode:   bool,
+        json_schema: Optional[dict] = None,
         **kwargs:    Any,
     ) -> dict: ...
 

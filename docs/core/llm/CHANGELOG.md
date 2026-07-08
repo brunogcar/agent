@@ -6,6 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
+| v1.2 | 2026-07-08 | **JSON schema enforcement:** Added `json_schema` param to `complete()`, `call()`, and `chat_completion()`. When provided, providers send `response_format={"type":"json_schema","json_schema":{"schema":{...}}}` (LM Studio enforces via outlines internally). Stronger than `json_mode` (which only ensures valid JSON, not schema). `json_schema` takes precedence over `json_mode` when both are set. `json_schema` implies `json_mode` for response parsing. Backward compatible — defaults to `None`. |
 | Pre-v1 | 2026-07-04 | Initial implementation. Role-based dispatch, circuit breaker per role, cognitive context budgeting, provider abstraction, thread-safe singleton. |
 
 ---
@@ -50,4 +51,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

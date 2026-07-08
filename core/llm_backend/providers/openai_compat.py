@@ -7,7 +7,7 @@ EXTRACTION NOTE (LLM Phase 1): Used for cloud APIs that implement the OpenAI spe
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, Optional
 import httpx
 
 from core.llm_backend.provider import BaseProvider
@@ -49,6 +49,7 @@ class OpenAICompatibleProvider(BaseProvider):
         max_tokens:  int,
         timeout:     int,
         json_mode:   bool,
+        json_schema: Optional[dict] = None,
         **kwargs:    Any,
     ) -> dict:
         payload: dict[str, Any] = {
@@ -57,7 +58,14 @@ class OpenAICompatibleProvider(BaseProvider):
             "temperature": temperature,
             "max_tokens":  max_tokens,
         }
-        if json_mode:
+        # v1.2: JSON schema enforcement. Some cloud providers (OpenAI, DeepSeek)
+        # support json_schema response_format. Others may not — they'll ignore
+        # or error. Callers should use json_mode (not json_schema) for providers
+        # with unknown schema support.
+        # json_schema takes precedence over json_mode when both are set.
+        if json_schema:
+            payload["response_format"] = {"type": "json_schema", "json_schema": {"schema": json_schema}}
+        elif json_mode:
             payload["response_format"] = {"type": "json_object"}
         payload.update(kwargs)
 

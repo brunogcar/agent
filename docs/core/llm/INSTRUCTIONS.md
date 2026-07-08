@@ -13,6 +13,8 @@
 7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
 8. **Never skip `compileall` before `pytest`** — catches syntax errors early.
 9. **Never print to stdout** — MCP stdio corruption. Return dicts only.
+10. **Never use `json_mode` when you know the schema** — v1.2: Prefer `json_schema` over `json_mode` when the expected JSON structure is known. `json_mode` only ensures valid JSON; `json_schema` enforces the schema at generation time (LM Studio uses outlines internally). This eliminates the need for defensive parsing.
+11. **Never remove the defensive JSON parsing in `_parse_response`** — v1.2: The 3-layer JSON extraction (direct parse → markdown fence → regex) is the fallback when schema enforcement fails or isn't available (cloud providers, older LM Studio). Schema enforcement makes it a safety net, not the primary path — but it must stay.
 
 ## ✅ ALWAYS DO
 
@@ -26,17 +28,15 @@
 17. **Always patch pytest to `D:\mcp\agent\venv\Scripts\pytest.exe`** — per project workflow.
 18. **Always include `-W error` and `--tb=short` in pytest commands** — clean output, catch warnings.
 19. **Always update this doc** when adding roles, changing response shapes, or modifying circuit breaker behavior.
+20. **Always prefer `json_schema` over `json_mode` when the schema is known** — v1.2: `json_schema` enforces structure at generation time; `json_mode` only ensures valid JSON. Use `json_schema` for all new JSON-returning roles (router, executor code, debug, distill, etc.).
+21. **Always keep defensive JSON parsing as a fallback** — v1.2: Schema enforcement can fail (cloud provider doesn't support it, LM Studio version too old, model too small). The 3-layer extraction in `_parse_response` catches these cases. Never remove it.
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(No entries yet. Add lessons here as they are learned from future refactors and bug fixes. When an AI assistant encounters a bug, fix, or architectural insight during editing, add it here with:*
-
-> - **What happened:** The symptom or bug
-> - **Why it matters:** The impact
-> - **Fix:** The solution or pattern to follow
-
-*Fill this section with relevant information during edits and refactors.)*
+> - **What happened:** The codebase had 7+ places with defensive JSON parsing (brace-counting, markdown fence extraction, regex fallbacks, `raw_decode()` scanning) because `json_mode` only ensures valid JSON — not schema conformance. Models could output `{"random": "stuff"}` when `{"root_cause": "...", "fix": "..."}` was expected.
+> - **Why it matters:** Small models (gemma-2-2b, lfm2-1.2b) used for executor/router roles frequently produce malformed JSON or schema-wrong JSON. The defensive parsing catches the syntax issues but can't fix schema-wrong output — the caller gets a dict with missing/wrong keys.
+> - **Fix (v1.2):** Added `json_schema` param to `complete()`/`call()`/`chat_completion()`. When provided, LM Studio enforces the schema at generation time via outlines — the model literally cannot generate schema-invalid output. The defensive parsing stays as a fallback for providers that don't support `json_schema`. Phase 1 is plumbing only; Phase 2 will define schemas per role.
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*

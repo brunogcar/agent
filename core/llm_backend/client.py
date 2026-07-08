@@ -78,6 +78,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         timeout: Optional[int] = None,
         json_mode: bool = False,
+        json_schema: Optional[dict] = None,
         trace_id: str = "",
         **kwargs: Any,
     ) -> LLMResponse:
@@ -128,12 +129,16 @@ class LLMClient:
                         max_tokens = _max_tokens,
                         timeout = _timeout,
                         json_mode = json_mode,
+                        json_schema = json_schema,
                         **kwargs,
                     )
                     elapsed = round(time.time() - start, 2)
                     # HIG-02: Record success
                     breaker.record_success()
-                    return self._parse_response(raw, role, role_cfg.model, elapsed, json_mode)
+                    # v1.2: json_schema implies json_mode for parsing purposes.
+                    # When a schema is provided, the response is JSON and should be parsed.
+                    effective_json_mode = json_mode or (json_schema is not None)
+                    return self._parse_response(raw, role, role_cfg.model, elapsed, effective_json_mode)
 
                 except httpx.TimeoutException:
                     elapsed = round(time.time() - start, 2)
@@ -193,6 +198,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         timeout: Optional[int] = None,
         json_mode: bool = False,
+        json_schema: Optional[dict] = None,
         trace_id: str = "",
     ) -> LLMResponse:
         messages: list[dict] = [{"role": "system", "content": system}]
@@ -214,6 +220,7 @@ class LLMClient:
             max_tokens = max_tokens,
             timeout = timeout,
             json_mode = json_mode,
+            json_schema = json_schema,
             trace_id = trace_id,
         )
 

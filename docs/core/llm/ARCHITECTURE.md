@@ -75,6 +75,7 @@ graph TD
 - **Circuit breaker per role** — Each role has an independent circuit breaker keyed by role name (not model identifier). 3 cumulative failures → cooldown equal to that role's own timeout.
 - **Context budgeting in `memory_backend/budget.py`** — The cognitive-priority message trimming system lives in `core/memory_backend/budget.py`, not `llm_backend/`. The module's own docstring is stale (still says `core/context_budget.py`).
 - **Dual JSON extraction** — `client.py` uses a 3-layer strategy (direct parse → markdown fence → outermost regex). `router.py` uses a different approach (`json.JSONDecoder().raw_decode()`). These are intentionally separate implementations for the same general problem.
+- **JSON schema enforcement (v1.2)** — `json_schema` param on `complete()`/`call()`/`chat_completion()`. When provided, providers send `response_format={"type":"json_schema",...}`. LM Studio enforces via outlines internally — model cannot generate schema-invalid output. Stronger than `json_mode` (which only ensures valid JSON, not schema). `json_schema` takes precedence over `json_mode`; implies `json_mode` for parsing. Backward compatible (defaults to `None`). Phase 1: plumbing only — no roles use it yet. Phase 2 will define schemas per role.
 - **Provider abstraction** — `BaseProvider` ABC with `LMStudioProvider` and `OpenAICompatibleProvider`. Dynamic factory registration at startup based on `*_API_KEY` env vars.
 - **Thread-safe singleton** — `LLMClient` is a singleton. `LMStudioProvider` uses a single shared `httpx.Client` with double-checked locking (not thread-local). `CircuitBreaker` uses `threading.Lock` per instance.
 - **Timeout single source of truth** — Timeout lives exclusively in `core/config.py` (`cfg.model_registry[role]["timeout"]`). Never in `llm_backend/config.py`.
@@ -95,7 +96,18 @@ graph TD
 - Mock `httpx.Client.post()` to avoid real LLM calls
 - Mock `cfg` for model names and timeouts
 - Circuit breaker tests use real breaker instances with mocked provider responses
+- JSON schema tests mock the provider and verify `response_format` payload structure
+
+**Test files:**
+- `test_json_schema.py` — v1.2: schema enforcement (provider payload, parsing, backward compat)
+- `test_json_extraction.py` — 3-layer JSON extraction in `_parse_response`
+- `test_llm_client_integration.py` — `complete()` and `call()` message building
+- `test_llm_client_errors.py` — error handling, circuit breaker integration
+- `test_llm_response.py` — `LLMResponse` dataclass
+- `test_circuit_breaker.py` — circuit breaker state transitions
+- `test_llm_telemetry.py` — telemetry/metrics
+- `test_llm_tracer.py` — trace logging
 
 ---
 
-*Last updated: 2026-07-04. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

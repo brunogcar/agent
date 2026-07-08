@@ -24,9 +24,24 @@ result = llm.complete(
     trace_id="abc123",
 )
 
+# v1.2: JSON schema enforcement (stronger than json_mode)
+result = llm.complete(
+    role="router",
+    system="Classify the user intent...",
+    user="What are ChromaDB best practices?",
+    json_schema={
+        "type": "object",
+        "properties": {
+            "classification": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["classification", "confidence"],
+    },
+)
+
 if result.ok:
     print(result.text)        # Raw text output
-    print(result.parsed)      # Parsed JSON (if json_mode=True)
+    print(result.parsed)      # Parsed JSON (if json_mode=True or json_schema set)
     print(result.elapsed)     # Seconds taken
     print(result.usage)       # {"prompt": N, "completion": M, "total": T}
 else:
@@ -42,7 +57,8 @@ else:
 | `user` | `str` | `""` | User message |
 | `context` | `str` | `""` | Additional context (appended after system, as a fake assistant "Understood." turn) |
 | `content` | `str` | `""` | Additional content appended to the user message (e.g. file contents) |
-| `json_mode` | `bool` | `False` | Parse response as JSON |
+| `json_mode` | `bool` | `False` | Parse response as JSON (basic — ensures valid JSON, no schema) |
+| `json_schema` | `Optional[dict]` | `None` | **v1.2.** JSON schema for structured generation. When provided, providers send `response_format={"type":"json_schema",...}`. LM Studio enforces via outlines internally. Stronger than `json_mode` — model cannot generate schema-invalid output. Takes precedence over `json_mode` when both set. Implies `json_mode` for parsing. |
 | `trace_id` | `str` | `""` | Trace identifier for logging |
 | `temperature` | `float` | *(role default)* | Override role temperature |
 | `max_tokens` | `int` | *(role default)* | Override role max tokens |

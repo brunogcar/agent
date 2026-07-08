@@ -6,7 +6,7 @@ EXTRACTION NOTE (LLM Phase 1): Extracted from core/llm.py.
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, Optional
 import httpx
 
 from core.llm_backend.provider import BaseProvider
@@ -50,6 +50,7 @@ class LMStudioProvider(BaseProvider):
         max_tokens:  int,
         timeout:     int,
         json_mode:   bool,
+        json_schema: Optional[dict] = None,
         **kwargs:    Any,
     ) -> dict:
         payload: dict[str, Any] = {
@@ -58,7 +59,13 @@ class LMStudioProvider(BaseProvider):
             "temperature": temperature,
             "max_tokens":  max_tokens,
         }
-        if json_mode:
+        # v1.2: JSON schema enforcement. When json_schema is provided, use
+        # response_format=json_schema (LM Studio enforces via outlines internally).
+        # This is stronger than json_object (which only ensures valid JSON, not schema).
+        # json_schema takes precedence over json_mode when both are set.
+        if json_schema:
+            payload["response_format"] = {"type": "json_schema", "json_schema": {"schema": json_schema}}
+        elif json_mode:
             payload["response_format"] = {"type": "json_object"}
         payload.update(kwargs)
 
