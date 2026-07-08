@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from langgraph.graph import StateGraph, END
 
-from workflows.base import WorkflowState
+from workflows.base import WorkflowState, trim_state_node
 from workflows.data_impl.nodes.recall import node_recall
 from workflows.data_impl.nodes.execute import node_execute
 from workflows.data_impl.nodes.critique import node_critique
@@ -30,12 +30,13 @@ from workflows.data_impl.routes import route_after_execute
 # (with conditions). The execute->critique/END edge is conditional on exec_error.
 WORKFLOW_METADATA = {
     "name": "data",
-    "version": "1.0",
-    "description": "Data analysis: recall -> execute -> critique -> store -> notify",
+    "version": "1.1",
+    "description": "Data analysis: recall -> execute -> critique -> trim -> store -> notify",
     "nodes": [
         {"name": "recall", "description": "Recall relevant past analyses from memory"},
         {"name": "execute", "description": "Generate (if needed) and execute Python code in a sandbox"},
         {"name": "critique", "description": "LLM critique of whether the output answers the goal"},
+        {"name": "trim", "description": "Evict oversized `output` to episodic memory (v1.1: chonkie-aware, keeps preview)"},
         {"name": "store", "description": "Store results in episodic (+ procedural for generated code) memory"},
         {"name": "notify", "description": "Notify the user and mark the workflow done"},
     ],
@@ -43,7 +44,8 @@ WORKFLOW_METADATA = {
         {"from": "recall", "to": "execute"},
         {"from": "execute", "to": "critique", "condition": "success (no exec_error)"},
         {"from": "execute", "to": "END", "condition": "failed (exec_error set)"},
-        {"from": "critique", "to": "store"},
+        {"from": "critique", "to": "trim"},
+        {"from": "trim", "to": "store"},
         {"from": "store", "to": "notify"},
         {"from": "notify", "to": "END"},
     ],
@@ -73,9 +75,15 @@ def build_data_graph():
         {"critique": "critique", "failed": END},
     )
 
-    # [Fix #10] critique -> store is a direct edge (route_after_critique was
-    # dead code — it always returned "store").
-    g.add_edge("critique", "store")
+    # v1.1: trim node between critique and store. After critique produces
+    # `result`, the raw `output` is no longer needed (store and notify use
+    # `result`). trim_state_node evicts oversized `output` to episodic memory,
+    # keeping a preview so the LLM has context. Under-threshold output passes
+    # through unchanged (trim_state_node returns {}). The fallback path
+    # (chonkie missing) does whole-string eviction (v1.0 behavior).
+    g.add_node("trim", trim_state_node)
+    g.add_edge("critique", "trim")
+    g.add_edge("trim", "store")
     g.add_edge("store", "notify")
     g.add_edge("notify", END)
 

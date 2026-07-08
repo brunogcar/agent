@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.1 | 2026-07-08 | **Wired `trim_state_node`:** Added trim node between critique and store. After critique produces `result`, oversized `output` is evicted to episodic memory (chonkie-aware — splits into chunks, evicts each individually, keeps first chunk as preview). Falls back to whole-string eviction if chonkie is missing. Uses `trim_state_node()` from `workflows/base.py` (v1.3). Graph: `recall → execute → critique → trim → store → notify`. First workflow to wire in `trim_state()` (see `base/CHANGELOG.md` #18). |
 | v1.0 | 2026-07-06 | **Subpackage split:** Split monolithic `workflows/data.py` (231 lines) into `workflows/data_impl/` subpackage with per-node modules (`recall`, `execute`, `critique`, `store`, `notify`). Added `WORKFLOW_METADATA` for MCP client introspection. Thin facade re-exports `build_data_graph`, `WORKFLOW_METADATA`. Tests split into per-node files + `conftest.py` + `TestSubpackageStructure`. Applied 12 audit fixes (see below). |
 | Pre-v1.0 | 2026-07-05 | Bug fix: `node_execute` and `node_critique` now call `agent(action="dispatch", ...)` (was missing `action`, always returned `Unknown action ''`). |
 

@@ -163,6 +163,27 @@ def _evict_field(new_state: dict, key: str, val: str, trace_id: str) -> None:
     )
     new_state[key] = f"[Evicted: {token_count} tokens saved to episodic memory. Use memory tool to recall.]"
 
+
+def trim_state_node(state: WorkflowState) -> dict:
+    """LangGraph node wrapper for trim_state().
+
+    trim_state() returns a full state dict (Copy-on-Write). LangGraph nodes
+    must return PARTIAL dicts (only changed keys). This wrapper calls
+    trim_state() and returns only the evicted keys with their new
+    placeholder/preview values.
+
+    Used by: data workflow (between critique and store — evicts `output`
+    after critique has produced `result`). Other workflows can wire it in
+    at their own trim-appropriate points.
+
+    Returns: {} if nothing was evicted, or {"output": "<placeholder>"} etc.
+    """
+    new_state = trim_state(state)
+    # trim_state only modifies evictable fields — return only changed keys
+    return {k: new_state[k] for k in ("search_results", "output", "analysis")
+            if state.get(k) != new_state.get(k)}
+
+
 def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = False, **kwargs) -> None:
     """Log a workflow step to the active trace.
 

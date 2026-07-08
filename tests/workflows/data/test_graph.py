@@ -39,6 +39,7 @@ class TestDataGraphTopology:
         node_names = set(nodes.keys()) if isinstance(nodes, dict) else set(nodes)
         assert any("execute" in n or "run" in n for n in node_names), "Missing execution node"
         assert any("critique" in n or "review" in n for n in node_names), "Missing critique node"
+        assert any("trim" in n for n in node_names), "Missing trim node (v1.1)"
 
 
 class TestWorkflowMetadata:
@@ -47,25 +48,28 @@ class TestWorkflowMetadata:
     def test_metadata_exists(self):
         assert isinstance(WORKFLOW_METADATA, dict)
         assert WORKFLOW_METADATA["name"] == "data"
-        assert WORKFLOW_METADATA["version"] == "1.0"
+        assert WORKFLOW_METADATA["version"] == "1.1"
 
     def test_metadata_has_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 5, f"Expected 5 nodes, got {len(nodes)}"
+        assert len(nodes) == 6, f"Expected 6 nodes, got {len(nodes)}"
         node_names = [n["name"] for n in nodes]
         assert "recall" in node_names
         assert "execute" in node_names
         assert "critique" in node_names
+        assert "trim" in node_names  # v1.1: trim node between critique and store
         assert "store" in node_names
         assert "notify" in node_names
 
     def test_metadata_has_edges(self):
         edges = WORKFLOW_METADATA["edges"]
-        assert len(edges) >= 5, f"Expected at least 5 edges, got {len(edges)}"
+        assert len(edges) >= 6, f"Expected at least 6 edges, got {len(edges)}"
         edge_pairs = [(e["from"], e["to"]) for e in edges]
         assert ("recall", "execute") in edge_pairs
         assert ("execute", "critique") in edge_pairs
         assert ("execute", "END") in edge_pairs
+        assert ("critique", "trim") in edge_pairs  # v1.1
+        assert ("trim", "store") in edge_pairs      # v1.1
         assert ("notify", "END") in edge_pairs
 
     def test_metadata_nodes_have_descriptions(self):

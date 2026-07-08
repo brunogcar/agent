@@ -2,6 +2,8 @@
 
 The `data` workflow handles **data analysis and visualization** tasks. It takes a natural language goal, optionally some initial Python code, and produces a data analysis result.
 
+**v1.1:** Wired `trim_state_node` between critique and store. After critique produces `result`, oversized `output` is evicted to episodic memory (chonkie-aware — keeps preview, evicts chunks individually). Falls back to whole-string eviction if chonkie is missing. See [Changelog](data/CHANGELOG.md).
+
 **v1.0:** Split into the `workflows/data_impl/` subpackage (per-node modules + `WORKFLOW_METADATA`), mirroring `research_impl` / `understand_impl`. See [Architecture](data/ARCHITECTURE.md).
 
 **Key characteristics:**
