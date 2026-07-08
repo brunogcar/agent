@@ -11,7 +11,7 @@
 | `tools/memory_ops/_registry.py` | `DISPATCH` dict + `@register_action` decorator |
 | `tools/memory_ops/state.py` | Singleton store instance + `reset_state()` |
 | `tools/memory_ops/helpers.py` | `_mem()`, `_validate_tags()`, `_validate_memory_type()`, `_validate_collections()` |
-| `tools/memory_ops/actions/store.py` | Store action handler |
+| `tools/memory_ops/actions/store.py` | Store action handler (v1.3: chunked store path — `chunk=True` routes to `store_chunked()`) |
 | `tools/memory_ops/actions/recall.py` | Recall action handler |
 | `tools/memory_ops/actions/recall_context.py` | Recall context action handler (v1.0) |
 | `tools/memory_ops/actions/delete.py` | Delete action handler |
@@ -143,6 +143,7 @@ tests/tools/memory/
 ├── test_facade.py           # @meta_tool metadata, action Literal, unknown action, trace_id, compress_result, duration_ms
 ├── test_registry.py         # DISPATCH, @register_action, duplicate guard
 ├── test_store.py            # store action: validation, dedup, size limits, memory_type fail-fast, collections guard
+├── test_store_chunking.py   # v1.3: chunk=True routing, procedural rejection, param pass-through, error handling
 ├── test_recall.py           # recall action: search, filtering, tags_filter
 ├── test_recall_context.py   # recall_context action: formatted string, collections guard, unsupported param rejection
 ├── test_delete.py           # delete action: similarity, confirm_ids, collections validation, threshold=0.0, threshold range
@@ -166,4 +167,4 @@ tests/tools/memory/
 
 ---
 
-*Last updated: 2026-07-03. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -75,6 +75,16 @@ class MemoryStore:
             memory_type = COLLECTION_SEMANTIC
         return self._store(memory_type, text, importance, tags, trace_id, goal, outcome, tools_used, source)
 
+    # ── v1.1: Chunked Store ─────────────────────────────────────────────
+    # Stores a pre-split list of chunks as linked memories.
+    # Uses execute_store_chunked() which does hash-dedup-only (skips vector
+    # dedup — chunks from the same document would falsely trigger it).
+    # See write_ops.execute_store_chunked() for full rationale.
+    def store_chunked(self, chunks: list[str], memory_type: str = "semantic", importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "") -> dict:
+        if memory_type not in ALL_COLLECTIONS:
+            memory_type = COLLECTION_SEMANTIC
+        return write_ops.execute_store_chunked(self, memory_type, chunks, importance, tags, trace_id, goal, outcome, tools_used, source)
+
     # ── Recall Delegators ─────────────────────────────────────────────────
 
     def recall(self, query: str, top_k: int = None, collections: list[str] = None, min_score: float = 0.5, tags_filter: str = "", trace_id: str = "") -> list[dict]:

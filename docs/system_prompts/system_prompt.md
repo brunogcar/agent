@@ -58,7 +58,7 @@ Please respond to the user's query:
 ### Memory Best Practices:
 ✅ Recall before heavy tasks — check memory(recall=...) first 🧠
 ✅ Store after completion — always save learning (importance 8+ for procedures)
-✅ Split texts >450 chars into chunks with tags (part-1, part-2) ⚡
+✅ Per-entry limit is 50KB — use chunk=True for large documents (v1.3): `memory(store, text="...", chunk=True, chunk_size=512)` splits into linked chunks for precise recall ⚡
 ✅ Use read_many(paths=[...]) for batch file reads — efficiency pattern!
 
 ---
@@ -116,7 +116,7 @@ parallel(tasks=[
 3. **Protected files NEVER edited via autocode**: server.py, registry.py, core/config.py, core/tracer.py
 4. **Vision inputs**: context= for file_path/URL, content= for base64. Always check VISION_MODEL is set in .env
 5. **Python mode** — run_data for imports (pandas/json/re/csv/etc), run for pure logic only; always print()!
-6. **Memory limits** — ~450 chars per entry to avoid timeout (-32001); split long texts into chunks
+6. **Memory limits** — 50KB per entry (MAX_MEMORY_BYTES); use `chunk=True` for large documents to split into linked chunks for precise recall
 7. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply
 8. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)
 9. **CLI for shell queries** — instant regex routing for trivial ops (ls, cat, echo, system info), don't waste tokens on direct tool wrappers ⚡

@@ -7,15 +7,15 @@
 | File | Purpose |
 |------|---------|
 | `core/memory_engine.py` | Thin facade — re-exports `memory` singleton |
-| `core/memory_backend/store.py` | `MemoryStore`: collections, stats, compact, delete |
-| `core/memory_backend/write_ops.py` | `execute_store()` — dedup pipeline |
+| `core/memory_backend/store.py` | `MemoryStore`: collections, stats, compact, delete, `store_chunked()` (v1.1) |
+| `core/memory_backend/write_ops.py` | `execute_store()` — dedup pipeline; `execute_store_chunked()` — batch insert for chunked stores (v1.1) |
 | `core/memory_backend/read_ops.py` | `execute_recall()`, `execute_recall_context()` |
 | `core/memory_backend/scoring.py` | 4-factor confidence scoring, query rewriting |
 | `core/memory_backend/maintenance.py` | `execute_delete/prune/summarize/stats/diversity_maintenance()` |
 | `core/memory_backend/telemetry.py` | Opik integration for observability |
 | `core/memory_backend/eviction.py` | `EvictionQueue` + `flusher_loop()` — async WAL-spill for evicted context |
 | `core/memory_backend/janitor.py` | `archive_old_episodes()`: episodic archival only |
-| `core/memory_backend/constants.py` | Shared constants (banned files, limits) |
+| `core/memory_backend/constants.py` | Shared constants (banned files, limits, META_FIELDS with v1.1 chunk fields) |
 | `core/memory_backend/client.py` | `get_client(timeout=60)` — ChromaDB client singleton |
 | `core/memory_backend/budget.py` | Cognitive priority-based context budgeting (7-tier) |
 | `core/memory_backend/pruner.py` | VRAM context pruning middleware — artifact preservation + truncation |
@@ -39,15 +39,15 @@
 ```text
 core/memory_engine.py          # Thin facade — re-exports MemoryStore singleton
 core/memory_backend/
-├── store.py                   # MemoryStore class: collections, _write_lock, stats
-├── write_ops.py               # execute_store() — TOCTOU-safe dedup + insert
+├── store.py                   # MemoryStore class: collections, _write_lock, stats, store_chunked() (v1.1)
+├── write_ops.py               # execute_store() — TOCTOU-safe dedup + insert; execute_store_chunked() — batch insert (v1.1)
 ├── read_ops.py                # execute_recall(), execute_recall_context()
 ├── scoring.py                 # _decay_score() + _rewrite_query() (model-free)
 ├── maintenance.py             # execute_delete/prune/summarize/stats/diversity_maintenance()
 ├── telemetry.py               # RecallTracker — RAM buffer, periodic ChromaDB flush
 ├── eviction.py                # EvictionQueue class + flusher_loop() — disk spill queue
 ├── janitor.py                 # archive_old_episodes() — episodic archival only
-├── constants.py               # COLLECTION_*, META_FIELDS, dedup thresholds
+├── constants.py               # COLLECTION_*, META_FIELDS (v1.1: +source_doc_id/chunk_index/chunk_count), dedup thresholds
 ├── client.py                  # get_client(timeout=60) — ChromaDB client singleton
 ├── budget.py                  # Cognitive context budgeting (7-tier ContextClass)
 ├── pruner.py                  # VRAM context pruning (artifact preservation + truncation)
@@ -489,4 +489,4 @@ The `pruner.py` module (`core/memory_backend/pruner.py`) implements VRAM-aware c
 
 ---
 
-*Last updated: 2026-07-03. See [API.md](API.md) for backend API reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [API.md](API.md) for backend API reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

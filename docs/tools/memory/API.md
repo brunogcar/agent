@@ -28,6 +28,10 @@ def memory(
     max_age_days: int = 30,
     min_importance: int = 3,
     dry_run: bool = True,
+    # v1.3 — Chunking (store action only)
+    chunk: bool = False,
+    chunk_method: str = "token",
+    chunk_size: int = 512,
 ) -> dict:
     '''Memory meta-tool — atomic actions.'''
 ```
@@ -54,6 +58,9 @@ def memory(
 | `max_age_days` | `int` | No | For `prune`: max age before removal. Must be `>= 0`. Default: `30`. |
 | `min_importance` | `int` | No | For `prune`: minimum importance to keep. Must be 1–10. Default: `3`. |
 | `dry_run` | `bool` | No | For `prune`: preview deletions without executing. Default: `True`. |
+| `chunk` | `bool` | No | **v1.3.** If `True`, `store` splits `text` via chonkie into N linked chunks. Each chunk is stored as a separate memory with shared `source_doc_id` metadata. Enables precise recall. Only `semantic` and `episodic` collections; `procedural` is rejected (reinforcement conflict). Default: `False`. |
+| `chunk_method` | `str` | No | **v1.3.** One of `"token"` (chonkie `TokenChunker`) or `"sentence"` (`SentenceChunker`). Ignored when `chunk=False`. Default: `"token"`. |
+| `chunk_size` | `int` | No | **v1.3.** Approximate tokens per chunk. Ignored when `chunk=False`. Default: `512`. |
 
 ---
 
@@ -106,6 +113,63 @@ Or if duplicate detected:
     },
     "duration_ms": 12
 }
+```
+
+### `store` with `chunk=True` — Chunked Store (v1.3)
+
+When `chunk=True`, the input `text` is split into N chunks via chonkie (same integration as file tool v1.2). Each chunk is stored as a separate memory with shared `source_doc_id` metadata, enabling precise recall — the LLM gets the specific paragraph, not the whole document.
+
+**Restrictions:**
+- Only `semantic` and `episodic` collections support chunking
+- `procedural` is **rejected** — the reinforcement feature (increment `reinforcement_count` on semantic match) is nonsensical for chunks
+- Per-entry size limit (50KB) still applies to the **full text** before chunking
+
+**How it works:**
+1. Text is split via chonkie `TokenChunker` or `SentenceChunker`
+2. All chunks share a `source_doc_id` (UUID) + carry `chunk_index` (0-based) and `chunk_count`
+3. Chunks are batch-inserted in a single ChromaDB `col.add()` call (atomic)
+4. Hash dedup only (exact match) — vector dedup is skipped (chunks from the same document would falsely trigger it)
+
+**Examples:**
+```python
+# Token chunking (default) — 512 tokens per chunk
+memory(action="store", text="very long document...", chunk=True)
+
+# Sentence chunking — groups whole sentences
+memory(action="store", text="research paper...", chunk=True, chunk_method="sentence", chunk_size=256)
+
+# Episodic chunking — store a long event log as linked chunks
+memory(action="store", text="long workflow trace...", memory_type="episodic", chunk=True)
+```
+
+**Return (chunked):**
+```json
+{
+    "status": "success",
+    "data": {
+        "status": "stored",
+        "source_doc_id": "uuid",
+        "stored": 12,
+        "skipped_duplicates": 0,
+        "chunk_count": 12,
+        "collection": "semantic"
+    },
+    "duration_ms": 340
+}
+```
+
+**Recall returns chunk metadata (v1.3):** Every recall result now includes `source_doc_id`, `chunk_index`, `chunk_count`. Non-chunked memories return defaults (`""`, `None`, `0`).
+
+```python
+results = memory(action="recall", query="authentication patterns")
+# Each result:
+# {
+#   "text": "...",
+#   "source_doc_id": "uuid",   # "" for non-chunked
+#   "chunk_index": 3,          # None for non-chunked
+#   "chunk_count": 12,         # 0 for non-chunked
+#   ...
+# }
 ```
 
 ### `recall` — Semantic Search

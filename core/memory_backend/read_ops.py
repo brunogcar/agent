@@ -93,6 +93,17 @@ def execute_recall(
                 "trace_id":   meta.get("trace_id", ""),
                 "age_days":   age_days,
                 "collection": col_name,
+                # ── v1.1: Chunking metadata ───────────────────────────────
+                # These fields are "" / None / 0 for non-chunked memories
+                # (pre-v1.1 stores don't have them in metadata — .get() defaults
+                # handle this gracefully). For chunked stores, they identify the
+                # result as a fragment of a larger document.
+                #   source_doc_id: UUID shared by all chunks from the same document
+                #   chunk_index:   0-based position within the document
+                #   chunk_count:   Total chunks in the document
+                "source_doc_id": meta.get("source_doc_id", ""),
+                "chunk_index":   meta.get("chunk_index", None),
+                "chunk_count":   meta.get("chunk_count", 0),
             })
 
     results.sort(key=lambda x: x["score"], reverse=True)

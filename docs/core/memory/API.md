@@ -37,6 +37,40 @@ result = memory.store(
 
 ---
 
+### `store_chunked()` — Store Linked Chunks (v1.1)
+
+Stores a list of pre-split text chunks as linked memories in a single batch. All chunks share a `source_doc_id` (UUID) and carry `chunk_index` / `chunk_count` metadata.
+
+```python
+result = memory.store_chunked(
+    chunks=["paragraph 1...", "paragraph 2...", "paragraph 3..."],
+    memory_type="semantic",
+    importance=7,
+    tags="research,chunked",
+    trace_id="abc123",
+)
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `chunks` | `list[str]` | — | **Required.** Pre-split chunk texts |
+| `memory_type` | `str` | `"semantic"` | Target collection. Procedural is rejected by the tool layer (reinforcement conflict). |
+| `importance` | `int` | `5` | Base importance (applied to all chunks) |
+| `tags` | `str` | `""` | Comma-separated tags (applied to all chunks) |
+| `trace_id` | `str` | `""` | Trace identifier |
+| `source` | `str` | `""` | Source attribution (URL, file path) |
+| `goal` | `str` | `""` | What was being attempted |
+| `outcome` | `str` | `"unknown"` | `success` / `failure` / `partial` / `unknown` |
+| `tools_used` | `str` | `""` | Comma-separated tool names |
+
+**Dedup:** Hash-only (exact match). Vector dedup is **skipped** — chunks from the same document are semantically similar and would falsely trigger the vector dedup pipeline in `execute_store()`. See `write_ops.execute_store_chunked()` for rationale.
+
+**Returns:** `dict` — `{"status": "stored", "source_doc_id": "uuid", "stored": N, "skipped_duplicates": M, "chunk_count": N, "collection": "semantic"}`
+
+**Recall metadata (v1.1):** `recall()` results now include `source_doc_id`, `chunk_index`, `chunk_count`. Non-chunked memories return defaults (`""`, `None`, `0`).
+
+---
+
 ## Read Operations
 
 ### `recall()` — Query Memory

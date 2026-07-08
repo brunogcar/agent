@@ -6,8 +6,10 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-
-*(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
+| v1.3 | 2026-07-08 | Chonkie chunking on `store` action (`chunk`, `chunk_method`, `chunk_size` params). Semantic + episodic only; procedural rejected. Core `store_chunked()` backend (hash-dedup-only, batch insert). Recall returns `source_doc_id`/`chunk_index`/`chunk_count` metadata. System prompt fixed (50KB limit, not 450 chars). |
+| v1.2 | — | `compress_result()` crash caught, `duration_ms` in all responses, `delete` confirm_ids/threshold validation, `recall_context` rejects unsupported params, `stats` collections validation, tag splitting comma-only, janitor errors forced to strings, destructive actions documented |
+| v1.1 | — | `delete` with `confirm_ids` only, `collections` type validation, `prune` range validation, `janitor` exception guards, `compress_result` success-only, facade exception handling |
+| v1.0 | — | `@meta_tool` + `@register_action` auto-discovery, un-multiplex to `memory_ops/actions/*.py`, `recall_context` action, fail-fast `memory_type` validation, reject empty `collections=[]`, `state.py` singleton pattern |
 
 ---
 
@@ -36,19 +38,17 @@
 | `compress_result()` only on success | Error responses no longer shallow-copied by compressor |
 | Facade catches handler exceptions | Previously uncaught exceptions crashed the tool |
 
-### v1.2
+### v1.3 (non-breaking additions)
 
 | Change | Impact |
 |--------|--------|
-| `compress_result()` crash caught | If compression fails, returns structured `fail()` instead of leaking exception |
-| `duration_ms` in all responses | Performance monitoring for every action |
-| `delete` validates `confirm_ids` type | String `confirm_ids` rejected — prevents character-wise iteration |
-| `delete` validates `threshold` range | `threshold` must be 0.0–1.0 |
-| `recall_context` rejects `tags_filter`/`min_score` | Previously silently ignored; now fails fast with clear error |
-| `stats` validates `collections` | Consistent with all other actions |
-| Tag splitting comma-only | Multi-word tags preserved: `"my tag, another tag"` |
-| Janitor errors forced to strings | Prevents JSON serialization failures |
-| Destructive actions marked in docs | `delete` and `prune` flagged for human confirmation |
+| New params on `store`: `chunk` (bool, default False), `chunk_method` ("token"\|"sentence", default "token"), `chunk_size` (int, default 512) | When `chunk=True`, text is split via chonkie into N linked chunks, each stored as a separate memory with shared `source_doc_id` metadata. Enables precise recall (find the specific paragraph, not the whole document). |
+| `chunk=True` rejected on `procedural` collection | Procedural reinforcement (increment `reinforcement_count` on semantic match) is nonsensical for chunks — which chunk gets reinforced? Returns clear error. |
+| Core: new `store_chunked()` method on `MemoryStore` | Batch insert with hash-dedup-only (skips vector dedup — chunks from the same document would falsely trigger it). See `docs/core/memory/CHANGELOG.md` v1.1. |
+| Core: `recall()` returns `source_doc_id`, `chunk_index`, `chunk_count` | LLM can identify recall results as fragments of a larger document. Non-chunked memories return defaults (`""`, `None`, `0`). |
+| System prompt fixed | `docs/system_prompts/system_prompt.md` rule #6 was "~450 chars per entry" — incorrect. Actual limit is 50KB (`MAX_MEMORY_BYTES`). Updated to reference `chunk=True` for large documents. |
+| Reuses `_chunk_text()` from `tools/file_ops/actions/read_file.py` | Same chonkie integration as file tool v1.2. Soft dependency (lazy import). No code duplication. |
+| No existing params removed or renamed | v1.2 callers unaffected — `chunk` defaults to `False` |
 
 ---
 
@@ -56,6 +56,10 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| Chonkie chunking on `store` action | ✅ v1.3 | `chunk=True` splits text via chonkie (token/sentence). Semantic + episodic only; procedural rejected. Reuses `_chunk_text()` from file tool. |
+| Core `store_chunked()` backend | ✅ v1.3 | Batch insert, hash-dedup-only (skips vector dedup). See `docs/core/memory/CHANGELOG.md` v1.1. |
+| Recall returns chunk metadata | ✅ v1.3 | `source_doc_id`, `chunk_index`, `chunk_count` in recall results. Non-chunked memories return defaults. |
+| System prompt memory limit fix | ✅ v1.3 | "~450 chars" → "50KB (MAX_MEMORY_BYTES)" + chunk=True reference |
 | Monolithic `memory(action, ...)` dispatch | ✅ pre-v1 | Single `@tool` function with if/elif branching |
 | Lazy ChromaDB loading | ✅ pre-v1 | `_mem()` closure; janitor bypasses store entirely |
 | 7 actions (store/recall/delete/prune/summarize/stats/janitor) | ✅ pre-v1 | All wired to `core.memory_engine.MemoryStore` |
@@ -98,14 +102,16 @@
 
 ---
 
-## 🔄 In Progress / Next Up (v1.3)
+## 🔄 In Progress / Next Up
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
+| Group-aware `delete` by `source_doc_id` | When deleting a chunked memory, offer to delete all chunks with the same `source_doc_id`. Prevents orphaned fragments. | P1 |
+| Semantic chunking (`chunk_method="semantic"`) | Uses LM Studio `/v1/embeddings` for topic-aware splitting. Needs design decision on offline fallback (LM Studio down → sentence chunking?). | P2 |
 | `export`/`import` actions | JSONL backup/restore for collections. Needs file path validation (path guard). | P1 |
 | AND-based tag filtering (`tags_required`) | Current `tags_filter` is OR-based. AND filtering for precise procedural recall. | P1 |
 | `memory(action="health")` | Lightweight ChromaDB connectivity check. | P2 |
-| `store_batch` action | Store multiple memories in one call. Cap at 20 entries. | P2 |
+| `store_batch` action | Store multiple independent memories in one call (not chunks — independent texts). Cap at 20 entries. | P2 |
 | `recall_context` `tags_filter`/`min_score` support | Requires backend `execute_recall_context()` to accept these params. | P2 |
 | `update` action | Modify existing memory by ID without losing history or changing ID. | P1 |
 | `recent` action | Time-based retrieval (last N entries or N days). No similarity search needed. | P2 |
@@ -138,4 +144,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

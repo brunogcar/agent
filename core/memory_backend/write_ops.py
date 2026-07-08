@@ -194,3 +194,198 @@ def execute_store(
             return {"status": "stored", "id": memory_id, "collection": collection}
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v1.1 — CHUNKED STORE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# WHY THIS EXISTS:
+#   The standard execute_store() runs two-layer dedup (hash + vector) on every
+#   store call. When storing a long document as N chunks, chunks from the same
+#   document are semantically similar and would trigger vector dedup — chunk #2
+#   gets skipped as a "duplicate" of chunk #1, chunk #3 skipped as a duplicate
+#   of #2, etc. The document would be silently truncated to 1 chunk.
+#
+#   execute_store_chunked() solves this by:
+#     1. Skipping vector dedup entirely (hash dedup only — chunks have different
+#        text, so different hashes, so they all pass).
+#     2. Batch-inserting all chunks in a single col.add() call (atomic + fast).
+#     3. Linking chunks with a shared source_doc_id UUID + chunk_index metadata.
+#
+# WHAT THIS DOES NOT DO:
+#   - Does NOT run on the procedural collection (procedural reinforcement is
+#     nonsensical for chunks — which chunk gets reinforced?). The tool layer
+#     rejects chunk=True on procedural before reaching this function.
+#   - Does NOT run vector dedup against EXISTING memories. If a chunk happens
+#     to be a near-duplicate of an existing memory from a different document,
+#     both will coexist. This is an acceptable tradeoff — chunked documents are
+#     meant to be granular, and the maintenance ops (prune, diversity enforcer)
+#     handle cross-document cleanup separately.
+#
+# CALLERS:
+#   - store.store_chunked() → this function
+#   - tools/memory_ops/actions/store.py (when chunk=True) → store.store_chunked()
+#
+# SEE ALSO:
+#   - docs/core/memory/API.md → "store_chunked()" section
+#   - docs/core/memory/CHANGELOG.md → v1.1 entry
+#   - docs/tools/memory/CHANGELOG.md → v1.3 entry
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def execute_store_chunked(
+    store,          # The MemoryStore instance (passed explicitly)
+    collection: str,
+    chunks: list[str],
+    importance: int = 5,
+    tags: str = "",
+    trace_id: str = "",
+    goal: str = "",
+    outcome: str = "unknown",
+    tools_used: str = "",
+    source: str = "",
+) -> dict:
+    """Store a list of text chunks as linked memories in a single batch.
+
+    All chunks share a `source_doc_id` (UUID) and carry `chunk_index` /
+    `chunk_count` metadata so recall can identify them as fragments of a
+    larger document.
+
+    Dedup: hash-only (exact match). Vector dedup is deliberately skipped
+    because chunks from the same document are semantically similar and would
+    falsely trigger the vector dedup pipeline in execute_store().
+
+    Returns:
+        {"status": "stored", "source_doc_id": str, "stored": int,
+         "skipped_duplicates": int, "chunk_count": int, "collection": str}
+    """
+    # 🔴 Cancellation Guard: Abort before any memory mutations
+    from core.runtime.cancellation import ensure_not_cancelled
+    ensure_not_cancelled(trace_id)
+
+    if not chunks:
+        return {"status": "error", "error": "chunks list is empty"}
+
+    importance = max(1, min(10, importance))
+    col = store._col(collection)
+
+    # Generate a shared UUID for all chunks from this document.
+    # This is the linker field — recall returns it so the LLM knows
+    # a result is a fragment, not a complete memory.
+    source_doc_id = str(uuid.uuid4())
+    chunk_count = len(chunks)
+
+    # ── Hash dedup (exact match only) ──────────────────────────────────────
+    # We skip vector dedup entirely. See the block comment above for rationale.
+    # Chunks with the exact same text as an existing memory (or as each other)
+    # are skipped; everything else is batch-inserted.
+    #
+    # NOTE: We track batch_hashes separately from store._hash_cache because
+    # hashes from THIS batch aren't in _hash_cache yet (they're added only
+    # after col.add() succeeds). Without batch_hashes, duplicate chunks WITHIN
+    # the same batch would both pass the _hash_cache check and both get stored.
+    batch_hashes = set()  # intra-batch dedup — catches duplicate chunks in the same document
+    now = int(time.time())
+    docs_to_add = []
+    ids_to_add = []
+    metas_to_add = []
+    skipped = 0
+
+    for idx, chunk_text in enumerate(chunks):
+        if not chunk_text or not chunk_text.strip():
+            skipped += 1
+            continue
+
+        text_hash = normalize_and_hash(chunk_text)
+
+        # O(1) hash guard — skip exact matches (existing memory OR earlier chunk in this batch)
+        if text_hash in store._hash_cache or text_hash in batch_hashes:
+            skipped += 1
+            continue
+
+        batch_hashes.add(text_hash)
+        docs_to_add.append(chunk_text)
+        ids_to_add.append(str(uuid.uuid4()))
+        metas_to_add.append({
+            "type":       collection,
+            "importance": importance,
+            "tags":       tags,
+            "timestamp":  now,
+            "trace_id":   trace_id,
+            "goal":       goal[:200],
+            "outcome":    outcome,
+            "tools_used": tools_used,
+            "source":     source[:200],
+            "text_hash":  text_hash,
+            "reinforcement_count": 0,
+            "last_reinforced": now,
+            # ── v1.1 chunking metadata ──────────────────────────────────
+            # source_doc_id: UUID linking all chunks from the same document.
+            #                Empty string "" for non-chunked memories (default).
+            # chunk_index:   0-based position within the document.
+            # chunk_count:   Total chunks in the document (≥1 for chunked, 0 for non-chunked).
+            "source_doc_id": source_doc_id,
+            "chunk_index":   idx,
+            "chunk_count":   chunk_count,
+        })
+
+    if not docs_to_add:
+        # All chunks were duplicates or empty
+        return {
+            "status": "skipped_duplicate",
+            "reason": "all_chunks_duplicate_or_empty",
+            "source_doc_id": source_doc_id,
+            "stored": 0,
+            "skipped_duplicates": skipped,
+            "chunk_count": chunk_count,
+            "collection": collection,
+        }
+
+    # ── Batch insert (atomic) ──────────────────────────────────────────────
+    # Single col.add() call — faster than N individual calls and avoids
+    # TOCTOU races between chunks of the same document.
+    with store._write_lock:
+        # Re-check hashes inside the lock (TOCTOU guard — same pattern as
+        # execute_store, but only for hash dedup, not vector dedup).
+        final_docs = []
+        final_ids = []
+        final_metas = []
+        for doc, mid, meta in zip(docs_to_add, ids_to_add, metas_to_add):
+            if meta["text_hash"] in store._hash_cache:
+                skipped += 1
+                continue
+            final_docs.append(doc)
+            final_ids.append(mid)
+            final_metas.append(meta)
+
+        if not final_docs:
+            return {
+                "status": "skipped_duplicate",
+                "reason": "all_chunks_duplicate_or_empty",
+                "source_doc_id": source_doc_id,
+                "stored": 0,
+                "skipped_duplicates": skipped,
+                "chunk_count": chunk_count,
+                "collection": collection,
+            }
+
+        try:
+            col.add(
+                documents=final_docs,
+                ids=final_ids,
+                metadatas=final_metas,
+            )
+            # Add all hashes to cache after successful insert
+            for meta in final_metas:
+                store._hash_cache.add(meta["text_hash"])
+
+            return {
+                "status": "stored",
+                "source_doc_id": source_doc_id,
+                "stored": len(final_docs),
+                "skipped_duplicates": skipped,
+                "chunk_count": chunk_count,
+                "collection": collection,
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}

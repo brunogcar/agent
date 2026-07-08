@@ -54,6 +54,10 @@ def memory(
     max_age_days: int = 30,
     min_importance: int = 3,
     dry_run: bool = True,
+    # v1.3 — Chunking (store action only; ignored by all other actions)
+    chunk: bool = False,
+    chunk_method: str = "token",
+    chunk_size: int = 512,
 ) -> dict:
     """Memory meta-tool — store, recall, and manage agent memories."""
     action = action.strip().lower() if action else ""
@@ -91,6 +95,10 @@ def memory(
         "max_age_days": max_age_days,
         "min_importance": min_importance,
         "dry_run": dry_run,
+        # v1.3 chunking params — always passed; only the store action uses them
+        "chunk": chunk,
+        "chunk_method": chunk_method,
+        "chunk_size": chunk_size,
     }
 
     start = time.time()

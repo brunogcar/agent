@@ -6,8 +6,8 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-
-*(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
+| v1.1 | 2026-07-08 | `store_chunked()` method + `execute_store_chunked()` — batch insert with hash-dedup-only (skips vector dedup for chunked stores). Recall returns `source_doc_id`/`chunk_index`/`chunk_count` metadata. `META_FIELDS` updated with 3 new fields. |
+| v1.0 | — | Three-collection architecture, four-layer dedup, decay scoring, context budgeting, diversity enforcement, meta-learning, sleep-learn daemon, thread-safe writes, cancellation guards, telemetry |
 
 ---
 
@@ -33,6 +33,9 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| `store_chunked()` + `execute_store_chunked()` | ✅ v1.1 | Batch insert for chunked stores. Hash-dedup-only (skips vector dedup — chunks from same doc would falsely trigger it). Linked via `source_doc_id` UUID + `chunk_index`/`chunk_count` metadata. |
+| Recall returns chunk metadata | ✅ v1.1 | `source_doc_id`, `chunk_index`, `chunk_count` in recall results. Non-chunked memories return defaults (`""`, `None`, `0`). |
+| `META_FIELDS` updated | ✅ v1.1 | Added `source_doc_id`, `chunk_index`, `chunk_count` (documentation-only — ChromaDB accepts arbitrary metadata keys). |
 | Three-collection architecture | ✅ pre-v1 | Episodic, semantic, procedural |
 | Four-layer dedup | ✅ pre-v1 | Hash guard + outer vector + inner vector + procedural reinforcement |
 | Decay scoring | ✅ pre-v1 | Time-decay with procedural bypass |
@@ -50,6 +53,8 @@
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
+| Group-aware `delete` by `source_doc_id` | When deleting a chunked memory, offer to delete all chunks with the same `source_doc_id`. Prevents orphaned fragments. Currently `delete` is similarity-based and may match some chunks but not others. | P1 |
+| Semantic chunking (`chunk_method="semantic"`) | Uses LM Studio `/v1/embeddings` for topic-aware splitting. Needs design decision on offline fallback. | P2 |
 | Sweeper integration | Phase 1 passive observation only; needs tracer/memory integration | P1 |
 | Janitor consolidation | `sleep_learn/janitor.py` has purge logic; `memory_backend/janitor.py` handles episodic archival | P1 |
 | Consolidated learning pipeline | Merge inline + background into single system with `source` metadata | P2 |
@@ -73,4 +78,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
