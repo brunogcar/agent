@@ -68,7 +68,7 @@ graph TD
 - **Autocode compatibility** — `run_workflow()` converts `goal` → `task` for the autocode workflow. This bridges the `run_workflow()` API (which uses `goal`) with autocode's internal API (which uses `task`).
 - **All workflows use `graph.invoke()`** — [v1.0] All six workflows (research, data, autocode, deep_research, understand) are sync LangGraph StateGraphs routed through `graph.invoke()`. No special-cased sync wrappers.
 - **Exception isolation** — The entire dispatch is wrapped in a try/except. If any workflow crashes, a checkpoint is saved and a clean failure dict is returned. Never leaks exceptions to the caller.
-- **State trimming** — `trim_state()` evicts oversized fields (`search_results`, `output`, `analysis`) to the async eviction queue when they exceed ~1000 tokens. Prevents LangGraph checkpoint bloat.
+- **State trimming** — `trim_state()` evicts oversized fields (`search_results`, `output`, `analysis`) to the async eviction queue when they exceed ~1000 tokens. Prevents LangGraph checkpoint bloat. v1.3: chonkie-aware — splits into sentence-aware chunks, evicts each individually (precise recall), keeps first chunk as preview. Falls back to whole-string eviction if chonkie is missing. **Note:** `trim_state()` is currently a utility — no workflow calls it yet (see CHANGELOG #18).
 
 ---
 

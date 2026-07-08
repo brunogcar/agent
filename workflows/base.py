@@ -65,20 +65,27 @@ def trim_state(state: WorkflowState) -> WorkflowState:
     """
     Phase 5: Evict low-value fields from working memory to the async queue.
     Returns a NEW state dict (Copy-on-Write) to preserve LangGraph immutability.
+
+    v1.3: Chonkie-aware eviction. When chonkie is available, splits oversized
+    fields into sentence-aware chunks and evicts each chunk individually (enabling
+    precise recall later). Keeps the first chunk as a preview in state so the LLM
+    has context without needing to recall immediately. Falls back to whole-string
+    eviction (v1.0 behavior) if chonkie is not installed or chunking fails.
+
+    NOTE: trim_state() is currently a utility — no workflow calls it yet. It's
+    ready for when workflows wire it into their graphs (see base/CHANGELOG.md #18).
+    When wired in, it should be called between nodes that produce large outputs
+    (e.g., after search_results is populated, before the next node runs).
     """
     from core.memory_backend.eviction import eviction_queue
-    from core.config import cfg
     new_state = dict(state)
     evicted_keys = []
+    trace_id = state.get("trace_id", "")
 
     for key in ["search_results", "output", "analysis"]:
         val = new_state.get(key)
         if val and isinstance(val, str) and (len(val) // 4) > 1000:
-            eviction_queue.push(
-                text=val,
-                metadata={"source": key, "trace_id": state.get("trace_id", "")}
-            )
-            new_state[key] = f"[Evicted: {len(val) // 4} tokens saved to episodic memory. Use memory tool to recall.]"
+            _evict_field(new_state, key, val, trace_id)
             evicted_keys.append(key)
 
     if evicted_keys:
@@ -87,6 +94,74 @@ def trim_state(state: WorkflowState) -> WorkflowState:
             tracer.step(tid, "eviction", f"Evicted {evicted_keys} to episodic memory")
 
     return new_state
+
+
+def _evict_field(new_state: dict, key: str, val: str, trace_id: str) -> None:
+    """Evict an oversized field. Tries chonkie-aware chunked eviction first,
+    falls back to whole-string eviction (v1.0 behavior) if chonkie is missing
+    or chunking fails.
+
+    Chonkie path (v1.3):
+      1. Split text into sentence-aware chunks via _chunk_text() (reuses file
+         tool v1.2 integration — same chonkie SentenceChunker, lazy import)
+      2. Evict each chunk individually to episodic memory. The `source` field
+         encodes the field name and chunk position (e.g., "evicted:output:chunk_2_of_5")
+         so the LLM can recall specific chunks later via tags_filter="evicted"
+      3. Keep first chunk (~500 chars) as preview in state — gives the LLM
+         enough context to decide whether to recall, instead of a blind placeholder
+
+    Fallback path (v1.0 behavior):
+      1. Evict whole string to episodic memory
+      2. Replace with generic placeholder (no preview)
+
+    Why `source` encodes chunk position (not source_doc_id metadata):
+      The eviction flusher (core/memory_backend/eviction.py flusher_loop) unpacks
+      metadata as kwargs to memory.store(). memory.store() accepts specific params
+      (text, memory_type, importance, tags, trace_id, goal, outcome, tools_used,
+      source) — NOT source_doc_id/chunk_index/chunk_count. Adding those would
+      cause TypeError. The `source` field (truncated to 200 chars by execute_store)
+      is the right place to encode chunk position for evicted memories.
+    """
+    token_count = len(val) // 4
+
+    # Import eviction_queue (needed for both chonkie and fallback paths).
+    # Imported inside the function to match trim_state()'s pattern and avoid
+    # module-level import side effects.
+    from core.memory_backend.eviction import eviction_queue
+
+    # Try chonkie-aware eviction
+    try:
+        from tools.file_ops.actions.read_file import _chunk_text
+        chunks = _chunk_text(val, "sentence", 512)
+        if chunks and len(chunks) > 1:
+            # Evict each chunk individually — source field encodes position for recall
+            for idx, chunk in enumerate(chunks):
+                eviction_queue.push(
+                    text=chunk,
+                    metadata={
+                        "source": f"evicted:{key}:chunk_{idx}_of_{len(chunks)}",
+                        "trace_id": trace_id,
+                    }
+                )
+            # Keep first chunk as preview (~500 chars) so LLM has context
+            preview = chunks[0][:500]
+            if len(chunks[0]) > 500:
+                preview += "..."
+            new_state[key] = (
+                f"[Evicted: {token_count} tokens across {len(chunks)} chunks saved to episodic memory. "
+                f'Preview: "{preview}". '
+                f'Use memory(recall, tags_filter="evicted") to retrieve specific chunks.]'
+            )
+            return
+    except Exception:
+        pass  # Fall through to whole-string eviction (chonkie missing or chunking failed)
+
+    # Fallback: whole-string eviction (v1.0 behavior)
+    eviction_queue.push(
+        text=val,
+        metadata={"source": f"evicted:{key}", "trace_id": trace_id}
+    )
+    new_state[key] = f"[Evicted: {token_count} tokens saved to episodic memory. Use memory tool to recall.]"
 
 def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = False, **kwargs) -> None:
     """Log a workflow step to the active trace.

@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.3 | 2026-07-08 | **Chonkie-aware `trim_state()`:** When chonkie is available, splits oversized fields into sentence-aware chunks and evicts each individually (precise recall later). Keeps first chunk as preview in state. Falls back to whole-string eviction (v1.0 behavior) if chonkie is missing or chunking fails. New `_evict_field()` helper. Tests updated to mock `_chunk_text` for deterministic path control. **Note:** `trim_state()` is currently a utility — no workflow calls it yet (#18 tracks wiring it in). |
 | v1.2 | 2026-07-06 | **Checkpoint + state fixes:** `node_error` now saves full state (not just `{status, error}`) for resume (#1). Exception handler saves checkpoint before returning failure (#2). `node_done` saves success checkpoint before `mark_complete` (#7). Resume no longer clobbers checkpoint's original goal (#5). `task` field added to `WorkflowState` TypedDict (#4). Module docstring fixed ("three workflows" → six). `@meta_tool` adoption noted for notify (#8 — deferred). Test restructure: split into `test_node_helpers` + `test_dispatcher` + `test_trim_state` + `conftest` (#9). |
 | v1.1 | 2026-07-05 | Bugfix batch in `workflows/helpers/checkpoint.py`: docstring path corrected (#15); `resume_count` computed via JSON parsing instead of string-matching (#16). `report` removed from `VALID_WORKFLOWS`. `deep_research` added. Error message updated to list all 5 types. |
 | v1.0 | — | Released — Shared `WorkflowState`, node helpers (`node_step`/`node_error`/`node_done`), `trim_state()`, `run_workflow()` dispatcher, checkpoint resumption, trace lifecycle. |
@@ -40,7 +41,7 @@
 | `node_step()` trace logging | ✅ v1.0 | Side-effect helper, returns None (not a LangGraph node) |
 | `node_error()` error handling | ✅ v1.0 | Guard against empty messages, saves checkpoint |
 | `node_done()` completion | ✅ v1.0 | Finishes trace, marks complete |
-| `trim_state()` memory eviction | ✅ v1.0 | Phase 5: evicts oversized fields to async queue |
+| `trim_state()` memory eviction | ✅ v1.0 | Phase 5: evicts oversized fields to async queue. v1.3: chonkie-aware (chunked eviction + preview, fallback to whole-string). |
 | `run_workflow()` dispatcher | ✅ v1.0 | Routes to 6 workflow types, trace auto-creation |
 | Checkpoint resumption | ✅ v1.0 | `resume=True` restores from journal, version validation |
 | Autocode compatibility | ✅ v1.0 | Converts `goal` → `task` for autocode workflow |
@@ -60,6 +61,7 @@
 | #7 `node_done()` success checkpoint | ✅ v1.2 | Was: no checkpoint. Now: saved before `mark_complete`. |
 | #8 `@meta_tool` on notify | ✅ v1.2 | Deferred — `notify` is a simple `@tool` (no dispatch table). Will adopt `@meta_tool` when notify is refactored. |
 | #9 Test restructure | ✅ v1.2 | Split into `test_node_helpers` + `test_dispatcher` + `test_trim_state` + `conftest`. |
+| #17 Chonkie-aware `trim_state()` | ✅ v1.3 | Chunked eviction + preview (fallback to v1.0 whole-string if chonkie missing). Tests mock `_chunk_text` for deterministic path control. |
 
 ---
 
@@ -74,6 +76,7 @@
 | 14 | **Timeout wrapper** | Add configurable timeout around `graph.invoke()` to prevent hung workflows | P2 |
 | 15 | **Result pruning** | Pipe `result` through `prune_tool_dict()` before return to prevent oversized outputs | P3 |
 | 16 | **Parallel workflow dispatch** | Evaluate `asyncio.gather()` for parallel workflow execution | P3 |
+| 18 | **Wire `trim_state()` into workflow graphs** | `trim_state()` is a utility (v1.3: chonkie-aware) but no workflow calls it. Wire it into graphs between nodes that produce large outputs (e.g., after `search_results` is populated, before the next node runs). This is the real gap — the chonkie improvement is "ready for use," not "in use." | P1 |
 
 ---
 

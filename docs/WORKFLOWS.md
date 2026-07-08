@@ -404,6 +404,35 @@ Creating `.bak` backup files is forbidden by project rules. Use atomic writes (`
 
 ---
 
+## 🧩 Chunking in Workflows
+
+Text chunking via [chonkie](https://github.com/chonkie-ai/chonkie) is integrated in **one workflow utility** (`trim_state()`) with **2 additional roadmap integration points**. See `docs/TOOLS.md` § "Chunking (chonkie)" for the tool-layer analysis.
+
+### Current: `trim_state()` in `workflows/base.py` (v1.3)
+
+`trim_state()` evicts oversized state fields (`search_results`, `output`, `analysis`) to episodic memory when they exceed ~1000 tokens. v1.3 makes this **chonkie-aware**:
+
+| Path | When | Behavior |
+|------|------|----------|
+| **Chonkie** (v1.3) | chonkie installed + chunking produces >1 chunk | Split text into sentence-aware chunks → evict each individually (precise recall later) → keep first chunk as preview in state |
+| **Fallback** (v1.0) | chonkie missing, chunking fails, or single chunk | Whole-string eviction → generic placeholder (no preview) |
+
+**Why the preview matters:** The LLM sees `[Evicted: 2500 tokens across 6 chunks saved to episodic memory. Preview: "The search returned..." Use memory(recall, tags_filter="evicted") to retrieve specific chunks.]` instead of a blind placeholder. It has enough context to decide whether to recall.
+
+**Chunk position encoding:** Each evicted chunk's `source` field encodes its position (`evicted:output:chunk_2_of_5`) so the LLM can identify which chunk to recall. The `source` field is used (not `source_doc_id` metadata) because the eviction flusher unpacks metadata as kwargs to `memory.store()`, which doesn't accept `source_doc_id`.
+
+**⚠️ Current status:** `trim_state()` is a **utility** — no workflow calls it yet. It's ready for when workflows wire it into their graphs (see `base/CHANGELOG.md` #18). The chonkie improvement is "ready for use," not "in use."
+
+### Roadmap: understand workflow (P2)
+
+When the understand workflow is extended to index `.md`/`.txt`/`.rst` docs (currently code-only), `core/kgraph/embeddings.py` should use chonkie `SentenceChunker` for prose files. Tree-sitter (currently used for code) can't parse prose. This is **conditional** on file-type support landing first — see `understand/CHANGELOG.md` #6.
+
+### Roadmap: autocode #37 (P3 future)
+
+If autocode is refactored to accumulate debug-loop history (current `debug.py` is stateless per iteration — each debug call sees only current test output), chonkie could compress the history to fit the LLM context. This is a **long-term future** item — depends on autocode first being refactored to accumulate history. See `autocode/CHANGELOG.md`.
+
+---
+
 *Architecture: shared WorkflowState + node helpers + dispatcher → 5 distinct workflows → memory bookend pattern → checkpoint resumption → exception isolation → best-effort side effects.*
 
 ---

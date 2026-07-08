@@ -54,6 +54,7 @@
 |---|---------|-------|----------|
 | 1 | **Configurable `skip_dirs`** | Currently hardcoded local set. Should be `.env` or `ProjectManager` config. | P3 |
 | 5 | **Additional languages** | Java, C/C++, Ruby via tree-sitter (tree-sitter-languages already bundles these — just add to LANGUAGE_MAP). | P3 |
+| 6 | **Chonkie chunking for `.md`/`.txt` docs (conditional)** | **When** understand is extended to index `.md`/`.txt`/`.rst` docs (currently code-only), use chonkie `SentenceChunker` for those file types. Tree-sitter (currently used for code definitions) can't parse prose — chonkie sentence chunking is the right tool for docs. Reuses `_chunk_text()` from `tools/file_ops/actions/read_file.py` (file tool v1.2 integration). This is **conditional** on file-type support landing first — not a standalone task. See `docs/TOOLS.md` § "Chunking (chonkie)". | P2 |
 
 ---
 

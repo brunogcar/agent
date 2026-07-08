@@ -875,6 +875,53 @@ Mutating actions (write, delete, commit, rollback) must call `ensure_not_cancell
 
 ---
 
+## 🧩 Chunking (chonkie) — Where It Applies and Why
+
+Text chunking via [chonkie](https://github.com/chonkie-ai/chonkie) is available as a **soft dependency** (lazy import — non-chunk operations work without it installed). As of file tool v1.2, memory tool v1.3, and workflow base v1.3, chunking is integrated in **two tools and one workflow utility**. This section explains why, so future AI editors don't re-investigate the same question.
+
+### The two patterns where chunking adds value
+
+| Pattern | Why chunking helps | Where it applies |
+|---------|-------------------|-----------------|
+| **Persistent text for retrieval** | Recall finds the specific paragraph, not the whole blob | ✅ Memory tool (v1.3) — `memory(action="store", chunk=True)` |
+| **Large persistent text for navigation** | LLM can read specific sections instead of one truncated blob | ✅ File tool (v1.2) — `file(action="read_file", chunk=True)` |
+| **Workflow state eviction** | Evict chunks individually (precise recall later) + keep preview in state | ✅ Workflow base `trim_state()` (v1.3) — see `docs/WORKFLOWS.md` |
+
+The key word is **persistent** — the text survives between calls and the LLM needs to navigate or retrieve it later. For ephemeral tool output, reactive truncation (`compress_result`) is correct.
+
+### Why other tools don't need chunking
+
+| Tool(s) | Current handling | Why chunking doesn't fit |
+|---------|-----------------|-------------------------|
+| **web**, **tavily**, **browser** | `max_chars` truncation + `prune_tool_dict` (head+tail+artifact) + `compress_result` | Web content is **ephemeral** — LLM consumes it immediately. If truncated, LLM increases `max_chars` or uses `browser(selector="...")` to target sections. The `research`/`deep_research` workflows handle multi-page synthesis. |
+| **git** | `diff` has `max_lines` (preserves headers, truncates middle); `log` uses `--max-count=n` | Git has native navigation — `git diff --stat`, `git diff -- pathspec`, `git diff -U5`. Chunking would duplicate git's native filtering. |
+| **cli** | Returns raw output, `compress_result` truncates | CLI is for quick shell queries. For large file reading, LLM uses `file(read_file, chunk=True)`. System prompt scopes CLI to "trivial ops." |
+| **agent**, **consult** | `budget.py` 7-tier priority truncation on `content` param | Chunked processing (map-reduce) is a **workflow** concern — `deep_research` already does decompose→search→synthesize. Adding chunking to the agent tool would break the "one tool call = one LLM call" contract and duplicate workflow logic. |
+| **report**, **parallel**, **notify**, **workflow**, **vision**, **python** | N/A — don't process large text | Either generate output (report), execute code (python), or orchestrate (workflow/parallel). No large-text input pattern. |
+
+### The architectural principle
+
+```
+file (persistent text on disk)       → chunk=True for navigation    ✅ v1.2
+memory (persistent text in ChromaDB) → chunk=True for retrieval     ✅ v1.3
+workflow state (eviction to memory)  → chunked eviction + preview   ✅ v1.3
+web/tavily/browser (ephemeral text)  → truncation + compress_result ✅ correct
+agent/workflows (LLM processing)     → budget.py + map-reduce       ✅ correct
+```
+
+`compress_result` in `core/utils.py` (truncates to 4000 chars with "chars truncated" message) is the right pattern for **ephemeral** tool output — reactive (handles overflow after it happens) rather than proactive (chunking before it's needed). For ephemeral output, reactive is correct — you don't know which part the LLM needs until it reads it.
+
+### Workflow integration points (roadmap)
+
+Chunking may add value in **workflows** in 2 additional places. See `docs/WORKFLOWS.md` § "Chunking in Workflows" for details:
+
+| Workflow | Integration point | Value | Priority |
+|----------|------------------|-------|----------|
+| **understand** | `core/kgraph/embeddings.py` — extend to `.md`/`.txt` docs (tree-sitter can't parse prose; chonkie sentence chunking would handle it) | Medium — depends on understand supporting docs first (separate feature) | P2 |
+| **autocode** #37 | Debug-loop history compression | Low — current `debug.py` is stateless per iteration. Would only apply if autocode is refactored to accumulate debug history. | P3 (future) |
+
+---
+
 *Architecture: @meta_tool + DISPATCH registry + atomic actions + path guard + cancellation guard + standardized returns + MCP stdio safety.*
 
 ---
