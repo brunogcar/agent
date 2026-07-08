@@ -24,6 +24,7 @@
 13. **Remember metrics are in-memory** — `_ROLE_METRICS` and `_PARSE_WARNING_LOG` are not persisted. Do not rely on them across process restarts.
 14. **Limit fallback to one-shot** — if primary fails and fallback also fails, return error. Do not chain more than one fallback.
 15. **Limit escalation to one-shot** — if planner model also fails to produce valid JSON, return `parse_warning`. Do not loop.
+16. **Always define `json_schema` in ROLE_CONFIG for JSON-returning roles** — v1.4: The schema enforces structure at generation time (LM Studio via outlines). The system prompt still documents the format; the schema makes it impossible to violate. See `docs/core/llm/INSTRUCTIONS.md` rule #10.
 
 ---
 
@@ -137,4 +138,4 @@ These are hard-won lessons from the Phase 7 `@meta_tool` refactor. Read before m
 
 ---
 
-*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

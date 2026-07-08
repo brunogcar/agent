@@ -6,7 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
-| v1.2 | 2026-07-08 | **JSON schema enforcement:** Added `json_schema` param to `complete()`, `call()`, and `chat_completion()`. When provided, providers send `response_format={"type":"json_schema","json_schema":{"schema":{...}}}` (LM Studio enforces via outlines internally). Stronger than `json_mode` (which only ensures valid JSON, not schema). `json_schema` takes precedence over `json_mode` when both are set. `json_schema` implies `json_mode` for response parsing. Backward compatible — defaults to `None`. |
+| v1.2 | 2026-07-08 | **JSON schema enforcement:** Added `json_schema` param to `complete()`, `call()`, and `chat_completion()`. When provided, providers send `response_format={"type":"json_schema","json_schema":{"schema":{...}}}` (LM Studio enforces via outlines internally). Stronger than `json_mode` (which only ensures valid JSON, not schema). `json_schema` takes precedence over `json_mode` when both are set. `json_schema` implies `json_mode` for response parsing. Backward compatible — defaults to `None`. Phase 2: schemas defined for 6 agent roles (code, route, plan, review, refactor, test) + router._model_route() + autocode debug node + procedural distill + sleep_learn distiller. |
 | Pre-v1 | 2026-07-04 | Initial implementation. Role-based dispatch, circuit breaker per role, cognitive context budgeting, provider abstraction, thread-safe singleton. |
 
 ---
@@ -29,6 +29,7 @@
 | Dual JSON extraction | ✅ Pre-v1 | `client.py` 3-layer + `router.py` `raw_decode()` |
 | Dynamic factory registration | ✅ Pre-v1 | Auto-registers cloud providers based on `*_API_KEY` env vars |
 | Token tracking | ✅ Pre-v1 | Prometheus metrics via `core/metrics.py` |
+| json_schema adopted by callers | ✅ v1.2 (Phase 2) | 6 agent roles + router + debug + distill + sleep_learn |
 
 ---
 

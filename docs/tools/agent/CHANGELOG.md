@@ -15,6 +15,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.4 | 2026-07-08 | **JSON schema enforcement:** Added `json_schema` to ROLE_CONFIG for 6 JSON-returning roles (code, route, plan, review, refactor, test). `dispatch.py` reads `json_schema` from role config and passes to `llm.complete()`. LM Studio enforces schema at generation time via outlines. Defensive JSON parsing stays as fallback. |
 | v1.3 | 2026-07-05 | Bugfix batch: escalation uses planner prompt (#7), `escalated_from` tracking (#8), content budget 70% of remaining (#9), fallback re-trims context (#11), role sets module-level (#12), vision_delegate forwards context (#13), llm_role validation at import — warning only, not error (#18), cache limits configurable (#19), metrics JSONL persistence (#20), cache key includes model (#23), metrics aggregation (#24), parse_warnings severity (#25), `unregister_action` added (#27), `_trim_context` head truncation fix (#21). Note: Bug #10 (classify/consultor fallback mismatch) was NOT fixed — fallbacks are intentional escalation paths per maintainer design decision. |
 | v0.1 | 2024-01-15 | Initial monolithic agent tool (~420 lines) |
 | v0.2 | 2024-02-01 | Added response cache and metrics |
@@ -121,4 +122,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

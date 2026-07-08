@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.2 | 2026-07-08 | **JSON schema enforcement:** `debug.py` now passes `json_schema` via `_call()` helper. Schema: `{root_cause: str, defense_notes: str, fix: str}`. `_call()` helper updated to accept `json_schema` param. LM Studio enforces at generation time. Defensive JSON parsing stays as fallback. |
 | v1.1.2 | 2026-07-06 | **Small-fix batch:** #39 (stuck detection — same error signature on consecutive iterations bails to verify), #44 (structured artifacts in return dict), #46 (multi-file git-diff input via `files={"all changed": ""}` + `git_diff=True`), #47 (dry-run guards on write_files/commit/branch). Also folded in v1.1.1: `TestPartialDictReturns` + changelog cleanup. |
 | v1.1 | 2026-07-06 | **Facade fix + WORKFLOW_METADATA + routing fixes.** Fixed the broken facade (was unreachable for 2 versions due to 4 dead imports + double-compile + uncompiled-graph crash in base.py). Added `WORKFLOW_METADATA` (17 nodes, loops, branches, safety_features). Fixed `route_after_write_files` to include `audit`/`edit` (was skipping impact analysis). Made `distill_memory` non-fatal (`tracer.warning` not `tracer.error`). Added facade contract tests. Based on cross-LLM review (Gemini, DeepSeek, Mistral, Qwen, Kimi). |
 | v1.0.2 | 2026-07-05 | P1/P2 bugfix batch (18 items — see Completed) |
@@ -111,4 +112,4 @@
 
 ---
 
-*Last updated: 2026-07-06 (v1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

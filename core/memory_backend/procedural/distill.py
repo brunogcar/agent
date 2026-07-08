@@ -29,6 +29,19 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
     user_prompt = USER_PROMPT_TEMPLATE.format(trace_text=trace_text)
 
     try:
+        # v1.3: JSON schema enforcement — LM Studio enforces the distillation
+        # schema at generation time. The model cannot produce has_insight/
+        # rule/tags with wrong types or missing fields.
+        _DISTILL_JSON_SCHEMA = {
+            "type": "object",
+            "properties": {
+                "has_insight": {"type": "boolean"},
+                "rule": {"type": "string"},
+                "tags": {"type": "string"},
+            },
+            "required": ["has_insight", "rule", "tags"],
+            "additionalProperties": False,
+        }
         # The timeout parameter is passed directly to llm.complete(), which passes it
         # to httpx.Client.post(). If it hits 15s, httpx severs the socket,
         # instantly freeing LM Studio's VRAM. No ThreadPoolExecutor needed.
@@ -40,6 +53,7 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
             trace_id=trace_id,
             temperature=0.2,
             timeout=timeout,
+            json_schema=_DISTILL_JSON_SCHEMA,
         )
     except Exception as e:
         tracer.error(trace_id, "distill", f"LLM call failed: {e}")

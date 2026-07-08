@@ -35,7 +35,7 @@
 
 > - **What happened:** The codebase had 7+ places with defensive JSON parsing (brace-counting, markdown fence extraction, regex fallbacks, `raw_decode()` scanning) because `json_mode` only ensures valid JSON — not schema conformance. Models could output `{"random": "stuff"}` when `{"root_cause": "...", "fix": "..."}` was expected.
 > - **Why it matters:** Small models (gemma-2-2b, lfm2-1.2b) used for executor/router roles frequently produce malformed JSON or schema-wrong JSON. The defensive parsing catches the syntax issues but can't fix schema-wrong output — the caller gets a dict with missing/wrong keys.
-> - **Fix (v1.2):** Added `json_schema` param to `complete()`/`call()`/`chat_completion()`. When provided, LM Studio enforces the schema at generation time via outlines — the model literally cannot generate schema-invalid output. The defensive parsing stays as a fallback for providers that don't support `json_schema`. Phase 1 is plumbing only; Phase 2 will define schemas per role.
+> - **Fix (v1.2):** Added `json_schema` param to `complete()`/`call()`/`chat_completion()`. When provided, LM Studio enforces the schema at generation time via outlines — the model literally cannot generate schema-invalid output. The defensive parsing stays as a fallback for providers that don't support `json_schema`. Phase 2 complete: schemas defined for 6 agent roles (code, route, plan, review, refactor, test) + router._model_route() + autocode debug node + procedural distill + sleep_learn distiller.
 
 ---
 

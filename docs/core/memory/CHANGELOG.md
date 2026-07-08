@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.2 | 2026-07-08 | **JSON schema enforcement:** `procedural/distill.py` now passes `json_schema` to `llm.complete()`. Schema: `{has_insight: bool, rule: str, tags: str}`. LM Studio enforces at generation time. Defensive JSON parsing stays as fallback. |
 | v1.1 | 2026-07-08 | `store_chunked()` method + `execute_store_chunked()` — batch insert with hash-dedup-only (skips vector dedup for chunked stores). Recall returns `source_doc_id`/`chunk_index`/`chunk_count` metadata. `META_FIELDS` updated with 3 new fields. |
 | v1.0 | — | Three-collection architecture, four-layer dedup, decay scoring, context budgeting, diversity enforcement, meta-learning, sleep-learn daemon, thread-safe writes, cancellation guards, telemetry |
 

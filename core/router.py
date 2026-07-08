@@ -381,10 +381,25 @@ class TaskRouter:
         trace_id: str,
     ) -> Optional[RoutingDecision]:
         """Try to get a routing decision from the Router."""
+        # v1.3: JSON schema enforcement — LM Studio enforces the routing
+        # schema at generation time via outlines. The model cannot produce
+        # schema-invalid output. Defensive parsing below stays as fallback.
+        _ROUTER_JSON_SCHEMA = {
+            "type": "object",
+            "properties": {
+                "workflow": {"type": "string"},
+                "tool": {"type": "string"},
+                "complexity": {"type": "integer"},
+                "reason": {"type": "string"},
+            },
+            "required": ["workflow", "tool", "complexity", "reason"],
+            "additionalProperties": False,
+        }
         r = llm.complete(
             role="router",
             system=ROUTER_SYSTEM_PROMPT,
             user=goal,
+            json_schema=_ROUTER_JSON_SCHEMA,
             trace_id=trace_id,
             timeout=cfg.router_timeout,
         )

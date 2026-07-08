@@ -38,11 +38,24 @@ def distill_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
     # 1. Call the public LLM API (Respects all global rate limits, budgets, and circuit breakers)
     tracer.step(trace_id, "sleep_learn", "distillation_started", observation_type=observation.get("event_type"))
     
+    # v1.3: JSON schema enforcement — LM Studio enforces the rule extraction
+    # schema at generation time. The model cannot produce rule/confidence
+    # with wrong types or missing fields.
+    _DISTILL_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "rule": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["rule", "confidence"],
+        "additionalProperties": False,
+    }
     result = llm.complete(
         role="executor",  # Use local model to avoid cloud costs for meta-learning
         system=_DISTILLATION_SYSTEM_PROMPT,
         user=f"Analyze this observation and extract a procedural rule:\n\n{obs_text}",
         json_mode=True,
+        json_schema=_DISTILL_SCHEMA,
         trace_id=trace_id,
         timeout=60,
         max_tokens=256

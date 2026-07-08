@@ -18,9 +18,25 @@ OUTPUT FORMAT (mandatory JSON, no markdown fences):
 Write the minimal change that improves the code. Do not rewrite unrelated code.
 """
 
+# v1.3: JSON schema for structured generation. LM Studio enforces this at
+# generation time via outlines — the model cannot produce schema-invalid output.
+# Matches the JSON format documented in the system prompt above.
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "analysis": {"type": "string"},
+        "refactored_code": {"type": "string"},
+        "risks": {"type": "string"},
+        "tests": {"type": "string"},
+    },
+    "required": ["analysis", "refactored_code", "risks", "tests"],
+    "additionalProperties": False,
+}
+
 ROLE_CONFIG = {
     "llm_role": "refactor",
     "json_mode": "prompt",
+    "json_schema": JSON_SCHEMA,
     "budget_chars": 128000,
     "budget_tokens": 32000,
     "cacheable": False,

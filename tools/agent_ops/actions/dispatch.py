@@ -167,6 +167,11 @@ def run_dispatch(
 
     llm_role = role_cfg["llm_role"]
     json_mode = role_cfg.get("json_mode") == "api"
+    # v1.3: Pass json_schema from role config to llm.complete() for structured generation.
+    # LM Studio enforces the schema at generation time via outlines — the model
+    # cannot produce schema-invalid output. Roles without json_schema pass None
+    # (no schema enforcement, just json_mode if set).
+    json_schema = role_cfg.get("json_schema")
     budget_chars = role_cfg.get("budget_chars")
     if budget_chars is None:
         budget_chars = _max_context_chars()
@@ -232,6 +237,7 @@ def run_dispatch(
         context=trimmed_context,
         content=trimmed_content,
         json_mode=json_mode,
+        json_schema=json_schema,
         trace_id=trace_id,
         **call_kwargs,
     )
@@ -273,6 +279,7 @@ def run_dispatch(
             context=fb_trimmed_context,
             content=fb_trimmed_content,
             json_mode=fb_cfg.get("json_mode") == "api",
+            json_schema=fb_cfg.get("json_schema"),
             trace_id=trace_id,
             **call_kwargs,
         )
@@ -378,6 +385,7 @@ def run_dispatch(
                 context=trimmed_context,
                 content=trimmed_content,
                 json_mode=plan_cfg.get("json_mode") == "api",
+                json_schema=plan_cfg.get("json_schema"),
                 trace_id=trace_id,
                 **call_kwargs,
             )

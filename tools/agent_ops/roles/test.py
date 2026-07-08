@@ -19,9 +19,25 @@ OUTPUT FORMAT (mandatory JSON, no markdown fences):
 Generate tests that would catch real bugs, not trivial assertions.
 """
 
+# v1.3: JSON schema for structured generation. LM Studio enforces this at
+# generation time via outlines — the model cannot produce schema-invalid output.
+# Matches the JSON format documented in the system prompt above.
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "test_code": {"type": "string"},
+        "coverage_analysis": {"type": "string"},
+        "setup_notes": {"type": "string"},
+        "edge_cases": {"type": "string"},
+    },
+    "required": ["test_code", "coverage_analysis", "setup_notes", "edge_cases"],
+    "additionalProperties": False,
+}
+
 ROLE_CONFIG = {
     "llm_role": "test",
     "json_mode": "prompt",
+    "json_schema": JSON_SCHEMA,
     "budget_chars": 128000,
     "budget_tokens": 32000,
     "cacheable": False,

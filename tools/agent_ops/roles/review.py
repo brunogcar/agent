@@ -16,9 +16,35 @@ OUTPUT FORMAT (mandatory JSON, no markdown fences):
 {"verdict": "APPROVE|REVISE|REJECT", "issues": [{"severity": "critical|warning|info", "description": "...", "fix": "..."}], "corrected_patch": "corrected code if verdict is REVISE, else null"}
 """
 
+# v1.3: JSON schema for structured generation. LM Studio enforces this at
+# generation time via outlines — the model cannot produce schema-invalid output.
+# Matches the JSON format documented in the system prompt above.
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["APPROVE", "REVISE", "REJECT"]},
+        "issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "severity": {"type": "string", "enum": ["critical", "warning", "info"]},
+                    "description": {"type": "string"},
+                    "fix": {"type": "string"},
+                },
+                "required": ["severity", "description", "fix"],
+            },
+        },
+        "corrected_patch": {"type": ["string", "null"]},
+    },
+    "required": ["verdict", "issues", "corrected_patch"],
+    "additionalProperties": False,
+}
+
 ROLE_CONFIG = {
     "llm_role": "review",
     "json_mode": "prompt",
+    "json_schema": JSON_SCHEMA,
     "budget_chars": 48000,
     "budget_tokens": 12000,
     "cacheable": False,

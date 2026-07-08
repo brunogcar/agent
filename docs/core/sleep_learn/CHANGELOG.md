@@ -6,6 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
+| Pre-v1 | 2026-07-08 | **JSON schema enforcement:** `distiller.py` now passes `json_schema` alongside existing `json_mode=True`. Schema: `{rule: str, confidence: number}`. LM Studio enforces at generation time. |
 | Pre-v1 | 2026-07-04 | Initial implementation. Background meta-cognition daemon with feedback loop, distillation, quality filters, isolated storage, prompt injection, janitor. |
 
 ---
@@ -68,4 +69,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

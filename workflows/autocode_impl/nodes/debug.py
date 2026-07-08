@@ -78,12 +78,26 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     user = f"Test failure:\n{stderr[:2000]}\n\nTest output:\n{stdout[:2000]}"
 
     try:
+        # v1.3: JSON schema enforcement — LM Studio enforces the debug
+        # schema at generation time. The model cannot produce root_cause/
+        # defense_notes/fix with wrong types or missing fields.
+        _DEBUG_JSON_SCHEMA = {
+            "type": "object",
+            "properties": {
+                "root_cause": {"type": "string"},
+                "defense_notes": {"type": "string"},
+                "fix": {"type": "string"},
+            },
+            "required": ["root_cause", "defense_notes", "fix"],
+            "additionalProperties": False,
+        }
         debug_response = _call(
             role="executor",
             system=system,
             user=user,
             timeout=cfg.execution_timeout,
-            temperature=retry_temp
+            temperature=retry_temp,
+            json_schema=_DEBUG_JSON_SCHEMA,
         )
     except Exception as e:
         tracer.error(tid, "systematic_debug", f"Debug LLM call failed: {e}")

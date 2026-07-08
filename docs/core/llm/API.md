@@ -66,6 +66,8 @@ else:
 
 > ⚠️ `complete_with_tools()` does not exist anywhere in this codebase (confirmed via repo-wide search). `LLMClient` exposes exactly two public call methods: `complete()` and `call()`.
 
+**Phase 2 (v1.2):** Schemas are now defined for: agent roles (code, route, plan, review, refactor, test) via ROLE_CONFIG, router._model_route(), autocode debug node, procedural distill, sleep_learn distiller.
+
 ---
 
 ### `call()` — Low-Level
@@ -423,4 +425,4 @@ Available at `GET /health/circuit-breakers` — per-**role** state and failure c
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

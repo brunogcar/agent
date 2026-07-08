@@ -8,9 +8,37 @@ OUTPUT: valid JSON only. No thinking tags. No markdown fences. Start with { and 
 Format: {"goal":"restated goal","steps":[{"step":1,"action":"tool_name","description":"what to do","inputs":{"key":"value"}}],"estimated_complexity":5,"risks":["failure point 1"]}
 """
 
+# v1.3: JSON schema for structured generation. LM Studio enforces this at
+# generation time via outlines — the model cannot produce schema-invalid output.
+# Matches the JSON format documented in the system prompt above.
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "goal": {"type": "string"},
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "step": {"type": "integer"},
+                    "action": {"type": "string"},
+                    "description": {"type": "string"},
+                    "inputs": {"type": "object"},
+                },
+                "required": ["step", "action", "description", "inputs"],
+            },
+        },
+        "estimated_complexity": {"type": "integer"},
+        "risks": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["goal", "steps", "estimated_complexity", "risks"],
+    "additionalProperties": False,
+}
+
 ROLE_CONFIG = {
     "llm_role": "planner",
     "json_mode": "prompt",
+    "json_schema": JSON_SCHEMA,
     "budget_chars": 128000,
     "budget_tokens": 32000,
     "cacheable": False,
