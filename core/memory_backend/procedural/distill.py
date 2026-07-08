@@ -29,7 +29,7 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
     user_prompt = USER_PROMPT_TEMPLATE.format(trace_text=trace_text)
 
     try:
-        # v1.3: JSON schema enforcement — LM Studio enforces the distillation
+        # Memory v1.2: JSON schema enforcement — LM Studio enforces the distillation
         # schema at generation time. The model cannot produce has_insight/
         # rule/tags with wrong types or missing fields.
         _DISTILL_JSON_SCHEMA = {

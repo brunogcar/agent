@@ -6,7 +6,8 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
-| Pre-v1 | 2026-07-08 | **JSON schema enforcement:** `_model_route()` now passes `json_schema` to `llm.complete()`. LM Studio enforces the routing schema (workflow, tool, complexity, reason) at generation time. Defensive JSON parsing stays as fallback. |
+| Pre-v1 | 2026-07-08 | **Hardening fix:** Router schema now includes `confidence` and `clarifying_questions` fields (was missing — `additionalProperties: False` blocked the model from generating those fields, silently breaking confidence-based routing logic). |
+| Pre-v1 | 2026-07-08 | **JSON schema enforcement:** `_model_route()` now passes `json_schema` to `llm.complete()`. LM Studio enforces the routing schema (workflow, tool, complexity, reason, confidence, clarifying_questions) at generation time. Defensive JSON parsing stays as fallback. |
 | Pre-v1 | 2026-07-04 | Initial implementation. Model-based + heuristic routing, confidence guard, complexity scoring, 15s timeout, 15 tools, 5 workflows. |
 
 ---

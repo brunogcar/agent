@@ -164,8 +164,25 @@ class LLMClient:
                     if e.response.status_code == 429 and attempt < self.MAX_RETRIES:
                         time.sleep(self.RETRY_DELAY * (attempt + 1))
                         continue
+                    # Hardening fix: if json_schema caused a 400 (provider doesn't support it),
+                    # retry WITHOUT the schema — fall back to json_mode only.
+                    # This handles older LM Studio versions and cloud providers that don't
+                    # support response_format=json_schema (e.g., Mistral).
+                    if (e.response.status_code == 400 and json_schema is not None
+                            and attempt < self.MAX_RETRIES
+                            and "response_format" in e.response.text.lower()):
+                        if trace_id:
+                            tracer.warning(trace_id, "llm_call",
+                                f"Provider rejected json_schema (400), retrying with json_mode only")
+                        json_schema = None  # strip schema for retry
+                        json_mode = True    # ensure JSON parsing still works
+                        continue
                     err = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
-                    if breaker:
+                    # Hardening fix: don't record circuit breaker failures for 4xx client
+                    # errors (400 = bad request, 401 = auth, 403 = forbidden). These are not
+                    # server availability issues — retrying won't help. Only 5xx and 429
+                    # should trigger breaker. (Pre-existing behavior, documented here.)
+                    if breaker and e.response.status_code >= 500:
                         breaker.record_failure()
                     if trace_id:
                         tracer.error(trace_id, "llm_call", err, role=role)

@@ -37,6 +37,26 @@
 > - **Why it matters:** Small models (gemma-2-2b, lfm2-1.2b) used for executor/router roles frequently produce malformed JSON or schema-wrong JSON. The defensive parsing catches the syntax issues but can't fix schema-wrong output — the caller gets a dict with missing/wrong keys.
 > - **Fix (v1.2):** Added `json_schema` param to `complete()`/`call()`/`chat_completion()`. When provided, LM Studio enforces the schema at generation time via outlines — the model literally cannot generate schema-invalid output. The defensive parsing stays as a fallback for providers that don't support `json_schema`. Phase 2 complete: schemas defined for 6 agent roles (code, route, plan, review, refactor, test) + router._model_route() + autocode debug node + procedural distill + sleep_learn distiller.
 
+> - **What happened:** Router schema defined 4 fields (`workflow`, `tool`, `complexity`, `reason`) with `additionalProperties: False`, but `ROUTER_SYSTEM_PROMPT` told the model to output 6 fields (also `confidence`, `clarifying_questions`). Outlines blocked the model from generating the extra 2 fields. `RoutingDecision` always defaulted to `confidence="medium"` and `clarifying_questions=[]` — the confidence-based routing logic was silently broken.
+> - **Why it matters:** Schema and system prompt MUST match. When `additionalProperties: False` is set, every field the system prompt mentions must be in the schema — or outlines will block the model from generating it. The model gets contradictory instructions: "output confidence" (prompt) vs "you cannot output confidence" (schema).
+> - **Fix (v1.2.1):** Added `confidence` and `clarifying_questions` to the router schema. Always verify schema fields match system prompt fields when using `additionalProperties: False`.
+
+> - **What happened:** `if json_schema:` used truthy check instead of `if json_schema is not None:`. An empty dict `{}` is a valid JSON Schema (accepts anything) but is falsy in Python — it would fall through to `json_mode` instead of being sent as a schema.
+> - **Why it matters:** Truthy checks on dicts are a Python gotcha. Always use `is not None` for optional dict parameters.
+> - **Fix (v1.2.1):** Changed to `if json_schema is not None:` in both providers.
+
+> - **What happened:** `payload.update(kwargs)` was called AFTER setting `response_format`. If any caller passed `response_format` in kwargs, it silently overwrote the schema enforcement.
+> - **Why it matters:** Order matters when merging dicts. Always merge user-provided kwargs FIRST, then set your own fields that shouldn't be overridden.
+> - **Fix (v1.2.1):** Moved `payload.update(kwargs)` before the `response_format` assignment in both providers.
+
+> - **What happened:** Escalation to planner passed `json_schema=plan_cfg.get("json_schema")` — the PLAN schema, not the original role's schema. If the `code` role failed, the escalation forced the planner to output a plan structure (goal/steps/risks), not a code patch (analysis/patch/assumptions/tests).
+> - **Why it matters:** When escalating to a different model, the schema must match what the CALLER expects, not what the escalation model's role normally produces. Using the wrong schema produces structurally valid but semantically wrong output.
+> - **Fix (v1.2.1):** Escalation now passes `json_schema=None` — no schema enforcement on escalation. The planner produces freeform JSON, and the defensive parsing handles it. This is the safest approach because the planner model may not produce good results with a different role's schema.
+
+> - **What happened:** `HTTPStatusError` handler recorded circuit breaker failures for ALL HTTP errors, including 4xx client errors (400 = bad request, 401 = auth, 403 = forbidden). A 400 from an unsupported `json_schema` would count as a failure — after 3 such failures, the circuit breaker opened and the role became unavailable.
+> - **Why it matters:** Circuit breakers are for SERVER availability issues (5xx, 429). Client errors (4xx) are not retriable and don't indicate the server is down. Recording them as breaker failures causes false circuit-open events.
+> - **Fix (v1.2.1):** Circuit breaker now only records failures for status codes >= 500. 4xx errors are logged but don't trigger the breaker.
+
 ---
 
 *Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*

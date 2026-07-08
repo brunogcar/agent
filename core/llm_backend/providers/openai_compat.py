@@ -63,11 +63,14 @@ class OpenAICompatibleProvider(BaseProvider):
         # or error. Callers should use json_mode (not json_schema) for providers
         # with unknown schema support.
         # json_schema takes precedence over json_mode when both are set.
-        if json_schema:
+        # Hardening fix: use `is not None` (was truthy check — empty dict {} is falsy).
+        # Hardening fix: payload.update(kwargs) moved BEFORE response_format
+        # (was after — kwargs could silently override response_format).
+        payload.update(kwargs)
+        if json_schema is not None:
             payload["response_format"] = {"type": "json_schema", "json_schema": {"schema": json_schema}}
         elif json_mode:
             payload["response_format"] = {"type": "json_object"}
-        payload.update(kwargs)
 
         response = self._get_client().post(
             "/chat/completions",

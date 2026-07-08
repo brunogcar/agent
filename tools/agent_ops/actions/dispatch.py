@@ -54,6 +54,9 @@ _PROMPT_JSON_ROLES: frozenset = frozenset()
 _API_JSON_ROLES: frozenset = frozenset()
 _JSON_ROLES: frozenset = frozenset()
 _ROLE_SETS_INITIALIZED: bool = False
+# Hardening fix: threading.Lock for race-condition-free lazy init
+# (was unlocked — two threads could both see False and both build sets)
+_ROLE_SETS_LOCK = __import__('threading').Lock()
 
 
 def _ensure_role_sets_initialized() -> None:
@@ -61,22 +64,32 @@ def _ensure_role_sets_initialized() -> None:
 
     Idempotent — safe to call multiple times. The first call populates
     the module-level frozensets; subsequent calls are no-ops.
+    Hardening fix: uses double-checked locking with _ROLE_SETS_LOCK
+    (was unlocked — race condition if two threads called simultaneously).
     """
     global _SLEEP_LEARN_ROLES, _PROMPT_JSON_ROLES, _API_JSON_ROLES, _JSON_ROLES, _ROLE_SETS_INITIALIZED
     if _ROLE_SETS_INITIALIZED:
         return
-    from tools.agent_ops import ROLES  # lazy to avoid circular import
-    _SLEEP_LEARN_ROLES = frozenset(
-        k for k, v in ROLES.items() if v["role_config"].get("sleep_learn")
-    )
-    _PROMPT_JSON_ROLES = frozenset(
-        k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "prompt"
-    )
-    _API_JSON_ROLES = frozenset(
-        k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "api"
-    )
-    _JSON_ROLES = _PROMPT_JSON_ROLES | _API_JSON_ROLES
-    _ROLE_SETS_INITIALIZED = True
+    with _ROLE_SETS_LOCK:
+        if _ROLE_SETS_INITIALIZED:
+            return
+        from tools.agent_ops import ROLES  # lazy to avoid circular import
+        _SLEEP_LEARN_ROLES = frozenset(
+            k for k, v in ROLES.items() if v["role_config"].get("sleep_learn")
+        )
+        _PROMPT_JSON_ROLES = frozenset(
+            k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "prompt"
+        )
+        _API_JSON_ROLES = frozenset(
+            k for k, v in ROLES.items() if v["role_config"].get("json_mode") == "api"
+        )
+        # Hardening fix: also include roles that have json_schema but no json_mode
+        # (was only checking json_mode — a role with json_schema but no json_mode
+        # would not have its response parsed as JSON)
+        _JSON_ROLES = _PROMPT_JSON_ROLES | _API_JSON_ROLES | frozenset(
+            k for k, v in ROLES.items() if v["role_config"].get("json_schema") is not None
+        )
+        _ROLE_SETS_INITIALIZED = True
 
 HELP_DISPATCH = """
 dispatch
@@ -385,7 +398,13 @@ def run_dispatch(
                 context=trimmed_context,
                 content=trimmed_content,
                 json_mode=plan_cfg.get("json_mode") == "api",
-                json_schema=plan_cfg.get("json_schema"),
+                # Hardening fix: escalation should NOT use the plan role's json_schema.
+                # If code role fails, escalation to planner should produce the ORIGINAL
+                # role's schema, not a plan schema. But the planner model may not produce
+                # good results with a code-review schema. Safest: pass NO schema on
+                # escalation — let the planner produce freeform JSON, defensive parsing
+                # handles it.
+                json_schema=None,
                 trace_id=trace_id,
                 **call_kwargs,
             )

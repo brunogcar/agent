@@ -78,7 +78,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     user = f"Test failure:\n{stderr[:2000]}\n\nTest output:\n{stdout[:2000]}"
 
     try:
-        # v1.3: JSON schema enforcement — LM Studio enforces the debug
+        # Autocode v1.2: JSON schema enforcement — LM Studio enforces the debug
         # schema at generation time. The model cannot produce root_cause/
         # defense_notes/fix with wrong types or missing fields.
         _DEBUG_JSON_SCHEMA = {

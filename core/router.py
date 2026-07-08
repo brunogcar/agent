@@ -384,6 +384,9 @@ class TaskRouter:
         # v1.3: JSON schema enforcement — LM Studio enforces the routing
         # schema at generation time via outlines. The model cannot produce
         # schema-invalid output. Defensive parsing below stays as fallback.
+        # Hardening fix: schema must match ROUTER_SYSTEM_PROMPT — includes
+        # confidence and clarifying_questions (was missing, causing the model
+        # to be unable to generate those fields with additionalProperties: False).
         _ROUTER_JSON_SCHEMA = {
             "type": "object",
             "properties": {
@@ -391,8 +394,10 @@ class TaskRouter:
                 "tool": {"type": "string"},
                 "complexity": {"type": "integer"},
                 "reason": {"type": "string"},
+                "confidence": {"type": "string"},
+                "clarifying_questions": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["workflow", "tool", "complexity", "reason"],
+            "required": ["workflow", "tool", "complexity", "reason", "confidence", "clarifying_questions"],
             "additionalProperties": False,
         }
         r = llm.complete(
