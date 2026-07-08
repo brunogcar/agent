@@ -6,7 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v1.1 | 2026-07-06 | **Metadata + citations + P0/P1 fixes:** Added `WORKFLOW_METADATA` for MCP client introspection. Wired the citation tracker into `_node_report` + `_node_notify` (sources were collected by `node_search` and discarded). Fixed P0 #2 (`task`/`content` swap in `node_synthesize`), P0 #4 (API budget decremented on Tavily attempt not success), P1 #6 (removed `_agent_ok`/`_agent_text` dead wrappers), P1 #7 (partial-dict returns), P1 #8 (`_node_recall` logs memory failures), P1 #10 (`_node_store` full result, no 800-char truncation), P1 #22 (`synthesis` field declared in state). |
+| v1.1 | 2026-07-06 | **Metadata + citations + P0/P1 fixes + trim analysis:** Added `WORKFLOW_METADATA` for MCP client introspection. Wired the citation tracker into `_node_report` + `_node_notify` (sources were collected by `node_search` and discarded). Fixed P0 #2 (`task`/`content` swap in `node_synthesize`), P0 #4 (API budget decremented on Tavily attempt not success), P1 #6 (removed `_agent_ok`/`_agent_text` dead wrappers), P1 #7 (partial-dict returns), P1 #8 (`_node_recall` logs memory failures), P1 #10 (`_node_store` full result, no 800-char truncation), P1 #22 (`synthesis` field declared in state). **Trim analysis:** `trim_state()` not wired in — deep_research already bounds its state (`knowledge_base` capped at 6000 chars via `_cap_knowledge()`, `extracted_evidence` cleared each iteration by synthesize). Evicting `knowledge_base` would break convergence detection (routes.py compares `_prev_knowledge` vs `knowledge_base`). See `docs/workflows/base/CHANGELOG.md` #18. |
 | v1.0.2 | 2026-07-05 | **Bug fix:** API budget (`budget_api_calls`) now only decremented for Tavily searches, not web (SearXNG) searches. |
 | v1.0.1 | 2026-07-05 | **Bug fix:** Both `agent()` calls in `node_synthesize` now pass `action="dispatch"`. Removed dead `completeness_threshold = 0.85` local. |
 | v1.0 | — | Released — 8-node cyclic LangGraph StateGraph with budget management, convergence detection, multi-tool search, and memory integration |
@@ -51,6 +51,7 @@
 | `_node_recall` logs memory failures | ✅ v1.1 | P1 #8 — was silent `except: pass` |
 | `_node_store` full result | ✅ v1.1 | P1 #10 — was `result[:800]` (truncated semantic memory) |
 | `synthesis` field in state | ✅ v1.1 | P1 #22 — was returned by `node_synthesize` but undeclared |
+| Trim analysis (not needed) | ✅ v1.1 | `trim_state()` not wired — `knowledge_base` already capped at 6000 chars, `extracted_evidence` cleared each iteration. Evicting `knowledge_base` would break convergence detection. |
 
 ---
 

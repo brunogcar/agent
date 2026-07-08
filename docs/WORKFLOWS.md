@@ -50,7 +50,7 @@ See [workflows/BASE.md](workflows/BASE.md) for full details.
 ```
 workflows/
 ├── base.py                 # Shared WorkflowState + node helpers + dispatcher
-├── research.py             # 8-node linear pipeline
+├── research.py             # Thin facade → research_impl/ (v1.0)
 ├── data.py                 # 5-node linear pipeline
 ├── autocode.py             # Thin facade → autocode_impl/
 ├── deep_research.py        # Thin facade → deep_research_impl/
@@ -105,19 +105,19 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 
 ### 1. 🔍 Research — [workflows/RESEARCH.md](workflows/RESEARCH.md)
 
-**Status:** Pre-v1.0 — Monolithic `workflows/research.py`. Will be split into subpackage with per-node modules following `deep_research_impl/` pattern.
+**Status:** v1.1 — Split into `workflows/research_impl/` subpackage (v1.0). Trim node wired in (v1.1).
 
 **Purpose:** Quick information gathering and synthesis. Single search → parallel scrape → one-shot synthesis.
 
-**Flow:** recall → search → parallel_scrape → synthesize → report → store → distill → notify
+**Flow:** recall → search → parallel_scrape → synthesize → trim → report → store → distill → notify
 
 **Key characteristics:**
-- **Single-query** — One SearXNG search, top results scraped in parallel (max 3, hardcoded)
+- **Single-query** — One SearXNG search, top results scraped in parallel (uses `cfg.web_max_search_results`, default 10)
 - **Browser fallback** — JS-heavy pages retried with `browser(navigate+text_content)`
 - **TDD not used** — No test-driven development; pure information synthesis
 - **Fast** — 1-2 minutes for simple queries
-- **Critical bug:** `agent()` missing `action="dispatch"` in `node_synthesize` — always returns error
-- **Critical bug:** `not r.get("status") == "success"` always false — error path never fires
+- **Trim node (v1.1)** — Evicts oversized `search_results` to episodic memory after synthesize
+- **v1.0 fixes** — 8 bugs fixed (agent action, as_completed timeout, 800-char truncation, zombie futures, etc.)
 
 **Safety:** SSRF protection, citation tracking, prune_tool_dict truncation.
 
@@ -135,7 +135,7 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 
 ### 2. 🔬 Deep Research — [workflows/DEEP_RESEARCH.md](workflows/DEEP_RESEARCH.md)
 
-**Status:** v1.0 — Already split into `workflows/deep_research_impl/` subpackage with per-node modules.
+**Status:** v1.1 — Split into `workflows/deep_research_impl/` subpackage. `WORKFLOW_METADATA` + citations wired in (v1.1). All P0 bugs fixed (v1.0.1-v1.1).
 
 **Purpose:** Iterative, multi-faceted research for complex questions. ReAct-style loop with self-evaluation.
 
@@ -145,11 +145,9 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 - **ReAct loop** — Cycles through decompose → search → synthesize until convergence or max iterations
 - **Budget-aware** — Hard caps on API calls (Tavily) and browser actions (tracked separately)
 - **Three-tier tools** — `tavily` → `web` → `browser` fallback chain
-- **Convergence detection** — Cosine similarity exits when knowledge stops changing (threshold: 0.85)
+- **Convergence detection** — SequenceMatcher similarity exits when knowledge stops changing (threshold: 0.85)
 - **Self-evaluation** — Completeness scoring (0-100) per iteration
-- **Critical bug:** `agent()` missing `action="dispatch"` in `node_synthesize` and `node_evaluate`
-- **Critical bug:** API budget decremented for web searches (should only decrement for Tavily)
-- **Critical bug:** `completeness_threshold` scale mismatch — node defaults to 0.85 (0-1), route uses 85.0 (0-100)
+- **v1.0.1-v1.1 fixes** — All P0 bugs fixed: `action="dispatch"` added, API budget on Tavily attempt only, `task`/`context` swap fixed, 800-char truncation removed, citations wired into report+notify
 
 **Safety:** Nested-call guard, URL deduplication, knowledge capping at 6K chars.
 
@@ -268,8 +266,8 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 
 | Aspect | Research | Deep Research | Data | Autocode | Understand |
 |--------|----------|---------------|------|----------|------------|
-| **Status** | Pre-v1.0 | v1.0 | v1.0 | v1.0 | v1.0 |
-| **Structure** | 8-node pipeline | 8-node cyclic ReAct | 5-node pipeline | 17-node state machine | 4-node LangGraph pipeline |
+| **Status** | v1.1 | v1.1 | v1.1 | v1.0 | v1.0 |
+| **Structure** | 9-node pipeline (v1.1: +trim) | 8-node cyclic ReAct | 6-node pipeline (v1.1: +trim) | 17-node state machine | 4-node LangGraph pipeline |
 | **Primary tools** | `web`, `browser` | `tavily`, `web`, `browser` | `python_exec`, `agent` | `agent`, `python_exec`, `git` | `python` (AST), `GraphStore` |
 | **LLM roles** | `research` | `planner`, `research`, `executor` | `code`, `critique` | `router`, `planner`, `executor`, `test` | N/A |
 | **Loop type** | Linear | Cyclic (decompose→search→synthesize) | Linear | Cyclic (debug→retry) | Linear |
@@ -280,7 +278,7 @@ The agent currently exposes **5 workflows**, triggerable via `run_workflow()` or
 | **Convergence** | ❌ No | ✅ Yes (cosine similarity) | ❌ No | ❌ No | ❌ No |
 | **Use case** | Quick facts | Complex research | Data analysis | Code generation | Codebase indexing |
 | **Typical duration** | 1-2 min | 3-10 min | 30s-2 min | 2-10 min | 1-5 min |
-| **Critical bugs** | 2 P0 | 5 P0 | 4 P0 | 11 P0 | 3 P0 |
+| **Critical bugs** | 0 (v1.0 fixed all P0s) | 0 (fixed v1.0.1-v1.1) | 0 (v1.0 fixed all P0s) | 11 P0 | 3 P0 |
 
 ---
 

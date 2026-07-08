@@ -5,7 +5,7 @@ The `deep_research` workflow performs **iterative, deep research** on a topic. I
 **Key characteristics:**
 - **Iterative search** — Cycles between search, synthesis, and evaluation until convergence
 - **Budget management** — Tracks API calls and browser actions to prevent runaway costs
-- **Convergence detection** — Uses cosine similarity to detect when new information stops adding value
+- **Convergence detection** — Uses `difflib.SequenceMatcher` similarity to detect when new information stops adding value
 - **Multi-tool search** — Uses Tavily API, web search, and browser fallback for comprehensive coverage
 - **Memory integration** — Recalls past research for context and stores results for future recall
 - **Report generation** — Generates a structured report with the final synthesis
@@ -34,18 +34,22 @@ print(result["result"])  # "Quantum computing error correction has seen..."
 
 ```ini
 # .env
-DEEP_RESEARCH_MAX_API_CALLS=15          # Max Tavily API calls per run
-DEEP_RESEARCH_MAX_BROWSER_ACTIONS=10   # Max browser actions per run
-DEEP_RESEARCH_CONVERGENCE_THRESHOLD=0.85 # Convergence similarity threshold (0-1)
-DEEP_RESEARCH_TIMEOUT_SECONDS=300       # Workflow timeout (seconds)
+DEEP_RESEARCH_MAX_ITERATIONS=10            # Hard cap on ReAct loop iterations
+DEEP_RESEARCH_COMPLETENESS_THRESHOLD=85    # 0-100, exit if score >= this AND converged
+DEEP_RESEARCH_MAX_API_CALLS=20            # Max Tavily search/extract budget per workflow
+DEEP_RESEARCH_MAX_BROWSER_ACTIONS=10      # Max browser nav/interact budget per workflow
+DEEP_RESEARCH_TIMEOUT_SECONDS=300         # Overall workflow timeout (seconds)
+DEEP_RESEARCH_CONVERGENCE_THRESHOLD=0.85  # SequenceMatcher similarity threshold (0-1)
 ```
 
 ```python
 # core/config.py
-cfg.deep_research_max_api_calls = 15      # Max Tavily API calls per run
-cfg.deep_research_max_browser_actions = 10 # Max browser actions per run
-cfg.deep_research_convergence_threshold = 0.85 # Convergence similarity threshold (0-1)
-cfg.deep_research_timeout_seconds = 300    # Workflow timeout (seconds)
+cfg.deep_research_max_iterations = 10            # Hard cap on ReAct loop iterations
+cfg.deep_research_completeness_threshold = 85.0  # 0-100, exit if score >= this AND converged
+cfg.deep_research_max_api_calls = 20             # Max Tavily search/extract budget per workflow
+cfg.deep_research_max_browser_actions = 10       # Max browser nav/interact budget per workflow
+cfg.deep_research_timeout_seconds = 300          # Overall workflow timeout (seconds)
+cfg.deep_research_convergence_threshold = 0.85   # SequenceMatcher similarity threshold (0-1)
 ```
 
 ---
