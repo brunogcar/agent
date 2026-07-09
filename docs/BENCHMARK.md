@@ -1,6 +1,31 @@
-# Benchmark Tool v1.2
+# Benchmark Tool v1.3
 
 🎯 Benchmark LLM roles for the agent. Measure which model is best for each role.
+
+---
+
+## 🆕 What's New in v1.3
+
+| Feature | Notes |
+|---------|-------|
+| **`--agent-mode` flag** | Uses agent role `SYSTEM_PROMPT` + `json_schema` from `ROLE_CONFIG` instead of YAML `system:` field. Tests the actual agent pipeline (model + real prompt + schema enforcement), not just raw model capability. Raw mode (without `--agent-mode`) is unchanged. |
+| **`json_field` validator** | Extracts a field from JSON output (e.g., `patch` from code role's `{"analysis":..., "patch":...}`) and runs another validator on it. Used in agent-mode for code/refactor/test tasks. |
+| **`schema_match` validator** | Validates output matches a JSON schema (required fields, types, enums, additionalProperties). No `jsonschema` dependency — manual check. |
+| **Agent-mode latency buffer** | JSON-returning roles get +1.0-1.5s target latency buffer in agent mode (schema compilation overhead). Raw mode latencies unchanged. |
+| **Agent-mode YAML fields** | Code tasks: `agent_mode: {json_field: patch}`. Refactor tasks: `json_field: refactored_code`. Test tasks: `json_field: test_code`. Router/plan tasks: `json_field: null` (validate full JSON). |
+
+### Usage
+
+```bash
+# Raw mode (unchanged — tests model capability with generic prompts)
+python -m benchmark --role router --depth easy
+
+# Agent mode (new — tests agent pipeline with real prompts + schema enforcement)
+python -m benchmark --role code --depth easy --agent-mode
+
+# Agent mode for all roles
+python -m benchmark --all --depth easy --agent-mode
+```
 
 ---
 

@@ -19,6 +19,17 @@ ROLE_TARGET_LATENCY = {
     "refactor": 15.0, "test": 15.0, "document": 10.0,
 }
 
+# v1.3: Agent-mode latency buffer.
+# When --agent-mode is used, JSON schema enforcement adds compilation overhead
+# (50-200ms on first call per schema, cached after). Add buffer to target
+# latencies for JSON-returning roles so they're not unfairly penalized.
+# These roles have json_schema in their ROLE_CONFIG.
+AGENT_MODE_LATENCY_BUFFER = {
+    "code": 1.0, "route": 1.0, "classify": 1.0,
+    "plan": 1.5, "review": 1.0, "refactor": 1.0,
+    "test": 1.0, "router": 1.0,
+}
+
 def calculate_task_score(
     correctness: float,
     format_score: float,
@@ -26,14 +37,21 @@ def calculate_task_score(
     tokens: int,
     timeout: int = 120,
     role: str = "router",
+    agent_mode: bool = False,
 ) -> dict:
     """Calculate per-task score.
 
     Returns dict with breakdown and final score (0-100).
+
+    v1.3: When agent_mode=True, adds AGENT_MODE_LATENCY_BUFFER to target
+    latency for JSON-returning roles (schema compilation overhead).
     """
     # Speed: soft degradation curve.
     # Full credit at or below target latency. Linear decay to 0 at 2x target.
     target = ROLE_TARGET_LATENCY.get(role, 5.0)
+    # v1.3: Add agent-mode buffer for JSON schema compilation overhead
+    if agent_mode:
+        target += AGENT_MODE_LATENCY_BUFFER.get(role, 0.0)
     if latency <= 0:
         speed = 1.0
     elif latency <= target:

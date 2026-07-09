@@ -213,6 +213,128 @@ def validate_composite(output: str, min_steps: int = 0, required_keywords: list 
     return sum(scores) / len(scores) if scores else 0.0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent-mode validators (v1.3)
+# These validators work with JSON output from agent-mode tasks (where the
+# LLM outputs structured JSON matching a role's json_schema, not raw text).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def validate_json_field(output: str, field: str = "", sub_validator: str = "exact_match", **kwargs) -> float:
+    """Extract a field from JSON output, then run another validator on it.
+
+    Used in agent-mode: the LLM outputs JSON (e.g., {"analysis": "...", "patch": "def foo()...", ...}),
+    and this validator extracts the "patch" field and runs python_execution on it.
+
+    Args:
+        output: Raw LLM output (should be valid JSON or JSON in markdown fences).
+        field: JSON key to extract (e.g., "patch", "test_code", "refactored_code").
+        sub_validator: Name of the validator to run on the extracted field.
+        **kwargs: Passed to the sub-validator (e.g., test_cases, expected).
+
+    Returns:
+        0.0 if JSON parse fails or field is missing.
+        Otherwise, the sub-validator's score on the extracted field.
+    """
+    if not field:
+        return 0.0
+    clean = _strip_markdown(output)
+    try:
+        data = json.loads(clean)
+    except (json.JSONDecodeError, ValueError):
+        return 0.0
+    if not isinstance(data, dict) or field not in data:
+        return 0.0
+    field_value = data[field]
+    if not isinstance(field_value, str):
+        field_value = str(field_value)
+    # Run the sub-validator on the extracted field
+    sub_fn = VALIDATORS.get(sub_validator, VALIDATORS["exact_match"])
+    return sub_fn(field_value, **kwargs)
+
+
+def validate_schema_match(output: str, schema: dict = None, **kwargs) -> float:
+    """Validate that output matches a JSON schema (manual check — no jsonschema dependency).
+
+    Checks:
+    1. Output is valid JSON (0.0 if not)
+    2. All required fields are present (0.5 if missing any)
+    3. Fields have correct types (0.75 if type mismatch)
+    4. additionalProperties: False — no extra fields (0.9 if extras present)
+    5. Full match = 1.0
+
+    Args:
+        output: Raw LLM output.
+        schema: JSON schema dict with "properties", "required", "additionalProperties".
+
+    Returns:
+        0.0-1.0 score.
+    """
+    if not schema:
+        return 0.0
+    clean = _strip_markdown(output)
+    try:
+        data = json.loads(clean)
+    except (json.JSONDecodeError, ValueError):
+        return 0.0
+    if not isinstance(data, dict):
+        return 0.0
+
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+
+    # Check required fields
+    missing = [k for k in required if k not in data]
+    if missing:
+        return 0.5
+
+    # Check types
+    type_map = {
+        "string": str, "integer": int, "number": (int, float),
+        "boolean": bool, "array": list, "object": dict,
+    }
+    type_errors = 0
+    for key, prop in properties.items():
+        if key not in data:
+            continue
+        expected_type = prop.get("type")
+        if expected_type:
+            # Handle union types like ["string", "null"]
+            if isinstance(expected_type, list):
+                valid_types = []
+                for t in expected_type:
+                    if t == "null":
+                        valid_types.append(type(None))
+                    else:
+                        valid_types.append(type_map.get(t))
+                if not any(isinstance(data[key], t) for t in valid_types if t):
+                    type_errors += 1
+            else:
+                expected_py = type_map.get(expected_type)
+                if expected_py and not isinstance(data[key], expected_py):
+                    # Special case: bool is subclass of int in Python
+                    if not (expected_type == "integer" and isinstance(data[key], bool)):
+                        type_errors += 1
+    if type_errors > 0:
+        return 0.75
+
+    # Check additionalProperties
+    if schema.get("additionalProperties") is False:
+        extra = [k for k in data if k not in properties]
+        if extra:
+            return 0.9
+
+    # Check enum values
+    enum_errors = 0
+    for key, prop in properties.items():
+        if key in data and "enum" in prop:
+            if data[key] not in prop["enum"]:
+                enum_errors += 1
+    if enum_errors > 0:
+        return 0.8
+
+    return 1.0
+
+
 VALIDATORS = {
     "exact_match": validate_exact_match,
     "contains": validate_contains,
@@ -223,4 +345,6 @@ VALIDATORS = {
     "keyword_coverage": validate_keyword_coverage,
     "regex_match": validate_regex_match,
     "composite": validate_composite,
+    "json_field": validate_json_field,
+    "schema_match": validate_schema_match,
 }

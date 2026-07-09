@@ -79,8 +79,14 @@ def snippet(text, max_len=55):
 def safe_filename(text):
     return re.sub(r'[<>:"/\\|?*]', '-', text)
 
-def run_task(role, llm_role, task, model_override="", temperature=0.0):
-    """Run a single task and return result dict. No terminal output here."""
+def run_task(role, llm_role, task, model_override="", temperature=0.0, agent_mode=False):
+    """Run a single task and return result dict. No terminal output here.
+
+    v1.3: When agent_mode=True, uses the role's SYSTEM_PROMPT from ROLE_CONFIG
+    (instead of YAML task's system: field) and passes json_schema to llm.complete().
+    This tests the actual agent pipeline (model + real prompt + schema enforcement),
+    not just raw model capability.
+    """
     original_model = None
     from core.llm_backend.config import RoleConfig
     if model_override and llm_role in llm._roles:
@@ -100,15 +106,32 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
     else:
         original_model = None
 
+    # v1.3: Agent mode — use role's SYSTEM_PROMPT and json_schema from ROLE_CONFIG
+    system_prompt = task.get("system", "")
+    json_schema = None
+    if agent_mode:
+        try:
+            from tools.agent_ops import ROLES
+            # Map benchmark role to agent role key
+            agent_role_key = role
+            if agent_role_key in ROLES:
+                role_data = ROLES[agent_role_key]
+                system_prompt = role_data.get("system_prompt", system_prompt)
+                role_cfg = role_data.get("role_config", {})
+                json_schema = role_cfg.get("json_schema")
+        except Exception:
+            pass  # Fall back to YAML system prompt if ROLES not available
+
     start = time.time()
     try:
         response = llm.complete(
             role=llm_role,
-            system=task.get("system", ""),
+            system=system_prompt,
             user=task["prompt"],
             temperature=temperature,
             max_tokens=task.get('max_tokens', 1024),
             timeout=task.get('timeout', 120),
+            json_schema=json_schema,
             trace_id="",
         )
         output = response.text if response.ok else ""
@@ -119,7 +142,7 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
             error_msg = response.error or "Unknown LLM error"
             result = {
                 "name": task["name"], "prompt": task["prompt"], "output": "",
-                "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role),
+                "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role, agent_mode=agent_mode),
                 "status": "fail", "error": error_msg, "latency": latency, "tokens": 0,
             }
             result["failure_category"] = categorize_failure(result)
@@ -129,11 +152,30 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
             empty_msg = f"EMPTY | model={response.model} text={repr(response.text[:50])}"
             result = {
                 "name": task["name"], "prompt": task["prompt"], "output": "",
-                "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role),
+                "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role, agent_mode=agent_mode),
                 "status": "fail", "error": empty_msg, "latency": latency, "tokens": 0,
             }
             result["failure_category"] = categorize_failure(result)
             return result
+
+        # v1.3: Agent mode — if task has agent_mode.json_field, extract that field
+        # from JSON output before validating. This lets us validate the CONTENT of
+        # a specific JSON field (e.g., "patch" from code role's JSON output).
+        validation_output = output
+        if agent_mode and "agent_mode" in task:
+            agent_cfg = task.get("agent_mode", {})
+            json_field = agent_cfg.get("json_field")
+            if json_field:
+                # Extract the field from JSON output
+                from benchmark.validators import _strip_markdown
+                clean = _strip_markdown(output)
+                try:
+                    import json as _json
+                    data = _json.loads(clean)
+                    if isinstance(data, dict) and json_field in data:
+                        validation_output = str(data[json_field])
+                except (_json.JSONDecodeError, ValueError):
+                    pass  # Fall back to raw output for validation
 
         validator_name = task.get("validator", "exact_match")
         validator_fn = VALIDATORS.get(validator_name, VALIDATORS["exact_match"])
@@ -142,7 +184,7 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
         validator_args = dict(task.get("validator_args", {}))
         if "expected" in task:
             validator_args["expected"] = task["expected"]
-        format_score = validator_fn(output, **validator_args)
+        format_score = validator_fn(validation_output, **validator_args)
         # correctness == format_score for most validators.
         # python_execution validator returns partial credit based on test cases.
         correctness = format_score
@@ -153,6 +195,7 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
             tokens=tokens,
             timeout=task.get('timeout', 120),
             role=role,
+            agent_mode=agent_mode,
         )
         status = "pass" if score["final"] >= 80 else "partial" if score["final"] >= 50 else "fail"
 
@@ -167,7 +210,7 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
         latency = time.time() - start
         result = {
             "name": task["name"], "prompt": task["prompt"], "output": "",
-            "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role),
+            "score": calculate_task_score(0, 0, latency, 0, task.get('timeout', 120), role=role, agent_mode=agent_mode),
             "status": "fail", "error": str(e), "latency": latency, "tokens": 0,
         }
         result["failure_category"] = categorize_failure(result)
@@ -184,7 +227,7 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0):
                 max_tokens=old_cfg.max_tokens,
             )
 
-def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
+def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0, agent_mode=False):
     """Run all tasks for a role and return aggregated results."""
     tasks = load_tasks(role)
     if not tasks:
@@ -218,7 +261,7 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
         last_result = None
 
         for _ in range(runs):
-            result = run_task(role, llm_role, task, model_override, temperature)
+            result = run_task(role, llm_role, task, model_override, temperature, agent_mode=agent_mode)
             run_scores.append(result["score"])
             run_results.append(result)
             last_result = result
@@ -236,6 +279,7 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
             tokens=round(sum(s["tokens"] for s in run_scores) / len(run_scores)),
             timeout=task.get('timeout', 120),
             role=role,
+            agent_mode=agent_mode,
         )
 
         status = "pass" if avg_score["final"] >= 80 else "partial" if avg_score["final"] >= 50 else "fail"
@@ -293,7 +337,7 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0):
         "failure_counts": failure_counts,
     }
 
-def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_models=None, temperature=0.0, output_dir="", tag="", baseline_path="", regression_threshold=5.0):
+def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_models=None, temperature=0.0, output_dir="", tag="", baseline_path="", regression_threshold=5.0, agent_mode=False):
     """Run benchmark across roles and models."""
     roles_to_test = []
     if all_roles:
@@ -350,7 +394,7 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
                 print(f"{'─' * 68}")
                 print()
 
-            role_result = run_role(role, depth, runs, model_override, temperature)
+            role_result = run_role(role, depth, runs, model_override, temperature, agent_mode=agent_mode)
             model_results[role] = role_result
 
             # Baseline delta
@@ -450,6 +494,7 @@ def main():
     parser.add_argument("--tag", help="Label for this run")
     parser.add_argument("--baseline", help="Baseline JSON file to compare against")
     parser.add_argument("--regression-threshold", type=float, default=5.0, help="Exit non-zero if any role drops > N points from baseline")
+    parser.add_argument("--agent-mode", action="store_true", help="v1.3: Use agent role system prompts + json_schema from ROLE_CONFIG. Tests the actual agent pipeline, not just raw model capability.")
     args = parser.parse_args()
 
     compare_models = None
@@ -467,6 +512,7 @@ def main():
         tag=args.tag,
         baseline_path=args.baseline,
         regression_threshold=args.regression_threshold,
+        agent_mode=args.agent_mode,
     )
 
     reports.print_final_table(results["role_results"], stack_comp)
