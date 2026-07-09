@@ -58,10 +58,10 @@ def test_router_workflow_list_matches_expected():
         pytest.fail("Router prompt workflow list is out of sync.\n" + "\n".join(msg_parts))
 
 
-def test_router_tool_count_is_15():
+def test_router_tool_count_matches():
     """Explicit count check to catch silent additions/removals."""
     mentioned = extract_tools_from_router_prompt()
-    assert len(mentioned) == 15, (
+    assert len(mentioned) == len(ROUTER_EXPECTED_TOOLS), (
         f"Expected exactly 15 tools in prompt, found {len(mentioned)}: {sorted(mentioned)}"
     )
 

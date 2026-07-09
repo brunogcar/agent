@@ -19,6 +19,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [PARALLEL.md](tools/PARALLEL.md) | Parallel | ThreadPoolExecutor, global timeout, nested-call guard, allowlist |
 | [PYTHON.md](tools/PYTHON.md) | Python | Dual-mode execution, AST sandbox, import allowlisting |
 | [REPORT.md](tools/REPORT.md) | Report | 11 atomic actions, HTML dashboards, XSS-safe templates, lazy imports |
+| [SWARM.md](tools/SWARM.md) | Swarm | Multi-model meta-tool, parallel cloud LLM fan-out, consensus/race/vote/compare/list_providers |
 | [TAVILY.md](tools/TAVILY.md) | Tavily | AI-ranked search, bulk extraction, keyless mode, API budget tracking |
 | [VISION.md](tools/VISION.md) | Vision | Multimodal analysis, 3 input sources, SSRF protection, JSON mode |
 | [WEB.md](tools/WEB.md) | Web | SearXNG search, BeautifulSoup, parallel scraping, connection pooling |
@@ -256,6 +257,17 @@ tools/
 │       ├── scorecard.py
 │       └── timeline.py
 │
+├── swarm.py                # Multi-model swarm meta-tool (5 actions)
+├── swarm_ops/
+│   ├── _registry.py
+│   ├── helpers.py
+│   └── actions/
+│       ├── consensus.py
+│       ├── race.py
+│       ├── vote.py
+│       ├── compare.py
+│       └── list_providers.py
+│
 ├── tavily.py               # Tavily AI search meta-tool (5 actions)
 ├── tavily_ops/
 │   ├── _registry.py
@@ -291,7 +303,7 @@ tools/
 
 ## 📚 Tool Catalog
 
-The agent currently exposes **15 tools** to the LLM.
+The agent currently exposes **16 tools** to the LLM.
 
 ### 1. 🤖 Agent — [tools/AGENT.md](tools/AGENT.md)
 
@@ -712,6 +724,41 @@ Changes not staged for commit:
 
 ---
 
+### 16. 🐝 Swarm — [tools/SWARM.md](tools/SWARM.md)
+
+**Status:** v1.0 — Multi-model parallel cloud LLM meta-tool.
+
+**Purpose:** Fan a single question out to all configured cloud LLM providers in parallel and combine responses via a coordination strategy (consensus, race, vote, compare, or list_providers).
+
+**Key characteristics:**
+- **5 coordination actions** — `consensus`, `race`, `vote`, `compare`, `list_providers`
+- **Parallel fan-out** — `ThreadPoolExecutor` (max 5 workers) calls every configured cloud provider concurrently
+- **Direct provider calls** — Calls `provider.chat_completion()` directly (NOT through `llm.complete()`), bypassing role routing, circuit breakers, and rate limiting
+- **Cloud-only** — Skips `lmstudio` (local); requires `*_API_KEY` + `*_BASE_MODEL` env vars per provider
+- **Deterministic output** — Results sorted by provider name (except `race`, which preserves winner-first ordering)
+- **NOT parallel-safe** — Uses ThreadPoolExecutor internally; excluded from `PARALLEL_SAFE`; do NOT nest inside `parallel()`
+- **Per-provider error isolation** — Provider failures captured in result dict; action only fails if ALL providers fail
+
+**Safety:** No filesystem operations (no path_guard needed); no SSRF surface (calls only trusted cloud LLM endpoints); API keys read by provider layer, never by swarm itself. Bypasses `llm.complete()` rate limiting — callers should be aware of per-call API cost (N providers = N API calls).
+
+**Output:**
+```json
+{
+  "status": "success",
+  "responses": [
+    {"provider": "claude", "model": "claude-3-5-sonnet-20241022", "text": "...", "latency": 2.31, "tokens": 412, "error": ""},
+    {"provider": "openai", "model": "gpt-4o-mini", "text": "...", "latency": 1.84, "tokens": 388, "error": ""}
+  ],
+  "synthesis": "Combined answer combining the strongest points from each response...",
+  "provider_count": 4,
+  "successful_count": 3,
+  "trace_id": "abc123",
+  "duration_ms": 5421
+}
+```
+
+---
+
 ## 🔄 Tool Comparison
 
 | Aspect | Agent | Browser | CLI | Consult | File | Git | Memory | Notify | Parallel | Python | Report | Tavily | Vision | Web | Workflow |
@@ -805,6 +852,44 @@ def my_tool(action: str = "", ...) -> dict:
     """Facade auto-populated by @meta_tool."""
     ...
 ```
+
+---
+
+## 🆕 New Tool Checklist
+
+When adding a **new tool** to the MCP Agent Stack, update **all** of the following files. Missing any one of them causes drift between the source code, the docs, and the LLM's tool schema.
+
+| # | File | What to update |
+|---|------|----------------|
+| 1 | `tools/<tool>.py` | The `@tool` facade — validation, dispatch, compression. Thin wrapper, no business logic. |
+| 2 | `tools/<tool>_ops/` | Subpackage: `_registry.py` (DISPATCH + `@register_action`), `__init__.py` (auto-imports `actions/`), `actions/` (one file per action), `helpers.py` (shared utilities). |
+| 3 | `core/router.py` | Add tool name to `ROUTER_TOOLS` list; add routing rules; add heuristic regex patterns for NL→tool routing. |
+| 4 | `core/parallel_executor.py` | Add to `PARALLEL_SAFE` frozenset **only if** the tool is parallel-safe (no internal ThreadPoolExecutor, no shared mutable state). Most tools are NOT parallel-safe. |
+| 5 | `tools/parallel.py` | Add to `_TOOL_MAP` dict **only if** parallel-safe (mirrors `PARALLEL_SAFE`). |
+| 6 | `docs/system_prompts/system_prompt.md` | Add the new tool to the tool list + describe its capabilities so the LLM knows when to use it. |
+| 7 | `docs/TOOLS.md` | (a) Bump tool count in "## 📚 Tool Catalog" intro; (b) add row to the summary Document/Tool/Key Topics table; (c) add `<tool>_ops/` block to the Module Map; (d) add `### N. <Tool>` detailed entry; (e) optionally add column to the Tool Comparison table. |
+| 8 | `docs/tools/<TOOL>.md` | Landing page — title, key characteristics, quick start, configuration, when-to-use table, subfile directory table. Follow `GIT.md` / `WEB.md` format. |
+| 9 | `docs/tools/<tool>/` | 4 subfiles following the 5-file standard: `API.md` (signature, params, actions, security), `ARCHITECTURE.md` (source ref, module tree, dispatch flow, design decisions, testing), `CHANGELOG.md` (version history, breaking changes, completed, in-progress, deferred), `INSTRUCTIONS.md` (NEVER DO, ALWAYS DO, anti-patterns). |
+| 10 | `benchmark/benchmark.py` | Add to `ROLE_GROUPS` / `ROLE_TO_GROUP` **only if** benchmark tasks exist for the new tool. Skip if no benchmark tasks. |
+| 11 | `server.py` | Check the tool-count warning threshold (>20 tools triggers a warning). Bump the expected count if hardcoded. |
+
+**Order of operations (recommended):**
+1. Write `tools/<tool>_ops/` first (subpackage + actions + helpers + registry).
+2. Write `tools/<tool>.py` facade (depends on the subpackage).
+3. Run `python -c "from tools import <tool>"` to verify imports + DISPATCH auto-discovery.
+4. Update `core/router.py` + `core/parallel_executor.py` + `tools/parallel.py` (if parallel-safe).
+5. Update `docs/TOOLS.md` (count, summary table, module map, detailed entry).
+6. Write `docs/tools/<TOOL>.md` + `docs/tools/<tool>/` subfiles.
+7. Update `docs/system_prompts/system_prompt.md`.
+8. Run `compileall` + `pytest` before committing.
+9. Restart LM Studio (cached tool schemas require full restart to refresh).
+
+**Common mistakes:**
+- Forgetting `__init__.py` in `actions/` — actions silently not registered.
+- Adding a tool to `PARALLEL_SAFE` that uses `ThreadPoolExecutor` internally (e.g. `swarm`) — causes nested-parallelism risk.
+- Forgetting to bump the tool count in `docs/TOOLS.md` — doc drift.
+- Writing the facade before the subpackage — ImportError on first run.
+- Not restarting LM Studio after schema changes — LLM sees stale tool list.
 
 ---
 

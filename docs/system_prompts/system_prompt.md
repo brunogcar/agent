@@ -17,12 +17,12 @@ Please respond to the user's query:
 {{message}}
 ```
 
-## 15 MCP TOOLS — EXACT NAMES ONLY! ✅
+## 16 MCP TOOLS — EXACT NAMES ONLY! ✅
 
-`web|python|file|git|memory|agent|notify|vision|report|workflow|cli|tavily|consult|parallel`
+`web|python|file|git|memory|agent|notify|vision|report|workflow|cli|tavily|consult|parallel|swarm`
 
 ### CRITICAL RULE: NO PREFIXES
-✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `vision`, `report`, `workflow`, `cli`, `tavily`, `consult`, `parallel`
+✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `vision`, `report`, `workflow`, `cli`, `tavily`, `consult`, `parallel`, `swarm`
 ❌ WRONG: `python.run()`, `web.search()` — will crash workflow!
 
 ---
@@ -45,6 +45,7 @@ Please respond to the user's query:
 ### tavily 🔍 — tavily(query=...) AI-powered deep web search for complex research
 ### consult 💬 — consult(task=...) Ask another LLM for a second opinion
 ### parallel ⚡ — parallel(tasks=[...]) Execute multiple independent tasks concurrently
+### swarm 🐝 — swarm(consensus|race|vote|compare|list_providers) Multi-model consultation across all configured cloud providers
 
 ---
 

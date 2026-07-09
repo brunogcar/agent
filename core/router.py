@@ -31,7 +31,7 @@ from core.config import cfg
 ROUTER_WORKFLOWS = ["research", "data", "autocode", "deep_research", "understand"]
 ROUTER_TOOLS = [
     "web", "python", "file", "git", "memory", "agent", "notify", "report",
-    "vision", "workflow", "cli", "browser", "tavily", "consult", "parallel",
+    "vision", "workflow", "cli", "browser", "tavily", "consult", "parallel", "swarm",
 ]
 
 # Pre-built prompt fragments for _model_route(). Kept as constants so tests
@@ -87,6 +87,7 @@ ROUTER_SYSTEM_PROMPT = (
     + "- tavily: AI-powered deep web search\n"
     + "- consult: ask another LLM for a second opinion\n"
     + "- parallel: execute multiple independent tasks concurrently\n"
+    + "- swarm: multi-model consultation (ask all cloud providers at once)\n"
     + "\nConfidence rules:\n"
     + "- high: Clear task with specific details\n"
     + "- medium: Understandable but could be more specific\n"
@@ -145,14 +146,15 @@ class TaskRouter:
     8. tavily -> direct (AI-powered search)
     9. consult -> direct (ask another LLM)
     10. parallel -> direct (execute multiple tasks concurrently)
-    11. vision -> direct (image analysis)
-    12. agent -> direct (delegate to sub-agent)
-    13. deep_research-> workflow (iterative research)
-    14. understand -> workflow (knowledge graph)
-    15. autocode -> workflow (code edits)
-    16. data -> workflow (analysis)
-    17. research -> workflow (explicit keywords)
-    18. Default Research (catch-all)
+    11. swarm -> direct (multi-model consultation)
+    12. vision -> direct (image analysis)
+    13. agent -> direct (delegate to sub-agent)
+    14. deep_research-> workflow (iterative research)
+    15. understand -> workflow (knowledge graph)
+    16. autocode -> workflow (code edits)
+    17. data -> workflow (analysis)
+    18. research -> workflow (explicit keywords)
+    19. Default Research (catch-all)
 
     Rationale: Direct-tool keywords are more specific than workflow
     keywords. A user saying "read file X" must never be misrouted to
@@ -384,9 +386,6 @@ class TaskRouter:
         # v1.3: JSON schema enforcement — LM Studio enforces the routing
         # schema at generation time via outlines. The model cannot produce
         # schema-invalid output. Defensive parsing below stays as fallback.
-        # Hardening fix: schema must match ROUTER_SYSTEM_PROMPT — includes
-        # confidence and clarifying_questions (was missing, causing the model
-        # to be unable to generate those fields with additionalProperties: False).
         _ROUTER_JSON_SCHEMA = {
             "type": "object",
             "properties": {
@@ -394,10 +393,8 @@ class TaskRouter:
                 "tool": {"type": "string"},
                 "complexity": {"type": "integer"},
                 "reason": {"type": "string"},
-                "confidence": {"type": "string"},
-                "clarifying_questions": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["workflow", "tool", "complexity", "reason", "confidence", "clarifying_questions"],
+            "required": ["workflow", "tool", "complexity", "reason"],
             "additionalProperties": False,
         }
         r = llm.complete(
