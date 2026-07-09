@@ -23,22 +23,43 @@ def create_llm_client() -> LLMClient:
     
     # 2. Dynamically register Cloud Advisory Providers based on .env keys
     from core.llm_backend.providers.openai_compat import OpenAICompatibleProvider
-    
+
+    # OpenAI-compatible providers (same provider class, different base URLs)
     cloud_providers = [
         ("openai",   cfg.openai_api_key,   cfg.openai_base_url),
         ("deepseek", cfg.deepseek_api_key, cfg.deepseek_base_url),
         ("mistral",  cfg.mistral_api_key,  cfg.mistral_base_url),
         ("qwen",     cfg.qwen_api_key,     cfg.qwen_base_url),
         ("kimi",     cfg.kimi_api_key,     cfg.kimi_base_url),
+        # v1.2.1: Additional OpenAI-compatible providers
+        ("zai",      cfg.zai_api_key,      cfg.zai_base_url),
+        ("mimo",     cfg.mimo_api_key,     cfg.mimo_base_url),
     ]
-    
+
     for name, api_key, base_url in cloud_providers:
         if api_key:  # Only register if the key is present and not empty
             client.register_provider(
                 name,
                 OpenAICompatibleProvider(base_url=base_url, api_key=api_key, provider_name=name)
             )
-            
+
+    # v1.2.1: Native providers (NOT OpenAI-compatible — need dedicated provider classes)
+    # Claude (Anthropic) — uses Anthropic Messages API
+    if cfg.claude_api_key:
+        from core.llm_backend.providers.anthropic import AnthropicProvider
+        client.register_provider(
+            "claude",
+            AnthropicProvider(base_url=cfg.claude_base_url, api_key=cfg.claude_api_key)
+        )
+
+    # Gemini (Google) — uses Google Generative Language API
+    if cfg.gemini_api_key:
+        from core.llm_backend.providers.gemini import GeminiProvider
+        client.register_provider(
+            "gemini",
+            GeminiProvider(base_url=cfg.gemini_base_url, api_key=cfg.gemini_api_key)
+        )
+
     return client
 
 def _cleanup_providers(client: LLMClient) -> None:

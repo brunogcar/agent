@@ -332,8 +332,14 @@ class BaseProvider(ABC):
 
 | Provider | Env Detection | Description |
 |----------|--------------|-------------|
-| `LMStudioProvider` | Always registered as `"lmstudio"` | LM Studio, Ollama, vLLM — any OpenAI-compatible local endpoint |
-| `OpenAICompatibleProvider` | One registered per cloud vendor whose `*_API_KEY` is non-empty in `.env` | `openai`, `deepseek`, `mistral`, `qwen`, `kimi` — all five are checked at startup |
+| `LMStudioProvider` | Always registered as `"lmstudio"` | LM Studio (local) — any OpenAI-compatible local endpoint (Ollama, vLLM) |
+| `OpenAICompatibleProvider` | One registered per cloud vendor whose `*_API_KEY` is non-empty in `.env` | `openai`, `deepseek`, `mistral`, `qwen`, `kimi`, `zai`, `mimo` — all seven OpenAI-compatible cloud providers are checked at startup |
+| `AnthropicProvider` | Registered as `"claude"` if `ANTHROPIC_API_KEY` is non-empty | Claude (Anthropic) — native Messages API, NOT OpenAI-compatible |
+| `GeminiProvider` | Registered as `"gemini"` if `GEMINI_API_KEY` is non-empty | Gemini (Google) — native Generative Language API, NOT OpenAI-compatible |
+
+> **Provider count (v1.2.2):** 10 supported providers total — 1 local (LM Studio) + 7 OpenAI-compatible cloud (OpenAI, DeepSeek, Mistral, Qwen, Kimi, Z.ai, MiMo) + 2 native cloud (Claude/Anthropic, Gemini/Google). Z.ai and MiMo are new OpenAI-compatible additions; Claude and Gemini are new native providers.
+>
+> **Claude and Gemini** (native providers) ignore `json_schema` in Phase 1 — they use different API mechanisms for structured output (Anthropic tool-use, Gemini responseSchema). `json_mode` works via system instruction / responseMimeType. Native schema support is a roadmap item.
 
 ### Provider Selection
 
@@ -349,12 +355,16 @@ graph TD
 `core/llm_backend/factory.py` scans `cfg` at startup. If a cloud provider's `API_KEY` is present in `.env`, it automatically registers an `OpenAICompatibleProvider` for that service. No code changes needed to add new cloud vendors.
 
 ```python
-# Auto-registered at startup if API key exists (all 5 are checked):
-# OPENAI_API_KEY=sk-...     → registers "openai" provider
-# DEEPSEEK_API_KEY=sk-...   → registers "deepseek" provider
-# MISTRAL_API_KEY=...       → registers "mistral" provider
-# QWEN_API_KEY=...          → registers "qwen" provider
-# KIMI_API_KEY=...          → registers "kimi" provider
+# Auto-registered at startup if API key exists (all 9 providers are checked):
+# OPENAI_API_KEY=sk-...      → registers "openai" provider   (OpenAICompatibleProvider)
+# DEEPSEEK_API_KEY=sk-...    → registers "deepseek" provider (OpenAICompatibleProvider)
+# MISTRAL_API_KEY=...        → registers "mistral" provider  (OpenAICompatibleProvider)
+# QWEN_API_KEY=...           → registers "qwen" provider     (OpenAICompatibleProvider)
+# KIMI_API_KEY=...           → registers "kimi" provider     (OpenAICompatibleProvider)
+# ZAI_API_KEY=...            → registers "zai" provider      (OpenAICompatibleProvider, v1.2.2)
+# MIMO_API_KEY=...           → registers "mimo" provider     (OpenAICompatibleProvider, v1.2.2)
+# ANTHROPIC_API_KEY=sk-...   → registers "claude" provider   (AnthropicProvider, v1.2.2 — native)
+# GEMINI_API_KEY=...         → registers "gemini" provider   (GeminiProvider, v1.2.2 — native)
 ```
 
 ---

@@ -118,7 +118,9 @@ core/
 │   ├── factory.py        # create_llm_client() — composition root, provider registration
 │   └── providers/
 │       ├── lmstudio.py   # Local OpenAI-compatible provider
-│       └── openai_compat.py # Cloud provider (OpenAI, DeepSeek, etc.)
+│       ├── openai_compat.py # Cloud provider (OpenAI, DeepSeek, Mistral, Qwen, Kimi, Z.ai, MiMo)
+│       ├── anthropic.py  # Claude (Anthropic) — native Messages API provider
+│       └── gemini.py     # Gemini (Google) — native Generative Language API provider
 │
 ├── memory_engine.py      # Thin facade for ChromaDBMemory
 ├── memory_backend/       # Full memory subsystem

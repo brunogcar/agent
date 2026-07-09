@@ -111,6 +111,23 @@ class Config:
         self.kimi_api_key = os.getenv("KIMI_API_KEY", "")
         self.kimi_base_url = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
 
+        # v1.2.1: Additional cloud providers (Claude, Gemini, Z.ai, MiMo)
+        # Claude (Anthropic) — NOT OpenAI-compatible, needs AnthropicProvider
+        self.claude_api_key = os.getenv("CLAUDE_API_KEY", "")
+        self.claude_base_url = os.getenv("CLAUDE_BASE_URL", "https://api.anthropic.com")
+
+        # Gemini (Google) — NOT OpenAI-compatible, needs GeminiProvider
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+        self.gemini_base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com")
+
+        # Z.ai (GLM) — OpenAI-compatible, uses OpenAICompatibleProvider
+        self.zai_api_key = os.getenv("ZAI_API_KEY", "")
+        self.zai_base_url = os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4")
+
+        # MiMo (Xiaomi AI Studio) — OpenAI-compatible, uses OpenAICompatibleProvider
+        self.mimo_api_key = os.getenv("MIMO_API_KEY", "")
+        self.mimo_base_url = os.getenv("MIMO_BASE_URL", "https://aistudio.xiaomimimo.com/v1")
+
         # -- Model roles -------------------------------------------------------
         planner_raw = os.getenv("PLANNER_MODEL")
         if not planner_raw:

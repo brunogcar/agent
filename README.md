@@ -2,7 +2,7 @@
 
 > **A fully autonomous local-first AI agent with 15 tools, 5 LangGraph workflows, a 3-tier LLM role system, and a self-improving memory — running on your hardware, with optional cloud LLM escalation.**
 
-Built on **MCP** (Model Context Protocol), **LM Studio** (local LLM inference), **ChromaDB** (vector memory), **SearXNG** (self-hosted search), and **LangGraph** (state-machine orchestration). The default stack runs entirely on your machine — no API keys required. Cloud LLMs (OpenAI, DeepSeek, Mistral, Qwen, Kimi) are supported as opt-in escalation paths via the `consult` tool and `CONSULTOR_MODEL` role.
+Built on **MCP** (Model Context Protocol), **LM Studio** (local LLM inference), **ChromaDB** (vector memory), **SearXNG** (self-hosted search), and **LangGraph** (state-machine orchestration). The default stack runs entirely on your machine — no API keys required. Cloud LLMs (OpenAI, DeepSeek, Mistral, Qwen, Kimi, Claude, Gemini, Z.ai, MiMo) are supported as opt-in escalation paths via the `consult` tool and `CONSULTOR_MODEL` role.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![Node.js 18+](https://img.shields.io/badge/node.js-18+-green.svg)](https://nodejs.org/)
@@ -92,7 +92,7 @@ graph TD
     G --> O["core/gateway.py<br/>FastAPI REST"]
 
     I & J & K -->|"OpenAI-compatible API"| P["LM Studio<br/>localhost:1234"]
-    I & J & K -.->|"opt-in cloud"| Q["OpenAI / DeepSeek /<br/>Mistral / Qwen / Kimi"]
+    I & J & K -.->|"opt-in cloud"| Q["OpenAI / DeepSeek / Mistral /<br/>Qwen / Kimi / Claude / Gemini /<br/>Z.ai / MiMo"]
 ```
 
 ### 3-Tier Role System

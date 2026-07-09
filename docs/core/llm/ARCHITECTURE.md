@@ -18,6 +18,8 @@
 | `core/llm_backend/provider.py` | `BaseProvider` ABC + `ProviderRegistry` |
 | `core/llm_backend/providers/lmstudio.py` | `LMStudioProvider` (local OpenAI-compatible) |
 | `core/llm_backend/providers/openai_compat.py` | `OpenAICompatibleProvider` (cloud) |
+| `core/llm_backend/providers/anthropic.py` | `AnthropicProvider` — Claude (Anthropic Messages API, NOT OpenAI-compatible) |
+| `core/llm_backend/providers/gemini.py` | `GeminiProvider` — Gemini (Google Generative Language API, NOT OpenAI-compatible) |
 | `core/config.py` | Model names, timeouts, LLM server URL, `model_registry` |
 | `core/metrics.py` | Token tracking (`track_llm_tokens`) |
 | `core/runtime/activity_tracker.py` | Inference slot management |
@@ -76,7 +78,7 @@ graph TD
 - **Context budgeting in `memory_backend/budget.py`** — The cognitive-priority message trimming system lives in `core/memory_backend/budget.py`, not `llm_backend/`. The module's own docstring is stale (still says `core/context_budget.py`).
 - **Dual JSON extraction** — `client.py` uses a 3-layer strategy (direct parse → markdown fence → outermost regex). `router.py` uses a different approach (`json.JSONDecoder().raw_decode()`). These are intentionally separate implementations for the same general problem.
 - **JSON schema enforcement (v1.2)** — `json_schema` param on `complete()`/`call()`/`chat_completion()`. When provided, providers send `response_format={"type":"json_schema",...}`. LM Studio enforces via outlines internally — model cannot generate schema-invalid output. Stronger than `json_mode` (which only ensures valid JSON, not schema). `json_schema` takes precedence over `json_mode`; implies `json_mode` for parsing. Backward compatible (defaults to `None`). Phase 1: plumbing only — no roles use it yet. Phase 2 will define schemas per role.
-- **Provider abstraction** — `BaseProvider` ABC with `LMStudioProvider` and `OpenAICompatibleProvider`. Dynamic factory registration at startup based on `*_API_KEY` env vars.
+- **Provider abstraction** — `BaseProvider` ABC with `LMStudioProvider` and `OpenAICompatibleProvider`. Dynamic factory registration at startup based on `*_API_KEY` env vars. v1.2.2: 4 new providers — Claude (native AnthropicProvider), Gemini (native GeminiProvider), Z.ai + MiMo (OpenAI-compatible). Claude and Gemini ignore json_schema in Phase 1 (different API mechanisms for structured output — deferred). Both use httpx directly (no SDK deps), same as existing providers.
 - **Thread-safe singleton** — `LLMClient` is a singleton. `LMStudioProvider` uses a single shared `httpx.Client` with double-checked locking (not thread-local). `CircuitBreaker` uses `threading.Lock` per instance.
 - **Timeout single source of truth** — Timeout lives exclusively in `core/config.py` (`cfg.model_registry[role]["timeout"]`). Never in `llm_backend/config.py`.
 - **No prompt loader** — System prompts are plain Python string constants passed directly by callers. No YAML-based prompt loading system exists.
