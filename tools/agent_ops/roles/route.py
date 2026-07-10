@@ -8,6 +8,8 @@ SYSTEM_PROMPT = (
 # v1.3: JSON schema for structured generation. LM Studio enforces this at
 # generation time via outlines — the model cannot produce schema-invalid output.
 # Matches the JSON format documented in the system prompt above.
+# This is the SINGLE SOURCE OF TRUTH for the routing schema.
+# core/router.py imports this constant — do not define a separate schema there.
 JSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -15,8 +17,10 @@ JSON_SCHEMA = {
         "tool": {"type": "string"},
         "complexity": {"type": "integer"},
         "reason": {"type": "string"},
+        "confidence": {"type": "string"},
+        "clarifying_questions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["workflow", "tool", "complexity", "reason"],
+    "required": ["workflow", "tool", "complexity", "reason", "confidence", "clarifying_questions"],
     "additionalProperties": False,
 }
 

@@ -7,7 +7,7 @@ SYSTEM_PROMPT = (
 
 ROLE_CONFIG = {
     "llm_role": 'summarize',
-    "json_mode": None,
+    "json_mode": None,  # Free-text role — no json_schema (output is prose, not structured JSON)
     "budget_chars": 48000,
     "budget_tokens": 12000,
     "cacheable": False,

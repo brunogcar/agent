@@ -12,6 +12,18 @@ from core.tracer import tracer
 from core.sleep_learn.filters import is_quality_rule
 from core.sleep_learn.storage import save_rule
 
+# Module-level schema constant (hardening fix: was inline in distill_observation()).
+# Confidence range matches the system prompt's "0.0-1.0" specification.
+_DISTILL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rule": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    },
+    "required": ["rule", "confidence"],
+    "additionalProperties": False,
+}
+
 _DISTILLATION_SYSTEM_PROMPT = (
     "You are a meta-learning engine. Your job is to analyze a specific agent "
     "observation (a past error, a successful workaround, or a user correction) "
@@ -43,15 +55,8 @@ def distill_observation(observation: Dict[str, Any]) -> Dict[str, Any]:
     # with wrong types or missing fields.
     # Hardening fix: removed redundant json_mode=True (json_schema implies json_mode
     # for parsing — passing both was redundant).
-    _DISTILL_SCHEMA = {
-        "type": "object",
-        "properties": {
-            "rule": {"type": "string"},
-            "confidence": {"type": "number"},
-        },
-        "required": ["rule", "confidence"],
-        "additionalProperties": False,
-    }
+    # Hardening fix: moved schema to module-level constant (was inline).
+    # Hardening fix: added minimum/maximum constraints on confidence (prompt says 0.0-1.0).
     result = llm.complete(
         role="executor",  # Use local model to avoid cloud costs for meta-learning
         system=_DISTILLATION_SYSTEM_PROMPT,

@@ -9,6 +9,19 @@ from core.memory_engine import memory # Import the facade to store the result
 from core.memory_backend.procedural.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from core.memory_backend.procedural.validate import is_valid_rule
 
+# Module-level schema constant (hardening fix: was inline in distill_workflow()).
+# Defined once, reused on every call. Matches SYSTEM_PROMPT in prompts.py.
+_DISTILL_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "has_insight": {"type": "boolean"},
+        "rule": {"type": "string"},
+        "tags": {"type": "string"},
+    },
+    "required": ["has_insight", "rule", "tags"],
+    "additionalProperties": False,
+}
+
 def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
     """
     Synchronous distillation pipeline.
@@ -32,16 +45,6 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
         # Memory v1.2: JSON schema enforcement — LM Studio enforces the distillation
         # schema at generation time. The model cannot produce has_insight/
         # rule/tags with wrong types or missing fields.
-        _DISTILL_JSON_SCHEMA = {
-            "type": "object",
-            "properties": {
-                "has_insight": {"type": "boolean"},
-                "rule": {"type": "string"},
-                "tags": {"type": "string"},
-            },
-            "required": ["has_insight", "rule", "tags"],
-            "additionalProperties": False,
-        }
         # The timeout parameter is passed directly to llm.complete(), which passes it
         # to httpx.Client.post(). If it hits 15s, httpx severs the socket,
         # instantly freeing LM Studio's VRAM. No ThreadPoolExecutor needed.

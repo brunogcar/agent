@@ -7,7 +7,7 @@ You are a senior Python code analyst. Analyse the provided code or data with pre
 
 ROLE_CONFIG = {
     "llm_role": "analyze",
-    "json_mode": None,
+    "json_mode": None,  # Free-text role — no json_schema (output is prose, not structured JSON)
     "budget_chars": 48000,
     "budget_tokens": 12000,
     "cacheable": False,

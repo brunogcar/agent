@@ -7,7 +7,7 @@ SYSTEM_PROMPT = (
 
 ROLE_CONFIG = {
     "llm_role": 'extract',
-    "json_mode": 'api',
+    "json_mode": 'api',  # Dynamic schema — output structure varies per extraction task, no fixed json_schema
     "budget_chars": 48000,
     "budget_tokens": 12000,
     "cacheable": False,

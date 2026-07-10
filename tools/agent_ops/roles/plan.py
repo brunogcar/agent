@@ -23,7 +23,7 @@ JSON_SCHEMA = {
                     "step": {"type": "integer"},
                     "action": {"type": "string"},
                     "description": {"type": "string"},
-                    "inputs": {"type": "object"},
+                    "inputs": {"type": "object", "additionalProperties": True},
                 },
                 "required": ["step", "action", "description", "inputs"],
             },

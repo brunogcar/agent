@@ -35,7 +35,12 @@ JSON_SCHEMA = {
                 "required": ["severity", "description", "fix"],
             },
         },
-        "corrected_patch": {"type": ["string", "null"]},
+        # Hardening fix: Changed from ["string", "null"] to "string" with default "".
+        # Small local models may produce the string "null" instead of JSON null,
+        # which would be stored as the string "null" — confusing downstream consumers.
+        # Empty string is safer and handled correctly by all consumers. The system
+        # prompt says "else null" — update to "else empty string" for consistency.
+        "corrected_patch": {"type": "string", "default": ""},
     },
     "required": ["verdict", "issues", "corrected_patch"],
     "additionalProperties": False,
