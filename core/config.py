@@ -128,6 +128,11 @@ class Config:
         self.mimo_api_key = os.getenv("MIMO_API_KEY", "")
         self.mimo_base_url = os.getenv("MIMO_BASE_URL", "https://aistudio.xiaomimimo.com/v1")
 
+        # GitHub API (for github tool — PR operations, push)
+        self.github_token = os.getenv("GITHUB_TOKEN", "")
+        self.github_owner = os.getenv("GITHUB_OWNER", "")
+        self.github_repo = os.getenv("GITHUB_REPO", "")
+
         # -- Model roles -------------------------------------------------------
         planner_raw = os.getenv("PLANNER_MODEL")
         if not planner_raw:

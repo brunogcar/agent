@@ -31,7 +31,7 @@ from core.config import cfg
 ROUTER_WORKFLOWS = ["research", "data", "autocode", "deep_research", "understand"]
 ROUTER_TOOLS = [
     "web", "python", "file", "git", "memory", "agent", "notify", "report",
-    "vision", "workflow", "cli", "browser", "tavily", "consult", "parallel", "swarm",
+    "vision", "workflow", "cli", "browser", "tavily", "consult", "parallel", "swarm", "github",
 ]
 
 # Pre-built prompt fragments for _model_route(). Kept as constants so tests
@@ -88,6 +88,7 @@ ROUTER_SYSTEM_PROMPT = (
     + "- consult: ask another LLM for a second opinion\n"
     + "- parallel: execute multiple independent tasks concurrently\n"
     + "- swarm: multi-model consultation (ask all cloud providers at once)\n"
+    + "- github: GitHub PR operations (create, list, review, merge, push)\n"
     + "\nConfidence rules:\n"
     + "- high: Clear task with specific details\n"
     + "- medium: Understandable but could be more specific\n"
@@ -147,14 +148,15 @@ class TaskRouter:
     9. consult -> direct (ask another LLM)
     10. parallel -> direct (execute multiple tasks concurrently)
     11. swarm -> direct (multi-model consultation)
-    12. vision -> direct (image analysis)
-    13. agent -> direct (delegate to sub-agent)
-    14. deep_research-> workflow (iterative research)
-    15. understand -> workflow (knowledge graph)
-    16. autocode -> workflow (code edits)
-    17. data -> workflow (analysis)
-    18. research -> workflow (explicit keywords)
-    19. Default Research (catch-all)
+    12. github -> direct (GitHub PR operations)
+    13. vision -> direct (image analysis)
+    14. agent -> direct (delegate to sub-agent)
+    15. deep_research-> workflow (iterative research)
+    16. understand -> workflow (knowledge graph)
+    17. autocode -> workflow (code edits)
+    18. data -> workflow (analysis)
+    19. research -> workflow (explicit keywords)
+    20. Default Research (catch-all)
 
     Rationale: Direct-tool keywords are more specific than workflow
     keywords. A user saying "read file X" must never be misrouted to

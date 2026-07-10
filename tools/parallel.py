@@ -28,6 +28,7 @@ _TOOL_MAP = {
     "notify": notify,
     "memory": memory,
     "cli": cli,
+    "github": None,  # Lazy import to avoid circular deps
 }
 
 @tool
@@ -69,6 +70,8 @@ def parallel(
             return fail(f"Tool spec at index {i} missing 'name'", trace_id=trace_id)
 
         fn = _TOOL_MAP.get(name)
+        if fn is None and name == "github":
+            from tools.github import github as fn
         if not fn:
             return fail(f"Tool '{name}' not found", trace_id=trace_id)
 

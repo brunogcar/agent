@@ -13,6 +13,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [CLI.md](tools/CLI.md) | CLI | 4-layer NL→shell dispatch, proxy routing, human-readable output |
 | [CONSULT.md](tools/CONSULT.md) | Consult | Cloud LLM advisory, kill-switch, rate-limit guard |
 | [FILE.md](tools/FILE.md) | File | 25+ atomic FS actions, path guard, cancellation guard, compression |
+| [GITHUB.md](tools/GITHUB.md) | GitHub | PR workflow (create/list/get/review/merge/comment), git push subprocess, httpx direct (not PyGithub) |
 | [GIT.md](tools/GIT.md) | Git | 20+ atomic VCS actions, semantic params, stash-based rollback |
 | [MEMORY.md](tools/MEMORY.md) | Memory | 3 ChromaDB collections, tag validation, janitor, lazy loading |
 | [NOTIFY.md](tools/NOTIFY.md) | Notify | Cross-platform alerts, APScheduler, graceful console fallback |
@@ -173,6 +174,19 @@ tools/
 │       ├── write_pptx.py
 │       └── write_xlsx.py
 │
+├── github.py               # GitHub PR workflow meta-tool (7 actions: 6 API + 1 subprocess)
+├── github_ops/
+│   ├── _registry.py
+│   ├── client.py                    # httpx.Client singleton (get_client, is_configured, repo_path)
+│   └── actions/
+│       ├── pr_create.py             # POST /repos/{owner}/{repo}/pulls
+│       ├── pr_list.py               # GET /repos/{owner}/{repo}/pulls
+│       ├── pr_get.py                # GET /repos/{owner}/{repo}/pulls/{n}
+│       ├── pr_review.py             # POST /repos/{owner}/{repo}/pulls/{n}/reviews
+│       ├── pr_merge.py              # PUT /repos/{owner}/{repo}/pulls/{n}/merge
+│       ├── pr_comment.py            # Dual-mode: /issues/{n}/comments OR /pulls/{n}/comments
+│       └── push.py                  # Local `git push` subprocess (--force-with-lease)
+│
 ├── git.py                  # Git meta-tool (20+ atomic actions)
 ├── git_ops/
 │   ├── _registry.py
@@ -303,7 +317,7 @@ tools/
 
 ## 📚 Tool Catalog
 
-The agent currently exposes **16 tools** to the LLM.
+The agent currently exposes **17 tools** to the LLM.
 
 ### 1. 🤖 Agent — [tools/AGENT.md](tools/AGENT.md)
 
@@ -759,17 +773,56 @@ Changes not staged for commit:
 
 ---
 
+### 17. 🐙 GitHub — [tools/GITHUB.md](tools/GITHUB.md)
+
+**Status:** v1.0 — 7-action PR workflow meta-tool (6 GitHub REST API actions + 1 local `git push` subprocess).
+
+**Purpose:** Open, list, get, review, merge, and comment on pull requests via the GitHub REST API; push local branches to `origin` as the prerequisite for PR creation. Conceptually paired with `git()` — `git` operates on the **local** VCS, `github` operates on the **remote** PR workflow.
+
+**Key characteristics:**
+- **7 actions** — `pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `push`
+- **GitHub REST API via httpx** — Direct HTTPS calls to `https://api.github.com` (hardcoded base URL). NO PyGithub dependency. Singleton `httpx.Client` with auth headers (connection pooling).
+- **`push` is a subprocess, not an API call** — `subprocess.run(["git", "push", ...])` with list args (NOT `shell=True`). No `GITHUB_TOKEN` needed for push.
+- **`--force-with-lease` (not `--force`)** — `force=True` on `push` uses `--force-with-lease`, which refuses to overwrite remote refs that have moved since the last fetch. Safer than bare `--force`.
+- **PARALLEL_SAFE for API actions, NOT for `push`** — Facade declares `_NOT_PARALLEL_SAFE = frozenset({"push"})`; `push` excluded from `PARALLEL_SAFE` (subprocess lock contention).
+- **Dual-mode `pr_comment`** — General comment via `/issues/{n}/comments` OR line-level comment via `/pulls/{n}/comments` (XOR validation on `path`/`line`).
+- **Default `merge_method="squash"`** — Keeps history clean (one commit per PR). Override with `merge` (merge commit) or `rebase` (linear).
+- **Requires `GITHUB_TOKEN` + `GITHUB_OWNER` + `GITHUB_REPO`** — All three in `.env` (commented out by default). `is_configured()` short-circuits on first empty value. `push` is the only action that does NOT require configuration.
+- **Auto-discovered** — `@tool` + `@meta_tool` + `@register_action` = zero manual wiring in `server.py`
+
+**Safety:** No filesystem operations outside `git push`. No `path_guard` needed (the `path` param on `pr_comment` is a GitHub file path, not a local FS path). No SSRF surface (hardcoded `https://api.github.com`). Token read once at httpx.Client construction, embedded in `Authorization` header, never logged or returned in any result dict. `push` uses list-form subprocess (NOT `shell=True`) + shell-metacharacter rejection (defense in depth).
+
+**Output:**
+```json
+{
+  "status": "success",
+  "data": {
+    "number": 42,
+    "title": "Fix timeout bug",
+    "url": "https://github.com/owner/repo/pull/42",
+    "state": "open",
+    "head": "fix/timeout",
+    "base": "main"
+  },
+  "error": null,
+  "duration_ms": 845,
+  "trace_id": "abc123"
+}
+```
+
+---
+
 ## 🔄 Tool Comparison
 
-| Aspect | Agent | Browser | CLI | Consult | File | Git | Memory | Notify | Parallel | Python | Report | Tavily | Vision | Web | Workflow |
-|--------|-------|---------|-----|---------|------|-----|--------|--------|----------|--------|--------|--------|--------|-----|----------|
-| **Interface** | `role` param | `action` param | `command` str | `question` str | `action` param | `action` param | `action` param | `action` param | `tools` list | `mode` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
-| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
-| **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
-| **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
-| **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ Data mode | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
-| **Lazy imports** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| **Primary use** | Specialist LLM | JS page automation | NL command router | Cloud advisory | File CRUD | Version control | Memory I/O | Alerts | Concurrent execution | Code execution | HTML reports | AI search | Image analysis | Web search | Workflow orchestration |
+| Aspect | Agent | Browser | CLI | Consult | File | GitHub | Git | Memory | Notify | Parallel | Python | Report | Swarm | Tavily | Vision | Web | Workflow |
+|--------|-------|---------|-----|---------|------|--------|-----|--------|--------|----------|--------|--------|-------|--------|--------|-----|----------|
+| **Interface** | `role` param | `action` param | `command` str | `question` str | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `mode` param | `action` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
+| **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ✅ API only (push ❌) | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
+| **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Planner synthesis | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
+| **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ Data mode | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
+| **Lazy imports** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
+| **Primary use** | Specialist LLM | JS page automation | NL command router | Cloud advisory | File CRUD | PR workflow | Version control | Memory I/O | Alerts | Concurrent execution | Code execution | HTML reports | Multi-model consensus | AI search | Image analysis | Web search | Workflow orchestration |
 
 ---
 
@@ -945,6 +998,7 @@ Mutating actions (write, delete, commit, rollback) must call `ensure_not_cancell
 | CLI | `.\venv\Scripts\pytest tests/tools/cli/ -W error --tb=short -v` |
 | Consult | `.\venv\Scripts\pytest tests/tools/consult/ -W error --tb=short -v` |
 | File | `.\venv\Scripts\pytest tests/tools/file/ -W error --tb=short -v` |
+| GitHub | `.\venv\Scripts\pytest tests/tools/github/ -W error --tb=short -v` |
 | Git | `.\venv\Scripts\pytest tests/tools/git/ -W error --tb=short -v` |
 | Memory | `.\venv\Scripts\pytest tests/tools/memory/ -W error --tb=short -v` |
 | Notify | `.\venv\Scripts\pytest tests/tools/notify/ -W error --tb=short -v` |

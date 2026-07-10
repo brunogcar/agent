@@ -17,6 +17,7 @@ _parallel_depth = threading.local()
 
 PARALLEL_SAFE = frozenset({
     "web", "file", "python", "python_exec", "notify",
+    "github",  # API actions are stateless HTTP (push is NOT parallel-safe but handled in-action)
 })
 
 def dispatch_parallel(

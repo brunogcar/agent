@@ -16,7 +16,7 @@ ROUTER_EXPECTED_TOOLS = frozenset({
     "web", "python", "file", "git", "memory",
     "agent", "notify", "report", "vision", "workflow",
     "cli", "browser", "tavily", "consult", "parallel",
-    "swarm",
+    "swarm", "github",
 })
 ROUTER_EXPECTED_WORKFLOWS = frozenset({
     "research", "data", "autocode", "deep_research", "understand",
