@@ -18,7 +18,7 @@ def metrics_endpoint(_: None = Depends(check_auth)):
     task outcomes, TDD iterations, and LLM token usage. 
     Auth: Bearer token (GATEWAY_SECRET).
     """
-    from core.metrics import generate_metrics, get_content_type
+    from core.observability.metrics import generate_metrics, get_content_type
     return Response(content=generate_metrics(), media_type=get_content_type())
 
 @router.get("/autocode/graph")

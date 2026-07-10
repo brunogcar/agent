@@ -6,16 +6,16 @@ import pytest
 import json
 from pathlib import Path
 from unittest.mock import patch
-from core.tracer_reader import read_trace, list_recent_traces
+from core.observability.reader import read_trace, list_recent_traces
 
 @pytest.fixture
 def mock_tracer():
-    with patch("core.tracer_reader.tracer") as mock:
+    with patch("core.observability.reader.tracer") as mock:
         yield mock
 
 @pytest.fixture
 def mock_config(tmp_path):
-    with patch("core.tracer_reader.cfg") as mock_cfg:
+    with patch("core.observability.reader.cfg") as mock_cfg:
         mock_cfg.log_path = tmp_path
         yield mock_cfg
 

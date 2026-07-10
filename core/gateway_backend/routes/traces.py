@@ -11,13 +11,13 @@ router = APIRouter()
 
 @router.get("/traces")
 def recent_traces(limit: int = 10, _: None = Depends(check_auth)):
-    from core.tracer_reader import list_recent_traces
+    from core.observability.reader import list_recent_traces
     return {"traces": list_recent_traces(limit)}
 
 @router.get("/traces/{trace_id}")
 def get_trace_timeline(trace_id: str, _: None = Depends(check_auth)):
     """Retrieve the full execution timeline for a specific trace_id."""
-    from core.tracer_reader import read_trace
+    from core.observability.reader import read_trace
     
     trace = read_trace(trace_id)
     if not trace:

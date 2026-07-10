@@ -75,9 +75,10 @@ result = llm.call(role="executor", messages=[{"role": "system", "content": "..."
 |------|-------------|
 | [ARCHITECTURE.md](llm/ARCHITECTURE.md) | Module tree, call flow, facade pattern, role hierarchy, thread safety, observability, known concerns |
 | [API.md](llm/API.md) | `complete()`, `call()`, `LLMResponse`, role configuration, fallback chain, context budgeting, circuit breaker, provider abstraction, JSON parsing |
+| [SCHEMAS.md](llm/SCHEMAS.md) | Consolidated reference for every `json_schema` in the codebase (9 schemas: 6 role schemas + 2 distillation schemas + 1 autocode debug schema) |
 | [CHANGELOG.md](llm/CHANGELOG.md) | Version history, completed milestones, roadmap |
 | [INSTRUCTIONS.md](llm/INSTRUCTIONS.md) | AI editing rules — NEVER DO, ALWAYS DO, anti-patterns |
 
 ---
 
-*Last updated: 2026-07-08. See subfiles for detailed documentation.*
+*Last updated: 2026-07-10. See subfiles for detailed documentation.*

@@ -7,10 +7,10 @@
 | File | Purpose |
 |------|---------|
 | `workflows/base.py` | Shared `WorkflowState`, `trim_state()`, `node_step()`, `node_error()`, `node_done()`, `run_workflow()` |
-| `core/tracer.py` | `tracer.new_trace()` / `.step()` / `.error()` / `.finish()` / `.warning()` — observability |
+| `core/tracer.py` | `tracer.new_trace()` / `.step()` / `.error()` / `.finish()` / `.warning()` — observability (thin facade → `core/observability/tracer_engine.py`) |
 | `core/config.py` | `cfg.*` — shared configuration |
 | `core/memory_backend/eviction.py` | `eviction_queue.push()` — async memory eviction |
-| `workflows/helpers/checkpoint.py` | `save_checkpoint()`, `get_latest()`, `mark_complete()` — checkpoint journal |
+| `core/observability/checkpoint.py` | `save_checkpoint()`, `get_latest()`, `mark_complete()` — checkpoint journal (was `workflows/helpers/checkpoint.py` in v1.2; moved in v1.3) |
 | `workflows/research.py` | `build_research_graph()` — research workflow |
 | `workflows/data.py` | `build_data_graph()` — data workflow |
 | `workflows/autocode.py` | `build_graph()` / `invoke_with_timeout()` — autocode workflow |

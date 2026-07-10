@@ -1,5 +1,5 @@
 """
-workflows/helpers/checkpoint.py — Append-only JSONL journal for workflow resumability.
+core/observability/checkpoint.py — Append-only JSONL journal for workflow resumability.
 Saves workflow state at critical boundaries to survive agent crashes.
 """
 from __future__ import annotations

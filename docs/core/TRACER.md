@@ -1,6 +1,8 @@
 # 📝 Tracer
 
-The Tracer (`core/tracer.py`) is the **centralized, structured logging and trace ID propagation system** for the entire agent stack. It provides end-to-end observability for workflows, tool executions, and LLM calls while strictly enforcing MCP stdio safety protocols.
+The Tracer (`core/tracer.py` — now a **thin facade** → `core/observability/tracer_engine.py`) is the **centralized, structured logging and trace ID propagation system** for the entire agent stack. It provides end-to-end observability for workflows, tool executions, and LLM calls while strictly enforcing MCP stdio safety protocols.
+
+> **v1.3 extraction:** The Tracer implementation moved to `core/observability/tracer_engine.py`. `core/tracer.py` is now a thin facade that re-exports `tracer`, `Tracer`, `_TraceStore`, `generate_trace_id`, `_writer` (and other module-level names) so 71+ callsites don't need to change import paths. The full observability subsystem — including `tracer_reader` (now `core/observability/reader.py`), `metrics` (now `core/observability/metrics.py`), and `checkpoint` (now `core/observability/checkpoint.py`) — is documented at [OBSERVABILITY.md](observability/OBSERVABILITY.md).
 
 **Key characteristics:**
 - **MCP stdio safety** — NEVER writes to `sys.stdout`; all output goes to stderr and JSONL files
@@ -60,11 +62,12 @@ tracer.finish(tid, success=True, result="committed abc123")
 
 | File | Description |
 |------|-------------|
-| [ARCHITECTURE.md](tracer/ARCHITECTURE.md) | Module tree, data flow, MCP stdio safety, trace lifecycle, observability integration, known concerns, testing |
+| [ARCHITECTURE.md](tracer/ARCHITECTURE.md) | Module tree, data flow, MCP stdio safety, trace lifecycle, observability integration, known concerns, testing (legacy v1 view — for the v1.3 extraction, see [observability/ARCHITECTURE.md](observability/ARCHITECTURE.md)) |
 | [API.md](tracer/API.md) | Core methods, trace record structure, trace retrieval, structlog & fallback, CLI querying |
 | [CHANGELOG.md](tracer/CHANGELOG.md) | Version history, completed milestones, roadmap |
 | [INSTRUCTIONS.md](tracer/INSTRUCTIONS.md) | AI editing rules — NEVER DO, ALWAYS DO, anti-patterns |
+| [OBSERVABILITY.md](OBSERVABILITY.md) | v1.3 canonical root for the full observability subsystem (tracer engine + reader + metrics + checkpoint) |
 
 ---
 
-*Last updated: 2026-07-04. See subfiles for detailed documentation.*
+*Last updated: 2026-07-10. See subfiles for detailed documentation. (v1.3: implementation moved to core/observability/tracer_engine.py; core/tracer.py is now a facade)*

@@ -193,7 +193,7 @@ def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = 
     if tid:
         tracer.step(tid, node, message, **kwargs)
     if checkpoint and tid:
-        from workflows.helpers.checkpoint import save_checkpoint
+        from core.observability.checkpoint import save_checkpoint
         # [v1.2 #1] Save the FULL state, not just {status, error}. This ensures
         # resume from an error checkpoint has the complete workflow context.
         save_checkpoint(tid, node, state)
@@ -210,7 +210,7 @@ def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> dict:
     tid = state.get("trace_id", "")
     if tid:
         tracer.error(tid, node, message, **kwargs)
-        from workflows.helpers.checkpoint import save_checkpoint
+        from core.observability.checkpoint import save_checkpoint
         # [v1.2 #1] Save full state for resume — was: save_checkpoint(tid, node, {"status": "failed", "error": message})
         save_checkpoint(tid, node, {**state, "status": "failed", "error": message})
 
@@ -226,10 +226,10 @@ def node_done(state: WorkflowState, result: str, artifacts: list = None) -> dict
     tid = state.get("trace_id", "")
     if tid:
         # [v1.2 #7] Save success checkpoint first (was: no checkpoint on success)
-        from workflows.helpers.checkpoint import save_checkpoint
+        from core.observability.checkpoint import save_checkpoint
         save_checkpoint(tid, "done", {**state, "status": "success", "result": result})
         tracer.finish(tid, success=True, result=result[:200])
-        from workflows.helpers.checkpoint import mark_complete
+        from core.observability.checkpoint import mark_complete
         mark_complete(tid)
     return {
         "status": "success",
@@ -277,7 +277,7 @@ def run_workflow(
     # CHECKPOINT RESUMPTION
     restored = None
     if resume:
-        from workflows.helpers.checkpoint import get_latest
+        from core.observability.checkpoint import get_latest
         restored = get_latest(trace_id)
         if restored:
             if restored.get("_checkpoint_version", 0) != 1:
@@ -352,7 +352,7 @@ def run_workflow(
         # [v1.2 #2] Save checkpoint before returning — was: no checkpoint on crash.
         # State at crash time is now preserved for debugging/resume.
         try:
-            from workflows.helpers.checkpoint import save_checkpoint
+            from core.observability.checkpoint import save_checkpoint
             save_checkpoint(trace_id, "dispatch_error", {**initial_state, "status": "failed", "error": msg})
         except Exception:
             pass  # Non-fatal: checkpoint failure shouldn't mask the original error

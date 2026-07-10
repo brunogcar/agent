@@ -16,7 +16,7 @@ The `core/` module is the **foundation layer** of the MCP Agent Stack. It provid
 | [KGRAPH.md](core/KGRAPH.md) | Knowledge Graph | AST parsing, SQLite graph storage, test targeting, project isolation, dependency queries |
 | [TRACER.md](core/TRACER.md) | Observability | Structured logging, trace lifecycle, JSONL files, MCP stdio safety, trace retrieval |
 | [NET.md](core/NET.md) | Network Infrastructure | HTTP error classification, SSRF protection, retry/backoff, API budget tracking, URL normalization |
-| [STANDALONE.md](core/STANDALONE.md) | Standalone Utilities | Contracts, path guard, citations, metrics, BRL validator, shared helpers |
+| [STANDALONE.md](core/STANDALONE.md) | Standalone Utilities | Contracts, path guard, citations, BRL validator, shared helpers (tracer/metrics moved to observability) |
 
 ---
 
@@ -46,11 +46,10 @@ graph TD
     end
     subgraph "Layer 1: Foundation"
         CFG["config.py"]
-        TRC["tracer.py"]
+        TRC["tracer.py<br/>Thin facade → observability/"]
         CTR["contracts.py"]
         SEC["net/security.py"]
         PTH["path_guard.py"]
-        MET["metrics.py"]
         UTL["utils.py"]
         PAR["parallel_executor.py"]
         BR["br_validator.py"]
@@ -82,13 +81,13 @@ graph TD
     NET --> UTL
 ```
 
-**Dependency rule:** Layers only import downward. No circular dependencies. Subsystems import from Layer 1 (config, tracer, contracts, security, path_guard, metrics, utils), never from Layer 3 (facades).
+**Dependency rule:** Layers only import downward. No circular dependencies. Subsystems import from Layer 1 (config, tracer facade, contracts, security, path_guard, utils), never from Layer 3 (facades). Note: `tracer.py` is itself a facade that re-exports from the `core/observability/` subsystem — it lives at Layer 1 conceptually but its implementation is in Layer 2.
 
 | Layer | Contains | Imports From |
 |-------|----------|-------------|
-| **Layer 1: Foundation** | config, tracer, contracts, net/security, path_guard, metrics, utils, parallel_executor, br_validator, citations | Nothing in `core/` |
-| **Layer 2: Subsystems** | llm_backend, memory_backend, sleep_learn, meta_learning, runtime, router, gateway_backend, kgraph, net | Layer 1 only |
-| **Layer 3: Facades** | llm.py, memory_engine.py, gateway.py, server.py, registry.py | Layer 2 (and transitively Layer 1) |
+| **Layer 1: Foundation** | config, tracer (facade → observability/), contracts, net/security, path_guard, utils, parallel_executor, br_validator, citations | Nothing in `core/` (tracer.py facade imports from `core/observability/` subsystem) |
+| **Layer 2: Subsystems** | observability (tracer_engine + reader + metrics + checkpoint), llm_backend, memory_backend, sleep_learn, meta_learning, runtime, router, gateway_backend, kgraph, net | Layer 1 only |
+| **Layer 3: Facades** | llm.py, memory_engine.py, gateway.py, server.py, registry.py, tracer.py (facade) | Layer 2 (and transitively Layer 1) |
 
 ---
 
@@ -101,8 +100,13 @@ core/
 ├── config.py             # Singleton Config, .env parsing, path resolution
 ├── config_validation.py  # Startup validation (paths, models, timeouts)
 │
-├── tracer.py             # In-memory trace store + JSONL file logging
-├── tracer_reader.py      # Trace retrieval (memory fast-path, disk slow-path)
+├── tracer.py             # Thin facade → core/observability/tracer_engine.py
+├── observability/        # Full observability subsystem (tracer + reader + metrics + checkpoint)
+│   ├── __init__.py       # Empty package init
+│   ├── tracer_engine.py  # Tracer singleton, _FileWriter, _TraceStore, generate_trace_id
+│   ├── reader.py         # Trace retrieval (memory fast-path, disk slow-path)
+│   ├── metrics.py        # Prometheus metrics (nodes, tasks, TDD, tokens)
+│   └── checkpoint.py     # Append-only JSONL journal for workflow resumability
 │
 ├── llm.py                # Thin facade for LLMClient
 ├── llm_backend/          # Full LLM subsystem
@@ -164,7 +168,6 @@ core/
 ├── contracts.py          # ToolCall/ToolResult schemas, ok()/fail() helpers
 ├── security.py           # SSRF protection (is_safe_network_address) — DEPRECATED, use net/security.py
 ├── path_guard.py         # Path validation, root scoping, protected files
-├── metrics.py            # Prometheus metrics (nodes, tasks, TDD, tokens)
 ├── parallel_executor.py  # Parallel tool execution engine (NOT_PARALLEL_SAFE guard)
 ├── citations.py          # Per-trace citation tracking for research
 ├── br_validator.py       # Brazilian financial data parser (BRL, dates, tickers)
@@ -496,7 +499,7 @@ key = normalize_url("https://example.com/?foo=1&bar=2")
 - **Cross-cutting concerns** — Used by tools, workflows, gateway, and skills alike
 - **No `@tool` facade** — Library code, not MCP tools
 - **No individual test suites** — Tested indirectly via consumer test suites
-- **Thread-safe where applicable** — `citations` and `metrics` use locks / CollectorRegistry
+- **Thread-safe where applicable** — `citations` uses locks; Prometheus `CollectorRegistry` is now in `core/observability/metrics.py` (moved out of standalone)
 
 **Components:**
 
@@ -506,10 +509,11 @@ key = normalize_url("https://example.com/?foo=1&bar=2")
 | `path_guard.py` | Path validation / SSRF guard | `resolve_path()`, `check_protected_file()`, `check_git_operation()` — Centralized path validation for all filesystem operations |
 | `utils.py` | Output compression | `compress_result()`, `truncate_output()` — Truncates large string fields recursively to prevent MCP context overflow |
 | `citations.py` | Citation tracking | `citations.add()`, `format_citations()` — Per-trace source numbering for research workflows |
-| `metrics.py` | Prometheus metrics | `track_node()`, `generate_metrics()` — Node duration, task status, TDD iterations, LLM tokens |
 | `br_validator.py` | Brazilian financial data | `parse_brl()`, `validate_ticker()`, `parse_date()` — Brazilian financial data validation for `skills/b3` |
 | `parallel_executor.py` | Parallel tool execution | `dispatch_parallel()`, `PARALLEL_SAFE` — Conservative allowlist for concurrent tool execution |
 | `config_validation.py` | Startup validation | `validate_config()` — Called by both server.py (with graceful ImportError fallback) and gateway factory |
+
+> **v1.3 move:** `tracer.py` is now a thin facade → `core/observability/tracer_engine.py`. `tracer_reader.py` and `metrics.py` moved into `core/observability/` (as `reader.py` and `metrics.py`). See [OBSERVABILITY.md](core/OBSERVABILITY.md) for the consolidated subsystem docs.
 
 **Output:**
 ```python
@@ -517,7 +521,7 @@ from core.contracts import ok, fail
 from core.path_guard import resolve_path, check_protected_file
 from core.utils import compress_result
 from core.citations import citations
-from core.metrics import track_node
+from core.observability.metrics import track_node  # moved from core.metrics in v1.3
 from core.br_validator import parse_brl
 ```
 

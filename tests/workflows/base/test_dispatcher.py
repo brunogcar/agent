@@ -48,7 +48,7 @@ class TestRunWorkflowCheckpoint:
         """resume=True must restore from checkpoint journal."""
         from workflows.base import run_workflow
         mocker.patch(
-            "workflows.helpers.checkpoint.get_latest",
+            "core.observability.checkpoint.get_latest",
             return_value={"_checkpoint_version": 1, "goal": "original", "memory_context": "ctx"},
         )
         mock_graph = mocker.patch("workflows.research.build_research_graph")
@@ -64,7 +64,7 @@ class TestRunWorkflowCheckpoint:
     def test_resume_version_mismatch_starts_fresh(self, mocker):
         from workflows.base import run_workflow
         mocker.patch(
-            "workflows.helpers.checkpoint.get_latest",
+            "core.observability.checkpoint.get_latest",
             return_value={"_checkpoint_version": 99, "goal": "old"},
         )
         mock_graph = mocker.patch("workflows.research.build_research_graph")
@@ -77,7 +77,7 @@ class TestRunWorkflowCheckpoint:
 
     def test_resume_no_checkpoint_starts_fresh(self, mocker):
         from workflows.base import run_workflow
-        mocker.patch("workflows.helpers.checkpoint.get_latest", return_value=None)
+        mocker.patch("core.observability.checkpoint.get_latest", return_value=None)
         mock_graph = mocker.patch("workflows.research.build_research_graph")
         mock_compiled = mocker.MagicMock()
         mock_compiled.invoke.return_value = {"status": "success"}
@@ -92,7 +92,7 @@ class TestRunWorkflowExceptionHandling:
         from workflows.base import run_workflow
         mock_graph = mocker.patch("workflows.research.build_research_graph")
         mock_graph.return_value.invoke.side_effect = RuntimeError("graph crashed")
-        mock_save = mocker.patch("workflows.helpers.checkpoint.save_checkpoint")
+        mock_save = mocker.patch("core.observability.checkpoint.save_checkpoint")
         result = run_workflow(workflow_type="research", goal="test", trace_id="t8")
         assert result["status"] == "failed"
         assert "graph crashed" in result["error"]

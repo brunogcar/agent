@@ -6,37 +6,47 @@
 
 | File | Purpose |
 |------|---------|
-| `core/tracer.py` | `Tracer` singleton, `_FileWriter`, `_TraceStore`, `generate_trace_id()` |
-| `core/tracer_reader.py` | `read_trace()`, `list_recent_traces()` — memory + disk retrieval |
-| `core/metrics.py` | Prometheus metrics (complementary to tracer) |
+| `core/observability/tracer_engine.py` | **Implementation** — `Tracer` singleton, `_FileWriter`, `_TraceStore`, `generate_trace_id()`. Moved here in v1.3. |
+| `core/tracer.py` | **Thin facade** (v1.3) — re-exports `tracer`, `Tracer`, `_TraceStore`, `generate_trace_id`, `_writer` (and other module-level names) from `tracer_engine.py`. Exists so 71+ callsites don't need to change import paths. |
+| `core/observability/reader.py` | `read_trace()`, `list_recent_traces()` — memory + disk retrieval (was `core/tracer_reader.py`) |
+| `core/observability/metrics.py` | Prometheus metrics (complementary to tracer) — was `core/metrics.py` |
+| `core/observability/checkpoint.py` | Append-only JSONL journal for workflow resumability — was `workflows/helpers/checkpoint.py` |
 | `core/config.py` | `log_path`, `autocode_debug` configuration |
-| `core/gateway_backend/routes/traces.py` | HTTP endpoints: `GET /traces`, `GET /traces/{id}` |
-| `core/gateway_backend/routes/metrics.py` | HTTP endpoint: `GET /metrics` |
+| `core/gateway_backend/routes/traces.py` | HTTP endpoints: `GET /traces`, `GET /traces/{id}` (imports from `core.observability.reader`) |
+| `core/gateway_backend/routes/metrics.py` | HTTP endpoint: `GET /metrics` (imports from `core.observability.metrics`) |
 | `core/gateway_backend/factory.py` | Request-ID middleware (assigns trace_id to every request) |
-| `server.py` | Main entry point — all tools use tracer for logging |
+| `server.py` | Main entry point — all tools use tracer for logging; imports `scan_incomplete` from `core.observability.checkpoint` |
+
+> **v1.3 extraction note:** This ARCHITECTURE.md preserves the legacy v1 view. For the canonical v1.3 observability subsystem docs (covering tracer_engine + reader + metrics + checkpoint as a single subsystem), see [../../observability/ARCHITECTURE.md](../../observability/ARCHITECTURE.md).
 
 ---
 
 ## 🌳 Module Tree
 
 ```text
-core/tracer.py                      # Tracer singleton, _FileWriter, _TraceStore
-core/tracer_reader.py                # Trace retrieval (memory fast-path, disk slow-path)
-core/metrics.py                     # Prometheus metrics (complementary)
+core/tracer.py                       # Thin facade (v1.3) → re-exports from observability/
+core/observability/
+├── tracer_engine.py                # Implementation: Tracer singleton, _FileWriter, _TraceStore
+├── reader.py                       # Trace retrieval (memory fast-path, disk slow-path)
+├── metrics.py                      # Prometheus metrics (complementary)
+└── checkpoint.py                   # Workflow resumability journal
 ```
 
 ### Component Hierarchy
 
 ```text
-Tracer (singleton)
-├── Trace ID Generator (uuid4 hex, 8 chars)
-├── Structlog Config (stderr only, JSON renderer)
-│   └── Graceful Fallback (standard logging if structlog missing)
-├── _FileWriter (Thread-safe JSONL, daily rotation)
-├── _TraceStore (In-memory, bounded to 200 traces)
-└── Trace Reader (core/tracer_reader.py)
-    ├── Fast Path (In-memory lookup via _TraceStore)
-    └── Slow Path (Disk scan of last 14 days of JSONL logs)
+core.tracer (facade)
+└── core.observability.tracer_engine
+    ├── Trace ID Generator (uuid4 hex, 12 chars)
+    ├── Structlog Config (stderr only, JSON renderer)
+    │   └── Graceful Fallback (standard logging if structlog missing)
+    ├── _FileWriter (Thread-safe JSONL, daily rotation)
+    ├── _TraceStore (In-memory, bounded to 200 traces)
+    └── tracer = Tracer()  # Module-level singleton
+
+core.observability.reader
+├── Fast Path (In-memory lookup via _TraceStore)
+└── Slow Path (Disk scan of last 14 days of JSONL logs)
 ```
 
 ---
@@ -97,4 +107,4 @@ graph TD
 
 ---
 
-*Last updated: 2026-07-04. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-10. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules. For the v1.3 observability subsystem docs, see [../../observability/ARCHITECTURE.md](../../observability/ARCHITECTURE.md).*

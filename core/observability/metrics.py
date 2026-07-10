@@ -1,5 +1,5 @@
 """
-core/metrics.py -- Prometheus metrics registry for autocode & gateway telemetry.
+core/observability/metrics.py -- Prometheus metrics registry for autocode & gateway telemetry.
 
 Tracks:
   - Node execution duration (histogram)
@@ -11,7 +11,7 @@ Gracefully degrades if prometheus_client is not installed. All helpers are
 safe to call anywhere; they become no-ops when the library is missing.
 
 Usage:
-    from core.metrics import track_node, track_task_status, generate_metrics
+    from core.observability.metrics import track_node, track_task_status, generate_metrics
 
     track_node("node_run_tests", duration=2.4)
     track_task_status("success")

@@ -33,7 +33,7 @@ class TestNodeStep:
     def test_checkpoint_true_saves_checkpoint(self, base_state, mocker):
         from workflows.base import node_step
         mocker.patch("workflows.base.tracer")  # silence tracer
-        mock_save = mocker.patch("workflows.helpers.checkpoint.save_checkpoint")
+        mock_save = mocker.patch("core.observability.checkpoint.save_checkpoint")
         node_step(base_state, "execute", "running", checkpoint=True)
         mock_save.assert_called_once_with("t1", "execute", base_state)
 
@@ -62,7 +62,7 @@ class TestNodeError:
     def test_saves_full_state_checkpoint(self, base_state, mocker):
         """[v1.2 #1] node_error must save the FULL state, not just {status, error}."""
         from workflows.base import node_error
-        mock_save = mocker.patch("workflows.helpers.checkpoint.save_checkpoint")
+        mock_save = mocker.patch("core.observability.checkpoint.save_checkpoint")
         base_state["memory_context"] = "some context"
         node_error(base_state, "execute", "failed")
         mock_save.assert_called_once()
@@ -97,8 +97,8 @@ class TestNodeDone:
     def test_saves_success_checkpoint(self, base_state, mocker):
         """[v1.2 #7] node_done must save a checkpoint before mark_complete."""
         from workflows.base import node_done
-        mock_save = mocker.patch("workflows.helpers.checkpoint.save_checkpoint")
-        mock_mark = mocker.patch("workflows.helpers.checkpoint.mark_complete")
+        mock_save = mocker.patch("core.observability.checkpoint.save_checkpoint")
+        mock_mark = mocker.patch("core.observability.checkpoint.mark_complete")
         mock_tracer = mocker.patch("workflows.base.tracer")
         node_done(base_state, result="done", artifacts=["file.py"])
         mock_save.assert_called_once()

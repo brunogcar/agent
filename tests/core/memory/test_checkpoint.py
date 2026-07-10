@@ -7,7 +7,7 @@ import os
 from decimal import Decimal
 from datetime import datetime, timedelta, time as dt_time
 from uuid import UUID, uuid4
-from workflows.helpers.checkpoint import sanitize_state, CHECKPOINT_DIR
+from core.observability.checkpoint import sanitize_state, CHECKPOINT_DIR
 
 def test_circular_ref_only_on_containers():
     """Interned strings must NOT trigger circular reference detection."""
@@ -60,8 +60,8 @@ def test_checkpoint_append_with_fsync():
     if path.exists():
         path.unlink()
 
-    with patch("workflows.helpers.checkpoint.os.fsync") as mock_fsync:
-        from workflows.helpers.checkpoint import save_checkpoint
+    with patch("core.observability.checkpoint.os.fsync") as mock_fsync:
+        from core.observability.checkpoint import save_checkpoint
         save_checkpoint(trace_id, "test_node", {"status": "running"})
 
     assert mock_fsync.called, "os.fsync not called during checkpoint save"
@@ -73,14 +73,14 @@ def test_checkpoint_append_with_fsync():
 # Bug #15: Stale docstring path
 # =============================================================================
 def test_checkpoint_docstring_path_correct():
-    """Docstring must reference workflows/helpers/checkpoint.py, not the old path.
+    """Docstring must reference core/observability/checkpoint.py, not the old path.
 
     Previously said 'core/workflow_checkpoint.py' — stale from before the
-    refactor that moved the file to workflows/helpers/.
+    refactor that moved the file to core/observability/.
     """
-    from workflows.helpers import checkpoint
-    assert "workflows/helpers/checkpoint.py" in checkpoint.__doc__, (
-        "Docstring must reference the current file path (workflows/helpers/checkpoint.py). "
+    from core.observability import checkpoint
+    assert "core/observability/checkpoint.py" in checkpoint.__doc__, (
+        "Docstring must reference the current file path (core/observability/checkpoint.py). "
         f"Got: {checkpoint.__doc__!r}"
     )
     assert "core/workflow_checkpoint.py" not in checkpoint.__doc__, (
@@ -98,7 +98,7 @@ def test_resume_count_uses_json_parsing_not_string_match():
     positives if a state field contains that literal string.
     """
     import json
-    from workflows.helpers.checkpoint import save_checkpoint, get_latest, CHECKPOINT_DIR
+    from core.observability.checkpoint import save_checkpoint, get_latest, CHECKPOINT_DIR
 
     trace_id = "resume_count_string_match_test"
     path = CHECKPOINT_DIR / f"{trace_id}.jsonl"
@@ -142,7 +142,7 @@ def test_resume_count_uses_json_parsing_not_string_match():
 def test_resume_count_counts_actual_resume_nodes():
     """resume_count must correctly count actual 'resume' nodes."""
     import json
-    from workflows.helpers.checkpoint import save_checkpoint, CHECKPOINT_DIR
+    from core.observability.checkpoint import save_checkpoint, CHECKPOINT_DIR
 
     trace_id = "resume_count_actual_test"
     path = CHECKPOINT_DIR / f"{trace_id}.jsonl"

@@ -1,5 +1,5 @@
 """
-core/trace_reader.py — Trace log reader and parser.
+core/observability/reader.py — Trace log reader and parser.
 Reads structured traces from the in-memory store and falls back to 
 scanning JSONL log files on disk for historical traces.
 """
@@ -9,7 +9,7 @@ import json
 from typing import Optional
 
 from core.config import cfg
-from core.tracer import tracer
+from core.observability.tracer_engine import tracer
 
 
 def read_trace(trace_id: str) -> Optional[dict]:
