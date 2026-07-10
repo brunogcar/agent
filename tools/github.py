@@ -39,6 +39,11 @@ _NOT_PARALLEL_SAFE = frozenset({"push"})
         " | Merge a PR | github(pr_merge) | merge / squash / rebase",
         " | Comment on PR | github(pr_comment) | General or line-level comment",
         " | Push branch | github(push) | git push origin branch (local subprocess)",
+        " | Create issue | github(issue_create) | Create GitHub issue with labels + assignees",
+        " | List issues | github(issue_list) | List open/closed/all issues",
+        " | Comment on issue | github(issue_comment) | Comment on issue or PR",
+        " | Create release | github(release_create) | Create release from tag",
+        " | List releases | github(release_list) | List GitHub releases",
         "",
         "Requires GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env.",
         "push action is NOT parallel-safe (subprocess).",
@@ -63,6 +68,12 @@ def github(
     branch: str = "",
     remote: str = "origin",
     force: bool = False,
+    # v1.1 — Issues + Releases
+    labels: str = "",
+    assignees: str = "",
+    tag: str = "",
+    draft: bool = False,
+    prerelease: bool = False,
     trace_id: str = "",
 ) -> dict:
     """GitHub API meta-tool — PR operations and git push."""
@@ -101,6 +112,12 @@ def github(
         "branch": branch,
         "remote": remote,
         "force": force,
+        # v1.1 — Issues + Releases
+        "labels": labels,
+        "assignees": assignees,
+        "tag": tag,
+        "draft": draft,
+        "prerelease": prerelease,
         "trace_id": trace_id,
     }
 

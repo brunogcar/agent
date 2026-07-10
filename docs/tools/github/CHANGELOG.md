@@ -6,6 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
+| v1.1 | 2026-07-10 | **Issues + Releases:** 5 new actions (`issue_create`, `issue_list`, `issue_comment`, `release_create`, `release_list`). Issues support labels + assignees. Releases support draft + prerelease flags. `issue_comment` works on both issues and PRs (shared endpoint). Facade updated with `labels`, `assignees`, `tag`, `draft`, `prerelease` params. |
 | v1.0 | 2026-07-10 | Initial release — 7 actions (`pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `push`), `@meta_tool` + `github_ops/` pattern, httpx direct (not PyGithub), `--force-with-lease` for safe force-push |
 
 ---
