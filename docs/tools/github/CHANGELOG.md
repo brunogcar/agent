@@ -6,6 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
+| v1.2 | 2026-07-10 | **Issue / Release reads + pagination + mergeable:** 3 new actions (`issue_get`, `issue_update`, `release_get`). `issue_update` unifies close/reopen/edit (replaces roadmap's `issue_close`/`issue_reopen` split). Pagination on `pr_list` + `issue_list` via `page` param + `parse_link_header()` helper in `client.py` (returns `page`/`has_next`/`next_page`). `mergeable` + `mergeable_state` surfaced in `pr_get`. Facade `state` default changed `"open"` → `""` (list actions default to "open" internally; `issue_update` treats `""` as "don't change"). New `page: int = 1` param. Bug fixes: `pr_get`/`pr_review`/`pr_merge`/`pr_comment` use `if not number:` (was `is None`) to catch facade default `number=0`; `pr_comment` uses `bool(line)` (was `is not None`) to catch facade default `line=0`. Tests: 32 → 78 (+4 new test files for pr_get/pr_review/pr_merge/pr_comment; +16 new tests in `test_issues_releases.py` / `test_pr_list.py`; `test_dispatch.py` updated 12 → 15 actions). |
 | v1.1 | 2026-07-10 | **Issues + Releases:** 5 new actions (`issue_create`, `issue_list`, `issue_comment`, `release_create`, `release_list`). Issues support labels + assignees. Releases support draft + prerelease flags. `issue_comment` works on both issues and PRs (shared endpoint). Facade updated with `labels`, `assignees`, `tag`, `draft`, `prerelease` params. |
 | v1.0 | 2026-07-10 | Initial release — 7 actions (`pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `push`), `@meta_tool` + `github_ops/` pattern, httpx direct (not PyGithub), `--force-with-lease` for safe force-push |
 
@@ -23,6 +24,22 @@ GitHub is a brand-new tool introduced in v1.0. There are no prior versions to br
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| `issue_get` action | ✅ v1.2 | GET `/repos/{owner}/{repo}/issues/{number}` — single issue details (number, title, state, body, url, labels, assignee, user, created_at, updated_at, closed_at). 404 → "Issue #N not found". |
+| `issue_update` action | ✅ v1.2 | PATCH `/repos/{owner}/{repo}/issues/{number}` — unified close/reopen/edit (replaces roadmap's `issue_close`/`issue_reopen` split). `state="open"`/`"closed"`/`""` (empty = don't change); also edits `title`, `body`, `labels`, `assignees`. At least one field required. |
+| `release_get` action | ✅ v1.2 | GET `/repos/{owner}/{repo}/releases/tags/{tag}` (by tag, preferred) OR GET `/repos/{owner}/{repo}/releases/{id}` (by numeric ID). Returns id, tag, name, url, draft, prerelease, created_at, published_at, body, assets list. |
+| Pagination on `pr_list` + `issue_list` | ✅ v1.2 | New `page` param (default 1) on both list actions. New `parse_link_header()` helper in `client.py` parses the GitHub `Link` header. Response shape gains `page`, `has_next`, `next_page`. Lets callers iterate repos with >100 PRs/issues. |
+| `mergeable` + `mergeable_state` in `pr_get` | ✅ v1.2 | `pr_get` response now surfaces `mergeable` (true/false/null — null = still computing, retry) and `mergeable_state` ("clean"/"blocked"/"unstable"/"dirty"/"unknown"). Use BEFORE `pr_merge` to pre-check. |
+| `parse_link_header()` in `client.py` | ✅ v1.2 | New module-level helper — extracts `next`/`last` page numbers from a GitHub `Link` header. Returns `{"next": int|None, "last": int|None}`. Used by `pr_list` + `issue_list`. |
+| Facade `state` default `"open"` → `""` | ✅ v1.2 | `pr_list`/`issue_list` internally default to `"open"` when empty (no behavior change for callers). `issue_update` treats `""` as "don't change" — enables the unified close/reopen/edit design without a separate no-op sentinel. |
+| New `page: int = 1` facade param | ✅ v1.2 | Added to the `github()` facade signature + forwarded in `kwargs`. Used by `pr_list`/`issue_list`; ignored by other actions via `**kwargs`. |
+| Bug fix — `number=0` facade default not caught | ✅ v1.2 | `pr_get`/`pr_review`/`pr_merge`/`pr_comment` previously checked `if number is None:` but the facade defaults `number=0`, so `github(action="pr_get")` (no number) passed validation and hit the API with `number=0`. Changed to `if not number:` — fails fast with `"number is required for <action>"`. |
+| Bug fix — `line=0` facade default not caught in `pr_comment` | ✅ v1.2 | `pr_comment` previously computed `line_set = line is not None` but the facade defaults `line=0`, so `line=0` was treated as "set" and triggered XOR-failure when `path` was also empty. Changed to `line_set = bool(line)` — `0` is treated as "not set", matching `path=""` semantics. |
+| Test coverage for `pr_get` / `pr_review` / `pr_merge` / `pr_comment` | ✅ v1.2 | 4 new test files: `test_pr_get.py` (6 tests), `test_pr_review.py` (7 tests), `test_pr_merge.py` (7 tests), `test_pr_comment.py` (7 tests). Mirrors the existing `test_pr_create.py` / `test_pr_list.py` pattern. |
+| Test coverage for `issue_get` / `issue_update` / `release_get` | ✅ v1.2 | `test_issues_releases.py` extended: +TestIssueGet (4 tests), +TestIssueUpdate (7 tests), +TestReleaseGet (5 tests). +1 pagination test for `issue_list`. |
+| Test coverage for `pr_list` pagination | ✅ v1.2 | `test_pr_list.py` extended: +2 pagination tests (Link header parsed → `has_next`/`next_page` populated; no Link header → `has_next=False`, `next_page=None`). |
+| `test_dispatch.py` updated 12 → 15 actions | ✅ v1.2 | `test_dispatch_has_15_actions` (was `_12_`); `test_unknown_action` now asserts all 15 action names appear in the error message. |
+| `conftest.py` updated for 14 API modules | ✅ v1.2 | `_API_ACTION_MODULES` gains `issue_get`, `issue_update`, `release_get` (12 → 14 API modules; `push` still excluded). Default mock `headers = {}` so `pr_list`/`issue_list` `resp.headers.get("link", "")` works without per-test setup. |
+| Test suite (78 tests) | ✅ v1.2 | `conftest.py` + `test_dispatch.py` (4 tests) + `test_pr_create.py` (4) + `test_pr_list.py` (5) + `test_pr_get.py` (6) + `test_pr_review.py` (7) + `test_pr_merge.py` (7) + `test_pr_comment.py` (7) + `test_issues_releases.py` (26) + `test_push.py` (4). All pass with `mock_cfg` / `mock_not_configured` / `mock_httpx_client` fixtures. |
 | `github()` tool facade | ✅ v1.0 | `@tool` + `@meta_tool` + manual dispatch; `action: str` (not `Literal`); `_NOT_PARALLEL_SAFE = frozenset({"push"})` |
 | `github_ops/` subpackage | ✅ v1.0 | `_registry.py` + `client.py` + `actions/` (auto-imported by `__init__.py`). No `helpers.py` — each handler is self-contained |
 | `pr_create` action | ✅ v1.0 | POST `/repos/{owner}/{repo}/pulls` — required `title` + `head`; optional `base` (default "main") + `body` |
@@ -44,25 +61,27 @@ GitHub is a brand-new tool introduced in v1.0. There are no prior versions to br
 
 ---
 
-## 🔄 Roadmap — Phase 2: Issues + Releases
+## 🔄 Roadmap — Phase 2: Issues + Releases (shipped in v1.1 + v1.2)
 
-| Feature | Notes | Priority |
-|---------|-------|----------|
-| `issue_create` action | POST `/repos/{owner}/{repo}/issues` — open a new issue. Params: `title`, `body`, `labels` (list), `assignees` (list). | P1 |
-| `issue_list` action | GET `/repos/{owner}/{repo}/issues?state=...&labels=...` — list issues. Reuse `pr_list` pagination pattern. | P1 |
-| `issue_get` action | GET `/repos/{owner}/{repo}/issues/{number}` — single issue details. Mirror `pr_get` shape. | P1 |
-| `issue_comment` action | POST `/repos/{owner}/{repo}/issues/{number}/comments` — comment on an issue. Note: this is the SAME endpoint as general `pr_comment` (PRs are issues). Consider unifying. | P1 |
-| `issue_close` / `issue_reopen` actions | PATCH `/repos/{owner}/{repo}/issues/{number}` with `state: "closed"` or `state: "open"`. | P2 |
-| `release_create` action | POST `/repos/{owner}/{repo}/releases` — create a release from a tag. Params: `tag_name`, `name`, `body` (release notes), `target_commitish`, `draft`, `prerelease`. | P2 |
-| `release_list` action | GET `/repos/{owner}/{repo}/releases` — list releases. | P2 |
-| `release_get` action | GET `/repos/{owner}/{repo}/releases/{id}` — single release details. | P2 |
-| Pagination support for `pr_list` / `issue_list` | Currently capped at 100 (GitHub API per_page max). Add `page` param + Link-header parsing for multi-page iteration. | P2 |
-| `mergeable` state in `pr_get` response | GitHub returns `mergeable` (bool/null) and `mergeable_state` (clean / blocked / unstable / dirty) — currently NOT surfaced. Add to `pr_get` return shape. | P2 |
-| Test coverage for `pr_get`, `pr_review`, `pr_merge`, `pr_comment` | Phase 1 only covers `pr_create` / `pr_list` / `push`. Add 4 test files mirroring the existing pattern. | P2 |
+Phase 2 is **complete**. The remaining items below are tracked for history; see the ✅ Completed section above for implementation notes.
+
+| Feature | Status | Notes |
+|---------|-------|-------|
+| `issue_create` action | ✅ v1.1 | POST `/repos/{owner}/{repo}/issues` — open a new issue. Params: `title`, `body`, `labels` (comma-separated), `assignees` (comma-separated). |
+| `issue_list` action | ✅ v1.1 (+ v1.2 pagination) | GET `/repos/{owner}/{repo}/issues?state=...&labels=...` — list issues. v1.2 added `page` param + Link-header parsing. |
+| `issue_get` action | ✅ v1.2 | GET `/repos/{owner}/{repo}/issues/{number}` — single issue details. Mirrors `pr_get` shape. |
+| `issue_comment` action | ✅ v1.1 | POST `/repos/{owner}/{repo}/issues/{number}/comments` — comment on an issue. SAME endpoint as general `pr_comment` (PRs are issues); kept as a separate action for caller clarity. |
+| `issue_close` / `issue_reopen` actions | ✅ v1.2 (unified as `issue_update`) | Originally planned as two separate actions; **shipped as a single unified `issue_update`** that handles close/reopen via the `state` param AND edits title/body/labels/assignees. See ARCHITECTURE.md → Key Design Decisions for rationale. |
+| `release_create` action | ✅ v1.1 | POST `/repos/{owner}/{repo}/releases` — create a release from a tag. Params: `tag_name`, `name`, `body`, `target_commitish`, `draft`, `prerelease`. |
+| `release_list` action | ✅ v1.1 | GET `/repos/{owner}/{repo}/releases` — list releases. |
+| `release_get` action | ✅ v1.2 | GET `/repos/{owner}/{repo}/releases/tags/{tag}` (by tag, preferred) OR GET `/repos/{owner}/{repo}/releases/{id}` (by numeric ID). Tag-based lookup is more user-friendly. |
+| Pagination support for `pr_list` / `issue_list` | ✅ v1.2 | `page` param + `parse_link_header()` helper in `client.py`. Response gains `page`, `has_next`, `next_page`. |
+| `mergeable` state in `pr_get` response | ✅ v1.2 | `mergeable` (true/false/null) + `mergeable_state` ("clean"/"blocked"/"unstable"/"dirty"/"unknown") now surfaced in `pr_get`. |
+| Test coverage for `pr_get`, `pr_review`, `pr_merge`, `pr_comment` | ✅ v1.2 | 4 new test files (27 tests total across the four actions). |
 
 ---
 
-## 🔄 Roadmap — Phase 3: Autocode Integration
+## 🔄 Roadmap — Phase 3 (v1.3): Autocode Integration
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
@@ -103,4 +122,4 @@ GitHub is a brand-new tool introduced in v1.0. There are no prior versions to br
 
 ---
 
-*Last updated: 2026-07-10. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-10 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

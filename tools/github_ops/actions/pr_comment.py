@@ -71,7 +71,7 @@ def _action_pr_comment(
             trace_id=trace_id,
         )
 
-    if number is None:
+    if not number:
         return fail("number is required for pr_comment", trace_id=trace_id)
     try:
         pr_number = int(number)
@@ -83,8 +83,10 @@ def _action_pr_comment(
 
     # Determine line-level vs general comment mode.
     # If exactly one of (path, line) is provided, that's a misuse — both or neither.
+    # Use bool() for both — the facade passes line=0 by default, and 0 is not None
+    # but bool(0) is False, so bool() correctly treats 0 as "not set".
     path_set = bool(path)
-    line_set = line is not None
+    line_set = bool(line)
     if path_set != line_set:
         return fail(
             "path and line must be provided together for line-level comments "

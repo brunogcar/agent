@@ -16,7 +16,7 @@ class TestDispatch:
         result = github(action="nonexistent")
         assert result["status"] == "error"
         assert "Unknown action" in result["error"]
-        # All 12 valid actions should be listed in the error message
+        # All 15 valid actions should be listed in the error message
         # v1.0 — PR operations + push
         assert "pr_create" in result["error"]
         assert "pr_list" in result["error"]
@@ -31,6 +31,10 @@ class TestDispatch:
         assert "issue_comment" in result["error"]
         assert "release_create" in result["error"]
         assert "release_list" in result["error"]
+        # v1.2 — Issues + Releases enhancements
+        assert "issue_get" in result["error"]
+        assert "issue_update" in result["error"]
+        assert "release_get" in result["error"]
 
     def test_empty_action(self):
         """Empty action should return a clear 'action is required' error."""
@@ -38,15 +42,16 @@ class TestDispatch:
         assert result["status"] == "error"
         assert "action is required" in result["error"]
 
-    def test_dispatch_has_12_actions(self):
-        """DISPATCH['github'] must contain exactly the 12 registered actions.
+    def test_dispatch_has_15_actions(self):
+        """DISPATCH['github'] must contain exactly the 15 registered actions.
 
         v1.0: 7 actions (6 PR ops + push)
         v1.1: +5 actions (3 issue + 2 release) = 12 total
+        v1.2: +3 actions (issue_get, issue_update, release_get) = 15 total
         """
         from tools.github_ops._registry import DISPATCH
         actions = DISPATCH.get("github", {})
-        assert len(actions) == 12
+        assert len(actions) == 15
         expected = {
             # v1.0
             "pr_create", "pr_list", "pr_get",
@@ -55,6 +60,8 @@ class TestDispatch:
             # v1.1
             "issue_create", "issue_list", "issue_comment",
             "release_create", "release_list",
+            # v1.2
+            "issue_get", "issue_update", "release_get",
         }
         assert set(actions.keys()) == expected
 
@@ -79,7 +86,7 @@ class TestDispatch:
 
 
 class TestRegistry:
-    """Verify all 12 actions are registered with proper metadata."""
+    """Verify all 15 actions are registered with proper metadata."""
 
     def test_all_actions_have_metadata(self):
         from tools.github_ops._registry import DISPATCH

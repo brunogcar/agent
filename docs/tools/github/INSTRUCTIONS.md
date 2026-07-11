@@ -12,13 +12,13 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 3. **Never add a `push` action to the `git` tool.** `push` lives in `github_ops/`, NOT `git_ops/`. The push step is conceptually part of the GitHub PR workflow (push → open PR → review → merge). Adding it to `git_ops/` would split the workflow across two tools and break the discoverability rule. If you need to push a branch, use `github(action="push", branch="...")`.
 
-4. **Never add `push` to `PARALLEL_SAFE` in `core/parallel_executor.py`.** `push` spawns a `git push` subprocess; concurrent pushes to the same branch will fail with lock contention on `.git/index.lock`. The facade declares `_NOT_PARALLEL_SAFE = frozenset({"push"})` — do not remove this. API actions (`pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`) ARE parallel-safe and can be in `PARALLEL_SAFE` if desired.
+4. **Never add `push` to `PARALLEL_SAFE` in `core/parallel_executor.py`.** `push` spawns a `git push` subprocess; concurrent pushes to the same branch will fail with lock contention on `.git/index.lock`. The facade declares `_NOT_PARALLEL_SAFE = frozenset({"push"})` — do not remove this. All 14 API actions (`pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `issue_create`, `issue_list`, `issue_get`, `issue_update`, `issue_comment`, `release_create`, `release_list`, `release_get`) ARE parallel-safe and can be in `PARALLEL_SAFE` if desired.
 
 5. **Never use `--force` (bare) for push.** Use `--force-with-lease` instead. `--force-with-lease` checks the remote ref against the local tracking ref before overwriting — if the remote has moved since your last fetch, the push is rejected. `--force` would silently overwrite, destroying teammates' commits. The `force=True` param on `push` already maps to `--force-with-lease` — do not change this. There's no scenario where bare `--force` is the right choice.
 
 6. **Never use `shell=True` in the `push` subprocess call.** `subprocess.run(["git", "push", ..., remote, branch], ...)` — the list form is mandatory. `shell=True` would expose the process to shell injection if `branch` or `remote` contained metacharacters (git branch names cannot contain these, but defense in depth is non-negotiable). The shell-metacharacter rejection in `push.py` is a secondary check — the primary defense is the list-form subprocess call.
 
-7. **Never skip the `is_configured()` check at the start of an API action.** Every API action (`pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`) must call `is_configured()` BEFORE making any API call. Failing fast with `fail("GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env")` is much friendlier than a confusing 401/404 from GitHub. The `push` action is the ONLY exception — it doesn't use the GitHub API.
+7. **Never skip the `is_configured()` check at the start of an API action.** Every API action (`pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `issue_create`, `issue_list`, `issue_get`, `issue_update`, `issue_comment`, `release_create`, `release_list`, `release_get`) must call `is_configured()` BEFORE making any API call. Failing fast with `fail("GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env")` is much friendlier than a confusing 401/404 from GitHub. The `push` action is the ONLY exception — it doesn't use the GitHub API.
 
 8. **Never remove the `Authorization: Bearer ...` header from the httpx.Client.** `get_client()` in `client.py` builds the client with `Authorization`, `Accept`, `X-GitHub-Api-Version`, and `Content-Type` headers. All four are required by the GitHub API. Removing any of them will cause 401/403/415 errors.
 
@@ -30,9 +30,9 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 12. **Never assume `resp.json()` will succeed.** Always wrap it in try/except — GitHub can return non-JSON responses (HTML error pages, empty 204 responses, etc.). The pattern `data = resp.json()` must be followed by `except Exception as e: return fail(f"{action} returned non-JSON response: {e}")`.
 
-13. **Never remove the per-action validation that fails fast on invalid params.** `pr_list` validates `state in ("open", "closed", "all")`. `pr_review` validates `event in ("APPROVE", "REQUEST_CHANGES", "COMMENT")`. `pr_merge` validates `merge_method in ("merge", "squash", "rebase")`. `pr_comment` validates the XOR of `path`/`line`. These checks happen BEFORE the API call — failing fast with a clear message is better than letting GitHub return a 422 with a cryptic error.
+13. **Never remove the per-action validation that fails fast on invalid params.** `pr_list` / `issue_list` validate `state in ("open", "closed", "all")`. `issue_update` validates `state in ("open", "closed")` (empty allowed = don't change). `pr_review` validates `event in ("APPROVE", "REQUEST_CHANGES", "COMMENT")`. `pr_merge` validates `merge_method in ("merge", "squash", "rebase")`. `pr_comment` validates the XOR of `path`/`line`. `issue_update` rejects no-op PATCHes (all fields empty). `release_get` requires `tag` OR `number`. These checks happen BEFORE the API call — failing fast with a clear message is better than letting GitHub return a 422 with a cryptic error.
 
-14. **Never forget to forward ALL kwargs to the handler.** The facade builds `kwargs = {title, head, base, body, number, state, limit, event, merge_method, commit_title, commit_message, path, line, side, branch, remote, force, trace_id}` (18 params) and passes them to `handler(**kwargs)`. Handlers absorb unused params via `**kwargs`. Removing a kwarg from the facade breaks handlers that read it; adding a kwarg to the facade without updating handlers silently no-ops (handler just ignores it via `**kwargs`).
+14. **Never forget to forward ALL kwargs to the handler.** The facade builds `kwargs = {title, head, base, body, number, state, limit, page, event, merge_method, commit_title, commit_message, path, line, side, branch, remote, force, labels, assignees, tag, draft, prerelease, trace_id}` (23 params — v1.2 added `page`) and passes them to `handler(**kwargs)`. Handlers absorb unused params via `**kwargs`. Removing a kwarg from the facade breaks handlers that read it; adding a kwarg to the facade without updating handlers silently no-ops (handler just ignores it via `**kwargs`).
 
 15. **Never log or return the `GITHUB_TOKEN` in any result dict.** The token is read once at httpx.Client construction time and embedded in the `Authorization` header. It must never appear in error messages, success payloads, trace logs, or test output. If you add debug logging, mask the token as `ghp_****`.
 
@@ -40,7 +40,9 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 17. **Never add github's `push` action to `tools/parallel.py` `_TOOL_MAP`.** Same reason as #4 — `push` is not parallel-safe. The `_TOOL_MAP` is the allowlist for parallel-safe tools; including push would cause intermittent lock-contention failures in `parallel()` batches.
 
-18. **Never patch `tools.github_ops.client.get_client` in tests AFTER the actions are imported.** Each action module imports `get_client` by name at module load time — patching the source attribute after import doesn't intercept the local reference. Use `mock_httpx_client` from `conftest.py` which patches `get_client` at every action module's namespace (`tools.github_ops.actions.<name>.get_client`). See ARCHITECTURE.md → Testing.
+18. **Never patch `tools.github_ops.client.get_client` in tests AFTER the actions are imported.** Each action module imports `get_client` by name at module load time — patching the source attribute after import doesn't intercept the local reference. Use `mock_httpx_client` from `conftest.py` which patches `get_client` at every action module's namespace (`tools.github_ops.actions.<name>.get_client`) across all 14 API modules. See ARCHITECTURE.md → Testing.
+
+19. **Never use `if number is None:` to detect a missing `number` (or `line`) param in a v1.2+ action.** The facade defaults `number: int = 0` and `line: int = 0`, so `is None` checks DON'T catch the missing-arg case — the handler would proceed with `number=0` / `line=0` and either hit the API with an invalid identifier or trigger an XOR failure when `path` is also empty. Always use `if not number:` (or `bool(line)`) — catches `0`, `None`, `""`, and any other falsy value. This was a real bug fixed in v1.2 for `pr_get` / `pr_review` / `pr_merge` / `pr_comment`.
 
 ---
 
@@ -76,7 +78,11 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 33. **Add `duration_ms` to every result via the facade.** The facade measures wall-clock time and injects `duration_ms` — handlers must NOT time themselves (double-counts). The injection happens after `handler(**kwargs)` returns, so handlers just need to return their result dict and the facade adds the timing.
 
-34. **Cap `per_page` at 100 for `pr_list` (and future `issue_list`).** GitHub API hard-caps `per_page=100` for the `/pulls` endpoint. Compute `per_page = min(limit, 100)` and slice `items[:limit_int]` after extraction. This handles `limit=5` (per_page=5, slice is no-op) and `limit=200` (per_page=100, slice to 100).
+34. **Cap `per_page` at 100 for `pr_list` and `issue_list` (and slice `items[:limit_int]` after extraction).** GitHub API hard-caps `per_page=100` for the `/pulls` and `/issues` endpoints. Compute `per_page = min(limit, 100)` and slice `items[:limit_int]` after extraction. This handles `limit=5` (per_page=5, slice is no-op) and `limit=200` (per_page=100, slice to 100). **For repos with >100 items, use the `page` param** (v1.2): `page=2`, `page=3`, etc. — the response includes `has_next` + `next_page` from the parsed `Link` header so callers can iterate without manual page counting.
+
+35. **Use `if not x:` (not `if x is None:`) for params that have a facade default of `0`.** The facade uses default-zero for `number` and `line` (so the signature stays `int`, not `Optional[int]`). This means `is None` checks don't catch missing-arg cases — the handler sees `0` and proceeds. Always use `if not number:` / `bool(line)`. Documented as NEVER DO rule #19.
+
+36. **Treat `mergeable=null` from `pr_get` as "retry".** GitHub returns `mergeable: null` while it's still computing the mergeability state (typically right after a push). If a caller sees `mergeable=null`, they should wait a moment and call `pr_get` again before deciding whether to `pr_merge`. The `mergeable_state` field is the more useful signal in practice: `"clean"`/`"blocked"`/`"unstable"`/`"dirty"`/`"unknown"`. Don't treat `null` as `false` — it doesn't mean "not mergeable", it means "GitHub hasn't told us yet".
 
 ---
 
@@ -88,8 +94,16 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 > - **Why it matters:** The impact
 > - **Fix:** The solution or pattern to follow
 
-*Fill this section with relevant information during edits and refactors. As of v1.0, no anti-patterns have been encountered yet — this is a new tool. The most likely future entries will be around: GitHub API rate-limit handling (429 / 403 with `X-RateLimit-Remaining: 0`), `mergeable` state polling (the field can be `null` while GitHub computes it), `pr_comment` line-level comment "pending" state surprise (line-level comments via `/pulls/{n}/comments` appear as pending until submitted via the UI — see API.md → pr_comment → Notes), or `push` lock contention if accidentally added to `parallel()` batches.)*
+*The first entry was added in v1.2:)*
+
+> - **What happened:** v1.0/v1.1 `pr_get`/`pr_review`/`pr_merge`/`pr_comment` checked `if number is None:` — but the facade defaults `number: int = 0`. Calling `github(action="pr_get")` with no `number` arg passed the check and hit the GitHub API with `number=0`, returning a confusing 404.
+> - **Why it matters:** This is a silent failure — the caller gets a misleading "PR #0 not found" instead of "number is required for pr_get". The same anti-pattern affected `pr_comment`'s `line` param (`line: int = 0`).
+> - **Fix:** Use `if not number:` (and `bool(line)` for `pr_comment`'s `line_set`) — catches `0`, `None`, `""`, and any other falsy value. Documented as NEVER DO rule #19. Fixed in v1.2 across all 4 affected actions. See ARCHITECTURE.md → Key Design Decisions #15.
+
+> - **What happened:** v1.0/v1.1 `pr_list` and `issue_list` were capped at 100 items (GitHub's `per_page` max) with no way to fetch the next page. Repos with >100 PRs/issues returned truncated results.
+> - **Why it matters:** Callers couldn't enumerate the full set — silently wrong results.
+> - **Fix:** v1.2 added a `page` param + `parse_link_header()` helper in `client.py`. The response now includes `page` (current page), `has_next` (bool), `next_page` (int or `None`) from the parsed `Link` header. Callers iterate: `while result["data"]["has_next"]: result = github(action="pr_list", page=result["data"]["next_page"])`. See ARCHITECTURE.md → Key Design Decisions #14.
 
 ---
 
-*Last updated: 2026-07-10. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-10 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

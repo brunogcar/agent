@@ -17,8 +17,11 @@ from tools.github_ops.client import get_client, is_configured, repo_path
 
 Required: number (int — PR number)
 
-Returns: {number, title, state, merged, draft, head, base, url, body,
-          user, created_at, updated_at}
+Returns: {number, title, state, merged, mergeable, mergeable_state, draft,
+          head, base, url, body, user, created_at, updated_at}
+
+mergeable: true/false/null — null means GitHub is still computing (retry).
+mergeable_state: "clean" / "blocked" / "unstable" / "dirty" / "unknown".
 
 Use pr_list first if you don't know the PR number.""",
     examples=[
@@ -43,7 +46,7 @@ def _action_pr_get(
             trace_id=trace_id,
         )
 
-    if number is None:
+    if not number:
         return fail("number is required for pr_get", trace_id=trace_id)
 
     try:
@@ -82,6 +85,8 @@ def _action_pr_get(
         "title": data.get("title"),
         "state": data.get("state"),
         "merged": bool(data.get("merged")),
+        "mergeable": data.get("mergeable"),
+        "mergeable_state": data.get("mergeable_state"),
         "draft": bool(data.get("draft")),
         "head": (data.get("head") or {}).get("ref"),
         "base": (data.get("base") or {}).get("ref"),

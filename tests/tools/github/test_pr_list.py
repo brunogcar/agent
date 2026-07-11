@@ -13,12 +13,13 @@ from unittest.mock import MagicMock
 from tools.github import github
 
 
-def _make_pr_list_response(prs: list[dict]) -> MagicMock:
+def _make_pr_list_response(prs: list[dict], link_header: str = "") -> MagicMock:
     """Build a mock GitHub API response for GET /repos/.../pulls."""
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = prs
     resp.text = ""
+    resp.headers = {"link": link_header} if link_header else {}
     return resp
 
 
@@ -86,3 +87,25 @@ class TestPrList:
         assert params.get("state") == "closed"
         # per_page is capped at min(limit, 100)
         assert params.get("per_page") == 15
+
+    def test_pr_list_pagination(self, mock_httpx_client):
+        """page param + Link header → has_next=True, next_page=2."""
+        link = '<https://api.github.com/repos/test-owner/test-repo/pulls?page=2>; rel="next", <https://api.github.com/repos/test-owner/test-repo/pulls?page=5>; rel="last"'
+        mock_httpx_client.get.return_value = _make_pr_list_response([], link_header=link)
+
+        result = github(action="pr_list", page=1)
+
+        assert result["status"] == "success"
+        assert result["data"]["page"] == 1
+        assert result["data"]["has_next"] is True
+        assert result["data"]["next_page"] == 2
+
+    def test_pr_list_no_next_page(self, mock_httpx_client):
+        """No Link header → has_next=False, next_page=None."""
+        mock_httpx_client.get.return_value = _make_pr_list_response([])
+
+        result = github(action="pr_list")
+
+        assert result["status"] == "success"
+        assert result["data"]["has_next"] is False
+        assert result["data"]["next_page"] is None

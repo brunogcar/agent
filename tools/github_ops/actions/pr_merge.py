@@ -62,7 +62,7 @@ def _action_pr_merge(
             trace_id=trace_id,
         )
 
-    if number is None:
+    if not number:
         return fail("number is required for pr_merge", trace_id=trace_id)
     try:
         pr_number = int(number)

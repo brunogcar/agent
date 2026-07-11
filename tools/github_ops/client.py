@@ -6,6 +6,7 @@ Base URL: https://api.github.com (hardcoded — GitHub API is a fixed endpoint).
 """
 from __future__ import annotations
 
+import re
 import threading
 from typing import Optional
 import httpx
@@ -54,3 +55,24 @@ def is_configured() -> bool:
 def repo_path() -> str:
     """Return the repo path segment: /repos/{owner}/{repo}."""
     return f"/repos/{cfg.github_owner}/{cfg.github_repo}"
+
+
+def parse_link_header(link_header) -> dict[str, Optional[int]]:
+    """Parse a GitHub API Link header for pagination.
+
+    GitHub returns a Link header like:
+        <https://api.github.com/...?page=2>; rel="next", <https://api.github.com/...?page=5>; rel="last"
+
+    Returns:
+        {"next": int|None, "last": int|None} — page numbers, or None if absent.
+    """
+    result: dict[str, Optional[int]] = {"next": None, "last": None}
+    if not link_header or not isinstance(link_header, str):
+        return result
+    # Match <url>; rel="next" and <url>; rel="last" patterns
+    for match in re.finditer(r'<[^>]*\?page=(\d+)>;\s*rel="(\w+)"', link_header):
+        page_num = int(match.group(1))
+        rel = match.group(2)
+        if rel in result:
+            result[rel] = page_num
+    return result

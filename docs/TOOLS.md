@@ -13,7 +13,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [CLI.md](tools/CLI.md) | CLI | 4-layer NL→shell dispatch, proxy routing, human-readable output |
 | [CONSULT.md](tools/CONSULT.md) | Consult | Cloud LLM advisory, kill-switch, rate-limit guard |
 | [FILE.md](tools/FILE.md) | File | 25+ atomic FS actions, path guard, cancellation guard, compression |
-| [GITHUB.md](tools/GITHUB.md) | GitHub | PR workflow (create/list/get/review/merge/comment), git push subprocess, httpx direct (not PyGithub) |
+| [GITHUB.md](tools/GITHUB.md) | GitHub | PR + issue + release workflow (15 actions: 6 PR + 5 issue + 3 release + push), pagination, mergeable state, git push subprocess, httpx direct (not PyGithub) |
 | [GIT.md](tools/GIT.md) | Git | 20+ atomic VCS actions, semantic params, stash-based rollback |
 | [MEMORY.md](tools/MEMORY.md) | Memory | 3 ChromaDB collections, tag validation, janitor, lazy loading |
 | [NOTIFY.md](tools/NOTIFY.md) | Notify | Cross-platform alerts, APScheduler, graceful console fallback |
@@ -174,17 +174,26 @@ tools/
 │       ├── write_pptx.py
 │       └── write_xlsx.py
 │
-├── github.py               # GitHub PR workflow meta-tool (7 actions: 6 API + 1 subprocess)
+├── github.py               # GitHub PR + issue + release meta-tool (15 actions: 14 API + 1 subprocess)
 ├── github_ops/
 │   ├── _registry.py
-│   ├── client.py                    # httpx.Client singleton (get_client, is_configured, repo_path)
+│   ├── client.py                    # httpx.Client singleton (get_client, is_configured, repo_path,
+│   │                                # parse_link_header — v1.2 pagination helper)
 │   └── actions/
 │       ├── pr_create.py             # POST /repos/{owner}/{repo}/pulls
-│       ├── pr_list.py               # GET /repos/{owner}/{repo}/pulls
-│       ├── pr_get.py                # GET /repos/{owner}/{repo}/pulls/{n}
+│       ├── pr_list.py               # GET /repos/{owner}/{repo}/pulls (paginated — v1.2)
+│       ├── pr_get.py                # GET /repos/{owner}/{repo}/pulls/{n} (incl. mergeable — v1.2)
 │       ├── pr_review.py             # POST /repos/{owner}/{repo}/pulls/{n}/reviews
 │       ├── pr_merge.py              # PUT /repos/{owner}/{repo}/pulls/{n}/merge
 │       ├── pr_comment.py            # Dual-mode: /issues/{n}/comments OR /pulls/{n}/comments
+│       ├── issue_create.py          # POST /repos/{owner}/{repo}/issues (v1.1)
+│       ├── issue_list.py            # GET /repos/{owner}/{repo}/issues (paginated — v1.1 + v1.2)
+│       ├── issue_get.py             # GET /repos/{owner}/{repo}/issues/{n} (v1.2)
+│       ├── issue_update.py          # PATCH /issues/{n} — unified close/reopen/edit (v1.2)
+│       ├── issue_comment.py         # POST /repos/{owner}/{repo}/issues/{n}/comments (v1.1)
+│       ├── release_create.py        # POST /repos/{owner}/{repo}/releases (v1.1)
+│       ├── release_list.py          # GET /repos/{owner}/{repo}/releases (v1.1)
+│       ├── release_get.py           # GET /releases/tags/{tag} OR /releases/{id} (v1.2)
 │       └── push.py                  # Local `git push` subprocess (--force-with-lease)
 │
 ├── git.py                  # Git meta-tool (20+ atomic actions)
@@ -775,16 +784,19 @@ Changes not staged for commit:
 
 ### 17. 🐙 GitHub — [tools/GITHUB.md](tools/GITHUB.md)
 
-**Status:** v1.0 — 7-action PR workflow meta-tool (6 GitHub REST API actions + 1 local `git push` subprocess).
+**Status:** v1.2 — 15-action PR + issue + release meta-tool (14 GitHub REST API actions + 1 local `git push` subprocess). v1.0 shipped 7 PR/push actions; v1.1 added 5 issue/release actions; v1.2 added `issue_get`, `issue_update` (unified close/reopen/edit), `release_get`, pagination on `pr_list`/`issue_list`, `mergeable`/`mergeable_state` in `pr_get`, and bug fixes for `number=0`/`line=0` facade-default validation.
 
-**Purpose:** Open, list, get, review, merge, and comment on pull requests via the GitHub REST API; push local branches to `origin` as the prerequisite for PR creation. Conceptually paired with `git()` — `git` operates on the **local** VCS, `github` operates on the **remote** PR workflow.
+**Purpose:** Open, list, get, review, merge, and comment on pull requests; open, list, get, update (close/reopen/edit), and comment on issues; create, list, and get releases — all via the GitHub REST API. Plus push local branches to `origin` as the prerequisite for PR creation. Conceptually paired with `git()` — `git` operates on the **local** VCS, `github` operates on the **remote** PR/issue/release workflow.
 
 **Key characteristics:**
-- **7 actions** — `pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `push`
-- **GitHub REST API via httpx** — Direct HTTPS calls to `https://api.github.com` (hardcoded base URL). NO PyGithub dependency. Singleton `httpx.Client` with auth headers (connection pooling).
+- **15 actions** — `pr_create`, `pr_list`, `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `push` (v1.0) + `issue_create`, `issue_list`, `issue_comment`, `release_create`, `release_list` (v1.1) + `issue_get`, `issue_update`, `release_get` (v1.2)
+- **GitHub REST API via httpx** — Direct HTTPS calls to `https://api.github.com` (hardcoded base URL). NO PyGithub dependency. Singleton `httpx.Client` with auth headers (connection pooling). v1.2 added `parse_link_header()` helper in `client.py`.
 - **`push` is a subprocess, not an API call** — `subprocess.run(["git", "push", ...])` with list args (NOT `shell=True`). No `GITHUB_TOKEN` needed for push.
 - **`--force-with-lease` (not `--force`)** — `force=True` on `push` uses `--force-with-lease`, which refuses to overwrite remote refs that have moved since the last fetch. Safer than bare `--force`.
-- **PARALLEL_SAFE for API actions, NOT for `push`** — Facade declares `_NOT_PARALLEL_SAFE = frozenset({"push"})`; `push` excluded from `PARALLEL_SAFE` (subprocess lock contention).
+- **PARALLEL_SAFE for API actions, NOT for `push`** — Facade declares `_NOT_PARALLEL_SAFE = frozenset({"push"})`; `push` excluded from `PARALLEL_SAFE` (subprocess lock contention). All 14 API actions are parallel-safe.
+- **Pagination on `pr_list` + `issue_list`** (v1.2) — `page` param + `Link` header parsing via `parse_link_header()`. Response includes `page` / `has_next` / `next_page`.
+- **`mergeable` + `mergeable_state` in `pr_get`** (v1.2) — surfaced for pre-merge checks. `mergeable` can be `true`/`false`/`null` (null = still computing, retry).
+- **`issue_update` unifies close/reopen/edit** (v1.2) — single PATCH action handles state changes AND field edits. `state=""` (the v1.2 facade default) means "don't change"; list actions normalize empty → `"open"`.
 - **Dual-mode `pr_comment`** — General comment via `/issues/{n}/comments` OR line-level comment via `/pulls/{n}/comments` (XOR validation on `path`/`line`).
 - **Default `merge_method="squash"`** — Keeps history clean (one commit per PR). Override with `merge` (merge commit) or `rebase` (linear).
 - **Requires `GITHUB_TOKEN` + `GITHUB_OWNER` + `GITHUB_REPO`** — All three in `.env` (commented out by default). `is_configured()` short-circuits on first empty value. `push` is the only action that does NOT require configuration.
