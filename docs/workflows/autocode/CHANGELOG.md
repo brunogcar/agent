@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.4 | 2026-07-11 | **Pre-2.0 hardening + dead code cleanup.** Cross-LLM review (DeepSeek, Qwen, MiMo, Kimi) found 19 real issues. Fixed 4 P0 (constants field mismatch, verify empty pytest, path traversal, dead flag_reset node), 6 P1 (shape_artifacts branch, tracer.error sig, verify stuck, brainstorm KG, execute _parse_json, commit label), 4 P2 (ruff scope, branch uniqueness, _call retry, create_skill atomic). Deleted 5 dead code items (test_mapper, test_runner, mermaid, route_after_analyze_impact, node_brainstorm mapping). 17 nodes (was 18). All fixes marked `[Pre-2.0 Fix]`. |
 | v1.3 | 2026-07-10 | **GitHub + Swarm integration:** New `node_publish` (push + PR create + optional auto-merge). New `github_ops.py` helper module. Swarm 2-run debug (consensus → vote, confidence HIGH/MEDIUM/LOW). 6 new config flags (all default OFF). 4 new state fields (`pushed`, `pr_number`, `pr_url`, `swarm_verdict`). Fix TypedDict drift (`branch` field). All operations graceful-skip if GitHub not configured — zero behavior change unless opted in. |
 | v1.2 | 2026-07-08 | **JSON schema enforcement:** `debug.py` now passes `json_schema` via `_call()` helper. Schema: `{root_cause: str, defense_notes: str, fix: str}`. `_call()` helper updated to accept `json_schema` param. LM Studio enforces at generation time. Defensive JSON parsing stays as fallback. |
 | v1.1.2 | 2026-07-06 | **Small-fix batch:** #39 (stuck detection — same error signature on consecutive iterations bails to verify), #44 (structured artifacts in return dict), #46 (multi-file git-diff input via `files={"all changed": ""}` + `git_diff=True`), #47 (dry-run guards on write_files/commit/branch). Also folded in v1.1.1: `TestPartialDictReturns` + changelog cleanup. |
@@ -85,6 +86,62 @@
 | **6 new config flags** | ✅ v1.3 | `AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`. All default OFF — v1.3 behaves identically to v1.2 unless explicitly opted in. |
 | **4 new state fields** | ✅ v1.3 | `pushed: bool`, `pr_number: int`, `pr_url: str`, `swarm_verdict: dict`. Plus fix: `branch: str` added to TypedDict (was read by `branch.py` but not declared — TypedDict drift). |
 | **Optional pull before branch** | ✅ v1.3 | `node_git_branch` now optionally pulls recent commits before creating the branch (`AUTOCODE_PULL_BEFORE_BRANCH=1`). Uses `github(action="pull")`. Non-blocking — pull failure doesn't stop the workflow. |
+| **P0: constants.py field name mismatch** | ✅ v1.4 | `DEBUG_SYSTEM` prompt used `hypothesis`/`defense_note`; code read `root_cause`/`defense_notes`. Swarm debug root_cause was always "Unknown". Fixed. Found by: MiMo. |
+| **P0: verify.py empty pytest args** | ✅ v1.4 | If no test files existed, `pytest` ran with no args → entire project test suite. Now skips pytest. Found by: DeepSeek. |
+| **P0: path traversal in write_files** | ✅ v1.4 | LLM-generated paths not validated (only user input validated). Added `_is_path_safe()` using `Path.resolve().is_relative_to()`. Found by: Qwen. |
+| **P0: dead node_write_files_with_flag_reset** | ✅ v1.4 | Registered but never wired. Reset `step_attempt` (non-existent field). Deleted. Found by: MiMo, Kimi. |
+| **P1: _shape_artifacts reads branch_name** | ✅ v1.4 | `plan.py` writes `branch`, facade reads `branch_name` → always `""`. Fixed with fallback. Found by: MiMo, Kimi. |
+| **P1: tracer.error signature mismatch** | ✅ v1.4 | `helpers.py` passed 2 args (trace_id missing). Fixed to 3 args. Found by: Qwen. |
+| **P1: verify doesn't handle tdd_status="stuck"** | ✅ v1.4 | Stuck routed to verify but verify only checked max_retries_exceeded. Now handles both. Found by: DeepSeek. |
+| **P1: brainstorm KG files not in LLM prompt** | ✅ v1.4 | KG files merged into state AFTER LLM call. Brainstorm never saw them. Fixed. Found by: MiMo. |
+| **P1: execute.py uses raw json.loads** | ✅ v1.4 | Markdown-fenced output → modified_files=[]. Now uses `_parse_json`. Found by: MiMo. |
+| **P1: commit.py label KeyError** | ✅ v1.4 | `s["label"]` → KeyError if step lacks label. Now `.get("label", "step")`. Found by: DeepSeek. |
+| **P2: verify ruff on entire workspace** | ✅ v1.4 | Was: `ruff check workspace_root` (slow, false failures). Now scopes to `modified_files`. Found by: DeepSeek, Qwen, Kimi. |
+| **P2: branch name collision across runs** | ✅ v1.4 | Same task → same branch → cross-contamination. Now appends trace_id suffix. Found by: MiMo, Kimi. |
+| **P2: _call no retry** | ✅ v1.4 | Single LLM failure crashed workflow. Now retries 2× with exponential backoff. Found by: MiMo. |
+| **P2: create_skill non-atomic write** | ✅ v1.4 | Direct `write_text` → crash corrupts file. Now: tempfile + os.replace. Found by: MiMo. |
+| **Dead code: test_mapper.py** | ✅ v1.4 | Unused (analyze_impact imports from `core.kgraph.test_mapper`). Deleted. Found by: Kimi. |
+| **Dead code: test_runner.py** | ✅ v1.4 | Unused (node_run_tests has its own). Deleted. Found by: Kimi. |
+| **Dead code: mermaid.py** | ✅ v1.4 | Never called (WORKFLOW_METADATA serves same purpose). Deleted. Found by: Kimi. |
+| **Dead code: route_after_analyze_impact** | ✅ v1.4 | Always returned "node_run_tests". Replaced with direct edge. Found by: MiMo. |
+| **Dead code: "node_brainstorm" mapping** | ✅ v1.4 | route_after_classify never returns "node_brainstorm". Removed from graph mapping. Found by: MiMo. |
+
+---
+
+## 🔍 Cross-LLM Review Findings (Pre-2.0)
+
+v1.4 is based on a cross-LLM code review where 4 LLMs (DeepSeek, Qwen, MiMo, Kimi)
+reviewed the autocode workflow code independently. Here's what was real vs noise:
+
+### Reviewers and scope
+- **DeepSeek**: 28 findings (4 P0, 5 P1, 7 P2, 4 P3, testing gaps, architecture)
+- **Qwen**: 10 findings (2 P0, 4 P1, 4 P2) — couldn't fetch all files, asked for more
+- **MiMo**: 20 findings (2 P0, 5 P1, 8 P2, 5 P3) — most thorough, found the constants bug
+- **Kimi**: 28 findings (6 P0, 7 P1, 10 P2, 7 P3, architecture, testing)
+
+### What was REAL (19 items, all fixed in v1.4)
+See the ✅ v1.4 entries above. Key findings:
+- The `constants.py` field name mismatch (MiMo P0.1) was the most damaging — swarm debug's root_cause was always "Unknown"
+- Path traversal for LLM-generated paths (Qwen P0.1) was a real security gap
+- 3 LLMs independently flagged ruff on entire workspace (real P2)
+- 3 LLMs independently flagged `_run_async` event loop pattern (real P2, deferred to 2.0)
+
+### What was FALSE (verified as wrong)
+- **Qwen P0.2** — `run_dir` NameError when test_code empty: FALSE (lines 200-202 are inside the `if state.get("test_code"):` block, properly guarded)
+- **Kimi P0.3** — `json_schema` may crash LM Studio: FALSE (`_call` helper already has 400 fallback that strips json_schema, built in v1.2)
+- **DeepSeek P1.5** — debug node doesn't pass `json_schema` to `_call`: FALSE (debug.py line 100 passes `json_schema=_DEBUG_JSON_SCHEMA`; DeepSeek said "file cuts off at L43" — didn't see full file)
+
+### What was PARTIALLY TRUE
+- **DeepSeek P0.2/P0.3** — error status not checked by routers: partially true. Routers don't check `status=="error"` but in practice the nodes set other fields that route correctly. Worth adding status checks in 2.0.
+- **Kimi P0.6** — test_files paths wrong for workspace projects: partially true. The `startswith("autocode/")` check is fragile but works for current structure. P2 not P0. Deferred to 2.0.
+
+### What was deferred to 2.0 (not fixed in v1.4)
+- `_run_async` event loop pattern (3 LLMs flagged) — needs full async refactor, too big for pre-2.0
+- `node_write_files` does too much (2 LLMs flagged) — architecture concern, 2.0 will split it
+- `node_verify` is a "god node" (Kimi flagged) — architecture, 2.0 will split it
+- Debug node statelessness (#37) — blocks context summarization, needs full refactor
+- State field bloat (~35 fields) — 2.0 will consider nested sub-states
+- `invoke_with_timeout` daemon thread zombie risk (#35) — needs process-level termination
 
 ---
 
@@ -155,4 +212,4 @@ should be reviewed during the 2.0 refactoring. All items are marked with
 
 ---
 
-*Last updated: 2026-07-10 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

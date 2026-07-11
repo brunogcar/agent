@@ -20,8 +20,9 @@ from workflows.autocode_impl.nodes.analyze_impact import node_analyze_impact
 from workflows.autocode_impl.nodes.debug import node_systematic_debug
 from workflows.autocode_impl.nodes.write_files import (
     node_write_files,
-    node_write_files_with_flag_reset,
 )
+# [Pre-2.0 Fix] Removed node_write_files_with_flag_reset import — was dead code
+# (registered but never wired, reset a non-existent field).
 from workflows.autocode_impl.nodes.verify import node_verify
 from workflows.autocode_impl.nodes.commit import node_commit
 from workflows.autocode_impl.nodes.publish import node_publish  # [v1.3]
@@ -33,8 +34,9 @@ from workflows.autocode_impl.routes import (
     route_after_run_tests,
     route_after_write_files,
     route_after_verify,
-    route_after_analyze_impact,
 )
+# [Pre-2.0 Fix] Removed route_after_analyze_impact import — was always constant,
+# replaced with direct edge.
 
 
 # [v1.1] WORKFLOW_METADATA for MCP client introspection.
@@ -44,7 +46,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "1.3",  # [v1.3] GitHub + Swarm integration
+    "version": "1.4",  # [v1.4] Pre-2.0 hardening + dead code cleanup
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -56,7 +58,8 @@ WORKFLOW_METADATA = {
         {"name": "node_write_tests", "type": "llm", "role": "executor", "description": "Write TDD tests before implementation"},
         {"name": "node_execute_step", "type": "llm", "role": "executor", "description": "Generate implementation code from plan"},
         {"name": "node_write_files", "type": "tool", "tool": "file", "description": "Write generated code to disk atomically"},
-        {"name": "node_write_files_with_flag_reset", "type": "tool", "tool": "file", "description": "Re-write files after debug loop, reset flags"},
+        # [Pre-2.0 Fix] Removed node_write_files_with_flag_reset from metadata
+        # (was registered but never wired — dead code).
         {"name": "node_analyze_impact", "type": "llm", "role": "analyze", "description": "Blast radius analysis using dependency graph"},
         {"name": "node_run_tests", "type": "tool", "tool": "pytest", "description": "Run TDD tests via pytest subprocess"},
         {"name": "node_systematic_debug", "type": "llm", "role": "executor", "description": "Root-cause hypothesis + one fix at a time"},
@@ -133,7 +136,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_analyze_impact", node_analyze_impact)
     workflow.add_node("node_systematic_debug", node_systematic_debug)
     workflow.add_node("node_write_files", node_write_files)
-    workflow.add_node("node_write_files_with_flag_reset", node_write_files_with_flag_reset)
+    # [Pre-2.0 Fix] Removed node_write_files_with_flag_reset — was dead code
     workflow.add_node("node_verify", node_verify)
     workflow.add_node("node_commit", node_commit)
     workflow.add_node("node_publish", node_publish)  # [v1.3]
@@ -149,7 +152,9 @@ def build_graph() -> StateGraph:
         "node_classify_task",
         route_after_classify,
         {
-            "node_brainstorm": "node_brainstorm",
+            # [Pre-2.0 Fix] Removed dead "node_brainstorm" mapping —
+            # route_after_classify never returns "node_brainstorm" (always
+            # goes through validate_input first).
             "node_create_skill": "node_create_skill",
             "node_validate_input": "node_validate_input",
             "END": END,
@@ -177,14 +182,9 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # Route after analyze_impact (Always proceeds to run_tests)
-    workflow.add_conditional_edges(
-        "node_analyze_impact",
-        route_after_analyze_impact,
-        {
-            "node_run_tests": "node_run_tests",
-        },
-    )
+    # [Pre-2.0 Fix] Replaced conditional_edges with direct edge —
+    # route_after_analyze_impact was always constant ("node_run_tests").
+    workflow.add_edge("node_analyze_impact", "node_run_tests")
 
     # Route after run_tests (pass vs debug)
     workflow.add_conditional_edges(

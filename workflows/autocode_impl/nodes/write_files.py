@@ -12,6 +12,34 @@ from workflows.autocode_impl.helpers import _files_context, _get_autocode_run_pa
 from core.config import cfg
 from core.tracer import tracer
 
+
+def _is_path_safe(base_path: Path, rel_path: str) -> bool:
+    """[Pre-2.0 Fix] Verify that a resolved path is strictly within base_path.
+
+    Prevents path traversal attacks where the LLM generates rel_path like
+    "../../etc/passwd" or "../../../Windows/System32/malicious.exe".
+
+    Args:
+        base_path: The allowed root directory.
+        rel_path: The relative path from the LLM (or user input).
+
+    Returns:
+        True if the resolved path is within base_path, False otherwise.
+    """
+    if not rel_path or not isinstance(rel_path, str):
+        return False
+    try:
+        target = (base_path / rel_path).resolve()
+        base_resolved = base_path.resolve()
+        # is_relative_to is Python 3.9+ — use it, fall back to str check
+        if hasattr(target, 'is_relative_to'):
+            return target.is_relative_to(base_resolved)
+        # Fallback for older Python (shouldn't be needed — we're 3.12+)
+        return str(target).startswith(str(base_resolved))
+    except (ValueError, RuntimeError):
+        return False
+
+
 def node_write_files(state: AutocodeState) -> dict:
     """
     Write generated code to agent root.
@@ -52,6 +80,12 @@ def node_write_files(state: AutocodeState) -> dict:
         base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
         target = base_path / rel_path
 
+        # [Pre-2.0 Fix] Path traversal guard — LLM-generated paths are untrusted.
+        if not _is_path_safe(base_path, rel_path):
+            tracer.step(tid, "write_files", f"BLOCKED path traversal: {rel_path}")
+            patch_errors.append(f"{rel_path}: path traversal blocked")
+            continue
+
         if cfg.is_protected(target):
             tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
             continue
@@ -81,6 +115,11 @@ def node_write_files(state: AutocodeState) -> dict:
         # Use project_root from state if available, otherwise workspace_root
         base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
         target = base_path / rel_path
+
+        # [Pre-2.0 Fix] Path traversal guard — LLM-generated paths are untrusted.
+        if not _is_path_safe(base_path, rel_path):
+            tracer.step(tid, "write_files", f"BLOCKED path traversal: {rel_path}")
+            continue
 
         if cfg.is_protected(target):
             tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
@@ -203,10 +242,9 @@ def node_write_files(state: AutocodeState) -> dict:
 
     return updates
 
-def node_write_files_with_flag_reset(state: AutocodeState) -> dict:
-    """Write files and reset retry flags."""
-    # Call the main node and capture its partial updates
-    updates = node_write_files(state)
-    # Add the flag reset to the updates dict
-    updates["step_attempt"] = 0
-    return updates
+# [Pre-2.0 Fix] DELETED: node_write_files_with_flag_reset
+# Was registered in graph.py but never wired (debug loop edges to node_write_files
+# directly). It reset `step_attempt` — a field that doesn't exist in AutocodeState
+# or _default_state. Dead code. The real stuck-detection field (last_test_error)
+# is correctly handled by run_tests.py (set on failure, cleared on success).
+# Found by: mimo P0.2, kimi A.4.

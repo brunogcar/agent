@@ -101,7 +101,7 @@ def _shape_artifacts(final_state: dict) -> dict[str, Any]:
     """
     return {
         "commit_sha": final_state.get("commit_sha", ""),
-        "branch_name": final_state.get("branch_name", ""),
+        "branch_name": final_state.get("branch_name") or final_state.get("branch", ""),  # [Pre-2.0 Fix] fallback to "branch" — plan.py writes "branch", not "branch_name"
         "modified_files": final_state.get("modified_files", []),
         "test_results": final_state.get("test_results", {}),
         "tdd_status": final_state.get("tdd_status", ""),

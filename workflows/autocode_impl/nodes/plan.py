@@ -70,7 +70,12 @@ def node_write_plan(state: AutocodeState) -> dict:
     # Fallback to "autocode" to prevent invalid branch name "autocode/".
     if not slug:
         slug = "autocode"
-    branch = f"autocode/{slug}"
+    # [Pre-2.0 Fix] Append trace_id suffix for uniqueness across runs.
+    # Was: two runs with same task → same branch → second run checks out first
+    # run's branch → cross-contamination / git history corruption.
+    # TODO(2.0): Consider making this configurable (some users may want reusable branches).
+    tid_suffix = tid.replace("-", "")[:8] if tid else "notrace"
+    branch = f"autocode/{slug}-{tid_suffix}"
 
     tracer.step(tid, "write_plan", f"{len(plan)} steps, branch: {branch}")
     return {"spec": spec, "plan": plan, "branch": branch, "current_step": 0}

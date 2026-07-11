@@ -7,16 +7,16 @@
 | File | Purpose |
 |------|---------|
 | `workflows/autocode.py` | `run_autocode_agent()` — main entry point |
-| `workflows/autocode_impl/graph.py` | `build_graph()` — 18-node LangGraph StateGraph builder (was 17 in v1.2; [v1.3] added `node_publish`) |
+| `workflows/autocode_impl/graph.py` | `build_graph()` — 17-node LangGraph StateGraph builder (was 18 in v1.3; **[v1.4]** removed dead `node_write_files_with_flag_reset` + dead `route_after_analyze_impact` conditional edge — see Dead Code section in CHANGELOG.md) |
 | `workflows/autocode_impl/state.py` | `AutocodeState` — extended TypedDict with autocode-specific fields ([v1.3] added `pushed`, `pr_number`, `pr_url`, `swarm_verdict`; fixed TypedDict drift on `branch`) |
-| `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_tests()` — conditional routing |
-| `workflows/autocode_impl/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers |
+| `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_write_files()`, `route_after_run_tests()`, `route_after_verify()` — conditional routing. **[v1.4]** `route_after_analyze_impact()` deleted (was always constant — replaced with direct edge `node_analyze_impact → node_run_tests` in graph.py). |
+| `workflows/autocode_impl/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. **[Pre-2.0 Fix]** `_call()` now retries 2× with exponential backoff (was single attempt — a rate-limit blip crashed the workflow). `tracer.error()` calls now use 3 args (tid, category, msg) not 2. |
 | `workflows/autocode_impl/git_ops.py` | `_git_snapshot()`, `_git_create_branch()`, `_git_commit()` — local git operations (branch creation, commit) |
 | `workflows/autocode_impl/github_ops.py` | **[v1.3]** `_github_pull()`, `_github_push()`, `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()`, `_swarm_debug_consensus()` — remote GitHub operations (lazy imports, `is_configured()` guards, tracer.step logging, structured returns) |
 | `workflows/autocode_impl/patch.py` | `apply_patch()`, `apply_patches()`, `extract_relevant_sections()` — patch application |
-| `workflows/autocode_impl/mermaid.py` | `export_mermaid()` — mermaid diagram export |
-| `workflows/autocode_impl/test_mapper.py` | `get_targeted_tests()`, `_build_test_index()` — test mapping |
-| `workflows/autocode_impl/test_runner.py` | `run_tests_on_disk()` — test execution |
+| ~~`workflows/autocode_impl/mermaid.py`~~ | **[v1.4]** DELETED — never called (`WORKFLOW_METADATA` serves the same purpose for MCP clients). Found by: Kimi. |
+| ~~`workflows/autocode_impl/test_mapper.py`~~ | **[v1.4]** DELETED — unused (analyze_impact imports from `core.kgraph.test_mapper`, not this module). Found by: Kimi. |
+| ~~`workflows/autocode_impl/test_runner.py`~~ | **[v1.4]** DELETED — unused (`node_run_tests` has its own test execution logic). Found by: Kimi. |
 | `workflows/autocode_impl/nodes/classify.py` | `node_classify_task()` — task classification |
 | `workflows/autocode_impl/nodes/validate.py` | `node_validate_input()` — input validation |
 | `workflows/autocode_impl/nodes/brainstorm.py` | `node_brainstorm()` — approach brainstorming |
@@ -24,7 +24,7 @@
 | `workflows/autocode_impl/nodes/branch.py` | `node_git_branch()` — git branch creation |
 | `workflows/autocode_impl/nodes/tests.py` | `node_write_tests()` — test generation |
 | `workflows/autocode_impl/nodes/execute.py` | `node_execute_step()` — plan step execution |
-| `workflows/autocode_impl/nodes/write_files.py` | `node_write_files()` — file writing |
+| `workflows/autocode_impl/nodes/write_files.py` | `node_write_files()` — file writing. **[Pre-2.0 Fix]** New `_is_path_safe()` helper validates LLM-generated paths against `base_path` using `Path.resolve().is_relative_to()` (was: only user input validated — LLM could emit `../../etc/passwd`). |
 | `workflows/autocode_impl/nodes/run_tests.py` | `node_run_tests()` — test execution |
 | `workflows/autocode_impl/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis |
 | `workflows/autocode_impl/nodes/debug.py` | `node_systematic_debug()` — debug analysis |
@@ -54,25 +54,24 @@
 ```text
 workflows/autocode.py
 ├── run_autocode_agent()              # Main entry point
-│   ├── build_graph()                 # 18-node LangGraph StateGraph (was 17 in v1.2)
+│   ├── build_graph()                 # 17-node LangGraph StateGraph (was 18 in v1.3; [v1.4] removed dead node_write_files_with_flag_reset)
 │   │   ├── node_classify_task()      # Phase 1: Classify task type
 │   │   ├── node_validate_input()     # Phase 2: Validate input
 │   │   ├── node_brainstorm()         # Phase 3: Brainstorm approach
-│   │   ├── node_write_plan()         # Phase 4: Generate plan
+│   │   ├── node_write_plan()         # Phase 4: Generate plan ([v1.4] branch name + trace_id suffix)
 │   │   ├── node_git_branch()         # Phase 5: Create git branch ([v1.3] optional pull before)
 │   │   ├── node_write_tests()        # Phase 6: Generate tests (TDD)
-│   │   ├── node_execute_step()       # Phase 7: Execute plan step
-│   │   ├── node_write_files()        # Phase 8: Write/modify files
+│   │   ├── node_execute_step()       # Phase 7: Execute plan step ([v1.4] uses _parse_json)
+│   │   ├── node_write_files()        # Phase 8: Write/modify files ([v1.4] _is_path_safe guard)
 │   │   ├── node_analyze_impact()     # Phase 9: Analyze blast radius
 │   │   ├── node_run_tests()          # Phase 10: Run tests
 │   │   ├── node_systematic_debug()   # Phase 11: Debug failures ([v1.3] optional swarm)
-│   │   ├── node_write_files_with_flag_reset()  # Phase 12: Retry with fix
-│   │   ├── node_verify()             # Phase 13: Verify changes
-│   │   ├── node_report()             # Phase 14: Generate report
-│   │   ├── node_git_commit()         # Phase 15: Commit changes
-│   │   ├── node_publish()            # [v1.3] Phase 16: Push + PR + optional auto-merge
-│   │   ├── node_distill_memory()     # Phase 17: Store procedural memory
-│   │   └── node_create_skill()       # Phase 18: Create skill (if applicable)
+│   │   ├── node_verify()             # Phase 12: Verify changes ([v1.4] handles stuck + skip pytest if no tests + ruff scoped to modified_files)
+│   │   ├── node_report()             # Phase 13: Generate report
+│   │   ├── node_git_commit()         # Phase 14: Commit changes ([v1.4] .get("label", "step") fallback)
+│   │   ├── node_publish()            # [v1.3] Phase 15: Push + PR + optional auto-merge
+│   │   ├── node_distill_memory()     # Phase 16: Store procedural memory
+│   │   └── node_create_skill()       # Phase 17: Create skill (if applicable) ([v1.4] atomic write)
 │   └── tracer.finish()               # Mark trace complete
 ```
 
@@ -98,15 +97,14 @@ graph TD
     H --> I["node_analyze_impact<br/>Phase 9: Impact"]
     I --> J["node_run_tests<br/>Phase 10: Run Tests"]
     J --> K{"route_after_tests<br/>Conditional"}
-    K -->|pass| L["node_verify<br/>Phase 13: Verify"]
+    K -->|pass| L["node_verify<br/>Phase 12: Verify"]
     K -->|fail| M["node_systematic_debug<br/>Phase 11: Debug"]
-    M --> N["node_write_files_with_flag_reset<br/>Phase 12: Retry"]
-    N --> J
-    L --> O["node_report<br/>Phase 14: Report"]
-    O --> P["node_git_commit<br/>Phase 15: Commit"]
-    P --> PP["node_publish [v1.3]<br/>Phase 16: Push + PR + optional merge"]
-    PP --> Q["node_distill_memory<br/>Phase 17: Memory"]
-    Q --> R["node_create_skill<br/>Phase 18: Skill"]
+    M --> H
+    L --> O["node_report<br/>Phase 13: Report"]
+    O --> P["node_git_commit<br/>Phase 14: Commit"]
+    P --> PP["node_publish [v1.3]<br/>Phase 15: Push + PR + optional merge"]
+    PP --> Q["node_distill_memory<br/>Phase 16: Memory"]
+    Q --> R["node_create_skill<br/>Phase 17: Skill"]
     R --> S["END<br/>Success"]
 ```
 
@@ -117,14 +115,24 @@ identically to v1.2. With `AUTOCODE_PUSH_ON_COMMIT=1` (+ optionally
 `AUTOCODE_OPEN_PR` and `AUTOCODE_AUTO_MERGE`), `node_publish` calls the
 matching `github_ops.py` helpers in sequence.
 
+**[v1.4] Dead-code removal:** The dead `node_write_files_with_flag_reset`
+node (was Phase 12, between `node_systematic_debug` and `node_run_tests`) is
+deleted — it was registered but never wired (the debug loop edges to
+`node_write_files` directly), and it reset `step_attempt` (a field that
+doesn't exist in `AutocodeState`). The dead `route_after_analyze_impact`
+conditional edge (was between `node_analyze_impact` and `node_run_tests`, but
+always returned `"node_run_tests"`) is replaced with a direct edge. Graph now
+has 17 nodes (was 18 in v1.3). See CHANGELOG.md § "Cross-LLM Review Findings
+(Pre-2.0)" — found by MiMo and Kimi.
+
 ---
 
 ## 💡 Key Design Decisions
 
-- **18-node LangGraph StateGraph** ([v1.3] was 17 in v1.2 — added `node_publish`) — The most complex workflow in the system. Each node has a specific responsibility.
+- **17-node LangGraph StateGraph** ([v1.4] was 18 in v1.3 — deleted dead `node_write_files_with_flag_reset`; [v1.3] was 17 in v1.2 — added `node_publish`) — The most complex workflow in the system. Each node has a specific responsibility.
 - **Mode-driven** — The task type (fix_error, improve, add_feature, create_skill, unclear) determines the workflow path. The `node_classify_task` uses the Router LLM to classify the task.
 - **TDD-first** — For `add_feature` and `improve` modes, tests are generated before implementation. This ensures test coverage.
-- **Iterative debug loop** — If tests fail, the workflow enters a debug loop: `node_systematic_debug` → `node_write_files_with_flag_reset` → `node_run_tests`. This loop repeats until tests pass or `MAX_RETRIES` (3) is exceeded. [v1.3] `node_systematic_debug` can optionally use the swarm tool for a 2-run consensus → vote pattern (see `node_systematic_debug` in [API.md](API.md)).
+- **Iterative debug loop** — If tests fail, the workflow enters a debug loop: `node_systematic_debug` → `node_write_files` → `node_analyze_impact` → `node_run_tests`. This loop repeats until tests pass, `MAX_RETRIES` (3) is exceeded, or `tdd_status == "stuck"` (same error signature on consecutive iterations — [Pre-2.0 Fix] `node_verify` now handles `"stuck"` correctly). [v1.3] `node_systematic_debug` can optionally use the swarm tool for a 2-run consensus → vote pattern (see `node_systematic_debug` in [API.md](API.md)). **[v1.4]** The intermediate `node_write_files_with_flag_reset` (was between `node_systematic_debug` and `node_run_tests`) is deleted as dead code — see Dead Code section in CHANGELOG.md.
 - **Impact analysis** — `node_analyze_impact` analyzes the blast radius of changes using the dependency graph. This prevents unintended side effects.
 - **Git integration** — `node_git_branch` creates a new branch ([v1.3] optionally pulls first via `AUTOCODE_PULL_BEFORE_BRANCH`), and `node_git_commit` commits changes with a descriptive message.
 - **GitHub integration** — [v1.3] `node_publish` runs after `node_git_commit` to push the branch, open a PR, and optionally auto-merge — all gated on config flags and `is_configured()`. See `github_ops.py` for the helper layer.
@@ -165,6 +173,48 @@ in the source code where the 2.0 refactor may revisit it.
 
 ---
 
+## 🧭 [v1.4] Pre-2.0 Hardening Notes
+
+The v1.4 release is a hardening + dead-code-cleanup pass based on a cross-LLM
+review (DeepSeek, Qwen, MiMo, Kimi — see CHANGELOG.md § "Cross-LLM Review
+Findings (Pre-2.0)"). It contains **no new features and no new config flags** —
+all changes are bug fixes, security guards, and deletions. Each fix is marked
+`[Pre-2.0 Fix]` in the source and referenced in this section so future editors
+can trace the rationale.
+
+1. **`_is_path_safe()` guards LLM-generated paths in `node_write_files`.**
+   - **Why:** [Pre-2.0 Fix] The existing path traversal check in `node_validate_input` only covered user-supplied paths. LLM-generated `patches[].path` and `new_files{}` keys were written directly to `base_path / rel_path` with no validation — an LLM hallucination like `"../../etc/passwd"` would escape `base_path`.
+   - **Fix:** New `_is_path_safe(base_path, rel_path) -> bool` helper in `nodes/write_files.py` uses `Path.resolve().is_relative_to()` to verify the resolved target stays inside `base_path`. Called for both patch targets and new-file targets.
+   - **Source:** `workflows/autocode_impl/nodes/write_files.py` (lines 16-40 + 2 call sites).
+   - **Found by:** Qwen (P0.1). See CHANGELOG.md.
+   - `# TODO(2.0):` Consider centralizing all path-safety checks in `core/path_guard.py` so nodes don't each roll their own.
+
+2. **`_call()` retries 2× with exponential backoff in `helpers.py`.**
+   - **Why:** [Pre-2.0 Fix] A single rate-limit blip or transient network error from the LLM provider crashed the entire autocode workflow. There was no retry.
+   - **Fix:** `_call(role, system, user, ..., retries=2)` now loops `retries + 1` times, sleeping `2 ** attempt` seconds between attempts (1s, 2s, 4s). On final failure it raises the last exception after logging via `tracer.error(tid, "llm_call", ...)` (also fixed: was 2 args, now 3).
+   - **Source:** `workflows/autocode_impl/helpers.py` (lines 72-106).
+   - **Found by:** MiMo (P2.6) + Qwen (P1.4, the tracer.error signature). See CHANGELOG.md.
+   - `# TODO(2.0):` Consider making `retries` configurable per role (planner may tolerate more retries than executor).
+
+3. **Branch name now includes `trace_id` suffix for uniqueness.**
+   - **Why:** [Pre-2.0 Fix] Two runs with the same `task` produced the same `autocode/{slug}` branch name. The second run would check out the first run's branch and cross-contaminate git history.
+   - **Fix:** `node_write_plan` now appends `-{tid_suffix}` where `tid_suffix = tid.replace("-", "")[:8]` (first 8 hex chars of trace_id, dashes stripped). Format: `autocode/{slug}-{tid_suffix}`.
+   - **Source:** `workflows/autocode_impl/nodes/plan.py` (lines 73-78).
+   - **Found by:** MiMo + Kimi (P2). See CHANGELOG.md.
+   - `# TODO(2.0):` Consider making this configurable — some operators may want reusable branches across runs.
+
+4. **Dead-code deletions — do NOT re-add.**
+   - **`node_write_files_with_flag_reset`** — was a thin wrapper around `node_write_files` that reset `step_attempt` (a field that doesn't exist in `AutocodeState`). Registered in the graph but never wired (debug loop edges to `node_write_files` directly). Deleted from `nodes/write_files.py`, `graph.py` (add_node + WORKFLOW_METADATA nodes list).
+   - **`route_after_analyze_impact`** — was a conditional router that always returned `"node_run_tests"`. Replaced with `workflow.add_edge("node_analyze_impact", "node_run_tests")` direct edge in `graph.py`.
+   - **`"node_brainstorm"` mapping** in `route_after_classify` — `route_after_classify` never returns `"node_brainstorm"` (always routes to `node_validate_input` first). Removed from the conditional_edges mapping dict.
+   - **`mermaid.py`** — never called by any node, route, or test. `WORKFLOW_METADATA` serves the same purpose for MCP clients.
+   - **`test_mapper.py`** — unused (analyze_impact imports from `core.kgraph.test_mapper`, not this local copy).
+   - **`test_runner.py`** — unused (`node_run_tests` has its own test execution logic).
+   - **Found by:** Kimi (mermaid/test_mapper/test_runner), MiMo (route_after_analyze_impact + node_brainstorm mapping). See CHANGELOG.md § "Dead code" entries.
+   - `# TODO(2.0):` Consider an import-time lint check that flags any registered-but-not-wired node or any conditional_edges mapping key that the route function never returns.
+
+---
+
 ## 🧪 Testing
 
 ```powershell
@@ -186,7 +236,7 @@ in the source code where the 2.0 refactor may revisit it.
 - Patch `notify(action="notify")` for notification
 - Test `node_classify_task` with mode override → assert correct task_type
 - Test `node_validate_input` with invalid path → assert error state
-- Test `node_brainstorm` with KG files → assert merged files (currently broken)
+- Test `node_brainstorm` with KG files → assert merged files (**[Pre-2.0 Fix]** KG files are now in the LLM prompt — was: merged AFTER the call, brainstorm never saw them)
 - Test `node_write_plan` with fallback → assert 3-step plan
 - Test `node_git_branch` with snapshot failure → assert graceful handling
 - Test `node_write_tests` with code extraction → assert test_code list
@@ -195,7 +245,7 @@ in the source code where the 2.0 refactor may revisit it.
 - Test `node_analyze_impact` with empty files_map → assert early return (currently broken)
 - Test `node_run_tests` with missing test files → assert error state
 - Test `node_systematic_debug` with max retries → assert failure state
-- Test `node_verify` with missing ruff → assert lint_passed=False (currently True)
+- Test `node_verify` with missing ruff → assert `lint_passed=None` ([P1 #7] was `True`; **[Pre-2.0 Fix]** `node_verify` also handles `tdd_status="stuck"` and skips pytest when no test files exist)
 - Test `node_git_commit` with no changes → assert skipped state
 - Test `node_distill_memory` with missing hypothesis → assert graceful handling
 - Test `node_create_skill` with invalid name → assert error state
@@ -220,4 +270,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-10 (v1.3 — `node_publish` + `github_ops.py` + swarm debug + 6 new flags; 17 → 18 nodes). See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (v1.4 — pre-2.0 hardening: deleted dead `node_write_files_with_flag_reset` + `mermaid.py`/`test_mapper.py`/`test_runner.py` + `route_after_analyze_impact`; added `_is_path_safe()` + `_call` retry + branch trace_id suffix; 18 → 17 nodes. See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

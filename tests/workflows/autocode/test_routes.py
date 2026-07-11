@@ -72,7 +72,7 @@ class TestRouteAfterVerify:
         assert route_after_verify({"verification_passed": False}) == "END"
 
 
-class TestRouteAfterAnalyzeImpact:
-    def test_always_routes_to_run_tests(self):
-        from workflows.autocode_impl.routes import route_after_analyze_impact
-        assert route_after_analyze_impact({}) == "node_run_tests"
+# [Pre-2.0 Fix] DELETED: TestRouteAfterAnalyzeImpact — route_after_analyze_impact
+# was removed (always constant, replaced with direct edge in graph.py).
+# Was: class TestRouteAfterAnalyzeImpact:
+#          def test_always_routes_to_run_tests(self): ...

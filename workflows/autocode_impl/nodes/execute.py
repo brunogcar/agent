@@ -10,7 +10,7 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.constants import CODER_SYSTEM
-from workflows.autocode_impl.helpers import _call, _write_files, _files_context
+from workflows.autocode_impl.helpers import _call, _write_files, _files_context, _parse_json
 from workflows.autocode_impl.state import AutocodeState
 
 def node_execute_step(state: AutocodeState) -> dict:
@@ -50,9 +50,13 @@ def node_execute_step(state: AutocodeState) -> dict:
     updates = {"tdd_source_code": code}
 
     # Derive modified_files from generated code JSON (only when not dry_run)
+    # [Pre-2.0 Fix] Was: raw json.loads(code) — fails on markdown-fenced output.
+    # Now uses _parse_json which strips ```json fences before parsing.
     if not state.get("dry_run", False):
         try:
-            code_data = json.loads(code)
+            code_data = _parse_json(code)
+            if not code_data:
+                code_data = json.loads(code)  # fallback to raw if _parse_json returns None
             modified = []
             for patch in code_data.get("patches", []):
                 modified.append(patch.get("path", ""))

@@ -84,7 +84,17 @@ def node_create_skill(state: AutocodeState) -> dict:
 
             skill_path = base / f"{skill_name}.py"
             skill_path.parent.mkdir(parents=True, exist_ok=True)
-            skill_path.write_text(skill_file_content, encoding="utf-8")
+            # [Pre-2.0 Fix] Atomic write — was: direct write_text (crash mid-write
+            # corrupts the skill file). Now: tempfile + os.replace.
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8', dir=skill_path.parent,
+                delete=False, suffix='.tmp'
+            ) as tmp:
+                tmp.write(skill_file_content)
+                tmp_path = Path(tmp.name)
+            os.replace(tmp_path, skill_path)
 
             updates["skill_path"] = str(skill_path)
             updates["skill_created"] = True  # [P2 #17] Set flag so autocode.py can detect it

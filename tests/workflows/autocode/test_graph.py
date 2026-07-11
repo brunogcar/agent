@@ -12,17 +12,19 @@ from workflows.autocode_impl.graph import build_graph, get_graph, WORKFLOW_METAD
 # ─── Graph topology ─────────────────────────────────────────────────────────
 
 class TestGraphTopology:
-    def test_graph_has_exactly_18_nodes(self):
+    def test_graph_has_exactly_17_nodes(self):
         g = build_graph()
         expected = {
             "node_classify_task", "node_validate_input", "node_brainstorm",
             "node_write_plan", "node_git_branch", "node_write_tests",
             "node_execute_step", "node_run_tests", "node_systematic_debug",
-            "node_write_files", "node_write_files_with_flag_reset",
+            "node_write_files",
             "node_verify", "node_commit", "node_publish",  # [v1.3]
             "node_distill_memory", "node_create_skill",
             "node_analyze_impact", "node_report",
         }
+        # [Pre-2.0 Fix] Was 18 (included node_write_files_with_flag_reset —
+        # dead code, removed in v1.4). Now 17.
         assert set(g.nodes.keys()) == expected, \
             f"Node mismatch. Missing: {expected - set(g.nodes.keys())}"
 
@@ -72,11 +74,11 @@ class TestWorkflowMetadata:
     def test_metadata_exists(self):
         assert isinstance(WORKFLOW_METADATA, dict)
         assert WORKFLOW_METADATA["name"] == "autocode"
-        assert WORKFLOW_METADATA["version"] == "1.3"  # [v1.3]
+        assert WORKFLOW_METADATA["version"] == "1.4"  # [v1.4]
 
-    def test_metadata_has_18_nodes(self):
+    def test_metadata_has_17_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 18  # [v1.3] was 17, +node_publish
+        assert len(nodes) == 17  # [Pre-2.0 Fix] was 18, removed node_write_files_with_flag_reset
 
     def test_metadata_nodes_have_types(self):
         for node in WORKFLOW_METADATA["nodes"]:

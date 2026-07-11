@@ -49,19 +49,14 @@
 
 **Logic:**
 1. Recall relevant memories
-2. Build prompt with goal, task type, and context
-3. Call `llm.complete(role="planner", ...)` for brainstorming
-4. Parse JSON response for approach
+2. **[Pre-2.0 Fix]** Query the knowledge graph (KG) for relevant files and merge them into the files context BEFORE building the LLM prompt (was: merged into state AFTER the call — brainstorm never saw KG files)
+3. Build prompt with goal, task type, context (now including KG files)
+4. Call `llm.complete(role="planner", ...)` for brainstorming
+5. Parse JSON response for approach
 
 **Output:** Partial dict with `brainstorm` (approach text) and `files` (updated with KG files).
 
-**Critical bug:** KG files are lost. The code merges `kg_files` into `files_update` but then stores `state["files"]` (original) instead of `files_update`:
-```python
-if kg_files:
-    files_update = {**kg_files, **state.get("files", {})}
-    # ... but then:
-    updates["files"] = state["files"]  # BUG: stores original, not merged!
-```
+**[Pre-2.0 Fix] KG files now in LLM prompt:** The previous bug merged `kg_files` into `files_update` but built the LLM `files_ctx` from `state.get("files", {})` (original) — KG files were fetched but never shown to the planner. Fixed by building `merged_files = {**kg_files, **state.get("files", {})}` and passing that to `_files_context()`. Found by: MiMo. See CHANGELOG.md § "Cross-LLM Review Findings (Pre-2.0)".
 
 ---
 
@@ -78,7 +73,9 @@ if kg_files:
 
 **Note:** Fallback plan has 3 steps: write_tests → implement → verify. This is used when LLM planning fails.
 
-**Note:** `slug` generation may produce empty string if `task[:40]` is all non-alphanumeric. This creates invalid branch name `"autocode/"`.
+**[P1 #12] `slug` fallback:** `slug` generation may produce empty string if `task[:40]` is all non-alphanumeric. Fallback to `"autocode"` prevents invalid branch name `"autocode/"`.
+
+**[Pre-2.0 Fix] Branch name uniqueness:** Branch name now appends a `trace_id` suffix (`autocode/{slug}-{tid_suffix}` where `tid_suffix = tid.replace("-", "")[:8]`). Was: same task → same branch → second run checked out first run's branch → cross-contamination. Found by: MiMo, Kimi. `# TODO(2.0):` Consider making this configurable (some users may want reusable branches).
 
 ---
 
@@ -133,9 +130,9 @@ if kg_files:
 
 **Output:** Partial dict with `code` (generated code), `modified_files`, `current_step`.
 
-**Bug:** Uses `state.get('files_context', '')` but `files_context` doesn't exist in `AutocodeState`. Should use `_files_context(state.get('files', {}))`.
+**[Pre-2.0 Fix] Uses `_parse_json`:** Was: raw `json.loads(code)` to derive `modified_files` — markdown-fenced JSON (```` ```json\n{...}\n``` ````) raised `JSONDecodeError` and `modified_files` was silently `[]`. Now uses `_parse_json(code)` which strips code fences before parsing. Found by: MiMo. See CHANGELOG.md.
 
-**Bug:** `modified_files` derivation from JSON may fail on non-JSON code. If `code` is not valid JSON, `json.loads(code)` fails and `modified_files` is `[]`.
+**Note:** `files_context` field is still referenced defensively in some places, but the canonical path is `_files_context(state.get('files', {}))`. Do NOT add a `files_context` field to `AutocodeState`.
 
 ---
 
@@ -145,6 +142,7 @@ if kg_files:
 
 **Logic:**
 1. For each modified file:
+   - **[Pre-2.0 Fix]** Validate the LLM-generated path with `_is_path_safe(base_path, rel_path)` (path traversal guard)
    - Apply patch (if patch provided)
    - Write new file (if new file)
    - Update existing file (if content provided)
@@ -153,13 +151,13 @@ if kg_files:
 
 **Output:** Partial dict with `written_files`, `test_files`, `autocode_run_path`.
 
-**Critical bug:** `.bak` files are created, violating user rule.
+**[Pre-2.0 Fix] `_is_path_safe()` path traversal guard:** New helper `_is_path_safe(base_path, rel_path) -> bool` in `nodes/write_files.py` validates that `(base_path / rel_path).resolve()` is strictly within `base_path.resolve()` using `Path.is_relative_to()`. Applied to BOTH patch targets and new-file targets. Was: only user-supplied paths were validated (in `node_validate_input`) — LLM-generated paths like `"../../etc/passwd"` would escape `base_path`. Found by: Qwen. See CHANGELOG.md.
 
-**Critical bug:** If `test_code` is missing but `tdd_source_code` exists, `run_dir` is undefined when persisting generated code. NameError.
+**[P1 #9] Returns `status: "error"` on JSON parse failure** (was: returned `{}` — workflow continued silently).
 
-**Bug:** `node_write_files` doesn't return `status` on error. If JSON parse fails, returns `{}` (empty dict). Workflow continues as if nothing happened.
+**[P2 #13] `FileLock` timeout retries once** (was: no retry — lock contention silently skipped the write).
 
-**Bug:** `FileLock` timeout is 10s but no retry logic. If lock is held by another process, it times out and skips the write.
+**Note:** `.bak` files are forbidden by project rules — atomic writes (tempfile + `os.replace`) only. Git is the backup.
 
 ---
 
@@ -195,7 +193,7 @@ if kg_files:
 
 **Bug:** `test_files` may contain paths that don't exist. `node_write_files` sets them to relative paths, but if the file wasn't written, the test run fails.
 
-**Bug:** `run_tests_on_disk` in `nodes/run_tests.py` has different signature from `test_runner.py`. Same name, different signatures. Confusing.
+**[v1.4]** The legacy `workflows/autocode_impl/test_runner.py` (which exported a different `run_tests_on_disk` with a different signature) is **DELETED** as dead code — `node_run_tests` has its own test execution logic and never imported from `test_runner.py`. The signature-confusion note above is no longer applicable. Found by: Kimi.
 
 ---
 
@@ -219,6 +217,8 @@ if kg_files:
 
 **Output:** Partial dict with `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`. **[v1.3]** When swarm was used, also includes `swarm_verdict: {fix, root_cause, defense_notes, confidence, agreement, providers}`.
 
+**[Pre-2.0 Fix] `constants.py` field name alignment:** The `DEBUG_SYSTEM` prompt now uses `root_cause` / `defense_notes` (matching the `_DEBUG_JSON_SCHEMA` and `AutocodeState` TypedDict). Was: `hypothesis` / `defense_note` — the prompt asked the LLM for those keys, but the code read `root_cause` / `defense_notes`, so swarm debug's `root_cause` was always `"Unknown"`. Found by: MiMo. See CHANGELOG.md.
+
 **[v1.3] Swarm is non-blocking:** the fix is always applied regardless of confidence. LOW confidence surfaces as a PR comment (if enabled), not as a workflow block. Rationale: the debug loop already has `MAX_RETRIES`, stuck-detection routing, the `node_verify` gate, and the git branch as safety nets; blocking on a multi-LLM vote would add latency and a new failure mode without improving correctness.
 
 **[v1.3] Fallback chain:** `AUTOCODE_SWARM_DEBUG=1` + swarm available → use swarm. `AUTOCODE_SWARM_DEBUG=1` + swarm unavailable (no providers, import failure, consensus exception) → single-LLM debug (v1.2 path). `AUTOCODE_SWARM_DEBUG=0` → single-LLM debug (v1.2 path).
@@ -235,38 +235,27 @@ if kg_files:
 
 ---
 
-### `node_write_files_with_flag_reset(state)` — Phase 12: Retry with Fix
-
-**Purpose:** Write the fix after debug analysis.
-
-**Logic:**
-1. Call `node_write_files(state)` to apply the fix
-2. Reset `step_attempt` to 0
-
-**Output:** Partial dict from `node_write_files` with `step_attempt: 0`.
-
-**Note:** This is a thin wrapper around `node_write_files` that resets the retry counter.
-
----
-
-### `node_verify(state)` — Phase 13: Verify Changes
+### `node_verify(state)` — Phase 12: Verify Changes
 
 **Purpose:** Verify the changes with linting and regression tests.
 
 **Logic:**
-1. Run `ruff check` for linting
-2. Run regression tests (if applicable)
-3. Return verification results
+1. **[Pre-2.0 Fix]** Handle `tdd_status` in `{"max_retries_exceeded", "stuck"}` → return early with `verification_passed: False` (was: only checked `max_retries_exceeded` — `"stuck"` routed here by `route_after_run_tests` but was unhandled, so verify proceeded as if tests had passed). Found by: DeepSeek.
+2. **[Pre-2.0 Fix]** Skip `pytest` entirely if no test files exist (`tests_dir` and `test_file` both missing). Was: ran `pytest` with no args → entire project test suite (could be thousands of tests, false failures, minutes of waste). Found by: DeepSeek.
+3. Run `ruff check` for linting (advisory only — does not block commit)
+4. **[Pre-2.0 Fix]** Scope ruff to `modified_files` only. Was: `ruff check workspace_root` (slow, noisy, false failures from pre-existing lint errors elsewhere in the workspace). Found by: DeepSeek, Qwen, Kimi (3 LLMs independently flagged this).
+5. Run LLM verification (spec coverage + cleanliness) with hallucination guard (real pytest exit code overrides LLM claim)
+6. Return verification results
 
-**Output:** Partial dict with `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`.
+**Output:** Partial dict with `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes`.
 
-**Bug:** `lint_passed = True` when ruff is not available. Should be `False` or `None`.
+**[P1 #7] `lint_passed = None` when ruff is unavailable** (was `True` — missing ruff should not report as pass).
 
-**Bug:** `evidence_outputs` includes `regression: fresh_output[:2000]` which is the same as `tests`. Redundant.
+**Note:** `evidence_outputs` includes `regression: fresh_output[:2000]` which is the same as `tests`. Redundant — `# TODO(2.0):` collapse into a single `tests` entry.
 
 ---
 
-### `node_report(state)` — Phase 14: Generate Report
+### `node_report(state)` — Phase 13: Generate Report
 
 **Purpose:** Generate a structured report with the final result.
 
@@ -282,7 +271,7 @@ if kg_files:
 
 ---
 
-### `node_git_commit(state)` — Phase 15: Commit Changes
+### `node_git_commit(state)` — Phase 14: Commit Changes
 
 **Purpose:** Commit the changes to git.
 
@@ -293,15 +282,15 @@ if kg_files:
 
 **Output:** Partial dict with `commit_sha`, `status`, `result`.
 
-**Bug:** `result_lines` includes `state.get("defense_note")` but the field is `defense_notes` (plural). Always empty.
+**[Pre-2.0 Fix] `.get("label", "step")` fallback:** Was: `s["label"]` raised `KeyError` if any step in the plan lacked a `"label"` key (LLM-returned plans are not guaranteed to label every step). Now uses `s.get("label", "step")` so malformed plans don't crash commit. Found by: DeepSeek. See CHANGELOG.md.
 
-**Bug:** `status` is set to `"done"` regardless of whether commit succeeded. If `_git_commit` returns `None` (no changes), `status` is still `"done"`.
+**Bug:** `status` is set to `"done"` regardless of whether commit succeeded. If `_git_commit` returns `None` (no changes), `status` is still `"done"`. `# TODO(2.0):` Distinguish "committed" / "nothing to commit" / "failed".
 
 **[v1.3] Scope note:** `node_git_commit` is LOCAL-ONLY (no push, no PR). All remote operations live in the next node, `node_publish`. See `workflows/autocode_impl/git_ops.py` (local) vs `workflows/autocode_impl/github_ops.py` (remote) for the split rationale.
 
 ---
 
-### `node_publish(state)` — [v1.3] Phase 16: Push + PR + Optional Auto-merge
+### `node_publish(state)` — [v1.3] Phase 15: Push + PR + Optional Auto-merge
 
 **Purpose:** Push the committed branch to the remote, open a PR, and optionally auto-merge it. Runs after `node_commit`, before `node_distill_memory`.
 
@@ -336,7 +325,7 @@ if kg_files:
 
 ---
 
-### `node_distill_memory(state)` — Phase 17: Store Procedural Memory
+### `node_distill_memory(state)` — Phase 16: Store Procedural Memory
 
 **Purpose:** Store procedural knowledge for future recall.
 
@@ -354,23 +343,25 @@ if kg_files:
 
 ---
 
-### `node_create_skill(state)` — Phase 18: Create Skill
+### `node_create_skill(state)` — Phase 17: Create Skill
 
 **Purpose:** Create a reusable skill file.
 
 **Logic:**
 1. Generate skill code
-2. Write to `cfg.agent_root / "skills" / f"{skill_name}.py"`
+2. Write to `cfg.agent_root / "skills" / f"{skill_name}.py"` (or `project_root / skills/` if set)
 
 **Output:** Partial dict with `skill_path`, `status`, `result`, `error`.
 
-**Bug:** `skill_path` is `cfg.agent_root / "skills" / f"{skill_name}.py"` but should use `project_root` or `workspace_root` for non-agent projects.
+**[P1 #3] Resolves skill directory via `project_root`** when set (was: always `agent_root` — wrong for workspace projects).
 
-**Bug:** No validation that `skill_name` is a valid filename. If it contains `/` or `\`, path traversal may escape `skills/`.
+**[P2 #15] `_sanitize_skill_name()`** strips any non-`[a-zA-Z0-9_]` chars (prevents path traversal via `/` or `\` in the skill name).
 
-**Bug:** `skill_file_content` is written without checking if it's valid Python. No syntax check.
+**[P2 #16] `_validate_python_syntax()`** runs `ast.parse()` before writing (catches `SyntaxError` early).
 
-**Bug:** `skill_created` is never set in state. `autocode.py` checks for it but it's always missing.
+**[P2 #17] `skill_created: True`** is now set on success (was: never set — `autocode.py` checked it but it was always missing).
+
+**[Pre-2.0 Fix] Atomic write:** Skill file is now written via `tempfile.NamedTemporaryFile` + `os.replace` (was: direct `write_text` — a crash mid-write would corrupt the skill file with a partial write). Found by: MiMo. See CHANGELOG.md.
 
 ---
 
@@ -458,4 +449,4 @@ For the full field list, see `workflows/autocode_impl/state.py`.
 
 ---
 
-*Last updated: 2026-07-10 (v1.3 — added `node_publish`, documented swarm debug + optional pull + 4 new state fields + `branch` TypedDict fix). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (v1.4 — pre-2.0 hardening: added `[Pre-2.0 Fix]` notes to `node_brainstorm` (KG in prompt), `node_write_plan` (trace_id suffix), `node_execute_step` (`_parse_json`), `node_write_files` (`_is_path_safe`), `node_systematic_debug` (constants field names), `node_verify` (stuck + skip pytest + ruff scope), `node_git_commit` (label fallback), `node_create_skill` (atomic write); removed `node_write_files_with_flag_reset` section; renumbered phases 13–18 → 12–17). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

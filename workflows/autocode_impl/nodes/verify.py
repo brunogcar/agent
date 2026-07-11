@@ -22,9 +22,13 @@ def node_verify(state: AutocodeState) -> dict:
     """
     tid = state.get("trace_id", "")
 
-    # Handle TDD max retries exceeded
-    if state.get("tdd_status") == "max_retries_exceeded":
-        tracer.error(tid, "verify", f"Verification skipped: TDD exhausted after {state.get('max_retries', cfg.autocode_max_retries)} attempts")
+    # Handle TDD max retries exceeded OR stuck (same error on consecutive iterations)
+    # [Pre-2.0 Fix] Was: only checked max_retries_exceeded. "stuck" routed here
+    # by route_after_run_tests but wasn't handled → verify proceeded as if tests passed.
+    tdd_status = state.get("tdd_status", "")
+    if tdd_status in ("max_retries_exceeded", "stuck"):
+        reason = "TDD exhausted" if tdd_status == "max_retries_exceeded" else "TDD stuck (same error repeated)"
+        tracer.error(tid, "verify", f"Verification skipped: {reason} after {state.get('max_retries', cfg.autocode_max_retries)} attempts")
         try:
             from core.memory_engine import memory
             memory.store(
@@ -65,43 +69,65 @@ def node_verify(state: AutocodeState) -> dict:
     test_file = run_dir / "test_autocode_feature.py"
     tests_dir = run_dir / "tests"
 
-    try:
-        cmd = [sys.executable, "-m", "pytest", "--tb=short", "--color=no", "-q"]
-        if tests_dir.exists():
-            cmd.append(str(tests_dir))
-        if test_file.exists():
-            cmd.append(str(test_file))
+    # [Pre-2.0 Fix] If no test files exist, skip pytest entirely.
+    # Was: ran `pytest` with no args → ran entire project test suite (could be
+    # thousands of tests, false failures, minutes of waste).
+    if not tests_dir.exists() and not test_file.exists():
+        fresh_output = "No test files found — skipping pytest"
+        tests_passed = False
+        tracer.step(tid, "verify", "no test files found, skipping pytest")
+    else:
+        try:
+            cmd = [sys.executable, "-m", "pytest", "--tb=short", "--color=no", "-q"]
+            if tests_dir.exists():
+                cmd.append(str(tests_dir))
+            if test_file.exists():
+                cmd.append(str(test_file))
 
-        # Run from project root so imports resolve correctly
-        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding='utf-8', cwd=str(base_path))
-        fresh_output = (result.stdout + result.stderr).strip()
-        tests_passed = result.returncode == 0
-    except FileNotFoundError:
-        # [FIX 5] Specific handler for missing pytest
-        fresh_output = "pytest not found in PATH — install with: pip install pytest"
-        tests_passed = False
-    except subprocess.TimeoutExpired as e:
-        # [FIX 5] Specific handler for timeout
-        fresh_output = f"pytest timed out after {e.timeout}s"
-        tests_passed = False
-    except Exception as e:
-        fresh_output = f"pytest failed to run: {e}"
+            # Run from project root so imports resolve correctly
+            base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding='utf-8', cwd=str(base_path))
+            fresh_output = (result.stdout + result.stderr).strip()
+            tests_passed = result.returncode == 0
+        except FileNotFoundError:
+            # [FIX 5] Specific handler for missing pytest
+            fresh_output = "pytest not found in PATH — install with: pip install pytest"
+            tests_passed = False
+        except subprocess.TimeoutExpired as e:
+            # [FIX 5] Specific handler for timeout
+            fresh_output = f"pytest timed out after {e.timeout}s"
+            tests_passed = False
+        except Exception as e:
+            fresh_output = f"pytest failed to run: {e}"
 
     # Ruff lint (non-fatal -- warnings don't block commit)
+    # [Pre-2.0 Fix] Was: ruff check on entire workspace_root (slow, noisy, false
+    # failures from pre-existing lint errors). Now scopes to modified_files only.
     lint_output = ""
     lint_passed = True
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check", str(cfg.workspace_root),
-             "--select", "E,F", "--no-cache"],
-            capture_output=True, text=True, timeout=30, encoding='utf-8'
-        )
-        lint_output = (result.stdout + result.stderr).strip()
-        lint_passed = result.returncode == 0
-    except Exception as e:
-        lint_output = f"ruff not available: {e}"
-        lint_passed = None  # [P1 #7] Was True — missing ruff should not report as pass
+    modified_files = state.get("modified_files", [])
+    if modified_files:
+        # Resolve paths relative to project_root or workspace_root
+        lint_base = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+        lint_targets = [str(lint_base / f) for f in modified_files if f]
+        if lint_targets:
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "ruff", "check"] + lint_targets +
+                    ["--select", "E,F", "--no-cache"],
+                    capture_output=True, text=True, timeout=30, encoding='utf-8'
+                )
+                lint_output = (result.stdout + result.stderr).strip()
+                lint_passed = result.returncode == 0
+            except Exception as e:
+                lint_output = f"ruff not available: {e}"
+                lint_passed = None  # [P1 #7] Was True — missing ruff should not report as pass
+        else:
+            lint_output = "No modified files to lint"
+            lint_passed = None
+    else:
+        lint_output = "No modified files to lint"
+        lint_passed = None
 
     automated_ok = tests_passed # lint is advisory only
 

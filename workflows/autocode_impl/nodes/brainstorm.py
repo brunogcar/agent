@@ -77,8 +77,16 @@ def node_brainstorm(state: AutocodeState) -> dict:
         except Exception as e:
             tracer.warning(tid, "brainstorm", f"KG query failed: {e}")
 
-    # Now build files context (includes both original and KG-injected files)
-    files_ctx = _files_context(state.get("files", {}))
+    # [Pre-2.0 Fix] Initialize files_update unconditionally — was only set inside
+    # `if kg_files:` block, could be undefined if exception fired after partial population.
+    if "files_update" not in dir():
+        files_update = state.get("files", {})
+
+    # [Pre-2.0 Fix] Build files context from MERGED files (original + KG-injected).
+    # Was: only used state.get("files", {}) — KG files were merged into state
+    # AFTER the LLM call, so the brainstorm node never saw them.
+    merged_files = {**kg_files, **state.get("files", {})} if kg_files else state.get("files", {})
+    files_ctx = _files_context(merged_files)
 
     # -- Select system prompt based on task type --
     if task_type == "fix":

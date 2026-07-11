@@ -258,12 +258,14 @@ Steps:
 2. Make ONE targeted fix -- no shotgun edits.
 3. Output JSON ONLY:
    {
-     "hypothesis": "<single sentence root cause>",
-     "files": {"<path>": "<full corrected file content>"},
-     "explanation": "<what was changed and why>",
-     "defense_note": "<how to prevent this class of bug in future>"
+     "root_cause": "<single sentence root cause>",
+     "defense_notes": "<how to prevent this class of bug in future>",
+     "fix": "<the corrected file content or patch JSON>"
    }
-No prose outside the JSON."""
+No prose outside the JSON.
+
+[Pre-2.0 Fix] Field names aligned with debug.py JSON schema + state.py TypedDict.
+Was: hypothesis/defense_note (mismatched code → root_cause always "Unknown")."""
 
 VERIFY_SYSTEM = """\
 You are the Executor model performing a pre-commit verification audit.

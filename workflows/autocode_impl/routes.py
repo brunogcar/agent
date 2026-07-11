@@ -30,9 +30,9 @@ def route_after_write_files(state: AutocodeState) -> str:
     else:
         return "node_verify"
 
-def route_after_analyze_impact(state: AutocodeState) -> str:
-    """Route after impact analysis node. Always proceeds to run_tests."""
-    return "node_run_tests"
+# [Pre-2.0 Fix] DELETED: route_after_analyze_impact — was always constant
+# ("node_run_tests"), replaced with direct edge in graph.py.
+# Found by: mimo P3.16.
 
 def route_after_run_tests(state: AutocodeState) -> str:
     """Route after running tests node.

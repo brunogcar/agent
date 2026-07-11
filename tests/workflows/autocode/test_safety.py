@@ -115,14 +115,10 @@ class TestTDDLoopConvergence:
         assert route_after_verify(base_state) == "END"
 
 
-class TestMermaidGuards:
-    """[P1 #5] mermaid.py must use getattr() guards for LangGraph internals."""
-
-    def test_mermaid_uses_getattr(self):
-        import inspect
-        from workflows.autocode_impl import mermaid
-        source = inspect.getsource(mermaid)
-        assert "getattr" in source, "mermaid.py must use getattr() guards for LangGraph internals"
+# [Pre-2.0 Fix] DELETED: TestMermaidGuards — mermaid.py was removed (dead code,
+# never called). WORKFLOW_METADATA serves the same purpose programmatically.
+# Was: class TestMermaidGuards:
+#          def test_mermaid_uses_getattr(self): ...
 
 
 class TestDeadRoutesRemoved:

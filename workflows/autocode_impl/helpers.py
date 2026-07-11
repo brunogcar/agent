@@ -69,30 +69,41 @@ def _should_copy_file(path: str | Path, protected_files: frozenset[str]) -> bool
     name = Path(path).name
     return name not in protected_files and path_str not in protected_files
 
-def _call(role: str, system: str, user: str, timeout: int | None = None, temperature: float | None = None, json_schema: dict | None = None) -> str:
+def _call(role: str, system: str, user: str, timeout: int | None = None, temperature: float | None = None, json_schema: dict | None = None, retries: int = 2) -> str:
     """Call the LLM with the given role, system prompt, and user message.
 
     v1.3: Added json_schema param for structured generation. When provided,
     LM Studio enforces the schema at generation time via outlines.
+    [Pre-2.0 Fix] Added retry with exponential backoff for transient failures.
+    Was: single attempt — a rate limit or network blip crashed the entire workflow.
     """
+    import time as _time
     if timeout is None:
         timeout = cfg.model_registry.get(role, {}).get("timeout", cfg.execution_timeout)
-    try:
-        response = llm.complete(
-            role=role,
-            system=system,
-            user=user,
-            timeout=timeout,
-            temperature=temperature,
-            json_schema=json_schema,
-        )
-        if response.ok:
-            return response.text
-        else:
-            raise RuntimeError(f"LLM error: {response.error}")
-    except Exception as e:
-        tracer.error("llm_call", f"Failed to call {role} model: {e}")
-        raise
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            response = llm.complete(
+                role=role,
+                system=system,
+                user=user,
+                timeout=timeout,
+                temperature=temperature,
+                json_schema=json_schema,
+            )
+            if response.ok:
+                return response.text
+            else:
+                raise RuntimeError(f"LLM error: {response.error}")
+        except Exception as e:
+            last_error = e
+            if attempt < retries:
+                _time.sleep(2 ** attempt)  # 1s, 2s, 4s...
+                continue
+            tracer.error("", "llm_call", f"Failed to call {role} model after {retries+1} attempts: {e}")
+            raise
+    # Should never reach here, but defensive
+    raise last_error  # type: ignore[misc]
 
 def _write_files(state: dict) -> dict:
     """
@@ -146,7 +157,7 @@ def _write_files(state: dict) -> dict:
         except Exception as e:
             if 'tmp_path' in locals() and tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
-            tracer.error(tid, f"Atomic write failed for {file_path}: {e}")
+            tracer.error(tid, "atomic_write", f"Atomic write failed for {file_path}: {e}")  # [Pre-2.0 Fix] was 2 args
             return {"error": f"Write failed: {e}", "partial_written": written}
 
     return {"files_written": written}

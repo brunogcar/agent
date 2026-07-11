@@ -23,9 +23,11 @@ def node_commit(state: AutocodeState) -> dict:
         tracer.step(tid, "commit", "dry_run=True — skipping git commit")
         return {"status": "dry_run", "commit_sha": "(dry-run)"}
     plan = state.get("plan", [])
+    # [Pre-2.0 Fix] Was: s["label"] — KeyError if any step lacks "label".
+    # Now uses .get("label", "step") fallback.
     labels = ", ".join(
-        s["label"] for s in plan
-        if s["label"] not in ("write_tests", "verify")
+        s.get("label", "step") for s in plan
+        if s.get("label", "step") not in ("write_tests", "verify")
     )
     task_type = state.get("task_type", "feature")
     msg = (
