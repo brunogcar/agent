@@ -34,16 +34,18 @@ def github(
     prerelease: bool = False,
     trace_id: str = "",
 ) -> dict:
-    """GitHub API meta-tool — PR + issue + release operations and git push."""
+    """GitHub API meta-tool — PR + issue + release operations + git push/pull."""
 ```
 
-> **Note:** Like `swarm()`, the github facade uses `action: str` and dispatches manually via `DISPATCH["github"][action]`. Unknown actions return a `fail()` result listing all 15 valid actions, rather than being rejected by a `Literal` schema layer. The `@meta_tool` decorator is applied (for `doc_sections` and metadata) but the `Literal` enum patch is **not** generated.
+> **Note:** Like `swarm()`, the github facade uses `action: str` and dispatches manually via `DISPATCH["github"][action]`. Unknown actions return a `fail()` result listing all 16 valid actions, rather than being rejected by a `Literal` schema layer. The `@meta_tool` decorator is applied (for `doc_sections` and metadata) but the `Literal` enum patch is **not** generated.
 
 > **v1.2 facade changes:** `state` default changed from `"open"` to `""` (list actions `pr_list`/`issue_list` internally default to `"open"` when empty — no caller-visible behavior change; `issue_update` treats `""` as "don't change" to enable the unified close/reopen/edit design). New `page: int = 1` param added (used by `pr_list`/`issue_list` for pagination).
 
+> **v1.3 facade changes:** `_NOT_PARALLEL_SAFE` updated from `frozenset({"push"})` to `frozenset({"push", "pull"})` (the new `pull` action is also a subprocess). New `pull` action registered via `@register_action("github", "pull", ...)`. Facade `doc_sections` gains a `Pull commits | github(pull)` row. No new facade params (pull reuses the existing `branch` + `remote` params).
+
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `action` | `str` | — | **Required.** One of: `pr_create` \| `pr_list` \| `pr_get` \| `pr_review` \| `pr_merge` \| `pr_comment` \| `push` \| `issue_create` \| `issue_list` \| `issue_get` \| `issue_update` \| `issue_comment` \| `release_create` \| `release_list` \| `release_get`. Lowercased + stripped before dispatch |
+| `action` | `str` | — | **Required.** One of: `pr_create` \| `pr_list` \| `pr_get` \| `pr_review` \| `pr_merge` \| `pr_comment` \| `push` \| `pull` \| `issue_create` \| `issue_list` \| `issue_get` \| `issue_update` \| `issue_comment` \| `release_create` \| `release_list` \| `release_get`. Lowercased + stripped before dispatch |
 | `title` | `str` | `""` | PR/issue title (used by `pr_create`, `issue_create`, `issue_update`) |
 | `head` | `str` | `""` | Source branch name — what to merge FROM (used by `pr_create`) |
 | `base` | `str` | `"main"` | Target branch name — what to merge INTO (used by `pr_create`) |
@@ -59,8 +61,8 @@ def github(
 | `path` | `str` | `""` | File path — triggers line-level comment mode when paired with `line` (used by `pr_comment`) |
 | `line` | `int` | `0` | Line number — triggers line-level comment mode when paired with `path` (used by `pr_comment`) |
 | `side` | `str` | `"RIGHT"` | Diff side: `LEFT` (base) or `RIGHT` (head) — only used in line-level mode (used by `pr_comment`) |
-| `branch` | `str` | `""` | Local branch name to push (used by `push`) |
-| `remote` | `str` | `"origin"` | Remote name to push to (used by `push`) |
+| `branch` | `str` | `""` | Branch name to push / pull (used by `push`, `pull`). For `pull`: empty = current branch |
+| `remote` | `str` | `"origin"` | Remote name to push to / pull from (used by `push`, `pull`) |
 | `force` | `bool` | `False` | If True, use `--force-with-lease` (NOT `--force`) — safer (used by `push`) |
 | `labels` | `str` | `""` | Comma-separated labels (used by `issue_create`, `issue_list`, `issue_update`) |
 | `assignees` | `str` | `""` | Comma-separated logins (used by `issue_create`, `issue_update`) |
@@ -100,6 +102,7 @@ def github(
 | `release_list` | — | `limit` | List releases |
 | `release_get` | `tag` OR `number` | — | Fetch a single release by tag (preferred) or numeric ID |
 | `push` | `branch` | `remote`, `force` | Push a local branch to the remote via `git push` (subprocess) |
+| `pull` | — | `branch`, `remote` | Pull recent commits from the remote via `git pull` (subprocess) — empty `branch` = current branch |
 
 ---
 
@@ -457,6 +460,84 @@ github(action="push", branch="feat/rebase", force=True)  # uses --force-with-lea
 
 ---
 
+### `pull` — Pull Recent Commits from the Remote
+
+**Purpose:** Fetch and merge recent commits from a git remote (default `origin`) into the current branch (or a specified branch) via `git pull`. This is a **local subprocess operation**, NOT a GitHub API call — it does NOT require `GITHUB_TOKEN`. It's the remote-sync counterpart to `push`: the standard PR workflow is **`pull` before branching** (ensure the new branch is based on the latest remote state) → **`push` after committing** (publish the branch so a PR can be opened). It lives in `github_ops` (NOT `git_ops`) for the same reason as `push` — together they cover the remote-sync half of the workflow and grouping them with the PR actions keeps the full remote workflow discoverable via `github(action=...)`.
+
+[v1.3] Added specifically for autocode integration — `AUTOCODE_PULL_BEFORE_BRANCH=1` causes `workflows/autocode_impl/nodes/branch.py` to call `github(action="pull")` before creating a feature branch.
+
+**Required params:** none (defaults to `git pull origin` — fetches + merges into the current branch)
+
+**Optional params:** `branch` (default `""` — empty means current branch; pass an explicit name to pull a specific branch), `remote` (default `"origin"`)
+
+**Example:**
+```python
+github(action="pull")                                   # git pull origin (current branch)
+github(action="pull", branch="main")                    # git pull origin main
+github(action="pull", branch="main", remote="upstream") # git pull upstream main
+```
+
+**Return format (success — explicit branch):**
+```json
+{
+  "status": "success",
+  "data": {
+    "status": "ok",
+    "branch": "main",
+    "remote": "origin",
+    "pulled": true,
+    "output": "From github.com:owner/repo\n   abc1234..def5678  main -> origin/main\nUpdating abc1234..def5678\nFast-forward\n"
+  },
+  "error": null,
+  "duration_ms": 1843
+}
+```
+
+**Return format (success — current branch, empty `branch` param):**
+```json
+{
+  "status": "success",
+  "data": {
+    "status": "ok",
+    "branch": "(current)",
+    "remote": "origin",
+    "pulled": true,
+    "output": "Already up to date."
+  },
+  "error": null,
+  "duration_ms": 412
+}
+```
+
+> **Note:** when `branch` is empty, the `data.branch` field is the sentinel string `"(current)"` (not empty) so callers can distinguish "pulled the current branch" from "missing branch param". The underlying `git pull` command is `git pull origin` (no branch arg) — git's behavior is to fetch + merge into the current branch's tracking ref.
+
+**Return format (non-zero exit — e.g. local changes would be overwritten):**
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": "git pull failed (exit 1): error: Your local changes to the following files would be overwritten by merge:\n\tsrc/foo.py\n...",
+  "branch": "main",
+  "remote": "origin",
+  "exit_code": 1,
+  "output": "error: Your local changes to the following files would be overwritten by merge:\n\tsrc/foo.py\n...",
+  "duration_ms": 612
+}
+```
+
+**Notes:**
+- Uses `subprocess.run(["git", "pull", remote, [branch]])` — **list form, NOT `shell=True`** for safety (same as `push`).
+- Empty `branch` is the recommended default for "pull into the current branch" — git's behavior matches the caller's intent and the response surfaces `branch: "(current)"` for clarity.
+- 120-second subprocess timeout. On timeout → `fail(f"git pull timed out after 120s (branch=..., remote=...)")`.
+- `FileNotFoundError` (git not installed) → `fail("git executable not found — install git and ensure it is on PATH")`.
+- Defense-in-depth: rejects branch/remote names containing shell metacharacters (`;`, `&`, `|`, `$`, backtick, `(`, `)`, `<`, `>`, `\n`, `\r`) — same check as `push`. Git branch names cannot contain these anyway, so this catches programming errors.
+- Combined `stdout + stderr` in the output field — git pull writes progress and merge info to stderr by default.
+- No `force` param — force-push semantics don't apply to pull. Conflict resolution is left to git's default (merge); a conflicting pull returns non-zero exit → `fail(f"git pull failed (exit {code}): {output}")` with the stderr text. Callers who want to rebase instead of merge should run `git pull --rebase` via `cli` or a direct subprocess — the github tool intentionally exposes only the plain-merge shape.
+- NOT parallel-safe — concurrent `git pull` on the same repo will race on `.git/index.lock`. Excluded from `PARALLEL_SAFE`; included in `_NOT_PARALLEL_SAFE = frozenset({"push", "pull"})`.
+- **`pull` vs `push` symmetry:** both are local subprocess actions, both live in `github_ops/` (NOT `git_ops/`), both reject shell metacharacters in `branch`/`remote`, both use a 120s timeout, both combine stdout+stderr in `output`. The only differences: `push` requires `branch` and supports `force` (→ `--force-with-lease`); `pull` makes `branch` optional (empty = current branch) and has no `force` param.
+
+---
+
 ### `issue_list` — List Issues
 
 **Purpose:** Fetch a list of issues on the configured repo, filtered by state and (optionally) labels. Supports pagination via the `page` param for repos with more than 100 issues.
@@ -700,6 +781,11 @@ All errors return a standardized `fail()` dict:
 | `git push timed out after 120s (branch=..., remote=...)` | `subprocess.TimeoutExpired` | `branch`, `remote` |
 | `git executable not found — install git and ensure it is on PATH` | `FileNotFoundError` from `subprocess.run` | `branch`, `remote` |
 | `git push failed (exit {code}): {output}` | Non-zero exit code from `git push` | `branch`, `remote`, `exit_code`, `output` |
+| `git pull timed out after 120s (branch=..., remote=...)` | `subprocess.TimeoutExpired` on `git pull` | `branch`, `remote` |
+| `git executable not found — install git and ensure it is on PATH` | `FileNotFoundError` from `subprocess.run` on `pull` | `branch`, `remote` |
+| `git pull failed (exit {code}): {output}` | Non-zero exit code from `git pull` (e.g. local changes would be overwritten) | `branch`, `remote`, `exit_code`, `output` |
+| `branch/remote contains forbidden character {char!r}` | Shell-metacharacter rejection on `push` or `pull` | `branch` or `remote` (whichever failed) |
+| `remote cannot be empty (default is 'origin')` | Empty `remote` on `push` or `pull` | `branch`, `remote` |
 | `GitHub action failed: {exception}` | Unhandled exception in handler | — |
 
 **Status code semantics:** `fail()` accepts a `status` kwarg that overrides the default `"error"` string. The github actions pass HTTP status codes (404, 405, 409, etc.) as `status` — callers can inspect `result["status"]` to distinguish "not found" (404) from "not mergeable" (405) from "stale head" (409) from a generic client error (4xx int).
@@ -708,24 +794,24 @@ All errors return a standardized `fail()` dict:
 
 ## 🔒 Security
 
-**No filesystem operations outside `git push`.** The github tool does NOT write to or read from the local filesystem. The only filesystem-affecting operation is `push` — and that's `git push`, which only updates remote refs (no local file writes).
+**No filesystem operations outside `git push` / `git pull`.** The github tool does NOT write to or read from the local filesystem. The only filesystem-affecting operations are `push` and `pull` — and those are `git push` / `git pull`, which only update refs (push) or fetch+merge refs (pull) in the local `.git` directory. No local working-tree writes from the github tool.
 
 **No path_guard needed.** The `path` param on `pr_comment` is a GitHub file path (relative to repo root), not a local filesystem path — it's sent to the GitHub API as-is. No local file is opened.
 
-**No SSRF surface.** All outbound calls go to `https://api.github.com` (hardcoded in `tools/github_ops/client.py`). The base URL is NOT configurable via env (see CHANGELOG.md roadmap for GHE support). No user-supplied URLs are passed to httpx.
+**No SSRF surface.** All outbound calls go to `https://api.github.com` (hardcoded in `tools/github_ops/client.py`). The base URL is NOT configurable via env (see CHANGELOG.md roadmap for GHE support). No user-supplied URLs are passed to httpx. The `push` / `pull` actions invoke `git push` / `git pull` on whatever remote is configured in the local repo (default `origin`) — no URL is constructed by the github tool.
 
-**Token handling.** `GITHUB_TOKEN` is read once at httpx.Client construction time (in `get_client()`) and embedded in the `Authorization: Bearer ...` header. The token is never logged, never returned in any result dict, never passed to subprocess (push uses the repo's git remote config, not the token). Restart the agent (or call `close_client()`) after rotating the token.
+**Token handling.** `GITHUB_TOKEN` is read once at httpx.Client construction time (in `get_client()`) and embedded in the `Authorization: Bearer ...` header. The token is never logged, never returned in any result dict, never passed to subprocess (`push` and `pull` use the repo's git remote config, not the token). Restart the agent (or call `close_client()`) after rotating the token.
 
-**Subprocess safety (`push` only).** `git push` is invoked with a list arg (`["git", "push", ..., remote, branch]`), NOT `shell=True`. Branch and remote names are validated against shell metacharacters as defense-in-depth — git branch names cannot contain these anyway, so this catches programming errors rather than security issues.
+**Subprocess safety (`push` + `pull`).** `git push` / `git pull` are invoked with a list arg (`["git", "push", ..., remote, branch]` / `["git", "pull", remote, [branch]]`), NOT `shell=True`. Branch and remote names are validated against shell metacharacters as defense-in-depth — git branch names cannot contain these anyway, so this catches programming errors rather than security issues.
 
-**`--force-with-lease` (not `--force`).** When `force=True`, push uses `--force-with-lease`, which checks the remote ref against the local tracking ref before overwriting. If the remote has been updated since the last fetch (e.g. a teammate pushed), the push is rejected. This prevents accidental history destruction. Use `force=True` only when you intend to rewrite remote branch history (e.g. after a rebase).
+**`--force-with-lease` (not `--force`) — `push` only.** When `force=True`, push uses `--force-with-lease`, which checks the remote ref against the local tracking ref before overwriting. If the remote has been updated since the last fetch (e.g. a teammate pushed), the push is rejected. This prevents accidental history destruction. Use `force=True` only when you intend to rewrite remote branch history (e.g. after a rebase). **`pull` has no `force` param** — force semantics don't apply to pull.
 
 **API response data is untrusted.** JSON returned from GitHub API calls (PR titles, bodies, comments, user logins) is treated as untrusted and returned to the caller as-is. Callers are responsible for any downstream rendering safety. The github tool itself does NOT `eval()`, `exec()`, or `subprocess.run()` GitHub response data.
 
 **Rate limiting.** GitHub API rate limits are 5000 req/hour for authenticated users. The github tool does NOT track or enforce client-side rate limits — GitHub will return HTTP 403 with a rate-limit error message, which surfaces as `fail("GitHub API error 403: ...")`. Per-action rate limit tracking is a roadmap item (see CHANGELOG.md).
 
-**`PARALLEL_SAFE` — API actions only.** The 14 API actions are stateless HTTP calls (safe to parallelize in `parallel()`). `push` is a subprocess and is NOT parallel-safe — concurrent pushes to the same branch will fail with lock contention. The github facade declares `_NOT_PARALLEL_SAFE = frozenset({"push"})` and `push` is excluded from `PARALLEL_SAFE` in `core/parallel_executor.py`.
+**`PARALLEL_SAFE` — API actions only.** The 14 API actions are stateless HTTP calls (safe to parallelize in `parallel()`). `push` and `pull` are both subprocesses and are NOT parallel-safe — concurrent pushes/pulls to the same repo will race on `.git/index.lock`. The github facade declares `_NOT_PARALLEL_SAFE = frozenset({"push", "pull"})` (v1.3 — `pull` added) and both are excluded from `PARALLEL_SAFE` in `core/parallel_executor.py`.
 
 ---
 
-*Last updated: 2026-07-10 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-10 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

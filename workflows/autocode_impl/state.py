@@ -91,6 +91,13 @@ class AutocodeState(TypedDict, total=False):
     # Git
     commit_sha: str
     branch_name: str
+    branch: str  # [v1.3] Fix TypedDict drift — was read by branch.py but not declared
+
+    # [v1.3] GitHub + Swarm integration
+    pushed: bool
+    pr_number: int
+    pr_url: str
+    swarm_verdict: dict  # {confidence: HIGH|MEDIUM|LOW, agreement: str, providers: int}
 
     # Memory
     memory_notes: str
@@ -144,6 +151,12 @@ def _default_state(
         "verify_report": "",
         "commit_sha": "",
         "branch_name": "",
+        "branch": "",  # [v1.3] Fix TypedDict drift
+        # [v1.3] GitHub + Swarm integration defaults
+        "pushed": False,
+        "pr_number": 0,
+        "pr_url": "",
+        "swarm_verdict": {},
         "memory_notes": "",
         "messages": [],
         "status": "running",

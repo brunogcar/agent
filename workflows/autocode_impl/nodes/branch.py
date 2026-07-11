@@ -5,16 +5,24 @@ Creates a git branch before any code changes. The branch itself serves as
 the safety net — no pre-snapshot is needed since changes are isolated on
 the branch and can be reverted via git.
 
-[FUTURE] When GitHub PR integration is added, this node will also push
-the branch to the remote and create a draft PR. For now, local branch only.
+[v1.3] Optional pull before branching (AUTOCODE_PULL_BEFORE_BRANCH=1):
+  When enabled, pulls recent commits from the remote before creating the
+  branch. This ensures the branch is based on the latest remote state.
+  Graceful-skip if GitHub is not configured.
+
+# TODO(2.0): The FUTURE comment about pushing the branch + creating a draft
+# PR is now implemented in node_publish (v1.3). This node stays focused on
+# local branch creation only.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from core.config import cfg
 from workflows.autocode_impl.state import AutocodeState
 from workflows.autocode_impl.git_ops import _git_create_branch
+from workflows.autocode_impl.github_ops import _github_pull  # [v1.3]
 from core.tracer import tracer
 
 def node_git_branch(state: AutocodeState) -> dict:
@@ -33,6 +41,13 @@ def node_git_branch(state: AutocodeState) -> dict:
         return {}
     # [GIT SCOPING] Route git ops to workspace project if set, else agent_root
     root = state.get("project_root")
+
+    # [v1.3] Optional: pull recent commits before branching
+    # Ensures the branch is based on the latest remote state.
+    # Graceful-skip if GitHub not configured or flag is off.
+    if cfg.autocode_pull_before_branch:
+        _github_pull(tid)  # Non-blocking — pull failure doesn't stop the workflow
+        # TODO(2.0): Consider failing the workflow if pull fails (configurable)
 
     # Create branch (the branch IS the snapshot — no separate snapshot needed)
     # [P1 #10] Check return value — if branch creation fails, return error status

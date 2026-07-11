@@ -12,14 +12,15 @@ from workflows.autocode_impl.graph import build_graph, get_graph, WORKFLOW_METAD
 # ─── Graph topology ─────────────────────────────────────────────────────────
 
 class TestGraphTopology:
-    def test_graph_has_exactly_17_nodes(self):
+    def test_graph_has_exactly_18_nodes(self):
         g = build_graph()
         expected = {
             "node_classify_task", "node_validate_input", "node_brainstorm",
             "node_write_plan", "node_git_branch", "node_write_tests",
             "node_execute_step", "node_run_tests", "node_systematic_debug",
             "node_write_files", "node_write_files_with_flag_reset",
-            "node_verify", "node_commit", "node_distill_memory", "node_create_skill",
+            "node_verify", "node_commit", "node_publish",  # [v1.3]
+            "node_distill_memory", "node_create_skill",
             "node_analyze_impact", "node_report",
         }
         assert set(g.nodes.keys()) == expected, \
@@ -71,11 +72,11 @@ class TestWorkflowMetadata:
     def test_metadata_exists(self):
         assert isinstance(WORKFLOW_METADATA, dict)
         assert WORKFLOW_METADATA["name"] == "autocode"
-        assert WORKFLOW_METADATA["version"] == "1.1"
+        assert WORKFLOW_METADATA["version"] == "1.3"  # [v1.3]
 
-    def test_metadata_has_17_nodes(self):
+    def test_metadata_has_18_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 17
+        assert len(nodes) == 18  # [v1.3] was 17, +node_publish
 
     def test_metadata_nodes_have_types(self):
         for node in WORKFLOW_METADATA["nodes"]:

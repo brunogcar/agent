@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.3 | 2026-07-10 | **GitHub + Swarm integration:** New `node_publish` (push + PR create + optional auto-merge). New `github_ops.py` helper module. Swarm 2-run debug (consensus → vote, confidence HIGH/MEDIUM/LOW). 6 new config flags (all default OFF). 4 new state fields (`pushed`, `pr_number`, `pr_url`, `swarm_verdict`). Fix TypedDict drift (`branch` field). All operations graceful-skip if GitHub not configured — zero behavior change unless opted in. |
 | v1.2 | 2026-07-08 | **JSON schema enforcement:** `debug.py` now passes `json_schema` via `_call()` helper. Schema: `{root_cause: str, defense_notes: str, fix: str}`. `_call()` helper updated to accept `json_schema` param. LM Studio enforces at generation time. Defensive JSON parsing stays as fallback. |
 | v1.1.2 | 2026-07-06 | **Small-fix batch:** #39 (stuck detection — same error signature on consecutive iterations bails to verify), #44 (structured artifacts in return dict), #46 (multi-file git-diff input via `files={"all changed": ""}` + `git_diff=True`), #47 (dry-run guards on write_files/commit/branch). Also folded in v1.1.1: `TestPartialDictReturns` + changelog cleanup. |
 | v1.1 | 2026-07-06 | **Facade fix + WORKFLOW_METADATA + routing fixes.** Fixed the broken facade (was unreachable for 2 versions due to 4 dead imports + double-compile + uncompiled-graph crash in base.py). Added `WORKFLOW_METADATA` (17 nodes, loops, branches, safety_features). Fixed `route_after_write_files` to include `audit`/`edit` (was skipping impact analysis). Made `distill_memory` non-fatal (`tracer.warning` not `tracer.error`). Added facade contract tests. Based on cross-LLM review (Gemini, DeepSeek, Mistral, Qwen, Kimi). |
@@ -77,6 +78,13 @@
 | **#44 Structured artifacts** | ✅ v1.1.2 | `run_autocode_agent()` now returns an `artifacts` dict: `commit_sha`, `branch_name`, `modified_files`, `test_results`, `tdd_status`, `tdd_iteration`, `verification_passed`, `skill_created`, `skill_path`. |
 | **#46 Multi-file git-diff input** | ✅ v1.1.2 | `files={"all changed": ""}` + `git_diff=True` resolves changed files via `git diff --name-only`. Merges with explicitly-passed files. |
 | **#47 Dry-run actually dry** | ✅ v1.1.2 | `dry_run=True` now guards `node_write_files`, `node_commit`, `node_git_branch`. Guards run AFTER validation checks so dry_run still surfaces JSON/verification errors. |
+| **#43 GitHub PR workflow** | ✅ v1.3 | New `node_publish` between `node_commit` and `node_distill_memory`. Push branch → create PR → optional auto-merge. Gated on `AUTOCODE_PUSH_ON_COMMIT` + `AUTOCODE_OPEN_PR` + `AUTOCODE_AUTO_MERGE` flags (all default OFF). Uses new `workflows/autocode_impl/github_ops.py` helper module. |
+| **`node_publish`** | ✅ v1.3 | New node: push + PR create + optional auto-merge. All operations graceful-skip if GitHub not configured. PR body includes task, commit SHA, verification status, swarm verdict. |
+| **`github_ops.py` helper** | ✅ v1.3 | New module mirroring `git_ops.py` pattern: `_github_push()`, `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()`, `_github_pull()`, `_swarm_debug_consensus()`. Lazy imports, tracer.step logging, structured returns. |
+| **Swarm debug integration** | ✅ v1.3 | `node_systematic_debug` now optionally uses swarm (2-run pattern: consensus → vote). Confidence: HIGH (unanimous) / MEDIUM (majority) / LOW (split). Non-blocking: fix always applies. LOW confidence → optional PR comment. Falls back to single-LLM if swarm off/unavailable. |
+| **6 new config flags** | ✅ v1.3 | `AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`. All default OFF — v1.3 behaves identically to v1.2 unless explicitly opted in. |
+| **4 new state fields** | ✅ v1.3 | `pushed: bool`, `pr_number: int`, `pr_url: str`, `swarm_verdict: dict`. Plus fix: `branch: str` added to TypedDict (was read by `branch.py` but not declared — TypedDict drift). |
+| **Optional pull before branch** | ✅ v1.3 | `node_git_branch` now optionally pulls recent commits before creating the branch (`AUTOCODE_PULL_BEFORE_BRANCH=1`). Uses `github(action="pull")`. Non-blocking — pull failure doesn't stop the workflow. |
 
 ---
 
@@ -88,12 +96,12 @@
 | 34 | **Remove `run_autocode_agent()` backward-compat shim** | Once all callers use `run_workflow("autocode")` directly, remove the shim. Audit callers first. | P2 |
 | 35 | **`invoke_with_timeout` daemon-thread zombie risk** | On timeout, daemon thread keeps running (Python can't kill threads). Consider `concurrent.futures` with cancellation or `multiprocessing`. | P2 |
 | 36 | **`create_skill` smoke-test import + git commit** | Currently has AST syntax check (v1.0.2 #16) but no import test or git commit. Skills should be committed like all other code changes. | P2 |
-| 37 | **Context summarization node** | Compress debug-loop history before it overflows the LLM context window. Add a `summarize_context` node before the debug loop re-enters. **v1.3 note:** Chonkie `SentenceChunker` is the right tool for this compression (reuses `_chunk_text()` from file tool v1.2). **Dependency:** Current `debug.py` is stateless per iteration (each debug call sees only current test output, no accumulated history). This item depends on autocode first being refactored to accumulate debug-loop history across iterations. See `docs/TOOLS.md` § "Chunking (chonkie)". | P1 (depends on debug history accumulation) |
+| 37 | **Context summarization node** | Compress debug-loop history before it overflows the LLM context window. Add a `summarize_context` node before the debug loop re-enters. **v1.3 note:** Chonkie `SentenceChunker` is the right tool for this compression (reuses `_chunk_text()` from file tool v1.2). **Dependency:** Current `debug.py` is stateless per iteration (each debug call sees only current test output, no accumulated history). This item depends on autocode first being refactored to accumulate debug-loop history across iterations. See `docs/TOOLS.md` § "Chunking (chonkie)". **v1.3 note:** Swarm debug does NOT solve this — it only sees the current iteration's test output, not history. Still blocked on debug history accumulation. | P1 (depends on debug history accumulation) |
 | 38 | **Human-in-the-Loop (HiTL) approval** | Pause graph before `commit` or `create_skill`. Send notification, wait for approve/reject via MCP. | P2 |
 | 40 | **Adaptive timeout by task type** | `create_skill`=120s, `audit`=300s, `feature`=900s. Better than one global timeout. | P2 |
 | 41 | **AST/linter pre-check before pytest** | Run `ruff`/`flake8` before `pytest`. Catch indentation errors instantly without booting the test runner. | P2 |
 | 42 | **Goal sanitization** | Enforce max length + strip control chars on `goal`/`task` input. Defense in depth (path traversal, command injection, token budget). | P2 |
-| 43 | **GitHub PR workflow** | After github tool is created, wire autocode to create PRs (branch → commit → push → open PR) instead of just commits. | P2 |
+| 43 | **GitHub PR workflow** | ✅ Shipped in v1.3 — see Completed section above. | ~~P2~~ Done |
 | 45 | **Streaming node transitions** | Stream `tracer.step` events to the client via WebSocket so the user sees progress instead of a 5-minute blank wait. Needs gateway integration. | P2 |
 
 ---
@@ -112,4 +120,39 @@
 
 ---
 
-*Last updated: 2026-07-08 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+## 🔍 2.0 Review Notes
+
+This section documents known technical debt and design decisions in v1.3 that
+should be reviewed during the 2.0 refactoring. All items are marked with
+`# TODO(2.0):` in the source code.
+
+### Architecture
+
+| Item | Location | Notes |
+|------|----------|-------|
+| `git_ops.py` + `github_ops.py` split | `workflows/autocode_impl/` | v1.3 keeps them separate because git (local) and github (remote) are separate tools. In 2.0, consider merging into a unified `vcs_ops.py` module. |
+| `node_publish` as single node | `nodes/publish.py` | Currently one node handling push + PR + merge. In 2.0, consider splitting into separate `node_push`, `node_pr_create`, `node_pr_merge` for finer-grained routing and retry. |
+| Debug node statelessness | `nodes/debug.py` | Each debug call sees only current test output, no accumulated history. Blocks context summarization (#37). Swarm debug does NOT solve this. Must be refactored in 2.0. |
+| Swarm verdict non-blocking | `nodes/debug.py` | Low-confidence swarm verdict applies fix anyway (non-blocking). In 2.0, consider `AUTOCODE_SWARM_BLOCK_ON_LOW_CONFIDENCE` flag for stricter gating. |
+| Config flags are global | `core/config.py` | All 6 v1.3 flags are global. In 2.0, consider per-task overrides (e.g., different PR strategy for different task types). |
+
+### Integration
+
+| Item | Location | Notes |
+|------|----------|-------|
+| `AUTOCODE_AUTO_MERGE` hardcoded to squash | `nodes/publish.py` | In 2.0, add `AUTOCODE_AUTO_MERGE_METHOD` config (squash/merge/rebase). |
+| Pull failure is non-blocking | `nodes/branch.py` | Pull failure doesn't stop the workflow. In 2.0, consider making this configurable (fail-fast vs graceful-skip). |
+| Swarm confidence thresholds | `github_ops.py` | Currently: unanimous=HIGH, majority=MEDIUM, split/disagreement=LOW. In 2.0, review thresholds — maybe MEDIUM should require ≥3 providers. |
+| PR body is minimal | `nodes/publish.py` | Currently includes task, commit SHA, verification status, swarm verdict. In 2.0, add test results, diff summary, impact warnings. |
+| No retry on push/PR failure | `nodes/publish.py` | Push or PR creation failure is terminal. In 2.0, add retry logic for transient failures. |
+
+### Documentation
+
+| Item | Location | Notes |
+|------|----------|-------|
+| Stale env vars in AUTOCODE.md | `docs/workflows/AUTOCODE.md` | Lists `AUTOCODE_PLANNER_TIMEOUT` etc. which don't exist (timeouts come from `model_registry`). Fixed in v1.3 — verify the fix is complete. |
+| `pull` action rebase param | `tools/github_ops/actions/pull.py` | `git pull --rebase` not supported. In 2.0, consider adding `rebase: bool` param. |
+
+---
+
+*Last updated: 2026-07-10 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

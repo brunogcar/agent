@@ -24,6 +24,7 @@ from workflows.autocode_impl.nodes.write_files import (
 )
 from workflows.autocode_impl.nodes.verify import node_verify
 from workflows.autocode_impl.nodes.commit import node_commit
+from workflows.autocode_impl.nodes.publish import node_publish  # [v1.3]
 from workflows.autocode_impl.nodes.memory import node_distill_memory
 from workflows.autocode_impl.nodes.create_skill import node_create_skill
 from workflows.autocode_impl.nodes.report import node_report
@@ -43,7 +44,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "1.1",
+    "version": "1.3",  # [v1.3] GitHub + Swarm integration
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -62,6 +63,7 @@ WORKFLOW_METADATA = {
         {"name": "node_verify", "type": "composite", "description": "Verification gate: lint + tests + LLM spec check"},
         {"name": "node_report", "type": "llm", "role": "summarize", "description": "Generate structured report of what was done"},
         {"name": "node_commit", "type": "tool", "tool": "git", "description": "Commit changes to the git branch"},
+        {"name": "node_publish", "type": "tool", "tool": "github", "description": "[v1.3] Push branch + create PR + optional auto-merge"},  # [v1.3]
         {"name": "node_distill_memory", "type": "llm", "role": "planner", "description": "Distill procedural memory for future runs"},
         {"name": "node_create_skill", "type": "tool", "tool": "file", "description": "Generate a new skill file (bypasses TDD, has AST validation)"},
     ],
@@ -86,7 +88,8 @@ WORKFLOW_METADATA = {
         {"from": "node_verify", "to": "node_report", "condition": "route_after_verify: verification_passed"},
         {"from": "node_verify", "to": "END", "condition": "route_after_verify: failed"},
         {"from": "node_report", "to": "node_commit"},
-        {"from": "node_commit", "to": "node_distill_memory"},
+        {"from": "node_commit", "to": "node_publish"},  # [v1.3]
+        {"from": "node_publish", "to": "node_distill_memory"},  # [v1.3]
         {"from": "node_distill_memory", "to": "END"},
     ],
     "loops": [
@@ -133,6 +136,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_write_files_with_flag_reset", node_write_files_with_flag_reset)
     workflow.add_node("node_verify", node_verify)
     workflow.add_node("node_commit", node_commit)
+    workflow.add_node("node_publish", node_publish)  # [v1.3]
     workflow.add_node("node_distill_memory", node_distill_memory)
     workflow.add_node("node_create_skill", node_create_skill)
     workflow.add_node("node_report", node_report)
@@ -205,9 +209,10 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # Report -> commit -> distill -> END
+    # Report -> commit -> publish -> distill -> END  [v1.3: +publish]
     workflow.add_edge("node_report", "node_commit")
-    workflow.add_edge("node_commit", "node_distill_memory")
+    workflow.add_edge("node_commit", "node_publish")  # [v1.3]
+    workflow.add_edge("node_publish", "node_distill_memory")  # [v1.3]
     workflow.add_edge("node_distill_memory", END)
 
     return workflow

@@ -6,7 +6,7 @@
 
 | File | Purpose |
 |------|---------|
-| `tools/github.py` | `@tool` facade: action dispatch, kwargs forwarding, exception capture, `duration_ms` timing, `trace_id` injection, `_NOT_PARALLEL_SAFE = frozenset({"push"})`. v1.2 facade params: 23 total (added `page` in v1.2; `state` default changed to `""`) |
+| `tools/github.py` | `@tool` facade: action dispatch, kwargs forwarding, exception capture, `duration_ms` timing, `trace_id` injection, `_NOT_PARALLEL_SAFE = frozenset({"push", "pull"})` (v1.3 — `pull` added). v1.2 facade params: 23 total (added `page` in v1.2; `state` default changed to `""`) |
 | `tools/_meta_tool.py` | `@meta_tool` decorator: docstring `doc_sections` + metadata. (github uses `action: str` — no `Literal` enum generated) |
 | `tools/github_ops/__init__.py` | Auto-imports every `actions/*.py` module to trigger `@register_action` side effects |
 | `tools/github_ops/_registry.py` | `DISPATCH` dict + `@register_action` decorator (duplicate-action detection) |
@@ -18,6 +18,7 @@
 | `tools/github_ops/actions/pr_merge.py` | PUT `/repos/{owner}/{repo}/pulls/{number}/merge` — squash / merge / rebase |
 | `tools/github_ops/actions/pr_comment.py` | POST `/issues/{number}/comments` (general) OR `/pulls/{number}/comments` (line-level) — dual-mode |
 | `tools/github_ops/actions/push.py` | Local `git push` subprocess (NOT an API call) — `--force-with-lease` when `force=True` |
+| `tools/github_ops/actions/pull.py` | Local `git pull` subprocess (NOT an API call) — optional `branch` (empty = current branch). v1.3 — remote-sync counterpart to `push` |
 | `tools/github_ops/actions/issue_create.py` | POST `/repos/{owner}/{repo}/issues` — open a new issue (v1.1) |
 | `tools/github_ops/actions/issue_list.py` | GET `/repos/{owner}/{repo}/issues?state=...&labels=...&page=...` — list issues (paginated; uses `parse_link_header`; v1.1 + v1.2 pagination) |
 | `tools/github_ops/actions/issue_get.py` | GET `/repos/{owner}/{repo}/issues/{number}` — single issue details (v1.2) |
@@ -30,7 +31,7 @@
 | `core/contracts.py` | `ok()` / `fail()` — standardized return shape |
 | `core/tracer.py` | `tracer` — observability (imported by facade) |
 | `registry.py` | `@tool` decorator — auto-discovery of `github()` into MCP |
-| `core/parallel_executor.py` | `PARALLEL_SAFE` frozenset — `push` is excluded (subprocess); 14 API actions are safe to parallelize |
+| `core/parallel_executor.py` | `PARALLEL_SAFE` frozenset — `push` AND `pull` excluded (subprocess); 14 API actions are safe to parallelize |
 
 > **Note:** Unlike `git_ops/`, `web_ops/`, `tavily_ops/`, `memory_ops/`, the `github_ops/` subpackage has **no `helpers.py`** file. Each action handler is self-contained — there's no shared utility beyond `client.py` (the httpx singleton + config check + v1.2 `parse_link_header()`). The dual-mode logic in `pr_comment.py` and the per-action validation logic are kept inline in each handler for clarity. If shared helpers accumulate later (e.g. rate-limit tracking), a `helpers.py` can be added without breaking the existing pattern.
 
@@ -67,15 +68,18 @@ tools/github_ops/
     ├── release_create.py             # POST /releases — create a release from a tag (v1.1)
     ├── release_list.py               # GET /releases — list releases (v1.1)
     ├── release_get.py                # GET /releases/tags/{tag} OR /releases/{id} — (v1.2)
-    └── push.py                       # Local `git push` subprocess (--force-with-lease when force=True)
-                                      # NOT an API call — does NOT require GITHUB_TOKEN
+    ├── push.py                       # Local `git push` subprocess (--force-with-lease when force=True)
+    │                                 # NOT an API call — does NOT require GITHUB_TOKEN
+    └── pull.py                       # Local `git pull` subprocess (v1.3 — remote-sync counterpart to push)
+                                      # Optional branch (empty = current branch); NOT an API call
+                                      # Does NOT require GITHUB_TOKEN
 ```
 
 ---
 
 ## 🔀 Dispatch Flow
 
-### Facade dispatch (all 15 actions)
+### Facade dispatch (all 16 actions)
 
 ```mermaid
 graph TD
@@ -84,7 +88,7 @@ graph TD
     C -->|Yes| D["fail('action is required')"]
     C -->|No| E["DISPATCH['github'][action]"]
     E --> F{"op_info is None?"}
-    F -->|Yes| G["fail('Unknown action. Use: pr_comment | pr_create | pr_get | pr_list | pr_merge | pr_review | push')"]
+    F -->|Yes| G["fail('Unknown action. Use: pr_comment | pr_create | pr_get | pr_list | pr_merge | pr_review | push | pull | ...')"]
     F -->|No| H["handler = op_info['func']"]
     H --> I["kwargs = {title, head, base, body, number, state, limit, event, merge_method, commit_title, commit_message, path, line, side, branch, remote, force, trace_id}"]
     I --> J["start = time.time()"]
@@ -143,6 +147,31 @@ graph TD
     O -->|No| Q["ok({status: 'ok', branch, remote, pushed: True, output, forced: bool(force)})"]
 ```
 
+### `pull` action flow (subprocess, NOT API) — v1.3
+
+```mermaid
+graph TD
+    A["handler(branch, remote, trace_id, **kwargs)"] --> B{"remote empty?"}
+    B -->|Yes| C["fail('remote cannot be empty (default is origin)')"]
+    B -->|No| D{"branch/remote contain shell metacharacters?"}
+    D -->|Yes| E["fail('branch/remote contains forbidden character {char!r}')"]
+    D -->|No| F{"branch provided?"}
+    F -->|Yes| G["cmd = ['git', 'pull', remote, branch]"]
+    F -->|No (empty = current)| H["cmd = ['git', 'pull', remote]"]
+    G --> I["subprocess.run(cmd, capture_output=True, text=True, timeout=120)"]
+    H --> I
+    I --> J{"TimeoutExpired?"}
+    J -->|Yes| K["fail('git pull timed out after 120s (branch=..., remote=...)')"]
+    J -->|No| L{"FileNotFoundError (git not on PATH)?"}
+    L -->|Yes| M["fail('git executable not found — install git and ensure it is on PATH')"]
+    L -->|No| N["output = (result.stdout or '') + (result.stderr or '')"]
+    N --> O{"returncode != 0?"}
+    O -->|Yes| P["fail('git pull failed (exit {code}): {output}', exit_code=code, output=output)"]
+    O -->|No| Q["ok({status: 'ok', branch: branch or '(current)', remote, pulled: True, output})"]
+```
+
+> **`push` vs `pull` flow symmetry (v1.3):** both are subprocess actions with identical error-handling structure (empty-`remote` check → shell-metacharacter rejection → 120s timeout → `FileNotFoundError` → non-zero exit). Differences: `push` requires `branch` (fails if empty) and supports `force` (→ `--force-with-lease`); `pull` makes `branch` optional (empty = current branch, surfaced as `"(current)"` in the result) and has no `force` param. Both live in `github_ops/` (NOT `git_ops/`) because they're part of the remote workflow.
+
 ---
 
 ## 💡 Key Design Decisions
@@ -153,17 +182,17 @@ The github tool uses `httpx.Client` directly to call the GitHub REST API. **Why 
 
 **Implication:** Every API action manually constructs the URL (`f"{repo_path()}/pulls"` etc.), parses the JSON response, and extracts fields. This is more verbose than PyGithub's `repo.create_pull(...)` but is also more transparent — the URL, payload, and response shape are all visible in the action source code.
 
-### 2. `push` lives in `github_ops/` (NOT `git_ops/`)
+### 2. `push` + `pull` live in `github_ops/` (NOT `git_ops/`)
 
-The `push` action spawns a local `git push` subprocess. Conceptually, it could live in `git_ops/` alongside `commit`, `add`, `status`, etc. It was placed in `github_ops/` instead. **Why:** Pushing a local branch to `origin` is the **prerequisite** for the entire PR workflow — push → open PR → review → merge. Grouping it with the other PR actions makes the workflow discoverable: every step from local commit to merged PR is reachable via `github(action=...)`. The `git_ops` tool remains focused on **local repo inspection and mutation** (`status`, `diff`, `log`, `branch_create`, `commit`, `restore`, `rollback`, `clone`). The split is: `git = local VCS, github = remote PR workflow`.
+The `push` action spawns a local `git push` subprocess; the `pull` action (v1.3) spawns a local `git pull` subprocess. Conceptually, both could live in `git_ops/` alongside `commit`, `add`, `status`, etc. They were placed in `github_ops/` instead. **Why:** Pushing a local branch to `origin` is the **prerequisite** for the entire PR workflow — push → open PR → review → merge. `pull` is the **remote-sync counterpart** — pull before branching → push after committing. Grouping them with the other PR actions makes the workflow discoverable: every step from local commit to merged PR is reachable via `github(action=...)`. The `git_ops` tool remains focused on **local repo inspection and mutation** (`status`, `diff`, `log`, `branch_create`, `commit`, `restore`, `rollback`, `clone`). The split is: `git = local VCS, github = remote PR workflow + remote sync`.
 
-**Implication:** When you need to push a branch, use `github(action="push", branch="...")`, NOT `git(action="push", ...)`. There is no `push` action in the `git` tool — and there shouldn't be (see INSTRUCTIONS.md → NEVER DO rule).
+**Implication:** When you need to push or pull a branch, use `github(action="push", branch="...")` or `github(action="pull")`, NOT `git(action="push"/"pull", ...)`. There is no `push` or `pull` action in the `git` tool — and there shouldn't be (see INSTRUCTIONS.md → NEVER DO rule).
 
-### 3. `PARALLEL_SAFE` for API actions, NOT for `push`
+### 3. `PARALLEL_SAFE` for API actions, NOT for `push` or `pull`
 
-The 6 API actions are stateless HTTPS calls to `https://api.github.com` — they're safe to parallelize in `parallel(tools=[...])`. The `push` action spawns a `git push` subprocess; concurrent pushes to the same branch will fail with lock contention. The facade declares `_NOT_PARALLEL_SAFE = frozenset({"push"})` and `push` is excluded from `PARALLEL_SAFE` in `core/parallel_executor.py`. **Why:** Subprocesses hold git index locks; two simultaneous `git push` operations on the same repo race on `.git/index.lock`. API actions don't have this problem — each is an independent HTTP request.
+The 6 API actions are stateless HTTPS calls to `https://api.github.com` — they're safe to parallelize in `parallel(tools=[...])`. The `push` and `pull` actions spawn `git push` / `git pull` subprocesses; concurrent pushes/pulls to the same repo will fail with lock contention. The facade declares `_NOT_PARALLEL_SAFE = frozenset({"push", "pull"})` (v1.3 — `pull` added) and both are excluded from `PARALLEL_SAFE` in `core/parallel_executor.py`. **Why:** Subprocesses hold git index locks; two simultaneous `git push` or `git pull` operations on the same repo race on `.git/index.lock`. API actions don't have this problem — each is an independent HTTP request.
 
-**Implication:** You can safely do `parallel(tools=[github(pr_get, number=42), github(pr_get, number=43)])`. You CANNOT safely do `parallel(tools=[github(push, branch="x"), github(push, branch="y")])` — the second will likely fail.
+**Implication:** You can safely do `parallel(tools=[github(pr_get, number=42), github(pr_get, number=43)])`. You CANNOT safely do `parallel(tools=[github(push, branch="x"), github(pull)])` — both will likely fail with lock contention.
 
 ### 4. `--force-with-lease` (NOT `--force`)
 
@@ -213,6 +242,10 @@ v1.0/v1.1 `pr_list` and (v1.1) `issue_list` were capped at 100 items (GitHub's `
 
 v1.0/v1.1 `pr_get`/`pr_review`/`pr_merge`/`pr_comment` checked `if number is None:` to detect a missing PR number. But the facade defaults `number: int = 0`, so calling `github(action="pr_get")` (no `number` arg) passed the `is None` check, hit the API with `number=0`, and got a confusing 404 (or worse, a 200 if PR #0 existed — it can't, but the principle stands). v1.2 changed the check to `if not number:` — fails fast with `"number is required for <action>"` whenever `number` is `0`, `None`, `""`, or any other falsy value. The same fix was applied to `pr_comment`'s `line` field: `line_set = bool(line)` instead of `line_set = line is not None` — catches the facade default `line=0`. **Why this matters:** the facade's default-zero pattern (`number: int = 0`, `line: int = 0`) is intentional (keeps the signature simple, no `Optional`), but it shifts the responsibility for detecting "not provided" to the handler. `is None` checks don't catch integer-zero defaults; `if not x:` does.
 
+### 16. `pull` is the remote-sync counterpart to `push` (v1.3)
+
+v1.3 adds the `pull` action as a deliberate symmetric counterpart to `push`. Both are local subprocess actions; both live in `github_ops/` (NOT `git_ops/`); both reject shell metacharacters in `branch`/`remote`; both use a 120s timeout; both combine stdout+stderr in `output`. **Why symmetric:** the standard PR workflow is **`pull` before branching → branch → commit → `push` → `pr_create`** — `pull` and `push` are the bookend remote-sync operations, and grouping them together (both in `github_ops/` and visually adjacent in the `@meta_tool` `doc_sections` table) makes the workflow discoverable. **Why `pull` was added in v1.3 specifically:** autocode v1.3 introduced `AUTOCODE_PULL_BEFORE_BRANCH=1` — the `node_git_branch` workflow node calls `github(action="pull")` before `_git_create_branch()` to ensure the new branch is based on the latest remote state. Without a `pull` action, autocode would have had to shell out to `git pull` directly via `subprocess.run` — bypassing the github tool's defense-in-depth (shell-metacharacter rejection, structured result, `tracer.step` logging). Adding `pull` to the github tool keeps the entire remote workflow (both directions) under one tool. **Differences from `push`:** (a) `pull` makes `branch` optional (empty = current branch, surfaced as `"(current)"` in the result) while `push` requires `branch`; (b) `pull` has no `force` param — force-push semantics don't apply to pull. # TODO(2.0): consider adding a `rebase=True` param to `pull` (would map to `git pull --rebase`) for callers who prefer rebase over merge.
+
 ---
 
 ## 🧪 Testing
@@ -226,7 +259,7 @@ python -m pytest tests/tools/github/ -W error --tb=short -v
 ```text
 tests/tools/github/
 ├── conftest.py              # Fixtures: mock_cfg, mock_not_configured, mock_httpx_client (14 API modules)
-├── test_dispatch.py         # Facade: unknown action (lists all 15), empty action, DISPATCH has 15 actions, duration_ms
+├── test_dispatch.py         # Facade: unknown action (lists all 16), empty action, DISPATCH has 16 actions, duration_ms
 ├── test_pr_create.py        # Success, not configured, missing title, missing head (4 tests)
 ├── test_pr_list.py          # Success, not configured, state filter pass-through, pagination, no-next-page (5 tests)
 ├── test_pr_get.py           # Success, not configured, missing number, not found, non-numeric, mergeable=null (6 tests) [v1.2]
@@ -234,20 +267,21 @@ tests/tools/github/
 ├── test_pr_merge.py         # Squash, custom method, not configured, missing number, invalid method, not mergeable, conflict (7 tests) [v1.2]
 ├── test_pr_comment.py       # General, line-level, not configured, missing number, missing body, XOR violation, side validation (7 tests) [v1.2]
 ├── test_issues_releases.py  # issue_create/list/get/update/comment + release_create/list/get + pagination (26 tests) [v1.1 + v1.2]
-└── test_push.py             # Success, missing branch, force-with-lease, non-zero exit code (4 tests)
+├── test_push.py             # Success, missing branch, force-with-lease, non-zero exit code (4 tests)
+└── test_pull.py             # Success with branch, success on current branch, custom remote, non-zero exit, timeout, git-not-found, forbidden chars (7 tests) [v1.3]
 ```
 
 **Mock strategy:**
 - **`mock_cfg`** fixture: patches `core.config.cfg.github_token` / `github_owner` / `github_repo` with test values → `is_configured()` returns True. Used by `mock_httpx_client`.
 - **`mock_not_configured`** fixture: patches `core.config.cfg.github_token` with `""` → `is_configured()` returns False. Used by "not configured" tests.
-- **`mock_httpx_client`** fixture (depends on `mock_cfg`): patches `get_client` in ALL 14 API action modules' namespaces (`tools.github_ops.actions.{pr_create,pr_list,pr_get,pr_review,pr_merge,pr_comment,issue_create,issue_list,issue_get,issue_update,issue_comment,release_create,release_list,release_get}.get_client`) to return a single MagicMock httpx client. Tests override `.get()` / `.post()` / `.put()` / `.patch()` return_value with canned responses. v1.2 update: default mock `headers = {}` so `pr_list`/`issue_list` `resp.headers.get("link", "")` works without per-test setup.
-- **`push` tests** patch `tools.github_ops.actions.push.subprocess.run` directly — no httpx mock needed (push doesn't use httpx).
+- **`mock_httpx_client`** fixture (depends on `mock_cfg`): patches `get_client` in ALL 14 API action modules' namespaces (`tools.github_ops.actions.{pr_create,pr_list,pr_get,pr_review,pr_merge,pr_comment,issue_create,issue_list,issue_get,issue_update,issue_comment,release_create,release_list,release_get}.get_client`) to return a single MagicMock httpx client. Tests override `.get()` / `.post()` / `.put()` / `.patch()` return_value with canned responses. v1.2 update: default mock `headers = {}` so `pr_list`/`issue_list` `resp.headers.get("link", "")` works without per-test setup. **v1.3:** `_API_ACTION_MODULES` unchanged — `pull` (like `push`) is NOT in this list because it uses subprocess, not httpx.
+- **`push` + `pull` tests** patch `tools.github_ops.actions.push.subprocess.run` / `tools.github_ops.actions.pull.subprocess.run` directly — no httpx mock needed (neither action uses httpx).
 
 **Critical mock-patching note (conftest.py docstring):**
 Each action module imports `get_client` by name (`from tools.github_ops.client import get_client`). After import, the action module holds a direct reference to the function object. Patching `tools.github_ops.client.get_client` AFTER the actions are imported does NOT intercept calls made via the action module's local reference. The `mock_httpx_client` fixture patches `get_client` at every action module's namespace (`tools.github_ops.actions.<name>.get_client`) — this is the only way to intercept the call. This is the same issue solved in `tests/tools/tavily/conftest.py` (which patches `_get_singleton_client` at the source — tavily imports it lazily inside functions, so source patching works).
 
-**Coverage (as of v1.2):**
-- ✅ Facade dispatch (unknown action — lists all 15, empty action, DISPATCH registry has 15, duration_ms)
+**Coverage (as of v1.3):**
+- ✅ Facade dispatch (unknown action — lists all 16, empty action, DISPATCH registry has 16, duration_ms) [v1.3: +1 action in dispatch assertions]
 - ✅ `pr_create` (4 tests: success, not configured, missing title, missing head)
 - ✅ `pr_list` (5 tests: success, not configured, state filter pass-through, pagination via Link header, no-next-page case) [v1.2: +2 pagination tests]
 - ✅ `pr_get` (6 tests: success, not configured, missing number, not found, non-numeric number, mergeable=null case) [v1.2 NEW]
@@ -257,8 +291,9 @@ Each action module imports `get_client` by name (`from tools.github_ops.client i
 - ✅ `issue_create` / `issue_list` / `issue_comment` / `release_create` / `release_list` (v1.1, in `test_issues_releases.py`)
 - ✅ `issue_get` (4 tests) / `issue_update` (7 tests) / `release_get` (5 tests) / `issue_list` pagination (1 test) [v1.2 NEW in `test_issues_releases.py`]
 - ✅ `push` (4 tests: success, missing branch, force-with-lease, non-zero exit code)
+- ✅ `pull` (7 tests: success with branch, success on current branch, custom remote, non-zero exit, timeout, git-not-found, forbidden chars in branch) [v1.3 NEW]
 
-**Total: 78 tests** (was 32 in v1.1; was 16 in v1.0).
+**Total: 85 tests** (was 78 in v1.2; was 32 in v1.1; was 16 in v1.0).
 
 **Run command:**
 ```bash
@@ -267,4 +302,4 @@ python -m pytest tests/tools/github/ -W error --tb=short -v
 
 ---
 
-*Last updated: 2026-07-10 (v1.2). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-10 (v1.3). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

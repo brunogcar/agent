@@ -1,15 +1,15 @@
 """
 Git helper functions for autocode workflow.
 
-[FUTURE] GitHub PR Integration:
-  When a `github` tool is added (planned before the autocode refactor),
-  this module will expand to support:
-    - Create PR from autocode branch
-    - Check PR status / CI results
-    - Fix PR based on review comments
-  For now, autocode relies on git branches + commits only. The branch itself
-  is the safety net — if something goes wrong, revert via git. No pre-snapshot
-  is needed since the branch isolates the changes.
+[v1.3] GitHub PR integration is now implemented in github_ops.py (sibling
+module). This module stays focused on LOCAL git operations (commit, branch).
+The branch itself is the safety net — if something goes wrong, revert via
+git. No pre-snapshot is needed since the branch isolates the changes.
+
+See github_ops.py for:
+  - _github_push(), _github_pr_create(), _github_pr_comment(), _github_pr_merge()
+  - _swarm_debug_consensus()
+  - _github_pull() (used by branch.py for AUTOCODE_PULL_BEFORE_BRANCH)
 """
 
 from __future__ import annotations
@@ -24,9 +24,8 @@ from core.tracer import tracer
 def _git_commit(message: str, tid: str = "", project_root: str = None) -> str | None:
     """Commit changes in the working tree.
 
-    [FUTURE] When GitHub PR integration is added, this will also handle
-    pushing the branch and creating/updating a PR. For now, it just commits
-    locally on the autocode branch.
+    [v1.3] Push + PR creation now handled by node_publish via github_ops.py.
+    This function stays focused on the local commit only.
     """
     from tools.git import git
     root = project_root or str(cfg.agent_root)

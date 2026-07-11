@@ -46,7 +46,7 @@ Please respond to the user's query:
 ### consult 💬 — consult(task=...) Ask another LLM for a second opinion
 ### parallel ⚡ — parallel(tasks=[...]) Execute multiple independent tasks concurrently
 ### swarm 🐝 — swarm(consensus|race|vote|compare|list_providers) Multi-model consultation across all configured cloud providers
-### github 🐙 — github(pr_create|pr_list|pr_get|pr_review|pr_merge|pr_comment|issue_create|issue_list|issue_get|issue_update|issue_comment|release_create|release_list|release_get|push) GitHub PR + issue + release operations (15 actions, v1.2) + git push
+### github 🐙 — github(pr_create|pr_list|pr_get|pr_review|pr_merge|pr_comment|issue_create|issue_list|issue_get|issue_update|issue_comment|release_create|release_list|release_get|push|pull) GitHub PR + issue + release operations (16 actions, v1.3) + git push/pull
 
 ---
 

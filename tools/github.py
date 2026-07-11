@@ -21,8 +21,8 @@ from tools._meta_tool import meta_tool
 from tools import github_ops  # noqa: F401 — triggers DISPATCH auto-discovery
 from tools.github_ops._registry import DISPATCH
 
-# push action uses subprocess — NOT parallel-safe
-_NOT_PARALLEL_SAFE = frozenset({"push"})
+# push + pull actions use subprocess — NOT parallel-safe
+_NOT_PARALLEL_SAFE = frozenset({"push", "pull"})
 
 
 @tool
@@ -39,6 +39,7 @@ _NOT_PARALLEL_SAFE = frozenset({"push"})
         " | Merge a PR | github(pr_merge) | merge / squash / rebase",
         " | Comment on PR | github(pr_comment) | General or line-level comment",
         " | Push branch | github(push) | git push origin branch (local subprocess)",
+        " | Pull commits | github(pull) | git pull origin branch (local subprocess)",
         " | Create issue | github(issue_create) | Create GitHub issue with labels + assignees",
         " | List issues | github(issue_list) | List open/closed/all issues (paginated)",
         " | Get issue | github(issue_get) | Get single issue details",

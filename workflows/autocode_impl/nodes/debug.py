@@ -1,5 +1,17 @@
 """
 Debug node for autocode workflow.
+
+[v1.3] Added optional swarm integration (AUTOCODE_SWARM_DEBUG=1):
+  - Run 1: swarm(action="consensus") — all providers propose a fix
+  - Run 2: swarm(action="vote") — providers vote on the consensus
+  - Confidence: HIGH (unanimous) / MEDIUM (majority) / LOW (split/disagreement)
+  - Non-blocking: fix always applies; LOW confidence → optional PR comment
+  - Falls back to single-LLM debug if swarm unavailable or flag off
+
+# TODO(2.0): The debug node is stateless per iteration (each call sees only
+# current test output, no accumulated history). This blocks context
+# summarization (#37). Should be refactored in 2.0 to accumulate debug_notes
+# across iterations for the swarm consensus prompt.
 """
 from __future__ import annotations
 import json, re
@@ -9,6 +21,7 @@ from core.memory_engine import memory
 from core.tracer import tracer
 from workflows.autocode_impl.helpers import _call, _parse_json
 from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.github_ops import _swarm_debug_consensus, _github_pr_comment
 from core.kgraph.queries import get_dependencies, get_callers
 
 def node_systematic_debug(state: AutocodeState) -> dict:
@@ -77,6 +90,46 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     )
     user = f"Test failure:\n{stderr[:2000]}\n\nTest output:\n{stdout[:2000]}"
 
+    # [v1.3] Swarm debug integration (2-run pattern: consensus → vote)
+    # Falls back to single-LLM debug if swarm is off, unavailable, or fails.
+    # TODO(2.0): Consider making swarm the default debug path for cloud-enabled setups.
+    if cfg.autocode_swarm_debug:
+        swarm_result = _swarm_debug_consensus(system, user, tid)
+        if swarm_result is not None:
+            root_cause = swarm_result.get("root_cause", "Unknown")
+            defense_notes = swarm_result.get("defense_notes", "")
+            suggested_fix = swarm_result.get("fix", "")
+            confidence = swarm_result.get("confidence", "LOW")
+            agreement = swarm_result.get("agreement", "unknown")
+            providers = swarm_result.get("providers", 0)
+
+            tracer.step(tid, "systematic_debug", f"Swarm root cause: {root_cause[:100]} (confidence={confidence})")
+
+            # If LOW confidence + PR exists + flag enabled → post PR comment
+            # so human reviewers can see the disagreement
+            # TODO(2.0): Also post for MEDIUM confidence if providers < 3
+            if (confidence == "LOW" and cfg.autocode_debug_comment_pr
+                    and state.get("pr_number")):
+                comment = (
+                    f"⚠️ **Low-confidence swarm debug verdict**\n\n"
+                    f"**Root cause:** {root_cause[:500]}\n"
+                    f"**Agreement:** {agreement} ({providers} providers)\n\n"
+                    f"Fix was applied automatically, but please review carefully."
+                )
+                _github_pr_comment(state["pr_number"], comment, tid)
+
+            return {
+                "root_cause": root_cause,
+                "defense_notes": defense_notes,
+                "tdd_source_code": suggested_fix,
+                "debug_notes": f"Debug iteration {current_iteration} (swarm {confidence}): {root_cause}",
+                "swarm_verdict": swarm_result,
+            }
+        # Swarm failed — fall through to single-LLM debug
+        tracer.step(tid, "systematic_debug", "Swarm unavailable — falling back to single-LLM debug")
+
+    # Single-LLM debug (existing v1.2 behavior — used when AUTOCODE_SWARM_DEBUG=0
+    # or when swarm is unavailable)
     try:
         # Autocode v1.2: JSON schema enforcement — LM Studio enforces the debug
         # schema at generation time. The model cannot produce root_cause/

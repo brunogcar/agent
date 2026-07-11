@@ -15,8 +15,8 @@ IMPORTANT — get_client patching strategy:
   The fix is to patch `get_client` at every action module's namespace
   (`tools.github_ops.actions.<name>.get_client`). The `mock_httpx_client`
   fixture below patches all 14 API-based action modules (6 PR actions +
-  8 issue/release actions). (`push` doesn't need patching — it uses
-  subprocess directly, no httpx.)
+  8 issue/release actions). (`push` and `pull` don't need patching — they
+  use subprocess directly, no httpx.)
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 
 
 # All github_ops action modules that import get_client from client.py.
-# push.py is intentionally NOT in this list — it uses subprocess, not httpx.
+# push.py + pull.py are intentionally NOT in this list — they use subprocess, not httpx.
 _API_ACTION_MODULES = (
     # v1.0 — PR operations (6 API actions)
     "pr_create",

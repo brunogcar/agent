@@ -128,7 +128,7 @@ class Config:
         self.mimo_api_key = os.getenv("MIMO_API_KEY", "")
         self.mimo_base_url = os.getenv("MIMO_BASE_URL", "https://aistudio.xiaomimimo.com/v1")
 
-        # GitHub API (for github tool — PR operations, push)
+        # GitHub API (for github tool — PR operations, push, issues, releases)
         self.github_token = os.getenv("GITHUB_TOKEN", "")
         self.github_owner = os.getenv("GITHUB_OWNER", "")
         self.github_repo = os.getenv("GITHUB_REPO", "")
@@ -334,6 +334,16 @@ class Config:
         # NOTE: planner_timeout, execution_timeout, router_timeout are derived from
         # model_registry above (single source of truth). Do not set them again here.
         self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
+
+        # -- Autocode v1.3: GitHub + Swarm integration flags -------------------
+        # All default OFF — autocode behaves exactly as v1.2 unless explicitly opted in.
+        # TODO(2.0): Review whether these should be per-task rather than global.
+        self.autocode_pull_before_branch = os.getenv("AUTOCODE_PULL_BEFORE_BRANCH", "0") == "1"
+        self.autocode_push_on_commit = os.getenv("AUTOCODE_PUSH_ON_COMMIT", "0") == "1"
+        self.autocode_open_pr = os.getenv("AUTOCODE_OPEN_PR", "0") == "1"
+        self.autocode_auto_merge = os.getenv("AUTOCODE_AUTO_MERGE", "0") == "1"
+        self.autocode_debug_comment_pr = os.getenv("AUTOCODE_DEBUG_COMMENT_PR", "0") == "1"
+        self.autocode_swarm_debug = os.getenv("AUTOCODE_SWARM_DEBUG", "0") == "1"
 
         # -- Validations -------------------------------------------------------
         # Existing validations (survive python -O via explicit raise)
