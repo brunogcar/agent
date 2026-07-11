@@ -19,16 +19,19 @@ from core.tracer import tracer
 
 
 def _run_async(coro):
-    """Run an async coroutine from sync context. Creates a new event loop."""
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(coro)
-        loop.close()
-        return result
-    except RuntimeError:
-        # Fallback: if there's already a running loop (unlikely in LangGraph sync node)
-        return asyncio.run(coro)
+    """Run an async coroutine from sync context.
+
+    [v2.0] Simplified to use asyncio.run() directly. Was: creating/destroying
+    a new event loop per call (resource leak risk, 3 LLMs flagged this in the
+    cross-LLM review). asyncio.run() handles loop creation + cleanup correctly
+    and is the standard Python 3.7+ pattern.
+
+    Note: This will raise RuntimeError if called from within a running event
+    loop. LangGraph sync nodes don't run in an event loop, so this is safe.
+    If async nodes are added in the future, they should use `await` directly
+    instead of calling this helper.
+    """
+    return asyncio.run(coro)
 
 
 def node_analyze_impact(state: AutocodeState) -> dict:

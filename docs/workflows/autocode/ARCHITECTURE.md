@@ -7,10 +7,11 @@
 | File | Purpose |
 |------|---------|
 | `workflows/autocode.py` | `run_autocode_agent()` — main entry point |
-| `workflows/autocode_impl/graph.py` | `build_graph()` — 17-node LangGraph StateGraph builder (was 18 in v1.3; **[v1.4]** removed dead `node_write_files_with_flag_reset` + dead `route_after_analyze_impact` conditional edge — see Dead Code section in CHANGELOG.md) |
-| `workflows/autocode_impl/state.py` | `AutocodeState` — extended TypedDict with autocode-specific fields ([v1.3] added `pushed`, `pr_number`, `pr_url`, `swarm_verdict`; fixed TypedDict drift on `branch`) |
+| `workflows/autocode_impl/graph.py` | `build_graph()` — 17-node LangGraph StateGraph builder (was 18 in v1.3; **[v1.4]** removed dead `node_write_files_with_flag_reset` + dead `route_after_analyze_impact` conditional edge — see Dead Code section in CHANGELOG.md). **[v2.0]** `WORKFLOW_METADATA["version"]` bumped from `"1.4"` to `"2.0-alpha"`; `invoke_with_timeout()` (in `base.py`, called from the autocode facade) now wires the new `helpers.py` cancellation flag (`clear_cancellation()` at start, `request_cancellation()` on timeout). Graph topology unchanged in Phase 1+2 — still 17 nodes. |
+| `workflows/autocode_impl/state.py` | `AutocodeState` — extended TypedDict with autocode-specific fields ([v1.3] added `pushed`, `pr_number`, `pr_url`, `swarm_verdict`; fixed TypedDict drift on `branch`). **[v2.0]** Adds 8 sub-state TypedDicts (`PlanState`, `TDDState`, `FilesState`, `ImpactState`, `DebugState`, `VerifyState`, `VCSState`, `MemoryState`) + 8 backward-compat accessor functions (`_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`). New `debug_history` field in `TDDState` (Phase 4 #37 placeholder — not yet populated). Legacy flat fields KEPT (removed in Phase 6). See "[v2.0] Sub-state Architecture" section below. |
 | `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_write_files()`, `route_after_run_tests()`, `route_after_verify()` — conditional routing. **[v1.4]** `route_after_analyze_impact()` deleted (was always constant — replaced with direct edge `node_analyze_impact → node_run_tests` in graph.py). |
-| `workflows/autocode_impl/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. **[Pre-2.0 Fix]** `_call()` now retries 2× with exponential backoff (was single attempt — a rate-limit blip crashed the workflow). `tracer.error()` calls now use 3 args (tid, category, msg) not 2. |
+| `workflows/autocode_impl/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. **[Pre-2.0 Fix]** `_call()` now retries 2× with exponential backoff (was single attempt — a rate-limit blip crashed the workflow). `tracer.error()` calls now use 3 args (tid, category, msg) not 2. **[v2.0]** `_parse_json()` now delegates to `core/json_extract.py` (consolidated JSON extraction — single source of truth). New cancellation flag: `request_cancellation()`, `clear_cancellation()`, `is_cancellation_requested()` — `_call()` checks the flag before each retry (aborts instead of sleeping through backoff if `invoke_with_timeout()` already timed out). |
+| `core/json_extract.py` | **[v2.0] NEW FILE** — consolidated JSON extraction utility. 3 functions: `extract_json(text)`, `extract_json_array(text)`, `extract_first_json(text)`. Single source of truth for all LLM JSON parsing. `helpers._parse_json` and `router._extract_first_json` both delegate to this module (eliminates the historical split where helpers used markdown-fence-strip + `json.loads` and router used `json.JSONDecoder().raw_decode()`). |
 | `workflows/autocode_impl/git_ops.py` | `_git_snapshot()`, `_git_create_branch()`, `_git_commit()` — local git operations (branch creation, commit) |
 | `workflows/autocode_impl/github_ops.py` | **[v1.3]** `_github_pull()`, `_github_push()`, `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()`, `_swarm_debug_consensus()` — remote GitHub operations (lazy imports, `is_configured()` guards, tracer.step logging, structured returns) |
 | `workflows/autocode_impl/patch.py` | `apply_patch()`, `apply_patches()`, `extract_relevant_sections()` — patch application |
@@ -26,10 +27,10 @@
 | `workflows/autocode_impl/nodes/execute.py` | `node_execute_step()` — plan step execution |
 | `workflows/autocode_impl/nodes/write_files.py` | `node_write_files()` — file writing. **[Pre-2.0 Fix]** New `_is_path_safe()` helper validates LLM-generated paths against `base_path` using `Path.resolve().is_relative_to()` (was: only user input validated — LLM could emit `../../etc/passwd`). |
 | `workflows/autocode_impl/nodes/run_tests.py` | `node_run_tests()` — test execution |
-| `workflows/autocode_impl/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis |
+| `workflows/autocode_impl/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis. **[v2.0]** `_run_async()` simplified from create/destroy event loop per call (`asyncio.new_event_loop` + `set_event_loop` + `run_until_complete` + `close`) to `asyncio.run(coro)`. Fixes the resource-leak risk flagged by 3 LLMs (DeepSeek, Kimi, MiMo) in the v1.4 cross-LLM review. No behavior change. |
 | `workflows/autocode_impl/nodes/debug.py` | `node_systematic_debug()` — debug analysis |
 | `workflows/autocode_impl/nodes/verify.py` | `node_verify()` — verification |
-| `workflows/autocode_impl/nodes/commit.py` | `node_git_commit()` — git commit |
+| `workflows/autocode_impl/nodes/commit.py` | `node_git_commit()` — git commit. **[v2.0]** First node migrated to the accessor pattern: reads `state["branch"]` via `_get_vcs(state, "branch", "main")` instead of `state.get("branch", "main")`. Proof-of-concept for the sub-state / legacy-fallback accessor layer (see "[v2.0] Sub-state Architecture" below). No behavior change — accessor returns the same value as the legacy path until Phase 6 removes the legacy fields. |
 | `workflows/autocode_impl/nodes/publish.py` | **[v1.3]** `node_publish()` — push branch + create PR + optional auto-merge (all gated on config flags + `is_configured()`) |
 | `workflows/autocode_impl/nodes/memory.py` | `node_distill_memory()` — procedural memory storage |
 | `workflows/autocode_impl/nodes/create_skill.py` | `node_create_skill()` — skill creation |
@@ -215,6 +216,108 @@ can trace the rationale.
 
 ---
 
+## 🧭 [v2.0] Sub-state Architecture
+
+The v2.0-alpha release introduces a backward-compatible accessor layer over the
+`AutocodeState` TypedDict. The goal is to migrate autocode from a flat ~35-field
+state dict to 8 focused sub-state TypedDicts without breaking any existing node or
+test in a single big-bang refactor. The migration is sequenced across the 7-phase
+plan (see CHANGELOG.md § "2.0 Refactor Progress"); only Phase 1 + Phase 2 ship in
+v2.0-alpha.
+
+### The 8 sub-state TypedDicts
+
+| Sub-state | TypedDict | Representative fields (legacy flat equivalents in parens) |
+|-----------|-----------|----------------------------------------------------------|
+| Plan | `PlanState` | `task_type`, `plan`, `branch`, `current_step` |
+| TDD | `TDDState` | `test_code`, `test_results`, `tdd_status`, `tdd_iteration`, `debug_history` **[v2.0] new** (Phase 4 #37 placeholder — not yet populated) |
+| Files | `FilesState` | `files`, `modified_files`, `written_files`, `files_map` |
+| Impact | `ImpactState` | `impact_warnings`, `blast_radius_note` |
+| Debug | `DebugState` | `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`, `swarm_verdict` |
+| Verify | `VerifyState` | `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes` |
+| VCS | `VCSState` | `branch`, `commit_sha`, `pushed`, `pr_number`, `pr_url` |
+| Memory | `MemoryState` | `brainstorm`, `skill_path`, `skill_created` |
+
+### The 8 backward-compat accessor functions
+
+Each accessor reads from the corresponding sub-state dict (e.g., `state["vcs"]`) if
+present, else falls back to the legacy flat field (e.g., `state["branch"]`). The
+legacy flat fields are **KEPT** in `AutocodeState` for the duration of the refactor
+and removed only in Phase 6 after every node has migrated.
+
+```python
+# Signature pattern (state.py)
+def _get_vcs(state: dict, key: str, default=None):
+    """Read `key` from state["vcs"] if present, else fall back to state[key]."""
+    vcs = state.get("vcs")
+    if isinstance(vcs, dict) and key in vcs:
+        return vcs[key]
+    return state.get(key, default)
+```
+
+The 8 accessors: `_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`, `_get_debug`,
+`_get_verify`, `_get_vcs`, `_get_memory`.
+
+### Why an accessor layer (instead of just rewriting state shape)
+
+1. **No big-bang refactor.** Every node currently does `state.get("branch")`,
+   `state.get("test_results")`, etc. Switching all 17 nodes in one commit would be
+   unreviewable and would break tests across the suite. The accessor layer lets us
+   migrate one node at a time — each migration is a small, reviewable diff.
+2. **Legacy fallback buys time.** Until Phase 6, both the legacy flat fields and
+   the new sub-state dicts coexist. An unmigrated node reading `state["branch"]`
+   still works whether the upstream writer used the legacy flat field or the new
+   `state["vcs"]["branch"]` shape — the accessor always returns the right value.
+3. **Phase 4 unblock.** The new `debug_history` field in `TDDState` is the
+   placeholder for #37 (context summarization). Declaring it now (in Phase 2) lets
+   Phase 4 wire `node_systematic_debug` to accumulate history without another
+   state-shape change.
+4. **Trivial Phase 6 cleanup.** Once all nodes call accessors, removing the legacy
+   flat fields + the fallback branches in the accessors is a mechanical diff.
+
+### `node_commit` is the proof-of-concept
+
+`node_git_commit` (Phase 14) is the **first node migrated to accessors** — it reads
+`state["branch"]` via `_get_vcs(state, "branch", "main")` instead of
+`state.get("branch", "main")`. Chosen because:
+
+- It reads exactly one field (`branch`) — smallest possible migration diff.
+- It runs late in the graph (Phase 14) so any breakage is caught late in the run,
+  not early (easy to bisect).
+- The fallback default `"main"` exercises the accessor's default-parameter path.
+
+Other nodes continue to read legacy flat fields directly until Phase 3 migrates
+them as part of the `node_write_files` / `node_verify` splits.
+
+`# TODO(2.0):` Migrate remaining 16 nodes to accessors during Phase 3 (node splits)
+and Phase 4 (debug history). Phase 6 removes the legacy flat fields + the accessor
+fallback branches.
+
+### Cancellation flag (Phase 1)
+
+Phase 1 also adds a module-level cancellation flag to `helpers.py` — not strictly
+part of the sub-state architecture, but it shares the "buy time until Phase 7"
+philosophy:
+
+```python
+# helpers.py
+def request_cancellation() -> None: ...
+def clear_cancellation() -> None: ...
+def is_cancellation_requested() -> bool: ...
+```
+
+`_call()` checks `is_cancellation_requested()` before each retry — if
+`invoke_with_timeout()` already timed out and called `request_cancellation()`,
+the in-flight LLM call aborts instead of sleeping through exponential backoff.
+This is a partial mitigation for #35 (daemon-thread zombie risk); full
+process-level termination lands in Phase 7.
+
+`# TODO(2.0):` Phase 7 will replace the in-process flag with
+`concurrent.futures` / `multiprocessing` for hard termination. The flag may be
+removed at that point.
+
+---
+
 ## 🧪 Testing
 
 ```powershell
@@ -270,4 +373,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-11 (v1.4 — pre-2.0 hardening: deleted dead `node_write_files_with_flag_reset` + `mermaid.py`/`test_mapper.py`/`test_runner.py` + `route_after_analyze_impact`; added `_is_path_safe()` + `_call` retry + branch trace_id suffix; 18 → 17 nodes. See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (v2.0-alpha — 2.0 refactor Phase 1 + Phase 2: new `core/json_extract.py` row in Source Code Reference; `helpers.py` row updated with cancellation flag + `_parse_json` delegation; `analyze_impact.py` row updated with `_run_async` simplification; `state.py` row updated with sub-state TypedDicts + accessors; `commit.py` row updated with `_get_vcs` migration; new "[v2.0] Sub-state Architecture" section documenting the backward-compat accessor pattern + cancellation flag; graph structure unchanged — 17 nodes. See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*

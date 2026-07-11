@@ -281,41 +281,13 @@ class TaskRouter:
     )
 
     def _extract_first_json(self, text: str) -> str | None:
-        """
-        Extract the first valid JSON object from text.
-        Handles deep nesting, escaped quotes inside strings, and markdown wrappers.
-        Uses Python's native C-optimized json.JSONDecoder().raw_decode() for safety.
-        """
-        # 1. Strip markdown fences immediately (immune to LLM formatting)
-        clean = text.strip()
-        if clean.startswith("```json"):
-            clean = clean[7:]
-        elif clean.startswith("```"):
-            clean = clean[3:]
-        if clean.endswith("```"):
-            clean = clean[:-3]
-        clean = clean.strip()
+        """Extract the first valid JSON object from text.
 
-        # 2. Try direct parse first (fastest)
-        try:
-            json.loads(clean)
-            return clean
-        except json.JSONDecodeError:
-            pass
-
-        # 3. Fallback: Use Python's native C-optimized raw_decode
-        # This safely handles all escape sequences, nested strings, and edge cases.
-        decoder = json.JSONDecoder()
-        idx = 0
-        while idx < len(clean):
-            if clean[idx] in '{[':
-                try:
-                    obj, end = decoder.raw_decode(clean, idx)
-                    return clean[idx:end]
-                except json.JSONDecodeError:
-                    pass
-            idx += 1
-        return None
+        [v2.0] Now delegates to core.json_extract.extract_first_json — single
+        source of truth for all LLM JSON parsing in the codebase.
+        """
+        from core.json_extract import extract_first_json
+        return extract_first_json(text)
 
     def route(
         self,

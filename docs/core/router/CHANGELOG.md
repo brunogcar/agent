@@ -6,6 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
+| Pre-v1 | 2026-07-11 | **Internal refactor — `_extract_first_json` delegation.** `_extract_first_json()` now delegates to `core/json_extract.extract_first_json()` (the new consolidated JSON extraction module introduced in autocode v2.0-alpha Phase 1). The router's 3-layer pipeline (direct parse → markdown fence strip → `json.JSONDecoder().raw_decode()`) is preserved as the implementation inside `core/json_extract.py`. No behavior change, no API change. The router's `core/router.py` now imports from `core/json_extract` instead of inlining the logic. |
 | Pre-v1 | 2026-07-08 | **Hardening fix:** Router schema now includes `confidence` and `clarifying_questions` fields (was missing — `additionalProperties: False` blocked the model from generating those fields, silently breaking confidence-based routing logic). |
 | Pre-v1 | 2026-07-08 | **JSON schema enforcement:** `_model_route()` now passes `json_schema` to `llm.complete()`. LM Studio enforces the routing schema (workflow, tool, complexity, reason, confidence, clarifying_questions) at generation time. Defensive JSON parsing stays as fallback. |
 | Pre-v1 | 2026-07-04 | Initial implementation. Model-based + heuristic routing, confidence guard, complexity scoring, 15s timeout, 15 tools, 5 workflows. |
@@ -25,7 +26,7 @@
 | Model-based routing | ✅ Pre-v1 | Router LLM with 15s timeout |
 | Heuristic fallback | ✅ Pre-v1 | Pre-compiled regex, O(1) matching |
 | Confidence Guard | ✅ Pre-v1 | Low-confidence interception + clarifying questions |
-| Deterministic JSON extraction | ✅ Pre-v1 | 3-layer pipeline with `raw_decode()` |
+| Deterministic JSON extraction | ✅ Pre-v1 | 3-layer pipeline with `raw_decode()`. **[Pre-v1]** `_extract_first_json()` now delegates to `core/json_extract.extract_first_json()` — the consolidated JSON extraction module shared with `helpers._parse_json` in autocode. Internal refactor only; behavior unchanged. |
 | Browser routing | ✅ Pre-v1 | `_RE_DIRECT_BROWSER` for browse/fill form/click keywords |
 | CLI routing | ✅ Pre-v1 | `_RE_DIRECT_CLI` for shell command keywords |
 | Tavily routing | ✅ Pre-v1 | `_RE_DIRECT_TAVILY` for AI search keywords |
@@ -38,6 +39,7 @@
 | Tool registry sync | ✅ Pre-v1 | Router prompt lists all 15 registered tools |
 | False-positive regression tests | ✅ Pre-v1 | Adversarial tests for known misrouting cases |
 | Module-level prompt constant | ✅ Pre-v1 | `ROUTER_SYSTEM_PROMPT` extracted for direct test import |
+| **[Pre-v1] `_extract_first_json` delegation to `core/json_extract`** | ✅ Pre-v1 | `_extract_first_json()` in `core/router.py` now delegates to `core/json_extract.extract_first_json()` instead of inlining the 3-layer pipeline (direct parse → markdown fence strip → `json.JSONDecoder().raw_decode()`). The pipeline implementation moved to `core/json_extract.py` verbatim — no behavior change, no API change. The router's `core/router.py` adds `from core.json_extract import extract_first_json` and replaces the inline body with a one-line delegation. This unifies JSON extraction across the codebase: `helpers._parse_json` (autocode) and `router._extract_first_json` both now delegate to the same module. Internal refactor only — introduced alongside autocode v2.0-alpha Phase 1. |
 
 ---
 
@@ -57,4 +59,4 @@
 
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (Pre-v1 — `_extract_first_json` now delegates to `core/json_extract.extract_first_json`; internal refactor, no behavior change. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

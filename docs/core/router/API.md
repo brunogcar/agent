@@ -241,6 +241,18 @@ graph TD
     E -->|No { } found| G
 ```
 
+**[Pre-v1.1] Delegation note:** The 3-layer extraction pipeline above is now implemented in `core/json_extract.extract_first_json()`. The router's `_extract_first_json()` method (in `core/router.py`) is a one-line delegation:
+
+```python
+# core/router.py (Pre-v1.1)
+from core.json_extract import extract_first_json
+
+def _extract_first_json(self, text: str) -> dict | None:
+    return extract_first_json(text)
+```
+
+The pipeline behavior (direct parse → markdown fence strip → `json.JSONDecoder().raw_decode()`) is preserved verbatim — no behavior change, no API change. The same `core/json_extract.py` module also backs `helpers._parse_json` in autocode (single source of truth for LLM JSON parsing across the codebase). Introduced alongside autocode v2.0-alpha Phase 1. See `docs/core/router/CHANGELOG.md` § Pre-v1.1.
+
 ### Tier 2: Heuristic Routing (Fallback)
 
 If the LLM call fails, times out, or returns invalid JSON, the `_heuristic_route()` method instantly classifies the goal using **pre-compiled regex patterns**.
@@ -323,4 +335,4 @@ When the `_RE_CODE` pattern matches, the heuristic checks if the goal also menti
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (Pre-v1.1 — added `[Pre-v1.1]` delegation note under Extraction Pipeline: `_extract_first_json()` now delegates to `core/json_extract.extract_first_json()`. Internal refactor; no behavior change, no API change. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*

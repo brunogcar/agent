@@ -1,10 +1,19 @@
-"""State definitions and defaults for autocode workflow."""
+"""State definitions and defaults for autocode workflow.
+
+[v2.0] Introduces nested sub-states (PlanState, TDDState, etc.) to group
+related fields. The flat legacy fields are kept for backward compatibility
+during the migration (Phase 2-5). Phase 6 removes the legacy fields.
+
+Nodes should use the accessor functions (_get_tdd, _get_plan, etc.) which
+read from the nested sub-state if present, falling back to the legacy flat
+field. This allows incremental migration without breaking any node.
+"""
 
 from __future__ import annotations
 
 from langgraph.graph.message import add_messages
 from langchain_core.messages import AnyMessage
-from typing import Annotated, TypedDict, Optional
+from typing import Annotated, TypedDict, Optional, Any
 
 from core.config import cfg
 
@@ -32,10 +41,87 @@ class FileSnapshot(TypedDict):
     size: int
     truncated: bool
 
-class AutocodeState(TypedDict, total=False):
-    """State for the autocode workflow."""
 
-    # Core task
+# [v2.0] Sub-state TypedDicts — group related fields for clarity.
+# These are optional in Phase 2 (nodes use accessors with legacy fallback).
+# Phase 6 makes them the primary storage and removes the legacy flat fields.
+
+class PlanState(TypedDict, total=False):
+    """[v2.0] Planning sub-state — groups brainstorm/plan fields."""
+    brainstorm_notes: str
+    plan: list[dict]
+    plan_accepted: bool
+    spec: str
+    current_step: int
+
+
+class TDDState(TypedDict, total=False):
+    """[v2.0] TDD loop sub-state — groups test/debug iteration fields."""
+    iteration: int
+    source_code: str
+    error: str
+    status: str
+    max_retries: int
+    last_test_error: str  # [#39] stuck detection
+    test_results: dict
+    tests_written: bool
+    debug_history: list[dict]  # [v2.0] Accumulated debug iterations for context summarization (#37)
+
+
+class FilesState(TypedDict, total=False):
+    """[v2.0] Files sub-state — groups file tracking fields."""
+    input_files: dict[str, str]
+    files_map: dict[str, FileSnapshot]
+    modified_files: list[str]
+
+
+class ImpactState(TypedDict, total=False):
+    """[v2.0] Impact analysis sub-state."""
+    warnings: list[dict]
+    targeted_test_cmd: str | None
+    failed: bool
+
+
+class DebugState(TypedDict, total=False):
+    """[v2.0] Debug sub-state — groups debug analysis fields."""
+    notes: str
+    root_cause: str
+    defense_notes: str
+    swarm_verdict: dict
+
+
+class VerifyState(TypedDict, total=False):
+    """[v2.0] Verification sub-state."""
+    notes: str
+    report: str
+    passed: bool
+
+
+class VCSState(TypedDict, total=False):
+    """[v2.0] Version control sub-state — groups git + GitHub fields."""
+    commit_sha: str
+    branch: str
+    branch_name: str
+    pushed: bool
+    pr_number: int
+    pr_url: str
+
+
+class MemoryState(TypedDict, total=False):
+    """[v2.0] Memory sub-state."""
+    notes: str
+    context: str
+
+
+class AutocodeState(TypedDict, total=False):
+    """State for the autocode workflow.
+
+    [v2.0] Sub-state fields (plan, tdd, files, etc.) are optional during
+    migration. Nodes use accessor functions that read sub-state first,
+    fall back to legacy flat fields.
+    """
+
+    # Core task (stays flat — used everywhere)
     task: str
     files: dict[str, str]
     mode: str
@@ -43,14 +129,27 @@ class AutocodeState(TypedDict, total=False):
     trace_id: str
     dry_run: bool
 
-    # Classification
+    # Classification (stays flat — used everywhere)
     task_type: str
     project_root: str
     autocode_run_path: str
 
-    # Brainstorm/Plan
+    # [v2.0] Sub-states (optional — Phase 2-5 migration)
+    plan: PlanState
+    tdd: TDDState
+    files_state: FilesState
+    impact: ImpactState
+    debug: DebugState
+    verify: VerifyState
+    vcs: VCSState
+    memory: MemoryState
+
+    # --- Legacy flat fields (kept for backward compat during migration) ---
+    # Note: `plan` is declared above as PlanState (sub-state). In legacy code,
+    # `plan` holds a list[dict] (the step list). The _get_plan() accessor
+    # handles both by checking isinstance. This overload is intentional during
+    # migration — Phase 6 will resolve it when legacy fields are removed.
     brainstorm_notes: str
-    plan: list[dict]
     plan_accepted: bool
     spec: str
 
@@ -110,6 +209,107 @@ class AutocodeState(TypedDict, total=False):
     error: str
     result: str
 
+
+# [v2.0] Backward-compat accessor functions.
+# These read from the nested sub-state if present, falling back to the
+# legacy flat field. Nodes migrate to use these incrementally.
+# Phase 6 removes the legacy fallbacks + flat fields.
+
+def _get_plan(state: dict, key: str, default: Any = None) -> Any:
+    """Read a plan sub-state field, falling back to legacy flat field."""
+    plan = state.get("plan")
+    if isinstance(plan, dict) and key in plan:
+        return plan[key]
+    # Legacy flat field
+    return state.get(key, default)
+
+
+def _get_tdd(state: dict, key: str, default: Any = None) -> Any:
+    """Read a TDD sub-state field, falling back to legacy flat field.
+
+    Maps short keys to legacy prefixed keys:
+        iteration -> tdd_iteration
+        source_code -> tdd_source_code
+        error -> tdd_error
+        status -> tdd_status
+    """
+    tdd = state.get("tdd")
+    if isinstance(tdd, dict) and key in tdd:
+        return tdd[key]
+    # Legacy flat field — map short key to prefixed key
+    legacy_key = f"tdd_{key}" if key in ("iteration", "source_code", "error", "status") else key
+    return state.get(legacy_key, default)
+
+
+def _get_files(state: dict, key: str, default: Any = None) -> Any:
+    """Read a files sub-state field, falling back to legacy flat field."""
+    files_state = state.get("files_state")
+    if isinstance(files_state, dict) and key in files_state:
+        return files_state[key]
+    # input_files -> files (legacy), files_map -> files_map, modified_files -> modified_files
+    if key == "input_files":
+        return state.get("files", default)
+    return state.get(key, default)
+
+
+def _get_impact(state: dict, key: str, default: Any = None) -> Any:
+    """Read an impact sub-state field, falling back to legacy flat field.
+
+    Maps short keys to legacy prefixed keys:
+        warnings -> impact_warnings
+        failed -> analyze_impact_failed
+    """
+    impact = state.get("impact")
+    if isinstance(impact, dict) and key in impact:
+        return impact[key]
+    legacy_map = {"warnings": "impact_warnings", "failed": "analyze_impact_failed"}
+    legacy_key = legacy_map.get(key, key)
+    return state.get(legacy_key, default)
+
+
+def _get_debug(state: dict, key: str, default: Any = None) -> Any:
+    """Read a debug sub-state field, falling back to legacy flat field."""
+    debug = state.get("debug")
+    if isinstance(debug, dict) and key in debug:
+        return debug[key]
+    return state.get(key, default)
+
+
+def _get_verify(state: dict, key: str, default: Any = None) -> Any:
+    """Read a verify sub-state field, falling back to legacy flat field.
+
+    Maps short keys to legacy keys:
+        notes -> verification_notes
+        report -> verify_report
+        passed -> verification_passed
+    """
+    verify = state.get("verify")
+    if isinstance(verify, dict) and key in verify:
+        return verify[key]
+    legacy_map = {"notes": "verification_notes", "report": "verify_report", "passed": "verification_passed"}
+    legacy_key = legacy_map.get(key, key)
+    return state.get(legacy_key, default)
+
+
+def _get_vcs(state: dict, key: str, default: Any = None) -> Any:
+    """Read a VCS sub-state field, falling back to legacy flat field."""
+    vcs = state.get("vcs")
+    if isinstance(vcs, dict) and key in vcs:
+        return vcs[key]
+    return state.get(key, default)
+
+
+def _get_memory(state: dict, key: str, default: Any = None) -> Any:
+    """Read a memory sub-state field, falling back to legacy flat field."""
+    memory = state.get("memory")
+    if isinstance(memory, dict) and key in memory:
+        return memory[key]
+    # notes -> memory_notes (legacy)
+    if key == "notes":
+        return state.get("memory_notes", default)
+    return state.get(key, default)
+
+
 def _default_state(
     task: str = "",
     files: dict[str, str] = None,
@@ -117,7 +317,11 @@ def _default_state(
     target_file: str = "",
     dry_run: bool = False,
 ) -> dict:
-    """Create a default state dictionary."""
+    """Create a default state dictionary.
+
+    [v2.0] Initializes both legacy flat fields AND empty sub-state dicts.
+    Nodes can write to either during migration. Phase 6 removes legacy fields.
+    """
     return {
         "task": task,
         "files": files or {},
@@ -128,6 +332,11 @@ def _default_state(
         "task_type": "",
         "project_root": "",
         "autocode_run_path": "",
+        # [v2.0] Empty sub-states (optional — nodes can use accessors)
+        "tdd": {
+            "debug_history": [],  # [v2.0] Accumulated debug iterations (#37)
+        },
+        # Legacy flat fields (kept for backward compat during Phase 2-5)
         "brainstorm_notes": "",
         "plan": [],
         "plan_accepted": False,

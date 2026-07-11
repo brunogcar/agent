@@ -17,42 +17,21 @@ def _extract_code(text: str) -> list[str]:
     return [m.group(1).strip() for m in matches]
 
 def _parse_json(text: str | None) -> dict:
-    """Parse JSON from text, extracting from code blocks if needed."""
-    if not text:
-        return {}
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    try:
-        code_blocks = _extract_code(text)
-        for block in code_blocks:
-            try:
-                return json.loads(block)
-            except json.JSONDecodeError:
-                continue
-    except Exception:
-        pass
-    return {}
+    """Parse JSON from text, extracting from code blocks if needed.
+
+    [v2.0] Now delegates to core.json_extract.extract_json — single source of
+    truth for all LLM JSON parsing in the codebase.
+    """
+    from core.json_extract import extract_json
+    return extract_json(text)
 
 def _parse_json_array(text: str | None) -> list:
-    """Parse JSON array from text."""
-    if not text:
-        return []
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    try:
-        code_blocks = _extract_code(text)
-        for block in code_blocks:
-            try:
-                return json.loads(block)
-            except json.JSONDecodeError:
-                continue
-    except Exception:
-        pass
-    return []
+    """Parse JSON array from text.
+
+    [v2.0] Now delegates to core.json_extract.extract_json_array.
+    """
+    from core.json_extract import extract_json_array
+    return extract_json_array(text)
 
 def _files_context(files: dict[str, str], max_len: int = 2000) -> str:
     """Format files dictionary for LLM context."""
@@ -69,6 +48,36 @@ def _should_copy_file(path: str | Path, protected_files: frozenset[str]) -> bool
     name = Path(path).name
     return name not in protected_files and path_str not in protected_files
 
+
+# [v2.0] Cancellation flag for graph-level timeout.
+# When invoke_with_timeout() detects a timeout, it sets this flag.
+# _call() checks it between retries — prevents waiting through a retry
+# backoff when the graph has already timed out.
+# TODO(2.0-later): Consider threading.Event for cleaner cross-thread signaling.
+_cancellation_requested = False
+
+
+def request_cancellation() -> None:
+    """[v2.0] Set the cancellation flag — called by invoke_with_timeout on timeout.
+
+    After this is called, _call() will raise RuntimeError on the next retry
+    check instead of sleeping through the backoff.
+    """
+    global _cancellation_requested
+    _cancellation_requested = True
+
+
+def clear_cancellation() -> None:
+    """[v2.0] Clear the cancellation flag — called at the start of a new graph invocation."""
+    global _cancellation_requested
+    _cancellation_requested = False
+
+
+def is_cancellation_requested() -> bool:
+    """[v2.0] Check if cancellation was requested."""
+    return _cancellation_requested
+
+
 def _call(role: str, system: str, user: str, timeout: int | None = None, temperature: float | None = None, json_schema: dict | None = None, retries: int = 2) -> str:
     """Call the LLM with the given role, system prompt, and user message.
 
@@ -76,12 +85,18 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
     LM Studio enforces the schema at generation time via outlines.
     [Pre-2.0 Fix] Added retry with exponential backoff for transient failures.
     Was: single attempt — a rate limit or network blip crashed the entire workflow.
+    [v2.0] Added cancellation flag check between retries — prevents waiting
+    through a retry backoff when the graph has already timed out.
     """
     import time as _time
     if timeout is None:
         timeout = cfg.model_registry.get(role, {}).get("timeout", cfg.execution_timeout)
     last_error = None
     for attempt in range(retries + 1):
+        # [v2.0] Check cancellation flag before each attempt — if the graph
+        # timed out during a previous retry's backoff sleep, bail immediately.
+        if _cancellation_requested:
+            raise RuntimeError("LLM call cancelled — graph timeout exceeded")
         try:
             response = llm.complete(
                 role=role,

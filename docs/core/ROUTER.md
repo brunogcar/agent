@@ -6,7 +6,7 @@ The Task Router (`core/router.py`) is the **ultra-fast classification layer** th
 - **Speed-first** — 15s hard timeout, falls back to heuristics if model is slow or unavailable
 - **Dual-mode routing** — Model-based (primary) + keyword heuristics (fallback)
 - **Confidence-aware** — Low-confidence decisions include clarifying questions to prevent wasted VRAM
-- **Robust JSON extraction** — 3-layer pipeline handles markdown fences, nested objects, and escaped quotes
+- **Robust JSON extraction** — 3-layer pipeline handles markdown fences, nested objects, and escaped quotes. **[Pre-v1.1]** The pipeline now lives in `core/json_extract.extract_first_json()` — `_extract_first_json()` in `core/router.py` is a one-line delegation. The same `core/json_extract.py` module also backs `helpers._parse_json` in autocode (single source of truth for LLM JSON parsing). Internal refactor; no behavior change.
 - **Zero hardcoding** — All model references use `cfg.router_model`
 
 ---
@@ -63,4 +63,4 @@ ROUTER_TIMEOUT=15
 
 ---
 
-*Last updated: 2026-07-04. See subfiles for detailed documentation.*
+*Last updated: 2026-07-11 (Pre-v1.1 — `Robust JSON extraction` bullet updated to note the 3-layer pipeline now lives in `core/json_extract.extract_first_json()`; `_extract_first_json()` in `core/router.py` is a one-line delegation. See subfiles for detailed documentation.*

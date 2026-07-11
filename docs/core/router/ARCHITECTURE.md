@@ -6,7 +6,8 @@
 
 | File | Purpose |
 |------|---------|
-| `core/router.py` | `TaskRouter`, `RoutingDecision`, `ROUTER_SYSTEM_PROMPT`, model + heuristic routing, JSON extraction |
+| `core/router.py` | `TaskRouter`, `RoutingDecision`, `ROUTER_SYSTEM_PROMPT`, model + heuristic routing. **[Pre-v1.1]** `_extract_first_json()` now delegates to `core/json_extract.extract_first_json()` — the inline 3-layer pipeline (direct parse → markdown fence strip → `json.JSONDecoder().raw_decode()`) moved to the consolidated `core/json_extract.py` module shared with `helpers._parse_json` in autocode. No behavior change. |
+| `core/json_extract.py` | **[Pre-v1.1] NEW DEPENDENCY** — consolidated JSON extraction utility (introduced in autocode v2.0-alpha Phase 1). 3 functions: `extract_json(text)`, `extract_json_array(text)`, `extract_first_json(text)`. The router's `_extract_first_json()` delegates to `extract_first_json()` here. Single source of truth for all LLM JSON parsing across the codebase. |
 | `tools/workflow.py` | Confidence Guard interception (low confidence → clarifying questions) |
 | `core/llm.py` | LLM client used by `router.route()` and `router.classify_complexity()` |
 | `core/tracer.py` | Trace logging for routing decisions |
@@ -29,7 +30,7 @@ core/router.py
 │   ├── classify_complexity() # Quick 1-10 complexity score
 │   ├── _model_route()      # LLM-based classification (Router role, 15s timeout)
 │   ├── _heuristic_route()  # Keyword-based fallback (pre-compiled regex)
-│   └── _extract_first_json() # Deterministic JSON extraction (3-layer)
+│   └── _extract_first_json() # Deterministic JSON extraction (3-layer) — **[Pre-v1.1]** now delegates to `core/json_extract.extract_first_json()`
 └── router                  # Module-level singleton
 ```
 
@@ -59,7 +60,7 @@ graph TD
 - **Speed-first** — 15s hard timeout on LLM call; heuristic fallback is O(1) regex. The Router must never block the user experience.
 - **Dual-mode routing** — Model-based (primary) + keyword heuristics (fallback). Works even when LM Studio is completely offline.
 - **Confidence Guard** — Low-confidence decisions are intercepted by `tools/workflow.py` before launching expensive workflows, preventing VRAM waste on misunderstood tasks.
-- **Robust JSON extraction** — `client.py` uses a 3-layer strategy (direct parse → markdown fence → outermost regex). `router.py` uses a different approach (`json.JSONDecoder().raw_decode()`). These are intentionally separate implementations for the same general problem.
+- **Robust JSON extraction** — `client.py` uses a 3-layer strategy (direct parse → markdown fence → outermost regex). `router.py` uses a different approach (`json.JSONDecoder().raw_decode()`). These are intentionally separate implementations for the same general problem. **[Pre-v1.1]** The `router.py` implementation now lives in `core/json_extract.extract_first_json()` — `_extract_first_json()` in `core/router.py` is a one-line delegation. The 3-layer pipeline behavior is preserved verbatim. The same `core/json_extract.py` module also backs `helpers._parse_json` in autocode (single source of truth for LLM JSON parsing across the codebase).
 - **Zero hardcoding** — All model references use `cfg.router_model`. No model identifiers in the router code.
 - **Pre-compiled regex** — All keyword patterns are `re.compile()` at class level, not compiled on every call.
 - **Priority order** — More specific patterns come before more general ones in `_heuristic_route()`. Direct tool requests are more specific than workflow requests.
@@ -130,4 +131,4 @@ score = router.classify_complexity("do stuff")
 
 ---
 
-*Last updated: 2026-07-04. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (Pre-v1.1 — `_extract_first_json()` now delegates to `core/json_extract.extract_first_json()`; new `core/json_extract.py` dependency row in Source Code Reference; module tree + JSON extraction design decision updated to note the delegation. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

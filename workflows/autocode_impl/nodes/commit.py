@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_vcs  # [v2.0] accessor
 from workflows.autocode_impl.git_ops import _git_commit
 from core.tracer import tracer
 
@@ -47,7 +47,7 @@ def node_commit(state: AutocodeState) -> dict:
 
     result_lines = [
         f"autocode complete -- {sha or '(no new commits)'}",
-        f"Branch: {state.get('branch', 'main')}",
+        f"Branch: {_get_vcs(state, 'branch', 'main')}",  # [v2.0] accessor with legacy fallback
     ]
     if state.get("skill_path"):
         result_lines.append(f"Skill: {state['skill_path']}")

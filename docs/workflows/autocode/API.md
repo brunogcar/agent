@@ -288,6 +288,8 @@
 
 **[v1.3] Scope note:** `node_git_commit` is LOCAL-ONLY (no push, no PR). All remote operations live in the next node, `node_publish`. See `workflows/autocode_impl/git_ops.py` (local) vs `workflows/autocode_impl/github_ops.py` (remote) for the split rationale.
 
+**[v2.0] First node migrated to the accessor pattern:** `node_git_commit` now reads `state["branch"]` via `_get_vcs(state, "branch", "main")` instead of `state.get("branch", "main")`. This is the proof-of-concept migration for the sub-state / legacy-fallback accessor layer introduced in Phase 2 (see ARCHITECTURE.md § "[v2.0] Sub-state Architecture"). No behavior change — the accessor returns the same value as the legacy path until Phase 6 removes the legacy flat fields. `# TODO(2.0):` Migrate the remaining 16 nodes during Phase 3 / Phase 4.
+
 ---
 
 ### `node_publish(state)` — [v1.3] Phase 15: Push + PR + Optional Auto-merge
@@ -437,6 +439,76 @@ For the full field list, see `workflows/autocode_impl/state.py`.
 
 ---
 
+## 🧭 [v2.0] State Accessors
+
+The v2.0-alpha release introduces a backward-compatible accessor layer over
+`AutocodeState`. Each accessor reads from the corresponding sub-state dict if
+present, else falls back to the legacy flat field. See ARCHITECTURE.md §
+"[v2.0] Sub-state Architecture" for the design rationale and the 7-phase
+migration plan.
+
+### The 8 accessor functions
+
+| Function | Sub-state TypedDict | Reads from | Legacy fallback fields |
+|----------|---------------------|------------|------------------------|
+| `_get_plan(state, key, default=None)` | `PlanState` | `state["plan"]` dict | `task_type`, `plan`, `branch`, `current_step` |
+| `_get_tdd(state, key, default=None)` | `TDDState` | `state["tdd"]` dict | `test_code`, `test_results`, `tdd_status`, `tdd_iteration`, `debug_history` |
+| `_get_files(state, key, default=None)` | `FilesState` | `state["files_state"]` dict | `files`, `modified_files`, `written_files`, `files_map` |
+| `_get_impact(state, key, default=None)` | `ImpactState` | `state["impact"]` dict | `impact_warnings`, `blast_radius_note` |
+| `_get_debug(state, key, default=None)` | `DebugState` | `state["debug"]` dict | `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`, `swarm_verdict` |
+| `_get_verify(state, key, default=None)` | `VerifyState` | `state["verify"]` dict | `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes` |
+| `_get_vcs(state, key, default=None)` | `VCSState` | `state["vcs"]` dict | `branch`, `commit_sha`, `pushed`, `pr_number`, `pr_url` |
+| `_get_memory(state, key, default=None)` | `MemoryState` | `state["memory"]` dict | `brainstorm`, `skill_path`, `skill_created` |
+
+**Signature (all 8 accessors share this shape):**
+
+```python
+def _get_vcs(state: dict, key: str, default=None):
+    """Read `key` from state["vcs"] if present, else fall back to state[key]."""
+    vcs = state.get("vcs")
+    if isinstance(vcs, dict) and key in vcs:
+        return vcs[key]
+    return state.get(key, default)
+```
+
+### Usage in nodes
+
+**[v2.0] `node_git_commit` is the proof-of-concept.** It reads the branch name
+via `_get_vcs(state, "branch", "main")` instead of `state.get("branch", "main")`:
+
+```python
+# Before (v1.4):
+branch = state.get("branch", "main")
+
+# After (v2.0-alpha):
+from workflows.autocode_impl.state import _get_vcs
+branch = _get_vcs(state, "branch", "main")
+```
+
+`# TODO(2.0):` The remaining 16 nodes still use the legacy `state.get(...)`
+pattern. They will migrate during Phase 3 (node splits) and Phase 4 (debug
+history). Phase 6 removes the legacy flat fields and the accessor fallback
+branches.
+
+### `debug_history` field — declared but not yet populated
+
+The new `debug_history` field in `TDDState` is **declared in Phase 2 but not
+populated by any node yet.** It is a placeholder for Phase 4 (#37 context
+summarization):
+
+- **Phase 4 will:** wire `node_systematic_debug` to append each iteration's
+  `{root_cause, defense_notes, fix, test_output}` to `debug_history`, then add
+  a `summarize_context` node before debug re-entry that compresses the history
+  (likely via Chonkie `SentenceChunker` — see `docs/TOOLS.md` § "Chunking").
+- **Until then:** `debug_history` is always empty. The accessor `_get_tdd(state,
+  "debug_history", [])` returns `[]`. No node reads it. The field exists only
+  so Phase 4 doesn't have to change `state.py` again.
+
+`# TODO(2.0):` Phase 4 — populate `debug_history` in `node_systematic_debug`
+and add the `summarize_context` node.
+
+---
+
 ## 🔒 Security
 
 *(Fill this section with relevant info from edits and refactors. Add security details as they are learned.)*
@@ -449,4 +521,4 @@ For the full field list, see `workflows/autocode_impl/state.py`.
 
 ---
 
-*Last updated: 2026-07-11 (v1.4 — pre-2.0 hardening: added `[Pre-2.0 Fix]` notes to `node_brainstorm` (KG in prompt), `node_write_plan` (trace_id suffix), `node_execute_step` (`_parse_json`), `node_write_files` (`_is_path_safe`), `node_systematic_debug` (constants field names), `node_verify` (stuck + skip pytest + ruff scope), `node_git_commit` (label fallback), `node_create_skill` (atomic write); removed `node_write_files_with_flag_reset` section; renumbered phases 13–18 → 12–17). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11 (v2.0-alpha — 2.0 refactor Phase 1 + Phase 2: added `[v2.0]` note to `node_git_commit` documenting the `_get_vcs` accessor migration (proof-of-concept); new "[v2.0] State Accessors" section documenting the 8 accessor functions (`_get_plan`/`_get_tdd`/`_get_files`/`_get_impact`/`_get_debug`/`_get_verify`/`_get_vcs`/`_get_memory`) and the 8 sub-state TypedDicts; new `debug_history` field declared in `TDDState` (Phase 4 #37 placeholder — not yet populated); graph structure unchanged — 17 nodes. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*

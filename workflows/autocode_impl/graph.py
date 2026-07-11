@@ -46,7 +46,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "1.4",  # [v1.4] Pre-2.0 hardening + dead code cleanup
+    "version": "2.0-alpha",  # [v2.0] Phase 1-2: foundation + state redesign
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -234,9 +234,19 @@ def invoke_with_timeout(initial_state: dict) -> dict:
     [P2 #30] cfg.autocode_graph_timeout was defined but never used.
     Now wraps graph.invoke() with a threading-based timeout to prevent
     hung workflows from blocking forever.
+
+    [v2.0] Now sets the cancellation flag on timeout — _call() checks this
+    between retries, so pending LLM retry backoffs bail immediately instead
+    of sleeping through the timeout. The daemon thread still can't be killed
+    (Python limitation), but it will exit on the next _call() check.
+    TODO(2.0-later): Consider process-level termination (#35) for true cancellation.
     """
     import threading
     from core.config import cfg
+    from workflows.autocode_impl.helpers import request_cancellation, clear_cancellation
+
+    # [v2.0] Clear any stale cancellation flag from a previous run
+    clear_cancellation()
 
     graph = get_graph()
     result = {"status": "failed", "error": "Graph invocation timed out"}
@@ -251,7 +261,9 @@ def invoke_with_timeout(initial_state: dict) -> dict:
     thread.join(timeout=timeout)
 
     if thread.is_alive():
-        # Thread is still running — timeout exceeded
+        # [v2.0] Set cancellation flag — _call() will check it and bail
+        # on the next retry attempt instead of sleeping through backoff.
+        request_cancellation()
         return {
             "status": "failed",
             "error": f"Autocode graph timed out after {timeout}s",
