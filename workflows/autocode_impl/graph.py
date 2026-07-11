@@ -18,14 +18,20 @@ from workflows.autocode_impl.nodes.execute import node_execute_step
 from workflows.autocode_impl.nodes.run_tests import node_run_tests
 from workflows.autocode_impl.nodes.analyze_impact import node_analyze_impact
 from workflows.autocode_impl.nodes.debug import node_systematic_debug
-from workflows.autocode_impl.nodes.write_files import (
-    node_write_files,
-)
-# [Pre-2.0 Fix] Removed node_write_files_with_flag_reset import — was dead code
-# (registered but never wired, reset a non-existent field).
-from workflows.autocode_impl.nodes.verify import node_verify
+from workflows.autocode_impl.nodes.write_files import node_write_files  # [v2.0] backward-compat wrapper
+from workflows.autocode_impl.nodes.apply_patches import node_apply_patches  # [v2.0] Phase 3.1 split
+from workflows.autocode_impl.nodes.write_new_files import node_write_new_files  # [v2.0] Phase 3.1 split
+from workflows.autocode_impl.nodes.persist_artifacts import node_persist_artifacts  # [v2.0] Phase 3.1 split
+from workflows.autocode_impl.nodes.verify import node_verify  # [v2.0] backward-compat wrapper
+from workflows.autocode_impl.nodes.run_pytest import node_run_pytest  # [v2.0] Phase 3.2 split
+from workflows.autocode_impl.nodes.run_lint import node_run_lint  # [v2.0] Phase 3.2 split
+from workflows.autocode_impl.nodes.llm_review import node_llm_review  # [v2.0] Phase 3.2 split
+from workflows.autocode_impl.nodes.verify_decision import node_verify_decision  # [v2.0] Phase 3.2 split
 from workflows.autocode_impl.nodes.commit import node_commit
-from workflows.autocode_impl.nodes.publish import node_publish  # [v1.3]
+from workflows.autocode_impl.nodes.publish import node_publish  # [v2.0] backward-compat wrapper
+from workflows.autocode_impl.nodes.push import node_push  # [v2.0] Phase 3.3 split
+from workflows.autocode_impl.nodes.create_pr import node_create_pr  # [v2.0] Phase 3.3 split
+from workflows.autocode_impl.nodes.merge_pr import node_merge_pr  # [v2.0] Phase 3.3 split
 from workflows.autocode_impl.nodes.memory import node_distill_memory
 from workflows.autocode_impl.nodes.create_skill import node_create_skill
 from workflows.autocode_impl.nodes.report import node_report
@@ -46,7 +52,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "2.0-alpha",  # [v2.0] Phase 1-2: foundation + state redesign
+    "version": "2.0-beta",  # [v2.0] Phase 3: node decomposition
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -57,16 +63,23 @@ WORKFLOW_METADATA = {
         {"name": "node_git_branch", "type": "tool", "tool": "git", "description": "Create git branch for the task"},
         {"name": "node_write_tests", "type": "llm", "role": "executor", "description": "Write TDD tests before implementation"},
         {"name": "node_execute_step", "type": "llm", "role": "executor", "description": "Generate implementation code from plan"},
-        {"name": "node_write_files", "type": "tool", "tool": "file", "description": "Write generated code to disk atomically"},
-        # [Pre-2.0 Fix] Removed node_write_files_with_flag_reset from metadata
-        # (was registered but never wired — dead code).
+        {"name": "node_apply_patches", "type": "tool", "tool": "file", "description": "[v2.0] Apply str_replace patches to existing files"},
+        {"name": "node_write_new_files", "type": "tool", "tool": "file", "description": "[v2.0] Write new/overwrite files atomically + build files_map"},
+        {"name": "node_persist_artifacts", "type": "tool", "tool": "file", "description": "[v2.0] Persist test file + generated code + debug log to run_dir"},
         {"name": "node_analyze_impact", "type": "llm", "role": "analyze", "description": "Blast radius analysis using dependency graph"},
         {"name": "node_run_tests", "type": "tool", "tool": "pytest", "description": "Run TDD tests via pytest subprocess"},
         {"name": "node_systematic_debug", "type": "llm", "role": "executor", "description": "Root-cause hypothesis + one fix at a time"},
-        {"name": "node_verify", "type": "composite", "description": "Verification gate: lint + tests + LLM spec check"},
+        {"name": "node_verify", "type": "composite", "description": "[v2.0] Backward-compat wrapper (not wired)"},
+        {"name": "node_run_pytest", "type": "tool", "tool": "pytest", "description": "[v2.0] Fresh pytest on autocode test files"},
+        {"name": "node_run_lint", "type": "tool", "tool": "ruff", "description": "[v2.0] Ruff lint on modified files only"},
+        {"name": "node_llm_review", "type": "llm", "role": "executor", "description": "[v2.0] LLM spec coverage + cleanliness review"},
+        {"name": "node_verify_decision", "type": "logic", "description": "[v2.0] Compose results + hallucination guard"},
         {"name": "node_report", "type": "llm", "role": "summarize", "description": "Generate structured report of what was done"},
         {"name": "node_commit", "type": "tool", "tool": "git", "description": "Commit changes to the git branch"},
-        {"name": "node_publish", "type": "tool", "tool": "github", "description": "[v1.3] Push branch + create PR + optional auto-merge"},  # [v1.3]
+        {"name": "node_publish", "type": "tool", "tool": "github", "description": "[v2.0] Backward-compat wrapper (not wired)"},
+        {"name": "node_push", "type": "tool", "tool": "github", "description": "[v2.0] Push branch to remote"},
+        {"name": "node_create_pr", "type": "tool", "tool": "github", "description": "[v2.0] Create pull request from branch"},
+        {"name": "node_merge_pr", "type": "tool", "tool": "github", "description": "[v2.0] Auto-merge PR (if enabled)"},
         {"name": "node_distill_memory", "type": "llm", "role": "planner", "description": "Distill procedural memory for future runs"},
         {"name": "node_create_skill", "type": "tool", "tool": "file", "description": "Generate a new skill file (bypasses TDD, has AST validation)"},
     ],
@@ -81,24 +94,28 @@ WORKFLOW_METADATA = {
         {"from": "node_write_plan", "to": "node_git_branch"},
         {"from": "node_git_branch", "to": "node_write_tests"},
         {"from": "node_write_tests", "to": "node_execute_step"},
-        {"from": "node_execute_step", "to": "node_write_files"},
-        {"from": "node_write_files", "to": "node_analyze_impact", "condition": "route_after_write_files: fix/refactor/improve/feature/audit/edit"},
-        {"from": "node_write_files", "to": "node_verify", "condition": "route_after_write_files: other"},
+        {"from": "node_execute_step", "to": "node_apply_patches"},
+        {"from": "node_apply_patches", "to": "node_write_new_files"},
+        {"from": "node_write_new_files", "to": "node_persist_artifacts"},
+        {"from": "node_persist_artifacts", "to": "node_analyze_impact", "condition": "route_after_write_files: fix/refactor/improve/feature/audit/edit"},
+        {"from": "node_persist_artifacts", "to": "node_run_pytest", "condition": "route_after_write_files: other"},
         {"from": "node_analyze_impact", "to": "node_run_tests"},
-        {"from": "node_run_tests", "to": "node_verify", "condition": "route_after_run_tests: passed or max_retries"},
+        {"from": "node_run_tests", "to": "node_run_pytest", "condition": "route_after_run_tests: passed or max_retries"},
         {"from": "node_run_tests", "to": "node_systematic_debug", "condition": "route_after_run_tests: failed"},
-        {"from": "node_systematic_debug", "to": "node_write_files", "condition": "debug loop (type: loop)", "type": "loop"},
-        {"from": "node_verify", "to": "node_report", "condition": "route_after_verify: verification_passed"},
-        {"from": "node_verify", "to": "END", "condition": "route_after_verify: failed"},
+        {"from": "node_systematic_debug", "to": "node_apply_patches", "condition": "debug loop (type: loop)", "type": "loop"},
+        {"from": "node_verify_decision", "to": "node_report", "condition": "route_after_verify: verification_passed"},
+        {"from": "node_verify_decision", "to": "END", "condition": "route_after_verify: failed"},
         {"from": "node_report", "to": "node_commit"},
-        {"from": "node_commit", "to": "node_publish"},  # [v1.3]
-        {"from": "node_publish", "to": "node_distill_memory"},  # [v1.3]
+        {"from": "node_commit", "to": "node_push"},  # [v2.0] Phase 3.3 split
+        {"from": "node_push", "to": "node_create_pr"},  # [v2.0] Phase 3.3 split
+        {"from": "node_create_pr", "to": "node_merge_pr"},  # [v2.0] Phase 3.3 split
+        {"from": "node_merge_pr", "to": "node_distill_memory"},  # [v2.0] Phase 3.3 split
         {"from": "node_distill_memory", "to": "END"},
     ],
     "loops": [
         {
             "name": "debug_loop",
-            "nodes": ["node_write_files", "node_analyze_impact", "node_run_tests", "node_systematic_debug"],
+            "nodes": ["node_apply_patches", "node_write_new_files", "node_persist_artifacts", "node_analyze_impact", "node_run_tests", "node_systematic_debug"],
             "exit_condition": "tdd_status == passed OR tdd_status == max_retries_exceeded",
             "max_iterations": "cfg.autocode_max_retries (default from .env)",
         },
@@ -135,11 +152,23 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_run_tests", node_run_tests)
     workflow.add_node("node_analyze_impact", node_analyze_impact)
     workflow.add_node("node_systematic_debug", node_systematic_debug)
-    workflow.add_node("node_write_files", node_write_files)
-    # [Pre-2.0 Fix] Removed node_write_files_with_flag_reset — was dead code
-    workflow.add_node("node_verify", node_verify)
+    # [v2.0] Phase 3.1: node_write_files split into 3 nodes
+    workflow.add_node("node_apply_patches", node_apply_patches)
+    workflow.add_node("node_write_new_files", node_write_new_files)
+    workflow.add_node("node_persist_artifacts", node_persist_artifacts)
+    workflow.add_node("node_write_files", node_write_files)  # backward-compat wrapper (not wired)
+    workflow.add_node("node_verify", node_verify)  # backward-compat wrapper (not wired)
+    # [v2.0] Phase 3.2: node_verify split into 4 nodes
+    workflow.add_node("node_run_pytest", node_run_pytest)
+    workflow.add_node("node_run_lint", node_run_lint)
+    workflow.add_node("node_llm_review", node_llm_review)
+    workflow.add_node("node_verify_decision", node_verify_decision)
     workflow.add_node("node_commit", node_commit)
-    workflow.add_node("node_publish", node_publish)  # [v1.3]
+    workflow.add_node("node_publish", node_publish)  # backward-compat wrapper (not wired)
+    # [v2.0] Phase 3.3: node_publish split into 3 nodes
+    workflow.add_node("node_push", node_push)
+    workflow.add_node("node_create_pr", node_create_pr)
+    workflow.add_node("node_merge_pr", node_merge_pr)
     workflow.add_node("node_distill_memory", node_distill_memory)
     workflow.add_node("node_create_skill", node_create_skill)
     workflow.add_node("node_report", node_report)
@@ -170,15 +199,20 @@ def build_graph() -> StateGraph:
     workflow.add_edge("node_write_plan", "node_git_branch")
     workflow.add_edge("node_git_branch", "node_write_tests")
     workflow.add_edge("node_write_tests", "node_execute_step")
-    workflow.add_edge("node_execute_step", "node_write_files")
+    # [v2.0] Phase 3.1: execute → apply_patches → write_new_files → persist_artifacts
+    workflow.add_edge("node_execute_step", "node_apply_patches")
+    workflow.add_edge("node_apply_patches", "node_write_new_files")
+    workflow.add_edge("node_write_new_files", "node_persist_artifacts")
 
-    # Route after write_files (TDD loop vs verification)
+    # Route after persist_artifacts (TDD loop vs verification)
+    # [v2.0] Was: route_after_write_files from node_write_files → node_verify.
+    # Now routes from node_persist_artifacts → node_run_pytest (Phase 3.2 split).
     workflow.add_conditional_edges(
-        "node_write_files",
+        "node_persist_artifacts",
         route_after_write_files,
         {
             "node_analyze_impact": "node_analyze_impact",
-            "node_verify": "node_verify",
+            "node_verify": "node_run_pytest",  # [v2.0] route to first verify sub-node
         },
     )
 
@@ -187,21 +221,27 @@ def build_graph() -> StateGraph:
     workflow.add_edge("node_analyze_impact", "node_run_tests")
 
     # Route after run_tests (pass vs debug)
+    # [v2.0] Phase 3.2: "node_verify" now maps to node_run_pytest (first sub-node)
     workflow.add_conditional_edges(
         "node_run_tests",
         route_after_run_tests,
         {
-            "node_verify": "node_verify",
+            "node_verify": "node_run_pytest",  # [v2.0] route to first verify sub-node
             "node_systematic_debug": "node_systematic_debug",
         },
     )
 
-    # Debug loop
-    workflow.add_edge("node_systematic_debug", "node_write_files")
+    # Debug loop [v2.0] Phase 3.1: debug → apply_patches (was: → node_write_files)
+    workflow.add_edge("node_systematic_debug", "node_apply_patches")
 
-    # Route after verification
+    # [v2.0] Phase 3.2: verify chain — run_pytest → run_lint → llm_review → verify_decision
+    workflow.add_edge("node_run_pytest", "node_run_lint")
+    workflow.add_edge("node_run_lint", "node_llm_review")
+    workflow.add_edge("node_llm_review", "node_verify_decision")
+
+    # Route after verification [v2.0] Phase 3.2: from node_verify_decision (was: node_verify)
     workflow.add_conditional_edges(
-        "node_verify",
+        "node_verify_decision",
         route_after_verify,
         {
             "report": "node_report",
@@ -209,10 +249,12 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # Report -> commit -> publish -> distill -> END  [v1.3: +publish]
+    # Report -> commit -> push -> create_pr -> merge_pr -> distill -> END  [v2.0: Phase 3.3 split]
     workflow.add_edge("node_report", "node_commit")
-    workflow.add_edge("node_commit", "node_publish")  # [v1.3]
-    workflow.add_edge("node_publish", "node_distill_memory")  # [v1.3]
+    workflow.add_edge("node_commit", "node_push")  # [v2.0] Phase 3.3
+    workflow.add_edge("node_push", "node_create_pr")  # [v2.0] Phase 3.3
+    workflow.add_edge("node_create_pr", "node_merge_pr")  # [v2.0] Phase 3.3
+    workflow.add_edge("node_merge_pr", "node_distill_memory")  # [v2.0] Phase 3.3
     workflow.add_edge("node_distill_memory", END)
 
     return workflow

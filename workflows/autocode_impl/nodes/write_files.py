@@ -1,250 +1,31 @@
-"""File writing node."""
+"""[v2.0] Backward-compat wrapper — calls apply_patches + write_new_files + persist_artifacts.
 
+The original node_write_files was split into 3 nodes in Phase 3.1:
+  - node_apply_patches: str_replace patches
+  - node_write_new_files: new file writes + files_map
+  - node_persist_artifacts: test file + generated code + debug log
+
+This wrapper preserves the original API for any external callers that import
+node_write_files directly. The graph now uses the 3 separate nodes.
+"""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any
-from filelock import FileLock, Timeout
-
 from workflows.autocode_impl.state import AutocodeState
-from workflows.autocode_impl.helpers import _files_context, _get_autocode_run_path, _cleanup_old_autocode_runs
-from core.config import cfg
-from core.tracer import tracer
-
-
-def _is_path_safe(base_path: Path, rel_path: str) -> bool:
-    """[Pre-2.0 Fix] Verify that a resolved path is strictly within base_path.
-
-    Prevents path traversal attacks where the LLM generates rel_path like
-    "../../etc/passwd" or "../../../Windows/System32/malicious.exe".
-
-    Args:
-        base_path: The allowed root directory.
-        rel_path: The relative path from the LLM (or user input).
-
-    Returns:
-        True if the resolved path is within base_path, False otherwise.
-    """
-    if not rel_path or not isinstance(rel_path, str):
-        return False
-    try:
-        target = (base_path / rel_path).resolve()
-        base_resolved = base_path.resolve()
-        # is_relative_to is Python 3.9+ — use it, fall back to str check
-        if hasattr(target, 'is_relative_to'):
-            return target.is_relative_to(base_resolved)
-        # Fallback for older Python (shouldn't be needed — we're 3.12+)
-        return str(target).startswith(str(base_resolved))
-    except (ValueError, RuntimeError):
-        return False
+from workflows.autocode_impl.nodes.apply_patches import node_apply_patches, _is_path_safe  # re-export
+from workflows.autocode_impl.nodes.write_new_files import node_write_new_files
+from workflows.autocode_impl.nodes.persist_artifacts import node_persist_artifacts
 
 
 def node_write_files(state: AutocodeState) -> dict:
+    """[v2.0] Backward-compat wrapper — runs all 3 split nodes in sequence.
+
+    Merges their partial state updates into one dict (matching the original
+    return shape). The graph uses the 3 separate nodes directly; this wrapper
+    is for external callers + tests that import node_write_files.
     """
-    Write generated code to agent root.
-    Handles both patch format (str_replace) and full file writes.
-    Patches are preferred -- faster, cheaper, less error-prone.
-    """
-    tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed"):
-        return {} # LangGraph partial update: no changes needed
-    # [FIX] Schema drift: execute/debug nodes write to tdd_source_code, not generated_code
-    if not state.get("tdd_source_code"):
-        return {} # LangGraph partial update: no changes needed
-    try:
-        data = json.loads(state["tdd_source_code"])
-    except Exception as e:
-        tracer.step(tid, "write_files", f"JSON parse failed: {e}")
-        # [P1 #9] Was: return {} (no status — workflow continues silently).
-        # Now returns error status so downstream nodes know write_files failed.
-        return {"status": "error", "error": f"write_files JSON parse failed: {e}"}
-
-    # [#47] Dry-run: skip all file writes AFTER validation checks pass.
-    # (Guards above run first so dry_run still surfaces JSON errors, etc.)
-    if state.get("dry_run"):
-        tracer.step(tid, "write_files", "dry_run=True — skipping file writes")
-        return {"status": "dry_run", "modified_files": []}
-
-    from workflows.autocode_impl.patch import apply_patch
-
-    # -- Apply str_replace patches for existing files -------------------------
-    patches = data.get("patches", [])
-    patch_errors = []
-    for p in patches:
-        rel_path = p.get("path", "")
-        old_text = p.get("old", "")
-        new_text = p.get("new", "")
-
-        # Use project_root from state if available, otherwise workspace_root
-        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
-        target = base_path / rel_path
-
-        # [Pre-2.0 Fix] Path traversal guard — LLM-generated paths are untrusted.
-        if not _is_path_safe(base_path, rel_path):
-            tracer.step(tid, "write_files", f"BLOCKED path traversal: {rel_path}")
-            patch_errors.append(f"{rel_path}: path traversal blocked")
-            continue
-
-        if cfg.is_protected(target):
-            tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
-            continue
-
-        if not target.exists():
-            tracer.step(tid, "write_files",
-                f"patch target missing, skipping: {rel_path}")
-            patch_errors.append(f"{rel_path}: file not found for patch")
-            continue
-
-        result = apply_patch(target, old_text, new_text)
-        if result.ok:
-            tracer.step(tid, "write_files",
-                f"patched {rel_path} ({result.lines_changed} lines changed)")
-        else:
-            tracer.step(tid, "write_files",
-                f"patch FAILED {rel_path}: {result.error}")
-            patch_errors.append(f"{rel_path}: {result.error}")
-
-    # -- Write new / overwrite files ------------------------------------------
-    new_files = data.get("new_files", {})
-    # Backwards compat: if no patches/new_files keys, treat whole data as files dict
-    if not patches and not new_files and isinstance(data, dict):
-        new_files = data
-
-    for rel_path, content in new_files.items():
-        # Use project_root from state if available, otherwise workspace_root
-        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
-        target = base_path / rel_path
-
-        # [Pre-2.0 Fix] Path traversal guard — LLM-generated paths are untrusted.
-        if not _is_path_safe(base_path, rel_path):
-            tracer.step(tid, "write_files", f"BLOCKED path traversal: {rel_path}")
-            continue
-
-        if cfg.is_protected(target):
-            tracer.step(tid, "write_files", f"BLOCKED protected: {rel_path}")
-            continue
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = str(target) + ".lock"
-
-        # [Bug #1] Atomic write — no .bak backup (violates project rules).
-        # [P2 #13] Added 1 retry on lock timeout — was no retry, silently skipped.
-        import tempfile
-        import os
-        for _attempt in range(2):  # 1 initial + 1 retry
-            try:
-                with FileLock(lock_path, timeout=10):
-                    with tempfile.NamedTemporaryFile(
-                        mode='w', encoding='utf-8', dir=target.parent,
-                        delete=False, suffix='.tmp'
-                    ) as tmp:
-                        tmp.write(str(content))
-                        tmp_path = Path(tmp.name)
-                    os.replace(tmp_path, target)
-                    tracer.step(tid, "write_files",
-                        f"wrote {rel_path} ({len(content)} chars)")
-                break  # Success — exit retry loop
-            except Timeout:
-                if _attempt == 0:
-                    tracer.step(tid, "write_files", f"lock timeout (retrying): {rel_path}")
-                    continue  # Retry
-                tracer.step(tid, "write_files", f"lock timeout (giving up): {rel_path}")
-            except Exception as e:
-                if 'tmp_path' in locals() and tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
-                tracer.step(tid, "write_files", f"write error {rel_path}: {e}")
-                break  # Non-timeout error — don't retry
-
-    if patch_errors:
-        tracer.step(tid, "write_files",
-            f"{len(patch_errors)} patch error(s): {patch_errors[0]}")
-
-    # On-demand cleanup of old autocode runs
-    _cleanup_old_autocode_runs()
-
-    # Build partial update dict
-    updates = {}
-    if patch_errors:
-        updates["patch_errors"] = patch_errors
-
-    # [Bug #3] Populate files_map for analyze_impact node.
-    # Snapshot modified files (content + md5) so analyze_impact can detect
-    # changes and run targeted tests. Without this, files_map is always {}
-    # and impact analysis never runs.
-    import hashlib
-    files_map = {}
-    all_modified = list(new_files.keys()) + [p.get("path", "") for p in patches if p.get("path")]
-    for mod_path in all_modified:
-        if not mod_path:
-            continue
-        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
-        full_path = base_path / mod_path
-        if full_path.exists():
-            try:
-                content = full_path.read_text(encoding="utf-8", errors="replace")
-                files_map[mod_path] = {
-                    "content_preview": content[:8000],
-                    "preview_md5": hashlib.md5(content[:8000].encode("utf-8")).hexdigest(),
-                    "full_md5": hashlib.md5(content.encode("utf-8")).hexdigest(),
-                    "size": len(content),
-                    "truncated": len(content) > 8000,
-                }
-            except Exception:
-                pass
-    if files_map:
-        updates["files_map"] = files_map
-
-    # Persist test file to per-run autocode folder
-    if state.get("test_code"):
-        run_dir = _get_autocode_run_path(tid)
-        test_file = run_dir / "test_autocode_feature.py"
-        lock_path = str(test_file) + ".lock"
-        try:
-            with FileLock(lock_path, timeout=10):
-                test_code = state["test_code"]
-                if isinstance(test_code, list):
-                    test_code = "\n\n".join(test_code)
-                test_file.write_text(test_code, encoding="utf-8")
-                tracer.step(tid, "write_files", f"test file persisted to {test_file}")
-        except Timeout:
-            tracer.step(tid, "write_files", "lock timeout on test file")
-        except Exception as e:
-            tracer.step(tid, "write_files", f"test file write error: {e}")
-
-        # Persist generated code for record-keeping
-        if state.get("tdd_source_code"):
-            try:
-                gen_file = run_dir / "generated_code.json"
-                gen_file.write_text(state["tdd_source_code"], encoding="utf-8")
-                tracer.step(tid, "write_files", f"generated code persisted to {gen_file}")
-            except Exception as e:
-                tracer.step(tid, "write_files", f"generated code write error: {e}")
-
-        # Persist debug log if present
-        if state.get("debug_notes") or state.get("root_cause"):
-            try:
-                debug_file = run_dir / "debug_log.json"
-                debug_data = {
-                    "debug_notes": state.get("debug_notes", ""),
-                    "root_cause": state.get("root_cause", ""),
-                    "defense_notes": state.get("defense_notes", ""),
-                    "tdd_iteration": state.get("tdd_iteration", 0),
-                }
-                debug_file.write_text(json.dumps(debug_data, indent=2), encoding="utf-8")
-                tracer.step(tid, "write_files", f"debug log persisted to {debug_file}")
-            except Exception as e:
-                tracer.step(tid, "write_files", f"debug log write error: {e}")
-
-        rel_path = test_file.relative_to(cfg.workspace_root)
-        updates["test_files"] = [str(rel_path).replace("\\", "/")]
-        updates["autocode_run_path"] = str(run_dir)
-
-    return updates
-
-# [Pre-2.0 Fix] DELETED: node_write_files_with_flag_reset
-# Was registered in graph.py but never wired (debug loop edges to node_write_files
-# directly). It reset `step_attempt` — a field that doesn't exist in AutocodeState
-# or _default_state. Dead code. The real stuck-detection field (last_test_error)
-# is correctly handled by run_tests.py (set on failure, cleared on success).
-# Found by: mimo P0.2, kimi A.4.
+    result: dict = {}
+    for node_fn in (node_apply_patches, node_write_new_files, node_persist_artifacts):
+        updates = node_fn({**state, **result})  # pass merged state forward
+        if updates:
+            result.update(updates)
+    return result

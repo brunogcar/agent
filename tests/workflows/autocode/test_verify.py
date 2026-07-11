@@ -10,7 +10,8 @@ from unittest.mock import patch, MagicMock
 class TestNodeVerify:
     def test_verify_sets_passed_on_valid_ast(self, base_state):
         from workflows.autocode_impl.nodes.verify import node_verify
-        with patch("workflows.autocode_impl.nodes.verify._call",
+        # [v2.0] Phase 3.2: _call now in llm_review.py (verify.py is wrapper)
+        with patch("workflows.autocode_impl.nodes.llm_review._call",
                    return_value='{"automated_checks_passed": true, "checks": {"syntax": {"passed": true}, "tests": {"passed": true}, "spec": {"passed": true}, "regressions": {"passed": true}, "cleanliness": {"passed": true}}, "summary": "All passed"}'), \
              patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")), \
              patch("workflows.autocode_impl.patch.apply_patch", return_value=MagicMock(ok=True, lines_changed=1)):
@@ -31,7 +32,8 @@ class TestVerifyLintPassed:
     def test_lint_none_on_missing_ruff(self, base_state):
         """[P1 #7] lint_passed must be None (not True) when ruff is missing."""
         from workflows.autocode_impl.nodes.verify import node_verify
-        with patch("workflows.autocode_impl.nodes.verify._call",
+        # [v2.0] Phase 3.2: _call now in llm_review.py (verify.py is wrapper)
+        with patch("workflows.autocode_impl.nodes.llm_review._call",
                    return_value='{"automated_checks_passed": false, "checks": {}, "summary": ""}'), \
              patch("subprocess.run", side_effect=FileNotFoundError("ruff not found")), \
              patch("workflows.autocode_impl.patch.apply_patch", return_value=MagicMock(ok=True)):

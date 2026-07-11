@@ -49,8 +49,10 @@
 
 ## 🚫 Deferred / Out of Scope
 
-*(No deferred items yet. Add entries here as decisions are made.)*
+| Feature | Why Deferred | Priority |
+|---------|--------------|----------|
+| Migrate `_parse_response` JSON extraction to `core/json_extract.py` | **[Autocode v2.0]** `router.py` + `helpers.py` already migrated. `client.py`'s `_parse_response` embeds JSON extraction in a larger function that also does API response parsing + schema validation. Migration requires separating these concerns. Planned for a later 2.0 phase. | P2 |
 
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-11. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

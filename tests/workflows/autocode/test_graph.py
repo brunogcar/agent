@@ -12,19 +12,27 @@ from workflows.autocode_impl.graph import build_graph, get_graph, WORKFLOW_METAD
 # ─── Graph topology ─────────────────────────────────────────────────────────
 
 class TestGraphTopology:
-    def test_graph_has_exactly_17_nodes(self):
+    def test_graph_has_exactly_27_nodes(self):
         g = build_graph()
         expected = {
             "node_classify_task", "node_validate_input", "node_brainstorm",
             "node_write_plan", "node_git_branch", "node_write_tests",
             "node_execute_step", "node_run_tests", "node_systematic_debug",
-            "node_write_files",
-            "node_verify", "node_commit", "node_publish",  # [v1.3]
+            # [v2.0] Phase 3.1: node_write_files split into 3 + wrapper
+            "node_apply_patches", "node_write_new_files", "node_persist_artifacts",
+            "node_write_files",  # backward-compat wrapper (registered, not wired)
+            # [v2.0] Phase 3.2: node_verify split into 4 + wrapper
+            "node_run_pytest", "node_run_lint", "node_llm_review", "node_verify_decision",
+            "node_verify",  # backward-compat wrapper (registered, not wired)
+            # [v2.0] Phase 3.3: node_publish split into 3 + wrapper
+            "node_push", "node_create_pr", "node_merge_pr",
+            "node_publish",  # backward-compat wrapper (registered, not wired)
+            "node_commit",
             "node_distill_memory", "node_create_skill",
             "node_analyze_impact", "node_report",
         }
-        # [Pre-2.0 Fix] Was 18 (included node_write_files_with_flag_reset —
-        # dead code, removed in v1.4). Now 17.
+        # [v2.0] Was 24 (Phase 3.2). Phase 3.3 split publish into 3 + kept
+        # wrapper = 27 nodes in graph (26 in metadata — wrappers excluded).
         assert set(g.nodes.keys()) == expected, \
             f"Node mismatch. Missing: {expected - set(g.nodes.keys())}"
 
@@ -37,9 +45,10 @@ class TestGraphTopology:
         assert isinstance(g, StateGraph)
 
     def test_tdd_loop_edge_exists(self):
-        """Debug loop: node_systematic_debug → node_write_files."""
+        """Debug loop: node_systematic_debug → node_apply_patches.
+        [v2.0] Was: → node_write_files. Phase 3.1 split changed target."""
         g = build_graph()
-        assert ("node_systematic_debug", "node_write_files") in g.edges
+        assert ("node_systematic_debug", "node_apply_patches") in g.edges
 
     def test_terminal_nodes_exist(self):
         g = build_graph()
@@ -74,11 +83,11 @@ class TestWorkflowMetadata:
     def test_metadata_exists(self):
         assert isinstance(WORKFLOW_METADATA, dict)
         assert WORKFLOW_METADATA["name"] == "autocode"
-        assert WORKFLOW_METADATA["version"] == "2.0-alpha"  # [v2.0] Phase 1-2
+        assert WORKFLOW_METADATA["version"] == "2.0-beta"  # [v2.0] Phase 3
 
-    def test_metadata_has_17_nodes(self):
+    def test_metadata_has_26_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 17  # [Pre-2.0 Fix] was 18, removed node_write_files_with_flag_reset
+        assert len(nodes) == 26  # [v2.0] was 23 (Phase 3.2), +3 publish split nodes (wrapper excluded)
 
     def test_metadata_nodes_have_types(self):
         for node in WORKFLOW_METADATA["nodes"]:

@@ -136,28 +136,87 @@
 
 ---
 
-### `node_write_files(state)` — Phase 8: Write/Modify Files
+### `node_write_files(state)` — [v2.0-beta] Phase 8: BACKWARD-COMPAT WRAPPER
 
-**Purpose:** Write or modify files on disk.
+**Purpose:** File writing — apply patches, write new files, persist run-dir artifacts. Runs after `node_execute_step`, before `node_analyze_impact` (or directly before the verify chain for task types that skip impact analysis).
 
-**Logic:**
+**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.1 split):** This node is now a thin wrapper that calls the 3 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 3 split nodes directly (`execute → apply_patches → write_new_files → persist_artifacts → [route]`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_write_files` still work, but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (26-entry list — wrappers excluded). See the 3 split-node sections below for the actual logic.
+
+**Wrapper logic:** Runs `node_apply_patches({**state, **result})` → `node_write_new_files({**state, **result})` → `node_persist_artifacts({**state, **result})` in sequence, accumulating partial updates into `result`. Returns the merged dict.
+
+**Original Logic (now distributed across 3 split nodes):**
 1. For each modified file:
-   - **[Pre-2.0 Fix]** Validate the LLM-generated path with `_is_path_safe(base_path, rel_path)` (path traversal guard)
-   - Apply patch (if patch provided)
-   - Write new file (if new file)
-   - Update existing file (if content provided)
-2. Use `FileLock` for atomic writes
-3. Use `tempfile.NamedTemporaryFile` + `os.replace` for atomicity
+   - Validate the LLM-generated path with `_is_path_safe(base_path, rel_path)` (path traversal guard — helper now lives in `apply_patches.py`, imported by `write_new_files.py`)
+   - Apply patch (if patch provided) — **`node_apply_patches`**
+   - Write new file (if new file) — **`node_write_new_files`**
+   - Update existing file (if content provided) — **`node_write_new_files`**
+2. Use `FileLock` for atomic writes — **`node_write_new_files`**
+3. Use `tempfile.NamedTemporaryFile` + `os.replace` for atomicity — **`node_write_new_files`**
+4. Persist `test_autocode_feature.py` + `generated_code.json` + `debug_log.json` to `run_dir` — **`node_persist_artifacts`**
 
-**Output:** Partial dict with `written_files`, `test_files`, `autocode_run_path`.
+**Output (merged):** Partial dict with `written_files`, `files_map`, `test_files`, `autocode_run_path`, `modified_files`, `patch_errors` (if any).
 
-**[Pre-2.0 Fix] `_is_path_safe()` path traversal guard:** New helper `_is_path_safe(base_path, rel_path) -> bool` in `nodes/write_files.py` validates that `(base_path / rel_path).resolve()` is strictly within `base_path.resolve()` using `Path.is_relative_to()`. Applied to BOTH patch targets and new-file targets. Was: only user-supplied paths were validated (in `node_validate_input`) — LLM-generated paths like `"../../etc/passwd"` would escape `base_path`. Found by: Qwen. See CHANGELOG.md.
+**[Pre-2.0 Fix] `_is_path_safe()` path traversal guard:** New helper `_is_path_safe(base_path, rel_path) -> bool` uses `Path.resolve().is_relative_to()` to verify the resolved target stays inside `base_path.resolve()`. Applied to BOTH patch targets and new-file targets. Was: only user-supplied paths were validated (in `node_validate_input`) — LLM-generated paths like `"../../etc/passwd"` would escape `base_path`. Found by: Qwen. See CHANGELOG.md. **[v2.0-beta]** Phase 3.1 moved the helper from `write_files.py` to `apply_patches.py` (re-exported from `write_files.py` for `import`-compatibility).
 
-**[P1 #9] Returns `status: "error"` on JSON parse failure** (was: returned `{}` — workflow continued silently).
+**[P1 #9] Returns `status: "error"` on JSON parse failure** (was: returned `{}` — workflow continued silently). Now handled by `node_apply_patches`.
 
-**[P2 #13] `FileLock` timeout retries once** (was: no retry — lock contention silently skipped the write).
+**[P2 #13] `FileLock` timeout retries once** (was: no retry — lock contention silently skipped the write). Now handled by `node_write_new_files`.
 
 **Note:** `.bak` files are forbidden by project rules — atomic writes (tempfile + `os.replace`) only. Git is the backup.
+
+---
+
+### `node_apply_patches(state)` — [v2.0-beta] Phase 8a: Apply str_replace Patches
+
+**Purpose:** Apply `str_replace` patches to existing files only. First of the 3 Phase 3.1 split nodes (was inside `node_write_files`).
+
+**Logic:**
+1. Read `state["tdd_source_code"]` JSON, extract `patches[]` array
+2. For each patch: validate path via `_is_path_safe()`, skip if protected, skip if file missing, else call `apply_patch(target, old_text, new_text)`
+3. Build `modified_files` list (paths successfully patched) + `patch_errors` list (path-traversal blocks + missing-file + apply failures)
+
+**Params:** None beyond `state`. Reads: `state["tdd_source_code"]`, `state["status"]`, `state["dry_run"]`, `state["project_root"]`.
+
+**Returns:** `{"modified_files": list[str], "patch_errors"?: list[str]}` — or `{"status": "error", "error": str}` on JSON parse failure, or `{"status": "dry_run", "modified_files": []}` when `dry_run=True`, or `{}` when `status` is `needs_clarification`/`failed` or `tdd_source_code` is empty.
+
+**Source:** `workflows/autocode_impl/nodes/apply_patches.py` (Phase 3.1 — also hosts `_is_path_safe()` shared with `write_new_files.py`).
+
+---
+
+### `node_write_new_files(state)` — [v2.0-beta] Phase 8b: Write New Files + Build files_map
+
+**Purpose:** Write new files / overwrite existing ones atomically. Also builds `files_map` for `analyze_impact`. Second of the 3 Phase 3.1 split nodes.
+
+**Logic:**
+1. Read `state["tdd_source_code"]` JSON, extract `new_files{}` dict (backwards-compat: if no `patches`/`new_files` keys, treat whole dict as files)
+2. For each file: validate path via `_is_path_safe()` (imported from `apply_patches.py`), skip if protected, else write atomically (`tempfile.NamedTemporaryFile` + `os.replace` + `FileLock` with 1 retry on timeout)
+3. Call `_cleanup_old_autocode_runs()` for on-demand run-dir pruning
+4. Build `files_map` — snapshots of all modified files (patches from `apply_patches` + new files written here) with `{content_preview, preview_md5, full_md5, size, truncated}` for `analyze_impact`
+
+**Params:** None beyond `state`. Reads: `state["tdd_source_code"]`, `state["status"]`, `state["dry_run"]`, `state["project_root"]`.
+
+**Returns:** `{"files_map": dict[str, dict]}` — or `{}` when `status` is `needs_clarification`/`failed`/`error`, `tdd_source_code` is empty, or `dry_run=True`.
+
+**Source:** `workflows/autocode_impl/nodes/write_new_files.py` (Phase 3.1 — imports `_is_path_safe` from `apply_patches.py`).
+
+---
+
+### `node_persist_artifacts(state)` — [v2.0-beta] Phase 8c: Persist Test File + Generated Code + Debug Log
+
+**Purpose:** Persist the test file + generated code + debug log to the per-run autocode folder. Third of the 3 Phase 3.1 split nodes. Sets `test_files` + `autocode_run_path` for downstream verify nodes.
+
+**Logic:**
+1. Resolve `run_dir` via `_get_autocode_run_path(tid)` (or read from `state["autocode_run_path"]` if set)
+2. Write `test_autocode_feature.py` from `state["test_code"]` (joined with `"\n\n"` if list) using `FileLock` (10s timeout)
+3. Write `generated_code.json` from `state["tdd_source_code"]` (if present)
+4. Write `debug_log.json` from `state["debug_notes"]` / `root_cause` / `defense_notes` / `tdd_iteration` (if any are present)
+5. Return `test_files` (relative path from `workspace_root`) + `autocode_run_path` (absolute path)
+
+**Params:** None beyond `state`. Reads: `state["test_code"]`, `state["tdd_source_code"]`, `state["debug_notes"]`, `state["root_cause"]`, `state["defense_notes"]`, `state["tdd_iteration"]`, `state["status"]`, `state["dry_run"]`, `state["trace_id"]`, `state["autocode_run_path"]`.
+
+**Returns:** `{"test_files": list[str], "autocode_run_path": str}` — or `{}` when `status` is `needs_clarification`/`failed`/`error`, `dry_run=True`, or `test_code` is empty.
+
+**Source:** `workflows/autocode_impl/nodes/persist_artifacts.py` (Phase 3.1).
 
 ---
 
@@ -235,23 +294,109 @@
 
 ---
 
-### `node_verify(state)` — Phase 12: Verify Changes
+### `node_verify(state)` — [v2.0-beta] Phase 12: BACKWARD-COMPAT WRAPPER
 
-**Purpose:** Verify the changes with linting and regression tests.
+**Purpose:** Verify the changes with linting, regression tests, and LLM spec review.
+
+**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.2 split):** This node is now a thin wrapper that calls the 4 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 4 split nodes directly (`route → run_pytest → run_lint → llm_review → verify_decision → [route_after_verify]`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_verify` still work (e.g., `test_verify.py` imports it to exercise the full verify chain), but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (26-entry list — wrappers excluded). See the 4 split-node sections below for the actual logic.
+
+**Wrapper logic:** Runs `node_run_pytest({**state, **result})` → `node_run_lint({**state, **result})` → `node_llm_review({**state, **result})` → `node_verify_decision({**state, **result})` in sequence, accumulating partial updates into `result`. Returns the merged dict.
+
+**Original Logic (now distributed across 4 split nodes):**
+1. **[Pre-2.0 Fix]** Handle `tdd_status` in `{"max_retries_exceeded", "stuck"}` → return early with `verification_passed: False` — **`node_verify_decision`**
+2. **[Pre-2.0 Fix]** Skip `pytest` entirely if no test files exist — **`node_run_pytest`**
+3. Run `ruff check` for linting (advisory only — does not block commit) — **`node_run_lint`**
+4. **[Pre-2.0 Fix]** Scope ruff to `modified_files` only — **`node_run_lint`**
+5. Run LLM verification (spec coverage + cleanliness) with hallucination guard — **`node_llm_review`** (LLM call) + **`node_verify_decision`** (hallucination guard: real pytest exit code overrides LLM claim)
+6. Return verification results — **`node_verify_decision`**
+
+**Output (merged):** Partial dict with `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes`, `test_results`, `tests_passed`, `llm_review_data`, `trace_id`, `status` (failed on max_retries/stuck early-exit).
+
+**[P1 #7] `lint_passed = None` when ruff is unavailable** (was `True` — missing ruff should not report as pass). Now handled by `node_run_lint`.
+
+**Note:** `evidence_outputs` includes `regression: fresh_output[:2000]` which is the same as `tests`. Redundant — `# TODO(2.0):` collapse into a single `tests` entry. Now produced by `node_verify_decision`.
+
+**[v2.0-beta] Test impact:** `test_verify.py` patches `workflows.autocode_impl.nodes.llm_review._call` instead of `…verify._call` — `_call` is now imported into `llm_review.py` for the LLM spec check. The `verify.py` wrapper re-exports nothing (it just runs the 4 split nodes), so patching `verify._call` no longer works.
+
+---
+
+### `node_run_pytest(state)` — [v2.0-beta] Phase 12a: Fresh Pytest Subprocess
+
+**Purpose:** Run a fresh pytest subprocess on the autocode run directory. First of the 4 Phase 3.2 split nodes (was inside `node_verify`).
 
 **Logic:**
-1. **[Pre-2.0 Fix]** Handle `tdd_status` in `{"max_retries_exceeded", "stuck"}` → return early with `verification_passed: False` (was: only checked `max_retries_exceeded` — `"stuck"` routed here by `route_after_run_tests` but was unhandled, so verify proceeded as if tests had passed). Found by: DeepSeek.
-2. **[Pre-2.0 Fix]** Skip `pytest` entirely if no test files exist (`tests_dir` and `test_file` both missing). Was: ran `pytest` with no args → entire project test suite (could be thousands of tests, false failures, minutes of waste). Found by: DeepSeek.
-3. Run `ruff check` for linting (advisory only — does not block commit)
-4. **[Pre-2.0 Fix]** Scope ruff to `modified_files` only. Was: `ruff check workspace_root` (slow, noisy, false failures from pre-existing lint errors elsewhere in the workspace). Found by: DeepSeek, Qwen, Kimi (3 LLMs independently flagged this).
-5. Run LLM verification (spec coverage + cleanliness) with hallucination guard (real pytest exit code overrides LLM claim)
-6. Return verification results
+1. Resolve `run_dir` from `state["autocode_run_path"]` or `_get_autocode_run_path(tid)`
+2. **[Pre-2.0 Fix]** If no test files exist (`tests_dir` and `test_file` both missing), skip pytest entirely — return `{"test_results": {...stderr: "No test files found..."}, "tests_passed": False}`
+3. Run `[python, "-m", "pytest", "--tb=short", "--color=no", "-q", ...targets]` with `cwd=base_path` and 120s timeout
+4. Build `test_results` dict `{success, stdout, stderr, returncode}` + `tests_passed` bool + ephemeral `_pytest_output` (first 2000 chars — stashed for `llm_review`)
 
-**Output:** Partial dict with `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes`.
+**Params:** None beyond `state`. Reads: `state["status"]`, `state["trace_id"]`, `state["autocode_run_path"]`, `state["project_root"]`.
 
-**[P1 #7] `lint_passed = None` when ruff is unavailable** (was `True` — missing ruff should not report as pass).
+**Returns:** `{"test_results": dict, "tests_passed": bool, "_pytest_output": str}` — handles `FileNotFoundError` (pytest missing) + `subprocess.TimeoutExpired` (120s) with structured error returns. Or `{}` when `status` is `needs_clarification`/`failed`.
 
-**Note:** `evidence_outputs` includes `regression: fresh_output[:2000]` which is the same as `tests`. Redundant — `# TODO(2.0):` collapse into a single `tests` entry.
+**Source:** `workflows/autocode_impl/nodes/run_pytest.py` (Phase 3.2).
+
+---
+
+### `node_run_lint(state)` — [v2.0-beta] Phase 12b: Ruff Lint on modified_files Only
+
+**Purpose:** Run `ruff check` scoped to `modified_files` only (advisory — does not block commit). Second of the 4 Phase 3.2 split nodes.
+
+**Logic:**
+1. Read `modified_files` from state (set by `node_apply_patches`); if empty, return `{"lint_output": "No modified files to lint", "lint_passed": None}`
+2. Resolve `lint_targets` as absolute paths via `base_path / f` for each `f` in `modified_files`
+3. Run `[python, "-m", "ruff", "check", ...targets, "--select", "E,F", "--no-cache"]` with 30s timeout
+4. Build `lint_output` (first 500 chars of stdout+stderr) + `lint_passed` (bool — `returncode == 0`)
+
+**Params:** None beyond `state`. Reads: `state["status"]`, `state["trace_id"]`, `state["modified_files"]`, `state["project_root"]`.
+
+**Returns:** `{"lint_output": str, "lint_passed": bool | None}` — `lint_passed` is `None` when ruff is unavailable (`except Exception` branch — **[P1 #7]** was `True` before Pre-2.0 Fix) or when no modified files exist. Or `{}` when `status` is `needs_clarification`/`failed`.
+
+**Source:** `workflows/autocode_impl/nodes/run_lint.py` (Phase 3.2).
+
+---
+
+### `node_llm_review(state)` — [v2.0-beta] Phase 12c: LLM Spec Coverage + Cleanliness Review
+
+**Purpose:** LLM-based spec review of the implementation. Third of the 4 Phase 3.2 split nodes. Calls `_call(role="executor", system=VERIFY_SYSTEM, ...)` with implementation context, fresh pytest output, and ruff output.
+
+**Logic:**
+1. Build `impl_ctx` from `state["tdd_source_code"]` JSON — extract `patches[].new` (first 1500 chars each) + `new_files{}` values (first 1500 chars each). Fallback: raw `tdd_source_code[:3000]` on parse error
+2. Read `tests_passed`, `_pytest_output` (from `node_run_pytest`), `lint_output` (from `node_run_lint`) from state
+3. Call `_call(role="executor", system=VERIFY_SYSTEM, user=<spec + impl + tests + pytest output + ruff output>, timeout=EXECUTOR_TIMEOUT)`
+4. Parse response via `_parse_json(raw)` → `data` dict `{automated_checks_passed, checks: {syntax, tests, spec, regressions, cleanliness}, summary}`
+5. On `_call` exception: `tracer.error(tid, "llm_review", ...)` + return `{"llm_review_data": {"automated_checks_passed": False, "checks": {}, "summary": "LLM verification error"}}`
+
+**Params:** None beyond `state`. Reads: `state["status"]`, `state["trace_id"]`, `state["tdd_source_code"]`, `state["tests_passed"]`, `state["_pytest_output"]`, `state["test_results"]`, `state["lint_output"]`, `state["spec"]`, `state["test_code"]`.
+
+**Returns:** `{"llm_review_data": dict}` — always returns a dict (even on error). Or `{}` when `status` is `needs_clarification`/`failed`.
+
+**Source:** `workflows/autocode_impl/nodes/llm_review.py` (Phase 3.2 — imports `_call` + `_parse_json` from `helpers.py`; `VERIFY_SYSTEM` from `constants.py`; `EXECUTOR_TIMEOUT` from `state.py`).
+
+**Note:** This is the only node in the verify chain that calls the LLM. `node_verify_decision` (next) consumes `llm_review_data` and applies the hallucination guard.
+
+---
+
+### `node_verify_decision(state)` — [v2.0-beta] Phase 12d: Compose Results + Hallucination Guard
+
+**Purpose:** Compose the results from the 3 previous nodes (run_pytest + run_lint + llm_review) and make the final verification decision. Fourth of the 4 Phase 3.2 split nodes. Also handles the `tdd_status="max_retries_exceeded"` / `"stuck"` early exit (moved here from the original `node_verify`).
+
+**Logic:**
+1. **Early exit:** If `tdd_status in ("max_retries_exceeded", "stuck")`, log `tracer.error(tid, "verify_decision", ...)`, store a procedural memory (`memory.store(...)` — non-fatal, wrapped in try/except), and return `{"status": "failed", "verification_notes": f"TDD {tdd_status}", "verification_passed": False, "trace_id": tid}`. Skip conditions (`needs_clarification`/`failed`): return `{}`.
+2. Read results from state: `tests_passed`, `lint_passed`, `_pytest_output`, `lint_output`, `llm_review_data`
+3. Compute `automated_ok = tests_passed` (lint is advisory only)
+4. **Hallucination guard:** If `not tests_passed` AND `llm_review_data["automated_checks_passed"]` is True, log `tracer.step` "HALLUCINATION DETECTED" — real exit code overrides LLM claim
+5. Compute `llm_checks_ok` = all of `syntax`, `tests`, `spec`, `regressions`, `cleanliness` checks pass
+6. Final decision: `all_passed = automated_ok AND llm_checks_ok`
+7. Build `verification_notes` (Automated/LLM PASS/FAIL + summary + JSON-encoded checks) + `evidence_outputs` `{tests, lint, regression}` (each truncated to 2000/500/2000 chars)
+
+**Params:** None beyond `state`. Reads: `state["trace_id"]`, `state["tdd_status"]`, `state["max_retries"]`, `state["task"]`, `state["tdd_error"]`, `state["status"]`, `state["tests_passed"]`, `state["lint_passed"]`, `state["_pytest_output"]`, `state["test_results"]`, `state["lint_output"]`, `state["llm_review_data"]`.
+
+**Returns:** `{"verification_passed": bool, "verification_notes": str, "evidence_outputs": dict, "trace_id": str}` — or `{"status": "failed", ...}` on max_retries/stuck early-exit, or `{}` on `needs_clarification`/`failed` skip.
+
+**Source:** `workflows/autocode_impl/nodes/verify_decision.py` (Phase 3.2).
+
+**[v2.0-beta] `route_after_verify` now routes from this node** (was: from `node_verify`). The conditional edge `workflow.add_conditional_edges("node_verify_decision", route_after_verify, {...})` in `graph.py` reads `verification_passed` to decide between `node_report` and `END`.
 
 ---
 
@@ -292,23 +437,23 @@
 
 ---
 
-### `node_publish(state)` — [v1.3] Phase 15: Push + PR + Optional Auto-merge
+### `node_publish(state)` — [v2.0-beta] Phase 15: BACKWARD-COMPAT WRAPPER
 
 **Purpose:** Push the committed branch to the remote, open a PR, and optionally auto-merge it. Runs after `node_commit`, before `node_distill_memory`.
 
-**Logic:**
-1. Skip conditions (same as `node_commit`): `status` in `{needs_clarification, failed, skipped}` → return `{}`. `verification_passed` falsy → return `{}`. `dry_run` truthy → return `{"status": "dry_run"}`.
-2. If none of the three publish flags are ON (`AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`), return `{}` (v1.2 behavior — no-op).
-3. If `state["branch"]` is empty, return `{}` (nothing to push).
-4. **Step 1 — Push:** If `cfg.autocode_push_on_commit`, call `_github_push(branch, tid)`. On failure, return early (`{"pushed": False, "pr_number": 0, "pr_url": ""}`) — do NOT proceed to PR creation.
-   - If push flag is OFF but PR/merge flags are ON, return early with a `tracer.step` note (can't create a PR without pushing first).
-5. **Step 2 — PR create:** If `cfg.autocode_open_pr` AND push succeeded, call `_github_pr_create(branch, title, body, tid)` with:
-   - `title`: `f"autocode: {task[:60]}"`
-   - `body`: built by `_build_pr_body(state)` — includes task, task_type, commit_sha, verification status, optional root_cause, optional swarm_verdict (with LOW-confidence warning if applicable).
-   - On success, set `pr_number` and `pr_url` from the returned PR data dict. On failure, return early (do NOT proceed to auto-merge).
-6. **Step 3 — Auto-merge:** If `cfg.autocode_auto_merge` AND a PR was created, call `_github_pr_merge(pr_number, tid)` with `merge_method="squash"` (hardcoded — see TODO below).
+**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.3 split):** This node is now a thin wrapper that calls the 3 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 3 split nodes directly (`commit → push → create_pr → merge_pr → distill_memory`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_publish` still work, but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (26-entry list — wrappers excluded). See the 3 split-node sections below for the actual logic.
 
-**Output:** Partial dict with `pushed: bool`, `pr_number: int`, `pr_url: str` (all three are always present when the node runs to completion; defaults are `False`/`0`/`""`).
+**Wrapper logic:** Runs `node_push({**state, **result})` → `node_create_pr({**state, **result})` → `node_merge_pr({**state, **result})` in sequence, accumulating partial updates into `result`. Returns the merged dict.
+
+**Original Logic (now distributed across 3 split nodes):**
+1. Skip conditions (same as `node_commit`): `status` in `{needs_clarification, failed, skipped}` → return `{}`. `verification_passed` falsy → return `{}`. `dry_run` truthy → return `{"status": "dry_run"}`. — **`node_push`**
+2. If none of the three publish flags are ON (`AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`), return `{}` (v1.2 behavior — no-op). — **`node_push`** (returns `{"pushed": False}` when push flag is OFF)
+3. If `state["branch"]` is empty, return `{}` (nothing to push). — **`node_push`**
+4. **Step 1 — Push:** If `cfg.autocode_push_on_commit`, call `_github_push(branch, tid)`. On failure, return early. — **`node_push`**
+5. **Step 2 — PR create:** If `cfg.autocode_open_pr` AND push succeeded, call `_github_pr_create(branch, title, body, tid)` with `body` built by `_build_pr_body(state)` — **`node_create_pr`** (`_build_pr_body` MOVED here from `publish.py` in Phase 3.3; signature unchanged)
+6. **Step 3 — Auto-merge:** If `cfg.autocode_auto_merge` AND a PR was created, call `_github_pr_merge(pr_number, tid)`. — **`node_merge_pr`** (terminal — returns `{}`)
+
+**Output (merged):** Partial dict with `pushed: bool`, `pr_number: int`, `pr_url: str` (all three are always present when the node runs to completion; defaults are `False`/`0`/`""`).
 
 **[v1.3] Config flags (all default OFF):**
 - `AUTOCODE_PUSH_ON_COMMIT=1` — push the branch to `origin` after commit.
@@ -317,13 +462,79 @@
 
 **[v1.3] Graceful-skip behavior:** Every `github_ops.py` helper checks `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()` in try/except) before any GitHub API call. If GitHub is not configured (`GITHUB_TOKEN` / `GITHUB_OWNER` / `GITHUB_REPO` missing), the helper logs a `tracer.step` and returns `False`/`None` — the workflow continues without crashing.
 
-**[v1.3] Why `node_publish` is separate from `node_commit`:** See ARCHITECTURE.md § "[v1.3] Design Decision Notes" #1. Short version: commit failure ≠ publish failure; the publish step can be skipped in dry_run / failed / skipped states independently; the graph topology stays self-documenting.
+**[v1.3] Why `node_publish` is separate from `node_commit`:** See ARCHITECTURE.md § "[v1.3] Design Decision Notes" #1. Short version: commit failure ≠ publish failure; the publish step can be skipped in dry_run / failed / skipped states independently; the graph topology stays self-documenting. **[v2.0-beta]** Phase 3.3 split it further for finer-grained routing and retry.
 
 **`# TODO(2.0):` items:**
-- Split `node_publish` into separate `node_push` / `node_pr_create` / `node_pr_merge` for finer-grained routing and retry.
+- ~~Split `node_publish` into separate `node_push` / `node_pr_create` / `node_pr_merge` for finer-grained routing and retry.~~ **[v2.0-beta] DONE (Phase 3.3)** — split into `node_push` / `node_create_pr` / `node_merge_pr`. `# TODO(2.0):` Phase 6 removes this wrapper once all external callers have migrated to the 3 split nodes.
 - Add retry logic for transient push / PR creation failures (currently terminal).
-- Add `AUTOCODE_AUTO_MERGE_METHOD` config (squash / merge / rebase) — currently hardcoded to `squash`.
+- Add `AUTOCODE_AUTO_MERGE_METHOD` config (squash / merge / rebase) — currently hardcoded to `squash` inside `_github_pr_merge`.
 - Richer PR body (test results, diff summary, impact warnings) — currently minimal.
+
+---
+
+### `node_push(state)` — [v2.0-beta] Phase 15a: Push Branch to Remote
+
+**Purpose:** Push the committed branch to the remote via `_github_push(branch, tid)`. First of the 3 Phase 3.3 split nodes (was inside `node_publish`).
+
+**Logic:**
+1. Skip conditions (same as `node_commit`): `status in {needs_clarification, failed, skipped}` → `{}`; `verification_passed` falsy → `{}`; `dry_run` truthy → `{"status": "dry_run"}`
+2. If `cfg.autocode_push_on_commit` is OFF, return `{"pushed": False}` (let downstream nodes decide)
+3. If `state["branch"]` is empty, return `{"pushed": False}` (nothing to push)
+4. Call `_github_push(branch, tid)` — returns `bool`
+5. Return `{"pushed": success}`
+
+**Params:** None beyond `state`. Reads: `state["status"]`, `state["verification_passed"]`, `state["dry_run"]`, `state["trace_id"]`, `state["branch"]`.
+
+**Returns:** `{"pushed": bool}` — or `{"status": "dry_run"}` when dry_run, or `{}` on skip conditions.
+
+**Source:** `workflows/autocode_impl/nodes/push.py` (Phase 3.3 — imports `_github_push` from `github_ops.py`).
+
+---
+
+### `node_create_pr(state)` — [v2.0-beta] Phase 15b: Create Pull Request
+
+**Purpose:** Open a PR from the autocode branch via `_github_pr_create(branch, title, body, tid)`. Second of the 3 Phase 3.3 split nodes. Hosts `_build_pr_body(state)` (moved here from `publish.py` in Phase 3.3 — signature unchanged).
+
+**Logic:**
+1. Skip conditions: `status in {needs_clarification, failed, skipped}` → `{}`; `verification_passed` falsy → `{}`; `dry_run` truthy → `{}`
+2. If `cfg.autocode_open_pr` is OFF, return `{"pr_number": 0, "pr_url": ""}`
+3. If `state["pushed"]` is falsy (can't create a PR without pushing first), return `{"pr_number": 0, "pr_url": ""}` with a `tracer.step` note
+4. If `state["branch"]` is empty, return `{"pr_number": 0, "pr_url": ""}`
+5. Build `pr_title = f"autocode: {state['task'][:60]}"` and `pr_body = _build_pr_body(state)`
+6. Call `_github_pr_create(branch, pr_title, pr_body, tid)` — returns `dict | None`
+7. Return `{"pr_number": pr_data["number"], "pr_url": pr_data["url"]}` on success, `{"pr_number": 0, "pr_url": ""}` on failure
+
+**`_build_pr_body(state)` helper (moved here from `publish.py` in Phase 3.3):**
+- Reads: `task`, `task_type`, `commit_sha`, `verification_passed`, `root_cause`, `swarm_verdict`
+- Outputs a markdown PR body: `## Autocode: <task[:80]>` header + `**Type:**` + `**Commit:**` + `**Verified:**` + optional `**Root cause identified:**` + optional `**Swarm review:**` (with `⚠️ Low-confidence swarm verdict` warning if `confidence == "LOW"`) + footer
+- Signature unchanged from `publish.py` (no behavior change — pure move)
+
+**Params:** None beyond `state`. Reads: `state["status"]`, `state["verification_passed"]`, `state["dry_run"]`, `state["trace_id"]`, `state["pushed"]`, `state["branch"]`, `state["task"]`, `state["task_type"]`, `state["commit_sha"]`, `state["root_cause"]`, `state["swarm_verdict"]`.
+
+**Returns:** `{"pr_number": int, "pr_url": str}` — always returns both keys (defaults `0`/`""` if PR not created). Or `{}` on skip conditions.
+
+**Source:** `workflows/autocode_impl/nodes/create_pr.py` (Phase 3.3 — imports `_github_pr_create` from `github_ops.py`; defines `_build_pr_body` locally).
+
+---
+
+### `node_merge_pr(state)` — [v2.0-beta] Phase 15c: Auto-merge PR (Terminal)
+
+**Purpose:** Auto-merge the PR via `_github_pr_merge(pr_number, tid)`. Third of the 3 Phase 3.3 split nodes. **DANGEROUS — default OFF.** Terminal — returns `{}` (no state update); no downstream node needs the merge result.
+
+**Logic:**
+1. Skip conditions: `status in {needs_clarification, failed, skipped}` → `{}`; `verification_passed` falsy → `{}`; `dry_run` truthy → `{}`
+2. If `cfg.autocode_auto_merge` is OFF, return `{}`
+3. If `state["pr_number"]` is falsy (no PR to merge — PR not created), return `{}` with a `tracer.step` note
+4. Call `_github_pr_merge(pr_number, tid)` (currently hardcoded to `merge_method="squash"` inside the helper)
+5. Return `{}` (terminal)
+
+**Params:** None beyond `state`. Reads: `state["status"]`, `state["verification_passed"]`, `state["dry_run"]`, `state["trace_id"]`, `state["pr_number"]`.
+
+**Returns:** `{}` always (terminal — no state update).
+
+**Source:** `workflows/autocode_impl/nodes/merge_pr.py` (Phase 3.3 — imports `_github_pr_merge` from `github_ops.py`).
+
+**`# TODO(2.0):`** Add `AUTOCODE_AUTO_MERGE_METHOD` config (squash/merge/rebase) — currently hardcoded to `squash` inside `_github_pr_merge`.
 
 ---
 
@@ -521,4 +732,4 @@ and add the `summarize_context` node.
 
 ---
 
-*Last updated: 2026-07-11 (v2.0-alpha — 2.0 refactor Phase 1 + Phase 2: added `[v2.0]` note to `node_git_commit` documenting the `_get_vcs` accessor migration (proof-of-concept); new "[v2.0] State Accessors" section documenting the 8 accessor functions (`_get_plan`/`_get_tdd`/`_get_files`/`_get_impact`/`_get_debug`/`_get_verify`/`_get_vcs`/`_get_memory`) and the 8 sub-state TypedDicts; new `debug_history` field declared in `TDDState` (Phase 4 #37 placeholder — not yet populated); graph structure unchanged — 17 nodes. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*
+*Last updated: 2026-07-11 (v2.0-beta — 2.0 refactor Phase 3 (node decomposition): `node_write_files` section reframed as backward-compat wrapper + 3 new split-node sections (`node_apply_patches` / `node_write_new_files` / `node_persist_artifacts` — Phase 3.1); `node_verify` section reframed as backward-compat wrapper + 4 new split-node sections (`node_run_pytest` / `node_run_lint` / `node_llm_review` / `node_verify_decision` — Phase 3.2); `node_publish` section reframed as backward-compat wrapper + 3 new split-node sections (`node_push` / `node_create_pr` / `node_merge_pr` — Phase 3.3) with `_build_pr_body` documented as moved to `create_pr.py`; each split node section includes Purpose, Logic, Params (state reads), Returns, Source; `route_after_verify` now routes from `node_verify_decision`; graph registers 27 nodes, metadata lists 26 [wrappers excluded]). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*

@@ -22,7 +22,7 @@
 10. **Always use role-based calls** — `llm.complete(role="...", ...)` or `llm.call(role="...", ...)`.
 11. **Always make new sub-role models fall back to `executor_model`** — not `planner_model`. Planner is expensive.
 12. **Always log every call via `tracer.step()`** with `trace_id`.
-13. **Always use the existing JSON extraction pipeline** — `client.py` uses 3-layer regex; `router.py` uses `raw_decode()`. Don't introduce a third approach.
+13. **Always use the existing JSON extraction pipeline** — `client.py` uses 3-layer regex; `router.py` uses `raw_decode()`. Don't introduce a third approach. **[Autocode v2.0]** `router.py` now delegates to `core/json_extract.py` (consolidated utility). `client.py`'s `_parse_response` migration to `core/json_extract.py` is planned for a later 2.0 phase — until then, keep the 3-layer extraction in `_parse_response` as-is. When migrating, separate the JSON extraction step from the API response parsing + schema validation steps.
 14. **Always go through `core/memory_backend/budget.py`'s `budget_messages()`** for context truncation — never raw-truncate messages. (Not `llm_backend/context_budget.py` — that file doesn't exist.)
 15. **Always use `CHARS_PER_TOKEN = / 3.5` for budgeting decisions** — the `// 4` estimates in `client.py` debug log and `rate_limit.py` are unrelated to what gets kept/trimmed.
 16. **Always read timeout from `cfg.model_registry[role]["timeout"]`** — single source of truth in `core/config.py`. Never add timeout to `llm_backend/config.py`.

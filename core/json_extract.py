@@ -1,12 +1,19 @@
 """[Autocode v2.0] Consolidated JSON extraction from LLM responses.
 
-Replaces 3 duplicated implementations:
-  - workflows/autocode_impl/helpers.py: _parse_json, _parse_json_array
-  - core/router.py: _extract_first_json
-  - core/llm_backend/client.py: _parse_response
+Part of the autocode v2.0 refactor. Replaces 2 of 3 duplicated JSON
+extraction implementations:
+  - workflows/autocode_impl/helpers.py: _parse_json, _parse_json_array (migrated)
+  - core/router.py: _extract_first_json (migrated)
 
-All LLM JSON parsing in the codebase should route through these functions.
-If a new edge case is found, fix it here once and all callers benefit.
+TODO(Autocode v2.0): core/llm_backend/client.py: _parse_response still has
+its own JSON extraction logic embedded in a larger response parser (it also
+does API response parsing + schema validation). Migrating it requires
+refactoring _parse_response to separate JSON extraction from API response
+parsing. Deferred to a later 2.0 phase — see docs/core/llm/INSTRUCTIONS.md.
+
+All LLM JSON parsing in the codebase should eventually route through these
+functions. If a new edge case is found, fix it here once and all callers
+benefit.
 
 Usage:
     from core.json_extract import extract_json, extract_json_array, extract_first_json

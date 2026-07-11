@@ -9,11 +9,15 @@ from unittest.mock import patch
 
 
 class TestDebugLoopRouting:
-    def test_debug_edge_routes_to_write_files(self):
-        """The graph must have a direct edge debug → write_files (not via run_tests)."""
+    def test_debug_edge_routes_to_apply_patches(self):
+        """The graph must have a direct edge debug → apply_patches (not via run_tests).
+
+        [v2.0] Was: debug → write_files. Phase 3.1 split changed target to
+        node_apply_patches (first of the 3 split write nodes).
+        """
         from workflows.autocode_impl.graph import build_graph
         g = build_graph()
-        assert ("node_systematic_debug", "node_write_files") in g.edges
+        assert ("node_systematic_debug", "node_apply_patches") in g.edges
 
 
 class TestDebugJsonParsing:
