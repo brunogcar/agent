@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| **v1.1** | 2026-07-12 | **Subagent dispatch in `propose` node.** `propose` now calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch. Was: `autocode_impl.helpers._call()`. Subagent gets only experiment history + target file content — no session history (superpowers pattern: "you construct exactly what they need"). Non-blocking: falls back to `_call()` on subagent failure. |
 | **v1.0** | 2026-07-12 | **Initial implementation.** 7-node LangGraph StateGraph (`setup → propose → modify → run_experiment → evaluate → log → decide → propose (loop)`). Evolutionary experiment-driven optimization: modify target file → run time-boxed subprocess → extract metric → keep (git commit) / discard (git reset). `AutoresearchState` TypedDict extends `WorkflowState`. `WORKFLOW_METADATA` mirrors autocode's schema. 4 config knobs (`AUTORESEARCH_TIME_BUDGET`, `AUTORESEARCH_TARGET_FILE`, `AUTORESEARCH_METRIC_NAME`, `AUTORESEARCH_METRIC_DIRECTION`). 22/22 tests pass with `-W error`. |
 
 ---
@@ -77,4 +78,4 @@ No other workflows were touched. No existing tests were broken.
 
 ---
 
-*Last updated: 2026-07-12 (v1.0 — initial implementation).*
+*Last updated: 2026-07-12 (v1.1 — `propose` node switched to subagent dispatch for isolated curated context).*

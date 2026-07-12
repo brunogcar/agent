@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| **v2.0.2** | 2026-07-12 | **Subagent debug path (`AUTOCODE_SUBAGENT_DEBUG=1`, default OFF).** Third debug path: single-LLM (default) → swarm → subagent. Non-blocking, falls back to single-LLM on failure. Subagent gets isolated curated context — it does NOT see autocode session state (superpowers pattern: "you construct exactly what they need"). Now 7 config flags (was 6). See INSTRUCTIONS.md NEVER DO #40 + ALWAYS DO #56. |
 | **v2.0.1** | 2026-07-11 | **Hardening pass — cross-LLM review (3 P0 + 7 P1 + 3 P2).** Sub-state clobbering in `debug.py` + `summarize_context.py` + `run_tests.py` (read-modify-write to preserve sibling TDD fields); `graph.py::invoke_with_timeout` now surfaces graph exceptions (was swallowing them as timeouts); markdown-fenced JSON parsing in `apply_patches.py` + `write_new_files.py` via `_parse_json`; `routes.py` short-circuits to `node_run_pytest` when `status=="error"`; `classify.py` enforces JSON schema (`task_type` enum); interruptible retry backoff via `threading.Event` (`helpers.py`); `modified_files` propagation from `write_new_files.py`; `blast_radius_note` now precedes "Output JSON ONLY:" in `DEBUG_SYSTEM`; `brainstorm.py` replaces `dir()` check with unconditional init; dead `json.loads` fallback removed from `execute.py`; dead `fix_error`/`improve` task_type entries removed from `route_after_write_files`; `debug_summary` now wired into `node_systematic_debug` prompt when `debug_history` > 5 entries. All 13 fixes tagged `[Hardening P*]` in source. 121/121 autocode tests pass. |
 | **v2.0** | 2026-07-11 | **2.0 GA — Phase 7 (Ponytail integration + dead code removal + doc consolidation).** `CODER_SYSTEM` now includes the 7-rung Lazy Dev minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code); `DEBUG_SYSTEM` Phase 4 also applies the ladder; new `ponytail:` comment convention for deliberate simplifications. `helpers._write_files()` DELETED (was dead code since v2.0-rc2). API.md split into API.md (facade + state accessors) + new NODES.md (per-node reference). `WORKFLOW_METADATA["version"]` → `"2.0"` (GA). Graph topology UNCHANGED (28 nodes, 27 metadata). **All 7 phases of the 2.0 refactor ✅ COMPLETE.** |
 | v2.0-rc3 | 2026-07-11 | **Phase 6 — State migration (sub-states primary).** `_default_state()` populates all 8 sub-states; legacy flat fields kept as mirrors. `_get_plan` accessor reads `plan_state` (not `plan`). |
@@ -134,7 +135,7 @@ Tracks that emerged from the v2.0 refactor + obra/superpowers + autoresearch des
 
 | # | Track | Inspiration | Notes |
 |---|-------|-------------|-------|
-| F1 | Subagent dispatch for parallel debug | obra/superpowers; agent dispatch roadmap | Allow `node_systematic_debug` to spawn parallel subagents (one per hypothesis) instead of the single-LLM sequential 4-phase loop. |
+| F1 | Subagent dispatch for parallel debug | obra/superpowers; agent dispatch roadmap | **PARTIALLY IMPLEMENTED** — single subagent dispatch available via `AUTOCODE_SUBAGENT_DEBUG=1` (v2.0.2). Parallel subagents (one per hypothesis) still future. |
 | F2 | Autoresearch pre-flight before plan | autoresearch design discussion | Wire a `node_autoresearch_preflight` (optional, gated on `AUTOCODE_AUTORESEARCH_PREFLIGHT=1`) before `node_brainstorm` to fetch web context for tasks that need external research. |
 | F3 | `debug_summary` consumption in verify chain | obra/superpowers Phase 4.5 | **[Hardening P2]** v2.0.1 wired `debug_summary` into `node_systematic_debug` prompt (when `debug_history` > 5 entries). Verify-chain consumption still deferred. |
 | F4 | Adaptive `_ARCHITECTURE_QUESTION_THRESHOLD` | obra/superpowers | Currently hardcoded to 3. Make it configurable per task type (`create_skill`=1, `feature`=5). |
@@ -145,4 +146,4 @@ Tracks that emerged from the v2.0 refactor + obra/superpowers + autoresearch des
 
 ---
 
-*Last updated: 2026-07-11 (v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-12 (v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

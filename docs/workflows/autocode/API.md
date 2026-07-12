@@ -119,14 +119,15 @@ The workflow returns a `dict`:
 }
 ```
 
-**Additional fields when GitHub + Swarm integration is enabled** (all default to their "off" values when the corresponding flags are OFF):
+**Additional fields when GitHub + Swarm + Subagent integration is enabled** (all default to their "off" values when the corresponding flags are OFF):
 
 ```json
 {
   "pushed": false,
   "pr_number": 0,
   "pr_url": "",
-  "swarm_verdict": {}
+  "swarm_verdict": {},
+  "subagent_verdict": {}
 }
 ```
 
@@ -136,6 +137,7 @@ The workflow returns a `dict`:
 | `pr_number` | `int` | `0` | Set by `node_create_pr` — the PR number from `_github_pr_create()`. |
 | `pr_url` | `str` | `""` | Set by `node_create_pr` — the PR HTML URL from `_github_pr_create()`. |
 | `swarm_verdict` | `dict` | `{}` | Set by `node_systematic_debug` when `AUTOCODE_SWARM_DEBUG=1` and swarm returned a verdict. Shape: `{fix, root_cause, defense_notes, confidence: "HIGH"\|"MEDIUM"\|"LOW", agreement, providers}`. |
+| `subagent_verdict` | `dict` | `{}` | Set by `node_systematic_debug` when `AUTOCODE_SUBAGENT_DEBUG=1` and the subagent dispatch returned a verdict. Shape: `{fix, root_cause, defense_notes}` (single isolated dispatch — no consensus/agreement). Falls back to single-LLM on subagent failure. |
 | `branch` | `str` | `""` | Set by `node_write_plan`. Includes `trace_id` suffix for uniqueness. |
 
 **Failure:**
@@ -159,7 +161,7 @@ The workflow state is a `TypedDict(total=False)` defined in
 `workflows/autocode_impl/state.py`. The most relevant fields for callers and
 future editors:
 
-**GitHub + Swarm integration fields:**
+**GitHub + Swarm + Subagent integration fields:**
 
 | Field | Type | Default | Source node | Purpose |
 |-------|------|---------|-------------|---------|
@@ -167,6 +169,7 @@ future editors:
 | `pr_number` | `int` | `0` | `node_create_pr` | PR number (0 = no PR created). |
 | `pr_url` | `str` | `""` | `node_create_pr` | PR HTML URL. |
 | `swarm_verdict` | `dict` | `{}` | `node_systematic_debug` | Swarm consensus + vote result. |
+| `subagent_verdict` | `dict` | `{}` | `node_systematic_debug` | Subagent dispatch result (single isolated LLM call with curated context). |
 
 **Debug loop fields (Phase 4):**
 
@@ -264,7 +267,15 @@ from `vcs_ops.py` directly** — see INSTRUCTIONS.md ALWAYS DO #53.
 
 `debug_history` is the within-run debug-loop history that closes the #37 prerequisite (context summarization):
 
-- **POPULATED** by `node_systematic_debug` on every iteration: `{iteration, phase, root_cause, fix (truncated to 200 chars), tests_passed: bool}` (`tests_passed=False` when the entry is created — `run_tests` updates it to `True` on the next loop iteration if the fix worked). **[Hardening P0.2]** `run_tests` now correctly marks the last entry's `tests_passed=True`. Swarm-path entries use `phase="swarm"` and include `confidence`.
+**Three debug paths** (mutually exclusive — see INSTRUCTIONS.md NEVER DO #40):
+
+1. **Single-LLM (default)** — `node_systematic_debug` calls `_call()` directly with the 4-phase `DEBUG_SYSTEM` prompt. No flag required.
+2. **Swarm** (`AUTOCODE_SWARM_DEBUG=1`) — `node_systematic_debug` calls `_swarm_debug_consensus()` which dispatches to 2+ providers, then votes (confidence HIGH/MEDIUM/LOW). Non-blocking: the fix is applied regardless of confidence.
+3. **Subagent** (`AUTOCODE_SUBAGENT_DEBUG=1`, v2.0.2) — `node_systematic_debug` calls `agent(action="subagent", role="planner")` with isolated curated context (failing test + error output + current source + truncated prior fix attempts). Subagent does NOT see autocode session state. Non-blocking: falls back to single-LLM on subagent failure.
+
+All three paths populate `debug_history` (with `phase` set accordingly: `investigation`/`pattern`/`hypothesis`/`fix` for single-LLM, `swarm` for swarm, `subagent` for subagent).
+
+- **POPULATED** by `node_systematic_debug` on every iteration: `{iteration, phase, root_cause, fix (truncated to 200 chars), tests_passed: bool}` (`tests_passed=False` when the entry is created — `run_tests` updates it to `True` on the next loop iteration if the fix worked). **[Hardening P0.2]** `run_tests` now correctly marks the last entry's `tests_passed=True`. Swarm-path entries use `phase="swarm"` and include `confidence`. Subagent-path entries use `phase="subagent"`.
 - **CONSUMED** by `node_systematic_debug`: last 5 entries are injected into the LLM user prompt under a `--- PRIOR DEBUG ATTEMPTS (do NOT repeat these) ---` block so the LLM doesn't repeat failed hypotheses/fixes.
 - **CONSUMED** by `node_summarize_context`: reads `debug_history` and compresses it into `debug_summary` via chonkie `SentenceChunker` (soft dep, lazy import) before re-entering the loop.
 - **Architecture-question exit:** `node_systematic_debug` reads the last 3 entries — if all have `tests_passed=False`, it bails with `tdd_status="max_retries_exceeded"` + procedural memory store. Different from #39 stuck detection (same error repeating) — this fires when DIFFERENT errors occur each iteration.
@@ -297,4 +308,4 @@ produced by `node_summarize_context`:
 
 ---
 
-*Last updated: 2026-07-11 (v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-12 (v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

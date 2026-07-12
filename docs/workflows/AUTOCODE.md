@@ -11,6 +11,7 @@ The `autocode` workflow handles **autonomous code generation and modification** 
 - **Git integration** — Creates branches, commits changes, generates commit messages (branch names include `trace_id` suffix for uniqueness)
 - **GitHub integration** — Optional push + PR + auto-merge (all gated on config flags + `is_configured()`, all default OFF)
 - **Swarm debug** — Optional 2-run multi-model debug (consensus → vote, confidence HIGH/MEDIUM/LOW) via `AUTOCODE_SWARM_DEBUG=1`
+- **Subagent debug** — Optional third debug path: single isolated subagent dispatch with curated context (no session state) via `AUTOCODE_SUBAGENT_DEBUG=1` (v2.0.2)
 - **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code); `ponytail:` comment convention for deliberate simplifications
 - **Memory integration** — Stores procedural knowledge for future recall
 - **Report generation** — Generates a structured report with the final result
@@ -65,7 +66,7 @@ AUTOCODE_GRAPH_TIMEOUT=300          # Workflow timeout (seconds)
 AUTOCODE_MAX_RETRIES=3              # Max debug retries
 AUTOCODE_MAX_FILE_CHARS=128000      # Max file content chars
 
-# GitHub + Swarm integration flags (ALL default OFF — autocode behaves
+# GitHub + Swarm + Subagent integration flags (ALL default OFF — autocode behaves
 # identically to a local-only workflow unless explicitly opted in)
 AUTOCODE_PULL_BEFORE_BRANCH=0       # Pull recent commits before branching
 AUTOCODE_PUSH_ON_COMMIT=0           # Push branch to origin after commit
@@ -73,6 +74,7 @@ AUTOCODE_OPEN_PR=0                  # Open a PR after push
 AUTOCODE_AUTO_MERGE=0               # DANGEROUS — auto-merge the PR (squash)
 AUTOCODE_DEBUG_COMMENT_PR=0         # Post LOW-confidence swarm verdict as PR comment
 AUTOCODE_SWARM_DEBUG=0              # Use swarm (consensus → vote) for debug
+AUTOCODE_SUBAGENT_DEBUG=0           # Use single isolated subagent dispatch for debug (v2.0.2)
 ```
 
 ```python
@@ -87,6 +89,7 @@ cfg.autocode_open_pr = False             # Open a PR after push
 cfg.autocode_auto_merge = False          # DANGEROUS — auto-merge the PR (squash)
 cfg.autocode_debug_comment_pr = False    # Post LOW-confidence swarm verdict as PR comment
 cfg.autocode_swarm_debug = False         # Use swarm (consensus → vote) for debug
+cfg.autocode_subagent_debug = False      # Use single isolated subagent dispatch for debug (v2.0.2)
 ```
 
 > **Note on stale timeout env vars:** Earlier versions of this doc listed `AUTOCODE_PLANNER_TIMEOUT`, `AUTOCODE_EXECUTOR_TIMEOUT`, and `AUTOCODE_ROUTER_TIMEOUT`. **These env vars DO NOT EXIST.** Per-role LLM timeouts come from `cfg.model_registry[role]["timeout"]` (see `core/config.py`). `AUTOCODE_GRAPH_TIMEOUT` is the only autocode timeout; it must be ≥ the max per-role timeout (validated at config load time).
@@ -123,4 +126,4 @@ cfg.autocode_swarm_debug = False         # Use swarm (consensus → vote) for de
 
 ---
 
-*Last updated: 2026-07-11 (v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-12 (v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

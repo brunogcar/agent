@@ -90,14 +90,26 @@ def _read_target_file(target_file: str, project_root: str) -> str:
         return ""
 
 
-def _call_planner(system: str, user: str, tid: str = "") -> str:
-    """Call the planner LLM with retry + cancellation support.
+def _call_planner(system: str, user: str, tid: str = "", context: str = "") -> str:
+    """Call the planner LLM via subagent dispatch.
 
-    Reuses autocode's _call helper for consistency (same retry/backoff,
-    same cancellation flag, same json_schema plumbing).
+    [v1.1] Switched from autocode's _call() to agent(action="subagent")
+    for isolated curated context. The subagent gets only the experiment
+    history + target file content — no session history, no autocode state.
+    Returns the response text (parsed by _parse_proposal upstream).
     """
-    from workflows.autocode_impl.helpers import _call
-    return _call(role="planner", system=system, user=user, timeout=cfg.planner_timeout)
+    from tools.agent import agent
+    result = agent(
+        action="subagent",
+        role="planner",
+        task=user,
+        system=system,
+        context=context,
+        trace_id=tid,
+    )
+    if result.get("status") == "success":
+        return result.get("response", "")
+    raise RuntimeError(f"Subagent planner failed: {result.get('error', 'unknown')}")
 
 
 def _parse_proposal(raw: str) -> dict:
@@ -154,7 +166,7 @@ def node_propose(state: AutoresearchState) -> dict:
     )
 
     try:
-        raw = _call_planner(_PROPOSE_SYSTEM, user, tid)
+        raw = _call_planner(_PROPOSE_SYSTEM, user, tid, context=history_str)
     except Exception as e:
         tracer.error(tid, "propose", f"planner LLM call failed: {e}")
         return {

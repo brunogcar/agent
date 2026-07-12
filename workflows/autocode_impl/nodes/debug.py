@@ -251,11 +251,60 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                 "swarm_verdict": swarm_result,
                 "tdd": current_tdd,
             }
-        # Swarm failed — fall through to single-LLM debug
-        tracer.step(tid, "systematic_debug", "Swarm unavailable — falling back to single-LLM debug")
+        # Swarm failed — fall through to subagent or single-LLM debug
+        tracer.step(tid, "systematic_debug", "Swarm unavailable — falling back")
 
-    # Single-LLM debug (existing v1.2 behavior — used when AUTOCODE_SWARM_DEBUG=0
-    # or when swarm is unavailable)
+    # [v1.1] Subagent debug — isolated curated-context LLM dispatch.
+    # Uses agent(action="subagent") for a fresh LLM call with NO session history.
+    # The subagent gets only the debug system prompt + test failure + history.
+    # Different from single-LLM: no retry, no cancellation flag, isolated context.
+    # Different from swarm: single LLM, not multi-provider consensus.
+    if cfg.autocode_subagent_debug:
+        from tools.agent import agent
+        try:
+            subagent_result = agent(
+                action="subagent",
+                role="executor",
+                task=user,
+                system=system,
+                trace_id=tid,
+            )
+            if subagent_result.get("status") == "success":
+                from core.json_extract import extract_json
+                debug_data = extract_json(subagent_result.get("response", ""))
+                if debug_data:
+                    phase = debug_data.get("phase", "investigation")
+                    root_cause = debug_data.get("root_cause", "Unknown")
+                    defense_notes = debug_data.get("defense_notes", "")
+                    suggested_fix = debug_data.get("fix", "")
+
+                    tracer.step(tid, "systematic_debug", f"Subagent [phase={phase}] root cause: {root_cause[:100]}")
+
+                    new_entry = {
+                        "iteration": current_iteration,
+                        "phase": phase,
+                        "root_cause": root_cause,
+                        "fix": (suggested_fix or "")[:200],
+                        "tests_passed": False,
+                    }
+                    updated_history = debug_history + [new_entry]
+
+                    current_tdd = dict(state.get("tdd", {}))
+                    current_tdd["debug_history"] = updated_history
+                    return {
+                        "root_cause": root_cause,
+                        "defense_notes": defense_notes,
+                        "tdd_source_code": suggested_fix,
+                        "debug_notes": f"Debug iteration {current_iteration} (subagent {phase}): {root_cause}",
+                        "tdd": current_tdd,
+                    }
+            # Subagent failed — fall through to single-LLM
+            tracer.step(tid, "systematic_debug", "Subagent unavailable — falling back to single-LLM debug")
+        except Exception as e:
+            tracer.step(tid, "systematic_debug", f"Subagent exception: {e} — falling back to single-LLM debug")
+
+    # Single-LLM debug (default — used when AUTOCODE_SWARM_DEBUG=0 and
+    # AUTOCODE_SUBAGENT_DEBUG=0, or when swarm/subagent are unavailable)
     # [v2.0] Phase 4 — JSON schema now includes `phase` field (enum of 4 phases).
     # LM Studio enforces this at generation time so the model cannot emit a
     # missing or invalid phase.

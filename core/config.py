@@ -354,6 +354,7 @@ class Config:
         self.autocode_auto_merge = os.getenv("AUTOCODE_AUTO_MERGE", "0") == "1"
         self.autocode_debug_comment_pr = os.getenv("AUTOCODE_DEBUG_COMMENT_PR", "0") == "1"
         self.autocode_swarm_debug = os.getenv("AUTOCODE_SWARM_DEBUG", "0") == "1"
+        self.autocode_subagent_debug = os.getenv("AUTOCODE_SUBAGENT_DEBUG", "0") == "1"  # [v1.1] subagent dispatch
 
         # -- Validations -------------------------------------------------------
         # Existing validations (survive python -O via explicit raise)

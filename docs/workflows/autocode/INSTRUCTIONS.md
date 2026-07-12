@@ -23,7 +23,7 @@
 17. **Never bypass `base.py`'s `run_workflow()` from the facade** — The facade delegates to `run_workflow("autocode")` for tracing, checkpointing, and timeout. Bypassing it (the old design) crashed and skipped safety infra.
 18. **Never put push / PR / merge logic in `node_commit` — use `node_push` / `node_create_pr` / `node_merge_pr`** — `node_commit` is local-only (calls `git(action="commit")` via `vcs_ops.py`). ALL remote operations live in the split publish nodes.
 19. **Never call GitHub API actions without `is_configured()`** — Every helper in `vcs_ops.py` MUST call `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()`) before any GitHub API call.
-20. **Never add an integration flag that defaults ON** — All 6 GitHub/Swarm flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`) default OFF. Backward compat — with all OFF, autocode behaves identically to v1.2.
+20. **Never add an integration flag that defaults ON** — All 7 GitHub/Swarm/Subagent flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_SUBAGENT_DEBUG`) default OFF. Backward compat — with all OFF, autocode behaves identically to v1.2.
 21. **Never block the debug loop on a swarm verdict** — Swarm debug (`AUTOCODE_SWARM_DEBUG=1`) is non-blocking by design. The fix is ALWAYS applied, regardless of confidence (HIGH/MEDIUM/LOW). LOW confidence surfaces as a PR comment (if `AUTOCODE_DEBUG_COMMENT_PR=1`), not as a workflow block.
 22. **Never call `vcs_ops.py` helpers from outside `nodes/`** — The helpers (`_github_pull`, `_github_push`, `_github_pr_create`, `_github_pr_comment`, `_github_pr_merge`, `_swarm_debug_consensus`, `_git_commit`, `_git_create_branch`) are private to the autocode workflow nodes. External code MUST call the public `tools.github` / `tools.git` / `tools.swarm` facades.
 23. **Never mix local and remote VCS helpers inappropriately** — `_git_*` helpers = local git (no network, no auth). `_github_*` helpers = remote GitHub (requires `is_configured()`). Exception: `_swarm_debug_consensus()` may be called by `node_systematic_debug` directly.
@@ -43,6 +43,7 @@
 37. **Never wire `node_summarize_context` as a wrapper or skip it in the debug loop** — It is a FULLY-WIRED active node between `node_systematic_debug` and `node_apply_patches`. Skipping it means the LLM sees unbounded `debug_history` in long-running debug loops.
 38. **Never call `helpers._write_files()` — it is DELETED** — `helpers._write_files()` was DELETED in v2.0 GA after a dead-code audit found it was never called by any node. Code that imports it will now `ImportError`. Use the split nodes: `node_apply_patches` + `node_write_new_files` + `node_persist_artifacts`.
 39. **Never hand-roll what the stdlib ships — check rung 3 first** — The 7-rung Lazy Dev ladder (see ALWAYS DO #54) prefers stdlib (`collections.defaultdict`, `itertools.chain`, `pathlib.Path.read_text`, `dataclasses.asdict`, `functools.lru_cache`, `subprocess.run`) over hand-rolled equivalents.
+40. **Never enable `AUTOCODE_SWARM_DEBUG` and `AUTOCODE_SUBAGENT_DEBUG` simultaneously** — They're alternative debug paths. Swarm = multi-provider consensus (2 runs, vote); Subagent = single isolated dispatch (curated context, no session state). Pick ONE per workflow run.
 
 ## ✅ ALWAYS DO
 
@@ -117,6 +118,7 @@
     - `# ponytail: single-file write, atomic-batch-write if >1 file ever needed`
 
     Purposes: (1) signals DELIBERATE simplification (not a missed edge case); (2) names the CEILING that would force a rewrite; (3) names the UPGRADE PATH. NOT for tech debt — use `# TODO:` / `# FIXME:` for those.
+56. **When `AUTOCODE_SUBAGENT_DEBUG=1`, the subagent gets isolated curated context** — The subagent does NOT see autocode session state (no `debug_history`, no `tdd_state`, no `plan_state`). It receives only what `node_systematic_debug` constructs: failing test, error output, current source file, prior fix attempts (truncated). This is by design — superpowers pattern: "you construct exactly what they need". Never pass `state` wholesale to `agent(action="subagent")`; always build a focused context dict.
 
 ---
 
@@ -144,4 +146,4 @@
 
 ---
 
-*Last updated: 2026-07-11 (v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-12 (v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

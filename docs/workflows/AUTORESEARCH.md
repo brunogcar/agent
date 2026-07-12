@@ -15,7 +15,8 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch) �
 - **Results ledger** — Every experiment (keep *or* discard) is appended to `results.tsv` so operators can `tail -f` while the loop runs.
 - **Atomic writes** — `modify` uses `tempfile.mkstemp` + `os.fsync` + `os.replace`; the target file is never in a half-written state if the process is killed mid-write.
 - **Time-boxed experiments** — Each run is killed via `subprocess.run(timeout=...)` after `autoresearch_time_budget` seconds.
-- **Reuses autocode infrastructure** — Calls `autocode_impl.helpers._call()` for LLM retries + cancellation; uses `core.json_extract.extract_json()` for proposal parsing.
+- **Subagent dispatch for proposals** — `propose` node calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch (v1.1; was `autocode_impl.helpers._call()`). Subagent gets only experiment history + target file content — no session history (superpowers pattern: "you construct exactly what they need"). Falls back to `_call()` on subagent failure.
+- **JSON extraction** — Uses `core.json_extract.extract_json()` for proposal parsing.
 
 ---
 
@@ -109,4 +110,4 @@ All four knobs have sane defaults; you can override any of them per-invocation b
 
 ---
 
-*Last updated: 2026-07-12 (v1.0 — initial implementation). See [AR1 worklog](../../../../worklog.md) for implementation details.*
+*Last updated: 2026-07-12 (v1.1 — `propose` node switched to subagent dispatch for isolated curated context; v1.0 initial implementation). See [AR1 worklog](../../../../worklog.md) for implementation details.*
