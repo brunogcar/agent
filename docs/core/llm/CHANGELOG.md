@@ -51,7 +51,7 @@
 
 | Feature | Why Deferred | Priority |
 |---------|--------------|----------|
-| Migrate `_parse_response` JSON extraction to `core/json_extract.py` | **[Autocode v2.0]** `router.py` + `helpers.py` already migrated. `client.py`'s `_parse_response` embeds JSON extraction in a larger function that also does API response parsing + schema validation. Migration requires separating these concerns. Planned for a later 2.0 phase. | P2 |
+| ~~Migrate `_parse_response` JSON extraction to `core/json_extract.py`~~ | ✅ Done — `_parse_response` now calls `extract_first_json()` from `core/json_extract.py`. All 3 JSON extraction implementations (helpers, router, llm_backend) now consolidated into one. | ~~P2~~ Done |
 
 ---
 

@@ -314,50 +314,20 @@ class LLMClient:
 
         parsed: Optional[Any] = None
         if json_mode:
-            # [P1] Robust JSON extraction
-            # Strategy:
-            # 1. Try parsing the raw string directly (handles clean JSON, arrays, and backticks in strings)
-            # 2. Try extracting from markdown code blocks
-            # 3. Fall back to finding outermost JSON object/array
+            # [Autocode v2.0] JSON extraction now delegates to core/json_extract.py
+            # (single source of truth for all LLM JSON parsing in the codebase).
+            # Was: 60-line inline implementation with 3-layer regex strategy.
+            # Now: extract_first_json returns raw JSON string, we parse to handle
+            # both dicts and arrays (extract_json returns dict only).
+            from core.json_extract import extract_first_json
+            raw_json = extract_first_json(choice)
+            if raw_json:
+                try:
+                    parsed = json.loads(raw_json)
+                except json.JSONDecodeError:
+                    pass
 
-            json_str = None
-            choice_stripped = choice.strip()
-
-            # 1. Direct parse attempt (fixes arrays and backticks inside strings)
-            try:
-                parsed = json.loads(choice_stripped)
-            except json.JSONDecodeError:
-                pass
-
-            # 2. If direct parse failed, try extraction
-            if parsed is None:
-                # Try markdown code block extraction
-                # Use a regex that expects the fence to be on its own line or at the start/end
-                code_block_match = re.search(r'```(?:json)?\s*\n(.*?)\n\s*```', choice, re.DOTALL)
-                if code_block_match:
-                    json_str = code_block_match.group(1).strip()
-                else:
-                    # Fall back to finding outermost JSON structure
-                    obj_match = re.search(r'\{.*\}', choice, re.DOTALL)
-                    arr_match = re.search(r'\[.*\]', choice, re.DOTALL)
-
-                    # Pick the one that starts earliest in the string
-                    if obj_match and arr_match:
-                        json_str = obj_match.group(0) if obj_match.start() < arr_match.start() else arr_match.group(0)
-                    elif obj_match:
-                        json_str = obj_match.group(0)
-                    elif arr_match:
-                        json_str = arr_match.group(0)
-                    else:
-                        json_str = choice_stripped
-
-                if json_str:
-                    try:
-                        parsed = json.loads(json_str)
-                    except json.JSONDecodeError:
-                        pass
-
-            # 🔴 Schema Validation: Catch LLM tool call drift
+            # Schema Validation: Catch LLM tool call drift
             # Only validate if it looks like a tool call (has 'tool' and 'action')
             if parsed and isinstance(parsed, dict) and "tool" in parsed and "action" in parsed:
                 try:
