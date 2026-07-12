@@ -55,10 +55,17 @@ def register_action(
                 f"Duplicate action registration: '{action_name}' already exists "
                 f"in DISPATCH['{tool_name}']. Check for colliding action files."
             )
+        # [Hardening] Cache signature at registration time (was: inspect on every call)
+        import inspect as _inspect
+        sig = _inspect.signature(func)
+        handler_params = set(sig.parameters.keys())
+        has_kwargs = any(p.kind == _inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         DISPATCH[tool_name][action_name] = {
             "func": func,
             "help": help_text,
             "examples": examples or [],
+            "params": handler_params,  # [Hardening] cached for facade kwargs filtering
+            "has_kwargs": has_kwargs,   # [Hardening] cached for facade kwargs filtering
         }
         return func
     return decorator

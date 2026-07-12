@@ -99,11 +99,9 @@ def agent(
         )
 
     # Build kwargs — pass through all relevant parameters
-    # [v1.1] Only pass params the handler accepts (subagent has system/json_schema,
-    # dispatch doesn't). This prevents "unexpected keyword argument" errors.
-    import inspect as _inspect
-    handler_sig = _inspect.signature(op_info["func"])
-    handler_params = set(handler_sig.parameters.keys())
+    # [Hardening] Use cached signature from registry (was: inspect.signature on every call)
+    handler_params = op_info.get("params", set())
+    has_kwargs = op_info.get("has_kwargs", False)
 
     all_kwargs = {
         "role": role,
@@ -120,7 +118,6 @@ def agent(
         "tools": tools,
     }
     # Filter: only pass params the handler accepts (use **kwargs catch-all if present)
-    has_kwargs = any(p.kind == _inspect.Parameter.VAR_KEYWORD for p in handler_sig.parameters.values())
     if has_kwargs:
         kwargs = {k: v for k, v in all_kwargs.items() if v is not None}
     else:

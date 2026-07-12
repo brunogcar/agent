@@ -54,7 +54,7 @@ class TestSubagentDispatch:
             agent(action="subagent", role="executor", task="Do something")
 
         call_kwargs = mock_complete.call_args.kwargs
-        assert "focused assistant" in call_kwargs["system"]
+        assert "focused subagent" in call_kwargs["system"]
 
     def test_subagent_custom_system_prompt(self):
         """Caller provides system prompt → passed through to LLM."""

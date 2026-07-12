@@ -261,6 +261,19 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     # Different from swarm: single LLM, not multi-provider consensus.
     if cfg.autocode_subagent_debug:
         from tools.agent import agent
+        import json as _json
+        # [Hardening] Define schema at module level for subagent path too
+        _SUBAGENT_DEBUG_SCHEMA = {
+            "type": "object",
+            "properties": {
+                "phase": {"type": "string", "enum": ["investigation", "pattern", "hypothesis", "fix"]},
+                "root_cause": {"type": "string"},
+                "defense_notes": {"type": "string"},
+                "fix": {"type": "string"},
+            },
+            "required": ["phase", "root_cause", "defense_notes", "fix"],
+            "additionalProperties": False,
+        }
         try:
             subagent_result = agent(
                 action="subagent",
@@ -268,10 +281,16 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                 task=user,
                 system=system,
                 trace_id=tid,
+                temperature=retry_temp,  # [Hardening] pass retry temperature
+                json_schema=_json.dumps(_SUBAGENT_DEBUG_SCHEMA),  # [Hardening] enforce schema
             )
             if subagent_result.get("status") == "success":
                 from core.json_extract import extract_json
                 debug_data = extract_json(subagent_result.get("response", ""))
+                if not debug_data:
+                    # [Hardening] Log when subagent returns unparseable response
+                    tracer.warning(tid, "systematic_debug",
+                        f"Subagent returned unparseable response: {subagent_result.get('response', '')[:200]}")
                 if debug_data:
                     phase = debug_data.get("phase", "investigation")
                     root_cause = debug_data.get("root_cause", "Unknown")

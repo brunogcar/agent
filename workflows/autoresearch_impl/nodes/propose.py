@@ -90,21 +90,32 @@ def _read_target_file(target_file: str, project_root: str) -> str:
         return ""
 
 
-def _call_planner(system: str, user: str, tid: str = "", context: str = "") -> str:
+_PROPOSE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "rationale": {"type": "string"},
+        "new_content": {"type": "string"},
+    },
+    "required": ["description", "rationale", "new_content"],
+    "additionalProperties": False,
+}
+
+
+def _call_planner(system: str, user: str, tid: str = "") -> str:
     """Call the planner LLM via subagent dispatch.
 
-    [v1.1] Switched from autocode's _call() to agent(action="subagent")
-    for isolated curated context. The subagent gets only the experiment
-    history + target file content — no session history, no autocode state.
-    Returns the response text (parsed by _parse_proposal upstream).
+    [v1.2] Hardening: added json_schema enforcement. Removed context param
+    (was duplicating history_str already in user — Kimi B2 finding).
     """
+    import json as _json
     from tools.agent import agent
     result = agent(
         action="subagent",
         role="planner",
         task=user,
         system=system,
-        context=context,
+        json_schema=_json.dumps(_PROPOSE_JSON_SCHEMA),  # [Hardening] enforce schema
         trace_id=tid,
     )
     if result.get("status") == "success":
@@ -166,7 +177,7 @@ def node_propose(state: AutoresearchState) -> dict:
     )
 
     try:
-        raw = _call_planner(_PROPOSE_SYSTEM, user, tid, context=history_str)
+        raw = _call_planner(_PROPOSE_SYSTEM, user, tid)
     except Exception as e:
         tracer.error(tid, "propose", f"planner LLM call failed: {e}")
         return {
