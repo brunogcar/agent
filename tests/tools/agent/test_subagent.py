@@ -185,3 +185,126 @@ class TestSubagentDispatch:
         call_kwargs = mock_complete.call_args.kwargs
         assert call_kwargs["temperature"] == 0.7
         assert call_kwargs["max_tokens"] == 500
+
+
+class TestSubagentMultiTurn:
+    """[v2.0] Multi-turn ReAct loop tests."""
+
+    def test_multi_turn_final_answer_on_turn_1(self):
+        """LLM returns final_answer immediately — 1 turn, no tool calls."""
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.model = "test"
+        mock_result.usage = {"total": 50}
+        mock_result.parsed = {"thought": "I know the answer", "final_answer": "The bug is on line 42"}
+        mock_result.text = '{"thought": "I know", "final_answer": "The bug is on line 42"}'
+
+        with patch("tools.agent_ops.actions.subagent.llm.complete", return_value=mock_result):
+            result = agent(
+                action="subagent",
+                role="executor",
+                task="Find the bug",
+                tools="file,git",
+            )
+
+        assert result["status"] == "success"
+        assert result["response"] == "The bug is on line 42"
+        assert result["turns"] == 1
+
+    def test_multi_turn_tool_call_then_final_answer(self):
+        """LLM calls a tool on turn 1, then gives final answer on turn 2."""
+        # Turn 1: tool call
+        turn1 = MagicMock()
+        turn1.ok = True
+        turn1.model = "test"
+        turn1.usage = {"total": 100}
+        turn1.parsed = {"thought": "Need to read file", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "test.py"}}}
+        turn1.text = '{"thought": "Need to read file", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "test.py"}}}'
+
+        # Turn 2: final answer
+        turn2 = MagicMock()
+        turn2.ok = True
+        turn2.model = "test"
+        turn2.usage = {"total": 80}
+        turn2.parsed = {"thought": "Found it", "final_answer": "Bug is a missing import"}
+        turn2.text = '{"thought": "Found it", "final_answer": "Bug is a missing import"}'
+
+        with patch("tools.agent_ops.actions.subagent.llm.complete", side_effect=[turn1, turn2]):
+            with patch("tools.agent_ops.actions.subagent._execute_tool", return_value="file content here"):
+                result = agent(
+                    action="subagent",
+                    role="executor",
+                    task="Find the bug",
+                    tools="file",
+                    max_turns=5,
+                )
+
+        assert result["status"] == "success"
+        assert result["response"] == "Bug is a missing import"
+        assert result["turns"] == 2
+
+    def test_multi_turn_max_turns_exceeded(self):
+        """LLM keeps calling tools — hits max_turns limit."""
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.model = "test"
+        mock_result.usage = {"total": 100}
+        mock_result.parsed = {"thought": "Checking", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "test.py"}}}
+        mock_result.text = '{"thought": "Checking", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "test.py"}}}'
+
+        with patch("tools.agent_ops.actions.subagent.llm.complete", return_value=mock_result):
+            with patch("tools.agent_ops.actions.subagent._execute_tool", return_value="file content"):
+                result = agent(
+                    action="subagent",
+                    role="executor",
+                    task="Keep checking",
+                    tools="file",
+                    max_turns=3,
+                )
+
+        assert result["status"] == "max_turns"
+        assert result["turns"] == 3
+
+    def test_multi_turn_disallowed_tool_rejected(self):
+        """Caller requests a tool not in the allowlist — error before any LLM call."""
+        with patch("tools.agent_ops.actions.subagent.llm.complete") as mock_complete:
+            result = agent(
+                action="subagent",
+                role="executor",
+                task="Do something",
+                tools="github,agent",  # not in _ALLOWED_SUBAGENT_TOOLS
+            )
+
+        assert result["status"] == "error"
+        assert "not allowed for subagents" in result["error"]
+        mock_complete.assert_not_called()
+
+    def test_multi_turn_consecutive_tool_failures_bail(self):
+        """3 consecutive tool failures → bail with TOOL_FAILURES error."""
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.model = "test"
+        mock_result.usage = {"total": 100}
+        mock_result.parsed = {"thought": "Trying", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "missing.py"}}}
+        mock_result.text = '{"thought": "Trying", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "missing.py"}}}'
+
+        with patch("tools.agent_ops.actions.subagent.llm.complete", return_value=mock_result):
+            with patch("tools.agent_ops.actions.subagent._execute_tool", return_value="Error: file not found"):
+                result = agent(
+                    action="subagent",
+                    role="executor",
+                    task="Read missing file",
+                    tools="file",
+                    max_turns=10,
+                )
+
+        assert result["status"] == "error"
+        assert result["error_code"] == "TOOL_FAILURES"
+        assert result["turns"] == 3
+
+    def test_multi_turn_python_run_blocked(self):
+        """python(mode='run') is blocked even if 'python' is in the allowlist."""
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("python", {"mode": "run", "code": "import os; os.system('rm -rf /')"})
+        assert "not allowed for subagents" in result
+        assert "eval" in result

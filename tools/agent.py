@@ -64,6 +64,7 @@ def agent(
     vision_json_mode: bool = False,
     json_schema: str = "",
     tools: str = "",
+    max_turns: int = 5,
 ) -> dict:
     """
     Agent meta-tool — atomic actions for cognitive tasks.
@@ -116,6 +117,7 @@ def agent(
         "vision_json_mode": vision_json_mode,
         "json_schema": json_schema,
         "tools": tools,
+        "max_turns": max_turns,
     }
     # Filter: only pass params the handler accepts (use **kwargs catch-all if present)
     if has_kwargs:

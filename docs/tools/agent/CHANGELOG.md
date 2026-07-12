@@ -15,6 +15,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.0 | 2026-07-12 | **Multi-turn ReAct loop.** When `tools` param provided, subagent enters bounded loop: LLM returns JSON with `thought` + `tool_call` or `final_answer`. Tool allowlist (file, git, web, memory, python eval-only). `python(mode='run')` blocked. 3 consecutive tool failures → bail. Max turns cap (default 5, configurable). Tool results capped at 4000 chars. Context fencing in system prompt. `_REACT_SCHEMA` enforced via `json_schema`. 6 new multi-turn tests (16 total). |
 | v1.6 | 2026-07-12 | **[Hardening] Cross-LLM review fixes.** `str(result.error)` safety (was crashing on Exception objects). `try/except` around `llm.complete()` with error classification (TIMEOUT/CIRCUIT_OPEN/RATE_LIMIT). Stronger default system prompt (JSON output + context fencing). Metrics recording for all paths. `parsed` field preserved through `compress_result`. `inspect.signature()` cached at registration time in `_registry.py` (was: on every call). |
 | v1.5 | 2026-07-12 | **Subagent dispatch adopted by callers.** `action="subagent"` (registered in `actions/subagent.py`) is now consumed by autoresearch's `propose` node (v1.1) and autocode's `node_systematic_debug` via `AUTOCODE_SUBAGENT_DEBUG=1` (v2.0.2). Subagent gets isolated curated context — no session history (superpowers pattern: "you construct exactly what they need"). Was previously a future/deferred item; single-dispatch path now in use. Parallel multi-subagent dispatch (one per hypothesis) still future. |
 | v1.4 | 2026-07-08 | **JSON schema enforcement:** Added `json_schema` to ROLE_CONFIG for 6 JSON-returning roles (code, route, plan, review, refactor, test). `dispatch.py` reads `json_schema` from role config and passes to `llm.complete()`. LM Studio enforces schema at generation time via outlines. Defensive JSON parsing stays as fallback. |
@@ -118,10 +119,10 @@
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
-| *(No deferred items yet. Add here when a feature is explicitly rejected or postponed.)* |
+| 1 | **Parallel multi-subagent dispatch** | v2.0 ships single-thread multi-turn. Parallel (one subagent per hypothesis, orchestrated) is a larger architecture change — needs thread pool + result aggregation. | P2 |
 
 > **Rule:** When adding a deferred item, include the explicit decision reason — not just "not needed." Link to the discussion or commit if available.
 
 ---
 
-*Last updated: 2026-07-12. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-12 (v2.0 — multi-turn ReAct loop). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
