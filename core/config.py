@@ -335,6 +335,16 @@ class Config:
         # model_registry above (single source of truth). Do not set them again here.
         self.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
 
+        # -- Autoresearch (v1.0) ------------------------------------------------
+        # Autonomous experiment-driven optimization loop. Each experiment run
+        # is time-boxed by autoresearch_time_budget; the LLM proposes changes
+        # to autoresearch_target_file and the loop keeps/discards based on
+        # autoresearch_metric_name + autoresearch_metric_direction.
+        self.autoresearch_time_budget = int(os.getenv("AUTORESEARCH_TIME_BUDGET", "300"))
+        self.autoresearch_target_file = os.getenv("AUTORESEARCH_TARGET_FILE", "train.py")
+        self.autoresearch_metric_name = os.getenv("AUTORESEARCH_METRIC_NAME", "val_bpb")
+        self.autoresearch_metric_direction = os.getenv("AUTORESEARCH_METRIC_DIRECTION", "lower")
+
         # -- Autocode v1.3: GitHub + Swarm integration flags -------------------
         # All default OFF — autocode behaves exactly as v1.2 unless explicitly opted in.
         # TODO(2.0): Review whether these should be per-task rather than global.

@@ -24,7 +24,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [TAVILY.md](tools/TAVILY.md) | Tavily | AI-ranked search, bulk extraction, keyless mode, API budget tracking |
 | [VISION.md](tools/VISION.md) | Vision | Multimodal analysis, 3 input sources, SSRF protection, JSON mode |
 | [WEB.md](tools/WEB.md) | Web | SearXNG search, BeautifulSoup, parallel scraping, connection pooling |
-| [WORKFLOW.md](tools/WORKFLOW.md) | Workflow | LangGraph launcher, 6 workflow types, auto-routing, resume support |
+| [WORKFLOW.md](tools/WORKFLOW.md) | Workflow | LangGraph launcher, 7 workflow types, auto-routing, resume support |
 
 ---
 
@@ -722,12 +722,12 @@ Changes not staged for commit:
 
 ### 15. 🔄 Workflow — [tools/WORKFLOW.md](tools/WORKFLOW.md)
 
-**Status:** v1.0 — LangGraph workflow launcher.
+**Status:** v1.1 — LangGraph workflow launcher. v1.1 adds `autoresearch` workflow (autonomous experiment-driven optimization loop).
 
-**Purpose:** Trigger long-running multi-step workflows (research, data, autocode, etc.).
+**Purpose:** Trigger long-running multi-step workflows (research, data, autocode, autoresearch, etc.).
 
 **Key characteristics:**
-- **6 workflow types** — `research`, `data`, `autocode`, `deep_research`, `understand`, `auto`
+- **7 workflow types** — `research`, `data`, `autocode`, `deep_research`, `understand`, `autoresearch`, `auto`
 - **Strict type validation** — `VALID_WORKFLOWS` frozenset prevents LLM hallucination
 - **Auto-routing** — `type="auto"` lazily imports Router model to classify goal and select workflow
 - **Fail-fast guards** — Autocode validates `target_file`, `error_msg`, `feature_desc` BEFORE git snapshots

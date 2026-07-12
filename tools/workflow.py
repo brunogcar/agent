@@ -43,10 +43,11 @@ VALID_WORKFLOWS: frozenset[str] = frozenset({
     "autocode",
     "deep_research",
     "understand",  # Codebase Knowledge Graph builder
+    "autoresearch",  # Autonomous experiment-driven optimization (karpathy/autoresearch)
     "auto",
 })
 
-WorkflowType = Literal["research", "data", "autocode", "deep_research", "understand", "auto"]
+WorkflowType = Literal["research", "data", "autocode", "deep_research", "understand", "autoresearch", "auto"]
 
 def _make_error(error: str, trace_id: str, **extra) -> dict:
     """
@@ -83,6 +84,7 @@ def workflow(
     - autocode: Fix bugs, add features, refactor code (TDD + safety).
     - deep_research: Iterative multi-faceted research with ReAct loop.
     - understand: Build a Codebase Knowledge Graph via AST parsing.
+    - autoresearch: Autonomous experiment-driven optimization (modify → run → measure → keep/discard → repeat).
     - auto: Let the Router classify the task and choose the workflow.
     """
     # === VALIDATION: Ensure trace_id is always present ===
@@ -227,6 +229,15 @@ def workflow(
         # default to agent root instead of the specified project directory.
         elif wf_type == "understand":
             kwargs["project_root"] = project_root
+
+        # [v1.0] autoresearch: pass target_file + project_root to the
+        # experiment-driven optimization loop. target_file is the script the
+        # workflow will modify + run repeatedly; project_root is the git repo
+        # where the experiment branch is created.
+        elif wf_type == "autoresearch":
+            kwargs["target_file"] = target_file
+            if project_root:
+                kwargs["project_root"] = project_root
 
         result = run_workflow(
             workflow_type=wf_type,

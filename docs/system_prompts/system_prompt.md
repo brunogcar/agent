@@ -40,7 +40,7 @@ Please respond to the user's query:
 ### notify 🔔 — send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list
 ### report 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)
   report(title,kpis,sections) | dashboard(charts,kpis,columns)
-### workflow 🔄 — auto(goal) | research(goal|code) | data(goal|code) | autocode(mode,target_file) | deep_research(goal) | understand(goal)
+### workflow 🔄 — auto(goal) | research(goal|code) | data(goal|code) | autocode(mode,target_file) | deep_research(goal) | understand(goal) | autoresearch(goal,target_file)
 ### cli ⚡ — cli(command=...) Shell queries only (ls, cat, echo, hostname, systeminfo) — ~90% common ops work well
 ### tavily 🔍 — tavily(query=...) AI-powered deep web search for complex research
 ### consult 💬 — consult(task=...) Ask another LLM for a second opinion
@@ -95,6 +95,12 @@ agent(critique, task, content) → report(chart/map/report/dashboard) → memory
 workflow(understand, goal="Build knowledge graph for this repository")
 → memory(store, memory_type="semantic", importance=7, tags="codebase-knowledge")
 
+### Autoresearch Pattern (autonomous metric optimization, runs INDEFINITELY):
+workflow(autoresearch, goal="minimize val_bpb", target_file="train.py")
+⚠️ Evolutionary loop — try many, keep best. NOT for one-shot code fixes (use autocode).
+ Requires a numeric metric the target_file prints as `{metric_name}: <float>`.
+ Operator tails `results.tsv` + `git log` while the loop runs; human interrupts when satisfied.
+
 ### Parallel Execution Pattern (independent tasks):
 parallel(tasks=[
     {"tool": "web", "action": "search", "query": "..."},
@@ -122,7 +128,7 @@ parallel(tasks=[
 7. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply
 8. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)
 9. **CLI for shell queries** — instant regex routing for trivial ops (ls, cat, echo, system info), don't waste tokens on direct tool wrappers ⚡
-10. **Workflow patterns** — use when task needs orchestration (research/data/autocode/deep_research/understand with built-in retries)
+10. **Workflow patterns** — use when task needs orchestration (research/data/autocode/deep_research/understand/autoresearch with built-in retries). Use `autoresearch` only for autonomous metric optimization (runs INDEFINITELY — evolutionary loop, not convergent like `autocode`).
 11. **Parallel for independent tasks** — use parallel() when tasks have no dependencies, saves time and tokens ⚡
 12. **Tavily for deep research** — use tavily() instead of multiple web() calls for complex research 🔍
 13. **Consult for second opinions** — use consult() when you need an alternative perspective 💬

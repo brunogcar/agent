@@ -1,6 +1,6 @@
 """workflows/base.py -- Shared state TypedDict, node helpers, and dispatcher.
 
-All six workflows (research, data, autocode, deep_research, understand) share:
+All seven workflows (research, data, autocode, deep_research, understand, autoresearch) share:
   WorkflowState TypedDict
   node_step() and node_error() and node_done() helpers that write to the trace
   run_workflow() dispatcher that routes by type
@@ -23,7 +23,7 @@ from core.config import cfg
 # -- Shared workflow state ----------------------------------------------------
 class WorkflowState(TypedDict, total=False):
     # Identity
-    workflow: str          # "research" | "data" | "autocode" | "deep_research" | "understand"
+    workflow: str          # "research" | "data" | "autocode" | "deep_research" | "understand" | "autoresearch"
     goal: str              # what we are trying to accomplish
     trace_id: str          # tracer ID for this run
     # Inputs
@@ -247,7 +247,7 @@ def run_workflow(
 ) -> dict:
     """
     Run a named workflow and return the final state as a dict.
-    workflow_type : "research" | "data" | "autocode" | "deep_research" | "understand"
+    workflow_type : "research" | "data" | "autocode" | "deep_research" | "understand" | "autoresearch"
     goal          : what to accomplish
     trace_id      : attach to existing trace (creates new one if empty)
     resume        : if True, attempt to restore from checkpoint journal
@@ -334,12 +334,47 @@ def run_workflow(
             graph = build_understand_graph()
             result = graph.invoke(understand_state)
 
+        elif wf_type == "autoresearch":
+            # [v1.0] Autonomous experiment-driven optimization.
+            # Evolutionary loop: propose → modify → run → evaluate → decide →
+            # log → propose (repeat). Runs indefinitely until human interrupt.
+            #
+            # The default LangGraph recursion_limit (25) is too low for an
+            # overnight autoresearch run (each iteration is ~6 node calls).
+            # We raise it to a sane default; callers wanting more can pass
+            # their own config via run_workflow's **kwargs (none yet —
+            # future: accept a recursion_limit kwarg).
+            from workflows.autoresearch import build_autoresearch_graph
+            from workflows.autoresearch_impl.state import _default_state as _ar_default
+            ar_state = _ar_default(
+                goal=goal,
+                trace_id=trace_id,
+                project_root=initial_state.get("project_root", ""),
+                target_file=initial_state.get("target_file", ""),
+                metric_name=initial_state.get("metric_name", ""),
+                metric_direction=initial_state.get("metric_direction", ""),
+                time_budget=initial_state.get("time_budget"),
+                branch=initial_state.get("branch", ""),
+                results_path=initial_state.get("results_path", ""),
+            )
+            # Merge any extra kwargs the caller passed (e.g. dry_run, overrides)
+            ar_state.update({k: v for k, v in initial_state.items()
+                             if k not in ar_state or ar_state.get(k) in ("", None, 0, 0.0)})
+            graph = build_autoresearch_graph()
+            # Default to 1000 iterations (~6000 node calls) — enough for an
+            # overnight run. Callers wanting more should invoke the graph
+            # directly with their own recursion_limit.
+            result = graph.invoke(
+                ar_state,
+                config={"recursion_limit": 1000},
+            )
+
         else:
             tracer.error(trace_id, "dispatch", f"Unknown workflow type: {wf_type!r}")
             tracer.finish(trace_id, success=False)
             return {
                 "status": "failed",
-                "error": f"Unknown workflow type '{wf_type}'. Use: research | data | autocode | deep_research | understand",
+                "error": f"Unknown workflow type '{wf_type}'. Use: research | data | autocode | deep_research | understand | autoresearch",
                 "result": "",
                 "artifacts": [],
             }

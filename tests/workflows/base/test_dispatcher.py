@@ -17,7 +17,7 @@ class TestRunWorkflowRouting:
     def test_unknown_workflow_error_lists_all_types(self):
         from workflows.base import run_workflow
         result = run_workflow(workflow_type="bad", goal="test", trace_id="t2")
-        for wf in ["research", "data", "autocode", "deep_research", "understand"]:
+        for wf in ["research", "data", "autocode", "deep_research", "understand", "autoresearch"]:
             assert wf in result["error"], f"Error message must list {wf}"
 
     def test_workflow_type_case_insensitive(self, mocker):
