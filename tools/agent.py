@@ -2,7 +2,7 @@
 
 Replaces the monolithic Phase 7 agent() with a true thin facade.
 All business logic lives in agent_ops/ submodules:
-  - actions/ — MCP-visible operations (dispatch, metrics, vision_delegate, clear_cache)
+  - actions/ — MCP-visible operations (dispatch, subagent, metrics, vision_delegate, clear_cache)
   - roles/ — Per-role prompts and configs (classify, route, research, etc.)
   - context.py — Context trimming and token estimation
   - cache.py — Response caching for deterministic roles
@@ -33,12 +33,14 @@ PARALLEL_SAFE = False
     DISPATCH.get("agent", {}),
     doc_sections=[
         "IMPORTANT — action vs role:",
-        ' action — what operation to perform: "dispatch" | "metrics" | "vision_delegate" | "clear_cache"',
-        ' role — which LLM persona to use (only for action="dispatch"): classify | route | research | summarize | extract | critique | analyze | code | review | plan | consultor | refactor | test | document',
+        ' action — what operation to perform: "dispatch" | "subagent" | "metrics" | "vision_delegate" | "clear_cache"',
+        ' role — which LLM persona to use (dispatch): classify | route | research | ... | (subagent): executor | planner | router | consultor',
         "",
         "Common usage patterns:",
         ' agent(action="dispatch", role="classify", task="Is this spam?")',
         ' agent(action="dispatch", role="plan", task="Build a web scraper")',
+        ' agent(action="subagent", role="executor", task="Debug this error", context="def foo(): ...")',
+        ' agent(action="subagent", role="planner", task="Propose 3 ideas", system="You are an ML researcher.")',
         ' agent(action="metrics", task="classify") # query per-role metrics',
         ' agent(action="vision_delegate", task="Describe this image", context="image.png")',
         ' agent(action="clear_cache") # clear response cache',
@@ -53,12 +55,15 @@ def agent(
     role: str = "",
     task: str = "",
     context: str = "",
+    system: str = "",
     content: str = "",
     trace_id: str = "",
     temperature: float = -1.0,
     max_tokens: int = -1,
     mime_type: str = "",
     vision_json_mode: bool = False,
+    json_schema: str = "",
+    tools: str = "",
 ) -> dict:
     """
     Agent meta-tool — atomic actions for cognitive tasks.
@@ -94,20 +99,32 @@ def agent(
         )
 
     # Build kwargs — pass through all relevant parameters
-    kwargs = {
+    # [v1.1] Only pass params the handler accepts (subagent has system/json_schema,
+    # dispatch doesn't). This prevents "unexpected keyword argument" errors.
+    import inspect as _inspect
+    handler_sig = _inspect.signature(op_info["func"])
+    handler_params = set(handler_sig.parameters.keys())
+
+    all_kwargs = {
         "role": role,
         "task": task,
         "context": context,
+        "system": system,
         "content": content,
         "trace_id": trace_id,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "mime_type": mime_type,
         "vision_json_mode": vision_json_mode,
+        "json_schema": json_schema,
+        "tools": tools,
     }
-    # Filter out None defaults so handlers only get what they need
-    # Keep False, "", [] — those are explicit values, not "not provided"
-    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    # Filter: only pass params the handler accepts (use **kwargs catch-all if present)
+    has_kwargs = any(p.kind == _inspect.Parameter.VAR_KEYWORD for p in handler_sig.parameters.values())
+    if has_kwargs:
+        kwargs = {k: v for k, v in all_kwargs.items() if v is not None}
+    else:
+        kwargs = {k: v for k, v in all_kwargs.items() if v is not None and k in handler_params}
 
     # Execute handler safely
     try:
