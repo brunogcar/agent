@@ -3,7 +3,7 @@
 The `autocode` workflow handles **autonomous code generation and modification** tasks. It takes a natural language goal, optionally some initial files, and produces working code with tests, verification, and git commit.
 
 **Key characteristics:**
-- **18-node LangGraph state machine** ([v1.3] was 17 in v1.2 — added `node_publish`)
+- **28-node LangGraph state machine** ([v2.0 GA] — was 27 in v2.0-beta; [v2.0-rc1] added `node_summarize_context`; [v2.0-beta] split 3 "god nodes" into 10 focused nodes; [v1.3] was 17 in v1.2 — added `node_publish`)
 - **Mode-driven** — Supports `fix_error`, `improve`, `add_feature`, `create_skill`, and `unclear` modes
 - **TDD-first** — Generates tests before implementation (when applicable)
 - **Iterative refinement** — Debug loop with retry until tests pass or max retries exceeded
@@ -11,6 +11,7 @@ The `autocode` workflow handles **autonomous code generation and modification** 
 - **Git integration** — Creates branches, commits changes, and generates commit messages
 - **[v1.3] GitHub integration** — Optional push + PR + auto-merge via `node_publish` (all gated on config flags + `is_configured()`, all default OFF)
 - **[v1.3] Swarm debug** — Optional 2-run multi-model debug (consensus → vote, confidence HIGH/MEDIUM/LOW) via `AUTOCODE_SWARM_DEBUG=1`
+- **[v2.0 GA] Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` now includes the 7-rung minimization ladder inspired by [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code); `ponytail:` comment convention for deliberate simplifications
 - **Memory integration** — Stores procedural knowledge for future recall
 - **Report generation** — Generates a structured report with the final result
 
@@ -130,10 +131,11 @@ cfg.autocode_swarm_debug = False         # Use swarm (consensus → vote) for de
 | Subfile | Description |
 |---------|-------------|
 | [Architecture](autocode/ARCHITECTURE.md) | File maps, module trees, mermaid diagrams, design decisions, testing layout |
-| [API](autocode/API.md) | Node reference, output format, error handling, security |
+| [API](autocode/API.md) | Facade (`run_autocode_agent()`), graph overview, output format, state fields, state accessors |
+| [Nodes](autocode/NODES.md) | **[v2.0 GA] NEW** — Per-node reference for all 28 nodes (25 active + 3 backward-compat wrappers), in graph-execution order |
 | [Changelog](autocode/CHANGELOG.md) | Version history, breaking changes, roadmap, completed features, deferred items |
 | [Instructions](autocode/INSTRUCTIONS.md) | AI editing rules, NEVER DO, ALWAYS DO, anti-patterns |
 
 ---
 
-*Last updated: 2026-07-10 (v1.3 — added `node_publish` + GitHub/Swarm integration + 6 new config flags; fixed stale timeout env vars). 18-node LangGraph state machine (was 17 in v1.2).*
+*Last updated: 2026-07-11 (v2.0 GA — **all 7 phases of the 2.0 refactor ✅ COMPLETE.** Phase 7 (Ponytail integration + dead code removal + doc consolidation): `CODER_SYSTEM` now includes the 7-rung Lazy Dev minimization ladder inspired by DietrichGebert/ponytail (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code); `DEBUG_SYSTEM` Phase 4 includes the Lazy Dev minimization rule; `helpers._write_files()` DELETED (was DEPRECATED in v2.0-rc2); new `ponytail:` comment convention for deliberate simplifications; API.md split into API.md (facade + graph overview + state accessors) + new NODES.md (per-node reference for all 28 nodes); `WORKFLOW_METADATA["version"]` → `"2.0"` (GA). The original Phase 7 scope (timeout hardening #35 + backward-compat wrapper removal) was DESCOPED — Phase 1 cancellation flag is the production mitigation for #35; 3 wrappers remain KEPT for test compatibility. Prior v2.0-rc3 — Phase 6 (state migration): sub-states are now PRIMARY storage. Prior v2.0-rc2 — Phase 5 (VCS consolidation + cleanup): new `vcs_ops.py` merges `git_ops.py` + `github_ops.py` (kept as thin re-export wrappers). Prior v2.0-rc1 — Phase 4 (debug loop refactor): `DEBUG_SYSTEM` 4-phase prompt + `node_systematic_debug` accumulates `debug_history` + new `node_summarize_context` + architecture-question exit. 28-node LangGraph state machine (was 27 in v2.0-beta; was 17 in v1.2).)*

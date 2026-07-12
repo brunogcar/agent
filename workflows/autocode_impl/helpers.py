@@ -120,69 +120,8 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
     # Should never reach here, but defensive
     raise last_error  # type: ignore[misc]
 
-def _write_files(state: dict) -> dict:
-    """[v2.0] DEPRECATED — use node_apply_patches + node_write_new_files instead.
-
-    This function is kept for backward compatibility but is never called by
-    any node (Phase 5 cleanup confirmed: execute.py imported it but never
-    called it — dead import removed). The actual file writing logic now lives
-    in nodes/apply_patches.py + nodes/write_new_files.py.
-
-    Original docstring:
-    Write files with EXPLICIT base directory resolution.
-    """
-    files_map = state.get("files_map") or state.get("files", {})
-    if not files_map:
-        return {"error": "No files to write"}
-
-    # [Bug #1] No .bak backups — atomic writes only. Git provides versioning.
-    written = []
-    tid = state.get("trace_id", "")
-    project_root = state.get("project_root", "")
-
-    if project_root:
-        try:
-            from core.kgraph.project import ProjectManager, is_same_path
-            is_agent = is_same_path(Path(project_root), cfg.agent_root)
-            pm = ProjectManager(project_root, is_agent_root=is_agent)
-            base = pm.source_root
-            tracer.step(tid, "write_files", f"Resolved base via ProjectManager: {base}")
-        except Exception as e:
-            tracer.warning(tid, "write_files", f"ProjectManager failed ({e}), falling back to cfg.agent_root")
-            base = cfg.agent_root
-    else:
-        if any("workspace" in str(p) for p in files_map.keys()):
-            base = cfg.workspace_root
-        else:
-            base = cfg.agent_root
-        tracer.step(tid, "write_files", f"Using fallback base: {base}")
-
-    for file_path, content in files_map.items():
-        if not file_path or not content:
-            continue
-
-        full_path = Path(base) / file_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Atomic write: tempfile + os.replace (no .bak backup)
-            with tempfile.NamedTemporaryFile(
-                mode='w', encoding='utf-8', dir=full_path.parent,
-                delete=False, suffix='.tmp'
-            ) as tmp:
-                tmp.write(content)
-                tmp_path = Path(tmp.name)
-
-            os.replace(tmp_path, full_path)
-            written.append(file_path)
-
-        except Exception as e:
-            if 'tmp_path' in locals() and tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
-            tracer.error(tid, "atomic_write", f"Atomic write failed for {file_path}: {e}")  # [Pre-2.0 Fix] was 2 args
-            return {"error": f"Write failed: {e}", "partial_written": written}
-
-    return {"files_written": written}
+# [v2.0] Phase 7: _write_files() DELETED — was dead code (never called by any node).
+# The actual file writing logic lives in nodes/apply_patches.py + nodes/write_new_files.py.
 
 def _get_autocode_run_path(trace_id: str) -> Path:
     """Return per-run autocode directory: workspace/autocode/YYYYMMDD/{trace_id}/"""
