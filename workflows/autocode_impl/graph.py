@@ -53,7 +53,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "2.0-rc2",  # [v2.0] Phase 5: VCS consolidation + cleanup
+    "version": "2.0-rc3",  # [v2.0] Phase 6: state migration (sub-states primary)
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [

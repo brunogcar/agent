@@ -217,10 +217,14 @@ class AutocodeState(TypedDict, total=False):
 # Phase 6 removes the legacy fallbacks + flat fields.
 
 def _get_plan(state: dict, key: str, default: Any = None) -> Any:
-    """Read a plan sub-state field, falling back to legacy flat field."""
-    plan = state.get("plan")
-    if isinstance(plan, dict) and key in plan:
-        return plan[key]
+    """Read a plan sub-state field, falling back to legacy flat field.
+
+    [v2.0-rc3] Phase 6: plan sub-state lives under "plan_state" (not "plan")
+    because "plan" is overloaded — legacy code reads it as list[dict].
+    """
+    plan_state = state.get("plan_state")
+    if isinstance(plan_state, dict) and key in plan_state:
+        return plan_state[key]
     # Legacy flat field
     return state.get(key, default)
 
@@ -320,8 +324,15 @@ def _default_state(
 ) -> dict:
     """Create a default state dictionary.
 
-    [v2.0] Initializes both legacy flat fields AND empty sub-state dicts.
-    Nodes can write to either during migration. Phase 6 removes legacy fields.
+    [v2.0-rc3] Phase 6: sub-states are now PRIMARY storage (populated with
+    default values). Legacy flat fields are kept as mirrors for backward
+    compat with unmigrated nodes + tests. Phase 7 will remove the legacy
+    fields after all nodes + tests are migrated to accessors.
+
+    Accessors (_get_tdd, _get_vcs, etc.) read sub-state first, fall back to
+    legacy. Since sub-states are now populated, accessors always find values
+    in sub-states — the legacy fallback is only hit by code that reads
+    state.get("tdd_iteration") directly (bypassing accessors).
     """
     return {
         "task": task,
@@ -333,13 +344,63 @@ def _default_state(
         "task_type": "",
         "project_root": "",
         "autocode_run_path": "",
-        # [v2.0] Empty sub-states (optional — nodes can use accessors)
-        "tdd": {
-            "debug_history": [],  # [v2.0] Accumulated debug iterations (#37)
+        # [v2.0-rc3] Phase 6: sub-states are PRIMARY storage (populated with defaults)
+        # Note: "plan" key is overloaded — legacy code reads it as list[dict] (step list).
+        # The plan sub-state lives under "plan_state" to avoid breaking list readers.
+        "plan_state": {
+            "brainstorm_notes": "",
+            "steps": [],  # the actual plan step list (was "plan" in legacy)
+            "plan_accepted": False,
+            "spec": "",
+            "current_step": 0,
         },
-        # Legacy flat fields (kept for backward compat during Phase 2-5)
+        "tdd": {
+            "iteration": 0,
+            "source_code": "",
+            "error": "",
+            "status": "",
+            "max_retries": MAX_RETRIES,
+            "last_test_error": "",
+            "test_results": {},
+            "tests_written": False,
+            "debug_history": [],
+            "debug_summary": "",
+        },
+        "files_state": {
+            "input_files": files or {},
+            "files_map": {},
+            "modified_files": [],
+        },
+        "impact": {
+            "warnings": [],
+            "targeted_test_cmd": None,
+            "failed": False,
+        },
+        "debug": {
+            "notes": "",
+            "root_cause": "",
+            "defense_notes": "",
+            "swarm_verdict": {},
+        },
+        "verify": {
+            "notes": "",
+            "report": "",
+            "passed": False,
+        },
+        "vcs": {
+            "commit_sha": "",
+            "branch": "",
+            "branch_name": "",
+            "pushed": False,
+            "pr_number": 0,
+            "pr_url": "",
+        },
+        "memory": {
+            "notes": "",
+        },
+        # Legacy flat fields (mirrors — kept for backward compat during Phase 6-7)
+        "plan": [],  # legacy: list[dict] step list (plan_state["steps"] is the sub-state version)
         "brainstorm_notes": "",
-        "plan": [],
         "plan_accepted": False,
         "spec": "",
         "tdd_iteration": 0,
@@ -349,7 +410,7 @@ def _default_state(
         "max_retries": MAX_RETRIES,
         "files_map": {},
         "current_step": 0,
-        "last_test_error": "",  # [#39] stuck detection
+        "last_test_error": "",
         "execution_notes": "",
         "modified_files": [],
         "test_results": {},
@@ -361,8 +422,7 @@ def _default_state(
         "verify_report": "",
         "commit_sha": "",
         "branch_name": "",
-        "branch": "",  # [v1.3] Fix TypedDict drift
-        # [v1.3] GitHub + Swarm integration defaults
+        "branch": "",
         "pushed": False,
         "pr_number": 0,
         "pr_url": "",

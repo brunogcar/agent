@@ -76,6 +76,7 @@
 | 4 | Custom embedding models | `all-MiniLM-L6-v2` is fast and accurate enough | Skip |
 | 5 | Real-time sync across agents | No multi-agent deployment currently | Skip |
 | 6 | Configurable decay half-life | Hardcoded 30 days is appropriate for all use cases | Skip |
+| 7 | TencentDB-style layered memory architecture (L0→L1→L2→L3) | Inspired by [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory). Progressive disclosure: L0 raw conversation → L1 atomic facts → L2 scenario blocks → L3 user persona. Top layers in context, drill down for details. Our current sleep_learn distiller does similar L0→L1 distillation but without the full pyramid. Needs architectural design before implementation. | P2 |
 
 ---
 

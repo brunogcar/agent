@@ -141,6 +141,7 @@
 | 14 | LRU cache for `recall` | Memory contents change between calls. Cached recall results would be stale. The ChromaDB query is already fast (~5ms). Caching adds complexity and stale data risk for negligible gain. | Rejected |
 | 15 | `inspect.signature` filtering in facade | Violates the established `_ops` pattern (git, file, browser all use `**kwargs` in handlers). Adds fragility — if a handler signature changes, the facade filter must be updated. The `**kwargs` absorption is a documented trade-off. | Rejected |
 | 16 | Explicitly reject `collections` in `store` | The `collections` param is harmlessly absorbed by `**kwargs`. Rejecting it adds friction for the LLM which sees the param in the facade signature. The `memory_type` parameter determines the collection — this is by design. | Rejected |
+| 17 | Mermaid symbol graph for context offloading (TencentDB pattern) | Inspired by [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory). Instead of storing verbose memory entries, offload full text to files and replace with compact Mermaid symbols in context. Agent drills down via `node_id` when needed. 61% token reduction in their benchmarks. Would require restructuring how memory entries are stored + retrieved. | P3 |
 
 ---
 

@@ -66,6 +66,7 @@
 | 4 | Custom distillation models | `llm.complete(role="executor")` is the canonical path | Skip |
 | 5 | Rule editing via tool action | Rules are auto-generated; manual editing invites inconsistency | Skip |
 | 6 | Configurable idle threshold | `SLEEP_LEARN_IDLE_THRESHOLD_SEC` exists but is not enforced yet | Skip |
+| 7 | Layered memory pyramid (L0→L1→L2→L3) inspired by TencentDB Agent Memory | Our sleep_learn distiller does L0 (conversation) → L1 (atomic facts) distillation. TencentDB adds L2 (scenario blocks) + L3 (user persona) layers with progressive disclosure. Would make cross-session learning more structured. See [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory). | P2 |
 
 ---
 

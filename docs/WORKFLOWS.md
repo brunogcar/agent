@@ -421,6 +421,10 @@ Text chunking via [chonkie](https://github.com/chonkie-ai/chonkie) is integrated
 
 **⚠️ Current status:** `trim_state()` is a **utility** — no workflow calls it yet. It's ready for when workflows wire it into their graphs (see `base/CHANGELOG.md` #18). The chonkie improvement is "ready for use," not "in use."
 
+### Roadmap: TencentDB symbol offloading for state (P2/P3 future)
+
+**[Roadmap]** The `trim_state()` function currently uses chonkie-aware eviction (v1.3). A more sophisticated approach inspired by [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) would offload verbose state fields to per-run files and replace them with compact Mermaid symbol graphs in state. Nodes that need full data drill down via file path. This would complement the existing chonkie approach — chonkie for within-field compression, Mermaid symbols for cross-field context management.
+
 ### Roadmap: understand workflow (P2)
 
 When the understand workflow is extended to index `.md`/`.txt`/`.rst` docs (currently code-only), `core/kgraph/embeddings.py` should use chonkie `SentenceChunker` for prose files. Tree-sitter (currently used for code) can't parse prose. This is **conditional** on file-type support landing first — see `understand/CHANGELOG.md` #6.
