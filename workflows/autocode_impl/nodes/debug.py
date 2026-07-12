@@ -8,10 +8,19 @@ Debug node for autocode workflow.
   - Non-blocking: fix always applies; LOW confidence → optional PR comment
   - Falls back to single-LLM debug if swarm unavailable or flag off
 
-# TODO(2.0): The debug node is stateless per iteration (each call sees only
-# current test output, no accumulated history). This blocks context
-# summarization (#37). Should be refactored in 2.0 to accumulate debug_notes
-# across iterations for the swarm consensus prompt.
+[v2.0] Phase 4 — 4-phase debug loop refactor (obra/superpowers systematic-debugging):
+  - DEBUG_SYSTEM prompt restructured into investigation / pattern / hypothesis /
+    fix. The LLM must declare its current phase in every JSON response.
+  - debug_history accumulates per-iteration entries
+    {iteration, phase, root_cause, fix[:200], tests_passed} so the LLM sees
+    prior attempts and the orchestrator can detect stuck loops.
+  - Architecture-question exit: if the last _ARCHITECTURE_QUESTION_THRESHOLD
+    entries all have tests_passed=False, bail with tdd_status=
+    "max_retries_exceeded" and store a procedural memory so the human can be
+    asked an architecture question (the bug is likely architectural, not a
+    fix-the-line bug).
+  - summarize_context node (separate file) compresses debug_history before
+    re-entering the loop — keeps context budget bounded (#37).
 """
 from __future__ import annotations
 import json, re
@@ -19,17 +28,65 @@ from typing import Any
 from core.config import cfg
 from core.memory_engine import memory
 from core.tracer import tracer
+from workflows.autocode_impl.constants import DEBUG_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_tdd
 from workflows.autocode_impl.github_ops import _swarm_debug_consensus, _github_pr_comment
 from core.kgraph.queries import get_dependencies, get_callers
+
+# [v2.0] Phase 4 — architecture-question threshold.
+# If the last N debug_history entries all have tests_passed=False, the bug is
+# likely architectural (not a fix-the-line bug). Bail and store a procedural
+# memory so the human can be asked an architecture-level question.
+_ARCHITECTURE_QUESTION_THRESHOLD = 3
+
 
 def node_systematic_debug(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     tracer.step(tid, "systematic_debug", "Starting systematic debug")
     max_retries = state.get("max_retries", cfg.autocode_max_retries)
     current_iteration = state.get("tdd_iteration", 0)
-    
+
+    # [v2.0] Phase 4 — read accumulated debug history from sub-state (with
+    # legacy flat fallback via _get_tdd accessor).
+    debug_history = _get_tdd(state, "debug_history", []) or []
+
+    # [v2.0] Phase 4 — architecture-question exit.
+    # If the last N entries all have tests_passed=False, the bug is likely
+    # architectural. Bail and store a procedural memory.
+    if len(debug_history) >= _ARCHITECTURE_QUESTION_THRESHOLD:
+        recent = debug_history[-_ARCHITECTURE_QUESTION_THRESHOLD:]
+        if all(not entry.get("tests_passed", False) for entry in recent):
+            error_msg = state.get("tdd_error", "Unknown TDD failure")
+            tracer.error(
+                tid, "systematic_debug",
+                f"Architecture-question exit: last {_ARCHITECTURE_QUESTION_THRESHOLD} debug "
+                f"iterations all failed tests — likely architecture-level issue."
+            )
+            memory.store(
+                text=(
+                    f"Debug loop bailed after {len(debug_history)} iterations on task: "
+                    f"'{state.get('task')}'. Last {_ARCHITECTURE_QUESTION_THRESHOLD} attempts "
+                    f"all failed tests — likely an architecture-level question, not a "
+                    f"code-level bug. Last error: {error_msg}"
+                ),
+                memory_type="procedural",
+                importance=9,
+                tags="tdd_failure,architecture_question,autocode,phase4",
+                trace_id=tid,
+                outcome="failed"
+            )
+            return {
+                "tdd_status": "max_retries_exceeded",
+                "error": error_msg,
+                "debug_notes": (
+                    f"Debug abandoned after {len(debug_history)} iterations — last "
+                    f"{_ARCHITECTURE_QUESTION_THRESHOLD} all failed. Likely architecture-"
+                    f"level issue: {error_msg}"
+                ),
+                "tdd": {"debug_history": debug_history},
+            }
+
     if current_iteration > max_retries:
         error_msg = state.get("tdd_error", "Unknown TDD failure")
         tracer.error(tid, "systematic_debug", f"TDD exhausted after {max_retries} attempts: {error_msg}")
@@ -46,7 +103,8 @@ def node_systematic_debug(state: AutocodeState) -> dict:
         return {
             "tdd_status": "max_retries_exceeded",
             "error": error_msg,
-            "debug_notes": f"Debug abandoned after {max_retries} iterations. Last error: {error_msg}"
+            "debug_notes": f"Debug abandoned after {max_retries} iterations. Last error: {error_msg}",
+            "tdd": {"debug_history": debug_history},
         }
 
     test_results = state.get("test_results", {})
@@ -80,19 +138,39 @@ def node_systematic_debug(state: AutocodeState) -> dict:
         except Exception:
             pass
 
-    system = (
-        "You are a senior debug engineer. Output ONLY valid JSON, no other text.\n"
-        "Analyze the raw test failure below. Ignore any previous assumptions or "
-        "speculative reasoning from prior attempts. Base your diagnosis STRICTLY "
-        "on the provided traceback and test output." + blast_radius_note + "\n"
-        'Return a JSON object with these EXACT fields:\n'
-        '{ "root_cause": "string", "defense_notes": "string", "fix": "string"}'
+    # [v2.0] Phase 4 — use DEBUG_SYSTEM from constants (4-phase structured prompt).
+    # The blast_radius_note is appended so the executor sees caller warnings.
+    system = DEBUG_SYSTEM + blast_radius_note
+
+    # [v2.0] Phase 4 — include last 5 debug_history entries so the LLM sees
+    # prior attempts and avoids repeating the same hypothesis/fix.
+    history_block = ""
+    if debug_history:
+        recent_history = debug_history[-5:]
+        lines = []
+        for entry in recent_history:
+            lines.append(
+                f"- iteration {entry.get('iteration', '?')} "
+                f"[phase={entry.get('phase', '?')}]: "
+                f"{entry.get('root_cause', '?')[:120]} | "
+                f"fix={entry.get('fix', '')[:120]}"
+            )
+        history_block = (
+            "\n\n--- PRIOR DEBUG ATTEMPTS (do NOT repeat these) ---\n"
+            + "\n".join(lines)
+            + "\n--- END PRIOR ATTEMPTS ---\n"
+        )
+
+    user = (
+        f"Test failure:\n{stderr[:2000]}\n\n"
+        f"Test output:\n{stdout[:2000]}"
+        f"{history_block}"
     )
-    user = f"Test failure:\n{stderr[:2000]}\n\nTest output:\n{stdout[:2000]}"
 
     # [v1.3] Swarm debug integration (2-run pattern: consensus → vote)
     # Falls back to single-LLM debug if swarm is off, unavailable, or fails.
-    # TODO(2.0): Consider making swarm the default debug path for cloud-enabled setups.
+    # [v2.0] Phase 4 — swarm path now records a debug_history entry with
+    # phase="swarm" and includes the swarm confidence.
     if cfg.autocode_swarm_debug:
         swarm_result = _swarm_debug_consensus(system, user, tid)
         if swarm_result is not None:
@@ -118,32 +196,50 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                 )
                 _github_pr_comment(state["pr_number"], comment, tid)
 
+            # [v2.0] Phase 4 — accumulate debug_history entry for swarm path.
+            # phase="swarm" because the 4-phase enum is single-LLM only.
+            new_entry = {
+                "iteration": current_iteration,
+                "phase": "swarm",
+                "root_cause": root_cause,
+                "fix": (suggested_fix or "")[:200],
+                "tests_passed": False,  # updated by run_tests on next iteration
+                "confidence": confidence,  # swarm-only field
+            }
+            updated_history = debug_history + [new_entry]
+
             return {
                 "root_cause": root_cause,
                 "defense_notes": defense_notes,
                 "tdd_source_code": suggested_fix,
                 "debug_notes": f"Debug iteration {current_iteration} (swarm {confidence}): {root_cause}",
                 "swarm_verdict": swarm_result,
+                "tdd": {"debug_history": updated_history},
             }
         # Swarm failed — fall through to single-LLM debug
         tracer.step(tid, "systematic_debug", "Swarm unavailable — falling back to single-LLM debug")
 
     # Single-LLM debug (existing v1.2 behavior — used when AUTOCODE_SWARM_DEBUG=0
     # or when swarm is unavailable)
-    try:
-        # Autocode v1.2: JSON schema enforcement — LM Studio enforces the debug
-        # schema at generation time. The model cannot produce root_cause/
-        # defense_notes/fix with wrong types or missing fields.
-        _DEBUG_JSON_SCHEMA = {
-            "type": "object",
-            "properties": {
-                "root_cause": {"type": "string"},
-                "defense_notes": {"type": "string"},
-                "fix": {"type": "string"},
+    # [v2.0] Phase 4 — JSON schema now includes `phase` field (enum of 4 phases).
+    # LM Studio enforces this at generation time so the model cannot emit a
+    # missing or invalid phase.
+    _DEBUG_JSON_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "phase": {
+                "type": "string",
+                "enum": ["investigation", "pattern", "hypothesis", "fix"],
             },
-            "required": ["root_cause", "defense_notes", "fix"],
-            "additionalProperties": False,
-        }
+            "root_cause": {"type": "string"},
+            "defense_notes": {"type": "string"},
+            "fix": {"type": "string"},
+        },
+        "required": ["phase", "root_cause", "defense_notes", "fix"],
+        "additionalProperties": False,
+    }
+
+    try:
         debug_response = _call(
             role="executor",
             system=system,
@@ -163,6 +259,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
         debug_data = _parse_json(clean_response)
         if not debug_data:
             debug_data = {
+                "phase": "investigation",
                 "root_cause": "Unknown",
                 "defense_notes": "",
                 "fix": ""
@@ -171,11 +268,36 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     root_cause = debug_data.get("root_cause", "Unknown root cause")
     defense_notes = debug_data.get("defense_notes", "")
     suggested_fix = debug_data.get("fix", "")
+    phase = debug_data.get("phase", "investigation")  # [v2.0] Phase 4
 
-    tracer.step(tid, "systematic_debug", f"Root cause: {root_cause[:100]}")
+    # [v2.0] Phase 4 — validate phase against the allowed enum. If the LLM
+    # returned an unknown value (shouldn't happen with schema enforcement,
+    # but defensive), default to "investigation".
+    if phase not in ("investigation", "pattern", "hypothesis", "fix"):
+        tracer.warning(
+            tid, "systematic_debug",
+            f"Unknown phase '{phase}' from LLM — defaulting to 'investigation'"
+        )
+        phase = "investigation"
+
+    tracer.step(tid, "systematic_debug", f"[phase={phase}] Root cause: {root_cause[:100]}")
+
+    # [v2.0] Phase 4 — accumulate debug_history entry.
+    # tests_passed=False here; updated to True by run_tests on the next loop
+    # iteration (or by summarize_context if it inspects test_results).
+    new_entry = {
+        "iteration": current_iteration,
+        "phase": phase,
+        "root_cause": root_cause,
+        "fix": (suggested_fix or "")[:200],
+        "tests_passed": False,
+    }
+    updated_history = debug_history + [new_entry]
+
     return {
         "root_cause": root_cause,
         "defense_notes": defense_notes,
         "tdd_source_code": suggested_fix,
-        "debug_notes": f"Debug iteration {current_iteration}: {root_cause}"
+        "debug_notes": f"Debug iteration {current_iteration} [phase={phase}]: {root_cause}",
+        "tdd": {"debug_history": updated_history},
     }

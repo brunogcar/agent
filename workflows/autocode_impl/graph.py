@@ -18,6 +18,7 @@ from workflows.autocode_impl.nodes.execute import node_execute_step
 from workflows.autocode_impl.nodes.run_tests import node_run_tests
 from workflows.autocode_impl.nodes.analyze_impact import node_analyze_impact
 from workflows.autocode_impl.nodes.debug import node_systematic_debug
+from workflows.autocode_impl.nodes.summarize_context import node_summarize_context  # [v2.0] Phase 4
 from workflows.autocode_impl.nodes.write_files import node_write_files  # [v2.0] backward-compat wrapper
 from workflows.autocode_impl.nodes.apply_patches import node_apply_patches  # [v2.0] Phase 3.1 split
 from workflows.autocode_impl.nodes.write_new_files import node_write_new_files  # [v2.0] Phase 3.1 split
@@ -52,7 +53,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "2.0-beta",  # [v2.0] Phase 3: node decomposition
+    "version": "2.0-rc1",  # [v2.0] Phase 4: debug loop refactor
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -68,7 +69,8 @@ WORKFLOW_METADATA = {
         {"name": "node_persist_artifacts", "type": "tool", "tool": "file", "description": "[v2.0] Persist test file + generated code + debug log to run_dir"},
         {"name": "node_analyze_impact", "type": "llm", "role": "analyze", "description": "Blast radius analysis using dependency graph"},
         {"name": "node_run_tests", "type": "tool", "tool": "pytest", "description": "Run TDD tests via pytest subprocess"},
-        {"name": "node_systematic_debug", "type": "llm", "role": "executor", "description": "Root-cause hypothesis + one fix at a time"},
+        {"name": "node_systematic_debug", "type": "llm", "role": "executor", "description": "[v2.0] 4-phase debug: investigation → pattern → hypothesis → fix"},
+        {"name": "node_summarize_context", "type": "logic", "description": "[v2.0] Compress debug_history before re-entering loop"},
         {"name": "node_verify", "type": "composite", "description": "[v2.0] Backward-compat wrapper (not wired)"},
         {"name": "node_run_pytest", "type": "tool", "tool": "pytest", "description": "[v2.0] Fresh pytest on autocode test files"},
         {"name": "node_run_lint", "type": "tool", "tool": "ruff", "description": "[v2.0] Ruff lint on modified files only"},
@@ -102,7 +104,8 @@ WORKFLOW_METADATA = {
         {"from": "node_analyze_impact", "to": "node_run_tests"},
         {"from": "node_run_tests", "to": "node_run_pytest", "condition": "route_after_run_tests: passed or max_retries"},
         {"from": "node_run_tests", "to": "node_systematic_debug", "condition": "route_after_run_tests: failed"},
-        {"from": "node_systematic_debug", "to": "node_apply_patches", "condition": "debug loop (type: loop)", "type": "loop"},
+        {"from": "node_systematic_debug", "to": "node_summarize_context", "condition": "debug loop entry"},
+        {"from": "node_summarize_context", "to": "node_apply_patches", "condition": "debug loop (type: loop)", "type": "loop"},
         {"from": "node_verify_decision", "to": "node_report", "condition": "route_after_verify: verification_passed"},
         {"from": "node_verify_decision", "to": "END", "condition": "route_after_verify: failed"},
         {"from": "node_report", "to": "node_commit"},
@@ -115,7 +118,7 @@ WORKFLOW_METADATA = {
     "loops": [
         {
             "name": "debug_loop",
-            "nodes": ["node_apply_patches", "node_write_new_files", "node_persist_artifacts", "node_analyze_impact", "node_run_tests", "node_systematic_debug"],
+            "nodes": ["node_apply_patches", "node_write_new_files", "node_persist_artifacts", "node_analyze_impact", "node_run_tests", "node_systematic_debug", "node_summarize_context"],
             "exit_condition": "tdd_status == passed OR tdd_status == max_retries_exceeded",
             "max_iterations": "cfg.autocode_max_retries (default from .env)",
         },
@@ -152,6 +155,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_run_tests", node_run_tests)
     workflow.add_node("node_analyze_impact", node_analyze_impact)
     workflow.add_node("node_systematic_debug", node_systematic_debug)
+    workflow.add_node("node_summarize_context", node_summarize_context)  # [v2.0] Phase 4
     # [v2.0] Phase 3.1: node_write_files split into 3 nodes
     workflow.add_node("node_apply_patches", node_apply_patches)
     workflow.add_node("node_write_new_files", node_write_new_files)
@@ -231,8 +235,9 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # Debug loop [v2.0] Phase 3.1: debug → apply_patches (was: → node_write_files)
-    workflow.add_edge("node_systematic_debug", "node_apply_patches")
+    # Debug loop [v2.0] Phase 4: debug → summarize_context → apply_patches
+    workflow.add_edge("node_systematic_debug", "node_summarize_context")
+    workflow.add_edge("node_summarize_context", "node_apply_patches")
 
     # [v2.0] Phase 3.2: verify chain — run_pytest → run_lint → llm_review → verify_decision
     workflow.add_edge("node_run_pytest", "node_run_lint")

@@ -253,19 +253,49 @@ Output ONLY the JSON. No prose before or after."""
 DEBUG_SYSTEM = """\
 You are the Executor model acting as a systematic debugger.
 
-Steps:
-1. Trace the error to the exact line and condition where failure originates.
-2. Make ONE targeted fix -- no shotgun edits.
-3. Output JSON ONLY:
-   {
-     "root_cause": "<single sentence root cause>",
-     "defense_notes": "<how to prevent this class of bug in future>",
-     "fix": "<the corrected file content or patch JSON>"
-   }
+[v2.0] 4-phase structure inspired by obra/superpowers systematic-debugging skill.
+Each iteration you MUST advance through the phases in order. Output the phase
+you are currently in via the `phase` field so the orchestrator can track
+progression and detect stuck loops.
+
+Phase 1 -- Root Cause Investigation ("investigation"):
+  - Read the actual error message and traceback.
+  - Reproduce the failure mentally; identify the exact failing line.
+  - Check what changed recently (git diff, modified_files list).
+  - Trace the data flow from input to the failing assertion.
+
+Phase 2 -- Pattern Analysis ("pattern"):
+  - Find a working example in the same codebase (similar code that does NOT fail).
+  - Compare working vs failing code line by line.
+  - Identify the SINGLE difference that explains the failure.
+
+Phase 3 -- Hypothesis ("hypothesis"):
+  - Form a SINGLE, specific, falsifiable hypothesis.
+  - "The bug is X because Y" -- not "could be A or B or C".
+  - Be specific enough that a fix can be tested in isolation.
+
+Phase 4 -- Implementation ("fix"):
+  - Make ONE targeted fix -- no shotgun edits, no speculative refactors.
+  - The fix must directly address the hypothesis from Phase 3.
+  - If the fix would touch >3 files, STOP -- the hypothesis is wrong.
+
+If prior debug attempts are provided, do NOT repeat their hypotheses or fixes.
+
+Output JSON ONLY:
+{
+  "phase": "investigation" | "pattern" | "hypothesis" | "fix",
+  "root_cause": "<single sentence root cause>",
+  "defense_notes": "<how to prevent this class of bug in future>",
+  "fix": "<the corrected file content or patch JSON>"
+}
 No prose outside the JSON.
 
 [Pre-2.0 Fix] Field names aligned with debug.py JSON schema + state.py TypedDict.
-Was: hypothesis/defense_note (mismatched code → root_cause always "Unknown")."""
+Was: hypothesis/defense_note (mismatched code → root_cause always "Unknown").
+
+[v2.0] 4-phase structure adopted from obra/superpowers systematic-debugging skill.
+JSON output now includes `phase` (investigation|pattern|hypothesis|fix) so the
+orchestrator can track iteration progression and detect stuck loops."""
 
 VERIFY_SYSTEM = """\
 You are the Executor model performing a pre-commit verification audit.

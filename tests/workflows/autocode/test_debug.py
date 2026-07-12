@@ -9,15 +9,16 @@ from unittest.mock import patch
 
 
 class TestDebugLoopRouting:
-    def test_debug_edge_routes_to_apply_patches(self):
-        """The graph must have a direct edge debug → apply_patches (not via run_tests).
+    def test_debug_edge_routes_to_summarize_context(self):
+        """The graph must have edges debug → summarize_context → apply_patches.
 
-        [v2.0] Was: debug → write_files. Phase 3.1 split changed target to
-        node_apply_patches (first of the 3 split write nodes).
+        [v2.0] Phase 4: debug → summarize_context → apply_patches (was: debug → apply_patches).
+        The summarize node compresses debug_history before re-entering the loop.
         """
         from workflows.autocode_impl.graph import build_graph
         g = build_graph()
-        assert ("node_systematic_debug", "node_apply_patches") in g.edges
+        assert ("node_systematic_debug", "node_summarize_context") in g.edges
+        assert ("node_summarize_context", "node_apply_patches") in g.edges
 
 
 class TestDebugJsonParsing:

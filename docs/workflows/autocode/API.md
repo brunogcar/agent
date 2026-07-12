@@ -140,7 +140,7 @@
 
 **Purpose:** File writing — apply patches, write new files, persist run-dir artifacts. Runs after `node_execute_step`, before `node_analyze_impact` (or directly before the verify chain for task types that skip impact analysis).
 
-**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.1 split):** This node is now a thin wrapper that calls the 3 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 3 split nodes directly (`execute → apply_patches → write_new_files → persist_artifacts → [route]`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_write_files` still work, but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (26-entry list — wrappers excluded). See the 3 split-node sections below for the actual logic.
+**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.1 split):** This node is now a thin wrapper that calls the 3 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 3 split nodes directly (`execute → apply_patches → write_new_files → persist_artifacts → [route]`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_write_files` still work, but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (27-entry list — wrappers excluded). See the 3 split-node sections below for the actual logic.
 
 **Wrapper logic:** Runs `node_apply_patches({**state, **result})` → `node_write_new_files({**state, **result})` → `node_persist_artifacts({**state, **result})` in sequence, accumulating partial updates into `result`. Returns the merged dict.
 
@@ -258,11 +258,16 @@
 
 ### `node_systematic_debug(state)` — Phase 11: Debug Failures
 
-**Purpose:** Debug test failures.
+**Purpose:** Debug test failures. **[v2.0-rc1]** Phase 4 refactor: now uses a 4-phase prompt (investigation → pattern → hypothesis → fix), accumulates `debug_history` across iterations, and bails with an architecture-question exit when 3+ consecutive iterations fail tests with different errors.
 
 **Logic:**
-1. Build prompt with test output and context (includes blast-radius warning from `kgraph` if `modified_files` is set)
-2. **[v1.3]** If `cfg.autocode_swarm_debug` is ON, call `_swarm_debug_consensus(system, user, tid)`:
+1. **[v2.0-rc1]** Read `debug_history` from `TDDState` sub-state via `_get_tdd(state, "debug_history", [])` (was stateless per iteration — closes the #37 prerequisite).
+2. **[v2.0-rc1] Architecture-question exit:** If `len(debug_history) >= _ARCHITECTURE_QUESTION_THRESHOLD` (3) AND all last 3 entries have `tests_passed=False`, bail with `tdd_status="max_retries_exceeded"` + procedural memory store (`memory.store(text=..., memory_type="procedural", importance=9, tags="tdd_failure,architecture_question,autocode,phase4", outcome="failed")`). DIFFERENT from #39 stuck detection (same error signature repeating) — this fires when DIFFERENT errors occur on each iteration, suggesting the bug is architectural, not a fix-the-line bug. Return shape: `{"tdd_status": "max_retries_exceeded", "error": ..., "debug_notes": ..., "tdd": {"debug_history": debug_history}}` (history preserved on early exit).
+3. Check `current_iteration > max_retries` — bail with `tdd_status="max_retries_exceeded"` + procedural memory store (`tags="tdd_failure,retry_exhaustion,autocode"`). Return preserves `debug_history`.
+4. Build prompt with test output and context (includes blast-radius warning from `kgraph` if `modified_files` is set).
+5. **[v2.0-rc1]** Use `DEBUG_SYSTEM` from `constants.py` (was inline) — the 4-phase structured prompt (investigation → pattern → hypothesis → fix) inspired by obra/superpowers `systematic-debugging`. `blast_radius_note` appended.
+6. **[v2.0-rc1]** Inject last 5 `debug_history` entries into the user prompt under a `--- PRIOR DEBUG ATTEMPTS (do NOT repeat these) ---` block (format: `- iteration N [phase=P]: root_cause[:120] | fix[:120]`).
+7. **[v1.3]** If `cfg.autocode_swarm_debug` is ON, call `_swarm_debug_consensus(system, user, tid)`:
    - **Run 1:** `swarm(action="consensus")` — all configured cloud providers propose a `{root_cause, defense_notes, fix}` object.
    - **Run 2:** `swarm(action="vote")` — providers vote YES/NO on whether the consensus root-cause + fix is correct.
    - Confidence is derived from the vote `agreement` field:
@@ -270,15 +275,22 @@
      - `majority` → `MEDIUM`
      - `split` / `disagreement` / unknown → `LOW`
    - If swarm returns `None` (no providers configured, import failure, consensus exception), falls through to single-LLM debug.
-3. Otherwise (flag OFF or swarm unavailable), call `llm.complete(role="executor", ..., json_schema=_DEBUG_JSON_SCHEMA)` for debug analysis (v1.2 behavior).
-4. Parse JSON response for root cause, defense notes, and fix.
-5. **[v1.3]** If swarm returned LOW confidence AND `cfg.autocode_debug_comment_pr` is ON AND a PR exists in state (`state["pr_number"]` is set), post a warning comment on the PR via `_github_pr_comment()` so human reviewers see the disagreement.
+8. Otherwise (flag OFF or swarm unavailable), call `llm.complete(role="executor", ..., json_schema=_DEBUG_JSON_SCHEMA)` for debug analysis (v1.2 behavior). **[v2.0-rc1]** `_DEBUG_JSON_SCHEMA` now includes required `phase` field (enum: `"investigation"` / `"pattern"` / `"hypothesis"` / `"fix"`).
+9. Parse JSON response for `phase`, `root_cause`, `defense_notes`, and `fix`. **[v2.0-rc1]** Validate `phase` against the allowed enum; default to `"investigation"` on unknown value (defensive — schema enforcement should prevent this). Trace-log `[phase=P] Root cause: ...`.
+10. **[v1.3]** If swarm returned LOW confidence AND `cfg.autocode_debug_comment_pr` is ON AND a PR exists in state (`state["pr_number"]` is set), post a warning comment on the PR via `_github_pr_comment()` so human reviewers see the disagreement.
+11. **[v2.0-rc1]** Append a new entry to `debug_history`: `{iteration: current_iteration, phase: phase, root_cause: root_cause, fix: (suggested_fix or "")[:200], tests_passed: False}` (`tests_passed` is updated by `run_tests` on the next loop iteration). Swarm path appends with `phase="swarm"` + extra `confidence` field. Return includes `"tdd": {"debug_history": updated_history}`.
 
-**Output:** Partial dict with `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`. **[v1.3]** When swarm was used, also includes `swarm_verdict: {fix, root_cause, defense_notes, confidence, agreement, providers}`.
+**Output:** Partial dict with `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`, **[v2.0-rc1]** `"tdd": {"debug_history": updated_history}`. **[v1.3]** When swarm was used, also includes `swarm_verdict: {fix, root_cause, defense_notes, confidence, agreement, providers}`.
 
 **[Pre-2.0 Fix] `constants.py` field name alignment:** The `DEBUG_SYSTEM` prompt now uses `root_cause` / `defense_notes` (matching the `_DEBUG_JSON_SCHEMA` and `AutocodeState` TypedDict). Was: `hypothesis` / `defense_note` — the prompt asked the LLM for those keys, but the code read `root_cause` / `defense_notes`, so swarm debug's `root_cause` was always `"Unknown"`. Found by: MiMo. See CHANGELOG.md.
 
-**[v1.3] Swarm is non-blocking:** the fix is always applied regardless of confidence. LOW confidence surfaces as a PR comment (if enabled), not as a workflow block. Rationale: the debug loop already has `MAX_RETRIES`, stuck-detection routing, the `node_verify` gate, and the git branch as safety nets; blocking on a multi-LLM vote would add latency and a new failure mode without improving correctness.
+**[v2.0-rc1] 4-phase prompt structure:** `DEBUG_SYSTEM` in `constants.py` restructured from 16 lines to ~46 lines. 4 explicit phases: Phase 1 "investigation" (read error, reproduce mentally, check git diff, trace data flow), Phase 2 "pattern" (find working example, compare line-by-line, identify the SINGLE difference), Phase 3 "hypothesis" (form a SINGLE specific falsifiable hypothesis — "the bug is X because Y"), Phase 4 "fix" (ONE targeted fix — no shotgun edits; if fix would touch >3 files, STOP — hypothesis is wrong). JSON output now includes required `phase` field so the orchestrator can track progression and detect stuck loops. Inspired by obra/superpowers `systematic-debugging` skill. Preserved the `[Pre-2.0 Fix]` note about field-name alignment.
+
+**[v2.0-rc1] debug_history accumulation:** Each iteration appends an entry `{iteration, phase, root_cause, fix[:200], tests_passed: False}` to `debug_history` in the `TDDState` sub-state. Last 5 entries are injected into the LLM user prompt so the LLM doesn't repeat failed hypotheses/fixes. The full history is preserved across iterations (closes the #37 prerequisite — was stateless per iteration before Phase 4). Swarm path accumulates with `phase="swarm"` and an extra `confidence` field. Both early-exit paths (architecture + max_retries) also return `"tdd": {"debug_history": debug_history}` to preserve history for downstream inspection.
+
+**[v2.0-rc1] Architecture-question exit:** `_ARCHITECTURE_QUESTION_THRESHOLD = 3` module constant. If `len(debug_history) >= 3` AND all last 3 entries have `tests_passed=False`, bail with `tdd_status="max_retries_exceeded"` + procedural memory store (`tags="tdd_failure,architecture_question,autocode,phase4"`, `importance=9`, `outcome="failed"`). The memory text includes the task, iteration count, threshold, and last error so a human reviewing the procedural memory store can see the architectural problem. This is DIFFERENT from #39 stuck detection (`route_after_run_tests` checks `last_test_error` signature equality across consecutive iterations — fires on the SAME error repeating). The architecture-question exit fires when DIFFERENT errors occur each iteration, suggesting the bug is architectural, not a fix-the-line bug. Inspired by superpowers Phase 4.5 pattern.
+
+**[v1.3] Swarm is non-blocking:** the fix is always applied regardless of confidence. LOW confidence surfaces as a PR comment (if enabled), not as a workflow block. Rationale: the debug loop already has `MAX_RETRIES`, stuck-detection routing, the `node_verify` gate, and the git branch as safety nets; blocking on a multi-LLM vote would add latency and a new failure mode without improving correctness. **[v2.0-rc1]** Add the architecture-question exit to that safety-net list.
 
 **[v1.3] Fallback chain:** `AUTOCODE_SWARM_DEBUG=1` + swarm available → use swarm. `AUTOCODE_SWARM_DEBUG=1` + swarm unavailable (no providers, import failure, consensus exception) → single-LLM debug (v1.2 path). `AUTOCODE_SWARM_DEBUG=0` → single-LLM debug (v1.2 path).
 
@@ -286,11 +298,44 @@
 
 **Note:** `blast_radius_note` is constructed but used in the system prompt. Correct.
 
-**[v1.3] Debug statelessness caveat:** Each debug call sees only the current iteration's `test_results` — there is no accumulation of `debug_notes` / `root_cause` across iterations. Swarm debug does NOT solve this (it also sees only the current iteration's output). Context summarization (#37 in CHANGELOG.md) is blocked on this refactor.
-- `# TODO(2.0):` Refactor `debug.py` to accumulate history across iterations.
+**[v2.0-rc1] Debug statelessness caveat RESOLVED:** Each debug call now sees the last 5 entries of `debug_history` (within the current run) in addition to the current iteration's `test_results`. The full history is also available to `node_summarize_context` which compresses it for bounded-context reads. Cross-run learning (procedural memory recall before debug) is still a `# TODO(2.0-post):` item — see CHANGELOG.md § "Future Tracks (Post-2.0)" F5.
+- `# TODO(2.0-post):` Migrate the LLM user prompt to use `debug_summary` (compressed) instead of the raw last-5-entries block once `debug_history` grows past ~10 entries (F3 in CHANGELOG.md).
+- `# TODO(2.0-post):` Add `memory.recall(query=stderr[:200], memory_type="procedural", k=3)` before the LLM debug prompt for cross-run learning (F5 in CHANGELOG.md).
+- `# TODO(2.0-post):` Consider `AUTOCODE_PARALLEL_DEBUG=1` flag for subagent dispatch (one subagent per hypothesis) instead of the single-LLM sequential 4-phase loop (F1 in CHANGELOG.md).
+- `# TODO(2.0-post):` Make `_ARCHITECTURE_QUESTION_THRESHOLD` configurable per task type (F4 in CHANGELOG.md).
 - `# TODO(2.0):` Consider making swarm the default debug path for cloud-enabled setups.
 - `# TODO(2.0):` Review confidence thresholds (e.g., MEDIUM should require ≥3 providers).
 - `# TODO(2.0):` Consider `AUTOCODE_SWARM_BLOCK_ON_LOW_CONFIDENCE` flag for stricter gating.
+
+---
+
+### `node_summarize_context(state)` — [v2.0-rc1] Phase 11a: Compress debug_history (NEW)
+
+**Purpose:** Compress `debug_history` before re-entering the debug loop. Closes #37 (context summarization). Wired between `node_systematic_debug` and `node_apply_patches` in the debug loop so the next debug iteration sees a bounded context.
+
+**Logic:**
+1. Read `debug_history` from `TDDState` sub-state via `_get_tdd(state, "debug_history", [])`.
+2. If `debug_history` is empty, return `{"tdd": {"debug_summary": ""}}` (no work to do — typically the first debug iteration).
+3. Otherwise, call `_summarize_debug_history(history)` helper:
+   a. Reverse the history (most recent first — the freshest hypothesis is the most relevant for the next iteration).
+   b. Render each entry as a single sentence: `iter=N phase=P tests_passed=B [confidence=C] root_cause=R fix_preview=F` (where `confidence` is included only for swarm-path entries that have it).
+   c. Join sentences with `. ` and append a trailing `.`.
+   d. Try `from chonkie import SentenceChunker` (lazy import, soft dependency). If import succeeds, instantiate `SentenceChunker(chunk_size=512, chunk_overlap=0)` and call `.chunk(text)`. Return the FIRST chunk only (most recent, since we reversed) — keeps the summary tight and bounded.
+   e. On ANY `Exception` (including `ModuleNotFoundError` when chonkie isn't installed, or chunking failure), silently fall back to `json.dumps(reversed_history[:3], ensure_ascii=False, default=str)` — JSON serialization of the last 3 entries (most recent first). The fallback keeps the node usable in environments where chonkie is not yet pip-installed (e.g., CI without optional deps).
+4. Trace-log entry count + compressed length: `tracer.step(tid, "summarize_context", f"Compressed {len(debug_history)} debug_history entries into {len(summary)} chars")`.
+5. Return `{"tdd": {"debug_summary": summary}}`.
+
+**Params:** None beyond `state`. Reads (via `_get_tdd` accessor): `state["tdd"]["debug_history"]` (or legacy `state["debug_history"]` fallback) — `list[dict]` where each dict has shape `{iteration: int, phase: str, root_cause: str, fix: str, tests_passed: bool, [confidence: str]}`.
+
+**Returns:** `{"tdd": {"debug_summary": str}}` — partial state update writing the compressed summary to the `debug_summary` field in the `TDDState` sub-state. Empty string when history is empty.
+
+**Source:** `workflows/autocode_impl/nodes/summarize_context.py` (Phase 4.3 NEW — ~110 lines).
+
+**Note:** This node does NOT mutate `debug_history` — the full history is preserved for the architecture-question exit check in `node_systematic_debug`. The summary is purely additive (a compressed view for bounded-context reads).
+
+**Note:** chonkie is a SOFT dependency — the node imports it lazily inside a `try` block. If chonkie is not installed, the node silently falls back to JSON-of-last-3-entries. Do NOT make chonkie a hard dependency of `workflows.autocode_impl` (the workflow must remain importable in environments without chonkie installed, e.g., CI without optional deps).
+
+**`# TODO(2.0-post):`** No downstream node reads `debug_summary` yet — `node_systematic_debug` still uses the raw last-5-entries block. Once `debug_history` grows past ~10 entries, switch the LLM user prompt to use `debug_summary` (the compressed chunk) instead of the raw entries (F3 in CHANGELOG.md § "Future Tracks (Post-2.0)").
 
 ---
 
@@ -298,7 +343,7 @@
 
 **Purpose:** Verify the changes with linting, regression tests, and LLM spec review.
 
-**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.2 split):** This node is now a thin wrapper that calls the 4 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 4 split nodes directly (`route → run_pytest → run_lint → llm_review → verify_decision → [route_after_verify]`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_verify` still work (e.g., `test_verify.py` imports it to exercise the full verify chain), but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (26-entry list — wrappers excluded). See the 4 split-node sections below for the actual logic.
+**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.2 split):** This node is now a thin wrapper that calls the 4 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 4 split nodes directly (`route → run_pytest → run_lint → llm_review → verify_decision → [route_after_verify]`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_verify` still work (e.g., `test_verify.py` imports it to exercise the full verify chain), but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (27-entry list — wrappers excluded). See the 4 split-node sections below for the actual logic.
 
 **Wrapper logic:** Runs `node_run_pytest({**state, **result})` → `node_run_lint({**state, **result})` → `node_llm_review({**state, **result})` → `node_verify_decision({**state, **result})` in sequence, accumulating partial updates into `result`. Returns the merged dict.
 
@@ -441,7 +486,7 @@
 
 **Purpose:** Push the committed branch to the remote, open a PR, and optionally auto-merge it. Runs after `node_commit`, before `node_distill_memory`.
 
-**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.3 split):** This node is now a thin wrapper that calls the 3 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 3 split nodes directly (`commit → push → create_pr → merge_pr → distill_memory`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_publish` still work, but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (26-entry list — wrappers excluded). See the 3 split-node sections below for the actual logic.
+**[v2.0-beta] BACKWARD-COMPAT WRAPPER (Phase 3.3 split):** This node is now a thin wrapper that calls the 3 split nodes in sequence and merges their partial state updates into one dict matching the original return shape. The graph wires the 3 split nodes directly (`commit → push → create_pr → merge_pr → distill_memory`); this wrapper is registered via `add_node(...)` so external callers + tests that `import node_publish` still work, but it has NO edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` (27-entry list — wrappers excluded). See the 3 split-node sections below for the actual logic.
 
 **Wrapper logic:** Runs `node_push({**state, **result})` → `node_create_pr({**state, **result})` → `node_merge_pr({**state, **result})` in sequence, accumulating partial updates into `result`. Returns the merged dict.
 
@@ -646,6 +691,13 @@ future editors:
 **[v1.3] TypedDict drift fix:**
 - `branch: str` was already read by `nodes/branch.py` (line 55: `if state.get("branch"):`) and set by `nodes/plan.py` since v1.0, but was NOT declared in the `AutocodeState` TypedDict. v1.3 adds the declaration (`state.py` line 94) and the default in `_default_state()` (`state.py` line 154). No runtime behavior change — pure type-safety fix.
 
+**[v2.0-rc1] New state fields (Phase 4 debug loop refactor):**
+
+| Field | Type | Default | Source node | Purpose |
+|-------|------|---------|-------------|---------|
+| `debug_history` | `list[dict]` | `[]` | `node_systematic_debug` | Within-run debug-loop history. Each entry: `{iteration: int, phase: str, root_cause: str, fix: str (truncated to 200 chars), tests_passed: bool}` (swarm path adds `confidence: str`). Declared in Phase 2 (v2.0-alpha) as a placeholder; **POPULATED as of Phase 4.2 (v2.0-rc1)**. Last 5 entries injected into the LLM user prompt; full history read by `node_summarize_context` and by the architecture-question exit check. Stored in `TDDState` sub-state (accessed via `_get_tdd`). |
+| `debug_summary` | `str` | `""` | `node_summarize_context` | Compressed `debug_history` string produced by the new `node_summarize_context` node (Phase 4.3). Reverses history (most recent first), renders each entry as a single sentence, tries `chonkie.SentenceChunker(chunk_size=512)` (soft dep, lazy import) and returns the FIRST chunk; falls back to `json.dumps(last_3_entries)` on any exception. Stored in `TDDState` sub-state (accessed via `_get_tdd`). `# TODO(2.0-post):` No downstream node reads it yet — see F3 in CHANGELOG.md § "Future Tracks (Post-2.0)". |
+
 For the full field list, see `workflows/autocode_impl/state.py`.
 
 ---
@@ -663,7 +715,7 @@ migration plan.
 | Function | Sub-state TypedDict | Reads from | Legacy fallback fields |
 |----------|---------------------|------------|------------------------|
 | `_get_plan(state, key, default=None)` | `PlanState` | `state["plan"]` dict | `task_type`, `plan`, `branch`, `current_step` |
-| `_get_tdd(state, key, default=None)` | `TDDState` | `state["tdd"]` dict | `test_code`, `test_results`, `tdd_status`, `tdd_iteration`, `debug_history` |
+| `_get_tdd(state, key, default=None)` | `TDDState` | `state["tdd"]` dict | `test_code`, `test_results`, `tdd_status`, `tdd_iteration`, `debug_history` **[v2.0-rc1] new** (populated by `node_systematic_debug`), `debug_summary` **[v2.0-rc1] new** (written by `node_summarize_context`) |
 | `_get_files(state, key, default=None)` | `FilesState` | `state["files_state"]` dict | `files`, `modified_files`, `written_files`, `files_map` |
 | `_get_impact(state, key, default=None)` | `ImpactState` | `state["impact"]` dict | `impact_warnings`, `blast_radius_note` |
 | `_get_debug(state, key, default=None)` | `DebugState` | `state["debug"]` dict | `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`, `swarm_verdict` |
@@ -696,27 +748,69 @@ from workflows.autocode_impl.state import _get_vcs
 branch = _get_vcs(state, "branch", "main")
 ```
 
-`# TODO(2.0):` The remaining 16 nodes still use the legacy `state.get(...)`
-pattern. They will migrate during Phase 3 (node splits) and Phase 4 (debug
-history). Phase 6 removes the legacy flat fields and the accessor fallback
-branches.
+`# TODO(2.0):` The remaining 15 nodes still use the legacy `state.get(...)`
+pattern. **[v2.0-rc1]** `node_systematic_debug` and `node_summarize_context` are
+now migrated to accessors (Phase 4). They will continue migrating during Phase 5
+(async refactor). Phase 6 removes the legacy flat fields and the accessor
+fallback branches.
 
-### `debug_history` field — declared but not yet populated
+### `debug_history` field — [v2.0-rc1] POPULATED by `node_systematic_debug`
 
-The new `debug_history` field in `TDDState` is **declared in Phase 2 but not
-populated by any node yet.** It is a placeholder for Phase 4 (#37 context
-summarization):
+The `debug_history` field in `TDDState` was **declared in Phase 2 as a
+forward-declared placeholder** and is **now populated by `node_systematic_debug`
+on every iteration as of Phase 4.2 (v2.0-rc1)**. It is the within-run debug-loop
+history that closes the #37 prerequisite (context summarization):
 
-- **Phase 4 will:** wire `node_systematic_debug` to append each iteration's
-  `{root_cause, defense_notes, fix, test_output}` to `debug_history`, then add
-  a `summarize_context` node before debug re-entry that compresses the history
-  (likely via Chonkie `SentenceChunker` — see `docs/TOOLS.md` § "Chunking").
-- **Until then:** `debug_history` is always empty. The accessor `_get_tdd(state,
-  "debug_history", [])` returns `[]`. No node reads it. The field exists only
-  so Phase 4 doesn't have to change `state.py` again.
+- **[v2.0-rc1] POPULATED:** `node_systematic_debug` appends a new entry on every
+  iteration: `{iteration: int, phase: str, root_cause: str, fix: str (truncated
+  to 200 chars), tests_passed: bool}` (`tests_passed=False` when the entry is
+  created — `run_tests` updates it to `True` on the next loop iteration if the
+  fix worked). Swarm-path entries use `phase="swarm"` and include an extra
+  `confidence` field.
+- **[v2.0-rc1] CONSUMED by `node_systematic_debug`:** Last 5 entries are
+  injected into the LLM user prompt under a `--- PRIOR DEBUG ATTEMPTS (do NOT
+  repeat these) ---` block so the LLM doesn't repeat failed hypotheses/fixes.
+- **[v2.0-rc1] CONSUMED by `node_summarize_context`:** The new
+  `node_summarize_context` node (Phase 4.3) reads `debug_history` and compresses
+  it into `debug_summary` via chonkie `SentenceChunker` (soft dep, lazy import)
+  before re-entering the loop.
+- **[v2.0-rc1] Architecture-question exit:** `node_systematic_debug` reads the
+  last 3 entries — if all have `tests_passed=False`, it bails with
+  `tdd_status="max_retries_exceeded"` + procedural memory store. DIFFERENT from
+  #39 stuck detection (same error repeating) — this fires when DIFFERENT errors
+  occur each iteration.
+- **[v2.0-rc1] Preserved on early exit:** Both early-exit paths (architecture +
+  max_retries) return `"tdd": {"debug_history": debug_history}` so the full
+  history is available for downstream inspection / procedural memory store.
+- **Accessor:** `_get_tdd(state, "debug_history", [])` reads from the TDD
+  sub-state dict if present, else falls back to the legacy flat field.
 
-`# TODO(2.0):` Phase 4 — populate `debug_history` in `node_systematic_debug`
-and add the `summarize_context` node.
+`# TODO(2.0-post):` Cross-run learning (procedural memory recall before debug)
+is still pending — see CHANGELOG.md § "Future Tracks (Post-2.0)" F5.
+
+### `debug_summary` field — [v2.0-rc1] NEW, written by `node_summarize_context`
+
+The new `debug_summary: str` field in `TDDState` (Phase 4.3, v2.0-rc1) holds the
+compressed `debug_history` string produced by `node_summarize_context`. It is the
+bounded-context view of the within-run debug-loop history:
+
+- **[v2.0-rc1] WRITTEN by `node_summarize_context`:** The new node (Phase 4.3)
+  reads `debug_history`, reverses it (most recent first), renders each entry as
+  a single sentence, then tries `chonkie.SentenceChunker(chunk_size=512)` and
+  returns the FIRST chunk. On any exception (including `ModuleNotFoundError`
+  when chonkie isn't installed) falls back to `json.dumps(last_3_entries)`.
+- **[v2.0-rc1] NOT YET READ by `node_systematic_debug`:** The LLM user prompt
+  still uses the raw last-5-entries block from `debug_history`. The summary is
+  available for future migration — see F3 in CHANGELOG.md § "Future Tracks
+  (Post-2.0)".
+- **[v2.0-rc1] Empty when history is empty:** First debug iteration (no prior
+  attempts) → `node_summarize_context` returns `{"tdd": {"debug_summary": ""}}`.
+- **Accessor:** `_get_tdd(state, "debug_summary", "")` reads from the TDD
+  sub-state dict if present, else falls back to the legacy flat field.
+
+`# TODO(2.0-post):` Migrate the LLM user prompt in `node_systematic_debug` to
+use `debug_summary` (compressed) instead of the raw last-5-entries block once
+`debug_history` grows past ~10 entries (F3 in CHANGELOG.md).
 
 ---
 
@@ -732,4 +826,4 @@ and add the `summarize_context` node.
 
 ---
 
-*Last updated: 2026-07-11 (v2.0-beta — 2.0 refactor Phase 3 (node decomposition): `node_write_files` section reframed as backward-compat wrapper + 3 new split-node sections (`node_apply_patches` / `node_write_new_files` / `node_persist_artifacts` — Phase 3.1); `node_verify` section reframed as backward-compat wrapper + 4 new split-node sections (`node_run_pytest` / `node_run_lint` / `node_llm_review` / `node_verify_decision` — Phase 3.2); `node_publish` section reframed as backward-compat wrapper + 3 new split-node sections (`node_push` / `node_create_pr` / `node_merge_pr` — Phase 3.3) with `_build_pr_body` documented as moved to `create_pr.py`; each split node section includes Purpose, Logic, Params (state reads), Returns, Source; `route_after_verify` now routes from `node_verify_decision`; graph registers 27 nodes, metadata lists 26 [wrappers excluded]). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*
+*Last updated: 2026-07-11 (v2.0-rc1 — 2.0 refactor Phase 4 (debug loop refactor): `node_systematic_debug` section rewritten to document 4-phase prompt (investigation → pattern → hypothesis → fix) + `debug_history` accumulation + last-5-entries injection into LLM user prompt + architecture-question exit (3+ consecutive `tests_passed=False` → `tdd_status="max_retries_exceeded"` + procedural memory store); new `node_summarize_context` section (Phase 11a — Purpose / Logic / Params / Returns / Source) documenting the chonkie `SentenceChunker` soft-dep + JSON-of-last-3-entries fallback + most-recent-first chunking; new `debug_summary` field subsection in [v2.0] State Accessors; `debug_history` field subsection updated from "not yet populated" to POPULATED by `node_systematic_debug`; `_get_tdd` row in accessor table updated to list both new fields; graph registers 28 nodes, metadata lists 27 [wrappers excluded]). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*

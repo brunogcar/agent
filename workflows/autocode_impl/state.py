@@ -66,6 +66,7 @@ class TDDState(TypedDict, total=False):
     test_results: dict
     tests_written: bool
     debug_history: list[dict]  # [v2.0] Accumulated debug iterations for context summarization (#37)
+    debug_summary: str  # [v2.0] Compressed debug_history from node_summarize_context
 
 
 class FilesState(TypedDict, total=False):
