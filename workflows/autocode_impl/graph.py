@@ -53,7 +53,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "2.0",  # [v2.0] GA — Phase 7: ponytail + dead code removal + doc consolidation
+    "version": "2.0.1",  # [Hardening] cross-LLM review fixes + doc consolidation
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -299,13 +299,30 @@ def invoke_with_timeout(initial_state: dict) -> dict:
     result = {"status": "failed", "error": "Graph invocation timed out"}
     timeout = getattr(cfg, "autocode_graph_timeout", 300)
 
+    # [Hardening P0.3] Capture exceptions inside the daemon thread — without
+    # this, any node crash kills the thread silently and is reported as a
+    # "timeout" because result stays at the default "Graph invocation timed out".
+    _invoke_error: Exception | None = None
+
     def _invoke():
-        nonlocal result
-        result = graph.invoke(initial_state)
+        nonlocal result, _invoke_error
+        try:
+            result = graph.invoke(initial_state)
+        except Exception as e:
+            _invoke_error = e
 
     thread = threading.Thread(target=_invoke, daemon=True)
     thread.start()
     thread.join(timeout=timeout)
+
+    # [Hardening P0.3] If the thread died with an exception, surface that as
+    # the failure reason instead of misreporting it as a timeout.
+    if _invoke_error is not None:
+        return {
+            "status": "failed",
+            "error": f"Autocode graph crashed: {_invoke_error}",
+            "trace_id": initial_state.get("trace_id", ""),
+        }
 
     if thread.is_alive():
         # [v2.0] Set cancellation flag — _call() will check it and bail

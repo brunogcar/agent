@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import threading as _threading
 from pathlib import Path
 from typing import Any
 from core.config import cfg
@@ -53,8 +54,10 @@ def _should_copy_file(path: str | Path, protected_files: frozenset[str]) -> bool
 # When invoke_with_timeout() detects a timeout, it sets this flag.
 # _call() checks it between retries — prevents waiting through a retry
 # backoff when the graph has already timed out.
-# TODO(2.0-later): Consider threading.Event for cleaner cross-thread signaling.
+# [Hardening P1.7] _cancel_event lets request_cancellation() interrupt the
+# time.sleep inside _call's retry backoff — was a non-interruptible 1-4s block.
 _cancellation_requested = False
+_cancel_event = _threading.Event()
 
 
 def request_cancellation() -> None:
@@ -62,15 +65,23 @@ def request_cancellation() -> None:
 
     After this is called, _call() will raise RuntimeError on the next retry
     check instead of sleeping through the backoff.
+
+    [Hardening P1.7] Also sets the Event so any in-progress backoff sleep in
+    _call() wakes up immediately.
     """
     global _cancellation_requested
     _cancellation_requested = True
+    _cancel_event.set()  # wake up any sleeping _call
 
 
 def clear_cancellation() -> None:
-    """[v2.0] Clear the cancellation flag — called at the start of a new graph invocation."""
+    """[v2.0] Clear the cancellation flag — called at the start of a new graph invocation.
+
+    [Hardening P1.7] Also clears the Event so subsequent _call() backoffs can sleep.
+    """
     global _cancellation_requested
     _cancellation_requested = False
+    _cancel_event.clear()
 
 
 def is_cancellation_requested() -> bool:
@@ -87,8 +98,9 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
     Was: single attempt — a rate limit or network blip crashed the entire workflow.
     [v2.0] Added cancellation flag check between retries — prevents waiting
     through a retry backoff when the graph has already timed out.
+    [Hardening P1.7] Backoff sleep is now interruptible via _cancel_event.wait
+    so request_cancellation() can wake the thread immediately.
     """
-    import time as _time
     if timeout is None:
         timeout = cfg.model_registry.get(role, {}).get("timeout", cfg.execution_timeout)
     last_error = None
@@ -113,7 +125,12 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
         except Exception as e:
             last_error = e
             if attempt < retries:
-                _time.sleep(2 ** attempt)  # 1s, 2s, 4s...
+                # [Hardening P1.7] Use interruptible Event.wait instead of time.sleep
+                # so request_cancellation() can wake us up immediately. If the event
+                # is set (cancellation requested), bail with RuntimeError instead of
+                # continuing the retry loop.
+                if _cancel_event.wait(timeout=2 ** attempt):
+                    raise RuntimeError("LLM call cancelled during backoff")
                 continue
             tracer.error("", "llm_call", f"Failed to call {role} model after {retries+1} attempts: {e}")
             raise

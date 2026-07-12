@@ -23,9 +23,20 @@ def route_after_write_files(state: AutocodeState) -> str:
     which is wrong for 'audit' (an audit IS impact analysis) and inconsistent
     for 'edit' (the docs say edit is 'heavier than fix' but it skipped TDD).
     Found by cross-LLM review (DeepSeek, Mistral).
+
+    [Hardening P1.5] If a prior node set status="error" (e.g. apply_patches
+    JSON parse failure), skip impact analysis and go straight to the verify
+    chain — run_pytest will fail and the verify_decision node will route to END.
+
+    [Hardening P2] Removed dead 'fix_error' and 'improve' entries — classify.py
+    normalizes both (fix_error -> fix, improve -> refactor), so they can never
+    reach this router.
     """
+    # [Hardening P1.5] Short-circuit on prior node error.
+    if state.get("status") == "error":
+        return "node_verify"  # routes to run_pytest (first verify sub-node)
     task_type = state.get("task_type", "feature")
-    if task_type in ["fix", "fix_error", "refactor", "improve", "feature", "audit", "edit"]:
+    if task_type in ["fix", "refactor", "feature", "audit", "edit"]:
         return "node_analyze_impact"
     else:
         return "node_verify"
@@ -40,7 +51,14 @@ def route_after_run_tests(state: AutocodeState) -> str:
     [#39] 'stuck' status (same error signature on consecutive iterations) now
     routes to node_verify — skips the doomed debug loop. The debug node would
     just regenerate the same fix for the same error.
+
+    [Hardening P1.5] If a prior node set status="error" (e.g. apply_patches
+    JSON parse failure), skip the debug loop and go to verify_chain which
+    handles errors via verify_decision.
     """
+    # [Hardening P1.5] Short-circuit on prior node error.
+    if state.get("status") == "error":
+        return "node_verify"  # routes to run_pytest (first verify sub-node)
     tdd_status = state.get("tdd_status", "")
     test_results = state.get("test_results", {})
     if tdd_status == "passed" or test_results.get("success"):

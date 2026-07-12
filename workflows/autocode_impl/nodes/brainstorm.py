@@ -41,6 +41,13 @@ def node_brainstorm(state: AutocodeState) -> dict:
     except Exception:
         mem_ctx = ""
 
+    # [Hardening P1.10] Initialize files_update unconditionally — was:
+    # `if "files_update" not in dir(): files_update = state.get("files", {})`
+    # The dir() check is brittle (inspects locals) and the initialization
+    # happened AFTER the KG block, so an exception inside KG could leave
+    # files_update undefined. Initialize before KG; KG block updates if found.
+    files_update = state.get("files", {})
+
     # -- Knowledge Graph Context Injection (Phase 5) --
     kg_files = {}
     project_root = state.get("project_root", "")
@@ -71,16 +78,11 @@ def node_brainstorm(state: AutocodeState) -> dict:
                         except Exception:
                             pass
                 
-                # Merge KG files into state["files"]
+                # Merge KG files into files_update (state files take priority)
                 if kg_files:
-                    files_update = {**kg_files, **state.get("files", {})}
+                    files_update = {**kg_files, **files_update}
         except Exception as e:
             tracer.warning(tid, "brainstorm", f"KG query failed: {e}")
-
-    # [Pre-2.0 Fix] Initialize files_update unconditionally — was only set inside
-    # `if kg_files:` block, could be undefined if exception fired after partial population.
-    if "files_update" not in dir():
-        files_update = state.get("files", {})
 
     # [Pre-2.0 Fix] Build files context from MERGED files (original + KG-injected).
     # Was: only used state.get("files", {}) — KG files were merged into state

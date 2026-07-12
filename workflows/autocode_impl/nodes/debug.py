@@ -76,6 +76,11 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                 trace_id=tid,
                 outcome="failed"
             )
+            # [Hardening] Read-modify-write: LangGraph replaces dict values, doesn't deep-merge.
+            # Must preserve existing tdd sub-state fields.
+            current_tdd = dict(state.get("tdd", {}))
+            current_tdd["debug_history"] = debug_history
+            current_tdd["status"] = "max_retries_exceeded"
             return {
                 "tdd_status": "max_retries_exceeded",
                 "error": error_msg,
@@ -84,7 +89,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                     f"{_ARCHITECTURE_QUESTION_THRESHOLD} all failed. Likely architecture-"
                     f"level issue: {error_msg}"
                 ),
-                "tdd": {"debug_history": debug_history},
+                "tdd": current_tdd,
             }
 
     if current_iteration > max_retries:
@@ -100,11 +105,15 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             outcome="failed"
         )
 
+        # [Hardening] Read-modify-write to preserve tdd sub-state.
+        current_tdd = dict(state.get("tdd", {}))
+        current_tdd["debug_history"] = debug_history
+        current_tdd["status"] = "max_retries_exceeded"
         return {
             "tdd_status": "max_retries_exceeded",
             "error": error_msg,
             "debug_notes": f"Debug abandoned after {max_retries} iterations. Last error: {error_msg}",
-            "tdd": {"debug_history": debug_history},
+            "tdd": current_tdd,
         }
 
     test_results = state.get("test_results", {})
@@ -139,8 +148,18 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             pass
 
     # [v2.0] Phase 4 — use DEBUG_SYSTEM from constants (4-phase structured prompt).
-    # The blast_radius_note is appended so the executor sees caller warnings.
-    system = DEBUG_SYSTEM + blast_radius_note
+    # [Hardening P1.9] blast_radius_note was appended AFTER the "Output JSON ONLY:"
+    # instruction, so the model saw the warning after the format spec (and might
+    # interpret it as content). Insert BEFORE the format instruction so the
+    # warning is part of the context, not the format spec.
+    if blast_radius_note:
+        format_idx = DEBUG_SYSTEM.find("Output JSON ONLY:")
+        if format_idx > 0:
+            system = DEBUG_SYSTEM[:format_idx] + blast_radius_note + "\n\n" + DEBUG_SYSTEM[format_idx:]
+        else:
+            system = DEBUG_SYSTEM + blast_radius_note
+    else:
+        system = DEBUG_SYSTEM
 
     # [v2.0] Phase 4 — include last 5 debug_history entries so the LLM sees
     # prior attempts and avoids repeating the same hypothesis/fix.
@@ -159,6 +178,19 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             "\n\n--- PRIOR DEBUG ATTEMPTS (do NOT repeat these) ---\n"
             + "\n".join(lines)
             + "\n--- END PRIOR ATTEMPTS ---\n"
+        )
+
+    # [Hardening P2] Wire debug_summary into the prompt: when the history is
+    # long (>5 entries), node_summarize_context will have produced a compressed
+    # debug_summary. Use that instead of the raw history block to keep the LLM
+    # context bounded (#37) — the summary is what the orchestrator intends the
+    # LLM to see in long-running debug loops.
+    debug_summary = _get_tdd(state, "debug_summary", "")
+    if debug_summary and len(debug_history) > 5:
+        history_block = (
+            "\n\n--- DEBUG SUMMARY (compressed) ---\n"
+            f"{debug_summary}\n"
+            "--- END SUMMARY ---\n"
         )
 
     user = (
@@ -208,13 +240,16 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             }
             updated_history = debug_history + [new_entry]
 
+            # [Hardening] Read-modify-write to preserve tdd sub-state.
+            current_tdd = dict(state.get("tdd", {}))
+            current_tdd["debug_history"] = updated_history
             return {
                 "root_cause": root_cause,
                 "defense_notes": defense_notes,
                 "tdd_source_code": suggested_fix,
                 "debug_notes": f"Debug iteration {current_iteration} (swarm {confidence}): {root_cause}",
                 "swarm_verdict": swarm_result,
-                "tdd": {"debug_history": updated_history},
+                "tdd": current_tdd,
             }
         # Swarm failed — fall through to single-LLM debug
         tracer.step(tid, "systematic_debug", "Swarm unavailable — falling back to single-LLM debug")
@@ -294,10 +329,13 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     }
     updated_history = debug_history + [new_entry]
 
+    # [Hardening] Read-modify-write to preserve tdd sub-state.
+    current_tdd = dict(state.get("tdd", {}))
+    current_tdd["debug_history"] = updated_history
     return {
         "root_cause": root_cause,
         "defense_notes": defense_notes,
         "tdd_source_code": suggested_fix,
         "debug_notes": f"Debug iteration {current_iteration} [phase={phase}]: {root_cause}",
-        "tdd": {"debug_history": updated_history},
+        "tdd": current_tdd,
     }

@@ -100,11 +100,21 @@ def node_summarize_context(state: AutocodeState) -> dict:
 
     if not debug_history:
         tracer.step(tid, "summarize_context", "Empty debug_history — no summary to produce")
-        return {"tdd": {"debug_summary": ""}}
+        # [Hardening P0.1] Read-modify-write: returning {"tdd": {"debug_summary": ""}}
+        # clobbers the entire tdd sub-state (LangGraph replaces dict values,
+        # doesn't deep-merge). Preserve existing fields.
+        current_tdd = dict(state.get("tdd", {}))
+        current_tdd["debug_summary"] = ""
+        return {"tdd": current_tdd}
 
     summary = _summarize_debug_history(debug_history)
     tracer.step(
         tid, "summarize_context",
         f"Compressed {len(debug_history)} debug_history entries into {len(summary)} chars"
     )
-    return {"tdd": {"debug_summary": summary}}
+    # [Hardening P0.1] Read-modify-write: returning {"tdd": {"debug_summary": summary}}
+    # clobbers the entire tdd sub-state (LangGraph replaces dict values,
+    # doesn't deep-merge). Preserve existing fields like debug_history.
+    current_tdd = dict(state.get("tdd", {}))
+    current_tdd["debug_summary"] = summary
+    return {"tdd": current_tdd}

@@ -52,16 +52,22 @@ def node_execute_step(state: AutocodeState) -> dict:
     # Derive modified_files from generated code JSON (only when not dry_run)
     # [Pre-2.0 Fix] Was: raw json.loads(code) — fails on markdown-fenced output.
     # Now uses _parse_json which strips ```json fences before parsing.
+    # [Hardening P2] Removed dead `json.loads(code)` fallback — _parse_json already
+    # tries direct json.loads as its first strategy (see core.json_extract.extract_json).
+    # The fallback was unreachable when _parse_json returned {}, and would raise
+    # JSONDecodeError (caught by the except) on truly invalid JSON.
     if not state.get("dry_run", False):
         try:
             code_data = _parse_json(code)
             if not code_data:
-                code_data = json.loads(code)  # fallback to raw if _parse_json returns None
-            modified = []
-            for patch in code_data.get("patches", []):
-                modified.append(patch.get("path", ""))
-            modified.extend(code_data.get("new_files", {}).keys())
-            updates["modified_files"] = [m for m in modified if m]
+                tracer.warning(tid, "execute_step", "Failed to parse LLM output as JSON — modified_files empty")
+                updates["modified_files"] = []
+            else:
+                modified = []
+                for patch in code_data.get("patches", []):
+                    modified.append(patch.get("path", ""))
+                modified.extend(code_data.get("new_files", {}).keys())
+                updates["modified_files"] = [m for m in modified if m]
         except Exception:
             updates["modified_files"] = []
 

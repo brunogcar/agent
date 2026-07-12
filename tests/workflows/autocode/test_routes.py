@@ -35,7 +35,10 @@ class TestRouteAfterWriteFiles:
 
     def test_all_tdd_task_types_route_to_impact(self):
         from workflows.autocode_impl.routes import route_after_write_files
-        for task_type in ["fix", "fix_error", "refactor", "improve", "feature"]:
+        # [Hardening P2] Removed dead "fix_error" + "improve" entries —
+        # classify.py normalizes both (fix_error -> fix, improve -> refactor),
+        # so they never reach this router.
+        for task_type in ["fix", "refactor", "feature"]:
             assert route_after_write_files({"task_type": task_type}) == "node_analyze_impact"
 
 

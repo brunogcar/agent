@@ -11,6 +11,23 @@ from workflows.autocode_impl.constants import TASK_CLASSIFIER_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
 from core.tracer import tracer
 
+# [Hardening P1.6] JSON schema for the classify LLM call.
+# LM Studio enforces this at generation time via outlines, so the model cannot
+# emit a missing/invalid task_type. Enum matches the values the rest of the
+# pipeline (classify override, routes, brainstorm system-prompt selector) expects.
+_CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "task_type": {
+            "type": "string",
+            "enum": ["feature", "audit", "edit", "fix", "refactor", "create_skill", "unclear"],
+        },
+        "questions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["task_type"],
+    "additionalProperties": False,
+}
+
 def node_classify_task(state: AutocodeState) -> dict:
     """Classify task type to route feature vs fix/refactor/edit/create_skill paths."""
     tid = state.get("trace_id", "")
@@ -20,6 +37,7 @@ def node_classify_task(state: AutocodeState) -> dict:
         system  = TASK_CLASSIFIER_SYSTEM,
         user    = f"Task:\n{state['task']}",
         timeout = ROUTER_TIMEOUT,
+        json_schema=_CLASSIFY_SCHEMA,  # [Hardening P1.6]
     )
     data      = _parse_json(raw)
     task_type = data.get("task_type", "feature")

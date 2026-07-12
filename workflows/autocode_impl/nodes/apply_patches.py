@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.helpers import _parse_json  # [Hardening P1.4]
 from core.config import cfg
 from core.tracer import tracer
 
@@ -59,8 +60,13 @@ def node_apply_patches(state: AutocodeState) -> dict:
         return {}
 
     # Parse the generated code JSON (shared parsing — patches + new_files)
+    # [Hardening P1.4] Use _parse_json (handles markdown-fenced JSON) instead of raw json.loads.
+    # _parse_json returns {} on failure; convert empty result into an explicit error
+    # so the existing `except Exception` handler + downstream callers see the failure.
     try:
-        data = json.loads(state["tdd_source_code"])
+        data = _parse_json(state.get("tdd_source_code", ""))
+        if not data:
+            raise ValueError("_parse_json returned empty dict (invalid or unparseable JSON)")
     except Exception as e:
         tracer.step(tid, "apply_patches", f"JSON parse failed: {e}")
         return {"status": "error", "error": f"apply_patches JSON parse failed: {e}"}

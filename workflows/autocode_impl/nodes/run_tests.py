@@ -108,6 +108,20 @@ def node_run_tests(state: AutocodeState) -> dict:
         updates["tdd_error"] = ""
         updates["last_test_error"] = ""  # [#39] clear on success
 
+        # [Hardening P0.2] Update debug_history: mark last entry's tests_passed=True.
+        # Without this, every debug_history entry stays tests_passed=False forever,
+        # causing the architecture-question exit in node_systematic_debug to fire
+        # after 3 iterations even when tests have since passed.
+        from workflows.autocode_impl.state import _get_tdd
+        debug_history = _get_tdd(state, "debug_history", [])
+        if debug_history:
+            debug_history[-1]["tests_passed"] = True
+            # Read-modify-write to preserve tdd sub-state (LangGraph replaces
+            # dict values, doesn't deep-merge).
+            current_tdd = dict(state.get("tdd", {}))
+            current_tdd["debug_history"] = debug_history
+            updates["tdd"] = current_tdd
+
         # [PHASE 3 FIX] Wire success callback: store procedural memory on convergence
         try:
             from core.memory_engine import memory

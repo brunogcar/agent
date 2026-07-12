@@ -18,7 +18,7 @@ from typing import Any
 from filelock import FileLock, Timeout
 
 from workflows.autocode_impl.state import AutocodeState
-from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs
+from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs, _parse_json  # [Hardening P1.4] added _parse_json
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.nodes.apply_patches import _is_path_safe
@@ -49,8 +49,13 @@ def node_write_new_files(state: AutocodeState) -> dict:
         return {}
 
     # Parse the generated code JSON
+    # [Hardening P1.4] Use _parse_json (handles markdown-fenced JSON) instead of raw json.loads.
+    # _parse_json returns {} on failure; treat empty result as parse failure.
     try:
-        data = json.loads(state["tdd_source_code"])
+        data = _parse_json(state.get("tdd_source_code", ""))
+        if not data:
+            tracer.step(tid, "write_new_files", "JSON parse failed: _parse_json returned empty dict")
+            return {}
     except Exception as e:
         tracer.step(tid, "write_new_files", f"JSON parse failed: {e}")
         return {}
@@ -135,4 +140,11 @@ def node_write_new_files(state: AutocodeState) -> dict:
     updates: dict[str, Any] = {}
     if files_map:
         updates["files_map"] = files_map
+    # [Hardening P1.8] Propagate written_files into modified_files.
+    # Without this, new files written here were never reflected in modified_files,
+    # so analyze_impact and downstream nodes missed them (only patched files
+    # showed up). Merge with existing modified_files from apply_patches.
+    if written_files:
+        existing_modified = state.get("modified_files", [])
+        updates["modified_files"] = list(set(existing_modified + written_files))
     return updates
