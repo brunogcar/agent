@@ -7,13 +7,14 @@
 | File | Purpose |
 |------|---------|
 | `workflows/autocode.py` | `run_autocode_agent()` — main entry point |
-| `workflows/autocode_impl/graph.py` | `build_graph()` — 28-node LangGraph StateGraph builder (was 27 in v2.0-beta; **[v2.0-rc1]** Phase 4 added `node_summarize_context` between `node_systematic_debug` and `node_apply_patches`; **[v2.0-beta]** Phase 3 split 3 "god nodes" into 10 focused nodes + kept the 3 originals as backward-compat wrappers — see "Source Code Reference" rows for `apply_patches.py` / `write_new_files.py` / `persist_artifacts.py` / `run_pytest.py` / `run_lint.py` / `llm_review.py` / `verify_decision.py` / `push.py` / `create_pr.py` / `merge_pr.py`). **[v2.0]** `invoke_with_timeout()` (in `base.py`, called from the autocode facade) wires the new `helpers.py` cancellation flag (`clear_cancellation()` at start, `request_cancellation()` on timeout). `WORKFLOW_METADATA["nodes"]` lists 27 nodes — the 3 backward-compat wrappers (`node_write_files` / `node_verify` / `node_publish`) are deliberately EXCLUDED so MCP clients render only active nodes (the new `node_summarize_context` IS included — it is wired into the debug loop). The graph itself registers 28 nodes via `add_node(...)` (wrappers + summarize_context included). `WORKFLOW_METADATA["version"]` bumped `"2.0-beta"` → `"2.0-rc1"` in Phase 4. `WORKFLOW_METADATA["loops"][0]["nodes"]` (the `debug_loop` list) now includes `node_summarize_context`. |
+| `workflows/autocode_impl/graph.py` | `build_graph()` — 28-node LangGraph StateGraph builder (was 27 in v2.0-beta; **[v2.0-rc1]** Phase 4 added `node_summarize_context` between `node_systematic_debug` and `node_apply_patches`; **[v2.0-beta]** Phase 3 split 3 "god nodes" into 10 focused nodes + kept the 3 originals as backward-compat wrappers — see "Source Code Reference" rows for `apply_patches.py` / `write_new_files.py` / `persist_artifacts.py` / `run_pytest.py` / `run_lint.py` / `llm_review.py` / `verify_decision.py` / `push.py` / `create_pr.py` / `merge_pr.py`). **[v2.0]** `invoke_with_timeout()` (in `base.py`, called from the autocode facade) wires the new `helpers.py` cancellation flag (`clear_cancellation()` at start, `request_cancellation()` on timeout). `WORKFLOW_METADATA["nodes"]` lists 27 nodes — the 3 backward-compat wrappers (`node_write_files` / `node_verify` / `node_publish`) are deliberately EXCLUDED so MCP clients render only active nodes (the new `node_summarize_context` IS included — it is wired into the debug loop). The graph itself registers 28 nodes via `add_node(...)` (wrappers + summarize_context included). `WORKFLOW_METADATA["version"]` bumped `"2.0-rc1"` → `"2.0-rc2"` in Phase 5 (graph topology UNCHANGED — Phase 5 was VCS consolidation + cleanup, not a node/graph change). `WORKFLOW_METADATA["loops"][0]["nodes"]` (the `debug_loop` list) includes `node_summarize_context`. |
 | `workflows/autocode_impl/state.py` | `AutocodeState` — extended TypedDict with autocode-specific fields ([v1.3] added `pushed`, `pr_number`, `pr_url`, `swarm_verdict`; fixed TypedDict drift on `branch`). **[v2.0]** Adds 8 sub-state TypedDicts (`PlanState`, `TDDState`, `FilesState`, `ImpactState`, `DebugState`, `VerifyState`, `VCSState`, `MemoryState`) + 8 backward-compat accessor functions (`_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`). `debug_history: list[dict]` field in `TDDState` (Phase 4 #37 placeholder — **[v2.0-rc1]** now POPULATED by `node_systematic_debug` on every iteration). **[v2.0-rc1]** New `debug_summary: str` field in `TDDState` (line 69) — written by `node_summarize_context`, holds the compressed debug_history chunk for bounded-context reads. Legacy flat fields KEPT (removed in Phase 6). See "[v2.0] Sub-state Architecture" section below. |
 | `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_write_files()`, `route_after_run_tests()`, `route_after_verify()` — conditional routing. **[v1.4]** `route_after_analyze_impact()` deleted (was always constant — replaced with direct edge `node_analyze_impact → node_run_tests` in graph.py). |
-| `workflows/autocode_impl/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. **[Pre-2.0 Fix]** `_call()` now retries 2× with exponential backoff (was single attempt — a rate-limit blip crashed the workflow). `tracer.error()` calls now use 3 args (tid, category, msg) not 2. **[v2.0]** `_parse_json()` now delegates to `core/json_extract.py` (consolidated JSON extraction — single source of truth). New cancellation flag: `request_cancellation()`, `clear_cancellation()`, `is_cancellation_requested()` — `_call()` checks the flag before each retry (aborts instead of sleeping through backoff if `invoke_with_timeout()` already timed out). |
+| `workflows/autocode_impl/helpers.py` | `_write_files()`, `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. **[Pre-2.0 Fix]** `_call()` now retries 2× with exponential backoff (was single attempt — a rate-limit blip crashed the workflow). `tracer.error()` calls now use 3 args (tid, category, msg) not 2. **[v2.0]** `_parse_json()` now delegates to `core/json_extract.py` (consolidated JSON extraction — single source of truth). New cancellation flag: `request_cancellation()`, `clear_cancellation()`, `is_cancellation_requested()` — `_call()` checks the flag before each retry (aborts instead of sleeping through backoff if `invoke_with_timeout()` already timed out). **[v2.0-rc2]** `_write_files()` marked DEPRECATED — dead-code audit found it was never called by any node (`execute.py` imported it but never used the import — dead import removed: `from ...helpers import _call, _write_files, ...` → `from ...helpers import _call, _files_context, _parse_json`). Kept in `helpers.py` for backward compat with a docstring pointer to `node_apply_patches` + `node_write_new_files` (the Phase 3.1 split nodes that superseded it). No behavior change — the function was unreachable before. |
 | `core/json_extract.py` | **[v2.0] NEW FILE** — consolidated JSON extraction utility. 3 functions: `extract_json(text)`, `extract_json_array(text)`, `extract_first_json(text)`. Single source of truth for all LLM JSON parsing. `helpers._parse_json` and `router._extract_first_json` both delegate to this module (eliminates the historical split where helpers used markdown-fence-strip + `json.loads` and router used `json.JSONDecoder().raw_decode()`). |
-| `workflows/autocode_impl/git_ops.py` | `_git_snapshot()`, `_git_create_branch()`, `_git_commit()` — local git operations (branch creation, commit) |
-| `workflows/autocode_impl/github_ops.py` | **[v1.3]** `_github_pull()`, `_github_push()`, `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()`, `_swarm_debug_consensus()` — remote GitHub operations (lazy imports, `is_configured()` guards, tracer.step logging, structured returns) |
+| `workflows/autocode_impl/vcs_ops.py` | **[v2.0-rc2] NEW FILE (Phase 5.1 VCS consolidation)** — unified VCS helper module that merges former `git_ops.py` (local operations) + `github_ops.py` (remote operations) into one module. Organized in 3 sections: (1) **Local operations** — `_git_commit()`, `_git_create_branch()` (was in `git_ops.py`); (2) **Remote operations** — `_github_pull()`, `_github_push()`, `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()` (was in `github_ops.py`); (3) **Swarm integration** — `_swarm_debug_consensus()` (was in `github_ops.py`). All lazy imports, `is_configured()` guards, `tracer.step` logging, structured returns preserved — pure move + merge, no behavior change. Resolves the v1.3 "2.0 Review Notes" item `git_ops.py + github_ops.py split → consider merging into unified vcs_ops.py`. All node imports updated to `from workflows.autocode_impl.vcs_ops import ...` (was: from `git_ops` / `github_ops`). |
+| `workflows/autocode_impl/git_ops.py` | **[v2.0-rc2] THIN RE-EXPORT WRAPPER (Phase 5.1)** — was the local-git-operations module (`_git_snapshot()`, `_git_create_branch()`, `_git_commit()`); now a thin re-export wrapper that re-exports `_git_commit` + `_git_create_branch` from `vcs_ops.py` for backward compat with external importers. New code MUST import from `vcs_ops.py` directly — see INSTRUCTIONS.md ALWAYS DO #53. (Note: `_git_snapshot()` was removed in v1.0.1 — the re-export wrapper does NOT re-export it.) |
+| `workflows/autocode_impl/github_ops.py` | **[v1.3]** Originally `_github_pull()`, `_github_push()`, `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()`, `_swarm_debug_consensus()` — remote GitHub operations (lazy imports, `is_configured()` guards, tracer.step logging, structured returns). **[v2.0-rc2] THIN RE-EXPORT WRAPPER (Phase 5.1)** — now a thin re-export wrapper that re-exports all github/swarm functions from `vcs_ops.py` for backward compat with external importers. New code MUST import from `vcs_ops.py` directly — see INSTRUCTIONS.md ALWAYS DO #53. |
 | `workflows/autocode_impl/patch.py` | `apply_patch()`, `apply_patches()`, `extract_relevant_sections()` — patch application |
 | ~~`workflows/autocode_impl/mermaid.py`~~ | **[v1.4]** DELETED — never called (`WORKFLOW_METADATA` serves the same purpose for MCP clients). Found by: Kimi. |
 | ~~`workflows/autocode_impl/test_mapper.py`~~ | **[v1.4]** DELETED — unused (analyze_impact imports from `core.kgraph.test_mapper`, not this module). Found by: Kimi. |
@@ -130,6 +131,20 @@ exit (3+ consecutive `tests_passed=False` → bail with `tdd_status="max_retries
 + procedural memory store). `state.py` `TDDState` gains `debug_summary: str` field
 (written by `node_summarize_context`). `WORKFLOW_METADATA["version"]` → `"2.0-rc1"`.
 
+**[v2.0-rc2] Update:** Phase 5 (VCS consolidation + cleanup) shipped. **Graph
+topology UNCHANGED** — Phase 5 did NOT add, remove, or rewire any node. The
+changes were: (1) new unified `workflows/autocode_impl/vcs_ops.py` merges former
+`git_ops.py` (local) + `github_ops.py` (remote) into one module, organized in 3
+sections (Local operations / Remote operations / Swarm integration); `git_ops.py`
++ `github_ops.py` kept as thin re-export wrappers for backward compat. All node
+imports updated to `from workflows.autocode_impl.vcs_ops import ...` (was: from
+`git_ops` / `github_ops`). (2) The 3 backward-compat node wrappers
+(`node_write_files` / `node_verify` / `node_publish`) are KEPT — tests import them
+directly; removal deferred from Phase 6 to Phase 7 (tests must be updated to
+import split nodes directly first). (3) `helpers._write_files()` marked DEPRECATED
+(dead code — was never called by any node; `execute.py`'s dead import removed).
+`WORKFLOW_METADATA["version"]` → `"2.0-rc2"`.
+
 ---
 
 ## 🔀 Dispatch Flow
@@ -236,6 +251,7 @@ in the source code where the 2.0 refactor may revisit it.
    - **Pattern:** Both modules follow the same shape — lazy import inside each helper, `project_root`/`tid` params, `tracer.step()` for observability, structured returns (`bool` / `dict | None`) — so they look alike but live apart.
    - **Source:** `workflows/autocode_impl/github_ops.py` (top docstring).
    - `# TODO(2.0):` Consider merging `git_ops.py` + `github_ops.py` into a unified `vcs_ops.py` module (see CHANGELOG.md § 2.0 Review Notes).
+   - **[v2.0-rc2] RESOLVED** in Phase 5.1 — new unified `workflows/autocode_impl/vcs_ops.py` merges `git_ops.py` (local) + `github_ops.py` (remote) into one module, organized in 3 sections (Local operations / Remote operations / Swarm integration). `git_ops.py` + `github_ops.py` kept as thin re-export wrappers for backward compat with external importers. All node imports updated to `from workflows.autocode_impl.vcs_ops import ...`. See INSTRUCTIONS.md ALWAYS DO #53 for the new import rule.
 
 3. **Swarm debug is non-blocking — the fix always applies, regardless of confidence.**
    - **Why non-blocking:** The debug loop already has its own safety net (`MAX_RETRIES`, stuck-detection routing in `route_after_run_tests`, the `node_verify` gate, the git branch). Adding a swarm-confidence gate would block the loop on a multi-LLM vote that may itself fail or take minutes. The swarm verdict is captured in `state.swarm_verdict` and surfaced in the PR body (and, for LOW confidence, optionally as a PR comment) so human reviewers see the disagreement without the workflow stalling.
@@ -300,7 +316,10 @@ state dict to 8 focused sub-state TypedDicts without breaking any existing node 
 test in a single big-bang refactor. The migration is sequenced across the 7-phase
 plan (see CHANGELOG.md § "2.0 Refactor Progress"); Phase 1 + Phase 2 shipped in
 v2.0-alpha, **Phase 3 (node splits) shipped in v2.0-beta, Phase 4 (debug loop
-refactor) shipped in v2.0-rc1**. Phase 5-7 remain pending (`# TODO(2.0):`).
+refactor) shipped in v2.0-rc1, Phase 5 (VCS consolidation + cleanup) shipped in
+v2.0-rc2**. Phase 6-7 remain pending (`# TODO(2.0):`).
+
+**[v2.0-rc1] Update:** Phase 4 (debug loop refactor) shipped. The `[v2.0]` Sub-state Architecture shipped in v2.0-alpha (Phase 1 + Phase 2) — Phase 3 (node splits) shipped in v2.0-beta — Phase 4 (debug loop refactor) shipped in v2.0-rc1. **Phase 5 (VCS consolidation + cleanup) shipped in v2.0-rc2** — graph topology UNCHANGED (28 nodes, 27 metadata); new unified `vcs_ops.py` merges `git_ops.py` + `github_ops.py` (both kept as thin re-export wrappers); `helpers._write_files()` marked deprecated; 3 backward-compat node wrappers KEPT for test compatibility (removal deferred from Phase 6 to Phase 7). Phase 6-7 remain pending (`# TODO(2.0):`).
 
 ### The 8 sub-state TypedDicts
 
@@ -373,8 +392,13 @@ but did NOT migrate them to accessors** (the split nodes still read legacy flat
 fields via `state.get(...)`). **[v2.0-rc1] Phase 4 migrated `node_systematic_debug`**
 to accessors — it now reads `debug_history` via `_get_tdd(state, "debug_history", [])`.
 Migrating the remaining split nodes + 6 unmigrated nodes to accessors is part of
-Phase 5 (async refactor). Phase 6 removes the legacy flat fields + the accessor
-fallback branches.
+Phase 5 (was "async refactor" in the original plan — **[v2.0-rc2] Phase 5 actually
+shipped as VCS consolidation + cleanup**; the async-refactor scope was dropped —
+`_run_async` was already simplified in Phase 1). Phase 6 removes the legacy flat
+fields + the accessor fallback branches. **[v2.0-rc2] Phase 5.2 note:** the 3
+backward-compat node wrappers (`node_write_files` / `node_verify` / `node_publish`)
+are KEPT for test compatibility — removal deferred from Phase 6 to Phase 7 (tests
+must be updated to import split nodes directly first).
 
 ### Backward-compat wrappers (Phase 3)
 
@@ -396,11 +420,15 @@ uses the split nodes directly. All 3 wrappers are excluded from
 `WORKFLOW_METADATA["nodes"]` (27-entry list — wrappers excluded) so MCP clients
 render only the 27 active nodes (the new `node_summarize_context` IS included).
 
-`# TODO(2.0):` Phase 6 removes these wrappers once all external callers +
+`# TODO(2.0):` Phase 7 removes these wrappers once all external callers +
 tests have migrated to importing the split nodes directly. Tests that import
 the wrapper should be rewritten to exercise the relevant split node (or chain)
 directly — see `test_verify.py` for the migration pattern (`patch("...llm_review._call")`
-replaces the old `patch("...verify._call")`).
+replaces the old `patch("...verify._call")`). **[v2.0-rc2] Phase 5.2 note:**
+wrapper removal was DEFERRED from Phase 6 to Phase 7 — tests still import the
+wrappers directly (`test_verify.py` imports `node_verify`, etc.), so removing
+them in Phase 6 would break the test suite. Phase 7 will update the tests to
+import the split nodes directly BEFORE deleting the wrappers.
 
 ### Cancellation flag (Phase 1)
 
@@ -486,4 +514,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-11 (v2.0-rc1 — 2.0 refactor Phase 4 (debug loop refactor): `DEBUG_SYSTEM` restructured into 4 phases (investigation → pattern → hypothesis → fix) inspired by obra/superpowers `systematic-debugging`; `node_systematic_debug` now accumulates `debug_history` across iterations + last 5 entries injected into LLM user prompt; new architecture-question exit (3+ consecutive `tests_passed=False` → `tdd_status="max_retries_exceeded"` + procedural memory store); new node `node_summarize_context` (`nodes/summarize_context.py`) compresses `debug_history` via chonkie `SentenceChunker` (soft dep, lazy import) before re-entering loop; graph wiring `debug → summarize_context → apply_patches` (was: `debug → apply_patches`); `state.py` `TDDState` adds `debug_summary: str` field; `WORKFLOW_METADATA["version"]` → `"2.0-rc1"`; graph registers 28 nodes, metadata lists 27 [wrappers excluded]; 1 new row in Source Code Reference for `node_summarize_context` + 1 updated row for `node_systematic_debug`; module tree shows 28 nodes + 3 commented-out wrappers; mermaid diagram updated with `summarize_context` node between `systematic_debug` and `apply_patches`; new "[v2.0-rc1] Edge changes (Phase 4 debug loop refactor)" section; "[v2.0-rc1] Update" callout after the v2.0-beta Update; Key Design Decisions bullets updated (28-node count, 4-phase debug + debug_history + architecture-question exit); "[v2.0-rc1] Test updates for Phase 4 debug loop refactor" paragraph). See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*
+*Last updated: 2026-07-11 (v2.0-rc2 — 2.0 refactor Phase 5 (VCS consolidation + cleanup): new `vcs_ops.py` row in Source Code Reference (unified VCS module merging `git_ops.py` + `github_ops.py`, organized in 3 sections: Local operations / Remote operations / Swarm integration); `git_ops.py` + `github_ops.py` rows updated to note they are now thin re-export wrappers; `helpers.py` row updated to note `_write_files()` is DEPRECATED (dead code — never called by any node; `execute.py` dead import removed); `graph.py` row updated to note Phase 5 did NOT change graph topology (still 28 nodes, 27 metadata) + version bumped `"2.0-rc1"` → `"2.0-rc2"`; new "[v2.0-rc2] Update" callout after the [v2.0-rc1] Update; "[v1.3] Design Decision Notes" #2 marked RESOLVED in Phase 5.1; "[v2.0] Sub-state Architecture" intro updated to list Phase 5 as shipped + note Phase 5.2 wrapper deferral; "Backward-compat wrappers (Phase 3)" subsection updated to note Phase 7 (was Phase 6) removes the wrappers; `# TODO(2.0):` accessor-migration note updated to note Phase 5 actually shipped as VCS consolidation (async-refactor scope was dropped — `_run_async` was already simplified in Phase 1)). Prior v2.0-rc1 — Phase 4 (debug loop refactor): new `node_summarize_context` row + `node_systematic_debug` row updated; module tree shows 28 nodes + 3 commented-out wrappers; mermaid diagram updated with `summarize_context` node between `systematic_debug` and `apply_patches`; "[v2.0-rc1] Edge changes (Phase 4 debug loop refactor)" section; Key Design Decisions bullets updated (28-node count, 4-phase debug + debug_history + architecture-question exit)). See [API](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*

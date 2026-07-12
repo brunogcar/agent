@@ -8,7 +8,7 @@ from __future__ import annotations
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.state import AutocodeState
-from workflows.autocode_impl.github_ops import _github_pr_create
+from workflows.autocode_impl.vcs_ops import _github_pr_create
 
 
 def _build_pr_body(state: AutocodeState) -> str:

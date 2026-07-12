@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from workflows.autocode_impl.state import AutocodeState, _get_vcs  # [v2.0] accessor
-from workflows.autocode_impl.git_ops import _git_commit
+from workflows.autocode_impl.vcs_ops import _git_commit
 from core.tracer import tracer
 
 def node_commit(state: AutocodeState) -> dict:

@@ -10,7 +10,7 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.constants import CODER_SYSTEM
-from workflows.autocode_impl.helpers import _call, _write_files, _files_context, _parse_json
+from workflows.autocode_impl.helpers import _call, _files_context, _parse_json  # [v2.0] removed dead _write_files import
 from workflows.autocode_impl.state import AutocodeState
 
 def node_execute_step(state: AutocodeState) -> dict:

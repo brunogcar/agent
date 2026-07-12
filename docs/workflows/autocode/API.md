@@ -92,7 +92,7 @@
 
 **[v1.3] Optional pull before branch:**
 - Gated on `AUTOCODE_PULL_BEFORE_BRANCH=1` (default OFF).
-- Uses `github(action="pull", remote="origin")` via `github_ops._github_pull()`.
+- Uses `github(action="pull", remote="origin")` via `github_ops._github_pull()` (**[v2.0-rc2]** `_github_pull` now lives in `vcs_ops.py` — `github_ops.py` is a thin re-export wrapper; new code should import from `workflows.autocode_impl.vcs_ops`).
 - Graceful-skip if GitHub is not configured (`is_configured()` returns `False`).
 - Non-blocking: pull failure does NOT stop the workflow — the branch is still created.
 - `# TODO(2.0):` Consider making pull-failure behavior configurable (fail-fast vs graceful-skip).
@@ -476,7 +476,7 @@
 
 **Bug:** `status` is set to `"done"` regardless of whether commit succeeded. If `_git_commit` returns `None` (no changes), `status` is still `"done"`. `# TODO(2.0):` Distinguish "committed" / "nothing to commit" / "failed".
 
-**[v1.3] Scope note:** `node_git_commit` is LOCAL-ONLY (no push, no PR). All remote operations live in the next node, `node_publish`. See `workflows/autocode_impl/git_ops.py` (local) vs `workflows/autocode_impl/github_ops.py` (remote) for the split rationale.
+**[v1.3] Scope note:** `node_git_commit` is LOCAL-ONLY (no push, no PR). All remote operations live in the next node, `node_publish`. See `workflows/autocode_impl/git_ops.py` (local) vs `workflows/autocode_impl/github_ops.py` (remote) for the split rationale. **[v2.0-rc2]** Both modules are now thin re-export wrappers — the actual implementations live in the unified `workflows/autocode_impl/vcs_ops.py` (Phase 5.1 consolidation). New code MUST import VCS functions from `vcs_ops.py` directly, not from `git_ops` / `github_ops` (see INSTRUCTIONS.md ALWAYS DO #53).
 
 **[v2.0] First node migrated to the accessor pattern:** `node_git_commit` now reads `state["branch"]` via `_get_vcs(state, "branch", "main")` instead of `state.get("branch", "main")`. This is the proof-of-concept migration for the sub-state / legacy-fallback accessor layer introduced in Phase 2 (see ARCHITECTURE.md § "[v2.0] Sub-state Architecture"). No behavior change — the accessor returns the same value as the legacy path until Phase 6 removes the legacy flat fields. `# TODO(2.0):` Migrate the remaining 16 nodes during Phase 3 / Phase 4.
 
@@ -505,7 +505,7 @@
 - `AUTOCODE_OPEN_PR=1` — open a PR from the branch to `main` after push.
 - `AUTOCODE_AUTO_MERGE=1` — **DANGEROUS.** Auto-merge the PR via squash after creation.
 
-**[v1.3] Graceful-skip behavior:** Every `github_ops.py` helper checks `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()` in try/except) before any GitHub API call. If GitHub is not configured (`GITHUB_TOKEN` / `GITHUB_OWNER` / `GITHUB_REPO` missing), the helper logs a `tracer.step` and returns `False`/`None` — the workflow continues without crashing.
+**[v1.3] Graceful-skip behavior:** Every `github_ops.py` helper checks `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()` in try/except) before any GitHub API call. If GitHub is not configured (`GITHUB_TOKEN` / `GITHUB_OWNER` / `GITHUB_REPO` missing), the helper logs a `tracer.step` and returns `False`/`None` — the workflow continues without crashing. **[v2.0-rc2]** All `_github_*` helpers now live in `vcs_ops.py` (Phase 5.1 consolidation); `github_ops.py` is a thin re-export wrapper that re-exports them for backward compat with external importers.
 
 **[v1.3] Why `node_publish` is separate from `node_commit`:** See ARCHITECTURE.md § "[v1.3] Design Decision Notes" #1. Short version: commit failure ≠ publish failure; the publish step can be skipped in dry_run / failed / skipped states independently; the graph topology stays self-documenting. **[v2.0-beta]** Phase 3.3 split it further for finer-grained routing and retry.
 
@@ -532,7 +532,7 @@
 
 **Returns:** `{"pushed": bool}` — or `{"status": "dry_run"}` when dry_run, or `{}` on skip conditions.
 
-**Source:** `workflows/autocode_impl/nodes/push.py` (Phase 3.3 — imports `_github_push` from `github_ops.py`).
+**Source:** `workflows/autocode_impl/nodes/push.py` (Phase 3.3 — imports `_github_push` from `github_ops.py`; **[v2.0-rc2]** `_github_push` now lives in `vcs_ops.py` — `github_ops.py` is a thin re-export wrapper).
 
 ---
 
@@ -558,7 +558,7 @@
 
 **Returns:** `{"pr_number": int, "pr_url": str}` — always returns both keys (defaults `0`/`""` if PR not created). Or `{}` on skip conditions.
 
-**Source:** `workflows/autocode_impl/nodes/create_pr.py` (Phase 3.3 — imports `_github_pr_create` from `github_ops.py`; defines `_build_pr_body` locally).
+**Source:** `workflows/autocode_impl/nodes/create_pr.py` (Phase 3.3 — imports `_github_pr_create` from `github_ops.py`; defines `_build_pr_body` locally; **[v2.0-rc2]** `_github_pr_create` now lives in `vcs_ops.py` — `github_ops.py` is a thin re-export wrapper).
 
 ---
 
@@ -577,7 +577,7 @@
 
 **Returns:** `{}` always (terminal — no state update).
 
-**Source:** `workflows/autocode_impl/nodes/merge_pr.py` (Phase 3.3 — imports `_github_pr_merge` from `github_ops.py`).
+**Source:** `workflows/autocode_impl/nodes/merge_pr.py` (Phase 3.3 — imports `_github_pr_merge` from `github_ops.py`; **[v2.0-rc2]** `_github_pr_merge` now lives in `vcs_ops.py` — `github_ops.py` is a thin re-export wrapper).
 
 **`# TODO(2.0):`** Add `AUTOCODE_AUTO_MERGE_METHOD` config (squash/merge/rebase) — currently hardcoded to `squash` inside `_github_pr_merge`.
 
@@ -751,8 +751,56 @@ branch = _get_vcs(state, "branch", "main")
 `# TODO(2.0):` The remaining 15 nodes still use the legacy `state.get(...)`
 pattern. **[v2.0-rc1]** `node_systematic_debug` and `node_summarize_context` are
 now migrated to accessors (Phase 4). They will continue migrating during Phase 5
-(async refactor). Phase 6 removes the legacy flat fields and the accessor
-fallback branches.
+(was originally planned as "async refactor" — **[v2.0-rc2]** Phase 5 actually
+shipped as VCS consolidation + cleanup; the async-refactor scope was dropped
+since `_run_async` was already simplified in Phase 1). Phase 6 removes the legacy
+flat fields and the accessor fallback branches.
+
+### `helpers._write_files()` — [v2.0-rc2] DEPRECATED
+
+The `helpers._write_files()` function is **DEPRECATED as of v2.0-rc2 (Phase 5.3)**.
+A dead-code audit found it was never called by any node — `execute.py` imported it
+but never used the import (the dead import was removed: `from ...helpers import
+_call, _write_files, ...` → `from ...helpers import _call, _files_context,
+_parse_json`).
+
+- **DEPRECATED, not deleted:** `_write_files()` is KEPT in `helpers.py` for
+  backward compat with any external callers that may import it. The function
+  body is unchanged; a docstring deprecation pointer was added directing callers
+  to `node_apply_patches` + `node_write_new_files` (the Phase 3.1 split nodes that
+  superseded it).
+- **Do NOT call from new code:** New nodes that need to write files MUST use the
+  Phase 3.1 split nodes (`node_apply_patches` for `str_replace` patches,
+  `node_write_new_files` for new-file writes). See NEVER DO #38 in
+  INSTRUCTIONS.md.
+- **No behavior change:** The function was unreachable before Phase 5.3 (no node
+  called it). Phase 5.3 just documents that fact + removes the dead import from
+  `execute.py`.
+
+### `vcs_ops.py` — [v2.0-rc2] Unified VCS module (Phase 5.1)
+
+The new `workflows/autocode_impl/vcs_ops.py` module is the **single source of
+truth for all VCS helpers** as of v2.0-rc2 (Phase 5.1). It merges the former
+`git_ops.py` (local operations) + `github_ops.py` (remote operations) into one
+module, organized in 3 sections:
+
+1. **Local operations** — `_git_commit()`, `_git_create_branch()` (was in
+   `git_ops.py`)
+2. **Remote operations** — `_github_pull()`, `_github_push()`,
+   `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()` (was in
+   `github_ops.py`)
+3. **Swarm integration** — `_swarm_debug_consensus()` (was in `github_ops.py`)
+
+All lazy imports, `is_configured()` guards, `tracer.step` logging, and structured
+returns are preserved — pure move + merge, no behavior change.
+
+**Backward compat:** `git_ops.py` + `github_ops.py` are kept as thin re-export
+wrappers (re-export from `vcs_ops`) so existing `from workflows.autocode_impl.git_ops import ...`
+and `from workflows.autocode_impl.github_ops import ...` calls still work. **New
+code MUST import from `vcs_ops.py` directly** — see INSTRUCTIONS.md ALWAYS DO #53.
+
+Resolves the v1.3 "2.0 Review Notes" item `git_ops.py + github_ops.py split →
+consider merging into unified vcs_ops.py`.
 
 ### `debug_history` field — [v2.0-rc1] POPULATED by `node_systematic_debug`
 
@@ -826,4 +874,4 @@ use `debug_summary` (compressed) instead of the raw last-5-entries block once
 
 ---
 
-*Last updated: 2026-07-11 (v2.0-rc1 — 2.0 refactor Phase 4 (debug loop refactor): `node_systematic_debug` section rewritten to document 4-phase prompt (investigation → pattern → hypothesis → fix) + `debug_history` accumulation + last-5-entries injection into LLM user prompt + architecture-question exit (3+ consecutive `tests_passed=False` → `tdd_status="max_retries_exceeded"` + procedural memory store); new `node_summarize_context` section (Phase 11a — Purpose / Logic / Params / Returns / Source) documenting the chonkie `SentenceChunker` soft-dep + JSON-of-last-3-entries fallback + most-recent-first chunking; new `debug_summary` field subsection in [v2.0] State Accessors; `debug_history` field subsection updated from "not yet populated" to POPULATED by `node_systematic_debug`; `_get_tdd` row in accessor table updated to list both new fields; graph registers 28 nodes, metadata lists 27 [wrappers excluded]). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*
+*Last updated: 2026-07-11 (v2.0-rc2 — 2.0 refactor Phase 5 (VCS consolidation + cleanup): new "`vcs_ops.py` — [v2.0-rc2] Unified VCS module (Phase 5.1)" subsection in [v2.0] State Accessors documenting the 3-section layout (Local operations / Remote operations / Swarm integration) + backward-compat wrappers (`git_ops.py` + `github_ops.py` kept as thin re-exports); new "`helpers._write_files()` — [v2.0-rc2] DEPRECATED" subsection noting the dead-code audit + dead-import removal from `execute.py`; node source lines for `node_git_branch` / `node_git_commit` / `node_publish` / `node_push` / `node_create_pr` / `node_merge_pr` updated with [v2.0-rc2] notes that `_github_*` helpers now live in `vcs_ops.py` (github_ops.py is a thin re-export wrapper); accessor-migration TODO note updated to note Phase 5 actually shipped as VCS consolidation (async-refactor scope dropped). Prior v2.0-rc1 — Phase 4 (debug loop refactor): `node_systematic_debug` section rewritten to document 4-phase prompt (investigation → pattern → hypothesis → fix) + `debug_history` accumulation + last-5-entries injection into LLM user prompt + architecture-question exit (3+ consecutive `tests_passed=False` → `tdd_status="max_retries_exceeded"` + procedural memory store); new `node_summarize_context` section (Phase 11a — Purpose / Logic / Params / Returns / Source) documenting the chonkie `SentenceChunker` soft-dep + JSON-of-last-3-entries fallback + most-recent-first chunking; new `debug_summary` field subsection in [v2.0] State Accessors; `debug_history` field subsection updated from "not yet populated" to POPULATED by `node_systematic_debug`; `_get_tdd` row in accessor table updated to list both new fields; graph registers 28 nodes, metadata lists 27 [wrappers excluded]). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history + 7-phase refactor progress, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*

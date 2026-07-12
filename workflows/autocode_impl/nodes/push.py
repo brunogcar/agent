@@ -11,7 +11,7 @@ from __future__ import annotations
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.state import AutocodeState
-from workflows.autocode_impl.github_ops import _github_push
+from workflows.autocode_impl.vcs_ops import _github_push
 
 
 def node_push(state: AutocodeState) -> dict:

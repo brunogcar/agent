@@ -31,7 +31,7 @@ from core.tracer import tracer
 from workflows.autocode_impl.constants import DEBUG_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
 from workflows.autocode_impl.state import AutocodeState, _get_tdd
-from workflows.autocode_impl.github_ops import _swarm_debug_consensus, _github_pr_comment
+from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_comment
 from core.kgraph.queries import get_dependencies, get_callers
 
 # [v2.0] Phase 4 — architecture-question threshold.

@@ -121,7 +121,14 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
     raise last_error  # type: ignore[misc]
 
 def _write_files(state: dict) -> dict:
-    """
+    """[v2.0] DEPRECATED — use node_apply_patches + node_write_new_files instead.
+
+    This function is kept for backward compatibility but is never called by
+    any node (Phase 5 cleanup confirmed: execute.py imported it but never
+    called it — dead import removed). The actual file writing logic now lives
+    in nodes/apply_patches.py + nodes/write_new_files.py.
+
+    Original docstring:
     Write files with EXPLICIT base directory resolution.
     """
     files_map = state.get("files_map") or state.get("files", {})

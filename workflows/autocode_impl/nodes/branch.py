@@ -21,8 +21,8 @@ from typing import Any
 
 from core.config import cfg
 from workflows.autocode_impl.state import AutocodeState
-from workflows.autocode_impl.git_ops import _git_create_branch
-from workflows.autocode_impl.github_ops import _github_pull  # [v1.3]
+from workflows.autocode_impl.vcs_ops import _git_create_branch
+from workflows.autocode_impl.vcs_ops import _github_pull  # [v1.3]
 from core.tracer import tracer
 
 def node_git_branch(state: AutocodeState) -> dict:
