@@ -238,6 +238,17 @@ def _swarm_debug_consensus(system: str, user: str, tid: str = "") -> dict | None
 
     Returns None if swarm is not available (no providers configured).
     Non-blocking: failures return None, caller falls back to single-LLM debug.
+
+    v1.0.2 (swarm): Fixed 7 interface bugs that made this function completely
+    non-functional (found by cross-LLM review — DeepSeek + MiMo independently):
+      - `prompt=` → `question=` (swarm facade param is `question`, not `prompt`)
+      - `role="executor"` dropped (not a swarm param — silently absorbed by **kwargs)
+      - `.get("response")` → `.get("synthesis")` (consensus returns `synthesis`)
+      - `providers_count` → `provider_count` (field name in swarm result)
+      - Added `single_response` to confidence_map (swarm v1.0.1 addition → LOW)
+      - Pass `trace_id=tid` so swarm calls are traced
+      - Check `synthesis_failed` flag (swarm v1.0.2 addition) and bail if synthesis
+        failed rather than parsing an empty string
     """
     try:
         from tools.swarm import swarm
@@ -249,16 +260,24 @@ def _swarm_debug_consensus(system: str, user: str, tid: str = "") -> dict | None
     try:
         consensus_resp = swarm(
             action="consensus",
-            prompt=f"{system}\n\n{user}",
-            role="executor",
+            question=f"{system}\n\n{user}",
+            trace_id=tid,
         )
         if consensus_resp.get("status") != "success":
             tracer.step(tid, "swarm_debug", f"consensus failed: {consensus_resp.get('error', '')}")
             return None
 
-        consensus_text = consensus_resp.get("data", {}).get("response", "")
+        consensus_data = consensus_resp.get("data", {})
+        # v1.0.2: Check synthesis_failed flag (swarm v1.0.2 addition). If the
+        # planner synthesis crashed, consensus_text is empty — bail rather than
+        # parse nothing.
+        if consensus_data.get("synthesis_failed"):
+            tracer.step(tid, "swarm_debug", f"consensus synthesis failed: {consensus_data.get('synthesis_error', '')}")
+            return None
+
+        consensus_text = consensus_data.get("synthesis", "")
         if not consensus_text:
-            tracer.step(tid, "swarm_debug", "consensus returned empty response")
+            tracer.step(tid, "swarm_debug", "consensus returned empty synthesis")
             return None
     except Exception as e:
         tracer.step(tid, "swarm_debug", f"consensus exception: {e}")
@@ -279,34 +298,38 @@ def _swarm_debug_consensus(system: str, user: str, tid: str = "") -> dict | None
     defense_notes = debug_data.get("defense_notes", "")
 
     # Run 2: vote — providers vote on whether the root_cause + fix is correct
-    # This gives us a confidence level (unanimous/majority/split/disagreement)
+    # This gives us a confidence level (unanimous/majority/split/disagreement/single_response)
     try:
         vote_resp = swarm(
             action="vote",
-            prompt=(
+            question=(
                 f"Review this debug analysis:\n"
                 f"Root cause: {root_cause[:500]}\n"
                 f"Fix: {fix[:500]}\n\n"
                 f"Is this root cause analysis and fix correct? Answer YES or NO."
             ),
-            role="executor",
+            trace_id=tid,
         )
         vote_data = vote_resp.get("data", {}) if vote_resp.get("status") == "success" else {}
         agreement = vote_data.get("agreement", "unknown")
-        providers = vote_data.get("providers_count", 0)
+        providers = vote_data.get("provider_count", 0)
     except Exception as e:
         tracer.step(tid, "swarm_debug", f"vote exception: {e}")
         agreement = "unknown"
         providers = 0
 
     # Map agreement to confidence level
+    # v1.0.2: Added single_response → LOW (swarm v1.0.1 addition). A single
+    # voter cannot express agreement; treating it as HIGH (the old behavior
+    # when single_response was misclassified as unanimous) was wrong.
     # TODO(2.0): Review confidence thresholds — currently:
-    #   unanimous = HIGH, majority = MEDIUM, split/disagreement = LOW
+    #   unanimous = HIGH, majority = MEDIUM, split/disagreement/single_response = LOW
     confidence_map = {
         "unanimous": "HIGH",
         "majority": "MEDIUM",
         "split": "LOW",
         "disagreement": "LOW",
+        "single_response": "LOW",
     }
     confidence = confidence_map.get(agreement, "LOW")
 

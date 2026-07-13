@@ -55,7 +55,11 @@ def _action_vote(
         available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens
     )
 
-    successful = [r for r in results if r["text"] and not r["error"]]
+    # v1.0.2 (P1-3 cross-LLM): Use .strip() so whitespace-only responses
+    # ("   ") are not counted as successful. Previously, "   " was truthy,
+    # passed the filter, then normalized to "" — causing two whitespace-only
+    # responses to falsely group as "unanimous" with key "".
+    successful = [r for r in results if r["text"].strip() and not r["error"]]
     if not successful:
         return fail("All providers failed to respond.", responses=results)
 

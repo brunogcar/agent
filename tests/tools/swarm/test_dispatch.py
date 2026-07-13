@@ -50,13 +50,16 @@ class TestDispatch:
 
 
 class TestInputValidation:
-    """v1.0.1: Numeric bounds for max_tokens and timeout (P3-2)."""
+    """v1.0.1: Numeric bounds for max_tokens and timeout (P3-2).
+    v1.0.2 (P2-4): error_code is now INVALID_INPUT (was INVALID_ACTION)."""
 
     def test_max_tokens_too_low(self, mock_llm_registry):
         result = swarm(action="list_providers", max_tokens=0)
         assert result["status"] == "error"
         assert "max_tokens" in result["error"]
-        assert result.get("error_code") == "INVALID_ACTION"
+        # v1.0.2 (P2-4): INVALID_INPUT, not INVALID_ACTION — the action name
+        # is valid, the parameter value is not.
+        assert result.get("error_code") == "INVALID_INPUT"
 
     def test_max_tokens_negative(self, mock_llm_registry):
         result = swarm(action="list_providers", max_tokens=-1)
@@ -102,6 +105,16 @@ class TestInputValidation:
         # With a non-empty action, validation fires first.
         assert result["status"] == "error"
         assert "max_tokens" in result["error"]
+        assert result.get("error_code") == "INVALID_INPUT"
+
+    def test_unknown_action_uses_invalid_action_code(self):
+        """v1.0.2 (P2-4): Unknown action keeps INVALID_ACTION code (distinct
+        from INVALID_INPUT). A caller routing on error_code can distinguish
+        'typo in action name' from 'bad parameter value'."""
+        result = swarm(action="nonexistent")
+        assert result["status"] == "error"
+        assert result.get("error_code") == "INVALID_ACTION"
+        assert "Unknown action" in result["error"]
 
 
 class TestRegistry:

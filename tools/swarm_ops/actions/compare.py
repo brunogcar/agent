@@ -1,4 +1,7 @@
-"""Swarm action: compare — all models answer, responses returned side-by-side."""
+"""Swarm action: compare — all models answer, responses returned side-by-side.
+
+v1.0.2 (P1-3 cross-LLM): Whitespace-only responses no longer count as successful.
+"""
 from __future__ import annotations
 from tools.swarm_ops._registry import register_action
 from tools.swarm_ops.helpers import (
@@ -38,7 +41,9 @@ def _action_compare(
         available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens
     )
 
-    successful = [r for r in results if r["text"] and not r["error"]]
+    # v1.0.2 (P1-3 cross-LLM): Use .strip() so whitespace-only responses
+    # are not counted as successful.
+    successful = [r for r in results if r["text"].strip() and not r["error"]]
     if not successful:
         return fail("All providers failed to respond.", responses=results)
 

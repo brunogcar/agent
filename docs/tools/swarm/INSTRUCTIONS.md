@@ -84,6 +84,16 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 37. **Test with `mock_llm_registry` / `make_vote_providers` / `mock_providers_with_*` fixtures.** Patch `core.llm.llm._registry._providers` with mock providers — never make real API calls in tests. v1.0.1 added: `make_vote_providers` (controlled per-provider response texts for vote classification tests), `mock_providers_with_key_leak_error` (Gemini key-leak regression), `mock_providers_with_slow_one` (race latency regression). See ARCHITECTURE.md → Testing section.
 
+38. **Never use `with ThreadPoolExecutor(...)` for swarm fan-out.** v1.0.2 (P1-1 cross-LLM): The context-manager `__exit__` calls `shutdown(wait=True)`, which blocks until ALL in-flight threads finish. If a provider hangs or ignores its timeout, the entire swarm call deadlocks. Both `_call_all_providers` and `_call_providers_race` must use explicit `executor = ThreadPoolExecutor(...)` + `try/finally: executor.shutdown(wait=False, cancel_futures=True)`. This is the single most important concurrency rule — it bit us twice (race in v1.0, consensus/vote/compare in v1.0.1).
+
+39. **Never check `r["text"]` for success without `.strip()`.** v1.0.2 (P1-3 cross-LLM): A whitespace-only response (`"   "`) is truthy but contains no meaningful content. All success/winner filters must use `r["text"].strip() and not r["error"]`. Without this, two providers returning whitespace-only text (e.g. content-filter blanking) falsely group as `unanimous` in vote, win in race, or count as successful in consensus/compare.
+
+40. **Never let `_sanitize_error()` raise.** v1.0.2 (P1-4 cross-LLM): A pathological exception whose `__str__` AND `__repr__` both raise must not crash the action — that breaks per-provider error isolation (the whole point of `_call_provider`'s try/except). `_sanitize_error` must be wrapped in a `try/except Exception` that returns a safe `<unstringifiable TypeName>` string. If you add patterns to `_SECRET_PATTERNS`, ensure they can't raise on unusual input.
+
+41. **Never use `error_code="INVALID_ACTION"` for parameter validation errors.** v1.0.2 (P2-4 cross-LLM): `INVALID_ACTION` semantically means "unknown action name". Parameter-value errors (out-of-bounds `max_tokens`, bad `timeout`) must use `INVALID_INPUT`. A caller routing on `error_code` must be able to distinguish "typo in action name" from "bad parameter value". The facade uses `INVALID_ACTION` only for the unknown-action case.
+
+42. **Never collect only SOME futures from a `wait()` `done` set.** v1.0.2 (P1-2 cross-LLM): `wait(return_when=FIRST_COMPLETED)` can return MULTIPLE futures in `done` if they complete simultaneously. If you `break` inside the `for future in done:` loop on the first winner, sibling done futures are discarded (already completed but never collected into `results`). Always iterate ALL of `done` to collect results, THEN check for a winner outside the inner loop.
+
 ---
 
 ## 🚫 Anti-Patterns & Lessons Learned
@@ -112,6 +122,22 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 > - **Why it matters:** A single voter cannot express agreement. HIGH confidence on one response defeats the swarm's purpose.
 > - **Fix:** Added `single_response` agreement label for `n_successful < 2`. Schema addition (new label) — documented in API.md + CHANGELOG. Downstream consumers (autocode `vcs_ops.confidence_map`) should add `"single_response": "LOW"`. Regression test: `test_vote.py::test_vote_single_response`.
 
+> - **What happened (v1.0.2 / P1-1 cross-LLM):** `_call_all_providers` (used by consensus, vote, compare) still used `with ThreadPoolExecutor(...)` + `as_completed(timeout=...)` after the v1.0.1 race fix. If `as_completed` raised `TimeoutError`, the `with` block's `__exit__` called `shutdown(wait=True)`, blocking forever on a hanging provider. This was the "other half" of the race bug — same class, different function.
+> - **Why it matters:** A single misbehaving provider (hangs, ignores timeout, DNS stall) deadlocks 3 of 5 swarm actions. Worse than the v1.0 race bug because consensus/vote/compare are the "main" actions.
+> - **Fix:** Rewrote `_call_all_providers` to mirror `_call_providers_race`: explicit `executor` + `try/except TimeoutError` (mark remaining futures as timeout) + `finally: shutdown(wait=False, cancel_futures=True)`. Regression test: `test_helpers.py::TestCallAllProvidersTimeout` (fails at 32s on v1.0.1 code, passes at ~11s on v1.0.2).
+
+> - **What happened (v1.0.2 / P1-2 cross-LLM):** `_call_providers_race` (v1.0.1 rewrite) had a `for future in done:` loop that `break`ed on the first winner. But `wait(return_when=FIRST_COMPLETED)` can return MULTIPLE futures in `done` if they complete simultaneously. Sibling done futures were discarded (already completed but never collected into `results`).
+> - **Why it matters:** The `responses` array was incomplete — callers couldn't see all providers that completed before the winner. Debugging provider failures was harder.
+> - **Fix:** Collect ALL done futures in the inner loop, THEN check for a winner outside it. See INSTRUCTIONS.md rule #42.
+
+> - **What happened (v1.0.2 / P1-3 cross-LLM):** All action success filters used `if r["text"] and not r["error"]`. A whitespace-only response (`"   "`) is truthy, so it passed the filter. In vote, `.strip().lower()[:200]` then reduced it to `""`, so two whitespace-only responses falsely grouped as `unanimous` with key `""`. In race, a whitespace-only response could win.
+> - **Why it matters:** Content-filter blanking, truncation, or provider bugs that produce whitespace-only output would create false agreement or empty winners. Downstream consumers (autocode) might treat this as HIGH confidence.
+> - **Fix:** Changed all success filters to `r["text"].strip() and not r["error"]` across consensus, race, compare, vote. See INSTRUCTIONS.md rule #39.
+
+> - **What happened (v1.0.2 / P0-1 cross-LLM):** `_swarm_debug_consensus` in `workflows/autocode_impl/vcs_ops.py` called `swarm(action="consensus", prompt=..., role="executor")`. The swarm facade's param is `question` (not `prompt`), and `role` is not a swarm param (silently absorbed by `**kwargs`). It then read `.get("response")` (should be `synthesis`) and `.get("providers_count")` (should be `provider_count`). The entire autocode swarm-debug integration was non-functional — `AUTOCODE_SWARM_DEBUG=1` silently fell back to single-LLM debug.
+> - **Why it matters:** Users enabling swarm debug got zero benefit. The bug was invisible because the fallback was silent. DeepSeek + MiMo independently found this in cross-LLM review.
+> - **Fix:** Corrected all 7 interface bugs: `prompt=`→`question=`, dropped `role=`, `response`→`synthesis`, `providers_count`→`provider_count`, added `single_response`→LOW to `confidence_map`, passes `trace_id`, checks `synthesis_failed`. The root cause — `**kwargs` silently absorbing unknown params — is a facade-design tradeoff (documented in INSTRUCTIONS.md #11); callers must match the documented param names.
+
 ---
 
-*Last updated: 2026-07-13 (v1.0.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-13 (v1.0.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

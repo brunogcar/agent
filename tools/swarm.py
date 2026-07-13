@@ -9,6 +9,9 @@ and applies a strategy (consensus, race, vote, compare, or list_providers).
 NOT parallel-safe (uses ThreadPoolExecutor internally — nested parallelism risk).
 
 v1.0.1: Added input validation for max_tokens / timeout (P3-2).
+v1.0.2 (P2-4 cross-LLM): Changed error_code from INVALID_ACTION to INVALID_INPUT
+        for parameter validation failures (semantically correct — the action
+        is valid, the parameter value is not).
 """
 from __future__ import annotations
 
@@ -73,17 +76,19 @@ def swarm(
     # on timeout=-1 raises ValueError). list_providers ignores these params
     # but we validate unconditionally — the fail message is clearer than a
     # downstream 400.
+    # v1.0.2 (P2-4): error_code is INVALID_INPUT (not INVALID_ACTION — the
+    # action name is valid, the parameter value is not).
     if not (_MAX_TOKENS_MIN <= max_tokens <= _MAX_TOKENS_MAX):
         return fail(
             f"max_tokens must be between {_MAX_TOKENS_MIN} and {_MAX_TOKENS_MAX}, got {max_tokens}",
             trace_id=trace_id,
-            error_code="INVALID_ACTION",
+            error_code="INVALID_INPUT",
         )
     if not (_TIMEOUT_MIN <= timeout <= _TIMEOUT_MAX):
         return fail(
             f"timeout must be between {_TIMEOUT_MIN} and {_TIMEOUT_MAX} seconds, got {timeout}",
             trace_id=trace_id,
-            error_code="INVALID_ACTION",
+            error_code="INVALID_INPUT",
         )
 
     dispatch = DISPATCH.get("swarm", {})
@@ -112,6 +117,10 @@ def swarm(
     try:
         result = handler(**kwargs)
     except Exception as e:
+        # v1.0.2 (P3-5 cross-LLM): log the traceback so programming errors
+        # (KeyError, AttributeError) aren't silently swallowed. The user-facing
+        # error message stays the same; the trace gets the full context.
+        tracer.error(trace_id, "swarm", f"Handler crash in action={action!r}: {e}")
         return fail(f"Swarm action failed: {e}", trace_id=trace_id)
 
     if trace_id and "trace_id" not in result:

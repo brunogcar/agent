@@ -149,11 +149,13 @@ The swarm facade declares `action: str` and the facade body does a manual `DISPA
 
 **Note:** `_call_providers_race()` does NOT sort — its results are in completion order, with the winner first. This is intentional: race semantics require preserving "who won" ordering.
 
-### 7. Early-return + best-effort cancellation in `race` (v1.0.1)
+### 7. Early-return + best-effort cancellation in `race` (v1.0.1, fixed v1.0.2)
 
 `_call_providers_race()` uses `concurrent.futures.wait(return_when=FIRST_COMPLETED)` in a loop and `executor.shutdown(wait=False, cancel_futures=True)` in a `finally` block. **Why:** the function must return as soon as the first valid response lands, without blocking on slower providers.
 
-**v1.0 bug (fixed in v1.0.1):** the original implementation used `as_completed` + `future.cancel()` + `break`, but the `with ThreadPoolExecutor(...)` context manager's `__exit__` calls `shutdown(wait=True)`, which blocked until ALL in-flight provider calls finished. Race had the same wall-clock latency as consensus. The new implementation avoids the context manager (uses an explicit `executor` + `finally: executor.shutdown(wait=False, cancel_futures=True)`).
+**v1.0 bug (fixed in v1.0.1):** the original implementation used `as_completed` + `future.cancel()` + `break`, but the `with ThreadPoolExecutor(...)` context manager's `__exit__` calls `shutdown(wait=True)`, which blocked until ALL in-flight provider calls finished. Race had the same wall-clock latency as consensus. The v1.0.1 rewrite avoids the context manager (uses an explicit `executor` + `finally: executor.shutdown(wait=False, cancel_futures=True)`).
+
+**v1.0.1 bug (fixed in v1.0.2, P1-2 cross-LLM):** the v1.0.1 rewrite had a `for future in done:` loop that `break`ed on the first winner. But `wait(FIRST_COMPLETED)` can return MULTIPLE futures in `done` if they complete simultaneously — sibling done futures were discarded. v1.0.2 collects ALL done futures first, then checks for winner outside the inner loop.
 
 **Caveat:** `cancel_futures=True` (Python 3.9+) only cancels PENDING futures — running futures continue to completion in the background. Their results are discarded because `wait=False` releases control immediately. This is best-effort, not guaranteed, but sufficient for the latency goal.
 
@@ -164,6 +166,10 @@ Each handler signature includes `**kwargs` to absorb unused dispatcher params. T
 ### 9. `duration_ms` at facade level (not handler level)
 
 The facade measures `time.time()` before/after `handler(**kwargs)` and injects `duration_ms` into the result. **Why:** Single source of truth for wall-clock timing — handlers don't need to remember to time themselves. Includes the full handler execution (provider calls + post-processing), which is what callers actually want to know.
+
+### 10. No `with ThreadPoolExecutor(...)` for fan-out (v1.0.2)
+
+Both `_call_all_providers` and `_call_providers_race` use explicit `executor = ThreadPoolExecutor(...)` + `try/finally: executor.shutdown(wait=False, cancel_futures=True)` instead of the `with` context manager. **Why:** `ThreadPoolExecutor.__exit__` calls `shutdown(wait=True)`, which blocks until ALL in-flight threads finish. If a provider hangs or ignores its timeout, the swarm call deadlocks. This bit us twice: race in v1.0 (fixed v1.0.1) and consensus/vote/compare in v1.0.1 (fixed v1.0.2, P1-1 cross-LLM). The explicit `shutdown(wait=False)` returns immediately; `cancel_futures=True` cancels PENDING futures. See INSTRUCTIONS.md rule #38 — this is the single most important concurrency rule.
 
 ---
 
@@ -205,4 +211,4 @@ python -m pytest tests/tools/swarm/ -W error --tb=short -v
 
 ---
 
-*Last updated: 2026-07-13 (v1.0.1). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.0.2). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

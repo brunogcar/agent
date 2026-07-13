@@ -110,4 +110,4 @@ DEEPSEEK_BASE_MODEL=deepseek-chat
 
 ---
 
-*Last updated: 2026-07-13 (v1.0.1). See subfiles for detailed documentation.*
+*Last updated: 2026-07-13 (v1.0.2). See subfiles for detailed documentation.*

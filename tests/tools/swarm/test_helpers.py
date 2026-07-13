@@ -157,3 +157,168 @@ class TestCallProviderSanitizesError:
             f"API key leaked into error: {result['error']!r}"
         )
         assert "key=<redacted>" in result["error"]
+
+
+class TestSanitizeErrorBroadened:
+    """v1.0.2 (P2-1 cross-LLM): Broader secret-pattern coverage.
+
+    v1.0.1 covered URL query params, Authorization: Bearer, x-api-key, and
+    dict reprs. v1.0.2 adds: camelCase JSON keys (apiKey), hyphenated
+    (api-key), bare provider-prefix keys in prose (AIzaSy..., sk-ant-...,
+    sk-...), and base64-friendly fallback chars (+, /, =).
+    """
+
+    def test_strips_camelcase_apikey_in_json(self):
+        exc = Exception('Response: {"apiKey": "sk-test-key-1234567890123"}')
+        sanitized = _sanitize_error(exc)
+        assert "sk-test-key-1234567890123" not in sanitized
+
+    def test_strips_hyphenated_api_key_header(self):
+        exc = Exception("api-key: sk-ant-api03-abcdefghij1234567890")
+        sanitized = _sanitize_error(exc)
+        assert "sk-ant-api03-abcdefghij1234567890" not in sanitized
+
+    def test_strips_access_token_camelcase(self):
+        exc = Exception('{"accessToken": "ya29.test-token-123456789012"}')
+        sanitized = _sanitize_error(exc)
+        assert "ya29.test-token-123456789012" not in sanitized
+
+    def test_strips_bare_google_key_in_prose(self):
+        """Keys appearing in prose without a `key=` prefix (e.g., 'with key AIzaSyD...').
+
+        v1.0.2 (P2-1): provider-prefix catch-all handles this.
+        """
+        exc = Exception("Authentication failed with API key AIzaSyD_fake-google-key-1234567890aaa")
+        sanitized = _sanitize_error(exc)
+        assert "AIzaSyD_fake-google-key-1234567890aaa" not in sanitized
+
+    def test_strips_bare_anthropic_key_in_prose(self):
+        exc = Exception("using token sk-ant-api03-fake-anthropic-key-1234567890")
+        sanitized = _sanitize_error(exc)
+        assert "sk-ant-api03-fake-anthropic-key-1234567890" not in sanitized
+
+    def test_strips_bare_openai_key_in_prose(self):
+        exc = Exception("rejected key sk-fakeopenaikey123456789012345")
+        sanitized = _sanitize_error(exc)
+        assert "sk-fakeopenaikey123456789012345" not in sanitized
+
+    def test_fallback_handles_base64_chars(self):
+        """v1.0.2 (P2-1): fallback regex now includes +, /, = for base64 tokens."""
+        # A base64-looking token after 'token='
+        exc = Exception("token=eyJhbGciOiJIUzI1NiJ9+abc/def==")
+        sanitized = _sanitize_error(exc)
+        assert "eyJhbGciOiJIUzI1NiJ9+abc/def==" not in sanitized
+
+    def test_fallback_threshold_lowered_to_16(self):
+        """v1.0.2 (P2-1): fallback now redacts 16+ char tokens (was 32+).
+        Some providers issue 20-28 char keys that v1.0.1 would miss.
+
+        Tests the fallback regex with a quoted format (e.g., key: "short20...")
+        which is what the fallback pattern matches. URL-style ?key=... is
+        covered by the first _SECRET_PATTERNS entry (tested elsewhere).
+        """
+        # 20-char key in a quoted dict format — exercises the fallback regex
+        exc = Exception('{"key": "short20charkey1234"}')
+        sanitized = _sanitize_error(exc)
+        assert "short20charkey1234" not in sanitized
+
+
+class TestSanitizeErrorSelfGuard:
+    """v1.0.2 (P1-4 cross-LLM): _sanitize_error must never itself raise.
+
+    A pathological exception whose __str__ AND __repr__ both raise must not
+    crash the action (which would break per-provider error isolation).
+    """
+
+    def test_pathological_exception_returns_safe_string(self):
+        class PathologicalExc(Exception):
+            def __str__(self):
+                raise RuntimeError("str broken")
+
+            def __repr__(self):
+                raise RuntimeError("repr broken")
+
+        sanitized = _sanitize_error(PathologicalExc("unused"))
+        assert isinstance(sanitized, str)
+        assert len(sanitized) > 0
+        # Should fall back to a safe type-name string
+        assert "PathologicalExc" in sanitized
+
+    def test_sanitize_never_raises_on_any_input(self):
+        """Fuzz-ish: various weird exception objects must not crash."""
+        weird_inputs = [
+            Exception(),
+            RuntimeError(""),
+            ValueError(None),
+            TypeError(),
+            KeyError("missing"),
+            AttributeError(),
+        ]
+        for exc in weird_inputs:
+            result = _sanitize_error(exc)
+            assert isinstance(result, str), f"_sanitize_error returned non-str for {exc!r}"
+
+
+class TestCallAllProvidersTimeout:
+    """v1.0.2 (P1-1 cross-LLM): _call_all_providers must not hang on timeout.
+
+    The v1.0.1 implementation used `with ThreadPoolExecutor(...)` +
+    `as_completed(timeout=...)`. If as_completed raised TimeoutError, the
+    `with` block's __exit__ called shutdown(wait=True), blocking forever on
+    a hanging provider. This affected consensus, vote, and compare.
+
+    The v1.0.2 rewrite mirrors _call_providers_race: explicit executor +
+    try/except TimeoutError + finally: shutdown(wait=False, cancel_futures=True).
+    """
+
+    def test_call_all_providers_does_not_hang_on_slow_provider(self):
+        """If one provider hangs, _call_all_providers must still return within
+        the timeout window, not block forever on shutdown(wait=True).
+        """
+        import time as _time
+        from unittest.mock import MagicMock, patch
+        import os
+        from tools.swarm_ops.helpers import _call_all_providers
+
+        def fast_call(*a, **k):
+            return {"choices": [{"message": {"content": "fast"}}], "usage": {"total_tokens": 5}}
+
+        def hanging_call(*a, **k):
+            # Sleep longer than the as_completed window (timeout+10).
+            # With timeout=1, the window is 11s; sleep 30s to guarantee the
+            # provider is still running when as_completed times out.
+            _time.sleep(30)
+            return {"choices": [{"message": {"content": "never"}}], "usage": {"total_tokens": 5}}
+
+        fast = MagicMock()
+        fast.chat_completion.side_effect = fast_call
+        hanging = MagicMock()
+        hanging.chat_completion.side_effect = hanging_call
+
+        providers = [("openai", "m1", fast), ("slow", "m2", hanging)]
+
+        start = _time.monotonic()
+        # timeout=1 + the +10s buffer in as_completed = ~11s max. Under the
+        # v1.0.1 bug, shutdown(wait=True) would block the full 30s of the
+        # hanging sleep. Under v1.0.2, shutdown(wait=False) returns immediately
+        # after as_completed times out at ~11s.
+        results = _call_all_providers(
+            providers, "sys", "q", "", timeout=1, max_tokens=10
+        )
+        elapsed = _time.monotonic() - start
+
+        # Should return in ~11s (as_completed timeout), NOT 30s+ (hanging sleep).
+        # Allow generous slack for CI.
+        assert elapsed < 20, (
+            f"_call_all_providers took {elapsed:.1f}s — v1.0.1 bug: shutdown(wait=True) "
+            f"blocked on the hanging provider."
+        )
+        # Both providers should have a result entry
+        assert len(results) == 2
+        # The fast provider should have succeeded
+        fast_result = next(r for r in results if r["provider"] == "openai")
+        assert fast_result["text"] == "fast"
+        # The hanging provider should be marked as timeout (no real response)
+        slow_result = next(r for r in results if r["provider"] == "slow")
+        assert slow_result["text"] == "", f"hanging provider returned text: {slow_result['text']!r}"
+        assert slow_result["error"] == "timeout"

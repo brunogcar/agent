@@ -9,6 +9,13 @@ Each provider's chat_completion() returns a dict in OpenAI shape:
 
 So we can extract text the same way for all providers, including the
 native AnthropicProvider and GeminiProvider (they normalize to OpenAI shape).
+
+v1.0.1: Added _sanitize_error() (P1-1), rewrote _call_providers_race (P1-2).
+v1.0.2: Hardened _call_all_providers timeout/shutdown (P1-1 cross-LLM),
+        fixed race done-future loss (P1-2 cross-LLM), guarded _sanitize_error
+        against self-raise (P1-4 cross-LLM), broadened sanitize patterns
+        (P2-1 cross-LLM), snapshot provider dict (P2-2), cleaned provider
+        filter (P2-3 cross-LLM).
 """
 from __future__ import annotations
 
@@ -26,45 +33,69 @@ _SWARM_SYSTEM_PROMPT = (
     "Keep responses structured and easy to read."
 )
 
-# Patterns that may leak secrets into error messages. Applied to str(e) before
-# the error is stored in a swarm result dict (which flows into logs + LLM context).
-# Gemini puts the API key in the URL query string (?key=...); httpx surfaces the
-# full URL in HTTPStatusError. Anthropic/OpenAI use headers and are not affected,
-# but we sanitize defensively for all providers.
+# v1.0.2 (P2-1 cross-LLM): Broadened secret-redaction patterns.
+# v1.0.1 covered: URL query params (?key=...), Authorization: Bearer, x-api-key,
+# dict reprs ('key': '...'). v1.0.2 adds: camelCase JSON keys (apiKey, accessToken),
+# hyphenated (api-key), bare-in-prose provider prefixes (AIzaSy..., sk-ant-..., sk-...),
+# and base64-friendly fallback chars (+, /, =).
 _SECRET_PATTERNS = [
-    # URL query params: ?key=... / &key=... / ?token=... / &api_key=...
-    re.compile(r"([?&](?:key|token|api_key|access_token|secret)=)[^&\s]+", re.IGNORECASE),
-    # Authorization headers
-    re.compile(r"(Authorization\s*:\s*Bearer\s+)[^\s,;\"']+", re.IGNORECASE),
+    # URL query params: ?key=... / &token=... / ?api_key=... / &api-key=... / &apikey=...
+    # v1.0.2 (P2-1): includes bare 'key' (Gemini uses ?key=...), api_key, api-key,
+    # apikey, token, access_token, access-token, secret.
+    re.compile(r"([?&](?:key|api[-_]?key|apikey|token|access[-_]?token|secret)=)[^&\s]+", re.IGNORECASE),
+    # Authorization headers (Bearer / token / basic)
+    re.compile(r"(Authorization\s*:\s*(?:Bearer|Token|Basic)\s+)[^\s,;\"']+", re.IGNORECASE),
     re.compile(r"(x-api-key\s*:\s*)[^\s,;\"']+", re.IGNORECASE),
-    # Bare key=... inside a repr (e.g. {'key': 'AIza...'})
-    re.compile(r"(['\"](?:key|token|api_key|access_token|secret)['\"]\s*:\s*['\"])[^'\"]+", re.IGNORECASE),
+    # Dict/JSON reprs: 'key': '...', "apiKey": "...", "access_token": "..."
+    # (covers snake_case, camelCase, and hyphenated key names inside quotes)
+    re.compile(r"(['\"](?:key|api[-_]?key|apikey|token|access[-_]?token|secret)['\"]\s*:\s*['\"])[^'\"]+", re.IGNORECASE),
 ]
+
+# v1.0.2 (P2-1 cross-LLM): Provider-specific key prefixes — catch bare keys in prose
+# (e.g., "Authentication failed with API key AIzaSyD..."). These prefixes are
+# highly specific to each provider and virtually never appear in non-secret contexts.
+_PROVIDER_KEY_PREFIXES = [
+    re.compile(r"(AIzaSy)[A-Za-z0-9_\-]{30,}"),          # Google/Gemini
+    re.compile(r"(sk-ant-)[A-Za-z0-9_\-]{20,}"),          # Anthropic
+    re.compile(r"(sk-)[A-Za-z0-9]{20,}"),                 # OpenAI (sk-... but not sk-ant-)
+]
+
+# v1.0.2 (P2-1 cross-LLM): Fallback for unknown key formats after a key-like label.
+# Broadened from [A-Za-z0-9_\-]{32,} to include base64 chars (+, /, =) and lowered
+# to {16,} to catch shorter keys (some providers issue 20-28 char keys).
+_KEY_VALUE_FALLBACK = re.compile(
+    r"((?:api[-_]?key|token|access[-_]?token|secret|apikey)['\"]?\s*[:=]\s*['\"]?)[A-Za-z0-9_\-+/=]{16,}",
+    re.IGNORECASE,
+)
 
 
 def _sanitize_error(exc: BaseException) -> str:
     """Return a log-safe string representation of an exception.
 
-    Strips API keys / tokens that may appear in URL query strings (Gemini)
-    or header reprs. Gemini is the primary motivator: its API key is sent as
-    a URL query param (?key=AIzaSy...), and httpx includes the full request
-    URL in HTTPStatusError messages. A 429 (common under swarm fan-out) would
-    otherwise leak the key into logs + LLM context.
+    Strips API keys / tokens that may appear in URL query strings (Gemini),
+    header reprs, JSON bodies, or bare in prose. Gemini is the primary
+    motivator: its API key is sent as a URL query param (?key=AIzaSy...),
+    and httpx includes the full request URL in HTTPStatusError messages.
+
+    v1.0.2 (P1-4 cross-LLM): Wrapped in try/except so a pathological exception
+    whose str() AND repr() both raise cannot crash this function. Previously,
+    such an exception would propagate out of _collect_future and break
+    per-provider error isolation.
     """
     try:
-        msg = str(exc)
+        try:
+            msg = str(exc)
+        except Exception:
+            msg = repr(exc)
+        for pat in _SECRET_PATTERNS:
+            msg = pat.sub(r"\1<redacted>", msg)
+        for pat in _PROVIDER_KEY_PREFIXES:
+            msg = pat.sub(r"\1<redacted>", msg)
+        msg = _KEY_VALUE_FALLBACK.sub(r"\1<redacted>", msg)
+        return msg
     except Exception:
-        msg = repr(exc)
-    for pat in _SECRET_PATTERNS:
-        msg = pat.sub(r"\1<redacted>", msg)
-    # Fallback: redact long opaque tokens after a known key name
-    msg = re.sub(
-        r"((?:key|token|api_key|access_token|secret)['\"]?\s*[:=]\s*['\"]?)[A-Za-z0-9_\-]{32,}",
-        r"\1<redacted>",
-        msg,
-        flags=re.IGNORECASE,
-    )
-    return msg
+        # Last resort — never let sanitization itself crash the action.
+        return f"<unstringifiable {type(exc).__name__}>"
 
 
 def _get_available_providers(providers_filter: str = "") -> list[tuple[str, str, Any]]:
@@ -73,18 +104,33 @@ def _get_available_providers(providers_filter: str = "") -> list[tuple[str, str,
     Returns list of (provider_name, model_name, provider_instance).
     Skips 'lmstudio' (local — swarm is for cloud providers only).
     Skips providers without a BASE_MODEL env var.
+
+    v1.0.2 (P2-2 cross-LLM): Snapshots the providers dict before iterating
+    to avoid `RuntimeError: dictionary changed size during iteration` if a
+    provider is registered concurrently.
+    v1.0.2 (P2-3 cross-LLM): Cleans the providers filter — drops empty entries
+    and duplicates. Unknown names are silently skipped (documented); callers
+    can use list_providers to discover valid names.
     """
     from core.llm import llm
 
     all_providers = []
-    for name, provider in llm._registry._providers.items():
+    # P2-2: snapshot to avoid mutation-during-iteration race
+    for name, provider in list(llm._registry._providers.items()):
         if name == "lmstudio":
             continue
         model = os.getenv(f"{name.upper()}_BASE_MODEL", "")
         if not model:
             continue
         if providers_filter:
-            allowed = [p.strip().lower() for p in providers_filter.split(",")]
+            # P2-3: filter empties + dedupe (preserve order)
+            allowed = []
+            seen = set()
+            for p in providers_filter.split(","):
+                clean = p.strip().lower()
+                if clean and clean not in seen:
+                    allowed.append(clean)
+                    seen.add(clean)
             if name not in allowed:
                 continue
         all_providers.append((name, model, provider))
@@ -115,10 +161,8 @@ def _call_provider(
     directly. This bypasses role routing, circuit breakers, and rate
     limiting. The swarm handles error/resilience at its own level.
 
-    v1.0.1: Error messages are sanitized via _sanitize_error() before being
-    stored. Gemini puts the API key in the URL query string; httpx surfaces
-    the full URL in HTTPStatusError. Without sanitization, a 429/5xx from
-    Gemini would leak the key into logs + LLM context.
+    v1.0.1: Error messages sanitized via _sanitize_error() before storing.
+    v1.0.2: _sanitize_error() is now self-guarded (P1-4) and broader (P2-1).
     """
     start = time.time()
     try:
@@ -162,6 +206,8 @@ def _collect_future(future, futures_map: dict) -> dict:
 
     Shared by _call_all_providers and _call_providers_race. Never raises —
     a future that raised is recorded as an error result for that provider.
+    The future MUST already be done when called (callers guarantee this via
+    as_completed or the `done` set from wait()).
     """
     name = futures_map.pop(future, "")
     try:
@@ -177,6 +223,18 @@ def _collect_future(future, futures_map: dict) -> dict:
         }
 
 
+def _timeout_result(name: str) -> dict:
+    """Build a standardized timeout error result for a provider."""
+    return {
+        "provider": name,
+        "model": "",
+        "text": "",
+        "latency": 0,
+        "tokens": 0,
+        "error": "timeout",
+    }
+
+
 def _call_all_providers(
     providers: list[tuple[str, str, Any]],
     system: str,
@@ -189,11 +247,22 @@ def _call_all_providers(
 
     Returns list of result dicts (one per provider). Failed providers
     have empty text and an error message.
+
+    v1.0.2 (P1-1 cross-LLM): Rewrote to mirror _call_providers_race's
+    shutdown pattern. The v1.0.1 implementation still used
+    `with ThreadPoolExecutor(...)` + `as_completed(timeout=...)`. If
+    as_completed raised TimeoutError, the `with` block's __exit__ called
+    shutdown(wait=True), blocking forever on a hanging provider. This
+    affected consensus, vote, and compare (3 of 5 actions). The new
+    implementation uses an explicit executor + try/except TimeoutError +
+    finally: shutdown(wait=False, cancel_futures=True), so a misbehaving
+    provider can no longer deadlock the swarm.
     """
     messages = _build_messages(system, user, context)
-    results = []
+    results: list[dict] = []
 
-    with ThreadPoolExecutor(max_workers=min(len(providers), 5)) as executor:
+    executor = ThreadPoolExecutor(max_workers=min(len(providers), 5))
+    try:
         futures = {}
         for name, model, prov in providers:
             future = executor.submit(
@@ -201,8 +270,22 @@ def _call_all_providers(
             )
             futures[future] = name
 
-        for future in as_completed(futures, timeout=timeout + 10):
-            results.append(_collect_future(future, futures))
+        try:
+            for future in as_completed(futures, timeout=timeout + 10):
+                results.append(_collect_future(future, futures))
+        except TimeoutError:
+            # as_completed timed out — collect any done futures we missed,
+            # then mark all remaining as timed out.
+            for f in list(futures):
+                if f.done() and not f.cancelled():
+                    results.append(_collect_future(f, futures))
+                else:
+                    name = futures.pop(f, "")
+                    f.cancel()
+                    results.append(_timeout_result(name))
+    finally:
+        # Same pattern as _call_providers_race: don't block on in-flight calls.
+        executor.shutdown(wait=False, cancel_futures=True)
 
     # Sort by provider name for deterministic output
     results.sort(key=lambda r: r["provider"])
@@ -219,15 +302,11 @@ def _call_providers_race(
 ) -> list[dict]:
     """Call all providers in parallel, return as soon as first valid response.
 
-    v1.0.1: Rewritten to actually return early. The v1.0 implementation used
-    `as_completed` + `future.cancel()` + `break`, but ThreadPoolExecutor's
-    context-manager `__exit__` calls `shutdown(wait=True)`, which blocked
-    until ALL in-flight provider calls finished — making race have the same
-    wall-clock latency as consensus. The new implementation uses
-    `wait(return_when=FIRST_COMPLETED)` in a loop and
-    `shutdown(wait=False, cancel_futures=True)` so the function returns as
-    soon as the first valid response lands, without waiting for slower
-    providers.
+    v1.0.1: Rewrote to actually return early (was blocked on shutdown(wait=True)).
+    v1.0.2 (P1-2 cross-LLM): Fixed done-future loss. The v1.0.1 inner loop
+    `for future in done:` broke on the first winner, discarding any sibling
+    futures in `done` (already completed but never collected). Now collects
+    ALL done futures first, then checks for winner outside the inner loop.
 
     Returns a list with the winner first, followed by any providers that
     completed *before* the winner (e.g. failed fast). Late providers are
@@ -257,14 +336,7 @@ def _call_providers_race(
                 for f in list(futures):
                     name = futures.pop(f, "")
                     f.cancel()
-                    results.append({
-                        "provider": name,
-                        "model": "",
-                        "text": "",
-                        "latency": 0,
-                        "tokens": 0,
-                        "error": "timeout",
-                    })
+                    results.append(_timeout_result(name))
                 break
 
             done, _pending = wait(futures, timeout=remaining, return_when=FIRST_COMPLETED)
@@ -274,20 +346,19 @@ def _call_providers_race(
                 for f in list(futures):
                     name = futures.pop(f, "")
                     f.cancel()
-                    results.append({
-                        "provider": name,
-                        "model": "",
-                        "text": "",
-                        "latency": 0,
-                        "tokens": 0,
-                        "error": "timeout",
-                    })
+                    results.append(_timeout_result(name))
                 break
 
+            # v1.0.2 (P1-2 cross-LLM): Collect ALL done futures BEFORE checking
+            # for winner. The v1.0.1 code broke inside this loop on the first
+            # winner, discarding sibling done futures (already completed but
+            # never collected into results).
             for future in done:
-                result = _collect_future(future, futures)
-                results.append(result)
-                if result["text"] and not result["error"] and winner is None:
+                results.append(_collect_future(future, futures))
+
+            # Now check if any of the collected results is a winner
+            for result in results:
+                if result["text"].strip() and not result["error"] and winner is None:
                     winner = result
                     # Cancel remaining (not-yet-started) futures and stop waiting.
                     for f in list(futures):

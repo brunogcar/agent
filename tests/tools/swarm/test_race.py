@@ -92,3 +92,30 @@ class TestRace:
         assert len(responses) >= 1
         # First response should be the winner
         assert responses[0]["provider"] == result["data"]["winner"]["provider"]
+
+    def test_race_does_not_win_on_whitespace_only(self, make_vote_providers):
+        """v1.0.2 (P1-3 cross-LLM): A whitespace-only response must not win.
+
+        v1.0.1 bug: `r["text"]` was truthy for "   ", so a provider returning
+        whitespace-only (e.g. content-filter blanking) would be declared the
+        winner. v1.0.2 uses `r["text"].strip()`.
+        """
+        llm = make_vote_providers({
+            "openai": "   ",      # whitespace only — must NOT win
+            "claude": "real answer",
+        })
+        next(llm)
+        result = swarm(action="race", question="test", timeout=10)
+        assert result["status"] == "success"
+        assert result["data"]["winner"]["provider"] == "claude"
+        assert result["data"]["winner"]["text"] == "real answer"
+
+    def test_race_has_successful_count(self, mock_llm_registry):
+        """v1.0.2 (P3-4 cross-LLM): race result includes successful_count
+        for parity with consensus/compare/vote.
+        """
+        result = swarm(action="race", question="test")
+        assert result["status"] == "success"
+        assert "successful_count" in result["data"]
+        assert isinstance(result["data"]["successful_count"], int)
+        assert result["data"]["successful_count"] >= 1

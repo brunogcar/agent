@@ -79,6 +79,8 @@ swarm(action="consensus", question="Async or sync drivers?", context="Project us
     {"provider": "openai", "model": "gpt-4o-mini", "text": "...", "latency": 1.84, "tokens": 388, "error": ""}
   ],
   "synthesis": "Combined answer combining the strongest points from each response...",
+  "synthesis_failed": false,
+  "synthesis_error": "",
   "provider_count": 4,
   "successful_count": 3,
   "trace_id": "abc123",
@@ -88,6 +90,7 @@ swarm(action="consensus", question="Async or sync drivers?", context="Project us
 
 **Notes:**
 - The synthesis step uses `llm.complete(role="planner", ...)` — this is the **only** place swarm routes through `llm.complete()` rather than calling `provider.chat_completion()` directly.
+- **v1.0.2 (P1-5):** If the synthesis LLM call fails, `synthesis_failed` is `true`, `synthesis` is `""`, and `synthesis_error` carries the error message. The action still returns `status: "success"` because the per-provider responses are valuable — callers should check `synthesis_failed` before relying on `synthesis`.
 - If all providers fail, returns `fail("All providers failed to respond.", responses=results)` — the `responses` array is still attached so callers can inspect the per-provider errors.
 - `provider_count` = number of providers *attempted* (after filter + env checks); `successful_count` = those that returned non-empty text with no error.
 
@@ -123,6 +126,7 @@ swarm(action="race", question="Quick fact: who invented Python?", providers="ope
     {"provider": "deepseek", "model": "deepseek-chat", "text": "Paris.", "latency": 0.82, "tokens": 5, "error": ""}
   ],
   "provider_count": 4,
+  "successful_count": 1,
   "trace_id": "abc123",
   "duration_ms": 940
 }
@@ -274,8 +278,8 @@ All errors return a standardized `fail()` dict:
 | `action is required` | Empty `action` param | — |
 | `Unknown action '<x>'. Use: consensus \| race \| ...` | Action not in DISPATCH | — |
 | `question is required for <action>` | Empty `question` on `consensus` / `race` / `vote` / `compare` | — |
-| `max_tokens must be between 1 and 8192, got <n>` | `max_tokens` out of bounds (v1.0.1) | `INVALID_ACTION` |
-| `timeout must be between 1 and 300 seconds, got <n>` | `timeout` out of bounds (v1.0.1) | `INVALID_ACTION` |
+| `max_tokens must be between 1 and 8192, got <n>` | `max_tokens` out of bounds (v1.0.2) | `INVALID_INPUT` |
+| `timeout must be between 1 and 300 seconds, got <n>` | `timeout` out of bounds (v1.0.2) | `INVALID_INPUT` |
 | `No cloud providers configured. Set *_API_KEY and *_BASE_MODEL in .env to enable.` | `_get_available_providers()` returns empty | — |
 | `All providers failed to respond.` | Every provider returned an error or empty text | `responses: [...]` (per-provider errors visible) |
 | `Swarm action failed: <exception>` | Unhandled exception in handler | — |
@@ -304,4 +308,4 @@ All errors return a standardized `fail()` dict:
 
 ---
 
-*Last updated: 2026-07-13 (v1.0.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.0.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

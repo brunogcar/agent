@@ -132,3 +132,20 @@ class TestVote:
         groups = result["data"]["groups"]
         counts = [g["count"] for g in groups]
         assert counts == sorted(counts, reverse=True)
+
+    def test_vote_whitespace_only_not_unanimous(self, make_vote_providers):
+        """v1.0.2 (P1-3 cross-LLM): Two whitespace-only responses must NOT
+        be classified as unanimous. v1.0.1 bug: "   " was truthy, passed the
+        filter, then normalized to "" — so two whitespace responses falsely
+        grouped as unanimous with key "".
+        """
+        llm = make_vote_providers({
+            "openai": "   ",    # whitespace only
+            "claude": "   ",    # whitespace only
+        })
+        next(llm)
+        result = swarm(action="vote", question="test")
+        # Both providers returned whitespace — should be filtered out as failures.
+        # With 0 successful responses, the action fails with "All providers failed".
+        assert result["status"] == "error"
+        assert "All providers failed" in result["error"]
