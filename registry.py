@@ -14,6 +14,29 @@ Usage in tool files:
  @tool
  def web(action: str, query: str = "") -> dict:
      ...
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. SCAN DEPTH IS ONE LEVEL for tools/: tools/*.py only, NOT tools/*_ops/ subpackages.
+     Subpackages are imported INDIRECTLY — the facade (tools/git.py) imports its
+     *_ops package, which triggers __init__.py auto-discovery and populates DISPATCH
+     before @meta_tool runs. DO NOT add recursive scanning of tools/ — it would
+     import action modules before their DISPATCH exists, and pull ChromaDB at MCP startup.
+
+  2. skills/ IS scanned at the TOP LEVEL ONLY (flat modules in skills/).
+     Only skills/dispatcher.py is expected to have @tool here.
+     Sub-packages (skills/b3/, skills/news/, etc.) are SKIPPED (is_pkg check at line 136).
+     The dispatcher imports them internally via its own domain discovery mechanism.
+     DO NOT scan skills/ sub-packages — it would trigger ChromaDB/requests imports
+     before MCP handshake completes.
+
+  3. get_tool_names() returns [] before register_all_tools() runs.
+     health.py /tools endpoint handles this with a static fallback list (which itself
+     is stale — missing cli/browser/tavily/consult/parallel as of Jun 2026).
+
+  4. NEVER use 'tool' as a variable name in any file that imports from registry.
+     It shadows the @tool decorator.
 """
 
 from __future__ import annotations

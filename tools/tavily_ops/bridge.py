@@ -9,6 +9,36 @@ v1.3 FIXES:
 - Use retry_async_factory from core.net.retry for unified retry logic.
 - Added CircuitBreakerOpen exception for proper error_code propagation.
 - Removed dead code after retry loop.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. ALWAYS USE ThreadPoolExecutor — NEVER call asyncio.run() directly.
+     asyncio.run() raises RuntimeError inside an already-running event loop (pytest,
+     Jupyter, nested async contexts). ThreadPoolExecutor runs asyncio in a new thread.
+     DO NOT add a "fast path" that calls asyncio.run() — it WILL break in tests.
+
+  2. Use shutdown(wait=False), NOT 'with ThreadPoolExecutor() as ex:'.
+     'with' calls shutdown(wait=True) on exit, blocking until the thread finishes.
+     This NEGATES the timeout. Tested empirically: 1s timeout with 'with' blocks
+     for the full 3s coroutine duration before TimeoutError fires.
+
+  3. Pass the FACTORY (callable) to retry_async_factory, NOT the coroutine result.
+     CORRECT: _run_async_with_resilience(_call, trace_id=...)
+     WRONG:   _run_async_with_resilience(_call(), trace_id=...)
+     A Python coroutine is one-shot. Re-awaiting after a raise gives:
+       RuntimeError: cannot reuse already awaited coroutine
+     This bug shipped in tavily v1.0/v1.1. Fixed in v1.2.
+
+  4. DELIBERATE CHOICE: per-call executor, not a persistent background loop.
+     browser_ops uses a persistent loop for Playwright (needs session continuity).
+     Tavily has NO inter-call state. DO NOT unify with browser_ops' approach.
+
+  5. on_failure fires ONLY on final raise (retry exhaustion), NOT per retry attempt.
+     This was fixed in core/net/retry.py v1.5 — on_failure is called only after all
+     retries are exhausted, not after each individual failure. This prevents transient
+     retries from accumulating CB failure_count on overall-successful calls.
+     DO NOT revert retry.py to per-attempt on_failure firing.
 """
 from __future__ import annotations
 

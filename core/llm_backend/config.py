@@ -1,6 +1,37 @@
 """core/llm_backend/config.py -- LLM role configuration builder.
 
 Builds RoleConfig objects from cfg.model_registry and hardcoded defaults.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. SINGLE FALLBACK CHAIN — ALL roles fall back to planner_model.
+     _build_role_configs() line 58: model = reg_entry.get("model", cfg.planner_model).
+     If a role's model is not set in model_registry (e.g., consultor disabled),
+     it falls back to planner_model — NOT to a group-specific model.
+     Each role has its own env var (EXECUTOR_MODEL, ROUTER_MODEL, etc.);
+     if unset, the model string is empty and the role is skipped (not in ROLE_CONFIGS).
+
+  2. temperature and max_tokens ARE HARDCODED in _defaults, NOT from .env.
+     Only model, provider, base_url, and timeout come from .env.
+     Verified: planner temp=0.2/32768tok, executor temp=0.0/16384tok.
+     Full table: docs/core/LLM.md
+
+  3. budget_chars in agent_ops/roles/*.py IS NOT max_tokens * 4.
+     budget_chars = max INPUT CONTEXT chars. max_tokens = max OUTPUT tokens.
+     Different questions, different numbers. DO NOT derive one from the other.
+
+  4. EXECUTOR_TIMEOUT is the correct env var (not EXECUTION_TIMEOUT).
+     cfg.execution_timeout reads from model_registry["executor"]["timeout"]
+     which uses _make_entry("EXECUTOR_TIMEOUT", 120). The attribute is named
+     execution_timeout but the env var is EXECUTOR_TIMEOUT — do not "fix" this
+     mismatch; it is intentional (execution_timeout is the derived attribute,
+     EXECUTOR_TIMEOUT is the env var source).
+
+  5. consultor role is CONDITIONALLY registered — only if CONSULTOR_MODEL is set.
+     _build_role_configs() skips roles not in model_registry. If consultor_mod
+     is empty, consultor is not added to ROLE_CONFIGS. Calling
+     llm.complete(role='consultor') when unconfigured falls back via _get_role().
 """
 from __future__ import annotations
 from dataclasses import dataclass

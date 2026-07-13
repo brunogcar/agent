@@ -19,6 +19,27 @@ UNIFICATION STATUS: Partial. Collections are unified (both write to 'procedural'
 but the query logic in injector.py still checks both for backward compatibility.
 Full unification (single query, no fallback) requires further investigation
 and a dedicated testing session.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. THIS MODULE WAS SUBSTANTIALLY REWRITTEN in the P0-P3 audit commit (Jun 2026).
+     Original: made LLM calls against last-24h ChromaDB episodic memories.
+     Rewrite: HEURISTIC/TEMPLATE-BASED — no LLM calls at learning time.
+     Rule extraction is template-based (_extract_rules_from_trace).
+     There IS a ChromaDB read at store time: memory.recall(text, top_k=1) for
+     semantic dedup (similarity > 0.95 skips). This is a read, not an LLM call.
+
+  2. DATA SOURCE IS VOLATILE: run_once() reads from tracer.recent(n=20).
+     The in-memory _TraceStore is wiped on every restart. After restart, meta-learner
+     has nothing to learn from until 20 new successful traces accumulate in-process.
+
+  3. RULES FROM META_LEARNING ARE NEVER REINFORCED by sleep_learn/feedback.py.
+     feedback.py looks up rule_ids in its own ChromaDB instance (procedural_meta) —
+     never finds meta_learning rules (which are in the main 'procedural' collection).
+     Meta_learning rules are permanently static after creation.
+
+  4. MetaLearner.run_forever() sleeps 30 min unconditionally with no idle/activity check.
 """
 from __future__ import annotations
 

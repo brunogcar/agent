@@ -46,6 +46,32 @@ Key design decisions (for future AI auditors):
   If a future decorator uses functools.wraps (creating a wrapper callable),
   @meta_tool must run BEFORE that wrapper is created, or the wrapper's
   __annotations__ won't reflect the Literal mutation.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. DECORATOR ORDER: @meta_tool must be INNER (closest to function).
+     It mutates __annotations__ and __doc__ in place. @tool must be OUTER.
+
+  2. IMPORT ORDER: DISPATCH must be populated BEFORE @meta_tool runs.
+     @meta_tool raises ValueError if dispatch is empty. DISPATCH is populated by
+     *_ops/__init__.py auto-discovery, triggered when the facade imports its *_ops package.
+     'from tools.*_ops._registry import DISPATCH' must appear BEFORE the function def.
+
+  3. 'action' parameter SHOULD HAVE NO DEFAULT VALUE for strict schema validation.
+     CORRECT: def agent(action: str, ...)
+     WRONG:   def agent(action: str = "", ...)
+     Empty-string default causes "Unknown action ''" errors instead of schema validation.
+     NOTE: As of v2.0, tools/agent.py and tools/git.py both use action: str = ""
+     (with default). This is a known deviation — the empty default means the facade
+     must handle action="" gracefully. If FastMCP schema validation is tightened,
+     remove the default to enforce action as required.
+
+  4. NEVER add **kwargs to the @tool facade. FastMCP derives schema from the signature.
+     **kwargs produces an opaque blob — all parameter documentation is lost.
+
+  5. NEVER use 'tool' as a variable name in facade or action files.
+     It shadows the @tool decorator from registry.py, causing NameError at decoration time.
 """
 from __future__ import annotations
 

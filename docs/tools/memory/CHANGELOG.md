@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.3.1 | 2026-07-12 | **[Bugfix] `_mem()` singleton fix.** `helpers._mem()` was creating a NEW `MemoryStore()` instance instead of using the module-level singleton from `core.memory_engine.memory`. Two separate instances had separate `_hash_cache` sets (dedup broken between tool and workflow writes — a tool `store()` and a workflow `store()` could write the same memory twice) and separate `_write_lock` instances (the TOCTOU double-checked locking fix in `write_ops.py` was bypassed). Fixed: `_mem()` now imports `memory as _singleton` from `core.memory_engine` and assigns that to `state._store`. Also added `[DESIGN]` block to `helpers.py` documenting the singleton constraint. |
 | v1.3 | 2026-07-08 | Chonkie chunking on `store` action (`chunk`, `chunk_method`, `chunk_size` params). Semantic + episodic only; procedural rejected. Core `store_chunked()` backend (hash-dedup-only, batch insert). Recall returns `source_doc_id`/`chunk_index`/`chunk_count` metadata. System prompt fixed (50KB limit, not 450 chars). |
 | v1.2 | — | `compress_result()` crash caught, `duration_ms` in all responses, `delete` confirm_ids/threshold validation, `recall_context` rejects unsupported params, `stats` collections validation, tag splitting comma-only, janitor errors forced to strings, destructive actions documented |
 | v1.1 | — | `delete` with `confirm_ids` only, `collections` type validation, `prune` range validation, `janitor` exception guards, `compress_result` success-only, facade exception handling |

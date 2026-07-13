@@ -1,6 +1,22 @@
 ﻿"""
 core/memory_backend/write_ops.py — Pure functions for memory write operations.
 Implements O(1) Hash Guard, Contextual Feedback, and Procedural Reinforcement.
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. TOCTOU RACE FIX: double-checked locking with TWO dedup checks.
+     OUTER check (outside _write_lock): fast path, filters ~80% of duplicates.
+     INNER check (inside _write_lock): authoritative — re-verifies BEFORE ChromaDB insert.
+     DO NOT remove either check. DO NOT move the inner check outside the lock.
+
+  2. execute_store() returns a RAW DICT, not wrapped in ok()/fail().
+     Success: {"status": "stored", "id": memory_id, "collection": collection}
+     Error:   {"status": "error", "error": str(e)}
+     trace_id is NOT included. The tool layer wraps with ok(result, trace_id=...).
+
+  3. _write_lock is per-MemoryStore instance, NOT module-level.
+     Two MemoryStore instances have separate locks and do NOT protect each other.
+     ALWAYS use the singleton from core/memory_engine.py.
 """
 from __future__ import annotations
 

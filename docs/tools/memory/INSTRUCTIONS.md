@@ -21,6 +21,7 @@
 16. **Never use `chunk=True` on `procedural` memories** — v1.3: The procedural collection has a reinforcement feature (increment `reinforcement_count` on semantic match) that is nonsensical for chunks. The store action rejects this combination with a clear error.
 17. **Never call `memory.store()` N times for chunks** — v1.3: Use `memory.store_chunked()` (or `memory(action="store", chunk=True)` from the tool layer). The standard `store()` runs vector dedup on every call; chunks from the same document would falsely trigger it and get silently dropped.
 18. **Never reimplement chunking** — v1.3: Reuse `_chunk_text()` from `tools/file_ops/actions/read_file.py`. See file tool INSTRUCTIONS.md rule #25.
+19. **Never create a new `MemoryStore()` in `_mem()`** — v1.3.1: `_mem()` must use the module-level singleton from `core.memory_engine.memory`, NOT `MemoryStore()`. Two separate instances have separate `_hash_cache` sets (dedup broken between tool and workflow writes) and separate `_write_lock` instances (TOCTOU fix in `write_ops.py` bypassed). The correct pattern: `from core.memory_engine import memory as _singleton; state._store = _singleton`.
 
 ### ALWAYS DO
 16. **Always use `_mem()` for lazy loading** — Never import `core.memory_engine` at module level.
@@ -40,6 +41,7 @@
 30. **Always use comma-only tag splitting** — v1.2: Multi-word tags are supported and preserved.
 31. **Always validate `memory_type` before calling `store_chunked()`** — v1.3: The backend's `store_chunked()` does not check for procedural; the tool layer must reject `chunk=True` on `procedural` before calling the backend.
 32. **Always pass `source_doc_id`/`chunk_index`/`chunk_count` in recall results** — v1.3: These fields let the LLM identify recall results as fragments of a larger document. Non-chunked memories return defaults (`""`, `None`, `0`).
+33. **Always use the `core.memory_engine.memory` singleton in `_mem()`** — v1.3.1: The tool layer's `_mem()` must return the SAME `MemoryStore` instance that the rest of the system uses. Import as `from core.memory_engine import memory as _singleton` and assign to `state._store`. Never call `MemoryStore()` directly — see NEVER DO #19.
 
 ---
 
@@ -61,6 +63,10 @@
 > - **Why it matters:** Tool-layer tests mock the backend, so they're deterministic. Core-layer tests use the real persistent ChromaDB, so they're sensitive to DB state across runs. AI editors writing core memory tests must account for this — the existing `test_write_ops.py` is the reference pattern.
 > - **Fix (v1.3/V1.1 V4):** Core chunked tests now use: (1) UUID-suffixed text per run, (2) `col.get()` for metadata verification (not `recall()`), (3) `_direct_store()` helper for setup (bypasses dedup, syncs `_hash_cache`). All 3 lessons documented in `docs/core/memory/INSTRUCTIONS.md` anti-patterns section. See `tests/core/memory/test_write_ops_chunked.py` module docstring for the 3 design notes.
 
+> - **What happened:** `helpers._mem()` was creating a NEW `MemoryStore()` instance (`from core.memory_engine import MemoryStore; state._store = MemoryStore()`) instead of using the module-level singleton (`core.memory_engine.memory`). The tool layer and the workflow/core layer each had their own `MemoryStore` with separate `_hash_cache` sets and separate `_write_lock` instances.
+> - **Why it matters:** (1) **Dedup broken across layers** — a tool `store()` and a workflow `store()` could write the same memory twice because each checked its own `_hash_cache` (which didn't know about the other's writes). (2) **TOCTOU fix bypassed** — `write_ops.execute_store()` uses double-checked locking with an outer check (outside `_write_lock`) and an inner check (inside `_write_lock`). If the tool and core use different `_write_lock` instances, the inner check doesn't protect against concurrent writes from the other layer. (3) **Memory doubled in ChromaDB** — every memory written by both a tool action and a workflow node was stored twice, inflating the collection and degrading recall quality.
+> - **Fix (v1.3.1):** `_mem()` now imports `memory as _singleton` from `core.memory_engine` and assigns that to `state._store`. Both tool and core layers now share the same `MemoryStore` instance, `_hash_cache`, and `_write_lock`. See NEVER DO #19 + ALWAYS DO #33.
+
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-12 (v1.3.1 — `_mem()` singleton fix; rules #19, #33 added). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -4,6 +4,27 @@ v1.2: Added for Tavily and future paid APIs.
 v1.3: Fixed deadlock by using threading.RLock(). Added daily reset mechanism.
       Wired auto_block to circuit breaker integration.
       FIXED: get_status() no longer returns {} when no budget config is set.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. MUST USE threading.RLock(), NOT threading.Lock().
+     Deadlock path confirmed: get_status() acquires _lock -> calls
+     _is_warning_unlocked() (same thread, same lock). With Lock() the same
+     thread deadlocks on the second acquire. RLock() allows reentrant acquisition.
+     DO NOT change to Lock().
+
+  2. record_call() IS WIRED into tavily action handlers (research.py, search.py).
+     Budget infrastructure is complete and actively used by tavily. Other paid
+     APIs should wire record_tool_call() after each successful SDK call.
+
+  3. APICostTracker is a MODULE SINGLETON (_budget_tracker at module level, line 123).
+     Do NOT create additional instances — counters will be fragmented.
+     Use the module-level helpers: record_tool_call(), check_budget(),
+     get_budget_status(), set_tool_budget().
+
+  4. is_warning() public method was removed. Only _is_warning_unlocked() exists.
+     Restore with: def is_warning(self, tool): with self._lock: return self._is_warning_unlocked(tool)
 """
 from __future__ import annotations
 

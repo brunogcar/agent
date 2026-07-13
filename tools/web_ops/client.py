@@ -4,6 +4,26 @@ The singleton client provides connection pooling across all web actions.
 httpx.Client is thread-safe; safe to use inside ThreadPoolExecutor.
 
 atexit.register(_close_client) ensures the client is closed on process exit.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. UA IS SELECTED ONCE AT CLIENT CREATION, not per-request.
+     _get_singleton_client() calls _pick_user_agent() once when creating the
+     httpx.Client. Every request for the entire process lifetime uses the SAME
+     User-Agent. "UA rotation" only varies across process restarts.
+     NOTE: scrape.py's docstring says "Per-request User-Agent rotation" — that
+     is misleading. The UA is fixed at client creation. Do not "fix" this by
+     adding per-request UA rotation without understanding the singleton pattern.
+
+  2. The 10MB response-size guard is in tools/web_ops/actions/scrape.py
+     (_MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024), NOT in this file.
+     It checks content-length AFTER the response is fully downloaded (httpx
+     Client.get() with stream=False reads the ENTIRE body before returning).
+     The guard only refuses to RETURN large content, not to RECEIVE it.
+     To actually abort mid-download, use client.stream("GET", url) in scrape.py.
+
+  3. See state.py for the module-ref import pattern requirement.
 """
 from __future__ import annotations
 

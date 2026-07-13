@@ -2,6 +2,28 @@
 
 Provides reset_state() and reset_loop() for test isolation,
 following the browser_ops pattern.
+
+
+[DESIGN] THIS MODULE IS THE SINGLE OWNER OF ALL WEB SINGLETON STATE.
+
+  IMPORT PATTERN — CRITICAL, DO NOT CHANGE:
+    client.py MUST import as a module reference:
+      import tools.web_ops.state as state
+      state._HTTP_CLIENT = httpx.Client(...)   # mutates THIS module's attr
+
+    NOT as a name-binding import:
+      from tools.web_ops.state import _HTTP_CLIENT  # WRONG
+
+    With from-import, after _get_singleton_client() runs, state._HTTP_CLIENT stays None.
+    reset_state() resets None->None — permanent no-op. Real client never torn down.
+
+    This bug was confirmed empirically in web_ops v1.0 (two separate Python objects,
+    different id()s). Fixed in commit b247e7e. DO NOT revert to from-import.
+
+  HOW TO VERIFY the fix is intact:
+    from tools.web_ops import client as c, state as s
+    _ = c._get_singleton_client()
+    assert c.state._HTTP_CLIENT is s._HTTP_CLIENT  # must be True
 """
 from __future__ import annotations
 

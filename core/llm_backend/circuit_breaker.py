@@ -4,6 +4,30 @@ v1.2: Added reset() method for testability.
 v1.3: Fixed record_failure() missing self._lock. Added _half_open_calls reset
       on HALF_OPEN → OPEN transition. Guarded _failure_count increment.
       FIXED: can_execute() now counts OPEN→HALF_OPEN transition against half_open_max_calls.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. GRANULARITY IS PER-ROLE, NOT PER-MODEL.
+     LLMClient._breakers[role]. Key is "executor", not the model name.
+     GET /health/circuit-breakers returns per-role keys; field is "failure_count".
+     Response is null unless cfg.enable_metrics_endpoint is truthy.
+
+  2. COOLDOWN IS DYNAMIC PER ROLE via recovery_timeout=role_cfg.timeout.
+     Router's CB cools in 15s, planner's in 180s. Changing ROUTER_TIMEOUT in .env
+     silently changes its CB cooldown.
+
+  3. FAILURE COUNT NEVER DECAYS IN CLOSED STATE.
+     record_success() is a NO-OP in CLOSED (only resets in HALF_OPEN).
+     Three failures spread over days still trip the breaker.
+     NOTE: retry_async_factory() in core/net/retry.py was fixed in v1.5 —
+     on_failure now fires ONLY on final raise, not per retry attempt.
+     This prevents transient retries from accumulating CB failure_count
+     on overall-successful calls. Do NOT revert retry.py to per-attempt firing.
+
+  4. HALF_OPEN: can_execute() counts the OPEN->HALF_OPEN probe call against
+     half_open_max_calls. Confirmed empirically: 10 concurrent threads after
+     cooldown -> exactly 1 gets True.
 """
 from __future__ import annotations
 

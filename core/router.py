@@ -16,6 +16,36 @@ Usage:
 
  decision = router.classify_complexity("Research ChromaDB")
  # Returns: 4 (int, 1-10)
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. HEURISTIC PRIORITY ORDER (after v1.2 false-positive fixes):
+     report -> browser -> file -> memory -> git -> notify -> cli -> tavily ->
+     consult -> parallel -> deep_research -> understand -> code -> data ->
+     research(explicit check, step #17) -> research(default fall-through, step #18).
+     The explicit _RE_RESEARCH check (step #17) fires for higher-confidence
+     research keywords. Step #18 is the catch-all default with confidence="low".
+
+  2. FALSE-POSITIVE HISTORY — patterns that were too broad, fixed in v1.2:
+     _RE_DIRECT_PARALLEL originally included "simultaneously", "at the same time",
+     "concurrently" — common in code-fix and research requests.
+     "Fix the race condition where X happens at the same time as Y" -> parallel (wrong).
+     _RE_DIRECT_CONSULT originally included bare "consult" and "second opinion" — too generic.
+     RULE: write adversarial test cases FIRST when adding new patterns.
+
+  3. test_router_drift.py patches a MOCK REGISTRY, not the real one.
+     Adding a new tool without updating the mock means the test still passes.
+     Known gap flagged Jun 2026. Fix: scan real tools/ directory.
+
+  4. _RE_RESEARCH IS explicitly checked at step #17 of _heuristic_route()
+     (line 592). It returns research with confidence="medium". Step #18 is the
+     pure fall-through default with confidence="low". Both exist — do NOT remove
+     the explicit check (step #17) or the default (step #18).
+
+  5. THREE HARDCODED TOOL LISTS drift from each other: ROUTER_TOOLS (this file),
+     dispatcher.py if-chain, and health.py static /tools fallback.
+     The dynamic registry.get_tool_names() path is correct; the static fallbacks lag.
 """
 from __future__ import annotations
 import json

@@ -11,6 +11,26 @@ Procedural memories have bounded decay with a minimum floor of 0.7 — they
 decay slowly over time but are never reduced below 70% of their original
 score. This balances persistence of validated knowledge with gradual
 aging of stale rules.
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. PROCEDURAL DECAY PLATEAUS AT ~9 DAYS, NOT 90.
+     Formula: decay = max(FLOOR=0.7, 1 - age_days / memory_decay_days)
+     memory_decay_days defaults to 30. Floor hit at: (1-0.7)*30 = 9 days.
+     A 9-day-old rule and a 5-year-old rule both get the same 0.7 multiplier.
+     Scoring is the ONLY staleness defense for the main 'procedural' collection.
+     purge_stale_rules() in sleep_learn/janitor.py only operates on 'procedural_meta'.
+
+  2. BOTH PROCEDURAL AND NON-PROCEDURAL HAVE DECAY FLOORS.
+     Procedural floor: 0.7 (PROCEDURAL_DECAY_FLOOR constant, line 29).
+     Non-procedural (episodic/semantic) floor: 0.3 (hardcoded in _decay_score, line 59).
+     Neither decays to zero. Procedural rules represent validated knowledge (higher
+     floor); episodic/semantic is transient context (lower floor but still floored).
+
+  3. TWO SEPARATE LEARNING SYSTEMS write to the procedural collection.
+     meta_learning.py -> main 'procedural'. sleep_learn/ -> 'procedural_meta'.
+     Rules from meta_learning.py are NEVER reinforced by sleep_learn/feedback.py —
+     the feedback loop only updates rules in its own ChromaDB instance.
 """
 from __future__ import annotations
 

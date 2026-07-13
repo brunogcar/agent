@@ -1,5 +1,8 @@
 """Tests for memory helpers — validation, lazy loading, singleton.
 v1.2: _mem() tests now mock MemoryStore to avoid real ChromaDB dependency.
+v1.3.1: _mem() tests updated — _mem() now uses core.memory_engine.memory singleton
+        instead of creating a new MemoryStore(). Tests assert identity with the
+        engine singleton instead of mocking MemoryStore construction.
 """
 from __future__ import annotations
 
@@ -80,19 +83,18 @@ class TestValidateTags:
         assert err == ""
 
 class TestMemLazyLoading:
-    def test_mem_creates_instance(self):
+    def test_mem_returns_singleton(self):
+        """v1.3.1: _mem() must return the same object as core.memory_engine.memory."""
         mem_state.reset_state()
-        with patch("core.memory_engine.MemoryStore") as MockStore:
-            from tools.memory_ops.helpers import _mem
-            store = _mem()
-            assert store is not None
-            MockStore.assert_called_once()
+        from core.memory_engine import memory as engine_singleton
+        from tools.memory_ops.helpers import _mem
+        store = _mem()
+        assert store is engine_singleton, "_mem() must return the core.memory_engine.memory singleton"
 
     def test_mem_returns_same_instance(self):
+        """v1.3.1: _mem() caches the singleton — second call returns the same object."""
         mem_state.reset_state()
-        with patch("core.memory_engine.MemoryStore") as MockStore:
-            from tools.memory_ops.helpers import _mem
-            store1 = _mem()
-            store2 = _mem()
-            assert store1 is store2
-            MockStore.assert_called_once()
+        from tools.memory_ops.helpers import _mem
+        store1 = _mem()
+        store2 = _mem()
+        assert store1 is store2

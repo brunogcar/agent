@@ -9,6 +9,26 @@ v1.3 FIXES:
 - Use _run_async for client.close() instead of fresh ThreadPoolExecutor.
 - Register Tavily SDK RateLimitError as retryable.
 - FIXED: _warn_keyless_once() now uses state._KEYLESS_WARNED for proper reset_state() support.
+
+
+[DESIGN] KEY DECISIONS — read before modifying:
+
+  1. ALL state mutations go through 'from tools.tavily_ops import state'.
+     See state.py for the full module-ref vs from-import explanation.
+
+  2. AsyncTavilyClient.close() is a COROUTINE — must be awaited.
+     Nulling state._TAVILY_CLIENT without awaiting close() leaks the underlying
+     httpx connection pool. Use bridge._run_async(state._TAVILY_CLIENT.close()).
+
+  3. atexit path goes through _close_client() -> _close_client_locked() ->
+     _run_async() -> bridge.py which uses shutdown(wait=False).
+     This is the same non-blocking shutdown as all other paths. The ~10s timeout
+     in _run_async (cfg.tavily_timeout + 10) bounds the close attempt.
+     DO NOT change atexit to use shutdown(wait=True) — it would block process
+     exit on a hung async close.
+
+  4. Keyless mode: always pass api_key=None, NOT api_key="".
+     The SDK treats "" differently from None in some versions.
 """
 from __future__ import annotations
 
