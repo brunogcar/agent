@@ -24,11 +24,11 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 9. **Never remove the `max_workers=min(len(providers), 5)` cap.** Without it, configuring 10 providers would spawn 10 threads per swarm call — thread explosion risk. The cap is a deliberate safety valve.
 
-10. **Never add a `Literal[...]` enum to the swarm facade's `action` parameter.** Swarm uses `action: str` with manual dispatch — this is intentional. `@meta_tool` is still applied (for `doc_sections` and metadata), but the `Literal` patch is skipped. Changing this would break the manual dispatch in the facade.
+10. **Never remove the manual dispatch + `fail("Unknown action")` from the swarm facade.** Swarm's facade uses `action: str` with a manual `DISPATCH["swarm"][action]` lookup that returns a friendly `fail()` listing valid actions for direct-Python callers. **Note (v1.0.1 correction):** contrary to the original v1.0 wording of this rule, `@meta_tool` DOES apply the `Literal[...]` enum to swarm's `action` parameter (just like git/file/web) — there is no skip logic in `@meta_tool`. The LLM-facing schema therefore gets the enum (which is good — prevents hallucinated action names), and the manual dispatch is a defense-in-depth path for callers that bypass schema validation (e.g. internal Python calls). Both layers coexist; do not remove either.
 
 11. **Never forget to forward ALL kwargs to the handler.** The facade builds `kwargs = {question, context, providers, max_tokens, timeout, trace_id}` and passes them to `handler(**kwargs)`. Handlers absorb unused params via `**kwargs`. Removing a kwarg from the facade breaks handlers that read it; adding a kwarg to the facade without updating handlers silently no-ops (handler just ignores it via `**kwargs`).
 
-12. **Never remove `del fn.__signature__` logic in `@meta_tool` if the decorator is modified.** Even though swarm doesn't use the `Literal` patch, `@meta_tool` is a shared decorator used by git/file/web/etc. that DOES need signature cache busting. See `docs/tools/git/INSTRUCTIONS.md` rule #5/#25.
+12. **Never remove `del fn.__signature__` logic in `@meta_tool` if the decorator is modified.** `@meta_tool` is a shared decorator used by git/file/web/swarm that needs signature cache busting so the `Literal` patch is picked up. See `docs/tools/git/INSTRUCTIONS.md` rule #5/#25. (v1.0.1: the previous wording claimed swarm "doesn't use the Literal patch" — that was incorrect; see rule #10.)
 
 13. **Never add a new action without registering it via `@register_action("swarm", "<name>", ...)`.** The `__init__.py` auto-imports `actions/*.py` to trigger registration; an unregistered handler is invisible to the dispatcher and returns "Unknown action".
 
@@ -82,7 +82,7 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 36. **Normalize vote responses with `text.strip().lower()[:200]`.** Coarse comparison suited to short answers (YES/NO, class labels). Don't change the truncation length without considering the impact on agreement classification thresholds.
 
-37. **Test with `mock_llm_registry` fixtures (once tests exist).** Patch `core.llm.llm._registry._providers` with `FakeProvider` instances — never make real API calls in tests. See ARCHITECTURE.md → Testing section for the proposed plan.
+37. **Test with `mock_llm_registry` / `make_vote_providers` / `mock_providers_with_*` fixtures.** Patch `core.llm.llm._registry._providers` with mock providers — never make real API calls in tests. v1.0.1 added: `make_vote_providers` (controlled per-provider response texts for vote classification tests), `mock_providers_with_key_leak_error` (Gemini key-leak regression), `mock_providers_with_slow_one` (race latency regression). See ARCHITECTURE.md → Testing section.
 
 ---
 
@@ -94,8 +94,24 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 > - **Why it matters:** The impact
 > - **Fix:** The solution or pattern to follow
 
-*Fill this section with relevant information during edits and refactors. As of v1.0, no anti-patterns have been encountered yet — this is a new tool. The most likely future entries will be around: provider API quirks (e.g. Claude/Gemini `json_schema` incompatibility — see `docs/core/llm/INSTRUCTIONS.md` rule #12), ThreadPoolExecutor deadlock under load, or `*_BASE_MODEL` env var naming mismatches.)*
+*Fill this section with relevant information during edits and refactors.*
+
+> - **What happened (v1.0.1 / P1-1):** Gemini provider raises `httpx.HTTPStatusError` whose `str()` includes the full request URL — including `?key=AIzaSy...`. The swarm's `_call_provider()` stored `str(e)` in the result `error` field, which flows into `logs/agent_*.jsonl` traces and LLM context.
+> - **Why it matters:** Gemini API key disclosure on any Gemini HTTP error (429 rate limits are common under swarm fan-out). Anthropic/OpenAI were not affected (keys in headers, not URLs).
+> - **Fix:** `_sanitize_error()` strips URL query params (`key=`, `token=`, `api_key=`), `Authorization: Bearer`, `x-api-key` headers, and dict-repr key fields before storing. Applied in `_call_provider()` and `_collect_future()`. Regression test: `test_helpers.py::TestCallProviderSanitizesError`.
+
+> - **What happened (v1.0.1 / P1-2):** `race` action did not return early. `as_completed` + `future.cancel()` + `break` exited the loop, but `ThreadPoolExecutor.__exit__` calls `shutdown(wait=True)`, blocking until all in-flight provider calls finished. Race had the same wall-clock latency as consensus.
+> - **Why it matters:** The entire performance rationale of race ("first valid response wins") didn't materialize. The CHANGELOG roadmap item "Streaming responses" was premised on race being first-completion-wins — it was actually wait-for-all-then-return-winner-first.
+> - **Fix:** Rewrote `_call_providers_race` to use `wait(return_when=FIRST_COMPLETED)` in a loop + `shutdown(wait=False, cancel_futures=True)` in a `finally` block. Regression test: `test_race.py::test_race_returns_fast` (asserts race returns <1.5s when one provider sleeps 2s).
+
+> - **What happened (v1.0.1 / P2-1):** Vote `split` was misclassified as `disagreement` for the 2-successful-2-distinct case. A `len(successful) > 2` guard pushed 2v2 ties into the `else: disagreement` branch.
+> - **Why it matters:** Doc/code drift (API.md table said 2-distinct-no-majority = `split`). Harmless for autocode (both map to LOW confidence), but wrong for correctness and future router vote-based routing.
+> - **Fix:** Replaced the guard with explicit `n_distinct` branches. Regression test: `test_vote.py::test_vote_split`.
+
+> - **What happened (v1.0.1 / P2-2):** Vote `unanimous` was returned when only 1 provider succeeded. `len(normalized) == 1` was true for a single voter. Downstream, autocode's `confidence_map` treats `unanimous` as HIGH — so a single-response verdict skipped the low-confidence PR comment.
+> - **Why it matters:** A single voter cannot express agreement. HIGH confidence on one response defeats the swarm's purpose.
+> - **Fix:** Added `single_response` agreement label for `n_successful < 2`. Schema addition (new label) — documented in API.md + CHANGELOG. Downstream consumers (autocode `vcs_ops.confidence_map`) should add `"single_response": "LOW"`. Regression test: `test_vote.py::test_vote_single_response`.
 
 ---
 
-*Last updated: 2026-07-09. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-13 (v1.0.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

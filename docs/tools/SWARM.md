@@ -81,7 +81,7 @@ DEEPSEEK_BASE_MODEL=deepseek-chat
 |------|------|-----|
 | Synthesized answer combining multiple models | `swarm(consensus)` | All models answer, planner synthesizes best response |
 | Fastest valid answer (cancel the rest) | `swarm(race)` | First valid response wins, remaining futures cancelled |
-| Majority/unanimous vote for classification | `swarm(vote)` | All models answer, agreement analysis (unanimous/majority/split/disagreement) |
+| Majority/unanimous vote for classification | `swarm(vote)` | All models answer, agreement analysis (unanimous/majority/split/disagreement/single_response) |
 | Raw side-by-side model comparison | `swarm(compare)` | All responses returned without synthesis — inspect each directly |
 | Discover what cloud providers are configured | `swarm(list_providers)` | No LLM calls, just env introspection |
 | Single strong cloud answer (one model) | `consult(question)` | One designated cloud model via separate provider chain — cheaper, no fan-out |
@@ -110,4 +110,4 @@ DEEPSEEK_BASE_MODEL=deepseek-chat
 
 ---
 
-*Last updated: 2026-07-09. See subfiles for detailed documentation.*
+*Last updated: 2026-07-13 (v1.0.1). See subfiles for detailed documentation.*

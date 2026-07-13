@@ -17,7 +17,7 @@
 | `tools/swarm_ops/actions/compare.py` | All providers → side-by-side (no synthesis) |
 | `tools/swarm_ops/actions/list_providers.py` | Env introspection — no LLM calls |
 | `core/llm/llm.py` | `llm._registry._providers` — provider registry read by `_get_available_providers()` |
-| `core/llm/<provider>.py` | Provider implementations: `chat_completion()` (returns OpenAI-shape dict) — called directly by swarm |
+| `core/llm_backend/providers/<provider>.py` | Provider implementations: `chat_completion()` (returns OpenAI-shape dict) — called directly by swarm. Located in `core/llm_backend/providers/{anthropic,gemini,lmstudio,openai_compat}.py` |
 | `core/contracts.py` | `ok()` / `fail()` — standardized return shape |
 | `core/tracer.py` | `tracer` — observability (imported by facade) |
 | `registry.py` | `@tool` decorator — auto-discovery of `swarm()` into MCP |
@@ -135,9 +135,13 @@ Swarm calls `provider.chat_completion()` directly, bypassing `llm.complete()`'s 
 
 A provider is only included if `<NAME>_BASE_MODEL` is set (in addition to `<NAME>_API_KEY`, which is checked at provider registration time). **Why:** The swarm needs an explicit model name to pass to `chat_completion(model=...)`. `llm.complete()` derives the model from role routing; swarm bypasses role routing, so it must read the model name directly from env. Providers without `*_BASE_MODEL` are silently skipped (no crash) — they simply don't participate.
 
-### 5. `action: str` (not `Literal[...]`)
+### 5. `action: str` (not `Literal[...]`) — manual dispatch as defense-in-depth
 
-Unlike `git()`, `file()`, `web()`, the swarm facade uses `action: str` and dispatches manually via `DISPATCH["swarm"][action]`. **Why:** Swarm's action set is small (5 actions) and stable, and the `@meta_tool` `Literal` enum is more valuable for tools with many actions where LLM hallucination of action names is a real risk. Manual dispatch lets the facade return a `fail()` result listing valid actions, rather than relying on the schema layer to reject bad inputs. The `@meta_tool` decorator is still applied (for `doc_sections` and metadata), just without the `Literal` patch.
+The swarm facade declares `action: str` and the facade body does a manual `DISPATCH["swarm"][action]` lookup that returns a friendly `fail("Unknown action '...'. Use: ...")` for direct-Python callers that bypass schema validation.
+
+**v1.0.1 correction:** contrary to the original v1.0 wording of this section, `@meta_tool` DOES apply the `Literal[...]` enum to swarm's `action` parameter (just like git/file/web) — there is no skip logic in `@meta_tool` (`tools/_meta_tool.py:126-127` unconditionally patches `fn.__annotations__["action"]`). The LLM-facing FastMCP schema therefore gets the enum, which prevents hallucinated action names at the schema layer. The facade's manual dispatch is a defense-in-depth path for internal Python callers (e.g. autocode's `_swarm_debug_consensus`) that call `swarm()` directly rather than through the MCP tool-call boundary. Both layers coexist.
+
+**Why keep the manual dispatch:** the `fail("Unknown action")` message lists valid actions, which is friendlier than a schema-validation rejection for direct callers. Removing it would degrade the developer experience for internal callers without gaining anything (the schema layer already rejects bad actions from the LLM).
 
 ### 6. Deterministic output ordering
 
@@ -145,9 +149,13 @@ Unlike `git()`, `file()`, `web()`, the swarm facade uses `action: str` and dispa
 
 **Note:** `_call_providers_race()` does NOT sort — its results are in completion order, with the winner first. This is intentional: race semantics require preserving "who won" ordering.
 
-### 7. Best-effort cancellation in `race`
+### 7. Early-return + best-effort cancellation in `race` (v1.0.1)
 
-`_call_providers_race()` calls `future.cancel()` on remaining futures after the winner is found. **Why:** Don't burn API quota on responses that will be discarded. **Caveat:** `future.cancel()` only succeeds for futures that haven't started running — if all workers are busy, in-flight calls continue to completion (their results are simply not returned in the final list). This is best-effort, not guaranteed.
+`_call_providers_race()` uses `concurrent.futures.wait(return_when=FIRST_COMPLETED)` in a loop and `executor.shutdown(wait=False, cancel_futures=True)` in a `finally` block. **Why:** the function must return as soon as the first valid response lands, without blocking on slower providers.
+
+**v1.0 bug (fixed in v1.0.1):** the original implementation used `as_completed` + `future.cancel()` + `break`, but the `with ThreadPoolExecutor(...)` context manager's `__exit__` calls `shutdown(wait=True)`, which blocked until ALL in-flight provider calls finished. Race had the same wall-clock latency as consensus. The new implementation avoids the context manager (uses an explicit `executor` + `finally: executor.shutdown(wait=False, cancel_futures=True)`).
+
+**Caveat:** `cancel_futures=True` (Python 3.9+) only cancels PENDING futures — running futures continue to completion in the background. Their results are discarded because `wait=False` releases control immediately. This is best-effort, not guaranteed, but sufficient for the latency goal.
 
 ### 8. `**kwargs` absorption in handlers
 
@@ -175,22 +183,26 @@ tests/tools/swarm/
 ├── test_race.py             # Success (winner), missing question, no providers, all fail, provider filter
 ├── test_vote.py             # Success, missing question, no providers, all fail, unanimous/disagreement, groups sorted
 ├── test_compare.py          # Success (no synthesis), missing question, no providers, all fail, provider filter
+├── test_helpers.py          # (v1.0.1) _sanitize_error, _call_provider error isolation, Gemini key-leak regression
 └── test_list_providers.py   # 3 providers (lmstudio excluded), empty, model names present
 ```
 
 **Mock strategy:**
 - Patch `core.llm.llm` singleton — replace `_registry._providers` with mock providers
 - Mock `provider.chat_completion()` to return controlled responses (no real API calls)
-- Mock `os.getenv` for `*_BASE_MODEL` env vars
+- Mock `os.getenv` for `*_BASE_MODEL` env vars (scoped to `*_BASE_MODEL` keys only — v1.0.1 fix; was global in v1.0)
 - Mock `llm.complete()` for consensus synthesis (returns canned text)
 - `mock_llm_empty_registry` fixture: only lmstudio registered → tests "no providers" error
 - `mock_failing_providers` fixture: providers raise RuntimeError → tests "all failed" error
+- `make_vote_providers` factory (v1.0.1): controlled per-provider response texts for vote classification tests (`unanimous`/`majority`/`split`/`disagreement`/`single_response`); `None` value = provider fails
+- `mock_providers_with_key_leak_error` (v1.0.1): Gemini provider raises `httpx.HTTPStatusError` with key-laden URL → P1-1 regression
+- `mock_providers_with_slow_one` (v1.0.1): one provider sleeps 2s → P1-2 race latency regression
 
-**Run command (once tests exist):**
+**Run command:**
 ```bash
 python -m pytest tests/tools/swarm/ -W error --tb=short -v
 ```
 
 ---
 
-*Last updated: 2026-07-09. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.0.1). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -19,7 +19,7 @@ def swarm(
     """Multi-model swarm meta-tool — consult multiple cloud LLMs in parallel."""
 ```
 
-> **Note:** Unlike `git()` / `file()` / `web()`, the swarm facade uses `action: str` rather than `Literal[...]`. The `@meta_tool` decorator is still applied (for docstring `doc_sections` and metadata), but the `Literal` enum is **not** generated — the facade performs manual dispatch via `DISPATCH["swarm"][action]`. Unknown actions return a `fail()` result listing valid actions, rather than being rejected by the schema layer.
+> **Note:** Unlike `git()` / `file()` / `web()`, the swarm facade declares `action: str` and performs manual dispatch via `DISPATCH["swarm"][action]`, returning a `fail()` result listing valid actions for direct-Python callers that bypass schema validation. **However**, `@meta_tool` still applies the `Literal[...]` enum to the `action` parameter (just like other meta-tools — there is no skip logic in `@meta_tool`), so the LLM-facing FastMCP schema gets the enum and rejects hallucinated action names at the schema layer. Both layers coexist: schema validation for LLM calls, manual dispatch + friendly `fail()` for internal Python callers (e.g. autocode's `_swarm_debug_consensus`).
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -36,7 +36,8 @@ def swarm(
 2. `DISPATCH["swarm"][action]` lookup; unknown → `fail("Unknown action '...'. Use: consensus | race | vote | compare | list_providers")`.
 3. All kwargs forwarded to the handler (`**kwargs` absorbs unused params per handler).
 4. Handler exceptions caught and returned as `fail(f"Swarm action failed: {e}")`.
-5. `duration_ms` (total wall time) appended to every successful result.
+5. `max_tokens` must be in `[1, 8192]`; `timeout` must be in `[1, 300]` seconds — out-of-bounds returns `fail(..., error_code="INVALID_ACTION")` (v1.0.1).
+6. `duration_ms` (total wall time) appended to every successful result.
 
 ---
 
@@ -130,7 +131,7 @@ swarm(action="race", question="Quick fact: who invented Python?", providers="ope
 **Notes:**
 - `responses` may include only the winner plus any providers that completed *before* the winner (e.g. failed fast). Late providers are cancelled.
 - If all providers fail, returns `fail("All providers failed to respond.", responses=results)`.
-- Cancellation is best-effort — `future.cancel()` only succeeds for futures that haven't started running.
+- **v1.0.1:** race now returns as soon as the first valid response lands (previously blocked on `ThreadPoolExecutor.__exit__` → `shutdown(wait=True)` until all in-flight calls finished). Cancellation is best-effort — `shutdown(cancel_futures=True)` cancels PENDING futures; running futures complete in the background with results discarded (`wait=False`).
 
 ---
 
@@ -165,13 +166,18 @@ swarm(action="vote", question="Classify this email as spam or not spam: ...", pr
 }
 ```
 
-**Agreement classification rules:**
+**Agreement classification rules (v1.0.1):**
 | Condition | Agreement |
 |-----------|-----------|
-| All successful responses normalize to the same text | `unanimous` |
+| Only 1 provider succeeded | `single_response` |
+| All successful responses (≥2) normalize to the same text | `unanimous` |
 | Exactly 2 distinct normalized texts AND largest group > 50% of successful | `majority` |
-| Exactly 2 distinct normalized texts AND no group > 50% | `split` |
+| Exactly 2 distinct normalized texts AND no group > 50% (incl. 2v2 tie) | `split` |
 | 3+ distinct normalized texts | `disagreement` |
+
+**v1.0.1 changes:**
+- `single_response` is a new label (v1.0 misclassified this as `unanimous`). A single voter cannot express agreement; downstream consumers (e.g. autocode `vcs_ops.confidence_map`) should map `single_response` to `LOW` confidence, not `HIGH`.
+- `split` now correctly covers the 2-successful-2-distinct case (v1.0 misclassified it as `disagreement` due to a `len(successful) > 2` guard).
 
 **Normalization:** `text.strip().lower()[:200]` — leading/trailing whitespace removed, case-folded, truncated to 200 chars. This is a *coarse* comparison suited to short answers (YES/NO, class labels). For long-form prose, `disagreement` is the expected outcome.
 
@@ -268,13 +274,15 @@ All errors return a standardized `fail()` dict:
 | `action is required` | Empty `action` param | — |
 | `Unknown action '<x>'. Use: consensus \| race \| ...` | Action not in DISPATCH | — |
 | `question is required for <action>` | Empty `question` on `consensus` / `race` / `vote` / `compare` | — |
+| `max_tokens must be between 1 and 8192, got <n>` | `max_tokens` out of bounds (v1.0.1) | `INVALID_ACTION` |
+| `timeout must be between 1 and 300 seconds, got <n>` | `timeout` out of bounds (v1.0.1) | `INVALID_ACTION` |
 | `No cloud providers configured. Set *_API_KEY and *_BASE_MODEL in .env to enable.` | `_get_available_providers()` returns empty | — |
 | `All providers failed to respond.` | Every provider returned an error or empty text | `responses: [...]` (per-provider errors visible) |
 | `Swarm action failed: <exception>` | Unhandled exception in handler | — |
 
 **Per-provider errors** are NOT fatal — a provider that raises (network error, auth error, timeout, etc.) is captured into its result dict with `text=""` and `error="<message>"`, and the remaining providers still contribute to the result. The action only fails if *every* provider fails.
 
-**Timeout behavior:** `ThreadPoolExecutor` uses `as_completed(futures, timeout=timeout+10)`. A provider that exceeds the per-call `timeout` inside `chat_completion()` is captured by the provider's own timeout handling; a future that exceeds `timeout+10` at the executor level raises `TimeoutError`, which is caught and recorded as that provider's error.
+**Timeout behavior:** `ThreadPoolExecutor` uses `as_completed(futures, timeout=timeout+10)` (in `_call_all_providers`) and `wait(futures, timeout=remaining, return_when=FIRST_COMPLETED)` (in `_call_providers_race`). A provider that exceeds the per-call `timeout` inside `chat_completion()` is captured by the provider's own timeout handling; a future that exceeds `timeout+10` at the executor level is recorded as a `timeout` error for that provider. **v1.0.1:** `_call_provider()` now sanitizes exception messages via `_sanitize_error()` before storing them — this strips API keys that Gemini puts in the URL query string (`?key=...`) from `httpx.HTTPStatusError` messages, preventing key leakage into logs + LLM context.
 
 ---
 
@@ -296,4 +304,4 @@ All errors return a standardized `fail()` dict:
 
 ---
 
-*Last updated: 2026-07-09. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.0.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
