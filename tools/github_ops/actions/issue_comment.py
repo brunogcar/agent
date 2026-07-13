@@ -1,5 +1,13 @@
-"""GitHub action: issue_comment — Comment on an issue or PR."""
+"""GitHub action: issue_comment — Comment on an issue or PR.
+
+v1.3.1 (P2-1 cross-LLM): Rewrote error handling to match the v1.0/v1.2
+3-stage pattern. v1.1 used an ambiguous single try/except.
+v1.3.1 (P3-2 cross-LLM): Added int(number) coercion for parity with
+issue_get/issue_update/pr_get/pr_review/pr_merge/pr_comment.
+"""
 from __future__ import annotations
+from typing import Any
+
 from core.contracts import ok, fail
 from tools.github_ops._registry import register_action
 from tools.github_ops.client import get_client, is_configured, repo_path
@@ -16,32 +24,57 @@ Returns: {id, url, body, created_at}""",
     ],
 )
 def _action_issue_comment(
-    number: int = 0,
+    number: Any = None,
     body: str = "",
-    **kwargs,
+    trace_id: str = "",
+    **kwargs: Any,
 ) -> dict:
     if not is_configured():
-        return fail("GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env.")
-    if not number:
-        return fail("number is required for issue_comment")
-    if not body:
-        return fail("body is required for issue_comment")
+        return fail(
+            "GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env",
+            trace_id=trace_id,
+        )
 
+    if not number:
+        return fail("number is required for issue_comment", trace_id=trace_id)
     try:
-        resp = get_client().post(
-            f"{repo_path()}/issues/{number}/comments",
+        issue_number = int(number)
+    except (TypeError, ValueError):
+        return fail(f"number must be an int — got {number!r}", trace_id=trace_id)
+
+    if not body:
+        return fail("body is required for issue_comment", trace_id=trace_id)
+
+    client = get_client()
+    try:
+        resp = client.post(
+            f"{repo_path()}/issues/{issue_number}/comments",
             json={"body": body},
             timeout=30,
         )
-        if resp.status_code >= 400:
-            err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"message": resp.text}
-            return fail(f"GitHub API error {resp.status_code}: {err.get('message', resp.text[:200])}")
-        data = resp.json()
-        return ok({
-            "id": data.get("id"),
-            "url": data.get("html_url"),
-            "body": data.get("body", ""),
-            "created_at": data.get("created_at", ""),
-        })
     except Exception as e:
-        return fail(f"issue_comment failed: {e}")
+        return fail(f"issue_comment request failed: {e}", trace_id=trace_id)
+
+    if resp.status_code >= 400:
+        try:
+            err_body = resp.json()
+            msg = err_body.get("message", resp.text)
+        except Exception:
+            msg = resp.text
+        return fail(
+            f"GitHub API error {resp.status_code}: {msg}",
+            status=resp.status_code,
+            trace_id=trace_id,
+        )
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        return fail(f"issue_comment returned non-JSON response: {e}", trace_id=trace_id)
+
+    return ok({
+        "id": data.get("id"),
+        "url": data.get("html_url"),
+        "body": data.get("body", ""),
+        "created_at": data.get("created_at", ""),
+    }, trace_id=trace_id)

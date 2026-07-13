@@ -116,14 +116,20 @@ def mock_httpx_client(mock_cfg):
 
 
 def _make_response(status_code: int = 200, json_body: dict | None = None,
-                   text: str = "") -> MagicMock:
+                   text: str = "", headers: dict | None = None) -> MagicMock:
     """Helper to build a mock httpx.Response with a specific status + body.
 
     Tests can use this to construct canned API responses:
         mock_client.post.return_value = _make_response(201, {"number": 42, ...})
+
+    v1.3.1 (P3-3 cross-LLM): Added `headers` param (defaults to empty dict).
+    Previously, _make_response() didn't set .headers, so resp.headers.get("link", "")
+    returned a MagicMock instead of a string — breaking pagination tests that used
+    _make_response() for pr_list/issue_list. Now .headers is always a real dict.
     """
     resp = MagicMock()
     resp.status_code = status_code
     resp.json.return_value = json_body or {}
     resp.text = text
+    resp.headers = headers if headers is not None else {}
     return resp

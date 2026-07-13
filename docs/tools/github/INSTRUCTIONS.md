@@ -22,7 +22,7 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 8. **Never remove the `Authorization: Bearer ...` header from the httpx.Client.** `get_client()` in `client.py` builds the client with `Authorization`, `Accept`, `X-GitHub-Api-Version`, and `Content-Type` headers. All four are required by the GitHub API. Removing any of them will cause 401/403/415 errors.
 
-9. **Never make `GITHUB_API_BASE` configurable via env in v1.0.** It's hardcoded to `https://api.github.com`. Phase 4+ roadmap item is GHE support (`GITHUB_API_BASE` env override). Don't add it prematurely — the hardcoded value is part of the security contract (no SSRF surface, see API.md → Security).
+9. **Never make `GITHUB_API_BASE` configurable via env in v1.x.** It's hardcoded to `https://api.github.com`. Phase 4+ roadmap item is GHE support (`GITHUB_API_BASE` env override). Don't add it prematurely — the hardcoded value is part of the security contract (no SSRF surface, see API.md → Security).
 
 10. **Never add a new action without registering it via `@register_action("github", "<name>", ...)`.** The `__init__.py` auto-imports `actions/*.py` to trigger registration; an unregistered handler is invisible to the dispatcher and returns "Unknown action".
 
@@ -50,43 +50,39 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 ## ✅ ALWAYS DO
 
-19. **Use `httpx.Client` directly for all GitHub API calls.** This is the canonical pattern. Obtain the client via `get_client()` (singleton, connection-pooled). Build URLs via `repo_path()` (returns `/repos/{owner}/{repo}`). Pass `timeout=30` per request. See any action in `tools/github_ops/actions/` for the pattern.
+21. **Use `httpx.Client` directly for all GitHub API calls.** Obtain via `get_client()` (singleton). Build URLs via `repo_path()`. Pass `timeout=30` per request.
 
-20. **Call `is_configured()` at the start of every API action.** Returns `bool(cfg.github_token and cfg.github_owner and cfg.github_repo)`. False → `fail("GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env")`. The `push` and `pull` actions do NOT need this check (subprocess, not API).
+22. **Call `is_configured()` at the start of every API action.** False → `fail("GitHub not configured...")`. `push`/`pull` skip this (subprocess, not API).
 
-21. **Use `--force-with-lease` for force-push.** The `force=True` param on `push` already maps to `--force-with-lease`. Do not change this. If a future feature needs bare `--force` (e.g. destructive history rewrite), add a separate `force_hard=True` param with a loud warning in the help_text — but default to `--force-with-lease`.
+23. **Use `--force-with-lease` for force-push.** The `force=True` param already maps to it. Don't change.
 
-22. **Use `subprocess.run(cmd, ...)` with list args (not `shell=True`).** The `push` action builds `cmd = ["git", "push", [--force-with-lease], remote, branch]` and the `pull` action (v1.3) builds `cmd = ["git", "pull", remote, [branch]]` — both pass it as a list. This is the only safe way to call subprocess with user-influenced input. Shell-metacharacter rejection is a secondary defense, not the primary one.
+24. **Use `subprocess.run(cmd, ...)` with list args (not `shell=True`).** Shell-metacharacter rejection is a secondary defense.
 
-23. **Validate params client-side BEFORE making the API call.** `state`, `event`, `merge_method`, `side` are validated against allowlists. `title`, `head`, `number`, `body`, `branch` are validated for non-empty. XOR on `path`/`line` for `pr_comment`. Failing fast with a clear message is better than letting GitHub return 422.
+25. **Validate params client-side BEFORE the API call.** `state`/`event`/`merge_method`/`side` validated against allowlists. `title`/`head`/`number`/`body`/`branch` validated for non-empty. XOR on `path`/`line` for `pr_comment`.
 
-24. **Handle specific HTTP status codes with specific messages.** 404 → "PR #N not found". 405 on `pr_merge` → "not mergeable". 409 on `pr_merge` → "head commit is not up to date". Generic 4xx/5xx → `fail(f"GitHub API error {code}: {msg}", status=code)`. The `status` kwarg on `fail()` lets callers distinguish error types via `result["status"]`.
+26. **Handle specific HTTP status codes with specific messages.** 404 → "PR #N not found". 405 on `pr_merge` → "not mergeable". 409 → "head not up to date". Generic 4xx/5xx → `fail(f"GitHub API error {code}: {msg}", status=code)`. The `status` kwarg lets callers distinguish error types.
 
-25. **Extract nested fields safely.** GitHub returns `head` and `base` as objects: `{"ref": "fix/timeout", ...}`. Use `(data.get("head") or {}).get("ref")` — handles the case where GitHub returns `null` for the head/base object (deleted branches). Same for `user.login`.
+27. **Use the 3-stage error-handling pattern** (v1.3.1 P2-1): network call (try/except) → HTTP error (status check) → JSON parse (try/except). Distinguishes network errors from parse errors. v1.1 actions were rewritten to match in v1.3.1.
 
-26. **Use `ok({...})` / `fail(...)` from `core.contracts` for return shapes.** Standardized `{"status": "success"|"error", "data": ..., "error": ..., "trace_id": ...}` dict. Don't hand-roll the status field. `ok()` nests the payload under `data`; `fail()` puts the message under `error`. See `tests/tools/github/` for assertion patterns.
+28. **Extract nested fields safely.** `(data.get("head") or {}).get("ref")` — handles `null` for deleted branches. Same for `user.login`.
 
-27. **Forward `**kwargs` in handler signatures.** The facade passes all 18 params to every handler; `push` ignores all the API params via `def _action_push(branch, remote, force, trace_id, **kwargs)`. Don't add explicit params that aren't used — `**kwargs` absorbs the rest.
+29. **Use `ok()` / `fail()` from `core.contracts`.** Don't hand-roll the status field.
 
-28. **Register new actions via `@register_action("github", "<name>", help_text=..., examples=[...])`.** The `help_text` and `examples` are surfaced through DISPATCH for documentation. Keep them accurate — they're shown to the LLM in the tool's `doc_sections`.
+30. **Forward `**kwargs` in handler signatures.** Facade passes all 24 params; `push` ignores API params via `**kwargs`.
 
-29. **Include `timeout=30` (or `timeout=120` for `push` / `pull`) on all external calls.** httpx and subprocess both accept a `timeout` kwarg. Without it, a hung GitHub API or hung git push/pull will block the agent indefinitely. `30` is appropriate for API calls (GitHub typically responds in < 2s); `120` for push AND pull (large repos can take 60s+ for either direction).
+31. **Register new actions via `@register_action("github", "<name>", help_text=..., examples=[...])`.** Keep `help_text`/`examples` accurate — surfaced to the LLM.
 
-30. **Update `API.md` and `CHANGELOG.md` when adding or changing an action.** New action = new row in the Summary Table + new section in API.md + new Completed row in CHANGELOG.md with version bump. Same as every other tool's INSTRUCTIONS.md.
+32. **Include `timeout=30` (API) or `timeout=120` (`push`/`pull`) on all external calls.** Without it, a hung API/git op blocks the agent indefinitely.
 
-31. **Document WHY in code comments, not just WHAT.** The "httpx not PyGithub" decision, the "push in github_ops not git_ops" decision, the "--force-with-lease not --force" decision, the "dual-mode pr_comment XOR" decision — all are non-obvious. Future AI auditors need the rationale to avoid "fixing" them. See `push.py` module docstring for the gold standard.
+33. **Update `API.md` and `CHANGELOG.md` when adding/changing an action.** New action = new Summary Table row + new API.md section + CHANGELOG version bump.
 
-32. **Test with `mock_cfg` / `mock_not_configured` / `mock_httpx_client` fixtures.** Never make real API calls in tests. Never make real `git push` or `git pull` calls in tests. The fixtures are in `tests/tools/github/conftest.py` — use them. For `push` tests, patch `tools.github_ops.actions.push.subprocess.run` directly. For `pull` tests (v1.3), patch `tools.github_ops.actions.pull.subprocess.run` directly (same pattern).
+34. **Test with `mock_cfg` / `mock_not_configured` / `mock_httpx_client` fixtures.** Never real API or git calls. For `push`/`pull`, patch `subprocess.run` directly.
 
-33. **Add `duration_ms` to every result via the facade.** The facade measures wall-clock time and injects `duration_ms` — handlers must NOT time themselves (double-counts). The injection happens after `handler(**kwargs)` returns, so handlers just need to return their result dict and the facade adds the timing.
+35. **Use `if not x:` (not `if x is None:`) for params with facade default `0`.** Facade uses `number: int = 0` and `line: int = 0`. `is None` doesn't catch missing-arg. See NEVER DO #19.
 
-34. **Cap `per_page` at 100 for `pr_list` and `issue_list` (and slice `items[:limit_int]` after extraction).** GitHub API hard-caps `per_page=100` for the `/pulls` and `/issues` endpoints. Compute `per_page = min(limit, 100)` and slice `items[:limit_int]` after extraction. This handles `limit=5` (per_page=5, slice is no-op) and `limit=200` (per_page=100, slice to 100). **For repos with >100 items, use the `page` param** (v1.2): `page=2`, `page=3`, etc. — the response includes `has_next` + `next_page` from the parsed `Link` header so callers can iterate without manual page counting.
+36. **Treat `mergeable=null` from `pr_get` as "retry".** GitHub is still computing. `mergeable_state` (`clean`/`blocked`/`unstable`/`dirty`/`unknown`) is more useful in practice.
 
-35. **Use `if not x:` (not `if x is None:`) for params that have a facade default of `0`.** The facade uses default-zero for `number` and `line` (so the signature stays `int`, not `Optional[int]`). This means `is None` checks don't catch missing-arg cases — the handler sees `0` and proceeds. Always use `if not number:` / `bool(line)`. Documented as NEVER DO rule #19.
-
-36. **Treat `mergeable=null` from `pr_get` as "retry".** GitHub returns `mergeable: null` while it's still computing the mergeability state (typically right after a push). If a caller sees `mergeable=null`, they should wait a moment and call `pr_get` again before deciding whether to `pr_merge`. The `mergeable_state` field is the more useful signal in practice: `"clean"`/`"blocked"`/`"unstable"`/`"dirty"`/`"unknown"`. Don't treat `null` as `false` — it doesn't mean "not mergeable", it means "GitHub hasn't told us yet".
-
-37. **Treat `pull` as the remote-sync counterpart to `push` (v1.3).** The standard PR workflow is **`pull` before branching → branch → commit → `push` → `pr_create`**. When adding new remote-related actions, follow the `push`/`pull` pattern: list-form subprocess, 120s timeout, shell-metacharacter rejection, combined stdout+stderr in `output`, NOT parallel-safe. If a new remote operation doesn't fit the `push`/`pull` shape (e.g. `fetch` without merge, `clone`), consider whether it belongs in `git_ops` instead (clone already lives there). See ARCHITECTURE.md → Key Design Decisions #16.
+37. **Treat `pull` as the remote-sync counterpart to `push` (v1.3).** Workflow: `pull` → branch → commit → `push` → `pr_create`. Follow the `push`/`pull` pattern for new remote ops: list-form subprocess, 120s timeout, metachar rejection, NOT parallel-safe.
 
 ---
 
@@ -110,4 +106,4 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 ---
 
-*Last updated: 2026-07-10 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

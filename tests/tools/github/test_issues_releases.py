@@ -1,9 +1,10 @@
-"""Tests for github issue and release actions (v1.1 + v1.2).
+"""Tests for github issue and release actions (v1.1 + v1.2 + v1.3.1).
 
 Covers: issue_create, issue_list, issue_comment, issue_get, issue_update,
 release_create, release_list, release_get.
 """
 from __future__ import annotations
+import httpx
 from tools.github import github
 
 
@@ -280,6 +281,28 @@ class TestIssueComment:
         assert result["status"] == "error"
         assert "body is required" in result["error"]
 
+    def test_issue_comment_coerces_string_number(self, mock_cfg, mock_httpx_client):
+        """v1.3.1 (P3-2 cross-LLM): issue_comment now coerces number to int
+        for parity with issue_get/issue_update/pr_get/pr_review/pr_merge/pr_comment.
+        v1.1 used number directly in the URL (worked by luck for numeric strings).
+        """
+        mock_httpx_client.post.return_value.status_code = 201
+        mock_httpx_client.post.return_value.headers = {"content-type": "application/json"}
+        mock_httpx_client.post.return_value.json.return_value = {
+            "id": 1, "html_url": "url", "body": "test", "created_at": "2026-07-10"
+        }
+        result = github(action="issue_comment", number="42", body="test")
+        assert result["status"] == "success"
+        # Verify the URL used the int-coerced number
+        call_args = mock_httpx_client.post.call_args
+        assert "/issues/42/comments" in call_args[0][0]
+
+    def test_issue_comment_rejects_non_numeric_number(self, mock_cfg, mock_httpx_client):
+        """v1.3.1 (P3-2): non-numeric number now fails fast instead of hitting the API."""
+        result = github(action="issue_comment", number="abc", body="test")
+        assert result["status"] == "error"
+        assert "must be an int" in result["error"]
+
 
 class TestReleaseCreate:
     def test_release_create_success(self, mock_cfg, mock_httpx_client):
@@ -338,3 +361,70 @@ class TestReleaseList:
         result = github(action="release_list", limit=2)
         assert result["status"] == "success"
         assert result["data"]["count"] == 2
+
+    def test_release_list_pagination(self, mock_cfg, mock_httpx_client):
+        """v1.3.1 (P2-2 cross-LLM): release_list now supports pagination
+        (page param + has_next/next_page from Link header), matching pr_list
+        and issue_list. v1.1 was capped at 100 items with no pagination.
+        """
+        mock_httpx_client.get.return_value.status_code = 200
+        mock_httpx_client.get.return_value.headers = {
+            "content-type": "application/json",
+            "link": '<https://api.github.com/repos/test/test/releases?page=2>; rel="next", <https://api.github.com/repos/test/test/releases?page=3>; rel="last"',
+        }
+        mock_httpx_client.get.return_value.json.return_value = [
+            {"id": 1, "tag_name": "v1.0.0", "name": "First", "html_url": "url1", "draft": False, "prerelease": False, "published_at": "2026-07-08"}
+        ]
+        result = github(action="release_list", page=1)
+        assert result["status"] == "success"
+        assert result["data"]["page"] == 1
+        assert result["data"]["has_next"] is True
+        assert result["data"]["next_page"] == 2
+
+
+class TestV131ErrorHandling:
+    """v1.3.1 (P2-1 cross-LLM): v1.1 actions now use the v1.0/v1.2 3-stage
+    error-handling pattern — network call → HTTP error → JSON parse, with
+    status= and trace_id= on all fail()/ok() calls.
+    """
+
+    def test_issue_create_api_error_has_status_code(self, mock_cfg, mock_httpx_client):
+        """v1.1 bug: fail() had no status= kwarg — callers couldn't distinguish
+        404 from 422 from 500. v1.3.1 propagates status_code via fail(status=...).
+        """
+        mock_httpx_client.post.return_value.status_code = 422
+        mock_httpx_client.post.return_value.headers = {"content-type": "application/json"}
+        mock_httpx_client.post.return_value.json.return_value = {"message": "Validation failed"}
+        mock_httpx_client.post.return_value.text = '{"message": "Validation failed"}'
+        result = github(action="issue_create", title="test")
+        assert result["status"] == 422  # HTTP code propagated (convention: status= is the int)
+        assert "422" in result["error"]
+        assert "Validation failed" in result["error"]
+
+    def test_release_create_api_error_has_status_code(self, mock_cfg, mock_httpx_client):
+        mock_httpx_client.post.return_value.status_code = 403
+        mock_httpx_client.post.return_value.headers = {"content-type": "application/json"}
+        mock_httpx_client.post.return_value.json.return_value = {"message": "Forbidden"}
+        mock_httpx_client.post.return_value.text = '{"message": "Forbidden"}'
+        result = github(action="release_create", tag="v1.0.0")
+        assert result["status"] == 403
+        assert "403" in result["error"]
+
+    def test_release_list_api_error_has_status_code(self, mock_cfg, mock_httpx_client):
+        mock_httpx_client.get.return_value.status_code = 500
+        mock_httpx_client.get.return_value.headers = {"content-type": "application/json"}
+        mock_httpx_client.get.return_value.json.return_value = {"message": "Server error"}
+        mock_httpx_client.get.return_value.text = '{"message": "Server error"}'
+        result = github(action="release_list")
+        assert result["status"] == 500
+        assert "500" in result["error"]
+
+    def test_issue_comment_network_error_distinct_from_parse_error(self, mock_cfg, mock_httpx_client):
+        """v1.1 bug: single try/except caught both network errors AND JSON parse
+        errors as 'issue_comment failed: {e}'. v1.3.1 distinguishes them.
+        """
+        # Network error (request raises)
+        mock_httpx_client.post.side_effect = httpx.ConnectError("connection refused")
+        result = github(action="issue_comment", number=42, body="test")
+        assert result["status"] == "error"
+        assert "request failed" in result["error"]  # network, not parse

@@ -2,816 +2,208 @@
 
 # 📝 API Reference
 
-## 🔧 Tool Signature
+## Tool Signature
 
 ```python
-@tool
-@meta_tool(DISPATCH["github"], doc_sections=[...])
-def github(
-    action: str,
-    title: str = "",
-    head: str = "",
-    base: str = "main",
-    body: str = "",
-    number: int = 0,
-    state: str = "",
-    limit: int = 30,
-    page: int = 1,
-    event: str = "",
-    merge_method: str = "squash",
-    commit_title: str = "",
-    commit_message: str = "",
-    path: str = "",
-    line: int = 0,
-    side: str = "RIGHT",
-    branch: str = "",
-    remote: str = "origin",
-    force: bool = False,
-    labels: str = "",
-    assignees: str = "",
-    tag: str = "",
-    draft: bool = False,
-    prerelease: bool = False,
-    trace_id: str = "",
-) -> dict:
-    """GitHub API meta-tool — PR + issue + release operations + git push/pull."""
+github(action: str, *, title, head, base, body, number, state, limit, page,
+       event, merge_method, commit_title, commit_message, path, line, side,
+       branch, remote, force, labels, assignees, tag, draft, prerelease,
+       trace_id) -> dict
 ```
 
-> **Note:** Like `swarm()`, the github facade uses `action: str` and dispatches manually via `DISPATCH["github"][action]`. Unknown actions return a `fail()` result listing all 16 valid actions, rather than being rejected by a `Literal` schema layer. The `@meta_tool` decorator is applied (for `doc_sections` and metadata) but the `Literal` enum patch is **not** generated.
+The facade uses `action: str` with manual `DISPATCH["github"][action]` dispatch (same pattern as `swarm`). `@meta_tool` is applied for `doc_sections`/metadata. Unknown actions return `fail("Unknown action '...'. Use: ...")` listing all 16 valid actions.
 
-> **v1.2 facade changes:** `state` default changed from `"open"` to `""` (list actions `pr_list`/`issue_list` internally default to `"open"` when empty — no caller-visible behavior change; `issue_update` treats `""` as "don't change" to enable the unified close/reopen/edit design). New `page: int = 1` param added (used by `pr_list`/`issue_list` for pagination).
+## Parameters
 
-> **v1.3 facade changes:** `_NOT_PARALLEL_SAFE` updated from `frozenset({"push"})` to `frozenset({"push", "pull"})` (the new `pull` action is also a subprocess). New `pull` action registered via `@register_action("github", "pull", ...)`. Facade `doc_sections` gains a `Pull commits | github(pull)` row. No new facade params (pull reuses the existing `branch` + `remote` params).
+| Param | Default | Used by | Description |
+|-------|---------|---------|-------------|
+| `action` | — | all | **Required.** One of 16 actions (see Summary). Lowercased + stripped |
+| `title` | `""` | pr_create, issue_create, issue_update, release_create | Title / name |
+| `head` | `""` | pr_create | Source branch (merge FROM) |
+| `base` | `"main"` | pr_create | Target branch (merge INTO) |
+| `body` | `""` | pr_create, pr_review, pr_comment, issue_create, issue_update, release_create | Markdown text |
+| `number` | `0` | pr_get/review/merge/comment, issue_get/update/comment, release_get | PR/issue/release ID. Coerced to int |
+| `state` | `""` | pr_list, issue_list, issue_update | `open`/`closed`/`all` for lists; `open`/`closed` for update (empty = don't change) |
+| `limit` | `30` | pr_list, issue_list, release_list | Max items per page (capped at 100) |
+| `page` | `1` | pr_list, issue_list, release_list | Page number for pagination |
+| `event` | `""` | pr_review | `APPROVE` / `REQUEST_CHANGES` / `COMMENT` |
+| `merge_method` | `"squash"` | pr_merge | `merge` / `squash` / `rebase` |
+| `commit_title` | `""` | pr_merge | Custom merge commit title |
+| `commit_message` | `""` | pr_merge | Custom merge commit body |
+| `path` | `""` | pr_comment | File path (triggers line-level mode with `line`) |
+| `line` | `0` | pr_comment | Line number (triggers line-level mode with `path`) |
+| `side` | `"RIGHT"` | pr_comment | `LEFT` (base) or `RIGHT` (head) — line-level only |
+| `branch` | `""` | push, pull | Branch name. `pull`: empty = current branch |
+| `remote` | `"origin"` | push, pull | Remote name |
+| `force` | `False` | push | `True` → `--force-with-lease` (NOT bare `--force`) |
+| `labels` | `""` | issue_create, issue_list, issue_update | Comma-separated |
+| `assignees` | `""` | issue_create, issue_update | Comma-separated logins |
+| `tag` | `""` | release_create, release_get | Tag name (takes priority over `number` in release_get) |
+| `draft` | `False` | release_create | Create as draft |
+| `prerelease` | `False` | release_create | Mark as prerelease |
+| `trace_id` | `""` | all | Auto-injected into result |
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `action` | `str` | — | **Required.** One of: `pr_create` \| `pr_list` \| `pr_get` \| `pr_review` \| `pr_merge` \| `pr_comment` \| `push` \| `pull` \| `issue_create` \| `issue_list` \| `issue_get` \| `issue_update` \| `issue_comment` \| `release_create` \| `release_list` \| `release_get`. Lowercased + stripped before dispatch |
-| `title` | `str` | `""` | PR/issue title (used by `pr_create`, `issue_create`, `issue_update`) |
-| `head` | `str` | `""` | Source branch name — what to merge FROM (used by `pr_create`) |
-| `base` | `str` | `"main"` | Target branch name — what to merge INTO (used by `pr_create`) |
-| `body` | `str` | `""` | Markdown body / description (used by `pr_create`, `pr_review`, `pr_comment`, `issue_create`, `issue_update`) |
-| `number` | `int` | `0` | PR/issue/release number (used by `pr_get`, `pr_review`, `pr_merge`, `pr_comment`, `issue_get`, `issue_update`, `release_get` when `tag` is empty). Coerced to int — numeric str accepted |
-| `state` | `str` | `""` | Filter for `pr_list`/`issue_list` (internally defaults to `"open"` when empty; one of `open`/`closed`/`all`). For `issue_update`: `"open"`/`"closed"` changes state; `""` = don't change |
-| `limit` | `int` | `30` | Max items to return per page (used by `pr_list`, `issue_list`). Capped at 100 per GitHub API per_page maximum |
-| `page` | `int` | `1` | Page number for pagination (used by `pr_list`, `issue_list`). Use when a repo has >100 items — the response includes `has_next`/`next_page` from the Link header |
-| `event` | `str` | `""` | Review event: `APPROVE`, `REQUEST_CHANGES`, `COMMENT` (used by `pr_review`) |
-| `merge_method` | `str` | `"squash"` | Merge method: `merge`, `squash`, `rebase` (used by `pr_merge`) |
-| `commit_title` | `str` | `""` | Custom merge commit title (used by `pr_merge`) |
-| `commit_message` | `str` | `""` | Custom merge commit body (used by `pr_merge`) |
-| `path` | `str` | `""` | File path — triggers line-level comment mode when paired with `line` (used by `pr_comment`) |
-| `line` | `int` | `0` | Line number — triggers line-level comment mode when paired with `path` (used by `pr_comment`) |
-| `side` | `str` | `"RIGHT"` | Diff side: `LEFT` (base) or `RIGHT` (head) — only used in line-level mode (used by `pr_comment`) |
-| `branch` | `str` | `""` | Branch name to push / pull (used by `push`, `pull`). For `pull`: empty = current branch |
-| `remote` | `str` | `"origin"` | Remote name to push to / pull from (used by `push`, `pull`) |
-| `force` | `bool` | `False` | If True, use `--force-with-lease` (NOT `--force`) — safer (used by `push`) |
-| `labels` | `str` | `""` | Comma-separated labels (used by `issue_create`, `issue_list`, `issue_update`) |
-| `assignees` | `str` | `""` | Comma-separated logins (used by `issue_create`, `issue_update`) |
-| `tag` | `str` | `""` | Tag name for release lookup/creation (used by `release_create`, `release_get`) |
-| `draft` | `bool` | `False` | If True, create a draft release (used by `release_create`) |
-| `prerelease` | `bool` | `False` | If True, mark release as prerelease (used by `release_create`) |
-| `trace_id` | `str` | `""` | Trace identifier for observability. Auto-injected into the result dict |
+**Dispatch flow:** `action` lowercased → empty fails → `DISPATCH` lookup (unknown fails with valid list) → all kwargs forwarded → handler exception caught as `fail("GitHub action failed: {e}")` → `duration_ms` + `trace_id` injected.
 
-**Dispatch behavior:**
-1. `action` is lowercased + stripped; empty → `fail("action is required")`.
-2. `DISPATCH["github"][action]` lookup; unknown → `fail(f"Unknown action '<x>'. Use: {sorted valid actions}")`.
-3. All kwargs forwarded to the handler (`**kwargs` absorbs unused params per handler).
-4. Handler exceptions caught and returned as `fail(f"GitHub action failed: {e}")`.
-5. `duration_ms` (total wall time) appended to every result.
-6. `trace_id` injected into the result if missing.
+## Actions — Summary Table
 
----
+| Action | Required | Optional | Returns |
+|--------|----------|----------|---------|
+| `pr_create` | `title`, `head` | `base`, `body` | `{number, title, url, state, head, base}` |
+| `pr_list` | — | `state`, `limit`, `page` | `{count, pulls, page, has_next, next_page}` |
+| `pr_get` | `number` | — | `{number, title, state, merged, mergeable, mergeable_state, draft, head, base, url, body, user, created_at, updated_at}` |
+| `pr_review` | `number`, `event` | `body` | `{id, state, url}` |
+| `pr_merge` | `number` | `merge_method`, `commit_title`, `commit_message` | `{merged, sha, message}` |
+| `pr_comment` | `number`, `body` | `path`, `line`, `side` | `{id, url, body}` (+ `path`, `line` if line-level) |
+| `issue_create` | `title` | `body`, `labels`, `assignees` | `{number, title, url, state}` |
+| `issue_list` | — | `state`, `labels`, `limit`, `page` | `{count, issues, page, has_next, next_page}` |
+| `issue_get` | `number` | — | `{number, title, state, body, url, labels, assignee, user, created_at, updated_at, closed_at}` |
+| `issue_update` | `number` + ≥1 field | `state`, `title`, `body`, `labels`, `assignees` | `{number, title, state, url}` |
+| `issue_comment` | `number`, `body` | — | `{id, url, body, created_at}` |
+| `release_create` | `tag` | `title`, `body`, `draft`, `prerelease` | `{id, tag, name, url, draft, prerelease, created_at}` |
+| `release_list` | — | `limit`, `page` | `{count, releases, page, has_next, next_page}` |
+| `release_get` | `tag` OR `number` | — | `{id, tag, name, url, draft, prerelease, created_at, published_at, body, assets}` |
+| `push` | `branch` | `remote`, `force` | `{status, branch, remote, pushed, output, forced}` |
+| `pull` | — | `branch`, `remote` | `{status, branch, remote, pulled, output}` |
 
-## ⚡ Actions
+## Action Details
 
-### Summary Table
-
-| Action | Required Params | Optional Params | Purpose |
-|--------|-----------------|-----------------|---------|
-| `pr_create` | `title`, `head` | `base`, `body` | Open a new pull request from a head branch into a base branch |
-| `pr_list` | — | `state`, `limit`, `page` | List pull requests filtered by state (open / closed / all), paginated |
-| `pr_get` | `number` | — | Fetch detailed info for a single pull request (incl. `mergeable` + `mergeable_state`) |
-| `pr_review` | `number`, `event` | `body`, `commit_id` | Submit a review (APPROVE / REQUEST_CHANGES / COMMENT) |
-| `pr_merge` | `number` | `merge_method`, `commit_title`, `commit_message` | Merge a pull request (squash / merge / rebase) |
-| `pr_comment` | `number`, `body` | `path`, `line`, `side` | Post a comment — general OR line-level (dual-mode) |
-| `issue_create` | `title` | `body`, `labels`, `assignees` | Open a new issue |
-| `issue_list` | — | `state`, `labels`, `limit`, `page` | List issues filtered by state + labels, paginated |
-| `issue_get` | `number` | — | Fetch detailed info for a single issue |
-| `issue_update` | `number` + at least one field | `state`, `title`, `body`, `labels`, `assignees` | Close / reopen / edit an issue (unified) |
-| `issue_comment` | `number`, `body` | — | Comment on an issue or PR (shared endpoint) |
-| `release_create` | `tag` | `name`, `body`, `draft`, `prerelease` | Create a release from a tag |
-| `release_list` | — | `limit` | List releases |
-| `release_get` | `tag` OR `number` | — | Fetch a single release by tag (preferred) or numeric ID |
-| `push` | `branch` | `remote`, `force` | Push a local branch to the remote via `git push` (subprocess) |
-| `pull` | — | `branch`, `remote` | Pull recent commits from the remote via `git pull` (subprocess) — empty `branch` = current branch |
-
----
-
-### `pr_create` — Open a New Pull Request
-
-**Purpose:** Open a new PR on the configured GitHub repo from a head branch into a base branch. The head branch must already exist on the remote — call `github(action="push", branch="...")` first if you've only committed locally.
-
-**Required params:** `title`, `head`
-
-**Optional params:** `base` (default `"main"`), `body` (markdown description)
-
-**Example:**
+### `pr_create`
 ```python
-github(action="pr_create", title="Fix timeout bug", head="fix/timeout", base="main")
-github(action="pr_create", title="Add login page", head="feat/login",
-       body="Closes #12. Implements OAuth2 login flow with session refresh.")
+github(action="pr_create", title="Fix bug", head="fix/branch", base="main", body="...")
 ```
+→ `{number, title, url, state, head, base}`. Head branch must exist on remote (call `push` first).
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "number": 42,
-    "title": "Fix timeout bug",
-    "url": "https://github.com/owner/repo/pull/42",
-    "state": "open",
-    "head": "fix/timeout",
-    "base": "main"
-  },
-  "error": null,
-  "duration_ms": 845
-}
-```
-
-**Notes:**
-- Calls `POST /repos/{owner}/{repo}/pulls`.
-- The `body` field is omitted from the API payload if empty (GitHub treats absent vs empty body identically).
-- On HTTP 4xx/5xx, returns `fail(f"GitHub API error {status_code}: {message}")` with the GitHub error message extracted from the JSON response body.
-
----
-
-### `pr_list` — List Pull Requests
-
-**Purpose:** Fetch a list of PRs on the configured repo, filtered by state and capped at a caller-supplied limit. Supports pagination via the `page` param for repos with more than 100 PRs.
-
-**Required params:** none
-
-**Optional params:** `state` (default `"open"` — pass `""`, `"open"`, `"closed"`, or `"all"`; empty defaults to `"open"`), `limit` (default `30`, capped at 100), `page` (default `1` — for pagination beyond 100 items)
-
-**Example:**
+### `pr_list`
 ```python
-github(action="pr_list")
-github(action="pr_list", state="closed", limit=10)
-github(action="pr_list", state="all", page=2)  # second page of results
+github(action="pr_list")                          # open PRs, page 1
+github(action="pr_list", state="closed", limit=10, page=2)
 ```
+→ `{count, pulls: [{number, title, state, head, base, url, draft}], page, has_next, next_page}`. Iterate: `while has_next: github(action="pr_list", page=next_page)`.
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "count": 2,
-    "pulls": [
-      {
-        "number": 42,
-        "title": "Fix timeout bug",
-        "state": "open",
-        "head": "fix/timeout",
-        "base": "main",
-        "url": "https://github.com/owner/repo/pull/42",
-        "draft": false
-      },
-      {
-        "number": 41,
-        "title": "Add login page",
-        "state": "open",
-        "head": "feat/login",
-        "base": "main",
-        "url": "https://github.com/owner/repo/pull/41",
-        "draft": true
-      }
-    ],
-    "page": 1,
-    "has_next": true,
-    "next_page": 2
-  },
-  "error": null,
-  "duration_ms": 412
-}
-```
-
-**Notes:**
-- Calls `GET /repos/{owner}/{repo}/pulls?state=...&per_page=...&page=...`.
-- The GitHub API caps `per_page` at 100 for this endpoint. `pr_list` computes `per_page = min(limit, 100)` and slices `items[:limit]` after extraction — the returned count never exceeds the caller's request even if GitHub returns more.
-- Results are returned in GitHub's default order (newest first by `created_at` descending).
-- Invalid `state` values are rejected before any API call: `fail(f"state must be one of 'open', 'closed', 'all' — got {state!r}")`.
-- **Pagination (v1.2):** when `page > 1` is passed, the same `per_page`/`limit` slice applies to that page's results. The `Link` response header is parsed by `parse_link_header()` (in `client.py`) and surfaced as `has_next` (bool) + `next_page` (int or `None`). If `has_next` is `True`, call again with `page=next_page` to fetch the next page. If the response has no `Link` header (e.g. a single-page result), `has_next=False` and `next_page=None`.
-
----
-
-### `pr_get` — Get a Single Pull Request
-
-**Purpose:** Fetch detailed info for a single PR — useful for checking mergeable state, draft flag, full body, and timestamps before merging or reviewing.
-
-**Required params:** `number`
-
-**Optional params:** none
-
-**Example:**
+### `pr_get`
 ```python
 github(action="pr_get", number=42)
 ```
+→ `{number, title, state, merged, mergeable, mergeable_state, draft, head, base, url, body, user, created_at, updated_at}`. `mergeable: null` = GitHub still computing (retry). `mergeable_state`: `clean`/`blocked`/`unstable`/`dirty`/`unknown`.
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "number": 42,
-    "title": "Fix timeout bug",
-    "state": "open",
-    "merged": false,
-    "mergeable": true,
-    "mergeable_state": "clean",
-    "draft": false,
-    "head": "fix/timeout",
-    "base": "main",
-    "url": "https://github.com/owner/repo/pull/42",
-    "body": "Resolves issue #42 by adding exponential backoff.",
-    "user": "octocat",
-    "created_at": "2026-07-09T14:32:11Z",
-    "updated_at": "2026-07-10T08:15:42Z"
-  },
-  "error": null,
-  "duration_ms": 287
-}
-```
-
-**Notes:**
-- Calls `GET /repos/{owner}/{repo}/pulls/{number}`.
-- 404 → `fail(f"PR #{pr_number} not found", status=404)` (specific message + status code).
-- `number` is coerced to int — numeric strings like `"42"` are accepted.
-- The `merged` boolean reflects whether the PR has been merged (GitHub returns `false` for unmerged PRs, including closed-without-merge ones).
-- **`mergeable` + `mergeable_state` (v1.2):** surfaced directly from the GitHub API response. `mergeable` is `true`/`false`/`null` — `null` means GitHub is still computing it (rare; usually right after a push). If you see `null`, wait a moment and call `pr_get` again. `mergeable_state` is one of `"clean"` / `"blocked"` / `"unstable"` / `"dirty"` / `"unknown"`:
-  - `"clean"` — no conflicts, all required checks/reviews satisfied → safe to merge.
-  - `"blocked"` — required reviews or status checks not satisfied.
-  - `"unstable"` — failing non-required status checks (e.g. CI red, but mergeable).
-  - `"dirty"` — merge conflict; the head branch needs a rebase.
-  - `"unknown"` — GitHub hasn't computed it yet (similar to `mergeable=null`).
-- Use this BEFORE `pr_merge` to pre-check the `mergeable` state and avoid the 405 "not mergeable" failure.
-
----
-
-### `pr_review` — Submit a Review
-
-**Purpose:** Submit a review on a PR — `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`. Requires push access to the repo for `APPROVE` / `REQUEST_CHANGES`; `COMMENT` works for any authenticated user.
-
-**Required params:** `number`, `event` (one of `APPROVE`, `REQUEST_CHANGES`, `COMMENT`)
-
-**Optional params:** `body` (markdown review text), `commit_id` (SHA of specific commit to review)
-
-**Example:**
+### `pr_review`
 ```python
-github(action="pr_review", number=42, event="APPROVE", body="LGTM 🚢")
-github(action="pr_review", number=42, event="REQUEST_CHANGES",
-       body="Need a null check on line 17")
-github(action="pr_review", number=42, event="COMMENT", body="Just a note")
+github(action="pr_review", number=42, event="APPROVE", body="LGTM")
 ```
+→ `{id, state, url}`. `event`: `APPROVE`/`REQUEST_CHANGES`/`COMMENT`. APPROVE/REQUEST_CHANGES require push access; can't review your own PR.
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": 12345678,
-    "state": "APPROVED",
-    "url": "https://github.com/owner/repo/pull/42#pullrequestreview-12345678"
-  },
-  "error": null,
-  "duration_ms": 521
-}
-```
-
-**Notes:**
-- Calls `POST /repos/{owner}/{repo}/pulls/{number}/reviews`.
-- `event` is validated client-side against `_VALID_REVIEW_EVENTS = ("APPROVE", "REQUEST_CHANGES", "COMMENT")` — invalid values fail fast with `fail(f"event must be one of {...} — got {event!r}")` before any API call. This avoids a 422 from GitHub.
-- `body` and `commit_id` are omitted from the payload if empty.
-- GitHub blocks self-approval in most configurations — you cannot review your own PR.
-- 404 → `fail(f"PR #{pr_number} not found", status=404)`.
-
----
-
-### `pr_merge` — Merge a Pull Request
-
-**Purpose:** Merge a PR via `squash`, `merge`, or `rebase`. Requires the PR to be mergeable (status checks passing if required, no conflicts, required reviews satisfied).
-
-**Required params:** `number`
-
-**Optional params:** `merge_method` (default `"squash"`, one of `merge`/`squash`/`rebase`), `commit_title`, `commit_message`
-
-**Example:**
+### `pr_merge`
 ```python
-github(action="pr_merge", number=42)
-github(action="pr_merge", number=42, merge_method="squash")
-github(action="pr_merge", number=42, merge_method="merge",
-       commit_title="Merge PR #42: Fix intermittent search timeout")
+github(action="pr_merge", number=42)                                          # squash (default)
+github(action="pr_merge", number=42, merge_method="merge", commit_title="...")
 ```
+→ `{merged: true, sha, message}`. 405 = not mergeable (conflict/blocked). 409 = head not up to date (rebase + push). Call `pr_get` first to check `mergeable_state`.
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "merged": true,
-    "sha": "6dcb09b5b57875f334f61aebed695e2e4193db5e",
-    "message": "Pull request successfully merged"
-  },
-  "error": null,
-  "duration_ms": 1102
-}
-```
-
-**Notes:**
-- Calls `PUT /repos/{owner}/{repo}/pulls/{number}/merge`.
-- Default `merge_method="squash"` keeps history clean — one commit per PR on the base branch. Use `"merge"` to preserve all commits (creates a merge commit), or `"rebase"` to add commits on top of the base without a merge commit.
-- Specific HTTP error handling:
-  - 404 → `fail(f"PR #{pr_number} not found", status=404)`
-  - 405 → `fail(f"PR #{pr_number} is not mergeable (conflict, blocked, or required checks not satisfied)", status=405)` — call `pr_get` first to check the `mergeable` state.
-  - 409 → `fail(f"PR #{pr_number} head commit is not up to date — rebase and push again", status=409)` — head has moved; rebase onto base and `github(action="push", force=True)`.
-- `commit_title` and `commit_message` are omitted from the payload if empty (GitHub uses defaults).
-
----
-
-### `pr_comment` — Post a Comment (Dual-Mode)
-
-**Purpose:** Post a comment on a PR. Two modes:
-
-1. **General PR comment** — POST `/repos/{owner}/{repo}/issues/{number}/comments` — triggered when `path` and `line` are NOT both provided. This is the standard "leave a comment on the PR" flow (GitHub treats PRs as issues for general comments).
-2. **Line-level (review) comment** — POST `/repos/{owner}/{repo}/pulls/{number}/comments` — triggered when `path` AND `line` are BOTH provided. Comments inline on a specific line of a specific file. Requires `side` (LEFT or RIGHT, default RIGHT) and the PR's diff must contain that line.
-
-**Required params:** `number`, `body`
-
-**Optional params:** `path` (file path for line-level), `line` (line number for line-level), `side` (default `"RIGHT"`)
-
-**Example:**
+### `pr_comment`
 ```python
-# General comment
-github(action="pr_comment", number=42, body="This needs a null check")
-
-# Line-level comment
-github(action="pr_comment", number=42,
-       body="Missing error handling here",
-       path="src/main.py", line=42)
-
-# Line-level on the LEFT (base) side of the diff
-github(action="pr_comment", number=42,
-       body="Pre-commit hook fails on this line",
-       path="tests/test_main.py", line=17, side="LEFT")
+github(action="pr_comment", number=42, body="General comment")                # general
+github(action="pr_comment", number=42, body="Line note", path="src/x.py", line=42, side="RIGHT")  # line-level
 ```
+→ `{id, url, body}` (+ `path`, `line` if line-level). `path` + `line` must be both-or-neither (XOR validation). General comments use `/issues/{n}/comments`; line-level use `/pulls/{n}/comments` with `subject_type=line`.
 
-**Return format (general):**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": 987654321,
-    "url": "https://github.com/owner/repo/issues/42#issuecomment-987654321",
-    "body": "This needs a null check"
-  },
-  "error": null,
-  "duration_ms": 398
-}
-```
-
-**Return format (line-level):**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": 1234567890,
-    "url": "https://github.com/owner/repo/pull/42#discussion_r1234567890",
-    "body": "Missing error handling here",
-    "path": "src/main.py",
-    "line": 42
-  },
-  "error": null,
-  "duration_ms": 441
-}
-```
-
-**Notes:**
-- XOR validation on `path` / `line` — providing one without the other returns `fail("path and line must be provided together for line-level comments (got path=..., line=...)")`. Both or neither, never just one.
-- Line-level payload includes `subject_type: "line"` per GitHub API v3 spec.
-- `side` is validated against `("LEFT", "RIGHT")` ONLY in line-level mode.
-- Line-level comments via this endpoint are NOT part of a review and will appear as "pending" until someone submits them via the UI. For proper review-thread comments, use `pr_review` with `event="COMMENT"` (deferred — see CHANGELOG.md roadmap).
-- 404 → `fail(f"PR #{pr_number} not found", status=404)`.
-
----
-
-### `push` — Push a Local Branch to the Remote
-
-**Purpose:** Push a local branch to a git remote (default `origin`) via `git push`. This is a **local subprocess operation**, NOT a GitHub API call — it does NOT require `GITHUB_TOKEN`. It's grouped under the `github` tool because pushing a local branch to `origin` is the prerequisite for any PR workflow.
-
-**Required params:** `branch`
-
-**Optional params:** `remote` (default `"origin"`), `force` (default `False` → uses `--force-with-lease`)
-
-**Example:**
+### `issue_create`
 ```python
-github(action="push", branch="fix/timeout")
-github(action="push", branch="fix/timeout", remote="origin")
-github(action="push", branch="feat/rebase", force=True)  # uses --force-with-lease
+github(action="issue_create", title="Bug", body="...", labels="bug,ui", assignees="alice,bob")
 ```
+→ `{number, title, url, state}`.
 
-**Return format (success):**
-```json
-{
-  "status": "success",
-  "data": {
-    "status": "ok",
-    "branch": "fix/timeout",
-    "remote": "origin",
-    "pushed": true,
-    "output": "To github.com:owner/repo.git\n   abc1234..def5678  fix/timeout -> fix/timeout",
-    "forced": false
-  },
-  "error": null,
-  "duration_ms": 1843
-}
-```
-
-**Return format (non-zero exit):**
-```json
-{
-  "status": "error",
-  "data": null,
-  "error": "git push failed (exit 1): ! [rejected] fix/timeout -> fix/timeout (fetch first)\n...",
-  "branch": "fix/timeout",
-  "remote": "origin",
-  "exit_code": 1,
-  "output": "! [rejected] fix/timeout -> fix/timeout (fetch first)\n...",
-  "duration_ms": 412
-}
-```
-
-**Notes:**
-- Uses `subprocess.run(["git", "push", [--force-with-lease], remote, branch])` — **list form, NOT `shell=True`** for safety.
-- `force=True` uses `--force-with-lease` (NOT `--force`), which refuses to overwrite remote refs that have moved since the last fetch. Safer than bare `--force` — prevents accidental history destruction when a teammate has pushed in the meantime.
-- 120-second subprocess timeout. On timeout → `fail(f"git push timed out after 120s (branch=..., remote=...)")`.
-- `FileNotFoundError` (git not installed) → `fail("git executable not found — install git and ensure it is on PATH")`.
-- Defense-in-depth: rejects branch/remote names containing shell metacharacters (`;`, `&`, `|`, `$`, backtick, `(`, `)`, `<`, `>`, `\n`, `\r`). Git branch names cannot contain these anyway, so this catches programming errors.
-- Combined `stdout + stderr` in the output field — git push writes progress and ref-update info to stderr by default.
-- NOT parallel-safe — concurrent `git push` to the same branch will fail with lock contention. Excluded from `PARALLEL_SAFE`.
-
----
-
-### `pull` — Pull Recent Commits from the Remote
-
-**Purpose:** Fetch and merge recent commits from a git remote (default `origin`) into the current branch (or a specified branch) via `git pull`. This is a **local subprocess operation**, NOT a GitHub API call — it does NOT require `GITHUB_TOKEN`. It's the remote-sync counterpart to `push`: the standard PR workflow is **`pull` before branching** (ensure the new branch is based on the latest remote state) → **`push` after committing** (publish the branch so a PR can be opened). It lives in `github_ops` (NOT `git_ops`) for the same reason as `push` — together they cover the remote-sync half of the workflow and grouping them with the PR actions keeps the full remote workflow discoverable via `github(action=...)`.
-
-[v1.3] Added specifically for autocode integration — `AUTOCODE_PULL_BEFORE_BRANCH=1` causes `workflows/autocode_impl/nodes/branch.py` to call `github(action="pull")` before creating a feature branch.
-
-**Required params:** none (defaults to `git pull origin` — fetches + merges into the current branch)
-
-**Optional params:** `branch` (default `""` — empty means current branch; pass an explicit name to pull a specific branch), `remote` (default `"origin"`)
-
-**Example:**
+### `issue_list`
 ```python
-github(action="pull")                                   # git pull origin (current branch)
-github(action="pull", branch="main")                    # git pull origin main
-github(action="pull", branch="main", remote="upstream") # git pull upstream main
+github(action="issue_list", state="open", labels="bug", limit=30, page=1)
 ```
+→ `{count, issues: [{number, title, state, url, labels, assignee}], page, has_next, next_page}`.
 
-**Return format (success — explicit branch):**
-```json
-{
-  "status": "success",
-  "data": {
-    "status": "ok",
-    "branch": "main",
-    "remote": "origin",
-    "pulled": true,
-    "output": "From github.com:owner/repo\n   abc1234..def5678  main -> origin/main\nUpdating abc1234..def5678\nFast-forward\n"
-  },
-  "error": null,
-  "duration_ms": 1843
-}
-```
-
-**Return format (success — current branch, empty `branch` param):**
-```json
-{
-  "status": "success",
-  "data": {
-    "status": "ok",
-    "branch": "(current)",
-    "remote": "origin",
-    "pulled": true,
-    "output": "Already up to date."
-  },
-  "error": null,
-  "duration_ms": 412
-}
-```
-
-> **Note:** when `branch` is empty, the `data.branch` field is the sentinel string `"(current)"` (not empty) so callers can distinguish "pulled the current branch" from "missing branch param". The underlying `git pull` command is `git pull origin` (no branch arg) — git's behavior is to fetch + merge into the current branch's tracking ref.
-
-**Return format (non-zero exit — e.g. local changes would be overwritten):**
-```json
-{
-  "status": "error",
-  "data": null,
-  "error": "git pull failed (exit 1): error: Your local changes to the following files would be overwritten by merge:\n\tsrc/foo.py\n...",
-  "branch": "main",
-  "remote": "origin",
-  "exit_code": 1,
-  "output": "error: Your local changes to the following files would be overwritten by merge:\n\tsrc/foo.py\n...",
-  "duration_ms": 612
-}
-```
-
-**Notes:**
-- Uses `subprocess.run(["git", "pull", remote, [branch]])` — **list form, NOT `shell=True`** for safety (same as `push`).
-- Empty `branch` is the recommended default for "pull into the current branch" — git's behavior matches the caller's intent and the response surfaces `branch: "(current)"` for clarity.
-- 120-second subprocess timeout. On timeout → `fail(f"git pull timed out after 120s (branch=..., remote=...)")`.
-- `FileNotFoundError` (git not installed) → `fail("git executable not found — install git and ensure it is on PATH")`.
-- Defense-in-depth: rejects branch/remote names containing shell metacharacters (`;`, `&`, `|`, `$`, backtick, `(`, `)`, `<`, `>`, `\n`, `\r`) — same check as `push`. Git branch names cannot contain these anyway, so this catches programming errors.
-- Combined `stdout + stderr` in the output field — git pull writes progress and merge info to stderr by default.
-- No `force` param — force-push semantics don't apply to pull. Conflict resolution is left to git's default (merge); a conflicting pull returns non-zero exit → `fail(f"git pull failed (exit {code}): {output}")` with the stderr text. Callers who want to rebase instead of merge should run `git pull --rebase` via `cli` or a direct subprocess — the github tool intentionally exposes only the plain-merge shape.
-- NOT parallel-safe — concurrent `git pull` on the same repo will race on `.git/index.lock`. Excluded from `PARALLEL_SAFE`; included in `_NOT_PARALLEL_SAFE = frozenset({"push", "pull"})`.
-- **`pull` vs `push` symmetry:** both are local subprocess actions, both live in `github_ops/` (NOT `git_ops/`), both reject shell metacharacters in `branch`/`remote`, both use a 120s timeout, both combine stdout+stderr in `output`. The only differences: `push` requires `branch` and supports `force` (→ `--force-with-lease`); `pull` makes `branch` optional (empty = current branch) and has no `force` param.
-
----
-
-### `issue_list` — List Issues
-
-**Purpose:** Fetch a list of issues on the configured repo, filtered by state and (optionally) labels. Supports pagination via the `page` param for repos with more than 100 issues.
-
-**Required params:** none
-
-**Optional params:** `state` (default `"open"` — pass `""`, `"open"`, `"closed"`, or `"all"`; empty defaults to `"open"`), `labels` (comma-separated label names — only issues with ALL of these labels are returned), `limit` (default `30`, capped at 100), `page` (default `1` — for pagination beyond 100 items)
-
-**Example:**
-```python
-github(action="issue_list")
-github(action="issue_list", state="closed", limit=10)
-github(action="issue_list", labels="bug,priority", page=2)
-```
-
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "count": 2,
-    "issues": [
-      {
-        "number": 42,
-        "title": "Search returns 500 on empty query",
-        "state": "open",
-        "url": "https://github.com/owner/repo/issues/42",
-        "labels": ["bug", "priority"],
-        "assignee": "octocat"
-      },
-      {
-        "number": 41,
-        "title": "Add dark mode toggle",
-        "state": "open",
-        "url": "https://github.com/owner/repo/issues/41",
-        "labels": ["enhancement"],
-        "assignee": ""
-      }
-    ],
-    "page": 1,
-    "has_next": false,
-    "next_page": null
-  },
-  "error": null,
-  "duration_ms": 388
-}
-```
-
-**Notes:**
-- Calls `GET /repos/{owner}/{repo}/issues?state=...&per_page=...&page=...&labels=...&sort=created&direction=desc`.
-- The GitHub API caps `per_page` at 100. `issue_list` computes `per_page = min(limit, 100)` and slices `items[:limit]` after extraction.
-- GitHub's `/issues` endpoint includes PRs (PRs are issues) — but with `labels` filtering and the default `state=open` filter, the result set is typically issues-only in practice. If you need to exclude PRs, filter client-side by checking the absence of a `pull_request` field on each item.
-- Invalid `state` values are rejected before any API call: `fail(f"state must be one of 'open', 'closed', 'all' — got {state!r}")`.
-- **Pagination (v1.2):** the `Link` response header is parsed by `parse_link_header()` (in `client.py`) and surfaced as `has_next` (bool) + `next_page` (int or `None`). If `has_next` is `True`, call again with `page=next_page` to fetch the next page.
-
----
-
-### `issue_get` — Get a Single Issue
-
-**Purpose:** Fetch detailed info for a single issue — useful for inspecting the body, labels, assignee, and timestamps before commenting or updating.
-
-**Required params:** `number`
-
-**Optional params:** none
-
-**Example:**
+### `issue_get`
 ```python
 github(action="issue_get", number=42)
 ```
+→ `{number, title, state, body, url, labels, assignee, user, created_at, updated_at, closed_at}`.
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "number": 42,
-    "title": "Search returns 500 on empty query",
-    "state": "open",
-    "body": "Steps to reproduce: ...",
-    "url": "https://github.com/owner/repo/issues/42",
-    "labels": ["bug", "priority"],
-    "assignee": "octocat",
-    "user": "alice",
-    "created_at": "2026-07-08T10:11:12Z",
-    "updated_at": "2026-07-10T08:15:42Z",
-    "closed_at": null
-  },
-  "error": null,
-  "duration_ms": 244
-}
-```
-
-**Notes:**
-- Calls `GET /repos/{owner}/{repo}/issues/{number}`.
-- 404 → `fail(f"Issue #{issue_number} not found", status=404)`.
-- `number` is coerced to int — numeric strings like `"42"` are accepted.
-- `closed_at` is `null` for open issues (GitHub returns the timestamp only when the issue is closed).
-- PRs are issues in GitHub's data model — calling `issue_get` with a PR number returns the PR's "issue view" (no `mergeable` / `head` / `base` fields). Use `pr_get` for PR-specific details.
-
----
-
-### `issue_update` — Update an Issue (close / reopen / edit, unified)
-
-**Purpose:** Update an issue's state (close/reopen) and/or its fields (title, body, labels, assignees) in a single PATCH call. This action **unifies** the roadmap's planned `issue_close` + `issue_reopen` split — one endpoint, one action, one `state` param.
-
-**Required params:** `number` AND at least one of: `state`, `title`, `body`, `labels`, `assignees`
-
-**Optional params:** `state` (`"open"` / `"closed"` / `""`), `title`, `body`, `labels` (comma-separated), `assignees` (comma-separated)
-
-**Example:**
+### `issue_update`
 ```python
-# Close an issue
-github(action="issue_update", number=42, state="closed")
-
-# Reopen with a new title
-github(action="issue_update", number=42, state="open", title="Reopened with new info")
-
-# Edit only the labels (state unchanged)
-github(action="issue_update", number=7, labels="bug,priority")
-
-# Reassign
-github(action="issue_update", number=7, assignees="alice,bob")
+github(action="issue_update", number=42, state="closed")                      # close
+github(action="issue_update", number=42, state="open", title="Reopened")      # reopen + retitile
+github(action="issue_update", number=42, labels="duplicate")                  # re-label only
 ```
+→ `{number, title, state, url}`. Unified close/reopen/edit. `state=""` = don't change. At least one field required.
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "number": 42,
-    "title": "Reopened with new info",
-    "state": "open",
-    "url": "https://github.com/owner/repo/issues/42"
-  },
-  "error": null,
-  "duration_ms": 514
-}
-```
-
-**Notes:**
-- Calls `PATCH /repos/{owner}/{repo}/issues/{number}`.
-- **`state=""` = don't change (v1.2 design):** the facade defaults `state` to `""`. When `state` is empty, it is **omitted** from the PATCH payload — GitHub leaves the current state untouched. Pass `"open"` to reopen, `"closed"` to close. This is what enables the unified close/reopen/edit design: a single action handles all three use cases without needing a separate "no-op" sentinel.
-- The same "omit-if-empty" rule applies to `title`, `body`, `labels`, `assignees` — only fields you explicitly set are included in the PATCH.
-- `labels` and `assignees` are comma-separated strings, split + trimmed client-side before being sent as JSON arrays. They REPLACE the existing labels/assignees (not append). To append, call `issue_get` first, merge, then `issue_update`.
-- Invalid `state` values (anything other than `""`, `"open"`, `"closed"`) → `fail(f"state must be 'open' or 'closed' — got {state!r}")`.
-- If NO field is provided (everything empty), → `fail("At least one of state, title, body, labels, assignees must be provided")` — guard against no-op PATCHes.
-- 404 → `fail(f"Issue #{issue_number} not found", status=404)`.
-
----
-
-### `release_get` — Get a Single Release
-
-**Purpose:** Fetch detailed info for a single release — by tag name (preferred) or by numeric release ID. Tag-based lookup is the default since you usually know the tag from `release_list` or `git tag`.
-
-**Required params:** `tag` (tag name) OR `number` (numeric release ID). `tag` takes priority if both are provided.
-
-**Optional params:** none
-
-**Example:**
+### `issue_comment`
 ```python
-# By tag (preferred — user-friendly)
-github(action="release_get", tag="v1.2.0")
-
-# By numeric release ID (use when you have it from release_list)
-github(action="release_get", number=12345)
+github(action="issue_comment", number=42, body="Fixed in PR #43")
 ```
+→ `{id, url, body, created_at}`. Shared endpoint for issues + PRs.
 
-**Return format:**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": 12345,
-    "tag": "v1.2.0",
-    "name": "v1.2.0 — Issue / Release reads + pagination",
-    "url": "https://github.com/owner/repo/releases/tag/v1.2.0",
-    "draft": false,
-    "prerelease": false,
-    "created_at": "2026-07-10T10:00:00Z",
-    "published_at": "2026-07-10T11:00:00Z",
-    "body": "## Changes\n- 3 new actions: issue_get, issue_update, release_get\n- Pagination on pr_list + issue_list\n- mergeable + mergeable_state in pr_get",
-    "assets": [
-      {
-        "name": "agent-1.2.0.tar.gz",
-        "url": "https://github.com/owner/repo/releases/download/v1.2.0/agent-1.2.0.tar.gz",
-        "size": 1048576,
-        "download_count": 42
-      }
-    ]
-  },
-  "error": null,
-  "duration_ms": 311
-}
+### `release_create`
+```python
+github(action="release_create", tag="v1.0.0", title="Release 1.0", body="...", prerelease=False)
 ```
+→ `{id, tag, name, url, draft, prerelease, created_at}`.
 
-**Notes:**
-- Calls `GET /repos/{owner}/{repo}/releases/tags/{tag}` when `tag` is provided (preferred), OR `GET /repos/{owner}/{repo}/releases/{id}` when only `number` is provided.
-- 404 → `fail(f"Release {label} not found", status=404)` where `label` is `f"tag {tag!r}"` or `f"ID {number!r}"` depending on which lookup was attempted.
-- `tag` takes priority — if both `tag` and `number` are provided, the tag-based URL is used and `number` is ignored.
-- If neither `tag` nor `number` is provided → `fail("tag or number is required for release_get")`.
-- `number` is coerced to int — numeric strings like `"12345"` are accepted.
-- `assets` is a list of `{name, url, size, download_count}` dicts. `size` is in bytes. `url` is the `browser_download_url` (direct download link). Empty releases return `assets: []`.
-- `created_at` and `published_at` are empty strings for draft releases (not yet published).
-
----
-
-## ❗ Error Handling
-
-All errors return a standardized `fail()` dict:
-
-```json
-{
-  "status": "error",
-  "data": null,
-  "error": "Descriptive message",
-  "trace_id": "abc123"
-}
+### `release_list`
+```python
+github(action="release_list", limit=30, page=1)
 ```
+→ `{count, releases: [{id, tag, name, url, draft, prerelease, published_at}], page, has_next, next_page}`. v1.3.1: pagination added.
 
-| Error | Trigger | Includes |
+### `release_get`
+```python
+github(action="release_get", tag="v1.0.0")           # by tag (preferred)
+github(action="release_get", number=12345)            # by numeric ID
+```
+→ `{id, tag, name, url, draft, prerelease, created_at, published_at, body, assets: [{name, url, size, download_count}]}`. `tag` takes priority over `number`.
+
+### `push`
+```python
+github(action="push", branch="fix/timeout")                                  # git push origin fix/timeout
+github(action="push", branch="feat/rebase", force=True)                      # --force-with-lease
+```
+→ `{status: "ok", branch, remote, pushed: true, output, forced}`. LOCAL subprocess (no GITHUB_TOKEN). `force=True` → `--force-with-lease` (safer than `--force`). NOT parallel-safe. 120s timeout.
+
+### `pull`
+```python
+github(action="pull")                                                        # git pull origin (current branch)
+github(action="pull", branch="main")                                         # git pull origin main
+```
+→ `{status: "ok", branch, remote, pulled: true, output}`. LOCAL subprocess. NOT parallel-safe. 120s timeout.
+
+## Error Handling
+
+All errors return `fail(error, status=..., trace_id=...)`:
+- `result["status"] == "error"` → validation error (bad param, not configured)
+- `result["status"] == <int>` → GitHub API HTTP error (404, 405, 422, 500, etc.)
+- `result["error"]` → human-readable message
+- `result["trace_id"]` → trace ID
+
+| Error | Trigger | `status` |
 |-------|---------|----------|
-| `action is required` | Empty `action` param | — |
-| `Unknown action '<x>'. Use: {sorted valid actions}` | Action not in DISPATCH | — |
-| `GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env` | API action called with empty token/owner/repo | — |
-| `<param> is required for <action>` | Missing required param (validated client-side) | — |
-| `state must be one of 'open', 'closed', 'all'` | Invalid `state` on `pr_list` / `issue_list` | — |
-| `state must be 'open' or 'closed'` | Invalid `state` on `issue_update` (only `"open"`/`"closed"`/`""` allowed; `""` = don't change) | — |
-| `event must be one of ('APPROVE', 'REQUEST_CHANGES', 'COMMENT')` | Invalid `event` on `pr_review` | — |
-| `merge_method must be one of ('merge', 'squash', 'rebase')` | Invalid `merge_method` on `pr_merge` | — |
-| `path and line must be provided together for line-level comments` | XOR violation on `pr_comment` | — |
-| `At least one of state, title, body, labels, assignees must be provided` | No-op PATCH on `issue_update` | — |
-| `tag or number is required for release_get` | Neither `tag` nor `number` provided on `release_get` | — |
-| `PR #{number} not found` | HTTP 404 on `pr_get` / `pr_review` / `pr_merge` / `pr_comment` | `status: 404` |
-| `Issue #{number} not found` | HTTP 404 on `issue_get` / `issue_update` | `status: 404` |
-| `Release {tag-or-ID} not found` | HTTP 404 on `release_get` | `status: 404` |
-| `PR #{number} is not mergeable (conflict, blocked, or required checks not satisfied)` | HTTP 405 on `pr_merge` | `status: 405` |
-| `PR #{number} head commit is not up to date — rebase and push again` | HTTP 409 on `pr_merge` | `status: 409` |
-| `GitHub API error {status_code}: {message}` | HTTP 4xx/5xx on any API action | `status: <code>` |
-| `<action> request failed: {exception}` | httpx exception (network/transport) | — |
-| `<action> returned non-JSON response: {exception}` | `resp.json()` raises | — |
-| `git push timed out after 120s (branch=..., remote=...)` | `subprocess.TimeoutExpired` | `branch`, `remote` |
-| `git executable not found — install git and ensure it is on PATH` | `FileNotFoundError` from `subprocess.run` | `branch`, `remote` |
-| `git push failed (exit {code}): {output}` | Non-zero exit code from `git push` | `branch`, `remote`, `exit_code`, `output` |
-| `git pull timed out after 120s (branch=..., remote=...)` | `subprocess.TimeoutExpired` on `git pull` | `branch`, `remote` |
-| `git executable not found — install git and ensure it is on PATH` | `FileNotFoundError` from `subprocess.run` on `pull` | `branch`, `remote` |
-| `git pull failed (exit {code}): {output}` | Non-zero exit code from `git pull` (e.g. local changes would be overwritten) | `branch`, `remote`, `exit_code`, `output` |
-| `branch/remote contains forbidden character {char!r}` | Shell-metacharacter rejection on `push` or `pull` | `branch` or `remote` (whichever failed) |
-| `remote cannot be empty (default is 'origin')` | Empty `remote` on `push` or `pull` | `branch`, `remote` |
-| `GitHub action failed: {exception}` | Unhandled exception in handler | — |
+| `action is required` | empty `action` | `"error"` |
+| `Unknown action '<x>'. Use: ...` | action not in DISPATCH | `"error"` |
+| `<param> is required for <action>` | missing required param | `"error"` |
+| `GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env` | `is_configured()` False | `"error"` |
+| `GitHub API error <code>: <msg>` | GitHub returned ≥400 | `<code>` (int) |
+| `PR #<n> not found` | 404 on pr_get/review/merge/comment | `404` |
+| `PR #<n> is not mergeable` | 405 on pr_merge | `405` |
+| `PR #<n> head commit is not up to date` | 409 on pr_merge | `409` |
+| `git push failed (exit <n>): <output>` | subprocess non-zero exit | `"error"` |
+| `git push timed out after 120s` | subprocess timeout | `"error"` |
+| `GitHub action failed: <exception>` | unhandled handler exception | `"error"` |
 
-**Status code semantics:** `fail()` accepts a `status` kwarg that overrides the default `"error"` string. The github actions pass HTTP status codes (404, 405, 409, etc.) as `status` — callers can inspect `result["status"]` to distinguish "not found" (404) from "not mergeable" (405) from "stale head" (409) from a generic client error (4xx int).
+Per-provider error isolation: N/A (single API). Network errors and JSON-parse errors are distinguished by message prefix (`"request failed:"` vs `"returned non-JSON response:"`).
+
+## Security
+
+- **Auth:** `GITHUB_TOKEN` read from env via `cfg.github_token`, embedded in `Authorization: Bearer ...` header at httpx.Client construction. Never logged or returned in results.
+- **No SSRF surface:** API base URL hardcoded to `https://api.github.com` (no user-supplied URLs). GHE support (`GITHUB_API_BASE` env override) is a Phase 4+ roadmap item.
+- **Subprocess safety:** `push`/`pull` use `subprocess.run(["git", ...], ...)` with list args (NOT `shell=True`). Branch/remote names validated against shell metacharacters (`; & | $ \` ( ) < > \n \r`) as defense-in-depth.
+- **`--force-with-lease`** (not bare `--force`): refuses to overwrite remote refs that moved since last fetch.
+- **No filesystem writes** except via `git push`/`git pull` (which modify the local `.git` directory).
 
 ---
 
-## 🔒 Security
-
-**No filesystem operations outside `git push` / `git pull`.** The github tool does NOT write to or read from the local filesystem. The only filesystem-affecting operations are `push` and `pull` — and those are `git push` / `git pull`, which only update refs (push) or fetch+merge refs (pull) in the local `.git` directory. No local working-tree writes from the github tool.
-
-**No path_guard needed.** The `path` param on `pr_comment` is a GitHub file path (relative to repo root), not a local filesystem path — it's sent to the GitHub API as-is. No local file is opened.
-
-**No SSRF surface.** All outbound calls go to `https://api.github.com` (hardcoded in `tools/github_ops/client.py`). The base URL is NOT configurable via env (see CHANGELOG.md roadmap for GHE support). No user-supplied URLs are passed to httpx. The `push` / `pull` actions invoke `git push` / `git pull` on whatever remote is configured in the local repo (default `origin`) — no URL is constructed by the github tool.
-
-**Token handling.** `GITHUB_TOKEN` is read once at httpx.Client construction time (in `get_client()`) and embedded in the `Authorization: Bearer ...` header. The token is never logged, never returned in any result dict, never passed to subprocess (`push` and `pull` use the repo's git remote config, not the token). Restart the agent (or call `close_client()`) after rotating the token.
-
-**Subprocess safety (`push` + `pull`).** `git push` / `git pull` are invoked with a list arg (`["git", "push", ..., remote, branch]` / `["git", "pull", remote, [branch]]`), NOT `shell=True`. Branch and remote names are validated against shell metacharacters as defense-in-depth — git branch names cannot contain these anyway, so this catches programming errors rather than security issues.
-
-**`--force-with-lease` (not `--force`) — `push` only.** When `force=True`, push uses `--force-with-lease`, which checks the remote ref against the local tracking ref before overwriting. If the remote has been updated since the last fetch (e.g. a teammate pushed), the push is rejected. This prevents accidental history destruction. Use `force=True` only when you intend to rewrite remote branch history (e.g. after a rebase). **`pull` has no `force` param** — force semantics don't apply to pull.
-
-**API response data is untrusted.** JSON returned from GitHub API calls (PR titles, bodies, comments, user logins) is treated as untrusted and returned to the caller as-is. Callers are responsible for any downstream rendering safety. The github tool itself does NOT `eval()`, `exec()`, or `subprocess.run()` GitHub response data.
-
-**Rate limiting.** GitHub API rate limits are 5000 req/hour for authenticated users. The github tool does NOT track or enforce client-side rate limits — GitHub will return HTTP 403 with a rate-limit error message, which surfaces as `fail("GitHub API error 403: ...")`. Per-action rate limit tracking is a roadmap item (see CHANGELOG.md).
-
-**`PARALLEL_SAFE` — API actions only.** The 14 API actions are stateless HTTP calls (safe to parallelize in `parallel()`). `push` and `pull` are both subprocesses and are NOT parallel-safe — concurrent pushes/pulls to the same repo will race on `.git/index.lock`. The github facade declares `_NOT_PARALLEL_SAFE = frozenset({"push", "pull"})` (v1.3 — `pull` added) and both are excluded from `PARALLEL_SAFE` in `core/parallel_executor.py`.
-
----
-
-*Last updated: 2026-07-10 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
