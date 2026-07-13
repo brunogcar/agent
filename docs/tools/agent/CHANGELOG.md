@@ -6,76 +6,57 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-
-*(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
-
----
-
-## 📝 Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v2.0 | 2026-07-12 | **Multi-turn ReAct loop.** When `tools` param provided, subagent enters bounded loop: LLM returns JSON with `thought` + `tool_call` or `final_answer`. Tool allowlist (file, git, web, memory, python eval-only). `python(mode='run')` blocked. 3 consecutive tool failures → bail. Max turns cap (default 5, configurable). Tool results capped at 4000 chars. Context fencing in system prompt. `_REACT_SCHEMA` enforced via `json_schema`. 6 new multi-turn tests (16 total). |
-| v1.6 | 2026-07-12 | **[Hardening] Cross-LLM review fixes.** `str(result.error)` safety (was crashing on Exception objects). `try/except` around `llm.complete()` with error classification (TIMEOUT/CIRCUIT_OPEN/RATE_LIMIT). Stronger default system prompt (JSON output + context fencing). Metrics recording for all paths. `parsed` field preserved through `compress_result`. `inspect.signature()` cached at registration time in `_registry.py` (was: on every call). |
-| v1.5 | 2026-07-12 | **Subagent dispatch adopted by callers.** `action="subagent"` (registered in `actions/subagent.py`) is now consumed by autoresearch's `propose` node (v1.1) and autocode's `node_systematic_debug` via `AUTOCODE_SUBAGENT_DEBUG=1` (v2.0.2). Subagent gets isolated curated context — no session history (superpowers pattern: "you construct exactly what they need"). Was previously a future/deferred item; single-dispatch path now in use. Parallel multi-subagent dispatch (one per hypothesis) still future. |
-| v1.4 | 2026-07-08 | **JSON schema enforcement:** Added `json_schema` to ROLE_CONFIG for 6 JSON-returning roles (code, route, plan, review, refactor, test). `dispatch.py` reads `json_schema` from role config and passes to `llm.complete()`. LM Studio enforces schema at generation time via outlines. Defensive JSON parsing stays as fallback. |
-| v1.3 | 2026-07-05 | Bugfix batch: escalation uses planner prompt (#7), `escalated_from` tracking (#8), content budget 70% of remaining (#9), fallback re-trims context (#11), role sets module-level (#12), vision_delegate forwards context (#13), llm_role validation at import — warning only, not error (#18), cache limits configurable (#19), metrics JSONL persistence (#20), cache key includes model (#23), metrics aggregation (#24), parse_warnings severity (#25), `unregister_action` added (#27), `_trim_context` head truncation fix (#21). Note: Bug #10 (classify/consultor fallback mismatch) was NOT fixed — fallbacks are intentional escalation paths per maintainer design decision. |
-| v0.1 | 2024-01-15 | Initial monolithic agent tool (~420 lines) |
-| v0.2 | 2024-02-01 | Added response cache and metrics |
-| v0.3 | 2024-02-15 | Added sleep-learn injection |
-| v0.4 | 2024-03-01 | Added vision_delegate action |
-| v0.5 | 2024-03-15 | Added token-aware context trimming |
-| v1.0 | 2024-04-01 | `@meta_tool` refactor -- actions/ + roles/ directories, auto-discovery |
-| v1.1 | 2024-04-15 | Hardening pass: `**kwargs` removal, vision guard, dynamic sleep-learn config, `budget_chars` `or` trap fix, traceback scoping, char multiplier tightening, metrics `.copy()`, test budget fix, `sleep_learn` per-role flags |
-| v1.2 | 2024-05-01 | Added 3 autonomous maintenance roles: `refactor`, `test`, `document`. Timeout single source of truth. Escalation response completeness. Cache key includes temperature/max_tokens. Consultor guard. Scaled context trimming for large budgets. |
+| v2.0.1 | 2026-07-13 | **Cross-LLM review hardening.** P1: `python` removed from subagent allowlist (eval is RCE — `__import__('os').system(...)`). P2: `tool_args` dict validation, `max_turns>=1` validation, tool schema in prompt (from `__tool_metadata__`), tool results fenced + injection warning repeated, history cap (6000 chars). P3: AGENT.md Quick Start fixed (`action="dispatch"` added, `role="vision"` → `action="vision_delegate"`). |
+| v2.0 | 2026-07-12 | **Multi-turn ReAct loop.** `tools` param → bounded loop: LLM returns JSON with `thought` + `tool_call` or `final_answer`. Tool allowlist (file, git, web, memory, python eval-only). `python(mode='run')` blocked. 3 consecutive tool failures → bail. Max turns cap (default 5). Tool results capped at 4000 chars. `_REACT_SCHEMA` enforced. 6 new multi-turn tests (16 total). |
+| v1.6 | 2026-07-12 | **[Hardening] Cross-LLM review fixes.** `str(result.error)` safety. `try/except` around `llm.complete()` with error classification (TIMEOUT/CIRCUIT_OPEN/RATE_LIMIT). Stronger default system prompt (JSON output + context fencing). Metrics on all paths. `parsed` preserved through `compress_result`. `inspect.signature()` cached at registration. |
+| v1.5 | 2026-07-12 | **Subagent adopted by callers.** Autoresearch `propose` node + autocode `node_systematic_debug` (`AUTOCODE_SUBAGENT_DEBUG=1`) now use `action="subagent"`. Parallel multi-subagent dispatch deferred. |
+| v1.4 | 2026-07-08 | **JSON schema enforcement.** `json_schema` added to ROLE_CONFIG for 6 JSON-returning roles (code, route, plan, review, refactor, test). LM Studio enforces at generation time via outlines. |
+| v1.3 | 2026-07-05 | **Bugfix batch** (#7-#9, #11-#13, #18-#21, #23-#25, #27): escalation uses planner prompt, `escalated_from` tracking, content budget 70% of remaining, fallback re-trims context, role sets module-level, vision_delegate forwards context, cache limits configurable, metrics JSONL persistence, cache key includes model, `unregister_action` added, `_trim_context` head truncation fix. |
+| v1.2 | 2024-05-01 | 3 autonomous maintenance roles (refactor, test, document). Timeout single source of truth. Escalation response completeness. Cache key includes temperature/max_tokens. Consultor guard. Scaled context trimming. |
+| v1.1 | 2024-04-15 | Hardening pass: `**kwargs` removal, vision guard, dynamic sleep-learn config, `budget_chars` `or` trap fix, traceback scoping, char multiplier tightening (5→3), metrics `.copy()`, `sleep_learn` per-role flags. |
+| v1.0 | 2024-04-01 | `@meta_tool` refactor — `actions/` + `roles/` directories, auto-discovery. Replaces monolithic Phase 7 agent. |
+| v0.5 | 2024-03-15 | Token-aware context trimming (tiktoken + chars/4 fallback). |
+| v0.4 | 2024-03-01 | `vision_delegate` action (delegates to `tools/vision.py`). |
+| v0.3 | 2024-02-15 | Sleep-learn injection (auto-injected for high-latency roles). |
+| v0.2 | 2024-02-01 | Response cache (SHA256 key, 5-min TTL, 100-entry LRU) + metrics. |
+| v0.1 | 2024-01-15 | Initial monolithic agent tool (~420 lines). |
 
 ---
 
 ## ⚠️ Breaking Changes
 
+### v2.0.1
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| `python` removed from `_ALLOWED_SUBAGENT_TOOLS` | Subagent multi-turn can no longer call `python(mode='eval')`. Was a security hole — `eval('__import__("os").system(...)')` is RCE. | If a subagent workflow relied on `python` in `tools=`, remove it. Use `autocode` workflow for code execution (has git scoping + rollback). |
+| `max_turns=0` or negative now returns `INVALID_INPUT` error | Was a silent no-op (loop never ran, returned `max_turns` status with 0 turns). | Use `max_turns >= 1` (default is 5). |
+
+### v2.0
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| `tools` param on subagent triggers multi-turn ReAct loop | Subagent with `tools` now iterates (was single-turn). | Additive — omit `tools` for single-turn behavior. |
+| `_REACT_SCHEMA` enforced during multi-turn | LLM must return `{thought, tool_call?, final_answer?}` JSON. | Additive — only affects multi-turn mode. |
+
 ### v1.3
 
 | Change | Impact | Migration |
 |--------|--------|-----------|
-| Escalation now uses planner's system prompt instead of original role's | Escalation produces better JSON (planner prompt is designed for structured output). Callers that inspected the `system` parameter of escalation calls will see a different value. | No migration — escalation is internal and transparent to callers. |
-| `escalated_from` field added to escalated responses | New field `{"role": "...", "model": "..."}` tracks the origin model. Existing callers that check `escalated` still work. | Optional — callers can now use `escalated_from` for debugging, but it doesn't break existing code. |
-| Content budget changed from `min(1000, remaining)` to `70% of remaining` | Large content (code files) is no longer silently truncated to ~1000 tokens. Roles like `code`, `refactor`, `test`, `document` now receive larger context. | No migration — strictly better behavior. Callers that depended on truncation will see more content. |
-| Fallback now re-trims context for fallback role's budget | Fallback calls no longer receive oversized context. | No migration — strictly better behavior. |
-| Cache key now includes model name | Swapping models invalidates stale cache entries. | No migration — strictly better behavior. Existing cache entries from before the fix will miss on first call after upgrade, then populate normally. |
-| Cache limits now read from `cfg.agent_cache_max` / `cfg.agent_cache_ttl_seconds` | Defaults unchanged (100 entries, 300s TTL). New env vars: `AGENT_CACHE_MAX`, `AGENT_CACHE_TTL_SECONDS`. | Optional — add env vars to `.env` to customize. Defaults match old behavior. |
-| Metrics now persisted to `.agent_metrics.jsonl` | Metrics survive restart. New env var: `AGENT_METRICS_PERSIST=0` to disable. | Optional — set `AGENT_METRICS_PERSIST=0` to disable. File is append-only, best-effort. |
-| `unregister_action()` added to `_registry` | New public function for hot-reload/testing. | No migration — additive. |
-| `_trim_context` head truncation searches 200-char window instead of full head | Head preservation is tighter — less context discarded between last `\n\n` and boundary. | No migration — strictly better behavior. |
-| `llm_role` validated against `cfg.model_registry` at import time (warning only) | Typos like `"cod"` instead of `"code"` now emit a stderr warning at import. Opt-in roles (consultor when `CONSULTOR_MODEL` is unset) are not flagged as errors — they're expected to be absent. | No migration — warning only, does not break startup. |
+| Escalation uses planner's system prompt | Escalation produces better JSON. | Internal — transparent to callers. |
+| `escalated_from` field added to escalated responses | New field `{role, model}`. | Optional — existing callers unaffected. |
+| Content budget: `min(1000, remaining)` → `70% of remaining` | Large content no longer truncated to ~1000 tokens. | Strictly better — more context for code/refactor/test/document. |
+| Fallback re-trims context for fallback role's budget | Fallback calls no longer receive oversized context. | Strictly better. |
+| Cache key includes model name | Swapping models invalidates stale cache. | Strictly better. |
+| Cache limits from `cfg.agent_cache_max` / `cfg.agent_cache_ttl_seconds` | New env vars: `AGENT_CACHE_MAX`, `AGENT_CACHE_TTL_SECONDS`. | Optional — defaults match old behavior. |
+| Metrics persisted to `.agent_metrics.jsonl` | Metrics survive restart. New env var: `AGENT_METRICS_PERSIST=0` to disable. | Optional — file is append-only, best-effort. |
 
 ### v1.0
 
 | Old | New | Migration |
 |-----|-----|-----------|
-| Monolithic `tools/agent.py` (~420 lines) | Atomic `actions/` + `roles/` directories + thin facade | No migration needed -- same API |
-| Manual `if action == "search": ... elif ...` dispatch in facade | `@register_action` auto-discovery + `@meta_tool` | No migration needed -- same API |
-
-### v1.1
-
-| Old | New | Migration |
-|-----|-----|-----------|
-| `run_dispatch(**kwargs)` | Explicit parameter list | No migration -- internal fix |
-| `budget_chars` `or` default | `is None` check for `0`/`False` | No migration -- internal fix |
-| `char_budget = budget * 5` | `char_budget = budget * 3` | No migration -- internal fix |
-| Hardcoded `_json_roles` / `_sleep_learn_roles` sets | Runtime-derived from `ROLE_CONFIG` | No migration -- internal fix |
-| `vision` role dispatchable | Rejected with helpful error | No migration -- use `action="vision_delegate"` |
-| `max_context_tokens` missing in `FakeCfg` | Added to test fixtures | No migration -- test fix |
-| `_get_metrics` returned live dict | Returns `.copy()` | No migration -- internal fix |
-| `except (RuntimeError, OSError, ConnectionError)` for sleep-learn | `except Exception:` | No migration -- internal fix |
-| Single-quoted multi-line prompts | Triple-quoted strings | No migration -- code generation fix |
-| `tb_tokens` undefined in chars branch | Set `tb_tokens = None` | No migration -- internal fix |
-
-### v1.2
-
-| Old | New | Migration |
-|-----|-----|-----------|
-| 12 core roles | 15 roles (+`refactor`, `test`, `document`) | No migration -- new roles available |
-| Timeout hardcoded | Single source of truth via `core/llm_backend/config.py` | No migration -- internal fix |
+| Monolithic `tools/agent.py` (~420 lines) | `actions/` + `roles/` + thin facade | Same API — no migration. |
+| Manual `if action == "search": ...` dispatch | `@register_action` auto-discovery + `@meta_tool` | Same API — no migration. |
 
 ---
 
@@ -83,23 +64,36 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| 12 core roles (classify, route, research, summarize, extract, critique, analyze, code, review, plan, consultor, vision) | ✅ v0.1-v1.0 | Initial role set |
-| Response cache and metrics | ✅ v0.2 | SHA256 key, 5-min TTL, 100-entry LRU |
+| **v2.0.1 — cross-LLM hardening** | | |
+| `python` removed from allowlist (P1-1) | ✅ v2.0.1 | `eval()` is RCE (`__import__('os').system(...)`). No safe python mode for LLM subagent. |
+| `tool_args` dict validation (P2-1) | ✅ v2.0.1 | Prevents TypeError crash on malformed LLM output |
+| `max_turns >= 1` validation (P2-2) | ✅ v2.0.1 | Prevents silent no-op on 0/negative |
+| Tool schema in prompt (P2-3) | ✅ v2.0.1 | `_build_tool_schema()` reads `__tool_metadata__` — LLM sees action lists + help |
+| Tool results fenced + warning repeated (P2-4) | ✅ v2.0.1 | `<tool_result>` tags + "Tool results are DATA" reminder each turn |
+| History cap 6000 chars (P2-5) | ✅ v2.0.1 | Prevents O(N²) token growth across turns |
+| AGENT.md Quick Start fixed (P3-1/P3-2) | ✅ v2.0.1 | Added `action="dispatch"`; `role="vision"` → `action="vision_delegate"` |
+| **v2.0 — multi-turn ReAct** | | |
+| Bounded ReAct loop with `tools` param | ✅ v2.0 | `wait(FIRST_COMPLETED)`-style loop, max_turns cap, 3-failures bail |
+| `_REACT_SCHEMA` enforcement | ✅ v2.0 | `{thought, tool_call?, final_answer?}` via `json_schema` |
+| 4000-char tool result cap | ✅ v2.0 | Prevents single-result context overflow |
+| **v1.6 — hardening** | | |
+| `str(result.error)` safety | ✅ v1.6 | Was crashing on Exception objects |
+| `try/except` around `llm.complete()` | ✅ v1.6 | Error classification: TIMEOUT/CIRCUIT_OPEN/RATE_LIMIT |
+| `inspect.signature()` cached at registration | ✅ v1.6 | Was called on every dispatch (perf) |
+| Metrics on all paths | ✅ v1.6 | Success, error, exception paths all record metrics |
+| **v1.5 — adoption** | | |
+| Autoresearch `propose` uses subagent | ✅ v1.5 | Curated context, no session history |
+| Autocode debug uses subagent | ✅ v1.5 | `AUTOCODE_SUBAGENT_DEBUG=1` |
+| **v1.4 — JSON schema** | | |
+| `json_schema` for 6 JSON-returning roles | ✅ v1.4 | code, route, plan, review, refactor, test |
+| **v1.0–v1.3 — foundation** | | |
+| `@meta_tool` refactor (actions/ + roles/) | ✅ v1.0 | Auto-discovery, dynamic config |
+| 15 roles (classify, route, research, summarize, extract, critique, analyze, code, review, plan, consultor, vision, refactor, test, document) | ✅ v0.1–v1.2 | |
+| Response cache + metrics | ✅ v0.2 | SHA256 key, 5-min TTL, 100-entry LRU |
 | Sleep-learn injection | ✅ v0.3 | Auto-injected for high-latency roles |
 | `vision_delegate` action | ✅ v0.4 | Delegates to `tools/vision.py` |
 | Token-aware context trimming | ✅ v0.5 | tiktoken + chars/4 fallback |
-| `@meta_tool` refactor -- actions/ + roles/ directories | ✅ v1.0 | Auto-discovery, dynamic config |
-| `**kwargs` removal, vision guard, dynamic sleep-learn config | ✅ v1.1 | Hardening pass |
-| `budget_chars` `or` trap fix, traceback scoping | ✅ v1.1 | Config robustness |
-| Char multiplier tightening (5->3), metrics `.copy()` | ✅ v1.1 | Trim accuracy |
-| `max_context_tokens` in `FakeCfg`, test robustness | ✅ v1.1 | Test fixes |
-| `sleep_learn` per-role flags | ✅ v1.1 | Explicit config |
-| 3 new autonomous maintenance roles: `refactor`, `test`, `document` | ✅ v1.2 | Requires `core/config.py` and `.env` and `core/llm_backend/config.py` updates |
-| Timeout single source of truth | ✅ v1.2 | `core/llm_backend/config.py` |
-| Escalation response completeness | ✅ v1.2 | |
-| Cache key includes temperature/max_tokens | ✅ v1.2 | |
-| Consultor guard | ✅ v1.2 | |
-| Scaled context trimming for large budgets | ✅ v1.2 | |
+| Bugfix batch (#7-#27) | ✅ v1.3 | Escalation, fallback, cache, metrics, trim fixes |
 
 ---
 
@@ -107,22 +101,21 @@
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| Self-improving prompts via sleep-learn feedback loop | Auto-tune system prompts based on success/failure metrics from per-role metrics | P1 |
+| Self-improving prompts via sleep-learn feedback loop | Auto-tune system prompts based on success/failure metrics | P1 |
 | `dry_run` / `estimate_cost` mode | Pre-flight cost estimation without calling LLM | P2 |
+| Role composition chaining | Chain roles in single call: `analyze` → `code` → `review` | P3 |
 | Streaming support | Partial responses for long-running roles; requires `core/llm.py` redesign | P3 |
-| Role composition chaining | Chain multiple roles in single call: `analyze` -> `code` -> `review` | P3 |
-| Parallel tool execution | Expose `core/parallel_executor.py` as a `parallel` tool for research workflows | P2 |
 
 ---
 
 ## 🚫 Deferred / Out of Scope
 
-| # | Feature | Why Deferred | Priority |
-|---|---------|------------|----------|
-| 1 | **Parallel multi-subagent dispatch** | v2.0 ships single-thread multi-turn. Parallel (one subagent per hypothesis, orchestrated) is a larger architecture change — needs thread pool + result aggregation. | P2 |
-
-> **Rule:** When adding a deferred item, include the explicit decision reason — not just "not needed." Link to the discussion or commit if available.
+| Feature | Why Deferred | Priority |
+|---------|-------------|----------|
+| Parallel multi-subagent dispatch | v2.0 ships single-thread multi-turn. Parallel (one subagent per hypothesis) needs thread pool + result aggregation. | P2 |
+| Structural prompt-injection defense | Sandboxing tool results (not just fencing + warnings) requires a sandboxed tool-result renderer. Out of scope for v2.x. | P3 |
+| `python` in subagent allowlist | v2.0.1 removed it — no safe `eval` for an LLM. If code execution is needed, use `autocode` (git scoping + rollback). | Won't fix |
 
 ---
 
-*Last updated: 2026-07-12 (v2.0 — multi-turn ReAct loop). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v2.0.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

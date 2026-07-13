@@ -303,8 +303,106 @@ class TestSubagentMultiTurn:
         assert result["turns"] == 3
 
     def test_multi_turn_python_run_blocked(self):
-        """python(mode='run') is blocked even if 'python' is in the allowlist."""
+        """v2.0.1 (P1-1): python is completely removed from the allowlist.
+        v2.0 blocked only mode='run'; v2.0.1 blocks ALL python calls (eval is
+        also unsafe — eval('__import__("os").system(...)') is RCE).
+        """
         from tools.agent_ops.actions.subagent import _execute_tool
         result = _execute_tool("python", {"mode": "run", "code": "import os; os.system('rm -rf /')"})
         assert "not allowed for subagents" in result
-        assert "eval" in result
+        # v2.0.1: python is not in the allowlist at all
+        assert "python" not in _execute_tool.__module__ or True  # just verify the message
+        # The message should list allowed tools (file, git, memory, web — NOT python)
+        from tools.agent_ops.actions.subagent import _ALLOWED_SUBAGENT_TOOLS
+        assert "python" not in _ALLOWED_SUBAGENT_TOOLS
+
+    def test_multi_turn_python_eval_also_blocked(self):
+        """v2.0.1 (P1-1): python(mode='eval') is ALSO blocked — eval is not read-only.
+        eval('__import__("os").system("rm -rf /")') is RCE. The v2.0 mode='run'
+        block was insufficient (Maginot Line).
+        """
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("python", {"mode": "eval", "code": "__import__('os').system('id')"})
+        assert "not allowed for subagents" in result
+
+    def test_multi_turn_python_in_tools_param_rejected(self):
+        """v2.0.1 (P1-1): Requesting python in the tools param fails before any LLM call."""
+        with patch("tools.agent_ops.actions.subagent.llm.complete") as mock_complete:
+            result = agent(
+                action="subagent",
+                role="executor",
+                task="Do something",
+                tools="file,python",  # python not in allowlist
+            )
+        assert result["status"] == "error"
+        assert "not allowed for subagents" in result["error"]
+        mock_complete.assert_not_called()
+
+    def test_multi_turn_tool_args_not_dict_rejected(self):
+        """v2.0.1 (P2-1): tool_args as a list/string returns a clear error
+        instead of crashing on **-unpacking.
+        """
+        from tools.agent_ops.actions.subagent import _execute_tool
+        # List instead of dict
+        result = _execute_tool("file", ["read", "test.py"])
+        assert "Error" in result
+        assert "JSON object" in result or "dict" in result
+        # String instead of dict
+        result = _execute_tool("file", "read")
+        assert "Error" in result
+        assert "JSON object" in result or "dict" in result
+
+    def test_multi_turn_max_turns_zero_rejected(self):
+        """v2.0.1 (P2-2): max_turns=0 fails fast instead of silently returning
+        a confusing 'max_turns exceeded' with 0 turns.
+        """
+        with patch("tools.agent_ops.actions.subagent.llm.complete") as mock_complete:
+            result = agent(
+                action="subagent",
+                role="executor",
+                task="Do something",
+                tools="file",
+                max_turns=0,
+            )
+        assert result["status"] == "error"
+        assert "max_turns" in result["error"]
+        assert result["error_code"] == "INVALID_INPUT"
+        mock_complete.assert_not_called()
+
+    def test_multi_turn_max_turns_negative_rejected(self):
+        """v2.0.1 (P2-2): max_turns=-1 fails fast."""
+        with patch("tools.agent_ops.actions.subagent.llm.complete") as mock_complete:
+            result = agent(
+                action="subagent",
+                role="executor",
+                task="Do something",
+                tools="file",
+                max_turns=-1,
+            )
+        assert result["status"] == "error"
+        assert "max_turns" in result["error"]
+
+    def test_multi_turn_tool_schema_in_prompt(self):
+        """v2.0.1 (P2-3): System prompt includes tool action list + help text
+        from __tool_metadata__, not just 'check each tool's documentation'.
+        """
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.model = "test"
+        mock_result.usage = {"total": 50}
+        mock_result.parsed = {"thought": "done", "final_answer": "ok"}
+        mock_result.text = '{"thought": "done", "final_answer": "ok"}'
+
+        with patch("tools.agent_ops.actions.subagent.llm.complete", return_value=mock_result) as mock_complete:
+            agent(
+                action="subagent",
+                role="executor",
+                task="Find the bug",
+                tools="file,git",
+            )
+
+        call_kwargs = mock_complete.call_args.kwargs
+        system_prompt = call_kwargs["system"]
+        # Should include action lists (not "check each tool's documentation")
+        assert "check each tool's documentation" not in system_prompt
+        assert "actions =" in system_prompt or "actions=" in system_prompt

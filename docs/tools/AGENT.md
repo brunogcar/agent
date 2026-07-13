@@ -19,19 +19,19 @@ The `agent()` tool is the **meta-cognitive dispatcher** of the MCP Agent Stack. 
 
 ```python
 # Fast classification (single word output, cached)
-result = agent(role="classify", task="Is this a bug?")
+result = agent(action="dispatch", role="classify", task="Is this a bug?")
 
 # Task routing (structured JSON, cached)
-result = agent(role="route", task="Summarize this file")
+result = agent(action="dispatch", role="route", task="Summarize this file")
 
 # Generate code patch (returns {analysis, patch, tests})
-result = agent(role="code", task="Fix the off-by-one error")
+result = agent(action="dispatch", role="code", task="Fix the off-by-one error")
 
 # Review a patch (returns {verdict, issues, corrected_patch})
-result = agent(role="review", task="Review this diff", content=diff_text)
+result = agent(action="dispatch", role="review", task="Review this diff", content=diff_text)
 
 # Vision analysis (delegates to tools/vision.py)
-result = agent(role="vision", task="Describe this image", context="/path/to/image.png")
+result = agent(action="vision_delegate", task="Describe this image", context="/path/to/image.png")
 
 # Subagent: curated-context dispatch (v1.5) — caller controls system prompt + context
 result = agent(
@@ -98,4 +98,4 @@ No dedicated `.env` variables. Uses:
 
 ---
 
-*Last updated: 2026-07-12 (v2.0 — subagent multi-turn ReAct loop). See subfiles for detailed documentation.*
+*Last updated: 2026-07-13 (v2.0.1 — subagent hardening). See subfiles for detailed documentation.*
