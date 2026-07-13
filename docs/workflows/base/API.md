@@ -7,7 +7,7 @@
 ```python
 class WorkflowState(TypedDict, total=False):
     # Identity
-    workflow: str      # "research" | "data" | "autocode" | "deep_research" | "understand"
+    workflow: str      # "research" | "data" | "autocode" | "deep_research" | "understand" | "autoresearch"
     goal: str          # What we are trying to accomplish
     trace_id: str      # Tracer ID for this run
     task: str          # [v1.2] Autocode task (same as goal; autocode uses task internally)
@@ -54,7 +54,7 @@ Evicts oversized fields from working memory to the async eviction queue:
 ```python
 def trim_state(state: WorkflowState) -> WorkflowState:
     # Returns a NEW state dict (Copy-on-Write)
-    # Evicts: search_results, output, analysis
+    # Evicts: search_results, output, analysis, memory_context
     # Threshold: len(val) // 4 > 1000 tokens (~4005 chars)
     # Replaced with: "[Evicted: N tokens saved to episodic memory. Use memory tool to recall.]"
 ```
@@ -125,11 +125,12 @@ Routes to the correct workflow graph:
 | `autocode` | `workflows.autocode_impl.graph.invoke_with_timeout()` | Converts `goal` → `task`; timeout wrapper |
 | `deep_research` | `workflows.deep_research_impl.build_deep_research_graph()` | Standard StateGraph |
 | `understand` | `workflows.understand.build_understand_graph()` | Uses `_default_state()` + standard `graph.invoke()` |
+| `autoresearch` | `workflows.autoresearch.build_autoresearch_graph()` | Uses `_default_state()` + `recursion_limit=1000` for overnight runs |
 
 **Returns:** `dict` with at minimum `{status, result, error, artifacts}`.
 
 **Error handling:**
-- Unknown workflow type → `"failed"` with clear error message listing all 5 valid types
+- Unknown workflow type → `"failed"` with clear error message listing all 6 valid types
 - Workflow crash → checkpoint saved, then `"failed"` with exception details
 - Checkpoint version mismatch → warning, starts fresh
 - Resume → preserves checkpoint's original goal (v1.2)
@@ -161,4 +162,4 @@ The dispatcher returns a `dict`:
 
 ---
 
-*Last updated: 2026-07-06 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

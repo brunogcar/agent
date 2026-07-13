@@ -16,6 +16,7 @@
 | `workflows/autocode.py` | `build_graph()` / `invoke_with_timeout()` — autocode workflow |
 | `workflows/deep_research_impl/graph.py` | `build_deep_research_graph()` — deep research workflow |
 | `workflows/understand.py` | `build_understand_graph()` / `_default_state()` — understand workflow |
+| `workflows/autoresearch.py` | `build_autoresearch_graph()` — autoresearch workflow |
 | `tests/workflows/base/` | Per-concern test files + `conftest.py` |
 
 ---
@@ -66,9 +67,9 @@ graph TD
 - **Resume preserves original goal** — [v1.2] The checkpoint's original goal is kept on resume. Was: clobbered with the new `goal` parameter, making checkpoints meaningless if the caller passed a different goal.
 - **Full state checkpoints** — [v1.2] `node_error()` saves the full workflow state (not just `{status, error}`), and `node_done()` saves a success checkpoint before `mark_complete()`. The exception handler also saves a checkpoint on crash. Resume from any of these has the complete workflow context.
 - **Autocode compatibility** — `run_workflow()` converts `goal` → `task` for the autocode workflow. This bridges the `run_workflow()` API (which uses `goal`) with autocode's internal API (which uses `task`).
-- **All workflows use `graph.invoke()`** — [v1.0] All six workflows (research, data, autocode, deep_research, understand) are sync LangGraph StateGraphs routed through `graph.invoke()`. No special-cased sync wrappers.
+- **All workflows use `graph.invoke()`** — [v1.0] All six workflows (research, data, autocode, deep_research, understand, autoresearch) are sync LangGraph StateGraphs routed through `graph.invoke()`. No special-cased sync wrappers. Autoresearch uses `recursion_limit=1000` for overnight runs.
 - **Exception isolation** — The entire dispatch is wrapped in a try/except. If any workflow crashes, a checkpoint is saved and a clean failure dict is returned. Never leaks exceptions to the caller.
-- **State trimming** — `trim_state()` evicts oversized fields (`search_results`, `output`, `analysis`) to the async eviction queue when they exceed ~1000 tokens. Prevents LangGraph checkpoint bloat. v1.3: chonkie-aware — splits into sentence-aware chunks, evicts each individually (precise recall), keeps first chunk as preview. Falls back to whole-string eviction if chonkie is missing. **Note:** `trim_state()` is currently a utility — no workflow calls it yet (see CHANGELOG #18).
+- **State trimming** — `trim_state()` evicts oversized fields (`search_results`, `output`, `analysis`, `memory_context`) to the async eviction queue when they exceed ~1000 tokens. Prevents LangGraph checkpoint bloat. v1.3: chonkie-aware — splits into sentence-aware chunks, evicts each individually (precise recall), keeps first chunk as preview. Falls back to whole-string eviction if chonkie is missing. v1.3.1: `memory_context` added to evictable fields. **Note:** `trim_state()` is wired into data (between critique and store) and research (between synthesize and report). Deep_research doesn't need it — `knowledge_base` already capped via `_cap_knowledge()`.
 
 ---
 
@@ -91,4 +92,4 @@ tests/workflows/base/
 
 ---
 
-*Last updated: 2026-07-06 (v1.2). See [API.md](API.md) for utility signatures and dispatcher details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.3.1). See [API.md](API.md) for utility signatures and dispatcher details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

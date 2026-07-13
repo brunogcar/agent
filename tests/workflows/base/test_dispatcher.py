@@ -110,3 +110,36 @@ class TestRunWorkflowExceptionHandling:
         assert result["result"] == ""
         assert result["artifacts"] == []
         assert "RuntimeError" in result["error"]
+
+
+class TestRunWorkflowInputValidation:
+    """v1.3.1 (P2-1): Input validation — fail fast before trace creation."""
+
+    def test_empty_workflow_type_fails_fast(self):
+        """Empty workflow_type returns error before creating trace or building state."""
+        from workflows.base import run_workflow
+        result = run_workflow(workflow_type="", goal="test", trace_id="t10")
+        assert result["status"] == "failed"
+        assert "workflow_type is required" in result["error"]
+
+    def test_empty_goal_fails_fast(self):
+        """Empty goal returns error before creating trace."""
+        from workflows.base import run_workflow
+        result = run_workflow(workflow_type="research", goal="", trace_id="t11")
+        assert result["status"] == "failed"
+        assert "goal is required" in result["error"]
+
+    def test_whitespace_goal_fails_fast(self):
+        """Whitespace-only goal returns error."""
+        from workflows.base import run_workflow
+        result = run_workflow(workflow_type="research", goal="   ", trace_id="t12")
+        assert result["status"] == "failed"
+        assert "goal is required" in result["error"]
+
+    def test_empty_workflow_type_does_not_create_trace(self, mocker):
+        """Validation should fire before tracer.new_trace is called."""
+        from workflows.base import run_workflow
+        mock_new_trace = mocker.patch("core.tracer.tracer.new_trace")
+        result = run_workflow(workflow_type="", goal="test")
+        assert result["status"] == "failed"
+        mock_new_trace.assert_not_called()

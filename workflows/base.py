@@ -1,6 +1,6 @@
 """workflows/base.py -- Shared state TypedDict, node helpers, and dispatcher.
 
-All seven workflows (research, data, autocode, deep_research, understand, autoresearch) share:
+All six workflows (research, data, autocode, deep_research, understand, autoresearch) share:
   WorkflowState TypedDict
   node_step() and node_error() and node_done() helpers that write to the trace
   run_workflow() dispatcher that routes by type
@@ -19,6 +19,10 @@ from typing import Any, Optional
 from typing_extensions import TypedDict
 from core.tracer import tracer
 from core.config import cfg
+
+# v1.3.1 (P3-3): Extracted constant — used by both trim_state() and trim_state_node().
+# v1.3.1 (P2-3): Added 'memory_context' — recalled memories can be large.
+_EVICTABLE_FIELDS = ("search_results", "output", "analysis", "memory_context")
 
 # -- Shared workflow state ----------------------------------------------------
 class WorkflowState(TypedDict, total=False):
@@ -82,7 +86,7 @@ def trim_state(state: WorkflowState) -> WorkflowState:
     evicted_keys = []
     trace_id = state.get("trace_id", "")
 
-    for key in ["search_results", "output", "analysis"]:
+    for key in _EVICTABLE_FIELDS:
         val = new_state.get(key)
         if val and isinstance(val, str) and (len(val) // 4) > 1000:
             _evict_field(new_state, key, val, trace_id)
@@ -180,7 +184,7 @@ def trim_state_node(state: WorkflowState) -> dict:
     """
     new_state = trim_state(state)
     # trim_state only modifies evictable fields — return only changed keys
-    return {k: new_state[k] for k in ("search_results", "output", "analysis")
+    return {k: new_state[k] for k in _EVICTABLE_FIELDS
             if state.get(k) != new_state.get(k)}
 
 
@@ -196,6 +200,9 @@ def node_step(state: WorkflowState, node: str, message: str, checkpoint: bool = 
         from core.observability.checkpoint import save_checkpoint
         # [v1.2 #1] Save the FULL state, not just {status, error}. This ensures
         # resume from an error checkpoint has the complete workflow context.
+        # v1.3.1 (P2-2): No status override needed — state is already "running"
+        # at this point (node_step is called mid-workflow, not on error/done).
+        # node_error and node_done override status to "failed"/"success" respectively.
         save_checkpoint(tid, node, state)
 
 def node_error(state: WorkflowState, node: str, message: str, **kwargs) -> dict:
@@ -256,7 +263,26 @@ def run_workflow(
     Returns the final WorkflowState as a plain dict with at minimum:
         {status: "success" | "failed", result: str, error: str, artifacts: list}
     """
-    wf_type = workflow_type.strip().lower()
+    wf_type = workflow_type.strip().lower() if workflow_type else ""
+
+    # v1.3.1 (P2-1): Input validation — fail fast before trace creation.
+    # Was: empty workflow_type reached the else branch (line ~372) after
+    # building initial_state + attempting checkpoint resume. Empty goal was
+    # silently accepted — the workflow ran with goal="" producing useless results.
+    if not wf_type:
+        return {
+            "status": "failed",
+            "error": "workflow_type is required. Use: research | data | autocode | deep_research | understand | autoresearch",
+            "result": "",
+            "artifacts": [],
+        }
+    if not goal or not goal.strip():
+        return {
+            "status": "failed",
+            "error": "goal is required (non-empty)",
+            "result": "",
+            "artifacts": [],
+        }
 
     # Create trace if not provided
     if not trace_id:

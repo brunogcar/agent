@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.3.1 | 2026-07-13 | **Doc drift + input validation:** `autoresearch` added to all docs (was missing — shipped in code but not docs). `memory_context` added to evictable fields. `_EVICTABLE_FIELDS` constant extracted. `run_workflow()` input validation (non-empty `goal` + `workflow_type`). Module docstring "seven" → "six". All "Last updated" dates bumped. |
 | v1.3 | 2026-07-08 | **Chonkie-aware `trim_state()`:** When chonkie is available, splits oversized fields into sentence-aware chunks and evicts each individually (precise recall later). Keeps first chunk as preview in state. Falls back to whole-string eviction (v1.0 behavior) if chonkie is missing or chunking fails. New `_evict_field()` helper. Tests updated to mock `_chunk_text` for deterministic path control. **Note:** `trim_state()` is currently a utility — no workflow calls it yet (#18 tracks wiring it in). |
 | v1.2 | 2026-07-06 | **Checkpoint + state fixes:** `node_error` now saves full state (not just `{status, error}`) for resume (#1). Exception handler saves checkpoint before returning failure (#2). `node_done` saves success checkpoint before `mark_complete` (#7). Resume no longer clobbers checkpoint's original goal (#5). `task` field added to `WorkflowState` TypedDict (#4). Module docstring fixed ("three workflows" → six). `@meta_tool` adoption noted for notify (#8 — deferred). Test restructure: split into `test_node_helpers` + `test_dispatcher` + `test_trim_state` + `conftest` (#9). |
 | v1.1 | 2026-07-05 | Bugfix batch in `workflows/helpers/checkpoint.py`: docstring path corrected (#15); `resume_count` computed via JSON parsing instead of string-matching (#16). `report` removed from `VALID_WORKFLOWS`. `deep_research` added. Error message updated to list all 5 types. |
@@ -92,4 +93,4 @@
 
 ---
 
-*Last updated: 2026-07-06 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

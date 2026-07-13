@@ -211,3 +211,40 @@ class TestTrimStateChonkie:
         trim_state(state)
         for call in mock_push.call_args_list:
             assert call.kwargs["metadata"]["trace_id"] == "my-trace-123"
+
+
+class TestTrimStateMemoryContext:
+    """v1.3.1 (P2-3): memory_context is now in the evictable fields list."""
+
+    def test_memory_context_evicted_when_oversized(self, mocker):
+        """memory_context should be evicted when > 1000 tokens (~4000 chars)."""
+        from workflows.base import trim_state
+        mock_push = mocker.patch("core.memory_backend.eviction.eviction_queue.push")
+        mocker.patch(
+            "tools.file_ops.actions.read_file._chunk_text",
+            side_effect=RuntimeError("chonkie not installed")
+        )
+        state = {"trace_id": "t1", "memory_context": "x" * 5000}
+        result = trim_state(state)
+        assert "Evicted" in result["memory_context"]
+        assert mock_push.call_count == 1
+
+    def test_memory_context_preserved_when_small(self, mocker):
+        """memory_context under threshold should be preserved."""
+        from workflows.base import trim_state
+        mocker.patch("core.memory_backend.eviction.eviction_queue.push")
+        mocker.patch(
+            "tools.file_ops.actions.read_file._chunk_text",
+            side_effect=RuntimeError("chonkie not installed")
+        )
+        state = {"trace_id": "t1", "memory_context": "small context"}
+        result = trim_state(state)
+        assert result["memory_context"] == "small context"
+
+    def test_evictable_fields_constant_includes_memory_context(self):
+        """v1.3.1 (P3-3): _EVICTABLE_FIELDS constant includes memory_context."""
+        from workflows.base import _EVICTABLE_FIELDS
+        assert "memory_context" in _EVICTABLE_FIELDS
+        assert "search_results" in _EVICTABLE_FIELDS
+        assert "output" in _EVICTABLE_FIELDS
+        assert "analysis" in _EVICTABLE_FIELDS

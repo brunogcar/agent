@@ -20,7 +20,7 @@
 11. **Always return `dict` from `node_error` and `node_done`** — Not `WorkflowState`. Partial updates only.
 12. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
 13. **Always validate checkpoint version** — `_checkpoint_version == 1` before resuming.
-14. **Always handle unknown workflow types** — Return `"failed"` with clear error listing all 5 types, never crash.
+14. **Always handle unknown workflow types** — Return `"failed"` with clear error listing all 6 types, never crash.
 15. **Always test `trim_state` with oversized fields** — Assert fields are evicted and replaced with placeholder text.
 16. **Always test checkpoint resumption** — Mock `get_latest` to return valid/invalid checkpoints.
 17. **Always test autocode compatibility** — Assert `task` key exists when `workflow_type="autocode"`.
@@ -50,4 +50,4 @@
 
 ---
 
-*Last updated: 2026-07-06 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [CHANGELOG.md](CHANGELOG.md) for version history.*

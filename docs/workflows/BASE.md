@@ -3,7 +3,7 @@
 The `workflows/base.py` module provides the **shared foundation** for all agent workflows. It defines the common `WorkflowState` TypedDict, node helper utilities, and the `run_workflow()` dispatcher that routes execution to the correct workflow graph.
 
 **Key characteristics:**
-- **Shared state schema** — `WorkflowState` is the common denominator across `research`, `data`, `autocode`, `deep_research`, and `understand` (22 fields)
+- **Shared state schema** — `WorkflowState` is the common denominator across `research`, `data`, `autocode`, `deep_research`, `understand`, and `autoresearch` (6 workflows, 22 fields)
 - **LangGraph immutability** — All helpers return partial update `dict`s, never mutate state in-place
 - **Checkpoint resumption** — `run_workflow(resume=True)` restores from the latest checkpoint journal
 - **Trace lifecycle** — Automatic trace creation, step logging, error tracking, and completion marking
