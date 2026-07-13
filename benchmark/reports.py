@@ -157,12 +157,17 @@ def print_regression_alert(regressions: list[tuple]):
     print(f"{RED}{BOLD}{'=' * 70}{RESET}")
 
 # ── Final benchmark table ───────────────────────────────────────────────────
-def print_benchmark_header(timestamp: str, depth: str, runs: int, tag: str = ""):
-    """Print benchmark run header."""
+def print_benchmark_header(timestamp: str, depth: str, runs: int, tag: str = "", agent_mode: bool = False):
+    """Print benchmark run header.
+
+    v1.4: Added agent_mode parameter -- prints 'Mode: agent' or 'Mode: raw'
+    so the terminal output distinguishes the two run types.
+    """
     tag_part = f", tag={tag}" if tag else ""
+    mode_str = f"{cyan('agent')}" if agent_mode else f"{yellow('raw')}"
     print(f"\n{bold('=') * 70}")
     print(f"{bold(' MCP AGENT BENCHMARK')} {timestamp}")
-    print(f" depth={depth}, runs={runs}{tag_part}")
+    print(f" depth={depth}, runs={runs}, mode={mode_str}{tag_part}")
     print(f"{bold('=') * 70}")
 
 def print_benchmark_complete(filepath: str):

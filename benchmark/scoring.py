@@ -24,9 +24,12 @@ ROLE_TARGET_LATENCY = {
 # (50-200ms on first call per schema, cached after). Add buffer to target
 # latencies for JSON-returning roles so they're not unfairly penalized.
 # These roles have json_schema in their ROLE_CONFIG.
+# v1.4: Fixed key "plan" -> "planner" -- the benchmark passes role="planner"
+# (the model-registry key), not "plan" (the ROLES filename key). The old key
+# never matched, so planner never got the agent-mode latency buffer.
 AGENT_MODE_LATENCY_BUFFER = {
     "code": 1.0, "route": 1.0, "classify": 1.0,
-    "plan": 1.5, "review": 1.0, "refactor": 1.0,
+    "planner": 1.5, "review": 1.0, "refactor": 1.0,
     "test": 1.0, "router": 1.0,
 }
 

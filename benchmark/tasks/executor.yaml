@@ -2,43 +2,64 @@ role: executor
 tasks:
 - name: extract_simple_json
   system: Return ONLY valid JSON. No explanation.
-  prompt: 'Extract key-value pairs: Name: John Doe, Age: 30, Email: john@example.com.
-    Return ONLY JSON.'
-  validator: json_valid
+  prompt: 'Extract key-value pairs: Name: John Doe, Age: 30, Email: john@example.com. Return ONLY JSON.'
+  validator: schema_match
   difficulty: easy
   timeout: 60
   max_tokens: 512
+  validator_args:
+    schema:
+      type: object
+      required:
+      - name
+      - age
+      - email
+      properties:
+        name:
+          type: string
+        age:
+          type: integer
+        email:
+          type: string
 - name: extract_table
   system: Return ONLY valid JSON array. No explanation.
-  prompt: 'Extract the data as a single valid JSON array. Each row should be an inner
-    array: Apple 1.20 100, Banana 0.50 150. Return ONLY JSON.'
+  prompt: 'Extract the data as a single valid JSON array. Each row should be an inner array: Apple 1.20 100, Banana 0.50 150.
+    Return ONLY JSON.'
   validator: json_valid
   difficulty: medium
   timeout: 60
   max_tokens: 512
+  validator_args:
+    expected_type: array
+    schema:
+      min_items: 2
 - name: extract_nested
   system: Return ONLY valid JSON. No explanation.
-  prompt: 'Extract nested data: user.name=Alice, user.address.city=London, user.address.zip=SW1A.
-    Return ONLY JSON.'
-  validator: json_valid
+  prompt: 'Extract nested data: user.name=Alice, user.address.city=London, user.address.zip=SW1A. Return ONLY JSON.'
+  validator: schema_match
   difficulty: hard
   timeout: 60
   max_tokens: 512
+  validator_args:
+    schema:
+      type: object
+      required:
+      - user
+      properties:
+        user:
+          type: object
 - name: extract_regex
   system: Return ONLY the extracted value. No explanation.
-  prompt: 'Extract the first email address from: Reach us at contact@mydomain.net
-    or help@support.io. Return ONLY the email.'
+  prompt: 'Extract the first email address from: Reach us at contact@mydomain.net or help@support.io. Return ONLY the email.'
   expected: contact@mydomain.net
   validator: exact_match
   difficulty: easy
   timeout: 60
   max_tokens: 256
 - name: code_fizzbuzz
-  system: Write Python code. Return ONLY the function, no explanation, no markdown
-    fences.
-  prompt: 'Write a Python function fizzbuzz(n) that returns the correct string for
-    a single number n: ''Fizz'' for multiples of 3, ''Buzz'' for multiples of 5, ''FizzBuzz''
-    for both, or the number as a string. Return ONLY the function.'
+  system: Write Python code. Return ONLY the function, no explanation, no markdown fences.
+  prompt: 'Write a Python function fizzbuzz(n) that returns the correct string for a single number n: ''Fizz'' for multiples
+    of 3, ''Buzz'' for multiples of 5, ''FizzBuzz'' for both, or the number as a string. Return ONLY the function.'
   validator: python_execution
   validator_args:
     test_cases:
@@ -52,11 +73,9 @@ tasks:
   agent_mode:
     json_field: patch
 - name: code_palindrome
-  system: Write Python code. Return ONLY the function, no explanation, no markdown
-    fences.
-  prompt: Write a Python function is_palindrome(s) that returns True if string s is
-    a palindrome (reads same forwards and backwards), ignoring case and non-alphanumeric
-    characters. Return ONLY the function.
+  system: Write Python code. Return ONLY the function, no explanation, no markdown fences.
+  prompt: Write a Python function is_palindrome(s) that returns True if string s is a palindrome (reads same forwards and
+    backwards), ignoring case and non-alphanumeric characters. Return ONLY the function.
   validator: python_execution
   validator_args:
     test_cases:
@@ -69,10 +88,9 @@ tasks:
   agent_mode:
     json_field: patch
 - name: code_fibonacci
-  system: Write Python code. Return ONLY the function, no explanation, no markdown
-    fences.
-  prompt: Write a Python function fibonacci(n) that returns the nth Fibonacci number.
-    Use an efficient approach (not naive recursion). Return ONLY the function.
+  system: Write Python code. Return ONLY the function, no explanation, no markdown fences.
+  prompt: Write a Python function fibonacci(n) that returns the nth Fibonacci number. Use an efficient approach (not naive
+    recursion). Return ONLY the function.
   validator: python_execution
   validator_args:
     test_cases:
@@ -86,10 +104,9 @@ tasks:
   agent_mode:
     json_field: patch
 - name: code_sort
-  system: Write Python code. Return ONLY the function, no explanation, no markdown
-    fences.
-  prompt: Write a Python function quicksort(arr) that sorts a list of numbers using
-    the quicksort algorithm. Return ONLY the function.
+  system: Write Python code. Return ONLY the function, no explanation, no markdown fences.
+  prompt: Write a Python function quicksort(arr) that sorts a list of numbers using the quicksort algorithm. Return ONLY the
+    function.
   validator: python_execution
   validator_args:
     test_cases:
@@ -102,10 +119,9 @@ tasks:
   agent_mode:
     json_field: patch
 - name: code_factorial
-  system: Write Python code. Return ONLY the function, no explanation, no markdown
-    fences.
-  prompt: Write a Python function factorial(n) that returns n factorial. Handle n=0
-    (return 1) and negative inputs (return None). Return ONLY the function.
+  system: Write Python code. Return ONLY the function, no explanation, no markdown fences.
+  prompt: Write a Python function factorial(n) that returns n factorial. Handle n=0 (return 1) and negative inputs (return
+    None). Return ONLY the function.
   validator: python_execution
   validator_args:
     test_cases:
@@ -119,11 +135,9 @@ tasks:
   agent_mode:
     json_field: patch
 - name: code_merge_sort
-  system: Write Python code. Return ONLY the function, no explanation, no markdown
-    fences.
-  prompt: Write a Python function merge_sort(arr) that sorts a list of numbers using
-    the merge sort algorithm with O(n log n) complexity. Handle empty lists and single
-    elements. Return ONLY the function.
+  system: Write Python code. Return ONLY the function, no explanation, no markdown fences.
+  prompt: Write a Python function merge_sort(arr) that sorts a list of numbers using the merge sort algorithm with O(n log
+    n) complexity. Handle empty lists and single elements. Return ONLY the function.
   validator: python_execution
   validator_args:
     test_cases:
@@ -138,11 +152,11 @@ tasks:
     json_field: patch
 - name: summarize_bullet_points
   system: Summarize into 3-5 bullet points. Be concise.
-  prompt: 'Summarize Python 3.12 features: improved error messages, new type parameter
-    syntax, faster bytecode, flexible f-strings, asyncio performance improvements.'
+  prompt: 'Summarize Python 3.12 features: improved error messages, new type parameter syntax, faster bytecode, flexible f-strings,
+    asyncio performance improvements.'
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 3
     required_keywords:
     - python 3.12
@@ -155,9 +169,8 @@ tasks:
   max_tokens: 512
 - name: summarize_article
   system: Summarize in 1-2 sentences. Be concise.
-  prompt: 'Summarize: The Mars Rover Perseverance landed in Jezero Crater on February
-    18, 2021. It carries instruments to search for signs of ancient microbial life
-    and collect rock samples for future return missions.'
+  prompt: 'Summarize: The Mars Rover Perseverance landed in Jezero Crater on February 18, 2021. It carries instruments to
+    search for signs of ancient microbial life and collect rock samples for future return missions.'
   validator: keyword_coverage
   validator_args:
     expected_keywords:
@@ -171,8 +184,8 @@ tasks:
   max_tokens: 512
 - name: summarize_email
   system: Summarize in 1 sentence. Be concise.
-  prompt: 'Email: ''Hey team, the deployment failed because the database migration
-    script was missing a column. I fixed it and redeployed. Everything is green now.'''
+  prompt: 'Email: ''Hey team, the deployment failed because the database migration script was missing a column. I fixed it
+    and redeployed. Everything is green now.'''
   validator: keyword_coverage
   validator_args:
     expected_keywords:
@@ -184,17 +197,14 @@ tasks:
   timeout: 60
   max_tokens: 256
 - name: summarize_technical
-  system: Summarize the technical document in 3-5 bullet points covering key concepts,
-    trade-offs, and recommendations.
-  prompt: 'Technical document: ''Microservices architecture offers independent deployability
-    and scalability but introduces network latency, data consistency challenges, and
-    operational complexity. Service meshes like Istio help manage traffic but add
-    resource overhead. Event-driven patterns improve decoupling but require robust
-    message durability and exactly-once semantics. Teams should start with monoliths
-    and extract services only when bounded contexts are clear.'''
+  system: Summarize the technical document in 3-5 bullet points covering key concepts, trade-offs, and recommendations.
+  prompt: 'Technical document: ''Microservices architecture offers independent deployability and scalability but introduces
+    network latency, data consistency challenges, and operational complexity. Service meshes like Istio help manage traffic
+    but add resource overhead. Event-driven patterns improve decoupling but require robust message durability and exactly-once
+    semantics. Teams should start with monoliths and extract services only when bounded contexts are clear.'''
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 3
     required_keywords:
     - microservices
@@ -223,9 +233,8 @@ tasks:
   max_tokens: 256
 - name: research_multi_step
   system: Answer the question with reasoning. Return the final answer only.
-  prompt: If a train travels 120 km in 2 hours, then stops for 30 minutes, then travels
-    another 90 km in 1.5 hours, what is the average speed for the entire journey including
-    the stop?
+  prompt: If a train travels 120 km in 2 hours, then stops for 30 minutes, then travels another 90 km in 1.5 hours, what is
+    the average speed for the entire journey including the stop?
   expected: '52.5'
   validator: contains
   difficulty: medium
@@ -233,14 +242,12 @@ tasks:
   max_tokens: 256
 - name: research_inference
   system: Answer the question with reasoning. Return the final answer only.
-  prompt: A chemist needs to identify an unknown substance. She observes that it melts
-    at a temperature that is exactly 4/5 of water's boiling point at sea level. She
-    also notes that this melting point is exactly 80Â°C above water's freezing point.
-    What is the substance's melting point in Fahrenheit? Show your work, then return
-    ONLY the final numerical answer.
+  prompt: A chemist needs to identify an unknown substance. She observes that it melts at a temperature that is exactly 4/5
+    of water's boiling point at sea level. She also notes that this melting point is exactly 80°C above water's freezing point.
+    What is the substance's melting point in Fahrenheit? Show your work, then return ONLY the final numerical answer.
   expected:
   - '176'
-  - 176Â°F
+  - 176°F
   - 176 F
   validator: contains
   difficulty: hard
@@ -251,7 +258,7 @@ tasks:
   prompt: 'def divide(a, b): return a / b'
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 2
     required_keywords:
     - zero
@@ -267,7 +274,7 @@ tasks:
   prompt: 'def fn(x, y): return x + y'
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 2
     required_keywords:
     - name
@@ -279,11 +286,10 @@ tasks:
   max_tokens: 512
 - name: critique_complex
   system: Critique the code. List issues as bullet points.
-  prompt: 'def process(data): result = []; for i in range(len(data)): if data[i] >
-    0: result.append(data[i] * 2); return result'
+  prompt: 'def process(data): result = []; for i in range(len(data)): if data[i] > 0: result.append(data[i] * 2); return result'
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 3
     required_keywords:
     - list comprehension
@@ -299,7 +305,7 @@ tasks:
   prompt: Python process grows 100MB/hour. List 3 likely causes.
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 3
     required_keywords:
     - memory
@@ -316,7 +322,7 @@ tasks:
   prompt: SQL query takes 30 seconds. List 3 likely causes.
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 3
     required_keywords:
     - index
@@ -329,11 +335,10 @@ tasks:
   max_tokens: 512
 - name: analyze_race_condition
   system: Analyze and list 2 likely causes as bullet points.
-  prompt: Two threads increment a shared counter and the final value is sometimes
-    wrong. List 2 likely causes.
+  prompt: Two threads increment a shared counter and the final value is sometimes wrong. List 2 likely causes.
   validator: composite
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
+    pattern: ^\s*[-•*]\s+
     min_steps: 2
     required_keywords:
     - race condition
@@ -347,11 +352,9 @@ tasks:
 - name: review_security
   system: Review for security issues. List findings as bullet points.
   prompt: query = f"SELECT * FROM users WHERE id = {user_id}"
-  validator: composite
+  validator: keyword_coverage
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
-    min_steps: 2
-    required_keywords:
+    expected_keywords:
     - injection
     - sql
     - input
@@ -363,11 +366,9 @@ tasks:
 - name: review_secrets
   system: Review for security issues. List findings as bullet points.
   prompt: API_KEY = "sk-1234567890abcdef"
-  validator: composite
+  validator: keyword_coverage
   validator_args:
-    pattern: ^\s*[-â€¢*]\s+
-    min_steps: 2
-    required_keywords:
+    expected_keywords:
     - secret
     - hardcoded
     - key
@@ -378,13 +379,10 @@ tasks:
   max_tokens: 512
 - name: review_auth
   system: Review for security issues. List findings as bullet points.
-  prompt: 'def login(username, password): if username == "admin" and password == "password123":
-    return True; return False'
-  validator: composite
+  prompt: 'def login(username, password): if username == "admin" and password == "password123": return True; return False'
+  validator: keyword_coverage
   validator_args:
-    pattern: ^\s*[-•*]\s+
-    min_steps: 3
-    required_keywords:
+    expected_keywords:
     - hardcoded
     - password
     - credential
@@ -395,8 +393,7 @@ tasks:
   max_tokens: 512
 - name: document_docstring
   system: Write documentation. Return ONLY the docstring text, no explanation.
-  prompt: 'Write a docstring for: def calculate_area(width, height): return width
-    * height. Return ONLY the docstring text.'
+  prompt: 'Write a docstring for: def calculate_area(width, height): return width * height. Return ONLY the docstring text.'
   validator: keyword_coverage
   validator_args:
     expected_keywords:
@@ -411,9 +408,8 @@ tasks:
   max_tokens: 256
 - name: document_api
   system: Write API documentation. Return ONLY the documentation, no explanation.
-  prompt: 'Document this API endpoint: POST /api/v1/users - Creates a new user. Body:
-    {name, email, age}. Returns 201 on success, 400 on validation error, 409 on duplicate
-    email. Return a concise description with parameters and response codes.'
+  prompt: 'Document this API endpoint: POST /api/v1/users - Creates a new user. Body: {name, email, age}. Returns 201 on success,
+    400 on validation error, 409 on duplicate email. Return a concise description with parameters and response codes.'
   validator: keyword_coverage
   validator_args:
     expected_keywords:
@@ -432,9 +428,8 @@ tasks:
   max_tokens: 512
 - name: document_readme
   system: Write documentation. Return ONLY the README section, no explanation.
-  prompt: Write an 'Installation' section for a Python project that uses pip, requires
-    Python 3.10+, and includes a virtual environment setup step. Return the section
-    in markdown format.
+  prompt: Write an 'Installation' section for a Python project that uses pip, requires Python 3.10+, and includes a virtual
+    environment setup step. Return the section in markdown format.
   validator: keyword_coverage
   validator_args:
     expected_keywords:
@@ -451,12 +446,12 @@ tasks:
   timeout: 90
   max_tokens: 512
 - name: test_basic_asserts
-  system: Write Python test code. Return ONLY the code, no explanation, no markdown
-    fences.
-  prompt: 'Write Python code that defines add(a, b) and includes assert statements
-    to test: add(2, 3) == 5, add(-1, 5) == 4, add(0, 0) == 0. Return ONLY the code.'
+  system: Write Python test code. Return ONLY the code, no explanation, no markdown fences.
+  prompt: 'Write pytest test functions to test add(a, b). Include tests for: add(2, 3) == 5, add(-1, 5) == 4, add(0, 0) ==
+    0. Return ONLY the test code.'
   validator: python_execution
   validator_args:
+    setup_code: "def add(a, b):\n    return a + b"
     test_cases:
     - assert add(2, 3) == 5
     - assert add(-1, 5) == 4
@@ -467,13 +462,13 @@ tasks:
   agent_mode:
     json_field: test_code
 - name: test_string_validation
-  system: Write Python test code. Return ONLY the code, no explanation, no markdown
-    fences.
-  prompt: 'Write Python code that defines is_palindrome(s): return s == s[::-1] and
-    includes assert statements to test: is_palindrome(''racecar'') == True, is_palindrome(''hello'')
-    == False, is_palindrome('''') == True. Return ONLY the code.'
+  system: Write Python test code. Return ONLY the code, no explanation, no markdown fences.
+  prompt: 'Write pytest test functions to test is_palindrome(s) that returns True if s reads the same forwards and backwards.
+    Include tests for: is_palindrome(''racecar'') == True, is_palindrome(''hello'') == False, is_palindrome('''') == True.
+    Return ONLY the test code.'
   validator: python_execution
   validator_args:
+    setup_code: "def is_palindrome(s):\n    return s == s[::-1]"
     test_cases:
     - assert is_palindrome('racecar') == True
     - assert is_palindrome('hello') == False
@@ -484,13 +479,12 @@ tasks:
   agent_mode:
     json_field: test_code
 - name: test_edge_cases
-  system: Write Python test code. Return ONLY the code, no explanation, no markdown
-    fences.
-  prompt: 'Write Python code that defines divide(a, b): return None if b == 0 else
-    a / b and includes assert statements to test: divide(10, 2) == 5.0, divide(5,
-    0) is None, divide(-4, 2) == -2.0. Return ONLY the code.'
+  system: Write Python test code. Return ONLY the code, no explanation, no markdown fences.
+  prompt: 'Write pytest test functions to test divide(a, b) that returns None if b == 0 else a / b. Include tests for: divide(10,
+    2) == 5.0, divide(5, 0) is None, divide(-4, 2) == -2.0. Return ONLY the test code.'
   validator: python_execution
   validator_args:
+    setup_code: "def divide(a, b):\n    return None if b == 0 else a / b"
     test_cases:
     - assert divide(10, 2) == 5.0
     - assert divide(5, 0) is None
@@ -501,14 +495,12 @@ tasks:
   agent_mode:
     json_field: test_code
 - name: test_data_structure
-  system: Write Python test code. Return ONLY the code, no explanation, no markdown
-    fences.
-  prompt: 'Write Python code that defines merge_dicts(a, b): return {**a, **b} and
-    includes assert statements to test: merge_dicts({1: 2}, {3: 4}) == {1: 2, 3: 4},
-    merge_dicts({}, {5: 6}) == {5: 6}, merge_dicts({}, {}) == {}. Return ONLY the
-    code.'
+  system: Write Python test code. Return ONLY the code, no explanation, no markdown fences.
+  prompt: 'Write pytest test functions to test merge_dicts(a, b) that returns {**a, **b}. Include tests for: merge_dicts({1:
+    2}, {3: 4}) == {1: 2, 3: 4}, merge_dicts({}, {5: 6}) == {5: 6}, merge_dicts({}, {}) == {}. Return ONLY the test code.'
   validator: python_execution
   validator_args:
+    setup_code: "def merge_dicts(a, b):\n    return {**a, **b}"
     test_cases:
     - 'assert merge_dicts({1: 2}, {3: 4}) == {1: 2, 3: 4}'
     - 'assert merge_dicts({}, {5: 6}) == {5: 6}'
@@ -519,29 +511,25 @@ tasks:
   agent_mode:
     json_field: test_code
 - name: test_error_handling
-  system: Write Python test code. Return ONLY the code, no explanation, no markdown
-    fences.
-  prompt: 'Write Python code that defines parse_int(s): return int(s) if s.strip()
-    else None and includes a try/except block that catches ValueError when calling
-    parse_int(''abc''). Return ONLY the code.'
+  system: Write Python test code. Return ONLY the code, no explanation, no markdown fences.
+  prompt: Write pytest test functions to test parse_int(s) that returns int(s) if s.strip() else None. Include a test that
+    parse_int('abc') raises ValueError. Return ONLY the test code.
   validator: python_execution
   validator_args:
+    setup_code: "def parse_int(s):\n    return int(s) if s.strip() else None"
     test_cases:
     - assert parse_int('42') == 42
     - assert parse_int('  ') is None
-    - "try:\n    parse_int('abc')\n    assert False, 'Should raise'\nexcept ValueError:\n\
-      \    pass"
+    - "try:\n    parse_int('abc')\n    assert False, 'Should raise'\nexcept ValueError:\n    pass"
   difficulty: hard
   timeout: 120
   max_tokens: 1024
   agent_mode:
     json_field: test_code
 - name: refactor_rename
-  system: Refactor code. Return ONLY the improved function, no explanation, no markdown
-    fences.
-  prompt: 'Refactor: def calc(a, b): return a * b. Rename parameters to ''width''
-    and ''height'' and add a docstring. Keep function name ''calc''. Return ONLY the
-    function.'
+  system: Refactor code. Return ONLY the improved function, no explanation, no markdown fences.
+  prompt: 'Refactor: def calc(a, b): return a * b. Rename parameters to ''width'' and ''height'' and add a docstring. Keep
+    function name ''calc''. Return ONLY the function.'
   validator: python_execution
   validator_args:
     test_cases:
@@ -554,11 +542,9 @@ tasks:
   agent_mode:
     json_field: refactored_code
 - name: refactor_extract_function
-  system: Refactor code. Return ONLY the improved function, no explanation, no markdown
-    fences.
-  prompt: 'Refactor: def process(items): total = 0; for i in items: total += i * 2;
-    return total. Extract the ''i * 2'' logic into a nested helper function named
-    double(x) inside process. Return ONLY the process function.'
+  system: Refactor code. Return ONLY the improved function, no explanation, no markdown fences.
+  prompt: 'Refactor: def process(items): total = 0; for i in items: total += i * 2; return total. Extract the ''i * 2'' logic
+    into a nested helper function named double(x) inside process. Return ONLY the process function.'
   validator: python_execution
   validator_args:
     test_cases:
@@ -570,11 +556,9 @@ tasks:
   agent_mode:
     json_field: refactored_code
 - name: refactor_list_comprehension
-  system: Refactor code. Return ONLY the improved function, no explanation, no markdown
-    fences.
-  prompt: 'Refactor: def get_even(nums): result = []; for n in nums: if n % 2 == 0:
-    result.append(n); return result. Use list comprehension. Keep function name. Return
-    ONLY the function.'
+  system: Refactor code. Return ONLY the improved function, no explanation, no markdown fences.
+  prompt: 'Refactor: def get_even(nums): result = []; for n in nums: if n % 2 == 0: result.append(n); return result. Use list
+    comprehension. Keep function name. Return ONLY the function.'
   validator: python_execution
   validator_args:
     test_cases:
@@ -586,12 +570,10 @@ tasks:
   agent_mode:
     json_field: refactored_code
 - name: refactor_early_return
-  system: Refactor code. Return ONLY the improved function, no explanation, no markdown
-    fences.
-  prompt: 'Refactor: def check_status(code): if code == 200: return ''OK''; elif code
-    == 404: return ''Not Found''; elif code == 500: return ''Error''; else: return
-    ''Unknown''. Use a dictionary for mapping and a single return statement. Keep
-    function name. Return ONLY the function.'
+  system: Refactor code. Return ONLY the improved function, no explanation, no markdown fences.
+  prompt: 'Refactor: def check_status(code): if code == 200: return ''OK''; elif code == 404: return ''Not Found''; elif code
+    == 500: return ''Error''; else: return ''Unknown''. Use a dictionary for mapping and a single return statement. Keep function
+    name. Return ONLY the function.'
   validator: python_execution
   validator_args:
     test_cases:
@@ -603,17 +585,17 @@ tasks:
   max_tokens: 1024
   agent_mode:
     json_field: refactored_code
-- name: refactor_use_dataclass
-  system: Refactor code. Return ONLY the improved code, no explanation, no markdown
-    fences.
-  prompt: 'Refactor: def create_user(name, age): return {''name'': name, ''age'':
-    age}. Use Python''s @dataclass decorator with fields name: str and age: int. Return
-    ONLY the class.'
+- name: refactor_to_class
+  system: Refactor code. Return ONLY the improved code, no explanation, no markdown fences.
+  prompt: 'Refactor: def create_user(name, age): return {''name'': name, ''age'': age}. Convert to a simple Python class named
+    User with an __init__ method that takes name and age as parameters and stores them as instance attributes, and a __repr__
+    method that returns a string. Return ONLY the class.'
   validator: python_execution
   validator_args:
     test_cases:
     - u = User('Alice', 25); assert u.name == 'Alice'
     - assert User('Bob', 17).age == 17
+    - u2 = User('Charlie', 30); assert hasattr(u2, 'name') and hasattr(u2, 'age')
   difficulty: hard
   timeout: 120
   max_tokens: 1024

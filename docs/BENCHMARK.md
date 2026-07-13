@@ -1,8 +1,55 @@
-# Benchmark Tool v1.3
+# Benchmark Tool v1.4.1
 
 🎯 Benchmark LLM roles for the agent. Measure which model is best for each role.
 
 ---
+
+## 🆕 What's New in v1.4.1
+
+v1.4.1 fixes 3 remaining issues found after v1.4 testing, and restructures
+route tasks for fairness.
+
+### Bug Fixes
+
+| # | Fix | Impact | Files |
+|---|-----|--------|-------|
+| 1 | **Test agent-mode: `setup_code` parameter** | Test tasks in agent-mode scored 10/100 for schema-following models (q3: 499 tokens, correct JSON) because the production SYSTEM_PROMPT asks for "pytest test file" but the validator's test_cases reference functions the model didn't define. `setup_code` runs BEFORE the model's code, providing the implementation. Granite (350M, ignores schema) scored 100 by accident — now all models can score fairly. | `validators.py`, `tasks/executor.yaml` (5 test tasks) |
+| 2 | **Planner agent-mode: `agent_mode.validator` override** | Planner agent-mode dropped 93→38 because the `composite` validator (checks `^\d+\.` numbered list pattern) doesn't work on JSON output `{"goal":"...","steps":[...]}`. Added `agent_mode.validator: keyword_coverage` override — validates keywords in JSON values instead of numbered-list format. | `benchmark.py`, `tasks/planner.yaml` (10 tasks) |
+| 3 | **Route task restructuring** | Route tasks were ambiguous: "direct" was a catch-all for 12 different tools, and route_research vs route_deep_research were nearly identical. Restructured: direct tasks now validate the specific TOOL name (git, memory, file, etc.) instead of just "direct". Added `autoresearch` workflow. Added multi-reference for ambiguous cases. | `tasks/router.yaml` (19 tasks, restructured) |
+
+### New Features
+
+| Feature | Notes |
+|---------|-------|
+| **`setup_code` in `python_execution`** | `validator_args: {setup_code: "def add(a,b): return a+b"}` — runs before model's code, provides implementations for test tasks |
+| **`agent_mode.validator` override** | `agent_mode: {validator: keyword_coverage}` — uses a different validator in agent-mode than raw mode |
+| **`agent_mode.expected` override** | `agent_mode: {expected: ["browser", "web"]}` — different expected answer in agent-mode than raw mode |
+| **Route tool validation** | Direct/tool tasks validate the `tool` JSON field in agent-mode (e.g., `git`, `memory`, `file`) instead of just `workflow: direct` |
+| **Multi-reference route answers** | `expected: ["research", "deep_research"]` — both answers accepted |
+| **`autoresearch` workflow** | New route task `route_autoresearch` (normal difficulty) |
+
+### Route Task Restructuring
+
+**v1.3 (old):** All 18 route tasks validated `workflow` field. "Direct" was a catch-all for 12 tool-use tasks.
+
+**v1.4.1 (new):** Route tasks split into two categories:
+
+| Category | Tasks | Raw mode | Agent mode |
+|----------|-------|----------|------------|
+| **Workflow routing** | 8 tasks | System prompt asks for workflow name. Validates `workflow` field. | Extracts `workflow` from JSON, validates it. |
+| **Tool routing** | 11 tasks | System prompt asks for tool name. Validates tool name. | Extracts `tool` from JSON, validates it. |
+
+Workflow options: `[autocode, research, data, understand, direct, deep_research, autoresearch]`
+Tool options: `[web, browser, cli, file, git, memory, agent, notify, report, vision, parallel, consult, tavily, python]`
+
+Multi-reference examples:
+- `route_research`: `expected: ["research", "deep_research"]` (both reasonable for CRISPR literature review)
+- `route_browser`: raw `expected: browser`, agent `expected: ["browser", "web"]` (browser not in production schema's tool list)
+- `route_parallel`: raw `expected: parallel`, agent `expected: ["parallel", "agent"]`
+
+---
+
+## 🆕 What's New in v1.4
 
 ## 🆕 What's New in v1.3
 

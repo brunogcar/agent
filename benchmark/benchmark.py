@@ -48,6 +48,13 @@ ROLE_TO_GROUP = {
     # "consultor": "consultor", # add when consultor.yaml exists
 }
 
+# v1.4: Benchmark role names don't always match agent_ops ROLES keys.
+# The only mismatch is planner (benchmark) vs plan (ROLES filename).
+# Renaming plan.py would break agent dispatch + tests, so we map here.
+BENCHMARK_TO_AGENT_ROLE = {
+    "planner": "plan",
+}
+
 DIFFICULTY_ORDER = {"easy": 0, "medium": 1, "hard": 2}
 
 def load_tasks(role):
@@ -158,32 +165,46 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0, agent_mod
             result["failure_category"] = categorize_failure(result)
             return result
 
-        # v1.3: Agent mode — if task has agent_mode.json_field, extract that field
+        # v1.4: Agent mode — if task has agent_mode.json_field, extract that field
         # from JSON output before validating. This lets us validate the CONTENT of
         # a specific JSON field (e.g., "patch" from code role's JSON output).
+        #
+        # v1.4: Migrated from _strip_markdown + json.loads to core.json_extract.
+        # The old parser failed on multi-line code strings with escaped newlines.
         validation_output = output
         if agent_mode and "agent_mode" in task:
             agent_cfg = task.get("agent_mode", {})
             json_field = agent_cfg.get("json_field")
             if json_field:
-                # Extract the field from JSON output
-                from benchmark.validators import _strip_markdown
-                clean = _strip_markdown(output)
-                try:
-                    import json as _json
-                    data = _json.loads(clean)
-                    if isinstance(data, dict) and json_field in data:
-                        validation_output = str(data[json_field])
-                except (_json.JSONDecodeError, ValueError):
-                    pass  # Fall back to raw output for validation
+                from core.json_extract import extract_json
+                data = extract_json(output)
+                if isinstance(data, dict) and json_field in data:
+                    validation_output = str(data[json_field])
+                # Fall back to raw output for validation if extraction fails
 
+        # v1.4.1: Determine validator, args, and expected (with agent-mode overrides).
+        # agent_mode.validator, agent_mode.validator_args, and agent_mode.expected
+        # override the task-level values when in agent-mode. This allows different
+        # validation strategies for raw vs agent-mode (e.g., planner uses composite
+        # in raw mode but keyword_coverage in agent-mode since output is JSON).
         validator_name = task.get("validator", "exact_match")
-        validator_fn = VALIDATORS.get(validator_name, VALIDATORS["exact_match"])
-        # Shallow copy: task dict is shared YAML state across all runs.
-        # Mutating it in-place corrupts subsequent runs (--runs N).
         validator_args = dict(task.get("validator_args", {}))
-        if "expected" in task:
-            validator_args["expected"] = task["expected"]
+        expected = task.get("expected")
+
+        if agent_mode and "agent_mode" in task:
+            agent_cfg = task.get("agent_mode", {})
+            if agent_cfg.get("validator"):
+                validator_name = agent_cfg["validator"]
+            if agent_cfg.get("validator_args"):
+                validator_args = dict(agent_cfg["validator_args"])
+            if "expected" in agent_cfg:
+                expected = agent_cfg["expected"]
+
+        if expected is not None:
+            validator_args["expected"] = expected
+
+        # Shallow copy: task dict is shared YAML state across all runs.
+        validator_fn = VALIDATORS.get(validator_name, VALIDATORS["exact_match"])
         format_score = validator_fn(validation_output, **validator_args)
         # correctness == format_score for most validators.
         # python_execution validator returns partial credit based on test cases.
@@ -361,11 +382,13 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
     individual_roles = list(dict.fromkeys(individual_roles))
 
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-    reports.print_benchmark_header(timestamp, depth, runs, tag)
+    reports.print_benchmark_header(timestamp, depth, runs, tag, agent_mode=agent_mode)
 
     results = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "config": {"depth": depth, "runs": runs, "temperature": temperature, "roles": individual_roles},
+        # v1.4: Added agent_mode to config so output JSON distinguishes
+        # raw-mode vs agent-mode runs.
+        "config": {"depth": depth, "runs": runs, "temperature": temperature, "roles": individual_roles, "agent_mode": agent_mode},
         "role_results": {},
     }
 
@@ -449,8 +472,10 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
         role_str = "default"
 
     tag_part = f"_{safe_filename(tag)}" if tag else ""
+    # v1.4: Append _agentmode suffix when --agent-mode is used.
+    mode_part = "_agentmode" if agent_mode else ""
     safe_ts = time.strftime("%Y%m%d-%H%M%S", time.localtime())
-    json_name = f"benchmark_{depth}_{role_str}_{model_str}_runs{runs}_{safe_ts}{tag_part}.json"
+    json_name = f"benchmark_{depth}_{role_str}_{model_str}_runs{runs}_{safe_ts}{tag_part}{mode_part}.json"
     out_dir = Path(output_dir) if output_dir else cfg.workspace_root / "benchmarks"
     out_dir.mkdir(parents=True, exist_ok=True)
     filepath = out_dir / json_name

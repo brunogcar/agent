@@ -5,4 +5,4 @@ Usage:
     python -m benchmark --group executor --depth standard --runs 3
     python -m benchmark --compare granite-350m,qwen-3b --role code
 """
-__version__ = "1.2.1"
+__version__ = "1.4.1"
