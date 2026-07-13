@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2.0.2 | 2026-07-13 | **Cross-LLM review: action-level allowlist (P0).** `_ALLOWED_SUBAGENT_ACTIONS` dict — both tool AND action validated. `file(action="write_file")`, `git(action="commit")`, `memory(action="store")` now blocked. `_build_tool_schema` filtered to allowed actions only. `_execute_tool` structured error extraction. `consecutive_failures` detects empty results. History truncation at turn boundaries (not raw chars). Metrics on all 6 exit paths. `max_turns` upper bound (20). `status="max_turns"` → `"error"` (P1-5). Multi-turn default system prompt. Exception messages truncated. Tools deduped. |
 | v2.0.1 | 2026-07-13 | **Cross-LLM review hardening.** P1: `python` removed from subagent allowlist (eval is RCE — `__import__('os').system(...)`). P2: `tool_args` dict validation, `max_turns>=1` validation, tool schema in prompt (from `__tool_metadata__`), tool results fenced + injection warning repeated, history cap (6000 chars). P3: AGENT.md Quick Start fixed (`action="dispatch"` added, `role="vision"` → `action="vision_delegate"`). |
 | v2.0 | 2026-07-12 | **Multi-turn ReAct loop.** `tools` param → bounded loop: LLM returns JSON with `thought` + `tool_call` or `final_answer`. Tool allowlist (file, git, web, memory, python eval-only). `python(mode='run')` blocked. 3 consecutive tool failures → bail. Max turns cap (default 5). Tool results capped at 4000 chars. `_REACT_SCHEMA` enforced. 6 new multi-turn tests (16 total). |
 | v1.6 | 2026-07-12 | **[Hardening] Cross-LLM review fixes.** `str(result.error)` safety. `try/except` around `llm.complete()` with error classification (TIMEOUT/CIRCUIT_OPEN/RATE_LIMIT). Stronger default system prompt (JSON output + context fencing). Metrics on all paths. `parsed` preserved through `compress_result`. `inspect.signature()` cached at registration. |
@@ -24,6 +25,14 @@
 ---
 
 ## ⚠️ Breaking Changes
+
+### v2.0.2
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| Action-level allowlist (`_ALLOWED_SUBAGENT_ACTIONS`) | `file(action="write_file")`, `git(action="commit")`, `memory(action="store")` now blocked. v2.0/v2.0.1 only gated tool names. | If a subagent workflow used write/commit/store actions, it will now get "Action not allowed" errors. Use `autocode` for mutations. |
+| `max_turns` upper bound (20) | `max_turns > 20` returns `INVALID_INPUT` error. | Use `max_turns <= 20` (default is 5). |
+| `status="max_turns"` → `status="error"` (P1-5) | Callers checking `result["status"] == "error"` now catch max-turns. `error_code="MAX_TURNS_EXCEEDED"` distinguishes it. | If checking `== "max_turns"`, change to `error_code == "MAX_TURNS_EXCEEDED"`. |
 
 ### v2.0.1
 
@@ -118,4 +127,4 @@
 
 ---
 
-*Last updated: 2026-07-13 (v2.0.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v2.0.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -98,4 +98,4 @@ No dedicated `.env` variables. Uses:
 
 ---
 
-*Last updated: 2026-07-13 (v2.0.1 — subagent hardening). See subfiles for detailed documentation.*
+*Last updated: 2026-07-13 (v2.0.2 — action-level allowlist). See subfiles for detailed documentation.*

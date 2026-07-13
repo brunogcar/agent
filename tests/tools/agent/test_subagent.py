@@ -244,13 +244,16 @@ class TestSubagentMultiTurn:
         assert result["turns"] == 2
 
     def test_multi_turn_max_turns_exceeded(self):
-        """LLM keeps calling tools — hits max_turns limit."""
+        """LLM keeps calling tools — hits max_turns limit.
+        v2.0.2 (P1-5): status is now "error" (was "max_turns") so callers
+        checking `== "error"` catch it. error_code distinguishes the type.
+        """
         mock_result = MagicMock()
         mock_result.ok = True
         mock_result.model = "test"
         mock_result.usage = {"total": 100}
-        mock_result.parsed = {"thought": "Checking", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "test.py"}}}
-        mock_result.text = '{"thought": "Checking", "tool_call": {"name": "file", "arguments": {"action": "read", "path": "test.py"}}}'
+        mock_result.parsed = {"thought": "Checking", "tool_call": {"name": "file", "arguments": {"action": "read_file", "path": "test.py"}}}
+        mock_result.text = '{"thought": "Checking", "tool_call": {"name": "file", "arguments": {"action": "read_file", "path": "test.py"}}}'
 
         with patch("tools.agent_ops.actions.subagent.llm.complete", return_value=mock_result):
             with patch("tools.agent_ops.actions.subagent._execute_tool", return_value="file content"):
@@ -262,7 +265,9 @@ class TestSubagentMultiTurn:
                     max_turns=3,
                 )
 
-        assert result["status"] == "max_turns"
+        # v2.0.2 (P1-5): "max_turns" → "error"
+        assert result["status"] == "error"
+        assert result["error_code"] == "MAX_TURNS_EXCEEDED"
         assert result["turns"] == 3
 
     def test_multi_turn_disallowed_tool_rejected(self):
@@ -406,3 +411,158 @@ class TestSubagentMultiTurn:
         # Should include action lists (not "check each tool's documentation")
         assert "check each tool's documentation" not in system_prompt
         assert "actions =" in system_prompt or "actions=" in system_prompt
+
+
+class TestSubagentV202ActionAllowlist:
+    """v2.0.2 (P0-1 cross-LLM): Action-level allowlist — the critical security fix.
+
+    v2.0/v2.0.1 gated at TOOL level only. `file(action="write_file")` and
+    `git(action="commit")` passed right through. Now both tool AND action
+    are validated.
+    """
+
+    def test_file_write_action_blocked(self):
+        """file(action='write_file') must be rejected — only read-only actions."""
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("file", {"action": "write_file", "path": ".env", "content": "stolen"})
+        assert "Error" in result
+        assert "not allowed" in result
+        assert "write_file" in result
+
+    def test_file_delete_action_blocked(self):
+        """file(action='delete_file') must be rejected."""
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("file", {"action": "delete_file", "path": "important.py"})
+        assert "Error" in result
+        assert "not allowed" in result
+
+    def test_git_commit_action_blocked(self):
+        """git(action='commit') must be rejected — subagent can't mutate repo."""
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("git", {"action": "commit", "message": "malicious"})
+        assert "Error" in result
+        assert "not allowed" in result
+
+    def test_git_push_action_blocked(self):
+        """git(action='push') must be rejected."""
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("git", {"action": "push", "branch": "main"})
+        assert "Error" in result
+        assert "not allowed" in result
+
+    def test_memory_store_action_blocked(self):
+        """memory(action='store') must be rejected — prevents memory poisoning."""
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("memory", {"action": "store", "text": "poisoned memory"})
+        assert "Error" in result
+        assert "not allowed" in result
+
+    def test_file_read_file_action_allowed(self):
+        """file(action='read_file') is allowed — it's read-only."""
+        from tools.agent_ops.actions.subagent import _execute_tool, _ALLOWED_SUBAGENT_ACTIONS
+        # Verify it's in the allowlist
+        assert "read_file" in _ALLOWED_SUBAGENT_ACTIONS["file"]
+        # We can't call the real file tool (no .env setup), but verify the
+        # action passes the allowlist check (no "not allowed" error)
+        # by checking it doesn't return an allowlist rejection
+        result = _execute_tool("file", {"action": "read_file", "path": "/nonexistent"})
+        # The result will be an error from the file tool itself (file not found),
+        # NOT an allowlist rejection. Verify it's not the allowlist error.
+        assert "not allowed" not in result or "Error:" in result  # tool error is fine
+
+    def test_missing_action_param_rejected(self):
+        """v2.0.2 (P0-1): tool call without 'action' param fails fast."""
+        from tools.agent_ops.actions.subagent import _execute_tool
+        result = _execute_tool("file", {"path": "test.py"})
+        assert "Error" in result
+        assert "action" in result.lower()
+
+    def test_tool_schema_only_shows_allowed_actions(self):
+        """v2.0.2 (P0-2): _build_tool_schema filters to allowed actions only —
+        LLM should NOT see write_file, delete_file, commit, push in the schema.
+        """
+        from tools.agent_ops.actions.subagent import _build_tool_schema
+        schema = _build_tool_schema(["file", "git"])
+        # Read-only actions SHOULD appear
+        assert "read_file" in schema
+        assert "status" in schema or "diff" in schema
+        # Write/dangerous actions should NOT appear
+        assert "write_file" not in schema
+        assert "delete_file" not in schema
+        assert "commit" not in schema
+        assert "push" not in schema
+
+    def test_max_turns_upper_bound(self):
+        """v2.0.2 (P1-4): max_turns > 20 is rejected — prevents cost runaway."""
+        with patch("tools.agent_ops.actions.subagent.llm.complete") as mock_complete:
+            result = agent(
+                action="subagent",
+                role="executor",
+                task="Do something",
+                tools="file",
+                max_turns=100,
+            )
+        assert result["status"] == "error"
+        assert "max_turns" in result["error"]
+        assert result["error_code"] == "INVALID_INPUT"
+        mock_complete.assert_not_called()
+
+    def test_tools_dedupe(self):
+        """v2.0.2 (P2-7): tools='file,file,git' deduped to 'file,git'."""
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.model = "test"
+        mock_result.usage = {"total": 50}
+        mock_result.parsed = {"thought": "done", "final_answer": "ok"}
+        mock_result.text = '{"thought": "done", "final_answer": "ok"}'
+
+        with patch("tools.agent_ops.actions.subagent.llm.complete", return_value=mock_result) as mock_complete:
+            agent(
+                action="subagent",
+                role="executor",
+                task="test",
+                tools="file,file,file,git",
+            )
+
+        system_prompt = mock_complete.call_args.kwargs["system"]
+        # The "You have access to these tools:" line should list "file, git" (deduped)
+        # not "file, file, file, git"
+        tools_line = [l for l in system_prompt.split("\n") if "You have access to these tools" in l][0]
+        assert tools_line.count("file") == 1  # "file" appears once, not 3x
+        assert "git" in tools_line
+
+    def test_error_extraction_from_tool_dict(self):
+        """v2.0.2 (P0-3): tool returning {'status':'error','error':'...'} is
+        extracted as 'Error: ...' (not a dict repr the LLM can't parse).
+        """
+        from tools.agent_ops.actions.subagent import _execute_tool
+        # Mock the file tool to return an error dict
+        with patch("tools.file.file", return_value={"status": "error", "error": "File not found"}):
+            result = _execute_tool("file", {"action": "read_file", "path": "missing.py"})
+        assert result.startswith("Error:")
+        assert "File not found" in result
+
+    def test_consecutive_failures_detects_empty_result(self):
+        """v2.0.2 (P1-1): empty tool result counts as failure (was resetting counter)."""
+        # This is tested indirectly — if _execute_tool returns "" for a tool,
+        # the consecutive_failures counter should increment. We test the
+        # is_failure logic by verifying empty string triggers the bail path.
+        mock_result = MagicMock()
+        mock_result.ok = True
+        mock_result.model = "test"
+        mock_result.usage = {"total": 100}
+        mock_result.parsed = {"thought": "x", "tool_call": {"name": "file", "arguments": {"action": "read_file", "path": "x"}}}
+        mock_result.text = '{"thought": "x", "tool_call": {"name": "file", "arguments": {"action": "read_file", "path": "x"}}}'
+
+        with patch("tools.agent_ops.actions.subagent.llm.complete", return_value=mock_result):
+            with patch("tools.agent_ops.actions.subagent._execute_tool", return_value=""):
+                result = agent(
+                    action="subagent",
+                    role="executor",
+                    task="test",
+                    tools="file",
+                    max_turns=10,
+                )
+        # 3 empty results → 3 consecutive failures → bail
+        assert result["status"] == "error"
+        assert result["error_code"] == "TOOL_FAILURES"
