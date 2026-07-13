@@ -52,9 +52,10 @@ graph TD
     B --> C{"route_after_execute<br/>Conditional"}
     C -->|failed: exec_error set| D["END<br/>Error result"]
     C -->|success| E["node_critique<br/>Phase 3: Review"]
-    E --> F["node_store<br/>Phase 4: Memory"]
-    F --> G["node_notify<br/>Phase 5: Notify"]
-    G --> H["END<br/>Success result"]
+    E --> F["trim_state_node<br/>Evict oversized output"]
+    F --> G["node_store<br/>Phase 4: Memory"]
+    G --> H["node_notify<br/>Phase 5: Notify"]
+    H --> I["END<br/>Success result"]
 ```
 
 **Conditional edge:** `route_after_execute` checks `state["exec_error"]`. Both failure paths in `node_execute` (code-gen failure and execution failure) now set `exec_error`, so failures route to END. Previously code-gen failure returned `node_error()` (which sets `status:failed` but not `exec_error`), so it leaked through to critique.
@@ -104,4 +105,4 @@ tests/workflows/data/
 
 ---
 
-*Last updated: 2026-07-06 (v1.0 split). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.1.1). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

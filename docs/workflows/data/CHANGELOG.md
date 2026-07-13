@@ -6,7 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v1.1 | 2026-07-08 | **Wired `trim_state_node`:** Added trim node between critique and store. After critique produces `result`, oversized `output` is evicted to episodic memory (chonkie-aware — splits into chunks, evicts each individually, keeps first chunk as preview). Falls back to whole-string eviction if chonkie is missing. Uses `trim_state_node()` from `workflows/base.py` (v1.3). Graph: `recall → execute → critique → trim → store → notify`. First workflow to wire in `trim_state()` (see `base/CHANGELOG.md` #18). |
+| v1.1.1 | 2026-07-13 | **Bugfix + doc drift:** P1: `node_critique` `r['text']` → `r.get('text', '')` (KeyError if "text" key missing on success). P2: ARCHITECTURE.md mermaid diagram updated to include `trim` node (was missing since v1.1). DATA.md "report workflow" → "report tool" (report is a tool, not a workflow). All "Last updated" dates bumped from v1.0 to v1.1.1. |
 | v1.0 | 2026-07-06 | **Subpackage split:** Split monolithic `workflows/data.py` (231 lines) into `workflows/data_impl/` subpackage with per-node modules (`recall`, `execute`, `critique`, `store`, `notify`). Added `WORKFLOW_METADATA` for MCP client introspection. Thin facade re-exports `build_data_graph`, `WORKFLOW_METADATA`. Tests split into per-node files + `conftest.py` + `TestSubpackageStructure`. Applied 12 audit fixes (see below). |
 | Pre-v1.0 | 2026-07-05 | Bug fix: `node_execute` and `node_critique` now call `agent(action="dispatch", ...)` (was missing `action`, always returned `Unknown action ''`). |
 
@@ -67,4 +67,4 @@
 
 ---
 
-*Last updated: 2026-07-06 (v1.0 split). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

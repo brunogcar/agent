@@ -71,7 +71,7 @@ print(result["result"])  # "Analysis complete: Top 5 months are..."
 | Fix code | `autocode` workflow | Targeted code changes with test verification |
 | Deep research | `deep_research` workflow | Iterative search with convergence detection |
 | Understand codebase | `understand` workflow | Codebase analysis and dependency mapping |
-| Generate report | `report` workflow | Structured report generation |
+| Generate report | `report` tool | 11 atomic report actions — charts, maps, dashboards, export to PDF/PNG |
 
 ---
 

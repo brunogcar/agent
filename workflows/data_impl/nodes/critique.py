@@ -51,7 +51,13 @@ def node_critique(state: WorkflowState) -> dict:
 
     if r.get("status") == "success":
         node_step(state, "critique", "critique complete")
-        return {"result": f"OUTPUT:\n{output}\n\nANALYSIS:\n{r['text']}"}
+        # v1.1.1 (P1-1): Use .get() — was r['text'] (KeyError if "text" key
+        # missing on a success response). Also note: the LLM only sees
+        # output[:1000] (token budget above), but the result stores the FULL
+        # output + analysis. This is a deliberate trade-off — the critique is
+        # based on the first 1000 chars, but the result preserves the complete
+        # output for the caller.
+        return {"result": f"OUTPUT:\n{output}\n\nANALYSIS:\n{r.get('text', '')}"}
 
     # [Fix #7] Log the critique failure (was a silent fallback).
     tracer.error(tid, "critique", f"critique failed: {r.get('error', 'unknown')}")
