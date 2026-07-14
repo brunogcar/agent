@@ -1,18 +1,29 @@
 """Node: propose — LLM proposes the next experiment.
 
-[v1.0] Calls the planner LLM with:
+[v1.1+] Dispatches the planner LLM via `agent(action="subagent", role="planner")`
+for isolated curated-context dispatch (was: `autocode_impl.helpers._call()` in
+v1.0). The subagent gets a fresh LLM call with NO session history — only:
   - the optimization goal (e.g. "minimize val_bpb")
   - the metric name and direction
   - the current best metric
   - the experiment history (descriptions + metrics + outcomes)
   - the current target_file content
 
-The LLM returns a JSON object describing the proposed change:
+The subagent returns a JSON object describing the proposed change:
   {
     "description": "Increase learning rate from 1e-4 to 3e-4",
     "rationale":   "Current LR is conservative; larger LR may converge faster.",
-    "patch":       "<new file content>" | "<diff>" | "<search/replace>"
+    "new_content": "<the FULL new content of the target file after your change>"
   }
+
+[v1.2] Hardening: `_PROPOSE_JSON_SCHEMA` enforcement added (was prompt-only).
+Removed duplicate `history_str` from `context` param (was in both `user` and
+`context` — wasted tokens).
+
+On subagent failure, `_call_planner` raises `RuntimeError`; `node_propose`
+catches it and returns `status="failed"`. There is NO `_call()` fallback —
+a subagent failure halts the current iteration (v1.2.2 doc fix: earlier docs
+incorrectly claimed a fallback existed).
 
 The propose node only produces the proposal — modify.py applies it. This
 separation lets us retry modify without re-querying the LLM if the patch

@@ -15,7 +15,7 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch) �
 - **Results ledger** — Every experiment (keep *or* discard) is appended to `results.tsv` so operators can `tail -f` while the loop runs.
 - **Atomic writes** — `modify` uses `tempfile.mkstemp` + `os.fsync` + `os.replace`; the target file is never in a half-written state if the process is killed mid-write.
 - **Time-boxed experiments** — Each run is killed via `subprocess.run(timeout=...)` after `autoresearch_time_budget` seconds.
-- **Subagent dispatch for proposals** — `propose` node calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch (v1.1; was `autocode_impl.helpers._call()`). Subagent gets only experiment history + target file content — no session history (superpowers pattern: "you construct exactly what they need"). Falls back to `_call()` on subagent failure.
+- **Subagent dispatch for proposals** — `propose` node calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch (v1.1; was `autocode_impl.helpers._call()`). Subagent gets only experiment history + target file content — no session history (superpowers pattern: "you construct exactly what they need"). On subagent failure, the iteration halts with `status="failed"` (no `_call()` fallback — v1.2.2 doc fix: earlier docs incorrectly claimed a fallback existed).
 - **JSON extraction** — Uses `core.json_extract.extract_json()` for proposal parsing.
 
 ---
@@ -110,4 +110,4 @@ All four knobs have sane defaults; you can override any of them per-invocation b
 
 ---
 
-*Last updated: 2026-07-14 (v1.2.1 — `propose` node switched to subagent dispatch for isolated curated context; v1.0 initial implementation). See [AR1 worklog](../../../../worklog.md) for implementation details.*
+*Last updated: 2026-07-14 (v1.2.2 — Phase 4g review: removed incorrect `_call()` fallback claim from v1.1 docs; propose docstring updated; v1.2.1 routing + helpers fixes; v1.1 subagent dispatch). See [AR1 worklog](../../../../worklog.md) for implementation details.*

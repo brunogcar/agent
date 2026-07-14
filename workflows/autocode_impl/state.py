@@ -89,6 +89,7 @@ class DebugState(TypedDict, total=False):
     root_cause: str
     defense_notes: str
     swarm_verdict: dict
+    subagent_verdict: dict  # [v2.0.4] P1-1: subagent debug path verdict (was doc'd but never set)
 
 
 class VerifyState(TypedDict, total=False):
@@ -198,6 +199,7 @@ class AutocodeState(TypedDict, total=False):
     pr_number: int
     pr_url: str
     swarm_verdict: dict  # {confidence: HIGH|MEDIUM|LOW, agreement: str, providers: int}
+    subagent_verdict: dict  # [v2.0.4] P1-1: {fix, root_cause, defense_notes} from subagent debug path
 
     # Memory
     memory_notes: str
@@ -381,6 +383,7 @@ def _default_state(
             "root_cause": "",
             "defense_notes": "",
             "swarm_verdict": {},
+            "subagent_verdict": {},  # [v2.0.4] P1-1
         },
         "verify": {
             "notes": "",
@@ -427,6 +430,7 @@ def _default_state(
         "pr_number": 0,
         "pr_url": "",
         "swarm_verdict": {},
+        "subagent_verdict": {},  # [v2.0.4] P1-1
         "memory_notes": "",
         "messages": [],
         "status": "running",

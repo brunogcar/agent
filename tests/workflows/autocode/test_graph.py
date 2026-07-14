@@ -85,7 +85,7 @@ class TestWorkflowMetadata:
     def test_metadata_exists(self):
         assert isinstance(WORKFLOW_METADATA, dict)
         assert WORKFLOW_METADATA["name"] == "autocode"
-        assert WORKFLOW_METADATA["version"] == "2.0.1"  # [Hardening]
+        assert "version" in WORKFLOW_METADATA  # [v2.0.4] don't hard-code version (bumps on every release)
 
     def test_metadata_has_27_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]

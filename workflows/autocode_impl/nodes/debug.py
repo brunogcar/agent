@@ -40,6 +40,25 @@ from core.kgraph.queries import get_dependencies, get_callers
 # memory so the human can be asked an architecture-level question.
 _ARCHITECTURE_QUESTION_THRESHOLD = 3
 
+# [v2.0.4] Shared JSON schema for the debug LLM response. Used by both the
+# single-LLM debug path (default) and the subagent debug path
+# (AUTOCODE_SUBAGENT_DEBUG=1). Was duplicated inline in both paths — deduped
+# to module level so there's one source of truth for the 4-phase enum.
+_DEBUG_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "phase": {
+            "type": "string",
+            "enum": ["investigation", "pattern", "hypothesis", "fix"],
+        },
+        "root_cause": {"type": "string"},
+        "defense_notes": {"type": "string"},
+        "fix": {"type": "string"},
+    },
+    "required": ["phase", "root_cause", "defense_notes", "fix"],
+    "additionalProperties": False,
+}
+
 
 def node_systematic_debug(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
@@ -261,19 +280,6 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     # Different from swarm: single LLM, not multi-provider consensus.
     if cfg.autocode_subagent_debug:
         from tools.agent import agent
-        import json as _json
-        # [Hardening] Define schema at module level for subagent path too
-        _SUBAGENT_DEBUG_SCHEMA = {
-            "type": "object",
-            "properties": {
-                "phase": {"type": "string", "enum": ["investigation", "pattern", "hypothesis", "fix"]},
-                "root_cause": {"type": "string"},
-                "defense_notes": {"type": "string"},
-                "fix": {"type": "string"},
-            },
-            "required": ["phase", "root_cause", "defense_notes", "fix"],
-            "additionalProperties": False,
-        }
         try:
             subagent_result = agent(
                 action="subagent",
@@ -282,7 +288,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                 system=system,
                 trace_id=tid,
                 temperature=retry_temp,  # [Hardening] pass retry temperature
-                json_schema=_json.dumps(_SUBAGENT_DEBUG_SCHEMA),  # [Hardening] enforce schema
+                json_schema=json.dumps(_DEBUG_JSON_SCHEMA),  # [v2.0.4] module-level schema (was inline dup)
             )
             if subagent_result.get("status") == "success":
                 from core.json_extract import extract_json
@@ -314,33 +320,25 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                         "root_cause": root_cause,
                         "defense_notes": defense_notes,
                         "tdd_source_code": suggested_fix,
+                        "subagent_verdict": {  # [v2.0.4] P1-1: was documented in API.md but never set
+                            "fix": suggested_fix,
+                            "root_cause": root_cause,
+                            "defense_notes": defense_notes,
+                        },
                         "debug_notes": f"Debug iteration {current_iteration} (subagent {phase}): {root_cause}",
                         "tdd": current_tdd,
                     }
-            # Subagent failed — fall through to single-LLM
-            tracer.step(tid, "systematic_debug", "Subagent unavailable — falling back to single-LLM debug")
+            # Subagent failed or returned unparseable JSON — fall through to single-LLM
+            tracer.step(tid, "systematic_debug", "Subagent debug path yielded no usable result — falling back to single-LLM debug")
         except Exception as e:
             tracer.step(tid, "systematic_debug", f"Subagent exception: {e} — falling back to single-LLM debug")
 
     # Single-LLM debug (default — used when AUTOCODE_SWARM_DEBUG=0 and
     # AUTOCODE_SUBAGENT_DEBUG=0, or when swarm/subagent are unavailable)
-    # [v2.0] Phase 4 — JSON schema now includes `phase` field (enum of 4 phases).
+    # [v2.0] Phase 4 — JSON schema includes `phase` field (enum of 4 phases).
     # LM Studio enforces this at generation time so the model cannot emit a
-    # missing or invalid phase.
-    _DEBUG_JSON_SCHEMA = {
-        "type": "object",
-        "properties": {
-            "phase": {
-                "type": "string",
-                "enum": ["investigation", "pattern", "hypothesis", "fix"],
-            },
-            "root_cause": {"type": "string"},
-            "defense_notes": {"type": "string"},
-            "fix": {"type": "string"},
-        },
-        "required": ["phase", "root_cause", "defense_notes", "fix"],
-        "additionalProperties": False,
-    }
+    # missing or invalid phase. Schema is module-level (_DEBUG_JSON_SCHEMA) —
+    # shared with the subagent debug path (v2.0.4 dedup).
 
     try:
         debug_response = _call(

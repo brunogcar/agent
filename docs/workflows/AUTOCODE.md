@@ -126,4 +126,4 @@ cfg.autocode_subagent_debug = False      # Use single isolated subagent dispatch
 
 ---
 
-*Last updated: 2026-07-12 (v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v2.0.4 — Phase 4g review: subagent_verdict field + schema dedup + version sync; v2.0.2 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

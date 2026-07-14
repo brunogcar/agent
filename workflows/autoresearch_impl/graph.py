@@ -38,7 +38,7 @@ from workflows.autoresearch_impl.routes import (
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.2",
+    "version": "1.2.2",  # [v1.2.2] subagent fallback doc fix + propose docstring + version sync
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
