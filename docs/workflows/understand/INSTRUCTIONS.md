@@ -19,17 +19,17 @@
 
 ## ✅ ALWAYS DO
 
-11. **Always pass `trace_id` to `_default_state()`** — Nodes need it for trace correlation.
-12. **Always close GraphStore connections** — Use `try: ... finally: store.close()`.
-13. **Always use `_chunked_md5()` for file hashing** — Prevents memory spikes.
-14. **Always deduplicate target paths** — Use `set()` before `list()` for edge creation.
-15. **Always treat `completed_with_errors` as success** — The workflow completed, just with some parse failures.
-16. **Always log report generation failures** — Use `tracer.error()`, not bare `except: pass`.
-17. **Always test sync node verification** — Assert `not inspect.iscoroutinefunction(node)`.
-18. **Always update this doc** when adding nodes, changing parsing logic, or modifying storage.
-19. **Always use `extract_definitions()` for chunking** — [v1.1] Per-definition (function/class/module) embeddings, not per-file or fixed-window. Richer semantic search.
-20. **Always delete old vectors before upserting** — [v1.1] `upsert_file_vectors()` calls `collection.delete(where={"file_path": ...})` first, so renamed/deleted definitions don't leave stale vectors.
-21. **Always batch embedding calls** — [v1.1] `embed_texts()` sends all texts in one HTTP request. Don't call it per-definition in a loop.
+13. **Always pass `trace_id` to `_default_state()`** — Nodes need it for trace correlation.
+14. **Always close GraphStore connections** — Use `try: ... finally: store.close()`.
+15. **Always use `_chunked_md5()` for file hashing** — Prevents memory spikes.
+16. **Always deduplicate target paths** — Use `set()` before `list()` for edge creation.
+17. **Always treat `completed_with_errors` as success** — The workflow completed, just with some parse failures.
+18. **Always log report generation failures** — Use `tracer.error()`, not bare `except: pass`.
+19. **Always test sync node verification** — Assert `not inspect.iscoroutinefunction(node)`.
+20. **Always update this doc** when adding nodes, changing parsing logic, or modifying storage.
+21. **Always use `extract_definitions()` for chunking** — [v1.1] Per-definition (function/class/module) embeddings, not per-file or fixed-window. Richer semantic search.
+22. **Always delete old vectors before upserting** — [v1.1] `upsert_file_vectors()` calls `collection.delete(where={"file_path": ...})` first, so renamed/deleted definitions don't leave stale vectors.
+23. **Always batch embedding calls** — [v1.1] `embed_texts()` sends all texts in one HTTP request. Don't call it per-definition in a loop.
 
 ---
 
@@ -57,4 +57,4 @@
 
 ---
 
-*Last updated: 2026-07-06 (v1.2 — multi-language support). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-13 (v1.2.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

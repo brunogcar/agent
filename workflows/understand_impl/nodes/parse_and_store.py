@@ -40,42 +40,46 @@ def node_parse_and_store(state: UnderstandState) -> dict:
     errors = []
 
     batch_size = getattr(cfg, "understand_batch_size", 10)
-    for i in range(0, len(files_to_parse), batch_size):
-        batch = files_to_parse[i:i + batch_size]
+    # v1.2.1 (P1-1): Wrap in try/finally — was: store.close() outside finally.
+    # If an exception escaped the per-file try/except (e.g., batch boundary
+    # error), the SQLite connection leaked. INSTRUCTIONS #3: always close in finally.
+    try:
+        for i in range(0, len(files_to_parse), batch_size):
+            batch = files_to_parse[i:i + batch_size]
 
-        for full_path, rel_path, current_hash, mtime, size in batch:
-            try:
-                content = Path(full_path).read_text(encoding="utf-8", errors="replace")
+            for full_path, rel_path, current_hash, mtime, size in batch:
+                try:
+                    content = Path(full_path).read_text(encoding="utf-8", errors="replace")
 
-                # [#4] Detect language and use tree-sitter for imports
-                language = get_language_for_file(rel_path) or "python"
-                deps = extract_imports(content, language)
+                    # [#4] Detect language and use tree-sitter for imports
+                    language = get_language_for_file(rel_path) or "python"
+                    deps = extract_imports(content, language)
 
-                target_paths = set()
-                for dep in deps:
-                    target_paths.add(dep)
-                    # For Python, also add the path-form (dotted → slashes)
-                    if language == "python":
-                        target_paths.add(dep.replace(".", "/") + ".py")
+                    target_paths = set()
+                    for dep in deps:
+                        target_paths.add(dep)
+                        # For Python, also add the path-form (dotted → slashes)
+                        if language == "python":
+                            target_paths.add(dep.replace(".", "/") + ".py")
 
-                store.upsert_file_graph(
-                    state["project_id"], rel_path, current_hash,
-                    list(target_paths), mtime, size
-                )
-                parsed += 1
-                edges += len(target_paths)
+                    store.upsert_file_graph(
+                        state["project_id"], rel_path, current_hash,
+                        list(target_paths), mtime, size
+                    )
+                    parsed += 1
+                    edges += len(target_paths)
 
-                # [#3] Populate code embeddings for semantic search.
-                # [#4] Pass the detected language for multi-language chunking.
-                # Graceful: if LM Studio is unavailable, this returns 0.
-                definitions = extract_definitions(content, language)
-                vectors += upsert_file_vectors(
-                    state["project_id"], rel_path, definitions, trace_id=tid,
-                )
-            except Exception as e:
-                errors.append(f"Failed to parse {rel_path}: {e}")
-
-    store.close()
+                    # [#3] Populate code embeddings for semantic search.
+                    # [#4] Pass the detected language for multi-language chunking.
+                    # Graceful: if LM Studio is unavailable, this returns 0.
+                    definitions = extract_definitions(content, language)
+                    vectors += upsert_file_vectors(
+                        state["project_id"], rel_path, definitions, trace_id=tid,
+                    )
+                except Exception as e:
+                    errors.append(f"Failed to parse {rel_path}: {e}")
+    finally:
+        store.close()
 
     tracer.step(
         tid, "parse",

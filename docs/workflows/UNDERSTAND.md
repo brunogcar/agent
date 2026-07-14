@@ -3,12 +3,12 @@
 The `understand` workflow analyzes a **project's codebase** to build a dependency graph, map file relationships, and identify architectural patterns. It is the foundation for intelligent code navigation, impact analysis, and automated refactoring suggestions.
 
 **Key characteristics:**
-- **Static analysis** — Parses Python AST to extract imports, class hierarchies, and function calls
+- **Multi-language static analysis** — Tree-sitter parser supports Python, JavaScript/TypeScript, Go, and Rust (v1.2). Extracts imports, class hierarchies, and function calls.
 - **Dependency graph** — Builds a graph in SQLite (via `GraphStore`) for fast querying
 - **Incremental updates** — Only re-parses changed files (MD5 hash comparison)
 - **Project isolation** — Each project gets its own graph database and artifact directory
-- **Async I/O** — All file I/O uses `asyncio.to_thread()` to prevent blocking the event loop
-- **Memory integration** — Stores project metadata in procedural memory for future recall
+- **Semantic search** — Per-definition code embeddings in ChromaDB via LM Studio `/v1/embeddings` (v1.1). Graceful degradation if embedding model is unavailable.
+- **LangGraph StateGraph** — Sync nodes, routed through `base.py`'s `graph.invoke()`. Supports checkpoint/resume.
 
 ---
 
@@ -40,7 +40,7 @@ print(result["result"])  # "Project analysis complete: 42 files, 156 dependencie
 | Fix code | `autocode` workflow | Targeted code changes with test verification |
 | Deep research | `deep_research` workflow | Iterative search with convergence detection |
 | Analyze data | `data` workflow | Code generation + execution, data analysis |
-| Generate report | `report` workflow | Structured report generation |
+| Generate report | `report` tool | 11 atomic report actions — charts, maps, dashboards, export to PDF/PNG |
 
 ---
 
@@ -73,4 +73,4 @@ cfg.understand_timeout_seconds = 300    # Workflow timeout (seconds)
 
 ---
 
-*Architecture: 4-phase async orchestrator (init -> discover -> parse + store -> report) with GraphStore dependency graph, incremental updates, batch processing, and memory integration. Not a LangGraph StateGraph — direct async function calls.*
+*Architecture: 4-node sync LangGraph StateGraph (init → discover → parse+store → report) with GraphStore dependency graph, incremental updates, batch processing, and ChromaDB vector indexing. Routed through base.py's `graph.invoke()`.*

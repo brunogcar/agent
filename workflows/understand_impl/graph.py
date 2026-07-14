@@ -26,7 +26,7 @@ from workflows.understand_impl.nodes.report import node_report
 
 WORKFLOW_METADATA = {
     "name": "understand",
-    "version": "1.0",
+    "version": "1.2",
     "description": "Build codebase knowledge graph: init → discover → parse → report",
     "nodes": [
         {"name": "node_init_project", "description": "Initialize ProjectManager and verify GraphStore"},
