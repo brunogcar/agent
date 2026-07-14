@@ -4,6 +4,8 @@
 whitespace separator) and takes the LAST occurrence (training scripts often
 print per-epoch metrics; we want the final value).
 
+v1.2.1 (P1-2): Extracted _extract_metric to helpers.py (shared with setup.py).
+
 If no metric is found (the experiment crashed, timed out, or printed in a
 different format), the node sets current_metric to None and a sentinel
 status so the decide node knows to discard the experiment.
@@ -12,32 +14,12 @@ Returns a PARTIAL state dict with `current_metric` and a status flag.
 """
 from __future__ import annotations
 
-import re
 from typing import Optional
 
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
-
-
-def _extract_metric(output: str, metric_name: str) -> Optional[float]:
-    """Extract the LAST occurrence of `{metric_name}: <float>` from output.
-
-    Accepts `:`, `=`, or whitespace as the separator. Returns None if no
-    match is found or the matched value can't be parsed as a float.
-    """
-    if not output or not metric_name:
-        return None
-    # Escape the metric name to handle special characters (e.g. "val/loss").
-    # Accept `:`, `=`, or whitespace as separator before the value.
-    pattern = rf"{re.escape(metric_name)}\s*[:=]\s*([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
-    matches = re.findall(pattern, output)
-    if not matches:
-        return None
-    try:
-        return float(matches[-1])
-    except (ValueError, IndexError):
-        return None
+from workflows.autoresearch_impl.helpers import extract_metric as _extract_metric
 
 
 def node_evaluate(state: AutoresearchState) -> dict:

@@ -26,6 +26,7 @@ from workflows.autoresearch_impl.nodes.evaluate import node_evaluate
 from workflows.autoresearch_impl.nodes.decide import node_decide
 from workflows.autoresearch_impl.nodes.log import node_log
 from workflows.autoresearch_impl.routes import (
+    route_after_setup,
     route_after_evaluate,
     route_after_decide,
 )
@@ -37,7 +38,7 @@ from workflows.autoresearch_impl.routes import (
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.0",
+    "version": "1.2",
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
@@ -175,7 +176,13 @@ def build_autoresearch_graph():
     g.set_entry_point("setup")
 
     # Linear edges: setup → propose → modify → run_experiment → evaluate
-    g.add_edge("setup", "propose")
+    # v1.2.1 (P1-1): Conditional edge after setup — routes to END on failure
+    # (was: linear edge that let setup failures spin the loop infinitely).
+    g.add_conditional_edges(
+        "setup",
+        route_after_setup,
+        {"propose": "propose", "end": END},
+    )
     g.add_edge("propose", "modify")
     g.add_edge("modify", "run_experiment")
     g.add_edge("run_experiment", "evaluate")

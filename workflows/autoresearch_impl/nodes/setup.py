@@ -23,6 +23,9 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
+from workflows.autoresearch_impl.helpers import extract_metric as _extract_metric_from_output
+
+# v1.2.1 (P1-2): _extract_metric_from_output now imported from helpers.py
 
 
 # Header for results.tsv. Tab-separated so it's easy to grep/awk/cut.
@@ -67,23 +70,6 @@ def _run_experiment_subprocess(
     except Exception as e:
         return f"[autoresearch] experiment failed to start: {e}\n"
 
-
-def _extract_metric_from_output(output: str, metric_name: str) -> float | None:
-    """Extract the LAST occurrence of `{metric_name}: <float>` from output.
-
-    Training scripts often print the metric per epoch; we want the final value.
-    Returns None if no match is found.
-    """
-    import re
-    # Match "val_bpb: 0.123" or "val_bpb=0.123" or "val_bpb 0.123"
-    pattern = rf"{re.escape(metric_name)}\s*[:=]\s*([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
-    matches = re.findall(pattern, output)
-    if not matches:
-        return None
-    try:
-        return float(matches[-1])
-    except (ValueError, IndexError):
-        return None
 
 
 def _git_create_branch(branch: str, project_root: str, tid: str) -> bool:

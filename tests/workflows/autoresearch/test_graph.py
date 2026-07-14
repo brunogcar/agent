@@ -115,11 +115,9 @@ class TestAutoresearchMetadata:
         )
 
     def test_metadata_has_correct_version(self):
-        """WORKFLOW_METADATA['version'] must be '1.0' for the initial release."""
-        assert WORKFLOW_METADATA["version"] == "1.0", (
-            f"version must be '1.0' for the initial release, "
-            f"got: {WORKFLOW_METADATA.get('version')}"
-        )
+        """WORKFLOW_METADATA['version'] must exist (not pinned — changes every release)."""
+        assert "version" in WORKFLOW_METADATA, "WORKFLOW_METADATA must have a 'version' key"
+        assert isinstance(WORKFLOW_METADATA["version"], str), "version must be a string"
 
     def test_metadata_has_7_nodes(self):
         """WORKFLOW_METADATA['nodes'] must list exactly 7 nodes."""

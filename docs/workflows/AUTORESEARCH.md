@@ -110,4 +110,4 @@ All four knobs have sane defaults; you can override any of them per-invocation b
 
 ---
 
-*Last updated: 2026-07-12 (v1.1 — `propose` node switched to subagent dispatch for isolated curated context; v1.0 initial implementation). See [AR1 worklog](../../../../worklog.md) for implementation details.*
+*Last updated: 2026-07-14 (v1.2.1 — `propose` node switched to subagent dispatch for isolated curated context; v1.0 initial implementation). See [AR1 worklog](../../../../worklog.md) for implementation details.*

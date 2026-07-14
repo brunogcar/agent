@@ -66,4 +66,4 @@
 
 ---
 
-*Last updated: 2026-07-12 (v1.0 — initial implementation).*
+*Last updated: 2026-07-14 (v1.2.1 — initial implementation).*

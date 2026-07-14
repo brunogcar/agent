@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| **v1.2.1** | 2026-07-14 | **Bugfix batch:** P1-1: Added `route_after_setup` conditional edge — setup failure now routes to END (was: infinite loop spinning on failed status, wasting ~160 LLM calls). P1-2: Extracted `_extract_metric` to `helpers.py` (was duplicated in setup.py + evaluate.py). P2-1: `node_log` `tracer.warning` uses `tid` (was hardcoded `"autoresearch"`). P2-2: `node_decide` KEPT message no longer hardcodes `<` (uses `direction=` instead). P2-3: WORKFLOW_METADATA version "1.0" → "1.2". P3-1: `git add -A` → `git add <target_file>` (was staging all files). |
 | **v1.2** | 2026-07-12 | **[Hardening] Propose node hardened.** `_PROPOSE_JSON_SCHEMA` enforcement added (was: prompt-only). Removed duplicate `history_str` from `context` param (was in both `user` and `context` — wasted tokens). |
 | **v1.1** | 2026-07-12 | **Subagent dispatch in `propose` node.** `propose` now calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch. Was: `autocode_impl.helpers._call()`. Subagent gets only experiment history + target file content — no session history (superpowers pattern: "you construct exactly what they need"). Non-blocking: falls back to `_call()` on subagent failure. |
 | **v1.0** | 2026-07-12 | **Initial implementation.** 7-node LangGraph StateGraph (`setup → propose → modify → run_experiment → evaluate → log → decide → propose (loop)`). Evolutionary experiment-driven optimization: modify target file → run time-boxed subprocess → extract metric → keep (git commit) / discard (git reset). `AutoresearchState` TypedDict extends `WorkflowState`. `WORKFLOW_METADATA` mirrors autocode's schema. 4 config knobs (`AUTORESEARCH_TIME_BUDGET`, `AUTORESEARCH_TARGET_FILE`, `AUTORESEARCH_METRIC_NAME`, `AUTORESEARCH_METRIC_DIRECTION`). 22/22 tests pass with `-W error`. |
@@ -79,4 +80,4 @@ No other workflows were touched. No existing tests were broken.
 
 ---
 
-*Last updated: 2026-07-12 (v1.1 — `propose` node switched to subagent dispatch for isolated curated context).*
+*Last updated: 2026-07-14 (v1.2.1 — `propose` node switched to subagent dispatch for isolated curated context).*

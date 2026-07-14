@@ -20,7 +20,7 @@ from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
 
 
-def _append_to_ledger(results_path: str, row: str) -> None:
+def _append_to_ledger(results_path: str, row: str, tid: str = "") -> None:
     """Append a single row to results.tsv.
 
     Uses a simple open(..., "a") — autoresearch runs single-threaded per
@@ -35,7 +35,7 @@ def _append_to_ledger(results_path: str, row: str) -> None:
     except Exception as e:
         # Non-fatal — the in-memory history is the source of truth for the
         # LLM; the ledger is for human audit. Log and continue.
-        tracer.warning("autoresearch", "log", f"ledger append failed: {e}")
+        tracer.warning(tid, "log", f"ledger append failed: {e}")
 
 
 def node_log(state: AutoresearchState) -> dict:
@@ -60,7 +60,7 @@ def node_log(state: AutoresearchState) -> dict:
     # Sanitize description — strip newlines/tabs so the row stays one line.
     safe_desc = " ".join(str(description).split())
     row = f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\n"
-    _append_to_ledger(results_path, row)
+    _append_to_ledger(results_path, row, tid)
 
     # 2. Append to in-memory experiment_history
     history_entry = {

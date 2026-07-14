@@ -1,6 +1,8 @@
 """Routing functions for the autoresearch workflow.
 
-[v1.0] Two routers:
+[v1.0] Three routers:
+  route_after_setup    — proceeds to "propose" on success, "end" on failure
+      (v1.2.1: was a linear edge that let setup failures spin the loop).
   route_after_evaluate — always proceeds to "log" (we log every experiment,
       whether it improved the metric or not, so the ledger is complete).
   route_after_decide   — always proceeds to "propose" (the experiment loop
@@ -9,6 +11,18 @@
 from __future__ import annotations
 
 from workflows.autoresearch_impl.state import AutoresearchState
+
+
+def route_after_setup(state: AutoresearchState) -> str:
+    """After setup: proceed to propose on success, END on failure.
+
+    v1.2.1 (P1-1): If setup fails (baseline metric not extracted), the
+    workflow used to spin infinitely — propose (LLM call = token cost) →
+    skip → skip → skip → discard → log → propose → ... Now routes to END.
+    """
+    if state.get("status") == "failed":
+        return "end"
+    return "propose"
 
 
 def route_after_evaluate(state: AutoresearchState) -> str:

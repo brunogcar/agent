@@ -39,18 +39,23 @@ def _is_improvement(new: float, best: float, direction: str) -> bool:
     return new < best
 
 
-def _git_commit(message: str, project_root: str, tid: str) -> str:
+def _git_commit(message: str, project_root: str, tid: str, target_file: str = "") -> str:
     """Stage the target_file and commit. Returns the short commit SHA.
 
     Uses subprocess directly (not the git tool) to keep this node self-
     contained — the git tool's commit action goes through compression and
     tracing that adds noise to the experiment loop.
 
+    v1.2.1 (P3-1): git add <target_file> instead of git add -A (was staging
+    ALL files — could commit unexpected artifacts from the experiment subprocess).
+
     Returns "" if the commit failed (caller treats as discard).
     """
     try:
+        # v1.2.1 (P3-1): Stage only the target_file, not all changes.
+        add_cmd = ["git", "add", target_file] if target_file else ["git", "add", "-A"]
         subprocess.run(
-            ["git", "add", "-A"],
+            add_cmd,
             cwd=project_root or None,
             capture_output=True,
             timeout=15,
@@ -156,11 +161,11 @@ def node_decide(state: AutoresearchState) -> dict:
         f"autoresearch: iter {iteration} — {description[:80]}\n\n"
         f"{metric_name}: {current_metric} (was {current_best}, direction={direction})"
     )
-    sha = _git_commit(commit_msg, project_root, tid)
+    sha = _git_commit(commit_msg, project_root, tid, state.get("target_file", ""))
     tracer.step(
         tid, "decide",
         f"iter {iteration}: KEPT {sha} "
-        f"({metric_name}={current_metric} < best={current_best})",
+        f"({metric_name}={current_metric}, was={current_best}, direction={direction})",
     )
     proposal["status"] = "keep"
     proposal["commit"] = sha
