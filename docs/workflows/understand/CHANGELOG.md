@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.3 | 2026-07-13 | **Doc indexing (.md/.txt/.rst):** `discover_files` now finds doc files alongside code. `parse_and_store` branches: code → tree-sitter imports + definitions; docs → chonkie sentence chunking (no graph edges, just vector embeddings). New `extract_doc_chunks()` in `embeddings.py`. New `DOC_EXTENSIONS` + `ALL_SUPPORTED_EXTENSIONS` + `is_doc_file()` in `tree_sitter_parser.py`. Chonkie is a soft dependency — falls back to single-chunk if not installed. Doc vectors have `type: "doc"` metadata (vs `"function"`/`"class"` for code) — filterable via ChromaDB `where` clauses. |
 | v1.2.1 | 2026-07-13 | **Bugfix + doc drift:** P1: `parse_and_store` `store.close()` wrapped in `finally` (was outside — leaked SQLite connection on batch-level exception). P2: WORKFLOW_METADATA version "1.0" → "1.2". UNDERSTAND.md rewritten — was describing Pre-v1.0 architecture (async, Python AST only, memory integration that doesn't exist, "not a LangGraph StateGraph"). Now reflects v1.2 reality (sync, tree-sitter multi-language, LangGraph StateGraph, ChromaDB vectors). ARCHITECTURE.md documents completion pattern (status set by parse_and_store, not node_done). INSTRUCTIONS.md numbering fixed (#11 duplication). |
 | v1.1 | 2026-07-06 | **ChromaDB vector indexing (#3):** `parse_and_store` now populates per-definition code embeddings (functions, classes, module docstrings) in ChromaDB for semantic search. Uses LM Studio's `/v1/embeddings` endpoint (OpenAI-compatible) with GGUF embedding models. Graceful degradation: if LM Studio is unavailable, vector indexing is skipped and the workflow completes with graph edges only. New modules: `core/kgraph/embeddings.py` (AST chunking + embedding client), `core/kgraph/vectors.py` (upsert + query). New config: `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED`. Also marked #2 (test restructure) as completed. |
 | v1.0 | 2026-07-05 | **Subpackage split:** Split monolithic `workflows/understand.py` (326 lines) into `workflows/understand_impl/` subpackage with per-node modules. Added `WORKFLOW_METADATA` for MCP client introspection. Thin facade re-exports `build_understand_graph`, `_default_state`, `WORKFLOW_METADATA`, `run_understand_workflow_sync`. Tests split into per-node files (`test_graph`, `test_state`, `test_init_project`, `test_helpers`) + `conftest.py`. |
@@ -54,7 +55,7 @@
 |---|---------|-------|----------|
 | 1 | **Configurable `skip_dirs`** | Currently hardcoded local set. Should be `.env` or `ProjectManager` config. | P3 |
 | 5 | **Additional languages** | Java, C/C++, Ruby via tree-sitter (tree-sitter-languages already bundles these — just add to LANGUAGE_MAP). | P3 |
-| 6 | **Chonkie chunking for `.md`/`.txt` docs (conditional)** | **When** understand is extended to index `.md`/`.txt`/`.rst` docs (currently code-only), use chonkie `SentenceChunker` for those file types. Tree-sitter (currently used for code definitions) can't parse prose — chonkie sentence chunking is the right tool for docs. Reuses `_chunk_text()` from `tools/file_ops/actions/read_file.py` (file tool v1.2 integration). This is **conditional** on file-type support landing first — not a standalone task. See `docs/TOOLS.md` § "Chunking (chonkie)". | P2 |
+| 6 | **Chonkie chunking for `.md`/`.txt` docs (conditional)** | ✅ Complete (v1.3) — `extract_doc_chunks()` uses chonkie `SentenceChunker` for `.md`/`.txt`/`.rst` files. Falls back to single-chunk if chonkie not installed. | ✅ |
 
 ---
 
@@ -70,4 +71,4 @@
 
 ---
 
-*Last updated: 2026-07-13 (v1.2.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

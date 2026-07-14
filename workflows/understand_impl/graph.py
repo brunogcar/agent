@@ -26,12 +26,12 @@ from workflows.understand_impl.nodes.report import node_report
 
 WORKFLOW_METADATA = {
     "name": "understand",
-    "version": "1.2",
-    "description": "Build codebase knowledge graph: init → discover → parse → report",
+    "version": "1.3",
+    "description": "Build codebase knowledge graph + doc embeddings: init → discover → parse → report",
     "nodes": [
         {"name": "node_init_project", "description": "Initialize ProjectManager and verify GraphStore"},
-        {"name": "node_discover_files", "description": "Scan for changed/new Python files via chunked MD5"},
-        {"name": "node_parse_and_store", "description": "Parse imports via AST and store dependency edges"},
+        {"name": "node_discover_files", "description": "Scan for changed/new code + doc files via chunked MD5"},
+        {"name": "node_parse_and_store", "description": "Parse imports via AST (code) or chonkie (docs), store edges + embeddings"},
         {"name": "node_report", "description": "Generate codebase overview report"},
     ],
     "edges": [

@@ -7,6 +7,7 @@
 | Version | Date | Notes |
 |---------|------|-------|
 | Pre-v1 | 2026-07-04 | Initial implementation. AST-based dependency extraction, SQLite graph storage, test targeting, project isolation. |
+| v1.3 update | 2026-07-13 | `tree_sitter_parser.py`: Added `DOC_EXTENSIONS` (.md/.txt/.rst), `ALL_SUPPORTED_EXTENSIONS`, `is_doc_file()`. `embeddings.py`: Added `extract_doc_chunks()` — chonkie sentence chunking for prose files. Doc chunks have `type: "doc"` metadata. Soft dependency on chonkie (fallback to single chunk). |
 
 ---
 
@@ -52,4 +53,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for component details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.3 update). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for component details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

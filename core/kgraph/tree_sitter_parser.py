@@ -42,6 +42,14 @@ LANGUAGE_MAP = {
 # Languages we support (for discover_files.py)
 SUPPORTED_EXTENSIONS = frozenset(LANGUAGE_MAP.keys())
 
+# v1.3: Document file extensions — indexed via chonkie sentence chunking
+# (tree-sitter can't parse prose). These files get vector embeddings but no
+# graph edges (docs don't have imports).
+DOC_EXTENSIONS = frozenset({".md", ".txt", ".rst"})
+
+# All extensions discover_files should find (code + docs)
+ALL_SUPPORTED_EXTENSIONS = SUPPORTED_EXTENSIONS | DOC_EXTENSIONS
+
 
 def get_language_for_file(file_path: str) -> Optional[str]:
     """Return the tree-sitter language name for a file, or None if unsupported."""
@@ -53,6 +61,12 @@ def get_language_for_file(file_path: str) -> Optional[str]:
 def is_supported(file_path: str) -> bool:
     """Check if a file's extension is supported by the multi-language parser."""
     return get_language_for_file(file_path) is not None
+
+
+def is_doc_file(file_path: str) -> bool:
+    """v1.3: Check if a file is a document (.md/.txt/.rst) — indexed via chonkie, not tree-sitter."""
+    from pathlib import Path
+    return Path(file_path).suffix.lower() in DOC_EXTENSIONS
 
 
 # ─── Parser cache (one parser per language) ─────────────────────────────────

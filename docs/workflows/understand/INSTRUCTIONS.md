@@ -16,20 +16,21 @@
 10. **Never skip `compileall` before `pytest`** — Catches syntax errors early.
 11. **Never let embedding failure crash the workflow** — [v1.1] `embed_texts()` returns `None` on failure; `upsert_file_vectors()` returns 0. Vector indexing is best-effort. Graph edges must still be stored. Use `tracer.warning`, not `tracer.error`.
 12. **Never embed whole files when definitions exist** — [v1.1] Use `extract_definitions()` for per-function/class chunking. Whole-file embedding defeats semantic search (you can't find "the function that does X").
+13. **Never use tree-sitter for doc files** — [v1.3] `.md`/`.txt`/`.rst` files use chonkie `extract_doc_chunks()`, not tree-sitter `extract_definitions()`. Tree-sitter can't parse prose. Use `is_doc_file()` to branch.
 
 ## ✅ ALWAYS DO
 
-13. **Always pass `trace_id` to `_default_state()`** — Nodes need it for trace correlation.
-14. **Always close GraphStore connections** — Use `try: ... finally: store.close()`.
-15. **Always use `_chunked_md5()` for file hashing** — Prevents memory spikes.
-16. **Always deduplicate target paths** — Use `set()` before `list()` for edge creation.
-17. **Always treat `completed_with_errors` as success** — The workflow completed, just with some parse failures.
-18. **Always log report generation failures** — Use `tracer.error()`, not bare `except: pass`.
-19. **Always test sync node verification** — Assert `not inspect.iscoroutinefunction(node)`.
-20. **Always update this doc** when adding nodes, changing parsing logic, or modifying storage.
-21. **Always use `extract_definitions()` for chunking** — [v1.1] Per-definition (function/class/module) embeddings, not per-file or fixed-window. Richer semantic search.
-22. **Always delete old vectors before upserting** — [v1.1] `upsert_file_vectors()` calls `collection.delete(where={"file_path": ...})` first, so renamed/deleted definitions don't leave stale vectors.
-23. **Always batch embedding calls** — [v1.1] `embed_texts()` sends all texts in one HTTP request. Don't call it per-definition in a loop.
+14. **Always pass `trace_id` to `_default_state()`** — Nodes need it for trace correlation.
+15. **Always close GraphStore connections** — Use `try: ... finally: store.close()`.
+16. **Always use `_chunked_md5()` for file hashing** — Prevents memory spikes.
+17. **Always deduplicate target paths** — Use `set()` before `list()` for edge creation.
+18. **Always treat `completed_with_errors` as success** — The workflow completed, just with some parse failures.
+19. **Always log report generation failures** — Use `tracer.error()`, not bare `except: pass`.
+20. **Always test sync node verification** — Assert `not inspect.iscoroutinefunction(node)`.
+21. **Always update this doc** when adding nodes, changing parsing logic, or modifying storage.
+22. **Always use `extract_definitions()` for chunking** — [v1.1] Per-definition (function/class/module) embeddings, not per-file or fixed-window. Richer semantic search.
+23. **Always delete old vectors before upserting** — [v1.1] `upsert_file_vectors()` calls `collection.delete(where={"file_path": ...})` first, so renamed/deleted definitions don't leave stale vectors.
+24. **Always batch embedding calls** — [v1.1] `embed_texts()` sends all texts in one HTTP request. Don't call it per-definition in a loop.
 
 ---
 
@@ -57,4 +58,4 @@
 
 ---
 
-*Last updated: 2026-07-13 (v1.2.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-13 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

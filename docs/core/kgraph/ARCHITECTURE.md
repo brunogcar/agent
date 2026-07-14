@@ -137,4 +137,4 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-06 (v1.2 — tree-sitter multi-language parser). See [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-13 (v1.3)

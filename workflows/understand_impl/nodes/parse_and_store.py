@@ -15,8 +15,8 @@ from core.tracer import tracer
 from core.config import cfg
 from core.kgraph.project import ProjectManager
 from core.kgraph.storage import GraphStore
-from core.kgraph.tree_sitter_parser import extract_imports, get_language_for_file, is_supported
-from core.kgraph.embeddings import extract_definitions
+from core.kgraph.tree_sitter_parser import extract_imports, get_language_for_file, is_supported, is_doc_file
+from core.kgraph.embeddings import extract_definitions, extract_doc_chunks
 from core.kgraph.vectors import upsert_file_vectors
 
 
@@ -51,31 +51,47 @@ def node_parse_and_store(state: UnderstandState) -> dict:
                 try:
                     content = Path(full_path).read_text(encoding="utf-8", errors="replace")
 
-                    # [#4] Detect language and use tree-sitter for imports
-                    language = get_language_for_file(rel_path) or "python"
-                    deps = extract_imports(content, language)
+                    # v1.3: Branch — doc files (.md/.txt/.rst) vs code files
+                    if is_doc_file(rel_path):
+                        # Doc path: chonkie sentence chunking, no graph edges
+                        store.upsert_file_graph(
+                            state["project_id"], rel_path, current_hash,
+                            [], mtime, size  # no target_paths — docs don't have imports
+                        )
+                        parsed += 1
+                        # No edges for docs
 
-                    target_paths = set()
-                    for dep in deps:
-                        target_paths.add(dep)
-                        # For Python, also add the path-form (dotted → slashes)
-                        if language == "python":
-                            target_paths.add(dep.replace(".", "/") + ".py")
+                        # v1.3: Use chonkie for doc chunking (tree-sitter can't parse prose)
+                        doc_chunks = extract_doc_chunks(content, rel_path, tid)
+                        vectors += upsert_file_vectors(
+                            state["project_id"], rel_path, doc_chunks, trace_id=tid,
+                        )
+                    else:
+                        # Code path: tree-sitter imports + definitions (existing v1.2 logic)
+                        language = get_language_for_file(rel_path) or "python"
+                        deps = extract_imports(content, language)
 
-                    store.upsert_file_graph(
-                        state["project_id"], rel_path, current_hash,
-                        list(target_paths), mtime, size
-                    )
-                    parsed += 1
-                    edges += len(target_paths)
+                        target_paths = set()
+                        for dep in deps:
+                            target_paths.add(dep)
+                            # For Python, also add the path-form (dotted → slashes)
+                            if language == "python":
+                                target_paths.add(dep.replace(".", "/") + ".py")
 
-                    # [#3] Populate code embeddings for semantic search.
-                    # [#4] Pass the detected language for multi-language chunking.
-                    # Graceful: if LM Studio is unavailable, this returns 0.
-                    definitions = extract_definitions(content, language)
-                    vectors += upsert_file_vectors(
-                        state["project_id"], rel_path, definitions, trace_id=tid,
-                    )
+                        store.upsert_file_graph(
+                            state["project_id"], rel_path, current_hash,
+                            list(target_paths), mtime, size
+                        )
+                        parsed += 1
+                        edges += len(target_paths)
+
+                        # [#3] Populate code embeddings for semantic search.
+                        # [#4] Pass the detected language for multi-language chunking.
+                        # Graceful: if LM Studio is unavailable, this returns 0.
+                        definitions = extract_definitions(content, language)
+                        vectors += upsert_file_vectors(
+                            state["project_id"], rel_path, definitions, trace_id=tid,
+                        )
                 except Exception as e:
                     errors.append(f"Failed to parse {rel_path}: {e}")
     finally:

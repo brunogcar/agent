@@ -4,10 +4,11 @@ The `understand` workflow analyzes a **project's codebase** to build a dependenc
 
 **Key characteristics:**
 - **Multi-language static analysis** — Tree-sitter parser supports Python, JavaScript/TypeScript, Go, and Rust (v1.2). Extracts imports, class hierarchies, and function calls.
+- **Document indexing** — `.md`/`.txt`/`.rst` files indexed via chonkie sentence chunking (v1.3). Doc chunks get vector embeddings with `type: "doc"` metadata — searchable alongside code definitions.
 - **Dependency graph** — Builds a graph in SQLite (via `GraphStore`) for fast querying
 - **Incremental updates** — Only re-parses changed files (MD5 hash comparison)
 - **Project isolation** — Each project gets its own graph database and artifact directory
-- **Semantic search** — Per-definition code embeddings in ChromaDB via LM Studio `/v1/embeddings` (v1.1). Graceful degradation if embedding model is unavailable.
+- **Semantic search** — Per-definition code embeddings + doc chunk embeddings in ChromaDB via LM Studio `/v1/embeddings` (v1.1). Graceful degradation if embedding model is unavailable.
 - **LangGraph StateGraph** — Sync nodes, routed through `base.py`'s `graph.invoke()`. Supports checkpoint/resume.
 
 ---

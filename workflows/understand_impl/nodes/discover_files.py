@@ -15,7 +15,7 @@ from workflows.understand_impl.helpers import _chunked_md5
 from core.tracer import tracer
 from core.kgraph.project import ProjectManager
 from core.kgraph.storage import GraphStore
-from core.kgraph.tree_sitter_parser import SUPPORTED_EXTENSIONS
+from core.kgraph.tree_sitter_parser import ALL_SUPPORTED_EXTENSIONS
 
 
 def node_discover_files(state: UnderstandState) -> dict:
@@ -34,8 +34,8 @@ def node_discover_files(state: UnderstandState) -> dict:
         for root, dirs, files in os.walk(pm.source_root):
             dirs[:] = sorted(set(dirs) - skip_dirs)
             for f in files:
-                # [#4] Use tree-sitter SUPPORTED_EXTENSIONS instead of hardcoded .py
-                if Path(f).suffix.lower() not in SUPPORTED_EXTENSIONS:
+                # v1.3: Use ALL_SUPPORTED_EXTENSIONS (code + docs)
+                if Path(f).suffix.lower() not in ALL_SUPPORTED_EXTENSIONS:
                     continue
                 full_path = Path(root) / f
                 try:
