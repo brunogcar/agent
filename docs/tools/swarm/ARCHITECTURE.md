@@ -10,7 +10,7 @@
 | `tools/_meta_tool.py` | `@meta_tool` decorator: docstring `doc_sections` + metadata. (Swarm uses `action: str` — no `Literal` enum generated) |
 | `tools/swarm_ops/__init__.py` | Auto-imports every `actions/*.py` module to trigger `@register_action` side effects |
 | `tools/swarm_ops/_registry.py` | `DISPATCH` dict + `@register_action` decorator (duplicate-action detection) |
-| `tools/swarm_ops/helpers.py` | Shared helpers: `_get_available_providers`, `_build_messages`, `_call_provider` (v1.1: no longer hardcodes `temperature=0.7` — accepts `temperature`/`json_mode`/`json_schema` and forwards to `provider.chat_completion()`), `_call_all_providers` (v1.1: same 3 new params), `_call_providers_race` (v1.1: same 3 new params), `_SWARM_SYSTEM_PROMPT` |
+| `tools/swarm_ops/helpers.py` | Shared helpers: `_get_available_providers`, `_build_messages`, `_call_provider` (**v1.1 update**: now delegates to `llm.complete_provider()` for circuit breaker + telemetry — falls back to direct `provider.chat_completion()` for unit-test mocks; v1.1: accepts `temperature`/`json_mode`/`json_schema` and forwards through `complete_provider()`), `_call_all_providers` (v1.1: same 3 new params), `_call_providers_race` (v1.1: same 3 new params), `_SWARM_SYSTEM_PROMPT` |
 | `tools/swarm_ops/actions/consensus.py` | All providers → planner synthesis. **v1.1:** accepts `temperature`/`json_mode`/`json_schema` (passed to `_call_all_providers`) |
 | `tools/swarm_ops/actions/race.py` | All providers in parallel → first valid wins. **v1.1:** same 3 new params (passed to `_call_providers_race`) |
 | `tools/swarm_ops/actions/vote.py` | All providers → agreement analysis. **v1.1:** same 3 new params; `temperature=0` recommended for deterministic classification |
@@ -117,7 +117,9 @@ graph TD
 
 Swarm calls `provider.chat_completion()` directly, bypassing `llm.complete()`'s role routing, circuit breakers, and rate limiting. **Why:** `llm.complete()` dispatches by *role* — it picks *one* provider per role based on routing config. The swarm's entire purpose is to call the *same question* on *different providers* *in parallel*. There's no role-based way to express "call all of them" — the swarm must reach into `llm._registry._providers` directly.
 
-**Implication:** Swarm does NOT benefit from circuit breakers or rate limiters in `llm.complete()`. Per-provider error handling and resilience is the swarm's own responsibility (handled in `_call_provider()` via try/except).
+**v1.1 update (#22):** `_call_provider()` now delegates to `llm.complete_provider()` (introduced in core LLM v1.3) — this gives swarm circuit-breaker integration + telemetry on per-provider fan-out (which it previously bypassed). `complete_provider(provider, model, messages, ...)` is the provider-direct call path on `LLMClient` — it skips role routing but keeps the CB and tracer plumbing. The fallback path (calling `provider.chat_completion()` directly) is preserved for unit-test mocks that patch the provider method directly.
+
+**Implication:** Pre-v1.1-update, swarm did NOT benefit from circuit breakers or rate limiters in `llm.complete()` — per-provider error handling and resilience was the swarm's own responsibility (handled in `_call_provider()` via try/except). Post-v1.1-update, swarm gets circuit-breaker integration via `complete_provider()` (keyed by provider name, not role).
 
 **Exception — `consensus` synthesis:** The synthesis step in `consensus.py` *does* call `llm.complete(role="planner", ...)`. This is correct: synthesis is a single-model role-routed task, not a multi-provider fan-out.
 
@@ -223,4 +225,4 @@ python -m pytest tests/tools/swarm/ -W error --tb=short -v
 
 ---
 
-*Last updated: 2026-07-14 (v1.1 — provider capability passthrough added: `temperature`/`json_mode`/`json_schema` on facade + 4 action handlers + `_call_provider`; new design decision #11 documents the caller-controlled rationale + Claude/Gemini roadmap). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.1 update — `_call_provider()` now delegates to `llm.complete_provider()` for circuit breaker + telemetry; v1.1 — provider capability passthrough added: `temperature`/`json_mode`/`json_schema` on facade + 4 action handlers + `_call_provider`; design decision #11 documents the caller-controlled rationale + Claude/Gemini roadmap). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

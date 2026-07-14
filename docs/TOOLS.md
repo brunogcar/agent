@@ -926,6 +926,8 @@ def my_tool(action: str = "", ...) -> dict:
 
 When adding a **new tool** to the MCP Agent Stack, update **all** of the following files. Missing any one of them causes drift between the source code, the docs, and the LLM's tool schema.
 
+> **Future note (v1.3):** When `complete_with_tools()` is implemented (native LLM tool-calling loop — see `docs/core/llm/INSTRUCTIONS.md` → In Progress / Next Up), a new checklist item will be needed: register tool definitions for `complete_with_tools()` so the tool can be called by the LLM natively (via OpenAI `tools` / Claude `tool_use` / Gemini `functionDeclarations`) rather than via JSON-schema-parsed `{tool, action, args}` dispatch.
+
 | # | File | What to update |
 |---|------|----------------|
 | 1 | `tools/<tool>.py` | The `@tool` facade — validation, dispatch, compression. Thin wrapper, no business logic. |

@@ -4,7 +4,7 @@
 
 ## 🔧 API Overview
 
-The LLM backend exposes two public call methods (`complete()`, `call()`) and a unified `LLMResponse` dataclass. All configuration is role-based — callers specify roles, not raw model strings.
+The LLM backend exposes three public call methods — `complete()` (high-level, role-based), `call()` (low-level, role-based), and `complete_provider()` (v1.3, provider-direct) — plus a unified `LLMResponse` dataclass. All configuration is role-based — callers specify roles, not raw model strings (except `complete_provider()`, which takes a provider name directly).
 
 ---
 
@@ -64,7 +64,7 @@ else:
 | `max_tokens` | `int` | *(role default)* | Override role max tokens |
 | `timeout` | `int` | *(role default)* | Override role timeout |
 
-> ⚠️ `complete_with_tools()` does not exist anywhere in this codebase (confirmed via repo-wide search). `LLMClient` exposes exactly two public call methods: `complete()` and `call()`.
+> ⚠️ `complete_with_tools()` does not exist anywhere in this codebase (confirmed via repo-wide search). `LLMClient` exposes three public call methods: `complete()`, `call()`, and `complete_provider()` (v1.3). See INSTRUCTIONS.md → In Progress / Next Up for the `complete_with_tools()` roadmap.
 
 **Phase 2 (v1.2):** Schemas are now defined for: agent roles (code, route, plan, review, refactor, test) via ROLE_CONFIG, router._model_route(), autocode debug node, procedural distill, sleep_learn distiller.
 
@@ -88,6 +88,56 @@ result = llm.call(
     trace_id="abc123",
 )
 ```
+
+---
+
+### `complete_provider()` — Provider-Direct Call (v1.3)
+
+**v1.3 (#22).** Bypasses role routing — calls a specific named provider directly. Maintains circuit breaker integration + telemetry (the same plumbing as `complete()`/`call()`) but lets the caller choose the provider instead of looking it up by role. Used by swarm's `_call_provider()` so swarm gets the same resilience and tracing as role-routed calls.
+
+```python
+result = llm.complete_provider(
+    provider="openai",                    # Provider name (must be in registry)
+    model="gpt-4o",                       # Model identifier
+    messages=[
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "..."},
+    ],
+    temperature=0.0,
+    max_tokens=1024,
+    timeout=60,
+    json_mode=False,
+    json_schema=None,
+    trace_id="abc123",
+)
+```
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `provider` | `str` | — | **Required.** Provider name (e.g. `"openai"`, `"claude"`, `"gemini"`, `"lmstudio"`, `"deepseek"`, ...). Must be registered in `llm._registry._providers`. |
+| `model` | `str` | — | **Required.** Model identifier to pass to the provider (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-..."`). |
+| `messages` | `list[dict]` | — | **Required.** OpenAI-shape messages list. |
+| `temperature` | `float` | `0.7` | Sampling temperature. |
+| `max_tokens` | `int` | `1024` | Max response tokens. |
+| `timeout` | `int` | `60` | Per-call timeout in seconds. |
+| `json_mode` | `bool` | `False` | Request JSON output. |
+| `json_schema` | `Optional[dict]` | `None` | JSON schema for structured output (v1.3: all providers honor natively). |
+| `trace_id` | `str` | `""` | Trace identifier for logging. |
+
+**Returns:** `LLMResponse` (same shape as `complete()`/`call()`).
+
+**When to use:**
+
+- Multi-provider fan-out where the same question must be sent to several specific providers in parallel (the swarm pattern). Pre-v1.3 this required reaching into `provider.chat_completion()` directly — bypassing the circuit breaker + losing telemetry.
+- Cross-model comparison / voting where role routing (which picks *one* provider per role) is the wrong abstraction.
+- Any code path that needs to pick the provider by name rather than by role.
+
+**When NOT to use:**
+
+- Role-based dispatch — use `llm.complete(role="...", ...)` instead. `complete_provider()` skips role routing, fallback chains, and the per-role `model_registry` lookup.
+- Internal `_call_provider()` test mocks that patch `provider.chat_completion()` directly — `complete_provider()` falls back to `provider.chat_completion()` if it can't satisfy the mock shape, so existing tests still work.
 
 ---
 
@@ -319,10 +369,16 @@ class BaseProvider(ABC):
         max_tokens: int,
         timeout: int,
         json_mode: bool,
-        **kwargs: Any,
+        **kwargs: Any,  # json_schema: Optional[dict] (v1.2+), honored natively by all providers (v1.3)
     ) -> dict: ...
 
     def is_available(self) -> bool:
+        return True
+
+    def supports_json_schema(self) -> bool:
+        """v1.3 (#41): Whether this provider honors `json_schema` natively.
+        All providers return True. Claude = tool-use conversion; Gemini =
+        responseSchema; OpenAI-compat = response_format with strict=True."""
         return True
 ```
 
@@ -339,7 +395,24 @@ class BaseProvider(ABC):
 
 > **Provider count (v1.2.2):** 10 supported providers total — 1 local (LM Studio) + 7 OpenAI-compatible cloud (OpenAI, DeepSeek, Mistral, Qwen, Kimi, Z.ai, MiMo) + 2 native cloud (Claude/Anthropic, Gemini/Google). Z.ai and MiMo are new OpenAI-compatible additions; Claude and Gemini are new native providers.
 >
-> **Claude and Gemini** (native providers) ignore `json_schema` in Phase 1 — they use different API mechanisms for structured output (Anthropic tool-use, Gemini responseSchema). `json_mode` works via system instruction / responseMimeType. Native schema support is a roadmap item.
+> **Claude and Gemini json_schema support (v1.3):** All providers now support `json_schema` natively. Claude uses Anthropic tool-use conversion (define tool with `input_schema`, force `tool_choice`, extract `tool_use` block's `input` as JSON). Gemini uses `responseSchema` conversion (strip `additionalProperties`/union types, set `responseMimeType=application/json`). OpenAI-compatible providers send `response_format={"type":"json_schema","schema":...,"name":...,"strict":true}` (v1.3 #42: `name` is derived from the schema `title` or defaults to `"structured_output"`; `strict: True` enforces the schema at generation time). Pre-v1.3, Claude and Gemini silently ignored `json_schema` and fell back to `json_mode` — that is no longer the case.
+
+### Provider Capability Detection (v1.3)
+
+`BaseProvider` exposes a `supports_json_schema()` method so callers can check before passing a schema:
+
+```python
+class BaseProvider(ABC):
+    name: str = "base"
+
+    def supports_json_schema(self) -> bool:
+        """Whether this provider honors the `json_schema` kwarg natively.
+        v1.3: all providers return True (Claude via tool-use conversion,
+        Gemini via responseSchema, OpenAI-compat via response_format)."""
+        return True
+```
+
+**v1.3 status:** All providers return `True`. The method exists so future providers (or future modes of existing providers) can declare `False` and let callers gracefully fall back to `json_mode` + defensive parsing.
 
 ### Provider Selection
 
@@ -435,4 +508,4 @@ Available at `GET /health/circuit-breakers` — per-**role** state and failure c
 
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

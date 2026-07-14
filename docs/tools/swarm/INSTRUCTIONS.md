@@ -8,7 +8,7 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 1. **Never add `lmstudio` to swarm.** Swarm is for cloud providers only. `_get_available_providers()` explicitly skips `name == "lmstudio"` — do not remove this check. Local models belong to `agent()` / `llm.complete()`, not swarm. Adding `lmstudio` would defeat the "different models, different vendors" premise and make `race` / `vote` meaningless (single local model racing itself).
 
-2. **Never use `llm.complete()` for the per-provider fan-out calls.** `llm.complete()` dispatches by *role* and routes to *one* provider per role — it cannot express "call all providers in parallel". Swarm calls `provider.chat_completion()` directly via `_call_provider()`. The ONLY exception is the `consensus` synthesis step, which legitimately uses `llm.complete(role="planner", ...)` because synthesis is a single-model role-routed task.
+2. **Never use `llm.complete()` for the per-provider fan-out calls.** `llm.complete()` dispatches by *role* and routes to *one* provider per role — it cannot express "call all providers in parallel". **[v1.1 update #22]** Use `llm.complete_provider(provider="...", model="...", messages=[...], ...)` — the provider-direct call path with circuit breaker + telemetry (added in core LLM v1.3). Swarm's `_call_provider()` delegates to it (with fallback to direct `provider.chat_completion()` for unit-test mocks). The ONLY exception to role-based dispatch is the `consensus` synthesis step, which legitimately uses `llm.complete(role="planner", ...)` because synthesis is a single-model role-routed task.
 
 3. **Never add `swarm` to `PARALLEL_SAFE` in `core/parallel_executor.py`.** Swarm uses its own `ThreadPoolExecutor` internally — nesting it inside `parallel(tools=[...])` would create nested thread pools and risk thread exhaustion. Swarm must remain excluded from the parallel allowlist.
 
@@ -50,9 +50,9 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 ## ✅ ALWAYS DO
 
-21. **Use `provider.chat_completion()` directly for per-provider calls.** This is the canonical way to call a specific provider bypassing role routing. Returns OpenAI-shape dict. See `_call_provider()` in `helpers.py`.
+21. **Use `llm.complete_provider()` for per-provider calls (v1.1 update #22).** This is the canonical way to call a specific named provider bypassing role routing while keeping circuit breaker + telemetry. Swarm's `_call_provider()` delegates to it. Falls back to direct `provider.chat_completion()` for unit-test mocks that patch the provider method. See `helpers.py` `_call_provider()`.
 
-22. **Handle errors per-provider inside `_call_provider()`.** Wrap the `provider.chat_completion()` call in try/except, capture the exception message, return a result dict with `text=""` and `error=str(e)`. Never let one provider's failure kill the whole action.
+22. **Handle errors per-provider inside `_call_provider()`.** Wrap the `llm.complete_provider()` call (or fallback `provider.chat_completion()` call) in try/except, capture the exception message, return a result dict with `text=""` and `error=str(e)`. Never let one provider's failure kill the whole action. **[v1.1 update #22]** The circuit breaker integration from `complete_provider()` adds another failure surface (CB can return `LLMResponse(ok=False)` for an OPEN breaker) — treat a CB rejection the same as any other provider error (record `error="Circuit breaker OPEN for provider {name}"`, do not let it propagate).
 
 23. **Sort results by provider name in `_call_all_providers()`.** Deterministic output for consensus/vote/compare. Use `results.sort(key=lambda r: r["provider"])`. Do NOT sort in `_call_providers_race()` (race needs winner-first ordering).
 
@@ -146,4 +146,4 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 ---
 
-*Last updated: 2026-07-14 (v1.1 — added rules #43 (never hardcode temperature), #44 (never gate json_schema on provider name — roadmap note included), #45 (use temperature=0 for vote); v1.0.2 cross-LLM hardening). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-14 (v1.1 update — rules #2/#21/#22 updated to reference `llm.complete_provider()` instead of direct `provider.chat_completion()`; v1.1 — added rules #43 (never hardcode temperature), #44 (never gate json_schema on provider name — roadmap note included), #45 (use temperature=0 for vote); v1.0.2 cross-LLM hardening). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

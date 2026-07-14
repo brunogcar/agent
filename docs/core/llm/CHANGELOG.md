@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.3** | 2026-07-14 | **Native json_schema for Claude/Gemini + provider capabilities + complete_provider() API.** (1) #41: `supports_json_schema()` on `BaseProvider` — callers can check before passing schema. (2) #39: Claude — json_schema → Anthropic tool-use conversion (define tool with `input_schema`, force `tool_choice`, extract `tool_use` block's `input` as JSON). (3) #40: Gemini — json_schema → `responseSchema` conversion (strip `additionalProperties`/union types, set `responseMimeType=application/json`). (4) #42: OpenAI — `name` field + `strict: True` in `response_format` for tracing. (5) #43: Post-parse enum validation — `_validate_enum_constraints()` walks schema recursively, graceful degradation on failure. (6) #22: `llm.complete_provider()` — provider-direct calls with circuit breaker + telemetry. Swarm's `_call_provider()` now delegates to it. |
 | v1.2.2 | 2026-07-08 | **4 new cloud providers.** Claude (Anthropic, native), Gemini (Google, native), Z.ai/GLM (OpenAI-compatible), MiMo/Xiaomi (OpenAI-compatible). Claude and Gemini ignore `json_schema` in Phase 1 (fall back to `json_mode` — native schema support deferred). All use httpx directly (no SDK dependencies). |
 | v1.2 | 2026-07-08 | **JSON schema enforcement.** Added `json_schema` param to `complete()`, `call()`, and `chat_completion()`. LM Studio enforces via outlines. Phase 2: schemas for 6 agent roles + router + autocode debug + distill + sleep_learn. |
 | Pre-v1 | 2026-07-04 | **Initial implementation.** Role-based dispatch, circuit breaker per role, cognitive context budgeting, provider abstraction, thread-safe singleton. |
@@ -24,14 +25,15 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| — | `complete_with_tools()` | Tool-calling loop not yet implemented at this layer. | P1 |
-| 39 | **Native `json_schema` for Claude** | Anthropic tool-use conversion (current path is prompt-injected JSON; native is more reliable). Claude currently ignores `json_schema`. | P2 |
-| 40 | **Native `json_schema` for Gemini** | Gemini `responseSchema` conversion (current path is prompt-injected JSON; native is more reliable). Gemini currently ignores `json_schema`. | P2 |
-| 41 | Provider capability detection | `supports_json_schema()` on `BaseProvider`. Lets callers gracefully degrade when a provider doesn't support native schema. | P2 |
-| 42 | OpenAI `name` field in json_schema response_format | Structured output naming for better tracing. | P2 |
+| — | `complete_with_tools()` | Tool-calling loop not yet implemented at this layer. See `INSTRUCTIONS.md` → In Progress / Next Up for the detailed roadmap. | P1 |
+| ✅ #39 | **Native `json_schema` for Claude** | ✅ **Shipped in v1.3** — Anthropic tool-use conversion (define tool with `input_schema`, force `tool_choice`, extract `tool_use` block's `input` as JSON). |
+| ✅ #40 | **Native `json_schema` for Gemini** | ✅ **Shipped in v1.3** — `responseSchema` conversion (strip `additionalProperties`/union types, set `responseMimeType=application/json`). |
+| ✅ #41 | Provider capability detection | ✅ **Shipped in v1.3** — `supports_json_schema()` on `BaseProvider`. All providers return `True`. |
+| ✅ #42 | OpenAI `name` field in json_schema response_format | ✅ **Shipped in v1.3** — `schema_name` from schema title or `"structured_output"`, plus `strict: True` for tracing. |
 | — | Decouple circuit breaker cooldown from role timeout | Cooldown is tied to `role_cfg.timeout` — a change to timeout silently changes cooldown. | P2 |
 | — | Enable `/health/circuit-breakers` by default | Currently returns `null` unless `cfg.enable_metrics_endpoint` is set. | P2 |
-| 43 | Post-parse enum validation | Runtime check when schema enforcement fails (Claude/Gemini path). | P3 |
+| ✅ #43 | Post-parse enum validation | ✅ **Shipped in v1.3** — `_validate_enum_constraints()` walks schema recursively, logs warning on failure (graceful degradation). |
+| ✅ #22 | `llm.complete_provider()` API | ✅ **Shipped in v1.3** — provider-direct calls with circuit breaker + telemetry. Swarm's `_call_provider()` now delegates to it (with fallback to direct `provider.chat_completion()` for unit-test mocks). |
 | 44 | Centralize schemas in `core/schemas/` | Single source of truth for all JSON schemas. | P3 |
 | — | YAML-based prompt loader | Currently system prompts are plain Python string constants. | P3 |
 | — | Fix `PROCEDURAL` vs `ERROR` tier weight | `PROCEDURAL` (50.0) outranks `ERROR` (40.0) but docstring claims the opposite. | P3 |
@@ -47,4 +49,4 @@
 
 ---
 
-*Last updated: 2026-07-14. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

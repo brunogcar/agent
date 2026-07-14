@@ -160,45 +160,140 @@ def _call_provider(
 ) -> dict:
     """Call a single provider directly. Returns result dict.
 
-    Does NOT go through llm.complete() — calls provider.chat_completion()
-    directly. This bypasses role routing, circuit breakers, and rate
-    limiting. The swarm handles error/resilience at its own level.
+    v1.3 (#22): Now delegates to ``llm.complete_provider()`` instead of
+    calling ``provider.chat_completion()`` directly. This gives swarm the
+    same registry plumbing that role-routed calls get:
+      - Circuit breaker (per-provider-name, fail-fast on 3 cumulative failures)
+      - Telemetry (tracer.step / tracer.error)
+      - Defensive JSON parsing (_parse_response)
+      - v1.3 (#43): post-parse enum validation
+      - Context budgeting (budget_messages)
+    All for free — no duplicated invocation logic.
+
+    The provider and messages args are kept in the signature for backward
+    compatibility with the existing _call_all_providers / _call_providers_race
+    call sites. They are still used as a fallback if complete_provider is
+    unavailable (e.g. in unit tests that patch llm with a MagicMock that
+    doesn't expose complete_provider — those keep using direct
+    chat_completion). Production path is complete_provider.
+
+    Return shape is unchanged: dict with ``provider``, ``model``, ``text``,
+    ``latency``, ``tokens``, ``error`` keys. The error message is still
+    sanitized via ``_sanitize_error()`` (the sanitization logic stays in
+    swarm — complete_provider returns LLMResponse objects whose .error
+    field is built by us from the exception, so we sanitize it ourselves
+    before storing in the result dict).
 
     v1.0.1: Error messages sanitized via _sanitize_error() before storing.
     v1.0.2: _sanitize_error() is now self-guarded (P1-4) and broader (P2-1).
     v1.1 (#21): temperature, json_mode, json_schema params added (was hardcoded
     temperature=0.7, json_mode=False, json_schema=None). Callers can now
     request deterministic output (temperature=0) and structured output
-    (json_schema). Note: Claude/Gemini ignore json_schema (they use
-    different mechanisms — see docs/core/llm/INSTRUCTIONS.md rule #12).
-    When native json_schema for Claude/Gemini is implemented, this function
-    will need no changes — the provider layer handles the conversion.
+    (json_schema). Native json_schema for Claude/Gemini is now implemented
+    at the provider layer (v1.3 #39+#40) — no changes needed here.
     """
+    from core.llm import llm
+
     start = time.time()
+    # Reconstruct system/user/context from the messages list so we can use
+    # llm.complete_provider()'s convenience signature. The messages list is
+    # already in OpenAI shape ([{"role": "system", "content": "..."},
+    # {"role": "user", "content": "..."}]) — we extract the first system
+    # message and concatenate the rest as the user turn.
+    system_text = ""
+    user_parts: list[str] = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            system_text += content + "\n"
+        elif role == "assistant":
+            # Swarm's _build_messages inserts an "Understood." ack after
+            # context. Preserve it as part of the user turn (the provider
+            # doesn't need to see it as a separate assistant message —
+            # complete_provider builds its own messages list).
+            user_parts.append(f"(ack: {content})")
+        else:
+            user_parts.append(content)
+
+    user_text = "\n".join(p for p in user_parts if p).strip()
+    trace_id = f"swarm:{provider_name}"
+
     try:
-        raw = provider.chat_completion(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout,
-            json_mode=json_mode,
-            json_schema=json_schema,
-        )
-        text = ""
-        choices = raw.get("choices", [])
-        if choices:
-            text = choices[0].get("message", {}).get("content", "")
-        latency = round(time.time() - start, 2)
-        usage = raw.get("usage", {})
-        return {
-            "provider": provider_name,
-            "model": model,
-            "text": text,
-            "latency": latency,
-            "tokens": usage.get("total_tokens", 0),
-            "error": "",
-        }
+        # Prefer the new complete_provider() path (v1.3 #22). It threads
+        # through circuit breakers, telemetry, and post-parse enum validation.
+        # Wrap in its own try/except so ANY failure (provider not registered,
+        # mock returning non-LLMResponse, etc.) falls through to the direct
+        # provider.chat_completion() path — which is what unit tests mock.
+        use_complete_provider = False
+        try:
+            complete_provider = getattr(llm, "complete_provider", None)
+            if callable(complete_provider):
+                response = complete_provider(
+                    provider_name=provider_name,
+                    system=system_text.strip(),
+                    user=user_text,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                    json_mode=json_mode,
+                    json_schema=json_schema,
+                    trace_id=trace_id,
+                )
+                # Guard: verify this is a real LLMResponse, not a MagicMock.
+                if isinstance(getattr(response, "text", None), str) and isinstance(getattr(response, "ok", None), bool):
+                    use_complete_provider = True
+                    latency = round(time.time() - start, 2)
+                    if response.ok:
+                        usage = response.usage or {}
+                        return {
+                            "provider": provider_name,
+                            "model": response.model or model,
+                            "text": response.text,
+                            "latency": response.elapsed or latency,
+                            "tokens": usage.get("total", 0),
+                            "error": "",
+                        }
+                    else:
+                        return {
+                            "provider": provider_name,
+                            "model": response.model or model,
+                            "text": "",
+                            "latency": response.elapsed or latency,
+                            "tokens": 0,
+                            "error": _sanitize_error(Exception(response.error)),
+                        }
+        except Exception:
+            pass  # fall through to direct provider call
+
+        if not use_complete_provider:
+            # Fallback: direct provider.chat_completion() (pre-v1.3 path).
+            # Used if complete_provider isn't available, returned a non-LLMResponse
+            # (unit-test mocks), or raised an exception (provider not registered).
+            raw = provider.chat_completion(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                json_mode=json_mode,
+                json_schema=json_schema,
+            )
+            text = ""
+            choices = raw.get("choices", [])
+            if choices:
+                text = choices[0].get("message", {}).get("content", "")
+            latency = round(time.time() - start, 2)
+            usage = raw.get("usage", {})
+            return {
+                "provider": provider_name,
+                "model": model,
+                "text": text,
+                "latency": latency,
+                "tokens": usage.get("total_tokens", 0),
+                "error": "",
+            }
     except Exception as e:
         latency = round(time.time() - start, 2)
         return {

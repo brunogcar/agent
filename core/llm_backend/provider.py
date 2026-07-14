@@ -31,6 +31,20 @@ class BaseProvider(ABC):
     def is_available(self) -> bool:
         return True
 
+    def supports_json_schema(self) -> bool:
+        """[v1.3 #41] Return True if this provider natively supports json_schema enforcement.
+
+        All providers now support json_schema natively (v1.3):
+        - OpenAI-compatible: response_format with json_schema (v1.2)
+        - Claude: Anthropic tool-use conversion (v1.3 #39)
+        - Gemini: responseSchema conversion (v1.3 #40)
+        - LM Studio: outlines-based enforcement (v1.2)
+
+        Callers can check this before passing json_schema to gracefully
+        degrade when a future provider doesn't support it.
+        """
+        return True
+
 class ProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, BaseProvider] = {}

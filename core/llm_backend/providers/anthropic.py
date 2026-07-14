@@ -10,13 +10,17 @@ Native provider for Claude models. Anthropic's API is NOT OpenAI-compatible:
 This provider converts OpenAI-style messages → Anthropic Messages API format,
 then normalizes the response back to the OpenAI shape that _parse_response expects.
 
-json_schema: IGNORED in Phase 1. Claude uses tool-use for structured output
-(a completely different API mechanism — you define a "tool" with input_schema,
-and Claude outputs tool_use blocks). Converting json_schema → Anthropic tool
-format is deferred to a follow-up commit after real-world testing.
-When json_schema is provided, falls back to json_mode=True (Claude supports
-json_mode via a system instruction, not response_format — this provider
-adds "Output ONLY valid JSON." to the system prompt when json_mode is True).
+v1.3 (#39): json_schema converted to Anthropic tool-use format for native
+enforcement. We synthesize a single "extract_structured_output" tool whose
+input_schema IS the user-supplied JSON Schema, force tool_choice to that tool,
+and extract the tool_use block's `input` dict from the response (JSON-
+stringified so _parse_response can parse it normally). This is stronger than
+the old v1.2.x fallback (prompt-injected "Output ONLY valid JSON"), which only
+worked for json_mode-style requests.
+
+When json_schema is None but json_mode is True, the old "Output ONLY valid
+JSON" system-prompt addition is still used (no schema to enforce, so prompt
+injection is the only mechanism available — same as v1.2.x).
 
 Soft dependency: Uses httpx directly (already installed). No anthropic SDK
 needed — consistent with existing providers (LMStudioProvider, OpenAICompatibleProvider
@@ -24,6 +28,7 @@ also use httpx, not SDKs).
 """
 from __future__ import annotations
 
+import json
 import threading
 from typing import Any, Optional
 import httpx
@@ -89,15 +94,22 @@ class AnthropicProvider(BaseProvider):
             else:
                 anthropic_messages.append({"role": role, "content": content})
 
-        # json_schema: IGNORED (Phase 1). Fall back to json_mode instruction.
-        # TODO (follow-up): Convert json_schema → Anthropic tool-use format.
-        # Claude's structured output uses tool_use blocks with input_schema,
-        # not response_format. This requires:
-        # 1. Converting json_schema dict → Anthropic tool definition
-        # 2. Adding the tool to the request
-        # 3. Extracting the tool_use block from the response
-        # Deferred until real-world testing with Claude API keys.
-        if json_schema is not None or json_mode:
+        # v1.3 (#39): Native json_schema enforcement via Anthropic tool-use.
+        # Anthropic doesn't support response_format=json_schema like OpenAI.
+        # Instead, you define a tool whose input_schema IS the JSON Schema,
+        # force tool_choice to that tool, and Claude returns a tool_use block
+        # whose `input` field is a dict matching the schema. We extract that
+        # dict, JSON-stringify it, and return it as the `content` text so
+        # _parse_response can parse it normally (just like the OpenAI path).
+        #
+        # When json_schema is None but json_mode is True, fall back to the
+        # pre-v1.3 prompt-injection path (no schema to enforce, so we can't
+        # use tool-use). This keeps the json_mode behavior unchanged.
+        tool_name = "extract_structured_output"
+        use_tool_for_schema = json_schema is not None
+
+        if not use_tool_for_schema and json_mode:
+            # Pre-v1.3 path: prompt-injected JSON mode (no schema to enforce).
             system_text += "\nOutput ONLY valid JSON. No prose, no markdown fences."
 
         payload: dict[str, Any] = {
@@ -107,6 +119,24 @@ class AnthropicProvider(BaseProvider):
             "system": system_text.strip(),
             "messages": anthropic_messages,
         }
+
+        if use_tool_for_schema:
+            # Convert json_schema → Anthropic tool definition.
+            # Anthropic's input_schema IS JSON Schema (no transformation needed).
+            description = (
+                json_schema.get("description")
+                if isinstance(json_schema, dict)
+                else None
+            ) or "Extract structured data matching the schema"
+            tool = {
+                "name": tool_name,
+                "description": description,
+                "input_schema": json_schema,
+            }
+            payload["tools"] = [tool]
+            # Force Claude to call this specific tool (no prose, no other tools).
+            payload["tool_choice"] = {"type": "tool", "name": tool_name}
+
         # Merge any extra kwargs (but don't let them override our fields)
         payload.update(kwargs)
 
@@ -118,14 +148,32 @@ class AnthropicProvider(BaseProvider):
         response.raise_for_status()
         raw = response.json()
 
-        # Normalize Anthropic response → OpenAI shape for _parse_response
-        # Anthropic: {"content": [{"type": "text", "text": "..."}], "usage": {"input_tokens": N, "output_tokens": M}}
-        # OpenAI: {"choices": [{"message": {"content": "..."}}], "usage": {"prompt_tokens": N, "completion_tokens": M, "total_tokens": T}}
+        # Normalize Anthropic response → OpenAI shape for _parse_response.
+        # Anthropic: {"content": [{"type": "text", "text": "..."} | {"type": "tool_use", "name": "...", "input": {...}}],
+        #             "usage": {"input_tokens": N, "output_tokens": M}}
+        # OpenAI:     {"choices": [{"message": {"content": "..."}}],
+        #             "usage": {"prompt_tokens": N, "completion_tokens": M, "total_tokens": T}}
+        #
+        # v1.3 (#39): When the request used tool-use for json_schema, the
+        # response content array contains a tool_use block. We extract its
+        # `input` dict, JSON-stringify it, and use that as the OpenAI-shape
+        # `content` text. _parse_response then parses it like any other JSON
+        # response. Text blocks are concatenated as before for non-schema calls.
         content_parts = raw.get("content", [])
         text = ""
+        tool_input_obj: Any = None
         for part in content_parts:
-            if part.get("type") == "text":
+            part_type = part.get("type")
+            if part_type == "text":
                 text += part.get("text", "")
+            elif part_type == "tool_use" and part.get("name") == tool_name:
+                # Native json_schema path: tool_use.input is a dict matching
+                # the user-supplied schema. JSON-stringify so _parse_response
+                # can re-parse it into `parsed`.
+                tool_input_obj = part.get("input")
+
+        if tool_input_obj is not None:
+            text = json.dumps(tool_input_obj)
 
         usage_in = raw.get("usage", {})
         prompt_tokens = usage_in.get("input_tokens", 0)
@@ -139,6 +187,14 @@ class AnthropicProvider(BaseProvider):
                 "total_tokens": prompt_tokens + completion_tokens,
             },
         }
+
+    def supports_json_schema(self) -> bool:
+        """v1.3 (#39): Claude supports json_schema natively via tool-use conversion.
+
+        Returns True (inherited from BaseProvider — kept here as an explicit
+        marker for readers grepping for the capability flag).
+        """
+        return True
 
     def is_available(self) -> bool:
         try:

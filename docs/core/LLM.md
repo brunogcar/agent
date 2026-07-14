@@ -7,7 +7,7 @@ The LLM backend is the **unified interface for all model interactions** in the a
 - **Circuit breaker per role** — 3 cumulative failures (no time window) → cooldown equal to that role's own configured timeout, auto-recovery via half-open
 - **Cognitive context budgeting** — Priority-based message trimming that preserves the most important content
 - **Dual output modes** — Text and JSON, each with their own extraction pipeline
-- **Provider abstraction** — LM Studio (local), OpenAI-compatible (OpenAI, DeepSeek, Mistral, Qwen, Kimi, Z.ai, MiMo), native (Claude/Anthropic, Gemini/Google)
+- **Provider abstraction** — LM Studio (local), OpenAI-compatible (OpenAI, DeepSeek, Mistral, Qwen, Kimi, Z.ai, MiMo), native (Claude/Anthropic, Gemini/Google). All providers support `json_schema` natively as of v1.3 (Claude via Anthropic tool-use conversion, Gemini via `responseSchema`, OpenAI-compat via `response_format` with `name` + `strict: True`). `llm.complete_provider()` (v1.3) exposes provider-direct calls with circuit breaker + telemetry.
 - **Thread-safe singleton** — One `llm` instance, imported everywhere via `from core.llm import llm`
 
 ---
@@ -81,4 +81,4 @@ result = llm.call(role="executor", messages=[{"role": "system", "content": "..."
 
 ---
 
-*Last updated: 2026-07-10. See subfiles for detailed documentation.*
+*Last updated: 2026-07-14 (v1.3). See subfiles for detailed documentation.*

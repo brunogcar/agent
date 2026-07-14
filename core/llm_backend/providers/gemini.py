@@ -11,14 +11,15 @@ Native provider for Google Gemini models. Google's API is NOT OpenAI-compatible:
 This provider converts OpenAI-style messages → Gemini generateContent format,
 then normalizes the response back to the OpenAI shape that _parse_response expects.
 
-json_schema: IGNORED in Phase 1. Gemini uses responseMimeType + responseSchema
-(a simplified JSON Schema that doesn't support additionalProperties, limited enum
-handling, no union types like ["string", "null"]). Your schemas use all of those
-— they'd need to be simplified/converted per-call.
-When json_schema is provided, falls back to json_mode=True (Gemini supports
-json_mode via responseMimeType: "application/json").
-Converting json_schema → Gemini responseSchema is deferred to a follow-up commit
-after real-world testing.
+v1.3 (#40): json_schema converted to Gemini's responseSchema for native
+enforcement. Gemini's responseSchema is a strict subset of JSON Schema that
+rejects: `additionalProperties`, `additionalProperties: false`, union types
+like `["string", "null"]`, and `$ref`. We strip/simplify these per-call via
+`_convert_schema_for_gemini()` before setting it on generationConfig.responseSchema.
+The `responseMimeType` is also set to `application/json`.
+
+When json_schema is None but json_mode is True, the pre-v1.3 path is kept:
+set responseMimeType only (no schema). Same as v1.2.x.
 
 Soft dependency: Uses httpx directly (already installed). No google-generativeai
 SDK needed — consistent with existing providers.
@@ -87,19 +88,20 @@ class GeminiProvider(BaseProvider):
             else:
                 gemini_contents.append({"role": "user", "parts": [{"text": content}]})
 
-        # json_schema: IGNORED (Phase 1). Fall back to json_mode via responseMimeType.
-        # TODO (follow-up): Convert json_schema → Gemini responseSchema.
-        # Gemini's responseSchema is a simplified JSON Schema that doesn't support:
-        # - additionalProperties
-        # - union types like ["string", "null"]
-        # - some enum edge cases
-        # Your schemas use all of these — conversion needs simplification per-call.
-        # Deferred until real-world testing with Gemini API keys.
+        # v1.3 (#40): Native json_schema enforcement via Gemini responseSchema.
+        # Gemini's responseSchema is a strict subset of JSON Schema — we strip
+        # unsupported keys (additionalProperties, $ref) and simplify union
+        # types (e.g. ["string", "null"] → "string") per-call before passing it.
+        # When json_schema is None but json_mode is True, fall back to the
+        # pre-v1.3 path: responseMimeType only (no schema).
         generation_config: dict[str, Any] = {
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
         }
-        if json_schema is not None or json_mode:
+        if json_schema is not None:
+            generation_config["responseMimeType"] = "application/json"
+            generation_config["responseSchema"] = self._convert_schema_for_gemini(json_schema)
+        elif json_mode:
             generation_config["responseMimeType"] = "application/json"
 
         payload: dict[str, Any] = {
@@ -145,6 +147,66 @@ class GeminiProvider(BaseProvider):
                 "total_tokens": total_tokens,
             },
         }
+
+    @staticmethod
+    def _convert_schema_for_gemini(schema: Any) -> Any:
+        """Convert a JSON Schema to Gemini's responseSchema subset.
+
+        Gemini's responseSchema is a strict subset of JSON Schema. Unsupported
+        features that must be stripped or simplified:
+          - `additionalProperties` / `additionalProperties: false` → drop key
+          - Union types like `["string", "null"]` → simplify to first type
+          - `$ref` / `$defs` → inline resolved (we don't resolve here; the
+            caller must already-inline schemas before passing them — we strip
+            the key defensively to avoid 400s)
+          - `title` / `description` / `$schema` / `definitions` → tolerated
+            by Gemini but stripped defensively for cleanliness
+
+        Walks the schema recursively: objects → properties, arrays → items.
+        Returns a new dict (does not mutate input).
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        # Keys Gemini's responseSchema doesn't understand (or doesn't need).
+        # Stripping them avoids 400s and keeps the wire payload lean.
+        _DROP_KEYS = {
+            "additionalProperties",
+            "$ref",
+            "$defs",
+            "definitions",
+            "$schema",
+        }
+
+        out: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key in _DROP_KEYS:
+                continue
+            if key == "type" and isinstance(value, list):
+                # Union type (e.g. ["string", "null"]). Gemini doesn't support
+                # union types — simplify to the first non-null type. If only
+                # ["null"] is present, fall back to "string" (Gemini requires
+                # a concrete type).
+                non_null = [t for t in value if t != "null"]
+                out[key] = non_null[0] if non_null else "string"
+            elif key == "properties" and isinstance(value, dict):
+                out[key] = {
+                    prop: GeminiProvider._convert_schema_for_gemini(sub)
+                    for prop, sub in value.items()
+                }
+            elif key == "items" and isinstance(value, dict):
+                out[key] = GeminiProvider._convert_schema_for_gemini(value)
+            else:
+                out[key] = value
+        return out
+
+    def supports_json_schema(self) -> bool:
+        """v1.3 (#40): Gemini supports json_schema natively via responseSchema conversion.
+
+        Returns True (inherited from BaseProvider — kept here as an explicit
+        marker for readers grepping for the capability flag).
+        """
+        return True
 
     def is_available(self) -> bool:
         try:

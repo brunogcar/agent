@@ -68,7 +68,27 @@ class OpenAICompatibleProvider(BaseProvider):
         # (was after — kwargs could silently override response_format).
         payload.update(kwargs)
         if json_schema is not None:
-            payload["response_format"] = {"type": "json_schema", "json_schema": {"schema": json_schema}}
+            # v1.3 (#42): Add `name` field to response_format for tracing.
+            # OpenAI uses the name to identify structured-output requests in
+            # their dashboard/tracing. Optional but recommended. Falls back to
+            # the schema's `title` field, then to "structured_output".
+            # Also set `strict: True` — OpenAI's strict mode guarantees the
+            # response matches the schema (no extra keys, all required keys
+            # present, no unsupported fields). DeepSeek/Mistral/Qwen ignore
+            # `strict` but accept it without error.
+            schema_name = (
+                json_schema.get("title")
+                if isinstance(json_schema, dict)
+                else None
+            ) or "structured_output"
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "schema": json_schema,
+                    "strict": True,
+                },
+            }
         elif json_mode:
             payload["response_format"] = {"type": "json_object"}
 

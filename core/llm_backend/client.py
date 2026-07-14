@@ -138,7 +138,25 @@ class LLMClient:
                     # v1.2: json_schema implies json_mode for parsing purposes.
                     # When a schema is provided, the response is JSON and should be parsed.
                     effective_json_mode = json_mode or (json_schema is not None)
-                    return self._parse_response(raw, role, role_cfg.model, elapsed, effective_json_mode)
+                    result = self._parse_response(raw, role, role_cfg.model, elapsed, effective_json_mode)
+                    # v1.3 (#43): Post-parse enum validation. If a schema was
+                    # passed and the response parsed to a Python object, walk
+                    # the schema recursively and verify every `enum` constraint
+                    # is satisfied. Failures log a warning but DO NOT fail the
+                    # call (graceful degradation — return parsed value as-is).
+                    if json_schema and result.parsed is not None:
+                        if not self._validate_enum_constraints(result.parsed, json_schema):
+                            if trace_id:
+                                tracer.warning(
+                                    trace_id, "llm",
+                                    "Post-parse enum validation failed — returning parsed value as-is (graceful degradation)",
+                                )
+                            else:
+                                logger.warning(
+                                    "Post-parse enum validation failed for role=%s model=%s",
+                                    role, role_cfg.model,
+                                )
+                    return result
 
                 except httpx.TimeoutException:
                     elapsed = round(time.time() - start, 2)
@@ -240,6 +258,156 @@ class LLMClient:
             json_schema = json_schema,
             trace_id = trace_id,
         )
+
+    def complete_provider(
+        self,
+        provider_name: str,
+        system: str,
+        user: str,
+        context: str = "",
+        content: str = "",
+        *,
+        model: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        timeout: int = 60,
+        json_mode: bool = False,
+        json_schema: Optional[dict] = None,
+        trace_id: str = "",
+    ) -> LLMResponse:
+        """Call a specific provider directly (bypasses role routing).
+
+        v1.3 (#22): New method for swarm and other callers that need
+        provider-direct calls without role-based dispatch. Still uses
+        registry plumbing (circuit breakers, telemetry, metrics) but
+        skips role lookup — caller specifies provider + model directly.
+
+        Unlike ``complete()`` which takes a role, this takes a provider_name
+        (e.g. "openai", "claude", "gemini") and an optional model string.
+        If ``model`` is empty, the caller is expected to supply it via the
+        ``<NAME>_BASE_MODEL`` env var lookup; if both are empty, the call
+        will still proceed but the provider may reject the empty model name
+        with a 400 (handled by the standard error path).
+
+        Thread-safety: same as ``call()`` — the provider's ``chat_completion``
+        is thread-safe (per-provider singleton httpx.Client with double-checked
+        locking). The per-role circuit breaker dict is guarded by Python's GIL
+        for dict mutations; individual breaker state transitions are guarded
+        by per-breaker ``threading.Lock``. Safe to call from a
+        ``ThreadPoolExecutor`` (swarm's pattern).
+        """
+        from core.runtime.activity_tracker import tracker
+
+        with tracker.inference_slot(timeout=60.0):
+            # Resolve provider — raises KeyError with available names if unknown.
+            provider = self._registry.get(provider_name)
+
+            # Model: caller-supplied > env var > empty (provider will reject).
+            # This matches the swarm's existing pattern (os.getenv NAME_BASE_MODEL).
+            _model = model or os.getenv(f"{provider_name.upper()}_BASE_MODEL", "")
+
+            if trace_id:
+                tracer.step(
+                    trace_id, "llm_call",
+                    role=f"provider:{provider_name}", model=_model,
+                    messages=1, timeout=timeout,
+                )
+
+            start = time.time()
+
+            # Circuit breaker — keyed on the provider_name (no role). Reuses
+            # the same _breakers dict + _get_breaker helper; the breaker is
+            # created lazily on first use with the executor timeout fallback.
+            breaker = self._get_breaker(provider_name)
+            if not breaker.can_execute():
+                elapsed = 0.1
+                err = f"Circuit breaker OPEN for provider {provider_name}: service degraded (fail-fast)."
+                if trace_id:
+                    tracer.warning(trace_id, "llm_call", err)
+                return LLMResponse.from_error(provider_name, _model, err, elapsed=0.1)
+
+            # Build messages — same shape as complete(): system + optional
+            # context (as user/assistant turn) + user (with optional content).
+            messages: list[dict] = [{"role": "system", "content": system}]
+            if context:
+                messages.append({"role": "user", "content": f"Background:\n{context}"})
+                messages.append({"role": "assistant", "content": "Understood."})
+            user_text = user
+            if content:
+                user_text = f"{user}\n\nContent:\n{content}"
+            messages.append({"role": "user", "content": user_text})
+
+            # Context budget — same defensive budgeting as call(). Uses the
+            # executor role's budget as a sensible default (no role to look up).
+            from core.memory_backend.budget import budget_messages
+            _budget = _ROLE_BUDGETS.get("executor", cfg.max_context_tokens)
+            messages = budget_messages(messages, _budget)
+
+            try:
+                raw = provider.chat_completion(
+                    model = _model,
+                    messages = messages,
+                    temperature = temperature,
+                    max_tokens = max_tokens,
+                    timeout = timeout,
+                    json_mode = json_mode,
+                    json_schema = json_schema,
+                )
+                elapsed = round(time.time() - start, 2)
+                breaker.record_success()
+                effective_json_mode = json_mode or (json_schema is not None)
+                result = self._parse_response(
+                    raw, provider_name, _model, elapsed, effective_json_mode,
+                )
+                # v1.3 (#43): post-parse enum validation (same as call()).
+                if json_schema and result.parsed is not None:
+                    if not self._validate_enum_constraints(result.parsed, json_schema):
+                        if trace_id:
+                            tracer.warning(
+                                trace_id, "llm",
+                                "Post-parse enum validation failed — returning parsed value as-is (graceful degradation)",
+                            )
+                        else:
+                            logger.warning(
+                                "Post-parse enum validation failed for provider=%s model=%s",
+                                provider_name, _model,
+                            )
+                return result
+
+            except httpx.TimeoutException:
+                elapsed = round(time.time() - start, 2)
+                breaker.record_failure()
+                err = f"Timeout after {elapsed}s (limit: {timeout}s)"
+                if trace_id:
+                    tracer.error(trace_id, "llm_call", err, role=provider_name)
+                return LLMResponse.from_error(provider_name, _model, err, elapsed)
+
+            except httpx.ConnectError:
+                elapsed = round(time.time() - start, 2)
+                breaker.record_failure()
+                err = f"Cannot connect to provider {provider_name}"
+                if trace_id:
+                    tracer.error(trace_id, "llm_call", err, role=provider_name)
+                return LLMResponse.from_error(provider_name, _model, err, elapsed)
+
+            except httpx.HTTPStatusError as e:
+                elapsed = round(time.time() - start, 2)
+                # Same 4xx-vs-5xx policy as call(): 5xx + 429 trip the breaker,
+                # 4xx don't (caller's fault — bad model name, bad request).
+                if e.response.status_code >= 500 or e.response.status_code == 429:
+                    breaker.record_failure()
+                err = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                if trace_id:
+                    tracer.error(trace_id, "llm_call", err, role=provider_name)
+                return LLMResponse.from_error(provider_name, _model, err, elapsed)
+
+            except Exception as e:
+                elapsed = round(time.time() - start, 2)
+                breaker.record_failure()
+                err = f"Unexpected error: {type(e).__name__}: {e}"
+                if trace_id:
+                    tracer.error(trace_id, "llm_call", err, role=provider_name)
+                return LLMResponse.from_error(provider_name, _model, err, elapsed)
 
     def is_available(self, role: str = "planner") -> bool:
         role_cfg = self._get_role(role)
@@ -349,3 +517,82 @@ class LLMClient:
             parsed=parsed,
             ok=True,
         )
+
+    @staticmethod
+    def _validate_enum_constraints(parsed: Any, schema: dict) -> bool:
+        """Walk ``schema`` recursively and verify all ``enum`` constraints hold.
+
+        v1.3 (#43): Post-parse enum validation. Runs after the provider returns
+        and the response is parsed into a Python object. If any field with an
+        ``enum`` constraint has a value not in that enum, this returns False.
+        The caller (``call()`` / ``complete_provider()``) logs a warning and
+        returns the parsed value as-is (graceful degradation — does NOT raise
+        or fail the call).
+
+        Why graceful: schema enforcement is best-effort. Even with native
+        ``json_schema`` support (v1.3 Claude/Gemini), small/fast models can
+        produce enum-violating output. Failing the call would push the failure
+        up to the workflow layer, which has no good recovery path; logging +
+        returning the value lets downstream code apply its own fallback
+        (e.g. router's heuristic fallback, autocode's debug loop).
+
+        Walks:
+          - Object schemas: ``properties`` → each property sub-schema, matched
+            against the corresponding key in the parsed dict.
+          - Array schemas: ``items`` sub-schema, applied to each element of
+            the parsed list.
+          - ``allOf`` / ``anyOf`` / ``oneOf``: each sub-schema is checked
+            independently (best-effort — combinatorial semantics ignored).
+          - ``enum`` at any level: the parsed value at that position must be
+            in the enum list.
+
+        Returns True if no enum constraint is violated (or there are no enum
+        constraints in the schema at all). Returns False on the first violation.
+        """
+        def _check(node: Any, sub: Any) -> bool:
+            # `sub` is a JSON Schema fragment; `node` is the corresponding
+            # Python value parsed from the LLM response.
+            if not isinstance(sub, dict):
+                return True  # not a schema fragment — nothing to check
+
+            # Enum check at this level.
+            enum = sub.get("enum")
+            if isinstance(enum, list) and node not in enum:
+                return False
+
+            # Recurse into properties (object).
+            props = sub.get("properties")
+            if isinstance(props, dict) and isinstance(node, dict):
+                for prop_name, prop_schema in props.items():
+                    if prop_name in node:
+                        if not _check(node[prop_name], prop_schema):
+                            return False
+
+            # Recurse into items (array).
+            items = sub.get("items")
+            if isinstance(items, dict) and isinstance(node, list):
+                for el in node:
+                    if not _check(el, items):
+                        return False
+
+            # allOf / anyOf / oneOf — best-effort, check each branch.
+            for combiner in ("allOf", "anyOf", "oneOf"):
+                branches = sub.get(combiner)
+                if isinstance(branches, list):
+                    for branch in branches:
+                        if not _check(node, branch):
+                            # For `anyOf`/`oneOf` a single branch failing
+                            # doesn't necessarily mean the value is invalid,
+                            # but for enum-checking purposes we treat any
+                            # enum violation in any branch as a failure —
+                            # conservative (over-reports) but safe.
+                            return False
+
+            return True
+
+        try:
+            return _check(parsed, schema)
+        except Exception:
+            # Never let validation crash the call — log only (caller's tracer.warning).
+            # A pathological schema (circular $ref, etc.) shouldn't break parsing.
+            return True
