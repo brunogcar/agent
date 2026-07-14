@@ -56,6 +56,18 @@ class TestRouteAfterRunTests:
         from workflows.autocode_impl.routes import route_after_run_tests
         assert route_after_run_tests({"tdd": {"status": "max_retries_exceeded"}}) == "node_verify"
 
+    def test_max_retries_routes_to_swarm_fallback_when_enabled(self, mocker):
+        """[v3.1 #48] When AUTOCODE_SWARM_DEBUG_FALLBACK=1, max_retries routes to swarm_fallback."""
+        from workflows.autocode_impl.routes import route_after_run_tests
+        mocker.patch("workflows.autocode_impl.routes.cfg.autocode_swarm_debug_fallback", True)
+        assert route_after_run_tests({"tdd": {"status": "max_retries_exceeded"}}) == "node_swarm_fallback"
+
+    def test_max_retries_routes_to_verify_when_fallback_disabled(self, mocker):
+        """[v3.1 #48] When AUTOCODE_SWARM_DEBUG_FALLBACK=0 (default), max_retries routes to verify."""
+        from workflows.autocode_impl.routes import route_after_run_tests
+        mocker.patch("workflows.autocode_impl.routes.cfg.autocode_swarm_debug_fallback", False)
+        assert route_after_run_tests({"tdd": {"status": "max_retries_exceeded"}}) == "node_verify"
+
     def test_stuck_routes_to_verify(self):
         """[#39] stuck status bails to verify, skips doomed debug loop."""
         from workflows.autocode_impl.routes import route_after_run_tests

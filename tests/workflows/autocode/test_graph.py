@@ -12,12 +12,14 @@ from workflows.autocode_impl.graph import build_graph, get_graph, WORKFLOW_METAD
 # ─── Graph topology ─────────────────────────────────────────────────────────
 
 class TestGraphTopology:
-    def test_graph_has_exactly_28_nodes(self):
+    def test_graph_has_exactly_29_nodes(self):
         g = build_graph()
         expected = {
             "node_classify_task", "node_validate_input", "node_brainstorm",
             "node_write_plan", "node_git_branch", "node_write_tests",
             "node_execute_step", "node_run_tests", "node_systematic_debug",
+            # [v3.1] #48: swarm fallback node (when debug retries exhausted)
+            "node_swarm_fallback",
             # [v2.0] Phase 3.1: node_write_files split into 3 + wrapper
             "node_apply_patches", "node_write_new_files", "node_persist_artifacts",
             "node_write_files",  # backward-compat wrapper (registered, not wired)
@@ -33,7 +35,7 @@ class TestGraphTopology:
             "node_distill_memory", "node_create_skill",
             "node_analyze_impact", "node_report",
         }
-        # [v2.0] Was 27 (Phase 3.3). Phase 4 added node_summarize_context = 28 nodes.
+        # [v3.1] Was 28 (v2.0 Phase 4). v3.1 added node_swarm_fallback = 29 nodes.
         assert set(g.nodes.keys()) == expected, \
             f"Node mismatch. Missing: {expected - set(g.nodes.keys())}"
 
@@ -87,9 +89,9 @@ class TestWorkflowMetadata:
         assert WORKFLOW_METADATA["name"] == "autocode"
         assert "version" in WORKFLOW_METADATA  # [v2.0.4] don't hard-code version (bumps on every release)
 
-    def test_metadata_has_27_nodes(self):
+    def test_metadata_has_28_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 27  # [v2.0] was 26 (Phase 3.3), +1 summarize_context (Phase 4)
+        assert len(nodes) == 28  # [v3.1] was 27 (v2.0 Phase 4), +1 node_swarm_fallback (v3.1 #48)
 
     def test_metadata_nodes_have_types(self):
         for node in WORKFLOW_METADATA["nodes"]:

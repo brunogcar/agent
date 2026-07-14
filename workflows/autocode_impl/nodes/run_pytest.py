@@ -56,6 +56,42 @@ def node_run_pytest(state: AutocodeState) -> dict:
             "tests_passed": False,
         }
 
+    # [v3.1 #41] AST/linter pre-check — run ruff --select E999 (syntax-only)
+    # before pytest. If syntax errors exist, pytest would fail anyway with a
+    # less clear error. This saves a ~30s pytest run and gives the debug node
+    # a precise syntax error message.
+    base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+    files_to_check = []
+    if test_file.exists():
+        files_to_check.append(str(test_file))
+    if tests_dir.exists():
+        files_to_check.append(str(tests_dir))
+
+    try:
+        syntax_cmd = [sys.executable, "-m", "ruff", "check", "--select", "E999", "--no-cache"] + files_to_check
+        syntax_result = subprocess.run(syntax_cmd, capture_output=True, text=True, timeout=10, encoding='utf-8', cwd=str(base_path))
+        if syntax_result.returncode != 0:
+            # Syntax errors found — skip pytest, return the error directly
+            syntax_error = syntax_result.stdout.strip() or syntax_result.stderr.strip()
+            tracer.step(tid, "run_pytest", f"SYNTAX ERROR (ruff E999): {syntax_error[:200]}")
+            return {
+                "test_results": {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": f"Syntax error detected (ruff E999):\n{syntax_error[:1000]}",
+                    "returncode": -1,
+                },
+                "tests_passed": False,
+                "_pytest_output": f"Syntax error (ruff E999):\n{syntax_error[:2000]}",
+            }
+    except FileNotFoundError:
+        # ruff not installed — skip pre-check, run pytest directly
+        tracer.step(tid, "run_pytest", "ruff not found, skipping syntax pre-check")
+    except subprocess.TimeoutExpired:
+        tracer.step(tid, "run_pytest", "ruff syntax pre-check timed out, skipping")
+    except Exception as e:
+        tracer.step(tid, "run_pytest", f"ruff pre-check error (non-fatal): {e}")
+
     try:
         cmd = [sys.executable, "-m", "pytest", "--tb=short", "--color=no", "-q"]
         if tests_dir.exists():
@@ -64,7 +100,7 @@ def node_run_pytest(state: AutocodeState) -> dict:
             cmd.append(str(test_file))
 
         # Run from project root so imports resolve correctly
-        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+        # [v3.1 #41] base_path already computed above for ruff pre-check
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding='utf-8', cwd=str(base_path))
         fresh_output = (result.stdout + result.stderr).strip()
         tests_passed = result.returncode == 0

@@ -4,6 +4,7 @@ Routing functions for the autocode state machine.
 from __future__ import annotations
 from typing import Any
 from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_verify
+from core.config import cfg  # [v3.1 #48] for autocode_swarm_debug_fallback flag
 
 def route_after_classify(state: AutocodeState) -> str:
     """Route after task classification node."""
@@ -55,6 +56,11 @@ def route_after_run_tests(state: AutocodeState) -> str:
     [Hardening P1.5] If a prior node set status="error" (e.g. apply_patches
     JSON parse failure), skip the debug loop and go to verify_chain which
     handles errors via verify_decision.
+
+    [v3.1 #48] When tdd_status == "max_retries_exceeded" AND
+    AUTOCODE_SWARM_DEBUG_FALLBACK=1, route to node_swarm_fallback instead of
+    node_verify. The swarm fallback may inject a fresh diagnosis and allow
+    one more debug cycle (HIGH confidence), or proceed to verify (LOW).
     """
     # [Hardening P1.5] Short-circuit on prior node error.
     if state.get("status") == "error":
@@ -64,6 +70,9 @@ def route_after_run_tests(state: AutocodeState) -> str:
     if tdd_status == "passed" or test_results.get("success"):
         return "node_verify"
     elif tdd_status == "max_retries_exceeded":
+        # [v3.1 #48] Swarm fallback — escalate to multi-model consensus
+        if getattr(cfg, "autocode_swarm_debug_fallback", False):
+            return "node_swarm_fallback"
         return "node_verify"
     elif tdd_status == "stuck":
         # [#39] Bail to verify — the debug loop is spinning on the same error.

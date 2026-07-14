@@ -31,6 +31,27 @@ def node_validate_input(state: AutocodeState) -> dict:
         tracer.step(tid, "validate_input", f"FAILED: {error}")
         return {"status": "error", "error": error}
 
+    # [v3.1 #42] Goal sanitization — max length + strip control chars.
+    # Prevents LLM confusion from garbage input and limits token waste.
+    MAX_TASK_LENGTH = 2000
+    if len(task) > MAX_TASK_LENGTH:
+        error = f"Task too long ({len(task)} chars, max {MAX_TASK_LENGTH}). Truncate or split into smaller tasks."
+        tracer.step(tid, "validate_input", f"FAILED: {error}")
+        return {"status": "error", "error": error}
+
+    # Strip control chars (keep \n, \t, \r — they're legitimate formatting)
+    import re as _re
+    cleaned_task = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', task)
+    if cleaned_task != task:
+        tracer.step(tid, "validate_input", "Stripped control characters from task")
+    # Update state with cleaned task (prevents downstream LLM confusion)
+    if cleaned_task != task:
+        # Return the cleaned task so LangGraph merges it into state
+        # (only if we changed something — avoids unnecessary state update)
+        task_update = {"task": cleaned_task}
+    else:
+        task_update = {}
+
     # 2. Mode validation
     valid_modes = {"feature", "fix", "fix_error", "refactor", "improve", "edit", "create_skill", "audit"}
     mode = state.get("mode", "")
@@ -73,4 +94,4 @@ def node_validate_input(state: AutocodeState) -> dict:
                 return {"status": "error", "error": error}
 
     tracer.step(tid, "validate_input", "PASSED: All input valid")
-    return {}
+    return task_update  # [v3.1 #42] includes cleaned task if control chars were stripped

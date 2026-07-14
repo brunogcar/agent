@@ -4,7 +4,7 @@
 
 This file documents the autocode workflow **facade** + **graph overview** +
 **output format** + **state fields** + **state accessors**. For the per-node
-reference (Purpose / Logic / Output / Notes for each of the 28 nodes), see
+reference (Purpose / Logic / Output / Notes for each of the 29 nodes), see
 [NODES.md](NODES.md).
 
 ---
@@ -49,7 +49,7 @@ result = run_autocode_agent(
 
 ## 🗺️ Graph Overview
 
-The autocode workflow is a **28-node LangGraph StateGraph** (25 active + 3 backward-compat wrappers — wrappers registered via `add_node(...)` for `import`-compatibility but NOT wired; excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 27 active-node entries). The 3 wrappers (`node_write_files` / `node_verify` / `node_publish`) are KEPT for test compatibility — removal deferred to post-2.0.
+The autocode workflow is a **29-node LangGraph StateGraph** (26 active + 3 backward-compat wrappers — wrappers registered via `add_node(...)` for `import`-compatibility but NOT wired; excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 28 active-node entries). The 3 wrappers (`node_write_files` / `node_verify` / `node_publish`) are KEPT for test compatibility — removal deferred to post-2.0. **[v3.1]** Adds `node_swarm_fallback` (Phase 11b: multi-model escalation when debug retries exhausted).
 
 | # | Node | Type | Phase | Purpose |
 |---|------|------|-------|---------|
@@ -65,19 +65,20 @@ The autocode workflow is a **28-node LangGraph StateGraph** (25 active + 3 backw
 | 10 | `node_persist_artifacts` | tool (file) | 8c | Persist test file + generated code + debug log to run_dir |
 | 11 | `node_analyze_impact` | llm (analyze) | 9 | Blast radius analysis using dependency graph |
 | 12 | `node_run_tests` | tool (pytest) | 10 | Run TDD tests via pytest subprocess |
-| 13 | `node_systematic_debug` | llm (executor) | 11 | 4-phase debug: investigation → pattern → hypothesis → fix |
-| 14 | `node_summarize_context` | logic | 11a | Compress debug_history before re-entering loop |
-| 15 | `node_run_pytest` | tool (pytest) | 12a | Fresh pytest on autocode test files |
-| 16 | `node_run_lint` | tool (ruff) | 12b | Ruff lint on modified files only |
-| 17 | `node_llm_review` | llm (executor) | 12c | LLM spec coverage + cleanliness review |
-| 18 | `node_verify_decision` | logic | 12d | Compose results + hallucination guard |
-| 19 | `node_report` | llm (summarize) | 13 | Generate structured report of what was done |
-| 20 | `node_commit` | tool (git) | 14 | Commit changes to the git branch |
-| 21 | `node_push` | tool (github) | 15a | Push branch to remote |
-| 22 | `node_create_pr` | tool (github) | 15b | Create pull request from branch |
-| 23 | `node_merge_pr` | tool (github) | 15c | Auto-merge PR (if enabled) |
-| 24 | `node_distill_memory` | llm (planner) | 16 | Distill procedural memory for future runs |
-| 25 | `node_create_skill` | tool (file) | 17 | Generate a new skill file (bypasses TDD, has AST validation) |
+| 13 | `node_swarm_fallback` | llm (executor) | 11b | **[v3.1]** Swarm consensus when debug retries exhausted (`max_retries_exceeded` + `AUTOCODE_SWARM_DEBUG_FALLBACK=1`). HIGH confidence → one more debug cycle; LOW/unavailable → verify chain. Sibling of `node_systematic_debug` (taken on `fail`); same conditional-edge fan-out from `node_run_tests`. |
+| 14 | `node_systematic_debug` | llm (executor) | 11 | 4-phase debug: investigation → pattern → hypothesis → fix |
+| 15 | `node_summarize_context` | logic | 11a | Compress debug_history before re-entering loop |
+| 16 | `node_run_pytest` | tool (pytest) | 12a | Fresh pytest on autocode test files (with **[v3.1]** `ruff --select E999` syntax pre-check) |
+| 17 | `node_run_lint` | tool (ruff) | 12b | Ruff lint on modified files only |
+| 18 | `node_llm_review` | llm (executor) | 12c | LLM spec coverage + cleanliness review (**[v3.1]** injects `debug_summary` when `debug_history` > 5) |
+| 19 | `node_verify_decision` | logic | 12d | Compose results + hallucination guard |
+| 20 | `node_report` | llm (summarize) | 13 | Generate structured report of what was done |
+| 21 | `node_commit` | tool (git) | 14 | Commit changes to the git branch |
+| 22 | `node_push` | tool (github) | 15a | Push branch to remote |
+| 23 | `node_create_pr` | tool (github) | 15b | Create pull request from branch |
+| 24 | `node_merge_pr` | tool (github) | 15c | Auto-merge PR (if enabled) |
+| 25 | `node_distill_memory` | llm (planner) | 16 | Distill procedural memory for future runs |
+| 26 | `node_create_skill` | tool (file) | 17 | Generate a new skill file (bypasses TDD, has AST validation) |
 | — | `node_write_files` | composite | wrapper | Backward-compat wrapper (not wired) — calls `node_apply_patches` → `node_write_new_files` → `node_persist_artifacts` |
 | — | `node_verify` | composite | wrapper | Backward-compat wrapper (not wired) — calls the 4 split verify nodes |
 | — | `node_publish` | tool (github) | wrapper | Backward-compat wrapper (not wired) — calls `node_push` → `node_create_pr` → `node_merge_pr` |
@@ -94,7 +95,7 @@ The autocode workflow is a **28-node LangGraph StateGraph** (25 active + 3 backw
 
 - `route_after_classify` — `feature`/`fix`/`refactor`/`edit`/`audit` → `node_brainstorm`; `create_skill` → `node_create_skill` (bypasses TDD).
 - `route_after_write_files` — `fix`/`refactor`/`improve`/`feature`/`audit`/`edit` → `node_analyze_impact`; other → `node_run_pytest`. **[Hardening P1.5]** short-circuits to `node_run_pytest` when `status=="error"`.
-- `route_after_run_tests` — `pass` → `node_run_pytest`; `fail` → `node_systematic_debug`; `stuck` → `node_run_pytest` (skips doomed debug). **[Hardening P1.5]** short-circuits on `status=="error"`.
+- `route_after_run_tests` — `pass` → `node_run_pytest`; `fail` → `node_systematic_debug`; `stuck` → `node_run_pytest` (skips doomed debug). **[v3.1 #48]** When `tdd_status == "max_retries_exceeded"` AND `AUTOCODE_SWARM_DEBUG_FALLBACK=1`, routes to `node_swarm_fallback` instead of `node_run_pytest`. **[Hardening P1.5]** short-circuits on `status=="error"`.
 - `route_after_verify` — `pass` → `node_report`; `fail` → `node_systematic_debug` (re-enter debug loop).
 
 For the per-node reference (Purpose / Logic / Output / Notes / Source), see
@@ -366,7 +367,7 @@ Before v3.0, sub-state fields had flat-field mirrors that could drift out of syn
 - **Skill names:** `_sanitize_skill_name()` strips non-`[a-zA-Z0-9_]` chars (prevents `/` or `\` path traversal).
 
 ### Secret handling
-- All 7 GitHub/Swarm/Subagent config flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_SUBAGENT_DEBUG`) default **OFF** — backward compat (with all OFF, autocode behaves identically to v1.2).
+- All 8 GitHub/Swarm/Subagent config flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_SUBAGENT_DEBUG`, `AUTOCODE_SWARM_DEBUG_FALLBACK`) default **OFF** — backward compat (with all OFF, autocode behaves identically to v1.2). **[v3.1]** `AUTOCODE_SWARM_DEBUG_FALLBACK=1` enables the post-debug-exhaustion swarm escalation node (`node_swarm_fallback`).
 - `is_configured()` guard: every `vcs_ops.py` helper MUST call `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()`) before any GitHub API call. Missing `GITHUB_TOKEN` / `GITHUB_OWNER` / `GITHUB_REPO` → graceful-skip (returns `False`/`None`, workflow continues).
 - `_call()` retries are interruptible via `threading.Event` — secrets/credentials are never logged.
 
@@ -409,7 +410,7 @@ The workflow uses a `status` field on `AutocodeState` to track workflow-level st
 | **GitHub API failure** | `_github_pr_create()` raised | Graceful-skip: `is_configured()` returns `False` → helper returns `None`/`False`. |
 | **Path traversal** | LLM returned `../../etc/passwd` | `_is_path_safe()` returns `False`; path added to `patch_errors`. |
 | **Timeout** | `invoke_with_timeout()` exceeded `cfg.autocode_graph_timeout` | `request_cancellation()` → `_call()` retries abort; status set to `"Autocode graph crashed: <exception>"` (Hardening P0.3). |
-| **Max retries exceeded** | `iteration > max_retries` in debug loop | `tdd_status="max_retries_exceeded"` + procedural memory store; verify chain returns `"failed"`. |
+| **Max retries exceeded** | `iteration > max_retries` in debug loop | `tdd_status="max_retries_exceeded"` + procedural memory store. **[v3.1 #48]** If `AUTOCODE_SWARM_DEBUG_FALLBACK=1`, `route_after_run_tests` routes to `node_swarm_fallback` instead of the verify chain — HIGH-confidence swarm verdict resets `tdd_status` for one more debug cycle; LOW/unavailable still falls through to verify chain (returns `"failed"`). |
 | **Stuck detection** | Same error signature on consecutive debug iterations | `route_after_run_tests` routes `"stuck"` → `node_run_pytest` (skips doomed debug). |
 | **Architecture-question exit** | 3+ consecutive `tests_passed=False` (different errors each iteration) | `tdd_status="max_retries_exceeded"` + procedural memory store (different from stuck — fires on architectural bug). |
 
@@ -420,4 +421,4 @@ The workflow uses a `status` field on `AutocodeState` to track workflow-level st
 
 ---
 
-*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

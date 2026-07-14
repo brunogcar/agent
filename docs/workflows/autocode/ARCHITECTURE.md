@@ -7,7 +7,7 @@
 | File | Purpose |
 |------|---------|
 | `workflows/autocode.py` | `run_autocode_agent()` — main entry point |
-| `workflows/autocode_impl/graph.py` | `build_graph()` — 28-node LangGraph StateGraph builder (25 active + 3 backward-compat wrappers registered but NOT wired). `WORKFLOW_METADATA["version"] == "2.0.5"` (Phase 4g review). |
+| `workflows/autocode_impl/graph.py` | `build_graph()` — 29-node LangGraph StateGraph builder (26 active + 3 backward-compat wrappers registered but NOT wired). `WORKFLOW_METADATA["version"] == "3.1"` (debug loop improvements). **[v3.1 #48]** `node_run_tests` now has a 3-way conditional edge (verify / debug / swarm_fallback); `node_swarm_fallback` has a 2-way conditional edge (HIGH → debug, LOW → verify). |
 | `workflows/autocode_impl/state.py` | `AutocodeState` TypedDict + 8 sub-state TypedDicts + 8 accessor functions. **[v3.0]** Sub-states are the PRIMARY (and ONLY) storage for sub-state fields — legacy flat-field mirrors were removed. Accessors read sub-state ONLY (no legacy fallback). 13 ephemeral flat fields explicitly declared. |
 | `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_write_files()`, `route_after_run_tests()`, `route_after_verify()` — conditional routing. **[Hardening P1.5]** short-circuits to `node_run_pytest` when `status=="error"`. |
 | `workflows/autocode_impl/helpers.py` | `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. `_call()` retries 2× with exponential backoff; **[Hardening P1.7]** backoff is interruptible via `threading.Event` so cancellation aborts retry sleep. |
@@ -32,13 +32,14 @@
 | `workflows/autocode_impl/nodes/write_new_files.py` | **[v2.0]** Writes new files / overwrites existing ones atomically. Builds `files_map` for `analyze_impact`. **[Hardening P1.4 + P1.8]** uses `_parse_json`; propagates new files into `modified_files`. |
 | `workflows/autocode_impl/nodes/persist_artifacts.py` | **[v2.0]** Persists `test_autocode_feature.py` + `generated_code.json` + `debug_log.json` to `run_dir`. |
 | `workflows/autocode_impl/nodes/run_tests.py` | `node_run_tests()` — test execution. **[Hardening P0.2]** marks last `debug_history` entry's `tests_passed=True`. |
+| `workflows/autocode_impl/nodes/swarm_fallback.py` | **[v3.1]** `node_swarm_fallback()` — escalates to `_swarm_debug_consensus` when debug retries exhausted + `AUTOCODE_SWARM_DEBUG_FALLBACK=1`. HIGH confidence → injects verdict + resets `tdd_status` (one more debug cycle); LOW/unavailable → `status="failed"` (verify chain). |
 | `workflows/autocode_impl/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis. **[v2.0]** `_run_async()` simplified to `asyncio.run(coro)`. |
 | `workflows/autocode_impl/nodes/debug.py` | `node_systematic_debug()` — 4-phase debug analysis. Accumulates `debug_history`. **[Hardening P0.1 + P1.9 + P2]** preserves TDD sub-state on writes; `blast_radius_note` precedes "Output JSON ONLY:"; consumes `debug_summary` when `debug_history` > 5 entries. |
 | `workflows/autocode_impl/nodes/summarize_context.py` | **[v2.0]** `node_summarize_context(state)` compresses `debug_history` before re-entering the debug loop. Uses chonkie `SentenceChunker` (soft dep) with JSON-of-last-3-entries fallback. **[Hardening P0.1]** preserves TDD sub-state. |
 | `workflows/autocode_impl/nodes/verify.py` | **[v2.0]** BACKWARD-COMPAT WRAPPER — calls `node_run_pytest` → `node_run_lint` → `node_llm_review` → `node_verify_decision`. Registered, NOT wired. |
-| `workflows/autocode_impl/nodes/run_pytest.py` | **[v2.0]** Fresh pytest subprocess on autocode run directory. |
+| `workflows/autocode_impl/nodes/run_pytest.py` | **[v2.0]** Fresh pytest subprocess on autocode run directory. **[v3.1 #41]** Runs `ruff --select E999` syntax pre-check BEFORE pytest — skips pytest + returns the syntax error directly if found. Non-fatal if ruff not installed. |
 | `workflows/autocode_impl/nodes/run_lint.py` | **[v2.0]** `ruff check --select E,F --no-cache` scoped to `modified_files` only. |
-| `workflows/autocode_impl/nodes/llm_review.py` | **[v2.0]** LLM spec coverage + cleanliness review. Only LLM-calling node in the verify chain. |
+| `workflows/autocode_impl/nodes/llm_review.py` | **[v2.0]** LLM spec coverage + cleanliness review. Only LLM-calling node in the verify chain. **[v3.1 F3]** Injects `debug_summary` into the verify LLM prompt when `debug_history` > 5 entries. |
 | `workflows/autocode_impl/nodes/verify_decision.py` | **[v2.0]** Composes results + hallucination guard (real pytest exit code overrides LLM claim) + max_retries/stuck early-exit. `route_after_verify` routes from this node. |
 | `workflows/autocode_impl/nodes/commit.py` | `node_git_commit()` — git commit. **[v3.0]** Reads `branch` via `_get_vcs` accessor (was the v2.0 proof-of-concept for the accessor pattern; v2.0.5 reverted to direct read due to split-brain bug; v2.1 re-migrated after writer was migrated). |
 | `workflows/autocode_impl/nodes/publish.py` | **[v2.0]** BACKWARD-COMPAT WRAPPER — calls `node_push` → `node_create_pr` → `node_merge_pr`. Registered, NOT wired. |
@@ -68,9 +69,9 @@
 ```text
 workflows/autocode.py
 ├── run_autocode_agent()              # Main entry point
-│   ├── build_graph()                 # 28-node LangGraph StateGraph (25 active + 3 backward-compat wrappers)
+│   ├── build_graph()                 # 29-node LangGraph StateGraph (26 active + 3 backward-compat wrappers)
 │   │   ├── node_classify_task()      # Phase 1: Classify task type
-│   │   ├── node_validate_input()     # Phase 2: Validate input
+│   │   ├── node_validate_input()     # Phase 2: Validate input + sanitize task (v3.1: max 2000 chars + strip control chars)
 │   │   ├── node_brainstorm()         # Phase 3: Brainstorm approach
 │   │   ├── node_write_plan()         # Phase 4: Generate plan
 │   │   ├── node_git_branch()         # Phase 5: Create git branch
@@ -80,12 +81,13 @@ workflows/autocode.py
 │   │   ├── node_write_new_files()    # Phase 8b: Write new/overwrite files + build files_map
 │   │   ├── node_persist_artifacts()  # Phase 8c: Persist test file + gen code + debug log
 │   │   ├── node_analyze_impact()     # Phase 9: Analyze blast radius
-│   │   ├── node_run_tests()          # Phase 10: Run tests
+│   │   ├── node_run_tests()          # Phase 10: Run tests (3-way conditional out: verify / debug / swarm_fallback)
+│   │   ├── node_swarm_fallback()     # Phase 11b: [v3.1] Swarm consensus when debug exhausted (HIGH → debug, LOW → verify)
 │   │   ├── node_systematic_debug()   # Phase 11: 4-phase debug (loops back via summarize_context)
 │   │   ├── node_summarize_context()  # Phase 11a: Compress debug_history before re-entering loop
-│   │   ├── node_run_pytest()         # Phase 12a: Fresh pytest subprocess
+│   │   ├── node_run_pytest()         # Phase 12a: Fresh pytest subprocess (v3.1: ruff E999 pre-check)
 │   │   ├── node_run_lint()           # Phase 12b: Ruff on modified_files only
-│   │   ├── node_llm_review()         # Phase 12c: LLM spec + cleanliness review
+│   │   ├── node_llm_review()         # Phase 12c: LLM spec + cleanliness review (v3.1: debug_summary injection)
 │   │   ├── node_verify_decision()    # Phase 12d: Compose results + hallucination guard
 │   │   ├── node_report()             # Phase 13: Generate report
 │   │   ├── node_git_commit()         # Phase 14: Commit changes
@@ -101,7 +103,7 @@ workflows/autocode.py
 │   └── tracer.finish()               # Mark trace complete
 ```
 
-The 3 backward-compat wrappers (`node_write_files`, `node_verify`, `node_publish`) are kept for `import`-compatibility (tests import them directly). They are registered via `add_node(...)` but NOT wired — no edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 27 active nodes. Removal deferred to post-2.0 (`# TODO(2.0-post):`).
+The 3 backward-compat wrappers (`node_write_files`, `node_verify`, `node_publish`) are kept for `import`-compatibility (tests import them directly). They are registered via `add_node(...)` but NOT wired — no edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 28 active nodes. Removal deferred to post-2.0 (`# TODO(2.0-post):`).
 
 ---
 
@@ -109,7 +111,7 @@ The 3 backward-compat wrappers (`node_write_files`, `node_verify`, `node_publish
 
 ```mermaid
 graph TD
-    A["node_classify_task<br/>Phase 1: Classify"] --> B["node_validate_input<br/>Phase 2: Validate"]
+    A["node_classify_task<br/>Phase 1: Classify"] --> B["node_validate_input<br/>Phase 2: Validate (v3.1: sanitize task)"]
     B --> C["node_brainstorm<br/>Phase 3: Brainstorm"]
     C --> D["node_write_plan<br/>Phase 4: Plan"]
     D --> E["node_git_branch<br/>Phase 5: Branch"]
@@ -120,15 +122,19 @@ graph TD
     WNF --> PA["node_persist_artifacts<br/>Phase 8c: Persist artifacts"]
     PA --> RT1{"route_after_write_files"}
     RT1 -->|fix/refactor/feature/audit/edit| I["node_analyze_impact<br/>Phase 9: Impact"]
-    RT1 -->|other| RP["node_run_pytest<br/>Phase 12a: Fresh pytest"]
+    RT1 -->|other| RP["node_run_pytest<br/>Phase 12a: Fresh pytest (v3.1: ruff pre-check)"]
     I --> J["node_run_tests<br/>Phase 10: Run Tests"]
-    J --> RT2{"route_after_run_tests<br/>Conditional"}
-    RT2 -->|pass / max_retries| RP
+    J --> RT2{"route_after_run_tests<br/>3-way conditional"}
+    RT2 -->|pass / max_retries (flag OFF) / stuck| RP
     RT2 -->|fail| M["node_systematic_debug<br/>Phase 11: 4-phase Debug"]
+    RT2 -->|max_retries + AUTOCODE_SWARM_DEBUG_FALLBACK=1| SF["node_swarm_fallback<br/>Phase 11b: Swarm consensus (v3.1)"]
+    SF --> SF2{"swarm verdict"}
+    SF2 -->|HIGH confidence| M
+    SF2 -->|LOW/unavailable| RP
     M --> SC["node_summarize_context<br/>Phase 11a: Compress debug_history"]
     SC --> AP
     RP --> RL["node_run_lint<br/>Phase 12b: Ruff on modified_files"]
-    RL --> LR["node_llm_review<br/>Phase 12c: LLM spec review"]
+    RL --> LR["node_llm_review<br/>Phase 12c: LLM spec review (v3.1: debug_summary injection)"]
     LR --> VD["node_verify_decision<br/>Phase 12d: Compose + hallucination guard"]
     VD --> RT3{"route_after_verify"}
     RT3 -->|verification_passed| O["node_report<br/>Phase 13: Report"]
@@ -145,23 +151,23 @@ graph TD
 **Conditional routes:**
 - `route_after_classify` — `feature`/`fix`/`refactor`/`edit`/`audit` → `node_brainstorm`; `create_skill` → `node_create_skill` (bypasses TDD).
 - `route_after_write_files` — `fix`/`refactor`/`improve`/`feature`/`audit`/`edit` → `node_analyze_impact`; other → `node_run_pytest`. **[Hardening P1.5]** short-circuits to `node_run_pytest` when `status=="error"`.
-- `route_after_run_tests` — `pass` → `node_run_pytest`; `fail` → `node_systematic_debug`; `stuck` → `node_run_pytest` (skips doomed debug). **[Hardening P1.5]** short-circuits on `status=="error"`.
+- `route_after_run_tests` — `pass` → `node_run_pytest`; `fail` → `node_systematic_debug`; `stuck` → `node_run_pytest` (skips doomed debug). **[v3.1 #48]** When `tdd_status == "max_retries_exceeded"` AND `cfg.autocode_swarm_debug_fallback` is ON, routes to `node_swarm_fallback` (3-way conditional from `node_run_tests`). `node_swarm_fallback` itself has a 2-way conditional out: HIGH confidence → `node_systematic_debug` (one more debug cycle with swarm verdict injected); LOW/MEDIUM/unavailable → `node_run_pytest` (proceed to verify chain, will fail). **[Hardening P1.5]** short-circuits on `status=="error"`.
 - `route_after_verify` — `pass` → `node_report`; `fail` → `node_systematic_debug` (re-enter debug loop).
 
-**Debug loop:** `node_systematic_debug` → `node_summarize_context` → `node_apply_patches` → `node_write_new_files` → `node_persist_artifacts` → `node_analyze_impact` → `node_run_tests` → (back to `node_systematic_debug` until tests pass, `MAX_RETRIES` exceeded, `tdd_status="stuck"`, OR the architecture-question exit fires — 3+ consecutive `tests_passed=False`).
+**Debug loop:** `node_systematic_debug` → `node_summarize_context` → `node_apply_patches` → `node_write_new_files` → `node_persist_artifacts` → `node_analyze_impact` → `node_run_tests` → (back to `node_systematic_debug` until tests pass, `MAX_RETRIES` exceeded, `tdd_status="stuck"`, OR the architecture-question exit fires — 3+ consecutive `tests_passed=False`). **[v3.1 #48]** On `max_retries_exceeded` + flag ON, `node_swarm_fallback` may inject a fresh diagnosis and re-enter the debug loop one more time (HIGH confidence only).
 
 ---
 
 ## 💡 Key Design Decisions
 
-- **28-node LangGraph StateGraph** — 25 active nodes + 3 backward-compat wrappers (registered, NOT wired) + `node_summarize_context` (Phase 4, debug-loop compression). The 3 wrappers preserve `import`-compatibility for external callers + tests; they are excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 27 active-node entries.
+- **29-node LangGraph StateGraph** — 26 active nodes + 3 backward-compat wrappers (registered, NOT wired) + `node_summarize_context` (Phase 4, debug-loop compression) + `node_swarm_fallback` (Phase 11b, v3.1 swarm escalation). The 3 wrappers preserve `import`-compatibility for external callers + tests; they are excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 28 active-node entries.
 - **Mode-driven** — The task type (`fix_error`, `improve`, `add_feature`, `create_skill`, `unclear`) determines the workflow path. `node_classify_task` uses the Router LLM to classify.
 - **TDD-first** — For `add_feature` and `improve` modes, tests are generated before implementation.
 - **Iterative debug loop** — `node_systematic_debug` accumulates `debug_history` across iterations (closes the #37 prerequisite); `node_summarize_context` compresses it before re-entering the loop. Last 5 entries injected into the LLM user prompt under a `PRIOR DEBUG ATTEMPTS (do NOT repeat these)` block. New architecture-question exit fires on 3+ consecutive `tests_passed=False` → `tdd_status="max_retries_exceeded"` + procedural memory store (different from #39 stuck detection — fires on DIFFERENT errors each iteration, suggesting architectural bug).
 - **Impact analysis** — `node_analyze_impact` analyzes blast radius using the dependency graph. Prevents unintended side effects.
 - **Git integration** — `node_git_branch` creates a new branch (optionally pulls first via `AUTOCODE_PULL_BEFORE_BRANCH`); `node_git_commit` commits changes with a descriptive message. `node_write_plan` appends `trace_id` suffix (`autocode/{slug}-{tid_suffix}`) for branch-name uniqueness.
 - **GitHub integration** — `node_push` → `node_create_pr` → `node_merge_pr` (all gated on config flags + `is_configured()`, all default OFF). With all flags OFF, the 3 nodes are no-ops — autocode behaves identically to a local-only workflow.
-- **Swarm debug integration** — `node_systematic_debug` optionally uses swarm (2-run pattern: `consensus` → `vote`). Confidence: HIGH (unanimous) / MEDIUM (majority) / LOW (split). Non-blocking — fix is ALWAYS applied regardless of confidence. LOW confidence surfaces as a PR comment (if `AUTOCODE_DEBUG_COMMENT_PR=1`), not as a workflow block.
+- **Swarm debug integration** — Two independent paths: (1) `node_systematic_debug` optionally uses swarm (2-run pattern: `consensus` → `vote`) INSIDE the debug loop via `AUTOCODE_SWARM_DEBUG=1`. Confidence: HIGH (unanimous) / MEDIUM (majority) / LOW (split). Non-blocking — fix is ALWAYS applied regardless of confidence. LOW confidence surfaces as a PR comment (if `AUTOCODE_DEBUG_COMMENT_PR=1`), not as a workflow block. (2) **[v3.1]** `node_swarm_fallback` consults the swarm AFTER the debug loop is exhausted via `AUTOCODE_SWARM_DEBUG_FALLBACK=1`. HIGH confidence → inject verdict + reset `tdd_status` (one more debug cycle); LOW/unavailable → proceed to verify chain. The two flags are independent — they can be enabled together or separately.
 - **Memory integration** — `node_distill_memory` stores procedural knowledge for future recall. Non-fatal — code is already committed by the time distill runs.
 - **Skill creation** — `node_create_skill` creates a reusable skill file. Atomic write (`tempfile` + `os.replace`) + AST validation.
 - **Filelock + atomic writes** — `node_write_new_files` uses `FileLock` and atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) to prevent race conditions and data corruption.
@@ -177,8 +183,8 @@ The `node_validate_input` path traversal check only covers user-supplied paths. 
 ### `_call()` retries 2× with exponential backoff + interruptible sleep
 `_call(role, system, user, ..., retries=2)` loops `retries + 1` times, sleeping `2 ** attempt` seconds between attempts. **[Hardening P1.7]** sleep uses `threading.Event.wait(timeout=...)` so `request_cancellation()` from a timeout aborts the backoff immediately (was `time.sleep(...)` — uninterruptible, blocked the timeout).
 
-### 6 v1.3 config flags default OFF
-`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`. With all flags OFF, autocode behaves identically to v1.2 (local-only, single-LLM debug).
+### 6 v1.3 config flags + 1 v2.0.2 + 1 v3.1 default OFF
+`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG` (v1.3); `AUTOCODE_SUBAGENT_DEBUG` (v2.0.2); `AUTOCODE_SWARM_DEBUG_FALLBACK` (v3.1). With all flags OFF, autocode behaves identically to v1.2 (local-only, single-LLM debug, no swarm fallback on exhaustion).
 
 ### Dead-code deletions — do NOT re-add
 - `node_write_files_with_flag_reset` — was registered but never wired; reset a non-existent `step_attempt` field.
@@ -291,4 +297,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

@@ -44,6 +44,17 @@ def node_llm_review(state: AutocodeState) -> dict:
     fresh_output = state.get("_pytest_output", state.get("test_results", {}).get("stderr", ""))
     lint_output = state.get("lint_output", "")
 
+    # [v3.1 F3] If debug_summary exists and debug_history is long, inject the
+    # compressed summary instead of making the LLM re-derive context from
+    # raw test output. This gives the verify LLM the accumulated debug
+    # knowledge without exploding the prompt.
+    debug_summary = _get_tdd(state, "debug_summary", "")  # [v3.1 F3] accessor
+    debug_history_len = len(_get_tdd(state, "debug_history", []))  # [v3.1 F3] accessor
+    debug_context_block = ""
+    if debug_summary and debug_history_len > 5:
+        debug_context_block = f"\n\nDEBUG SUMMARY (compressed from {debug_history_len} iterations):\n{debug_summary[:2000]}\n"
+        tracer.step(tid, "llm_review", f"Injected debug_summary ({len(debug_summary)} chars) — {debug_history_len} iterations")
+
     try:
         raw = _call(
             role="executor",
@@ -55,6 +66,7 @@ def node_llm_review(state: AutocodeState) -> dict:
                 f"FRESH PYTEST OUTPUT (exit code {'0' if tests_passed else '1'}):\n"
                 f"{fresh_output[:2000]}\n\n"
                 f"RUFF OUTPUT:\n{lint_output[:500]}"
+                f"{debug_context_block}"  # [v3.1 F3] appended only if debug_history > 5
             ),
             timeout=EXECUTOR_TIMEOUT,
         )

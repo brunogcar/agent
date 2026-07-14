@@ -49,6 +49,8 @@
 41. **Never use `state.get()` for sub-state fields** — [v3.0] Sub-state fields live ONLY in sub-state dicts (`state["tdd"]`, `state["vcs"]`, etc.). The legacy flat fields were removed — `state.get("tdd_status")`, `state.get("modified_files")`, `state.get("branch")`, etc. will return `None`. Use accessors (`_get_tdd`, `_get_files`, `_get_vcs`, etc.) instead. See [SUBSTATE.md](SUBSTATE.md).
 42. **Never write flat-field mirrors in node returns** — [v3.0] Node returns MUST write sub-state only via RMW. Do NOT include legacy flat fields like `{"modified_files": [...], "branch": "..."}` — write `{"files_state": current_files, "vcs": current_vcs}` instead. Ephemeral flat fields (`test_results`, `test_code`, etc.) are still flat by design. See [SUBSTATE.md](SUBSTATE.md) § "RMW Pattern".
 43. **Never assume `input_files` exists in `files_state`** — [v3.0] `input_files` was removed from `FilesState` — it was just a mirror of the core `files` flat field. `validate.py`, `brainstorm.py`, `plan.py`, `tests.py` now read `state.get("files", {})` directly (core flat field). See [SUBSTATE.md](SUBSTATE.md) § "Core Flat Fields".
+44. **Never skip the `ruff --select E999` pre-check in `node_run_pytest`** — [v3.1 #41] The pre-check runs BEFORE pytest to catch syntax errors (saves a ~30s pytest run). If a syntax error exists, pytest would fail anyway with a less clear message. Non-fatal if ruff is not installed — falls through to pytest. Do NOT add an early-return-before-ruff path or bypass the pre-check "for speed".
+45. **Never disable the `MAX_TASK_LENGTH = 2000` check in `node_validate_input`** — [v3.1 #42] Goal sanitization is the entry gate. Tasks > 2000 chars are rejected to prevent LLM token waste + context confusion. If a task legitimately needs more, split it into multiple workflow runs.
 
 ## ✅ ALWAYS DO
 
@@ -123,6 +125,8 @@
 
     Purposes: (1) signals DELIBERATE simplification (not a missed edge case); (2) names the CEILING that would force a rewrite; (3) names the UPGRADE PATH. NOT for tech debt — use `# TODO:` / `# FIXME:` for those.
 40. **When `AUTOCODE_SUBAGENT_DEBUG=1`, the subagent gets isolated curated context** — The subagent does NOT see autocode session state. It receives only what `node_systematic_debug` constructs: failing test, error output, current source file, prior fix attempts (truncated). This is by design — superpowers pattern: "you construct exactly what they need". Never pass `state` wholesale to `agent(action="subagent")`.
+41. **Always strip control chars from task input — let `node_validate_input` clean it** — [v3.1 #42] The validate node strips `[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]` (control chars except `\n\t\r`) from `task` before downstream nodes see it. Don't bypass it by writing to `state["task"]` directly elsewhere; if you must write task input, run it through the same `re.sub` pattern (or call `node_validate_input`). The cleaned task is returned in the state update so LangGraph merges it.
+42. **When wiring a debug-loop exit, prefer `node_swarm_fallback` over a hard `status="failed"` if `AUTOCODE_SWARM_DEBUG_FALLBACK=1`** — [v3.1 #48] The swarm fallback (default OFF) gives the graph one more chance via multi-model consensus before giving up. HIGH confidence → reset `tdd.status` to `""` (one more debug cycle); LOW/unavailable → set `status="failed"` (proceeds to verify chain). `route_after_run_tests` already handles this — do not duplicate the routing logic in a node.
 
 ---
 
@@ -160,4 +164,4 @@
 
 ---
 
-*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, legacy-fallback branches removed from all 8 accessors, #32 + #33 + #41-#43 added for v3.0, ALWAYS DO renumbered 1-40; v2.2 — Track M1 Batch 3c: plan sub-state migration, ALL 8 ACCESSORS NOW SAFE; v2.0.5 — Phase 4g review: split-brain accessor warning (lifted in v3.0); v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; #44 + #45 NEVER DO and #41 + #42 ALWAYS DO added; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, legacy-fallback branches removed from all 8 accessors, #32 + #33 + #41-#43 added for v3.0, ALWAYS DO renumbered 1-40; v2.2 — Track M1 Batch 3c: plan sub-state migration, ALL 8 ACCESSORS NOW SAFE; v2.0.5 — Phase 4g review: split-brain accessor warning (lifted in v3.0); v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

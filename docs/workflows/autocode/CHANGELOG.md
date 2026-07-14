@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v3.1** | 2026-07-14 | **Debug loop improvements.** 4 items: (1) #42 Goal sanitization — max 2000 chars + strip control chars in `validate.py`. (2) #41 AST pre-check — `ruff --select E999` before pytest in `run_pytest.py` (saves ~30s on syntax errors). (3) F3 `debug_summary` in verify chain — `llm_review.py` injects compressed summary when `debug_history` > 5. (4) #48 Swarm fallback — new `node_swarm_fallback` node: when debug retries exhausted + `AUTOCODE_SWARM_DEBUG_FALLBACK=1`, escalates to swarm consensus. HIGH confidence → one more debug cycle; LOW → verify chain. New config flag `AUTOCODE_SWARM_DEBUG_FALLBACK` (default OFF). Graph: 28 → 29 nodes. |
 | **v3.0** | 2026-07-14 | **Flat-field removal — Track M1 ✅ COMPLETE.** Removed ~32 legacy flat-field mirrors from `AutocodeState` + `_default_state()`. All 8 accessors simplified to 4-line sub-state-only reads. 13 ephemeral flat fields explicitly declared. See [SUBSTATE.md](SUBSTATE.md). |
 | **v2.2** | 2026-07-14 | **Track M1 Batch 3c — `plan` sub-state.** 🎉 ALL 8 ACCESSORS NOW SAFE. 4 writers + 5 readers migrated. Fixed pre-existing `"steps"` → `"plan"` key mismatch. |
 | **v2.3** | 2026-07-14 | **Track M1 Batch 3b — `files` sub-state.** 4 writers + 9 readers migrated. P1.8 hardening preserved. |
@@ -74,16 +75,16 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 48 | **Swarm ↔ autocode debug loop integration** | Wire swarm verdict feedback into the autocode debug loop (debug history + retry decisions). Was blocked by v1.0.2 P0 fix; now unblocked. | P1 |
+| ✅ #48 | **Swarm ↔ autocode debug loop integration** | ✅ **Shipped in v3.1** — `node_swarm_fallback` (gated on `AUTOCODE_SWARM_DEBUG_FALLBACK=1`, default OFF). Escalates to swarm consensus when debug retries exhausted; HIGH confidence → one more debug cycle, LOW/unavailable → verify chain. |
+| ✅ #41 | **AST/linter pre-check before pytest** | ✅ **Shipped in v3.1** — `ruff --select E999` syntax-only pre-check in `node_run_pytest` (saves ~30s on syntax errors). Non-fatal if ruff not installed. |
+| ✅ #42 | **Goal sanitization** | ✅ **Shipped in v3.1** — `node_validate_input` now enforces max 2000 chars + strips control chars; returns cleaned task in state update. |
+| ✅ F3 | **`debug_summary` consumption in verify chain** | ✅ **Shipped in v3.1** — `node_llm_review` injects `debug_summary` into the verify LLM prompt when `debug_history` > 5 entries. |
 | 34 | Remove `run_autocode_agent()` backward-compat shim | Once all callers use `run_workflow("autocode")` directly. | P2 |
 | 35 | `invoke_with_timeout` daemon-thread zombie risk | v2.0.1 surfaces graph crashes. Full process-level termination still deferred. | P2 |
 | 36 | `create_skill` smoke-test import + git commit | Currently has AST syntax check; no import test or git commit. | P2 |
 | 38 | Human-in-the-Loop (HiTL) approval | Pause graph before `commit` or `create_skill`. | P2 |
 | 40 | Adaptive timeout by task type | `create_skill`=120s, `audit`=300s, `feature`=900s. | P2 |
-| 41 | AST/linter pre-check before pytest | Run `ruff`/`flake8` before `pytest` to catch indentation errors early. | P2 |
-| 42 | Goal sanitization | Max length + strip control chars on `goal`/`task` input. | P2 |
 | F1 | Parallel subagent debug | Single subagent via `AUTOCODE_SUBAGENT_DEBUG=1` (v2.0.2). Parallel subagents (one per hypothesis) still future. Now unblocked — v2.0.2 action-level allowlist makes this safe. | P2 |
-| F3 | `debug_summary` consumption in verify chain | v2.0.1 wired `debug_summary` into debug prompt. Verify-chain consumption still deferred. | P2 |
 | F7 | Lazy Dev full audit mode | 7-rung ladder + `ponytail:` convention shipped (v2.0). Full audit mode (`task_type="audit"` whole-repo scan) still deferred. | P2 |
 | 32 | IDE integration | LSP or VS Code extension for autocode. | P3 |
 | 56 | v3.x cleanup: remove backward-compat wrappers | `node_write_files`, `node_verify`, `node_publish` (registered but NOT wired). Blocked by tests importing them directly. | P3 |
@@ -116,4 +117,4 @@
 
 ---
 
-*Last updated: 2026-07-14 (v3.0 — Track M1 complete). See [SUBSTATE.md](SUBSTATE.md) for the v3.0 sub-state architecture, [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for state accessors, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback). See [SUBSTATE.md](SUBSTATE.md) for the v3.0 sub-state architecture, [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for state accessors, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

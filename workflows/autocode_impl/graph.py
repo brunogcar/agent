@@ -7,7 +7,7 @@ so MCP clients can render the graph correctly.
 """
 from __future__ import annotations
 from langgraph.graph import END, StateGraph
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_tdd  # [v3.1 #48] _get_tdd for swarm_fallback routing
 from workflows.autocode_impl.nodes.classify import node_classify_task
 from workflows.autocode_impl.nodes.validate import node_validate_input
 from workflows.autocode_impl.nodes.brainstorm import node_brainstorm
@@ -18,6 +18,7 @@ from workflows.autocode_impl.nodes.execute import node_execute_step
 from workflows.autocode_impl.nodes.run_tests import node_run_tests
 from workflows.autocode_impl.nodes.analyze_impact import node_analyze_impact
 from workflows.autocode_impl.nodes.debug import node_systematic_debug
+from workflows.autocode_impl.nodes.swarm_fallback import node_swarm_fallback  # [v3.1 #48] swarm fallback
 from workflows.autocode_impl.nodes.summarize_context import node_summarize_context  # [v2.0] Phase 4
 from workflows.autocode_impl.nodes.write_files import node_write_files  # [v2.0] backward-compat wrapper
 from workflows.autocode_impl.nodes.apply_patches import node_apply_patches  # [v2.0] Phase 3.1 split
@@ -53,7 +54,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "3.0",  # [v3.0] Flat-field removal — Track M1 complete
+    "version": "3.1",  # [v3.1] Debug loop improvements: goal sanitization, AST pre-check, debug_summary in verify, swarm fallback
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -70,6 +71,7 @@ WORKFLOW_METADATA = {
         {"name": "node_analyze_impact", "type": "llm", "role": "analyze", "description": "Blast radius analysis using dependency graph"},
         {"name": "node_run_tests", "type": "tool", "tool": "pytest", "description": "Run TDD tests via pytest subprocess"},
         {"name": "node_systematic_debug", "type": "llm", "role": "executor", "description": "[v2.0] 4-phase debug: investigation → pattern → hypothesis → fix"},
+        {"name": "node_swarm_fallback", "type": "llm", "role": "executor", "description": "[v3.1] Swarm consensus when debug retries exhausted (HIGH confidence → retry, LOW → verify)"},
         {"name": "node_summarize_context", "type": "logic", "description": "[v2.0] Compress debug_history before re-entering loop"},
         {"name": "node_verify", "type": "composite", "description": "[v2.0] Backward-compat wrapper (not wired)"},
         {"name": "node_run_pytest", "type": "tool", "tool": "pytest", "description": "[v2.0] Fresh pytest on autocode test files"},
@@ -155,6 +157,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_run_tests", node_run_tests)
     workflow.add_node("node_analyze_impact", node_analyze_impact)
     workflow.add_node("node_systematic_debug", node_systematic_debug)
+    workflow.add_node("node_swarm_fallback", node_swarm_fallback)  # [v3.1 #48] swarm fallback
     workflow.add_node("node_summarize_context", node_summarize_context)  # [v2.0] Phase 4
     # [v2.0] Phase 3.1: node_write_files split into 3 nodes
     workflow.add_node("node_apply_patches", node_apply_patches)
@@ -224,20 +227,34 @@ def build_graph() -> StateGraph:
     # route_after_analyze_impact was always constant ("node_run_tests").
     workflow.add_edge("node_analyze_impact", "node_run_tests")
 
-    # Route after run_tests (pass vs debug)
+    # Route after run_tests (pass vs debug vs swarm fallback)
     # [v2.0] Phase 3.2: "node_verify" now maps to node_run_pytest (first sub-node)
+    # [v3.1 #48]: "node_swarm_fallback" — when debug retries exhausted + flag on
     workflow.add_conditional_edges(
         "node_run_tests",
         route_after_run_tests,
         {
             "node_verify": "node_run_pytest",  # [v2.0] route to first verify sub-node
             "node_systematic_debug": "node_systematic_debug",
+            "node_swarm_fallback": "node_swarm_fallback",  # [v3.1 #48]
         },
     )
 
     # Debug loop [v2.0] Phase 4: debug → summarize_context → apply_patches
     workflow.add_edge("node_systematic_debug", "node_summarize_context")
     workflow.add_edge("node_summarize_context", "node_apply_patches")
+
+    # [v3.1 #48] Swarm fallback edges:
+    #   HIGH confidence → node_systematic_debug (one more debug cycle with swarm verdict)
+    #   LOW/unavailable → node_run_pytest (proceed to verify chain, will fail)
+    workflow.add_conditional_edges(
+        "node_swarm_fallback",
+        lambda state: "node_systematic_debug" if _get_tdd(state, "status", "") == "" and state.get("status") != "failed" else "node_verify",
+        {
+            "node_systematic_debug": "node_systematic_debug",
+            "node_verify": "node_run_pytest",
+        },
+    )
 
     # [v2.0] Phase 3.2: verify chain — run_pytest → run_lint → llm_review → verify_decision
     workflow.add_edge("node_run_pytest", "node_run_lint")

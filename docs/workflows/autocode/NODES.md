@@ -2,14 +2,16 @@
 
 # 📝 Node Reference
 
-Per-node reference for all 28 nodes in the autocode workflow graph
-(25 active + 3 backward-compat wrappers — see [ARCHITECTURE.md](ARCHITECTURE.md)
+Per-node reference for all 29 nodes in the autocode workflow graph
+(26 active + 3 backward-compat wrappers — see [ARCHITECTURE.md](ARCHITECTURE.md)
 § "Backward-compat wrappers" for wrapper details). Nodes are listed in
 graph-execution order (Phase 1 → Phase 17). For the workflow facade, output format,
 state fields, and accessor functions, see [API.md](API.md). For the sub-state
 architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBSTATE.md).
 
 > **[v3.0]** Every node reads sub-state fields via accessors (`_get_tdd`, `_get_vcs`, etc.) and writes via read-modify-write (RMW). Ephemeral flat fields (`test_results`, `test_code`, `_pytest_output`, etc.) stay flat — read via `state.get(key, default)`. See [SUBSTATE.md](SUBSTATE.md).
+
+> **[v3.1]** Debug loop improvements — (1) `node_validate_input` strips control chars + enforces max 2000 chars (#42); (2) `node_run_pytest` runs `ruff --select E999` syntax pre-check before pytest (#41); (3) `node_llm_review` injects `debug_summary` into the verify LLM prompt when `debug_history` > 5 (F3); (4) NEW `node_swarm_fallback` node (#48) — escalates to swarm consensus when debug retries exhausted + `AUTOCODE_SWARM_DEBUG_FALLBACK=1`.
 
 **[v2.0] Lazy Dev / YAGNI Ladder:** `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code). Enforced at the prompt level — every code-generating node benefits. See INSTRUCTIONS.md ALWAYS DO #38 + #39.
 
@@ -38,21 +40,27 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ### `node_validate_input(state)` — Phase 2: Validate Input
 
-**Purpose:** Validate input parameters.
+**Purpose:** Validate input parameters. **[v3.1 #42]** Also sanitizes the task: enforces a max length (2000 chars) and strips control characters before downstream nodes see the task.
 
 **Logic:**
-1. Check `goal` is non-empty
-2. Check `files` is a dict with valid paths
-3. Check `target_file` is valid (if provided)
+1. Check `task` is non-empty + a string
+2. **[v3.1 #42]** Enforce `MAX_TASK_LENGTH = 2000` — return `{"status": "error", "error": "Task too long (...)"}` if exceeded
+3. **[v3.1 #42]** Strip control chars via `re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', task)` — keeps `\n`, `\t`, `\r` (legitimate formatting). If anything was stripped, return `{"task": cleaned_task}` so LangGraph merges the cleaned value into state.
+4. Check `mode` is in the valid-modes set (when provided)
+5. Check `files` is a dict with valid paths
+6. **[P1 #11]** Path traversal check — catches Unix (`..` / leading `/`), Windows absolute (`C:\`), and URL-encoded (`%2f`, `%5c`) traversal in `files` keys.
 
-**Output:** Partial dict with `status` ("valid" | "error") and `error` (if invalid).
+**Output:** Partial dict with `status` ("error" if invalid) + `error` message — OR `{"task": cleaned_task}` when only control-char stripping occurred (no other state update). Returns `{}` when nothing changed (all valid, no stripping needed).
 
 **Error handling:**
-- Invalid goal → `"error"` status with message
-- Invalid files → `"error"` status with message
-- Invalid target_file → `"error"` status with message
+- Empty/non-string task → `"error"` status with message
+- Task > 2000 chars → `"error"` status with message (do NOT auto-truncate — the caller should split the task)
+- Invalid mode → `"error"` status with message
+- Invalid files (non-dict / non-string key / path traversal) → `"error"` status with message
 
-**Note:** Path traversal check is incomplete. Doesn't catch absolute Windows paths (`C:\file.txt`) or Unicode traversal.
+**Note:** Path traversal check uses `_re.match(r"[a-z]:[\\/]", normalized)` for Windows absolute paths (was missing in pre-v1.0.2 code).
+
+**Note:** Control-char stripping is non-fatal — the cleaned task is transparently substituted via the state update. Downstream nodes (brainstorm, plan, etc.) never see the raw control chars.
 
 ---
 
@@ -238,6 +246,36 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ---
 
+### `node_swarm_fallback(state)` — Phase 11b: Swarm Consensus when Debug Retries Exhausted
+
+**[v3.1 #48]** — NEW NODE. Called by `route_after_run_tests` when `_get_tdd(state, "status", "") == "max_retries_exceeded"` AND `cfg.autocode_swarm_debug_fallback` is ON. Without the flag, the same condition routes directly to `node_run_pytest` (verify chain). This node is the "escalation" pattern from loop-engineering: when a single agent can't resolve an issue after N attempts, escalate to a multi-agent consensus with a pruned context summary.
+
+**Purpose:** Give the debug loop one more chance via multi-model consensus. If the swarm agrees (HIGH confidence), inject the verdict + reset `tdd_status` to allow one more debug cycle. If not (LOW/MEDIUM confidence or swarm unavailable), set `status="failed"` so the graph proceeds to the verify chain (which will fail and surface to the user).
+
+**Logic:**
+1. Read `debug_history`, `debug_summary`, and `error` from the `tdd` sub-state via accessors.
+2. Build a context block for the swarm — prefer the compressed `debug_summary` (first 2000 chars) if available; otherwise render the last 3 `debug_history` entries (root_cause + fix, truncated to 200 chars each). Fall back to `"No debug history available. Last error: <error>"` when both are empty.
+3. Call `_swarm_debug_consensus(system=DEBUG_SYSTEM, user=<context>, tid=tid)` — same 2-run pattern (consensus → vote) used by `node_systematic_debug` when `AUTOCODE_SWARM_DEBUG=1`. Returns `None` when no providers configured / import failure / consensus exception.
+4. If swarm returned `None`: trace `"Swarm unavailable — proceeding to verify chain"` and return `{"status": "failed"}`. Graph routes to `node_run_pytest` (verify chain).
+5. If swarm returned `confidence == "HIGH"`: trace `"HIGH confidence — injecting verdict, allowing one more debug cycle"`. RMW the `debug` sub-state with `root_cause`, `defense_notes`, `swarm_verdict`, and a `notes` string. RMW the `tdd` sub-state with `status=""` (RESET — allows debug loop to retry), `source_code=suggested_fix` (the swarm's proposed fix), and `error=error` (kept for context). Graph routes to `node_systematic_debug`.
+6. If swarm returned `confidence in ("LOW", "MEDIUM")`: trace `"{confidence} confidence — proceeding to verify chain"`. Still RMW `debug` sub-state with `swarm_verdict` + `notes` (recorded for the report), but return `{"status": "failed", "debug": current_debug}`. Graph routes to `node_run_pytest` (verify chain).
+
+**Params:** None beyond `state`. Reads (via accessors): `_get_tdd(state, "debug_history", [])`, `_get_tdd(state, "debug_summary", "")`, `_get_tdd(state, "error", "Unknown error")`, `state.get("trace_id", "")`. Reads `cfg.autocode_max_retries` to populate the swarm prompt.
+
+**Returns:**
+- HIGH confidence: `{"tdd": current_tdd (RMW with status="" + source_code=suggested_fix), "debug": current_debug (RMW with root_cause + defense_notes + swarm_verdict + notes)}`
+- LOW/MEDIUM confidence or swarm `None`: `{"status": "failed", "debug": current_debug (RMW with swarm_verdict + notes — None case omits the swarm_verdict write)}`
+
+**Routing (in `graph.py`):** `node_run_tests` → `route_after_run_tests` → (3-way conditional) → `node_swarm_fallback`. From `node_swarm_fallback`, a 2-way conditional edge: HIGH-confidence (`tdd.status == ""` AND `state.status != "failed"`) → `node_systematic_debug`; otherwise → `node_run_pytest` (verify chain).
+
+**Source:** `workflows/autocode_impl/nodes/swarm_fallback.py`. Imports `_swarm_debug_consensus` from `vcs_ops.py`, `DEBUG_SYSTEM` from `constants.py`, `_get_tdd` + `_get_debug` from `state.py`.
+
+**Note:** The flag `AUTOCODE_SWARM_DEBUG_FALLBACK` (default OFF) is INDEPENDENT of `AUTOCODE_SWARM_DEBUG` — the latter controls whether `node_systematic_debug` uses swarm INSIDE the debug loop; the former controls whether the swarm is consulted AFTER the debug loop is exhausted. They can be enabled together (swarm-inside-loop + swarm-on-exhaustion) or independently.
+
+**Note:** Non-blocking by design — the swarm verdict is always advisory. HIGH confidence is the only path that extends the debug loop; LOW/MEDIUM just records the verdict for the report and proceeds to verify (which will fail, since `tdd_status` was already `"max_retries_exceeded"`). The user sees the swarm verdict in the final report's `debug.swarm_verdict`.
+
+---
+
 ### `node_systematic_debug(state)` — Phase 11: Debug Failures
 
 **Purpose:** Debug test failures. Uses a 4-phase prompt (investigation → pattern → hypothesis → fix), accumulates `debug_history` across iterations, and bails on architecture-question detection (3+ consecutive `tests_passed=False`).
@@ -315,21 +353,28 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ---
 
-### `node_run_pytest(state)` — Phase 12a: Fresh Pytest Subprocess
+### `node_run_pytest(state)` — Phase 12a: Fresh Pytest Subprocess (with ruff E999 syntax pre-check)
 
-**Purpose:** Run a fresh pytest subprocess on the autocode run directory. First of the 4 Phase 3.2 split nodes (was inside `node_verify`).
+**Purpose:** Run a fresh pytest subprocess on the autocode run directory. First of the 4 Phase 3.2 split nodes (was inside `node_verify`). **[v3.1 #41]** Now runs `ruff --select E999` (syntax-only) BEFORE pytest — if syntax errors exist, skips pytest and returns the error directly (saves ~30s on a doomed pytest run + gives the debug node a precise syntax error message).
 
 **Logic:**
 1. Resolve `run_dir` from `state["autocode_run_path"]` or `_get_autocode_run_path(tid)`
 2. **[Pre-2.0 Fix]** If no test files exist (`tests_dir` and `test_file` both missing), skip pytest entirely — return `{"test_results": {...stderr: "No test files found..."}, "tests_passed": False}`. Was: ran `pytest` with no args → entire project test suite.
-3. Run `[python, "-m", "pytest", "--tb=short", "--color=no", "-q", ...targets]` with `cwd=base_path` and 120s timeout
-4. Build `test_results` dict `{success, stdout, stderr, returncode}` + `tests_passed` bool + ephemeral `_pytest_output` (first 2000 chars — stashed for `llm_review`)
+3. **[v3.1 #41]** AST/syntax pre-check: compute `base_path` (from `state["project_root"]` or `cfg.workspace_root`) + `files_to_check` list (`test_file` + `tests_dir`). Run `[python, "-m", "ruff", "check", "--select", "E999", "--no-cache", ...files_to_check]` with 10s timeout + `cwd=base_path`.
+   - If `returncode != 0` (syntax errors found): trace `"SYNTAX ERROR (ruff E999): <first 200 chars>"` and return `{"test_results": {success: False, stdout: "", stderr: "Syntax error detected (ruff E999):\n<first 1000 chars>", returncode: -1}, "tests_passed": False, "_pytest_output": "Syntax error (ruff E999):\n<first 2000 chars>"}` — skip pytest entirely.
+   - `FileNotFoundError` (ruff not installed): trace `"ruff not found, skipping syntax pre-check"` — falls through to pytest. **Non-fatal.**
+   - `subprocess.TimeoutExpired` (10s): trace `"ruff syntax pre-check timed out, skipping"` — falls through to pytest. **Non-fatal.**
+   - Any other `Exception`: trace `"ruff pre-check error (non-fatal): <e>"` — falls through to pytest. **Non-fatal.**
+4. Run `[python, "-m", "pytest", "--tb=short", "--color=no", "-q", ...targets]` with `cwd=base_path` and 120s timeout
+5. Build `test_results` dict `{success, stdout, stderr, returncode}` + `tests_passed` bool + ephemeral `_pytest_output` (first 2000 chars — stashed for `llm_review`)
 
-**Params:** None beyond `state`. Reads: `state["status"]`, `state["trace_id"]`, `state["autocode_run_path"]`, `state["project_root"]`.
+**Params:** None beyond `state`. Reads: `state["status"]`, `state["trace_id"]`, `state["autocode_run_path"]`, `state["project_root"]` (falls back to `cfg.workspace_root`).
 
-**Returns:** `{"test_results": dict, "tests_passed": bool, "_pytest_output": str}` — handles `FileNotFoundError` (pytest missing) + `subprocess.TimeoutExpired` (120s) with structured error returns.
+**Returns:** `{"test_results": dict, "tests_passed": bool, "_pytest_output": str}` — handles `FileNotFoundError` (pytest missing) + `subprocess.TimeoutExpired` (120s) with structured error returns. **[v3.1]** Also returns early with a structured syntax-error result when ruff E999 finds syntax errors (before pytest runs).
 
 **Source:** `workflows/autocode_impl/nodes/run_pytest.py`.
+
+**Note:** The ruff pre-check is a SOFT dependency — `ruff` may not be installed in all environments. The `except FileNotFoundError` handler makes it non-fatal: pytest runs anyway (with a less clear error if there's a syntax issue). Do NOT make `ruff` a hard dependency. See INSTRUCTIONS.md NEVER DO #44.
 
 ---
 
@@ -351,24 +396,27 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ---
 
-### `node_llm_review(state)` — Phase 12c: LLM Spec Coverage + Cleanliness Review
+### `node_llm_review(state)` — Phase 12c: LLM Spec Coverage + Cleanliness Review (with debug_summary injection)
 
-**Purpose:** LLM-based spec review of the implementation. Third of the 4 Phase 3.2 split nodes. Calls `_call(role="executor", system=VERIFY_SYSTEM, ...)` with implementation context, fresh pytest output, and ruff output.
+**Purpose:** LLM-based spec review of the implementation. Third of the 4 Phase 3.2 split nodes. Calls `_call(role="executor", system=VERIFY_SYSTEM, ...)` with implementation context, fresh pytest output, and ruff output. **[v3.1 F3]** When `debug_history` > 5 entries, also injects the compressed `debug_summary` so the verify LLM has the accumulated debug knowledge without the prompt exploding.
 
 **Logic:**
 1. Build `impl_ctx` from `_get_tdd(state, "source_code", "{}")` JSON — extract `patches[].new` (first 1500 chars each) + `new_files{}` values (first 1500 chars each). Fallback: raw `tdd.source_code[:3000]` on parse failure.
-2. Read `tests_passed`, `_pytest_output` (from `node_run_pytest`), `lint_output` (from `node_run_lint`) from state — these are ephemeral flat fields
-3. Call `_call(role="executor", system=VERIFY_SYSTEM, user=<spec + impl + tests + pytest output + ruff output>, timeout=EXECUTOR_TIMEOUT)`
-4. Parse response via `_parse_json(raw)` → `data` dict `{automated_checks_passed, checks: {syntax, tests, spec, regressions, cleanliness}, summary}`
-5. On `_call` exception: `tracer.error(tid, "llm_review", ...)` + return `{"llm_review_data": {"automated_checks_passed": False, "checks": {}, "summary": "LLM verification error"}}`
+2. Read `tests_passed`, `_pytest_output` (from `node_run_pytest`), `lint_output` (from `node_run_lint`) from state — these are ephemeral flat fields.
+3. **[v3.1 F3]** Read `debug_summary` + `debug_history` length via `_get_tdd` accessor. If `debug_summary` is non-empty AND `len(debug_history) > 5`, build a `debug_context_block = "\n\nDEBUG SUMMARY (compressed from <N> iterations):\n<debug_summary[:2000]>\n"` and trace `"Injected debug_summary (<len> chars) — <N> iterations"`. Otherwise `debug_context_block = ""`.
+4. Call `_call(role="executor", system=VERIFY_SYSTEM, user=<spec + impl + tests + pytest output + ruff output + debug_context_block (if any)>, timeout=EXECUTOR_TIMEOUT)` — the debug block is APPENDED to the user prompt (after the ruff output) only when the threshold is met.
+5. Parse response via `_parse_json(raw)` → `data` dict `{automated_checks_passed, checks: {syntax, tests, spec, regressions, cleanliness}, summary}`
+6. On `_call` exception: `tracer.error(tid, "llm_review", ...)` + return `{"llm_review_data": {"automated_checks_passed": False, "checks": {}, "summary": "LLM verification error"}}`
 
-**Params:** None beyond `state`. Reads (via accessors + flat): `_get_tdd(state, "source_code", "{}")`, `state["status"]`, `state["trace_id"]`, `state["tests_passed"]`, `state["_pytest_output"]`, `state["test_results"]`, `state["lint_output"]`, `state["project_root"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_tdd(state, "source_code", "{}")`, `_get_tdd(state, "debug_summary", "")` (v3.1), `_get_tdd(state, "debug_history", [])` (v3.1 — length only), `state["status"]`, `state["trace_id"]`, `state["tests_passed"]`, `state["_pytest_output"]`, `state["test_results"]`, `state["lint_output"]`, `state["project_root"]`.
 
 **Returns:** `{"llm_review_data": dict}` — always returns a dict (even on error). Or `{}` when `status` is `needs_clarification`/`failed`.
 
-**Source:** `workflows/autocode_impl/nodes/llm_review.py` (imports `_call` + `_parse_json` from `helpers.py`; `VERIFY_SYSTEM` from `constants.py`; `EXECUTOR_TIMEOUT` from `state.py`).
+**Source:** `workflows/autocode_impl/nodes/llm_review.py` (imports `_call` + `_parse_json` from `helpers.py`; `VERIFY_SYSTEM` from `constants.py`; `EXECUTOR_TIMEOUT` + `_get_plan` + `_get_tdd` from `state.py`).
 
 **Note:** This is the only node in the verify chain that calls the LLM. `node_verify_decision` (next) consumes `llm_review_data` and applies the hallucination guard.
+
+**Note (v3.1 F3):** The threshold (`> 5` entries) matches the symmetric consumption in `node_systematic_debug` (which uses `debug_summary` to replace its raw last-5-entries block when `debug_history` > 5). Both nodes consult the same compressed summary, keeping the verify LLM's context bounded in long-running debug loops without re-deriving context from raw test output.
 
 ---
 
@@ -533,4 +581,4 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ---
 
-*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization in `node_validate_input`, #41 AST pre-check in `node_run_pytest`, F3 `debug_summary` injection in `node_llm_review`, #48 NEW `node_swarm_fallback` node; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
