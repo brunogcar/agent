@@ -1,12 +1,13 @@
 # 🧭 Router
 
-The Task Router (`core/router.py`) is the **ultra-fast classification layer** that sits between the user's goal and the workflow execution engine. It uses the dedicated Router role (`cfg.router_model`) to classify intent, determine complexity, and select the correct workflow or direct tool, all within a strict 15-second timeout.
+The Task Router (`core/router.py` — a 36-line thin facade; all logic in `core/router_backend/`) is the **ultra-fast classification layer** that sits between the user's goal and the workflow execution engine. It uses the dedicated Router role (`cfg.router_model`) to classify intent, determine complexity, and select the correct workflow or direct tool, all within a strict 15-second timeout.
 
 **Key characteristics:**
+- **Thin facade pattern (v1.0)** — `core/router.py` re-exports 7 public symbols; all implementation lives in `core/router_backend/` (10 files), mirroring the LLM/memory/gateway pattern. All `from core.router import X` callers continue to work unchanged.
 - **Speed-first** — 15s hard timeout, falls back to heuristics if model is slow or unavailable
-- **Dual-mode routing** — Model-based (primary) + keyword heuristics (fallback)
+- **Three-tier routing + adaptive + telemetry (v1.0)** — Model-based (primary) + keyword heuristics (fallback) + swarm vote (advisory). Every non-empty-goal decision is post-processed by `apply_adaptive_thresholds()` (complexity > 7 + non-`high` confidence → downgrade) and recorded by `log_routing_telemetry()` (heuristic-vs-model disagreement tracking).
 - **Confidence-aware** — Low-confidence decisions include clarifying questions to prevent wasted VRAM
-- **Robust JSON extraction** — 3-layer pipeline handles markdown fences, nested objects, and escaped quotes. **[Pre-v1.1]** The pipeline now lives in `core/json_extract.extract_first_json()` — `_extract_first_json()` in `core/router.py` is a one-line delegation. The same `core/json_extract.py` module also backs `helpers._parse_json` in autocode (single source of truth for LLM JSON parsing). Internal refactor; no behavior change.
+- **Robust JSON extraction** — 3-layer pipeline handles markdown fences, nested objects, and escaped quotes. The pipeline lives in `core/json_extract.extract_first_json()`; `_extract_first_json()` in `core/router_backend/model_route.py` is a one-line delegation. The same `core/json_extract.py` module also backs `helpers._parse_json` in autocode (single source of truth for LLM JSON parsing).
 - **Zero hardcoding** — All model references use `cfg.router_model`
 
 ---
@@ -63,4 +64,4 @@ ROUTER_TIMEOUT=15
 
 ---
 
-*Last updated: 2026-07-11 (Pre-v1.1 — `Robust JSON extraction` bullet updated to note the 3-layer pipeline now lives in `core/json_extract.extract_first_json()`; `_extract_first_json()` in `core/router.py` is a one-line delegation. See subfiles for detailed documentation.*
+*Last updated: 2026-07-14 (v1.0 — first versioned release: `core/router.py` is now a 36-line thin facade; all implementation lives in `core/router_backend/` (10 files) following the LLM/memory/gateway pattern; added routing telemetry (`get_telemetry()` / `get_telemetry_summary()` / `clear_telemetry()`) + adaptive complexity thresholds (`apply_adaptive_thresholds()` — complexity > 7 + non-`high` confidence → downgrade). See subfiles for detailed documentation.*

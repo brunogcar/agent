@@ -39,8 +39,8 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", True)
-        # Force heuristic path: _model_route returns None.
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        # Force heuristic path: model_route returns None.
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
         mock_swarm.return_value = _vote_result("unanimous", "autocode", successful_count=3)
 
@@ -60,7 +60,7 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", False)
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
 
         router = TaskRouter()
@@ -79,7 +79,7 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", True)
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
 
         router = TaskRouter()
@@ -99,7 +99,7 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", True)
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
         mock_swarm.return_value = _vote_result("disagreement", "autocode", successful_count=3)
 
@@ -118,7 +118,7 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", True)
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
         mock_swarm.return_value = _vote_result("unanimous", "banana", successful_count=3)
 
@@ -137,7 +137,7 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", True)
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
         mock_swarm.return_value = {"status": "error", "error": "no providers configured"}
 
@@ -157,7 +157,7 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", True)
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
         mock_swarm.side_effect = RuntimeError("swarm imploded")
 
@@ -179,7 +179,7 @@ class TestSwarmFallbackRouting:
         from core.router import TaskRouter
 
         mocker.patch("core.config.cfg.router_swarm_fallback", True)
-        mocker.patch.object(TaskRouter, "_model_route", return_value=None)
+        mocker.patch("core.router_backend.router_engine.model_route", return_value=None)
         mock_swarm = mocker.patch("tools.swarm.swarm")
         mock_swarm.return_value = _vote_result("unanimous", "research", successful_count=3)
 

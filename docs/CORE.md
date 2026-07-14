@@ -9,7 +9,7 @@ The `core/` module is the **foundation layer** of the MCP Agent Stack. It provid
 | [CONFIG.md](core/CONFIG.md) | Configuration | Singleton `.env` loading, model tiers, path hierarchy, validation, gateway config |
 | [LLM.md](core/LLM.md) | LLM Client | Role-based dispatch, circuit breakers, context budgeting, JSON parsing, provider abstraction |
 | [MEMORY.md](core/MEMORY.md) | Memory System | Three collections, four-layer dedup, decay scoring, write/read ops, maintenance |
-| [ROUTER.md](core/ROUTER.md) | Task Router | Model + heuristic routing, confidence guard, complexity scoring, JSON extraction |
+| [ROUTER.md](core/ROUTER.md) | Task Router | Thin facade pattern (`router.py` + `router_backend/`), 3-tier routing (model → heuristic → swarm), adaptive complexity thresholds, routing telemetry, confidence guard, complexity scoring, JSON extraction |
 | [GATEWAY.md](core/GATEWAY.md) | REST Gateway | FastAPI endpoints, auth, rate limiting, middleware, SQLite task store, report serving |
 | [RUNTIME.md](core/RUNTIME.md) | Runtime | Activity tracking, cancellation guards, health checks, providers, watchdog, task runner |
 | [SLEEP_LEARN.md](core/SLEEP_LEARN.md) | Background Learning | Feedback processing, distillation, filters, storage, injection, feedback loop |
@@ -39,7 +39,7 @@ graph TD
         SL["sleep_learn/\nBackground learning"]
         ML["memory_backend/meta_learning.py\nBackground learning (30min daemon)"]
         RT["runtime/\nWatchdog, health, activity"]
-        RTR["router.py\nTask classification"]
+        RTR["router.py<br/>Thin facade → router_backend/"]
         GW_B["gateway_backend/\nHTTP engine"]
         KG["kgraph/\nKnowledge graph"]
         NET["net/\nNetwork infrastructure"]
@@ -86,8 +86,8 @@ graph TD
 | Layer | Contains | Imports From |
 |-------|----------|-------------|
 | **Layer 1: Foundation** | config, tracer (facade → observability/), contracts, net/security, path_guard, utils, parallel_executor, br_validator, citations | Nothing in `core/` (tracer.py facade imports from `core/observability/` subsystem) |
-| **Layer 2: Subsystems** | observability (tracer_engine + reader + metrics + checkpoint), llm_backend, memory_backend, sleep_learn, meta_learning, runtime, router, gateway_backend, kgraph, net | Layer 1 only |
-| **Layer 3: Facades** | llm.py, memory_engine.py, gateway.py, server.py, registry.py, tracer.py (facade) | Layer 2 (and transitively Layer 1) |
+| **Layer 2: Subsystems** | observability (tracer_engine + reader + metrics + checkpoint), llm_backend, memory_backend, sleep_learn, meta_learning, runtime, router_backend, gateway_backend, kgraph, net | Layer 1 only |
+| **Layer 3: Facades** | llm.py, memory_engine.py, gateway.py, router.py, server.py, registry.py, tracer.py (facade) | Layer 2 (and transitively Layer 1) |
 
 ---
 
@@ -173,7 +173,17 @@ core/
 ├── br_validator.py       # Brazilian financial data parser (BRL, dates, tickers)
 ├── utils.py              # Shared utility helpers (truncation, compression)
 │
-├── router.py             # TaskRouter: goal -> workflow classification
+├── router.py             # Thin facade (36 lines) — re-exports public API
+├── router_backend/       # Task router implementation (v1.0 split — 10 files)
+│   ├── decision.py       # RoutingDecision class
+│   ├── constants.py      # ROUTER_SYSTEM_PROMPT, ROUTER_TOOLS, ROUTER_WORKFLOWS
+│   ├── heuristics.py     # 16 pre-compiled regex patterns + heuristic_route()
+│   ├── model_route.py    # model_route() + _extract_first_json() [imports llm directly]
+│   ├── swarm_fallback.py # swarm_fallback_route() [lazy-imports tools.swarm.swarm]
+│   ├── complexity.py     # classify_complexity()
+│   ├── telemetry.py      # [v1.0 NEW] routing telemetry (heuristic-vs-model disagreements)
+│   ├── adaptive.py       # [v1.0 NEW] adaptive complexity thresholds (complexity > 7)
+│   └── router.py         # TaskRouter class — orchestrator (route() + classify_complexity())
 │
 ├── kgraph/               # Codebase Knowledge Graph
 │   ├── ast_parser.py     # Dedicated AST parsing with LRU cache + thread pool
@@ -314,10 +324,11 @@ results = memory.recall("how to fix syntax errors", top_k=5)
 **Purpose:** Model-based routing with deterministic heuristic fallback for workflow/tool selection.
 
 **Key characteristics:**
+- **Thin facade pattern (v1.0 split)** — `core/router.py` is a 36-line facade re-exporting 7 public symbols; all implementation lives in `core/router_backend/` (10 files), mirroring the LLM/memory/gateway pattern
 - **Speed-first** — 15s hard timeout, falls back to heuristics if model is slow or unavailable
-- **Dual-mode routing** — Model-based (primary) + keyword heuristics (fallback)
+- **Three-tier routing + adaptive + telemetry (v1.0)** — Model-based (primary) + keyword heuristics (fallback) + swarm vote (advisory). Every non-empty-goal decision is post-processed by `apply_adaptive_thresholds()` (complexity > 7 + non-`high` confidence → downgrade) and recorded by `log_routing_telemetry()` (heuristic-vs-model disagreement tracking)
 - **Confidence-aware** — Low-confidence decisions include clarifying questions to prevent wasted VRAM
-- **Robust JSON extraction** — 3-layer pipeline handles markdown fences, nested objects, and escaped quotes
+- **Robust JSON extraction** — 3-layer pipeline (delegates to `core/json_extract.extract_first_json()`)
 - **Zero hardcoding** — All model references use `cfg.router_model`
 
 **Output:**

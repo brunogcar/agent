@@ -4,15 +4,21 @@
 
 ## 🔧 API Overview
 
-The Router exposes three public methods (`route()`, `classify_complexity()`) + one advisory method (`_swarm_fallback_route()`), and a `RoutingDecision` dataclass. All model references use `cfg.router_model` — zero hardcoding.
+**Public surface (via the thin facade `core/router.py`):** `route()`, `classify_complexity()`, and the `RoutingDecision` dataclass. All model references use `cfg.router_model` — zero hardcoding.
+
+**v1.0 additions — accessible via direct import from `core.router_backend/` (not on the `TaskRouter` class):**
+- **Routing telemetry:** `log_routing_telemetry()` (called internally by `route()`), `get_telemetry()`, `get_telemetry_summary()`, `clear_telemetry()` — see [Routing Telemetry API (v1.0)](#-routing-telemetry-api-v10).
+- **Adaptive complexity thresholds:** `apply_adaptive_thresholds()`, `COMPLEXITY_THRESHOLD` — see [Adaptive Complexity Thresholds (v1.0)](#-adaptive-complexity-thresholds-v10).
+
+**Internal helpers (also in `core.router_backend/`):** `model_route()`, `heuristic_route()`, `swarm_fallback_route()`, `classify_complexity()`. These are called by `route()` — callers should normally use `route()` rather than invoking them directly.
 
 ### Config Flags
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `ROUTER_MODEL` | (project default) | LLM used by `_model_route()` and `classify_complexity()` (via `cfg.router_model`) |
-| `ROUTER_TIMEOUT` | `15` (seconds) | Hard timeout for `_model_route()` LLM call (via `cfg.router_timeout`) |
-| **`ROUTER_SWARM_FALLBACK`** | **`0` (OFF)** | When `1`, enables swarm vote-based routing fallback: if model routing fails AND heuristic returns `confidence="low"`, calls `swarm(action="vote", temperature=0)` for a second opinion. Requires unanimous/majority agreement + valid workflow type. Non-fatal — any failure falls back to the heuristic decision. See `_swarm_fallback_route()` below. |
+| `ROUTER_MODEL` | (project default) | LLM used by `model_route()` and `classify_complexity()` (via `cfg.router_model`) |
+| `ROUTER_TIMEOUT` | `15` (seconds) | Hard timeout for `model_route()` LLM call (via `cfg.router_timeout`) |
+| **`ROUTER_SWARM_FALLBACK`** | **`0` (OFF)** | When `1`, enables swarm vote-based routing fallback: if model routing fails AND heuristic returns `confidence="low"`, calls `swarm(action="vote", temperature=0)` for a second opinion. Requires unanimous/majority agreement + valid workflow type. Non-fatal — any failure falls back to the heuristic decision. See `swarm_fallback_route()` below. |
 
 ---
 
@@ -60,16 +66,18 @@ score = router.classify_complexity("Calculate the mean of column A in data.csv")
 
 ---
 
-### `_swarm_fallback_route()` — Swarm Vote Second Opinion
+### `swarm_fallback_route()` — Swarm Vote Second Opinion (internal helper)
 
-Advisory method called from `route()` ONLY when:
-1. `_model_route(goal, trace_id)` returned `None` (model unavailable, timeout, invalid JSON), AND
-2. `_heuristic_route(goal)` returned `confidence == "low"` (the catch-all step #18 — no routing keywords matched), AND
+**[v1.0]** Was `TaskRouter._swarm_fallback_route()` (private method); now a standalone function in `core/router_backend/swarm_fallback.py`. Still called from `route()` ONLY when:
+1. `model_route(goal, trace_id)` returned `None` (model unavailable, timeout, invalid JSON), AND
+2. `heuristic_route(goal)` returned `confidence == "low"` (the catch-all step #18 — no routing keywords matched), AND
 3. `cfg.router_swarm_fallback` is `True` (env var `ROUTER_SWARM_FALLBACK=1`).
 
 ```python
-# Internal — called by route() when the above 3 conditions hold
-swarm_decision = router._swarm_fallback_route(goal, trace_id)
+# Internal — called by route() when the above 3 conditions hold.
+# Direct import is supported but unusual (route() is the public entry point).
+from core.router_backend.swarm_fallback import swarm_fallback_route
+swarm_decision = swarm_fallback_route(goal, trace_id)
 # Returns: Optional[RoutingDecision] — None means "no confident swarm verdict, fall back to heuristic"
 ```
 
@@ -108,6 +116,157 @@ swarm(
 **Why `unanimous`/`majority` required (not `split`/`disagreement`):** A split or disagreement swarm verdict is *no more confident* than the heuristic low-confidence decision — both are saying "I don't know for sure". Overriding the heuristic with an equally-uncertain swarm verdict would just add latency without improving routing quality. Only unanimous/majority verdicts represent a confident second opinion worth overriding the heuristic.
 
 **Why non-fatal:** The router's contract is `route(goal) -> RoutingDecision` — it must never raise. The swarm fallback is a *bonus* path: if it works, great; if it doesn't, the heuristic decision still stands. All exceptions are caught and logged via `tracer.warning(...)`. The flag is OFF by default — users who don't have cloud providers configured will never see this code path fire.
+
+---
+
+## 📊 Routing Telemetry API (v1.0)
+
+**[v1.0 NEW]** `core/router_backend/telemetry.py` exposes an in-memory log of routing decisions for observational analysis. `log_routing_telemetry()` is called automatically from `route()` after every non-empty-goal decision — callers don't need to invoke it. The query/clear API is for inspection (e.g., from a debug REPL, a health endpoint, or a test teardown).
+
+**Import path:**
+
+```python
+from core.router_backend.telemetry import (
+    log_routing_telemetry,  # called internally by route() — usually don't call directly
+    get_telemetry,
+    get_telemetry_summary,
+    clear_telemetry,
+)
+```
+
+### `get_telemetry()` — Full Log
+
+```python
+from core.router_backend.telemetry import get_telemetry
+entries = get_telemetry()
+# Returns: list[dict] — copy of the in-memory log (newest at the end)
+```
+
+**Returns:** `list[dict]` — bounded FIFO log, max 100 entries (`_MAX_LOG_ENTRIES`). Each entry has these keys:
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `goal_preview` | `str` | First 100 chars of the goal |
+| `model_workflow` | `str \| None` | `None` when the model failed (timeout / invalid JSON / unavailable) |
+| `heuristic_workflow` | `str` | What the heuristic WOULD have returned (always computed for telemetry) |
+| `final_workflow` | `str` | What `route()` actually returned (model verdict, swarm verdict, or heuristic) |
+| `confidence` | `str` | Final decision's confidence (`high` / `medium` / `low`) — post-adaptive-threshold |
+| `disagreement` | `bool` | `True` iff `model_workflow is not None and model_workflow != heuristic_workflow` |
+
+### `get_telemetry_summary()` — Aggregate Stats
+
+```python
+from core.router_backend.telemetry import get_telemetry_summary
+summary = get_telemetry_summary()
+# Returns: {"total": 42, "disagreements": 3, "disagreement_rate": 0.0714}
+```
+
+**Returns:** `dict` with three keys:
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `total` | `int` | Total entries in the log (0–100) |
+| `disagreements` | `int` | Count of entries where `disagreement is True` |
+| `disagreement_rate` | `float` | `disagreements / total` (0.0 when `total == 0`) |
+
+**Use cases:**
+- Health endpoint — surface `disagreement_rate` as a routing-quality signal.
+- Debug REPL — `summary` then `entries = get_telemetry()` to drill into specific disagreements.
+- Test teardown — `clear_telemetry()` to avoid cross-test log leakage.
+
+### `clear_telemetry()` — Reset Log
+
+```python
+from core.router_backend.telemetry import clear_telemetry
+clear_telemetry()
+# Returns: None — empties the in-memory log
+```
+
+**Use cases:** test teardown, manual reset, before/after benchmark runs. Idempotent (clearing an empty log is a no-op).
+
+### `log_routing_telemetry()` — Internal Recorder
+
+Called automatically by `route()` after every non-empty-goal decision. Direct invocation is supported but unusual — `route()` is the only caller in production code.
+
+```python
+from core.router_backend.telemetry import log_routing_telemetry
+log_routing_telemetry(
+    goal="Fix the bug in server.py",
+    model_workflow="autocode",        # None when the model failed
+    heuristic_workflow="autocode",     # always computed (cheap regex)
+    final_workflow="autocode",         # what route() actually returned
+    confidence="high",                 # post-adaptive-threshold
+    trace_id="abc123",
+)
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `goal` | `str` | — | **Required.** The user's goal (truncated to first 100 chars in the log entry) |
+| `model_workflow` | `str \| None` | — | **Required.** Workflow the model returned, or `None` if the model failed |
+| `heuristic_workflow` | `str` | — | **Required.** Workflow the heuristic returned (always available — `route()` always computes it for telemetry) |
+| `final_workflow` | `str` | — | **Required.** Workflow `route()` is actually returning (model verdict, swarm verdict, or heuristic) |
+| `confidence` | `str` | — | **Required.** Final decision's `confidence` value (post-adaptive-threshold) |
+| `trace_id` | `str` | `""` | Trace identifier (currently stored for future use; not in the entry) |
+
+**Returns:** `None`. Appends an entry to the bounded FIFO log; if the log exceeds `_MAX_LOG_ENTRIES` (100), the oldest entry is dropped.
+
+**Disagreement flag:** `entry["disagreement"] = (model_workflow is not None and model_workflow != heuristic_workflow)`. So:
+- Model success + heuristic agrees → `disagreement=False`
+- Model success + heuristic disagrees → `disagreement=True` (the interesting case — model and regex disagree on classification)
+- Model failure → `disagreement=False` (no comparison possible — `model_workflow` is `None`)
+
+---
+
+## 📈 Adaptive Complexity Thresholds (v1.0)
+
+**[v1.0 NEW]** `core/router_backend/adaptive.py` exposes one function + one constant. `apply_adaptive_thresholds()` is called automatically from `route()` on every non-empty-goal decision (model success, swarm fallback, heuristic fallback) — callers don't need to invoke it. The function is exported for direct testing and for callers that construct `RoutingDecision` objects outside of `route()`.
+
+**Import path:**
+
+```python
+from core.router_backend.adaptive import apply_adaptive_thresholds, COMPLEXITY_THRESHOLD
+```
+
+### `apply_adaptive_thresholds(decision)` — Downgrade Complex + Non-High Confidence
+
+```python
+from core.router_backend.adaptive import apply_adaptive_thresholds
+from core.router_backend.decision import RoutingDecision
+
+d = RoutingDecision({"workflow": "autocode", "complexity": 9, "confidence": "low"})
+apply_adaptive_thresholds(d)
+# d.confidence is now "medium"
+# d.clarifying_questions is now ["This is a complex task -- can you provide more specific details ...?"]
+# Returns the same d (mutated in place AND returned for fluent chaining)
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `decision` | `RoutingDecision` | — | **Required.** The decision to potentially downgrade. **Mutated in place.** |
+
+**Returns:** the same `RoutingDecision` object (mutated in place AND returned for fluent chaining — `decision = apply_adaptive_thresholds(decision)` is the natural call site).
+
+**Behavior:**
+
+| Condition | Action |
+|-----------|--------|
+| `complexity > 7` AND `confidence != "high"` | Downgrade `confidence` to `"medium"`. If `clarifying_questions` is empty, append `"This is a complex task -- can you provide more specific details about what you want to achieve?"`. |
+| `complexity > 7` AND `confidence == "high"` | No-op (high-confidence complex tasks proceed — the model is sure) |
+| `complexity <= 7` | No-op |
+
+**Strict `>` (not `>=`):** `COMPLEXITY_THRESHOLD = 7`, and the comparison is `decision.complexity > COMPLEXITY_THRESHOLD`. So `complexity=7` (the autocode-with-file-extension case) is unaffected — only `complexity ∈ {8, 9, 10}` triggers the downgrade. This is a deliberate backwards-compatibility decision: existing complexity=7 test cases must keep passing.
+
+**Why this matters:** A `complexity=9` task routed with `confidence="low"` is risky — the router is unsure AND the task is expensive. Downgrading to `confidence="medium"` and adding a clarifying question surfaces the uncertainty to the Confidence Guard, which can intercept before launching an expensive workflow. The threshold fires on every non-empty-goal path (model success, swarm fallback, heuristic fallback) — high-complexity + non-high-confidence is risky regardless of which tier produced the decision.
+
+### `COMPLEXITY_THRESHOLD` — Module Constant
+
+```python
+from core.router_backend.adaptive import COMPLEXITY_THRESHOLD
+COMPLEXITY_THRESHOLD  # 7
+```
+
+The threshold used by `apply_adaptive_thresholds()`. Exported so tests can assert against the constant rather than hardcoding `7`.
 
 ---
 
@@ -233,7 +392,9 @@ graph TD
 
 ---
 
-## 🔄 Three-Tier Routing Strategy
+## 🔄 Three-Tier Routing Strategy (v1.0: 3-tier + adaptive thresholds + telemetry)
+
+**[v1.0]** The routing flow is now a 5-stage pipeline: empty-goal short-circuit → heuristic (always, for telemetry) → Tier 1 model → Tier 3 swarm (advisory) → Tier 2 heuristic fallback. Every non-empty-goal path applies `apply_adaptive_thresholds()` and calls `log_routing_telemetry()`. See [ARCHITECTURE.md](ARCHITECTURE.md) § Routing Flow for the full mermaid diagram. This section documents the three tiers themselves.
 
 ### Tier 1: Model-Based Routing (Primary)
 
@@ -300,21 +461,21 @@ graph TD
     E -->|No { } found| G
 ```
 
-**[Pre-v1.1] Delegation note:** The 3-layer extraction pipeline above is now implemented in `core/json_extract.extract_first_json()`. The router's `_extract_first_json()` method (in `core/router.py`) is a one-line delegation:
+**[v1.0 split] Delegation note:** The 3-layer extraction pipeline above is implemented in `core/json_extract.extract_first_json()`. The router's `_extract_first_json()` function (now a standalone function in `core/router_backend/model_route.py`, was a method on `TaskRouter` pre-v1.0) is a one-line delegation:
 
 ```python
-# core/router.py (Pre-v1.1)
+# core/router_backend/model_route.py (v1.0)
 from core.json_extract import extract_first_json
 
-def _extract_first_json(self, text: str) -> dict | None:
+def _extract_first_json(text: str) -> str | None:
     return extract_first_json(text)
 ```
 
-The pipeline behavior (direct parse → markdown fence strip → `json.JSONDecoder().raw_decode()`) is preserved verbatim — no behavior change, no API change. The same `core/json_extract.py` module also backs `helpers._parse_json` in autocode (single source of truth for LLM JSON parsing across the codebase). Introduced alongside autocode v2.0-alpha Phase 1. See `docs/core/router/CHANGELOG.md` § Pre-v1.1.
+The pipeline behavior (direct parse → markdown fence strip → `json.JSONDecoder().raw_decode()`) is preserved verbatim — no behavior change, no API change. The same `core/json_extract.py` module also backs `helpers._parse_json` in autocode (single source of truth for LLM JSON parsing across the codebase).
 
 ### Tier 2: Heuristic Routing (Fallback)
 
-If the LLM call fails, times out, or returns invalid JSON, the `_heuristic_route()` method instantly classifies the goal using **pre-compiled regex patterns**.
+If the LLM call fails, times out, or returns invalid JSON, the `heuristic_route()` function (in `core/router_backend/heuristics.py`; was `TaskRouter._heuristic_route()` pre-v1.0) instantly classifies the goal using **pre-compiled regex patterns**. **[v1.0]** `route()` always invokes `heuristic_route()` first (cheap regex) so its result can be compared against the model verdict for telemetry — even when the model succeeds.
 
 **Priority Order (most specific first):**
 
@@ -400,7 +561,7 @@ When Tier 1 (model) fails AND Tier 2 (heuristic) returns `confidence="low"` (the
 graph TD
     A["Tier 2 heuristic decision<br/>confidence='low'"] --> B{"cfg.router_swarm_fallback<br/>is True?"}
     B -->|No| F["Return heuristic decision<br/>(unchanged — pre-v1.0 behavior)"]
-    B -->|Yes| C["Call _swarm_fallback_route(goal, trace_id)"]
+    B -->|Yes| C["Call swarm_fallback_route(goal, trace_id)<br/>(v1.0: standalone fn in swarm_fallback.py)"]
     C --> D{"swarm_decision is None?"}
     D -->|Yes — non-fatal failure path| F
     D -->|No — unanimous/majority + valid workflow| E["Return swarm_decision<br/>(confidence='medium',<br/>overrides heuristic)"]
@@ -423,8 +584,8 @@ graph TD
 
 The router contract is `route(goal) -> RoutingDecision` — it must never raise. The swarm fallback is a *bonus* path: if it works, great; if it doesn't, the heuristic decision still stands. The flag is OFF by default — users without cloud providers configured will never see this code path fire.
 
-See `_swarm_fallback_route()` above for the full method spec.
+See `swarm_fallback_route()` above for the full function spec.
 
 ---
 
-*Last updated: 2026-07-14 (v1.0 — first versioned release: added `_swarm_fallback_route()` advisory method + Tier 3 swarm vote fallback path + `ROUTER_SWARM_FALLBACK=0` config flag; Pre-v1.1 — `_extract_first_json()` delegates to `core/json_extract.extract_first_json()`). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.0 — first versioned release: split `core/router.py` into `core/router_backend/` package (10 files, thin facade pattern); added Routing Telemetry API (`get_telemetry()` / `get_telemetry_summary()` / `clear_telemetry()` / internal `log_routing_telemetry()`) + Adaptive Complexity Thresholds (`apply_adaptive_thresholds()` + `COMPLEXITY_THRESHOLD = 7`); renamed `_swarm_fallback_route()` (method) → `swarm_fallback_route()` (standalone fn in `swarm_fallback.py`); updated Three-Tier Routing Strategy intro to mention the v1.0 5-stage pipeline; updated `_extract_first_json` delegation note for v1.0 split). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

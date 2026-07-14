@@ -27,12 +27,14 @@ ROUTER_EXPECTED_WORKFLOWS = frozenset({
 def mock_llm():
     """Mock the LLM client to prevent actual LM Studio calls during tests.
 
-    Yields a MagicMock that replaces `core.router.llm`.
+    Yields a MagicMock that replaces `core.router_backend.model_route.llm`.
+    (v1.0 split -- llm is now imported in model_route.py, not in the facade.)
+
     Usage in tests:
         def test_something(mock_llm):
             mock_llm.complete.return_value = MagicMock(ok=True, text='{"workflow": "research"}')
     """
-    with patch("core.router.llm") as mock:
+    with patch("core.router_backend.model_route.llm") as mock:
         yield mock
 
 
