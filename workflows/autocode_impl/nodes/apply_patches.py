@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
 from workflows.autocode_impl.helpers import _parse_json  # [Hardening P1.4]
 from core.config import cfg
 from core.tracer import tracer
@@ -74,7 +74,10 @@ def node_apply_patches(state: AutocodeState) -> dict:
     # [#47] Dry-run: skip all file writes AFTER validation checks pass.
     if state.get("dry_run"):
         tracer.step(tid, "apply_patches", "dry_run=True — skipping patch application")
-        return {"status": "dry_run", "modified_files": []}
+        # [v2.3] RMW: write to files sub-state + flat mirror
+        current_files = dict(state.get("files_state", {}))
+        current_files["modified_files"] = []
+        return {"status": "dry_run", "modified_files": [], "files_state": current_files}
 
     from workflows.autocode_impl.patch import apply_patch
 
@@ -116,7 +119,10 @@ def node_apply_patches(state: AutocodeState) -> dict:
     if patch_errors:
         tracer.step(tid, "apply_patches", f"{len(patch_errors)} patch error(s): {patch_errors[0]}")
 
-    updates: dict[str, Any] = {"modified_files": modified_files}
+    # [v2.3] RMW: write to files sub-state + flat mirror
+    current_files = dict(state.get("files_state", {}))
+    current_files["modified_files"] = modified_files
+    updates: dict[str, Any] = {"modified_files": modified_files, "files_state": current_files}
     if patch_errors:
         updates["patch_errors"] = patch_errors
     return updates

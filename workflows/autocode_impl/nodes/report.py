@@ -5,7 +5,7 @@ Autocode report node -- generates code_audit report after verification.
 from __future__ import annotations
 import json
 
-from workflows.autocode_impl.state import AutocodeState, _get_verify, _get_vcs  # [v2.6+v2.1] accessors
+from workflows.autocode_impl.state import AutocodeState, _get_verify, _get_vcs, _get_files  # [v2.6+v2.1+v2.3] accessors
 
 
 def node_report(state: AutocodeState) -> dict:  # [P1 #2] Was AutocodeState — actually returns dict
@@ -15,7 +15,7 @@ def node_report(state: AutocodeState) -> dict:  # [P1 #2] Was AutocodeState — 
     tid = state.get("trace_id", "")
     task = state.get("task", "")
     task_type = state.get("task_type", "feature")
-    modified_files = list(state.get("files_map", {}).keys())
+    modified_files = list(_get_files(state, "files_map", {}).keys())  # [v2.3] accessor
     test_results = state.get("test_results", {})
     verification_notes = _get_verify(state, "notes", "")  # [v2.6] accessor
     commit_sha = _get_vcs(state, "commit_sha", "")  # [v2.1] accessor

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from pathlib import Path
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
 from core.kgraph.test_mapper import get_targeted_tests
 from core.config import cfg
 from core.tracer import tracer
@@ -46,7 +46,7 @@ def node_analyze_impact(state: AutocodeState) -> dict:
     until v3.0. See Track M1 in CHANGELOG.
     """
     tid = state.get("trace_id", "unknown")
-    files_map = state.get("files_map", {})
+    files_map = _get_files(state, "files_map", {})  # [v2.3] accessor
     project_root = state.get("project_root", "")
 
     if not files_map:

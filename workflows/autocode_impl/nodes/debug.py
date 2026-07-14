@@ -30,7 +30,7 @@ from core.memory_engine import memory
 from core.tracer import tracer
 from workflows.autocode_impl.constants import DEBUG_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
-from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_vcs  # [v2.1] _get_vcs added
+from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_vcs, _get_files  # [v2.1+v2.3] accessors
 from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_comment
 from core.kgraph.queries import get_dependencies, get_callers
 
@@ -154,7 +154,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     # --- Phase 6: Blast Radius Context Injection ---
     blast_radius_note = ""
     project_root = state.get("project_root", "")
-    modified_files = state.get("modified_files", [])
+    modified_files = _get_files(state, "modified_files", [])  # [v2.3] accessor
 
     if project_root and modified_files:
         try:

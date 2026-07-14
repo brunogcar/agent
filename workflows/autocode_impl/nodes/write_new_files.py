@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from filelock import FileLock, Timeout
 
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
 from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs, _parse_json  # [Hardening P1.4] added _parse_json
 from core.config import cfg
 from core.tracer import tracer
@@ -145,6 +145,15 @@ def node_write_new_files(state: AutocodeState) -> dict:
     # so analyze_impact and downstream nodes missed them (only patched files
     # showed up). Merge with existing modified_files from apply_patches.
     if written_files:
-        existing_modified = state.get("modified_files", [])
+        # [v2.3] Use _get_files accessor (reads sub-state first, falls back to flat)
+        existing_modified = _get_files(state, "modified_files", [])
         updates["modified_files"] = list(set(existing_modified + written_files))
+    # [v2.3] RMW: write to files sub-state if any files fields were set
+    if updates:
+        current_files = dict(state.get("files_state", {}))
+        if "files_map" in updates:
+            current_files["files_map"] = updates["files_map"]
+        if "modified_files" in updates:
+            current_files["modified_files"] = updates["modified_files"]
+        updates["files_state"] = current_files
     return updates

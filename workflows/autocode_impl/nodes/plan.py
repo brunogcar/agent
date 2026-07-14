@@ -4,7 +4,7 @@ Plan writing node.
 from __future__ import annotations
 import re
 from typing import Any
-from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs  # [v2.1] accessor
+from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs, _get_files  # [v2.1+v2.3] accessors
 from workflows.autocode_impl.constants import PLAN_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json_array
 from core.tracer import tracer
@@ -27,7 +27,7 @@ def node_write_plan(state: AutocodeState) -> dict:
     # ── Phase 8: Blast Radius Context Injection for Planner ──
     blast_radius_note = ""
     project_root = state.get("project_root", "")
-    files_in_context = list(state.get("files", {}).keys())
+    files_in_context = list(_get_files(state, "input_files", {}).keys())  # [v2.3] accessor
 
     if project_root and files_in_context:
         try:

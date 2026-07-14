@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
 from core.config import cfg
 from core.tracer import tracer
 
@@ -28,7 +28,7 @@ def node_run_lint(state: AutocodeState) -> dict:
 
     # [Pre-2.0 Fix] Was: ruff check on entire workspace_root (slow, noisy).
     # Now scopes to modified_files only.
-    modified_files = state.get("modified_files", [])
+    modified_files = _get_files(state, "modified_files", [])  # [v2.3] accessor
     if not modified_files:
         tracer.step(tid, "run_lint", "no modified files to lint")
         return {"lint_output": "No modified files to lint", "lint_passed": None}

@@ -10,7 +10,7 @@ by any node). See Track M1 in CHANGELOG.
 """
 from __future__ import annotations
 
-from workflows.autocode_impl.state import AutocodeState, _get_debug  # [v2.5] accessor
+from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_files  # [v2.5+v2.3] accessors
 from core.tracer import tracer
 from core.memory_backend.procedural.distill import distill_workflow
 
@@ -29,7 +29,7 @@ def node_distill_memory(state: AutocodeState) -> dict:
     root_cause = _get_debug(state, "root_cause", "")
     defense_notes = _get_debug(state, "defense_notes", "")
     error_log = state.get("error_log", "")
-    modified_files = state.get("modified_files", [])
+    modified_files = _get_files(state, "modified_files", [])  # [v2.3] accessor
 
     tracer.step(tid, "node_distill_memory", "Starting procedural distillation...")
 

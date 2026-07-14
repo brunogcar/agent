@@ -10,7 +10,7 @@ from typing import Any
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
 
 def node_validate_input(state: AutocodeState) -> dict:
     """
@@ -40,7 +40,7 @@ def node_validate_input(state: AutocodeState) -> dict:
         return {"status": "error", "error": error}
 
     # 3. Files validation
-    files = state.get("files", {})
+    files = _get_files(state, "input_files", {})  # [v2.3] accessor (was state.get("files", {}))
     if files:
         if not isinstance(files, dict):
             error = "files must be a dictionary"

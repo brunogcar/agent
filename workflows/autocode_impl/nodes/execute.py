@@ -11,7 +11,7 @@ from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.constants import CODER_SYSTEM
 from workflows.autocode_impl.helpers import _call, _files_context, _parse_json  # [v2.0] removed dead _write_files import
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
 
 def node_execute_step(state: AutocodeState) -> dict:
     """
@@ -74,4 +74,9 @@ def node_execute_step(state: AutocodeState) -> dict:
     tracer.step(tid, "execute_step", "Code generated and written")
     updates["execution_notes"] = f"Executed step: {current_step.get('description', '')}"
     updates["current_step"] = current_step_idx + 1
+    # [v2.3] RMW: write to files sub-state if modified_files was set
+    if "modified_files" in updates:
+        current_files = dict(state.get("files_state", {}))
+        current_files["modified_files"] = updates["modified_files"]
+        updates["files_state"] = current_files
     return updates
