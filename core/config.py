@@ -356,6 +356,7 @@ class Config:
         self.autocode_swarm_debug = os.getenv("AUTOCODE_SWARM_DEBUG", "0") == "1"
         self.autocode_subagent_debug = os.getenv("AUTOCODE_SUBAGENT_DEBUG", "0") == "1"  # [v1.1] subagent dispatch
         self.autocode_swarm_debug_fallback = os.getenv("AUTOCODE_SWARM_DEBUG_FALLBACK", "0") == "1"  # [v3.1 #48] swarm fallback when debug exhausted
+        self.router_swarm_fallback = os.getenv("ROUTER_SWARM_FALLBACK", "0") == "1"  # [v1.1 #18] swarm vote for low-confidence routing
 
         # -- Validations -------------------------------------------------------
         # Existing validations (survive python -O via explicit raise)

@@ -274,6 +274,8 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 **Note:** Non-blocking by design — the swarm verdict is always advisory. HIGH confidence is the only path that extends the debug loop; LOW/MEDIUM just records the verdict for the report and proceeds to verify (which will fail, since `tdd_status` was already `"max_retries_exceeded"`). The user sees the swarm verdict in the final report's `debug.swarm_verdict`.
 
+**Smoke test (swarm v1.1 #17):** Covered by `tests/workflows/autocode/test_swarm_integration.py::TestSwarmFallbackIntegration` (3 tests): HIGH-confidence path asserts `tdd.status == ""` (reset) + `debug.swarm_verdict` present + `status != "failed"`; LOW-confidence path asserts `status == "failed"` + `debug.swarm_verdict` present; swarm-unavailable path (mock returns `None`) asserts `status == "failed"` + no verdict. Uses pytest-mock `mocker` fixture to patch `_swarm_debug_consensus` on the `workflows.autocode_impl.nodes.swarm_fallback` import path.
+
 ---
 
 ### `node_systematic_debug(state)` — Phase 11: Debug Failures
@@ -304,6 +306,8 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 **Swarm is non-blocking:** the fix is always applied regardless of confidence. LOW confidence surfaces as a PR comment (if enabled), not as a workflow block.
 
 **Fallback chain:** `AUTOCODE_SWARM_DEBUG=1` + swarm available → use swarm. `AUTOCODE_SWARM_DEBUG=1` + swarm unavailable → single-LLM debug. `AUTOCODE_SWARM_DEBUG=0` → single-LLM debug (default).
+
+**Smoke test (swarm v1.1 #17):** The `AUTOCODE_SWARM_DEBUG` enable/disable contract is covered by `tests/workflows/autocode/test_swarm_integration.py::TestSwarmDebugIntegration` (2 tests): when `cfg.autocode_swarm_debug=True`, `_swarm_debug_consensus` is called exactly once and the result is non-None; when `False`, `_swarm_debug_consensus` is NOT called (single-LLM fallback path). Patches `_swarm_debug_consensus` on the `workflows.autocode_impl.nodes.debug` import path + mocks `_call` so the single-LLM fallback doesn't crash. Does NOT test the 4-phase prompt or `DEBUG_SYSTEM` content — those are LLM-prompt concerns, validated manually.
 
 **`# TODO(2.0-post):`** items: cross-run procedural memory recall before debug (F5); subagent dispatch for parallel debug (F1); adaptive `_ARCHITECTURE_QUESTION_THRESHOLD` per task type (F4).
 
@@ -581,4 +585,4 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ---
 
-*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization in `node_validate_input`, #41 AST pre-check in `node_run_pytest`, F3 `debug_summary` injection in `node_llm_review`, #48 NEW `node_swarm_fallback` node; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization in `node_validate_input`, #41 AST pre-check in `node_run_pytest`, F3 `debug_summary` injection in `node_llm_review`, #48 NEW `node_swarm_fallback` node; swarm v1.1 #17 — smoke test references added to `node_systematic_debug` + `node_swarm_fallback` node descriptions; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

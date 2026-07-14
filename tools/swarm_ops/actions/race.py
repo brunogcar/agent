@@ -31,6 +31,9 @@ def _action_race(
     providers: str = "",
     timeout: int = 60,
     max_tokens: int = 1024,
+    temperature: float = 0.7,
+    json_mode: bool = False,
+    json_schema: dict | None = None,
     **kwargs,
 ) -> dict:
     if not question:
@@ -40,8 +43,13 @@ def _action_race(
     if not available:
         return fail("No cloud providers configured. Set *_API_KEY and *_BASE_MODEL in .env to enable.")
 
+    # [v1.1 #21+#20] Pass through provider-capability params. race is mostly
+    # used for fast fact lookups where temperature=0 makes the first response
+    # more reliable; json_schema can be used when callers want structured
+    # output from whichever provider wins.
     results = _call_providers_race(
-        available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens
+        available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens,
+        temperature=temperature, json_mode=json_mode, json_schema=json_schema,
     )
 
     # v1.0.2 (P1-3 cross-LLM): Use .strip() so whitespace-only responses

@@ -154,6 +154,9 @@ def _call_provider(
     messages: list[dict],
     timeout: int,
     max_tokens: int,
+    temperature: float = 0.7,
+    json_mode: bool = False,
+    json_schema: dict | None = None,
 ) -> dict:
     """Call a single provider directly. Returns result dict.
 
@@ -163,17 +166,24 @@ def _call_provider(
 
     v1.0.1: Error messages sanitized via _sanitize_error() before storing.
     v1.0.2: _sanitize_error() is now self-guarded (P1-4) and broader (P2-1).
+    v1.1 (#21): temperature, json_mode, json_schema params added (was hardcoded
+    temperature=0.7, json_mode=False, json_schema=None). Callers can now
+    request deterministic output (temperature=0) and structured output
+    (json_schema). Note: Claude/Gemini ignore json_schema (they use
+    different mechanisms — see docs/core/llm/INSTRUCTIONS.md rule #12).
+    When native json_schema for Claude/Gemini is implemented, this function
+    will need no changes — the provider layer handles the conversion.
     """
     start = time.time()
     try:
         raw = provider.chat_completion(
             model=model,
             messages=messages,
-            temperature=0.7,
+            temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
-            json_mode=False,
-            json_schema=None,
+            json_mode=json_mode,
+            json_schema=json_schema,
         )
         text = ""
         choices = raw.get("choices", [])
@@ -242,6 +252,9 @@ def _call_all_providers(
     context: str,
     timeout: int,
     max_tokens: int,
+    temperature: float = 0.7,
+    json_mode: bool = False,
+    json_schema: dict | None = None,
 ) -> list[dict]:
     """Call all providers in parallel via ThreadPoolExecutor.
 
@@ -266,7 +279,8 @@ def _call_all_providers(
         futures = {}
         for name, model, prov in providers:
             future = executor.submit(
-                _call_provider, name, model, prov, messages, timeout, max_tokens
+                _call_provider, name, model, prov, messages, timeout, max_tokens,
+                temperature, json_mode, json_schema
             )
             futures[future] = name
 
@@ -299,6 +313,9 @@ def _call_providers_race(
     context: str,
     timeout: int,
     max_tokens: int,
+    temperature: float = 0.7,
+    json_mode: bool = False,
+    json_schema: dict | None = None,
 ) -> list[dict]:
     """Call all providers in parallel, return as soon as first valid response.
 
@@ -322,7 +339,8 @@ def _call_providers_race(
         futures = {}
         for name, model, prov in providers:
             future = executor.submit(
-                _call_provider, name, model, prov, messages, timeout, max_tokens
+                _call_provider, name, model, prov, messages, timeout, max_tokens,
+                temperature, json_mode, json_schema
             )
             futures[future] = name
 

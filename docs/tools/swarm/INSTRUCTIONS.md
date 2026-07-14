@@ -94,6 +94,12 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 42. **Never collect only SOME futures from a `wait()` `done` set.** v1.0.2 (P1-2 cross-LLM): `wait(return_when=FIRST_COMPLETED)` can return MULTIPLE futures in `done` if they complete simultaneously. If you `break` inside the `for future in done:` loop on the first winner, sibling done futures are discarded (already completed but never collected into `results`). Always iterate ALL of `done` to collect results, THEN check for a winner outside the inner loop.
 
+43. **Never hardcode `temperature` (or `json_mode` / `json_schema`) inside `_call_provider()` or any action handler.** [v1.1 #21+#20] v1.0.x hardcoded `temperature=0.7` — callers had no way to request deterministic output (e.g. for vote classification, where sampling noise would inflate `disagreement`). All three capability params (`temperature`, `json_mode`, `json_schema`) must flow through as caller-supplied values: facade → handler → `_call_all_providers`/`_call_providers_race` → `_call_provider` → `provider.chat_completion()`. The facade resolves `temperature=-1.0` → `0.7` (the pre-v1.1 default) before forwarding — never bake `0.7` into the helper layer.
+
+44. **Never gate `json_schema` forwarding on provider name inside swarm.** [v1.1 #20] Anthropic and Gemini use different mechanisms (tool-use forcing and `response_mime_type`/`response_schema` respectively) than OpenAI-compatible providers, but those mechanisms live in the **provider layer** (`core/llm_backend/providers/{anthropic,gemini}.py`), NOT in swarm. Swarm's job is to *forward* the caller's intent; the provider's job is to *translate* it. Do NOT add `if provider.name == "claude": drop json_schema` logic — that splits the translation responsibility across two layers and creates a maintenance trap when native json_schema ships for Claude/Gemini. **Roadmap:** when native `json_schema` for Claude/Gemini ships (core/llm P2 items #39+#40), `_call_provider()` will need NO changes — the provider layer will start honoring the kwarg it already receives. See `docs/core/llm/INSTRUCTIONS.md` rule #12 for the canonical provider-capability matrix.
+
+45. **Use `temperature=0` for `vote` when measuring model agreement.** [v1.1 #21] Two LLMs at `temperature=0` converge on the same answer more often than at `temperature=0.7` — so the `agreement` classification (`unanimous` / `majority` / `split` / `disagreement`) measures *genuine model disagreement*, not sampling noise. The router's `_swarm_fallback_route()` and any future "vote for classification" caller should pass `temperature=0` explicitly. Creative-generation callers (`consensus` for brainstorming, `compare` for diverse model perspectives) should keep the default `0.7`. Race is a wash either way, but `temperature=0` makes the first valid response marginally more reliable for fact-lookup use cases.
+
 ---
 
 ## 🚫 Anti-Patterns & Lessons Learned
@@ -140,4 +146,4 @@ These rules apply to any AI assistant (or human editor) modifying the swarm tool
 
 ---
 
-*Last updated: 2026-07-13 (v1.0.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-14 (v1.1 — added rules #43 (never hardcode temperature), #44 (never gate json_schema on provider name — roadmap note included), #45 (use temperature=0 for vote); v1.0.2 cross-LLM hardening). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

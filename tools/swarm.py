@@ -63,8 +63,18 @@ def swarm(
     max_tokens: int = 1024,
     timeout: int = 60,
     trace_id: str = "",
+    temperature: float = -1.0,
+    json_mode: bool = False,
+    json_schema: str = "",
 ) -> dict:
-    """Multi-model swarm meta-tool — consult multiple cloud LLMs in parallel."""
+    """Multi-model swarm meta-tool — consult multiple cloud LLMs in parallel.
+
+    [v1.1] Added temperature, json_mode, json_schema params:
+    - temperature: -1.0 = use default (0.7); 0.0 = deterministic (for vote)
+    - json_mode: True = request JSON output from providers
+    - json_schema: JSON schema string for structured output enforcement
+      (ignored by Claude/Gemini — they use different mechanisms)
+    """
     action = action.strip().lower() if action else ""
 
     if not action:
@@ -104,6 +114,26 @@ def swarm(
 
     handler = op_info["func"]
 
+    # [v1.1 #21+#20] Parse temperature, json_mode, json_schema for passthrough.
+    # temperature: -1.0 = default (0.7); otherwise use the caller's value.
+    actual_temp = 0.7 if temperature < 0 else temperature
+
+    # json_schema: parse JSON string to dict (like agent facade does).
+    parsed_schema = None
+    if json_schema:
+        if isinstance(json_schema, str):
+            try:
+                import json as _json
+                parsed_schema = _json.loads(json_schema)
+            except _json.JSONDecodeError:
+                return fail(
+                    f"json_schema must be valid JSON — got: {json_schema[:100]}",
+                    trace_id=trace_id,
+                    error_code="INVALID_INPUT",
+                )
+        elif isinstance(json_schema, dict):
+            parsed_schema = json_schema
+
     kwargs = {
         "question": question,
         "context": context,
@@ -111,6 +141,10 @@ def swarm(
         "max_tokens": max_tokens,
         "timeout": timeout,
         "trace_id": trace_id,
+        # [v1.1] Provider capability passthrough
+        "temperature": actual_temp,
+        "json_mode": json_mode,
+        "json_schema": parsed_schema,
     }
 
     start = time.time()

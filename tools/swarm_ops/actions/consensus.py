@@ -40,6 +40,9 @@ def _action_consensus(
     providers: str = "",
     timeout: int = 60,
     max_tokens: int = 1024,
+    temperature: float = 0.7,
+    json_mode: bool = False,
+    json_schema: dict | None = None,
     **kwargs,
 ) -> dict:
     if not question:
@@ -49,8 +52,13 @@ def _action_consensus(
     if not available:
         return fail("No cloud providers configured. Set *_API_KEY and *_BASE_MODEL in .env to enable.")
 
+    # [v1.1 #21+#20] Pass through provider-capability params. temperature lets
+    # callers trade creativity for determinism (default 0.7 = balanced).
+    # json_mode + json_schema request structured output (ignored by
+    # Claude/Gemini — see docs/core/llm/INSTRUCTIONS.md rule #12).
     results = _call_all_providers(
-        available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens
+        available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens,
+        temperature=temperature, json_mode=json_mode, json_schema=json_schema,
     )
 
     # v1.0.2 (P1-3 cross-LLM): Use .strip() so whitespace-only responses

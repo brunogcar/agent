@@ -10,11 +10,11 @@
 | `tools/_meta_tool.py` | `@meta_tool` decorator: docstring `doc_sections` + metadata. (Swarm uses `action: str` — no `Literal` enum generated) |
 | `tools/swarm_ops/__init__.py` | Auto-imports every `actions/*.py` module to trigger `@register_action` side effects |
 | `tools/swarm_ops/_registry.py` | `DISPATCH` dict + `@register_action` decorator (duplicate-action detection) |
-| `tools/swarm_ops/helpers.py` | Shared helpers: `_get_available_providers`, `_build_messages`, `_call_provider`, `_call_all_providers`, `_call_providers_race`, `_SWARM_SYSTEM_PROMPT` |
-| `tools/swarm_ops/actions/consensus.py` | All providers → planner synthesis |
-| `tools/swarm_ops/actions/race.py` | All providers in parallel → first valid wins |
-| `tools/swarm_ops/actions/vote.py` | All providers → agreement analysis |
-| `tools/swarm_ops/actions/compare.py` | All providers → side-by-side (no synthesis) |
+| `tools/swarm_ops/helpers.py` | Shared helpers: `_get_available_providers`, `_build_messages`, `_call_provider` (v1.1: no longer hardcodes `temperature=0.7` — accepts `temperature`/`json_mode`/`json_schema` and forwards to `provider.chat_completion()`), `_call_all_providers` (v1.1: same 3 new params), `_call_providers_race` (v1.1: same 3 new params), `_SWARM_SYSTEM_PROMPT` |
+| `tools/swarm_ops/actions/consensus.py` | All providers → planner synthesis. **v1.1:** accepts `temperature`/`json_mode`/`json_schema` (passed to `_call_all_providers`) |
+| `tools/swarm_ops/actions/race.py` | All providers in parallel → first valid wins. **v1.1:** same 3 new params (passed to `_call_providers_race`) |
+| `tools/swarm_ops/actions/vote.py` | All providers → agreement analysis. **v1.1:** same 3 new params; `temperature=0` recommended for deterministic classification |
+| `tools/swarm_ops/actions/compare.py` | All providers → side-by-side (no synthesis). **v1.1:** same 3 new params |
 | `tools/swarm_ops/actions/list_providers.py` | Env introspection — no LLM calls |
 | `core/llm/llm.py` | `llm._registry._providers` — provider registry read by `_get_available_providers()` |
 | `core/llm_backend/providers/<provider>.py` | Provider implementations: `chat_completion()` (returns OpenAI-shape dict) — called directly by swarm. Located in `core/llm_backend/providers/{anthropic,gemini,lmstudio,openai_compat}.py` |
@@ -73,15 +73,15 @@ graph TD
 
 ```mermaid
 graph TD
-    A["handler(question, context, providers, timeout, max_tokens)"] --> B{"question empty?"}
+    A["handler(question, context, providers, timeout, max_tokens,<br/>temperature, json_mode, json_schema)"] --> B{"question empty?"}
     B -->|Yes| C["fail('question is required for <action>')"]
     B -->|No| D["_get_available_providers(providers)"]
     D --> E{"empty?"}
     E -->|Yes| F["fail('No cloud providers configured...')"]
-    E -->|No| G["_call_all_providers OR _call_providers_race"]
+    E -->|No| G["_call_all_providers OR _call_providers_race<br/>(passes temperature, json_mode, json_schema)"]
     G --> H["_build_messages(_SWARM_SYSTEM_PROMPT, question, context)"]
     H --> I["ThreadPoolExecutor(max_workers=min(N, 5))"]
-    I --> J["submit _call_provider per provider"]
+    I --> J["submit _call_provider per provider<br/>(_call_provider forwards temp/json_mode/json_schema<br/>to provider.chat_completion())"]
     J --> K["as_completed(timeout+10)"]
     K --> L["collect results, sort by provider name"]
     L --> M{"successful non-empty?"}
@@ -171,6 +171,18 @@ The facade measures `time.time()` before/after `handler(**kwargs)` and injects `
 
 Both `_call_all_providers` and `_call_providers_race` use explicit `executor = ThreadPoolExecutor(...)` + `try/finally: executor.shutdown(wait=False, cancel_futures=True)` instead of the `with` context manager. **Why:** `ThreadPoolExecutor.__exit__` calls `shutdown(wait=True)`, which blocks until ALL in-flight threads finish. If a provider hangs or ignores its timeout, the swarm call deadlocks. This bit us twice: race in v1.0 (fixed v1.0.1) and consensus/vote/compare in v1.0.1 (fixed v1.0.2, P1-1 cross-LLM). The explicit `shutdown(wait=False)` returns immediately; `cancel_futures=True` cancels PENDING futures. See INSTRUCTIONS.md rule #38 — this is the single most important concurrency rule.
 
+### 11. Provider capability passthrough (v1.1)
+
+`_call_provider()` previously hardcoded `temperature=0.7` when calling `provider.chat_completion()` — callers had no way to influence sampling determinism or request structured JSON output. v1.1 makes three capability params caller-controlled: `temperature` (float), `json_mode` (bool), `json_schema` (dict | None). They flow through facade → handler → `_call_all_providers` / `_call_providers_race` → `_call_provider` → `provider.chat_completion()`.
+
+**Why caller-controlled (not action-controlled):** different callers have different needs. The router's swarm fallback (`_swarm_fallback_route`) needs `temperature=0` so the vote measures genuine model disagreement rather than sampling noise. Autocode's debug consensus (`_swarm_debug_consensus`) wants the default `0.7` for creative hypothesis generation. A future caller may want `json_schema` for structured classification. Hardcoding at any layer would force a wrong default on some caller.
+
+**Why `temperature=-1.0` as the default** (rather than `0.7` directly): the facade treats any negative value as "use the pre-v1.1 default of `0.7`". This makes the new param additive for existing callers — a caller that doesn't pass `temperature` gets the exact pre-v1.1 behavior. A caller that wants deterministic calls explicitly passes `temperature=0`.
+
+**Why `json_schema` is a generic passthrough (not gated on provider name):** Anthropic and Gemini use different mechanisms (tool-use forcing and `response_mime_type`/`response_schema` respectively) — but those mechanisms live in the provider layer (`core/llm_backend/providers/{anthropic,gemini}.py`), not in swarm. Swarm's job is to *forward* the caller's intent; the provider's job is to *translate* it. **Roadmap:** when native `json_schema` for Claude/Gemini ships (core/llm P2 items #39+#40), `_call_provider()` needs NO changes — the provider layer will start honoring the kwarg it already receives. This is why v1.1 threads `json_schema` through verbatim rather than inspecting `provider.name` to decide whether to forward it. See INSTRUCTIONS.md rule #44 for the corresponding guard.
+
+**Implication — `**kwargs` absorption is no longer a free ride:** pre-v1.1, handlers' `**kwargs` silently absorbed any unknown facade param. v1.1 makes the 3 new params explicit on every action handler signature — a typo'd param name in the facade (e.g. `temprature=...`) would now be rejected at the handler call site rather than silently ignored. This is the same "silent absorption is dangerous" lesson from v1.0.2 P0-1 (the autocode `_swarm_debug_consensus` bug that called `swarm(prompt=..., role=...)` — wrong param names absorbed by `**kwargs`).
+
 ---
 
 ## 🧪 Testing
@@ -211,4 +223,4 @@ python -m pytest tests/tools/swarm/ -W error --tb=short -v
 
 ---
 
-*Last updated: 2026-07-13 (v1.0.2). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.1 — provider capability passthrough added: `temperature`/`json_mode`/`json_schema` on facade + 4 action handlers + `_call_provider`; new design decision #11 documents the caller-controlled rationale + Claude/Gemini roadmap). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

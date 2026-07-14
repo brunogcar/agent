@@ -15,6 +15,9 @@ def swarm(
     max_tokens: int = 1024,
     timeout: int = 60,
     trace_id: str = "",
+    temperature: float = -1.0,   # [v1.1 #21] -1.0 = use default (0.7); 0.0 = deterministic
+    json_mode: bool = False,     # [v1.1 #20] request JSON output from providers
+    json_schema: str = "",       # [v1.1 #20] JSON schema string for structured output
 ) -> dict:
     """Multi-model swarm meta-tool — consult multiple cloud LLMs in parallel."""
 ```
@@ -30,14 +33,18 @@ def swarm(
 | `max_tokens` | `int` | `1024` | Max response tokens per provider. Passed through to `provider.chat_completion(max_tokens=...)` |
 | `timeout` | `int` | `60` | Per-provider call timeout (seconds). `ThreadPoolExecutor` waits up to `timeout + 10s` for futures |
 | `trace_id` | `str` | `""` | Trace identifier for observability. Auto-injected into the result dict |
+| `temperature` | `float` | `-1.0` | **[v1.1 #21]** Sampling temperature to pass to `provider.chat_completion()`. `-1.0` = use default (`0.7`); `0.0` = deterministic (recommended for `vote` — see INSTRUCTIONS.md ALWAYS DO rule on temperature). Any other non-negative value passes through verbatim. |
+| `json_mode` | `bool` | `False` | **[v1.1 #20]** When `True`, requests JSON output from each provider (passed as `json_mode=True` to `provider.chat_completion()`). OpenAI-compatible providers enforce via `response_format={"type": "json_object"}`. Claude/Gemini ignore this flag — see `docs/core/llm/INSTRUCTIONS.md` rule #12. |
+| `json_schema` | `str` \| `dict` | `""` | **[v1.1 #20]** JSON schema (as a JSON string or dict) for structured-output enforcement. Threaded through to `provider.chat_completion()`. OpenAI-compatible providers enforce via `response_format={"type": "json_schema", "schema": ...}`. Claude/Gemini ignore it (they use different mechanisms — see `docs/core/llm/INSTRUCTIONS.md` rule #12). **Roadmap:** when native json_schema for Claude/Gemini ships (core/llm P2 items #39+#40), `_call_provider()` needs NO changes — the provider layer handles the conversion. |
 
 **Dispatch behavior:**
 1. `action` is lowercased + stripped; empty → `fail("action is required")`.
 2. `DISPATCH["swarm"][action]` lookup; unknown → `fail("Unknown action '...'. Use: consensus | race | vote | compare | list_providers")`.
-3. All kwargs forwarded to the handler (`**kwargs` absorbs unused params per handler).
-4. Handler exceptions caught and returned as `fail(f"Swarm action failed: {e}")`.
-5. `max_tokens` must be in `[1, 8192]`; `timeout` must be in `[1, 300]` seconds — out-of-bounds returns `fail(..., error_code="INVALID_ACTION")` (v1.0.1).
-6. `duration_ms` (total wall time) appended to every successful result.
+3. **[v1.1]** `temperature` is resolved: `actual_temp = 0.7 if temperature < 0 else temperature` (so the default `-1.0` maps to `0.7`, but a caller-supplied `0.0` is preserved as deterministic). `json_schema` is parsed: a string is `json.loads()`-ed to a dict (invalid JSON → `fail("json_schema must be valid JSON — got: ...")`); a dict is passed through as-is; `""` → `None`. `json_mode` passes through verbatim.
+4. All kwargs forwarded to the handler (`**kwargs` absorbs unused params per handler). The 3 new params (`temperature`, `json_mode`, `json_schema`) are now explicit params on every action handler — no longer absorbed by `**kwargs`.
+5. Handler exceptions caught and returned as `fail(f"Swarm action failed: {e}")`.
+6. `max_tokens` must be in `[1, 8192]`; `timeout` must be in `[1, 300]` seconds — out-of-bounds returns `fail(..., error_code="INVALID_INPUT")` (v1.0.2 — was `INVALID_ACTION` in v1.0.1).
+7. `duration_ms` (total wall time) appended to every successful result.
 
 ---
 
@@ -47,10 +54,10 @@ def swarm(
 
 | Action | Required Params | Optional Params | Purpose |
 |--------|-----------------|-----------------|---------|
-| `consensus` | `question` | `context`, `providers`, `max_tokens`, `timeout` | All providers answer → planner synthesizes best response |
-| `race` | `question` | `context`, `providers`, `max_tokens`, `timeout` | All providers answer in parallel → first valid response wins, rest cancelled |
-| `vote` | `question` | `context`, `providers`, `max_tokens`, `timeout` | All providers answer → agreement analysis (unanimous/majority/split/disagreement) |
-| `compare` | `question` | `context`, `providers`, `max_tokens`, `timeout` | All providers answer → responses returned side-by-side (no synthesis) |
+| `consensus` | `question` | `context`, `providers`, `max_tokens`, `timeout`, `temperature`, `json_mode`, `json_schema` | All providers answer → planner synthesizes best response |
+| `race` | `question` | `context`, `providers`, `max_tokens`, `timeout`, `temperature`, `json_mode`, `json_schema` | All providers answer in parallel → first valid response wins, rest cancelled |
+| `vote` | `question` | `context`, `providers`, `max_tokens`, `timeout`, `temperature`, `json_mode`, `json_schema` | All providers answer → agreement analysis (unanimous/majority/split/disagreement). `temperature=0` recommended for deterministic classification |
+| `compare` | `question` | `context`, `providers`, `max_tokens`, `timeout`, `temperature`, `json_mode`, `json_schema` | All providers answer → responses returned side-by-side (no synthesis) |
 | `list_providers` | — | — (ignores all other params) | Lists all configured cloud providers + their models |
 
 ---
@@ -61,13 +68,15 @@ def swarm(
 
 **Required params:** `question`
 
-**Optional params:** `context`, `providers`, `max_tokens`, `timeout`
+**Optional params:** `context`, `providers`, `max_tokens`, `timeout`, `temperature` (v1.1), `json_mode` (v1.1), `json_schema` (v1.1)
 
 **Example:**
 ```python
 swarm(action="consensus", question="How to handle concurrent writes in SQLite?")
 swarm(action="consensus", question="Best architecture for a chat app?", providers="openai,claude")
 swarm(action="consensus", question="Async or sync drivers?", context="Project uses FastAPI + Postgres.")
+# [v1.1] Structured output via json_schema (OpenAI-compatible providers enforce; Claude/Gemini ignore):
+swarm(action="consensus", question="Best of the above answers? Return JSON.", json_mode=True)
 ```
 
 **Return format:**
@@ -102,12 +111,14 @@ swarm(action="consensus", question="Async or sync drivers?", context="Project us
 
 **Required params:** `question`
 
-**Optional params:** `context`, `providers`, `max_tokens`, `timeout`
+**Optional params:** `context`, `providers`, `max_tokens`, `timeout`, `temperature` (v1.1), `json_mode` (v1.1), `json_schema` (v1.1)
 
 **Example:**
 ```python
 swarm(action="race", question="What is the capital of France?")
 swarm(action="race", question="Quick fact: who invented Python?", providers="openai,deepseek")
+# [v1.1] Deterministic race — first valid response more reliable when temp=0:
+swarm(action="race", question="What's the HTTP status code for Not Found?", temperature=0)
 ```
 
 **Return format:**
@@ -145,12 +156,17 @@ swarm(action="race", question="Quick fact: who invented Python?", providers="ope
 
 **Required params:** `question`
 
-**Optional params:** `context`, `providers`, `max_tokens`, `timeout`
+**Optional params:** `context`, `providers`, `max_tokens`, `timeout`, `temperature` (v1.1 — `0.0` recommended), `json_mode` (v1.1), `json_schema` (v1.1)
 
 **Example:**
 ```python
 swarm(action="vote", question="Is this code safe to deploy? Answer YES or NO.")
 swarm(action="vote", question="Classify this email as spam or not spam: ...", providers="openai,claude,gemini")
+# [v1.1] Deterministic vote — temp=0 makes agreement measure genuine model disagreement, not sampling noise:
+swarm(action="vote", question="Is this code safe to deploy? Answer YES or NO.", temperature=0)
+# [v1.1] Structured vote — json_schema replaces fragile YES/NO text matching with a structured object:
+swarm(action="vote", question="Classify this task: autocode, research, or data?",
+      temperature=0, json_schema='{"type":"object","properties":{"workflow":{"type":"string","enum":["autocode","research","data"]}},"required":["workflow"]}')
 ```
 
 **Return format:**
@@ -198,12 +214,14 @@ swarm(action="vote", question="Classify this email as spam or not spam: ...", pr
 
 **Required params:** `question`
 
-**Optional params:** `context`, `providers`, `max_tokens`, `timeout`
+**Optional params:** `context`, `providers`, `max_tokens`, `timeout`, `temperature` (v1.1 — `0.0` recommended to see raw model differences, not sampling variation), `json_mode` (v1.1), `json_schema` (v1.1)
 
 **Example:**
 ```python
 swarm(action="compare", question="Explain RAFT consensus in 3 sentences.")
 swarm(action="compare", question="Best practices for error handling in Python?", providers="openai,claude")
+# [v1.1] Deterministic compare — callers typically want temperature=0 to see raw model differences:
+swarm(action="compare", question="Explain RAFT consensus in 3 sentences.", temperature=0)
 ```
 
 **Return format:**
@@ -306,6 +324,12 @@ All errors return a standardized `fail()` dict:
 
 **Cost / rate-limit awareness.** Swarm bypasses `llm.complete()`'s role routing, circuit breakers, and rate limiting (by design — see ARCHITECTURE.md). Callers should be aware that a `consensus` call to N providers burns N API calls per invocation. Per-provider rate limiting is a roadmap item (see CHANGELOG.md).
 
+**[v1.1] Provider capability passthrough.** `temperature`, `json_mode`, and `json_schema` are now caller-controlled rather than hardcoded in `_call_provider()`. The facade parses `temperature=-1.0` → default `0.7` (so a caller omitting the param gets the pre-v1.1 behavior) and `json_schema` from JSON string → dict before forwarding to the handler. Each action handler explicitly declares the 3 new params (no longer absorbed by `**kwargs`).
+
+**[v1.1] Provider capability matrix.** `temperature` is honored by all providers (OpenAI-compatible + Anthropic + Gemini). `json_mode` + `json_schema` are honored by OpenAI-compatible providers only — Anthropic and Gemini use different mechanisms (tool-use forcing and `response_mime_type`/`response_schema` respectively). See `docs/core/llm/INSTRUCTIONS.md` rule #12 for the canonical provider-capability matrix. **Roadmap:** when native `json_schema` for Claude/Gemini ships (core/llm P2 items #39+#40), `_call_provider()` will need NO changes — the provider layer (`core/llm_backend/providers/{anthropic,gemini}.py`) is responsible for translating the `json_schema` kwarg into the provider-specific mechanism. This is why v1.1 threads `json_schema` through as a generic kwarg rather than gating it on provider name.
+
+**[v1.1] Router swarm fallback.** When the router's heuristic fallback returns `confidence="low"` AND `ROUTER_SWARM_FALLBACK=1` (default OFF — see `docs/core/router/API.md`), `core/router.py::_swarm_fallback_route()` calls `swarm(action="vote", question=..., temperature=0, max_tokens=20, timeout=15)`. Requires unanimous/majority agreement + valid workflow type to override the heuristic decision. Non-fatal — any swarm failure falls through to the heuristic decision. This is the first production consumer of the `temperature=0` passthrough (#21).
+
 ---
 
-*Last updated: 2026-07-13 (v1.0.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.1 — `temperature`/`json_mode`/`json_schema` passthrough on facade + 4 action handlers + `_call_provider()`; router swarm fallback path documented). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

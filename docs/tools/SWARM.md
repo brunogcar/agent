@@ -9,6 +9,8 @@ Where `consult()` consults a *single* cloud model and `agent()` routes to a *sin
 - **Parallel fan-out** — `ThreadPoolExecutor` (capped at 5 workers) calls providers concurrently; `_call_all_providers()` waits for all, `_call_providers_race()` returns on the first valid response
 - **5 coordination actions** — `consensus`, `race`, `vote`, `compare`, `list_providers`
 - **Direct provider calls** — Calls `provider.chat_completion()` directly (NOT through `llm.complete()`), bypassing role routing, circuit breakers, and rate limiting. Swarm handles resilience at its own layer
+- **[v1.1] Provider capability passthrough** — `temperature` (default `-1.0` → resolves to `0.7`), `json_mode`, and `json_schema` are caller-controlled params threaded through facade → handler → `_call_provider()` → `provider.chat_completion()`. Was hardcoded `temperature=0.7`. `temperature=0` is recommended for `vote` (deterministic — agreement measures genuine model disagreement, not sampling noise). `json_schema` is honored by OpenAI-compatible providers; Claude/Gemini ignore it (provider-layer translation is a core/llm roadmap P2 item — when it ships, `_call_provider()` needs NO changes)
+- **[v1.1] Router swarm fallback** — When the router's heuristic fallback returns `confidence="low"` AND `ROUTER_SWARM_FALLBACK=1` (default OFF), `core/router.py::_swarm_fallback_route()` calls `swarm(action="vote", temperature=0)` for a second opinion. Requires unanimous/majority agreement + valid workflow type to override the heuristic. See `docs/core/router/` for the routing-side docs.
 - **Cloud-only** — Skips `lmstudio` (local). Swarm is for cloud providers only
 - **Env-driven** — Requires `*_API_KEY` + `*_BASE_MODEL` for each participating provider
 - **Deterministic output** — Results sorted by provider name
@@ -110,4 +112,4 @@ DEEPSEEK_BASE_MODEL=deepseek-chat
 
 ---
 
-*Last updated: 2026-07-13 (v1.0.2). See subfiles for detailed documentation.*
+*Last updated: 2026-07-14 (v1.1 — provider capability passthrough on facade + 4 action handlers + `_call_provider()`; router swarm fallback path documented). See subfiles for detailed documentation.*

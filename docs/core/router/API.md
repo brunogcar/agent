@@ -4,7 +4,15 @@
 
 ## 🔧 API Overview
 
-The Router exposes two public methods (`route()`, `classify_complexity()`) and a `RoutingDecision` dataclass. All model references use `cfg.router_model` — zero hardcoding.
+The Router exposes three public methods (`route()`, `classify_complexity()`) + one advisory method (`_swarm_fallback_route()`), and a `RoutingDecision` dataclass. All model references use `cfg.router_model` — zero hardcoding.
+
+### Config Flags
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `ROUTER_MODEL` | (project default) | LLM used by `_model_route()` and `classify_complexity()` (via `cfg.router_model`) |
+| `ROUTER_TIMEOUT` | `15` (seconds) | Hard timeout for `_model_route()` LLM call (via `cfg.router_timeout`) |
+| **`ROUTER_SWARM_FALLBACK`** | **`0` (OFF)** | When `1`, enables swarm vote-based routing fallback: if model routing fails AND heuristic returns `confidence="low"`, calls `swarm(action="vote", temperature=0)` for a second opinion. Requires unanimous/majority agreement + valid workflow type. Non-fatal — any failure falls back to the heuristic decision. See `_swarm_fallback_route()` below. |
 
 ---
 
@@ -49,6 +57,57 @@ score = router.classify_complexity("Calculate the mean of column A in data.csv")
 | `goal` | `str` | — | **Required.** The user's task description |
 
 **Returns:** `int` (1-10). Falls back to `5` on LLM failure.
+
+---
+
+### `_swarm_fallback_route()` — Swarm Vote Second Opinion
+
+Advisory method called from `route()` ONLY when:
+1. `_model_route(goal, trace_id)` returned `None` (model unavailable, timeout, invalid JSON), AND
+2. `_heuristic_route(goal)` returned `confidence == "low"` (the catch-all step #18 — no routing keywords matched), AND
+3. `cfg.router_swarm_fallback` is `True` (env var `ROUTER_SWARM_FALLBACK=1`).
+
+```python
+# Internal — called by route() when the above 3 conditions hold
+swarm_decision = router._swarm_fallback_route(goal, trace_id)
+# Returns: Optional[RoutingDecision] — None means "no confident swarm verdict, fall back to heuristic"
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `goal` | `str` | — | **Required.** The user's task description (truncated to first 500 chars in the swarm prompt) |
+| `trace_id` | `str` | — | **Required.** Trace identifier (forwarded to the swarm call) |
+
+**Returns:** `Optional[RoutingDecision]`
+
+| Outcome | Returns | Reason |
+|---------|---------|--------|
+| Swarm returned `status == "success"` AND `agreement in {"unanimous", "majority"}` AND winner ∈ `{autocode, research, data, deep_research, understand, direct}` | `RoutingDecision(workflow=winner, tool="workflow", complexity=5, confidence="medium", reason="Swarm vote ({agreement}, {N} providers)")` | Confident second opinion overrides the heuristic low-confidence decision |
+| Swarm status != "success" | `None` | Swarm unavailable — fall through to heuristic |
+| Swarm `agreement` ∈ `{"split", "disagreement", "single_response"}` | `None` | Split/disagreement verdict is no more confident than the heuristic |
+| Swarm winner not in valid workflow set (e.g. "banana") | `None` | LLM hallucinated an invalid workflow name — don't propagate |
+| Any exception (swarm import error, swarm crash, network failure, etc.) | `None` + `tracer.warning(...)` | Non-fatal — the flag is advisory and must never turn a successful `route()` call into a failed one |
+
+**The swarm call (when this method fires):**
+
+```python
+swarm(
+    action="vote",
+    question=("Which workflow type best fits this task? Answer with ONE word: "
+              "autocode, research, data, deep_research, understand, or direct.\n\n"
+              f"Task: {goal[:500]}"),
+    temperature=0,    # deterministic — vote must measure model agreement, not sampling noise
+    max_tokens=20,    # just one word
+    timeout=15,
+    trace_id=trace_id,
+)
+```
+
+**Why `temperature=0`:** Two LLMs at `temperature=0` converge on the same answer more often than at `temperature=0.7` — so the `agreement` classification (`unanimous` / `majority` / `split` / `disagreement`) measures *genuine model disagreement*, not sampling noise. Without `temperature=0`, a `disagreement` verdict would be ambiguous (could be either "models genuinely disagree on classification" or "models sampled different tokens but agree on classification"). See `docs/tools/swarm/INSTRUCTIONS.md` rule #45.
+
+**Why `unanimous`/`majority` required (not `split`/`disagreement`):** A split or disagreement swarm verdict is *no more confident* than the heuristic low-confidence decision — both are saying "I don't know for sure". Overriding the heuristic with an equally-uncertain swarm verdict would just add latency without improving routing quality. Only unanimous/majority verdicts represent a confident second opinion worth overriding the heuristic.
+
+**Why non-fatal:** The router's contract is `route(goal) -> RoutingDecision` — it must never raise. The swarm fallback is a *bonus* path: if it works, great; if it doesn't, the heuristic decision still stands. All exceptions are caught and logged via `tracer.warning(...)`. The flag is OFF by default — users who don't have cloud providers configured will never see this code path fire.
 
 ---
 
@@ -174,7 +233,7 @@ graph TD
 
 ---
 
-## 🔄 Two-Tier Routing Strategy
+## 🔄 Three-Tier Routing Strategy
 
 ### Tier 1: Model-Based Routing (Primary)
 
@@ -302,23 +361,23 @@ graph TD
 
 | Pattern | Regex | Routes To |
 |---------|-------|-----------|
-| `_RE_REPORT` | `(create a chart\|create chart\|make a chart\|plot a chart\|draw a chart\|visualise\|create a graph\|make a graph\|create a map\|make a map\|create a dashboard\|make a dashboard\|create a report\|make a report\|bar chart\|line chart\|pie chart\|scatter plot\|heatmap)` | `direct → report` |
-| `_RE_DIRECT_BROWSER` | `(browse\|fill form\|click button\|js-rendered\|open page\|take a screenshot\|capture screen\|web automation\|headless browser)` | `direct → browser` |
-| `_RE_DIRECT_FILE` | `(read file\|open file\|list files\|list directory\|write file\|show file\|read the file\|open the file)` | `direct → file` |
-| `_RE_DIRECT_MEMORY` | `(recall\|remember\|what do you know about\|store this\|save this to memory)` | `direct → memory` |
-| `_RE_DIRECT_GIT` | `(git status\|git log\|show commits\|git diff\|commit this\|git commit)` | `direct → git` |
-| `_RE_DIRECT_NOTIFY` | `(notify me\|send notification\|remind me\|schedule reminder)` | `direct → notify` |
-| `_RE_DIRECT_CLI` | `(run command\|execute shell\|terminal\|bash\|powershell\|pip install\|npm install\|yarn install\|composer install\|docker build\|docker run\|kubectl\|terraform apply\|ansible)` | `direct → cli` |
-| `_RE_DIRECT_TAVILY` | `(tavily\|ai search\|deep search\|advanced search\|ai-powered search\|intelligent search)` | `direct → tavily` |
-| `_RE_DIRECT_CONSULT` | `(consult a different (?:ai\|llm\|model)\|ask another model\|get another perspective\|ask a different llm\|let's get a second opinion\|second opinion from (?:ai\|llm\|model))` | `direct → consult` |
-| `_RE_DIRECT_PARALLEL` | `(run\s+.*?\s+in\s+parallel\|run\s+.*?\s+at\s+the\s+same\s+time\|batch process\|concurrently\|run together\|parallel execution)` | `direct → parallel` |
-| `_RE_DIRECT_VISION` | `(ocr\s+(?:this\|the\|that\|these\|those\|an\|a\|my)\|analyze\s+.*?\s+image\|describe\s+.*?\s+image\|what\s+is\s+in\s+this\s+image\|read\s+this\s+image\|image\s+description\|analyze\s+this\s+photo\|what\s+does\s+this\s+picture\s+show\|read\s+text\s+from\s+image\|screenshot\s+analysis)` | `direct → vision` |
-| `_RE_DIRECT_AGENT` | `(delegate\s+.*?\s+agent\|spawn\s+an\s+agent\|use\s+an\s+agent\|sub-agent\|let\s+an\s+agent\|have\s+an\s+agent)` | `direct → agent` |
-| `_RE_DEEP_RESEARCH` | `(deep research\|thorough investigation\|comprehensive report\|iterative research\|multi-faceted research\|extensive research\|in-depth analysis\|detailed investigation)` | `deep_research → workflow` |
-| `_RE_UNDERSTAND` | `(understand codebase\|build knowledge graph\|analyze project structure\|index codebase\|codebase overview\|project analysis\|map dependencies\|explore codebase\|scan project)` | `understand → workflow` |
-| `_RE_CODE` | `(fix\|bug\|debug\|audit\|patch\|refactor\|improve\|add feature\|implement\|edit\|modify\|update code\|error message\|runtime error\|type error\|syntax error\|logic error)` | `autocode` |
-| `_RE_DATA` | `(analyse\|analyze\|calculate\|compute\|csv\|excel\|spreadsheet\|statistics\|pandas\|numpy\|dataset)` | `data` |
-| `_RE_RESEARCH` | `(what is\|what are\|how does\|explain\|research\|find information\|summarise\|summarize\|look up)` | `research (step 17, medium confidence)` |
+| `_RE_REPORT` | `(create a chart\|create chart\|make a chart\|plot a chart\|draw a chart\|visualise\|create a graph\|make a graph\|create a map\|make a map\|create a dashboard\|make a dashboard\|create a report\|make a report\|bar chart\|line chart\|pie chart\|scatter plot\|heatmap)` | `direct → report` |
+| `_RE_DIRECT_BROWSER` | `(browse\|fill form\|click button\|js-rendered\|open page\|take a screenshot\|capture screen\|web automation\|headless browser)` | `direct → browser` |
+| `_RE_DIRECT_FILE` | `(read file\|open file\|list files\|list directory\|write file\|show file\|read the file\|open the file)` | `direct → file` |
+| `_RE_DIRECT_MEMORY` | `(recall\|remember\|what do you know about\|store this\|save this to memory)` | `direct → memory` |
+| `_RE_DIRECT_GIT` | `(git status\|git log\|show commits\|git diff\|commit this\|git commit)` | `direct → git` |
+| `_RE_DIRECT_NOTIFY` | `(notify me\|send notification\|remind me\|schedule reminder)` | `direct → notify` |
+| `_RE_DIRECT_CLI` | `(run command\|execute shell\|terminal\|bash\|powershell\|pip install\|npm install\|yarn install\|composer install\|docker build\|docker run\|kubectl\|terraform apply\|ansible)` | `direct → cli` |
+| `_RE_DIRECT_TAVILY` | `(tavily\|ai search\|deep search\|advanced search\|ai-powered search\|intelligent search)` | `direct → tavily` |
+| `_RE_DIRECT_CONSULT` | `(consult a different (?:ai\|llm\|model)\|ask another model\|get another perspective\|ask a different llm\|let's get a second opinion\|second opinion from (?:ai\|llm\|model))` | `direct → consult` |
+| `_RE_DIRECT_PARALLEL` | `(run\s+.*?\s+in\s+parallel\|run\s+.*?\s+at\s+the\s+same\s+time\|batch process\|concurrently\|run together\|parallel execution)` | `direct → parallel` |
+| `_RE_DIRECT_VISION` | `(ocr\s+(?:this\|the\|that\|these\|those\|an\|a\|my)\|analyze\s+.*?\s+image\|describe\s+.*?\s+image\|what\s+is\s+in\s+this\s+image\|read\s+this\s+image\|image\s+description\|analyze\s+this\s+photo\|what\s+does\s+this\s+picture\s+show\|read\s+text\s+from\s+image\|screenshot\s+analysis)` | `direct → vision` |
+| `_RE_DIRECT_AGENT` | `(delegate\s+.*?\s+agent\|spawn\s+an\s+agent\|use\s+an\s+agent\|sub-agent\|let\s+an\s+agent\|have\s+an\s+agent)` | `direct → agent` |
+| `_RE_DEEP_RESEARCH` | `(deep research\|thorough investigation\|comprehensive report\|iterative research\|multi-faceted research\|extensive research\|in-depth analysis\|detailed investigation)` | `deep_research → workflow` |
+| `_RE_UNDERSTAND` | `(understand codebase\|build knowledge graph\|analyze project structure\|index codebase\|codebase overview\|project analysis\|map dependencies\|explore codebase\|scan project)` | `understand → workflow` |
+| `_RE_CODE` | `(fix\|bug\|debug\|audit\|patch\|refactor\|improve\|add feature\|implement\|edit\|modify\|update code\|error message\|runtime error\|type error\|syntax error\|logic error)` | `autocode` |
+| `_RE_DATA` | `(analyse\|analyze\|calculate\|compute\|csv\|excel\|spreadsheet\|statistics\|pandas\|numpy\|dataset)` | `data` |
+| `_RE_RESEARCH` | `(what is\|what are\|how does\|explain\|research\|find information\|summarise\|summarize\|look up)` | `research (step 17, medium confidence)` |
 
 > ⚠️ **All patterns are case-insensitive** (`re.IGNORECASE`).
 >
@@ -333,6 +392,39 @@ When the `_RE_CODE` pattern matches, the heuristic checks if the goal also menti
 | Code keywords + file extension mentioned | 7 | More likely a specific file edit |
 | Code keywords only | 5 | Might be a general code question |
 
+### Tier 3: Swarm Vote Fallback (Advisory)
+
+When Tier 1 (model) fails AND Tier 2 (heuristic) returns `confidence="low"` (the catch-all step #18 — no routing keywords matched) AND `ROUTER_SWARM_FALLBACK=1`, the router asks the swarm for a second opinion before returning the low-confidence heuristic decision.
+
+```mermaid
+graph TD
+    A["Tier 2 heuristic decision<br/>confidence='low'"] --> B{"cfg.router_swarm_fallback<br/>is True?"}
+    B -->|No| F["Return heuristic decision<br/>(unchanged — pre-v1.0 behavior)"]
+    B -->|Yes| C["Call _swarm_fallback_route(goal, trace_id)"]
+    C --> D{"swarm_decision is None?"}
+    D -->|Yes — non-fatal failure path| F
+    D -->|No — unanimous/majority + valid workflow| E["Return swarm_decision<br/>(confidence='medium',<br/>overrides heuristic)"]
+```
+
+**What the swarm is asked:** "Which workflow type best fits this task? Answer with ONE word: autocode, research, data, deep_research, understand, or direct." Each configured cloud provider votes; the swarm's `agreement` classification (`unanimous` / `majority` / `split` / `disagreement` / `single_response`) tells us how confident the swarm itself is.
+
+**Override criteria (ALL must hold):**
+1. Swarm returned `status == "success"`
+2. `agreement in {"unanimous", "majority"}` — split/disagreement/single_response are no more confident than the heuristic low-confidence decision
+3. Winning workflow name (extracted from `groups[0]["preview"]`) ∈ `{autocode, research, data, deep_research, understand, direct}` — rejects LLM hallucinations like "banana"
+
+**Override outcome:** `RoutingDecision(workflow=winner, tool="workflow", complexity=5, confidence="medium", reason="Swarm vote ({agreement}, {N} providers)")`. Note that the swarm decision's `confidence="medium"` — *not* `high` — because the swarm is a fallback path, not a primary signal.
+
+**Failure paths (all non-fatal):**
+- Swarm status != "success" → fall through to heuristic
+- Swarm agreement not in `{unanimous, majority}` → fall through to heuristic
+- Swarm winner not a valid workflow → fall through to heuristic
+- Any exception (swarm import error, swarm crash, network failure, timeout) → `tracer.warning(...)` + fall through to heuristic
+
+The router contract is `route(goal) -> RoutingDecision` — it must never raise. The swarm fallback is a *bonus* path: if it works, great; if it doesn't, the heuristic decision still stands. The flag is OFF by default — users without cloud providers configured will never see this code path fire.
+
+See `_swarm_fallback_route()` above for the full method spec.
+
 ---
 
-*Last updated: 2026-07-11 (Pre-v1.1 — added `[Pre-v1.1]` delegation note under Extraction Pipeline: `_extract_first_json()` now delegates to `core/json_extract.extract_first_json()`. Internal refactor; no behavior change, no API change. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules).*
+*Last updated: 2026-07-14 (v1.0 — first versioned release: added `_swarm_fallback_route()` advisory method + Tier 3 swarm vote fallback path + `ROUTER_SWARM_FALLBACK=0` config flag; Pre-v1.1 — `_extract_first_json()` delegates to `core/json_extract.extract_first_json()`). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -42,6 +42,9 @@ def _action_vote(
     providers: str = "",
     timeout: int = 60,
     max_tokens: int = 1024,
+    temperature: float = 0.7,
+    json_mode: bool = False,
+    json_schema: dict | None = None,
     **kwargs,
 ) -> dict:
     if not question:
@@ -51,8 +54,18 @@ def _action_vote(
     if not available:
         return fail("No cloud providers configured. Set *_API_KEY and *_BASE_MODEL in .env to enable.")
 
+    # [v1.1 #21+#20] Pass through provider-capability params.
+    # vote benefits especially from:
+    #   - temperature=0 (deterministic): two LLMs both at temp=0 will converge
+    #     on the same answer more often than at temp=0.7 — agreement is
+    #     measuring genuine model disagreement, not sampling noise.
+    #   - json_schema (structured classification): instead of fragile YES/NO
+    #     text matching (case, trailing punctuation, "Yes." vs "yes"), the
+    #     providers can return a structured {"vote": "yes"} object — making
+    #     agreement analysis robust to formatting variation.
     results = _call_all_providers(
-        available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens
+        available, _SWARM_SYSTEM_PROMPT, question, context, timeout, max_tokens,
+        temperature=temperature, json_mode=json_mode, json_schema=json_schema,
     )
 
     # v1.0.2 (P1-3 cross-LLM): Use .strip() so whitespace-only responses
