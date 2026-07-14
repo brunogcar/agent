@@ -10,7 +10,7 @@ by any node). See Track M1 in CHANGELOG.
 """
 from __future__ import annotations
 
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_debug  # [v2.5] accessor
 from core.tracer import tracer
 from core.memory_backend.procedural.distill import distill_workflow
 
@@ -25,8 +25,9 @@ def node_distill_memory(state: AutocodeState) -> dict:
     task_type = state.get("task_type", "feature")
     # [Bug #11] Changed hypothesis -> root_cause and defense_note -> defense_notes
     # to match what debug.py actually sets. Previously always empty.
-    root_cause = state.get("root_cause", "")
-    defense_notes = state.get("defense_notes", "")
+    # [v2.5] Use _get_debug accessors (read sub-state first, fall back to flat)
+    root_cause = _get_debug(state, "root_cause", "")
+    defense_notes = _get_debug(state, "defense_notes", "")
     error_log = state.get("error_log", "")
     modified_files = state.get("modified_files", [])
 

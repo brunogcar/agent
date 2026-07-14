@@ -100,15 +100,19 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             current_tdd = dict(state.get("tdd", {}))
             current_tdd["debug_history"] = debug_history
             current_tdd["status"] = "max_retries_exceeded"
+            # [v2.5] RMW: write to debug sub-state + flat mirror
+            current_debug = dict(state.get("debug", {}))
+            current_debug["notes"] = (
+                f"Debug abandoned after {len(debug_history)} iterations — last "
+                f"{_ARCHITECTURE_QUESTION_THRESHOLD} all failed. Likely architecture-"
+                f"level issue: {error_msg}"
+            )
             return {
                 "tdd_status": "max_retries_exceeded",
                 "error": error_msg,
-                "debug_notes": (
-                    f"Debug abandoned after {len(debug_history)} iterations — last "
-                    f"{_ARCHITECTURE_QUESTION_THRESHOLD} all failed. Likely architecture-"
-                    f"level issue: {error_msg}"
-                ),
+                "debug_notes": current_debug["notes"],
                 "tdd": current_tdd,
+                "debug": current_debug,
             }
 
     if current_iteration > max_retries:
@@ -128,11 +132,15 @@ def node_systematic_debug(state: AutocodeState) -> dict:
         current_tdd = dict(state.get("tdd", {}))
         current_tdd["debug_history"] = debug_history
         current_tdd["status"] = "max_retries_exceeded"
+        # [v2.5] RMW: write to debug sub-state + flat mirror
+        current_debug = dict(state.get("debug", {}))
+        current_debug["notes"] = f"Debug abandoned after {max_retries} iterations. Last error: {error_msg}"
         return {
             "tdd_status": "max_retries_exceeded",
             "error": error_msg,
-            "debug_notes": f"Debug abandoned after {max_retries} iterations. Last error: {error_msg}",
+            "debug_notes": current_debug["notes"],
             "tdd": current_tdd,
+            "debug": current_debug,
         }
 
     test_results = state.get("test_results", {})
@@ -262,13 +270,20 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             # [Hardening] Read-modify-write to preserve tdd sub-state.
             current_tdd = dict(state.get("tdd", {}))
             current_tdd["debug_history"] = updated_history
+            # [v2.5] RMW: write to debug sub-state + flat mirrors
+            current_debug = dict(state.get("debug", {}))
+            current_debug["root_cause"] = root_cause
+            current_debug["defense_notes"] = defense_notes
+            current_debug["notes"] = f"Debug iteration {current_iteration} (swarm {confidence}): {root_cause}"
+            current_debug["swarm_verdict"] = swarm_result
             return {
                 "root_cause": root_cause,
                 "defense_notes": defense_notes,
                 "tdd_source_code": suggested_fix,
-                "debug_notes": f"Debug iteration {current_iteration} (swarm {confidence}): {root_cause}",
+                "debug_notes": current_debug["notes"],
                 "swarm_verdict": swarm_result,
                 "tdd": current_tdd,
+                "debug": current_debug,
             }
         # Swarm failed — fall through to subagent or single-LLM debug
         tracer.step(tid, "systematic_debug", "Swarm unavailable — falling back")
@@ -316,17 +331,24 @@ def node_systematic_debug(state: AutocodeState) -> dict:
 
                     current_tdd = dict(state.get("tdd", {}))
                     current_tdd["debug_history"] = updated_history
+                    # [v2.5] RMW: write to debug sub-state + flat mirrors
+                    current_debug = dict(state.get("debug", {}))
+                    current_debug["root_cause"] = root_cause
+                    current_debug["defense_notes"] = defense_notes
+                    current_debug["notes"] = f"Debug iteration {current_iteration} (subagent {phase}): {root_cause}"
+                    current_debug["subagent_verdict"] = {
+                        "fix": suggested_fix,
+                        "root_cause": root_cause,
+                        "defense_notes": defense_notes,
+                    }
                     return {
                         "root_cause": root_cause,
                         "defense_notes": defense_notes,
                         "tdd_source_code": suggested_fix,
-                        "subagent_verdict": {  # [v2.0.4] P1-1: was documented in API.md but never set
-                            "fix": suggested_fix,
-                            "root_cause": root_cause,
-                            "defense_notes": defense_notes,
-                        },
-                        "debug_notes": f"Debug iteration {current_iteration} (subagent {phase}): {root_cause}",
+                        "subagent_verdict": current_debug["subagent_verdict"],
+                        "debug_notes": current_debug["notes"],
                         "tdd": current_tdd,
+                        "debug": current_debug,
                     }
             # Subagent failed or returned unparseable JSON — fall through to single-LLM
             tracer.step(tid, "systematic_debug", "Subagent debug path yielded no usable result — falling back to single-LLM debug")
@@ -398,10 +420,16 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     # [Hardening] Read-modify-write to preserve tdd sub-state.
     current_tdd = dict(state.get("tdd", {}))
     current_tdd["debug_history"] = updated_history
+    # [v2.5] RMW: write to debug sub-state + flat mirrors
+    current_debug = dict(state.get("debug", {}))
+    current_debug["root_cause"] = root_cause
+    current_debug["defense_notes"] = defense_notes
+    current_debug["notes"] = f"Debug iteration {current_iteration} [phase={phase}]: {root_cause}"
     return {
         "root_cause": root_cause,
         "defense_notes": defense_notes,
         "tdd_source_code": suggested_fix,
-        "debug_notes": f"Debug iteration {current_iteration} [phase={phase}]: {root_cause}",
+        "debug_notes": current_debug["notes"],
         "tdd": current_tdd,
+        "debug": current_debug,
     }

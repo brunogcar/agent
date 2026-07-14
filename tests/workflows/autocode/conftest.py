@@ -24,28 +24,24 @@ def base_state(temp_workspace):
 
     Tests override only the fields they need. dry_run defaults to False
     so mutation nodes actually run; tests that want dry-run set it True.
+
+    [v2.5+v2.6] Uses _default_state() to populate all 8 sub-states with
+    defaults. The v2.0.5 split-brain bug (P1-1) was invisible to tests
+    because tests built state without the sub-state — so the accessor
+    fell through to the flat field and returned the correct value.
+    _default_state() populates the sub-state with defaults, so accessors
+    are exercised on the real code path. See Track M1 learning #2 in
+    CHANGELOG.
     """
-    return {
-        "task": "test task",
-        "trace_id": "test-trace-001",
-        "status": "running",
-        "dry_run": False,
-        "task_type": "feature",
-        "project_root": str(temp_workspace),
-        "plan": [{"id": 1, "label": "write_code", "description": "implement"}],
-        "current_step": 0,
-        "tdd_iteration": 0,
-        "tdd_status": "",
-        "tdd_source_code": "",
-        "tdd_error": "",
-        "last_test_error": "",
-        "test_results": {},
-        "test_files": [],
-        "verification_passed": False,
-        "modified_files": [],
-        "files_map": {},
-        "max_retries": 3,
-        "messages": [],
-        "error": "",
-        "result": "",
-    }
+    from workflows.autocode_impl.state import _default_state
+    state = _default_state(task="test task")
+    # Override with the test-specific values that tests depend on:
+    state["trace_id"] = "test-trace-001"
+    state["task_type"] = "feature"
+    state["project_root"] = str(temp_workspace)
+    # plan: legacy list[dict] step list (tests read state["plan"] directly)
+    state["plan"] = [{"id": 1, "label": "write_code", "description": "implement"}]
+    state["current_step"] = 0
+    state["test_files"] = []
+    state["max_retries"] = 3
+    return state

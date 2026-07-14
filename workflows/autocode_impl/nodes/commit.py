@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState  # [v2.0.5] _get_vcs removed (split-brain — see P1-1)
+from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify  # [v2.5+v2.6] accessors
 from workflows.autocode_impl.vcs_ops import _git_commit
 from core.tracer import tracer
 
@@ -15,7 +15,7 @@ def node_commit(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     if state.get("status") in ("needs_clarification", "failed"):
         return {}
-    if not state.get("verification_passed"):
+    if not _get_verify(state, "passed", False):
         return {"status": "skipped", "commit_sha": ""}
     # [#47] Dry-run: skip the actual commit AFTER the verification gate.
     # (The verification check above runs first so dry_run doesn't mask it.)
@@ -58,10 +58,12 @@ def node_commit(state: AutocodeState) -> dict:
     ]
     if state.get("skill_path"):
         result_lines.append(f"Skill: {state['skill_path']}")
-    result_lines += [" ", state.get("verification_notes", " ")]
+    result_lines += [" ", _get_verify(state, "notes", " ")]
     # [Bug #10] Changed defense_note -> defense_notes (plural) to match state field
-    if state.get("defense_notes"):
-        result_lines.append(f"\nDefense note: {state['defense_notes']}")
+    # [v2.5] Use _get_debug accessor (reads sub-state first, falls back to flat)
+    defense_notes = _get_debug(state, "defense_notes", "")
+    if defense_notes:
+        result_lines.append(f"\nDefense note: {defense_notes}")
 
     return {
         "status": "done",

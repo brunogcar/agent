@@ -41,10 +41,15 @@ def node_verify_decision(state: AutocodeState) -> dict:
             )
         except Exception:
             pass
+        # [v2.6] RMW: write to verify sub-state + flat mirrors
+        current_verify = dict(state.get("verify", {}))
+        current_verify["passed"] = False
+        current_verify["notes"] = f"TDD {tdd_status}"
         return {
             "status": "failed",
-            "verification_notes": f"TDD {tdd_status}",
+            "verification_notes": current_verify["notes"],
             "verification_passed": False,
+            "verify": current_verify,
             "trace_id": tid,
         }
 
@@ -82,17 +87,22 @@ def node_verify_decision(state: AutocodeState) -> dict:
 
     tracer.step(tid, "verify_decision", f"result: {'PASS' if all_passed else 'FAIL'} -- {summary[:80]}")
 
+    # [v2.6] RMW: write to verify sub-state + flat mirrors
+    current_verify = dict(state.get("verify", {}))
+    current_verify["passed"] = all_passed
+    current_verify["notes"] = (
+        f"Automated: {'PASS' if automated_ok else 'FAIL'} | "
+        f"LLM: {'PASS' if llm_checks_ok else 'FAIL'}\n"
+        f"{summary}\n\n{notes}"
+    )
     return {
         "verification_passed": all_passed,
-        "verification_notes": (
-            f"Automated: {'PASS' if automated_ok else 'FAIL'} | "
-            f"LLM: {'PASS' if llm_checks_ok else 'FAIL'}\n"
-            f"{summary}\n\n{notes}"
-        ),
+        "verification_notes": current_verify["notes"],
         "evidence_outputs": {
             "tests": fresh_output[:2000],
             "lint": lint_output[:500],
             "regression": fresh_output[:2000],
         },
+        "verify": current_verify,
         "trace_id": tid,
     }

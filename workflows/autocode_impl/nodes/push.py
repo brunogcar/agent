@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_verify  # [v2.6] accessor
 from workflows.autocode_impl.vcs_ops import _github_push
 
 
@@ -25,7 +25,7 @@ def node_push(state: AutocodeState) -> dict:
     # Skip conditions — same as node_commit
     if state.get("status") in ("needs_clarification", "failed", "skipped"):
         return {}
-    if not state.get("verification_passed"):
+    if not _get_verify(state, "passed", False):
         return {}
     if state.get("dry_run"):
         tracer.step(tid, "push", "dry_run=True — skipping push")

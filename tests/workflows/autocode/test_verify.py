@@ -67,8 +67,20 @@ class TestCommitDefenseNotes:
 
     def test_commit_uses_defense_notes(self, base_state):
         from workflows.autocode_impl.nodes.commit import node_commit
-        base_state["verification_passed"] = True
-        base_state["defense_notes"] = "Add bounds check"
+        # [v2.5+v2.6] Simulate what the migrated writer nodes do: write to
+        # BOTH sub-state (primary) and flat field (mirror). The accessors
+        # (_get_verify, _get_debug) read the sub-state first — if we only
+        # set the flat field, the accessor returns the sub-state default.
+        base_state["verification_passed"] = True  # flat mirror
+        verify = dict(base_state.get("verify", {}))
+        verify["passed"] = True
+        base_state["verify"] = verify
+
+        base_state["defense_notes"] = "Add bounds check"  # flat mirror
+        debug = dict(base_state.get("debug", {}))
+        debug["defense_notes"] = "Add bounds check"
+        base_state["debug"] = debug
+
         base_state["task_type"] = "feature"
         base_state["task"] = "fix bug"
         with patch("workflows.autocode_impl.nodes.commit._git_commit", return_value="abc123"):

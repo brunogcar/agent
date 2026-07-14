@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from filelock import FileLock, Timeout
 
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_debug  # [v2.5] accessor
 from workflows.autocode_impl.helpers import _get_autocode_run_path
 from core.config import cfg
 from core.tracer import tracer
@@ -69,13 +69,16 @@ def node_persist_artifacts(state: AutocodeState) -> dict:
             tracer.step(tid, "persist_artifacts", f"generated code write error: {e}")
 
     # Persist debug log if present
-    if state.get("debug_notes") or state.get("root_cause"):
+    # [v2.5] Use _get_debug accessors (read sub-state first, fall back to flat)
+    debug_notes = _get_debug(state, "notes", "")
+    root_cause = _get_debug(state, "root_cause", "")
+    if debug_notes or root_cause:
         try:
             debug_file = run_dir / "debug_log.json"
             debug_data = {
-                "debug_notes": state.get("debug_notes", ""),
-                "root_cause": state.get("root_cause", ""),
-                "defense_notes": state.get("defense_notes", ""),
+                "debug_notes": debug_notes,
+                "root_cause": root_cause,
+                "defense_notes": _get_debug(state, "defense_notes", ""),
                 "tdd_iteration": state.get("tdd_iteration", 0),
             }
             debug_file.write_text(json.dumps(debug_data, indent=2), encoding="utf-8")

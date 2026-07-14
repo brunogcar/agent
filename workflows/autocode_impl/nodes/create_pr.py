@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify  # [v2.5+v2.6] accessors
 from workflows.autocode_impl.vcs_ops import _github_pr_create
 
 
@@ -20,9 +20,10 @@ def _build_pr_body(state: AutocodeState) -> str:
     task = state.get("task", "")
     task_type = state.get("task_type", "")
     commit_sha = state.get("commit_sha", "")
-    verification_passed = state.get("verification_passed", False)
-    root_cause = state.get("root_cause", "")
-    swarm_verdict = state.get("swarm_verdict", {})
+    # [v2.5+v2.6] Use accessors (read sub-state first, fall back to flat)
+    verification_passed = _get_verify(state, "passed", False)
+    root_cause = _get_debug(state, "root_cause", "")
+    swarm_verdict = _get_debug(state, "swarm_verdict", {})
 
     lines = [
         f"## Autocode: {task[:80]}",
@@ -68,7 +69,7 @@ def node_create_pr(state: AutocodeState) -> dict:
     # Skip conditions
     if state.get("status") in ("needs_clarification", "failed", "skipped"):
         return {}
-    if not state.get("verification_passed"):
+    if not _get_verify(state, "passed", False):
         return {}
     if state.get("dry_run"):
         return {}

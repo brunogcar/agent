@@ -277,11 +277,19 @@ def _get_impact(state: dict, key: str, default: Any = None) -> Any:
 
 
 def _get_debug(state: dict, key: str, default: Any = None) -> Any:
-    """Read a debug sub-state field, falling back to legacy flat field."""
+    """Read a debug sub-state field, falling back to legacy flat field.
+
+    [v2.5] Maps short keys to legacy keys:
+        notes -> debug_notes
+    Other keys (root_cause, defense_notes, swarm_verdict, subagent_verdict)
+    are the same in both sub-state and flat field.
+    """
     debug = state.get("debug")
     if isinstance(debug, dict) and key in debug:
         return debug[key]
-    return state.get(key, default)
+    legacy_map = {"notes": "debug_notes"}
+    legacy_key = legacy_map.get(key, key)
+    return state.get(legacy_key, default)
 
 
 def _get_verify(state: dict, key: str, default: Any = None) -> Any:
