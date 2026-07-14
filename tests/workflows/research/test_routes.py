@@ -28,11 +28,11 @@ class TestRouting:
         next_node = route_after_search(state)
         assert next_node in ("END", "failed", "__end__", "notify")
 
-    def test_route_after_synthesize_routes_to_report_on_success(self):
-        """Successful synthesis must route to report."""
+    def test_route_after_synthesize_routes_to_trim_on_success(self):
+        """Successful synthesis must route to trim (v1.1.1: was 'report', now 'trim')."""
         state = _base_state()
         state["status"] = "running"
-        assert route_after_synthesize(state) == "report"
+        assert route_after_synthesize(state) == "trim"
 
     def test_route_after_synthesize_routes_to_end_on_failed(self):
         """Failed synthesis must route to END."""

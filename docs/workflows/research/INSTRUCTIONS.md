@@ -17,21 +17,23 @@
 11. **Never read `search_results` in nodes after `synthesize`** — v1.1: The trim node evicts `search_results` between synthesize and report. Nodes after synthesize (report, store, distill, notify) must use `result`, not `search_results`. If you add a new node after synthesize, use `state.get("result", "")`.
 12. **Never use `as_completed(timeout=)` for parallel scraping** — v1.0 fix #4: `as_completed` timeout is per-first-future, not global. Use `concurrent.futures.wait(timeout=)` for global timeout.
 13. **Never leave pending futures running on timeout** — v1.0 fix #5: Call `.cancel()` on timed-out futures to prevent zombie threads.
+14. **Never let memory/notify failures crash the workflow** — v1.1.1: Wrap `memory.recall`, `memory.store_*`, and `notify()` in `try/except` + `tracer.error` (same pattern as data workflow Fix #8/#10).
+15. **Never return a routing key that doesn't match the conditional edges dict** — v1.1.1 P0: `route_after_synthesize` returned `"report"` but the dict mapped `"trim"`. The trim node was unreachable. Always verify routing return values match `add_conditional_edges` dict keys.
 
 ## ✅ ALWAYS DO
 
-14. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
-15. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
-16. **Always handle search failure gracefully** — Empty results should route to END, not crash.
+16. **Always return `dict` from nodes** — Not `WorkflowState`. Partial updates only.
+17. **Always pass `trace_id` to tracer calls** — Observability requires trace correlation.
+18. **Always handle search failure gracefully** — Empty results should route to END, not crash.
 17. **Always test `route_after_search` with both paths** — Assert `"failed"` and `"synthesize"`.
 18. **Always test `route_after_synthesize` with both paths** — Assert `"failed"` and `"trim"` (v1.1: was `"report"`).
-19. **Always test memory storage** — Assert semantic + procedural memory stored correctly.
-20. **Always test notification** — Assert `notify()` called with correct message.
-21. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
+21. **Always test memory storage** — Assert semantic + procedural memory stored correctly.
+22. **Always test notification** — Assert `notify()` called with correct message.
+23. **Always update this doc** when adding nodes, changing routing logic, or modifying error handling.
 22. **Always use `!= "success"` not `not ... == "success"`** — The latter is confusing due to operator precedence (functionally correct but hard to read).
 23. **Always use `cfg.web_max_search_results`** — Never hardcode `max_results`. The config var exists for a reason.
-24. **Always store full `result` in semantic memory** — v1.0 fix #7: Semantic memory is for content retrieval. Truncating to 800 chars made it nearly useless.
-25. **Always deduplicate URLs in `node_search`** — v1.0 fix #12: Use a `seen_urls` set to prevent duplicate scraping.
+26. **Always store full `result` in semantic memory** — v1.0 fix #7: Semantic memory is for content retrieval. Truncating to 800 chars made it nearly useless.
+27. **Always deduplicate URLs in `node_search`** — v1.0 fix #12: Use a `seen_urls` set to prevent duplicate scraping.
 
 ---
 
@@ -63,4 +65,4 @@
 
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-14 (v1.1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

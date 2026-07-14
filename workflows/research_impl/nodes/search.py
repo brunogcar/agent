@@ -26,11 +26,15 @@ def node_search(state: WorkflowState) -> dict:
 
     # [Fix #12] Deduplicate URLs — SearXNG may return the same URL from
     # different search engines. Track seen URLs to avoid duplicate scraping.
+    # v1.1.1 (#13): Also validate URL scheme — filter out javascript:, mailto:,
+    # and relative paths that SearXNG may return.
     seen_urls = set()
     valid_urls = []
     for r in result["results"]:
         url = r.get("url", "")
         if not url or url in seen_urls:
+            continue
+        if not (url.startswith("http://") or url.startswith("https://")):
             continue
         seen_urls.add(url)
         valid_urls.append({"url": url, "title": r.get("title", ""), "snippet": r.get("snippet", "")})

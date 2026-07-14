@@ -6,7 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
-| v1.1 | 2026-07-08 | **Trim node wired in:** Added `trim_state_node` between synthesize and report. After synthesize produces `result`, oversized `search_results` (up to 40KB) is evicted to episodic memory (chonkie-aware — splits into chunks, evicts each individually, keeps first chunk as preview). Falls back to whole-string eviction if chonkie is missing. Uses `trim_state_node()` from `workflows/base.py` (v1.3). Graph: `recall → search → parallel_scrape → synthesize → trim → report → store → distill → notify`. Second workflow to wire in `trim_state()` (see `base/CHANGELOG.md` #18). |
+| v1.1.1 | 2026-07-14 | **P0 routing fix + P1 exception isolation + URL validation:** P0: `route_after_synthesize` returned `"report"` but conditional edges mapped `"trim"` — trim node was unreachable since v1.1. Fixed to return `"trim"`. P1: `node_recall`, `node_store`, `node_notify` wrapped in `try/except` (same pattern as data workflow Fix #8/#10 — was crashing on memory/notify failure). P1: `node_synthesize` `r["text"]` → `r.get("text", "")` (KeyError). #13: URL validation in `node_search` — filters `javascript:`, `mailto:`, relative paths. P2: `route_after_search` docstring fixed. RESEARCH.md "report workflow" → "report tool" + autoresearch row. |
 | v1.0 | 2026-07-05 | **Subpackage split + 8 bug fixes + test restructure:** Split monolithic `workflows/research.py` (513 lines) into `workflows/research_impl/` subpackage with per-node modules. Thin facade re-exports `build_research_graph`, `WORKFLOW_METADATA`. Added `WORKFLOW_METADATA` for MCP client introspection (8 nodes + 10 edges). Tests split into per-node files + `conftest.py` + `TestSubpackageStructure` (11 structural tests). Fixed 8 bugs (see below). |
 | Pre-v1.0 | 2026-07-05 | **Bug fix:** `node_search` now uses `cfg.web_max_search_results` (default 10) instead of hardcoded `max_results=3`. `node_synthesize` error check changed from confusing `not r.get("status") == "success"` to explicit `r.get("status") != "success"` for readability. `node_synthesize` now calls `agent(action="dispatch", role="research", ...)` (was missing `action`, always returned `Unknown action ''`). |
 | Pre-v1.0 | — | In development — Monolithic `workflows/research.py` with 8-node pipeline. |
@@ -55,10 +55,10 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 6 | **Fix `report_tool` signature** | Verify `report()` tool signature matches usage. The v1.0 code calls `report_tool(action="report", ...)` — verify this matches the current report tool API. | P2 |
-| 11 | **Fix dossier truncation splitting headers** | Truncation may cut `### [Source N]` headers in half. v1.0 improved truncation (uses `rfind("\n\n")` to cut at paragraph boundary), but edge cases may remain. | P3 |
-| 13 | **Add URL validation** | `r["url"]` could be `javascript:void(0)` or relative paths. v1.0 added URL dedup (#12) but not validation. | P3 |
-| 15 | **Configurable search results** | Make `max_results` configurable via `.env` (currently uses `cfg.web_max_search_results`). | P3 |
+| 6 | **Fix `report_tool` signature** | ✅ Verified — `report_tool(action="report", ...)` matches the current report tool facade signature. No fix needed. | ✅ |
+| 11 | **Fix dossier truncation splitting headers** | Skip — v1.0 truncation uses `rfind("\n\n")` (paragraph boundary). `### [Source N]` headers are separated by `\n\n` from content, so truncation won't split them. Edge case (single source > max_dossier_chars with no `\n\n`) is too unlikely to justify complexity. | Skip |
+| 13 | **Add URL validation** | ✅ Complete (v1.1.1) — `node_search` now filters `javascript:`, `mailto:`, relative paths via `url.startswith("http://")` or `url.startswith("https://")`. | ✅ |
+| 15 | **Configurable search results** | Already uses `cfg.web_max_search_results` (default 10). ✅ Complete. | ✅ |
 | 16 | **Streaming synthesis** | Stream synthesis output for real-time feedback | P3 |
 | 17 | **Multi-language support** | Support non-English search and synthesis | P3 |
 | 18 | **crawl4ai integration** | **Potential refactor:** Replace `_browser_fallback_scrape` with `web(action="crawl")`. Crawl4ai handles JS-heavy pages natively (returns clean markdown), eliminating the browser fallback for JS walls. Depends on crawl4ai quality validation against real JS-heavy pages. See `docs/TOOLS.md` § "Crawl4ai integration" and `docs/tools/web/CHANGELOG.md` v1.3. | P2 (evaluation) |
@@ -77,4 +77,4 @@
 
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

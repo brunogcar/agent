@@ -64,7 +64,8 @@ print(result["result"])  # "ChromaDB best practices include..."
 | Fix code | `autocode` workflow | Targeted code changes with test verification |
 | Deep research | `deep_research` workflow | Iterative search with convergence detection |
 | Understand codebase | `understand` workflow | Codebase analysis and dependency mapping |
-| Generate report | `report` workflow | Structured report generation |
+| Generate report | `report` tool | 11 atomic report actions — charts, maps, dashboards, export to PDF/PNG |
+| Autonomous optimization | `autoresearch` workflow | Evolutionary experiment loop |
 
 ---
 
@@ -76,3 +77,7 @@ print(result["result"])  # "ChromaDB best practices include..."
 | [API](research/API.md) | Node reference, output format, error handling, security |
 | [Changelog](research/CHANGELOG.md) | Version history, breaking changes, roadmap, completed features, deferred items |
 | [Instructions](research/INSTRUCTIONS.md) | AI editing rules, NEVER DO, ALWAYS DO, anti-patterns |
+
+---
+
+*Last updated: 2026-07-14 (v1.1.1). See subfiles for detailed documentation.*

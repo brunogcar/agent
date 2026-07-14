@@ -45,4 +45,4 @@ def node_synthesize(state: WorkflowState) -> dict:
 
     node_step(state, "synthesize", "synthesis complete",
               elapsed=r.get("elapsed", 0))
-    return {"result": r["text"]}
+    return {"result": r.get("text", "")}
