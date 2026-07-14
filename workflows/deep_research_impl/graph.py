@@ -122,6 +122,9 @@ def _node_report(state: DeepResearchState) -> dict:
     kb = state.get("knowledge_base", "")
     synthesis = state.get("synthesis", "")
     report = synthesis or kb
+    # v1.1.1 (#9): Handle empty report — was producing empty string with "incomplete" status.
+    if not report:
+        report = f"No results found for: {state.get('goal', 'unknown goal')}"
     completeness = state.get("completeness", 0.0)
     threshold = state.get("completeness_threshold", 85.0)
     status = "success" if completeness >= threshold else "incomplete"

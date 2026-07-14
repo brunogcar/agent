@@ -1,5 +1,7 @@
 """tests/workflows/deep_research/test_budget.py
 Tests for budget tracking utilities.
+
+v1.1.1: Removed TestFormatAudit + format_audit import (dead code removed from budget.py).
 """
 from __future__ import annotations
 
@@ -9,7 +11,6 @@ from workflows.deep_research_impl.budget import (
     log_event,
     is_api_budget_exhausted,
     is_browser_budget_exhausted,
-    format_audit,
 )
 
 
@@ -41,11 +42,3 @@ class TestBudgetExhausted:
     def test_browser_exhausted(self):
         assert is_browser_budget_exhausted({"budget_browser_actions": 0}) is True
         assert is_browser_budget_exhausted({"budget_browser_actions": 5}) is False
-
-
-class TestFormatAudit:
-    def test_renders_events(self):
-        events = [{"iteration": 1, "tool": "tavily", "action": "search", "reason": "q"}]
-        text = format_audit(events)
-        assert "tavily" in text
-        assert "search" in text

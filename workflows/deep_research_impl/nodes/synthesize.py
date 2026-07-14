@@ -144,11 +144,20 @@ def _cap_knowledge(knowledge: str, max_chars: int = _MAX_PREV_KNOWLEDGE_CHARS) -
     return "... [earlier context truncated] ...\n\n" + truncated
 
 def _parse_score(text: str) -> float:
-    """Extract the last numeric score from critique text, clamp to 0-100."""
-    # Remove negative numbers (e.g. "-5" -> ignore the minus, keep 5)
-    cleaned = re.sub(r"-\d+", "", text)
-    matches = re.findall(r"\d+", cleaned)
+    """Extract the last numeric score from critique text, clamp to 0-100.
+
+    v1.1.1 (#20): Removed `re.sub(r"-\\d+", "", text)` — it removed numbers
+    from ranges like "85-90" (turned into "85"). Now finds all integers and
+    takes the last one. Negative scores (e.g. "-5") are handled by checking
+    if the match is preceded by a minus sign — if so, treat as 0 (invalid score).
+    """
+    # Find all numbers (positive). Check if the last one is preceded by '-'.
+    matches = list(re.finditer(r"-?(\d+)", text))
     if matches:
-        score = int(matches[-1])  # Last number
+        m = matches[-1]
+        # If preceded by '-', it's a negative number → clamp to 0
+        if m.group(0).startswith("-"):
+            return 0.0
+        score = int(m.group(1))
         return float(max(0, min(100, score)))
     return 0.0

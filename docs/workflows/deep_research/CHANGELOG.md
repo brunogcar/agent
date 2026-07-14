@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.1.1 | 2026-07-14 | **Bugfix batch + dead code cleanup:** P1: `node_decompose_goal` returns partial dicts (was `{**state, ...}` — missed in v1.1 P1 #7). #11: `route_after_synthesize` reads `state["converged"]` instead of recomputing. #14: Regex `[\-*•]` → `[-*•]` (unnecessary escape). #15: Trailing comma handling in `_parse_sub_queries`. #20: `_parse_score` no longer removes numbers from ranges like "85-90". #9: Empty report → "No results found" message. #12: Removed `format_audit` dead code. #13: Removed `JS_HEAVY_HINTS` dead import + constant. #17: Filter empty queries in `node_search`. |
 | v1.1 | 2026-07-06 | **Metadata + citations + P0/P1 fixes + trim analysis:** Added `WORKFLOW_METADATA` for MCP client introspection. Wired the citation tracker into `_node_report` + `_node_notify` (sources were collected by `node_search` and discarded). Fixed P0 #2 (`task`/`content` swap in `node_synthesize`), P0 #4 (API budget decremented on Tavily attempt not success), P1 #6 (removed `_agent_ok`/`_agent_text` dead wrappers), P1 #7 (partial-dict returns), P1 #8 (`_node_recall` logs memory failures), P1 #10 (`_node_store` full result, no 800-char truncation), P1 #22 (`synthesis` field declared in state). **Trim analysis:** `trim_state()` not wired in — deep_research already bounds its state (`knowledge_base` capped at 6000 chars via `_cap_knowledge()`, `extracted_evidence` cleared each iteration by synthesize). Evicting `knowledge_base` would break convergence detection (routes.py compares `_prev_knowledge` vs `knowledge_base`). See `docs/workflows/base/CHANGELOG.md` #18. |
 | v1.0.2 | 2026-07-05 | **Bug fix:** API budget (`budget_api_calls`) now only decremented for Tavily searches, not web (SearXNG) searches. |
 | v1.0.1 | 2026-07-05 | **Bug fix:** Both `agent()` calls in `node_synthesize` now pass `action="dispatch"`. Removed dead `completeness_threshold = 0.85` local. |
@@ -59,17 +60,17 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 9 | **`_node_report` empty report not handled** | Empty `knowledge_base` + `synthesis` produces empty report with `"incomplete"` status. | P1 |
-| 11 | **`route_after_synthesize` recomputing `converged`** | Already computed in `node_synthesize`. Redundant and may diverge. | P1 |
-| 12 | **Remove `format_audit` dead code** | Function exists but never called. | P3 |
-| 13 | **Remove `JS_HEAVY_HINTS` dead code** | Defined in `constants.py` but never used. `search.py` uses hardcoded indicators. | P2 |
-| 14 | **Fix `_parse_sub_queries` regex fragility** | Character class `r'[\-*•]'` has unnecessary escape. May emit `SyntaxWarning`. | P1 |
-| 15 | **Fix `_parse_sub_queries` trailing comma handling** | LLMs may output trailing commas in JSON. `json.loads` rejects them. | P1 |
+| 9 | **`_node_report` empty report** | ✅ Complete (v1.1.1). | ✅ |
+| 11 | **`route_after_synthesize` recomputing `converged`** | ✅ Complete (v1.1.1). | ✅ |
+| 12 | **Remove `format_audit` dead code** | ✅ Complete (v1.1.1). | ✅ |
+| 13 | **Remove `JS_HEAVY_HINTS` dead code** | ✅ Complete (v1.1.1). | ✅ |
+| 14 | **Fix `_parse_sub_queries` regex** | ✅ Complete (v1.1.1). | ✅ |
+| 15 | **Fix trailing comma in JSON** | ✅ Complete (v1.1.1). | ✅ |
 | 16 | **`node_search` hardcoded `max_results=5`** | Should be configurable via `.env`. | P2 |
-| 17 | **`node_search` not filtering empty queries** | Empty strings in `queries` cause searches for `""`. | P2 |
+| 17 | **Filter empty queries** | ✅ Complete (v1.1.1). | ✅ |
 | 18 | **`_summarize_evidence` bypassing role config** | Uses custom system prompt instead of role's configured prompt. | P2 |
 | 19 | **`_extract_evidence` hardcoded top 3** | Should be configurable. | P2 |
-| 20 | **`_parse_score` removing negative numbers incorrectly** | `re.sub(r"-\d+", "", text)` removes numbers from ranges like "85-90". | P1 |
+| 20 | **`_parse_score` range bug** | ✅ Complete (v1.1.1). | ✅ |
 | 21 | **`_cap_knowledge` may exceed max after prefix** | Truncation + prefix may exceed `max_chars`. | P2 |
 | 24 | **Configurable convergence threshold** | Make `CONVERGENCE_SIMILARITY_THRESHOLD` actually use `.env` value | P2 |
 | 25 | **Streaming synthesis** | Stream synthesis output for real-time feedback | P3 |
@@ -89,4 +90,4 @@
 
 ---
 
-*Last updated: 2026-07-06 (v1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

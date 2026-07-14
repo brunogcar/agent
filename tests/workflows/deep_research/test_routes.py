@@ -55,8 +55,8 @@ class TestRouteAfterSynthesize:
             "max_iterations": 10,
             "completeness": 90.0,
             "completeness_threshold": 85.0,
-            "knowledge_base": "LangGraph is a framework.",
-            "_prev_knowledge": "LangGraph is a framework.",
+            # v1.1.1 (#11): route now reads state["converged"] instead of recomputing
+            "converged": True,
             "consecutive_empty_iterations": 0,
         }
         assert route_after_synthesize(state) == "report"

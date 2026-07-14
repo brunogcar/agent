@@ -1,12 +1,14 @@
 """workflows/deep_research_impl/routes.py
 Conditional routing logic for the DeepResearch cyclic graph.
+
+v1.1.1 (#11): route_after_synthesize now reads state["converged"] instead
+of recomputing via _is_converged(). The value is already computed in
+node_synthesize and stored in state. Recomputing was redundant and could
+diverge if the knowledge_base changed between synthesize and route.
 """
 from __future__ import annotations
 from workflows.deep_research_impl.state import DeepResearchState
-from workflows.deep_research_impl.constants import (
-    CONVERGENCE_SIMILARITY_THRESHOLD,
-    _is_converged,
-)
+
 
 def route_after_synthesize(state: DeepResearchState) -> str:
     """
@@ -28,9 +30,8 @@ def route_after_synthesize(state: DeepResearchState) -> str:
 
     completeness = state.get("completeness", 0.0)
     threshold = state.get("completeness_threshold", 85.0)
-    prev_knowledge = state.get("_prev_knowledge", "")
-    knowledge_base = state.get("knowledge_base", "")
-    converged = _is_converged(prev_knowledge, knowledge_base, CONVERGENCE_SIMILARITY_THRESHOLD)
+    # v1.1.1 (#11): Read converged from state (computed by node_synthesize)
+    converged = state.get("converged", False)
     if completeness >= threshold and converged:
         return "report"
 

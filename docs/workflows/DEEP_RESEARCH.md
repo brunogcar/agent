@@ -63,7 +63,8 @@ cfg.deep_research_convergence_threshold = 0.85   # SequenceMatcher similarity th
 | Analyze data | `data` workflow | Code generation + execution, data analysis |
 | Fix code | `autocode` workflow | Targeted code changes with test verification |
 | Understand codebase | `understand` workflow | Static analysis, dependency graph |
-| Generate report | `report` workflow | Structured report generation |
+| Generate report | `report` tool | 11 atomic report actions |
+| Autonomous optimization | `autoresearch` workflow | Evolutionary experiment loop |
 
 ---
 
@@ -75,3 +76,7 @@ cfg.deep_research_convergence_threshold = 0.85   # SequenceMatcher similarity th
 | [API](deep_research/API.md) | Node reference, output format, error handling, security |
 | [Changelog](deep_research/CHANGELOG.md) | Version history, breaking changes, roadmap, completed features, deferred items |
 | [Instructions](deep_research/INSTRUCTIONS.md) | AI editing rules, NEVER DO, ALWAYS DO, anti-patterns |
+
+---
+
+*Last updated: 2026-07-14 (v1.1.1). See subfiles for detailed documentation.*

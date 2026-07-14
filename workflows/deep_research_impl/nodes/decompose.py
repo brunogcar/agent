@@ -20,7 +20,14 @@ def _parse_sub_queries(text: str) -> list[str]:
 
     # Try JSON array first
     try:
-        parsed = json.loads(text.strip())
+        # v1.1.1 (#15): Strip trailing commas before json.loads — LLMs sometimes
+        # output [1, 2, 3,] which json.loads rejects.
+        clean = text.strip()
+        if clean.endswith(",]"):
+            clean = clean[:-2] + "]"
+        elif clean.endswith(",}"):
+            clean = clean[:-2] + "}"
+        parsed = json.loads(clean)
         if isinstance(parsed, list) and all(isinstance(q, str) for q in parsed):
             return [q.strip() for q in parsed if q.strip()]
         if isinstance(parsed, dict):
@@ -47,8 +54,8 @@ def _parse_sub_queries(text: str) -> list[str]:
     for line in text.strip().splitlines():
         stripped = line.strip()
         # Match bullets, numbers 1-9, or step prefixes
-        if re.match(r'^\s*([\-*•]|\d+[\.)])\s+', stripped):
-            stripped = re.sub(r'^\s*([\-*•]|\d+[\.)])\s+', '', stripped).strip()
+        if re.match(r'^\s*([-*•]|\d+[\.)])\s+', stripped):
+            stripped = re.sub(r'^\s*([-*•]|\d+[\.)])\s+', '', stripped).strip()
         # Also match "Step N: query" patterns
         elif re.match(r'^Step\s+\d+[:\.]\s*', stripped, re.IGNORECASE):
             stripped = re.sub(r'^Step\s+\d+[:\.]\s*', '', stripped, flags=re.IGNORECASE).strip()
@@ -70,7 +77,7 @@ def node_decompose_goal(state: DeepResearchState) -> DeepResearchState:
     goal = state.get("goal", "")
     tid = state.get("trace_id", "")
     if not goal:
-        return {**state, "sub_queries": [], "pending_queries": []}
+        return {"sub_queries": [], "pending_queries": []}
 
     kb = state.get("knowledge_base", "")
     # Cap knowledge base to avoid overflowing the planner context
@@ -90,13 +97,13 @@ def node_decompose_goal(state: DeepResearchState) -> DeepResearchState:
         )
         if not result.ok:
             logger.warning(f"Decompose LLM failed: {result.error}")
-            return {**state, "sub_queries": [goal], "pending_queries": [goal]}
+            return {"sub_queries": [goal], "pending_queries": [goal]}
 
         sub_queries = _parse_sub_queries(result.text)
         if not sub_queries:
             sub_queries = [goal]
 
-        return {**state, "sub_queries": sub_queries, "pending_queries": sub_queries}
+        return {"sub_queries": sub_queries, "pending_queries": sub_queries}
     except Exception as e:
         logger.warning(f"Decompose exception: {e}")
-        return {**state, "sub_queries": [goal], "pending_queries": [goal]}
+        return {"sub_queries": [goal], "pending_queries": [goal]}

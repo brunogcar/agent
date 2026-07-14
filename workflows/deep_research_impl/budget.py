@@ -59,17 +59,3 @@ def is_api_budget_exhausted(state: dict[str, Any]) -> bool:
 def is_browser_budget_exhausted(state: dict[str, Any]) -> bool:
     """Return ``True`` if no browser actions remain."""
     return state.get("budget_browser_actions", 0) <= 0
-
-
-def format_audit(events: list[dict[str, Any]]) -> str:
-    """Render budget events as a markdown list."""
-    lines = []
-    for e in events:
-        line = (
-            f"- Iteration {e.get('iteration', '?')}: "
-            f"{e.get('action', '?')} ({e.get('tool', '?')})"
-        )
-        if e.get("reason"):
-            line += f" — {e['reason']}"
-        lines.append(line)
-    return "\n".join(lines) if lines else "_No budget events recorded._"

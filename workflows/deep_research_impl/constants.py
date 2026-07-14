@@ -72,10 +72,3 @@ Synthesis:
 {synthesis}
 
 Score (0-100):"""
-
-# -- JS detection hints ---------------------------------------------------------
-JS_HEAVY_HINTS = (
-    "dashboard", "spa", "react", "angular", "vue", "ember", "svelte",
-    "next.js", "nuxt", "gatsby", "single page", "dynamic loading",
-    "client-side", "frontend framework", "component library",
-)

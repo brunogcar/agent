@@ -18,7 +18,6 @@ from workflows.deep_research_impl.budget import (
     log_event,
     is_browser_budget_exhausted,
 )
-from workflows.deep_research_impl.constants import JS_HEAVY_HINTS
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +215,8 @@ def _extract_evidence(
 def node_search(state: DeepResearchState) -> DeepResearchState:
     """Execute pending sub-queries, extract evidence, manage budget."""
     queries = state.get("pending_queries", [])
+    # v1.1.1 (#17): Filter empty queries — empty strings cause searches for ""
+    queries = [q for q in queries if q and q.strip()]
     if not queries:
         return {
             "extracted_evidence": [],
