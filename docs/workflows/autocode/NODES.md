@@ -419,6 +419,8 @@ state fields, and accessor functions, see [API.md](API.md).
 
 **[v2.0] First node migrated to the accessor pattern:** Reads `state["branch"]` via `_get_vcs(state, "branch", "main")` instead of `state.get("branch", "main")`. Proof-of-concept for the 8-accessor migration.
 
+**[v2.0.5] REVERTED — accessor was broken (split-brain):** `_get_vcs` read `state["vcs"]["branch"]` first, which held the stale default `""` (sub-state populated by `_default_state()` but never written to by nodes — `node_write_plan` writes the flat `branch` field). The accessor returned `""` instead of the actual branch name. Now reads `state.get("branch") or state.get("branch_name") or "main"` directly. Only `_get_tdd` is safe to use today (see INSTRUCTIONS.md NEVER DO #33). Full accessor migration is the v2.x → v3.0 roadmap.
+
 ---
 
 ### `node_publish(state)` — Phase 15: BACKWARD-COMPAT WRAPPER

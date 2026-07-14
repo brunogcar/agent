@@ -6,8 +6,6 @@ decision (pass/fail) is handled by node_verify_decision (next in graph).
 """
 from __future__ import annotations
 
-import json
-
 from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT
 from workflows.autocode_impl.constants import VERIFY_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
@@ -25,9 +23,13 @@ def node_llm_review(state: AutocodeState) -> dict:
         return {}
 
     # Build implementation context from generated code artifacts
+    # [v2.0.5] P3-3: Was `json.loads(...)` — fails on markdown-fenced JSON.
+    # Now uses `_parse_json` for consistency with apply_patches.py + write_new_files.py.
     impl_ctx = ""
     try:
-        code_data = json.loads(state.get("tdd_source_code", "{}"))
+        code_data = _parse_json(state.get("tdd_source_code", "{}"))
+        if not code_data:
+            code_data = {}
         parts = []
         for patch in code_data.get("patches", []):
             parts.append(f"# Patch: {patch.get('path', '')}\n```python\n{patch.get('new', '')[:1500]}\n```")

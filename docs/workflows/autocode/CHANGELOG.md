@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| **v2.0.5** | 2026-07-14 | **Phase 4g review — split-brain sub-state bug + state schema gaps + migration docs (2 P1 + 3 P2 + 4 P3).** **P1-1:** `_get_vcs(state, "branch", "main")` in `commit.py` was broken — read stale sub-state default `""` instead of actual branch name (sub-state populated by `_default_state()` but never written to by nodes; `node_write_plan` writes the flat `branch` field). The accessor returned `""`, making commit messages say `Branch: ` (empty). Reverted to direct `state.get("branch") or state.get("branch_name") or "main"`. This is the split-brain bug Gemini predicted in Phase 3 — the only accessor call outside `_get_tdd`, now proven broken. **P1-2:** INSTRUCTIONS.md #33 told new code to use the 8 accessors — but 7 of 8 return stale defaults. Added warning: only `_get_tdd` is safe today (nodes write to `tdd` sub-state via RMW). Updated ALWAYS DO #44 to match. **P2-1:** `verification_passed` was undeclared in `AutocodeState` TypedDict + missing from `_default_state()` (route_after_verify + commit.py read it). Added both. **P2-2:** `plan_state` key was used by `_get_plan()` + `_default_state()` but undeclared in TypedDict (overloaded `plan` is the legacy `list[dict]` step list). Added `plan_state: PlanState` declaration. Fixed API.md accessor table (`state["plan"]` → `state["plan_state"]`). **P2-3:** AUTOCODE.md "When to Use" table had `report` workflow (report is a tool) + missing `autoresearch`. Fixed both. **P2-4:** ARCHITECTURE.md + NODES.md overstated migration completeness ("All 7 phases COMPLETE — sub-states are PRIMARY"). Only `tdd` is actively maintained by nodes. Added candid migration-status warnings. NODES.md commit node updated: accessor "proof-of-concept" reverted. **P3-1:** `_call()` tracer.error used empty trace_id — retry-exhaustion errors were unattributed. Added `trace_id=""` param. **P3-2:** `run_tests.py` mutated `debug_history` list + dict in-place before RMW. Added defensive copy (`[dict(e) for e in debug_history]`). **P3-3:** `llm_review.py` used raw `json.loads` (fails on markdown-fenced JSON) — inconsistent with apply_patches.py + write_new_files.py. Switched to `_parse_json`. **P3-4:** `_pytest_output` ephemeral field (set by run_pytest, read by llm_review + verify_decision) was undocumented. Added ephemeral-fields table to API.md. **P3-5:** ARCHITECTURE.md node count drift ("27 active + 1 wrapper" → "25 active + 3 wrappers"). Fixed. |
 | **v2.0.4** | 2026-07-14 | **Phase 4g review — subagent debug path integration fixes (2 P1 + 2 P2 + 1 P3).** P1-1: `subagent_verdict` field was documented in API.md since v2.0.2 but NEVER set in code — now populated in `node_systematic_debug` return dict + added to `DebugState` TypedDict + `AutocodeState` flat field + `_default_state()`. P1-2 (autoresearch, see below). P2-1: `WORKFLOW_METADATA["version"]` was stale at `"2.0.1"` through v2.0.2 + v2.0.3 (CHANGELOG bumped, code string forgot) — synced to `"2.0.4"`. `test_graph.py` version assertion weakened to `assert "version" in WORKFLOW_METADATA` (was: hard-coded `"2.0.1"`). P2-3: `_DEBUG_JSON_SCHEMA` was duplicated inline in both the subagent path and single-LLM path (byte-identical) — deduped to a single module-level constant. P3-1: tracer message "Subagent unavailable" was misleading (fires for both LLM errors AND unparseable JSON) — reworded to "yielded no usable result". |
 | **v2.0.3** | 2026-07-12 | **[Hardening] Subagent debug path hardened.** `json_schema=_DEBUG_JSON_SCHEMA` now passed to subagent call (was: no schema enforcement). `temperature=retry_temp` now passed (was: default). Warning logged on empty `extract_json` (was: silent fallback). |
 | **v2.0.2** | 2026-07-12 | **Subagent debug path (`AUTOCODE_SUBAGENT_DEBUG=1`, default OFF).** Third debug path: single-LLM (default) → swarm → subagent. Non-blocking, falls back to single-LLM on failure. Subagent gets isolated curated context — it does NOT see autocode session state (superpowers pattern: "you construct exactly what they need"). Now 7 config flags (was 6). See INSTRUCTIONS.md NEVER DO #40 + ALWAYS DO #56. |
@@ -81,6 +82,8 @@ Cross-LLM review of v2.0 GA found 3 P0 + 7 P1 + 3 P2 real issues. All fixed in v
 | 42 | Goal sanitization | Max length + strip control chars on `goal`/`task` input. | P2 |
 | 43 | GitHub PR workflow | ✅ Shipped in v1.3. | ~~P2~~ Done |
 | 45 | Streaming node transitions | Stream `tracer.step` events to MCP client via WebSocket. | P2 |
+| 46 | **[v2.x → v3.0] Complete sub-state migration** | Migrate 7 remaining sub-states (plan, files, impact, debug, verify, vcs, memory) from flat-field writes to RMW sub-state writes. See Future Track M1 below for full scope + learnings from the `tdd` migration. | P1 |
+| 47 | **[v3.0] Remove legacy flat fields** | After all nodes write to sub-states, remove the flat field mirrors from `AutocodeState` TypedDict + `_default_state()`. Prerequisite: #46 complete. | P1 |
 
 ---
 
@@ -146,6 +149,41 @@ Tracks that emerged from the v2.0 refactor + obra/superpowers + autoresearch des
 | F7 | Lazy Dev (YAGNI Ladder) — **PARTIALLY IMPLEMENTED** | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | **[v2.0 GA]** 7-rung ladder in `CODER_SYSTEM` + Lazy Dev rule in `DEBUG_SYSTEM` Phase 4 + `ponytail:` comment convention all shipped. Full audit mode (`task_type="audit"` whole-repo scan for over-engineering) still deferred. |
 | F8 | Mermaid symbol context offloading | [TencentCloud/TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) | Instead of chonkie-compressing `debug_history`, offload symbol context (function/class signatures, call graph) to a mermaid diagram that the LLM can reference on demand. |
 
+### Track M1 — Sub-state migration (v2.x → v3.0)
+
+**Goal:** Complete the v2.0 accessor-layer migration. Today only `tdd` is fully migrated (nodes write to the `tdd` sub-state via read-modify-write). The other 7 sub-states hold stale defaults because nodes still write to flat fields. This causes split-brain bugs: `_get_vcs(state, "branch", "main")` returns `""` (stale sub-state default), not the actual branch name (which lives in the flat `branch` field). See v2.0.5 P1-1 for the proof.
+
+**Why gradual:** The `tdd` migration took 4 phases (v2.0-alpha → v2.0-rc1 → v2.0-rc3 → v2.0.1) and still produced 3 P0 RMW-clobbering bugs (fixed in v2.0.1 hardening). Scaling that to 7 more sub-states in one release is too risky. The 2.x line will migrate them one sub-state at a time, building on what was learned from `tdd`.
+
+**Learnings from the `tdd` migration (apply to every future sub-state):**
+
+1. **Read-modify-write is mandatory.** LangGraph replaces dict values, doesn't deep-merge. Returning `{"tdd": {"debug_history": [...]}}` clobbers every other `tdd` field. Always do: `current_tdd = dict(state.get("tdd", {}))`, mutate, return `current_tdd`. This was P0.1 in v2.0.1.
+2. **Tests must use `_default_state()`, not minimal hand-built state.** The split-brain bug (P1-1) was invisible to tests because tests built `state = {"branch": "fix-bug", ...}` without the `vcs` sub-state — so `_get_vcs` fell through to the flat field and returned the correct value. The bug only manifested when `_default_state()` was used (which populates the sub-state with `""`).
+3. **Copy before mutating.** `run_tests.py` mutated `debug_history[-1]["tests_passed"] = True` in-place. Works today, but unsafe if LangGraph ever snapshots state between nodes. Pattern: `debug_history = [dict(e) for e in debug_history]` before mutating. (v2.0.5 P3-2.)
+4. **Migrate the writer first, then the reader.** If a node writes flat (`state["branch"] = ...`) and a reader uses the accessor (`_get_vcs(state, "branch")`), the accessor returns the stale sub-state default. Either migrate the writer to RMW sub-state writes BEFORE any reader uses the accessor, or don't use the accessor at all. The `tdd` migration worked because BOTH the writers (debug.py, summarize_context.py, run_tests.py) AND the readers (debug.py) use `_get_tdd` + RMW.
+5. **The accessor layer is the trap.** 6 of 8 accessors are dead code today (zero callers). If anyone follows INSTRUCTIONS.md #33 (old version) and uses them, they'll hit split-brain. INSTRUCTIONS.md #33 has been updated (v2.0.5) to warn: only `_get_tdd` is safe. The 6 dead accessors must either be deleted or made safe (via writer migration) before v3.0.
+
+**Migration order (proposed — lowest-risk first):**
+
+| Sub-state | Writer nodes | Risk | Why this order |
+|-----------|-------------|------|----------------|
+| `tdd` | debug.py, summarize_context.py, run_tests.py | ✅ DONE | Already migrated (v2.0 → v2.0.1) |
+| `vcs` | commit.py, branch.py, plan.py, push.py, create_pr.py, merge_pr.py | **v2.1** | Most callers (6 nodes) but all writes are simple flat→sub-state. P1-1 already proved the trap; fix it properly. |
+| `plan` | brainstorm.py, plan.py, execute.py | **v2.2** | `plan` key is overloaded (legacy `list[dict]` step list vs `PlanState` dict). Migrate to `plan_state` as primary, keep `plan` as the step-list alias. |
+| `files` | apply_patches.py, write_new_files.py, persist_artifacts.py | **v2.3** | `files_map` + `modified_files` propagation — the P1.8 hardening showed how easy it is to lose writes here. |
+| `impact` | analyze_impact.py | **v2.4** | Single writer — lowest risk. |
+| `debug` | debug.py (flat writes for root_cause/defense_notes) | **v2.5** | Partially overlaps with `tdd` (debug_history). Consolidate. |
+| `verify` | run_pytest.py, run_lint.py, llm_review.py, verify_decision.py | **v2.6** | 4 nodes in the verify chain. `_pytest_output` ephemeral field needs a home (see v2.0.5 P3-4). |
+| `memory` | memory.py (distill) | **v2.7** | Single writer — lowest risk, but last because it's the least-read sub-state. |
+
+**After all 7 are migrated (v3.0):**
+- Remove the 6 dead accessors that were never safe (`_get_plan`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`) — they'll be redundant once all nodes use `_get_*` + RMW.
+- Remove the legacy flat fields from `AutocodeState` TypedDict + `_default_state()`.
+- Update all 13 test files to assert on sub-state reads instead of flat fields.
+- Update INSTRUCTIONS.md #33 to remove the warning (all accessors safe again).
+
+**Estimated scope:** ~15 nodes (RMW rewrites) + 4 route functions (switch to accessors) + 13 test files. Each sub-state = 1 minor release (v2.1 → v2.7). v3.0 = flat-field removal + accessor cleanup.
+
 ---
 
-*Last updated: 2026-07-12 (v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + migration docs + v2.x→v3.0 roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

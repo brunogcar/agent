@@ -187,14 +187,24 @@ For the full field list, see `workflows/autocode_impl/state.py`.
 The v2.0 refactor introduced a backward-compatible accessor layer over
 `AutocodeState`. Each accessor reads from the corresponding sub-state dict if
 present, else falls back to the legacy flat field. See ARCHITECTURE.md §
-"[v2.0] Sub-state Architecture" for the design rationale. Sub-states are now
-PRIMARY storage (Phase 6); legacy flat fields remain as mirrors.
+"[v2.0] Sub-state Architecture" for the design rationale.
+
+> **⚠️ [v2.0.5] Only `_get_tdd` is safe to use today.** The other 7 accessors
+> (`_get_plan`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`,
+> `_get_vcs`, `_get_memory`) are **migration scaffolding that return stale
+> sub-state defaults** because nodes write to flat fields, not sub-state dicts.
+> Only `tdd` is actively maintained by nodes (via read-modify-write). The
+> split-brain trap: `_get_vcs(state, "branch", "main")` returns `""` (the
+> sub-state default), not the actual branch name (which lives in the flat
+> `branch` field). **For all non-`tdd` reads, use `state.get(key, default)`
+> directly.** Full migration is the v2.x → v3.0 roadmap (see CHANGELOG Future
+> Tracks). See INSTRUCTIONS.md NEVER DO #33 + ALWAYS DO #44.
 
 ### The 8 accessor functions
 
 | Function | Sub-state TypedDict | Reads from | Legacy fallback fields |
 |----------|---------------------|------------|------------------------|
-| `_get_plan(state, key, default=None)` | `PlanState` | `state["plan"]` dict | `task_type`, `plan`, `branch`, `current_step` |
+| `_get_plan(state, key, default=None)` | `PlanState` | `state["plan_state"]` dict (NOT `state["plan"]` — that's overloaded as `list[dict]` step list) | `task_type`, `plan`, `branch`, `current_step` |
 | `_get_tdd(state, key, default=None)` | `TDDState` | `state["tdd"]` dict | `test_code`, `test_results`, `tdd_status`, `tdd_iteration`, `debug_history`, `debug_summary` |
 | `_get_files(state, key, default=None)` | `FilesState` | `state["files_state"]` dict | `files`, `modified_files`, `written_files`, `files_map` |
 | `_get_impact(state, key, default=None)` | `ImpactState` | `state["impact"]` dict | `impact_warnings`, `blast_radius_note` |
@@ -229,8 +239,17 @@ branch = _get_vcs(state, "branch", "main")
 ```
 
 `node_systematic_debug` and `node_summarize_context` are also migrated to
-accessors. The remaining nodes still use the legacy `state.get(...)` pattern;
-migration is `# TODO(2.0-post):`.
+accessors. `node_git_commit` was migrated as a proof-of-concept, **[v2.0.5]
+but the `_get_vcs` call was broken (split-brain) and has been reverted to
+direct `state.get("branch")` reads** (see CHANGELOG v2.0.5 P1-1). The remaining
+nodes still use the legacy `state.get(...)` pattern; full migration is the
+v2.x → v3.0 roadmap (see CHANGELOG Future Tracks).
+
+### Ephemeral fields (not in TypedDict)
+
+| Field | Type | Set by | Read by | Purpose |
+|-------|------|--------|---------|---------|
+| `_pytest_output` | `str` | `node_run_pytest` (verify chain) | `node_llm_review`, `node_verify_decision` | Ephemeral — passes fresh pytest stdout+stderr between verify-chain nodes. Not persisted in `_default_state()`; not declared in `AutocodeState` TypedDict (intentional — it's scratch space for the verify sub-chain). |
 
 ### `helpers._write_files()` — DELETED
 

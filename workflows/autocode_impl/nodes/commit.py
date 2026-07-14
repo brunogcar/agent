@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState, _get_vcs  # [v2.0] accessor
+from workflows.autocode_impl.state import AutocodeState  # [v2.0.5] _get_vcs removed (split-brain — see P1-1)
 from workflows.autocode_impl.vcs_ops import _git_commit
 from core.tracer import tracer
 
@@ -45,9 +45,16 @@ def node_commit(state: AutocodeState) -> dict:
     sha = _git_commit(msg, tid, root)
     tracer.step(tid, "commit", f"sha: {sha} @ {root or 'agent_root'}")
 
+    # [v2.0.5] P1-1: Was `_get_vcs(state, 'branch', 'main')` — broken split-brain.
+    # _get_vcs reads state["vcs"]["branch"] first, which holds the stale default
+    # "" (sub-state populated by _default_state() but never written to by nodes —
+    # node_write_plan writes the flat "branch" field). The accessor returned ""
+    # instead of the actual branch name. Read flat fields directly until the
+    # sub-state migration is complete (roadmap: v2.x → v3.0). NEVER DO #33 updated.
+    branch_for_msg = state.get("branch") or state.get("branch_name") or "main"
     result_lines = [
         f"autocode complete -- {sha or '(no new commits)'}",
-        f"Branch: {_get_vcs(state, 'branch', 'main')}",  # [v2.0] accessor with legacy fallback
+        f"Branch: {branch_for_msg}",
     ]
     if state.get("skill_path"):
         result_lines.append(f"Skill: {state['skill_path']}")

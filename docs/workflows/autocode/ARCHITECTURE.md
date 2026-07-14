@@ -7,7 +7,7 @@
 | File | Purpose |
 |------|---------|
 | `workflows/autocode.py` | `run_autocode_agent()` — main entry point |
-| `workflows/autocode_impl/graph.py` | `build_graph()` — 28-node LangGraph StateGraph builder (27 active + 1 NEW `node_summarize_context`; 3 backward-compat wrappers registered but NOT wired). `WORKFLOW_METADATA["version"] == "2.0"` (GA). |
+| `workflows/autocode_impl/graph.py` | `build_graph()` — 28-node LangGraph StateGraph builder (25 active + 3 backward-compat wrappers registered but NOT wired). `WORKFLOW_METADATA["version"] == "2.0.5"` (Phase 4g review). |
 | `workflows/autocode_impl/state.py` | `AutocodeState` TypedDict + 8 sub-state TypedDicts + 8 accessor functions. All sub-states populated as PRIMARY storage by `_default_state()` (legacy flat fields kept as mirrors for backward compat). |
 | `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_write_files()`, `route_after_run_tests()`, `route_after_verify()` — conditional routing. **[Hardening P1.5]** short-circuits to `node_run_pytest` when `status=="error"`. |
 | `workflows/autocode_impl/helpers.py` | `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. `_call()` retries 2× with exponential backoff; **[Hardening P1.7]** backoff is interruptible via `threading.Event` so cancellation aborts retry sleep. |
@@ -68,7 +68,7 @@
 ```text
 workflows/autocode.py
 ├── run_autocode_agent()              # Main entry point
-│   ├── build_graph()                 # 28-node LangGraph StateGraph (27 active + 1 wrapper)
+│   ├── build_graph()                 # 28-node LangGraph StateGraph (25 active + 3 backward-compat wrappers)
 │   │   ├── node_classify_task()      # Phase 1: Classify task type
 │   │   ├── node_validate_input()     # Phase 2: Validate input
 │   │   ├── node_brainstorm()         # Phase 3: Brainstorm approach
@@ -154,7 +154,7 @@ graph TD
 
 ## 💡 Key Design Decisions
 
-- **28-node LangGraph StateGraph** — 25 active nodes + 3 backward-compat wrappers (registered, NOT wired) + 1 NEW `node_summarize_context` (Phase 11a, debug-loop compression). The 3 wrappers preserve `import`-compatibility for external callers + tests; they are excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 27 active-node entries.
+- **28-node LangGraph StateGraph** — 25 active nodes + 3 backward-compat wrappers (registered, NOT wired) + `node_summarize_context` (Phase 4, debug-loop compression). The 3 wrappers preserve `import`-compatibility for external callers + tests; they are excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 27 active-node entries.
 - **Mode-driven** — The task type (`fix_error`, `improve`, `add_feature`, `create_skill`, `unclear`) determines the workflow path. `node_classify_task` uses the Router LLM to classify.
 - **TDD-first** — For `add_feature` and `improve` modes, tests are generated before implementation.
 - **Iterative debug loop** — `node_systematic_debug` accumulates `debug_history` across iterations (closes the #37 prerequisite); `node_summarize_context` compresses it before re-entering the loop. Last 5 entries injected into the LLM user prompt under a `PRIOR DEBUG ATTEMPTS (do NOT repeat these)` block. New architecture-question exit fires on 3+ consecutive `tests_passed=False` → `tdd_status="max_retries_exceeded"` + procedural memory store (different from #39 stuck detection — fires on DIFFERENT errors each iteration, suggesting architectural bug).
@@ -190,7 +190,20 @@ The `node_validate_input` path traversal check only covers user-supplied paths. 
 
 ## 🧭 [v2.0] Sub-state Architecture
 
-The v2.0 refactor migrated autocode from a flat ~35-field state dict to 8 focused sub-state TypedDicts behind a backward-compatible accessor layer. All 7 phases ✅ COMPLETE. Sub-states are now PRIMARY storage (`_default_state()` populates all 8); legacy flat fields remain as mirrors for backward compat with unmigrated nodes + tests. Legacy field removal is deferred to post-2.0 (`# TODO(2.0-post):`).
+The v2.0 refactor migrated autocode from a flat ~35-field state dict to 8 focused sub-state TypedDicts behind a backward-compatible accessor layer. All 7 phases ✅ COMPLETE.
+
+> **⚠️ [v2.0.5] Migration status: only `tdd` is fully migrated.** `_default_state()`
+> populates all 8 sub-states as PRIMARY storage, but nodes only WRITE to the `tdd`
+> sub-state (via read-modify-write). The other 7 sub-states hold stale defaults
+> because nodes still write to flat fields (`branch`, `commit_sha`, `modified_files`,
+> etc.). The accessors read sub-state first — so `_get_vcs(state, "branch", "main")`
+> returns `""` (the stale default), not the actual branch name. **[v2.0.5 P1-1]**
+> `node_commit` was reverted to direct `state.get("branch")` reads after this
+> split-brain bug was found. Only `_get_tdd` is safe to use today (see INSTRUCTIONS.md
+> NEVER DO #33). Full migration of the remaining 7 sub-states is the v2.x → v3.0
+> roadmap (see CHANGELOG Future Tracks).
+
+Legacy flat fields remain as mirrors for backward compat with unmigrated nodes + tests. Legacy field removal is deferred to v3.0 (`# TODO(v3.0):`).
 
 ### The 8 sub-state TypedDicts
 
@@ -221,7 +234,7 @@ def _get_vcs(state: dict, key: str, default=None):
 
 The 8 accessors: `_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`.
 
-**Why an accessor layer:** No big-bang refactor — migrate one node at a time. Legacy fallback buys time until Phase 6 makes sub-states PRIMARY. `node_git_commit` was the proof-of-concept (Phase 1); `node_systematic_debug` + `node_summarize_context` migrated in Phase 4. Remaining nodes still read legacy flat fields directly; migration to accessors is `# TODO(2.0-post):`.
+**Why an accessor layer:** No big-bang refactor — migrate one node at a time. Legacy fallback buys time until Phase 6 makes sub-states PRIMARY. `node_systematic_debug` + `node_summarize_context` migrated to accessors in Phase 4 (these are the only 2 nodes that write to sub-state via read-modify-write, so `_get_tdd` is safe). `node_git_commit` was migrated as a proof-of-concept in Phase 1, **[v2.0.5] but the `_get_vcs` call was broken (split-brain) and has been reverted** — see CHANGELOG v2.0.5 P1-1. Remaining nodes still read legacy flat fields directly; full migration is the v2.x → v3.0 roadmap.
 
 ### Cancellation flag
 

@@ -115,6 +115,10 @@ def node_run_tests(state: AutocodeState) -> dict:
         from workflows.autocode_impl.state import _get_tdd
         debug_history = _get_tdd(state, "debug_history", [])
         if debug_history:
+            # [v2.0.5] P3-2: Copy before mutating — was mutating the list + dict
+            # in-place. Works today, but unsafe if LangGraph ever snapshots state
+            # between nodes. Defensive copy matches the pattern used by debug.py.
+            debug_history = [dict(e) for e in debug_history]
             debug_history[-1]["tests_passed"] = True
             # Read-modify-write to preserve tdd sub-state (LangGraph replaces
             # dict values, doesn't deep-merge).

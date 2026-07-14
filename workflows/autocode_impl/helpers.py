@@ -89,7 +89,7 @@ def is_cancellation_requested() -> bool:
     return _cancellation_requested
 
 
-def _call(role: str, system: str, user: str, timeout: int | None = None, temperature: float | None = None, json_schema: dict | None = None, retries: int = 2) -> str:
+def _call(role: str, system: str, user: str, timeout: int | None = None, temperature: float | None = None, json_schema: dict | None = None, retries: int = 2, trace_id: str = "") -> str:
     """Call the LLM with the given role, system prompt, and user message.
 
     v1.3: Added json_schema param for structured generation. When provided,
@@ -100,6 +100,8 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
     through a retry backoff when the graph has already timed out.
     [Hardening P1.7] Backoff sleep is now interruptible via _cancel_event.wait
     so request_cancellation() can wake the thread immediately.
+    [v2.0.5] P3-1: Added trace_id param so retry-exhaustion errors are traced to
+    the workflow's trace (was: empty trace_id — errors were unattributed).
     """
     if timeout is None:
         timeout = cfg.model_registry.get(role, {}).get("timeout", cfg.execution_timeout)
@@ -132,7 +134,7 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
                 if _cancel_event.wait(timeout=2 ** attempt):
                     raise RuntimeError("LLM call cancelled during backoff")
                 continue
-            tracer.error("", "llm_call", f"Failed to call {role} model after {retries+1} attempts: {e}")
+            tracer.error(trace_id, "llm_call", f"Failed to call {role} model after {retries+1} attempts: {e}")
             raise
     # Should never reach here, but defensive
     raise last_error  # type: ignore[misc]

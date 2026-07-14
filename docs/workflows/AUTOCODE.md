@@ -110,7 +110,8 @@ cfg.autocode_subagent_debug = False      # Use single isolated subagent dispatch
 | Analyze data | `data` workflow | Code generation + execution, data analysis |
 | Deep research | `deep_research` workflow | Iterative search with convergence detection |
 | Understand codebase | `understand` workflow | Static analysis, dependency graph |
-| Generate report | `report` workflow | Structured report generation |
+| Optimize a metric via experiments | `autoresearch` workflow | Evolutionary loop: modify → run → measure → keep/discard |
+| Generate a report | `report` tool | Structured report generation (tool, not a workflow) |
 
 ---
 
@@ -126,4 +127,4 @@ cfg.autocode_subagent_debug = False      # Use single isolated subagent dispatch
 
 ---
 
-*Last updated: 2026-07-14 (v2.0.4 — Phase 4g review: subagent_verdict field + schema dedup + version sync; v2.0.2 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + v2.x→v3.0 migration roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

@@ -138,6 +138,7 @@ class AutocodeState(TypedDict, total=False):
 
     # [v2.0] Sub-states (optional — Phase 2-5 migration)
     plan: PlanState
+    plan_state: PlanState  # [v2.0.5] P2-2: sub-state primary storage (not "plan" — that's overloaded as list[dict])
     tdd: TDDState
     files_state: FilesState
     impact: ImpactState
@@ -188,6 +189,7 @@ class AutocodeState(TypedDict, total=False):
     # Verification
     verification_notes: str
     verify_report: str
+    verification_passed: bool  # [v2.0.5] P2-1: was undeclared (route_after_verify + commit.py read it)
 
     # Git
     commit_sha: str
@@ -423,6 +425,7 @@ def _default_state(
         "defense_notes": "",
         "verification_notes": "",
         "verify_report": "",
+        "verification_passed": False,  # [v2.0.5] P2-1: was missing from _default_state
         "commit_sha": "",
         "branch_name": "",
         "branch": "",
