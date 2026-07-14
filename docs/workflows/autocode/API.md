@@ -158,98 +158,138 @@ The workflow returns a `dict`:
 ## 🗂️ State Fields (AutocodeState)
 
 The workflow state is a `TypedDict(total=False)` defined in
-`workflows/autocode_impl/state.py`. The most relevant fields for callers and
-future editors:
+`workflows/autocode_impl/state.py`. **[v3.0]** All sub-state fields live in
+8 typed sub-state dicts (`plan_state`, `tdd`, `files_state`, `impact`, `debug`,
+`verify`, `vcs`, `memory`) — the legacy flat-field mirrors were removed.
+Accessors are the ONLY read path for sub-state fields; ephemeral flat fields
+are read directly via `state.get(key, default)`.
 
-**GitHub + Swarm + Subagent integration fields:**
+**For the complete sub-state reference** — TypedDicts, writer/reader node lists, the RMW pattern, migration history — **see [SUBSTATE.md](SUBSTATE.md).**
 
-| Field | Type | Default | Source node | Purpose |
-|-------|------|---------|-------------|---------|
-| `pushed` | `bool` | `False` | `node_push` | Whether the branch was pushed to `origin`. |
-| `pr_number` | `int` | `0` | `node_create_pr` | PR number (0 = no PR created). |
-| `pr_url` | `str` | `""` | `node_create_pr` | PR HTML URL. |
-| `swarm_verdict` | `dict` | `{}` | `node_systematic_debug` | Swarm consensus + vote result. |
-| `subagent_verdict` | `dict` | `{}` | `node_systematic_debug` | Subagent dispatch result (single isolated LLM call with curated context). |
+### Core flat fields (read directly via `state.get(key, default)`)
 
-**Debug loop fields (Phase 4):**
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `task` | `str` | `""` | Natural-language goal (set by facade). |
+| `files` | `dict[str, str]` | `{}` | Initial file contents keyed by relative path. |
+| `mode` | `str` | `""` | `fix_error` / `improve` / `add_feature` / `create_skill` / `unclear`. |
+| `target_file` | `str` | `""` | Optional target file path. |
+| `trace_id` | `str` | `""` | Trace correlation ID. |
+| `dry_run` | `bool` | `False` | Skip writes / commits / branches when `True`. |
+| `task_type` | `str` | `""` | Classified task type (`feature`/`audit`/`edit`/`fix`/`refactor`/`create_skill`/`unclear`). |
+| `project_root` | `str` | `""` | Workspace root for path resolution. |
+| `autocode_run_path` | `str` | `""` | Per-run output directory. |
+| `messages` | `list[AnyMessage]` | `[]` | LangGraph message reducer (annotated). |
+| `status` | `str` | `"running"` | Workflow status (`running`/`success`/`failed`/etc.). |
+| `error` | `str` | `""` | Error message on failure. |
+| `result` | `str` | `""` | Final result string on success. |
 
-| Field | Type | Default | Source node | Purpose |
-|-------|------|---------|-------------|---------|
-| `debug_history` | `list[dict]` | `[]` | `node_systematic_debug` | Within-run debug-loop history. Each entry: `{iteration, phase, root_cause, fix (truncated to 200 chars), tests_passed}`. Swarm-path entries use `phase="swarm"` and include `confidence`. |
-| `debug_summary` | `str` | `""` | `node_summarize_context` | Compressed `debug_history` string. Reverses history (most recent first), renders each entry as a sentence, returns first chonkie `SentenceChunker(chunk_size=512)` chunk (or JSON-of-last-3-entries fallback if chonkie unavailable). **[Hardening P2]** consumed by `node_systematic_debug` prompt when `debug_history` > 5 entries (was written but never read). |
+### Sub-state fields (read via accessors ONLY — see [🧭 State Accessors](#-v30-state-accessors) below)
+
+| Sub-state key | TypedDict | Representative fields | Accessor |
+|---------------|-----------|----------------------|----------|
+| `plan_state` | `PlanState` | `brainstorm_notes`, `plan`, `plan_accepted`, `spec`, `current_step` | `_get_plan` |
+| `tdd` | `TDDState` | `iteration`, `source_code`, `error`, `status`, `max_retries`, `last_test_error`, `tests_written`, `debug_history`, `debug_summary` | `_get_tdd` |
+| `files_state` | `FilesState` | `files_map`, `modified_files` (`input_files` removed in v3.0) | `_get_files` |
+| `impact` | `ImpactState` | `warnings`, `targeted_test_cmd`, `failed` | `_get_impact` |
+| `debug` | `DebugState` | `notes`, `root_cause`, `defense_notes`, `swarm_verdict`, `subagent_verdict` | `_get_debug` |
+| `verify` | `VerifyState` | `notes`, `report`, `passed` | `_get_verify` |
+| `vcs` | `VCSState` | `commit_sha`, `branch`, `branch_name`, `pushed`, `pr_number`, `pr_url` | `_get_vcs` |
+| `memory` | `MemoryState` | `notes`, `context` | `_get_memory` |
+
+> **Note:** `input_files` was removed from `FilesState` in v3.0 — it was just a mirror of the core `files` flat field. `validate.py`, `brainstorm.py`, `plan.py`, `tests.py` now read `state.get("files", {})` directly.
+
+### Ephemeral flat fields (read directly via `state.get(key, default)`)
+
+**[v3.0]** Ephemeral flat fields stay flat — they're inter-node scratch space, not part of any sub-state. See [SUBSTATE.md](SUBSTATE.md) § "Ephemeral Flat Fields" for the full table.
+
+| Field | Set by | Read by | Purpose |
+|-------|--------|---------|---------|
+| `test_code` | `node_write_tests` | `node_persist_artifacts` | Generated test code (joined `"\n\n"` if list). |
+| `test_files` | `node_persist_artifacts` | `node_run_pytest`, `node_run_tests` | Relative paths of test files. |
+| `test_results` | `node_run_pytest`, `node_run_tests` | `node_debug`, `node_verify_decision`, `node_report`, `_shape_artifacts` | `{success, stdout, stderr, returncode}`. Removed from `TDDState` in v3.0. |
+| `_pytest_output` | `node_run_pytest` | `node_llm_review`, `node_verify_decision` | First 2000 chars of pytest stdout+stderr. |
+| `tests_passed` | `node_run_pytest`, `node_run_tests` | `node_verify_decision`, `node_llm_review` | Boolean test-pass status. |
+| `lint_output` | `node_run_lint` | `node_llm_review`, `node_verify_decision` | First 500 chars of ruff stdout+stderr. |
+| `lint_passed` | `node_run_lint` | `node_verify_decision` | `None` when ruff unavailable. |
+| `llm_review_data` | `node_llm_review` | `node_verify_decision` | `{automated_checks_passed, checks, summary}`. |
+| `execution_notes` | `node_execute_step` | (downstream) | Per-step execution notes. |
+| `skill_path` | `node_create_skill` | `_shape_artifacts` | Path to created skill file. |
+| `skill_created` | `node_create_skill` | `_shape_artifacts` | Skill creation success flag. |
+| `patch_errors` | `node_apply_patches` | (downstream) | Path-traversal blocks + missing-file + apply failures. |
+| `evidence_outputs` | `node_verify_decision` | `_shape_artifacts` | `{tests, lint, regression}` (truncated). |
+| `memory_context` | `node_brainstorm` | (downstream) | KG-recalled memory context. |
 
 For the full field list, see `workflows/autocode_impl/state.py`.
 
 ---
 
-## 🧭 [v2.0] State Accessors
+## 🧭 [v3.0] State Accessors
 
-The v2.0 refactor introduced a backward-compatible accessor layer over
-`AutocodeState`. Each accessor reads from the corresponding sub-state dict if
-present, else falls back to the legacy flat field. See ARCHITECTURE.md §
-"[v2.0] Sub-state Architecture" for the design rationale.
+**[v3.0]** All 8 accessors are the ONLY read path for sub-state fields. Each is a 4-line sub-state-only read — no legacy fallback. For the full accessor reference (signatures, RMW pattern, writer/reader node lists), see [SUBSTATE.md](SUBSTATE.md).
 
-> **⚠️ [v2.0.5] Only `_get_tdd` is safe to use today.** The other 7 accessors
-> (`_get_plan`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`,
-> `_get_vcs`, `_get_memory`) are **migration scaffolding that return stale
-> sub-state defaults** because nodes write to flat fields, not sub-state dicts.
-> Only `tdd` is actively maintained by nodes (via read-modify-write). The
-> split-brain trap: `_get_vcs(state, "branch", "main")` returns `""` (the
-> sub-state default), not the actual branch name (which lives in the flat
-> `branch` field). **For all non-`tdd` reads, use `state.get(key, default)`
-> directly.** Full migration is the v2.x → v3.0 roadmap (see CHANGELOG Future
-> Tracks). See INSTRUCTIONS.md NEVER DO #33 + ALWAYS DO #44.
+> **[v3.0] All 8 accessors are safe and are the ONLY path.** Use them for any
+> sub-state field read (`_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`,
+> `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`). For ephemeral flat
+> fields (test_results, test_code, _pytest_output, lint_output, etc.), use
+> `state.get(key, default)` directly. See INSTRUCTIONS.md NEVER DO #33 +
+> ALWAYS DO #29.
 
 ### The 8 accessor functions
 
-| Function | Sub-state TypedDict | Reads from | Legacy fallback fields |
-|----------|---------------------|------------|------------------------|
-| `_get_plan(state, key, default=None)` | `PlanState` | `state["plan_state"]` dict (NOT `state["plan"]` — that's overloaded as `list[dict]` step list) | `task_type`, `plan`, `branch`, `current_step` |
-| `_get_tdd(state, key, default=None)` | `TDDState` | `state["tdd"]` dict | `test_code`, `test_results`, `tdd_status`, `tdd_iteration`, `debug_history`, `debug_summary` |
-| `_get_files(state, key, default=None)` | `FilesState` | `state["files_state"]` dict | `files`, `modified_files`, `written_files`, `files_map` |
-| `_get_impact(state, key, default=None)` | `ImpactState` | `state["impact"]` dict | `impact_warnings`, `blast_radius_note` |
-| `_get_debug(state, key, default=None)` | `DebugState` | `state["debug"]` dict | `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`, `swarm_verdict` |
-| `_get_verify(state, key, default=None)` | `VerifyState` | `state["verify"]` dict | `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes` |
-| `_get_vcs(state, key, default=None)` | `VCSState` | `state["vcs"]` dict | `branch`, `commit_sha`, `pushed`, `pr_number`, `pr_url` |
-| `_get_memory(state, key, default=None)` | `MemoryState` | `state["memory"]` dict | `brainstorm`, `skill_path`, `skill_created` |
+| Function | Sub-state TypedDict | Reads from |
+|----------|---------------------|------------|
+| `_get_plan(state, key, default=None)` | `PlanState` | `state["plan_state"]` dict (NOT `state["plan"]` — that's the legacy `list[dict]` step list) |
+| `_get_tdd(state, key, default=None)` | `TDDState` | `state["tdd"]` dict |
+| `_get_files(state, key, default=None)` | `FilesState` | `state["files_state"]` dict |
+| `_get_impact(state, key, default=None)` | `ImpactState` | `state["impact"]` dict |
+| `_get_debug(state, key, default=None)` | `DebugState` | `state["debug"]` dict |
+| `_get_verify(state, key, default=None)` | `VerifyState` | `state["verify"]` dict |
+| `_get_vcs(state, key, default=None)` | `VCSState` | `state["vcs"]` dict |
+| `_get_memory(state, key, default=None)` | `MemoryState` | `state["memory"]` dict |
 
-**Signature (all 8 accessors share this shape):**
+**Signature (all 8 accessors share this 4-line shape — no legacy fallback):**
 
 ```python
-def _get_vcs(state: dict, key: str, default=None):
-    """Read `key` from state["vcs"] if present, else fall back to state[key]."""
-    vcs = state.get("vcs")
-    if isinstance(vcs, dict) and key in vcs:
-        return vcs[key]
-    return state.get(key, default)
+def _get_vcs(state: dict, key: str, default: Any = None) -> Any:
+    """Read `key` from state["vcs"] if present, else return `default`."""
+    sub = state.get("vcs")
+    if isinstance(sub, dict) and key in sub:
+        return sub[key]
+    return default
 ```
 
 ### Usage in nodes
 
-`node_git_commit` is the proof-of-concept. It reads the branch name via
-`_get_vcs(state, "branch", "main")` instead of `state.get("branch", "main")`:
+Every node that reads a sub-state field MUST use the corresponding accessor.
+Example: `node_git_commit` reads the branch name via `_get_vcs(state, "branch", "")`
+instead of the legacy `state.get("branch", "")`:
 
 ```python
-# Before (v1.4):
-branch = state.get("branch", "main")
-
-# After (v2.0):
+# [v3.0] accessor read — sub-state is the ONLY storage
 from workflows.autocode_impl.state import _get_vcs
-branch = _get_vcs(state, "branch", "main")
+branch = _get_vcs(state, "branch", "") or "main"
+
+# [v3.0] ephemeral flat field — read directly (no accessor)
+test_results = state.get("test_results", {})
 ```
 
-`node_systematic_debug` and `node_summarize_context` are also migrated to
-accessors. `node_git_commit` was migrated as a proof-of-concept, **[v2.0.5]
-but the `_get_vcs` call was broken (split-brain) and has been reverted to
-direct `state.get("branch")` reads** (see CHANGELOG v2.0.5 P1-1). The remaining
-nodes still use the legacy `state.get(...)` pattern; full migration is the
-v2.x → v3.0 roadmap (see CHANGELOG Future Tracks).
+**[v3.0]** All nodes that read sub-state fields have been migrated: routes.py
+(2 reads), autocode.py `_shape_artifacts` (5 reads), and 11 node files (tdd_*,
+debug_notes, root_cause, modified_files, etc.). The v2.0.5 split-brain warning
+is lifted — there is no flat fallback to be split-brained against.
 
-### Ephemeral fields (not in TypedDict)
+### RMW pattern (write side)
 
-| Field | Type | Set by | Read by | Purpose |
-|-------|------|--------|---------|---------|
-| `_pytest_output` | `str` | `node_run_pytest` (verify chain) | `node_llm_review`, `node_verify_decision` | Ephemeral — passes fresh pytest stdout+stderr between verify-chain nodes. Not persisted in `_default_state()`; not declared in `AutocodeState` TypedDict (intentional — it's scratch space for the verify sub-chain). |
+LangGraph replaces dict values, doesn't deep-merge. Returning `{"vcs": {"pushed": True}}` clobbers every other `vcs` field. Always do read-modify-write:
+
+```python
+current_vcs = dict(state.get("vcs", {}))           # 1. READ (shallow copy)
+current_vcs["pushed"] = success                    # 2. MODIFY (on the copy)
+return {"vcs": current_vcs}                        # 3. WRITE (return partial)
+```
+
+See [SUBSTATE.md](SUBSTATE.md) § "RMW Pattern" for full pattern + variants.
 
 ### `helpers._write_files()` — DELETED
 
@@ -280,7 +320,7 @@ for all VCS helpers**. It merges the former `git_ops.py` (local operations) +
 All lazy imports, `is_configured()` guards, `tracer.step` logging, and
 structured returns are preserved. `git_ops.py` + `github_ops.py` are kept as
 thin re-export wrappers so existing imports still work. **New code MUST import
-from `vcs_ops.py` directly** — see INSTRUCTIONS.md ALWAYS DO #53.
+from `vcs_ops.py` directly** — see INSTRUCTIONS.md ALWAYS DO #37.
 
 ### `debug_history` field — written by `node_systematic_debug`, read by `node_summarize_context`
 
@@ -299,7 +339,7 @@ All three paths populate `debug_history` (with `phase` set accordingly: `investi
 - **CONSUMED** by `node_summarize_context`: reads `debug_history` and compresses it into `debug_summary` via chonkie `SentenceChunker` (soft dep, lazy import) before re-entering the loop.
 - **Architecture-question exit:** `node_systematic_debug` reads the last 3 entries — if all have `tests_passed=False`, it bails with `tdd_status="max_retries_exceeded"` + procedural memory store. Different from #39 stuck detection (same error repeating) — this fires when DIFFERENT errors occur each iteration.
 - **Preserved on early exit:** Both early-exit paths (architecture + max_retries) return `"tdd": {"debug_history": debug_history}` so the full history is available for downstream inspection / procedural memory store.
-- **Accessor:** `_get_tdd(state, "debug_history", [])` reads from the TDD sub-state dict if present, else falls back to the legacy flat field.
+- **Accessor:** `_get_tdd(state, "debug_history", [])` reads from the TDD sub-state dict (sub-state is the ONLY storage since v3.0 — no legacy fallback).
 
 `# TODO(2.0-post):` Cross-run learning (procedural memory recall before debug) is still pending — see CHANGELOG.md § "Future Tracks (Post-2.0)" F5.
 
@@ -311,20 +351,73 @@ produced by `node_summarize_context`:
 - **WRITTEN** by `node_summarize_context`: reverses history (most recent first), renders each entry as a single sentence, tries `chonkie.SentenceChunker(chunk_size=512)`, returns the FIRST chunk. On any exception falls back to `json.dumps(last_3_entries)`.
 - **[Hardening P2] CONSUMED** by `node_systematic_debug`: when `debug_history` grows past 5 entries, the LLM user prompt replaces the raw last-5-entries block with a "DEBUG SUMMARY (compressed)" block containing the summary string. Keeps LLM context bounded (#37) in long-running debug loops.
 - **Empty when history is empty:** First debug iteration (no prior attempts) → `node_summarize_context` returns `{"tdd": {"debug_summary": ""}}`.
-- **Accessor:** `_get_tdd(state, "debug_summary", "")` reads from the TDD sub-state dict if present, else falls back to the legacy flat field.
+- **Accessor:** `_get_tdd(state, "debug_summary", "")` reads from the TDD sub-state dict (sub-state is the ONLY storage since v3.0 — no legacy fallback).
 
 ---
 
 ## 🔒 Security
 
-*(Fill this section with relevant info from edits and refactors. Add security details as they are learned.)*
+**[v3.0] Sub-state architecture is a security improvement — no more split-brain.**
+Before v3.0, sub-state fields had flat-field mirrors that could drift out of sync (writer updated one, reader read the other). The v2.0.5 split-brain bug in `commit.py` (`_get_vcs(state, "branch", "main")` returning stale `""` instead of the actual branch) was the proof. v3.0 removed the flat-field mirrors entirely — every read goes through the accessor, every write goes through RMW, there is no second source of truth to drift.
+
+### Path traversal protection
+- **User-supplied paths:** `node_validate_input` checks `target_file` + `files` keys.
+- **LLM-generated paths:** `patches[].path` + `new_files{}` keys are validated via `_is_path_safe(base_path, rel_path)` in `apply_patches.py` (imported by `write_new_files.py`). Uses `Path.resolve().is_relative_to()`.
+- **Skill names:** `_sanitize_skill_name()` strips non-`[a-zA-Z0-9_]` chars (prevents `/` or `\` path traversal).
+
+### Secret handling
+- All 7 GitHub/Swarm/Subagent config flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_SUBAGENT_DEBUG`) default **OFF** — backward compat (with all OFF, autocode behaves identically to v1.2).
+- `is_configured()` guard: every `vcs_ops.py` helper MUST call `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()`) before any GitHub API call. Missing `GITHUB_TOKEN` / `GITHUB_OWNER` / `GITHUB_REPO` → graceful-skip (returns `False`/`None`, workflow continues).
+- `_call()` retries are interruptible via `threading.Event` — secrets/credentials are never logged.
+
+### Atomic writes
+- `node_write_new_files` uses `tempfile.NamedTemporaryFile` + `os.replace` + `FileLock` (1 retry on timeout).
+- `node_create_skill` uses `tempfile.NamedTemporaryFile` + `os.replace` (was direct `write_text` — crash mid-write corrupted the skill file).
+
+### LLM JSON parsing
+- All LLM-generated JSON is parsed via `_parse_json()` (in `helpers.py`) which delegates to `core/json_extract.py`. Handles markdown fences (```` ```json ... ``` ````), partial JSON, and trailing content. Never use raw `json.loads()` on LLM output — see INSTRUCTIONS.md NEVER DO #24.
+
+### vcs_ops.py encapsulation
+- `vcs_ops.py` helpers (`_git_*`, `_github_*`, `_swarm_debug_consensus`) are **private to the autocode workflow nodes**. External code MUST call the public `tools.github` / `tools.git` / `tools.swarm` facades (see INSTRUCTIONS.md NEVER DO #22).
 
 ---
 
 ## 📝 Error Handling
 
-*(Fill this section with relevant info from edits and refactors. Add error classification as it is learned.)*
+The workflow uses a `status` field on `AutocodeState` to track workflow-level state. Nodes return partial dicts with `status` + `error` to signal failure; LangGraph routes via `route_after_*` functions.
+
+### Status values
+
+| `status` value | Meaning | Set by | Next route |
+|----------------|---------|--------|------------|
+| `"running"` | Default — workflow in progress. | `_default_state()` | continues |
+| `"valid"` | Input validation passed. | `node_validate_input` | continues |
+| `"error"` | Hard error (parse failure, missing file, etc.). | Various | short-circuit: `route_after_*` routes to `node_run_pytest` (Hardening P1.5) or END |
+| `"needs_clarification"` | LLM returned ambiguous output. | Various | node skips (`{}` return) |
+| `"failed"` | Workflow failed. | `node_verify_decision`, `node_push`, etc. | END |
+| `"skipped"` | Node skipped (e.g., `node_create_skill` when not applicable). | Various | continues |
+| `"dry_run"` | `dry_run=True` — writes/commits/branches skipped. | `node_apply_patches`, `node_push` | continues |
+| `"success"` | Workflow succeeded. | terminal node | END |
+
+### Error categories
+
+| Category | Example | Handling |
+|----------|---------|----------|
+| **LLM failure** | `_call()` exhausted retries, returned `""` | Node falls back to default (e.g., `task_type="unclear"`) or returns `{"status": "error", "error": ...}`. |
+| **JSON parse failure** | LLM returned non-JSON or markdown-fenced JSON | `_parse_json()` returns `{}`; node logs warning + uses defaults. |
+| **Subprocess failure** | `pytest` / `ruff` / `git` returned non-zero | Captured as structured return; workflow continues (lint is advisory). |
+| **GitHub API failure** | `_github_pr_create()` raised | Graceful-skip: `is_configured()` returns `False` → helper returns `None`/`False`. |
+| **Path traversal** | LLM returned `../../etc/passwd` | `_is_path_safe()` returns `False`; path added to `patch_errors`. |
+| **Timeout** | `invoke_with_timeout()` exceeded `cfg.autocode_graph_timeout` | `request_cancellation()` → `_call()` retries abort; status set to `"Autocode graph crashed: <exception>"` (Hardening P0.3). |
+| **Max retries exceeded** | `iteration > max_retries` in debug loop | `tdd_status="max_retries_exceeded"` + procedural memory store; verify chain returns `"failed"`. |
+| **Stuck detection** | Same error signature on consecutive debug iterations | `route_after_run_tests` routes `"stuck"` → `node_run_pytest` (skips doomed debug). |
+| **Architecture-question exit** | 3+ consecutive `tests_passed=False` (different errors each iteration) | `tdd_status="max_retries_exceeded"` + procedural memory store (different from stuck — fires on architectural bug). |
+
+### Tracing
+- Every node should call `tracer.step(tid, ...)` for graceful events + `tracer.error(tid, category, message)` (3 args — see NEVER DO #29) for failures.
+- `trace_id` is mandatory on every tracer call (INSTRUCTIONS.md ALWAYS DO).
+- `_call()` retry-exhaustion errors now include `trace_id` (Hardening P3-1).
 
 ---
 
-*Last updated: 2026-07-12 (v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

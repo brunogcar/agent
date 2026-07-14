@@ -33,21 +33,21 @@ def node_push(state: AutocodeState) -> dict:
 
     # If push not enabled, skip (but let downstream nodes decide)
     if not cfg.autocode_push_on_commit:
-        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["pushed"] = False
-        return {"pushed": False, "vcs": current_vcs}
+        return {"vcs": current_vcs}
 
     branch = _get_vcs(state, "branch", "")  # [v2.1] accessor
     if not branch:
         tracer.step(tid, "push", "no branch in state — skipping")
-        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["pushed"] = False
-        return {"pushed": False, "vcs": current_vcs}
+        return {"vcs": current_vcs}
 
     success = _github_push(branch, tid)
-    # [v2.1] RMW: write to vcs sub-state + flat mirror
+    # [v2.1] RMW: write to vcs sub-state
     current_vcs = dict(state.get("vcs", {}))
     current_vcs["pushed"] = success
-    return {"pushed": success, "vcs": current_vcs}
+    return {"vcs": current_vcs}

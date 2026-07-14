@@ -3,7 +3,7 @@ Routing functions for the autocode state machine.
 """
 from __future__ import annotations
 from typing import Any
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_verify
 
 def route_after_classify(state: AutocodeState) -> str:
     """Route after task classification node."""
@@ -59,8 +59,8 @@ def route_after_run_tests(state: AutocodeState) -> str:
     # [Hardening P1.5] Short-circuit on prior node error.
     if state.get("status") == "error":
         return "node_verify"  # routes to run_pytest (first verify sub-node)
-    tdd_status = state.get("tdd_status", "")
-    test_results = state.get("test_results", {})
+    tdd_status = _get_tdd(state, "status", "")  # [v3.0] accessor (was flat field)
+    test_results = state.get("test_results", {})  # [v3.0] stays flat (ephemeral)
     if tdd_status == "passed" or test_results.get("success"):
         return "node_verify"
     elif tdd_status == "max_retries_exceeded":
@@ -73,7 +73,7 @@ def route_after_run_tests(state: AutocodeState) -> str:
 
 def route_after_verify(state: AutocodeState) -> str:
     """Route after verification node."""
-    if state.get("verification_passed", False):
+    if _get_verify(state, "passed", False):  # [v3.0] accessor (was flat field)
         return "report"
     else:
         return "END"

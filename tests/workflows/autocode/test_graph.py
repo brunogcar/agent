@@ -116,30 +116,44 @@ class TestWorkflowMetadata:
 
 class TestStateSchema:
     def test_state_has_all_required_tdd_fields(self):
-        from workflows.autocode_impl.state import AutocodeState
+        """[v3.0] TDD fields moved to TDDState sub-state; test_results stays flat (ephemeral)."""
+        from workflows.autocode_impl.state import AutocodeState, TDDState, PlanState
         import typing
-        hints = typing.get_type_hints(AutocodeState)
-        for field in ["tdd_source_code", "tdd_status", "tdd_iteration",
-                       "test_results", "plan", "current_step"]:
-            assert field in hints, f"AutocodeState missing required TDD field: {field}"
+        # TDD fields are now in TDDState sub-state
+        tdd_hints = typing.get_type_hints(TDDState)
+        for field in ["source_code", "status", "iteration"]:
+            assert field in tdd_hints, f"TDDState missing required field: {field}"
+        # test_results stays flat (ephemeral, not in any sub-state)
+        state_hints = typing.get_type_hints(AutocodeState)
+        assert "test_results" in state_hints, "AutocodeState missing ephemeral test_results field"
+        # plan + current_step are in PlanState sub-state
+        plan_hints = typing.get_type_hints(PlanState)
+        for field in ["plan", "current_step"]:
+            assert field in plan_hints, f"PlanState missing required field: {field}"
 
     def test_state_has_git_scoping_field(self):
-        from workflows.autocode_impl.state import AutocodeState
+        """[v3.0] spec moved to PlanState sub-state; project_root stays flat (core)."""
+        from workflows.autocode_impl.state import AutocodeState, PlanState
         import typing
-        hints = typing.get_type_hints(AutocodeState)
-        assert "project_root" in hints
-        assert "spec" in hints
+        state_hints = typing.get_type_hints(AutocodeState)
+        assert "project_root" in state_hints  # core flat field
+        # spec is now in PlanState sub-state
+        plan_hints = typing.get_type_hints(PlanState)
+        assert "spec" in plan_hints
 
     def test_default_state_structure(self):
+        """[v3.0] plan is in plan_state sub-state; tdd_iteration is in tdd sub-state."""
         from workflows.autocode_impl.state import _default_state
         state = _default_state(task="schema check")
         assert state["task"] == "schema check"
         assert state["status"] == "running"
         assert state["dry_run"] is False
-        assert isinstance(state["plan"], list)
-        assert state["plan"] == []
+        # plan is now in plan_state sub-state
+        assert isinstance(state["plan_state"]["plan"], list)
+        assert state["plan_state"]["plan"] == []
         assert state["project_root"] == ""
-        assert state["tdd_iteration"] == 0
+        # tdd_iteration is now in tdd sub-state
+        assert state["tdd"]["iteration"] == 0
 
 
 # ─── Partial-dict returns (structural invariant) ────────────────────────────

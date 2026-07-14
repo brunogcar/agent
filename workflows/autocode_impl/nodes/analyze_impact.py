@@ -41,24 +41,20 @@ def node_analyze_impact(state: AutocodeState) -> dict:
     Converted to sync, wrapping async calls in _run_async().
 
     [v2.4] Sub-state migration: now writes to the `impact` sub-state via
-    read-modify-write (RMW) alongside the legacy flat fields. The flat
-    fields are kept as mirrors for backward compat with unmigrated readers
-    until v3.0. See Track M1 in CHANGELOG.
+    read-modify-write (RMW). The flat-field mirrors were removed in v3.0
+    once all readers were migrated to accessors. See Track M1 in CHANGELOG.
     """
     tid = state.get("trace_id", "unknown")
     files_map = _get_files(state, "files_map", {})  # [v2.3] accessor
     project_root = state.get("project_root", "")
 
     if not files_map:
-        # [v2.4] RMW: write to impact sub-state + flat mirrors
+        # [v2.4] RMW: write to impact sub-state
         current_impact = dict(state.get("impact", {}))
         current_impact["warnings"] = []
         current_impact["targeted_test_cmd"] = None
         current_impact["failed"] = False
         return {
-            "impact_warnings": [],
-            "targeted_test_cmd": None,
-            "analyze_impact_failed": False,
             "impact": current_impact,
         }
 
@@ -169,21 +165,18 @@ def node_analyze_impact(state: AutocodeState) -> dict:
             warnings_count=len(impact_warnings)
         )
 
-        # [v2.4] RMW: write to impact sub-state + flat mirrors
+        # [v2.4] RMW: write to impact sub-state
         current_impact = dict(state.get("impact", {}))
         current_impact["warnings"] = impact_warnings
         current_impact["targeted_test_cmd"] = targeted_test_cmd
         current_impact["failed"] = False
         return {
-            "impact_warnings": impact_warnings,
-            "targeted_test_cmd": targeted_test_cmd,
-            "analyze_impact_failed": False,
             "impact": current_impact,
         }
-        
+
     except Exception as e:
         tracer.error(tid, "analyze_impact", f"AST analysis failed: {e}")
-        # [v2.4] RMW: write to impact sub-state + flat mirrors
+        # [v2.4] RMW: write to impact sub-state
         current_impact = dict(state.get("impact", {}))
         current_impact["warnings"] = [{
             "type": "AST_ERROR",
@@ -193,8 +186,5 @@ def node_analyze_impact(state: AutocodeState) -> dict:
         current_impact["targeted_test_cmd"] = "pytest"
         current_impact["failed"] = True
         return {
-            "impact_warnings": current_impact["warnings"],
-            "targeted_test_cmd": "pytest",
-            "analyze_impact_failed": True,
             "impact": current_impact,
         }

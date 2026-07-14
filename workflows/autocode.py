@@ -19,7 +19,14 @@ from typing import Any
 from workflows.autocode_impl.graph import build_graph, get_graph, WORKFLOW_METADATA
 
 # State (public API — used by tests and callers)
-from workflows.autocode_impl.state import AutocodeState, _default_state
+from workflows.autocode_impl.state import (
+    AutocodeState,
+    _default_state,
+    _get_vcs,
+    _get_files,
+    _get_tdd,
+    _get_verify,
+)
 
 __all__ = [
     "run_autocode_agent",
@@ -100,13 +107,13 @@ def _shape_artifacts(final_state: dict) -> dict[str, Any]:
     having to guess which state keys to read.
     """
     return {
-        "commit_sha": final_state.get("commit_sha", ""),
-        "branch_name": final_state.get("branch_name") or final_state.get("branch", ""),  # [Pre-2.0 Fix] fallback to "branch" — plan.py writes "branch", not "branch_name"
-        "modified_files": final_state.get("modified_files", []),
-        "test_results": final_state.get("test_results", {}),
-        "tdd_status": final_state.get("tdd_status", ""),
-        "tdd_iteration": final_state.get("tdd_iteration", 0),
-        "verification_passed": final_state.get("verification_passed", False),
+        "commit_sha": _get_vcs(final_state, "commit_sha", ""),  # [v3.0] accessor
+        "branch_name": _get_vcs(final_state, "branch", ""),  # [v3.0] accessor (was flat branch_name + branch fallback)
+        "modified_files": _get_files(final_state, "modified_files", []),  # [v3.0] accessor
+        "test_results": final_state.get("test_results", {}),  # [v3.0] stays flat (ephemeral)
+        "tdd_status": _get_tdd(final_state, "status", ""),  # [v3.0] accessor
+        "tdd_iteration": _get_tdd(final_state, "iteration", 0),  # [v3.0] accessor
+        "verification_passed": _get_verify(final_state, "passed", False),  # [v3.0] accessor
         "skill_created": final_state.get("skill_created", False),
         "skill_path": final_state.get("skill_path", ""),
     }

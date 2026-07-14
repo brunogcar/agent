@@ -76,44 +76,40 @@ def node_create_pr(state: AutocodeState) -> dict:
 
     # If PR creation not enabled, skip
     if not cfg.autocode_open_pr:
-        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["pr_number"] = 0
         current_vcs["pr_url"] = ""
-        return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}
+        return {"vcs": current_vcs}
 
     # Can't create a PR without pushing first
     if not _get_vcs(state, "pushed", False):  # [v2.1] accessor
         tracer.step(tid, "create_pr", "skipping PR — branch not pushed")
-        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["pr_number"] = 0
         current_vcs["pr_url"] = ""
-        return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}
+        return {"vcs": current_vcs}
 
     branch = _get_vcs(state, "branch", "")  # [v2.1] accessor
     if not branch:
-        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["pr_number"] = 0
         current_vcs["pr_url"] = ""
-        return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}
+        return {"vcs": current_vcs}
 
     pr_title = f"autocode: {state.get('task', '')[:60]}"
     pr_body = _build_pr_body(state)
     pr_data = _github_pr_create(branch, pr_title, pr_body, tid)
     if pr_data:
-        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["pr_number"] = pr_data.get("number", 0)
         current_vcs["pr_url"] = pr_data.get("url", "")
-        return {
-            "pr_number": current_vcs["pr_number"],
-            "pr_url": current_vcs["pr_url"],
-            "vcs": current_vcs,
-        }
-    # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        return {"vcs": current_vcs}
+    # [v2.1] RMW: write to vcs sub-state
     current_vcs = dict(state.get("vcs", {}))
     current_vcs["pr_number"] = 0
     current_vcs["pr_url"] = ""
-    return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}
+    return {"vcs": current_vcs}

@@ -55,16 +55,15 @@ class TestNodeGitBranchScoping:
     def test_branch_routes_to_project_root(self, tmp_path):
         from workflows.autocode_impl.nodes.branch import node_git_branch
         custom_root = str(tmp_path / "scoped_repo")
-        # [v2.1] Use _default_state() so vcs sub-state is populated (catches split-brain).
-        # Then override branch in BOTH sub-state + flat field (what plan.py does post-v2.1).
+        # [v3.0] Use _default_state() so vcs sub-state is populated.
+        # Then override branch in the vcs sub-state ONLY (no flat mirror).
         from workflows.autocode_impl.state import _default_state
         state = _default_state(task="branch test")
         state["trace_id"] = "t5"
         state["status"] = "running"
         state["project_root"] = custom_root
-        state["branch"] = "feat/scoped"  # flat mirror
         state["vcs"] = dict(state.get("vcs", {}))
-        state["vcs"]["branch"] = "feat/scoped"  # sub-state (primary)
+        state["vcs"]["branch"] = "feat/scoped"  # sub-state (primary, only)
         with patch("workflows.autocode_impl.nodes.branch._git_create_branch") as mock_branch:
             mock_branch.return_value = True
             node_git_branch(state)
@@ -77,14 +76,13 @@ class TestNodeGitBranchErrorHandling:
 
     def test_returns_error_on_failure(self, tmp_path):
         from workflows.autocode_impl.nodes.branch import node_git_branch
-        # [v2.1] Use _default_state() so vcs sub-state is populated (catches split-brain).
+        # [v3.0] Use _default_state() so vcs sub-state is populated.
         from workflows.autocode_impl.state import _default_state
         state = _default_state(task="branch fail")
         state["trace_id"] = "t1"
         state["status"] = "running"
-        state["branch"] = "feat/broken"  # flat mirror
         state["vcs"] = dict(state.get("vcs", {}))
-        state["vcs"]["branch"] = "feat/broken"  # sub-state (primary)
+        state["vcs"]["branch"] = "feat/broken"  # sub-state (primary, only)
         with patch("workflows.autocode_impl.nodes.branch._git_create_branch", return_value=False):
             result = node_git_branch(state)
             assert result["status"] == "error"

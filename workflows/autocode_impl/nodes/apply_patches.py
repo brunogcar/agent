@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
+from workflows.autocode_impl.state import AutocodeState, _get_files, _get_tdd  # [v2.3+v3.0] accessors
 from workflows.autocode_impl.helpers import _parse_json  # [Hardening P1.4]
 from core.config import cfg
 from core.tracer import tracer
@@ -56,7 +56,7 @@ def node_apply_patches(state: AutocodeState) -> dict:
     if state.get("status") in ("needs_clarification", "failed"):
         return {}
 
-    if not state.get("tdd_source_code"):
+    if not _get_tdd(state, "source_code", ""):  # [v3.0] accessor (was flat field)
         return {}
 
     # Parse the generated code JSON (shared parsing — patches + new_files)
@@ -64,7 +64,7 @@ def node_apply_patches(state: AutocodeState) -> dict:
     # _parse_json returns {} on failure; convert empty result into an explicit error
     # so the existing `except Exception` handler + downstream callers see the failure.
     try:
-        data = _parse_json(state.get("tdd_source_code", ""))
+        data = _parse_json(_get_tdd(state, "source_code", ""))  # [v3.0] accessor (was flat field)
         if not data:
             raise ValueError("_parse_json returned empty dict (invalid or unparseable JSON)")
     except Exception as e:
@@ -74,10 +74,10 @@ def node_apply_patches(state: AutocodeState) -> dict:
     # [#47] Dry-run: skip all file writes AFTER validation checks pass.
     if state.get("dry_run"):
         tracer.step(tid, "apply_patches", "dry_run=True — skipping patch application")
-        # [v2.3] RMW: write to files sub-state + flat mirror
+        # [v2.3] RMW: write to files sub-state
         current_files = dict(state.get("files_state", {}))
         current_files["modified_files"] = []
-        return {"status": "dry_run", "modified_files": [], "files_state": current_files}
+        return {"status": "dry_run", "files_state": current_files}
 
     from workflows.autocode_impl.patch import apply_patch
 
@@ -119,10 +119,10 @@ def node_apply_patches(state: AutocodeState) -> dict:
     if patch_errors:
         tracer.step(tid, "apply_patches", f"{len(patch_errors)} patch error(s): {patch_errors[0]}")
 
-    # [v2.3] RMW: write to files sub-state + flat mirror
+    # [v2.3] RMW: write to files sub-state
     current_files = dict(state.get("files_state", {}))
     current_files["modified_files"] = modified_files
-    updates: dict[str, Any] = {"modified_files": modified_files, "files_state": current_files}
+    updates: dict[str, Any] = {"files_state": current_files}
     if patch_errors:
         updates["patch_errors"] = patch_errors
     return updates

@@ -53,7 +53,7 @@ from workflows.autocode_impl.routes import (
 # complexity (17 nodes, debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "2.0.5",  # [v2.0.5] Phase 4g review: _get_vcs split-brain fix + state schema gaps + migration docs
+    "version": "3.0",  # [v3.0] Flat-field removal — Track M1 complete
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [

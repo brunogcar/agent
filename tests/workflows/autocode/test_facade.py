@@ -81,12 +81,13 @@ class TestRunWorkflowAutocode:
 class TestStructuredArtifacts:
     def test_shape_artifacts_extracts_fields(self):
         from workflows.autocode import _shape_artifacts
+        # [v3.0] _shape_artifacts reads via accessors — populate the sub-states.
         final_state = {
-            "commit_sha": "abc123", "branch_name": "fix-bug",
-            "modified_files": ["a.py", "b.py"],
+            "vcs": {"commit_sha": "abc123", "branch": "fix-bug"},
+            "files_state": {"modified_files": ["a.py", "b.py"]},
             "test_results": {"success": True},
-            "tdd_status": "passed", "tdd_iteration": 2,
-            "verification_passed": True,
+            "tdd": {"status": "passed", "iteration": 2},
+            "verify": {"passed": True},
         }
         art = _shape_artifacts(final_state)
         assert art["commit_sha"] == "abc123"
@@ -104,11 +105,13 @@ class TestStructuredArtifacts:
     def test_run_autocode_agent_attaches_artifacts(self):
         from workflows.autocode import run_autocode_agent
         with patch("workflows.base.run_workflow") as mock_rw:
+            # [v3.0] _shape_artifacts reads via accessors — populate the sub-states.
             mock_rw.return_value = {
-                "status": "success", "commit_sha": "def456",
-                "branch_name": "feat-x", "modified_files": ["c.py"],
-                "tdd_status": "passed", "tdd_iteration": 1,
-                "verification_passed": True,
+                "status": "success",
+                "vcs": {"commit_sha": "def456", "branch": "feat-x"},
+                "files_state": {"modified_files": ["c.py"]},
+                "tdd": {"status": "passed", "iteration": 1},
+                "verify": {"passed": True},
             }
             result = run_autocode_agent("test task")
         assert "artifacts" in result
@@ -173,32 +176,34 @@ class TestGitDiffInput:
 class TestDryRunGuards:
     def test_write_files_skips_on_dry_run(self):
         from workflows.autocode_impl.nodes.write_files import node_write_files
-        state = {"dry_run": True, "tdd_source_code": '{"patches": []}', "trace_id": "t1"}
+        # [v3.0] tdd_source_code lives ONLY in the tdd sub-state.
+        state = {"dry_run": True, "tdd": {"source_code": '{"patches": []}'}, "trace_id": "t1"}
         result = node_write_files(state)
         assert result["status"] == "dry_run"
-        assert result["modified_files"] == []
+        # [v3.0] modified_files lives ONLY in the files sub-state.
+        assert result["files_state"]["modified_files"] == []
 
     def test_commit_skips_on_dry_run(self):
         from workflows.autocode_impl.nodes.commit import node_commit
         with patch("workflows.autocode_impl.git_ops._git_commit") as mock_git:
-            # [v2.6+v2.1] Simulate what migrated writer nodes do: write to
-            # BOTH sub-state (primary) and flat field (mirror). The accessors
-            # (_get_verify, _get_vcs) read sub-state first.
-            state = {"dry_run": True, "verification_passed": True,
-                     "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1",
+            # [v3.0] verify + vcs sub-states are the PRIMARY storage.
+            state = {"dry_run": True,
+                     "plan_state": {"plan": [], "current_step": 0, "spec": "", "brainstorm_notes": "", "plan_accepted": False},
+                     "task": "test", "task_type": "feature", "trace_id": "t1",
                      "verify": {"passed": True, "notes": "", "report": ""},
                      "vcs": {"commit_sha": "", "branch": "", "pushed": False, "pr_number": 0, "pr_url": ""}}
             result = node_commit(state)
         assert result["status"] == "dry_run"
-        assert result["commit_sha"] == "(dry-run)"
+        # [v3.0] commit_sha lives ONLY in the vcs sub-state now.
+        assert result["vcs"]["commit_sha"] == "(dry-run)"
         assert not mock_git.called
 
     def test_branch_skips_on_dry_run(self):
         from workflows.autocode_impl.nodes.branch import node_git_branch
         with patch("workflows.autocode_impl.git_ops._git_create_branch") as mock_branch:
-            # [v2.1] Include vcs sub-state for consistency (dry_run exits early,
+            # [v3.0] Include vcs sub-state for consistency (dry_run exits early,
             # but the state should still be well-formed).
-            state = {"dry_run": True, "branch": "feat-x", "trace_id": "t1",
+            state = {"dry_run": True, "trace_id": "t1",
                      "vcs": {"branch": "feat-x", "commit_sha": "", "pushed": False, "pr_number": 0, "pr_url": ""}}
             result = node_git_branch(state)
         assert result == {}
@@ -209,15 +214,16 @@ class TestDryRunGuards:
         mock_git_commit = mocker.patch(
             "workflows.autocode_impl.nodes.commit._git_commit", return_value="abc123"
         )
-        # [v2.6+v2.1] Include sub-states so accessors find the values
-        # (sub-state is primary; flat field is mirror).
-        state = {"dry_run": False, "verification_passed": True,
-                 "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1",
+        # [v3.0] Include sub-states so accessors find the values (sub-state only).
+        state = {"dry_run": False,
+                 "plan_state": {"plan": [], "current_step": 0, "spec": "", "brainstorm_notes": "", "plan_accepted": False},
+                 "task": "test", "task_type": "feature", "trace_id": "t1",
                  "verify": {"passed": True, "notes": "", "report": ""},
                  "vcs": {"commit_sha": "", "branch": "", "pushed": False, "pr_number": 0, "pr_url": ""}}
         result = node_commit(state)
         assert mock_git_commit.called
-        assert result["commit_sha"] == "abc123"
+        # [v3.0] commit_sha lives ONLY in the vcs sub-state now.
+        assert result["vcs"]["commit_sha"] == "abc123"
 
 
 # ─── Distill memory non-fatal ───────────────────────────────────────────────

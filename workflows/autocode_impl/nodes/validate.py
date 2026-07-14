@@ -10,7 +10,7 @@ from typing import Any
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
+from workflows.autocode_impl.state import AutocodeState  # [v3.0] files is core flat field
 
 def node_validate_input(state: AutocodeState) -> dict:
     """
@@ -40,7 +40,7 @@ def node_validate_input(state: AutocodeState) -> dict:
         return {"status": "error", "error": error}
 
     # 3. Files validation
-    files = _get_files(state, "input_files", {})  # [v2.3] accessor (was state.get("files", {}))
+    files = state.get("files", {})  # [v3.0] files is a core flat field (user input), not a sub-state field
     if files:
         if not isinstance(files, dict):
             error = "files must be a dictionary"

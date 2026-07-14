@@ -27,11 +27,13 @@ class TestDryRunMode:
         """dry_run=True must prevent file writes."""
         from workflows.autocode_impl.nodes.execute import node_execute_step
         base_state["dry_run"] = True
-        base_state["tdd_source_code"] = "new_file.py: print('hi')"
+        # [v3.0] tdd_source_code lives ONLY in the tdd sub-state.
+        base_state["tdd"]["source_code"] = "new_file.py: print('hi')"
         with patch("workflows.autocode_impl.nodes.execute._call") as mock_llm:
             mock_llm.return_value = "print('hi')"
             result = node_execute_step(base_state)
-        assert "modified_files" not in result
+        # [v3.0] modified_files lives ONLY in the files sub-state. dry_run skips it.
+        assert "files_state" not in result or "modified_files" not in result.get("files_state", {})
         assert not list(temp_workspace.glob("*.py"))
 
     def test_dry_run_false_populates_modified_files(self, base_state, temp_workspace):
@@ -39,7 +41,8 @@ class TestDryRunMode:
         from workflows.autocode_impl.nodes.write_files import node_write_files
         import json
         base_state["dry_run"] = False
-        base_state["tdd_source_code"] = json.dumps({"new_files": {"out.py": "# code"}})
+        # [v3.0] tdd_source_code lives ONLY in the tdd sub-state.
+        base_state["tdd"]["source_code"] = json.dumps({"new_files": {"out.py": "# code"}})
         base_state["test_code"] = ""
         result = node_write_files(base_state)
         # modified_files may or may not be set depending on write_files logic,
@@ -64,11 +67,12 @@ class TestMemoryCallbacks:
     def test_memory_stored_on_tdd_success(self, base_state, mock_memory_store):
         """Memory must store with correct tags/importance on TDD pass."""
         from core.memory_engine import memory
-        base_state["tdd_status"] = "passed"
-        base_state["tdd_iteration"] = 2
+        # [v3.0] tdd fields live ONLY in the tdd sub-state.
+        base_state["tdd"]["status"] = "passed"
+        base_state["tdd"]["iteration"] = 2
         base_state["task"] = "add validation"
         memory.store(
-            text=f"TDD converged after {base_state['tdd_iteration']} iterations for task: '{base_state['task']}'",
+            text=f"TDD converged after {base_state['tdd']['iteration']} iterations for task: '{base_state['task']}'",
             memory_type="procedural", importance=7,
             tags="tdd_success,converged,autocode",
             trace_id=base_state["trace_id"], outcome="success",
@@ -81,12 +85,13 @@ class TestMemoryCallbacks:
 
     def test_memory_stored_on_retry_exhaustion(self, base_state, mock_memory_store):
         from core.memory_engine import memory
-        base_state["tdd_status"] = "max_retries_exceeded"
-        base_state["tdd_iteration"] = 3
-        base_state["tdd_error"] = "AssertionError"
+        # [v3.0] tdd fields live ONLY in the tdd sub-state.
+        base_state["tdd"]["status"] = "max_retries_exceeded"
+        base_state["tdd"]["iteration"] = 3
+        base_state["tdd"]["error"] = "AssertionError"
         base_state["task"] = "fix endpoint"
         memory.store(
-            text=f"TDD failed after {base_state['tdd_iteration']} iterations",
+            text=f"TDD failed after {base_state['tdd']['iteration']} iterations",
             memory_type="procedural", importance=9,
             tags="tdd_failure,retry_exhaustion,autocode",
             trace_id=base_state["trace_id"], outcome="failed",
@@ -99,19 +104,21 @@ class TestMemoryCallbacks:
 class TestTDDLoopConvergence:
     def test_passing_tests_route_to_verify(self, base_state):
         from workflows.autocode_impl.routes import route_after_run_tests
-        base_state["tdd_status"] = "passed"
+        # [v3.0] tdd_status lives ONLY in the tdd sub-state.
+        base_state["tdd"]["status"] = "passed"
         base_state["test_results"] = {"success": True}
         assert route_after_run_tests(base_state) == "node_verify"
 
     def test_failing_tests_route_to_debug(self, base_state):
         from workflows.autocode_impl.routes import route_after_run_tests
-        base_state["tdd_status"] = "failed"
+        base_state["tdd"]["status"] = "failed"
         base_state["test_results"] = {"success": False}
         assert route_after_run_tests(base_state) == "node_systematic_debug"
 
     def test_verify_failure_routes_to_end(self, base_state):
         from workflows.autocode_impl.routes import route_after_verify
-        base_state["verification_passed"] = False
+        # [v3.0] verification_passed lives ONLY in the verify sub-state.
+        base_state["verify"]["passed"] = False
         assert route_after_verify(base_state) == "END"
 
 

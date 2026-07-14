@@ -48,7 +48,10 @@ def node_execute_step(state: AutocodeState) -> dict:
         return {"status": "error", "error": "No code generated"}
 
     # Store generated code for TDD loop
-    updates = {"tdd_source_code": code}
+    # [v3.0] RMW: write to tdd sub-state (was flat tdd_source_code mirror)
+    current_tdd = dict(state.get("tdd", {}))
+    current_tdd["source_code"] = code
+    updates: dict[str, Any] = {"tdd": current_tdd}
 
     # Derive modified_files from generated code JSON (only when not dry_run)
     # [Pre-2.0 Fix] Was: raw json.loads(code) — fails on markdown-fenced output.
@@ -57,31 +60,31 @@ def node_execute_step(state: AutocodeState) -> dict:
     # tries direct json.loads as its first strategy (see core.json_extract.extract_json).
     # The fallback was unreachable when _parse_json returned {}, and would raise
     # JSONDecodeError (caught by the except) on truly invalid JSON.
+    # [v3.0] modified_files lives ONLY in the files sub-state (was flat mirror).
+    modified_files_list: list[str] = []
     if not state.get("dry_run", False):
         try:
             code_data = _parse_json(code)
             if not code_data:
                 tracer.warning(tid, "execute_step", "Failed to parse LLM output as JSON — modified_files empty")
-                updates["modified_files"] = []
             else:
                 modified = []
                 for patch in code_data.get("patches", []):
                     modified.append(patch.get("path", ""))
                 modified.extend(code_data.get("new_files", {}).keys())
-                updates["modified_files"] = [m for m in modified if m]
+                modified_files_list = [m for m in modified if m]
         except Exception:
-            updates["modified_files"] = []
+            pass  # modified_files_list stays empty
 
     tracer.step(tid, "execute_step", "Code generated and written")
     updates["execution_notes"] = f"Executed step: {current_step.get('description', '')}"
-    updates["current_step"] = current_step_idx + 1
-    # [v2.2] RMW: write to plan sub-state + flat mirror for current_step
+    # [v2.2] RMW: write to plan sub-state for current_step (sub-state only in v3.0)
     current_plan = dict(state.get("plan_state", {}))
     current_plan["current_step"] = current_step_idx + 1
     updates["plan_state"] = current_plan
-    # [v2.3] RMW: write to files sub-state if modified_files was set
-    if "modified_files" in updates:
+    # [v2.3] RMW: write to files sub-state for modified_files (sub-state only in v3.0)
+    if not state.get("dry_run", False):
         current_files = dict(state.get("files_state", {}))
-        current_files["modified_files"] = updates["modified_files"]
+        current_files["modified_files"] = modified_files_list
         updates["files_state"] = current_files
     return updates

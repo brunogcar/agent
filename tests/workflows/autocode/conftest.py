@@ -25,13 +25,11 @@ def base_state(temp_workspace):
     Tests override only the fields they need. dry_run defaults to False
     so mutation nodes actually run; tests that want dry-run set it True.
 
-    [v2.5+v2.6] Uses _default_state() to populate all 8 sub-states with
-    defaults. The v2.0.5 split-brain bug (P1-1) was invisible to tests
-    because tests built state without the sub-state — so the accessor
-    fell through to the flat field and returned the correct value.
-    _default_state() populates the sub-state with defaults, so accessors
-    are exercised on the real code path. See Track M1 learning #2 in
-    CHANGELOG.
+    [v3.0] Uses _default_state() — sub-states are now the PRIMARY (and only)
+    storage for the grouped fields. The v2.x split-brain pattern (test
+    writes to BOTH sub-state + flat field) is gone — flat mirror fields
+    no longer exist in _default_state(). Tests must write to the sub-state
+    directly when they want to override a sub-state field.
     """
     from workflows.autocode_impl.state import _default_state
     state = _default_state(task="test task")
@@ -39,15 +37,11 @@ def base_state(temp_workspace):
     state["trace_id"] = "test-trace-001"
     state["task_type"] = "feature"
     state["project_root"] = str(temp_workspace)
-    # plan: legacy list[dict] step list (tests read state["plan"] directly)
-    # [v2.2] Write to BOTH sub-state (primary) + flat field (mirror) — simulates
-    # what plan.py does post-v2.2. The _get_plan accessor reads sub-state first.
+    # plan: list[dict] step list lives ONLY in the plan sub-state (post-v3.0).
     test_plan = [{"id": 1, "label": "write_code", "description": "implement"}]
-    state["plan"] = test_plan  # flat mirror
-    state["plan_state"] = dict(state.get("plan_state", {}))
-    state["plan_state"]["plan"] = test_plan  # sub-state (primary)
+    state["plan_state"]["plan"] = test_plan
     state["plan_state"]["current_step"] = 0
-    state["current_step"] = 0  # flat mirror
     state["test_files"] = []
-    state["max_retries"] = 3
+    # max_retries lives ONLY in the tdd sub-state (post-v3.0).
+    state["tdd"]["max_retries"] = 3
     return state

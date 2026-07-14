@@ -13,6 +13,7 @@ The `autocode` workflow handles **autonomous code generation and modification** 
 - **Swarm debug** — Optional 2-run multi-model debug (consensus → vote, confidence HIGH/MEDIUM/LOW) via `AUTOCODE_SWARM_DEBUG=1`
 - **Subagent debug** — Optional third debug path: single isolated subagent dispatch with curated context (no session state) via `AUTOCODE_SUBAGENT_DEBUG=1` (v2.0.2)
 - **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code); `ponytail:` comment convention for deliberate simplifications
+- **v3.0 Sub-state architecture** — All state fields live in 8 typed sub-states (plan, tdd, files, impact, debug, verify, vcs, memory). Legacy flat-field mirrors removed. Accessors are the only read path.
 - **Memory integration** — Stores procedural knowledge for future recall
 - **Report generation** — Generates a structured report with the final result
 
@@ -122,9 +123,10 @@ cfg.autocode_subagent_debug = False      # Use single isolated subagent dispatch
 | [Architecture](autocode/ARCHITECTURE.md) | File maps, module trees, mermaid diagrams, design decisions, testing layout |
 | [API](autocode/API.md) | Facade (`run_autocode_agent()`), graph overview, output format, state fields, state accessors |
 | [Nodes](autocode/NODES.md) | Per-node reference for all 28 nodes (25 active + 3 backward-compat wrappers), in graph-execution order |
+| [Substate](autocode/SUBSTATE.md) | Single source of truth for the v3.0 sub-state architecture — 8 sub-states, accessor signatures, RMW pattern, migration history |
 | [Changelog](autocode/CHANGELOG.md) | Version history, breaking changes, roadmap, completed features, deferred items |
 | [Instructions](autocode/INSTRUCTIONS.md) | AI editing rules, NEVER DO, ALWAYS DO, anti-patterns |
 
 ---
 
-*Last updated: 2026-07-14 (v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + v2.x→v3.0 migration roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are now the PRIMARY + ONLY storage; v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + v2.x→v3.0 migration roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

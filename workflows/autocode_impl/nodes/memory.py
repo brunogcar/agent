@@ -3,10 +3,11 @@ Procedural memory node.
 Extracts reusable rules from successful autocode workflows using the Planner LLM.
 
 [v2.7] Sub-state migration: now writes a summary to the `memory` sub-state via
-read-modify-write (RMW) alongside the legacy `memory_notes` flat field. Before
-this, the node returned {} — the `memory` sub-state and `memory_notes` flat
-field were both dead code (populated by _default_state() but never written to
-by any node). See Track M1 in CHANGELOG.
+read-modify-write (RMW). Before this, the node returned {} — the `memory`
+sub-state and `memory_notes` flat field were both dead code (populated by
+_default_state() but never written to by any node). The flat `memory_notes`
+mirror was removed in v3.0 once all readers were migrated to accessors.
+See Track M1 in CHANGELOG.
 """
 from __future__ import annotations
 
@@ -75,13 +76,12 @@ def node_distill_memory(state: AutocodeState) -> dict:
         distill_summary = f"distill_failed: {e}"
         tracer.warning(tid, "node_distill_memory", f"Distillation failed (non-fatal): {e}")
 
-    # [v2.7] RMW: write to memory sub-state + flat mirror.
-    # Before this, the node returned {} — the memory sub-state was dead code.
+    # [v2.7] RMW: write to memory sub-state (sub-state only in v3.0).
+    # Before v2.7, the node returned {} — the memory sub-state was dead code.
     # Now it records a summary of the distillation outcome for downstream
     # consumers (e.g. report.py could surface it, or future cross-run learning).
     current_memory = dict(state.get("memory", {}))
     current_memory["notes"] = distill_summary
     return {
-        "memory_notes": distill_summary,
         "memory": current_memory,
     }

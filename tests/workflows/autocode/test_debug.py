@@ -25,9 +25,10 @@ class TestDebugJsonParsing:
     def test_debug_node_uses_parse_json_fallback(self, mocker, base_state):
         """node_systematic_debug must handle nested JSON from the LLM."""
         from workflows.autocode_impl.nodes.debug import node_systematic_debug
-        base_state["tdd_iteration"] = 1
-        base_state["max_retries"] = 3
-        base_state["tdd_error"] = "AssertionError"
+        # [v3.0] tdd fields live ONLY in the tdd sub-state.
+        base_state["tdd"]["iteration"] = 1
+        base_state["tdd"]["max_retries"] = 3
+        base_state["tdd"]["error"] = "AssertionError"
         base_state["test_results"] = {"stderr": "AssertionError", "stdout": ""}
         mocker.patch(
             "workflows.autocode_impl.nodes.debug._call",
@@ -48,16 +49,19 @@ class TestDebugJsonParsing:
 class TestMaxRetriesEnforcement:
     def test_max_retries_in_state(self, base_state):
         from workflows.autocode_impl.state import MAX_RETRIES
-        assert base_state["max_retries"] == 3
+        # [v3.0] max_retries lives ONLY in the tdd sub-state.
+        assert base_state["tdd"]["max_retries"] == 3
         assert MAX_RETRIES == 3
 
     def test_debug_sets_max_retries_exceeded(self, mocker, base_state):
         """When tdd_iteration > max_retries, debug must set tdd_status='max_retries_exceeded'."""
         from workflows.autocode_impl.nodes.debug import node_systematic_debug
-        base_state["tdd_iteration"] = 4  # > max_retries (3)
-        base_state["max_retries"] = 3
-        base_state["tdd_error"] = "AssertionError"
+        # [v3.0] tdd fields live ONLY in the tdd sub-state.
+        base_state["tdd"]["iteration"] = 4  # > max_retries (3)
+        base_state["tdd"]["max_retries"] = 3
+        base_state["tdd"]["error"] = "AssertionError"
         base_state["test_results"] = {"stderr": "error", "stdout": ""}
         mocker.patch("core.memory_engine.memory.store")
         result = node_systematic_debug(base_state)
-        assert result["tdd_status"] == "max_retries_exceeded"
+        # [v3.0] tdd_status lives ONLY in the tdd sub-state now.
+        assert result["tdd"]["status"] == "max_retries_exceeded"

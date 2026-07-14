@@ -8,7 +8,7 @@
 |------|---------|
 | `workflows/autocode.py` | `run_autocode_agent()` — main entry point |
 | `workflows/autocode_impl/graph.py` | `build_graph()` — 28-node LangGraph StateGraph builder (25 active + 3 backward-compat wrappers registered but NOT wired). `WORKFLOW_METADATA["version"] == "2.0.5"` (Phase 4g review). |
-| `workflows/autocode_impl/state.py` | `AutocodeState` TypedDict + 8 sub-state TypedDicts + 8 accessor functions. All sub-states populated as PRIMARY storage by `_default_state()` (legacy flat fields kept as mirrors for backward compat). |
+| `workflows/autocode_impl/state.py` | `AutocodeState` TypedDict + 8 sub-state TypedDicts + 8 accessor functions. **[v3.0]** Sub-states are the PRIMARY (and ONLY) storage for sub-state fields — legacy flat-field mirrors were removed. Accessors read sub-state ONLY (no legacy fallback). 13 ephemeral flat fields explicitly declared. |
 | `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_write_files()`, `route_after_run_tests()`, `route_after_verify()` — conditional routing. **[Hardening P1.5]** short-circuits to `node_run_pytest` when `status=="error"`. |
 | `workflows/autocode_impl/helpers.py` | `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. `_call()` retries 2× with exponential backoff; **[Hardening P1.7]** backoff is interruptible via `threading.Event` so cancellation aborts retry sleep. |
 | `workflows/autocode_impl/constants.py` | All SYSTEM prompts. `DEBUG_SYSTEM` is a 4-phase structured prompt (investigation → pattern → hypothesis → fix). `CODER_SYSTEM` includes the 7-rung Lazy Dev minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code). |
@@ -40,7 +40,7 @@
 | `workflows/autocode_impl/nodes/run_lint.py` | **[v2.0]** `ruff check --select E,F --no-cache` scoped to `modified_files` only. |
 | `workflows/autocode_impl/nodes/llm_review.py` | **[v2.0]** LLM spec coverage + cleanliness review. Only LLM-calling node in the verify chain. |
 | `workflows/autocode_impl/nodes/verify_decision.py` | **[v2.0]** Composes results + hallucination guard (real pytest exit code overrides LLM claim) + max_retries/stuck early-exit. `route_after_verify` routes from this node. |
-| `workflows/autocode_impl/nodes/commit.py` | `node_git_commit()` — git commit. **[v2.0]** First node migrated to the accessor pattern (`_get_vcs`). |
+| `workflows/autocode_impl/nodes/commit.py` | `node_git_commit()` — git commit. **[v3.0]** Reads `branch` via `_get_vcs` accessor (was the v2.0 proof-of-concept for the accessor pattern; v2.0.5 reverted to direct read due to split-brain bug; v2.1 re-migrated after writer was migrated). |
 | `workflows/autocode_impl/nodes/publish.py` | **[v2.0]** BACKWARD-COMPAT WRAPPER — calls `node_push` → `node_create_pr` → `node_merge_pr`. Registered, NOT wired. |
 | `workflows/autocode_impl/nodes/push.py` | **[v2.0]** Pushes branch to remote via `_github_push` (gated on `AUTOCODE_PUSH_ON_COMMIT`). |
 | `workflows/autocode_impl/nodes/create_pr.py` | **[v2.0]** Opens PR via `_github_pr_create` (gated on `AUTOCODE_OPEN_PR`). Hosts `_build_pr_body(state)`. |
@@ -188,53 +188,52 @@ The `node_validate_input` path traversal check only covers user-supplied paths. 
 
 ---
 
-## 🧭 [v2.0] Sub-state Architecture
+## 🧭 [v3.0] Sub-state Architecture
 
-The v2.0 refactor migrated autocode from a flat ~35-field state dict to 8 focused sub-state TypedDicts behind a backward-compatible accessor layer. All 7 phases ✅ COMPLETE.
+The autocode state is split into 8 focused sub-state TypedDicts behind an accessor layer. **[v3.0]** Track M1 (v2.1–v2.7 + v3.0) is ✅ COMPLETE — all 8 accessors are the ONLY read path for sub-state fields. Legacy flat-field mirrors were removed; accessor legacy-fallback branches were removed (each is now a 4-line sub-state-only read).
 
-> **⚠️ [v2.0.5] Migration status: only `tdd` is fully migrated.** `_default_state()`
-> populates all 8 sub-states as PRIMARY storage, but nodes only WRITE to the `tdd`
-> sub-state (via read-modify-write). The other 7 sub-states hold stale defaults
-> because nodes still write to flat fields (`branch`, `commit_sha`, `modified_files`,
-> etc.). The accessors read sub-state first — so `_get_vcs(state, "branch", "main")`
-> returns `""` (the stale default), not the actual branch name. **[v2.0.5 P1-1]**
-> `node_commit` was reverted to direct `state.get("branch")` reads after this
-> split-brain bug was found. Only `_get_tdd` is safe to use today (see INSTRUCTIONS.md
-> NEVER DO #33). Full migration of the remaining 7 sub-states is the v2.x → v3.0
-> roadmap (see CHANGELOG Future Tracks).
+> **[v3.0] Migration status: ✅ COMPLETE — Track M1 shipped.** All 8 sub-states
+> (`plan_state`, `tdd`, `files_state`, `impact`, `debug`, `verify`, `vcs`,
+> `memory`) are the PRIMARY (and ONLY) storage for their fields. Every node
+> writes via read-modify-write (RMW); every reader uses the corresponding
+> accessor. The v2.0.5 split-brain warning is lifted. Ephemeral flat fields
+> (test_results, test_code, _pytest_output, lint_output, etc.) stay flat by
+> design.
 
-Legacy flat fields remain as mirrors for backward compat with unmigrated nodes + tests. Legacy field removal is deferred to v3.0 (`# TODO(v3.0):`).
+**For the full sub-state reference** — TypedDicts, writer/reader node lists, the 8 accessor signatures, the RMW pattern, migration history — **see [SUBSTATE.md](SUBSTATE.md).**
 
-### The 8 sub-state TypedDicts
+### The 8 sub-state TypedDicts (summary)
 
 | Sub-state | TypedDict | Representative fields |
 |-----------|-----------|----------------------|
-| Plan | `PlanState` | `task_type`, `plan`, `branch`, `current_step` |
-| TDD | `TDDState` | `test_code`, `test_results`, `tdd_status`, `tdd_iteration`, `debug_history`, `debug_summary` |
-| Files | `FilesState` | `files`, `modified_files`, `written_files`, `files_map` |
-| Impact | `ImpactState` | `impact_warnings`, `blast_radius_note` |
-| Debug | `DebugState` | `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`, `swarm_verdict` |
-| Verify | `VerifyState` | `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes` |
-| VCS | `VCSState` | `branch`, `commit_sha`, `pushed`, `pr_number`, `pr_url` |
-| Memory | `MemoryState` | `brainstorm`, `skill_path`, `skill_created` |
+| Plan | `PlanState` | `brainstorm_notes`, `plan`, `plan_accepted`, `spec`, `current_step` |
+| TDD | `TDDState` | `iteration`, `source_code`, `error`, `status`, `max_retries`, `last_test_error`, `tests_written`, `debug_history`, `debug_summary` |
+| Files | `FilesState` | `files_map`, `modified_files` (`input_files` removed in v3.0 — use core `files` flat field) |
+| Impact | `ImpactState` | `warnings`, `targeted_test_cmd`, `failed` |
+| Debug | `DebugState` | `notes`, `root_cause`, `defense_notes`, `swarm_verdict`, `subagent_verdict` |
+| Verify | `VerifyState` | `notes`, `report`, `passed` |
+| VCS | `VCSState` | `commit_sha`, `branch`, `branch_name`, `pushed`, `pr_number`, `pr_url` |
+| Memory | `MemoryState` | `notes`, `context` |
 
-### The 8 backward-compat accessor functions
+### The 8 accessor functions
 
-Each accessor reads from the corresponding sub-state dict if present, else falls back to the legacy flat field.
+Each accessor reads from the corresponding sub-state dict — NO legacy flat-field fallback (removed in v3.0). Signature pattern (see [SUBSTATE.md](SUBSTATE.md) for all 8):
 
 ```python
-# Signature pattern (state.py)
-def _get_vcs(state: dict, key: str, default=None):
-    """Read `key` from state["vcs"] if present, else fall back to state[key]."""
-    vcs = state.get("vcs")
-    if isinstance(vcs, dict) and key in vcs:
-        return vcs[key]
-    return state.get(key, default)
+# [v3.0] Signature pattern (state.py) — 4 lines, sub-state-only
+def _get_vcs(state: dict, key: str, default: Any = None) -> Any:
+    """Read `key` from state["vcs"] if present, else return `default`."""
+    sub = state.get("vcs")
+    if isinstance(sub, dict) and key in sub:
+        return sub[key]
+    return default
 ```
 
 The 8 accessors: `_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`.
 
-**Why an accessor layer:** No big-bang refactor — migrate one node at a time. Legacy fallback buys time until Phase 6 makes sub-states PRIMARY. `node_systematic_debug` + `node_summarize_context` migrated to accessors in Phase 4 (these are the only 2 nodes that write to sub-state via read-modify-write, so `_get_tdd` is safe). `node_git_commit` was migrated as a proof-of-concept in Phase 1, **[v2.0.5] but the `_get_vcs` call was broken (split-brain) and has been reverted** — see CHANGELOG v2.0.5 P1-1. Remaining nodes still read legacy flat fields directly; full migration is the v2.x → v3.0 roadmap.
+**Design rationale:** The accessor layer decouples node code from the storage layout. Nodes call `_get_vcs(state, "branch", "")` instead of `state.get("branch", "")` or `state["vcs"]["branch"]` — the accessor is free to evolve (it was the backward-compat bridge during v2.1–v2.7, then simplified in v3.0) without breaking callers. Every read goes through the accessor; every write goes through RMW; ephemeral flat fields (test_results, test_code, _pytest_output, lint_output, etc.) stay flat because they're inter-node scratch space, not part of any sub-state.
+
+For the v2.0 → v3.0 migration narrative, see [CHANGELOG.md](CHANGELOG.md) § "Track M1". For per-version details, see git history.
 
 ### Cancellation flag
 
@@ -292,4 +291,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-11 (v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

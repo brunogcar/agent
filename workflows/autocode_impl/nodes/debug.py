@@ -63,11 +63,10 @@ _DEBUG_JSON_SCHEMA = {
 def node_systematic_debug(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     tracer.step(tid, "systematic_debug", "Starting systematic debug")
-    max_retries = state.get("max_retries", cfg.autocode_max_retries)
-    current_iteration = state.get("tdd_iteration", 0)
+    max_retries = _get_tdd(state, "max_retries", cfg.autocode_max_retries)  # [v3.0] accessor
+    current_iteration = _get_tdd(state, "iteration", 0)  # [v3.0] accessor
 
-    # [v2.0] Phase 4 — read accumulated debug history from sub-state (with
-    # legacy flat fallback via _get_tdd accessor).
+    # [v2.0] Phase 4 — read accumulated debug history from tdd sub-state.
     debug_history = _get_tdd(state, "debug_history", []) or []
 
     # [v2.0] Phase 4 — architecture-question exit.
@@ -76,7 +75,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     if len(debug_history) >= _ARCHITECTURE_QUESTION_THRESHOLD:
         recent = debug_history[-_ARCHITECTURE_QUESTION_THRESHOLD:]
         if all(not entry.get("tests_passed", False) for entry in recent):
-            error_msg = state.get("tdd_error", "Unknown TDD failure")
+            error_msg = _get_tdd(state, "error", "Unknown TDD failure")  # [v3.0] accessor
             tracer.error(
                 tid, "systematic_debug",
                 f"Architecture-question exit: last {_ARCHITECTURE_QUESTION_THRESHOLD} debug "
@@ -100,7 +99,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             current_tdd = dict(state.get("tdd", {}))
             current_tdd["debug_history"] = debug_history
             current_tdd["status"] = "max_retries_exceeded"
-            # [v2.5] RMW: write to debug sub-state + flat mirror
+            # [v2.5] RMW: write to debug sub-state
             current_debug = dict(state.get("debug", {}))
             current_debug["notes"] = (
                 f"Debug abandoned after {len(debug_history)} iterations — last "
@@ -108,15 +107,13 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                 f"level issue: {error_msg}"
             )
             return {
-                "tdd_status": "max_retries_exceeded",
                 "error": error_msg,
-                "debug_notes": current_debug["notes"],
                 "tdd": current_tdd,
                 "debug": current_debug,
             }
 
     if current_iteration > max_retries:
-        error_msg = state.get("tdd_error", "Unknown TDD failure")
+        error_msg = _get_tdd(state, "error", "Unknown TDD failure")  # [v3.0] accessor
         tracer.error(tid, "systematic_debug", f"TDD exhausted after {max_retries} attempts: {error_msg}")
 
         memory.store(
@@ -132,13 +129,11 @@ def node_systematic_debug(state: AutocodeState) -> dict:
         current_tdd = dict(state.get("tdd", {}))
         current_tdd["debug_history"] = debug_history
         current_tdd["status"] = "max_retries_exceeded"
-        # [v2.5] RMW: write to debug sub-state + flat mirror
+        # [v2.5] RMW: write to debug sub-state
         current_debug = dict(state.get("debug", {}))
         current_debug["notes"] = f"Debug abandoned after {max_retries} iterations. Last error: {error_msg}"
         return {
-            "tdd_status": "max_retries_exceeded",
             "error": error_msg,
-            "debug_notes": current_debug["notes"],
             "tdd": current_tdd,
             "debug": current_debug,
         }
@@ -270,18 +265,14 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             # [Hardening] Read-modify-write to preserve tdd sub-state.
             current_tdd = dict(state.get("tdd", {}))
             current_tdd["debug_history"] = updated_history
-            # [v2.5] RMW: write to debug sub-state + flat mirrors
+            current_tdd["source_code"] = suggested_fix  # [v3.0] sub-state write (was flat tdd_source_code)
+            # [v2.5] RMW: write to debug sub-state
             current_debug = dict(state.get("debug", {}))
             current_debug["root_cause"] = root_cause
             current_debug["defense_notes"] = defense_notes
             current_debug["notes"] = f"Debug iteration {current_iteration} (swarm {confidence}): {root_cause}"
             current_debug["swarm_verdict"] = swarm_result
             return {
-                "root_cause": root_cause,
-                "defense_notes": defense_notes,
-                "tdd_source_code": suggested_fix,
-                "debug_notes": current_debug["notes"],
-                "swarm_verdict": swarm_result,
                 "tdd": current_tdd,
                 "debug": current_debug,
             }
@@ -331,7 +322,8 @@ def node_systematic_debug(state: AutocodeState) -> dict:
 
                     current_tdd = dict(state.get("tdd", {}))
                     current_tdd["debug_history"] = updated_history
-                    # [v2.5] RMW: write to debug sub-state + flat mirrors
+                    current_tdd["source_code"] = suggested_fix  # [v3.0] sub-state write (was flat tdd_source_code)
+                    # [v2.5] RMW: write to debug sub-state
                     current_debug = dict(state.get("debug", {}))
                     current_debug["root_cause"] = root_cause
                     current_debug["defense_notes"] = defense_notes
@@ -342,11 +334,6 @@ def node_systematic_debug(state: AutocodeState) -> dict:
                         "defense_notes": defense_notes,
                     }
                     return {
-                        "root_cause": root_cause,
-                        "defense_notes": defense_notes,
-                        "tdd_source_code": suggested_fix,
-                        "subagent_verdict": current_debug["subagent_verdict"],
-                        "debug_notes": current_debug["notes"],
                         "tdd": current_tdd,
                         "debug": current_debug,
                     }
@@ -420,16 +407,13 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     # [Hardening] Read-modify-write to preserve tdd sub-state.
     current_tdd = dict(state.get("tdd", {}))
     current_tdd["debug_history"] = updated_history
-    # [v2.5] RMW: write to debug sub-state + flat mirrors
+    current_tdd["source_code"] = suggested_fix  # [v3.0] sub-state write (was flat tdd_source_code)
+    # [v2.5] RMW: write to debug sub-state
     current_debug = dict(state.get("debug", {}))
     current_debug["root_cause"] = root_cause
     current_debug["defense_notes"] = defense_notes
     current_debug["notes"] = f"Debug iteration {current_iteration} [phase={phase}]: {root_cause}"
     return {
-        "root_cause": root_cause,
-        "defense_notes": defense_notes,
-        "tdd_source_code": suggested_fix,
-        "debug_notes": current_debug["notes"],
         "tdd": current_tdd,
         "debug": current_debug,
     }

@@ -16,18 +16,18 @@ def node_commit(state: AutocodeState) -> dict:
     if state.get("status") in ("needs_clarification", "failed"):
         return {}
     if not _get_verify(state, "passed", False):
-        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["commit_sha"] = ""
-        return {"status": "skipped", "commit_sha": "", "vcs": current_vcs}
+        return {"status": "skipped", "vcs": current_vcs}
     # [#47] Dry-run: skip the actual commit AFTER the verification gate.
     # (The verification check above runs first so dry_run doesn't mask it.)
     if state.get("dry_run"):
         tracer.step(tid, "commit", "dry_run=True — skipping git commit")
-        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        # [v2.1] RMW: write to vcs sub-state
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["commit_sha"] = "(dry-run)"
-        return {"status": "dry_run", "commit_sha": "(dry-run)", "vcs": current_vcs}
+        return {"status": "dry_run", "vcs": current_vcs}
     plan = _get_plan(state, "plan", [])  # [v2.2] accessor
     # [Pre-2.0 Fix] Was: s["label"] — KeyError if any step lacks "label".
     # Now uses .get("label", "step") fallback.
@@ -67,12 +67,11 @@ def node_commit(state: AutocodeState) -> dict:
     if defense_notes:
         result_lines.append(f"\nDefense note: {defense_notes}")
 
-    # [v2.1] RMW: write to vcs sub-state + flat mirror
+    # [v2.1] RMW: write to vcs sub-state
     current_vcs = dict(state.get("vcs", {}))
     current_vcs["commit_sha"] = sha or ""
     return {
         "status": "done",
-        "commit_sha": sha or "",
         "result": "\n".join(result_lines),
         "vcs": current_vcs,
     }

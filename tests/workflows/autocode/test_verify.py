@@ -17,8 +17,10 @@ class TestNodeVerify:
              patch("workflows.autocode_impl.patch.apply_patch", return_value=MagicMock(ok=True, lines_changed=1)):
             result = node_verify(base_state)
             assert isinstance(result, dict)
-            assert "verification_passed" in result
-            assert "verification_notes" in result
+            # [v3.0] verification_passed + verification_notes live ONLY in the verify sub-state.
+            assert "verify" in result
+            assert "passed" in result["verify"]
+            assert "notes" in result["verify"]
 
     def test_verify_sets_failed_on_syntax_error(self, base_state):
         from workflows.autocode_impl.nodes.verify import node_verify
@@ -46,10 +48,12 @@ class TestVerifyLintPassed:
 class TestCommitAndGitEdgeCases:
     def test_commit_skips_when_not_verified(self, base_state):
         from workflows.autocode_impl.nodes.commit import node_commit
-        base_state["verification_passed"] = False
+        # [v3.0] verification_passed lives ONLY in the verify sub-state.
+        base_state["verify"]["passed"] = False
         result = node_commit(base_state)
         assert result.get("status") == "skipped"
-        assert result.get("commit_sha") == ""
+        # commit_sha is in the vcs sub-state now.
+        assert result["vcs"]["commit_sha"] == ""
 
     def test_commit_handles_nothing_to_commit(self, temp_workspace):
         from workflows.autocode_impl.git_ops import _git_commit
@@ -67,16 +71,12 @@ class TestCommitDefenseNotes:
 
     def test_commit_uses_defense_notes(self, base_state):
         from workflows.autocode_impl.nodes.commit import node_commit
-        # [v2.5+v2.6] Simulate what the migrated writer nodes do: write to
-        # BOTH sub-state (primary) and flat field (mirror). The accessors
-        # (_get_verify, _get_debug) read the sub-state first — if we only
-        # set the flat field, the accessor returns the sub-state default.
-        base_state["verification_passed"] = True  # flat mirror
+        # [v3.0] Simulate what migrated writer nodes do: write to sub-state ONLY
+        # (no flat mirror). The accessors (_get_verify, _get_debug) read the sub-state.
         verify = dict(base_state.get("verify", {}))
         verify["passed"] = True
         base_state["verify"] = verify
 
-        base_state["defense_notes"] = "Add bounds check"  # flat mirror
         debug = dict(base_state.get("debug", {}))
         debug["defense_notes"] = "Add bounds check"
         base_state["debug"] = debug

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from filelock import FileLock, Timeout
 
-from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
+from workflows.autocode_impl.state import AutocodeState, _get_files, _get_tdd  # [v2.3+v3.0] accessors
 from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs, _parse_json  # [Hardening P1.4] added _parse_json
 from core.config import cfg
 from core.tracer import tracer
@@ -40,7 +40,7 @@ def node_write_new_files(state: AutocodeState) -> dict:
     if state.get("status") in ("needs_clarification", "failed", "error"):
         return {}
 
-    if not state.get("tdd_source_code"):
+    if not _get_tdd(state, "source_code", ""):  # [v3.0] accessor (was flat field)
         return {}
 
     # [#47] Dry-run: skip writes
@@ -52,7 +52,7 @@ def node_write_new_files(state: AutocodeState) -> dict:
     # [Hardening P1.4] Use _parse_json (handles markdown-fenced JSON) instead of raw json.loads.
     # _parse_json returns {} on failure; treat empty result as parse failure.
     try:
-        data = _parse_json(state.get("tdd_source_code", ""))
+        data = _parse_json(_get_tdd(state, "source_code", ""))  # [v3.0] accessor (was flat field)
         if not data:
             tracer.step(tid, "write_new_files", "JSON parse failed: _parse_json returned empty dict")
             return {}
@@ -138,22 +138,21 @@ def node_write_new_files(state: AutocodeState) -> dict:
                 pass
 
     updates: dict[str, Any] = {}
+    # [v3.0] files_map + modified_files live ONLY in the files sub-state.
     if files_map:
-        updates["files_map"] = files_map
+        current_files = dict(state.get("files_state", {}))
+        current_files["files_map"] = files_map
+        updates["files_state"] = current_files
     # [Hardening P1.8] Propagate written_files into modified_files.
     # Without this, new files written here were never reflected in modified_files,
     # so analyze_impact and downstream nodes missed them (only patched files
     # showed up). Merge with existing modified_files from apply_patches.
     if written_files:
-        # [v2.3] Use _get_files accessor (reads sub-state first, falls back to flat)
+        # [v2.3] Use _get_files accessor (reads sub-state)
         existing_modified = _get_files(state, "modified_files", [])
-        updates["modified_files"] = list(set(existing_modified + written_files))
-    # [v2.3] RMW: write to files sub-state if any files fields were set
-    if updates:
-        current_files = dict(state.get("files_state", {}))
-        if "files_map" in updates:
-            current_files["files_map"] = updates["files_map"]
-        if "modified_files" in updates:
-            current_files["modified_files"] = updates["modified_files"]
+        merged = list(set(existing_modified + written_files))
+        # RMW: preserve any files_map update from above
+        current_files = dict(updates.get("files_state", state.get("files_state", {})))
+        current_files["modified_files"] = merged
         updates["files_state"] = current_files
     return updates

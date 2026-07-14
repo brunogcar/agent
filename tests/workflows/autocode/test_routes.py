@@ -45,34 +45,36 @@ class TestRouteAfterWriteFiles:
 class TestRouteAfterRunTests:
     def test_passed_routes_to_verify(self):
         from workflows.autocode_impl.routes import route_after_run_tests
-        assert route_after_run_tests({"tdd_status": "passed"}) == "node_verify"
+        # [v3.0] tdd_status lives ONLY in the tdd sub-state.
+        assert route_after_run_tests({"tdd": {"status": "passed"}}) == "node_verify"
 
     def test_success_in_results_routes_to_verify(self):
         from workflows.autocode_impl.routes import route_after_run_tests
-        assert route_after_run_tests({"tdd_status": "", "test_results": {"success": True}}) == "node_verify"
+        assert route_after_run_tests({"tdd": {"status": ""}, "test_results": {"success": True}}) == "node_verify"
 
     def test_max_retries_routes_to_verify(self):
         from workflows.autocode_impl.routes import route_after_run_tests
-        assert route_after_run_tests({"tdd_status": "max_retries_exceeded"}) == "node_verify"
+        assert route_after_run_tests({"tdd": {"status": "max_retries_exceeded"}}) == "node_verify"
 
     def test_stuck_routes_to_verify(self):
         """[#39] stuck status bails to verify, skips doomed debug loop."""
         from workflows.autocode_impl.routes import route_after_run_tests
-        assert route_after_run_tests({"tdd_status": "stuck"}) == "node_verify"
+        assert route_after_run_tests({"tdd": {"status": "stuck"}}) == "node_verify"
 
     def test_failed_routes_to_debug(self):
         from workflows.autocode_impl.routes import route_after_run_tests
-        assert route_after_run_tests({"tdd_status": "failed"}) == "node_systematic_debug"
+        assert route_after_run_tests({"tdd": {"status": "failed"}}) == "node_systematic_debug"
 
 
 class TestRouteAfterVerify:
     def test_passed_routes_to_report(self):
         from workflows.autocode_impl.routes import route_after_verify
-        assert route_after_verify({"verification_passed": True}) == "report"
+        # [v3.0] verification_passed lives ONLY in the verify sub-state.
+        assert route_after_verify({"verify": {"passed": True}}) == "report"
 
     def test_failed_routes_to_end(self):
         from workflows.autocode_impl.routes import route_after_verify
-        assert route_after_verify({"verification_passed": False}) == "END"
+        assert route_after_verify({"verify": {"passed": False}}) == "END"
 
 
 # [Pre-2.0 Fix] DELETED: TestRouteAfterAnalyzeImpact — route_after_analyze_impact

@@ -6,7 +6,7 @@ decision (pass/fail) is handled by node_verify_decision (next in graph).
 """
 from __future__ import annotations
 
-from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT, _get_plan  # [v2.2] accessor
+from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT, _get_plan, _get_tdd  # [v2.2+v3.0] accessors
 from workflows.autocode_impl.constants import VERIFY_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
 from core.tracer import tracer
@@ -27,7 +27,7 @@ def node_llm_review(state: AutocodeState) -> dict:
     # Now uses `_parse_json` for consistency with apply_patches.py + write_new_files.py.
     impl_ctx = ""
     try:
-        code_data = _parse_json(state.get("tdd_source_code", "{}"))
+        code_data = _parse_json(_get_tdd(state, "source_code", "{}"))  # [v3.0] accessor (was flat field)
         if not code_data:
             code_data = {}
         parts = []
@@ -35,9 +35,9 @@ def node_llm_review(state: AutocodeState) -> dict:
             parts.append(f"# Patch: {patch.get('path', '')}\n```python\n{patch.get('new', '')[:1500]}\n```")
         for path, content in code_data.get("new_files", {}).items():
             parts.append(f"# New file: {path}\n```python\n{str(content)[:1500]}\n```")
-        impl_ctx = "\n\n".join(parts) if parts else state.get("tdd_source_code", "")[:3000]
+        impl_ctx = "\n\n".join(parts) if parts else _get_tdd(state, "source_code", "")[:3000]  # [v3.0] accessor
     except Exception:
-        impl_ctx = state.get("tdd_source_code", "")[:3000]
+        impl_ctx = _get_tdd(state, "source_code", "")[:3000]  # [v3.0] accessor
 
     # Get pytest + lint output from previous nodes (stored in state)
     tests_passed = state.get("tests_passed", False)

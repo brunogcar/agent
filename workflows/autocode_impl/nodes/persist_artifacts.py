@@ -3,8 +3,9 @@
 Split from node_write_files (Phase 3.1). This node persists artifacts to
 the per-run autocode folder for debugging and traceability:
   - test_autocode_feature.py (from state["test_code"])
-  - generated_code.json (from state["tdd_source_code"])
-  - debug_log.json (from state debug fields, if present)
+  - generated_code.json (from the tdd sub-state's source_code field — read
+    via _get_tdd accessor)
+  - debug_log.json (from debug sub-state fields, if present)
 
 Also sets `test_files` + `autocode_run_path` in state for downstream nodes
 (verify node uses these to find the test files).
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from filelock import FileLock, Timeout
 
-from workflows.autocode_impl.state import AutocodeState, _get_debug  # [v2.5] accessor
+from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_tdd  # [v2.5+v3.0] accessors
 from workflows.autocode_impl.helpers import _get_autocode_run_path
 from core.config import cfg
 from core.tracer import tracer
@@ -60,10 +61,11 @@ def node_persist_artifacts(state: AutocodeState) -> dict:
         tracer.step(tid, "persist_artifacts", f"test file write error: {e}")
 
     # Persist generated code for record-keeping
-    if state.get("tdd_source_code"):
+    source_code = _get_tdd(state, "source_code", "")  # [v3.0] accessor (was flat field)
+    if source_code:
         try:
             gen_file = run_dir / "generated_code.json"
-            gen_file.write_text(state["tdd_source_code"], encoding="utf-8")
+            gen_file.write_text(source_code, encoding="utf-8")
             tracer.step(tid, "persist_artifacts", f"generated code persisted to {gen_file}")
         except Exception as e:
             tracer.step(tid, "persist_artifacts", f"generated code write error: {e}")
@@ -79,7 +81,7 @@ def node_persist_artifacts(state: AutocodeState) -> dict:
                 "debug_notes": debug_notes,
                 "root_cause": root_cause,
                 "defense_notes": _get_debug(state, "defense_notes", ""),
-                "tdd_iteration": state.get("tdd_iteration", 0),
+                "tdd_iteration": _get_tdd(state, "iteration", 0),  # [v3.0] accessor (was flat field)
             }
             debug_file.write_text(json.dumps(debug_data, indent=2), encoding="utf-8")
             tracer.step(tid, "persist_artifacts", f"debug log persisted to {debug_file}")

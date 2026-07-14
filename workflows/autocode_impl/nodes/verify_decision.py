@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_tdd  # [v3.0] accessor
 from core.config import cfg
 from core.tracer import tracer
 
@@ -25,14 +25,14 @@ def node_verify_decision(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
 
     # Handle TDD max retries exceeded OR stuck (early exit)
-    tdd_status = state.get("tdd_status", "")
+    tdd_status = _get_tdd(state, "status", "")  # [v3.0] accessor (was flat field)
     if tdd_status in ("max_retries_exceeded", "stuck"):
         reason = "TDD exhausted" if tdd_status == "max_retries_exceeded" else "TDD stuck (same error repeated)"
-        tracer.error(tid, "verify_decision", f"Verification skipped: {reason} after {state.get('max_retries', cfg.autocode_max_retries)} attempts")
+        tracer.error(tid, "verify_decision", f"Verification skipped: {reason} after {_get_tdd(state, 'max_retries', cfg.autocode_max_retries)} attempts")  # [v3.0] accessor
         try:
             from core.memory_engine import memory
             memory.store(
-                text=f"Verification skipped due to TDD exhaustion on task: '{state.get('task', 'Unknown')}'. Error: {state.get('tdd_error', 'Unknown')}",
+                text=f"Verification skipped due to TDD exhaustion on task: '{state.get('task', 'Unknown')}'. Error: {_get_tdd(state, 'error', 'Unknown')}",  # [v3.0] accessor
                 memory_type="procedural",
                 importance=8,
                 tags="tdd_failure,verify_skipped,autocode",
@@ -41,14 +41,12 @@ def node_verify_decision(state: AutocodeState) -> dict:
             )
         except Exception:
             pass
-        # [v2.6] RMW: write to verify sub-state + flat mirrors
+        # [v2.6] RMW: write to verify sub-state
         current_verify = dict(state.get("verify", {}))
         current_verify["passed"] = False
         current_verify["notes"] = f"TDD {tdd_status}"
         return {
             "status": "failed",
-            "verification_notes": current_verify["notes"],
-            "verification_passed": False,
             "verify": current_verify,
             "trace_id": tid,
         }
@@ -87,7 +85,7 @@ def node_verify_decision(state: AutocodeState) -> dict:
 
     tracer.step(tid, "verify_decision", f"result: {'PASS' if all_passed else 'FAIL'} -- {summary[:80]}")
 
-    # [v2.6] RMW: write to verify sub-state + flat mirrors
+    # [v2.6] RMW: write to verify sub-state
     current_verify = dict(state.get("verify", {}))
     current_verify["passed"] = all_passed
     current_verify["notes"] = (
@@ -96,8 +94,6 @@ def node_verify_decision(state: AutocodeState) -> dict:
         f"{summary}\n\n{notes}"
     )
     return {
-        "verification_passed": all_passed,
-        "verification_notes": current_verify["notes"],
         "evidence_outputs": {
             "tests": fresh_output[:2000],
             "lint": lint_output[:500],

@@ -10,7 +10,7 @@ from typing import Any
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState, _get_impact
+from workflows.autocode_impl.state import AutocodeState, _get_impact, _get_tdd  # [v3.0] accessors
 
 def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_cmd: str | None = None) -> dict:
     """
@@ -95,37 +95,38 @@ def node_run_tests(state: AutocodeState) -> dict:
     # [v2.4] Use _get_impact accessor (reads sub-state first, falls back to flat field)
     targeted_cmd = _get_impact(state, "targeted_test_cmd", None)
     test_results = run_tests_on_disk(existing_test_files, project_root=project_root, targeted_cmd=targeted_cmd)
-    current_iter = state.get("tdd_iteration", 0) + 1
+    current_iter = _get_tdd(state, "iteration", 0) + 1  # [v3.0] accessor
+
+    # [v3.0] Read-modify-write: all tdd_* writes go to the tdd sub-state via RMW.
+    # LangGraph replaces dict values, doesn't deep-merge — preserve existing fields.
+    current_tdd = dict(state.get("tdd", {}))
+    current_tdd["iteration"] = current_iter
 
     # Build partial update dict instead of mutating state directly
+    # [v3.0] test_results stays flat (ephemeral); tdd fields go in the sub-state below.
     updates = {
         "test_results": test_results,
-        "tdd_iteration": current_iter,
     }
 
     if test_results.get("success"):
         tracer.step(tid, "run_tests", f"Tests passed in {current_iter} iterations")
-        updates["tdd_status"] = "passed"
-        updates["tdd_error"] = ""
-        updates["last_test_error"] = ""  # [#39] clear on success
+        current_tdd["status"] = "passed"
+        current_tdd["error"] = ""
+        current_tdd["last_test_error"] = ""  # [#39] clear on success
 
         # [Hardening P0.2] Update debug_history: mark last entry's tests_passed=True.
         # Without this, every debug_history entry stays tests_passed=False forever,
         # causing the architecture-question exit in node_systematic_debug to fire
         # after 3 iterations even when tests have since passed.
-        from workflows.autocode_impl.state import _get_tdd
-        debug_history = _get_tdd(state, "debug_history", [])
+        debug_history = current_tdd.get("debug_history", [])
         if debug_history:
             # [v2.0.5] P3-2: Copy before mutating — was mutating the list + dict
             # in-place. Works today, but unsafe if LangGraph ever snapshots state
             # between nodes. Defensive copy matches the pattern used by debug.py.
             debug_history = [dict(e) for e in debug_history]
             debug_history[-1]["tests_passed"] = True
-            # Read-modify-write to preserve tdd sub-state (LangGraph replaces
-            # dict values, doesn't deep-merge).
-            current_tdd = dict(state.get("tdd", {}))
             current_tdd["debug_history"] = debug_history
-            updates["tdd"] = current_tdd
+        updates["tdd"] = current_tdd
 
         # [PHASE 3 FIX] Wire success callback: store procedural memory on convergence
         try:
@@ -143,21 +144,22 @@ def node_run_tests(state: AutocodeState) -> dict:
 
     else:
         current_error = test_results.get("stderr", "Tests failed")
-        updates["tdd_error"] = current_error
+        current_tdd["error"] = current_error
         # [#39] Stuck detection: compare error signature to previous iteration.
         # If the same error repeats and we're past iteration 1, the debug loop
         # is spinning on the same mistake — bail to verify instead of looping.
-        prev_error = state.get("last_test_error", "")
+        prev_error = _get_tdd(state, "last_test_error", "")  # [v3.0] accessor
         if prev_error and current_iter > 1 and _error_signature(prev_error) == _error_signature(current_error):
             tracer.warning(
                 tid, "run_tests",
                 f"Stuck detection: same error signature on iteration {current_iter}, bailing to verify"
             )
-            updates["tdd_status"] = "stuck"
+            current_tdd["status"] = "stuck"
         else:
-            updates["tdd_status"] = "failed"
-        updates["last_test_error"] = current_error
-        tracer.step(tid, "run_tests", f"Tests failed (iteration {current_iter}, status={updates['tdd_status']})")
+            current_tdd["status"] = "failed"
+        current_tdd["last_test_error"] = current_error
+        updates["tdd"] = current_tdd
+        tracer.step(tid, "run_tests", f"Tests failed (iteration {current_iter}, status={current_tdd['status']})")
 
     return updates
 

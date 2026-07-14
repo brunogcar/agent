@@ -6,9 +6,12 @@ Per-node reference for all 28 nodes in the autocode workflow graph
 (25 active + 3 backward-compat wrappers — see [ARCHITECTURE.md](ARCHITECTURE.md)
 § "Backward-compat wrappers" for wrapper details). Nodes are listed in
 graph-execution order (Phase 1 → Phase 17). For the workflow facade, output format,
-state fields, and accessor functions, see [API.md](API.md).
+state fields, and accessor functions, see [API.md](API.md). For the sub-state
+architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBSTATE.md).
 
-**[v2.0] Lazy Dev / YAGNI Ladder:** `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code). Enforced at the prompt level — every code-generating node benefits. See INSTRUCTIONS.md ALWAYS DO #54 + #55.
+> **[v3.0]** Every node reads sub-state fields via accessors (`_get_tdd`, `_get_vcs`, etc.) and writes via read-modify-write (RMW). Ephemeral flat fields (`test_results`, `test_code`, `_pytest_output`, etc.) stay flat — read via `state.get(key, default)`. See [SUBSTATE.md](SUBSTATE.md).
+
+**[v2.0] Lazy Dev / YAGNI Ladder:** `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code). Enforced at the prompt level — every code-generating node benefits. See INSTRUCTIONS.md ALWAYS DO #38 + #39.
 
 ---
 
@@ -92,7 +95,7 @@ state fields, and accessor functions, see [API.md](API.md).
 
 **Logic:**
 1. If `cfg.autocode_pull_before_branch` is ON, call `_github_pull(tid)` to pull recent commits from `origin` before creating the branch. Pull failure is non-blocking.
-2. Create branch via `_git_create_branch()` (if `state["branch"]` is set).
+2. Create branch via `_git_create_branch()` (if `_get_vcs(state, "branch", "")` is set).
 
 **Output:** Empty dict (side effects only). On branch-creation failure: `{"status": "error", "error": "Failed to create git branch: <name>"}`.
 
@@ -113,7 +116,7 @@ state fields, and accessor functions, see [API.md](API.md).
 2. Call `llm.complete(role="test", ...)` for test generation
 3. Extract code from markdown fences
 
-**Output:** Partial dict with `test_code` (list of test strings) and `current_step`.
+**Output:** Partial dict with `test_code` (list of test strings — ephemeral flat field) and `plan_state` (sub-state RMW: writes `current_step`).
 
 **Note:** `test_code` is `list[str]` but stored as-is in state. Later, `node_persist_artifacts` checks if it's a list and joins with `"\n\n"`.
 
@@ -131,7 +134,7 @@ state fields, and accessor functions, see [API.md](API.md).
 5. **[Pre-2.0 Fix]** Use `_parse_json()` to derive `modified_files` (was: raw `json.loads(code)` → markdown-fenced JSON raised `JSONDecodeError` and `modified_files` was always `[]`).
 6. **[Hardening P2]** Removed dead `json.loads(code)` fallback — `_parse_json` already tries direct `json.loads` first, so when it returns `{}` the fallback would also raise. Now traces a warning + sets `modified_files=[]` on empty dict.
 
-**Output:** Partial dict with `code` (generated code), `modified_files`, `current_step`.
+**Output:** Partial dict with `tdd` (sub-state RMW: writes `source_code`), `files_state` (sub-state RMW: writes `modified_files`), `plan_state` (sub-state RMW: writes `current_step`). `execution_notes` (ephemeral flat) may also be set.
 
 ---
 
@@ -144,7 +147,7 @@ state fields, and accessor functions, see [API.md](API.md).
 - `node_write_new_files({**state, **result})` →
 - `node_persist_artifacts({**state, **result})`
 
-**Output (merged):** Partial dict with `written_files`, `files_map`, `test_files`, `autocode_run_path`, `modified_files`, `patch_errors` (if any).
+**Output (merged):** Partial dict that merges the 3 split-node returns — primarily the `files_state` sub-state (`files_map`, `modified_files`) + ephemeral flat fields (`test_files`, `autocode_run_path`, `patch_errors`).
 
 **Note:** Registered via `add_node(...)` so external callers + tests that `import node_write_files` still work, but NOT wired (no edges in or out). Excluded from `WORKFLOW_METADATA["nodes"]`. `# TODO(2.0-post):` wrapper removal deferred.
 
@@ -155,14 +158,14 @@ state fields, and accessor functions, see [API.md](API.md).
 **Purpose:** Apply `str_replace` patches to existing files only. First of the 3 Phase 3.1 split nodes (was inside `node_write_files`).
 
 **Logic:**
-1. Read `state["tdd_source_code"]` JSON. **[Hardening P1.4]** Use `_parse_json()` (handles markdown fences ```` ```json ... ``` ````); was raw `json.loads()` which failed on fenced output. Empty-dict check raises `ValueError` inside try block so the existing except handler produces `"apply_patches JSON parse failed: ..."`.
+1. Read `tdd.source_code` JSON via `_get_tdd(state, "source_code", "")`. **[Hardening P1.4]** Use `_parse_json()` (handles markdown fences ```` ```json ... ``` ````); was raw `json.loads()` which failed on fenced output. Empty-dict check raises `ValueError` inside try block so the existing except handler produces `"apply_patches JSON parse failed: ..."`.
 2. Extract `patches[]` array
 3. For each patch: validate path via `_is_path_safe()`, skip if protected, skip if file missing, else call `apply_patch(target, old_text, new_text)`
 4. Build `modified_files` list (paths successfully patched) + `patch_errors` list (path-traversal blocks + missing-file + apply failures)
 
-**Params:** None beyond `state`. Reads: `state["tdd_source_code"]`, `state["status"]`, `state["dry_run"]`, `state["project_root"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_tdd(state, "source_code", "")`, `state["status"]`, `state["dry_run"]`, `state["project_root"]`.
 
-**Returns:** `{"modified_files": list[str], "patch_errors"?: list[str]}` — or `{"status": "error", "error": str}` on JSON parse failure, or `{"status": "dry_run", "modified_files": []}` when `dry_run=True`.
+**Returns:** `{"files_state": current_files (sub-state RMW with modified_files), "patch_errors"?: list[str]}` — or `{"status": "error", "error": str}` on JSON parse failure, or `{"status": "dry_run", "files_state": current_files}` when `dry_run=True`. `patch_errors` stays flat (ephemeral).
 
 **Source:** `workflows/autocode_impl/nodes/apply_patches.py` (also hosts `_is_path_safe()` shared with `write_new_files.py`).
 
@@ -173,15 +176,15 @@ state fields, and accessor functions, see [API.md](API.md).
 **Purpose:** Write new files / overwrite existing ones atomically. Also builds `files_map` for `analyze_impact`. Second of the 3 Phase 3.1 split nodes.
 
 **Logic:**
-1. Read `state["tdd_source_code"]` JSON via `_parse_json()` (**[Hardening P1.4]** handles markdown fences). Extract `new_files{}` dict (backwards-compat: if no `patches`/`new_files` keys, treat whole dict as files).
+1. Read `tdd.source_code` JSON via `_get_tdd(state, "source_code", "")` + `_parse_json()` (**[Hardening P1.4]** handles markdown fences). Extract `new_files{}` dict (backwards-compat: if no `patches`/`new_files` keys, treat whole dict as files).
 2. For each file: validate path via `_is_path_safe()` (imported from `apply_patches.py`), skip if protected, else write atomically (`tempfile.NamedTemporaryFile` + `os.replace` + `FileLock` with 1 retry on timeout).
 3. Call `_cleanup_old_autocode_runs()` for on-demand run-dir pruning
 4. Build `files_map` — snapshots of all modified files (patches from `apply_patches` + new files written here) with `{content_preview, preview_md5, full_md5, size, truncated}` for `analyze_impact`
-5. **[Hardening P1.8]** Merge new files into `modified_files` (set union with `state.get("modified_files", [])`) so downstream nodes (`analyze_impact`, etc.) see them. Without this, new files were never reflected in `modified_files`.
+5. **[Hardening P1.8]** Merge new files into `modified_files` (set union with existing `_get_files(state, "modified_files", [])`) so downstream nodes (`analyze_impact`, etc.) see them. Without this, new files were never reflected in `modified_files`.
 
-**Params:** None beyond `state`. Reads: `state["tdd_source_code"]`, `state["status"]`, `state["dry_run"]`, `state["project_root"]`, `state["modified_files"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_tdd(state, "source_code", "")`, `_get_files(state, "modified_files", [])`, `state["status"]`, `state["dry_run"]`, `state["project_root"]`.
 
-**Returns:** `{"files_map": dict[str, dict], "modified_files": list[str]}` — or `{}` when `status` is `needs_clarification`/`failed`/`error`, `tdd_source_code` is empty, or `dry_run=True`.
+**Returns:** `{"files_state": current_files (sub-state RMW with files_map + modified_files)}` — or `{}` when `status` is `needs_clarification`/`failed`/`error`, `tdd.source_code` is empty, or `dry_run=True`.
 
 **Source:** `workflows/autocode_impl/nodes/write_new_files.py` (imports `_is_path_safe` from `apply_patches.py`).
 
@@ -194,11 +197,11 @@ state fields, and accessor functions, see [API.md](API.md).
 **Logic:**
 1. Resolve `run_dir` via `_get_autocode_run_path(tid)` (or read from `state["autocode_run_path"]` if set)
 2. Write `test_autocode_feature.py` from `state["test_code"]` (joined with `"\n\n"` if list) using `FileLock` (10s timeout)
-3. Write `generated_code.json` from `state["tdd_source_code"]` (if present)
-4. Write `debug_log.json` from `state["debug_notes"]` / `root_cause` / `defense_notes` / `tdd_iteration` (if any are present)
+3. Write `generated_code.json` from `_get_tdd(state, "source_code", "")` (if present)
+4. Write `debug_log.json` from `_get_debug(state, "notes", "")` / `_get_debug(state, "root_cause", "")` / `_get_debug(state, "defense_notes", "")` / `_get_tdd(state, "iteration", 0)` (if any are present)
 5. Return `test_files` (relative path from `workspace_root`) + `autocode_run_path` (absolute path)
 
-**Params:** None beyond `state`. Reads: `state["test_code"]`, `state["tdd_source_code"]`, `state["debug_notes"]`, `state["root_cause"]`, `state["defense_notes"]`, `state["tdd_iteration"]`, `state["status"]`, `state["dry_run"]`, `state["trace_id"]`, `state["project_root"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_tdd(state, "source_code", "")`, `_get_debug(state, "notes/root_cause/defense_notes", "")`, `_get_tdd(state, "iteration", 0)`, `state["test_code"]`, `state["status"]`, `state["dry_run"]`, `state["trace_id"]`, `state["project_root"]`.
 
 **Returns:** `{"test_files": list[str], "autocode_run_path": str}` — or `{}` when `status` is `needs_clarification`/`failed`/`error`, `dry_run=True`, or `test_code` is empty.
 
@@ -215,7 +218,7 @@ state fields, and accessor functions, see [API.md](API.md).
 2. Query dependency graph for affected files
 3. Generate impact warnings
 
-**Output:** Partial dict with `impact_warnings` (list of dicts with `type`, `message`, `agent_fault`).
+**Output:** Partial dict with `impact` (sub-state RMW: writes `warnings` — list of dicts with `type`, `message`, `agent_fault`).
 
 **Note:** `node_analyze_impact` uses `_run_async()` to wrap async calls (`parse_dependencies_from_string`, `get_targeted_tests`). **[v2.0]** `_run_async()` simplified to `asyncio.run(coro)` (was create/destroy event loop per call).
 
@@ -231,7 +234,7 @@ state fields, and accessor functions, see [API.md](API.md).
 3. Return results
 4. **[Hardening P0.2]** If `test_results.success`, mark the last entry in `debug_history` (read via `_get_tdd`) with `tests_passed=True`, then read-modify-write the `tdd` sub-state to preserve other fields. Without this, every `debug_history` entry stayed `tests_passed=False` forever, causing the architecture-question exit to fire prematurely after 3 iterations.
 
-**Output:** Partial dict with `test_results`, `test_passed`, `test_output`, and (when tests passed) `"tdd": {"debug_history": updated_history}`.
+**Output:** Partial dict with `test_results` (ephemeral flat), `tests_passed` (ephemeral flat), and `tdd` (sub-state RMW: writes `debug_history`, `status`, `iteration`, `last_test_error`, `error` as needed).
 
 ---
 
@@ -253,10 +256,10 @@ state fields, and accessor functions, see [API.md](API.md).
    - If swarm returns `None` (no providers configured, import failure, consensus exception), falls through to single-LLM debug.
 8. Otherwise (flag OFF or swarm unavailable), call `llm.complete(role="executor", ..., json_schema=_DEBUG_JSON_SCHEMA)` for debug analysis.
 9. Parse JSON response for `phase`, `root_cause`, `defense_notes`, and `fix`. Validate `phase` against the allowed enum; default to `"investigation"` on unknown value.
-10. If swarm returned LOW confidence AND `cfg.autocode_debug_comment_pr` is ON AND a PR exists (`state["pr_number"]` is set), post a warning comment on the PR via `_github_pr_comment()`.
+10. If swarm returned LOW confidence AND `cfg.autocode_debug_comment_pr` is ON AND a PR exists (`_get_vcs(state, "pr_number", 0)` is set), post a warning comment on the PR via `_github_pr_comment()`.
 11. Append a new entry to `debug_history`: `{iteration: current_iteration, phase: phase, root_cause: root_cause, fix: (suggested_fix or "")[:200], tests_passed: False}` (tests_passed is updated to True by `node_run_tests` on the next loop iteration if the fix worked). Swarm-path entries include extra `confidence` field. **[Hardening P0.1]** Read-modify-write preserves sibling TDD fields.
 
-**Output:** Partial dict with `root_cause`, `defense_notes`, `tdd_source_code`, `debug_notes`, `"tdd": {"debug_history": updated_history}`. When swarm was used, also includes `"swarm_verdict": {...}`. Both early-exit paths preserve `debug_history`.
+**Output:** Partial dict with `tdd` (sub-state RMW: writes `source_code` = suggested fix, `debug_history` updated, `status`, `error` on early exits) + `debug` (sub-state RMW: writes `root_cause`, `defense_notes`, `notes`, `swarm_verdict`, `subagent_verdict`). When swarm was used, the swarm verdict is in `debug.swarm_verdict`. `error` (flat status) on early-exit paths. Both early-exit paths preserve `debug_history` (in `tdd` sub-state).
 
 **[Pre-2.0 Fix] Field name alignment:** `DEBUG_SYSTEM` prompt now uses `root_cause` / `defense_notes` (matching the `_DEBUG_JSON_SCHEMA` and `AutocodeState` TypedDict). Was: `hypothesis` / `defense_note` — swarm debug root_cause was always "Unknown".
 
@@ -284,7 +287,7 @@ state fields, and accessor functions, see [API.md](API.md).
 4. Trace-log entry count + compressed length.
 5. **[Hardening P0.1]** Read-modify-write: `current_tdd = dict(state.get("tdd", {}))` then `current_tdd["debug_summary"] = summary` — preserves `debug_history`, `iteration`, `status`, etc. Return `{"tdd": current_tdd}`.
 
-**Params:** None beyond `state`. Reads (via `_get_tdd` accessor): `state["tdd"]["debug_history"]` (or legacy `state["debug_history"]` fallback) — `list[dict]` where each dict has shape `{iteration, phase, root_cause, fix, tests_passed, confidence?}`.
+**Params:** None beyond `state`. Reads (via `_get_tdd` accessor): `state["tdd"]["debug_history"]` — `list[dict]` where each dict has shape `{iteration, phase, root_cause, fix, tests_passed, confidence?}`. **[v3.0]** Sub-state is the ONLY storage — no legacy flat fallback.
 
 **Returns:** `{"tdd": {"debug_summary": str}}` (or full `tdd` sub-state with `debug_summary` merged in after Hardening P0.1). Empty string when history is empty.
 
@@ -306,7 +309,7 @@ state fields, and accessor functions, see [API.md](API.md).
 - `node_llm_review({**state, **result})` →
 - `node_verify_decision({**state, **result})`
 
-**Output (merged):** Partial dict with `lint_passed`, `lint_output`, `regression_passed`, `evidence_outputs`, `verification_passed`, `verification_notes`, `test_results`, `tests_passed`, `llm_review_data`.
+**Output (merged):** Partial dict that merges the 4 split-node returns — primarily the `verify` sub-state (`passed`, `notes`, `report`) + ephemeral flat fields (`test_results`, `tests_passed`, `llm_review_data`, `lint_passed`, `lint_output`, `_pytest_output`) + `evidence_outputs`.
 
 **Note:** Registered via `add_node(...)` but NOT wired. Excluded from `WORKFLOW_METADATA["nodes"]`. `# TODO(2.0-post):` wrapper removal deferred.
 
@@ -340,7 +343,7 @@ state fields, and accessor functions, see [API.md](API.md).
 3. Run `[python, "-m", "ruff", "check", ...targets, "--select", "E,F", "--no-cache"]` with 30s timeout
 4. Build `lint_output` (first 500 chars of stdout+stderr) + `lint_passed` (bool — `returncode == 0`)
 
-**Params:** None beyond `state`. Reads: `state["status"]`, `state["trace_id"]`, `state["modified_files"]`, `state["project_root"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_files(state, "modified_files", [])`, `state["status"]`, `state["trace_id"]`, `state["project_root"]`.
 
 **Returns:** `{"lint_output": str, "lint_passed": bool | None}` — `lint_passed` is `None` when ruff is unavailable (was `True` before Pre-2.0 Fix) or when no modified files.
 
@@ -353,13 +356,13 @@ state fields, and accessor functions, see [API.md](API.md).
 **Purpose:** LLM-based spec review of the implementation. Third of the 4 Phase 3.2 split nodes. Calls `_call(role="executor", system=VERIFY_SYSTEM, ...)` with implementation context, fresh pytest output, and ruff output.
 
 **Logic:**
-1. Build `impl_ctx` from `state["tdd_source_code"]` JSON — extract `patches[].new` (first 1500 chars each) + `new_files{}` values (first 1500 chars each). Fallback: raw `tdd_source_code[:3000]` on parse failure.
-2. Read `tests_passed`, `_pytest_output` (from `node_run_pytest`), `lint_output` (from `node_run_lint`) from state
+1. Build `impl_ctx` from `_get_tdd(state, "source_code", "{}")` JSON — extract `patches[].new` (first 1500 chars each) + `new_files{}` values (first 1500 chars each). Fallback: raw `tdd.source_code[:3000]` on parse failure.
+2. Read `tests_passed`, `_pytest_output` (from `node_run_pytest`), `lint_output` (from `node_run_lint`) from state — these are ephemeral flat fields
 3. Call `_call(role="executor", system=VERIFY_SYSTEM, user=<spec + impl + tests + pytest output + ruff output>, timeout=EXECUTOR_TIMEOUT)`
 4. Parse response via `_parse_json(raw)` → `data` dict `{automated_checks_passed, checks: {syntax, tests, spec, regressions, cleanliness}, summary}`
 5. On `_call` exception: `tracer.error(tid, "llm_review", ...)` + return `{"llm_review_data": {"automated_checks_passed": False, "checks": {}, "summary": "LLM verification error"}}`
 
-**Params:** None beyond `state`. Reads: `state["status"]`, `state["trace_id"]`, `state["tdd_source_code"]`, `state["tests_passed"]`, `state["_pytest_output"]`, `state["test_results"]`, `state["lint_output"]`, `state["project_root"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_tdd(state, "source_code", "{}")`, `state["status"]`, `state["trace_id"]`, `state["tests_passed"]`, `state["_pytest_output"]`, `state["test_results"]`, `state["lint_output"]`, `state["project_root"]`.
 
 **Returns:** `{"llm_review_data": dict}` — always returns a dict (even on error). Or `{}` when `status` is `needs_clarification`/`failed`.
 
@@ -374,17 +377,17 @@ state fields, and accessor functions, see [API.md](API.md).
 **Purpose:** Compose the results from the 3 previous nodes (run_pytest + run_lint + llm_review) and make the final verification decision. Fourth of the 4 Phase 3.2 split nodes. Also handles the `tdd_status in ("max_retries_exceeded", "stuck")` early-exit path.
 
 **Logic:**
-1. **Early exit:** If `tdd_status in ("max_retries_exceeded", "stuck")`, log `tracer.error(tid, "verify_decision", ...)`, store a procedural memory (`memory.store(...)` — non-fatal, wrapped in try/except), return `{"status": "failed", ...}`.
-2. Read results from state: `tests_passed`, `lint_passed`, `_pytest_output`, `lint_output`, `llm_review_data`
+1. **Early exit:** If `_get_tdd(state, "status", "")` is in (`max_retries_exceeded`, `stuck`), log `tracer.error(tid, "verify_decision", ...)`, store a procedural memory (`memory.store(...)` — non-fatal, wrapped in try/except), return `{"status": "failed", ...}`.
+2. Read ephemeral flat results from state: `tests_passed`, `lint_passed`, `_pytest_output`, `lint_output`, `llm_review_data`
 3. Compute `automated_ok = tests_passed` (lint is advisory only)
 4. **Hallucination guard:** If `not tests_passed` AND `llm_review_data["automated_checks_passed"]` is True, log `tracer.step` "HALLUCINATION DETECTED" — real exit code overrides LLM claim
 5. Compute `llm_checks_ok` = all of `syntax`, `tests`, `spec`, `regressions`, `cleanliness` checks pass
 6. Final decision: `all_passed = automated_ok AND llm_checks_ok`
-7. Build `verification_notes` (Automated/LLM PASS/FAIL + summary + JSON-encoded checks) + `evidence_outputs` `{tests, lint, regression}` (each truncated to 2000/500/2000 chars)
+7. Build `verify.notes` (Automated/LLM PASS/FAIL + summary + JSON-encoded checks) + `evidence_outputs` `{tests, lint, regression}` (each truncated to 2000/500/2000 chars)
 
-**Params:** None beyond `state`. Reads: `state["trace_id"]`, `state["tdd_status"]`, `state["max_retries"]`, `state["task"]`, `state["tdd_error"]`, `state["status"]`, `state["tests_passed"]`, `state["lint_passed"]`, `state["_pytest_output"]`, `state["lint_output"]`, `state["llm_review_data"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_tdd(state, "status", "")`, `_get_tdd(state, "max_retries", ...)`, `_get_tdd(state, "error", ...)`, `state["trace_id"]`, `state["task"]`, `state["status"]`, `state["tests_passed"]`, `state["lint_passed"]`, `state["_pytest_output"]`, `state["lint_output"]`, `state["llm_review_data"]`.
 
-**Returns:** `{"verification_passed": bool, "verification_notes": str, "evidence_outputs": dict, "trace_id": str}` — or `{"status": "failed", ...}` on max_retries/stuck early-exit, or `{}` on `needs_clarification`/`failed`/`dry_run`.
+**Returns:** `{"verify": current_verify (sub-state RMW with passed + notes), "evidence_outputs": dict, "trace_id": str}` — or `{"status": "failed", ...}` on max_retries/stuck early-exit, or `{}` on `needs_clarification`/`failed`/`dry_run`. `evidence_outputs` + `trace_id` stay flat (ephemeral).
 
 **Source:** `workflows/autocode_impl/nodes/verify_decision.py`.
 
@@ -413,13 +416,11 @@ state fields, and accessor functions, see [API.md](API.md).
 2. Call `git(action="commit", message=..., root=...)`
 3. Return commit SHA
 
-**Output:** Partial dict with `commit_sha`, `status`, `result`.
+**Output:** Partial dict with `vcs` (sub-state RMW: writes `commit_sha`), `status`, `result`.
 
 **[Pre-2.0 Fix] `.get("label", "step")` fallback:** Was: `s["label"]` raised `KeyError` if any step in the plan lacked a `"label"` key (LLM-returned plans are not guaranteed to label every step). Now uses `.get("label", "step")`.
 
-**[v2.0] First node migrated to the accessor pattern:** Reads `state["branch"]` via `_get_vcs(state, "branch", "main")` instead of `state.get("branch", "main")`. Proof-of-concept for the 8-accessor migration.
-
-**[v2.0.5] REVERTED — accessor was broken (split-brain):** `_get_vcs` read `state["vcs"]["branch"]` first, which held the stale default `""` (sub-state populated by `_default_state()` but never written to by nodes — `node_write_plan` writes the flat `branch` field). The accessor returned `""` instead of the actual branch name. Now reads `state.get("branch") or state.get("branch_name") or "main"` directly. Only `_get_tdd` is safe to use today (see INSTRUCTIONS.md NEVER DO #33). Full accessor migration is the v2.x → v3.0 roadmap.
+**[v3.0] Reads branch via accessor:** Reads `_get_vcs(state, "branch", "") or _get_vcs(state, "branch_name", "") or "main"` instead of `state.get("branch", ...)`. The v2.0.5 split-brain band-aid (direct `state.get("branch")`) is no longer needed — `plan.py` writes the `branch` to the `vcs` sub-state via RMW (Track M1 v2.1), and the v3.0 accessor reads sub-state ONLY (no flat fallback). All 8 accessors are safe (Track M1 complete).
 
 ---
 
@@ -432,7 +433,7 @@ state fields, and accessor functions, see [API.md](API.md).
 - `node_create_pr({**state, **result})` →
 - `node_merge_pr({**state, **result})`
 
-**Output (merged):** Partial dict with `pushed: bool`, `pr_number: int`, `pr_url: str` (all three are always present when the node runs to completion; defaults are `False`/`0`/`""`).
+**Output (merged):** Partial dict that merges the 3 split-node returns — primarily the `vcs` sub-state (`pushed`, `pr_number`, `pr_url` — all three populated in `vcs` when the node runs to completion; defaults are `False`/`0`/`""`).
 
 **Note:** Registered via `add_node(...)` but NOT wired. Excluded from `WORKFLOW_METADATA["nodes"]`. `# TODO(2.0-post):` wrapper removal deferred.
 
@@ -443,15 +444,15 @@ state fields, and accessor functions, see [API.md](API.md).
 **Purpose:** Push the committed branch to the remote via `_github_push(branch, tid)`. First of the 3 Phase 3.3 split nodes (was inside `node_publish`).
 
 **Logic:**
-1. Skip conditions (same as `node_commit`): `status in {needs_clarification, failed, skipped}` → `{}`; `verification_passed` falsy → `{}`; `dry_run` truthy → `{"status": "dry_run"}`
-2. If `cfg.autocode_push_on_commit` is OFF, return `{"pushed": False}` (let downstream nodes decide)
-3. If `state["branch"]` is empty, return `{"pushed": False}` (nothing to push)
+1. Skip conditions (same as `node_commit`): `status in {needs_clarification, failed, skipped}` → `{}`; `_get_verify(state, "passed", False)` falsy → `{}`; `dry_run` truthy → `{"status": "dry_run"}`
+2. If `cfg.autocode_push_on_commit` is OFF, return `{"vcs": current_vcs}` with `pushed=False` (let downstream nodes decide)
+3. If `_get_vcs(state, "branch", "")` is empty, return `{"vcs": current_vcs}` with `pushed=False` (nothing to push)
 4. Call `_github_push(branch, tid)` — returns `bool`
-5. Return `{"pushed": success}`
+5. RMW the `vcs` sub-state with `pushed=success`
 
-**Params:** None beyond `state`. Reads: `state["status"]`, `state["verification_passed"]`, `state["dry_run"]`, `state["trace_id"]`, `state["branch"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_vcs(state, "branch", "")`, `_get_verify(state, "passed", False)`, `state["status"]`, `state["dry_run"]`, `state["trace_id"]`.
 
-**Returns:** `{"pushed": bool}` — or `{"status": "dry_run"}` when dry_run, or `{}` on skip conditions.
+**Returns:** `{"vcs": current_vcs (sub-state RMW with pushed)}` — or `{"status": "dry_run"}` when dry_run, or `{}` on skip conditions.
 
 **Source:** `workflows/autocode_impl/nodes/push.py` (imports `_github_push` from `vcs_ops.py`).
 
@@ -462,19 +463,19 @@ state fields, and accessor functions, see [API.md](API.md).
 **Purpose:** Open a PR from the autocode branch via `_github_pr_create(branch, title, body, tid)`. Second of the 3 Phase 3.3 split nodes. Hosts `_build_pr_body(state)`.
 
 **Logic:**
-1. Skip conditions: `status in {needs_clarification, failed, skipped}` → `{}`; `verification_passed` falsy → `{}`; `dry_run` truthy → `{}`
-2. If `cfg.autocode_open_pr` is OFF, return `{"pr_number": 0, "pr_url": ""}`
-3. If `state["pushed"]` is falsy (can't create a PR without pushing first), return `{"pr_number": 0, "pr_url": ""}` with a `tracer.step` note
-4. If `state["branch"]` is empty, return `{"pr_number": 0, "pr_url": ""}`
+1. Skip conditions: `status in {needs_clarification, failed, skipped}` → `{}`; `_get_verify(state, "passed", False)` falsy → `{}`; `dry_run` truthy → `{}`
+2. If `cfg.autocode_open_pr` is OFF, RMW `vcs` with `pr_number=0, pr_url=""`
+3. If `_get_vcs(state, "pushed", False)` is falsy (can't create a PR without pushing first), RMW `vcs` with `pr_number=0, pr_url=""` + a `tracer.step` note
+4. If `_get_vcs(state, "branch", "")` is empty, RMW `vcs` with `pr_number=0, pr_url=""`
 5. Build `pr_title = f"autocode: {state['task'][:60]}"` and `pr_body = _build_pr_body(state)`
 6. Call `_github_pr_create(branch, pr_title, pr_body, tid)` — returns `dict | None`
-7. Return `{"pr_number": pr_data["number"], "pr_url": pr_data["url"]}` on success, `{"pr_number": 0, "pr_url": ""}` on failure
+7. RMW `vcs` with `pr_number=pr_data["number"], pr_url=pr_data["url"]` on success, or `pr_number=0, pr_url=""` on failure
 
-**`_build_pr_body(state)` helper:** Reads `task`, `task_type`, `commit_sha`, `verification_passed`, `root_cause`, `swarm_verdict`. Outputs a markdown PR body with header + Type + Commit + Verified + optional Root cause + optional Swarm review (with ⚠️ Low confidence warning).
+**`_build_pr_body(state)` helper:** Reads (via accessors + flat) `state["task"]`, `state["task_type"]`, `_get_vcs(state, "commit_sha", "")`, `_get_verify(state, "passed", False)`, `_get_debug(state, "root_cause", "")`, `_get_debug(state, "swarm_verdict", {})`. Outputs a markdown PR body with header + Type + Commit + Verified + optional Root cause + optional Swarm review (with ⚠️ Low confidence warning).
 
-**Params:** None beyond `state`. Reads: `state["status"]`, `state["verification_passed"]`, `state["dry_run"]`, `state["trace_id"]`, `state["pushed"]`, `state["branch"]`, `state["task"]`, `state["task_type"]`, `state["commit_sha"]`, `state["root_cause"]`, `state["swarm_verdict"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_vcs(state, "commit_sha/branch", ...)`, `_get_vcs(state, "pushed", False)`, `_get_verify(state, "passed", False)`, `_get_debug(state, "root_cause", "")`, `_get_debug(state, "swarm_verdict", {})`, `state["status"]`, `state["dry_run"]`, `state["trace_id"]`, `state["task"]`, `state["task_type"]`.
 
-**Returns:** `{"pr_number": int, "pr_url": str}` — always returns both keys (defaults `0`/`""` if PR not created). Or `{}` on skip conditions.
+**Returns:** `{"vcs": current_vcs (sub-state RMW with pr_number + pr_url)}` — always returns the vcs sub-state with both keys (defaults `0`/`""` if PR not created). Or `{}` on skip conditions.
 
 **Source:** `workflows/autocode_impl/nodes/create_pr.py` (imports `_github_pr_create` from `vcs_ops.py`; defines `_build_pr_body` locally).
 
@@ -485,13 +486,13 @@ state fields, and accessor functions, see [API.md](API.md).
 **Purpose:** Auto-merge the PR via `_github_pr_merge(pr_number, tid)`. Third of the 3 Phase 3.3 split nodes. **DANGEROUS — default OFF.** Terminal — returns `{}` (no state update); no downstream node reads its output.
 
 **Logic:**
-1. Skip conditions: `status in {needs_clarification, failed, skipped}` → `{}`; `verification_passed` falsy → `{}`; `dry_run` truthy → `{}`
+1. Skip conditions: `status in {needs_clarification, failed, skipped}` → `{}`; `_get_verify(state, "passed", False)` falsy → `{}`; `dry_run` truthy → `{}`
 2. If `cfg.autocode_auto_merge` is OFF, return `{}`
-3. If `state["pr_number"]` is falsy (no PR to merge — PR not created), return `{}` with a `tracer.step` note
+3. If `_get_vcs(state, "pr_number", 0)` is falsy (no PR to merge — PR not created), return `{}` with a `tracer.step` note
 4. Call `_github_pr_merge(pr_number, tid)` (currently hardcoded to `merge_method="squash"` inside the helper)
 5. Return `{}` (terminal)
 
-**Params:** None beyond `state`. Reads: `state["status"]`, `state["verification_passed"]`, `state["dry_run"]`, `state["trace_id"]`, `state["pr_number"]`.
+**Params:** None beyond `state`. Reads (via accessors + flat): `_get_vcs(state, "pr_number", 0)`, `_get_verify(state, "passed", False)`, `state["status"]`, `state["dry_run"]`, `state["trace_id"]`.
 
 **Returns:** `{}` always (terminal — no state update).
 
@@ -532,4 +533,4 @@ state fields, and accessor functions, see [API.md](API.md).
 
 ---
 
-*Last updated: 2026-07-11 (v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-14 (v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

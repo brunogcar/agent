@@ -4,7 +4,7 @@ Brainstorming node.
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
-from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_files, _get_plan  # [v2.3+v2.2] accessors
+from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_plan  # [v3.0] _get_files removed (files is core flat)
 from workflows.autocode_impl.constants import (
     BRAINSTORM_SYSTEM,
     AUDIT_BRAINSTORM_SYSTEM,
@@ -46,7 +46,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
     # The dir() check is brittle (inspects locals) and the initialization
     # happened AFTER the KG block, so an exception inside KG could leave
     # files_update undefined. Initialize before KG; KG block updates if found.
-    files_update = _get_files(state, "input_files", {})  # [v2.3] accessor (was state.get("files", {}))
+    files_update = state.get("files", {})  # [v3.0] files is core flat field
 
     # -- Knowledge Graph Context Injection (Phase 5) --
     kg_files = {}
@@ -70,7 +70,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
                 tracer.step(tid, "brainstorm", f"KG found {len(relevant_paths)} relevant files in {source_root}")
                 for rel_path in relevant_paths:
                     full_path = source_root / rel_path
-                    if full_path.exists() and rel_path not in _get_files(state, "input_files", {}):  # [v2.3] accessor
+                    if full_path.exists() and rel_path not in state.get("files", {}):  # [v3.0] core flat field
                         try:
                             # Read first 8KB to prevent context bloat
                             content = full_path.read_text(encoding="utf-8", errors="replace")[:8000]
@@ -87,7 +87,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
     # [Pre-2.0 Fix] Build files context from MERGED files (original + KG-injected).
     # Was: only used state.get("files", {}) — KG files were merged into state
     # AFTER the LLM call, so the brainstorm node never saw them.
-    merged_files = {**kg_files, **_get_files(state, "input_files", {})} if kg_files else _get_files(state, "input_files", {})  # [v2.3] accessor
+    merged_files = {**kg_files, **state.get("files", {})} if kg_files else state.get("files", {})  # [v3.0] core flat field
     files_ctx = _files_context(merged_files)
 
     # -- Select system prompt based on task type --
@@ -137,19 +137,16 @@ def node_brainstorm(state: AutocodeState) -> dict:
                 + "\n".join(f"- {i}" for i in impact)
 
     tracer.step(tid, "brainstorm", f"spec ready ({len(spec)} chars)")
-    
-    updates = {"memory_context": mem_ctx, "spec": spec}
-    # [v2.2] RMW: write to plan sub-state + flat mirror for spec
+
+    # [v3.0] memory_context stays flat (ephemeral); spec lives ONLY in plan sub-state.
+    updates: dict[str, Any] = {"memory_context": mem_ctx}
+    # [v2.2] RMW: write to plan sub-state for spec (sub-state only in v3.0)
     current_plan = dict(state.get("plan_state", {}))
     current_plan["spec"] = spec
     updates["plan_state"] = current_plan
     # [Bug #7] Store the MERGED files (kg_files + original), not the original.
     # Previously: updates["files"] = state["files"] — discarded KG files.
     if kg_files:
-        updates["files"] = files_update
-        # [v2.3] RMW: write to files sub-state + flat mirror for input_files
-        current_files = dict(state.get("files_state", {}))
-        current_files["input_files"] = files_update
-        updates["files_state"] = current_files
-    
+        updates["files"] = files_update  # [v3.0] files is core flat field (not sub-state)
+
     return updates

@@ -4,7 +4,7 @@ Plan writing node.
 from __future__ import annotations
 import re
 from typing import Any
-from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs, _get_files, _get_plan  # [v2.1+v2.3+v2.2] accessors
+from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs, _get_plan  # [v3.0] _get_files removed (files is core flat)
 from workflows.autocode_impl.constants import PLAN_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json_array
 from core.tracer import tracer
@@ -27,7 +27,7 @@ def node_write_plan(state: AutocodeState) -> dict:
     # ── Phase 8: Blast Radius Context Injection for Planner ──
     blast_radius_note = ""
     project_root = state.get("project_root", "")
-    files_in_context = list(_get_files(state, "input_files", {}).keys())  # [v2.3] accessor
+    files_in_context = list(state.get("files", {}).keys())  # [v3.0] files is core flat field
 
     if project_root and files_in_context:
         try:
@@ -78,12 +78,12 @@ def node_write_plan(state: AutocodeState) -> dict:
     branch = f"autocode/{slug}-{tid_suffix}"
 
     tracer.step(tid, "write_plan", f"{len(plan)} steps, branch: {branch}")
-    # [v2.1] RMW: write to vcs sub-state + flat mirror for branch
+    # [v2.1] RMW: write to vcs sub-state for branch
     current_vcs = dict(state.get("vcs", {}))
     current_vcs["branch"] = branch
-    # [v2.2] RMW: write to plan sub-state + flat mirrors for spec, plan, current_step
+    # [v2.2] RMW: write to plan sub-state for spec, plan, current_step
     current_plan = dict(state.get("plan_state", {}))
     current_plan["spec"] = spec
     current_plan["plan"] = plan
     current_plan["current_step"] = 0
-    return {"spec": spec, "plan": plan, "branch": branch, "current_step": 0, "vcs": current_vcs, "plan_state": current_plan}
+    return {"vcs": current_vcs, "plan_state": current_plan}

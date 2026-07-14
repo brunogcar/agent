@@ -15,14 +15,14 @@ class TestNodeExecuteStep:
         with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "def helper(): pass"
             result = node_execute_step(base_state)
-            assert result["tdd_source_code"] == "def helper(): pass"
+            # [v3.0] tdd_source_code lives ONLY in the tdd sub-state now.
+            assert result["tdd"]["source_code"] == "def helper(): pass"
             assert "execution_notes" in result
 
     def test_empty_plan_returns_error(self):
         from workflows.autocode_impl.nodes.execute import node_execute_step
-        # [v2.2] Include plan_state sub-state so accessor finds the empty plan
+        # [v3.0] Plan lives ONLY in the plan sub-state (no flat mirror).
         state = {"task": "empty plan", "trace_id": "t1", "status": "running",
-                 "plan": [], "current_step": 0,
                  "plan_state": {"plan": [], "current_step": 0, "spec": "", "brainstorm_notes": "", "plan_accepted": False}}
         result = node_execute_step(state)
         assert result["status"] == "error"
@@ -34,33 +34,32 @@ class TestNodeExecuteStep:
         with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "print('dry')"
             result = node_execute_step(base_state)
-            assert "modified_files" not in result
+            # [v3.0] modified_files lives ONLY in the files sub-state. dry_run skips
+            # writing it (no files_state update either).
+            assert "files_state" not in result or "modified_files" not in result.get("files_state", {})
 
     def test_increments_current_step(self, base_state):
         from workflows.autocode_impl.nodes.execute import node_execute_step
-        # [v2.2] Override plan in BOTH sub-state + flat field (accessor reads sub-state first)
+        # [v3.0] Override plan in the plan sub-state (no flat mirror).
         test_plan = [
             {"id": 1, "label": "write_code", "description": "step 1"},
             {"id": 2, "label": "write_code", "description": "step 2"},
         ]
-        base_state["plan"] = test_plan  # flat mirror
-        base_state["plan_state"]["plan"] = test_plan  # sub-state (primary)
+        base_state["plan_state"]["plan"] = test_plan
         base_state["plan_state"]["current_step"] = 0
-        base_state["current_step"] = 0
         with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "code"
             result = node_execute_step(base_state)
-            assert result["current_step"] == 1
+            # [v3.0] current_step lives ONLY in the plan sub-state.
+            assert result["plan_state"]["current_step"] == 1
 
     def test_does_not_increment_beyond_plan(self, base_state):
         """When current_step >= len(plan), return error (no increment)."""
         from workflows.autocode_impl.nodes.execute import node_execute_step
-        # [v2.2] Override plan + current_step in BOTH sub-state + flat field
+        # [v3.0] Override plan + current_step in the plan sub-state (no flat mirror).
         test_plan = [{"id": 1, "label": "write_code", "description": "only step"}]
-        base_state["plan"] = test_plan  # flat mirror
-        base_state["plan_state"]["plan"] = test_plan  # sub-state (primary)
+        base_state["plan_state"]["plan"] = test_plan
         base_state["plan_state"]["current_step"] = 1
-        base_state["current_step"] = 1
         with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "code"
             result = node_execute_step(base_state)
@@ -72,13 +71,13 @@ class TestNodeExecuteStep:
 class TestNodeWriteFiles:
     def test_skips_on_missing_tdd_source_code(self, base_state):
         from workflows.autocode_impl.nodes.write_files import node_write_files
-        base_state.pop("tdd_source_code", None)
+        base_state["tdd"].pop("source_code", None)  # [v3.0] tdd sub-state only
         assert node_write_files(base_state) == {}
 
     def test_parses_json_and_writes(self, base_state, temp_workspace):
         from workflows.autocode_impl.nodes.write_files import node_write_files
         payload = {"new_files": {"test_output.py": "# generated"}}
-        base_state["tdd_source_code"] = json.dumps(payload)
+        base_state["tdd"]["source_code"] = json.dumps(payload)  # [v3.0] tdd sub-state
         base_state["dry_run"] = False
         base_state["test_code"] = "def test_feature(): assert True"
         result = node_write_files(base_state)
@@ -89,7 +88,7 @@ class TestNodeWriteFiles:
 
     def test_invalid_json_returns_error(self, base_state):
         from workflows.autocode_impl.nodes.write_files import node_write_files
-        base_state["tdd_source_code"] = "{ invalid json"
+        base_state["tdd"]["source_code"] = "{ invalid json"  # [v3.0] tdd sub-state
         result = node_write_files(base_state)
         assert result.get("status") == "error"
         assert "JSON parse" in result.get("error", "")
@@ -97,7 +96,7 @@ class TestNodeWriteFiles:
     def test_populates_test_files_when_test_code_present(self, base_state, temp_workspace):
         from workflows.autocode_impl.nodes.write_files import node_write_files
         payload = {"new_files": {"out.py": "# code"}}
-        base_state["tdd_source_code"] = json.dumps(payload)
+        base_state["tdd"]["source_code"] = json.dumps(payload)  # [v3.0] tdd sub-state
         base_state["dry_run"] = False
         base_state["test_code"] = "def test_feature(): assert True"
         result = node_write_files(base_state)
@@ -106,7 +105,7 @@ class TestNodeWriteFiles:
     def test_no_test_files_when_no_test_code(self, base_state, temp_workspace):
         from workflows.autocode_impl.nodes.write_files import node_write_files
         payload = {"new_files": {"out.py": "# code"}}
-        base_state["tdd_source_code"] = json.dumps(payload)
+        base_state["tdd"]["source_code"] = json.dumps(payload)  # [v3.0] tdd sub-state
         base_state["dry_run"] = False
         base_state["test_code"] = ""
         result = node_write_files(base_state)
@@ -115,18 +114,19 @@ class TestNodeWriteFiles:
     def test_populates_files_map(self, base_state, temp_workspace):
         from workflows.autocode_impl.nodes.write_files import node_write_files
         payload = {"new_files": {"out.py": "# code"}}
-        base_state["tdd_source_code"] = json.dumps(payload)
+        base_state["tdd"]["source_code"] = json.dumps(payload)  # [v3.0] tdd sub-state
         base_state["dry_run"] = False
         base_state["test_code"] = ""
         result = node_write_files(base_state)
-        assert "files_map" in result
-        assert len(result["files_map"]) > 0
+        # [v3.0] files_map lives ONLY in the files sub-state.
+        assert "files_state" in result
+        assert len(result["files_state"].get("files_map", {})) > 0
 
     def test_no_bak_files_created(self, base_state, temp_workspace):
         """[Bug #1] Atomic writes only — no .bak files."""
         from workflows.autocode_impl.nodes.write_files import node_write_files
         payload = {"new_files": {"nobak.py": "# code"}}
-        base_state["tdd_source_code"] = json.dumps(payload)
+        base_state["tdd"]["source_code"] = json.dumps(payload)  # [v3.0] tdd sub-state
         base_state["dry_run"] = False
         base_state["test_code"] = ""
         node_write_files(base_state)
@@ -138,7 +138,7 @@ class TestTestCodeListCoercion:
         """test_code as list must be joined to a string for writing."""
         from workflows.autocode_impl.nodes.write_files import node_write_files
         payload = {"new_files": {"out.py": "# code"}}
-        base_state["tdd_source_code"] = json.dumps(payload)
+        base_state["tdd"]["source_code"] = json.dumps(payload)  # [v3.0] tdd sub-state
         base_state["dry_run"] = False
         base_state["test_code"] = ["def test_a(): assert True", "def test_b(): assert True"]
         result = node_write_files(base_state)

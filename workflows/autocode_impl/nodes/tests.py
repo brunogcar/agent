@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT, _get_plan, _get_files  # [v2.2+v2.3] accessors
+from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT, _get_plan  # [v3.0] _get_files removed (files is core flat)
 from workflows.autocode_impl.constants import TEST_SYSTEM
 from workflows.autocode_impl.helpers import _call, _extract_code, _files_context
 from core.tracer import tracer
@@ -31,7 +31,7 @@ def node_write_tests(state: AutocodeState) -> dict:
         system  = TEST_SYSTEM,
         user    = (
             f"Spec:\n{_get_plan(state, 'spec', '')}\n\n"  # [v2.2] accessor
-            f"Existing files:\n{_files_context(_get_files(state, 'input_files', {}))}\n\n"  # [v2.3] accessor
+            f"Existing files:\n{_files_context(state.get('files', {}))}\n\n"  # [v3.0] files is core flat field
             f"Step: {step['description']}"
         ),
         timeout = EXECUTOR_TIMEOUT,
@@ -39,7 +39,7 @@ def node_write_tests(state: AutocodeState) -> dict:
     test_code = _extract_code(raw)
     tracer.step(tid, "write_tests", f"tests written ({len(test_code)} chars)")
 
-    # [v2.2] RMW: write to plan sub-state + flat mirror for current_step
+    # [v2.2] RMW: write to plan sub-state for current_step (sub-state only in v3.0)
     current_plan = dict(state.get("plan_state", {}))
     current_plan["current_step"] = idx + 1
-    return {"test_code": test_code, "current_step": idx + 1, "plan_state": current_plan}
+    return {"test_code": test_code, "plan_state": current_plan}
