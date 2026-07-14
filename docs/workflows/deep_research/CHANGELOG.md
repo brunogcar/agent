@@ -2,57 +2,32 @@
 
 # 🗺️ Changelog
 
-## 📝 Version History
+## ✅ Completed
 
-| Version | Date | Changes |
+### 📝 Version History
+
+| Version | Date | Summary |
 |---------|------|---------|
-| v1.1.1 | 2026-07-14 | **Bugfix batch + dead code cleanup:** P1: `node_decompose_goal` returns partial dicts (was `{**state, ...}` — missed in v1.1 P1 #7). #11: `route_after_synthesize` reads `state["converged"]` instead of recomputing. #14: Regex `[\-*•]` → `[-*•]` (unnecessary escape). #15: Trailing comma handling in `_parse_sub_queries`. #20: `_parse_score` no longer removes numbers from ranges like "85-90". #9: Empty report → "No results found" message. #12: Removed `format_audit` dead code. #13: Removed `JS_HEAVY_HINTS` dead import + constant. #17: Filter empty queries in `node_search`. |
-| v1.1 | 2026-07-06 | **Metadata + citations + P0/P1 fixes + trim analysis:** Added `WORKFLOW_METADATA` for MCP client introspection. Wired the citation tracker into `_node_report` + `_node_notify` (sources were collected by `node_search` and discarded). Fixed P0 #2 (`task`/`content` swap in `node_synthesize`), P0 #4 (API budget decremented on Tavily attempt not success), P1 #6 (removed `_agent_ok`/`_agent_text` dead wrappers), P1 #7 (partial-dict returns), P1 #8 (`_node_recall` logs memory failures), P1 #10 (`_node_store` full result, no 800-char truncation), P1 #22 (`synthesis` field declared in state). **Trim analysis:** `trim_state()` not wired in — deep_research already bounds its state (`knowledge_base` capped at 6000 chars via `_cap_knowledge()`, `extracted_evidence` cleared each iteration by synthesize). Evicting `knowledge_base` would break convergence detection (routes.py compares `_prev_knowledge` vs `knowledge_base`). See `docs/workflows/base/CHANGELOG.md` #18. |
+| v1.1.1 | 2026-07-14 | **Bugfix batch + dead code cleanup.** P1: `node_decompose_goal` returns partial dicts. #11: `route_after_synthesize` reads `state["converged"]` instead of recomputing. #20: `_parse_score` range bug fix. #9: Empty report → "No results found". #12/#13: Removed `format_audit` + `JS_HEAVY_HINTS` dead code. #14/#15/#17: Regex + trailing comma + empty query fixes. |
+| v1.1 | 2026-07-06 | **Metadata + citations + P0/P1 fixes.** Added `WORKFLOW_METADATA`. Wired citation tracker into report + notify. Fixed P0 #2 (`task`/`content` swap), P0 #4 (API budget on Tavily attempt). P1 #6/#7/#8/#10/#22. Trim analysis: not needed (`knowledge_base` already capped). |
 | v1.0.2 | 2026-07-05 | **Bug fix:** API budget (`budget_api_calls`) now only decremented for Tavily searches, not web (SearXNG) searches. |
 | v1.0.1 | 2026-07-05 | **Bug fix:** Both `agent()` calls in `node_synthesize` now pass `action="dispatch"`. Removed dead `completeness_threshold = 0.85` local. |
-| v1.0 | — | Released — 8-node cyclic LangGraph StateGraph with budget management, convergence detection, multi-tool search, and memory integration |
+| v1.0 | — | **Released** — 8-node cyclic LangGraph StateGraph with budget management, convergence detection, multi-tool search, and memory integration. |
 
 ---
 
-## ⚠️ Breaking Changes
+### ⚠️ Breaking Changes
 
-### v1.1 — 2026-07-06
+#### v1.1 — 2026-07-06
 
 | Change | Impact | Migration |
 |--------|--------|-----------|
 | `_node_*` helpers return partial dicts (was `{**state, ...}`) | LangGraph best practice — only changed keys. | No migration — callers consume the merged final state from `graph.invoke()`. |
 | `_node_store` stores full result (was `result[:800]`) | Semantic memory now holds complete research. | No migration — larger stored text is the intended improvement. |
 | `_node_notify` returns `artifacts` (source URLs) | Was `return state`. | No migration — callers read `result["artifacts"]`; was always empty before. |
-| `node_synthesize` uses `task=` for user instruction, `context=` for system prompt | Was swapped (`task=`=system prompt, `content=`=user instruction). | No migration — the old mapping was broken (system prompt landed in `user=` slot). |
+| `node_synthesize` uses `task=` for user instruction, `context=` for system prompt | Was swapped. | No migration — the old mapping was broken. |
 | API budget decrements on Tavily ATTEMPT, not success | Failed Tavily calls now correctly consume budget. | No migration — more accurate tracking. |
 | Removed `_agent_ok` / `_agent_text` wrappers | Dead code handling a legacy `LLMResponse` shape. | If external code imported them, inline the `dict` access (`result.get("status") == "success"`, `result.get("text", "")`). |
-
----
-
-## ✅ Completed
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Cyclic LangGraph workflow | ✅ v1.0 | Search → synthesize → evaluate → loop until convergence |
-| Budget management | ✅ v1.0 | API calls + browser actions tracked separately |
-| Convergence detection | ✅ v1.0 | Cosine similarity between knowledge bases |
-| Multi-tool search | ✅ v1.0 | Tavily → web → browser fallback |
-| Goal decomposition | ✅ v1.0 | Planner LLM breaks goal into sub-queries |
-| Evaluation | ✅ v1.0 | Executor LLM evaluates synthesis quality |
-| Memory integration | ✅ v1.0 | Recall + store for context and future use |
-| Report generation | ✅ v1.0 | Structured report with synthesis and sources |
-| `agent()` passes `action="dispatch"` | ✅ v1.0.1 | Both synthesize + evaluate calls (was missing) |
-| API budget only for Tavily, not web | ✅ v1.0.2 | Web (SearXNG) is free; only Tavily decrements |
-| `WORKFLOW_METADATA` | ✅ v1.1 | MCP client introspection (8 nodes, cyclic edges) |
-| Citations wired into report + notify | ✅ v1.1 | Sources collected by `node_search` now surface in report + artifacts |
-| `task`/`content` swap fixed in synthesize | ✅ v1.1 | P0 #2 — `task=`=user instruction, `context=`=system prompt |
-| API budget on Tavily attempt | ✅ v1.1 | P0 #4 — failed Tavily calls now consume budget |
-| `_agent_ok`/`_agent_text` removed | ✅ v1.1 | P1 #6 — dead wrappers for legacy `LLMResponse` shape |
-| Partial-dict returns in graph nodes | ✅ v1.1 | P1 #7 — no more `{**state, ...}` |
-| `_node_recall` logs memory failures | ✅ v1.1 | P1 #8 — was silent `except: pass` |
-| `_node_store` full result | ✅ v1.1 | P1 #10 — was `result[:800]` (truncated semantic memory) |
-| `synthesis` field in state | ✅ v1.1 | P1 #22 — was returned by `node_synthesize` but undeclared |
-| Trim analysis (not needed) | ✅ v1.1 | `trim_state()` not wired — `knowledge_base` already capped at 6000 chars, `extracted_evidence` cleared each iteration. Evicting `knowledge_base` would break convergence detection. |
 
 ---
 
@@ -60,28 +35,20 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 9 | **`_node_report` empty report** | ✅ Complete (v1.1.1). | ✅ |
-| 11 | **`route_after_synthesize` recomputing `converged`** | ✅ Complete (v1.1.1). | ✅ |
-| 12 | **Remove `format_audit` dead code** | ✅ Complete (v1.1.1). | ✅ |
-| 13 | **Remove `JS_HEAVY_HINTS` dead code** | ✅ Complete (v1.1.1). | ✅ |
-| 14 | **Fix `_parse_sub_queries` regex** | ✅ Complete (v1.1.1). | ✅ |
-| 15 | **Fix trailing comma in JSON** | ✅ Complete (v1.1.1). | ✅ |
 | 16 | **`node_search` hardcoded `max_results=5`** | Should be configurable via `.env`. | P2 |
-| 17 | **Filter empty queries** | ✅ Complete (v1.1.1). | ✅ |
 | 18 | **`_summarize_evidence` bypassing role config** | Uses custom system prompt instead of role's configured prompt. | P2 |
 | 19 | **`_extract_evidence` hardcoded top 3** | Should be configurable. | P2 |
-| 20 | **`_parse_score` range bug** | ✅ Complete (v1.1.1). | ✅ |
 | 21 | **`_cap_knowledge` may exceed max after prefix** | Truncation + prefix may exceed `max_chars`. | P2 |
-| 24 | **Configurable convergence threshold** | Make `CONVERGENCE_SIMILARITY_THRESHOLD` actually use `.env` value | P2 |
-| 25 | **Streaming synthesis** | Stream synthesis output for real-time feedback | P3 |
-| 26 | **crawl4ai integration** | **Potential refactor:** Replace three-tier `tavily → web → browser` with two-tier `tavily → web(crawl)`. Crawl4ai handles JS-heavy pages natively, eliminating the browser tier for scraping. Browser would still be needed for interactive cases (if any). Depends on crawl4ai quality validation. See `docs/TOOLS.md` § "Crawl4ai integration" and `docs/tools/web/CHANGELOG.md` v1.3. | P2 (evaluation) |
+| 24 | **Configurable convergence threshold** | Make `CONVERGENCE_SIMILARITY_THRESHOLD` actually use `.env` value. | P2 |
+| 25 | **Streaming synthesis** | Stream synthesis output for real-time feedback. | P3 |
+| 26 | **crawl4ai integration** | Replace three-tier `tavily → web → browser` with two-tier `tavily → web(crawl)`. Depends on quality validation. See `docs/tools/web/CHANGELOG.md` v1.3. | P2 (evaluation) |
 
 ---
 
 ## 🚫 Deferred / Out of Scope
 
 | # | Feature | Why Deferred | Priority |
-|---|---------|------------|----------|
+|---|---------|--------------|----------|
 | 1 | **Remove cyclic workflow** | Single-pass research would miss important information. Iteration is essential. | Skip |
 | 2 | **Remove budget management** | Budget tracking prevents runaway costs. | Skip |
 | 3 | **Remove convergence detection** | Without it, the workflow would run indefinitely or stop prematurely. | Skip |

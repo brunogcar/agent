@@ -84,17 +84,18 @@ This guide defines the universal 5-file documentation standard for all component
 ### `CHANGELOG.md` (Self-contained history)
 
 **Section order (mandatory):**
-1. `## 📝 Version History` — table with Version, Date, Notes. Always present, even if empty with placeholder notice.
-2. `## ⚠️ Breaking Changes` — newest version first. Separate table per version. Never merge with roadmap.
-3. `## ✅ Completed` — features already shipped, with version markers.
-4. `## 🔄 In Progress / Next Up` — planned features, prioritized.
+1. `## ✅ Completed` — parent category for the two completed-record sub-sections below.
+2. `### 📝 Version History` — table with Version, Date, Summary. Always present, even if empty with placeholder notice. Newest-first.
+3. `### ⚠️ Breaking Changes` — detailed per-version tables (only versions with breaking changes). Newest-first, same chronological order as Version History. Never merge with roadmap.
+4. `## 🔄 In Progress / Next Up` — planned features only, prioritized. When an item ships, it moves UP into Version History + Breaking Changes (remove from In Progress).
 5. `## 🚫 Deferred / Out of Scope` — explicitly rejected or postponed.
 
+> **Why no separate `## Completed` table:** Version History + Breaking Changes together ARE the completed record. Version History answers "when did X ship?" Breaking Changes answers "what exactly changed?" A separate Completed table duplicates Version History. Done roadmap items leave "In Progress" and live only in Version History/Breaking Changes.
+
 **What goes in:**
-- Version history table (always first, always present)
-- Breaking changes (newest version first, separate from roadmap)
-- Completed milestones / phases
-- In progress / next up
+- Version history table (always first under Completed, always present)
+- Breaking changes (detailed per-version tables, under Version History)
+- In progress / next up (planned only — ✅ done items move up)
 - Deferred / out of scope
 
 **What stays out:**
@@ -103,11 +104,13 @@ This guide defines the universal 5-file documentation standard for all component
 - AI editing rules
 - Quick start or configuration
 
-> **Rule:** New releases are appended to CHANGELOG.md without touching any other doc file.
+> **Rule:** New releases are appended to Version History + Breaking Changes without touching any other doc file.
 
-> **Adaptation rule:** If the original doc has a "Roadmap" section with mixed `✅` completed and planned items, split them: `✅` items go to **Completed**, planned items go to **In Progress / Next Up**. Never force a mixed section into a single bucket.
+> **Adaptation rule:** If the original doc has a "Roadmap" section with mixed `✅` completed and planned items, split them: `✅` items go to Version History (if not already there), planned items go to In Progress / Next Up. Never force a mixed section into a single bucket.
 
 > **Version rule:** Preserve existing version numbers exactly. If the original doc has v1, v1.1, v2, etc., keep them. "Pre-v1" only applies to components that have never been versioned. Never flatten or rename version numbers.
+
+> **Ordering rule:** Version History and Breaking Changes must be in the SAME chronological order (newest-first). This keeps the two sub-sections parallel — the reader can scan Version History for the "when" and Breaking Changes for the "what" at the same position.
 
 ---
 
@@ -265,12 +268,17 @@ These rules are for AI assistants splitting docs. They are non-negotiable.
 11. **Follow the pattern, adapt old docs to fit.** Old sections that don't map cleanly get split or placed where they make sense, but nothing gets dropped. Adaptation over rigidity.
 12. **Never create `.bak` files** when applying fixes.
 13. **Never rewrite entire files** when editing. Surgical edits only. Preserve existing code exactly.
-14. **Always include `-W error` and `--tb=short` in pytest commands.**
-15. **Patch pytest to `D:\mcp\agent\venv\Scripts\pytest.exe`.**
-16. **Present downloadable files with sandbox links, versioned names (v1, v2, v3).**
-17. **PowerShell commands: extract zip, copy to correct folders, compileall via script, then individual tests, then full suite.**
-18. **Delete temp files after use.**
+
+> **Items 14-18 moved to [SESSION_WORKFLOW.md](SESSION_WORKFLOW.md):** pytest flags, venv python path, zip delivery format, PowerShell command order, and temp-file cleanup now live in the session workflow guide (they're session conventions, not documentation structure rules).
 
 ---
 
-*Last updated: 2026-07-03. Applies to all docs in `docs/tools/`, `docs/core/`, `docs/workflows/`, `docs/skills/`, and future areas. This guide is updated every session with lessons learned — auto-correct as you go.*
+## 🔗 Cross-References
+
+- **[SESSION_WORKFLOW.md](SESSION_WORKFLOW.md)** — session workflow (getting oriented, 5-step change workflow, compile-check format, test commands, zip delivery, git commands). Read this before starting any session.
+- **[TOOLS.md](TOOLS.md)** § "New Tool Checklist" — files to update when adding a new tool
+- **[WORKFLOWS.md](WORKFLOWS.md)** § "How to Add a New Workflow" — files to update when adding a new workflow
+
+---
+
+*Last updated: 2026-07-14. Applies to all docs in `docs/tools/`, `docs/core/`, `docs/workflows/`, `docs/skills/`, and future areas. For session workflow conventions (compile-check, test commands, zip delivery, git format), see [SESSION_WORKFLOW.md](SESSION_WORKFLOW.md).*

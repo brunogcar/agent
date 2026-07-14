@@ -181,7 +181,7 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 - **Three debug paths** — Single-LLM (default) → swarm (`AUTOCODE_SWARM_DEBUG=1`) → subagent (`AUTOCODE_SUBAGENT_DEBUG=1`); mutually exclusive, non-blocking fallback
 - **Impact analysis** — Blast radius analysis using the dependency graph before execution
 - **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes a 7-rung minimization ladder; `ponytail:` comment convention for deliberate simplifications
-- **Sub-state architecture** — 8 sub-state TypedDicts behind an accessor layer (migration in progress; see autocode CHANGELOG Future Tracks)
+- **v3.0 Sub-state architecture** — All state fields live in 8 typed sub-states (plan, tdd, files, impact, debug, verify, vcs, memory). Legacy flat-field mirrors removed (v3.0). Accessors are the only read path. See `docs/workflows/autocode/SUBSTATE.md` for the full reference.
 
 **Safety:** Protected files, git branch isolation, atomic writes, path traversal guard, dry-run guards, retry limits.
 
