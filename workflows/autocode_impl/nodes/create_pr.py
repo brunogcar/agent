@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify  # [v2.5+v2.6] accessors
+from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify, _get_vcs  # [v2.5+v2.6+v2.1] accessors
 from workflows.autocode_impl.vcs_ops import _github_pr_create
 
 
@@ -19,7 +19,7 @@ def _build_pr_body(state: AutocodeState) -> str:
     """
     task = state.get("task", "")
     task_type = state.get("task_type", "")
-    commit_sha = state.get("commit_sha", "")
+    commit_sha = _get_vcs(state, "commit_sha", "")  # [v2.1] accessor
     # [v2.5+v2.6] Use accessors (read sub-state first, fall back to flat)
     verification_passed = _get_verify(state, "passed", False)
     root_cause = _get_debug(state, "root_cause", "")
@@ -76,23 +76,44 @@ def node_create_pr(state: AutocodeState) -> dict:
 
     # If PR creation not enabled, skip
     if not cfg.autocode_open_pr:
-        return {"pr_number": 0, "pr_url": ""}
+        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["pr_number"] = 0
+        current_vcs["pr_url"] = ""
+        return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}
 
     # Can't create a PR without pushing first
-    if not state.get("pushed"):
+    if not _get_vcs(state, "pushed", False):  # [v2.1] accessor
         tracer.step(tid, "create_pr", "skipping PR — branch not pushed")
-        return {"pr_number": 0, "pr_url": ""}
+        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["pr_number"] = 0
+        current_vcs["pr_url"] = ""
+        return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}
 
-    branch = state.get("branch", "")
+    branch = _get_vcs(state, "branch", "")  # [v2.1] accessor
     if not branch:
-        return {"pr_number": 0, "pr_url": ""}
+        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["pr_number"] = 0
+        current_vcs["pr_url"] = ""
+        return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}
 
     pr_title = f"autocode: {state.get('task', '')[:60]}"
     pr_body = _build_pr_body(state)
     pr_data = _github_pr_create(branch, pr_title, pr_body, tid)
     if pr_data:
+        # [v2.1] RMW: write to vcs sub-state + flat mirrors
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["pr_number"] = pr_data.get("number", 0)
+        current_vcs["pr_url"] = pr_data.get("url", "")
         return {
-            "pr_number": pr_data.get("number", 0),
-            "pr_url": pr_data.get("url", ""),
+            "pr_number": current_vcs["pr_number"],
+            "pr_url": current_vcs["pr_url"],
+            "vcs": current_vcs,
         }
-    return {"pr_number": 0, "pr_url": ""}
+    # [v2.1] RMW: write to vcs sub-state + flat mirrors
+    current_vcs = dict(state.get("vcs", {}))
+    current_vcs["pr_number"] = 0
+    current_vcs["pr_url"] = ""
+    return {"pr_number": 0, "pr_url": "", "vcs": current_vcs}

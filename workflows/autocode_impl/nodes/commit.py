@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify  # [v2.5+v2.6] accessors
+from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify, _get_vcs  # [v2.5+v2.6+v2.1] accessors
 from workflows.autocode_impl.vcs_ops import _git_commit
 from core.tracer import tracer
 
@@ -16,12 +16,18 @@ def node_commit(state: AutocodeState) -> dict:
     if state.get("status") in ("needs_clarification", "failed"):
         return {}
     if not _get_verify(state, "passed", False):
-        return {"status": "skipped", "commit_sha": ""}
+        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["commit_sha"] = ""
+        return {"status": "skipped", "commit_sha": "", "vcs": current_vcs}
     # [#47] Dry-run: skip the actual commit AFTER the verification gate.
     # (The verification check above runs first so dry_run doesn't mask it.)
     if state.get("dry_run"):
         tracer.step(tid, "commit", "dry_run=True — skipping git commit")
-        return {"status": "dry_run", "commit_sha": "(dry-run)"}
+        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["commit_sha"] = "(dry-run)"
+        return {"status": "dry_run", "commit_sha": "(dry-run)", "vcs": current_vcs}
     plan = state.get("plan", [])
     # [Pre-2.0 Fix] Was: s["label"] — KeyError if any step lacks "label".
     # Now uses .get("label", "step") fallback.
@@ -45,13 +51,9 @@ def node_commit(state: AutocodeState) -> dict:
     sha = _git_commit(msg, tid, root)
     tracer.step(tid, "commit", f"sha: {sha} @ {root or 'agent_root'}")
 
-    # [v2.0.5] P1-1: Was `_get_vcs(state, 'branch', 'main')` — broken split-brain.
-    # _get_vcs reads state["vcs"]["branch"] first, which holds the stale default
-    # "" (sub-state populated by _default_state() but never written to by nodes —
-    # node_write_plan writes the flat "branch" field). The accessor returned ""
-    # instead of the actual branch name. Read flat fields directly until the
-    # sub-state migration is complete (roadmap: v2.x → v3.0). NEVER DO #33 updated.
-    branch_for_msg = state.get("branch") or state.get("branch_name") or "main"
+    # [v2.1] Use _get_vcs accessor (was v2.0.5 band-aid: state.get("branch") directly).
+    # Now that plan.py writes to the vcs sub-state via RMW, the accessor is safe.
+    branch_for_msg = _get_vcs(state, "branch", "") or _get_vcs(state, "branch_name", "") or "main"
     result_lines = [
         f"autocode complete -- {sha or '(no new commits)'}",
         f"Branch: {branch_for_msg}",
@@ -65,8 +67,12 @@ def node_commit(state: AutocodeState) -> dict:
     if defense_notes:
         result_lines.append(f"\nDefense note: {defense_notes}")
 
+    # [v2.1] RMW: write to vcs sub-state + flat mirror
+    current_vcs = dict(state.get("vcs", {}))
+    current_vcs["commit_sha"] = sha or ""
     return {
         "status": "done",
         "commit_sha": sha or "",
-        "result": "\n".join(result_lines)
+        "result": "\n".join(result_lines),
+        "vcs": current_vcs,
     }

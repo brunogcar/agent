@@ -4,7 +4,7 @@ Plan writing node.
 from __future__ import annotations
 import re
 from typing import Any
-from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT
+from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs  # [v2.1] accessor
 from workflows.autocode_impl.constants import PLAN_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json_array
 from core.tracer import tracer
@@ -78,4 +78,7 @@ def node_write_plan(state: AutocodeState) -> dict:
     branch = f"autocode/{slug}-{tid_suffix}"
 
     tracer.step(tid, "write_plan", f"{len(plan)} steps, branch: {branch}")
-    return {"spec": spec, "plan": plan, "branch": branch, "current_step": 0}
+    # [v2.1] RMW: write to vcs sub-state + flat mirror for branch
+    current_vcs = dict(state.get("vcs", {}))
+    current_vcs["branch"] = branch
+    return {"spec": spec, "plan": plan, "branch": branch, "current_step": 0, "vcs": current_vcs}

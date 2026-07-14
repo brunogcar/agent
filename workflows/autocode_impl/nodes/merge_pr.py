@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState, _get_verify  # [v2.6] accessor
+from workflows.autocode_impl.state import AutocodeState, _get_verify, _get_vcs  # [v2.6+v2.1] accessors
 from workflows.autocode_impl.vcs_ops import _github_pr_merge
 
 
@@ -33,7 +33,7 @@ def node_merge_pr(state: AutocodeState) -> dict:
     if not cfg.autocode_auto_merge:
         return {}
 
-    pr_number = state.get("pr_number", 0)
+    pr_number = _get_vcs(state, "pr_number", 0)  # [v2.1] accessor
     if not pr_number:
         tracer.step(tid, "merge_pr", "no PR to merge — skipping")
         return {}

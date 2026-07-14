@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState, _get_verify  # [v2.6] accessor
+from workflows.autocode_impl.state import AutocodeState, _get_verify, _get_vcs  # [v2.6+v2.1] accessors
 from workflows.autocode_impl.vcs_ops import _github_push
 
 
@@ -33,12 +33,21 @@ def node_push(state: AutocodeState) -> dict:
 
     # If push not enabled, skip (but let downstream nodes decide)
     if not cfg.autocode_push_on_commit:
-        return {"pushed": False}
+        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["pushed"] = False
+        return {"pushed": False, "vcs": current_vcs}
 
-    branch = state.get("branch", "")
+    branch = _get_vcs(state, "branch", "")  # [v2.1] accessor
     if not branch:
         tracer.step(tid, "push", "no branch in state — skipping")
-        return {"pushed": False}
+        # [v2.1] RMW: write to vcs sub-state + flat mirror
+        current_vcs = dict(state.get("vcs", {}))
+        current_vcs["pushed"] = False
+        return {"pushed": False, "vcs": current_vcs}
 
     success = _github_push(branch, tid)
-    return {"pushed": success}
+    # [v2.1] RMW: write to vcs sub-state + flat mirror
+    current_vcs = dict(state.get("vcs", {}))
+    current_vcs["pushed"] = success
+    return {"pushed": success, "vcs": current_vcs}

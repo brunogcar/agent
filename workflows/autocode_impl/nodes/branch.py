@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.config import cfg
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_vcs  # [v2.1] accessor
 from workflows.autocode_impl.vcs_ops import _git_create_branch
 from workflows.autocode_impl.vcs_ops import _github_pull  # [v1.3]
 from core.tracer import tracer
@@ -52,12 +52,14 @@ def node_git_branch(state: AutocodeState) -> dict:
     # Create branch (the branch IS the snapshot — no separate snapshot needed)
     # [P1 #10] Check return value — if branch creation fails, return error status
     # so the workflow doesn't continue writing to the wrong branch.
-    if state.get("branch"):
-        success = _git_create_branch(state["branch"], tid, root)
+    # [v2.1] Use _get_vcs accessor (reads sub-state first, falls back to flat)
+    branch = _get_vcs(state, "branch", "")
+    if branch:
+        success = _git_create_branch(branch, tid, root)
         if not success:
             return {
                 "status": "error",
-                "error": f"Failed to create git branch: {state['branch']}",
+                "error": f"Failed to create git branch: {branch}",
             }
 
     return {}

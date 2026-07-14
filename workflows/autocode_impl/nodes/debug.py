@@ -30,7 +30,7 @@ from core.memory_engine import memory
 from core.tracer import tracer
 from workflows.autocode_impl.constants import DEBUG_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
-from workflows.autocode_impl.state import AutocodeState, _get_tdd
+from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_vcs  # [v2.1] _get_vcs added
 from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_comment
 from core.kgraph.queries import get_dependencies, get_callers
 
@@ -246,14 +246,14 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             # so human reviewers can see the disagreement
             # TODO(2.0): Also post for MEDIUM confidence if providers < 3
             if (confidence == "LOW" and cfg.autocode_debug_comment_pr
-                    and state.get("pr_number")):
+                    and _get_vcs(state, "pr_number", 0)):  # [v2.1] accessor
                 comment = (
                     f"⚠️ **Low-confidence swarm debug verdict**\n\n"
                     f"**Root cause:** {root_cause[:500]}\n"
                     f"**Agreement:** {agreement} ({providers} providers)\n\n"
                     f"Fix was applied automatically, but please review carefully."
                 )
-                _github_pr_comment(state["pr_number"], comment, tid)
+                _github_pr_comment(_get_vcs(state, "pr_number", 0), comment, tid)  # [v2.1] accessor
 
             # [v2.0] Phase 4 — accumulate debug_history entry for swarm path.
             # phase="swarm" because the 4-phase enum is single-LLM only.

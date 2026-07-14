@@ -181,8 +181,13 @@ class TestDryRunGuards:
     def test_commit_skips_on_dry_run(self):
         from workflows.autocode_impl.nodes.commit import node_commit
         with patch("workflows.autocode_impl.git_ops._git_commit") as mock_git:
+            # [v2.6+v2.1] Simulate what migrated writer nodes do: write to
+            # BOTH sub-state (primary) and flat field (mirror). The accessors
+            # (_get_verify, _get_vcs) read sub-state first.
             state = {"dry_run": True, "verification_passed": True,
-                     "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1"}
+                     "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1",
+                     "verify": {"passed": True, "notes": "", "report": ""},
+                     "vcs": {"commit_sha": "", "branch": "", "pushed": False, "pr_number": 0, "pr_url": ""}}
             result = node_commit(state)
         assert result["status"] == "dry_run"
         assert result["commit_sha"] == "(dry-run)"
@@ -191,7 +196,10 @@ class TestDryRunGuards:
     def test_branch_skips_on_dry_run(self):
         from workflows.autocode_impl.nodes.branch import node_git_branch
         with patch("workflows.autocode_impl.git_ops._git_create_branch") as mock_branch:
-            state = {"dry_run": True, "branch": "feat-x", "trace_id": "t1"}
+            # [v2.1] Include vcs sub-state for consistency (dry_run exits early,
+            # but the state should still be well-formed).
+            state = {"dry_run": True, "branch": "feat-x", "trace_id": "t1",
+                     "vcs": {"branch": "feat-x", "commit_sha": "", "pushed": False, "pr_number": 0, "pr_url": ""}}
             result = node_git_branch(state)
         assert result == {}
         assert not mock_branch.called
@@ -201,8 +209,12 @@ class TestDryRunGuards:
         mock_git_commit = mocker.patch(
             "workflows.autocode_impl.nodes.commit._git_commit", return_value="abc123"
         )
+        # [v2.6+v2.1] Include sub-states so accessors find the values
+        # (sub-state is primary; flat field is mirror).
         state = {"dry_run": False, "verification_passed": True,
-                 "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1"}
+                 "plan": [], "task": "test", "task_type": "feature", "trace_id": "t1",
+                 "verify": {"passed": True, "notes": "", "report": ""},
+                 "vcs": {"commit_sha": "", "branch": "", "pushed": False, "pr_number": 0, "pr_url": ""}}
         result = node_commit(state)
         assert mock_git_commit.called
         assert result["commit_sha"] == "abc123"
