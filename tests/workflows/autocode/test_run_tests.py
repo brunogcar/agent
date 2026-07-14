@@ -115,18 +115,66 @@ class TestRunTestsFileCheck:
 
 class TestRunTestsBudgetWiring:
     def test_targeted_cmd_passed_through(self, mocker):
-        """node_run_tests must pass targeted_test_cmd to run_tests_on_disk."""
+        """node_run_tests must pass targeted_test_cmd to run_tests_on_disk.
+
+        [v2.4] Simulates the post-migration state: analyze_impact writes to
+        BOTH the impact sub-state AND the flat field mirror. The reader
+        (run_tests) uses _get_impact accessor, which reads the sub-state
+        first. Uses _default_state() to catch split-brain (Track M1
+        learning #2 — the v2.0.5 split-brain bug was invisible because
+        tests built state without the sub-state populated).
+        """
         from workflows.autocode_impl.nodes.run_tests import node_run_tests
+        from workflows.autocode_impl.state import _default_state
         mock_run = mocker.patch(
             "workflows.autocode_impl.nodes.run_tests.run_tests_on_disk",
             return_value={"success": True, "stdout": "", "stderr": ""},
         )
         mocker.patch("core.memory_engine.memory.store")
         mocker.patch("pathlib.Path.exists", return_value=True)
-        state = {
-            "test_files": ["test_x.py"], "trace_id": "t1", "tdd_iteration": 0,
-            "targeted_test_cmd": "pytest tests/test_x.py",
-        }
+        state = _default_state(task="test", target_file="test_x.py")
+        state["test_files"] = ["test_x.py"]
+        state["trace_id"] = "t1"
+        state["tdd_iteration"] = 0
+        # Simulate what analyze_impact does post-v2.4: write to BOTH
+        # sub-state (primary) and flat field (mirror). The accessor reads
+        # the sub-state first — if we only set the flat field, the accessor
+        # returns the sub-state default (None), not the flat value.
+        cmd = "pytest tests/test_x.py"
+        state["targeted_test_cmd"] = cmd  # flat mirror
+        current_impact = dict(state.get("impact", {}))
+        current_impact["targeted_test_cmd"] = cmd  # sub-state (primary)
+        state["impact"] = current_impact
         node_run_tests(state)
         _, kwargs = mock_run.call_args
-        assert kwargs.get("targeted_cmd") == "pytest tests/test_x.py"
+        assert kwargs.get("targeted_cmd") == cmd
+
+    def test_targeted_cmd_read_from_impact_substate(self, mocker):
+        """[v2.4] When impact sub-state has targeted_test_cmd, accessor reads it.
+
+        This is the forward-looking test: after v2.4 migration, analyze_impact
+        writes to the impact sub-state. This test verifies the reader picks up
+        the sub-state value (not the stale flat-field default).
+        """
+        from workflows.autocode_impl.nodes.run_tests import node_run_tests
+        from workflows.autocode_impl.state import _default_state
+        mock_run = mocker.patch(
+            "workflows.autocode_impl.nodes.run_tests.run_tests_on_disk",
+            return_value={"success": True, "stdout": "", "stderr": ""},
+        )
+        mocker.patch("core.memory_engine.memory.store")
+        mocker.patch("pathlib.Path.exists", return_value=True)
+        state = _default_state(task="test", target_file="test_x.py")
+        state["test_files"] = ["test_x.py"]
+        state["trace_id"] = "t1"
+        state["tdd_iteration"] = 0
+        # Simulate analyze_impact having written to the impact sub-state:
+        state["impact"] = {
+            "warnings": [],
+            "targeted_test_cmd": "pytest tests/sub/test_y.py",
+            "failed": False,
+        }
+        # Leave the flat field as the default (None) — accessor must use sub-state
+        node_run_tests(state)
+        _, kwargs = mock_run.call_args
+        assert kwargs.get("targeted_cmd") == "pytest tests/sub/test_y.py"

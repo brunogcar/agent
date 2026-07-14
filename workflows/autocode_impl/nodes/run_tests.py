@@ -10,7 +10,7 @@ from typing import Any
 
 from core.config import cfg
 from core.tracer import tracer
-from workflows.autocode_impl.state import AutocodeState
+from workflows.autocode_impl.state import AutocodeState, _get_impact
 
 def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_cmd: str | None = None) -> dict:
     """
@@ -92,7 +92,8 @@ def node_run_tests(state: AutocodeState) -> dict:
 
     # Run tests with existing files only
     project_root = state.get("project_root", None)
-    targeted_cmd = state.get("targeted_test_cmd", None)
+    # [v2.4] Use _get_impact accessor (reads sub-state first, falls back to flat field)
+    targeted_cmd = _get_impact(state, "targeted_test_cmd", None)
     test_results = run_tests_on_disk(existing_test_files, project_root=project_root, targeted_cmd=targeted_cmd)
     current_iter = state.get("tdd_iteration", 0) + 1
 
