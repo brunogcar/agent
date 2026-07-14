@@ -6,12 +6,22 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v1.0** | 2026-07-14 | **First versioned release.** Split the monolithic `Config.__init__` (~430 lines, 515-line `core/config.py`) into a 12-file `core/config_backend/` package following the LLM / memory / gateway / router pattern. Builder dispatch: `Config.__init__` now imports and calls `_init_paths(cfg)` → `_init_providers(cfg)` → `_init_models(cfg)` → `_init_services(cfg)` → `_init_memory(cfg)` → `_init_execution(cfg)` → `_init_limits(cfg)` → `_init_security(cfg)` → `_validate_config(cfg)` in section order. `core/config.py` is now 168 lines (was 515). `core/config_validation.py` is now an 18-line backwards-compat shim — `validate_config()` impl moved to `core/config_backend/validation.py`. Split is purely structural — no behavior changes; all 213 callers doing `from core.config import cfg` continue to work unchanged. |
 | Pre-v1.0 | 2026-07-05 | Added `agent_cache_max` and `agent_cache_ttl_seconds` env vars (Bug #19) for configurable agent tool cache limits. Defaults: 100 entries, 300s TTL. Added path traversal guard to `resolve_workspace_path` (Bug #1) — mirrors `resolve_agent_path`. Added 3 new `validate_config()` checks (Bug #17): model_registry entry completeness, agent role llm_role existence, allowed_internal_hosts type validation. |
-| Pre-v1.0 | — | *(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)* |
 
 ---
 
 ## ⚠️ Breaking Changes
+
+### v1.0 — 2026-07-14
+
+The **public surface is unchanged** — `from core.config import cfg`, `from core.config import Config`, and `from core.config_validation import validate_config` all continue to work. The breakage is purely internal (test patch targets + the location of the `validate_config()` implementation).
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| `validate_config()` impl moved from `core/config_validation.py` → `core/config_backend/validation.py` | The old module is now an 18-line shim that re-exports `validate_config`. The shim re-exports **only** `validate_config` — not `cfg` or `tracer`. | No action for callers using `from core.config_validation import validate_config`. Tests that patched `core.config_validation.cfg` or `core.config_validation.tracer` must update to `core.config_backend.validation.cfg` / `.tracer` — `validate_config()` looks up those names in its defining module's globals. |
+| `Config.__init__` no longer sets attributes inline | The ~430-line `__init__` is now a 25-line dispatcher that calls 9 builders. Adding a new attribute directly to `__init__` will not work — it must go in the appropriate `config_backend/` builder. | When adding a new config attribute, put it in the matching builder (`paths.py` for paths, `models.py` for models, etc.). See [INSTRUCTIONS.md](INSTRUCTIONS.md) rule #14. |
+| Two distinct validators now coexist | `validators.py::_validate_config(cfg)` runs at construction time (raises immediately, 22 range checks). `validation.py::validate_config()` runs at startup (aggregates all errors into one RuntimeError, 7 check groups). | If you previously added a check to `validate_config()`, decide whether it's a construction-time range check (→ `validators.py`) or a startup check (→ `validation.py`). See [ARCHITECTURE.md](ARCHITECTURE.md) → Key Design Decisions. |
 
 ### Pre-v1.0 — 2026-07-05
 
@@ -27,7 +37,10 @@
 
 ## ✅ Completed
 
-*(No completed milestones yet. This is a pre-v1 document. Add completed features here as they ship.)*
+| Feature | Version | Notes |
+|---------|---------|-------|
+| `config_backend/` package split | v1.0 | Monolithic `Config.__init__` (~430 lines) split into 12-file `core/config_backend/` package (builder pattern). Mirrors the LLM / memory / gateway / router split. 213 callers unaffected. |
+| `config_validation.py` consolidation | v1.0 | Merged into `config_backend/` as a backwards-compat shim. `validate_config()` impl now in `config_backend/validation.py`. Two validators now coexist with clear separation: `validators.py::_validate_config(cfg)` (construction-time, raises immediately) vs `validation.py::validate_config()` (startup-time, aggregates all errors). |
 
 ---
 
@@ -49,4 +62,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for config reference, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for config reference, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -2,6 +2,59 @@
 
 # 📝 API Reference
 
+## 📦 Package Structure (v1.0)
+
+The configuration system was split in v1.0 from a monolithic `core/config.py` (515 lines, ~430-line `__init__`) into a thin `Config` class + 12-file `core/config_backend/` package. The public surface is unchanged — `from core.config import cfg` and `from core.config import Config` continue to work exactly as before. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full file map.
+
+### Public API (stable since Pre-v1.0)
+
+```python
+from core.config import cfg, Config        # Singleton + class
+cfg.agent_root                               # pathlib.Path
+cfg.planner_model                            # str
+cfg.model_registry                           # dict[str, dict[str, Any]]
+cfg.is_protected("server.py")                # bool
+cfg.resolve_agent_path("tools/web.py")       # Path
+cfg.ensure_dirs()                            # None — creates missing dirs
+cfg.reload()                                 # None — re-reads .env + re-runs builders
+```
+
+### Internal builder functions (v1.0 — `core/config_backend/`)
+
+`Config.__init__` is a 25-line dispatcher that imports and calls these 9 builders in section order. The order matters — later builders read attributes set by earlier ones, and `validators.py` runs last so it can range-check everything.
+
+**Do not call these directly from application code.** They are internal to `Config.__init__`. New config attributes belong in the appropriate builder — see [INSTRUCTIONS.md](INSTRUCTIONS.md) rule #14.
+
+| Builder | Module | Sets |
+|---------|--------|------|
+| `_init_paths(cfg)` | `config_backend/paths.py` | 9 filesystem path attributes (`agent_root`, `workspace_root`, `memory_root` + 6 derived) |
+| `_init_providers(cfg)` | `config_backend/providers.py` | 26 attributes: runtime, embeddings, 10 cloud-provider pairs, GitHub |
+| `_init_models(cfg)` | `config_backend/models.py` | Model roles, `model_registry` (16 keys + conditional consultor), derived `planner_timeout` / `execution_timeout` / `router_timeout` |
+| `_init_services(cfg)` | `config_backend/services.py` | SearXNG, Tavily, browser fallback, 6 deep-research knobs |
+| `_init_memory(cfg)` | `config_backend/memory.py` | Memory tuning, diversity, context budgeting |
+| `_init_execution(cfg)` | `config_backend/execution.py` | Autocode, autoresearch, parallel, cache, understand |
+| `_init_limits(cfg)` | `config_backend/limits.py` | Tool limits (memory, web, cli, file) |
+| `_init_security(cfg)` | `config_backend/security.py` | `protected_files` frozenset, SSRF allowlist, gateway, environment |
+| `_validate_config(cfg)` | `config_backend/validators.py` | **Construction-time** range checks (22 checks, raises immediately). Called as the LAST step of `__init__`. |
+
+### Two distinct validators (v1.0)
+
+| Validator | Module | When | Failure mode |
+|-----------|--------|------|--------------|
+| `_validate_config(cfg)` | `config_backend/validators.py` | Construction time (last step of `Config.__init__`, also re-runs on `reload()`) | Raises `ValueError` / `FileNotFoundError` immediately — 22 range checks |
+| `validate_config()` | `config_backend/validation.py` | Startup time (called by `server.py` via the `config_validation.py` shim) | Aggregates ALL errors into one `RuntimeError` (multi-line summary) — 7 check groups |
+
+> ⚠️ **`validate_config()` impl moved in v1.0.** Pre-v1.0 it lived in `core/config_validation.py`. That module is now an 18-line backwards-compat shim that re-exports `validate_config` from `core/config_backend/validation.py`. The shim re-exports **only** `validate_config` — not `cfg` or `tracer`. Tests that previously patched `core.config_validation.cfg` / `.tracer` must update to `core.config_backend.validation.cfg` / `.tracer`.
+
+### Helper module (v1.0 — `config_backend/env_loader.py`)
+
+| Helper | Signature | Used by |
+|--------|-----------|---------|
+| `_find_env_file()` | `() -> Path \| None` — walks 5 parents from `config_backend/` to locate `.env` | `core/config.py` (module-level load), `Config.reload()` |
+| `_resolve_role()` | `(model_name: str) -> tuple[str, str]` — exact-match cloud-provider routing, else local LM Studio name | `config_backend/models.py` (called 17×) |
+
+---
+
 ## 🔧 Model Configuration
 
 Model identifiers are loaded from `.env` and must match **exactly** what appears in your LLM provider's `/v1/models` response. The agent uses a **tiered model strategy**: larger models for complex reasoning, smaller models for fast classification and lightweight tasks.
@@ -424,7 +477,7 @@ SSRF: localhost/internal access allowed by default for development. Set ALLOWED_
 
 The `Config.__init__()` method enforces these validations **at import time**. Invalid config raises `ValueError` or `FileNotFoundError`, preventing the server from starting with bad settings.
 
-Additionally, `core/config_validation.py` runs a second pass at startup (called from `gateway_backend/factory.py`) to verify critical paths exist and required models are configured.
+Additionally, `core/config_backend/validation.py::validate_config()` (exposed via the `core/config_validation.py` backwards-compat shim) runs a second pass at startup (called from `gateway_backend/factory.py`) to verify critical paths exist and required models are configured. See [Package Structure](#-package-structure-v10) above for the v1.0 split.
 
 ### Path Validations
 - `agent_root` must be an absolute path
@@ -462,7 +515,9 @@ Additionally, `core/config_validation.py` runs a second pass at startup (called 
 
 ### `validate_config()` — Startup validation
 
-`core/config_validation.py` runs a second validation pass at startup (called from `server.py` and `gateway_backend/factory.py`). Raises `RuntimeError` with all accumulated errors if any check fails.
+**v1.0 move:** `validate_config()` now lives in `core/config_backend/validation.py`. The original `core/config_validation.py` is an 18-line backwards-compat shim that re-exports it — `from core.config_validation import validate_config` continues to work unchanged. Tests that patched `core.config_validation.cfg` / `.tracer` must update to `core.config_backend.validation.cfg` / `.tracer` (the shim re-exports only `validate_config`).
+
+`core/config_backend/validation.py` runs a second validation pass at startup (called from `server.py` with graceful `ImportError` fallback, and from `gateway_backend/factory.py`). Raises `RuntimeError` with all accumulated errors if any check fails.
 
 **Checks performed:**
 - Critical paths exist (`agent_root`, `workspace_root`, `memory_root`, etc.)
@@ -483,4 +538,4 @@ Additionally, `core/config_validation.py` runs a second pass at startup (called 
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

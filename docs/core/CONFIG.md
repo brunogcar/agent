@@ -1,9 +1,12 @@
 # ⚙️ Configuration System
 
-The configuration system (`core/config.py`) is the **single source of truth** for all runtime settings. It uses a singleton pattern, loads from `.env` at import time, and provides validated, typed access to paths, models, limits, and feature flags.
+The configuration system (`core/config.py` + `core/config_backend/`) is the **single source of truth** for all runtime settings. It uses a singleton pattern, loads from `.env` at import time, and provides validated, typed access to paths, models, limits, and feature flags.
+
+> **v1.0 split:** The monolithic `Config.__init__` (~430 lines) was split into a 12-file `core/config_backend/` package following the LLM / memory / gateway / router pattern. `Config.__init__` is now a 25-line dispatcher that calls 9 builder functions (`_init_paths`, `_init_providers`, `_init_models`, `_init_services`, `_init_memory`, `_init_execution`, `_init_limits`, `_init_security`, `_validate_config`) in section order. `core/config_validation.py` is now an 18-line backwards-compat shim — `validate_config()` impl lives in `config_backend/validation.py`. Public surface (`from core.config import cfg`) is unchanged; 213 callers continue to work. See [config/ARCHITECTURE.md](config/ARCHITECTURE.md) for the full file map.
 
 **Key characteristics:**
 - **Singleton** — One `cfg` instance, imported everywhere via `from core.config import cfg`
+- **Builder pattern (v1.0)** — `Config.__init__` dispatches to 9 `_init_<section>(cfg)` builders in `config_backend/`; no attribute setup happens inline
 - **Fail-fast** — Invalid config raises exceptions at import time, preventing silent misconfigurations
 - **Pathlib throughout** — All paths are `pathlib.Path` objects (cross-platform)
 - **No hardcoding** — Model names, paths, and limits all come from environment variables
@@ -54,7 +57,7 @@ if cfg.is_protected("server.py"):
 
 ## ⚙️ Configuration
 
-All paths are `pathlib.Path` objects, resolved to absolute paths. The `_ensure_dirs()` method creates any missing directories at startup.
+All paths are `pathlib.Path` objects, resolved to absolute paths. The `_init_paths(cfg)` builder (in `core/config_backend/paths.py`) sets them; `Config.ensure_dirs()` creates any missing directories at startup.
 
 ### Path Hierarchy
 
@@ -116,4 +119,6 @@ path = cfg.resolve_workspace_path("data/sales.csv")
 
 ---
 
-*Architecture: singleton Config class, .env loading, pathlib paths, tiered model registry, fail-fast validation.*
+*Architecture: singleton Config class with builder-dispatch __init__, .env loading, pathlib paths, tiered model registry, fail-fast validation. v1.0 split: core/config.py (168 lines) + 12-file core/config_backend/ package + 18-line config_validation.py shim.*
+
+*Last updated: 2026-07-14 (v1.0). See [config/ARCHITECTURE.md](config/ARCHITECTURE.md) for the file map and design decisions.*

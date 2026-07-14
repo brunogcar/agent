@@ -6,7 +6,7 @@ The `core/` module is the **foundation layer** of the MCP Agent Stack. It provid
 
 | Document | Subsystem | Key Topics |
 |----------|-----------|------------|
-| [CONFIG.md](core/CONFIG.md) | Configuration | Singleton `.env` loading, model tiers, path hierarchy, validation, gateway config |
+| [CONFIG.md](core/CONFIG.md) | Configuration | Thin facade pattern (`config.py` + `config_backend/`), singleton `.env` loading, builder-dispatch `__init__`, model tiers, path hierarchy, two-tier validation (construction + startup), gateway config |
 | [LLM.md](core/LLM.md) | LLM Client | Role-based dispatch, circuit breakers, context budgeting, JSON parsing, provider abstraction |
 | [MEMORY.md](core/MEMORY.md) | Memory System | Three collections, four-layer dedup, decay scoring, write/read ops, maintenance |
 | [ROUTER.md](core/ROUTER.md) | Task Router | Thin facade pattern (`router.py` + `router_backend/`), 3-tier routing (model → heuristic → swarm), adaptive complexity thresholds, routing telemetry, confidence guard, complexity scoring, JSON extraction |
@@ -40,12 +40,13 @@ graph TD
         ML["memory_backend/meta_learning.py\nBackground learning (30min daemon)"]
         RT["runtime/\nWatchdog, health, activity"]
         RTR["router.py<br/>Thin facade → router_backend/"]
+        CFG_B["config_backend/<br/>Builders + validators (v1.0 split)"]
         GW_B["gateway_backend/\nHTTP engine"]
         KG["kgraph/\nKnowledge graph"]
         NET["net/\nNetwork infrastructure"]
     end
     subgraph "Layer 1: Foundation"
-        CFG["config.py"]
+        CFG["config.py<br/>Thin facade → config_backend/"]
         TRC["tracer.py<br/>Thin facade → observability/"]
         CTR["contracts.py"]
         SEC["net/security.py"]
@@ -59,6 +60,7 @@ graph TD
     MEM_F --> MEM_B
     GW_F --> GW_B
     SRV --> REG
+    CFG --> CFG_B
     LLM_B --> CFG
     LLM_B --> TRC
     MEM_B --> CFG
@@ -85,8 +87,8 @@ graph TD
 
 | Layer | Contains | Imports From |
 |-------|----------|-------------|
-| **Layer 1: Foundation** | config, tracer (facade → observability/), contracts, net/security, path_guard, utils, parallel_executor, br_validator, citations | Nothing in `core/` (tracer.py facade imports from `core/observability/` subsystem) |
-| **Layer 2: Subsystems** | observability (tracer_engine + reader + metrics + checkpoint), llm_backend, memory_backend, sleep_learn, meta_learning, runtime, router_backend, gateway_backend, kgraph, net | Layer 1 only |
+| **Layer 1: Foundation** | config (facade → config_backend/), tracer (facade → observability/), contracts, net/security, path_guard, utils, parallel_executor, br_validator, citations | Nothing in `core/` (tracer.py facade imports from `core/observability/` subsystem; `config_backend/` imports `cfg` from `core.config`) |
+| **Layer 2: Subsystems** | observability (tracer_engine + reader + metrics + checkpoint), llm_backend, memory_backend, sleep_learn, meta_learning, runtime, config_backend, router_backend, gateway_backend, kgraph, net | Layer 1 only |
 | **Layer 3: Facades** | llm.py, memory_engine.py, gateway.py, router.py, server.py, registry.py, tracer.py (facade) | Layer 2 (and transitively Layer 1) |
 
 ---
@@ -97,8 +99,21 @@ graph TD
 core/
 ├── __init__.py           # Package init — no side effects (daemon moved to server.py)
 │
-├── config.py             # Singleton Config, .env parsing, path resolution
-├── config_validation.py  # Startup validation (paths, models, timeouts)
+├── config.py             # Thin Config class (168 lines) — builder-dispatch __init__ + singleton cfg
+├── config_validation.py  # 18-line backwards-compat shim → config_backend/validation.py
+├── config_backend/       # Config implementation (v1.0 split — 12 files)
+│   ├── __init__.py       # Package docstring (no side effects)
+│   ├── env_loader.py     # _find_env_file() + _resolve_role() — helpers, no state
+│   ├── paths.py          # _init_paths(cfg) — 9 filesystem path attributes
+│   ├── providers.py      # _init_providers(cfg) — runtime, embeddings, cloud providers, GitHub
+│   ├── models.py         # _init_models(cfg) — model roles, model_registry, derived timeouts
+│   ├── services.py       # _init_services(cfg) — SearXNG, Tavily, browser, deep_research
+│   ├── memory.py         # _init_memory(cfg) — memory tuning, diversity, context budgeting
+│   ├── execution.py      # _init_execution(cfg) — autocode, autoresearch, parallel, cache
+│   ├── limits.py         # _init_limits(cfg) — tool limits (memory, web, cli, file)
+│   ├── security.py       # _init_security(cfg) — protected files, SSRF, gateway, environment
+│   ├── validators.py     # _validate_config(cfg) — construction-time range checks
+│   └── validation.py     # validate_config() — startup-time aggregation (RuntimeError)
 │
 ├── tracer.py             # Thin facade → core/observability/tracer_engine.py
 ├── observability/        # Full observability subsystem (tracer + reader + metrics + checkpoint)
@@ -234,11 +249,12 @@ core/
 
 ### 1. ⚙️ Configuration — [core/CONFIG.md](core/CONFIG.md)
 
-**Status:** v1.0 — Singleton config loaded from `.env` at import time.
+**Status:** v1.0 — Singleton config loaded from `.env` at import time. Thin facade pattern (`config.py` 168 lines + `config_backend/` 12-file package).
 
 **Purpose:** Single source of truth for all runtime settings. Fail-fast validation at import time.
 
 **Key characteristics:**
+- **Thin facade + builder pattern (v1.0 split)** — `core/config.py` is a 168-line facade; `Config.__init__` is a 25-line dispatcher that calls 9 builders (`_init_paths`, `_init_providers`, `_init_models`, `_init_services`, `_init_memory`, `_init_execution`, `_init_limits`, `_init_security`, `_validate_config`) in `core/config_backend/`. Mirrors the LLM / memory / gateway / router pattern. `core/config_validation.py` is now an 18-line backwards-compat shim — `validate_config()` impl lives in `config_backend/validation.py`.
 - **Singleton** — One `cfg` instance, imported everywhere via `from core.config import cfg`
 - **Fail-fast** — Invalid config raises exceptions at import time, preventing silent misconfigurations
 - **Pathlib throughout** — All paths are `pathlib.Path` objects (cross-platform)
@@ -522,7 +538,7 @@ key = normalize_url("https://example.com/?foo=1&bar=2")
 | `citations.py` | Citation tracking | `citations.add()`, `format_citations()` — Per-trace source numbering for research workflows |
 | `br_validator.py` | Brazilian financial data | `parse_brl()`, `validate_ticker()`, `parse_date()` — Brazilian financial data validation for `skills/b3` |
 | `parallel_executor.py` | Parallel tool execution | `dispatch_parallel()`, `PARALLEL_SAFE` — Conservative allowlist for concurrent tool execution |
-| `config_validation.py` | Startup validation | `validate_config()` — Called by both server.py (with graceful ImportError fallback) and gateway factory |
+| `config_validation.py` | Startup validation (backwards-compat shim) | `validate_config()` — re-exported from `core/config_backend/validation.py` (v1.0 move). Called by both server.py (with graceful ImportError fallback) and gateway factory. Tests patching `cfg` / `tracer` must target `core.config_backend.validation.cfg` / `.tracer` — the shim re-exports only `validate_config`. |
 
 > **v1.3 move:** `tracer.py` is now a thin facade → `core/observability/tracer_engine.py`. `tracer_reader.py` and `metrics.py` moved into `core/observability/` (as `reader.py` and `metrics.py`). See [OBSERVABILITY.md](core/OBSERVABILITY.md) for the consolidated subsystem docs.
 

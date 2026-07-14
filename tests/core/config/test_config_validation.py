@@ -1,4 +1,11 @@
-"""Tests for core/config_validation.py — startup config validation (Bug #17).
+"""Tests for startup config validation (Bug #17).
+
+[v1.0] validate_config() now lives in core/config_backend/validation.py;
+core/config_validation.py is a backwards-compat shim that re-exports it.
+The import path `from core.config_validation import validate_config` still
+works. Patches must target `core.config_backend.validation.cfg` and
+`core.config_backend.validation.tracer` — the function looks up those names
+in its defining module's globals, NOT in the shim module.
 
 Verifies that validate_config() catches:
   - model_registry entries with empty model/provider strings
@@ -44,8 +51,8 @@ class TestModelRegistryValidation:
         }
         fake_cfg.allowed_internal_hosts = frozenset({"localhost"})
 
-        with patch("core.config_validation.cfg", fake_cfg), \
-             patch("core.config_validation.tracer"):
+        with patch("core.config_backend.validation.cfg", fake_cfg), \
+             patch("core.config_backend.validation.tracer"):
             with pytest.raises(RuntimeError, match="empty 'model'"):
                 validate_config()
 
@@ -75,8 +82,8 @@ class TestModelRegistryValidation:
         }
         fake_cfg.allowed_internal_hosts = frozenset({"localhost"})
 
-        with patch("core.config_validation.cfg", fake_cfg), \
-             patch("core.config_validation.tracer"):
+        with patch("core.config_backend.validation.cfg", fake_cfg), \
+             patch("core.config_backend.validation.tracer"):
             with pytest.raises(RuntimeError, match="empty 'provider'"):
                 validate_config()
 
@@ -106,8 +113,8 @@ class TestModelRegistryValidation:
         }
         fake_cfg.allowed_internal_hosts = frozenset({"localhost"})
 
-        with patch("core.config_validation.cfg", fake_cfg), \
-             patch("core.config_validation.tracer"):
+        with patch("core.config_backend.validation.cfg", fake_cfg), \
+             patch("core.config_backend.validation.tracer"):
             with pytest.raises(RuntimeError, match="invalid 'timeout'"):
                 validate_config()
 
@@ -142,7 +149,7 @@ class TestAllowedInternalHostsValidation:
         # Pass a string instead of a set — invalid type
         fake_cfg.allowed_internal_hosts = "localhost"
 
-        with patch("core.config_validation.cfg", fake_cfg), \
-             patch("core.config_validation.tracer"):
+        with patch("core.config_backend.validation.cfg", fake_cfg), \
+             patch("core.config_backend.validation.tracer"):
             with pytest.raises(RuntimeError, match="allowed_internal_hosts must be"):
                 validate_config()
