@@ -4,7 +4,7 @@ Plan writing node.
 from __future__ import annotations
 import re
 from typing import Any
-from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs, _get_files  # [v2.1+v2.3] accessors
+from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs, _get_files, _get_plan  # [v2.1+v2.3+v2.2] accessors
 from workflows.autocode_impl.constants import PLAN_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json_array
 from core.tracer import tracer
@@ -17,7 +17,7 @@ def node_write_plan(state: AutocodeState) -> dict:
     if state.get("status") == "needs_clarification":
         return {}
     
-    spec = state.get("spec") or state["task"]
+    spec = _get_plan(state, "spec", "") or state["task"]  # [v2.2] accessor
     tracer.step(tid, "write_plan", "writing plan")
 
     # Phase 3/5: Inject relevant learned rules for the Planner
@@ -81,4 +81,9 @@ def node_write_plan(state: AutocodeState) -> dict:
     # [v2.1] RMW: write to vcs sub-state + flat mirror for branch
     current_vcs = dict(state.get("vcs", {}))
     current_vcs["branch"] = branch
-    return {"spec": spec, "plan": plan, "branch": branch, "current_step": 0, "vcs": current_vcs}
+    # [v2.2] RMW: write to plan sub-state + flat mirrors for spec, plan, current_step
+    current_plan = dict(state.get("plan_state", {}))
+    current_plan["spec"] = spec
+    current_plan["plan"] = plan
+    current_plan["current_step"] = 0
+    return {"spec": spec, "plan": plan, "branch": branch, "current_step": 0, "vcs": current_vcs, "plan_state": current_plan}

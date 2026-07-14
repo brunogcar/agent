@@ -4,7 +4,7 @@ Brainstorming node.
 from __future__ import annotations
 from pathlib import Path
 from typing import Any
-from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_files  # [v2.3] accessor
+from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_files, _get_plan  # [v2.3+v2.2] accessors
 from workflows.autocode_impl.constants import (
     BRAINSTORM_SYSTEM,
     AUDIT_BRAINSTORM_SYSTEM,
@@ -139,6 +139,10 @@ def node_brainstorm(state: AutocodeState) -> dict:
     tracer.step(tid, "brainstorm", f"spec ready ({len(spec)} chars)")
     
     updates = {"memory_context": mem_ctx, "spec": spec}
+    # [v2.2] RMW: write to plan sub-state + flat mirror for spec
+    current_plan = dict(state.get("plan_state", {}))
+    current_plan["spec"] = spec
+    updates["plan_state"] = current_plan
     # [Bug #7] Store the MERGED files (kg_files + original), not the original.
     # Previously: updates["files"] = state["files"] — discarded KG files.
     if kg_files:

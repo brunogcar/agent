@@ -40,8 +40,14 @@ def base_state(temp_workspace):
     state["task_type"] = "feature"
     state["project_root"] = str(temp_workspace)
     # plan: legacy list[dict] step list (tests read state["plan"] directly)
-    state["plan"] = [{"id": 1, "label": "write_code", "description": "implement"}]
-    state["current_step"] = 0
+    # [v2.2] Write to BOTH sub-state (primary) + flat field (mirror) — simulates
+    # what plan.py does post-v2.2. The _get_plan accessor reads sub-state first.
+    test_plan = [{"id": 1, "label": "write_code", "description": "implement"}]
+    state["plan"] = test_plan  # flat mirror
+    state["plan_state"] = dict(state.get("plan_state", {}))
+    state["plan_state"]["plan"] = test_plan  # sub-state (primary)
+    state["plan_state"]["current_step"] = 0
+    state["current_step"] = 0  # flat mirror
     state["test_files"] = []
     state["max_retries"] = 3
     return state

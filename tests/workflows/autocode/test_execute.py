@@ -20,8 +20,10 @@ class TestNodeExecuteStep:
 
     def test_empty_plan_returns_error(self):
         from workflows.autocode_impl.nodes.execute import node_execute_step
+        # [v2.2] Include plan_state sub-state so accessor finds the empty plan
         state = {"task": "empty plan", "trace_id": "t1", "status": "running",
-                 "plan": [], "current_step": 0}
+                 "plan": [], "current_step": 0,
+                 "plan_state": {"plan": [], "current_step": 0, "spec": "", "brainstorm_notes": "", "plan_accepted": False}}
         result = node_execute_step(state)
         assert result["status"] == "error"
         assert "No more plan steps" in result["error"]
@@ -36,11 +38,15 @@ class TestNodeExecuteStep:
 
     def test_increments_current_step(self, base_state):
         from workflows.autocode_impl.nodes.execute import node_execute_step
-        base_state["current_step"] = 0
-        base_state["plan"] = [
+        # [v2.2] Override plan in BOTH sub-state + flat field (accessor reads sub-state first)
+        test_plan = [
             {"id": 1, "label": "write_code", "description": "step 1"},
             {"id": 2, "label": "write_code", "description": "step 2"},
         ]
+        base_state["plan"] = test_plan  # flat mirror
+        base_state["plan_state"]["plan"] = test_plan  # sub-state (primary)
+        base_state["plan_state"]["current_step"] = 0
+        base_state["current_step"] = 0
         with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "code"
             result = node_execute_step(base_state)
@@ -49,8 +55,12 @@ class TestNodeExecuteStep:
     def test_does_not_increment_beyond_plan(self, base_state):
         """When current_step >= len(plan), return error (no increment)."""
         from workflows.autocode_impl.nodes.execute import node_execute_step
+        # [v2.2] Override plan + current_step in BOTH sub-state + flat field
+        test_plan = [{"id": 1, "label": "write_code", "description": "only step"}]
+        base_state["plan"] = test_plan  # flat mirror
+        base_state["plan_state"]["plan"] = test_plan  # sub-state (primary)
+        base_state["plan_state"]["current_step"] = 1
         base_state["current_step"] = 1
-        base_state["plan"] = [{"id": 1, "label": "write_code", "description": "only step"}]
         with patch("workflows.autocode_impl.nodes.execute._call") as mock_call:
             mock_call.return_value = "code"
             result = node_execute_step(base_state)

@@ -11,7 +11,7 @@ from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.constants import CODER_SYSTEM
 from workflows.autocode_impl.helpers import _call, _files_context, _parse_json  # [v2.0] removed dead _write_files import
-from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
+from workflows.autocode_impl.state import AutocodeState, _get_files, _get_plan  # [v2.3+v2.2] accessors
 
 def node_execute_step(state: AutocodeState) -> dict:
     """
@@ -20,8 +20,9 @@ def node_execute_step(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     tracer.step(tid, "execute_step", "Executing plan step")
     # [FIX] Schema drift: plan is a list[dict], not a dict with "steps" key
-    plan = state.get("plan", [])
-    current_step_idx = state.get("current_step", 0)
+    # [v2.2] Use _get_plan accessors (read sub-state first, fall back to flat)
+    plan = _get_plan(state, "plan", [])
+    current_step_idx = _get_plan(state, "current_step", 0)
     if current_step_idx >= len(plan):
         return {"status": "error", "error": "No more plan steps"}
     current_step = plan[current_step_idx]
@@ -74,6 +75,10 @@ def node_execute_step(state: AutocodeState) -> dict:
     tracer.step(tid, "execute_step", "Code generated and written")
     updates["execution_notes"] = f"Executed step: {current_step.get('description', '')}"
     updates["current_step"] = current_step_idx + 1
+    # [v2.2] RMW: write to plan sub-state + flat mirror for current_step
+    current_plan = dict(state.get("plan_state", {}))
+    current_plan["current_step"] = current_step_idx + 1
+    updates["plan_state"] = current_plan
     # [v2.3] RMW: write to files sub-state if modified_files was set
     if "modified_files" in updates:
         current_files = dict(state.get("files_state", {}))

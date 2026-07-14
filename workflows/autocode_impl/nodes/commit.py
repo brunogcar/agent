@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify, _get_vcs  # [v2.5+v2.6+v2.1] accessors
+from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify, _get_vcs, _get_plan  # [v2.5+v2.6+v2.1+v2.2] accessors
 from workflows.autocode_impl.vcs_ops import _git_commit
 from core.tracer import tracer
 
@@ -28,7 +28,7 @@ def node_commit(state: AutocodeState) -> dict:
         current_vcs = dict(state.get("vcs", {}))
         current_vcs["commit_sha"] = "(dry-run)"
         return {"status": "dry_run", "commit_sha": "(dry-run)", "vcs": current_vcs}
-    plan = state.get("plan", [])
+    plan = _get_plan(state, "plan", [])  # [v2.2] accessor
     # [Pre-2.0 Fix] Was: s["label"] — KeyError if any step lacks "label".
     # Now uses .get("label", "step") fallback.
     labels = ", ".join(

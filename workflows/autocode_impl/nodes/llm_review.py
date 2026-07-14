@@ -6,7 +6,7 @@ decision (pass/fail) is handled by node_verify_decision (next in graph).
 """
 from __future__ import annotations
 
-from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT
+from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT, _get_plan  # [v2.2] accessor
 from workflows.autocode_impl.constants import VERIFY_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
 from core.tracer import tracer
@@ -49,7 +49,7 @@ def node_llm_review(state: AutocodeState) -> dict:
             role="executor",
             system=VERIFY_SYSTEM,
             user=(
-                f"Spec:\n{state.get('spec', '')}\n\n"
+                f"Spec:\n{_get_plan(state, 'spec', '')}\n\n"  # [v2.2] accessor
                 f"Implementation:\n```python\n{impl_ctx[:3000]}\n```\n\n"
                 f"Tests:\n```python\n{state.get('test_code', '')[:1000]}\n```\n\n"
                 f"FRESH PYTEST OUTPUT (exit code {'0' if tests_passed else '1'}):\n"

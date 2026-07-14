@@ -361,7 +361,7 @@ def _default_state(
         # The plan sub-state lives under "plan_state" to avoid breaking list readers.
         "plan_state": {
             "brainstorm_notes": "",
-            "steps": [],  # the actual plan step list (was "plan" in legacy)
+            "plan": [],  # [v2.2] Fixed: was "steps" (mismatched PlanState TypedDict which declares "plan: list[dict]")
             "plan_accepted": False,
             "spec": "",
             "current_step": 0,
