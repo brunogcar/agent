@@ -7,6 +7,7 @@
 | Version | Date | Status |
 |---------|------|--------|
 | v1.3.1 | 2026-07-13 | **Doc drift + input validation:** `autoresearch` added to all docs (was missing — shipped in code but not docs). `memory_context` added to evictable fields. `_EVICTABLE_FIELDS` constant extracted. `run_workflow()` input validation (non-empty `goal` + `workflow_type`). Module docstring "seven" → "six". All "Last updated" dates bumped. |
+| v1.3.2 | 2026-07-14 | **Post-Phase-4 doc cleanup:** `WORKFLOWS.md` restructured to match TOOLS.md/CORE.md index pattern (removed per-workflow version numbers, node counts, and bug counts from the central index — those live in per-workflow docs). base/CHANGELOG roadmap #13 (input validation) moved to Completed (shipped in v1.3.1). Roadmap #18 (trim_state wiring) clarified: data + research have their own trim nodes that call `trim_state()` internally; `trim_state()` is NOT an unused utility. |
 | v1.3 | 2026-07-08 | **Chonkie-aware `trim_state()`:** When chonkie is available, splits oversized fields into sentence-aware chunks and evicts each individually (precise recall later). Keeps first chunk as preview in state. Falls back to whole-string eviction (v1.0 behavior) if chonkie is missing or chunking fails. New `_evict_field()` helper. Tests updated to mock `_chunk_text` for deterministic path control. **Note:** `trim_state()` is currently a utility — no workflow calls it yet (#18 tracks wiring it in). |
 | v1.2 | 2026-07-06 | **Checkpoint + state fixes:** `node_error` now saves full state (not just `{status, error}`) for resume (#1). Exception handler saves checkpoint before returning failure (#2). `node_done` saves success checkpoint before `mark_complete` (#7). Resume no longer clobbers checkpoint's original goal (#5). `task` field added to `WorkflowState` TypedDict (#4). Module docstring fixed ("three workflows" → six). `@meta_tool` adoption noted for notify (#8 — deferred). Test restructure: split into `test_node_helpers` + `test_dispatcher` + `test_trim_state` + `conftest` (#9). |
 | v1.1 | 2026-07-05 | Bugfix batch in `workflows/helpers/checkpoint.py`: docstring path corrected (#15); `resume_count` computed via JSON parsing instead of string-matching (#16). `report` removed from `VALID_WORKFLOWS`. `deep_research` added. Error message updated to list all 5 types. |
@@ -62,7 +63,9 @@
 | #7 `node_done()` success checkpoint | ✅ v1.2 | Was: no checkpoint. Now: saved before `mark_complete`. |
 | #8 `@meta_tool` on notify | ✅ v1.2 | Deferred — `notify` is a simple `@tool` (no dispatch table). Will adopt `@meta_tool` when notify is refactored. |
 | #9 Test restructure | ✅ v1.2 | Split into `test_node_helpers` + `test_dispatcher` + `test_trim_state` + `conftest`. |
+| #13 Input validation | ✅ v1.3.1 | `run_workflow()` now rejects empty `workflow_type` or `goal` before trace creation. Was listed under "In Progress" — moved to Completed (v1.3.2 doc fix). |
 | #17 Chonkie-aware `trim_state()` | ✅ v1.3 | Chunked eviction + preview (fallback to v1.0 whole-string if chonkie missing). Tests mock `_chunk_text` for deterministic path control. |
+| #18 `trim_state()` wiring | ✅ Complete | Data + Research workflows have their own trim nodes that call `trim_state()` internally. Deep_research doesn't need it (`knowledge_base` capped at 6K chars via `_cap_knowledge()`; evicting would break convergence detection). Autocode uses `node_summarize_context` (chonkie `SentenceChunker`) for debug history compression — separate pattern, same soft-dep approach. Clarified v1.3.2 — was previously misdocumented as "utility, no workflow calls it yet." |
 
 ---
 
@@ -71,13 +74,11 @@
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
 | 10 | **Configurable eviction threshold** | Hardcoded `len(val) // 4 > 1000`. Make configurable via `.env` | P2 |
-| 11 | **Configurable evicted fields** | Hardcoded `["search_results", "output", "analysis"]`. Make configurable | P2 |
+| 11 | **Configurable evicted fields** | Hardcoded `_EVICTABLE_FIELDS` tuple. Make configurable | P2 |
 | 12 | **Workflow registration** | Replace hardcoded if/elif dispatch with dynamic registry (e.g., `WORKFLOW_REGISTRY` dict) | P2 |
-| 13 | **Input validation** | Add `run_workflow()` input validation (non-empty goal, valid workflow_type) | P2 |
-| 14 | **Timeout wrapper** | Add configurable timeout around `graph.invoke()` to prevent hung workflows | P2 |
+| 14 | **Universal timeout wrapper** | Autocode has `invoke_with_timeout()` (graph-level). Other 5 workflows rely on per-tool timeouts. A universal dispatcher-level timeout is still deferred. | P2 |
 | 15 | **Result pruning** | Pipe `result` through `prune_tool_dict()` before return to prevent oversized outputs | P3 |
 | 16 | **Parallel workflow dispatch** | Evaluate `asyncio.gather()` for parallel workflow execution | P3 |
-| 18 | **Wire `trim_state()` into workflow graphs** | `trim_state()` is a utility (v1.3: chonkie-aware). **Data wired in (v1.1)** — trim between critique and store. **Research wired in (v1.1)** — trim between synthesize and report. **Deep_research: not needed** — `knowledge_base` already capped at 6000 chars via `_cap_knowledge()`, `extracted_evidence` cleared each iteration. Evicting `knowledge_base` would break convergence detection. | ✅ Complete (data ✅, research ✅, deep_research: not needed) |
 
 ---
 
@@ -93,4 +94,4 @@
 
 ---
 
-*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-14 (v1.3.2 — post-Phase-4 doc cleanup + WORKFLOWS.md restructure). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

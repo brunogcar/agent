@@ -1,10 +1,10 @@
 # 🔄 Workflows Architecture & Orchestration Guide
 
-> **Status:** v3 — Verified July 2026 against real source via `workflows/` directory and per-tool docs..
+> **Status:** v4 — Restructured July 2026 to match the TOOLS.md/CORE.md index pattern. Per-workflow versions, node counts, and bug counts live in each workflow's own docs (`docs/workflows/{name}/CHANGELOG.md`). This central index only tracks **architectural** structure — it changes when a workflow is added, removed, or fundamentally rearchitected, not on every bugfix release.
 
 Workflows are long-running, multi-step orchestration pipelines built on **LangGraph**. They coordinate multiple tools, LLM calls, and memory operations to achieve complex goals that require sequential reasoning, error recovery, and state management.
 
-This document provides a **high-level overview** of all workflows and serves as an **index** to the detailed workflow docs. For deep-dive state machines, node-by-node breakdowns, and tool-specific details, see the dedicated docs in `docs/workflows/`.
+This document provides a **high-level overview** of all workflows and serves as an **index** to the detailed workflow docs. For deep-dive state machines, node-by-node breakdowns, version history, and tool-specific details, see the dedicated docs in `docs/workflows/`.
 
 | Document | Workflow | Key Topics |
 |----------|----------|------------|
@@ -12,8 +12,8 @@ This document provides a **high-level overview** of all workflows and serves as 
 | [RESEARCH.md](workflows/RESEARCH.md) | Research | Single-query pipeline, browser fallback, citation tracking |
 | [DEEP_RESEARCH.md](workflows/DEEP_RESEARCH.md) | Deep Research | ReAct loop, budget tracking, convergence detection, three-tier tools |
 | [DATA.md](workflows/DATA.md) | Data | Python execution, critique layer, dual memory storage |
-| [AUTOCODE.md](workflows/AUTOCODE.md) | Autocode | TDD, git scoping, surgical patching, 17-node state machine |
-| [UNDERSTAND.md](workflows/UNDERSTAND.md) | Understand | AST parsing, incremental indexing, knowledge graph |
+| [AUTOCODE.md](workflows/AUTOCODE.md) | Autocode | TDD, git scoping, surgical patching, debug loop, impact analysis |
+| [UNDERSTAND.md](workflows/UNDERSTAND.md) | Understand | AST parsing, incremental indexing, knowledge graph, doc indexing |
 | [AUTORESEARCH.md](workflows/AUTORESEARCH.md) | Autoresearch | Evolutionary experiment loop, metric-driven keep/discard, results ledger |
 
 ---
@@ -26,21 +26,18 @@ All workflows inherit from a shared foundation defined in `workflows/base.py`.
 |-----------|------|---------|
 | **`WorkflowState`** | `workflows/base.py` | `TypedDict(total=False)` — shared state schema (22 fields). Nodes return partial updates (only changed keys). |
 | **`node_step()`** | `workflows/base.py` | Trace logging: `tracer.step(tid, node, message, **kwargs)` |
-| **`node_error()`** | `workflows/base.py` | Mark state failed, log error, save checkpoint. Returns partial dict. **Note:** Saves partial checkpoint (loses workflow context on resume). |
+| **`node_error()`** | `workflows/base.py` | Mark state failed, log error, save full-state checkpoint. Returns partial dict. |
 | **`node_done()`** | `workflows/base.py` | Mark state succeeded, finish trace, mark complete. Returns partial dict. |
-| **`trim_state()`** | `workflows/base.py` | Phase 5 memory eviction: evicts oversized fields to async queue to prevent checkpoint bloat. |
-| **`run_workflow()`** | `workflows/base.py` | Dispatcher: trace creation → checkpoint resume → route to correct graph → exception isolation. |
+| **`trim_state()`** | `workflows/base.py` | Memory eviction: evicts oversized fields to async queue to prevent checkpoint bloat (chonkie-aware, soft dep). |
+| **`run_workflow()`** | `workflows/base.py` | Dispatcher: trace creation → input validation → checkpoint resume → route to correct graph → exception isolation. |
 
 **Key design decisions:**
 - **Partial updates** — Nodes return `dict` with only changed keys. Never mutate state in-place. Never spread `**state`.
 - **Trace auto-creation** — If `trace_id` is empty, `tracer.new_trace()` creates one automatically.
 - **Checkpoint resumption** — `resume=True` restores from the checkpoint journal with version validation (`_checkpoint_version == 1`).
-- **Exception isolation** — The entire dispatch is wrapped in try/except. Workflow crashes return clean failure dicts, never leak exceptions.
-
-**Known limitations:**
-- `node_error()` saves only `{"status": "failed", "error": ...}` — loses all workflow context on resume. Should save full state.
-- `run_workflow()` exception handler returns failure dict but never calls `save_checkpoint()`. State at crash time is lost.
-- `understand` workflow ignores `trace_id`, `goal`, and checkpoint system. `resume=True` is meaningless.
+- **Exception isolation** — The entire dispatch is wrapped in try/except. Workflow crashes return clean failure dicts, never leak exceptions. Crash-time checkpoint is saved.
+- **Input validation** — `run_workflow()` rejects empty `workflow_type` or `goal` before trace creation (v1.3.1).
+- **Full-state checkpoints** — `node_error()` and the exception handler both save the full workflow state (not just `{status, error}`), so resume has complete context (v1.2).
 
 See [workflows/BASE.md](workflows/BASE.md) for full details.
 
@@ -51,67 +48,36 @@ See [workflows/BASE.md](workflows/BASE.md) for full details.
 ```
 workflows/
 ├── base.py                 # Shared WorkflowState + node helpers + dispatcher
-├── research.py             # Thin facade → research_impl/ (v1.0)
-├── data.py                 # 5-node linear pipeline
+├── research.py             # Thin facade → research_impl/
+├── data.py                 # Thin facade → data_impl/
 ├── autocode.py             # Thin facade → autocode_impl/
 ├── deep_research.py        # Thin facade → deep_research_impl/
-├── understand.py           # Direct async function calls (not LangGraph)
-├── autoresearch.py         # Thin facade → autoresearch_impl/ (7-node experiment loop)
+├── understand.py           # Thin facade → understand_impl/
+├── autoresearch.py         # Thin facade → autoresearch_impl/
 ├── helpers/
 │   └── checkpoint.py       # Checkpoint journal: save, get_latest, mark_complete
-├── autocode_impl/          # 17-node subpackage
-│   ├── constants.py
-│   ├── git_ops.py
-│   ├── graph.py
-│   ├── helpers.py
-│   ├── mermaid.py
-│   ├── patch.py
-│   ├── routes.py
-│   ├── state.py
-│   ├── test_mapper.py
-│   ├── test_runner.py
-│   └── nodes/
-│       ├── analyze_impact.py
-│       ├── brainstorm.py
-│       ├── branch.py
-│       ├── classify.py
-│       ├── commit.py
-│       ├── create_skill.py
-│       ├── debug.py
-│       ├── execute.py
-│       ├── memory.py
-│       ├── plan.py
-│       ├── report.py
-│       ├── run_tests.py
-│       ├── tests.py
-│       ├── validate.py
-│       ├── verify.py
-│       └── write_files.py
-└── deep_research_impl/     # ReAct loop subpackage
-    ├── budget.py
-    ├── constants.py
-    ├── graph.py
-    ├── routes.py
-    ├── state.py
-    └── nodes/
-        ├── decompose.py
-        ├── search.py
-        └── synthesize.py
-
-workflows/autoresearch_impl/  # 7-node experiment loop subpackage
-├── __init__.py
-├── graph.py
-├── routes.py
-├── state.py
-└── nodes/
-    ├── setup.py
-    ├── propose.py
-    ├── modify.py
-    ├── run_experiment.py
-    ├── evaluate.py
-    ├── decide.py
-    └── log.py
+│
+├── research_impl/          # Single-query pipeline (recall → search → scrape → synthesize → trim → report → store → notify)
+├── data_impl/              # Python analysis pipeline (recall → execute → critique → trim → store → notify)
+│
+├── autocode_impl/          # Multi-node TDD state machine (most complex workflow)
+│   ├── constants.py        # SYSTEM prompts (CODER_SYSTEM, DEBUG_SYSTEM, etc.)
+│   ├── graph.py            # StateGraph builder + WORKFLOW_METADATA + invoke_with_timeout
+│   ├── helpers.py          # _call(), _parse_json(), cancellation flag, _get_autocode_run_path
+│   ├── patch.py            # str_replace patch application
+│   ├── routes.py           # 4 conditional routers (classify, write_files, run_tests, verify)
+│   ├── state.py            # AutocodeState + 8 sub-state TypedDicts + accessor functions
+│   ├── vcs_ops.py          # Unified VCS helpers (git local + github remote + swarm debug)
+│   ├── git_ops.py          # Re-export wrapper → vcs_ops.py (backward compat)
+│   ├── github_ops.py       # Re-export wrapper → vcs_ops.py (backward compat)
+│   └── nodes/              # Per-node modules (25 active + 3 backward-compat wrappers)
+│
+├── deep_research_impl/     # Cyclic ReAct loop (recall → decompose → search → synthesize → loop/exit)
+├── understand_impl/        # Codebase indexing pipeline (init → discover → parse_and_store → report)
+└── autoresearch_impl/      # Infinite experiment loop (setup → propose → modify → run → evaluate → log → decide → loop)
 ```
+
+> **Note:** Each `_impl/` subpackage has its own `graph.py`, `state.py`, `routes.py`, `nodes/` directory, and `WORKFLOW_METADATA`. See the per-workflow `ARCHITECTURE.md` for file-by-file breakdowns.
 
 ---
 
@@ -121,8 +87,6 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ### 1. 🔍 Research — [workflows/RESEARCH.md](workflows/RESEARCH.md)
 
-**Status:** v1.1 — Split into `workflows/research_impl/` subpackage (v1.0). Trim node wired in (v1.1).
-
 **Purpose:** Quick information gathering and synthesis. Single search → parallel scrape → one-shot synthesis.
 
 **Flow:** recall → search → parallel_scrape → synthesize → trim → report → store → distill → notify
@@ -130,10 +94,9 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 **Key characteristics:**
 - **Single-query** — One SearXNG search, top results scraped in parallel (uses `cfg.web_max_search_results`, default 10)
 - **Browser fallback** — JS-heavy pages retried with `browser(navigate+text_content)`
-- **TDD not used** — No test-driven development; pure information synthesis
+- **Trim node** — Evicts oversized `search_results` to episodic memory after synthesize
+- **No TDD** — Pure information synthesis, no code generation
 - **Fast** — 1-2 minutes for simple queries
-- **Trim node (v1.1)** — Evicts oversized `search_results` to episodic memory after synthesize
-- **v1.0 fixes** — 8 bugs fixed (agent action, as_completed timeout, 800-char truncation, zombie futures, etc.)
 
 **Safety:** SSRF protection, citation tracking, prune_tool_dict truncation.
 
@@ -151,8 +114,6 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ### 2. 🔬 Deep Research — [workflows/DEEP_RESEARCH.md](workflows/DEEP_RESEARCH.md)
 
-**Status:** v1.1 — Split into `workflows/deep_research_impl/` subpackage. `WORKFLOW_METADATA` + citations wired in (v1.1). All P0 bugs fixed (v1.0.1-v1.1).
-
 **Purpose:** Iterative, multi-faceted research for complex questions. ReAct-style loop with self-evaluation.
 
 **Flow:** recall → decompose → search → synthesize → [route: loop or exit] → report → notify → store → distill
@@ -163,7 +124,6 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 - **Three-tier tools** — `tavily` → `web` → `browser` fallback chain
 - **Convergence detection** — SequenceMatcher similarity exits when knowledge stops changing (threshold: 0.85)
 - **Self-evaluation** — Completeness scoring (0-100) per iteration
-- **v1.0.1-v1.1 fixes** — All P0 bugs fixed: `action="dispatch"` added, API budget on Tavily attempt only, `task`/`context` swap fixed, 800-char truncation removed, citations wired into report+notify
 
 **Safety:** Nested-call guard, URL deduplication, knowledge capping at 6K chars.
 
@@ -181,18 +141,16 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ### 3. 📊 Data — [workflows/DATA.md](workflows/DATA.md)
 
-**Status:** v1.0 — 5-node LangGraph pipeline, split into `workflows/data_impl/` subpackage (per-node modules + `WORKFLOW_METADATA`).
-
 **Purpose:** Python-based data analysis, calculations, and dataset generation.
 
-**Flow:** recall → execute → critique → store → notify (execute has a conditional edge: failure → END)
+**Flow:** recall → execute → critique → trim → store → notify (execute has a conditional edge: failure → END)
 
 **Key characteristics:**
 - **Code execution** — Real Python via `python(mode="run_data")`
 - **Optional generation** — If no code provided, `agent(action="dispatch", role="code")` generates it from the goal
 - **Critique layer** — `agent(action="dispatch", role="critique")` evaluates output quality (best-effort, logged on failure)
 - **Dual memory** — Stores episodic (result) + procedural (working code). Procedural storage is gated on `code_generated` so user-provided code is not stored.
-- **v1.0 fixes applied:** partial-dict node returns; code-gen & execution failures now set `exec_error` (route to END, not critique); `context=` for critique text; exception isolation on memory/notify/agent; observable code-extraction fallbacks; dead `route_after_critique` removed.
+- **Trim node** — Evicts oversized `output` to episodic memory after critique
 
 **Safety:** Sandboxed execution; best-effort critique and non-fatal memory/notify (never flip a successful analysis to failed).
 
@@ -210,26 +168,22 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ### 4. 🤖 Autocode — [workflows/AUTOCODE.md](workflows/AUTOCODE.md)
 
-**Status:** v1.0 — Already split into `workflows/autocode_impl/` subpackage with 17 per-node modules.
+**Purpose:** Autonomous code generation with TDD, git scoping, and architectural safety. The most complex workflow — a multi-node state machine with a debug loop, impact analysis, and optional git/GitHub integration.
 
-**Purpose:** Autonomous code generation with TDD, git scoping, and architectural safety.
-
-**Flow:** classify → validate → brainstorm → plan → branch → tests → execute → write_files → analyze_impact → run_tests → [debug → retry] → verify → report → commit → distill
+**Flow:** classify → validate → brainstorm → plan → branch → tests → execute → apply_patches → write_new_files → persist_artifacts → analyze_impact → run_tests → [debug → summarize_context → retry] → verify chain (pytest + lint + llm_review → decision) → report → commit → push → create_pr → merge_pr → distill
 
 **Key characteristics:**
-- **TDD on disk** — Real pytest subprocess; exit codes are ground truth
+- **TDD on disk** — Real pytest subprocess; exit codes are ground truth (hallucination guard in verify)
+- **4-phase debug loop** — investigation → pattern → hypothesis → fix (inspired by obra/superpowers). Accumulates `debug_history` across iterations with context compression.
 - **Surgical patching** — `str_replace` patches preferred over full rewrites
 - **Git scoping** — Workspace-scoped branches and commits
-- **Protected files** — Blocks writes to `server.py`, `core/*`, `registry.py`
-- **Self-correcting** — Debug → retry with temperature jitter
-- **17 nodes** — Most complex workflow in the agent
-- **Critical bug:** `.bak` files created (violates user rule)
-- **Critical bug:** `git(action="snapshot")` doesn't exist (removed in un-multiplex refactor)
-- **Critical bug:** `files_map` never populated — `analyze_impact` never runs
-- **Critical bug:** `node_analyze_impact` is async in sync graph — may fail or hang
-- **Critical bug:** `node_brainstorm` loses KG files (stores original instead of merged)
+- **GitHub integration** — Optional push + PR + auto-merge (all 7 integration flags default OFF)
+- **Three debug paths** — Single-LLM (default) → swarm (`AUTOCODE_SWARM_DEBUG=1`) → subagent (`AUTOCODE_SUBAGENT_DEBUG=1`); mutually exclusive, non-blocking fallback
+- **Impact analysis** — Blast radius analysis using the dependency graph before execution
+- **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes a 7-rung minimization ladder; `ponytail:` comment convention for deliberate simplifications
+- **Sub-state architecture** — 8 sub-state TypedDicts behind an accessor layer (migration in progress; see autocode CHANGELOG Future Tracks)
 
-**Safety:** Protected files, git snapshot/rollback, AST validation, retry limits, hallucination guard.
+**Safety:** Protected files, git branch isolation, atomic writes, path traversal guard, dry-run guards, retry limits.
 
 **Output:**
 ```json
@@ -239,8 +193,7 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
   "error": "",
   "artifacts": ["web.py", "test_web.py"],
   "commit_sha": "abc123",
-  "test_passed": true,
-  "lint_passed": true
+  "trace_id": "autocode_001"
 }
 ```
 
@@ -248,21 +201,18 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ### 5. 🧠 Understand — [workflows/UNDERSTAND.md](workflows/UNDERSTAND.md)
 
-**Status:** v1.0 — 4-node LangGraph StateGraph with sync nodes, checkpoint/resume support, trace_id propagation.
-
 **Purpose:** Build and maintain a deterministic Codebase Knowledge Graph for Python projects.
 
 **Flow:** init_project → discover_files → parse_and_store → report
 
 **Key characteristics:**
 - **AST-based parsing** — Extracts imports via Python AST (not regex)
+- **Doc indexing** — Indexes `.md`/`.txt`/`.rst` prose files via chonkie `SentenceChunker` (soft dep, lazy import)
 - **Incremental indexing** — Chunked MD5 + mtime comparison; only changed files re-parsed
 - **Physical isolation** — Separate artifact directories for agent root vs workspace
 - **Batch processing** — Files parsed in configurable batches (UNDERSTAND_BATCH_SIZE, default 10)
 - **Sync nodes** — All nodes are `def` (sync), routed through base.py's standard `graph.invoke()`
 - **GraphStore lifecycle** — Connections properly opened and closed in each node
-- **Trace correlation** — trace_id propagated through state to all nodes
-- **Checkpoint/resume** — Supported via base.py's standard graph.invoke() path
 
 **Safety:** Size rejection, file size limits, skip directories.
 
@@ -280,8 +230,6 @@ The agent currently exposes **6 workflows**, triggerable via `run_workflow()` or
 
 ### 6. 🔬 Autoresearch — [workflows/AUTORESEARCH.md](workflows/AUTORESEARCH.md)
 
-**Status:** v1.0 — 7-node LangGraph StateGraph with an infinite experiment loop. Evolutionary (try many, keep best) — distinct from autocode (convergent: solve one task).
-
 **Purpose:** Autonomous experiment-driven optimization. Repeatedly modify a target file (e.g. `train.py`), run it as a time-boxed subprocess, extract a metric, and either commit (if improved) or roll back (if worse). The loop runs indefinitely until a human interrupts it.
 
 Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
@@ -292,11 +240,11 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 - **Evolutionary, not convergent** — Many experiments, one branch, `results.tsv` ledger of outcomes. No "done" state.
 - **Indefinite loop** — `decide → propose` is an unconditional back-edge. Exits only on human interrupt or LangGraph's `recursion_limit` (dispatcher sets 1000 — ~166 experiments per invocation).
 - **Metric-driven** — Every iteration judged by a single numeric metric extracted from experiment output (`{metric_name}: <float>`, last occurrence).
+- **Subagent dispatch** — `propose` node calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch (no session history).
 - **Git-based keep/discard** — Improvements committed; failures `git reset --hard HEAD` + `git clean -fd`. Git is the safety net.
 - **Results ledger** — Every experiment (keep OR discard) appended to `results.tsv` — operators `tail -f` while the loop runs.
 - **Atomic writes** — `node_modify` uses `tempfile.mkstemp` + `os.fsync` + `os.replace`; target file never half-written.
 - **Time-boxed experiments** — `subprocess.run(timeout=time_budget)` (default 300s).
-- **Reuses autocode infrastructure** — `node_propose` calls `autocode_impl.helpers._call()` for retry + cancellation; uses `core.json_extract.extract_json()` for proposal parsing.
 
 **Safety:** Atomic writes, git-based rollback, time-boxed subprocesses, output truncation (50KB), `re.escape(metric_name)`, list-arg `subprocess.run` (no `shell=True`).
 
@@ -322,20 +270,20 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
 
 | Aspect | Research | Deep Research | Data | Autocode | Understand | Autoresearch |
 |--------|----------|---------------|------|----------|------------|--------------|
-| **Status** | v1.1 | v1.1 | v1.1 | v1.0 | v1.0 | v1.0 |
-| **Structure** | 9-node pipeline (v1.1: +trim) | 8-node cyclic ReAct | 6-node pipeline (v1.1: +trim) | 17-node state machine | 4-node LangGraph pipeline | 7-node infinite loop |
+| **Structure** | Linear pipeline | Cyclic ReAct | Linear pipeline | Multi-node state machine | Linear pipeline | Infinite loop |
 | **Primary tools** | `web`, `browser` | `tavily`, `web`, `browser` | `python_exec`, `agent` | `agent`, `python_exec`, `git` | `python` (AST), `GraphStore` | `subprocess`, `git` |
-| **LLM roles** | `research` | `planner`, `research`, `executor` | `code`, `critique` | `router`, `planner`, `executor`, `test` | N/A | `planner` |
+| **LLM roles** | `research` | `planner`, `research`, `executor` | `code`, `critique` | `router`, `planner`, `executor`, `test` | N/A | `planner` (via subagent) |
 | **Loop type** | Linear | Cyclic (decompose→search→synthesize) | Linear | Cyclic (debug→retry) | Linear | Infinite (propose→…→decide→propose) |
 | **TDD** | ❌ No | ❌ No | ❌ No | ✅ Yes (real pytest) | ❌ No | ❌ No |
-| **Git ops** | ❌ No | ❌ No | ❌ No | ✅ Yes (branch, commit) | ❌ No | ✅ Yes (branch, commit, reset) |
+| **Git ops** | ❌ No | ❌ No | ❌ No | ✅ Yes (branch, commit, optional push/PR/merge) | ❌ No | ✅ Yes (branch, commit, reset) |
 | **Memory** | Recall + store | Recall + store | Recall + store | Recall + store + distill | N/A | ❌ No (results.tsv is the ledger) |
 | **Budget tracking** | ❌ No | ✅ Yes (API calls, browser actions) | ❌ No | ✅ Yes (retries) | ❌ No | ✅ Yes (time_budget per experiment) |
 | **Convergence** | ❌ No | ✅ Yes (cosine similarity) | ❌ No | ❌ No | ❌ No | ❌ No (human stops the loop) |
-| **Exit condition** | Done | Convergence / max iter | Done | Tests pass | Done | Human interrupt / recursion_limit |
+| **Exit condition** | Done | Convergence / max iter | Done | Tests pass / max retries | Done | Human interrupt / recursion_limit |
 | **Use case** | Quick facts | Complex research | Data analysis | Code generation | Codebase indexing | Metric optimization |
 | **Typical duration** | 1-2 min | 3-10 min | 30s-2 min | 2-10 min | 1-5 min | Indefinite (overnight+) |
-| **Critical bugs** | 0 (v1.0 fixed all P0s) | 0 (fixed v1.0.1-v1.1) | 0 (v1.0 fixed all P0s) | 11 P0 | 3 P0 | 0 (v1.0) |
+
+> **Per-workflow version history, node counts, and changelog details live in each workflow's own docs** — see `docs/workflows/{name}/CHANGELOG.md`. This table tracks architectural structure, which only changes on major refactors.
 
 ---
 
@@ -368,7 +316,7 @@ All workflows return the same dict shape from `run_workflow()`. The `trace_id` i
 **Guaranteed keys:** `status`, `result`, `error`, `artifacts`, `trace_id`.
 
 **Workflow-specific extra keys** (when applicable):
-- `commit_sha` — Autocode only
+- `commit_sha`, `branch`, `pushed`, `pr_number`, `pr_url`, `swarm_verdict`, `subagent_verdict` — Autocode only
 - `test_passed` / `lint_passed` — Autocode only
 - `experiment_count` / `baseline_metric` / `current_best` / `experiment_history` — Autoresearch only
 
@@ -430,20 +378,27 @@ Every workflow should follow:
 - **Start**: Always `recall` relevant memories to inject context into the first LLM prompt.
 - **End**: Always `store` the outcome (episodic for events, procedural for lessons learned).
 
+> **Exception:** Autoresearch uses `results.tsv` as its ledger instead of memory storage (by design — the ledger is the human audit trail).
+
 ### 4. Timeout Enforcement
 Wrap all external tool calls, subprocess executions, and LLM calls in timeouts. A hanging tool should fail the node gracefully and trigger a rollback or retry, not freeze the entire agent loop.
+
+> **Autocode** has `invoke_with_timeout()` (graph-level timeout + cancellation flag). Other workflows rely on per-tool timeouts. A universal dispatcher-level timeout is a roadmap item (see `base/CHANGELOG.md` #14).
 
 ### 5. Best-Effort Side Effects
 Report generation, memory storage, and notifications should never fail the workflow. Catch exceptions and continue.
 
 ### 6. Checkpoint Safety
-`node_error()` always saves a checkpoint. `node_done()` marks the checkpoint complete. This enables resumability after crashes.
+`node_error()` always saves a full-state checkpoint. `node_done()` saves a success checkpoint before `mark_complete`. The exception handler saves a crash-time checkpoint. This enables resumability after crashes.
 
 ### 7. Agent Tool Contract
-The `agent()` facade requires `action` parameter. Always pass `action="dispatch"` for LLM calls. Never call `agent(role="...")` without `action`.
+The `agent()` facade requires `action` parameter. Always pass `action="dispatch"` for LLM calls (or `action="subagent"` for isolated curated-context dispatch). Never call `agent(role="...")` without `action`.
 
 ### 8. No `.bak` Files
-Creating `.bak` backup files is forbidden by project rules. Use atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) instead.
+Creating `.bak` backup files is forbidden by project rules. Use atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) instead. Git is the backup.
+
+### 9. Read-Modify-Write for Sub-States (Autocode)
+Autocode uses 8 sub-state TypedDicts. LangGraph replaces dict values, doesn't deep-merge — so returning `{"tdd": {"debug_history": [...]}}` clobbers every other `tdd` field. Always do: `current_tdd = dict(state.get("tdd", {}))`, mutate, return `current_tdd`. See `autocode/INSTRUCTIONS.md` NEVER DO #33 for the accessor-layer warning.
 
 ---
 
@@ -451,56 +406,46 @@ Creating `.bak` backup files is forbidden by project rules. Use atomic writes (`
 
 | Workflow | Test Command |
 |----------|-------------|
-| Base | `.\venv\Scripts\python tests/workflows/base/ -W error --tb=short -v` |
-| Research | `.\venv\Scripts\python tests/workflows/research/ -W error --tb=short -v` |
-| Deep Research | `.\venv\Scripts\python tests/workflows/deep_research/ -W error --tb=short -v` |
-| Data | `.\venv\Scripts\python tests/workflows/data/ -W error --tb=short -v` |
-| Autocode | `.\venv\Scripts\python tests/workflows/autocode/ -W error --tb=short -v` |
-| Understand | `.\venv\Scripts\python tests/workflows/understand/ -W error --tb=short -v` |
+| Base | `python -m pytest tests/workflows/base/ -W error --tb=short -v` |
+| Research | `python -m pytest tests/workflows/research/ -W error --tb=short -v` |
+| Deep Research | `python -m pytest tests/workflows/deep_research/ -W error --tb=short -v` |
+| Data | `python -m pytest tests/workflows/data/ -W error --tb=short -v` |
+| Autocode | `python -m pytest tests/workflows/autocode/ -W error --tb=short -v` |
+| Understand | `python -m pytest tests/workflows/understand/ -W error --tb=short -v` |
 | Autoresearch | `python -m pytest tests/workflows/autoresearch/ -W error --tb=short -v` |
+| Full suite | `python -m pytest tests -v -W error` |
 
 ---
 
 ## 🧩 Chunking in Workflows
 
-Text chunking via [chonkie](https://github.com/chonkie-ai/chonkie) is integrated in **one workflow utility** (`trim_state()`) with **2 additional roadmap integration points**. See `docs/TOOLS.md` § "Chunking (chonkie)" for the tool-layer analysis.
+Text chunking via [chonkie](https://github.com/chonkie-ai/chonkie) is integrated in **3 workflow integration points**. See `docs/TOOLS.md` § "Chunking (chonkie)" for the tool-layer analysis.
 
-### Current: `trim_state()` in `workflows/base.py` (v1.3)
+### 1. `trim_state()` in `workflows/base.py`
 
-`trim_state()` evicts oversized state fields (`search_results`, `output`, `analysis`) to episodic memory when they exceed ~1000 tokens. v1.3 makes this **chonkie-aware**:
+`trim_state()` evicts oversized state fields (`search_results`, `output`, `analysis`, `memory_context`) to episodic memory when they exceed ~1000 tokens. Chonkie-aware: splits text into sentence-aware chunks, evicts each individually (precise recall later), keeps first chunk as preview in state. Falls back to whole-string eviction if chonkie is missing.
 
-| Path | When | Behavior |
-|------|------|----------|
-| **Chonkie** (v1.3) | chonkie installed + chunking produces >1 chunk | Split text into sentence-aware chunks → evict each individually (precise recall later) → keep first chunk as preview in state |
-| **Fallback** (v1.0) | chonkie missing, chunking fails, or single chunk | Whole-string eviction → generic placeholder (no preview) |
+**Status:** Utility function. Data and Research workflows have their own trim nodes that call `trim_state()` internally. Deep_research doesn't need it (`knowledge_base` is capped at 6000 chars via `_cap_knowledge()`; evicting it would break convergence detection).
 
-**Why the preview matters:** The LLM sees `[Evicted: 2500 tokens across 6 chunks saved to episodic memory. Preview: "The search returned..." Use memory(recall, tags_filter="evicted") to retrieve specific chunks.]` instead of a blind placeholder. It has enough context to decide whether to recall.
+### 2. Understand workflow — doc indexing
 
-**Chunk position encoding:** Each evicted chunk's `source` field encodes its position (`evicted:output:chunk_2_of_5`) so the LLM can identify which chunk to recall. The `source` field is used (not `source_doc_id` metadata) because the eviction flusher unpacks metadata as kwargs to `memory.store()`, which doesn't accept `source_doc_id`.
+`core/kgraph/embeddings.py` uses chonkie `SentenceChunker` for `.md`/`.txt`/`.rst` prose files (code files use tree-sitter). This enables the understand workflow to index documentation alongside code.
 
-**⚠️ Current status:** `trim_state()` is a **utility** — no workflow calls it yet. It's ready for when workflows wire it into their graphs (see `base/CHANGELOG.md` #18). The chonkie improvement is "ready for use," not "in use."
+### 3. Autocode workflow — debug history compression
 
-### Roadmap: TencentDB symbol offloading for state (P2/P3 future)
+`node_summarize_context` compresses `debug_history` via chonkie `SentenceChunker` before re-entering the debug loop. Keeps the LLM context bounded in long-running debug loops. Falls back to JSON-of-last-3-entries if chonkie is missing.
 
-**[Roadmap]** The `trim_state()` function currently uses chonkie-aware eviction (v1.3). A more sophisticated approach inspired by [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) would offload verbose state fields to per-run files and replace them with compact Mermaid symbol graphs in state. Nodes that need full data drill down via file path. This would complement the existing chonkie approach — chonkie for within-field compression, Mermaid symbols for cross-field context management.
+### Roadmap: TencentDB symbol offloading (P2/P3 future)
 
-### Roadmap: understand workflow (P2)
-
-When the understand workflow is extended to index `.md`/`.txt`/`.rst` docs (currently code-only), `core/kgraph/embeddings.py` should use chonkie `SentenceChunker` for prose files. Tree-sitter (currently used for code) can't parse prose. This is **conditional** on file-type support landing first — see `understand/CHANGELOG.md` #6.
-
-### Roadmap: autocode #37 (P3 future)
-
-If autocode is refactored to accumulate debug-loop history (current `debug.py` is stateless per iteration — each debug call sees only current test output), chonkie could compress the history to fit the LLM context. This is a **long-term future** item — depends on autocode first being refactored to accumulate history. See `autocode/CHANGELOG.md`.
-
----
-
-*Architecture: shared WorkflowState + node helpers + dispatcher → 6 distinct workflows → memory bookend pattern (except autoresearch, which uses results.tsv) → checkpoint resumption → exception isolation → best-effort side effects.*
+A more sophisticated approach inspired by [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) would offload verbose state fields to per-run files and replace them with compact Mermaid symbol graphs in state. Nodes that need full data drill down via file path. This would complement the existing chonkie approach — chonkie for within-field compression, Mermaid symbols for cross-field context management.
 
 ---
 
 ## 🆕 How to Add a New Workflow
 
 When adding a **new workflow** to the MCP Agent Stack, update **all** of the following. Missing any one of them causes drift between the source code, the docs, and the LLM's tool schema. This checklist mirrors `docs/TOOLS.md` § "New Tool Checklist" but is adapted for the workflow pattern (facade + `_impl/` subpackage + dispatcher integration).
+
+> **When to update WORKFLOWS.md:** This central index only needs updating when a workflow is **added**, **removed**, or **fundamentally rearchitected** (e.g., changing its loop type, node structure, or primary tools). Per-workflow version bumps, bugfixes, and changelog details live in the per-workflow docs (`docs/workflows/{name}/CHANGELOG.md`) — **do not** bump version numbers or node counts in WORKFLOWS.md on every release.
 
 ### Step-by-step checklist
 
@@ -518,7 +463,7 @@ When adding a **new workflow** to the MCP Agent Stack, update **all** of the fol
 | 10 | `tests/workflows/{name}/` | Create `__init__.py` + `conftest.py` (fixtures) + `test_graph.py` (topology + metadata + facade re-exports) + per-concern test files (one concern per file). Mock LLM calls + subprocess + git; never make live network calls. Match `tests/workflows/autoresearch/` (22 tests). Also update `tests/workflows/base/test_dispatcher.py` to assert the unknown-type error message includes `"{name}"`. |
 | 11 | `docs/workflows/{NAME}.md` | Landing page (5-file standard: landing page + 4 subfiles). Follow `AUTORESEARCH.md` format: Overview, Key characteristics, Quick Start, Configuration, When-to-Use table, Subfile Directory table. Keep concise — match the workflow's complexity (autoresearch is simpler than autocode → smaller doc). |
 | 12 | `docs/workflows/{name}/` | 4 subfiles following the 5-file standard: `CHANGELOG.md` (Version History, Breaking Changes, Completed, In Progress / Next Up, Deferred / Out of Scope), `ARCHITECTURE.md` (Source Code Reference table, Module Tree, Mermaid diagram, Key Design Decisions, Testing section), `API.md` (Facade signature, State Fields table, Per-Node Reference, Routes, Security, Error Handling), `INSTRUCTIONS.md` (NEVER DO, ALWAYS DO, Anti-Patterns). Use `[v1.0]` markers throughout. |
-| 13 | `docs/WORKFLOWS.md` | (a) Add row to the summary Document/Workflow/Key Topics table at the top; (b) add `{name}.py` + `{name}_impl/` block to the Module Map; (c) bump the "N workflows" count in the Workflow Catalog intro; (d) add `### N. {Name}` detailed entry to the Workflow Catalog; (e) add column to the Workflow Comparison table; (f) add workflow-specific extra keys to the Unified Return Schema section; (g) add row to the Testing Quick Reference table; (h) update the footer line ("N distinct workflows"). |
+| 13 | `docs/WORKFLOWS.md` | (a) Add row to the summary Document/Workflow/Key Topics table at the top; (b) add `{name}.py` + `{name}_impl/` line to the Module Map; (c) bump the "N workflows" count in the Workflow Catalog intro; (d) add `### N. {Name}` detailed entry to the Workflow Catalog (architectural description only — no version numbers or bug counts); (e) add column to the Workflow Comparison table; (f) add workflow-specific extra keys to the Unified Return Schema section; (g) add row to the Testing Quick Reference table; (h) update the footer line ("N distinct workflows"). **Do NOT add per-workflow version numbers or node counts** — those live in the per-workflow docs. |
 | 14 | `docs/system_prompts/system_prompt.md` | Add the new workflow to the `workflow` tool capabilities line + the `## HARD RULES` Workflow patterns rule. The LLM needs to know the workflow exists + when to use it. |
 | 15 | `docs/TOOLS.md` | Bump the workflow count in `### 15. 🔄 Workflow` (e.g. "6 workflow types" → "7 workflow types") + the summary table row that mentions the count. |
 
@@ -550,6 +495,7 @@ When adding a **new workflow** to the MCP Agent Stack, update **all** of the fol
 - **Not restarting LM Studio after schema changes** — LLM sees stale workflow list.
 - **Adding a workflow that doesn't extend `WorkflowState`** — the dispatcher's `run_workflow()` expects shared fields (`workflow`, `trace_id`, `status`, `error`, `result`, `artifacts`). Extend `WorkflowState` to inherit them.
 - **Forgetting to update the unknown-type error message in `workflows/base.py`** — the dispatcher's `"Unknown workflow type '{wf_type}'. Use: research | data | autocode | ..."` string must list the new workflow or operators get misleading error messages.
+- **Putting per-workflow version numbers in WORKFLOWS.md** — the central index should only track architectural structure. Per-workflow versions, node counts, and changelog details live in `docs/workflows/{name}/CHANGELOG.md`. WORKFLOWS.md only needs updating when a workflow is added, removed, or fundamentally rearchitected.
 
 ---
 
@@ -559,3 +505,7 @@ When adding a **new workflow** to the MCP Agent Stack, update **all** of the fol
 - **Core:** See `docs/CORE.md`
 - **Skills:** See `docs/SKILLS.md`
 - **Environment:** See `.env.example` in repo root
+
+---
+
+*Architecture: shared WorkflowState + node helpers + dispatcher → 6 distinct workflows → memory bookend pattern (except autoresearch, which uses results.tsv) → checkpoint resumption → exception isolation → best-effort side effects. This index tracks architectural structure only — per-workflow version history lives in each workflow's own docs.*
