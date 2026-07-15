@@ -44,6 +44,7 @@ _TOOL_MAP: dict[str, Optional[Callable]] = {
     "tavily": None,        # lazy — NOT parallel-safe (shared AsyncTavilyClient)
     "swarm": None,         # lazy — NOT parallel-safe (ThreadPoolExecutor internally)
     "workflow": None,      # lazy — NOT parallel-safe (long-running blocking calls)
+    "schedule": None,     # lazy — NOT parallel-safe (BackgroundScheduler singleton + shared _job_registry)
     # NOTE: "parallel" intentionally omitted — nested parallel calls are
     # blocked by _parallel_depth in executor.py, so it cannot be dispatched
     # to itself. Attempting it returns "Tool 'parallel' not found".
@@ -105,6 +106,8 @@ def _get_tool_fn(name: str) -> Optional[Callable]:
         from tools.swarm import swarm as fn
     elif name == "workflow":
         from tools.workflow import workflow as fn
+    elif name == "schedule":
+        from tools.schedule import schedule as fn
     else:
         return None
 

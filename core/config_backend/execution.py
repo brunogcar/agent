@@ -44,7 +44,18 @@ import os
 
 
 def _init_execution(cfg) -> None:
-    """Initialize parallel execution, cache, understand, autocode, autoresearch."""
+    """Initialize parallel execution, cache, understand, autocode, autoresearch.
+
+    Also initializes the agent timezone (v1.0) — the single source of truth
+    for tz-aware datetime operations across the agent (core/time_utils.py,
+    tools/notify_ops/, tools/schedule_ops/). Empty string means "use the
+    system local timezone" (resolved lazily by core.time_utils.get_timezone()).
+    """
+
+    # -- Timezone (v1.0) ---------------------------------------------------
+    # Used by core/time_utils.py. Examples: "America/Sao_Paulo",
+    # "Europe/London", "UTC". "" (default) = system local timezone.
+    cfg.timezone = os.getenv("AGENT_TZ", "").strip()
 
     # -- Parallel Execution (Phase 7) --------------------------------------
     cfg.max_concurrent_workers = int(os.getenv("MAX_CONCURRENT_WORKERS", "3"))

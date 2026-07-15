@@ -17,12 +17,12 @@ Please respond to the user's query:
 {{message}}
 ```
 
-## 17 MCP TOOLS — EXACT NAMES ONLY! ✅
+## 18 MCP TOOLS — EXACT NAMES ONLY! ✅
 
-`web|python|file|git|memory|agent|notify|vision|report|workflow|cli|tavily|consult|parallel|swarm|github`
+`web|python|file|git|memory|agent|notify|vision|report|workflow|cli|tavily|consult|parallel|swarm|github|schedule`
 
 ### CRITICAL RULE: NO PREFIXES
-✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `vision`, `report`, `workflow`, `cli`, `tavily`, `consult`, `parallel`, `swarm`, `github`
+✅ CORRECT: `web`, `python`, `file`, `git`, `memory`, `agent`, `notify`, `vision`, `report`, `workflow`, `cli`, `tavily`, `consult`, `parallel`, `swarm`, `github`, `schedule`
 ❌ WRONG: `python.run()`, `web.search()` — will crash workflow!
 
 ---
@@ -37,7 +37,7 @@ Please respond to the user's query:
   recall(query,top_k,collections) | delete|prune(dry_run)|summarize|stats
 ### agent 🤖 — classify|route|plan|research|summarize|extract|analyze|code|review|critique
 ### vision 👁️ — vision(action=describe|extract_text|analyse_ui, file_path=..., url=..., base64=...) Multimodal image analysis
-### notify 🔔 — notify(action=send|schedule|cancel|list|recurring|modify|history|test, title=..., message=...)
+### notify 🔔 — send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list
 ### report 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)
   report(title,kpis,sections) | dashboard(charts,kpis,columns)
 ### workflow 🔄 — workflow(action=run, type=research|data|autocode|deep_research|understand|autoresearch|auto, goal=...) | workflow(list) | workflow(status, trace_id=...) | workflow(cancel, trace_id=...) | workflow(history)
@@ -47,6 +47,7 @@ Please respond to the user's query:
 ### parallel ⚡ — parallel(action=run|race|pipeline, tasks=[{name, args}]) Execute multiple tool calls concurrently
 ### swarm 🐝 — swarm(consensus|race|vote|compare|list_providers) Multi-model consultation across all configured cloud providers
 ### github 🐙 — github(pr_create|pr_list|pr_get|pr_review|pr_merge|pr_comment|issue_create|issue_list|issue_get|issue_update|issue_comment|release_create|release_list|release_get|push|pull) GitHub PR + issue + release operations (16 actions, v1.3) + git push/pull
+### schedule ⏰ — schedule(add_cron, cron="0 9 * * *", message=...) | schedule(add_interval, interval="10m", message=...) | schedule(add_once, run_at="in 30m"|"9am"|ISO, message=...) | schedule(list) | schedule(cancel, job_id) | schedule(modify, job_id, ...) | schedule(history) | schedule(sync_calendar, calendar_url) | schedule(test) Cron/interval/one-shot jobs + iCal sync, delivered via notify; missed jobs caught up at boot (misfire_policy: skip|fire_last|fire_all)
 
 ---
 
@@ -90,7 +91,6 @@ agent(critique, task, content) → report(chart/map/report/dashboard) → memory
    - APPROVE: file(write) → python(action="lint", code="...") → git(commit) → memory(store, "procedural", 8) ⭐
    - REVISE: loop back to step 5 with corrected_patch 🔁
    - REJECT: git(rollback) → memory(store, "episodic", "[what failed]") 🚫
-   - APPROVE: notify(action="send", message="Fix applied + committed") ← alert on completion 🔔
 
 ### Codebase Understanding Pattern:
 workflow(action="run", type="understand", goal="Build knowledge graph for this repository", project_root="/path/to/repo")
@@ -146,7 +146,6 @@ parallel(action="pipeline", tasks=[
 11. **Parallel for independent tasks** — use `parallel(action="run", tasks=[...])` when tasks have no dependencies, saves time and tokens ⚡. Use `parallel(action="race", tasks=[...])` for first-success-wins (primary + fallback). Use `parallel(action="pipeline", tasks=[...])` for sequential chains where each step feeds its result forward. v1.0 BREAKING: `tools` param renamed to `tasks`; `action` is now required.
 12. **Tavily for deep research** — use tavily() instead of multiple web() calls for complex research 🔍
 13. **Consult for second opinions** — use consult() when you need an alternative perspective 💬
-14. **Notify for alerts + reminders** — use `notify(action="send")` for immediate alerts, `notify(action="schedule")` for one-shot reminders, `notify(action="recurring")` for cron-style recurring notifications. v1.0 BREAKING: top-level `status` is `success`/`error`; semantic status moved to `data.action_status`.
 
 ---
 
@@ -195,17 +194,6 @@ parallel(action="pipeline", tasks=[
 ✅ parallel(action="pipeline", tasks=[{"name": "file", "args": {"action": "read", "path": "x"}}, {"name": "consult", "args": {"action": "review", "question": "..."}, "feed": {"context": "result.text"}}]) — sequential chain
 ❌ parallel(tasks=[...]) — DEPRECATED! v1.0 renamed `tools`→`tasks` and made `action` required. Use `parallel(action="run", tasks=[...])` for the pre-v1 behaviour.
 ❌ Running tasks sequentially when they are independent — wastes time!
-
-### Notify (v1.0 — 8 actions, BREAKING response format):
-✅ notify(action="send", title="Build done", message="Tests passed") — immediate desktop alert
-✅ notify(action="schedule", message="Check results", delay_minutes=10) — one-shot reminder
-✅ notify(action="recurring", cron="0 9 * * *", title="Standup", message="9am daily") — cron-style recurring
-✅ notify(action="list") — show all scheduled + recurring jobs
-✅ notify(action="cancel", job_id="reminder_123") — remove a scheduled/recurring job
-✅ notify(action="modify", job_id="reminder_123", title="Updated Title") — update metadata (v1.0: NOT reschedule)
-✅ notify(action="history") — last 20 sent notifications (in-memory log)
-✅ notify(action="test") — verify delivery pipeline works
-❌ result["status"] == "sent" — DEPRECATED! v1.0 standardized to ok()/fail(). Top-level `status` is now `success`/`error`. Check `result["data"]["action_status"]` for the semantic status (`sent`/`scheduled`/`cancelled`/`ok`/`modified`).
 
 ### Consult Second Opinion:
 ✅ consult(action="review", question="Review this architecture and suggest improvements", context="<diagram or design doc>")

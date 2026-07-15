@@ -155,6 +155,19 @@ _RE_DIRECT_AGENT = re.compile(
     re.IGNORECASE,
 )
 
+# Schedule tool — cron jobs, recurring tasks, calendar sync, reminders with
+# rich scheduling (the simple "remind me" path still routes to notify; this
+# catches explicit scheduling/calendar intent). Narrowed to avoid false
+# positives on ordinary English like "schedule a meeting" (calendar-app
+# intent, not tool intent) — requires tool-scheduling phrases.
+_RE_DIRECT_SCHEDULE = re.compile(
+    r"\b(cron\s+job|recurring\s+(?:job|task|reminder)|every\s+\w+\s+at\s+\d|"
+    r"schedule\s+a\s+(?:cron|recurring|daily|weekly|hourly)\s+(?:job|task|reminder)|"
+    r"sync\s+(?:my\s+)?calendar|ical\s+sync|caldav|"
+    r"run\s+.*?\s+(?:daily|weekly|hourly|every\s+day|every\s+week))\b",
+    re.IGNORECASE,
+)
+
 
 def heuristic_route(goal: str) -> RoutingDecision:
     """Rule-based fallback routing when the model is unavailable.
@@ -301,6 +314,16 @@ def heuristic_route(goal: str) -> RoutingDecision:
             "complexity": 6,
             "reason": "Complex sub-task delegation -- use agent() directly",
             "confidence": "medium",
+        })
+
+    # 12b. Schedule tasks (cron / recurring / calendar sync — richer than notify)
+    if _RE_DIRECT_SCHEDULE.search(goal):
+        return RoutingDecision({
+            "workflow": "direct",
+            "tool": "schedule",
+            "complexity": 3,
+            "reason": "Scheduling task (cron/recurring/calendar) -- use schedule() directly",
+            "confidence": "high",
         })
 
     # 13. Deep Research workflow (iterative, multi-faceted research)

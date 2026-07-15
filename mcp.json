@@ -7,13 +7,6 @@
       ],
       "cwd": "D:/mcp/agent",
       "env": {}
-    },
-    "time": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@mcpcentral/mcp-time"
-      ]
     }
   }
 }

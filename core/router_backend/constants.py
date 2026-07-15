@@ -11,6 +11,7 @@ ROUTER_WORKFLOWS = ["research", "data", "autocode", "deep_research", "understand
 ROUTER_TOOLS = [
     "web", "python", "file", "git", "memory", "agent", "notify", "report",
     "vision", "workflow", "cli", "browser", "tavily", "consult", "parallel", "swarm", "github",
+    "schedule",
 ]
 
 # Pre-built prompt fragments for model_route(). Kept as constants so tests
@@ -68,6 +69,7 @@ ROUTER_SYSTEM_PROMPT = (
     + "- parallel: execute multiple independent tasks concurrently\n"
     + "- swarm: multi-model consultation (ask all cloud providers at once)\n"
     + "- github: GitHub PR operations (create, list, review, merge, push)\n"
+    + "- schedule: cron/interval/one-shot jobs + iCal calendar sync (delivered via notify)\n"
     + "\nConfidence rules:\n"
     + "- high: Clear task with specific details\n"
     + "- medium: Understandable but could be more specific\n"

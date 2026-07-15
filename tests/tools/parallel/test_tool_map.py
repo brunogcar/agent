@@ -100,7 +100,7 @@ class TestToolMapContents:
         expected_keys = {
             "web", "git", "file", "python", "python_exec", "notify", "memory",
             "cli", "github", "consult", "vision", "report", "agent",
-            "browser", "tavily", "swarm", "workflow",
+            "browser", "tavily", "swarm", "workflow", "schedule",
         }
         assert set(_TOOL_MAP.keys()) == expected_keys
 

@@ -364,6 +364,32 @@ def _start_watchdog() -> None:
 
 _start_watchdog()
 
+# -- Start Schedule Catch-Up (offline missed-fire recovery) -------------------
+def _start_schedule_catch_up() -> None:
+    """Recover schedule jobs that were due while the server was offline.
+
+    Runs tools.schedule_ops.state.catch_up_missed_jobs() in a daemon thread
+    so it never blocks MCP boot. For each persisted job, computes missed
+    fires in (last_fired_at, now], applies the job's misfire_grace window +
+    misfire_policy (skip/fire_last/fire_all), and delivers via notify. The
+    catch-up runs once per process (guarded inside catch_up_missed_jobs).
+    See tools/schedule_ops/state.py for the full design.
+    """
+    try:
+        from tools.schedule_ops.state import catch_up_missed_jobs
+        # Tiny delay so the scheduler singleton + notify are importable first.
+        import time as _time
+        _time.sleep(1)
+        summary = catch_up_missed_jobs()
+        if summary.get("jobs_with_misses", 0) > 0:
+            print(f"[server] Schedule catch-up: {summary}", file=sys.stderr)
+        else:
+            print("[server] Schedule catch-up: no missed jobs", file=sys.stderr)
+    except Exception as e:
+        print(f"[server] Schedule catch-up skipped: {e}", file=sys.stderr)
+
+_threading.Thread(target=_start_schedule_catch_up, daemon=True).start()
+
 # -- Run (hands stdout to FastMCP's stdio transport) ----------------------------
 if __name__ == "__main__":
     mcp.run()
