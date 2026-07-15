@@ -16,7 +16,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [GITHUB.md](tools/GITHUB.md) | GitHub | PR + issue + release workflow + remote sync (16 actions: 6 PR + 5 issue + 3 release + push + pull), pagination, mergeable state, git push/pull subprocess, httpx direct (not PyGithub) |
 | [GIT.md](tools/GIT.md) | Git | 20+ atomic VCS actions, semantic params, stash-based rollback |
 | [MEMORY.md](tools/MEMORY.md) | Memory | 3 ChromaDB collections, tag validation, janitor, lazy loading |
-| [NOTIFY.md](tools/NOTIFY.md) | Notify | Cross-platform alerts, APScheduler, graceful console fallback |
+| [NOTIFY.md](tools/NOTIFY.md) | Notify | `@meta_tool` refactor v1.0 — 8 actions (`send`/`schedule`/`cancel`/`list`/`recurring`/`modify`/`history`/`test`), `notify_ops/` subpackage (11 files), breaking response-format standardization (`ok()`/`fail()` with semantic status moved to `data.action_status`), job persistence to JSON, `trace_id` + `duration_ms`, 85 tests |
 | [PARALLEL.md](tools/PARALLEL.md) | Parallel | `@meta_tool` refactor v1.0 — 3 actions (`run`/`race`/`pipeline`), `parallel_ops/` subpackage (8 files), breaking `tools`→`tasks` rename, per-call `timeout`, `PARALLEL_SAFE` (10 tools) + `_TOOL_MAP` (17 tools, lazy), 93 tests |
 | [PYTHON.md](tools/PYTHON.md) | Python | 5 actions (`run`/`run_data`/`eval`/`profile`/`lint`) via `@meta_tool`, `python_ops/` subpackage (11 files), three-layer security (sandbox → imports → executors), `json_schema` validation, `timeout` override |
 | [REPORT.md](tools/REPORT.md) | Report | 11 atomic actions, HTML dashboards, XSS-safe templates, lazy imports |
@@ -247,7 +247,22 @@ tools/
 │       ├── store.py
 │       └── summarize.py
 │
-├── notify.py               # Desktop notifications & scheduler
+├── notify.py               # Desktop notifications & scheduler meta-tool — @meta_tool facade (8 actions: send/schedule/cancel/list/recurring/modify/history/test)
+├── notify_ops/             # v1.0 NEW — @meta_tool refactor subpackage (11 files)
+│   ├── _registry.py        # DISPATCH + register_action decorator
+│   ├── __init__.py         # Auto-discovery (Path.glob actions/*.py)
+│   ├── state.py            # _scheduler + _scheduler_lock + _job_registry + _delivery_log (max 50) + _save_jobs/_load_jobs (atomic JSON) + reset_state
+│   ├── helpers.py          # _get_scheduler (lazy APScheduler singleton) + _send_notification (plyer → notify-send → console chain)
+│   └── actions/
+│       ├── __init__.py
+│       ├── send.py         # @register_action("notify", "send") — immediate desktop notification
+│       ├── schedule.py     # @register_action("notify", "schedule") — APScheduler DateTrigger one-shot
+│       ├── cancel.py       # @register_action("notify", "cancel") — remove job by job_id (NOT_FOUND fast-fail)
+│       ├── list_workflows.py  # @register_action("notify", "list") — enumerate jobs + metadata
+│       ├── recurring.py    # @register_action("notify", "recurring") — CronTrigger.from_crontab()
+│       ├── modify.py       # @register_action("notify", "modify") — update registry metadata (v1.0 limitation: not reschedule)
+│       ├── history.py      # @register_action("notify", "history") — last 20 from _delivery_log
+│       └── test_notify.py  # @register_action("notify", "test") — fixed test notification
 │
 ├── parallel.py             # Concurrent tool execution meta-tool — @meta_tool facade (3 actions: run/race/pipeline)
 ├── parallel_ops/           # v1.0 NEW — @meta_tool refactor subpackage (8 files)
@@ -602,25 +617,65 @@ Changes not staged for commit:
 
 ### 8. 🔔 Notify — [tools/NOTIFY.md](tools/NOTIFY.md)
 
-**Status:** v1.0 — Cross-platform desktop notifications with scheduling.
+**Status:** v1.0 — `@meta_tool` refactor with 8 actions: `send` / `schedule` / `cancel` / `list` / `recurring` / `modify` / `history` / `test`.
 
-**Purpose:** Send immediate alerts and schedule delayed reminders.
+**Purpose:** Send immediate desktop alerts, schedule delayed reminders, and schedule cron-style recurring notifications. v1.0 collapsed the pre-v1 single-file 247-line `tools/notify.py` into a 154-line thin `@tool @meta_tool` dispatch facade + 11-file `notify_ops/` subpackage. **Breaking change:** response format standardized via `ok()`/`fail()` — top-level `status` is now `success`/`error` only; semantic status (`sent`/`scheduled`/`cancelled`/`ok`/`modified`) moved to `data.action_status`. Pre-v1 callers that branched on `result["status"] == "sent"` must migrate to `result["data"]["action_status"] == "sent"`.
 
 **Key characteristics:**
-- **Cross-platform** — Windows (`plyer`), Linux (`notify-send`), universal console fallback
-- **Graceful fallback** — Never silently fails; prints to console if desktop APIs fail
-- **Scheduler integration** — APScheduler `BackgroundScheduler` for delayed reminders
-- **Job registry** — In-memory tracking of scheduled jobs with metadata
-- **Special status schema** — Uses `sent`/`scheduled`/`ok`/`cancelled`/`error` (not generic `success`)
+- **8 actions via `@meta_tool`** — `send` (immediate desktop notification), `schedule` (APScheduler `DateTrigger` one-shot), `cancel` (remove job by `job_id` — fast-fails with `NOT_FOUND`), `list` (enumerate jobs + metadata), `recurring` (cron-style via `CronTrigger.from_crontab`), `modify` (update job metadata — v1.0 limitation: NOT reschedule), `history` (in-memory delivery log), `test` (fixed test notification). The `action: Literal[...]` type is auto-generated from `DISPATCH`.
+- **11-file `notify_ops/` subpackage** — `_registry.py`, `__init__.py` (auto-discovery via `Path.glob`), `state.py` (scheduler singleton + job registry + delivery log + atomic JSON persistence), `helpers.py` (`_get_scheduler` lazy singleton + `_send_notification` cross-platform chain), `actions/{__init__,send,schedule,cancel,list_workflows,recurring,modify,history,test_notify}.py`. Auto-discovery: drop a new file in `actions/` to add a 9th action — no facade edits needed.
+- **Standardized `ok()` / `fail()` responses** — `response.status` is `success`/`error` only (matches `consult`/`parallel`/`vision`/`swarm` pattern). Semantic status preserved in `data.action_status`. `error_code` (`MISSING_PARAM` / `INVALID_PARAM` / `NOT_FOUND` / `DEPENDENCY_MISSING` / `INTERNAL_ERROR` / `DELIVERY_FAILED`) on every `fail()`.
+- **Job persistence** — `_job_registry` persisted to `workspace/.notify_jobs/jobs.json` via atomic write (`tmp` + `os.replace`). `_load_jobs()` re-hydrates on startup — scheduled + recurring jobs survive process restarts. Past-fire `DateTrigger` jobs are skipped at reload (their fire time has passed).
+- **In-memory delivery log** — Bounded to 50 entries (`_MAX_DELIVERY_LOG`); powers the `history` action. NOT persisted (debugging aid, not audit trail).
+- **Cross-platform fallback** — Windows (`plyer`), Linux (`notify-send`), universal console (`sys.stderr`) — never silently fails.
+- **`trace_id` + `duration_ms` in every response** — Facade times the handler call and adds `duration_ms` post-handler. `trace_id` threaded into BOTH the `ok()` kwarg AND the data dict.
+- **Lazy APScheduler import** — `send` / `test` / `history` work without `apscheduler` installed; only `schedule` / `cancel` / `list` / `recurring` need it.
 
-**Safety:** No destructive operations, optional dependencies (`apscheduler`, `plyer`), clear error on missing deps.
+**Safety:** No destructive operations, optional dependencies (`apscheduler`, `plyer`), clear `DEPENDENCY_MISSING` error on missing deps. `cancel` fast-fails with `NOT_FOUND` if `job_id` not in registry (BREAKING v1.0 — pre-v1 silently popped missing keys).
 
 **Output:**
 ```json
+// action="send" — success
 {
-  "status": "sent",
-  "result": "Notification delivered",
-  "trace_id": "abc123"
+  "status": "success",
+  "trace_id": "abc123",
+  "data": {
+    "action_status": "sent",
+    "action": "send",
+    "title": "Research done",
+    "message": "Tesla analysis complete",
+    "method": "plyer",
+    "trace_id": "abc123"
+  },
+  "duration_ms": 12
+}
+
+// action="recurring" — success (cron syntax)
+// notify(action="recurring", cron="0 9 * * *", title="Standup", message="Daily standup time")
+{
+  "status": "success",
+  "trace_id": "abc123",
+  "data": {
+    "action_status": "scheduled",
+    "action": "recurring",
+    "job_id": "recurring_1721053200",
+    "cron": "0 9 * * *",
+    "next_run": "2026-07-16 09:00:00",
+    "title": "Standup",
+    "message": "Daily standup time",
+    "trace_id": "abc123"
+  },
+  "duration_ms": 6
+}
+
+// action="cancel" — NOT_FOUND error (BREAKING v1.0)
+{
+  "status": "error",
+  "trace_id": "abc123",
+  "error": "Job 'reminder_X' not found in registry (it may have already fired or never existed).",
+  "error_code": "NOT_FOUND",
+  "data": null,
+  "duration_ms": 1
 }
 ```
 
@@ -982,12 +1037,12 @@ Changes not staged for commit:
 | Aspect | Agent | Browser | CLI | Consult | File | GitHub | Git | Memory | Notify | Parallel | Python | Report | Swarm | Tavily | Vision | Web | Workflow |
 |--------|-------|---------|-----|---------|------|--------|-----|--------|--------|----------|--------|--------|-------|--------|--------|-----|----------|
 | **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `action`+`tasks` params | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `action`+`type` params (two-level) |
-| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (two-level: action+type) |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (two-level: action+type) |
 | **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ✅ API only (push ❌) | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
 | **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Planner synthesis | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
-| **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ run_data/profile/lint | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
+| **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ✅ `notify-send` (Linux only) | ✅ ThreadPool | ✅ run_data/profile/lint | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
 | **Lazy imports** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ✅ Yes (_TOOL_MAP: 17 tools) | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| **Primary use** | Specialist LLM | JS page automation | NL command router | Cloud advisory | File CRUD | PR workflow | Version control | Memory I/O | Alerts | Concurrent execution | Code execution | HTML reports | Multi-model consensus | AI search | Image analysis | Web search | Workflow orchestration |
+| **Primary use** | Specialist LLM | JS page automation | NL command router | Cloud advisory | File CRUD | PR workflow | Version control | Memory I/O | Alerts + scheduling | Concurrent execution | Code execution | HTML reports | Multi-model consensus | AI search | Image analysis | Web search | Workflow orchestration |
 
 ---
 
@@ -1014,7 +1069,7 @@ All tools MUST return a dictionary with at least:
 ```
 
 **Special status schemas** (non-standard):
-- **Notify** — `sent`, `scheduled`, `ok`, `cancelled`, `error`
+- **Notify** — v1.0 standardized: top-level `status` is `success`/`error` (was `sent`/`scheduled`/`ok`/`cancelled` in pre-v1 — BREAKING). Semantic status preserved in `data.action_status` (`sent`/`scheduled`/`cancelled`/`ok`/`modified`).
 - **Consult** — `disabled`, `rate_limited`
 - **Workflow** — `success` | `failed` (from graph, not tool layer)
 

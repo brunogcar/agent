@@ -1,247 +1,172 @@
+"""tools/notify.py — Notify meta-tool (v1.0).
+
+Thin @tool facade. Routes all notify actions to handlers in
+notify_ops/actions/ via the DISPATCH dict. Auto-discovered by
+registry.py via the @tool decorator.
+
+v1.0 changes (the @meta_tool refactor):
+  - Now a meta-tool with 8 actions: send | schedule | cancel | list |
+    recurring | modify | history | test.
+  - @meta_tool auto-generates the action: Literal[...] type annotation and
+    the docstring's action list from DISPATCH.
+  - New params: cron (recurring action), trace_id (observability).
+  - All implementation logic moved to notify_ops/ subpackage.
+  - Action handlers use ok()/fail() from core.contracts for standardized
+    response shape. Semantic statuses ("sent", "scheduled", "cancelled",
+    "ok") preserved in data.action_status — response.status is now
+    "success"/"error" per the standardized contract.
+
+PARALLEL_SAFE — notify IS in core/parallel_executor.py's PARALLEL_SAFE
+frozenset. Notifications are stateless; concurrent calls don't interfere
+(APScheduled jobs are guarded by _scheduler_lock).
+
+KNOWN ISSUE (not fixed here — out of scope for this refactor):
+  tools/parallel.py's _TOOL_MAP does not include "notify". This means
+  the parallel executor's TOOL_MAP-based dispatch path skips notify even
+  though PARALLEL_SAFE lists it. The router still routes to notify via
+  the standard tool dispatch path, so end-to-end behavior is correct in
+  the common case — but parallel() with notify in the tool list will not
+  use the parallel executor's notify-specific path. Document this in the
+  parallel staging dir's worklog when that refactor lands.
+
+FUTURE INTEGRATION — schedule tool:
+  A future `schedule` tool will own calendar sync, iCal/CalDAV, and richer
+  cron semantics. That schedule tool will USE notify as its delivery
+  mechanism — notify stays focused on notification delivery, not
+  scheduling logic beyond simple delays. See
+  notify_ops/actions/recurring.py for the future delivery-backend roadmap
+  (ntfy.sh / Slack / Discord / Telegram / email).
 """
-tools/notify.py — Notify meta-tool.
-
-Replaces: old notify.py + scheduler.py (two separate tools → one)
-The LLM sees ONE tool: notify(action, ...)
-
-Actions:
-  send     → desktop notification (cross-platform with graceful fallback)
-  schedule → schedule a notification after N minutes (APScheduler)
-  cancel   → cancel a scheduled notification
-  list     → list all scheduled notifications
-
-Cross-platform:
-  Windows → plyer (native toast notifications)
-  Linux   → notify-send (libnotify) if available, else print to console
-  Fallback→ always prints to console so nothing is silently swallowed
-
-STATUS SCHEMA NOTE:
- notify.py uses special status values that are semantically correct for
- notifications and are NOT mapped to the generic "success" value:
-   "sent"      — immediate notification delivered
-   "scheduled" — reminder queued for future delivery
-   "ok"        — query/list operation succeeded
-   "cancelled" — scheduled job removed
-   "error"     — operation failed
- These are documented in ToolResult as valid notification-specific states.
-"""
-
 from __future__ import annotations
 
-import os
-import sys
-import threading
 import time
-from datetime import datetime, timedelta
-from typing import Any, Optional
 
-from core.config import cfg
+from core.tracer import tracer
 from registry import tool
+from tools._meta_tool import meta_tool
 
-# ── Scheduler singleton ───────────────────────────────────────────────────────
+# Import notify_ops to trigger DISPATCH auto-discovery BEFORE @meta_tool reads it.
+from tools import notify_ops  # noqa: F401
+from tools.notify_ops._registry import DISPATCH
 
-_scheduler: Any         = None
-_scheduler_lock         = threading.Lock()
-_job_registry: dict[str, dict] = {}
-
-
-def _get_scheduler() -> Optional[Any]:
-    global _scheduler
-    with _scheduler_lock:
-        if _scheduler is None:
-            try:
-                from apscheduler.schedulers.background import BackgroundScheduler
-                _scheduler = BackgroundScheduler(daemon=True)
-                _scheduler.start()
-            except ImportError:
-                return None
-    return _scheduler
-
-
-# ── Platform notification ─────────────────────────────────────────────────────
-
-def _send_notification(title: str, message: str, timeout: int = 5) -> tuple[bool, str]:
-    """
-    Send a desktop notification. Returns (success, method_used).
-    Always falls back to console print — never silently fails.
-    """
-    # Windows — plyer
-    if cfg.is_windows:
-        try:
-            from plyer import notification
-            notification.notify(
-                title=title,
-                message=message,
-                app_name="MCP Agent",
-                timeout=timeout,
-            )
-            return True, "plyer"
-        except Exception:
-            pass  # fall through to console
-
-    # Linux — notify-send
-    if not cfg.is_windows:
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["notify-send", "-t", str(timeout * 1000), title, message],
-                capture_output=True, timeout=5,
-            )
-            if result.returncode == 0:
-                return True, "notify-send"
-        except (FileNotFoundError, Exception):
-            pass  # fall through to console
-
-    # Universal fallback — console print
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"\n[NOTIFY {ts}] {title}: {message}\n", file=sys.stderr)
-    return True, "console"
-
-
-# ── Meta-tool ─────────────────────────────────────────────────────────────────
 
 @tool
+@meta_tool(
+    DISPATCH.get("notify", {}),
+    doc_sections=[
+        "NOTIFY TOOL — Desktop notifications + scheduled reminders:",
+        " | Need | Action | Why |",
+        " |------|--------|-----|",
+        " | Immediate notification | notify(send) | Desktop alert (plyer/notify-send/console) |",
+        " | Schedule a reminder | notify(schedule) | APScheduler DateTrigger after N minutes |",
+        " | Cancel a reminder | notify(cancel) | Remove job by job_id |",
+        " | List scheduled jobs | notify(list) | Show all pending notifications |",
+        " | Recurring notification | notify(recurring) | Cron-style via APScheduler CronTrigger |",
+        " | Modify a job | notify(modify) | Update title/message without cancel+re-create |",
+        " | Recently sent | notify(history) | In-memory log of delivered notifications |",
+        " | Test delivery | notify(test) | Verify notification pipeline works |",
+        "",
+        "Platform: Windows (plyer), Linux (notify-send), fallback (console).",
+        "PARALLEL_SAFE — notifications are stateless.",
+        "",
+        "PARAMETERS:",
+        " - action (required) — one of the actions listed above.",
+        " - title (optional) — notification title (default 'Agent' or 'Agent Reminder').",
+        " - message (required for send/schedule/recurring) — notification body.",
+        " - timeout (optional, seconds, default 5) — how long the toast shows.",
+        " - delay_minutes (required for schedule, >0) — minutes from now to fire.",
+        " - job_id (required for cancel/modify) — identifier from schedule/recurring response.",
+        " - cron (required for recurring) — 5-field cron expression (e.g. '0 9 * * *' = 9am daily).",
+        " - trace_id (optional) — forwarded to all responses for observability threading.",
+        "",
+        "STATUS SCHEMA:",
+        " - response.status is 'success' or 'error' (standardized via core.contracts.ok/fail).",
+        " - response.data.action_status preserves semantic status ('sent', 'scheduled', 'cancelled', 'ok', 'modified').",
+        " - response.duration_ms is set by this facade (rounded milliseconds).",
+    ],
+)
 def notify(
-    action:        str,
-    title:         str = "",
-    message:       str = "",
-    timeout:       int = 5,
+    action: str = "",
+    title: str = "",
+    message: str = "",
+    timeout: int = 5,
     delay_minutes: int = 0,
-    job_id:        str = "",
+    job_id: str = "",
+    cron: str = "",
+    trace_id: str = "",
+    **kwargs,
 ) -> dict:
-    """
-    Notification tool — send desktop alerts and schedule reminders.
+    """notify meta-tool — send | schedule | cancel | list | recurring | modify | history | test."""
+    action = action.strip().lower() if action else ""
 
-    action: "send" | "schedule" | "cancel" | "list"
+    tracer.step(trace_id, "notify", f"action={action}")
 
-    send
-        Send an immediate desktop notification.
-        Required: message
-        Optional: title (default "Agent"), timeout (seconds, default 5)
-        Returns:  {status, method}
-
-    schedule
-        Schedule a notification after a delay.
-        Required: message, delay_minutes
-        Optional: title
-        Returns:  {status, job_id, run_at}
-
-    cancel
-        Cancel a scheduled notification.
-        Required: job_id (from schedule response)
-        Returns:  {status, job_id}
-
-    list
-        List all scheduled notifications.
-        Returns:  {jobs: [{job_id, run_at, title, message}], count}
-
-    Examples:
-        notify(action="send", title="Research done", message="Tesla analysis complete")
-        notify(action="schedule", message="Check autocode results", delay_minutes=10)
-        notify(action="cancel", job_id="reminder_1234567890")
-        notify(action="list")
-    """
-    action = action.strip().lower()
-
-    # ── send ──────────────────────────────────────────────────────────────────
-    if action == "send":
-        if not message:
-            return {"status": "error", "error": "message is required for send"}
-
-        send_title  = title or "Agent"
-        ok, method  = _send_notification(send_title, message, timeout)
-
+    if not action:
         return {
-            "status":  "sent" if ok else "error",
-            "title":   send_title,
-            "message": message,
-            "method":  method,
+            "status": "error",
+            "data": None,
+            "error": "action is required (send | schedule | cancel | list | recurring | modify | history | test)",
+            "trace_id": trace_id,
         }
 
-    # ── schedule ──────────────────────────────────────────────────────────────
-    if action == "schedule":
-        if not message:
-            return {"status": "error", "error": "message is required for schedule"}
-        if delay_minutes <= 0:
-            return {"status": "error", "error": "delay_minutes must be > 0 for schedule"}
+    dispatch = DISPATCH.get("notify", {})
+    op_info = dispatch.get(action)
 
-        scheduler = _get_scheduler()
-        if scheduler is None:
-            return {
-                "status": "error",
-                "error":  "APScheduler not installed. Run: pip install apscheduler",
-            }
+    if op_info is None:
+        valid_actions = " | ".join(sorted(dispatch.keys()))
+        return {
+            "status": "error",
+            "data": None,
+            "error": f"Unknown action '{action}'. Use: {valid_actions}",
+            "trace_id": trace_id,
+        }
 
-        try:
-            from apscheduler.triggers.date import DateTrigger
+    handler = op_info["func"]
 
-            run_time   = datetime.now() + timedelta(minutes=delay_minutes)
-            job_id_new = f"reminder_{int(time.time())}"
-            send_title = title or "Agent Reminder"
-
-            scheduler.add_job(
-                func=_send_notification,
-                trigger=DateTrigger(run_date=run_time),
-                kwargs={"title": send_title, "message": message},
-                id=job_id_new,
-            )
-
-            _job_registry[job_id_new] = {
-                "title":   send_title,
-                "message": message,
-                "run_at":  run_time.isoformat(),
-                "status":  "scheduled",
-            }
-
-            return {
-                "status":        "scheduled",
-                "job_id":        job_id_new,
-                "message":       message,
-                "run_at":        run_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "delay_minutes": delay_minutes,
-            }
-
-        except Exception as e:
-            return {"status": "error", "error": f"Schedule failed: {e}"}
-
-    # ── cancel ────────────────────────────────────────────────────────────────
-    if action == "cancel":
-        if not job_id:
-            return {"status": "error", "error": "job_id is required for cancel"}
-
-        scheduler = _get_scheduler()
-        if scheduler is None:
-            return {"status": "error", "error": "Scheduler not running"}
-
-        try:
-            scheduler.remove_job(job_id)
-            _job_registry.pop(job_id, None)
-            return {"status": "cancelled", "job_id": job_id}
-        except Exception as e:
-            return {"status": "error", "error": f"Cancel failed: {e} (job may already have run)"}
-
-    # ── list ──────────────────────────────────────────────────────────────────
-    if action == "list":
-        scheduler = _get_scheduler()
-        if scheduler is None:
-            return {"status": "ok", "jobs": [], "count": 0, "note": "Scheduler not running"}
-
-        try:
-            jobs = scheduler.get_jobs()
-            result = []
-            for job in jobs:
-                meta = _job_registry.get(job.id, {})
-                result.append({
-                    "job_id":  job.id,
-                    "run_at":  str(job.next_run_time),
-                    "title":   meta.get("title", ""),
-                    "message": meta.get("message", ""),
-                })
-            return {"status": "ok", "jobs": result, "count": len(result)}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
-
-    return {
-        "status": "error",
-        "error":  f"Unknown action '{action}'. Use: send | schedule | cancel | list",
+    # Forward all facade params to the handler. Handlers are tolerant of
+    # extra kwargs (**kwargs) so unused params are silently ignored — this
+    # lets us evolve the facade signature without breaking existing
+    # handlers, and lets handlers pick only the params they need.
+    handler_kwargs = {
+        "action": action,
+        "title": title,
+        "message": message,
+        "timeout": timeout,
+        "delay_minutes": delay_minutes,
+        "job_id": job_id,
+        "cron": cron,
+        "trace_id": trace_id,
     }
+
+    start = time.time()
+    try:
+        result = handler(**handler_kwargs)
+    except Exception as e:
+        return {
+            "status": "error",
+            "data": None,
+            "error": f"Notify action failed: {e}",
+            "trace_id": trace_id,
+        }
+
+    if not isinstance(result, dict):
+        return {
+            "status": "error",
+            "data": None,
+            "error": f"Handler returned {type(result).__name__}, expected dict.",
+            "trace_id": trace_id,
+        }
+
+    # Trace success/failure for observability. Only the action_status field
+    # (in data) carries the semantic status; the top-level status is now
+    # 'success'/'error' per the standardized contract.
+    if result.get("status") == "error":
+        tracer.step(trace_id, "notify", f"action={action}:failed")
+    else:
+        tracer.step(trace_id, "notify", f"action={action}:complete")
+
+    # The facade adds duration_ms — handlers don't track this themselves
+    # (matches the consult/python facade pattern). This keeps timing
+    # instrumentation in ONE place: the facade.
+    result["duration_ms"] = round((time.time() - start) * 1000)
+    return result
