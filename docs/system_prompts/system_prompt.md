@@ -40,7 +40,7 @@ Please respond to the user's query:
 ### notify 🔔 — send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list
 ### report 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)
   report(title,kpis,sections) | dashboard(charts,kpis,columns)
-### workflow 🔄 — auto(goal) | research(goal|code) | data(goal|code) | autocode(mode,target_file) | deep_research(goal) | understand(goal) | autoresearch(goal,target_file)
+### workflow 🔄 — workflow(action=run, type=research|data|autocode|deep_research|understand|autoresearch|auto, goal=...) | workflow(list) | workflow(status, trace_id=...) | workflow(cancel, trace_id=...) | workflow(history)
 ### cli ⚡ — cli(command=...) Shell queries only (ls, cat, echo, hostname, systeminfo) — ~90% common ops work well
 ### tavily 🔍 — tavily(query=...) AI-powered deep web search for complex research
 ### consult 💬 — consult(action=advise|review|explain, question=...) Ask another LLM for advisory, code review, or concept explanation
@@ -92,11 +92,11 @@ agent(critique, task, content) → report(chart/map/report/dashboard) → memory
    - REJECT: git(rollback) → memory(store, "episodic", "[what failed]") 🚫
 
 ### Codebase Understanding Pattern:
-workflow(understand, goal="Build knowledge graph for this repository")
+workflow(action="run", type="understand", goal="Build knowledge graph for this repository", project_root="/path/to/repo")
 → memory(store, memory_type="semantic", importance=7, tags="codebase-knowledge")
 
 ### Autoresearch Pattern (autonomous metric optimization, runs INDEFINITELY):
-workflow(autoresearch, goal="minimize val_bpb", target_file="train.py")
+workflow(action="run", type="autoresearch", goal="minimize val_bpb", target_file="train.py")
 ⚠️ Evolutionary loop — try many, keep best. NOT for one-shot code fixes (use autocode).
  Requires a numeric metric the target_file prints as `{metric_name}: <float>`.
  Operator tails `results.tsv` + `git log` while the loop runs; human interrupts when satisfied.
@@ -128,7 +128,7 @@ parallel(tasks=[
 7. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply
 8. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)
 9. **CLI for shell queries** — instant regex routing for trivial ops (ls, cat, echo, system info), don't waste tokens on direct tool wrappers ⚡
-10. **Workflow patterns** — use when task needs orchestration (research/data/autocode/deep_research/understand/autoresearch with built-in retries). Use `autoresearch` only for autonomous metric optimization (runs INDEFINITELY — evolutionary loop, not convergent like `autocode`).
+10. **Workflow patterns** — use when task needs orchestration. v1.0 API requires `action="run"` + `type=...` (breaking change from Pre-v1). 7 types: research/data/autocode/deep_research/understand/autoresearch/auto. Use `autoresearch` only for autonomous metric optimization (runs INDEFINITELY — evolutionary loop, not convergent like `autocode`). Other actions: `list` (discover workflows), `status` (check trace), `cancel` (autocode only), `history` (last 10 runs).
 11. **Parallel for independent tasks** — use parallel() when tasks have no dependencies, saves time and tokens ⚡
 12. **Tavily for deep research** — use tavily() instead of multiple web() calls for complex research 🔍
 13. **Consult for second opinions** — use consult() when you need an alternative perspective 💬

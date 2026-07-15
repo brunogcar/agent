@@ -24,7 +24,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [TAVILY.md](tools/TAVILY.md) | Tavily | AI-ranked search, bulk extraction, keyless mode, API budget tracking |
 | [VISION.md](tools/VISION.md) | Vision | Multimodal image analysis — 3 actions (describe/extract_text/analyse_ui) via `@meta_tool`, `vision_ops/` subpackage (8 files), breaking `task`→`action`+`question` rename (with deprecated `task` alias), new params (`json_schema`/`format`/`context_type`), `core/net retry_sync` URL downloads, SSRF protection |
 | [WEB.md](tools/WEB.md) | Web | SearXNG search, BeautifulSoup, parallel scraping, connection pooling |
-| [WORKFLOW.md](tools/WORKFLOW.md) | Workflow | LangGraph launcher, 7 workflow types, auto-routing, resume support |
+| [WORKFLOW.md](tools/WORKFLOW.md) | Workflow | `@meta_tool` two-level dispatch (action+type), 5 actions (run/list/status/cancel/history), 7 workflow types, `workflow_ops/` subpackage (18 files), breaking `type`→`action`+`type` split (v1.0), new params (files/git_diff/dry_run) |
 
 ---
 
@@ -34,7 +34,7 @@ Most tools share a common foundation defined in `tools/_meta_tool.py` and the re
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **`@meta_tool`** | `tools/_meta_tool.py` | Auto-generates `Literal[...]` action enums and docstrings from a `DISPATCH` dict. Used by `browser`, `consult`, `file`, `git`, `github`, `python`, `report`, `swarm`, `tavily`, `vision`, `web`, and `cli` (special case). |
+| **`@meta_tool`** | `tools/_meta_tool.py` | Auto-generates `Literal[...]` action enums and docstrings from a `DISPATCH` dict. Used by `browser`, `consult`, `file`, `git`, `github`, `python`, `report`, `swarm`, `tavily`, `vision`, `web`, `workflow` (v1.0 — two-level: also reads `TYPE_DISPATCH` via `register_type`), and `cli` (special case). |
 | **`DISPATCH`** | `tools/*_ops/_registry.py` | Maps action names → handler metadata. Validated by `^[a-z][a-z0-9_]*$` regex. |
 | **`@register_action`** | `tools/*_ops/actions/*.py` | Decorator that auto-discovers action handlers into the registry. |
 | **`path_guard`** | `core/path_guard.py` | Validates all filesystem paths. Blocks traversal outside `agent_root` / `workspace_root`. |
@@ -356,7 +356,30 @@ tools/
 │       ├── search.py
 │       └── search_and_read.py
 │
-└── workflow.py        # LangGraph workflow launcher
+├── workflow.py                  # Workflow meta-tool facade (@tool @meta_tool, 174 lines, thin router)
+└── workflow_ops/                # v1.0 NEW — two-level dispatch subpackage (18 files)
+    ├── __init__.py              # imports _registry, _type_registry, actions, types (in order)
+    ├── _registry.py             # ACTION_DISPATCH + register_action() decorator
+    ├── _type_registry.py        # TYPE_DISPATCH + register_type() decorator (second level)
+    ├── helpers.py               # _make_error, _ensure_trace_id, _validate_goal,
+    │                            #   _execute_workflow (single entry to run_workflow),
+    │                            #   _get_all_workflow_metadata, _WORKFLOW_MODULES map
+    ├── actions/                 # META-level: what to do (5 actions)
+    │   ├── __init__.py          # auto-discovery via Path.glob("*.py")
+    │   ├── run.py               # @register_action("workflow", "run")
+    │   ├── list_workflows.py    # @register_action("workflow", "list")
+    │   ├── status.py            # @register_action("workflow", "status")
+    │   ├── cancel.py            # @register_action("workflow", "cancel")
+    │   └── history.py           # @register_action("workflow", "history")
+    └── types/                   # WORKFLOW-TYPE-level: which workflow to run (7 types)
+        ├── __init__.py          # auto-discovery via Path.glob("*.py")
+        ├── research.py          # @register_type("research")
+        ├── data.py              # @register_type("data")
+        ├── autocode.py          # @register_type("autocode")  — fail-fast param guards
+        ├── deep_research.py     # @register_type("deep_research")
+        ├── understand.py        # @register_type("understand")
+        ├── autoresearch.py      # @register_type("autoresearch")
+        └── auto.py              # @register_type("auto")  — router dispatch + confidence guard
 ```
 
 ---
@@ -785,27 +808,54 @@ Changes not staged for commit:
 
 ### 15. 🔄 Workflow — [tools/WORKFLOW.md](tools/WORKFLOW.md)
 
-**Status:** v1.1 — LangGraph workflow launcher. v1.1 adds `autoresearch` workflow (autonomous experiment-driven optimization loop).
+**Status:** v1.0 — `@meta_tool` refactor with **two-level dispatch** (action + type). v1.0 collapsed the 263-line monolithic facade into a 174-line thin router + 18-file `workflow_ops/` subpackage. **Breaking change:** `type` alone no longer works — callers MUST use `action="run"` + `type="..."`. Pre-v1.1 added `autoresearch` workflow; Pre-v1.2 added `deep_research` + removed `report`; Pre-v1.1 fixed Bugs #3 (`understand` project_root forwarding) and #6 (auto-routing low-confidence guard).
 
-**Purpose:** Trigger long-running multi-step workflows (research, data, autocode, autoresearch, etc.).
+**Purpose:** Launch and manage multi-step autonomous LangGraph workflows (research, data, autocode, autoresearch, etc.). 5 actions cover the full lifecycle: run, list, status, cancel, history.
 
 **Key characteristics:**
-- **7 workflow types** — `research`, `data`, `autocode`, `deep_research`, `understand`, `autoresearch`, `auto`
-- **Strict type validation** — `VALID_WORKFLOWS` frozenset prevents LLM hallucination
-- **Auto-routing** — `type="auto"` lazily imports Router model to classify goal and select workflow
-- **Fail-fast guards** — Autocode validates `target_file`, `error_msg`, `feature_desc` BEFORE git snapshots
-- **Guaranteed observability** — Every return dict contains `trace_id` (auto-generated if not provided)
-- **Resume support** — `resume=True` continues interrupted workflows from checkpoint
+- **Two-level dispatch** — `action` (META-level: what to do — `run | list | status | cancel | history`) + `type` (workflow-type-level: which workflow). Only `action="run"` dispatches into `TYPE_DISPATCH`; the other 4 actions are leaf operations on tracer/checkpoint.
+- **5 actions** — `run` (launch a workflow), `list` (show all 7 workflows + metadata), `status` (checkpoint journal + tracer summary), `cancel` (autocode-only cancellation flag), `history` (last 10 workflow traces from tracer)
+- **7 workflow types** — `research`, `data`, `autocode`, `deep_research`, `understand`, `autoresearch`, `auto` (router-classified)
+- **`workflow_ops/` subpackage** — 18 files: `_registry.py` (ACTION_DISPATCH), `_type_registry.py` (TYPE_DISPATCH), `helpers.py`, `actions/` (5 files), `types/` (7 files) + 2 `__init__.py` auto-discovery globs
+- **`@meta_tool` facade** — `action: Literal["run", "list", "status", "cancel", "history"]` auto-generated from `DISPATCH`. Decorator order: `@tool` (outer) → `@meta_tool` (inner).
+- **Type registry replaces `VALID_WORKFLOWS`** — `TYPE_DISPATCH` populated by `@register_type` decorators (auto-discovered via `types/__init__.py` glob). Adding a type = drop a new file in `types/`, no facade edits.
+- **Validation in type handlers, NOT facade** — Autocode's `target_file`/`error_msg`/`feature_desc` guards live in `types/autocode.py`. Understand's `project_root` guard lives in `types/understand.py`. The `run` action only validates that `type` is non-empty + registered.
+- **Auto-routing** — `type="auto"` calls `router.route()` to classify the goal. Three outcomes: `direct` (not a workflow), `low` confidence (needs clarification — Bug #6 fix: fires even with empty questions), routed type (delegates to that type's handler).
+- **`_execute_workflow()` is the single entry to `run_workflow()`** — Type handlers call `helpers._execute_workflow(wf_type, goal, trace_id, resume, **type_specific_kwargs)` which builds kwargs conditionally per type and guarantees `trace_id` in the result.
+- **New params (v1.0)** — `files` (JSON dict of filename→content for autocode pass-through), `git_diff` (autocode v1.1.2 git-diff input mode), `dry_run` (pre-flight: validate params + routing without executing). Forwarded only when non-empty/`True`.
+- **Guaranteed observability** — Every return dict (success or error) contains `trace_id` (auto-generated via `_ensure_trace_id()`) AND `duration_ms` (attached by facade).
+- **Resume support** — `resume=True` continues interrupted workflows from checkpoint. Forwarded through `_execute_workflow()` to `run_workflow(resume=...)`.
+- **NOT parallel-safe** — workflows are long-running blocking calls. Do NOT add to `PARALLEL_SAFE`.
+- **98 tests across 11 files** — `conftest.py` + 10 `test_*.py` files. `mock_tracer` fixture patches tracer in THREE modules simultaneously via `ExitStack` (Python `from x import y` binding pitfall).
 
-**Safety:** Parameter validation before any side effects, structured error messages, trace ID propagation.
+**Safety:** Type-specific parameter validation before any side effects (autocode guards live in `types/autocode.py` and fire BEFORE git snapshots). `_make_error()` (NOT `fail()`) preserves `trace_id` on every error response. `status`/`cancel` actions catch `ImportError` separately and return success with explanatory messages — resilient to partial deployments (e.g. autocode not installed). Lazy router import inside `types/auto.py` body prevents startup circular dependencies.
 
-**Output:**
+**Output (action="run"):**
 ```json
 {
   "status": "success",
   "result": "Research complete: 5 sources synthesized",
   "trace_id": "abc123",
-  "artifacts": ["report.html"]
+  "duration_ms": 45000
+}
+```
+
+**Output (action="list"):**
+```json
+{
+  "status": "success",
+  "workflows": {
+    "research":      {"name": "Research", "version": "1.0", "description": "...", "entry_point": "..."},
+    "data":          {"name": "data", "error": "metadata not available"},
+    "autocode":      {"name": "Autocode", "version": "2.0-alpha", "description": "...", "entry_point": "..."},
+    "deep_research": {"name": "Deep Research", "version": "1.0", "description": "...", "entry_point": "..."},
+    "understand":    {"name": "understand", "error": "metadata not available"},
+    "autoresearch":  {"name": "autoresearch", "error": "metadata not available"},
+    "auto":          {"name": "auto", "description": "Let the Router classify the goal and choose the workflow.", "version": "?", "entry_point": ""}
+  },
+  "count": 7,
+  "trace_id": "abc123",
+  "duration_ms": 120
 }
 ```
 
@@ -893,8 +943,8 @@ Changes not staged for commit:
 
 | Aspect | Agent | Browser | CLI | Consult | File | GitHub | Git | Memory | Notify | Parallel | Python | Report | Swarm | Tavily | Vision | Web | Workflow |
 |--------|-------|---------|-----|---------|------|--------|-----|--------|--------|----------|--------|--------|-------|--------|--------|-----|----------|
-| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `type` param |
-| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct |
+| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `action`+`type` params (two-level) |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (two-level: action+type) |
 | **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ✅ API only (push ❌) | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
 | **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Planner synthesis | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
 | **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ run_data/profile/lint | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |

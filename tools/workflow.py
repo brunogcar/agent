@@ -1,68 +1,68 @@
-﻿"""
-tools/workflow.py — Launch LangGraph workflows (research, data, autocode).
-Registered via @tool so MCP auto-discovers it.
+"""tools/workflow.py — Workflow meta-tool (v1.0).
 
-ARCHITECTURE & SAFETY (P0-3 Hardening):
-This tool acts as the primary entry point for long-running, multi-step autonomous
-tasks. Because workflows like 'autocode' modify the filesystem and take git snapshots,
-this module enforces strict validation and observability rules:
+Thin @tool facade. Routes all workflow actions to handlers in
+workflow_ops/actions/ via the DISPATCH dict. The `run` action further
+dispatches into TYPE_DISPATCH (workflow_ops/types/) based on the `type`
+parameter — two-level dispatch.
 
-1. STRICT TYPE VALIDATION:
-   The LLM cannot hallucinate non-existent workflows. Only explicitly allowed
-   types (research, data, autocode, report, auto) are accepted. Unknown types
-   fail fast with a helpful error message, saving execution tokens.
+v1.0 changes (the @meta_tool refactor):
+  - Now a meta-tool with 5 actions: run | list | status | cancel | history.
+  - @meta_tool auto-generates the action: Literal[...] type annotation and
+    the docstring's action list from DISPATCH.
+  - BREAKING: the old `type` parameter alone no longer works. You must use
+    `action="run"` + `type="research"` (or other type). The old
+    `workflow(type="research", goal="...")` call MUST be rewritten as
+    `workflow(action="run", type="research", goal="...")`.
+  - New params: files (JSON dict of filename→content for autocode
+    pass-through), git_diff (autocode v1.1.2 git-diff input mode),
+    dry_run (pre-flight: validate params + routing without executing).
+  - All implementation logic moved to workflow_ops/ subpackage.
 
-2. FAIL-FAST PARAMETER GUARDS:
-   Autocode requires specific parameters depending on the mode (e.g., 'target_file'
-   is always required; 'error_msg' is required for 'fix_error' mode). If these
-   are missing, the tool aborts BEFORE taking git snapshots or invoking the Planner.
+NOT parallel-safe — workflows are long-running blocking calls. Do NOT add
+to PARALLEL_SAFE.
+The router already routes to `workflow` for workflow intents; no router
+changes needed for v1.0.
 
-3. GUARANTEED OBSERVABILITY (trace_id):
-   Every single return dictionary (success or error) is guaranteed to contain
-   a 'trace_id'. If the MCP host does not provide one, this tool generates a
-   new trace immediately. This ensures our JSONL logs can perfectly correlate
-   workflow failures back to the original user request.
-
-4. AUTO-ROUTING:
-   If type='auto' (or omitted), the tool lazily imports the Router model to
-   classify the goal and dynamically select the correct workflow.
+[DESIGN] The `type` param is kept as `type` (not renamed to avoid shadowing
+the Python builtin in a way that breaks existing call sites). The breaking
+change is that `type` alone no longer works — callers must use
+`action="run"` + `type="..."`.
 """
 from __future__ import annotations
 
-from typing import Literal
+import time
 
-from registry import tool
 from core.tracer import tracer
+from registry import tool
+from tools._meta_tool import meta_tool
 
-# ── Valid workflow types ───────────────────────────────────────────────────
-# Strict allowlist prevents the LLM from hallucinating non-existent workflows
-# (e.g., "coding" or "analysis") and wasting execution cycles.
-VALID_WORKFLOWS: frozenset[str] = frozenset({
-    "research",
-    "data",
-    "autocode",
-    "deep_research",
-    "understand",  # Codebase Knowledge Graph builder
-    "autoresearch",  # Autonomous experiment-driven optimization (karpathy/autoresearch)
-    "auto",
-})
+# Import workflow_ops to trigger DISPATCH + TYPE_DISPATCH auto-discovery
+# BEFORE @meta_tool reads DISPATCH.
+from tools import workflow_ops  # noqa: F401
+from tools.workflow_ops._registry import DISPATCH
 
-WorkflowType = Literal["research", "data", "autocode", "deep_research", "understand", "autoresearch", "auto"]
-
-def _make_error(error: str, trace_id: str, **extra) -> dict:
-    """
-    Helper to ensure every error response includes trace_id.
-    Centralizing error formatting guarantees that our JSONL logs can always
-    correlate workflow failures back to the original request.
-    """
-    result = {"status": "error", "error": error, "trace_id": trace_id}
-    result.update(extra)
-    return result
 
 @tool
+@meta_tool(
+    DISPATCH.get("workflow", {}),
+    doc_sections=[
+        "WORKFLOW TOOL — Launch and manage LangGraph workflows:",
+        " | Need | Action | Why |",
+        " |------|--------|-----|",
+        " | Run a workflow | workflow(run, type=research) | Execute a multi-step autonomous workflow |",
+        " | List available workflows | workflow(list) | Show all workflows + their metadata |",
+        " | Check workflow status | workflow(status, trace_id=...) | Check checkpoint for a running/completed workflow |",
+        " | Cancel a workflow | workflow(cancel, trace_id=...) | Set cancellation flag (autocode only) |",
+        " | Show recent runs | workflow(history) | Query tracer for recent workflow executions |",
+        "",
+        "Workflow types (for action=run): research, data, autocode, deep_research, understand, autoresearch, auto",
+        "NOT parallel-safe — workflows are long-running blocking calls.",
+    ],
+)
 def workflow(
-    type: str,
-    goal: str,
+    action: str = "",
+    type: str = "",
+    goal: str = "",
     # data workflow
     code: str = "",
     # autocode workflow
@@ -70,194 +70,108 @@ def workflow(
     mode: str = "improve",
     error_msg: str = "",
     feature_desc: str = "",
-    # understand workflow
+    files: str = "",
+    git_diff: bool = False,
+    dry_run: bool = False,
+    # understand / autoresearch workflow
     project_root: str = "",
+    # common
     trace_id: str = "",
     resume: bool = False,
 ) -> dict:
+    """Workflow meta-tool — run | list | status | cancel | history.
+
+    Launch and manage LangGraph workflows. The `run` action dispatches
+    into a second-level registry (TYPE_DISPATCH) based on the `type`
+    parameter — see workflow_ops/types/ for the per-type handlers.
+
+    Args:
+        action: Which action to perform. Auto-restricted by @meta_tool to
+                the registered action names (run | list | status | cancel | history).
+        type: Workflow type — only used by action='run'. One of:
+              research | data | autocode | deep_research | understand |
+              autoresearch | auto.
+        goal: Goal text — required for action='run' (and routed types).
+        code: Optional code string — forwarded to the data workflow.
+        target_file: Required for autocode + autoresearch workflows.
+        mode: Autocode mode — improve (default) | fix_error | add_feature.
+        error_msg: Required when mode='fix_error'.
+        feature_desc: Required when mode='add_feature'.
+        files: JSON dict of filename→content — autocode pass-through.
+        git_diff: Use git-diff input mode (autocode v1.1.2).
+        dry_run: Pre-flight: validate params + routing without executing.
+        project_root: Required for understand; optional for autoresearch.
+        trace_id: Observability threading ID. Auto-generated if missing.
+        resume: Resume from checkpoint.
+
+    Returns:
+        Dict with status="success" | "error" | "routed" |
+        "needs_clarification". Every response includes trace_id.
     """
-    Launch a multi-step autonomous workflow.
-    
-    Workflows:
-    - research: Gather info from web, synthesize findings.
-    - data: Analyze datasets with pandas/numpy, generate reports.
-    - autocode: Fix bugs, add features, refactor code (TDD + safety).
-    - deep_research: Iterative multi-faceted research with ReAct loop.
-    - understand: Build a Codebase Knowledge Graph via AST parsing.
-    - autoresearch: Autonomous experiment-driven optimization (modify → run → measure → keep/discard → repeat).
-    - auto: Let the Router classify the task and choose the workflow.
-    """
-    # === VALIDATION: Ensure trace_id is always present ===
-    # If the MCP host doesn't pass a trace_id, we generate one immediately 
-    # so that even early validation failures are logged correctly.
-    if not trace_id:
-        trace_id = tracer.new_trace("workflow", goal=goal)
+    action = action.strip().lower() if action else ""
 
-    # === VALIDATION: type parameter ===
-    wf_type = type.strip().lower() if type else ""
+    tracer.step(trace_id, "workflow", f"action={action} type={type}")
 
-    # Special case: empty type defaults to "auto"
-    if not wf_type:
-        wf_type = "auto"
-
-    if wf_type not in VALID_WORKFLOWS:
-        tracer.error(trace_id, "workflow", f"Invalid workflow type: {type}")
-        return _make_error(
-            f"Invalid workflow type '{type}'. Valid types: {sorted(VALID_WORKFLOWS)}",
-            trace_id=trace_id,
-            valid_types=list(VALID_WORKFLOWS),
-        )
-
-    # === VALIDATION: goal parameter ===
-    if not goal or not goal.strip():
-        tracer.error(trace_id, "workflow", "Missing goal parameter")
-        return _make_error(
-            "goal parameter is required",
-            trace_id=trace_id,
-            workflow_type=wf_type,
-        )
-
-    # === VALIDATION: understand-specific parameters ===
-    # Understand builds a knowledge graph for a specific project directory.
-    # It requires the project_root to know where to scan and where to store artifacts.
-    if wf_type == "understand":
-        if not project_root or not project_root.strip():
-            return _make_error(
-                "project_root is required for understand workflow",
-                trace_id=trace_id,
-                workflow_type=wf_type,
-            )
-
-    # === VALIDATION: autocode-specific parameters ===
-    # Autocode takes git snapshots and modifies the filesystem. 
-    # We must fail fast if the LLM forgot to provide the target file or 
-    # the specific error message/feature description required for the mode.
-    if wf_type == "autocode":
-        if not target_file or not target_file.strip():
-            return _make_error(
-                "target_file is required for autocode workflow",
-                trace_id=trace_id,
-                workflow_type=wf_type,
-            )
-
-        if mode == "fix_error" and not error_msg:
-            return _make_error(
-                "error_msg is required for mode='fix_error'",
-                trace_id=trace_id,
-                workflow_type=wf_type,
-                mode=mode,
-            )
-
-        if mode == "add_feature" and not feature_desc:
-            return _make_error(
-                "feature_desc is required for mode='add_feature'",
-                trace_id=trace_id,
-                workflow_type=wf_type,
-                mode=mode,
-            )
-
-    # === AUTO-ROUTING ===
-    if wf_type == "auto":
-        try:
-            # Lazy import to prevent circular dependencies at startup
-            from core.router import router
-            decision = router.route(goal, trace_id=trace_id)
-            actual_type = decision.workflow
-            
-            tracer.step(trace_id, "workflow_route", 
-                       f"Auto-routed '{goal[:30]}' to {actual_type} (confidence: {decision.confidence})")
-
-            # If the Router decides this isn't a workflow at all (e.g., "what time is it?"),
-            # it returns "direct". We pass this back to the LLM so it can call the correct tool.
-            if actual_type == "direct":
-                return {
-                    "status": "routed",
-                    "workflow": "direct",
-                    "tool": decision.tool,
-                    "reason": decision.reason,
-                    "trace_id": trace_id,
-                }
-
-            # 🔴 ROUTER CONFIDENCE GUARD: Prevent wasting 15+ minutes on misunderstood tasks
-            # If the Router says "low" confidence, it means the goal is too vague or ambiguous.
-            # We abort execution and return clarifying questions to the user instead.
-            # [Bug #6] Abort on low confidence REGARDLESS of whether clarifying_questions
-            # exist. Previously, low confidence with empty questions fell through to
-            # execution — defeating the guard's purpose.
-            if decision.confidence == "low":
-                questions = decision.clarifying_questions or ["Please provide more details about what you want to achieve."]
-                questions_text = "\n".join(f"- {q}" for q in questions)
-                return {
-                    "status": "needs_clarification",
-                    "reason": "The task goal is too vague or ambiguous to proceed confidently.",
-                    "clarifying_questions": questions,
-                    "message": f"To help me understand your request better, please clarify:\n{questions_text}",
-                    "trace_id": trace_id,
-                }
-
-            wf_type = actual_type
-
-        except Exception as e:
-            tracer.error(trace_id, "workflow", f"Router failed: {e}")
-            return _make_error(
-                f"Failed to route workflow: {e}",
-                trace_id=trace_id,
-            )
-
-    # === EXECUTION ===
-    try:
-        from workflows.base import run_workflow
-
-        kwargs = {
-            "goal": goal,
+    if not action:
+        return {
+            "status": "error",
+            "error": "action is required (run | list | status | cancel | history)",
             "trace_id": trace_id,
         }
 
-        if wf_type == "data" and code:
-            kwargs["code"] = code
+    dispatch = DISPATCH.get("workflow", {})
+    op_info = dispatch.get(action)
 
-        elif wf_type == "autocode":
-            kwargs.update({
-                "target_file": target_file,
-                "mode": mode,
-                "error_msg": error_msg,
-                "feature_desc": feature_desc,
-            })
+    if op_info is None:
+        valid_actions = " | ".join(sorted(dispatch.keys()))
+        return {
+            "status": "error",
+            "error": f"Unknown action '{action}'. Use: {valid_actions}",
+            "trace_id": trace_id,
+        }
 
-        # [Bug #3] understand workflow must receive project_root — previously
-        # validated above but never forwarded to run_workflow, causing it to
-        # default to agent root instead of the specified project directory.
-        elif wf_type == "understand":
-            kwargs["project_root"] = project_root
+    handler = op_info["func"]
 
-        # [v1.0] autoresearch: pass target_file + project_root to the
-        # experiment-driven optimization loop. target_file is the script the
-        # workflow will modify + run repeatedly; project_root is the git repo
-        # where the experiment branch is created.
-        elif wf_type == "autoresearch":
-            kwargs["target_file"] = target_file
-            if project_root:
-                kwargs["project_root"] = project_root
+    # Forward every facade param to the handler. Handlers pick what they
+    # need via **kwargs — no per-action conditional branches needed here.
+    kwargs = {
+        "type": type,
+        "goal": goal,
+        "code": code,
+        "target_file": target_file,
+        "mode": mode,
+        "error_msg": error_msg,
+        "feature_desc": feature_desc,
+        "files": files,
+        "git_diff": git_diff,
+        "dry_run": dry_run,
+        "project_root": project_root,
+        "trace_id": trace_id,
+        "resume": resume,
+    }
 
-        result = run_workflow(
-            workflow_type=wf_type,
-            resume=resume,
-            **kwargs,
-        )
-
-        # Ensure trace_id is in result for downstream observability
-        if isinstance(result, dict):
-            if "trace_id" not in result:
-                result["trace_id"] = trace_id
-            return result
-        
-        # Fallback if run_workflow returns a string or non-dict
-        return {"status": "success", "result": result, "trace_id": trace_id}
-
+    start = time.time()
+    try:
+        result = handler(**kwargs)
     except Exception as e:
-        tracer.error(trace_id, "workflow", f"Workflow execution failed: {e}")
-        return _make_error(
-            f"Workflow execution failed: {e}",
-            trace_id=trace_id,
-            workflow_type=wf_type,
-        )
+        tracer.error(trace_id, "workflow", f"Action '{action}' failed: {e}")
+        return {
+            "status": "error",
+            "error": f"Workflow action failed: {e}",
+            "trace_id": trace_id,
+        }
+
+    if not isinstance(result, dict):
+        return {
+            "status": "error",
+            "error": f"Handler returned {type(result).__name__}, expected dict.",
+            "trace_id": trace_id,
+        }
+
+    if result.get("status") == "error":
+        tracer.step(trace_id, "workflow", f"action={action}:failed")
+    else:
+        tracer.step(trace_id, "workflow", f"action={action}:complete")
+
+    result["duration_ms"] = round((time.time() - start) * 1000)
+    return result

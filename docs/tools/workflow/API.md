@@ -2,13 +2,36 @@
 
 # 📝 API Reference
 
+> **v1.0 — `@meta_tool` refactor with two-level dispatch.** The `workflow()` tool now takes an `action` parameter (meta-level: what to do) plus a `type` parameter (workflow-type-level: which workflow to run). Only `action="run"` uses `type`; the other four actions are leaf operations.
+
 ## 🔧 Tool Signature
 
 ```python
+from registry import tool
+from tools._meta_tool import meta_tool
+from tools.workflow_ops._registry import DISPATCH  # populated by workflow_ops/__init__.py auto-discovery
+
 @tool
+@meta_tool(
+    DISPATCH.get("workflow", {}),
+    doc_sections=[
+        "WORKFLOW TOOL — Launch and manage LangGraph workflows:",
+        " | Need | Action | Why |",
+        " |------|--------|-----|",
+        " | Run a workflow | workflow(run, type=research) | Execute a multi-step autonomous workflow |",
+        " | List available workflows | workflow(list) | Show all workflows + their metadata |",
+        " | Check workflow status | workflow(status, trace_id=...) | Check checkpoint for a running/completed workflow |",
+        " | Cancel a workflow | workflow(cancel, trace_id=...) | Set cancellation flag (autocode only) |",
+        " | Show recent runs | workflow(history) | Query tracer for recent workflow executions |",
+        "",
+        "Workflow types (for action=run): research, data, autocode, deep_research, understand, autoresearch, auto",
+        "NOT parallel-safe — workflows are long-running blocking calls.",
+    ],
+)
 def workflow(
-    type: str,
-    goal: str,
+    action: str = "",                      # auto-restricted by @meta_tool to Literal["run", "list", "status", "cancel", "history"]
+    type: str = "",                         # workflow type — only used by action="run"
+    goal: str = "",
     # data workflow
     code: str = "",
     # autocode workflow
@@ -16,43 +39,210 @@ def workflow(
     mode: str = "improve",
     error_msg: str = "",
     feature_desc: str = "",
-    # understand workflow
+    files: str = "",                        # v1.0 NEW — JSON dict of filename→content for autocode pass-through
+    git_diff: bool = False,                 # v1.0 NEW — autocode v1.1.2 git-diff input mode
+    dry_run: bool = False,                  # v1.0 NEW — pre-flight: validate params + routing without executing
+    # understand / autoresearch workflow
     project_root: str = "",
+    # common
     trace_id: str = "",
     resume: bool = False,
 ) -> dict:
-    """Launch a multi-step autonomous workflow.
-
-    Workflows:
-    - research: Gather info from web, synthesize findings.
-    - data: Analyse datasets with pandas/numpy, generate reports.
-    - autocode: Fix bugs, add features, refactor code (TDD + safety).
-    - deep_research: Iterative multi-faceted research with ReAct loop.
-    - understand: Build codebase Knowledge Graph.
-    - auto: Let the Router classify the task and choose the workflow.
-    """
+    """Workflow meta-tool — run | list | status | cancel | history."""
 ```
+
+### Parameter Table
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `type` | `str` | **Yes** | — | Workflow type. Valid: `research`, `data`, `autocode`, `deep_research`, `understand`, `auto`. Empty defaults to `auto`. |
-| `goal` | `str` | **Yes** | — | Human-readable task description |
-| `code` | `str` | No | `""` | Python code for `data` workflow (e.g., pandas analysis) |
-| `target_file` | `str` | No | `""` | File path for `autocode` workflow. **Required** when `type="autocode"`. |
-| `mode` | `str` | No | `"improve"` | Autocode mode: `improve`, `fix_error`, `add_feature`, `refactor` |
-| `error_msg` | `str` | No | `""` | Error message for `autocode` mode `fix_error`. **Required** when `mode="fix_error"`. |
-| `feature_desc` | `str` | No | `""` | Feature description for `autocode` mode `add_feature`. **Required** when `mode="add_feature"`. |
-| `project_root` | `str` | No | `""` | Project directory for `understand` workflow. **Required** when `type="understand"`. |
-| `trace_id` | `str` | No | `""` | Trace identifier. Auto-generated if not provided. |
-| `resume` | `bool` | No | `False` | Continue interrupted workflow from checkpoint |
+| `action` | `Literal["run", "list", "status", "cancel", "history"]` | **Yes** | `""` | What to do. Auto-restricted by `@meta_tool`. Empty string returns an error. |
+| `type` | `str` | Only for `action="run"` | `""` | Workflow type. Valid: `research`, `data`, `autocode`, `deep_research`, `understand`, `autoresearch`, `auto`. Validated against `TYPE_DISPATCH`. |
+| `goal` | `str` | Only for `action="run"` | `""` | Human-readable task description. Validated by `_validate_goal()`. |
+| `code` | `str` | No | `""` | Python code for `data` workflow (e.g. pandas analysis). Forwarded only when non-empty. |
+| `target_file` | `str` | Yes for `type="autocode"` / `type="autoresearch"` | `""` | File path. Autocode: file to modify. Autoresearch: script to modify + run repeatedly. |
+| `mode` | `str` | No | `"improve"` | Autocode mode: `improve`, `fix_error`, `add_feature`. |
+| `error_msg` | `str` | Required when `type="autocode"` + `mode="fix_error"` | `""` | Error message for autocode `fix_error` mode. |
+| `feature_desc` | `str` | Required when `type="autocode"` + `mode="add_feature"` | `""` | Feature description for autocode `add_feature` mode. |
+| `files` | `str` (JSON) | No | `""` | **v1.0 NEW.** JSON dict of `filename → content` for autocode pass-through. Forwarded only when non-empty. |
+| `git_diff` | `bool` | No | `False` | **v1.0 NEW.** Use git-diff input mode (autocode v1.1.2). Forwarded only when `True`. |
+| `dry_run` | `bool` | No | `False` | **v1.0 NEW.** Pre-flight: validate params + routing without executing. Forwarded only when `True`. |
+| `project_root` | `str` | Yes for `type="understand"`, optional for `type="autoresearch"` | `""` | Project directory. Understand: directory to scan. Autoresearch: git repo for experiment branch. |
+| `trace_id` | `str` | No | `""` | Observability threading ID. Auto-generated by `_ensure_trace_id()` if missing. |
+| `resume` | `bool` | No | `False` | Continue interrupted workflow from checkpoint. Forwarded to `run_workflow(resume=...)`. |
 
-**WorkflowType Literal:** `Literal["research", "data", "autocode", "deep_research", "understand", "auto"]`
+### ⚠️ Breaking Change (v1.0)
+
+```python
+# ❌ OLD (Pre-v1) — no longer works
+workflow(type="research", goal="Find the best Python async database drivers")
+# → returns {"status": "error", "error": "action is required (run | list | status | cancel | history)", "trace_id": ""}
+
+# ✅ NEW (v1.0) — action="run" is now required
+workflow(action="run", type="research", goal="Find the best Python async database drivers")
+```
+
+The `type` param name is KEPT (not renamed to `workflow_type`) to minimize call-site churn. The migration is purely additive: prepend `action="run",` to every existing call.
 
 ---
 
-## ⚡ Workflow Types
+## ⚡ Actions (5)
 
-### `research`
+### `action="run"`
+
+Launch a multi-step autonomous workflow. The ONLY action that uses `type` and dispatches into `TYPE_DISPATCH`.
+
+| Required | Optional | Description |
+|----------|----------|-------------|
+| `action="run"`, `type`, `goal` | `code`, `target_file`, `mode`, `error_msg`, `feature_desc`, `files`, `git_diff`, `dry_run`, `project_root`, `trace_id`, `resume` | See [§ Workflow Types](#-workflow-types-7) below for which params apply to which `type`. |
+
+**Examples:**
+```python
+workflow(action="run", type="research", goal="Survey LLM agent frameworks")
+workflow(action="run", type="data", goal="Analyze sales.csv", code="print(df.head())")
+workflow(action="run", type="autocode", goal="Fix login bug", target_file="auth.py", mode="fix_error", error_msg="KeyError: user")
+workflow(action="run", type="autocode", goal="Add auth", target_file="auth.py", mode="add_feature", feature_desc="JWT auth with refresh tokens", files='{"auth.py": "...", "models.py": "..."}', dry_run=True)
+workflow(action="run", type="understand", goal="Map codebase", project_root="/path/to/repo")
+workflow(action="run", type="auto", goal="Find recent papers on RAG")
+```
+
+**Returns:** workflow-specific dict. Always includes `status`, `trace_id`, `duration_ms`. Possible `status` values: `success`, `error`, `routed` (auto→direct only), `needs_clarification` (auto→low confidence only).
+
+---
+
+### `action="list"`
+
+List all available workflows with their metadata. Reads `WORKFLOW_METADATA` from each workflow module's `graph.py` via `_get_all_workflow_metadata()`, then augments with `TYPE_DISPATCH` entries not in the static `_WORKFLOW_MODULES` map (specifically `auto`).
+
+| Required | Optional | Description |
+|----------|----------|-------------|
+| `action="list"` | `trace_id` | No other params. The `type` param is ignored. |
+
+**Example:**
+```python
+workflow(action="list")
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "workflows": {
+    "research":      {"name": "Research",      "version": "1.0", "description": "...", "entry_point": "..."},
+    "data":          {"name": "data",          "error": "metadata not available"},
+    "autocode":      {"name": "Autocode",      "version": "2.0-alpha", "description": "...", "entry_point": "..."},
+    "deep_research": {"name": "Deep Research", "version": "1.0", "description": "...", "entry_point": "..."},
+    "understand":    {"name": "understand",    "error": "metadata not available"},
+    "autoresearch":  {"name": "autoresearch",  "error": "metadata not available"},
+    "auto":          {"name": "auto",          "description": "Let the Router classify the goal and choose the workflow.", "version": "?", "entry_point": ""}
+  },
+  "count": 7,
+  "trace_id": "abc123"
+}
+```
+
+Modules that can't be imported (e.g. heavy optional dep missing) show up as `{"name": <type>, "error": "metadata not available"}` rather than crashing the list action.
+
+---
+
+### `action="status"`
+
+Check the status of a workflow by `trace_id`. Looks up both the checkpoint journal and the tracer.
+
+| Required | Optional | Description |
+|----------|----------|-------------|
+| `action="status"`, `trace_id` | — | The `type` param is ignored. |
+
+**Example:**
+```python
+workflow(action="status", trace_id="abc123")
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "trace_id": "abc123",
+  "checkpoint": true,
+  "checkpoint_node": "node_git_commit",
+  "checkpoint_status": "running",
+  "tracer_summary": {"steps": 12, "errors": 0, "elapsed_ms": 45000}
+}
+```
+
+If the checkpoint module isn't available or the tracer db errors, the action returns success with `checkpoint=false` and/or `tracer_summary=null` — it never crashes.
+
+---
+
+### `action="cancel"`
+
+Request cancellation of a running workflow by `trace_id`. Currently only the autocode workflow supports cancellation (via `workflows.autocode_impl.helpers.request_cancellation()`).
+
+| Required | Optional | Description |
+|----------|----------|-------------|
+| `action="cancel"`, `trace_id` | — | The `type` param is ignored. |
+
+**Example:**
+```python
+workflow(action="cancel", trace_id="abc123")
+```
+
+**Returns (autocode installed):**
+```json
+{
+  "status": "success",
+  "message": "Cancellation requested for trace_id=abc123. Only autocode workflow supports cancellation. Other workflows will complete their current step.",
+  "trace_id": "abc123"
+}
+```
+
+**Returns (autocode not installed — `ImportError`):**
+```json
+{
+  "status": "success",
+  "message": "Cancellation requested for trace_id=abc123, but no cancellation mechanism is available in this deployment (workflows.autocode_impl.helpers not installed).",
+  "trace_id": "abc123"
+}
+```
+
+Other workflows will complete their current step before noticing the flag — that's documented in the response message. See the roadmap for graceful cancel across all workflow types.
+
+---
+
+### `action="history"`
+
+Show recent workflow runs from the tracer. Filters to traces with a `workflow` field OR `category == "workflow"`.
+
+| Required | Optional | Description |
+|----------|----------|-------------|
+| `action="history"` | `trace_id` | The `type` param is ignored. Returns up to 10 recent runs. |
+
+**Example:**
+```python
+workflow(action="history")
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "runs": [
+    {"trace_id": "abc123", "workflow": "research", "goal": "Survey LLM agent frameworks", "status": "success", "elapsed": 45000},
+    {"trace_id": "def456", "workflow": "autocode", "goal": "Fix login bug in auth.py — KeyError on user lookup...", "status": "failed", "elapsed": 12000}
+  ],
+  "count": 2,
+  "trace_id": "abc123"
+}
+```
+
+The `goal` is truncated to 80 chars per entry to keep the response compact for LLM context. Non-workflow traces (tool calls, LLM calls) are filtered out.
+
+---
+
+## 📂 Workflow Types (7)
+
+The `type` parameter is only used by `action="run"`. Each type has its own handler in `tools/workflow_ops/types/` that validates type-specific params and calls `_execute_workflow()`.
+
+### `type="research"`
 
 Gathers information from web sources, synthesizes findings, and generates cited reports.
 
@@ -60,23 +250,43 @@ Gathers information from web sources, synthesizes findings, and generates cited 
 |----------|----------|-------------|
 | `goal` | `trace_id`, `resume` | Research topic or question |
 
-### `data`
+**Handler:** `tools/workflow_ops/types/research.py` → `_type_research()` → `_execute_workflow("research", goal, trace_id, resume)`.
+
+---
+
+### `type="data"`
 
 Analyses datasets with pandas/numpy, generates charts, and produces data reports.
 
 | Required | Optional | Description |
 |----------|----------|-------------|
-| `goal` | `code`, `trace_id`, `resume` | Analysis goal. `code` provides initial Python code. |
+| `goal` | `code`, `trace_id`, `resume` | `code` provides initial Python code. Forwarded only when non-empty. |
 
-### `autocode`
+**Handler:** `tools/workflow_ops/types/data.py` → `_type_data()` → `_execute_workflow("data", goal, trace_id, resume, code=code)`.
+
+---
+
+### `type="autocode"`
 
 Fixes bugs, adds features, or refactors code with TDD and safety checks (git snapshots).
 
 | Required | Optional | Description |
 |----------|----------|-------------|
-| `goal`, `target_file` | `mode`, `error_msg`, `feature_desc`, `trace_id`, `resume` | `mode` controls behaviour. `error_msg` required for `fix_error`. `feature_desc` required for `add_feature`. |
+| `goal`, `target_file` | `mode`, `error_msg`, `feature_desc`, `files`, `git_diff`, `dry_run`, `trace_id`, `resume` | `mode` controls behaviour. `error_msg` required for `fix_error`. `feature_desc` required for `add_feature`. `files`/`git_diff`/`dry_run` are v1.0 NEW pass-through params (forwarded only when non-empty/`True`). |
 
-### `deep_research`
+**Handler:** `tools/workflow_ops/types/autocode.py` → `_type_autocode()` — fail-fast guards BEFORE git snapshots → `_execute_workflow("autocode", goal, trace_id, resume, target_file=..., mode=..., error_msg=..., feature_desc=..., files=..., git_diff=..., dry_run=...)`.
+
+**Modes:**
+
+| Mode | Required extra params | Behavior |
+|------|----------------------|----------|
+| `improve` (default) | — | Refactor + improve the target_file |
+| `fix_error` | `error_msg` | Diagnose + fix the reported error |
+| `add_feature` | `feature_desc` | Implement the described feature |
+
+---
+
+### `type="deep_research"`
 
 Iterative, multi-faceted research for complex questions. Uses a ReAct-style loop with self-evaluation, budget tracking, and convergence detection.
 
@@ -84,40 +294,61 @@ Iterative, multi-faceted research for complex questions. Uses a ReAct-style loop
 |----------|----------|-------------|
 | `goal` | `trace_id`, `resume` | Research question. The workflow decomposes, searches, and synthesizes iteratively until convergence or max iterations. |
 
-### `understand`
+**Handler:** `tools/workflow_ops/types/deep_research.py` → `_type_deep_research()` → `_execute_workflow("deep_research", goal, trace_id, resume)`.
+
+---
+
+### `type="understand"`
 
 Builds a codebase Knowledge Graph for dependency analysis and navigation.
 
 | Required | Optional | Description |
 |----------|----------|-------------|
-| `goal`, `project_root` | `trace_id`, `resume` | `project_root` is the directory to scan |
+| `goal`, `project_root` | `trace_id`, `resume` | `project_root` is the directory to scan. **Bug #3 fix:** `project_root` is now forwarded to `run_workflow()` (was previously validated but dropped). |
 
-### `auto`
+**Handler:** `tools/workflow_ops/types/understand.py` → `_type_understand()` → `_execute_workflow("understand", goal, trace_id, resume, project_root=project_root)`.
+
+---
+
+### `type="autoresearch"`
+
+Autonomous experiment-driven optimization (modify → run → measure → keep/discard → repeat). Inspired by karpathy/autoresearch.
+
+| Required | Optional | Description |
+|----------|----------|-------------|
+| `goal`, `target_file` | `project_root`, `trace_id`, `resume` | `target_file` is the script the workflow will modify + run repeatedly. `project_root` is the git repo where the experiment branch is created. |
+
+**Handler:** `tools/workflow_ops/types/autoresearch.py` → `_type_autoresearch()` → `_execute_workflow("autoresearch", goal, trace_id, resume, target_file=target_file, project_root=project_root)`.
+
+---
+
+### `type="auto"`
 
 Lets the Router classify the goal and dynamically select the correct workflow.
 
 | Required | Optional | Description |
 |----------|----------|-------------|
-| `goal` | `trace_id`, `resume` | The Router decides which workflow to run |
+| `goal` | `trace_id`, `resume`, plus any params for the routed type | The Router decides which workflow to run. If it routes to e.g. `autocode`, the autocode type handler re-validates `target_file` etc. |
 
-**Auto-routing outcomes:**
+**Handler:** `tools/workflow_ops/types/auto.py` → `_type_auto()` → `router.route(goal, trace_id)` → three outcomes:
 
 | Outcome | Status | Description |
 |---------|--------|-------------|
-| `direct` | `routed` | Router decides this is not a workflow task. Returns `tool` and `reason` for the LLM to use. |
-| `low` confidence | `needs_clarification` | Goal is too vague. Returns `clarifying_questions` for the user. |
-| `success` | `success` | Router selected a workflow. Execution proceeds with that type. |
+| Router returns `workflow="direct"` | `routed` | Router decides this is not a workflow task. Returns `tool` and `reason` for the LLM to use. |
+| Router returns `confidence="low"` | `needs_clarification` | Goal is too vague. Returns `clarifying_questions` for the user. **Bug #6 fix:** fires EVEN IF `clarifying_questions` is empty/None (provides default question). |
+| Router returns a specific type with non-low confidence | (delegated to that type) | Delegates to `TYPE_DISPATCH[routed_type]["func"]` — re-validates type-specific params. Falls back to `_execute_workflow` directly for unknown routed types. |
 
 ---
 
 ## 📤 Output
 
-### Success
+### Success (research / data / deep_research / understand / autoresearch)
 ```json
 {
   "status": "success",
-  "result": "...",
-  "trace_id": "abc123"
+  "result": "Research complete: 5 sources synthesized",
+  "trace_id": "abc123",
+  "duration_ms": 45000
 }
 ```
 
@@ -128,7 +359,8 @@ Lets the Router classify the goal and dynamically select the correct workflow.
   "workflow": "direct",
   "tool": "web",
   "reason": "This is a simple factual query best handled by web search.",
-  "trace_id": "abc123"
+  "trace_id": "abc123",
+  "duration_ms": 1200
 }
 ```
 
@@ -142,17 +374,46 @@ Lets the Router classify the goal and dynamically select the correct workflow.
     "Which specific module should I focus on?"
   ],
   "message": "To help me understand your request better, please clarify:\n- What programming language is the project using?\n- Which specific module should I focus on?",
+  "trace_id": "abc123",
+  "duration_ms": 980
+}
+```
+
+### Validation Error — Missing `action`
+```json
+{
+  "status": "error",
+  "error": "action is required (run | list | status | cancel | history)",
   "trace_id": "abc123"
 }
 ```
 
-### Validation Error
+### Validation Error — Unknown `action`
 ```json
 {
   "status": "error",
-  "error": "Invalid workflow type 'coding'. Valid types: ['auto', 'autocode', 'data', 'deep_research', 'research', 'understand']",
+  "error": "Unknown action 'execute'. Use: cancel | history | list | run | status",
+  "trace_id": "abc123"
+}
+```
+
+### Validation Error — Invalid `type` for `run`
+```json
+{
+  "status": "error",
+  "error": "Invalid workflow type 'coding'. Valid: ['autocode', 'auto', 'data', 'deep_research', 'research', 'understand', 'autoresearch']",
   "trace_id": "abc123",
-  "valid_types": ["auto", "autocode", "data", "deep_research", "research", "understand"]
+  "valid_types": ["autocode", "auto", "data", "deep_research", "research", "understand", "autoresearch"]
+}
+```
+
+### Validation Error — Missing type-specific param
+```json
+{
+  "status": "error",
+  "error": "target_file is required for autocode workflow",
+  "trace_id": "abc123",
+  "workflow_type": "autocode"
 }
 ```
 
@@ -160,11 +421,32 @@ Lets the Router classify the goal and dynamically select the correct workflow.
 ```json
 {
   "status": "error",
-  "error": "Workflow execution failed: <exception>",
+  "error": "Workflow action failed: <exception>",
   "trace_id": "abc123",
-  "workflow_type": "autocode"
+  "duration_ms": 12000
 }
 ```
+
+---
+
+## 🛡️ Error Handling
+
+| Error Type | Trigger | Status | Returned Keys | Notes |
+|------------|---------|--------|---------------|-------|
+| Missing `action` | `action` is empty/whitespace | `error` | `error`, `trace_id` | First check in facade. |
+| Unknown `action` | `action` not in `DISPATCH["workflow"]` | `error` | `error` (lists valid actions), `trace_id` | Facade case-insensitive (`action.strip().lower()`). |
+| Handler exception | Action handler raises | `error` | `error` (wraps exception), `trace_id` | Caught in facade `try/except Exception`. Logs via `tracer.error()`. |
+| Handler returned non-dict | Handler returned `str` / `None` / etc. | `error` | `error` (`Handler returned X, expected dict.`), `trace_id` | Defense against malformed handlers. |
+| Missing `type` for `run` | `type` empty/whitespace | `error` | `error`, `trace_id`, `valid_types` | Returned by `_action_run`. |
+| Invalid `type` for `run` | `type` not in `TYPE_DISPATCH` | `error` | `error`, `trace_id`, `valid_types` | Case-insensitive (`type.strip().lower()`). |
+| Missing `goal` | `goal` empty/whitespace | `error` | `error`, `trace_id`, `workflow_type` | Returned by type handler. Logged via `tracer.error()`. |
+| Missing type-specific param | e.g. autocode without `target_file` | `error` | `error`, `trace_id`, `workflow_type` (+ `mode` for autocode mode-specific errors) | Fail-fast BEFORE git snapshots. |
+| Router exception | `router.route()` raises | `error` | `error` (`Failed to route workflow: ...`), `trace_id` | Caught in `_type_auto`. |
+| Checkpoint module missing | `core.observability.checkpoint` ImportError | (success) | `checkpoint=false`, `tracer_summary=...` | `status` action returns success with `checkpoint=false`. |
+| Tracer db error | `tracer.summary()` raises | (success) | `checkpoint=...`, `tracer_summary=null` | `status` action returns success with `tracer_summary=null`. |
+| Autocode helpers missing | `workflows.autocode_impl.helpers` ImportError | (success) | `message` notes "no cancellation mechanism" | `cancel` action returns success — distinct from runtime failure. |
+
+**Guaranteed keys for ALL responses:** `status`, `trace_id`. Every response also includes `duration_ms` (attached by the facade).
 
 ---
 
@@ -172,12 +454,14 @@ Lets the Router classify the goal and dynamically select the correct workflow.
 
 | Feature | Implementation |
 |---------|---------------|
-| **Type allowlist** | `VALID_WORKFLOWS` frozenset prevents LLM hallucination of non-existent types |
-| **Parameter guards** | Autocode validates `target_file`, `error_msg`, `feature_desc` before any filesystem mutation |
-| **Trace ID guarantee** | Every response contains `trace_id`. Auto-generated if not provided by MCP host |
-| **Router confidence guard** | Low-confidence auto-routing aborts with clarifying questions instead of wasting execution time |
-| **Lazy imports** | `core.router` imported inside `auto` branch to prevent startup circular dependencies |
+| **Type allowlist** | `TYPE_DISPATCH` registry prevents LLM hallucination of non-existent types. Unknown types fail fast in `_action_run` with `valid_types` in the error. |
+| **Action allowlist** | `DISPATCH["workflow"]` registry + `@meta_tool`-generated `Literal[...]` enum restricts `action` to the 5 registered names. |
+| **Parameter guards** | Autocode validates `target_file`, `error_msg`, `feature_desc` BEFORE any filesystem mutation (git snapshots). Validation lives in `types/autocode.py`, not the facade. |
+| **Trace ID guarantee** | Every response contains `trace_id`. `_ensure_trace_id()` auto-generates one if not provided by the MCP host. Called by every type handler. |
+| **Router confidence guard** | Low-confidence auto-routing aborts with clarifying questions instead of wasting 15+ minutes of execution time. Fires even if `clarifying_questions` is empty (Bug #6 fix). |
+| **Lazy imports** | `core.router` imported inside `types/auto.py`'s `_type_auto()` body to prevent startup circular dependencies. |
+| **Resilient to partial deployments** | `status` / `cancel` actions catch `ImportError` separately and return success with explanatory messages — a deployment without autocode installed can still call these actions. |
 
 ---
 
-*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-15 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
