@@ -1,366 +1,111 @@
-"""tools/python.py — Python execution meta-tool.
+"""tools/python.py — Python execution meta-tool (v1.0).
 
-Replaces: run_python + run_python_data (old flat tools)
-The LLM sees ONE tool: python(mode, code)
+Thin @tool facade. Routes all python actions to handlers in
+python_ops/actions/ via the DISPATCH dict. Auto-discovered by
+registry.py via the @tool decorator.
 
-Modes:
-  run → strict sandbox, whitelisted builtins only, no imports
-      Use for: pure logic, string ops, math, list/dict work
-  run_data → two-path execution:
-      stdlib imports → in-process (fast)
-      heavy libs     → subprocess (isolated)
-      Use for: anything that needs import statements
+v1.0 changes (the @meta_tool refactor + un-multiplex):
+  - Now a meta-tool with 5 actions: run | run_data | eval | profile | lint.
+  - @meta_tool auto-generates the action: Literal[...] type annotation and
+    the docstring's action list from DISPATCH.
+  - BREAKING: `mode` parameter renamed to `action` (matches all other
+    @meta_tool tools).
+  - New params: trace_id (observability), timeout (override
+    cfg.execution_timeout for subprocess), json_schema (JSON schema string
+    for structured output enforcement).
+  - All implementation logic moved to python_ops/ subpackage.
 
-Key improvements over old execution.py:
-  - Cleaner error messages that tell the model exactly what went wrong
-  - FORBIDDEN_TOKENS no longer blocks subprocess (was a bug in old git_ops)
-  - Sandbox uses pathlib-safe temp directory
-  - Always print() — clear reminder in docstring
+Parallel-safety: python IS in PARALLEL_SAFE. Each action's thread-safety
+is handled internally: run uses _STDOUT_LOCK; eval is fast/lockless;
+run_data/profile/lint use subprocess isolation.
 """
-
 from __future__ import annotations
 
-import ast
-import contextlib
-import importlib
-import io
-import os
-import subprocess
-import sys
-import tempfile
-import threading
-from pathlib import Path
+import time
 
-from core.config import cfg
+from core.contracts import fail
+from core.tracer import tracer
 from registry import tool
-from core.contracts import ok, fail
+from tools._meta_tool import meta_tool
 
-# ── Sandbox config ────────────────────────────────────────────────────────────
+# Import python_ops to trigger DISPATCH auto-discovery BEFORE @meta_tool reads it.
+from tools import python_ops  # noqa: F401
+from tools.python_ops._registry import DISPATCH
 
-SAFE_BUILTINS = {
-    "print": print, "range": range, "len": len,
-    "int": int, "float": float, "str": str, "bool": bool,
-    "list": list, "dict": dict, "set": set, "tuple": tuple,
-    "sum": sum, "min": min, "max": max, "abs": abs, "round": round,
-    "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
-    "sorted": sorted, "reversed": reversed,
-    "isinstance": isinstance, "issubclass": issubclass,
-    "type": type, "repr": repr,  # hash removed: DoS risk via collision
-    "any": any, "all": all,
-    "chr": chr, "ord": ord, "hex": hex, "oct": oct, "bin": bin,
-    "divmod": divmod, "pow": pow,
-    "True": True, "False": False, "None": None,
-}
-
-FORBIDDEN_IN_SANDBOX = ["__import__", "eval(", "exec(", "open(", "compile("]
-
-# 🔴 AST Sandbox Validation (Security P0)
-# Replaces brittle string-matching with syntax-tree analysis.
-# Blocks imports, dangerous builtins, module attribute access, and
-# MRO traversal vectors that bypass import-based restrictions.
-DANGEROUS_BUILTINS = {
-    "eval", "exec", "compile", "open", "__import__",
-    "input", "breakpoint", "globals", "locals", "vars", "dir",
-    "getattr", "setattr", "delattr"
-}
-DANGEROUS_MODULES = {"os", "sys", "subprocess", "shutil", "socket", "ctypes", "multiprocessing"}
-
-# Attributes that enable MRO traversal and sandbox escapes.
-# These allow finding arbitrary classes (e.g., subprocess.Popen) already
-# loaded in the interpreter without needing __import__.
-DANGEROUS_ATTRS = {
-    "__class__", "__base__", "__bases__", "__subclasses__", "__mro__",
-    "__dict__",
-}
-
-# Names that must not be accessed directly (bypass attribute checks).
-# __builtins__ is a Name in the AST, not an Attribute.
-DANGEROUS_NAMES = {"__builtins__"}
-
-
-def _validate_sandbox_ast(code: str) -> tuple[bool, str]:
-    """
-    AST-based sandbox validation. Blocks imports, dangerous builtin calls,
-    module attribute access, MRO traversal vectors, and dangerous name access.
-
-    Returns (is_safe, error_message).
-
-    NOTE: This is defense-in-depth against LLM mistakes and prompt injection.
-    It is NOT a security boundary against determined adversarial code.
-    Do not expose to untrusted multi-tenant input without OS-level sandboxing.
-    """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as e:
-        return False, f"SyntaxError: {e.msg} (line {e.lineno})"
-
-    for node in ast.walk(tree):
-        # Block all imports in strict sandbox
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            return False, "Imports are not allowed in sandbox mode. Use mode='run_data' for imports."
-
-        # Block dangerous name references (__builtins__)
-        if isinstance(node, ast.Name) and node.id in DANGEROUS_NAMES:
-            return False, f"Blocked sandbox escape vector: name '{node.id}' is not allowed in sandbox mode."
-
-        # Block dangerous function calls
-        if isinstance(node, ast.Call):
-            func = node.func
-            # Direct calls: eval(), exec(), open(), etc.
-            if isinstance(func, ast.Name) and func.id in DANGEROUS_BUILTINS:
-                return False, f"Blocked dangerous call: {func.id}() in sandbox mode."
-            # Attribute calls: os.system(), subprocess.run(), etc.
-            if isinstance(func, ast.Attribute):
-                if isinstance(func.value, ast.Name) and func.value.id in DANGEROUS_MODULES:
-                    return False, f"Blocked dangerous module access: {func.value.id}.{func.attr}() in sandbox mode."
-
-        # Block MRO traversal attribute access.
-        # These bypass import restrictions by finding already-loaded classes
-        # (e.g., subprocess.Popen) via the Python class hierarchy.
-        if isinstance(node, ast.Attribute):
-            if node.attr in DANGEROUS_ATTRS:
-                return False, f"Blocked sandbox escape vector: attribute '{node.attr}' is not allowed in sandbox mode."
-
-        # Block dynamic subscript resolution (e.g., __builtins__["eval"])
-        if isinstance(node, ast.Subscript):
-            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
-                if node.slice.value in DANGEROUS_BUILTINS:
-                    return False, f"Blocked dynamic subscript access to '{node.slice.value}' in sandbox mode."
-
-        # Block definition-time execution vectors
-        if isinstance(node, ast.ClassDef):
-            return False, "Class definitions (metaclass attacks) are not allowed in sandbox mode."
-        if isinstance(node, ast.AsyncFunctionDef):
-            return False, "Async functions are not allowed in sandbox mode."
-        if isinstance(node, (ast.With, ast.AsyncWith)):
-            return False, "Context managers (with statements) are not allowed in sandbox mode."
-
-    return True, ""
-
-# Stdlib modules — run in-process (fast, no subprocess overhead)
-STDLIB_IMPORTS = {
-    "random", "json", "math", "statistics", "datetime", "calendar",
-    "collections", "itertools", "functools", "re", "csv",
-    "io", "textwrap", "string", "decimal", "fractions",
-    "heapq", "bisect", "pprint", "copy", "time", "uuid",
-    "hashlib", "base64", "struct",
-    "dataclasses", "typing", "enum", "abc",
-}
-
-# 🔵 Granular Core Allowlist: Only specific safe utilities can be imported by LLM scripts
-CORE_ALLOWED = {
-    "core.br_validator",
-}
-
-# Heavy libs — require subprocess (slow first import, worth isolating)
-HEAVY_IMPORTS = {
-    "pandas", "numpy", "matplotlib", "scipy", "sklearn",
-    "seaborn", "plotly", "PIL", "cv2", "torch", "tensorflow",
-}
-
-ALL_ALLOWED = STDLIB_IMPORTS | HEAVY_IMPORTS | CORE_ALLOWED
-
-# Modules that are never allowed even in run_data -- security boundary.
-# These can access the filesystem, network, processes, or environment vars.
-BLOCKED_IMPORTS = {
-    "os", "sys", "subprocess", "shutil", "socket", "pickle",
-    "multiprocessing", "ctypes", "importlib", "builtins",
-    "signal", "pty", "tty", "termios", "fcntl", "resource",
-}
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _parse_imports(code: str) -> list[str]:
-    """Return list of top-level base module names from code."""
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return []
-    names = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                # Preserve full path for core.* to allow granular sandboxing
-                name = alias.name
-                names.append(name if name.startswith("core.") else name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            name = node.module
-            names.append(name if name.startswith("core.") else name.split(".")[0])
-    return names
-
-# [BUGFIX-2] Thread-safe stdout capture using contextlib.redirect_stdout.
-# contextlib.redirect_stdout is reentrant but NOT cross-thread-safe:
-# sys.stdout is process-global, so concurrent redirects from different
-# threads can clobber each other. We add a module-level lock to prevent
-# this — safe even if python_exec is added to PARALLEL_SAFE in the future.
-_STDOUT_LOCK = threading.Lock()
-
-def _run_inprocess(code: str, import_names: list[str]) -> dict:
-    """Execute stdlib-only code in-process. Fast, no subprocess overhead."""
-    exec_globals: dict = {"__builtins__": __builtins__}
-
-    for name in import_names:
-        try:
-            exec_globals[name] = importlib.import_module(name)
-        except ImportError as e:
-            return fail(f"Import failed: {e}")
-
-    captured = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(captured):
-            exec(code, exec_globals)
-        output = captured.getvalue().strip()
-        return ok(
-            output if output else "(no output — use print() to return results)",
-            mode="in_process",
-        )
-    except Exception as e:
-        return fail(str(e), mode="in_process")
-
-
-def _run_subprocess(code: str) -> dict:
-    """Execute heavy-lib code in a subprocess."""
-    tmp = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8",
-            dir=str(cfg.workspace_root),
-        ) as f:
-            f.write(code)
-            tmp = Path(f.name)
-
-        result = subprocess.run(
-            [sys.executable, str(tmp)],
-            capture_output=True,
-            text=True,
-            timeout=cfg.execution_timeout,
-        )
-
-        if result.returncode != 0:
-            error = result.stderr.strip() or result.stdout.strip() or "Unknown error"
-            return fail(error, mode="subprocess")
-
-        output = result.stdout.strip()
-        return ok(
-            output if output else "(no output — use print() to return results)",
-            mode="subprocess",
-        )
-
-    except subprocess.TimeoutExpired:
-        return fail(
-            f"Timed out after {cfg.execution_timeout}s. Simplify or reduce data size.",
-            mode="subprocess",
-        )
-    except Exception as e:
-        return fail(str(e), mode="subprocess")
-    finally:
-        if tmp and tmp.exists():
-            try:
-                tmp.unlink()
-            except Exception:
-                pass
-
-# ── Meta-tool ─────────────────────────────────────────────────────────────────
 
 @tool
-def python(mode: str, code: str, trace_id: str = "") -> dict:
-    """
-    Execute Python code.
+@meta_tool(
+    DISPATCH.get("python", {}),
+    doc_sections=[
+        "PYTHON TOOL — Code execution with security layers:",
+        " | Need | Action | Why |",
+        " |------|--------|-----|",
+        " | Pure logic, no imports | python(run) | Strict sandbox, whitelisted builtins only |",
+        " | Data analysis with imports | python(run_data) | Controlled imports (stdlib in-process, heavy in subprocess) |",
+        " | Quick expression eval | python(eval) | Expressions only (no statements), even more restrictive than run |",
+        " | Performance profiling | python(profile) | cProfile timing breakdown |",
+        " | Code quality check | python(lint) | ruff --select E,F (syntax + lint) before execution |",
+        "",
+        "NOT parallel-safe for run_data (subprocess), but run/eval/lint are safe.",
+        "ALWAYS use print() to return output — variables are not captured (except in eval).",
+    ],
+)
+def python(
+    action: str = "",
+    code: str = "",
+    trace_id: str = "",
+    timeout: int = -1,
+    json_schema: str = "",
+) -> dict:
+    """Python code execution meta-tool — run | run_data | eval | profile | lint."""
+    action = action.strip().lower() if action else ""
 
-    mode: "run" | "run_data"
+    tracer.step(trace_id, "python", f"action={action}")
 
-    run
-      Strict sandbox — no imports allowed.
-      Only whitelisted built-ins: print, range, len, int, float, str,
-      list, dict, set, sum, min, max, abs, round, sorted, zip, etc.
-      Use for: math, string ops, list/dict manipulation, pure logic.
-      Fast — runs in the current process.
-
-    run_data
-      Unrestricted imports from allowed module list.
-      Stdlib modules (json, math, datetime, re, csv, etc.) → in-process, fast.
-      Heavy libs (pandas, numpy, matplotlib, sklearn) → subprocess, isolated.
-      ALWAYS use print() to return output — variables are not captured.
-      Use for: data analysis, file processing, calculations with libraries.
-
-    Allowed imports for run_data:
-      stdlib: random json math statistics datetime calendar collections
-              itertools functools re csv io textwrap string decimal
-              pathlib os sys hashlib base64 uuid dataclasses typing enum
-      heavy: pandas numpy matplotlib scipy sklearn seaborn plotly
-    """
-    mode = mode.strip().lower()
+    if not action:
+        return fail("action is required (run | run_data | eval | profile | lint)", trace_id=trace_id)
 
     if not code or not code.strip():
-        return fail("No code provided")
+        return fail("No code provided", trace_id=trace_id)
 
-    # ── run (sandbox) ─────────────────────────────────────────────────────────
-    if mode == "run":
-        # Fast-path string check (cheap, catches obvious violations)
-        for token in FORBIDDEN_IN_SANDBOX:
-            if token in code:
-                return fail(
-                    f"Forbidden token '{token}' in sandbox mode. "
-                    "Use mode='run_data' for code that needs imports or file access."
-                )
+    dispatch = DISPATCH.get("python", {})
+    op_info = dispatch.get(action)
 
-        # 🔴 Authoritative AST validation (blocks obfuscated bypasses)
-        ast_safe, ast_err = _validate_sandbox_ast(code)
-        if not ast_safe:
-            return fail(ast_err)
+    if op_info is None:
+        valid_actions = " | ".join(sorted(dispatch.keys()))
+        return fail(
+            f"Unknown action '{action}'. Use: {valid_actions}",
+            trace_id=trace_id,
+        )
 
-        captured = io.StringIO()
-        try:
-            with _STDOUT_LOCK:
-                with contextlib.redirect_stdout(captured):
-                    local_env: dict = {}
-                    exec(code, {"__builtins__": SAFE_BUILTINS}, local_env)
-            output = captured.getvalue().strip()
-            from core.memory_backend.pruner import prune_text
-            final_output = output if output else str({k: str(v) for k, v in local_env.items()})
-            if output:  # Only prune actual stdout, not env dumps
-                final_output = prune_text("python_exec", final_output, trace_id)
-            return ok(final_output, mode="sandbox")
-        except Exception as e:
-            return fail(str(e), mode="sandbox")
+    handler = op_info["func"]
 
-    # ── run_data ──────────────────────────────────────────────────────────────
-    if mode == "run_data":
-        # Syntax check first
-        try:
-            ast.parse(code)
-        except SyntaxError as e:
-            return fail(f"SyntaxError line {e.lineno}: {e.msg}", mode="run_data")
+    kwargs = {
+        "code": code,
+        "trace_id": trace_id,
+        "timeout": timeout,
+        "json_schema": json_schema,
+    }
 
-        imports = _parse_imports(code)
-        # Check blocked imports first (security boundary)
-        dangerous = [n for n in imports if n in BLOCKED_IMPORTS]
-        if dangerous:
-            return fail(
-                f"Import(s) blocked for security: {dangerous}. "
-                "These modules can access filesystem, processes, or network. "
-                "Use the file(), git(), or web() tools instead.",
-                mode="run_data",
-            )
+    start = time.time()
+    try:
+        result = handler(**kwargs)
+    except Exception as e:
+        return fail(f"Python action failed: {e}", trace_id=trace_id)
 
-        blocked = [n for n in imports if n not in ALL_ALLOWED and n not in ("__future__",)]
-        if blocked:
-            return fail(
-                f"Import(s) not in allowed list: {blocked}. "
-                f"Allowed stdlib: {sorted(STDLIB_IMPORTS)}. "
-                f"Allowed heavy: {sorted(HEAVY_IMPORTS)}.",
-                mode="run_data",
-            )
+    if not isinstance(result, dict):
+        return fail(
+            f"Handler returned {type(result).__name__}, expected dict.",
+            trace_id=trace_id,
+        )
 
-        needs_heavy = any(n in HEAVY_IMPORTS for n in imports)
-        if needs_heavy:
-            result = _run_subprocess(code)
-        else:
-            result = _run_inprocess(code, imports)
+    if trace_id and "trace_id" not in result:
+        result["trace_id"] = trace_id
 
-        if result.get("status") == "success" and result.get("data"):
-            from core.memory_backend.pruner import prune_text
-            result["data"] = prune_text("python_exec", result["data"], trace_id)
-        return result
+    if result.get("status") == "error":
+        tracer.step(trace_id, "python", f"action={action}:failed")
+    else:
+        tracer.step(trace_id, "python", f"action={action}:complete")
 
-    return fail(f"Unknown mode '{mode}'. Use: run | run_data")
+    result["duration_ms"] = round((time.time() - start) * 1000)
+    return result

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from tools.python import _validate_sandbox_ast
+from tools.python_ops.sandbox import _validate_sandbox_ast
 
 
 class TestSandboxMRORBlocking:

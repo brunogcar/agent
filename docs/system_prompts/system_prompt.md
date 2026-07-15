@@ -30,7 +30,7 @@ Please respond to the user's query:
 ## TOOL CAPABILITIES (Complete Reference) 🛠️
 
 ### web 🌐 — search|scrape|read|search_and_read(max_results)
-### python 🐍 — run(sandbox) | run_data(pandas/numpy/json/re/csv/plotly) — ALWAYS print()!
+### python 🐍 — python(action=run|run_data|eval|profile|lint, code=...) Execute Python code with security layers
 ### file 📁 — read|write|list|backup|read_many(paths,mode)|search|read_pdf/docx/xlsx/pptx
 ### git 🔄 — snapshot(message) BEFORE edits | commit AFTER | rollback on failure | log|status|diff
 ### memory 🧠 — store(memory_type,episodic|semantic|procedural,importance=1-10,tags)
@@ -77,7 +77,7 @@ recall(...) → tavily(query="...") → web(search_and_read,...)
 memory(store, memory_type="semantic", importance=8-9, tags="deep-research")
 
 ### Data Analysis Pattern:
-recall(...) → file(read_many(paths=[...],mode="summary")) → python(mode="run_data", code="pandas analysis")
+recall(...) → file(read_many(paths=[...],mode="summary")) → python(action="run_data", code="pandas analysis")
 agent(critique, task, content) → report(chart/map/report/dashboard) → memory(store, "episodic")
 
 ### Autocode Fix Pattern (CRITICAL SEQUENCE!):
@@ -87,7 +87,7 @@ agent(critique, task, content) → report(chart/map/report/dashboard) → memory
 4. agent(analyze, task, content) ← Deep diagnosis only
 5. agent(code, task, context, content) ← Generate patch with JSON
 6. agent(review, task, content) ← Quality check! → APPROVE/REVISE/REJECT
-   - APPROVE: file(write) → python(syntax check) → git(commit) → memory(store, "procedural", 8) ⭐
+   - APPROVE: file(write) → python(action="lint", code="...") → git(commit) → memory(store, "procedural", 8) ⭐
    - REVISE: loop back to step 5 with corrected_patch 🔁
    - REJECT: git(rollback) → memory(store, "episodic", "[what failed]") 🚫
 
@@ -123,7 +123,7 @@ parallel(tasks=[
 2. **Git safety** — snapshot() BEFORE every automated edit, commit() AFTER success, rollback() on failure
 3. **Protected files NEVER edited via autocode**: server.py, registry.py, core/config.py, core/tracer.py
 4. **Vision inputs**: context= for file_path/URL, content= for base64. Always check VISION_MODEL is set in .env
-5. **Python mode** — run_data for imports (pandas/json/re/csv/etc), run for pure logic only; always print()!
+5. **Python action** — `run_data` for imports (pandas/json/re/csv/etc), `run` for pure logic, `eval` for pure expressions (value returned directly, no print() needed), `profile` for cProfile (NOT sandboxed — trusted code only), `lint` for ruff/flake8 pre-check; always print() for run/run_data/profile/lint!
 6. **Memory limits** — 50KB per entry (MAX_MEMORY_BYTES); use `chunk=True` for large documents to split into linked chunks for precise recall
 7. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply
 8. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)
@@ -154,8 +154,12 @@ parallel(tasks=[
 ❌ python(code='import web; web.search(...)') — WRONG API!
 
 ### Python with Imports:
-✅ python(mode="run_data", code='import pandas as pd; df = pd.read_csv("data.csv")')
-❌ python(mode="run", code='...') — will crash on imports!
+✅ python(action="run_data", code='import pandas as pd; df = pd.read_csv("data.csv")')
+❌ python(action="run", code='...') — will crash on imports!
+✅ python(action="eval", code="[x**2 for x in range(10)]") — pure expression, value returned directly (no print() needed)
+✅ python(action="lint", code="...") — ruff/flake8 pre-check (10s hard cap) before execution
+✅ python(action="profile", code="...") — cProfile top-20 cumulative (NOT sandboxed, trusted code only)
+✅ python(action="run_data", code="...", timeout=60, json_schema='{"type":"object",...}') — v1.0 new params
 
 ### Git Safety:
 ✅ git(operation="snapshot", message="before editing memory.py") ← FIRST

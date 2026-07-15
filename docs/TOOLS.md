@@ -18,7 +18,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [MEMORY.md](tools/MEMORY.md) | Memory | 3 ChromaDB collections, tag validation, janitor, lazy loading |
 | [NOTIFY.md](tools/NOTIFY.md) | Notify | Cross-platform alerts, APScheduler, graceful console fallback |
 | [PARALLEL.md](tools/PARALLEL.md) | Parallel | ThreadPoolExecutor, global timeout, nested-call guard, allowlist |
-| [PYTHON.md](tools/PYTHON.md) | Python | Dual-mode execution, AST sandbox, import allowlisting |
+| [PYTHON.md](tools/PYTHON.md) | Python | 5 actions (`run`/`run_data`/`eval`/`profile`/`lint`) via `@meta_tool`, `python_ops/` subpackage (11 files), three-layer security (sandbox → imports → executors), `json_schema` validation, `timeout` override |
 | [REPORT.md](tools/REPORT.md) | Report | 11 atomic actions, HTML dashboards, XSS-safe templates, lazy imports |
 | [SWARM.md](tools/SWARM.md) | Swarm | Multi-model meta-tool, parallel cloud LLM fan-out, consensus/race/vote/compare/list_providers |
 | [TAVILY.md](tools/TAVILY.md) | Tavily | AI-ranked search, bulk extraction, keyless mode, API budget tracking |
@@ -34,7 +34,7 @@ Most tools share a common foundation defined in `tools/_meta_tool.py` and the re
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **`@meta_tool`** | `tools/_meta_tool.py` | Auto-generates `Literal[...]` action enums and docstrings from a `DISPATCH` dict. Used by `browser`, `file`, `git`, `memory`, `report`, `tavily`, `web`, and `cli` (special case). |
+| **`@meta_tool`** | `tools/_meta_tool.py` | Auto-generates `Literal[...]` action enums and docstrings from a `DISPATCH` dict. Used by `browser`, `consult`, `file`, `git`, `github`, `python`, `report`, `swarm`, `tavily`, `web`, and `cli` (special case). |
 | **`DISPATCH`** | `tools/*_ops/_registry.py` | Maps action names → handler metadata. Validated by `^[a-z][a-z0-9_]*$` regex. |
 | **`@register_action`** | `tools/*_ops/actions/*.py` | Decorator that auto-discovers action handlers into the registry. |
 | **`path_guard`** | `core/path_guard.py` | Validates all filesystem paths. Blocks traversal outside `agent_root` / `workspace_root`. |
@@ -251,7 +251,20 @@ tools/
 │
 ├── parallel.py             # Concurrent tool execution
 │
-├── python.py          # Python dual-mode execution
+├── python.py              # Python code execution meta-tool — @meta_tool facade (5 actions: run/run_data/eval/profile/lint)
+├── python_ops/
+│   ├── _registry.py       # DISPATCH + register_action decorator
+│   ├── __init__.py        # Auto-discovery (Path.glob actions/*.py)
+│   ├── sandbox.py         # SAFE_BUILTINS, FORBIDDEN_IN_SANDBOX, DANGEROUS_* sets, _validate_sandbox_ast, _validate_eval_ast
+│   ├── imports.py         # STDLIB/HEAVY/CORE_ALLOWED/BLOCKED_IMPORTS, _parse_imports
+│   ├── executors.py       # _STDOUT_LOCK, _run_inprocess, _run_subprocess (timeout_override), _validate_against_schema, _validate_output_text_against_schema
+│   └── actions/
+│       ├── __init__.py
+│       ├── run.py         # @register_action("python", "run") — strict sandbox
+│       ├── run_data.py    # @register_action("python", "run_data") — controlled imports
+│       ├── eval.py        # @register_action("python", "eval") — pure expression (NEW v1.0)
+│       ├── profile.py     # @register_action("python", "profile") — cProfile top-20 (NEW v1.0, NOT sandboxed)
+│       └── lint.py        # @register_action("python", "lint") — ruff/flake8 pre-check (NEW v1.0)
 │
 ├── report.py               # Report meta-tool (11 atomic actions)
 ├── report_ops/
@@ -598,28 +611,34 @@ Changes not staged for commit:
 
 ### 10. 🐍 Python — [tools/PYTHON.md](tools/PYTHON.md)
 
-**Status:** v1.0 — Dual-mode sandboxed code execution.
+**Status:** v1.0 — `@meta_tool` refactor with 5 actions: `run` / `run_data` / `eval` / `profile` / `lint`.
 
-**Purpose:** Execute Python code with either strict sandbox or controlled data-science imports.
+**Purpose:** Execute Python code with three-layer security (sandbox → imports → executors) and optional `json_schema` validation. Replaces the Pre-v1 dual-mode `python(mode, code)` facade.
 
 **Key characteristics:**
-- **Dual-mode** — `run` (strict sandbox, no imports) and `run_data` (controlled imports, subprocess for heavy libs)
-- **AST-based sandbox** — `validate_sandbox_ast()` blocks imports, dangerous builtins, `getattr`/`setattr`, metaclass attacks, context managers, subscript access to `__builtins__`
+- **5 actions via `@meta_tool`** — `run` (strict sandbox, no imports), `run_data` (controlled imports, stdlib in-process + heavy in subprocess), `eval` (pure expression, value returned directly), `profile` (cProfile top-20, NOT sandboxed), `lint` (ruff/flake8 pre-check, 10s hard cap)
+- **11-file `python_ops/` subpackage** — `_registry.py`, `__init__.py`, `sandbox.py` (Layer 1), `imports.py` (Layer 2), `executors.py` (Layer 3), `actions/{__init__,run,run_data,eval,profile,lint}.py`
+- **Three-layer security** — Sandbox (`SAFE_BUILTINS` + `_validate_sandbox_ast` / `_validate_eval_ast`) → Imports (`BLOCKED_IMPORTS` + `ALL_ALLOWED`) → Executors (`_STDOUT_LOCK` + subprocess isolation). Each layer owned by a separate module and fails independently
+- **`json_schema` validation** — Graceful for `run`/`run_data` (warnings on mismatch); strict for `eval` (`fail` on mismatch); ignored by `profile`/`lint`. Best-effort, no `jsonschema` dependency (supports `type`/`enum`/`required`/`properties`/`items`)
+- **`timeout` override** — `-1` → `cfg.execution_timeout`; any non-negative int → overrides. Honored by `run_data`/`profile` (subprocess); ignored by `run`/`eval` (in-process); fixed 10s hard cap for `lint`
+- **AST-based sandbox** — `_validate_sandbox_ast()` blocks imports, dangerous builtins, MRO traversal, metaclass attacks, context managers, dynamic subscripts; `_validate_eval_ast()` is stricter (rejects all statements)
 - **Thread-safe stdout** — Module-level `_STDOUT_LOCK` prevents cross-thread clobbering in `parallel()`
-- **Import allowlisting** — `STDLIB_IMPORTS` + `HEAVY_IMPORTS` + `CORE_ALLOWED` with `BLOCKED_IMPORTS` boundary
-- **Result pruning** — `prune_text()` prevents MCP context overflow
+- **Import allowlisting** — `STDLIB_IMPORTS` + `HEAVY_IMPORTS` + `CORE_ALLOWED` (`core.br_validator` only) with `BLOCKED_IMPORTS` security boundary (`os`, `sys`, `subprocess`, etc.)
+- **Result pruning** — `prune_text()` prevents MCP context overflow on large outputs
 
-**Safety:** Two-layer defense (fast-path string check + deep AST tree walking), 16 pytest security cases, subprocess isolation for heavy libs, timeout enforcement.
+**Breaking change (v1.0):** `mode` parameter renamed to `action`. Legacy `python(mode="run", ...)` returns `{"status": "error", "error": "action is required (run | run_data | eval | profile | lint)"}`. Update all callers to `python(action="run", ...)`. The `run` and `run_data` behaviors are otherwise unchanged.
+
+**Safety:** Two-layer defense (fast-path string check + deep AST tree walking), subprocess isolation for heavy libs, timeout enforcement (configurable + 10s hard cap for lint), temp file cleanup in `finally` blocks. 145 tests across 10 files (3 existing Pre-v1 files updated + 7 new v1.0 files including `conftest.py`).
 
 **Output:**
 ```json
 {
   "status": "success",
-  "result": "42",
-  "stdout": "42\n",
-  "stderr": "",
-  "locals": {"x": 42},
-  "trace_id": "abc123"
+  "data": "4950",
+  "mode": "sandbox",
+  "trace_id": "abc123",
+  "warnings": ["json_schema validation failed: ..."],
+  "duration_ms": 12
 }
 ```
 
@@ -849,11 +868,11 @@ Changes not staged for commit:
 
 | Aspect | Agent | Browser | CLI | Consult | File | GitHub | Git | Memory | Notify | Parallel | Python | Report | Swarm | Tavily | Vision | Web | Workflow |
 |--------|-------|---------|-----|---------|------|--------|-----|--------|--------|----------|--------|--------|-------|--------|--------|-----|----------|
-| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `mode` param | `action` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
-| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
+| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `action` param | `action` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
 | **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ✅ API only (push ❌) | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
 | **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Planner synthesis | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
-| **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ Data mode | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
+| **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ run_data/profile/lint | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
 | **Lazy imports** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
 | **Primary use** | Specialist LLM | JS page automation | NL command router | Cloud advisory | File CRUD | PR workflow | Version control | Memory I/O | Alerts | Concurrent execution | Code execution | HTML reports | Multi-model consensus | AI search | Image analysis | Web search | Workflow orchestration |
 
@@ -999,14 +1018,16 @@ Wrap external HTTP calls, subprocess executions, and heavy computations in timeo
 Creating `.bak` backup files is forbidden by project rules. Use atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) instead.
 
 ### 6. AST Sandbox Validation (Python Tool)
-The Python execution sandbox blocks:
-- Direct imports, dangerous builtins (`eval`, `exec`, `compile`, `open`)
+The Python execution sandbox (Layer 1 — `python_ops/sandbox.py`) blocks:
+- Direct imports, dangerous builtins (`eval`, `exec`, `compile`, `open`, `__import__`)
 - Dynamic resolution (`getattr`, `setattr`, `delattr`)
-- Subscript access to `__builtins__`
+- Subscript access to `__builtins__` (e.g. `__builtins__["eval"]`)
 - Module attribute calls (`os.system()`)
+- MRO traversal vectors (`__class__`, `__subclasses__`, `__mro__`, `__dict__`)
+- Direct name access (`__builtins__`)
 - Definition-time execution (`ast.ClassDef`, `ast.With`, `ast.AsyncFunctionDef`)
 
-Two-layer defense: fast-path string check + deep AST tree walking. 16 pytest cases verify blocking of obfuscated attacks.
+Two-layer defense: fast-path string check (`FORBIDDEN_IN_SANDBOX`) + deep AST tree walking (`_validate_sandbox_ast` / `_validate_eval_ast`). The `eval` action is stricter — it rejects ALL statements (only pure expressions survive `ast.parse(mode='eval')`). 31 pytest cases across `test_sandbox_security.py` + `test_sandbox_ast_bypass.py` verify blocking of obfuscated attacks. See [docs/tools/python/ARCHITECTURE.md § Security Layers](tools/python/ARCHITECTURE.md#-security-layers) for the full three-layer model (sandbox → imports → executors).
 
 ### 7. Git Rollback Safety
 Default `rollback` action uses stash-based recovery: stashes uncommitted changes before `git reset --hard HEAD`. Returns `stash_ref` for manual recovery. Only `force=True` performs permanent discard + `git clean -fd`.

@@ -16,7 +16,7 @@ class TestThreadSafeStdout:
     def test_concurrent_stdout_isolation(self):
         """Two parallel python() calls must each see only their own output."""
         def run_code(n):
-            return python(mode="run", code=f"print('thread{n}')")
+            return python(action="run", code=f"print('thread{n}')")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             f1 = ex.submit(run_code, 1)
@@ -34,7 +34,7 @@ class TestThreadSafeStdout:
     def test_concurrent_mixed_modes(self):
         """Concurrent run and run_data calls must not interleave output."""
         def run_sandbox(n):
-            return python(mode="run", code=f"x = {n} * 2\nprint(x)")
+            return python(action="run", code=f"x = {n} * 2\nprint(x)")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
             futures = [ex.submit(run_sandbox, i) for i in range(3)]
@@ -53,7 +53,7 @@ class TestThreadSafeStdout:
     def test_run_data_stdout_isolation(self):
         """run_data mode (in-process) must also isolate stdout per thread."""
         def run_stdlib(n):
-            return python(mode="run_data", code=f"import json\nprint(json.dumps({{'id': {n}}}))")
+            return python(action="run_data", code=f"import json\nprint(json.dumps({{'id': {n}}}))")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             f1 = ex.submit(run_stdlib, 1)
