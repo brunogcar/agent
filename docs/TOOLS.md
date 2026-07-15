@@ -22,7 +22,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [REPORT.md](tools/REPORT.md) | Report | 11 atomic actions, HTML dashboards, XSS-safe templates, lazy imports |
 | [SWARM.md](tools/SWARM.md) | Swarm | Multi-model meta-tool, parallel cloud LLM fan-out, consensus/race/vote/compare/list_providers |
 | [TAVILY.md](tools/TAVILY.md) | Tavily | AI-ranked search, bulk extraction, keyless mode, API budget tracking |
-| [VISION.md](tools/VISION.md) | Vision | Multimodal analysis, 3 input sources, SSRF protection, JSON mode |
+| [VISION.md](tools/VISION.md) | Vision | Multimodal image analysis — 3 actions (describe/extract_text/analyse_ui) via `@meta_tool`, `vision_ops/` subpackage (8 files), breaking `task`→`action`+`question` rename (with deprecated `task` alias), new params (`json_schema`/`format`/`context_type`), `core/net retry_sync` URL downloads, SSRF protection |
 | [WEB.md](tools/WEB.md) | Web | SearXNG search, BeautifulSoup, parallel scraping, connection pooling |
 | [WORKFLOW.md](tools/WORKFLOW.md) | Workflow | LangGraph launcher, 7 workflow types, auto-routing, resume support |
 
@@ -34,7 +34,7 @@ Most tools share a common foundation defined in `tools/_meta_tool.py` and the re
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **`@meta_tool`** | `tools/_meta_tool.py` | Auto-generates `Literal[...]` action enums and docstrings from a `DISPATCH` dict. Used by `browser`, `consult`, `file`, `git`, `github`, `python`, `report`, `swarm`, `tavily`, `web`, and `cli` (special case). |
+| **`@meta_tool`** | `tools/_meta_tool.py` | Auto-generates `Literal[...]` action enums and docstrings from a `DISPATCH` dict. Used by `browser`, `consult`, `file`, `git`, `github`, `python`, `report`, `swarm`, `tavily`, `vision`, `web`, and `cli` (special case). |
 | **`DISPATCH`** | `tools/*_ops/_registry.py` | Maps action names → handler metadata. Validated by `^[a-z][a-z0-9_]*$` regex. |
 | **`@register_action`** | `tools/*_ops/actions/*.py` | Decorator that auto-discovers action handlers into the registry. |
 | **`path_guard`** | `core/path_guard.py` | Validates all filesystem paths. Blocks traversal outside `agent_root` / `workspace_root`. |
@@ -329,7 +329,20 @@ tools/
 │       ├── research.py
 │       └── search.py
 │
-├── vision.py               # Multimodal image analysis
+├── vision.py               # Multimodal image analysis meta-tool — @meta_tool facade (3 actions: describe/extract_text/analyse_ui)
+├── vision_ops/
+│   ├── _registry.py        # DISPATCH + register_action decorator
+│   ├── __init__.py         # Auto-discovery (Path.glob actions/*.py)
+│   ├── helpers.py          # _validate_vision_inputs, _file_to_block, _b64_to_block, _do_download,
+│   │                       #   _download_image_to_data_uri (core/net retry_sync), _check_vision_available,
+│   │                       #   _build_image_block, _call_vision
+│   ├── prompts.py          # DESCRIBE/EXTRACT_TEXT/ANALYSE_UI system prompts (base + JSON variants)
+│   │                       #   + FORMAT_SUFFIXES + CONTEXT_TYPE_MODIFIERS
+│   └── actions/
+│       ├── __init__.py
+│       ├── describe.py     # @register_action("vision", "describe")
+│       ├── extract_text.py # @register_action("vision", "extract_text")
+│       └── analyse_ui.py   # @register_action("vision", "analyse_ui")
 │
 ├── web.py                  # Web search & scraping meta-tool (4 actions)
 ├── web_ops/
@@ -705,27 +718,39 @@ Changes not staged for commit:
 
 ### 13. 👁️ Vision — [tools/VISION.md](tools/VISION.md)
 
-**Status:** v1.0 — Multimodal image analysis.
+**Status:** v1.0 — Multimodal image analysis meta-tool with 3 actions.
 
-**Purpose:** Analyze images via local file, base64, or URL using a dedicated vision model.
+**Purpose:** Analyze images via local file, base64, or URL using a dedicated vision model. Three action-specific system prompts cover the common image-analysis use cases: general description, OCR-style text extraction, and UI/UX critique.
 
 **Key characteristics:**
-- **3 input sources** — `file_path`, `base64`, or `url` (exactly one required)
-- **Multimodal LLM dispatch** — Routes to `cfg.vision_model` via `llm.call(role="vision")`
-- **JSON mode** — Structured output with schema validation
-- **Context support** — Optional `context` parameter for background information
-- **Kill-switch ready** — Clear error if `VISION_MODEL` is unset
+- **`@meta_tool` facade** — 3 actions (`describe` / `extract_text` / `analyse_ui`) auto-discovered from `vision_ops/actions/` via the `DISPATCH` registry. Adding a new action = drop a file; the `action: Literal[...]` annotation and docstring update themselves.
+- **8-file `vision_ops/` subpackage** — `_registry.py`, `__init__.py`, `helpers.py`, `prompts.py`, `actions/{__init__,describe,extract_text,analyse_ui}.py`.
+- **3 actions, same LLM** — All three route to one configured `vision` role (`cfg.vision_model`). Only the system prompt differs (base + format suffix + context-type modifier). `describe` preserves the Pre-v1 `_VISION_SYSTEM` behavior; `extract_text` adds an OCR specialist prompt (reading order, location notes, `[unclear]` for low-confidence); `analyse_ui` adds a senior UI/UX designer prompt (8-section critique with severity-tagged issues).
+- **Breaking `task`→`action`+`question` rename** — the Pre-v1 `vision(task="...")` is replaced by `vision(action="describe", question="...")`. A **deprecated `task` alias** is kept for backward compat with `tools/agent_ops/actions/vision_delegate.py` — when `action` is empty AND `task` is non-empty, mapped to `action="describe"` + `question=task` with a deprecation warning. **Will be removed in v2.0.**
+- **New v1.0 params** — `trace_id` (observability, threaded through all return paths), `format` (`markdown`/`json`/`bullet_points` — appended suffix to base prompt), `context_type` (`""`/`screenshot`/`diagram`/`photo`/`document` — appended modifier), `json_schema` (structured output via `llm.call(json_schema=...)`).
+- **3 input sources** — `file_path`, `base64`, or `url` (exactly one required). URL downloads go through `core/net retry_sync` (max 2 retries, `is_retryable_error` classification, central backoff constants from `core/net/default.py`).
+- **SSRF protection** — `is_safe_network_address()` blocks localhost and private IP ranges for URL inputs (runs in `_validate_vision_inputs()`).
+- **JSON mode + JSON schema** — `json_mode=True` selects the action's `*_JSON_SYSTEM` prompt variant; `json_schema='...'` forwards a parsed schema dict to `llm.call(json_schema=...)`. `parsed` + `parse_warning` in the response.
+- **`_call_vision` indirection** — Action handlers never reference `llm` directly; they call `helpers._call_vision()` so conftest only needs one patch point (`tools.vision_ops.helpers.llm`).
+- **Kill-switch ready** — Clear error if `VISION_MODEL` is unset (returns `status=disabled`).
+- **NOT parallel-safe** — Uses LLM calls; excluded from `PARALLEL_SAFE`.
 
-**Safety:** SSRF protection (`is_safe_network_address()`) for URL inputs, file size limits (`VISION_MAX_FILE_BYTES` = 20MB), base64 length limits (`VISION_MAX_BASE64_LEN` = 10M chars).
+**Safety:** SSRF protection (`is_safe_network_address()`) for URL inputs, file size limits (`VISION_MAX_FILE_BYTES` = 20MB), base64 length limits (`VISION_MAX_BASE64_LEN` = 10M chars), URL scheme validation (http/https only), `core/net retry_sync` for resilient URL downloads with bounded retries (max 2).
 
 **Output:**
 ```json
 {
   "status": "success",
-  "result": "The image shows a login form with username and password fields...",
-  "trace_id": "abc123"
+  "action": "describe",
+  "description": "Overview: A dashboard showing sales metrics...\nKey Elements: ...",
+  "model": "gpt-4o",
+  "elapsed": 2.34,
+  "usage": {"prompt_tokens": 1200, "completion_tokens": 150},
+  "trace_id": "abc123",
+  "duration_ms": 2362
 }
 ```
+> Response payload key is action-specific: `describe` → `description`, `extract_text` → `text_extracted`, `analyse_ui` → `analysis`. `trace_id` only included when caller passed one. `parsed` + `parse_warning` only when `json_mode`/`json_schema` is active. `duration_ms` always present.
 
 ---
 
@@ -868,8 +893,8 @@ Changes not staged for commit:
 
 | Aspect | Agent | Browser | CLI | Consult | File | GitHub | Git | Memory | Notify | Parallel | Python | Report | Swarm | Tavily | Vision | Web | Workflow |
 |--------|-------|---------|-----|---------|------|--------|-----|--------|--------|----------|--------|--------|-------|--------|--------|-----|----------|
-| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `action` param | `action` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
-| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
+| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `type` param |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct |
 | **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ✅ API only (push ❌) | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
 | **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Planner synthesis | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
 | **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ run_data/profile/lint | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |

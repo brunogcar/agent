@@ -36,7 +36,7 @@ Please respond to the user's query:
 ### memory 🧠 — store(memory_type,episodic|semantic|procedural,importance=1-10,tags)
   recall(query,top_k,collections) | delete|prune(dry_run)|summarize|stats
 ### agent 🤖 — classify|route|plan|research|summarize|extract|analyze|code|review|critique
-### vision 👁️ — agent(role="vision", task="...", context="file_path|url") | json_mode=True for structured output
+### vision 👁️ — vision(action=describe|extract_text|analyse_ui, file_path=..., url=..., base64=...) Multimodal image analysis
 ### notify 🔔 — send(title,message,timeout) | schedule(delay_minutes) | cancel(job_id) | list
 ### report 📊 — chart(bar/line/scatter...) | map(markers/heatmap/choropleth/route/circles)
   report(title,kpis,sections) | dashboard(charts,kpis,columns)
@@ -122,7 +122,7 @@ parallel(tasks=[
 1. **Exact tool names only** — no prefixes! Use `web`, `python`, not `web.search()` or `python.run()`
 2. **Git safety** — snapshot() BEFORE every automated edit, commit() AFTER success, rollback() on failure
 3. **Protected files NEVER edited via autocode**: server.py, registry.py, core/config.py, core/tracer.py
-4. **Vision inputs**: context= for file_path/URL, content= for base64. Always check VISION_MODEL is set in .env
+4. **Vision inputs**: `action=describe|extract_text|analyse_ui` + ONE of (file_path, base64, url). Optional: `question`, `context`, `context_type` (screenshot|diagram|photo|document), `format` (markdown|json|bullet_points), `json_schema`, `trace_id`. Always check VISION_MODEL is set in .env.
 5. **Python action** — `run_data` for imports (pandas/json/re/csv/etc), `run` for pure logic, `eval` for pure expressions (value returned directly, no print() needed), `profile` for cProfile (NOT sandboxed — trusted code only), `lint` for ruff/flake8 pre-check; always print() for run/run_data/profile/lint!
 6. **Memory limits** — 50KB per entry (MAX_MEMORY_BYTES); use `chunk=True` for large documents to split into linked chunks for precise recall
 7. **Code pipeline**: analyze → code → review → apply. Never skip review! REVISE = fix & re-review, not apply
@@ -182,6 +182,15 @@ parallel(tasks=[
 ✅ consult(action="review", question="Review this architecture and suggest improvements", context="<diagram or design doc>")
 ✅ consult(action="advise", question="Should I use event sourcing for billing?", context="<current architecture>")
 ❌ Overthinking alone when a second perspective would help!
+
+### Vision Image Analysis (v1.0 — `action` + `question`, NOT `task`):
+✅ vision(action="describe", file_path="screenshot.png") — general image description
+✅ vision(action="extract_text", url="https://example.com/receipt.jpg", context_type="photo") — OCR-style text extraction
+✅ vision(action="analyse_ui", file_path="dashboard.png", context_type="screenshot") — UI/UX critique
+✅ vision(action="describe", base64="<b64...>", json_schema='{"type":"object",...}') — structured JSON output
+✅ vision(action="analyse_ui", file_path="ui.png", question="Focus on the nav bar") — focused question
+❌ vision(task="Describe this image", file_path="...") — DEPRECATED! Use `action="describe"` + `question=` instead. The `task` alias still works but emits a deprecation warning.
+❌ vision(action="describe", file_path="...", url="...") — provide exactly ONE image source, not multiple!
 
 ---
 
