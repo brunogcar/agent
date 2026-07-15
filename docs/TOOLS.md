@@ -17,7 +17,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [GIT.md](tools/GIT.md) | Git | 20+ atomic VCS actions, semantic params, stash-based rollback |
 | [MEMORY.md](tools/MEMORY.md) | Memory | 3 ChromaDB collections, tag validation, janitor, lazy loading |
 | [NOTIFY.md](tools/NOTIFY.md) | Notify | Cross-platform alerts, APScheduler, graceful console fallback |
-| [PARALLEL.md](tools/PARALLEL.md) | Parallel | ThreadPoolExecutor, global timeout, nested-call guard, allowlist |
+| [PARALLEL.md](tools/PARALLEL.md) | Parallel | `@meta_tool` refactor v1.0 — 3 actions (`run`/`race`/`pipeline`), `parallel_ops/` subpackage (8 files), breaking `tools`→`tasks` rename, per-call `timeout`, `PARALLEL_SAFE` (10 tools) + `_TOOL_MAP` (17 tools, lazy), 93 tests |
 | [PYTHON.md](tools/PYTHON.md) | Python | 5 actions (`run`/`run_data`/`eval`/`profile`/`lint`) via `@meta_tool`, `python_ops/` subpackage (11 files), three-layer security (sandbox → imports → executors), `json_schema` validation, `timeout` override |
 | [REPORT.md](tools/REPORT.md) | Report | 11 atomic actions, HTML dashboards, XSS-safe templates, lazy imports |
 | [SWARM.md](tools/SWARM.md) | Swarm | Multi-model meta-tool, parallel cloud LLM fan-out, consensus/race/vote/compare/list_providers |
@@ -249,7 +249,17 @@ tools/
 │
 ├── notify.py               # Desktop notifications & scheduler
 │
-├── parallel.py             # Concurrent tool execution
+├── parallel.py             # Concurrent tool execution meta-tool — @meta_tool facade (3 actions: run/race/pipeline)
+├── parallel_ops/           # v1.0 NEW — @meta_tool refactor subpackage (8 files)
+│   ├── _registry.py        # DISPATCH + register_action decorator
+│   ├── __init__.py         # Auto-discovery (Path.glob actions/*.py)
+│   ├── tool_map.py         # PARALLEL_SAFE frozenset (10 tools) + _TOOL_MAP dict (17 tools, all lazy) + _get_tool_fn
+│   ├── executor.py         # _parallel_depth guard, _resolve_timeout, _safe_run, dispatch_run/race/pipeline, _resolve_dot_path
+│   └── actions/
+│       ├── __init__.py
+│       ├── run.py          # @register_action("parallel", "run") — barrier via wait()
+│       ├── race.py         # @register_action("parallel", "race") — first success via as_completed()
+│       └── pipeline.py     # @register_action("parallel", "pipeline") — sequential chain with feed (None|str|dict)
 │
 ├── python.py              # Python code execution meta-tool — @meta_tool facade (5 actions: run/run_data/eval/profile/lint)
 ├── python_ops/
@@ -618,28 +628,56 @@ Changes not staged for commit:
 
 ### 9. ⚡ Parallel — [tools/PARALLEL.md](tools/PARALLEL.md)
 
-**Status:** v1.0 — Concurrent tool execution with safety allowlist.
+**Status:** v1.0 — `@meta_tool` refactor with 3 actions: `run` / `race` / `pipeline`.
 
-**Purpose:** Execute multiple independent tool calls in parallel to reduce latency.
+**Purpose:** Execute multiple independent tool calls concurrently to reduce latency. v1.0 collapsed the pre-v1 single-mode `parallel(tools, ...)` facade into a 117-line thin `@meta_tool` dispatch wrapper + 8-file `parallel_ops/` subpackage. **Breaking change:** `tools` param renamed to `tasks`; `action` is now required.
 
 **Key characteristics:**
-- **ThreadPoolExecutor** — Real concurrent execution with `cfg.worker_timeout` (default 60s)
-- **Global timeout** — `concurrent.futures.wait()` with real timeout; NOT broken `as_completed()` per-future timeout
-- **Nested-call guard** — `threading.local()` prevents `parallel → parallel` recursion / deadlock
-- **Conservative allowlist** — `PARALLEL_SAFE = {web, file, python, python_exec, notify}` only
-- **Explicit tool mapping** — `_TOOL_MAP` imports functions directly; no runtime discovery
+- **3 actions via `@meta_tool`** — `run` (barrier via `concurrent.futures.wait()` — wait for all), `race` (`as_completed()` — first success wins, cancel rest), `pipeline` (sequential chain with result feeding — NOT parallel despite the tool name). `action: Literal["pipeline","race","run"]` auto-generated from `DISPATCH`.
+- **8-file `parallel_ops/` subpackage** — `_registry.py`, `__init__.py` (auto-discovery via `Path.glob`), `tool_map.py`, `executor.py`, `actions/{__init__,run,race,pipeline}.py`. Auto-discovery: drop a new file in `actions/` to add a 4th action — no facade edits needed.
+- **Pipeline "feed" mechanism** — Per-task `feed` key (`None` \| `str` dot-path \| `dict` of arg-name → dot-path) controls how each result flows into the next call's args. `str` replaces args entirely (resolved value must be a dict); `dict` merges into args (missing paths yield `None` — soft error, chain continues).
+- **Real global timeout** — `concurrent.futures.wait()` with `cfg.worker_timeout` (default 60s) for `run` (NOT broken `as_completed()` per-future timeout); `as_completed()` for `race` (legitimate — needs completion order); per-step for `pipeline`. Per-call `timeout` param overrides the global default.
+- **Nested-call guard** — `threading.local()` (`_parallel_depth`) prevents `parallel → parallel` recursion / deadlock. All three engines increment it; pipeline stages that call `parallel()` are also blocked.
+- **`PARALLEL_SAFE` allowlist (10 tools)** + **`_TOOL_MAP` (17 tools, all lazy-imported)** — v1.0 expanded `PARALLEL_SAFE` from 6 → 10 (added `consult`, `vision`, `report`, `agent`); expanded `_TOOL_MAP` from 9 → 17. `parallel` itself intentionally omitted from `_TOOL_MAP` (nested-parallel guard at validator layer).
+- **Backwards-compat shim** — `core/parallel_executor.py` is now a 37-line re-export from `tools.parallel_ops.*`. Existing imports (`dispatch_parallel`, `PARALLEL_SAFE`, `_parallel_depth`, `_safe_run`) continue to work; `dispatch_parallel` is an alias for `dispatch_run`.
+- **`duration_ms` in every response** — Facade times the handler call and adds `duration_ms` to the response. Mirrors `consult.py` / `swarm.py` pattern.
 
-**Safety:** Write-heavy tools (`git`, `memory`, `file` write ops) excluded by design. Nested `parallel()` calls blocked. Timeout prevents runaway execution.
+**Safety:** Write-heavy tools (`git`, `memory`, `cli`, `browser`, `tavily`, `swarm`, `workflow`) excluded by design. Nested `parallel()` calls blocked. Timeout prevents runaway execution. `pipeline` does NOT enforce `PARALLEL_SAFE` (sequential — no concurrency hazard).
 
 **Output:**
 ```json
+// action="run"
 {
   "status": "success",
-  "result": [
-    {"status": "success", "result": "...", "tool": "web"},
-    {"status": "success", "result": "...", "tool": "file"}
+  "trace_id": "abc123",
+  "results": [
+    {"tool": "web", "status": "success", "result": {"status": "success", "data": "..."}, "trace_id": "abc123"}
   ],
-  "trace_id": "abc123"
+  "errors": [],
+  "completed": 1,
+  "failed": 0,
+  "duration_ms": 1234
+}
+
+// action="race" — winner may be null if all tasks fail
+{
+  "status": "success",
+  "trace_id": "abc123",
+  "winner": {"tool": "web", "status": "success", "result": {...}, "trace_id": "abc123"},
+  "cancelled": ["tavily"],
+  "failed": [],
+  "duration_ms": 567
+}
+
+// action="pipeline" — same shape as run
+{
+  "status": "success",
+  "trace_id": "abc123",
+  "results": [...],
+  "errors": [...],
+  "completed": 2,
+  "failed": 0,
+  "duration_ms": 3456
 }
 ```
 
@@ -943,12 +981,12 @@ Changes not staged for commit:
 
 | Aspect | Agent | Browser | CLI | Consult | File | GitHub | Git | Memory | Notify | Parallel | Python | Report | Swarm | Tavily | Vision | Web | Workflow |
 |--------|-------|---------|-----|---------|------|--------|-----|--------|--------|----------|--------|--------|-------|--------|--------|-----|----------|
-| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `action`+`type` params (two-level) |
-| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (two-level: action+type) |
+| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `action`+`tasks` params | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `action`+`type` params (two-level) |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool (two-level: action+type) |
 | **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ✅ API only (push ❌) | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
 | **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Planner synthesis | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
 | **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ run_data/profile/lint | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |
-| **Lazy imports** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
+| **Lazy imports** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes | ✅ Yes | ✅ Yes (_TOOL_MAP: 17 tools) | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
 | **Primary use** | Specialist LLM | JS page automation | NL command router | Cloud advisory | File CRUD | PR workflow | Version control | Memory I/O | Alerts | Concurrent execution | Code execution | HTML reports | Multi-model consensus | AI search | Image analysis | Web search | Workflow orchestration |
 
 ---
@@ -1046,8 +1084,8 @@ When adding a **new tool** to the MCP Agent Stack, update **all** of the followi
 | 1 | `tools/<tool>.py` | The `@tool` facade — validation, dispatch, compression. Thin wrapper, no business logic. |
 | 2 | `tools/<tool>_ops/` | Subpackage: `_registry.py` (DISPATCH + `@register_action`), `__init__.py` (auto-imports `actions/`), `actions/` (one file per action), `helpers.py` (shared utilities). |
 | 3 | `core/router.py` | Add tool name to `ROUTER_TOOLS` list; add routing rules; add heuristic regex patterns for NL→tool routing. |
-| 4 | `core/parallel_executor.py` | Add to `PARALLEL_SAFE` frozenset **only if** the tool is parallel-safe (no internal ThreadPoolExecutor, no shared mutable state). Most tools are NOT parallel-safe. |
-| 5 | `tools/parallel.py` | Add to `_TOOL_MAP` dict **only if** parallel-safe (mirrors `PARALLEL_SAFE`). |
+| 4 | `tools/parallel_ops/tool_map.py` | Add to `PARALLEL_SAFE` frozenset **only if** the tool is parallel-safe (no internal ThreadPoolExecutor, no shared mutable state). Most tools are NOT parallel-safe. (v1.0: `PARALLEL_SAFE` and `_TOOL_MAP` moved here from `core/parallel_executor.py`, which is now a backwards-compat shim.) |
+| 5 | `tools/parallel_ops/tool_map.py` | Add to `_TOOL_MAP` dict (mirrors `PARALLEL_SAFE`) **and** add the matching lazy-import branch in `_get_tool_fn`. A new key with `None` value but no `elif name == "X":` branch returns `None` silently. |
 | 6 | `docs/system_prompts/system_prompt.md` | Add the new tool to the tool list + describe its capabilities so the LLM knows when to use it. |
 | 7 | `docs/TOOLS.md` | (a) Bump tool count in "## 📚 Tool Catalog" intro; (b) add row to the summary Document/Tool/Key Topics table; (c) add `<tool>_ops/` block to the Module Map; (d) add `### N. <Tool>` detailed entry; (e) optionally add column to the Tool Comparison table. |
 | 8 | `docs/tools/<TOOL>.md` | Landing page — title, key characteristics, quick start, configuration, when-to-use table, subfile directory table. Follow `GIT.md` / `WEB.md` format. |
@@ -1059,7 +1097,7 @@ When adding a **new tool** to the MCP Agent Stack, update **all** of the followi
 1. Write `tools/<tool>_ops/` first (subpackage + actions + helpers + registry).
 2. Write `tools/<tool>.py` facade (depends on the subpackage).
 3. Run `python -c "from tools import <tool>"` to verify imports + DISPATCH auto-discovery.
-4. Update `core/router.py` + `core/parallel_executor.py` + `tools/parallel.py` (if parallel-safe).
+4. Update `core/router.py` + `tools/parallel_ops/tool_map.py` (if parallel-safe; add to `PARALLEL_SAFE` + `_TOOL_MAP` + the `_get_tool_fn` lazy-import chain).
 5. Update `docs/TOOLS.md` (count, summary table, module map, detailed entry).
 6. Write `docs/tools/<TOOL>.md` + `docs/tools/<tool>/` subfiles.
 7. Update `docs/system_prompts/system_prompt.md`.

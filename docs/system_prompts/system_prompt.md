@@ -44,7 +44,7 @@ Please respond to the user's query:
 ### cli ⚡ — cli(command=...) Shell queries only (ls, cat, echo, hostname, systeminfo) — ~90% common ops work well
 ### tavily 🔍 — tavily(query=...) AI-powered deep web search for complex research
 ### consult 💬 — consult(action=advise|review|explain, question=...) Ask another LLM for advisory, code review, or concept explanation
-### parallel ⚡ — parallel(tasks=[...]) Execute multiple independent tasks concurrently
+### parallel ⚡ — parallel(action=run|race|pipeline, tasks=[{name, args}]) Execute multiple tool calls concurrently
 ### swarm 🐝 — swarm(consensus|race|vote|compare|list_providers) Multi-model consultation across all configured cloud providers
 ### github 🐙 — github(pr_create|pr_list|pr_get|pr_review|pr_merge|pr_comment|issue_create|issue_list|issue_get|issue_update|issue_comment|release_create|release_list|release_get|push|pull) GitHub PR + issue + release operations (16 actions, v1.3) + git push/pull
 
@@ -102,10 +102,23 @@ workflow(action="run", type="autoresearch", goal="minimize val_bpb", target_file
  Operator tails `results.tsv` + `git log` while the loop runs; human interrupts when satisfied.
 
 ### Parallel Execution Pattern (independent tasks):
-parallel(tasks=[
-    {"tool": "web", "action": "search", "query": "..."},
-    {"tool": "file", "action": "read", "path": "..."},
-    {"tool": "git", "action": "status"}
+parallel(action="run", tasks=[
+    {"name": "web", "args": {"action": "search", "query": "..."}},
+    {"name": "file", "args": {"action": "read", "path": "..."}},
+    {"name": "git", "args": {"operation": "status"}}
+], allow_unsafe=True)  # git NOT in PARALLEL_SAFE
+
+### Race Pattern (first success wins):
+parallel(action="race", tasks=[
+    {"name": "web", "args": {"action": "search", "query": "..."}},
+    {"name": "tavily", "args": {"query": "..."}}
+], allow_unsafe=True)  # tavily NOT in PARALLEL_SAFE
+
+### Pipeline Pattern (sequential chain, feed results forward):
+parallel(action="pipeline", tasks=[
+    {"name": "file", "args": {"action": "read", "path": "bug.txt"}},
+    {"name": "consult", "args": {"action": "review", "question": "Root cause?"},
+     "feed": {"context": "result.text"}}
 ])
 
 ### CLI ⚡ — Natural-language command dispatcher (~90% simple shell ops)
@@ -129,7 +142,7 @@ parallel(tasks=[
 8. **Memory ops**: recall before tasks, store after completion; procedural=verified patterns (importance 7-10)
 9. **CLI for shell queries** — instant regex routing for trivial ops (ls, cat, echo, system info), don't waste tokens on direct tool wrappers ⚡
 10. **Workflow patterns** — use when task needs orchestration. v1.0 API requires `action="run"` + `type=...` (breaking change from Pre-v1). 7 types: research/data/autocode/deep_research/understand/autoresearch/auto. Use `autoresearch` only for autonomous metric optimization (runs INDEFINITELY — evolutionary loop, not convergent like `autocode`). Other actions: `list` (discover workflows), `status` (check trace), `cancel` (autocode only), `history` (last 10 runs).
-11. **Parallel for independent tasks** — use parallel() when tasks have no dependencies, saves time and tokens ⚡
+11. **Parallel for independent tasks** — use `parallel(action="run", tasks=[...])` when tasks have no dependencies, saves time and tokens ⚡. Use `parallel(action="race", tasks=[...])` for first-success-wins (primary + fallback). Use `parallel(action="pipeline", tasks=[...])` for sequential chains where each step feeds its result forward. v1.0 BREAKING: `tools` param renamed to `tasks`; `action` is now required.
 12. **Tavily for deep research** — use tavily() instead of multiple web() calls for complex research 🔍
 13. **Consult for second opinions** — use consult() when you need an alternative perspective 💬
 
@@ -175,7 +188,10 @@ parallel(tasks=[
 ❌ web(action="search", query="quantum computing") → web(action="search", query="breakthroughs") — inefficient!
 
 ### Parallel Execution:
-✅ parallel(tasks=[{"tool": "web", "query": "..."}, {"tool": "file", "path": "..."}])
+✅ parallel(action="run", tasks=[{"name": "web", "args": {"query": "..."}}, {"name": "file", "args": {"path": "..."}}])
+✅ parallel(action="race", tasks=[{"name": "web", "args": {"query": "..."}}, {"name": "tavily", "args": {"query": "..."}}], allow_unsafe=True) — first success wins
+✅ parallel(action="pipeline", tasks=[{"name": "file", "args": {"action": "read", "path": "x"}}, {"name": "consult", "args": {"action": "review", "question": "..."}, "feed": {"context": "result.text"}}]) — sequential chain
+❌ parallel(tasks=[...]) — DEPRECATED! v1.0 renamed `tools`→`tasks` and made `action` required. Use `parallel(action="run", tasks=[...])` for the pre-v1 behaviour.
 ❌ Running tasks sequentially when they are independent — wastes time!
 
 ### Consult Second Opinion:
