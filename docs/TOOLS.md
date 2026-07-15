@@ -11,7 +11,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [AGENT.md](tools/AGENT.md) | Agent | 15 specialist roles, role-based dispatch, caching, context budgets |
 | [BROWSER.md](tools/BROWSER.md) | Browser | Playwright automation, 20 atomic actions, session isolation, SSRF |
 | [CLI.md](tools/CLI.md) | CLI | 4-layer NL→shell dispatch, proxy routing, human-readable output |
-| [CONSULT.md](tools/CONSULT.md) | Consult | Cloud LLM advisory, kill-switch, rate-limit guard |
+| [CONSULT.md](tools/CONSULT.md) | Consult | Cloud LLM advisory — 3 actions (advise/review/explain) via `@meta_tool`, `consult_ops/` subpackage (8 files), kill-switch, rate-limit guard |
 | [FILE.md](tools/FILE.md) | File | 25+ atomic FS actions, path guard, cancellation guard, compression |
 | [GITHUB.md](tools/GITHUB.md) | GitHub | PR + issue + release workflow + remote sync (16 actions: 6 PR + 5 issue + 3 release + push + pull), pagination, mergeable state, git push/pull subprocess, httpx direct (not PyGithub) |
 | [GIT.md](tools/GIT.md) | Git | 20+ atomic VCS actions, semantic params, stash-based rollback |
@@ -139,7 +139,17 @@ tools/
 │       ├── system.py
 │       └── web.py
 │
-├── consult.py              # Cloud LLM advisory (opt-in, kill-switch)
+├── consult.py              # Cloud LLM advisory meta-tool — @meta_tool facade (3 actions: advise/review/explain)
+├── consult_ops/
+│   ├── _registry.py        # DISPATCH + register_action decorator
+│   ├── __init__.py         # Auto-discovery (Path.glob actions/*.py)
+│   ├── helpers.py          # _estimate_tokens, _truncate_context, _check_consultor_available, _check_rate_limit, _get_consultor_provider, _call_consultor
+│   ├── prompts.py          # ADVISE/REVIEW/EXPLAIN system prompts + FORMAT_SUFFIXES + CONTEXT_TYPE_MODIFIERS
+│   └── actions/
+│       ├── __init__.py
+│       ├── advise.py       # @register_action("consult", "advise")
+│       ├── review.py       # @register_action("consult", "review")
+│       └── explain.py      # @register_action("consult", "explain")
 │
 ├── file.py                 # File system meta-tool (25+ atomic actions)
 ├── file_ops/
@@ -414,27 +424,36 @@ Changes not staged for commit:
 
 ### 4. 🔍 Consult — [tools/CONSULT.md](tools/CONSULT.md)
 
-**Status:** v1.0 — Opt-in cloud LLM advisory.
+**Status:** v1.0 — Opt-in cloud LLM advisory meta-tool with 3 actions.
 
 **Purpose:** High-stakes tasks requiring stronger reasoning, domain expertise, or external validation.
 
 **Key characteristics:**
+- **`@meta_tool` facade** — `action: Literal["advise", "explain", "review"]` auto-generated from `DISPATCH`. Adding a new action = drop a file in `consult_ops/actions/`; the facade updates itself.
+- **3 actions** — `advise` (architectural advisory, default), `review` (structured code review with severity tags across 5 dimensions), `explain` (educator persona with analogies + step-by-step). Same LLM call, different system prompts.
+- **8-file `consult_ops/` subpackage** — `_registry.py`, `__init__.py`, `helpers.py`, `prompts.py`, `actions/{__init__,advise,review,explain}.py`.
+- **New v1.0 params** — `trace_id` (observability, threaded through all return paths), `format` (`markdown`/`json`/`bullet_points`), `context_type` (`""`/`code`/`logs`/`architecture`).
 - **Cloud LLM dispatch** — Routes to dedicated `CONSULTOR_MODEL` via separate provider chain
 - **Kill-switch ready** — Returns `{"status": "disabled"}` if `CONSULTOR_MODEL` is empty
 - **Rate-limit guard** — Pre-flight `check_rate_limit()` prevents accidental API quota burn
-- **Token-aware truncation** — `tiktoken` (cl100k_base) pruning before dispatch
+- **Token-aware truncation** — `tiktoken` (cl100k_base) pruning before dispatch (hard 2000-token ceiling)
 - **NOT_PARALLEL_SAFE** — Excluded from aggressive routing
 
-**Safety:** No fallback chain — if unset, role does not exist in registry. Clear error messages for all disabled states.
+**Safety:** No fallback chain — if unset, role does not exist in registry. Clear error messages for all disabled states. `_call_consultor` indirection centralizes LLM access for clean test patching.
 
 **Output:**
 ```json
 {
   "status": "success",
-  "result": "The trade-offs between async and sync drivers...",
-  "trace_id": "abc123"
+  "action": "advise",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "advice": "The trade-offs between async and sync drivers...",
+  "trace_id": "abc123",
+  "duration_ms": 1842
 }
 ```
+> Response payload key is action-specific: `advice` / `review` / `explanation`. `trace_id` only included when caller passed one. `warnings` only included on truncation. `duration_ms` always present.
 
 ---
 
@@ -830,8 +849,8 @@ Changes not staged for commit:
 
 | Aspect | Agent | Browser | CLI | Consult | File | GitHub | Git | Memory | Notify | Parallel | Python | Report | Swarm | Tavily | Vision | Web | Workflow |
 |--------|-------|---------|-----|---------|------|--------|-----|--------|--------|----------|--------|--------|-------|--------|--------|-----|----------|
-| **Interface** | `role` param | `action` param | `command` str | `question` str | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `mode` param | `action` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
-| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
+| **Interface** | `role` param | `action` param | `command` str | `action` param | `action` param | `action` param | `action` param | `action` param | `action` param | `tools` list | `mode` param | `action` param | `action` param | `action` param | `file_path/url/base64` | `action` param | `type` param |
+| **Meta-tool** | ❌ Role dispatch | ✅ @meta_tool | ✅ @meta_tool (special) | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ✅ @meta_tool | ❌ Direct | ❌ Direct | ❌ Direct | ✅ @meta_tool | ✅ @meta_tool (no Literal) | ✅ @meta_tool | ❌ Direct | ✅ @meta_tool | ❌ Direct |
 | **PARALLEL_SAFE** | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Read only | ✅ API only (push ❌) | ❌ No | ❌ No | ✅ Yes | N/A (orchestrator) | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ❌ No | ✅ Yes | ❌ No |
 | **LLM required** | ✅ Yes | ❌ No | ✅ Router/Executor | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Planner synthesis | ✅ Yes | ✅ Yes | ❌ No | ✅ Router |
 | **Subprocess** | ❌ No | ❌ No | ✅ Shell (Layer 2) | ❌ No | ❌ No | ✅ `git push` (push only) | ✅ System git | ❌ No | ❌ No | ✅ ThreadPool | ✅ Data mode | ❌ No | ❌ No (ThreadPool) | ❌ No | ❌ No | ❌ No | ✅ Workflow graphs |

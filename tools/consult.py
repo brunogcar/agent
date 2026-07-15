@@ -1,111 +1,117 @@
-"""
-tools/consult.py - Explicit Advisory Tool.
+"""tools/consult.py — Advisory consultation meta-tool (v1.0).
+
+Thin @tool facade. Routes all consult actions to handlers in
+consult_ops/actions/ via the DISPATCH dict. Auto-discovered by
+registry.py via the @tool decorator.
+
+v1.0 changes (the @meta_tool refactor):
+  - Now a meta-tool with 3 actions: advise | review | explain.
+  - @meta_tool auto-generates the action: Literal[...] type annotation and
+    the docstring's action list from DISPATCH.
+  - New params: trace_id (observability), format (markdown|json|bullet_points),
+    context_type (code|logs|architecture|""), all forwarded to the handler.
+  - All implementation logic moved to consult_ops/ subpackage.
+
+NOT parallel-safe (uses LLM calls) — do NOT add to PARALLEL_SAFE.
+The router's _RE_DIRECT_CONSULT heuristic already routes "ask another model"
+intents directly here; no router changes needed for v1.0.
 """
 from __future__ import annotations
 
+import time
+
+from core.tracer import tracer
 from registry import tool
-from core.llm import llm
-from core.config import cfg
-from core.llm_backend.rate_limit import check_rate_limit
+from tools._meta_tool import meta_tool
 
-_MAX_CONTEXT_TOKENS = 2000  # Conservative default for cloud models
+# Import consult_ops to trigger DISPATCH auto-discovery BEFORE @meta_tool reads it.
+from tools import consult_ops  # noqa: F401
+from tools.consult_ops._registry import DISPATCH
 
-# Attempt to import tiktoken for accurate token counting, fallback to char estimate
-try:
-    import tiktoken
-    _HAS_TIKTOKEN = True
-except ImportError:
-    _HAS_TIKTOKEN = False
-
-def _estimate_tokens(text: str) -> int:
-    if _HAS_TIKTOKEN:
-        try:
-            encoder = tiktoken.get_encoding("cl100k_base")
-            return len(encoder.encode(text))
-        except Exception:
-            pass
-    # Fallback: ~4 chars per token is a safe conservative estimate
-    return len(text) // 4
-
-_ADVISORY_SYSTEM_PROMPT = (
-    "You are an expert advisory consultant. Provide clear, concise, and highly actionable advice. "
-    "Focus on architectural soundness, best practices, and potential pitfalls. "
-    "Do not write code unless explicitly asked. Keep responses structured and easy to read."
-)
 
 @tool
-def consult(question: str, context: str = "") -> dict:
-    """
-    Consult the configured AI advisor for high-level help.
-    Use for breaking deadlocks, architectural decisions, or complex logic reviews.
-    Do not use for routine code generation or simple questions.
-    """
-    if not cfg.consultor_model:
-        return {
-            "status": "disabled",
-            "error": "Consultor is disabled. Set CONSULTOR_MODEL in .env to enable.",
-        }
+@meta_tool(
+    DISPATCH.get("consult", {}),
+    doc_sections=[
+        "CONSULT TOOL — Advisory consultation (single LLM call to consultor role):",
+        " | Need | Action | Why |",
+        " |------|--------|-----|",
+        " | Architectural advice / deadlock breaker | consult(advise) | General advisory prompt (default behavior pre-v1.0) |",
+        " | Structured code review | consult(review) | Severity-tagged findings across correctness/security/perf/maintainability/best-practices |",
+        " | Concept explanation | consult(explain) | Educational prompt with analogies + step-by-step breakdowns |",
+        "",
+        "PARAMETERS:",
+        " - question (required for all actions) — what you want the consultor to address.",
+        " - context (optional) — supporting material; truncated to ~2000 tokens to prevent overflow.",
+        " - format: markdown (default) | json | bullet_points — controls output shape.",
+        " - context_type: '' (default) | code | logs | architecture — focuses the prompt on the context kind.",
+        " - trace_id (optional) — forwarded to llm.complete for observability threading.",
+        "",
+        "NOT parallel-safe — uses LLM calls. Kill switch: empty CONSULTOR_MODEL in .env.",
+    ],
+)
+def consult(
+    action: str = "",
+    question: str = "",
+    context: str = "",
+    trace_id: str = "",
+    format: str = "markdown",
+    context_type: str = "",
+) -> dict:
+    """Advisory consultation meta-tool — advise | review | explain."""
+    action = action.strip().lower() if action else ""
 
-    if not question or not question.strip():
-        return {"status": "error", "error": "The question parameter cannot be empty."}
+    tracer.step(trace_id, "consult", f"action={action}")
 
-    # Get provider name for rate limiting
-    provider = cfg.model_registry.get("consultor", {}).get("provider", "unknown")
-
-    # Pre-flight check: verify the role's provider is available
-    if not llm.is_available("consultor"):
-        return {
-            "status": "disabled",
-            "error": f"Provider for consultor role ('{provider}') is not available or not configured.",
-        }
-
-    # Check rate limit before making the cloud call
-    if not check_rate_limit(provider):
-        return {
-            "status": "rate_limited",
-            "error": f"Rate limit exceeded for {provider}. Please wait before consulting again.",
-        }
-
-    # Token-aware context truncation guardrail
-    warnings = []
-    current_tokens = _estimate_tokens(context)
-    if current_tokens > _MAX_CONTEXT_TOKENS:
-        if _HAS_TIKTOKEN:
-            try:
-                encoder = tiktoken.get_encoding("cl100k_base")
-                tokens = encoder.encode(context)
-                context = encoder.decode(tokens[:_MAX_CONTEXT_TOKENS])
-            except Exception:
-                context = context[: _MAX_CONTEXT_TOKENS * 4]
-        else:
-            context = context[: _MAX_CONTEXT_TOKENS * 4]
-        
-        warnings.append(f"Context truncated from ~{current_tokens} to {_MAX_CONTEXT_TOKENS} tokens to prevent overflow.")
-
-    # Execute LLM Call (llm.complete handles the timeout from RoleConfig)
-    result = llm.complete(
-        role="consultor",
-        system=_ADVISORY_SYSTEM_PROMPT,
-        user=question,
-        context=context,
-    )
-
-    if not result.ok:
+    if not action:
         return {
             "status": "error",
-            "provider": provider,
-            "model": result.model,
-            "error": result.error,
+            "error": "action is required (advise | explain | review)",
+            "trace_id": trace_id,
         }
 
-    response = {
-        "status": "success",
-        "provider": provider,
-        "model": result.model,
-        "advice": result.text,
+    dispatch = DISPATCH.get("consult", {})
+    op_info = dispatch.get(action)
+
+    if op_info is None:
+        valid_actions = " | ".join(sorted(dispatch.keys()))
+        return {
+            "status": "error",
+            "error": f"Unknown action '{action}'. Use: {valid_actions}",
+            "trace_id": trace_id,
+        }
+
+    handler = op_info["func"]
+
+    kwargs = {
+        "question": question,
+        "context": context,
+        "trace_id": trace_id,
+        "format": format,
+        "context_type": context_type,
     }
 
-    if warnings:
-        response["warnings"] = warnings
+    start = time.time()
+    try:
+        result = handler(**kwargs)
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"Consult action failed: {e}",
+            "trace_id": trace_id,
+        }
 
-    return response
+    if not isinstance(result, dict):
+        return {
+            "status": "error",
+            "error": f"Handler returned {type(result).__name__}, expected dict.",
+            "trace_id": trace_id,
+        }
+
+    if result.get("status") == "error":
+        tracer.step(trace_id, "consult", f"action={action}:failed")
+    else:
+        tracer.step(trace_id, "consult", f"action={action}:complete")
+
+    result["duration_ms"] = round((time.time() - start) * 1000)
+    return result

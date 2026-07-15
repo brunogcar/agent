@@ -43,7 +43,7 @@ Please respond to the user's query:
 ### workflow 🔄 — auto(goal) | research(goal|code) | data(goal|code) | autocode(mode,target_file) | deep_research(goal) | understand(goal) | autoresearch(goal,target_file)
 ### cli ⚡ — cli(command=...) Shell queries only (ls, cat, echo, hostname, systeminfo) — ~90% common ops work well
 ### tavily 🔍 — tavily(query=...) AI-powered deep web search for complex research
-### consult 💬 — consult(task=...) Ask another LLM for a second opinion
+### consult 💬 — consult(action=advise|review|explain, question=...) Ask another LLM for advisory, code review, or concept explanation
 ### parallel ⚡ — parallel(tasks=[...]) Execute multiple independent tasks concurrently
 ### swarm 🐝 — swarm(consensus|race|vote|compare|list_providers) Multi-model consultation across all configured cloud providers
 ### github 🐙 — github(pr_create|pr_list|pr_get|pr_review|pr_merge|pr_comment|issue_create|issue_list|issue_get|issue_update|issue_comment|release_create|release_list|release_get|push|pull) GitHub PR + issue + release operations (16 actions, v1.3) + git push/pull
@@ -175,7 +175,8 @@ parallel(tasks=[
 ❌ Running tasks sequentially when they are independent — wastes time!
 
 ### Consult Second Opinion:
-✅ consult(task="Review this architecture and suggest improvements")
+✅ consult(action="review", question="Review this architecture and suggest improvements", context="<diagram or design doc>")
+✅ consult(action="advise", question="Should I use event sourcing for billing?", context="<current architecture>")
 ❌ Overthinking alone when a second perspective would help!
 
 ---
