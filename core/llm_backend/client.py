@@ -554,9 +554,12 @@ class LLMClient:
             try:
                 if trace_id and tracker.is_cancelled(trace_id):
                     elapsed = round(_time.time() - start_time, 2)
-                    return LLMResponse.from_error(
-                        role, "", f"Tool-calling loop cancelled at iteration {iteration}",
-                        elapsed,
+                    return LLMResponse(
+                        text="", role=role, model="",
+                        usage={"prompt": 0, "completion": 0, "total": 0},
+                        elapsed=elapsed, ok=False,
+                        error=f"Tool-calling loop cancelled at iteration {iteration}",
+                        reason="cancelled", iterations=iteration,
                     )
             except Exception:
                 pass  # is_cancelled not available — proceed
@@ -576,6 +579,9 @@ class LLMClient:
             )
 
             if not result.ok:
+                # v1.4.1: Tag the bail reason + iteration count.
+                result.reason = "llm_error"
+                result.iterations = iteration + 1
                 return result  # LLM error — bail immediately
 
             # Aggregate usage across iterations (minimax #5)
@@ -596,6 +602,8 @@ class LLMClient:
                     usage=total_usage,
                     elapsed=elapsed,
                     ok=True,
+                    iterations=iteration + 1,
+                    reason="",
                 )
 
             # Process tool calls
@@ -648,14 +656,24 @@ class LLMClient:
                 err = f"{max_consecutive_errors} consecutive tool errors — bailing"
                 if trace_id:
                     tracer.error(trace_id, "llm_tools", err)
-                return LLMResponse.from_error(role, result.model, err, elapsed)
+                return LLMResponse(
+                    text="", role=role, model=result.model,
+                    usage=total_usage, elapsed=elapsed, ok=False,
+                    error=err, reason="consecutive_errors",
+                    iterations=iteration + 1,
+                )
 
         # Max iterations exceeded
         elapsed = round(_time.time() - start_time, 2)
         err = f"max_iterations ({max_iterations}) exceeded"
         if trace_id:
             tracer.error(trace_id, "llm_tools", err)
-        return LLMResponse.from_error(role, last_result.model if last_result else "", err, elapsed)
+        return LLMResponse(
+            text="", role=role, model=last_result.model if last_result else "",
+            usage=total_usage, elapsed=elapsed, ok=False,
+            error=err, reason="max_iterations",
+            iterations=max_iterations,
+        )
 
     @staticmethod
     def _parse_response(

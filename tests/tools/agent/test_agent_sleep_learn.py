@@ -3,6 +3,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+# v1.4 fix: ensure core.sleep_learn.injector is imported before patch() tries
+# to resolve it as an attribute of core. Without this, patch("core.sleep_learn.
+# injector.inject_rules_into_prompt") fails with AttributeError because
+# core.sleep_learn hasn't been loaded yet (dispatch.py imports it lazily).
+import core.sleep_learn.injector  # noqa: F401
+
 from tools.agent import agent
 from tools.agent_ops.cache import _clear_cache
 

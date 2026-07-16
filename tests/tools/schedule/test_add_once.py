@@ -13,7 +13,8 @@ def test_add_once_relative(mock_cfg, mock_scheduler):
 
 
 def test_add_once_iso(mock_cfg, mock_scheduler):
-    r = schedule(action="add_once", run_at="2026-07-16T09:00:00", message="Deploy")
+    # Use a far-future date (2099) so this test never drifts into the past.
+    r = schedule(action="add_once", run_at="2099-07-16T09:00:00", message="Deploy")
     assert r["status"] == "success"
     assert "09:00:00" in r["data"]["run_at"]
 

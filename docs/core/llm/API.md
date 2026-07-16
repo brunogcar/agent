@@ -367,7 +367,14 @@ result = llm.complete_with_tools(
 
 **Parameters:** `role`, `system`, `user`, `tools` (list[ToolDefinition]), `context=""`, `content=""`, `max_iterations=10`, `execute` (Callable[[ToolCall], dict]), `max_consecutive_errors=3`, `trace_id=""`.
 
-**Returns:** `LLMResponse` with the final text. `tool_calls` is empty (loop consumed them). `usage` is aggregated across iterations.
+**Returns:** `LLMResponse` with the final text. `tool_calls` is empty (loop consumed them). `usage` is aggregated across all iterations.
+
+**v1.4.1 fields on the returned `LLMResponse`:**
+
+| Field | Type | Values | Purpose |
+|-------|------|--------|---------|
+| `iterations` | int | 0 (single-turn) / N (loop count) | How many LLM calls the loop made. Callers can use this for cost tracking + debugging. |
+| `reason` | str | `""` (success) / `max_iterations` / `consecutive_errors` / `cancelled` / `llm_error` | Structured bail reason. Replaces fragile substring-matching on error text — callers do `result.reason` dict lookup instead of `if "max_iterations" in result.error`. |
 
 **Tool errors stay in-loop:** if `execute()` raises, the error is caught, formatted as `{"error": str(e)}`, and appended as the tool result. The LLM sees the error and adapts. `max_consecutive_errors=3` bails after 3 consecutive failures.
 

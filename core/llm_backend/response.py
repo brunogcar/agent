@@ -52,6 +52,13 @@ class LLMResponse:
     error:    str                     = ""
     ok:       bool                    = True
     tool_calls: list[ToolCall]        = field(default_factory=list)
+    # v1.4.1: Structured loop metadata (set by complete_with_tools()).
+    # iterations: how many LLM calls the loop made (0 for single-turn paths).
+    # reason: structured bail reason — "max_iterations", "consecutive_errors",
+    #         "cancelled", "llm_error", or "" for success. Replaces fragile
+    #         substring-matching on error text in callers (subagent).
+    iterations: int                   = 0
+    reason:    str                    = ""
 
     @classmethod
     def from_error(cls, role: str, model: str, error: str, elapsed: float = 0.0) -> "LLMResponse":

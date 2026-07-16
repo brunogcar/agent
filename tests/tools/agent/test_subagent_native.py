@@ -51,11 +51,14 @@ class TestSubagentNativeImmediateText:
 
     def test_immediate_text_returns_success(self):
         """LLM gives a text answer right away — status=success, response=text."""
-        with patch("tools.agent_ops.actions.subagent.llm.complete_with_tools", return_value=_text_response("The bug is on line 42")):
+        resp = _text_response("The bug is on line 42")
+        resp.iterations = 1  # v1.4.1: simulate 1 iteration
+        with patch("tools.agent_ops.actions.subagent.llm.complete_with_tools", return_value=resp):
             result = agent(action="subagent", role="executor", task="Find the bug", tools="file")
         assert result["status"] == "success"
         assert result["response"] == "The bug is on line 42"
         assert result["model"] == "test-model"
+        assert result["turns"] == 1  # v1.4.1: actual iterations, not max_turns
         assert "elapsed" in result
 
     def test_immediate_text_has_usage(self):
@@ -102,13 +105,18 @@ class TestSubagentNativeMaxTurns:
     def test_max_turns_exceeded(self):
         """LLM keeps calling tools — complete_with_tools bails with max_iterations error."""
         from core.llm_backend.response import LLMResponse
-        error_resp = LLMResponse.from_error("executor", "test", "max_iterations (3) exceeded", 0.5)
+        error_resp = LLMResponse(
+            text="", role="executor", model="test",
+            usage={"total": 0}, elapsed=0.5, ok=False,
+            error="max_iterations (3) exceeded",
+            reason="max_iterations", iterations=3,
+        )
         with patch("tools.agent_ops.actions.subagent.llm.complete_with_tools", return_value=error_resp):
             with patch("tools.agent_ops.actions.subagent._execute_tool", return_value="ok"):
                 result = agent(action="subagent", role="executor", task="task", tools="file", max_turns=3)
         assert result["status"] == "error"
         assert result["error_code"] == "MAX_TURNS_EXCEEDED"
-        assert "max_iterations" in result["error"]
+        assert result["turns"] == 3  # v1.4.1: actual iterations, not max_turns
 
     def test_max_turns_passed_as_max_iterations(self):
         """max_turns=5 → complete_with_tools called with max_iterations=5 (not default 10)."""
@@ -127,21 +135,33 @@ class TestSubagentNativeErrors:
     def test_consecutive_tool_errors_bail(self):
         """3 consecutive tool errors → TOOL_FAILURES error_code."""
         from core.llm_backend.response import LLMResponse
-        error_resp = LLMResponse.from_error("executor", "test", "3 consecutive tool errors — bailing", 0.5)
+        error_resp = LLMResponse(
+            text="", role="executor", model="test",
+            usage={"total": 0}, elapsed=0.5, ok=False,
+            error="3 consecutive tool errors — bailing",
+            reason="consecutive_errors", iterations=5,
+        )
         with patch("tools.agent_ops.actions.subagent.llm.complete_with_tools", return_value=error_resp):
             with patch("tools.agent_ops.actions.subagent._execute_tool", return_value="Error: broken"):
                 result = agent(action="subagent", role="executor", task="task", tools="file", max_turns=10)
         assert result["status"] == "error"
         assert result["error_code"] == "TOOL_FAILURES"
+        assert result["turns"] == 5  # v1.4.1: actual iterations
 
     def test_llm_error_bails_immediately(self):
         """LLM error (not tool error) → MODEL_ERROR."""
         from core.llm_backend.response import LLMResponse
-        error_resp = LLMResponse.from_error("executor", "test", "LM Studio unreachable", 0.1)
+        error_resp = LLMResponse(
+            text="", role="executor", model="test",
+            usage={"total": 0}, elapsed=0.1, ok=False,
+            error="LM Studio unreachable",
+            reason="llm_error", iterations=1,
+        )
         with patch("tools.agent_ops.actions.subagent.llm.complete_with_tools", return_value=error_resp):
             result = agent(action="subagent", role="executor", task="task", tools="file")
         assert result["status"] == "error"
         assert result["error_code"] == "MODEL_ERROR"
+        assert result["turns"] == 1  # v1.4.1: actual iterations
 
 
 class TestSubagentNativeSecurity:

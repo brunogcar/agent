@@ -21,7 +21,7 @@
 | `tools/agent_ops/actions/metrics.py` | `@register_action("agent", "metrics")` — query per-role metrics |
 | `tools/agent_ops/actions/vision_delegate.py` | `@register_action("agent", "vision_delegate")` — delegate to tools.vision |
 | `tools/agent_ops/actions/clear_cache.py` | `@register_action("agent", "clear_cache")` — clear response cache |
-| `tools/agent_ops/actions/subagent.py` | `@register_action("agent", "subagent")` — curated-context LLM dispatch (v1.5 single-turn) + bounded ReAct loop (v2.0 multi-turn with tool calling). Hosts `_ALLOWED_SUBAGENT_TOOLS`, `_REACT_SCHEMA`, `_execute_tool()`, `_run_multi_turn()` |
+| `tools/agent_ops/actions/subagent.py` | `@register_action("agent", "subagent")` — curated-context LLM dispatch (v1.5 single-turn) + bounded ReAct loop (v2.0 multi-turn, JSON-parsed) + native tool-calling path (v2.1, opt-in via `SUBAGENT_NATIVE_TOOLS=1`). v2.1.1: uses `result.reason` + `result.iterations` (structured fields from `LLMResponse`) instead of substring-matching on error text. Hosts `_ALLOWED_SUBAGENT_ACTIONS`, `_REACT_SCHEMA`, `_execute_tool()`, `_run_multi_turn()` (JSON path), `_run_multi_turn_native()` (native path). |
 | `tools/agent_ops/roles/*.py` | 12 files: `SYSTEM_PROMPT` + `ROLE_CONFIG` per role |
 | `tests/tools/agent/conftest.py` | Test fixtures: `mock_cfg` (autouse), `mock_llm_result` |
 | `tests/tools/agent/test_agent_validation.py` | Validation and role coverage tests |

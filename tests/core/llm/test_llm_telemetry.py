@@ -67,7 +67,7 @@ class TestTelemetryLogging:
     def test_telemetry_uses_role_specific_budget(self, llm_client, mock_provider):
         """Planner should use 32K budget, not the global default."""
         with patch("core.llm_backend.client.logger") as mock_logger:
-            llm_client.call(role="plan", messages=[{"role": "user", "content": "test"}])
+            llm_client.call(role="planner", messages=[{"role": "user", "content": "test"}])
             args = mock_logger.info.call_args[0]
             assert args[4] == 32000  # planner budget
 

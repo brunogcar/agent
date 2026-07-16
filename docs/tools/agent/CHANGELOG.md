@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v2.1.1** | 2026-07-16 | **Hardening: `iterations` + `reason` fields on LLMResponse (minimax review).** (1) `LLMResponse` gains `iterations: int` (actual LLM call count from the loop) + `reason: str` (structured bail reason: `max_iterations`/`consecutive_errors`/`cancelled`/`llm_error`/`""`). (2) `complete_with_tools()` sets both on every return path. (3) Subagent `_run_multi_turn_native()` replaces fragile substring-matching on error text with `result.reason` lookup (one word change in client.py no longer silently breaks error_code mapping). (4) `turns` field now reports actual iterations (was `max_turns` — misleading). (5) Fixes 5 pre-existing test failures: 4 sleep_learn (`import core.sleep_learn.injector` before patch) + 1 budget (`role="plan"` typo → `role="planner"`). |
 | **v2.1** | 2026-07-16 | **Native tool-calling path (opt-in).** New `_run_multi_turn_native()` uses `llm.complete_with_tools()` (LLM v1.4) instead of the JSON-parsed ReAct loop. The LLM returns native `tool_calls` (not JSON with `thought`/`tool_call`/`final_answer`), the loop executes them via `_execute_tool`, results are appended as `tool`-role messages. Opt-in via `SUBAGENT_NATIVE_TOOLS=1` env var — the JSON path (v2.0.2) stays the default for models that don't support native tool calling. Safety preserved: `max_turns` → `max_iterations`, `_ALLOWED_SUBAGENT_ACTIONS` → filtered `ToolDefinition` enum, 3 consecutive errors bail, tool results truncated to 4000 chars. `_REACT_SCHEMA` + `_build_tool_schema` NOT deleted (still used by the JSON path). 12 new tests in `test_subagent_native.py`. |
 | v2.0.2 | 2026-07-13 | **Cross-LLM review: action-level allowlist (P0).** `_ALLOWED_SUBAGENT_ACTIONS` dict — both tool AND action validated. `file(action="write_file")`, `git(action="commit")`, `memory(action="store")` now blocked. `_build_tool_schema` filtered to allowed actions only. `_execute_tool` structured error extraction. `consecutive_failures` detects empty results. History truncation at turn boundaries (not raw chars). Metrics on all 6 exit paths. `max_turns` upper bound (20). `status="max_turns"` → `"error"` (P1-5). Multi-turn default system prompt. Exception messages truncated. Tools deduped. |
 | v2.0.1 | 2026-07-13 | **Cross-LLM review hardening.** P1: `python` removed from subagent allowlist (eval is RCE — `__import__('os').system(...)`). P2: `tool_args` dict validation, `max_turns>=1` validation, tool schema in prompt (from `__tool_metadata__`), tool results fenced + injection warning repeated, history cap (6000 chars). P3: AGENT.md Quick Start fixed (`action="dispatch"` added, `role="vision"` → `action="vision_delegate"`). |
@@ -125,6 +126,27 @@
 | Parallel multi-subagent dispatch | v2.0 ships single-thread multi-turn. Parallel (one subagent per hypothesis) needs thread pool + result aggregation. | P2 |
 | Structural prompt-injection defense | Sandboxing tool results (not just fencing + warnings) requires a sandboxed tool-result renderer. Out of scope for v2.x. | P3 |
 | `python` in subagent allowlist | v2.0.1 removed it — no safe `eval` for an LLM. If code execution is needed, use `autocode` (git scoping + rollback). | Won't fix |
+
+---
+
+## 🔜 Next Up: v2.2 Milestone (Native Tool Calling Default)
+
+**Timeline:** 1 week after v2.1.1 ships (benchmark period: 2026-07-16 → 2026-07-23).
+
+**Plan:**
+1. **Benchmark** — run `benchmark/` with `SUBAGENT_NATIVE_TOOLS=1` for 1 week across all local + cloud models. Compare native vs JSON on: pass rate, latency, token usage, tool-call accuracy.
+2. **Decision point (2026-07-23):**
+   - **If native wins or ties** → flip the default in v2.2: `SUBAGENT_NATIVE_TOOLS` defaults to `1`, JSON path becomes opt-in (`SUBAGENT_NATIVE_TOOLS=0` for models that don't support native tool calling).
+   - **If native loses** → keep JSON as default, mark native path as "experimental" in docs, investigate root causes.
+3. **v2.2 (if native wins):**
+   - Flip the env-var default (`0` → `1`)
+   - Deprecate `_run_multi_turn` (JSON path) — mark with `@deprecated`, plan removal in v3.0
+   - Delete `_REACT_SCHEMA` + `_build_tool_schema` (only used by the JSON path)
+   - Simplify the dispatch: remove the `if SUBAGENT_NATIVE_TOOLS == "1"` branch — native becomes the only path
+
+**Why 1 week:** gives enough data points across different task types (code analysis, file reading, web research) to make an informed decision. Too short = noisy data; too long = the dual-implementation maintenance debt compounds.
+
+**Until v2.2:** both paths are maintained. The JSON path is the default and fully tested (34 tests). The native path is opt-in and fully tested (12 tests).
 
 ---
 

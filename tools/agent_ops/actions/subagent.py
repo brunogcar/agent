@@ -888,17 +888,18 @@ def _run_multi_turn_native(
 
     # Map LLMResponse → subagent return dict (same shape as _run_multi_turn)
     if not result.ok:
-        # complete_with_tools bails on: LLM error, max_iterations exceeded,
-        # max_consecutive_errors exceeded. Distinguish via error text.
+        # v1.4.1: Use structured result.reason instead of substring-matching
+        # on error text (fragile — one word change in client.py would silently
+        # break the error_code mapping). result.reason is set by
+        # complete_with_tools() on every bail path.
         err = result.error or "unknown error"
-        if "max_iterations" in err:
-            error_code = "MAX_TURNS_EXCEEDED"
-        elif "consecutive tool errors" in err:
-            error_code = "TOOL_FAILURES"
-        elif "cancelled" in err:
-            error_code = "CANCELLED"
-        else:
-            error_code = "MODEL_ERROR"
+        _REASON_TO_CODE = {
+            "max_iterations": "MAX_TURNS_EXCEEDED",
+            "consecutive_errors": "TOOL_FAILURES",
+            "cancelled": "CANCELLED",
+            "llm_error": "MODEL_ERROR",
+        }
+        error_code = _REASON_TO_CODE.get(result.reason, "MODEL_ERROR")
         _record_multi_turn_metric("error", elapsed, total_tokens)
         if trace_id:
             tracer.error(trace_id, "subagent_native", f"bail: {error_code} — {err}")
@@ -909,7 +910,7 @@ def _run_multi_turn_native(
             "error": err,
             "elapsed": elapsed,
             "model": result.model,
-            "turns": max_turns,  # hit the cap
+            "turns": result.iterations,  # v1.4.1: actual iteration count (was max_turns)
             "usage": {"total": total_tokens},
         }
 
@@ -924,7 +925,7 @@ def _run_multi_turn_native(
         "model": result.model,
         "elapsed": elapsed,
         "usage": {"total": total_tokens},
-        "turns": max_turns,  # exact turn count not available from the loop; use the cap
+        "turns": result.iterations,  # v1.4.1: actual iteration count (was max_turns)
     }
 
 
