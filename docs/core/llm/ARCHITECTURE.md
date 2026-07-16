@@ -7,9 +7,10 @@
 | File | Purpose |
 |------|---------|
 | `core/llm.py` | Thin facade — re-exports `llm` singleton |
-| `core/llm_backend/client.py` | `LLMClient`: `complete()`, `call()`, `complete_provider()` (v1.3), `_validate_enum_constraints()` (v1.3), `circuit_breaker_states` property |
+| `core/llm_backend/client.py` | `LLMClient`: `complete()`, `call()`, `complete_provider()` (v1.3), `complete_with_tools()` (v1.4), `_validate_enum_constraints()` (v1.3), `circuit_breaker_states` property, `tool_calling_mode` config (v1.4) |
 | `core/llm_backend/config.py` | `RoleConfig` dataclass + `_build_role_configs()` + `ROLE_CONFIGS` module-level dict |
-| `core/llm_backend/response.py` | `LLMResponse` dataclass |
+| `core/llm_backend/response.py` | `LLMResponse` dataclass + `ToolCall` dataclass (v1.4: `id`, `name`, `arguments`). `tool_calls` field on `LLMResponse` (default `[]`). |
+| `core/llm_backend/tools.py` | **v1.4 NEW.** `ToolDefinition` + `tool_def_from_meta_tool()` + `tool_def_from_registry()` + provider converters (`to_openai_tools`/`to_anthropic_tools`/`to_gemini_tools`). |
 | `core/memory_backend/budget.py` | Cognitive priority-based context budgeting (`budget_messages()`, 7-tier `ContextClass`) |
 | `core/memory_backend/pruner.py` | VRAM artifact pruning |
 | `core/llm_backend/rate_limit.py` | Rate limiting + raw token-count truncation + cost estimation |

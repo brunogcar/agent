@@ -1,24 +1,57 @@
 """
-core/llm_backend/response.py — Unified LLM response object.
+core/llm_backend/response.py — Unified LLM response object + ToolCall.
 
 EXTRACTION NOTE (LLM Phase 1): Extracted from core/llm.py.
+v1.4: Added ToolCall dataclass + tool_calls field for native tool calling.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
+
+
+@dataclass
+class ToolCall:
+    """A single tool call requested by the LLM (v1.4).
+
+    Provider adapters convert their native format (OpenAI ``tool_calls``,
+    Anthropic ``tool_use`` blocks, Gemini ``functionCall`` parts) into this
+    unified shape. The ``complete_with_tools()`` loop only ever sees
+    ``ToolCall`` objects — never provider-specific formats.
+
+    Attributes:
+        id: Provider-minted call ID (for round-tripping the result). Gemini
+            doesn't mint IDs — the adapter generates position-based synthetic
+            ones (``gemini_tc_0``, ``gemini_tc_1``).
+        name: Tool name (e.g. ``"file"``, ``"web"``). For meta-tools, the
+            specific action is in ``arguments["action"]``.
+        arguments: Always a parsed dict (never a JSON string). For meta-tools,
+            includes ``"action"`` + the action's params.
+    """
+    id: str
+    name: str
+    arguments: dict
+
 
 @dataclass
 class LLMResponse:
-    """Unified response object returned by all LLM calls."""
+    """Unified response object returned by all LLM calls.
+
+    v1.4: Added ``tool_calls`` field (empty list by default — backward
+    compatible). Populated only by ``complete_with_tools()``; the existing
+    ``complete()`` / ``call()`` / ``complete_provider()`` paths never set it
+    (they go through ``_parse_response`` which ignores tool_calls in the raw
+    response).
+    """
     text:     str
     role:     str
     model:    str
     usage:    dict[str, int]
     elapsed:  float
-    parsed:   Optional[Any]  = None
-    error:    str            = ""
-    ok:       bool           = True
+    parsed:   Optional[Any]           = None
+    error:    str                     = ""
+    ok:       bool                    = True
+    tool_calls: list[ToolCall]        = field(default_factory=list)
 
     @classmethod
     def from_error(cls, role: str, model: str, error: str, elapsed: float = 0.0) -> "LLMResponse":

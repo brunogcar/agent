@@ -78,6 +78,7 @@ class AnthropicProvider(BaseProvider):
         timeout:     int,
         json_mode:   bool,
         json_schema: Optional[dict] = None,
+        tools:       Optional[list] = None,
         **kwargs:    Any,
     ) -> dict:
         # Convert OpenAI-style messages to Anthropic Messages API format.
@@ -136,6 +137,12 @@ class AnthropicProvider(BaseProvider):
             payload["tools"] = [tool]
             # Force Claude to call this specific tool (no prose, no other tools).
             payload["tool_choice"] = {"type": "tool", "name": tool_name}
+        elif tools:
+            # v1.4: Native tool calling. Convert ToolDefinition list → Anthropic
+            # tools format + add to payload. Do NOT force tool_choice — let
+            # Claude decide whether to call a tool or return text.
+            from core.llm_backend.tools import to_anthropic_tools
+            payload["tools"] = to_anthropic_tools(tools)
 
         # Merge any extra kwargs (but don't let them override our fields)
         payload.update(kwargs)
@@ -162,6 +169,10 @@ class AnthropicProvider(BaseProvider):
         content_parts = raw.get("content", [])
         text = ""
         tool_input_obj: Any = None
+        # v1.4: Native tool calling — collect ALL tool_use blocks (not just
+        # the json_schema sentinel). Each becomes a tool_calls entry in the
+        # OpenAI-shape response.
+        native_tool_calls: list[dict] = []
         for part in content_parts:
             part_type = part.get("type")
             if part_type == "text":
@@ -171,6 +182,17 @@ class AnthropicProvider(BaseProvider):
                 # the user-supplied schema. JSON-stringify so _parse_response
                 # can re-parse it into `parsed`.
                 tool_input_obj = part.get("input")
+            elif part_type == "tool_use":
+                # v1.4: Native tool call — convert to OpenAI tool_calls shape.
+                # Anthropic provides an `id` (e.g. "toolu_01abc...") — round-trip it.
+                native_tool_calls.append({
+                    "id": part.get("id", f"anthropic_tc_{len(native_tool_calls)}"),
+                    "type": "function",
+                    "function": {
+                        "name": part.get("name", ""),
+                        "arguments": json.dumps(part.get("input", {})),
+                    },
+                })
 
         if tool_input_obj is not None:
             text = json.dumps(tool_input_obj)
@@ -179,8 +201,12 @@ class AnthropicProvider(BaseProvider):
         prompt_tokens = usage_in.get("input_tokens", 0)
         completion_tokens = usage_in.get("output_tokens", 0)
 
+        # v1.4: Include tool_calls in the normalized response when present.
+        message = {"content": text}
+        if native_tool_calls:
+            message["tool_calls"] = native_tool_calls
         return {
-            "choices": [{"message": {"content": text}}],
+            "choices": [{"message": message}],
             "usage": {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,

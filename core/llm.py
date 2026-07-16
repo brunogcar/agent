@@ -36,7 +36,8 @@ import atexit
 # -- Thin Facade -------------------------------------------------------------
 from core.llm_backend.factory import create_llm_client
 from core.llm_backend.client import LLMClient
-from core.llm_backend.response import LLMResponse
+from core.llm_backend.response import LLMResponse, ToolCall
+from core.llm_backend.tools import ToolDefinition, tool_def_from_meta_tool, tool_def_from_registry
 from core.llm_backend.circuit_breaker import CircuitBreaker
 from core.llm_backend.providers.lmstudio import LMStudioProvider
 from core.llm_backend.provider import ProviderRegistry, BaseProvider

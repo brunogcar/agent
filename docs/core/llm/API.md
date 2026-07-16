@@ -350,6 +350,33 @@ The gateway exposes circuit breaker states via `GET /health/circuit-breakers`, w
 
 ---
 
+## 🔧 Native Tool Calling (v1.4)
+
+### `complete_with_tools()` — Native tool-calling loop
+
+```python
+from core.llm import llm, ToolDefinition, tool_def_from_meta_tool
+
+tools = [tool_def_from_meta_tool("file", file_fn, allowed_actions=frozenset({"read_file"}))]
+result = llm.complete_with_tools(
+    role="executor", system="...", user="...", tools=tools,
+    execute=lambda tc: dispatch(tc.name, tc.arguments),
+    max_iterations=10, max_consecutive_errors=3, trace_id="task-1",
+)
+```
+
+**Parameters:** `role`, `system`, `user`, `tools` (list[ToolDefinition]), `context=""`, `content=""`, `max_iterations=10`, `execute` (Callable[[ToolCall], dict]), `max_consecutive_errors=3`, `trace_id=""`.
+
+**Returns:** `LLMResponse` with the final text. `tool_calls` is empty (loop consumed them). `usage` is aggregated across iterations.
+
+**Tool errors stay in-loop:** if `execute()` raises, the error is caught, formatted as `{"error": str(e)}`, and appended as the tool result. The LLM sees the error and adapts. `max_consecutive_errors=3` bails after 3 consecutive failures.
+
+### `ToolCall` / `ToolDefinition` / `tool_calling_mode`
+
+See `core/llm_backend/tools.py` + `core/llm_backend/response.py`. `tool_calling_mode` at `LLMClient.__init__`: `"native"` / `"json"` / `"auto"` (default `"auto"` — v1.4 always tries native).
+
+---
+
 ## 🔌 Provider Abstraction
 
 ### BaseProvider (Abstract) — `core/llm_backend/provider.py`

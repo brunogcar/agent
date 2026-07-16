@@ -50,6 +50,7 @@ class OpenAICompatibleProvider(BaseProvider):
         timeout:     int,
         json_mode:   bool,
         json_schema: Optional[dict] = None,
+        tools:       Optional[list] = None,
         **kwargs:    Any,
     ) -> dict:
         payload: dict[str, Any] = {
@@ -58,6 +59,13 @@ class OpenAICompatibleProvider(BaseProvider):
             "temperature": temperature,
             "max_tokens":  max_tokens,
         }
+        # v1.4: Native tool calling. Convert ToolDefinition list → OpenAI
+        # tools format + add to payload. The response's tool_calls (if any)
+        # are already in OpenAI shape (choices[0].message.tool_calls) — no
+        # response-side conversion needed for OpenAI-compatible providers.
+        if tools:
+            from core.llm_backend.tools import to_openai_tools
+            payload["tools"] = to_openai_tools(tools)
         # v1.2: JSON schema enforcement. Some cloud providers (OpenAI, DeepSeek)
         # support json_schema response_format. Others may not — they'll ignore
         # or error. Callers should use json_mode (not json_schema) for providers

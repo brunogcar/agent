@@ -42,9 +42,11 @@
 
 ---
 
-## 🔄 In Progress / Next Up
+## ✅ Recently Completed
 
-### `complete_with_tools()` — Native tool-calling loop at the LLM layer (P1)
+### `complete_with_tools()` — Native tool-calling loop (v1.4 — COMPLETE)
+
+**Implemented in v1.4.** See [API.md](API.md) for the full signature + usage. Key design: 1 tool def per `@meta_tool` (action list in description, `action` as enum), provider adapters convert to native format, tool errors stay in-loop, `max_consecutive_errors=3` bail.
 
 This is the next major LLM-layer feature. The detailed roadmap:
 
@@ -60,4 +62,4 @@ This is the next major LLM-layer feature. The detailed roadmap:
 
 ---
 
-*Last updated: 2026-07-14 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-16 (v1.4 — complete_with_tools implemented). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -70,13 +70,25 @@ class GeminiProvider(BaseProvider):
         timeout:     int,
         json_mode:   bool,
         json_schema: Optional[dict] = None,
+        tools:       Optional[list] = None,
         **kwargs:    Any,
     ) -> dict:
         # Convert OpenAI-style messages to Gemini generateContent format.
         # OpenAI: [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
         # Gemini: {"systemInstruction": {"parts": [{"text": "..."}]}, "contents": [{"role": "user", "parts": [{"text": "..."}]}]}
+        #
+        # v1.4: Native tool calling. Handles 3 new message shapes:
+        #   - assistant with tool_calls → Gemini {"role":"model","parts":[{"functionCall":{...}}]}
+        #   - tool result (role="tool") → Gemini {"role":"function","parts":[{"functionResponse":{...}}]}
+        # Gemini's functionCall has no ID (unlike OpenAI/Anthropic) — we mint
+        # position-based synthetic IDs (gemini_tc_0, gemini_tc_1). For round-
+        # tripping tool results, we build a {tool_call_id: tool_name} map from
+        # preceding assistant messages (Gemini's functionResponse needs the name).
         system_text = ""
         gemini_contents = []
+        # Map tool_call_id → tool_name (built from assistant tool_calls, consumed
+        # by tool result messages). Per-call state — no cross-call leakage.
+        tc_id_to_name: dict[str, str] = {}
 
         for msg in messages:
             role = msg.get("role", "user")
@@ -84,7 +96,39 @@ class GeminiProvider(BaseProvider):
             if role == "system":
                 system_text += content + "\n"
             elif role == "assistant":
-                gemini_contents.append({"role": "model", "parts": [{"text": content}]})
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    # v1.4: Assistant message with tool_calls → Gemini functionCall parts.
+                    parts = []
+                    if content:
+                        parts.append({"text": content})
+                    for tc in tool_calls:
+                        fn = tc.get("function", {})
+                        tc_name = fn.get("name", "")
+                        tc_id = tc.get("id", f"gemini_tc_{len(tc_id_to_name)}")
+                        tc_id_to_name[tc_id] = tc_name
+                        try:
+                            tc_args = json.loads(fn.get("arguments", "{}"))
+                        except (json.JSONDecodeError, TypeError):
+                            tc_args = {}
+                        parts.append({"functionCall": {"name": tc_name, "args": tc_args}})
+                    gemini_contents.append({"role": "model", "parts": parts})
+                else:
+                    gemini_contents.append({"role": "model", "parts": [{"text": content}]})
+            elif role == "tool":
+                # v1.4: Tool result → Gemini functionResponse. Look up the tool
+                # name from the tc_id_to_name map (built from preceding assistant
+                # tool_calls). Gemini has no tool_call_id field — the name IS the key.
+                tc_id = msg.get("tool_call_id", "")
+                tc_name = tc_id_to_name.get(tc_id, "unknown_tool")
+                try:
+                    response_obj = json.loads(content) if content else {}
+                except (json.JSONDecodeError, TypeError):
+                    response_obj = {"result": content}
+                gemini_contents.append({
+                    "role": "function",
+                    "parts": [{"functionResponse": {"name": tc_name, "response": response_obj}}],
+                })
             else:
                 gemini_contents.append({"role": "user", "parts": [{"text": content}]})
 
@@ -110,6 +154,11 @@ class GeminiProvider(BaseProvider):
         }
         if system_text.strip():
             payload["systemInstruction"] = {"parts": [{"text": system_text.strip()}]}
+        # v1.4: Native tool calling. Convert ToolDefinition list → Gemini
+        # functionDeclarations format + add to payload.
+        if tools:
+            from core.llm_backend.tools import to_gemini_tools
+            payload["tools"] = to_gemini_tools(tools)
         # Merge any extra kwargs (but don't let them override our fields)
         payload.update(kwargs)
 
@@ -128,19 +177,44 @@ class GeminiProvider(BaseProvider):
         # OpenAI: {"choices": [{"message": {"content": "..."}}], "usage": {"prompt_tokens": N, "completion_tokens": M, "total_tokens": T}}
         candidates = raw.get("candidates", [])
         text = ""
+        # v1.4: Native tool calling — parse functionCall parts → OpenAI tool_calls.
+        # Gemini's functionCall has no ID (unlike OpenAI/Anthropic). We mint
+        # position-based synthetic IDs (gemini_tc_0, gemini_tc_1). For parallel
+        # calls to the SAME tool, the round-trip relies on position matching
+        # (documented limitation — see gemini.py docstring).
+        native_tool_calls: list[dict] = []
         if candidates:
             content = candidates[0].get("content", {})
             parts = content.get("parts", [])
             for part in parts:
-                text += part.get("text", "")
+                if "text" in part:
+                    text += part.get("text", "")
+                elif "functionCall" in part:
+                    fc = part.get("functionCall", {})
+                    tc_name = fc.get("name", "")
+                    tc_args = fc.get("args", {})
+                    # Mint position-based synthetic ID.
+                    tc_id = f"gemini_tc_{len(native_tool_calls)}"
+                    native_tool_calls.append({
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc_name,
+                            "arguments": json.dumps(tc_args),
+                        },
+                    })
 
         usage_meta = raw.get("usageMetadata", {})
         prompt_tokens = usage_meta.get("promptTokenCount", 0)
         completion_tokens = usage_meta.get("candidatesTokenCount", 0)
         total_tokens = usage_meta.get("totalTokenCount", prompt_tokens + completion_tokens)
 
+        # v1.4: Include tool_calls in the normalized response when present.
+        message = {"content": text}
+        if native_tool_calls:
+            message["tool_calls"] = native_tool_calls
         return {
-            "choices": [{"message": {"content": text}}],
+            "choices": [{"message": message}],
             "usage": {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,

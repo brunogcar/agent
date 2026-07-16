@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ import httpx
 
 from core.config import cfg
 from core.tracer import tracer
-from core.llm_backend.response import LLMResponse
+from core.llm_backend.response import LLMResponse, ToolCall
 from core.llm_backend.circuit_breaker import CircuitBreaker
 from core.llm_backend.provider import ProviderRegistry
 from core.llm_backend.config import RoleConfig, _build_role_configs
@@ -44,13 +44,21 @@ class LLMClient:
     MAX_RETRIES = 2
     RETRY_DELAY = 2.0
 
-    def __init__(self) -> None:
+    def __init__(self, tool_calling_mode: str = "auto") -> None:
         self._registry = ProviderRegistry()
         self._roles = _build_role_configs()
 
         # HIG-02: Per-role circuit breakers for resilience
         self._breakers: dict[str, CircuitBreaker] = {}
         self._build_breakers()
+
+        # v1.4: Tool calling mode — "native" (use provider tool APIs),
+        # "json" (use JSON-schema-parsed tool calls — the legacy subagent
+        # path), or "auto" (native if the provider supports it, else json).
+        # Currently only "native" is implemented in complete_with_tools();
+        # "json" raises NotImplementedError (use the subagent's existing
+        # JSON loop for that path). "auto" always tries native in v1.4.
+        self.tool_calling_mode = tool_calling_mode
 
     # [FIX] Changed from @cached_property to @property to reflect dynamic breaker states
     @property
@@ -465,12 +473,199 @@ class LLMClient:
             return self._roles["executor"]
         return self._roles[role]
 
+    def complete_with_tools(
+        self,
+        role: str,
+        system: str,
+        user: str,
+        tools: list,
+        *,
+        context: str = "",
+        content: str = "",
+        max_iterations: int = 10,
+        execute: "Callable[[ToolCall], dict]",
+        max_consecutive_errors: int = 3,
+        trace_id: str = "",
+        **kwargs,
+    ) -> LLMResponse:
+        """Native tool-calling loop (v1.4).
+
+        Sends messages + tool definitions to the LLM. If the LLM returns
+        ``tool_calls``, executes each via ``execute()``, appends the results
+        to messages, and loops. Returns when the LLM produces a text response
+        (no tool calls) or ``max_iterations`` is exceeded.
+
+        Unlike ``complete()``, this method does NOT use ``json_mode`` or
+        ``json_schema`` — it uses the provider's native tool-calling API
+        (OpenAI ``tools``, Anthropic ``tool_use``, Gemini ``functionCall``).
+
+        Args:
+            role: LLM role (planner/executor/router/etc.) — resolves provider + model.
+            system: System prompt.
+            user: User message (the task).
+            tools: list[ToolDefinition] — the tools the LLM can call.
+            context: Optional background context (appended as user/assistant turn).
+            content: Optional content block (appended to user message).
+            max_iterations: Hard cap on LLM calls (default 10). Prevents runaway loops.
+            execute: Callback that executes a ToolCall and returns a dict result.
+                     The dict is JSON-stringified and appended as a ``tool`` role
+                     message. If execute raises, the error is caught, formatted as
+                     ``{"error": str(e)}``, and appended — the LLM sees the error
+                     and can adapt. The loop does NOT break on tool errors.
+            max_consecutive_errors: Bail after N consecutive tool errors (default 3).
+                                    Prevents silent infinite loops on a misbehaving tool.
+            trace_id: Trace identifier for observability.
+            **kwargs: Forwarded to ``call()`` → provider's ``chat_completion()``.
+
+        Returns:
+            LLMResponse with the final text response. ``tool_calls`` is empty
+            on the returned response (the loop consumed them all). ``usage``
+            is aggregated across all iterations. If ``max_iterations`` is
+            exceeded, ``ok=False`` + ``error`` describes the bail.
+
+        Tool-call flow per iteration:
+          1. call(role, messages, tools=tools) → LLMResponse
+          2. If result.tool_calls is empty → return result (done)
+          3. For each ToolCall: execute(tc) → dict result
+          4. Append assistant message (with tool_calls) + tool result messages
+          5. Check max_consecutive_errors + cancellation → continue or bail
+        """
+        import json as _json
+        import time as _time
+        from core.runtime.activity_tracker import tracker
+
+        # Build messages (same shape as complete())
+        messages: list[dict] = [{"role": "system", "content": system}]
+        if context:
+            messages.append({"role": "user", "content": f"Background:\n{context}"})
+            messages.append({"role": "assistant", "content": "Understood."})
+        user_text = user
+        if content:
+            user_text = f"{user}\n\nContent:\n{content}"
+        messages.append({"role": "user", "content": user_text})
+
+        total_usage = {"prompt": 0, "completion": 0, "total": 0}
+        consecutive_errors = 0
+        last_result: LLMResponse | None = None
+        start_time = _time.time()
+
+        for iteration in range(max_iterations):
+            # Cancellation check between iterations (minimax #6).
+            try:
+                if trace_id and tracker.is_cancelled(trace_id):
+                    elapsed = round(_time.time() - start_time, 2)
+                    return LLMResponse.from_error(
+                        role, "", f"Tool-calling loop cancelled at iteration {iteration}",
+                        elapsed,
+                    )
+            except Exception:
+                pass  # is_cancelled not available — proceed
+
+            # LLM call (tools flows through kwargs to the provider)
+            if trace_id:
+                tracer.step(trace_id, "llm_tools", f"iteration {iteration}")
+
+            result = self.call(
+                role=role,
+                messages=messages,
+                json_mode=False,
+                json_schema=None,
+                trace_id=trace_id,
+                tools=tools,
+                **kwargs,
+            )
+
+            if not result.ok:
+                return result  # LLM error — bail immediately
+
+            # Aggregate usage across iterations (minimax #5)
+            for k in total_usage:
+                total_usage[k] += result.usage.get(k, 0)
+
+            last_result = result
+
+            # No tool calls → done (text response)
+            if not result.tool_calls:
+                elapsed = round(_time.time() - start_time, 2)
+                if trace_id:
+                    tracer.step(trace_id, "llm_tools", f"completed in {iteration+1} iterations")
+                return LLMResponse(
+                    text=result.text,
+                    role=role,
+                    model=result.model,
+                    usage=total_usage,
+                    elapsed=elapsed,
+                    ok=True,
+                )
+
+            # Process tool calls
+            # Append the assistant message (with tool_calls) to messages
+            assistant_msg: dict = {"role": "assistant", "content": result.text or ""}
+            # Include tool_calls in OpenAI shape for the provider to convert
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": _json.dumps(tc.arguments),
+                    },
+                }
+                for tc in result.tool_calls
+            ]
+            messages.append(assistant_msg)
+
+            # Execute each tool call + append result
+            had_error = False
+            for tc in result.tool_calls:
+                if trace_id:
+                    tracer.step(trace_id, "llm_tools",
+                                f"executing tool '{tc.name}' action='{tc.arguments.get('action', '')}'")
+
+                try:
+                    tool_result = execute(tc)
+                    if not isinstance(tool_result, dict):
+                        tool_result = {"result": str(tool_result)}
+                    consecutive_errors = 0
+                except Exception as e:
+                    had_error = True
+                    consecutive_errors += 1
+                    tool_result = {"error": str(e)[:500]}  # truncate to avoid context overflow
+                    if trace_id:
+                        tracer.warning(trace_id, "llm_tools",
+                                       f"tool '{tc.name}' error: {str(e)[:200]}")
+
+                # Append tool result message (OpenAI shape)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": _json.dumps(tool_result),
+                })
+
+            # Bail on too many consecutive errors (minimax #4)
+            if consecutive_errors >= max_consecutive_errors:
+                elapsed = round(_time.time() - start_time, 2)
+                err = f"{max_consecutive_errors} consecutive tool errors — bailing"
+                if trace_id:
+                    tracer.error(trace_id, "llm_tools", err)
+                return LLMResponse.from_error(role, result.model, err, elapsed)
+
+        # Max iterations exceeded
+        elapsed = round(_time.time() - start_time, 2)
+        err = f"max_iterations ({max_iterations}) exceeded"
+        if trace_id:
+            tracer.error(trace_id, "llm_tools", err)
+        return LLMResponse.from_error(role, last_result.model if last_result else "", err, elapsed)
+
     @staticmethod
     def _parse_response(
         raw: dict, role: str, model: str, elapsed: float, json_mode: bool,
     ) -> LLMResponse:
         try:
-            choice = raw["choices"][0]["message"]["content"].strip()
+            # v1.4: content can be None when the LLM returns ONLY tool_calls
+            # (no text). Handle gracefully — set to empty string.
+            raw_content = raw["choices"][0]["message"].get("content")
+            choice = (raw_content or "").strip()
             usage_r = raw.get("usage", {})
             usage = {
                 "prompt": usage_r.get("prompt_tokens", 0),
@@ -479,6 +674,28 @@ class LLMClient:
             }
         except (KeyError, IndexError) as e:
             return LLMResponse.from_error(role, model, f"Response parse error: {e}", elapsed)
+
+        # v1.4: Extract native tool_calls from the raw response (if present).
+        # Converts OpenAI-shape tool_calls → ToolCall objects. The provider
+        # adapters already normalized to OpenAI shape (choices[0].message.tool_calls).
+        # Each entry: {"id":..., "type":"function", "function":{"name":..., "arguments": json_string}}
+        tool_calls_list: list = []
+        try:
+            raw_tc = raw["choices"][0]["message"].get("tool_calls", [])
+            for tc in raw_tc:
+                fn = tc.get("function", {})
+                args_str = fn.get("arguments", "{}")
+                try:
+                    args_dict = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
+                except json.JSONDecodeError:
+                    args_dict = {"_raw_arguments": args_str}
+                tool_calls_list.append(ToolCall(
+                    id=tc.get("id", f"tc_{len(tool_calls_list)}"),
+                    name=fn.get("name", ""),
+                    arguments=args_dict,
+                ))
+        except (KeyError, IndexError, TypeError):
+            pass  # No tool_calls — normal text-only response.
 
         parsed: Optional[Any] = None
         if json_mode:
@@ -516,6 +733,7 @@ class LLMClient:
             elapsed=elapsed,
             parsed=parsed,
             ok=True,
+            tool_calls=tool_calls_list,
         )
 
     @staticmethod
