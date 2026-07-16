@@ -175,7 +175,7 @@ Queues a notification for future delivery via APScheduler `DateTrigger` (N minut
 | `data.delay_minutes` | `int` | Original delay requested |
 | `data.trace_id` | `str` | Trace identifier (echoed) |
 
-**Side effects:** Adds APScheduler job + updates `_job_registry` + calls `_save_jobs()` (persists to `workspace/.notify_jobs/jobs.json`).
+**Side effects:** Adds APScheduler job + updates `_job_registry` + calls `_save_jobs()` (persists to `agent_root/.notify_jobs/jobs.json` (v1.1: moved from `workspace/`)).
 
 **Examples:**
 ```python
@@ -246,7 +246,7 @@ notify(action="list", trace_id="audit-1")
 
 ### `action="recurring"` — Schedule a cron-style recurring notification
 
-Queues a recurring notification via APScheduler `CronTrigger.from_crontab()`.
+Queues a recurring notification via `core.time_utils._build_cron_trigger()` (v1.1: was `CronTrigger.from_crontab()`; DOW remap ensures standard cron 0=Sunday semantics).
 
 **Params used:** `title`, `message`, `cron`, `trace_id`.
 
@@ -269,7 +269,7 @@ Queues a recurring notification via APScheduler `CronTrigger.from_crontab()`.
 
 #### Cron expression syntax
 
-Standard Unix 5-field cron (APScheduler's `CronTrigger.from_crontab` matches vixie-cron semantics):
+Standard Unix 5-field cron (v1.1: via `core.time_utils._build_cron_trigger()` which remaps DOW to APScheduler day-names, preserving 0=Sunday semantics — raw `from_crontab` treats 0=Monday):
 
 ```
 ┌──────── minute (0-59)
@@ -291,7 +291,7 @@ Standard Unix 5-field cron (APScheduler's `CronTrigger.from_crontab` matches vix
 | `0 */2 * * *` | every 2 hours on the hour |
 | `30 8 * * 1-5` | 8:30am Monday through Friday |
 
-> **Note:** APScheduler's `from_crontab` does NOT support `@yearly`/`@monthly`/`@weekly`/`@daily`/`@hourly`/`@reboot` macros. Use the equivalent 5-field expression. CRON_TZ (per-job timezone) is also not supported in the current `recurring` action — planned for the future `schedule` tool.
+> **Note:** `_build_cron_trigger` does NOT support `@yearly`/`@monthly`/`@weekly`/`@daily`/`@hourly`/`@reboot` macros. Use the equivalent 5-field expression. CRON_TZ (per-job timezone) is also not supported in the current `recurring` action — use the `schedule` tool (v1.0+) for richer cron semantics, intervals, one-shots, and calendar sync.
 
 **Examples:**
 ```python
@@ -409,8 +409,8 @@ notify(action="test", trace_id="smoke-1")
 Current considerations:
 - `subprocess.run(["notify-send", "-t", str(timeout * 1000), title, message], capture_output=True, timeout=5)` is called with a hardcoded argv list — no shell, no shell injection risk. The `title` and `message` are passed as separate argv elements (not interpolated into a shell string).
 - Job IDs are generated from `int(time.time())` — not cryptographically random, but sufficient for notification scheduling. Do NOT reuse this pattern for security tokens.
-- The persistence file `workspace/.notify_jobs/jobs.json` is written with default filesystem permissions (umask). On multi-user systems, consider tightening permissions if the message bodies are sensitive.
-- The cron expression is validated by `CronTrigger.from_crontab()` BEFORE the job is added — malformed expressions return `INVALID_PARAM` rather than crashing the scheduler.
+- The persistence file `agent_root/.notify_jobs/jobs.json` (v1.1: moved from `workspace/`) is written with default filesystem permissions (umask). On multi-user systems, consider tightening permissions if the message bodies are sensitive.
+- The cron expression is validated by `_build_cron_trigger()` (v1.1: was `from_crontab`) BEFORE the job is added — malformed expressions return `INVALID_PARAM` rather than crashing the scheduler.
 
 ---
 

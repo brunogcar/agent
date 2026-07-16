@@ -5,6 +5,9 @@
 ## ❌ NEVER DO
 
 1. **Never implement custom path resolution in helpers or handlers** — Use `core.path_guard.resolve_path()` exclusively. The old `file_ops` refactor had `_resolve()` and `_safe_resolve()` in `helpers.py` that duplicated path_guard logic. That was a bug.
+2. **Never use `datetime.now()` directly in tools** — Use `core.time_utils.now()` (tz-aware). Naive `datetime.now()` breaks silently if the host timezone changes or DST transitions. The only exception is test code asserting specific instants.
+3. **Never use `CronTrigger.from_crontab()` directly** — it treats DOW as 0=Monday (Python convention), NOT standard cron's 0=Sunday. Always use `core.time_utils._build_cron_trigger(cron, get_timezone())` which remaps DOW to day-names. `"0 9 * * 1"` = Monday 9am, not Tuesday.
+4. **Never assume `cfg.timezone` is a valid tz name** — `get_timezone()` resolves it lazily and falls back to system local → UTC on invalid values. Always go through `get_timezone()`, never `ZoneInfo(cfg.timezone)` directly.
 2. **Never add `**kwargs` to `ok()` / `fail()`** — FastMCP schema breaks. Use `**meta` instead.
 3. **Never skip `check_protected_file()` for write operations** — Protected files must be guarded. Reads are always allowed.
 4. **Never forget `GIT_WORKSPACE_ONLY` when adding new git actions** — `init` and `clone` must be restricted to `WORKSPACE_ROOT`.

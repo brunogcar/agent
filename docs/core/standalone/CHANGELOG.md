@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| Pre-v1.1 | 2026-07-16 | **Added `core/time_utils.py`** — new standalone module: tz-aware `now()`/`parse_iso()`/`parse_human()`/`parse_duration()`/`cron_next_fire()`/`compute_missed_fires()`/`_build_cron_trigger()`, all reading `cfg.timezone` (`AGENT_TZ` env). Replaces the external `@mcpcentral/mcp-time` MCP dependency for our own tooling. Used by `notify_ops` (v1.1 swap) + `schedule_ops` (v1.0). 44 unit tests in `tests/core/test_time_utils.py`. |
 | Pre-v1.1 | 2026-07-05 | `check_protected_file` now fails-closed on unknown operations (Bug #2). Was fail-open, which allowed new write actions to silently bypass protection on protected files. |
 | Pre-v1 | — | Initial standalone modules created |
 

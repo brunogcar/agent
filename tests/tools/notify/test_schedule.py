@@ -164,7 +164,7 @@ class TestScheduleRegistryAndPersistence:
         mock_save.assert_called_once()
 
     def test_jobs_json_persisted_to_disk(self, mock_cfg, mock_scheduler, tmp_path):
-        """_save_jobs should write a real jobs.json file under workspace_root.
+        """_save_jobs should write a real jobs.json file under agent_root.
 
         This test exercises the actual _save_jobs() (not mocked) to verify
         the persistence file is created and contains valid JSON.
@@ -177,7 +177,7 @@ class TestScheduleRegistryAndPersistence:
         }):
             result = notify(action="schedule", message="persist me", delay_minutes=5)
 
-        jobs_file = (tmp_path / "workspace" / ".notify_jobs" / "jobs.json")
+        jobs_file = (tmp_path / ".notify_jobs" / "jobs.json")
         assert jobs_file.exists(), f"jobs.json not written at {jobs_file}"
         import json
         loaded = json.loads(jobs_file.read_text(encoding="utf-8"))

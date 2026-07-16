@@ -9,10 +9,7 @@ Adding a new action: drop a new file here, define a handler decorated with
 @register_action("notify", "<action_name>", ...). The facade will pick it
 up automatically on next import — no edits to __init__.py needed.
 
-NOTE: This file is named `test_notify.py` to namespace-collide-avoid with
-the standard `test_*` pytest discovery pattern. The action_name registered
-is "test" (not "test_notify"). The module file name is intentionally
-different from the action name because the auto-discovery glob picks up
-all *.py files in actions/, and we want to keep the literal "test" action
-registration explicit.
+v1.1: action files use bare names (list.py, test.py) matching report_ops'
+convention. The action_name is set by @register_action, NOT the filename —
+auto-discovery globs all *.py in actions/ and imports them.
 """

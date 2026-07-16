@@ -11,6 +11,7 @@ The configuration system was split in v1.0 from a monolithic `core/config.py` (5
 ```python
 from core.config import cfg, Config        # Singleton + class
 cfg.agent_root                               # pathlib.Path
+cfg.timezone                                 # str — AGENT_TZ env ("" = system local); v1.1
 cfg.planner_model                            # str
 cfg.model_registry                           # dict[str, dict[str, Any]]
 cfg.is_protected("server.py")                # bool

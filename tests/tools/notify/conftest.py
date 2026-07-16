@@ -6,8 +6,8 @@ tested), no real files are written to the user's workspace.
 
 Patches four things across two modules so action handlers can be tested in
 isolation:
-  - tools.notify_ops.helpers.cfg        — is_windows + workspace_root
-  - tools.notify_ops.state.cfg          — workspace_root (for _save_jobs / _load_jobs)
+  - tools.notify_ops.helpers.cfg        — is_windows
+  - tools.notify_ops.state.cfg          — agent_root (v1.1: for _save_jobs / _load_jobs)
   - tools.notify_ops.helpers._get_scheduler  — return MagicMock instead of real scheduler
   - plyer.notification.notify           — fake Windows toast success
   - subprocess.run                      — fake notify-send success on Linux
@@ -50,12 +50,13 @@ def reset_notify_state():
 def mock_cfg(tmp_path):
     """Patch the cfg singleton as seen by BOTH notify_ops.helpers AND notify_ops.state.
 
-    Default: Linux (is_windows=False), workspace_root = tmp_path/workspace.
+    Default: Linux (is_windows=False), agent_root = tmp_path (v1.1: persistence
+    moved from workspace_root → agent_root, mirroring .understand/.schedule_jobs).
     Tests can mutate `mock.is_windows = True` to exercise the Windows/plyer path.
     """
     mock = MagicMock()
     mock.is_windows = False
-    mock.workspace_root = str(tmp_path / "workspace")
+    mock.agent_root = str(tmp_path)
 
     with patch("tools.notify_ops.helpers.cfg", mock), \
          patch("tools.notify_ops.state.cfg", mock):

@@ -9,26 +9,26 @@
 | `tools/notify.py` | `@tool @meta_tool` facade (154 lines) — strips/lowercases `action`, looks up handler in `DISPATCH["notify"][action]`, wraps handler exceptions as `"Notify action failed: ..."`, adds `duration_ms` to every response. Decorator order: `@tool` outer, `@meta_tool` inner (per `tools/_meta_tool.py` invariant). Imports `from tools import notify_ops` BEFORE reading `DISPATCH` so auto-discovery populates the table first. |
 | `tools/notify_ops/__init__.py` | Auto-discovery: globs `actions/*.py`, imports each via `importlib.import_module` to trigger `@register_action` decoration. Runs BEFORE the facade reads `DISPATCH` so the table is populated when `@meta_tool` runs. Mirrors `consult_ops/__init__.py` exactly. |
 | `tools/notify_ops/_registry.py` | `DISPATCH` dict + `@register_action` decorator. Module-level `DISPATCH` is shared by all action modules via the `from ... import DISPATCH` re-export pattern. Duplicate registration raises `ValueError` loudly. The `func` reference is the raw callable (not a partial/wrapper) so `@meta_tool`'s parameter introspection works. |
-| `tools/notify_ops/state.py` | All shared mutable state: `_scheduler` singleton + `_scheduler_lock`, `_job_registry` dict (job_id → metadata), `_delivery_log` bounded list (max 50), `_jobs_path()` / `_save_jobs()` / `_load_jobs()` (atomic JSON persistence to `workspace/.notify_jobs/jobs.json`), `_log_delivery()` append helper, `_noop_fire()` stub for re-loaded jobs, `reset_state()` for test isolation. |
+| `tools/notify_ops/state.py` | All shared mutable state: `_scheduler` singleton + `_scheduler_lock`, `_job_registry` dict (job_id → metadata), `_delivery_log` bounded list (max 50), `_jobs_path()` / `_save_jobs()` / `_load_jobs()` (atomic JSON persistence to `agent_root/.notify_jobs/jobs.json` (v1.1: moved from `workspace/`)), `_log_delivery()` append helper, `_noop_fire()` stub for re-loaded jobs, `reset_state()` for test isolation. |
 | `tools/notify_ops/helpers.py` | Two responsibilities: `_get_scheduler()` (lazy APScheduler singleton — imports + starts + calls `state._load_jobs()` on first call; returns `None` on ImportError) and `_send_notification()` (cross-platform chain: plyer → notify-send → console; calls `state._log_delivery()` after every delivery). |
 | `tools/notify_ops/actions/__init__.py` | Docstring-only marker file explaining the auto-discovery convention. |
 | `tools/notify_ops/actions/send.py` | `@register_action("notify", "send", ...)` + `_action_send` — immediate desktop notification via `_send_notification`. Default title `"Agent"`. Semantic status `"sent"` in `data.action_status`. |
 | `tools/notify_ops/actions/schedule.py` | `@register_action("notify", "schedule", ...)` + `_action_schedule` — APScheduler `DateTrigger` one-shot N minutes from now. Default title `"Agent Reminder"`. Calls `_save_jobs()` after registering. Semantic status `"scheduled"`. |
 | `tools/notify_ops/actions/cancel.py` | `@register_action("notify", "cancel", ...)` + `_action_cancel` — remove job by `job_id`. Fast-fails with `NOT_FOUND` if job_id not in registry. Pops from registry even if `scheduler.remove_job` raises (job already fired). Calls `_save_jobs()` after. Semantic status `"cancelled"`. |
-| `tools/notify_ops/actions/list_workflows.py` | `@register_action("notify", "list", ...)` + `_action_list` — enumerate APScheduler jobs + enrich with registry metadata. Returns empty list with note (NOT error) when scheduler is `None`. Adds `recurring` + `cron` fields per job. Semantic status `"ok"`. (Module named `list_workflows.py` to mirror `workflow_ops` pattern — action_name is `"list"`.) |
-| `tools/notify_ops/actions/recurring.py` | `@register_action("notify", "recurring", ...)` + `_action_recurring` — cron-style via APScheduler `CronTrigger.from_crontab()`. Validates cron expression before adding job (raises `INVALID_PARAM` on bad syntax). Computes next fire time via `trigger.get_next_fire_time(None, now)`. Stores `"recurring": True` + `"cron"` in registry. Calls `_save_jobs()`. Semantic status `"scheduled"`. Includes a docstring section on the future `schedule` tool integration plan and the proposed delivery-backend roadmap (ntfy.sh / Slack / Discord / Telegram / email). |
+| `tools/notify_ops/actions/list.py` | `@register_action("notify", "list", ...)` + `_action_list` — enumerate APScheduler jobs + enrich with registry metadata. Returns empty list with note (NOT error) when scheduler is `None`. Adds `recurring` + `cron` fields per job. Semantic status `"ok"`. (v1.1: renamed from `list_workflows.py` → `list.py` to align with `report_ops` convention.) |
+| `tools/notify_ops/actions/recurring.py` | `@register_action("notify", "recurring", ...)` + `_action_recurring` — cron-style via `core.time_utils._build_cron_trigger()` (v1.1: was `CronTrigger.from_crontab()` — the DOW remap fixes the 0=Monday trap; standard cron 0=Sunday now). Validates cron expression before adding job (raises `INVALID_PARAM` on bad syntax). Computes next fire time via `core.time_utils.cron_next_fire()` (tz-aware). Stores `"recurring": True` + `"cron"` in registry. Calls `_save_jobs()`. Semantic status `"scheduled"`. Includes a docstring section on the `schedule` tool integration (v1.0, has landed) and the proposed delivery-backend roadmap (ntfy.sh / Slack / Discord / Telegram / email). |
 | `tools/notify_ops/actions/modify.py` | `@register_action("notify", "modify", ...)` + `_action_modify` — updates `_job_registry` title and/or message in place. Supports partial updates (only-title or only-message). Explicitly documents the v1.0 limitation: APScheduler kwargs are frozen at scheduling time, so metadata changes show in `list()` immediately but DON'T take effect on the next fire without cancel+re-create. Calls `_save_jobs()`. Semantic status `"modified"`. |
 | `tools/notify_ops/actions/history.py` | `@register_action("notify", "history", ...)` + `_action_history` — returns last 20 entries from `state._delivery_log` (the full log is capped at 50). Documents why the log is in-memory only (debugging aid, not audit trail). Semantic status `"ok"`. |
-| `tools/notify_ops/actions/test_notify.py` | `@register_action("notify", "test", ...)` + `_action_test` — sends fixed `title="Test"`, `message="Notification test successful"` through the full `_send_notification` chain. Useful for verifying the delivery pipeline works in the current environment. Appears in `history` immediately. Module named `test_notify.py` (not `test.py`) to avoid pytest discovery pattern confusion. Semantic status `"sent"`. |
+| `tools/notify_ops/actions/test.py` | `@register_action("notify", "test", ...)` + `_action_test` — sends fixed `title="Test"`, `message="Notification test successful"` through the full `_send_notification` chain. Useful for verifying the delivery pipeline works in the current environment. Appears in `history` immediately. (v1.1: renamed from `test_notify.py` → `test.py` — pytest only collects under `tests/`, so no discovery conflict.) Semantic status `"sent"`. |
 | `core/contracts.py` | `ok()` / `fail()` — standardized return dicts with `trace_id` injection. All notify action handlers use these. |
-| `core/config.py` | `cfg.is_windows` (platform detection for `_send_notification`), `cfg.workspace_root` (for `_jobs_path()`). |
+| `core/config.py` | `cfg.is_windows` (platform detection for `_send_notification`), `cfg.agent_root` (v1.1: for `_jobs_path()`, was `cfg.workspace_root`). |
 | `core/tracer.py` | `tracer.step(trace_id, "notify", ...)` — called by the facade on action entry + completion/failure. |
 | `tests/tools/notify/conftest.py` | 5 fixtures (`reset_notify_state` autouse, `mock_cfg`, `mock_scheduler`, `mock_scheduler_none`, `mock_plyer`, `mock_notify_send`) — see [Testing section](#-testing) for the full breakdown. |
 | `tests/tools/notify/test_send.py` | 12 tests — success on Linux/Windows, default title, missing message, console fallback (3 paths), trace_id threading, delivery log entry + history visibility |
 | `tests/tools/notify/test_schedule.py` | 11 tests — success, DateTrigger used, missing message, missing/negative delay, APScheduler not installed, trace_id threading, registry metadata, `_save_jobs` called, real `jobs.json` file written to tmp_path |
 | `tests/tools/notify/test_cancel.py` | 8 tests — success, `_save_jobs` called, scheduler.remove_job raises still succeeds, missing job_id, job not in registry (NOT_FOUND), scheduler not running (DEPENDENCY_MISSING), trace_id threading |
 | `tests/tools/notify/test_list.py` | 5 tests — jobs with metadata enrichment, recurring jobs include cron field, empty list, scheduler not running returns empty + note (NOT error), trace_id threading |
-| `tests/tools/notify/test_recurring.py` | 12 tests — success, CronTrigger.from_crontab invoked, default title, registry marks recurring=True, `_save_jobs` called, missing message, missing/whitespace cron, invalid cron expression (INVALID_PARAM), APScheduler not installed, trace_id threading |
+| `tests/tools/notify/test_recurring.py` | 12 tests — success, _build_cron_trigger invoked (v1.1 DOW remap), default title, registry marks recurring=True, `_save_jobs` called, missing message, missing/whitespace cron, invalid cron expression (INVALID_PARAM), APScheduler not installed, trace_id threading |
 | `tests/tools/notify/test_modify.py` | 9 tests — updates both fields, `_save_jobs` called, partial update (only title / only message), missing job_id, no fields provided (MISSING_PARAM), job not found (NOT_FOUND), trace_id threading |
 | `tests/tools/notify/test_history.py` | 5 tests — returns log after send, multiple entries, empty log, log capped at 50 (response returns last 20), trace_id threading |
 | `tests/tools/notify/test_test.py` | 8 tests — sends notification, fixed title/message, returns method, Windows uses plyer, delivery log entry, visible via history, trace_id threading, no trace_id when not provided |
@@ -52,7 +52,7 @@ tools/notify_ops/
 │   ├── _scheduler_lock        # threading.Lock — guards singleton init
 │   ├── _job_registry          # dict {job_id → {title, message, run_at, cron, status, recurring}}
 │   ├── _delivery_log          # list (bounded to _MAX_DELIVERY_LOG=50)
-│   ├── _jobs_path()           # cfg.workspace_root / ".notify_jobs" / "jobs.json"
+│   ├── _jobs_path()           # cfg.agent_root / ".notify_jobs" / "jobs.json"  (v1.1)
 │   ├── _save_jobs()           # Atomic write (tmp + os.replace) — best-effort, never crashes
 │   ├── _load_jobs()           # Called ONCE by _get_scheduler() after start. Re-creates DateTrigger
 │   │                          # + CronTrigger jobs from jobs.json. Skips past-fire DateTrigger jobs.
@@ -69,13 +69,13 @@ tools/notify_ops/
     ├── send.py                # @register_action("notify", "send")     — immediate desktop notification
     ├── schedule.py            # @register_action("notify", "schedule") — APScheduler DateTrigger one-shot
     ├── cancel.py              # @register_action("notify", "cancel")   — remove job by job_id
-    ├── list_workflows.py      # @register_action("notify", "list")     — enumerate jobs + metadata
-    ├── recurring.py           # @register_action("notify", "recurring") — CronTrigger.from_crontab()
+    ├── list.py                # @register_action("notify", "list")     — enumerate jobs + metadata  (v1.1 rename)
+    ├── recurring.py           # @register_action("notify", "recurring") — _build_cron_trigger() (v1.1 DOW fix)
     ├── modify.py              # @register_action("notify", "modify")   — update registry metadata
     ├── history.py             # @register_action("notify", "history")  — last 20 from _delivery_log
-    └── test_notify.py         # @register_action("notify", "test")     — fixed test notification
+    └── test.py                # @register_action("notify", "test")     — fixed test notification  (v1.1 rename)
 
-workspace/.notify_jobs/jobs.json    # Persisted _job_registry (atomic-write, reloaded on startup)
+agent_root/.notify_jobs/jobs.json    # Persisted _job_registry (v1.1: moved from workspace/, atomic-write, reloaded on startup)
 ```
 
 ---
@@ -143,13 +143,13 @@ All 8 actions are auto-discovered from `tools/notify_ops/actions/*.py` at import
 | `send` | `send.py` | immediate | `sent` | no (delivery logged) |
 | `schedule` | `schedule.py` | APScheduler `DateTrigger` (one-shot) | `scheduled` | ✅ `_save_jobs()` |
 | `cancel` | `cancel.py` | user call | `cancelled` | ✅ `_save_jobs()` |
-| `list` | `list_workflows.py` | user call | `ok` | read-only |
+| `list` | `list.py` | user call | `ok` | read-only |
 | `recurring` | `recurring.py` | APScheduler `CronTrigger` (cron) | `scheduled` | ✅ `_save_jobs()` |
 | `modify` | `modify.py` | user call | `modified` | ✅ `_save_jobs()` |
 | `history` | `history.py` | user call | `ok` | read-only |
-| `test` | `test_notify.py` | immediate (fixed payload) | `sent` | no (delivery logged) |
+| `test` | `test.py` | immediate (fixed payload) | `sent` | no (delivery logged) |
 
-**Naming convention:** the module file name does NOT have to match the action_name. `list_workflows.py` registers `action_name="list"`; `test_notify.py` registers `action_name="test"`. The auto-discovery globs `*.py` and the `@register_action("notify", "<name>", ...)` decorator is what populates `DISPATCH["notify"][<name>]` — `@meta_tool` then reads the keys for the `Literal` enum.
+**Naming convention (v1.1):** the module file name does NOT have to match the action_name. `list.py` registers `action_name="list"`; `test.py` registers `action_name="test"` (v1.1: renamed from `list_workflows.py`/`test_notify.py` to align with `report_ops` convention). The auto-discovery globs `*.py` and the `@register_action("notify", "<name>", ...)` decorator is what populates `DISPATCH["notify"][<name>]` — `@meta_tool` then reads the keys for the `Literal` enum.
 
 ---
 
@@ -157,7 +157,7 @@ All 8 actions are auto-discovered from `tools/notify_ops/actions/*.py` at import
 
 ### File location
 
-`workspace/.notify_jobs/jobs.json` — resolved by `state._jobs_path()` from `cfg.workspace_root`. Tests patch `cfg.workspace_root` (via the `mock_cfg` fixture) to redirect persistence to a `tmp_path`.
+`agent_root/.notify_jobs/jobs.json` — resolved by `state._jobs_path()` from `cfg.agent_root` (v1.1: moved from `cfg.workspace_root`). Tests patch `cfg.agent_root` (via the `mock_cfg` fixture) to redirect persistence to a `tmp_path`.
 
 ### Write semantics (`_save_jobs`)
 
@@ -170,8 +170,8 @@ All 8 actions are auto-discovered from `tools/notify_ops/actions/*.py` at import
 
 Called ONCE by `helpers._get_scheduler()` after the scheduler starts. Reads `jobs.json` (if it exists), re-creates each job in APScheduler:
 
-- **DateTrigger jobs** (`recurring=False`): re-create with `DateTrigger(run_date=datetime.fromisoformat(run_at))`. **Skipped if `run_at <= now`** — the fire time passed while offline.
-- **CronTrigger jobs** (`recurring=True`): re-create with `CronTrigger.from_crontab(cron)`. NOT skipped (cron jobs are forward-looking).
+- **DateTrigger jobs** (`recurring=False`): re-create with `DateTrigger(run_date=parse_iso(run_at))` (v1.1: was `datetime.fromisoformat`, now tz-aware via `core.time_utils`). **Skipped if `run_at <= now`** — the fire time passed while offline.
+- **CronTrigger jobs** (`recurring=True`): re-create via `_build_cron_trigger(cron, get_timezone())` (v1.1: was `CronTrigger.from_crontab(cron)` — DOW remap fixes 0=Monday trap). NOT skipped (cron jobs are forward-looking).
 
 All re-created jobs use `state._noop_fire` as the firing callback (NOT `helpers._send_notification`) to avoid a `state ↔ helpers` circular import at module load. `_noop_fire` lazy-imports `_send_notification` at fire time, well after module initialization.
 

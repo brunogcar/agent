@@ -1,10 +1,10 @@
-"""tools/notify_ops/actions/list_workflows.py — List scheduled notifications.
+"""tools/notify_ops/actions/list.py — List scheduled notifications.
 
-The action_name is "list" but the module is named list_workflows.py to
-mirror the naming convention used by other tools (workflow_ops/actions/
-list_workflows.py). The auto-discovery in notify_ops/__init__.py globs
-*.py and imports them — the actual action_name registered via
-@register_action is what @meta_tool reads for the Literal enum.
+v1.1: renamed from list_workflows.py → list.py to match report_ops'
+convention (report_ops/actions/list.py already used the bare name).
+The action_name has always been "list" — only the filename changed.
+Auto-discovery in notify_ops/__init__.py globs *.py, so no facade edits
+were needed.
 
 Preserves the original tools/notify.py list action behavior (query
 APScheduler for all jobs + enrich with registry metadata) but routes

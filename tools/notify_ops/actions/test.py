@@ -1,4 +1,4 @@
-"""tools/notify_ops/actions/test_notify.py — Test the delivery pipeline. [NEW]
+"""tools/notify_ops/actions/test.py — Test the delivery pipeline.
 
 v1.0 introduces this action. Sends a known test notification through the
 full _send_notification pipeline so the LLM (or a human operator) can
@@ -9,14 +9,10 @@ The test notification uses fixed title="Test" and message="Notification
 test successful" so it's identifiable in the delivery log (history action)
 and distinguishable from real notifications.
 
-The module file is named test_notify.py (not test.py) for two reasons:
-  1. Avoids the pytest discovery pattern `test_*.py` — pytest would try to
-     collect it as a test module if it were named test.py at the actions/
-     level. (Actually pytest only collects from testpaths, but the explicit
-     _notify suffix keeps the intent clear and is consistent with the
-     test_notify.py naming pattern used by the original test file.)
-  2. The action_name registered is still "test" — the @meta_tool Literal
-     enum generation uses the DISPATCH keys, not the module file names.
+v1.1: renamed from test_notify.py → test.py. pytest only collects from
+testpaths (tests/), so there's no discovery conflict with a bare test.py
+in tools/. The action_name is "test" — set by @register_action, not the
+filename. Aligns with report_ops/actions/ convention.
 """
 from __future__ import annotations
 

@@ -1,10 +1,11 @@
 """tools/notify_ops/actions/recurring.py — Cron-style recurring notification. [NEW]
 
-v1.0 introduces this action. Uses APScheduler CronTrigger.from_crontab() to
-parse a standard 5-field cron expression and schedule a recurring job.
+v1.0 introduces this action. v1.1 swaps raw CronTrigger.from_crontab() →
+core.time_utils._build_cron_trigger() which remaps the DOW field to
+APScheduler day-names, preserving standard cron 0=Sunday semantics
+(from_crontab treats 0=Monday — a subtle trap).
 
-Cron expression format (standard Unix cron — APScheduler's from_crontab
-matches the vixie-cron semantics):
+Cron expression format (standard Unix cron — 0=Sunday):
     "*/5 * * * *"   — every 5 minutes
     "0 9 * * *"     — 9am daily
     "0 9 * * 1"     — 9am every Monday
@@ -15,22 +16,23 @@ Fields (in order):
     minute (0-59), hour (0-23), day-of-month (1-31),
     month (1-12), day-of-week (0-6 where 0=Sunday)
 
-[DESIGN] FUTURE INTEGRATION — schedule tool:
-  A future `schedule` tool will own calendar sync, iCal/CalDAV, and richer
-  cron semantics (CRON_TZ, human-readable "every weekday" parsing, etc.).
-  That schedule tool will USE notify as its delivery mechanism:
+[DESIGN] SCHEDULE TOOL INTEGRATION (v1.0+ — schedule tool has landed):
+  The `schedule` tool (v1.0) now owns calendar sync, iCal/CalDAV, richer
+  cron semantics, and offline missed-fire recovery. It USES notify as its
+  delivery mechanism:
       schedule(action="add_cron", cron="0 9 * * *",
-               delivery=notify(action="send", title="Standup", message="..."))
-  Notify's recurring action stays focused on the notification delivery use
-  case; richer scheduling logic moves to the schedule tool when it lands.
+               delivery={"tool":"notify","action":"send","title":"...","message":"..."})
+  Notify's recurring action stays focused on simple cron-style notification
+  delivery; for richer scheduling (intervals, one-shots at specific times,
+  calendar sync, catch-up), use the schedule tool instead.
   See the bottom of this file for the future delivery-backend roadmap.
 """
 from __future__ import annotations
 
 import time
-from datetime import datetime
 
 from core.contracts import ok, fail
+from core.time_utils import now, cron_next_fire, format_dt, _build_cron_trigger, get_timezone
 from tools.notify_ops._registry import register_action
 from tools.notify_ops import helpers
 from tools.notify_ops import state
@@ -90,11 +92,12 @@ def _action_recurring(
     # here to produce a clean fail() response with INVALID_PARAM error_code
     # rather than letting it bubble up as INTERNAL_ERROR.
     try:
-        from apscheduler.triggers.cron import CronTrigger
-        trigger = CronTrigger.from_crontab(cron)
+        # v1.1 DOW FIX: use _build_cron_trigger (remaps DOW 0=Sunday to
+        # APScheduler day-names) instead of raw from_crontab (0=Monday trap).
+        trigger = _build_cron_trigger(cron, get_timezone())
     except ImportError:
         return fail(
-            "APScheduler CronTrigger not available. Run: pip install apscheduler",
+            "APScheduler not installed. Run: pip install apscheduler",
             trace_id=trace_id,
             error_code="DEPENDENCY_MISSING",
         )
@@ -116,11 +119,10 @@ def _action_recurring(
             id=job_id,
         )
 
-        # Compute next fire time for the response payload. APScheduler's
-        # CronTrigger.get_next_fire_time() takes (previous_fire_time, now)
-        # — pass None for previous to get the next upcoming fire.
-        next_run = trigger.get_next_fire_time(None, datetime.now())
-        next_run_str = next_run.strftime("%Y-%m-%d %H:%M:%S") if next_run else ""
+        # Compute next fire time for the response payload via time_utils
+        # (tz-aware, configured timezone, standard cron 0=Sunday semantics).
+        next_run = cron_next_fire(cron)
+        next_run_str = format_dt(next_run) if next_run else ""
 
         state._job_registry[job_id] = {
             "title": send_title,

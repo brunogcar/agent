@@ -9,13 +9,19 @@ v1.0 changes vs. legacy schedule:
   - Semantic status "scheduled" preserved in data.action_status.
   - Calls state._save_jobs() after registering the job so the schedule
     survives process restarts.
+
+v1.1 changes:
+  - Swapped naive datetime.now() → core.time_utils.now() (tz-aware).
+  - Swapped timedelta → time_utils.parse_duration for the delay.
+  - Swapped strftime → time_utils.format_dt.
+  Now respects cfg.timezone (AGENT_TZ env) instead of naive local time.
 """
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
 
 from core.contracts import ok, fail
+from core.time_utils import now, parse_duration, format_dt
 from tools.notify_ops._registry import register_action
 from tools.notify_ops import helpers
 from tools.notify_ops import state
@@ -64,7 +70,7 @@ def _action_schedule(
     try:
         from apscheduler.triggers.date import DateTrigger
 
-        run_time = datetime.now() + timedelta(minutes=delay_minutes)
+        run_time = now() + parse_duration(f"{delay_minutes}m")
         job_id = f"reminder_{int(time.time())}"
         send_title = title or "Agent Reminder"
 
@@ -94,7 +100,7 @@ def _action_schedule(
                 "action": "schedule",
                 "job_id": job_id,
                 "message": message,
-                "run_at": run_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "run_at": format_dt(run_time),
                 "delay_minutes": delay_minutes,
                 "trace_id": trace_id,
             },

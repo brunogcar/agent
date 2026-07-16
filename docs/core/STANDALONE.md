@@ -39,6 +39,7 @@ from core.br_validator import parse_brl, validate_ticker         # Skills use th
 | Output compression | `core/utils.py` | `compress_result()` truncates large string fields recursively |
 | Citation tracking | `core/citations.py` | Per-trace source numbering for research workflows |
 | BRL / BR date / ticker parsing | `core/br_validator.py` | Brazilian financial data validation for `skills/b3` |
+| Tz-aware time + cron helpers | `core/time_utils.py` | `now()` / `parse_iso()` / `parse_human()` / `parse_duration()` / `cron_next_fire()` / `compute_missed_fires()` / `_build_cron_trigger()` — reads `cfg.timezone` (`AGENT_TZ` env); used by `notify_ops` + `schedule_ops`; replaces the external `@mcpcentral/mcp-time` MCP dependency |
 
 > **v1.3 move:** Prometheus metrics (`track_node`, `generate_metrics`) moved to `core/observability/metrics.py` — see [OBSERVABILITY.md](observability/OBSERVABILITY.md).
 

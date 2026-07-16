@@ -16,7 +16,7 @@
 | `tools/workflow_ops/helpers.py` | Shared utilities: `_make_error()`, `_ensure_trace_id()`, `_validate_goal()`, `_execute_workflow()` (single entry point to `run_workflow()`), `_get_all_workflow_metadata()` (lazy imports each workflow module's `graph.py`), `_WORKFLOW_MODULES` map. |
 | `tools/workflow_ops/actions/__init__.py` | Auto-discovery: globs `actions/*.py`, imports each — triggers `@register_action` decorators. Adding a new action = drop a file, no edits here. |
 | `tools/workflow_ops/actions/run.py` | `@register_action("workflow", "run")` — the `run` action. Validates `type` non-empty + registered in `TYPE_DISPATCH`, then forwards ALL params to the type handler. Intentionally thin: no type-specific validation here. |
-| `tools/workflow_ops/actions/list_workflows.py` | `@register_action("workflow", "list")` — calls `_get_all_workflow_metadata()` + augments with `TYPE_DISPATCH` entries that aren't in the static `_WORKFLOW_MODULES` map (e.g. `auto`, a router pseudo-type). |
+| `tools/workflow_ops/actions/list.py` | `@register_action("workflow", "list")` (v1.1: renamed from `list_workflows.py`) — calls `_get_all_workflow_metadata()` + augments with `TYPE_DISPATCH` entries that aren't in the static `_WORKFLOW_MODULES` map (e.g. `auto`, a router pseudo-type). |
 | `tools/workflow_ops/actions/status.py` | `@register_action("workflow", "status")` — requires `trace_id`. Wraps `core.observability.checkpoint.get_latest()` + `tracer.summary()` in try/except so a missing module or tracer db error doesn't crash the action. |
 | `tools/workflow_ops/actions/cancel.py` | `@register_action("workflow", "cancel")` — requires `trace_id`. Calls `workflows.autocode_impl.helpers.request_cancellation()` (autocode only). Catches `ImportError` separately (autocode not installed → success with "no cancellation mechanism" message). |
 | `tools/workflow_ops/actions/history.py` | `@register_action("workflow", "history")` — calls `tracer.recent(n=10)`, filters to traces with a `workflow` field OR `category=="workflow"`, truncates `goal` to 80 chars. |
@@ -60,7 +60,7 @@ tools/workflow_ops/                        # v1.0 NEW — 18 files, two-level di
 ├── actions/                               # META-level: what to do (5 actions)
 │   ├── __init__.py                        # auto-discovery via Path.glob("*.py")
 │   ├── run.py                             # @register_action("workflow", "run")
-│   ├── list_workflows.py                  # @register_action("workflow", "list")
+│   ├── list.py                            # @register_action("workflow", "list")  (v1.1 rename)
 │   ├── status.py                          # @register_action("workflow", "status")
 │   ├── cancel.py                          # @register_action("workflow", "cancel")
 │   └── history.py                         # @register_action("workflow", "history")

@@ -1,4 +1,4 @@
-"""tools/workflow_ops/actions/list_workflows.py — The `list` action.
+"""tools/workflow_ops/actions/list.py — The `list` action. (v1.1: renamed from list_workflows.py)
 
 Returns metadata for all available workflow types. Useful for the LLM to
 discover what workflows exist without reading docs.

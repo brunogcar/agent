@@ -156,6 +156,39 @@ GIT_WORKSPACE_ONLY = frozenset({"clone", "init"})
 
 ---
 
+### `core/time_utils.py`
+
+```python
+from core.time_utils import (
+    now, now_iso, parse_iso, parse_human, parse_duration,
+    to_utc, from_utc, format_dt, get_timezone,
+    cron_next_fire, compute_missed_fires, _build_cron_trigger,
+)
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `now()` | `() -> datetime` | Current time as tz-aware datetime in `cfg.timezone` |
+| `now_iso()` | `() -> str` | Current time as ISO 8601 string (tz-aware) |
+| `parse_iso()` | `(s: str) -> datetime` | Parse ISO 8601; naive inputs assumed configured tz; trailing `Z` = UTC |
+| `parse_human()` | `(s: str, base=None) -> datetime` | Parse human-friendly time: ISO / `"in 30m"` / `"9am"` / `"2026-07-16"` / `"1h30m"` |
+| `parse_duration()` | `(s: str) -> timedelta` | Parse duration: `"10m"` / `"2h"` / `"1d"` / `"1h30m"` (compound); raises on empty/garbage |
+| `to_utc()` | `(dt) -> datetime` | Convert to UTC; naive inputs assumed configured tz |
+| `from_utc()` | `(dt, tz=None) -> datetime` | Convert UTC datetime to given tz (default: configured) |
+| `format_dt()` | `(dt, fmt="%Y-%m-%d %H:%M:%S") -> str` | Format datetime; naive inputs assumed configured tz |
+| `get_timezone()` | `() -> tzinfo` | Resolve `cfg.timezone` (`AGENT_TZ`) → `ZoneInfo`; falls back to system local → UTC. Never raises. |
+| `cron_next_fire()` | `(cron_expr, after=None) -> datetime \| None` | Next fire of 5-field cron after `after` (default now); standard cron 0=Sunday via DOW remap |
+| `compute_missed_fires()` | `(cron_expr, last_fired, until=None, max_count=1000) -> list[datetime]` | Missed fires in `(last_fired, until]`; exclusive lower bound; safety cap |
+| `_build_cron_trigger()` | `(cron_expr, tz) -> CronTrigger` | Build APScheduler trigger; remaps DOW to day-names (0=Sunday, not APScheduler's 0=Monday) |
+
+**Timezone resolution:** `cfg.timezone` (`AGENT_TZ` env) → `ZoneInfo(name)`. Empty string → system local (`datetime.now().astimezone().tzinfo`). Invalid → falls through to local → UTC. Never raises.
+
+**Cron DOW remap (subtle APScheduler trap):** `CronTrigger.from_crontab()` treats numeric `day_of_week` as 0=Monday (Python convention), NOT standard cron's 0=Sunday. `_build_cron_trigger` parses the crontab DOW field (`*`, `*/N`, `a-b`, `a,b`, names) and remaps each to unambiguous day names (`sun`/`mon`/...), which APScheduler interprets correctly. Standard cron semantics preserved — `"0 9 * * 1"` = Monday 9am, not Tuesday.
+
+**Soft APScheduler dependency:** only `cron_next_fire` / `compute_missed_fires` / `_build_cron_trigger` need APScheduler. Everything else is pure stdlib. Callers that don't need cron logic pay zero import cost.
+
+---
+
 ## 🔒 Security
 
 ### 🛡️ Path Guard

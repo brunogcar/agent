@@ -7,7 +7,7 @@ Covers:
   4. Invalid cron expression → error
   5. APScheduler not installed → graceful error
   6. trace_id threading
-  7. CronTrigger.from_crontab actually invoked
+  7. _build_cron_trigger (v1.1 DOW remap) actually invoked
 """
 from __future__ import annotations
 
@@ -59,8 +59,8 @@ class TestRecurringSuccess:
         assert result["data"]["message"] == "Daily standup"
         mock_scheduler.add_job.assert_called_once()
 
-    def test_recurring_uses_cron_trigger_from_crontab(self, mock_cfg, mock_scheduler):
-        """Should call CronTrigger.from_crontab(cron) and pass result to add_job."""
+    def test_recurring_uses_build_cron_trigger_not_from_crontab(self, mock_cfg, mock_scheduler):
+        """v1.1: Should call CronTrigger(...) via _build_cron_trigger — NOT from_crontab (0=Monday trap)."""
         mock_pkg, mock_cron_trigger, mock_cron_instance = _mock_apscheduler_with_cron()
         with patch.dict(sys.modules, {
             "apscheduler": mock_pkg,
@@ -69,7 +69,9 @@ class TestRecurringSuccess:
         }):
             notify(action="recurring", cron="*/5 * * * *", message="heartbeat")
 
-        mock_cron_trigger.from_crontab.assert_called_once_with("*/5 * * * *")
+        # v1.1: _build_cron_trigger calls CronTrigger(minute=..., hour=..., day_of_week=...)
+        mock_cron_trigger.assert_called()  # constructor was called (twice: trigger + cron_next_fire)
+        mock_cron_trigger.from_crontab.assert_not_called()  # old path NOT used
         call_kwargs = mock_scheduler.add_job.call_args[1]
         assert call_kwargs["trigger"] is mock_cron_instance
 
@@ -147,9 +149,8 @@ class TestRecurringInvalidCron:
 
     def test_recurring_invalid_cron_expression(self, mock_cfg, mock_scheduler):
         """Should return INVALID_PARAM error when cron expression is malformed."""
-        # Make from_crontab raise ValueError (what real APScheduler does).
+        # v1.1: _build_cron_trigger raises ValueError on its own (field count check).
         mock_pkg, mock_cron_trigger, _ = _mock_apscheduler_with_cron()
-        mock_cron_trigger.from_crontab.side_effect = ValueError("wrong number of fields")
         with patch.dict(sys.modules, {
             "apscheduler": mock_pkg,
             "apscheduler.triggers": mock_pkg.triggers,

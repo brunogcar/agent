@@ -45,8 +45,9 @@ refactor. Two responsibilities:
 from __future__ import annotations
 
 import sys
-from datetime import datetime
 from typing import Optional, Tuple
+
+from core.time_utils import now, format_dt
 
 from core.config import cfg
 
@@ -135,7 +136,7 @@ def _send_notification(title: str, message: str, timeout: int = 5) -> Tuple[bool
 
     # Universal fallback — console print to stderr
     if not success:
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = format_dt(now(), "%H:%M:%S")
         print(f"\n[NOTIFY {ts}] {title}: {message}\n", file=sys.stderr)
         method, success = "console", True
 

@@ -31,10 +31,12 @@ about each other's storage details.
      reset_state() in production code — it would silently nuke scheduled
      reminders.
 
-  5. _save_jobs() / _load_jobs() use cfg.workspace_root / ".notify_jobs" /
-     "jobs.json" for persistence. The directory is created lazily on first
-     save. File writes are atomic (write to .tmp, then rename) to prevent
-     partial-write corruption if the process dies mid-write.
+  5. _save_jobs() / _load_jobs() use cfg.agent_root / ".notify_jobs" /
+     "jobs.json" for persistence (v1.1: moved from workspace_root → agent_root
+     to mirror the .understand/ + .schedule_jobs/ convention; job persistence
+     is agent infrastructure, not user data). The directory is created lazily
+     on first save. File writes are atomic (write to .tmp, then rename) to
+     prevent partial-write corruption if the process dies mid-write.
 
 PERSISTENCE + RESTART SEMANTICS:
   On process startup, the first _get_scheduler() call invokes _load_jobs()
@@ -49,11 +51,11 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.config import cfg
+from core.time_utils import now, parse_iso, _build_cron_trigger, get_timezone
 
 # ── Scheduler singleton ───────────────────────────────────────────────────────
 
@@ -81,14 +83,14 @@ _MAX_DELIVERY_LOG = 50
 def _jobs_path() -> Path:
     """Return the absolute path to the jobs.json persistence file.
 
-    Centralized so tests can patch this function (or patch cfg.workspace_root)
+    Centralized so tests can patch this function (or patch cfg.agent_root)
     to redirect persistence to a tmp_path. NEVER hardcode the path in callers.
     """
-    return Path(cfg.workspace_root) / ".notify_jobs" / "jobs.json"
+    return Path(cfg.agent_root) / ".notify_jobs" / "jobs.json"
 
 
 def _save_jobs() -> None:
-    """Persist _job_registry to workspace/.notify_jobs/jobs.json.
+    """Persist _job_registry to agent_root/.notify_jobs/jobs.json.
 
     Atomic write: serialize to JSON, write to a .tmp sibling, then os.replace
     to the final path. This prevents partial-write corruption if the process
@@ -113,14 +115,15 @@ def _save_jobs() -> None:
 
 
 def _load_jobs() -> None:
-    """Load _job_registry from workspace/.notify_jobs/jobs.json on startup.
+    """Load _job_registry from agent_root/.notify_jobs/jobs.json on startup.
 
     Called ONCE by _get_scheduler() after the scheduler is initialized. Reads
     the persisted registry and re-registers every job back into APScheduler:
 
       - DateTrigger jobs: re-create with DateTrigger(run_date=run_at). Skip
         if run_at is already in the past (fire time passed while offline).
-      - CronTrigger (recurring) jobs: re-create with CronTrigger.from_crontab(cron).
+      - CronTrigger (recurring) jobs: re-create via _build_cron_trigger(cron)
+        (v1.1: DOW remap — standard cron 0=Sunday, not APScheduler's 0=Monday).
 
     Failures (missing file, corrupt JSON, APScheduler errors) are swallowed
     and logged — a corrupt persistence file MUST NOT prevent the scheduler
@@ -145,7 +148,6 @@ def _load_jobs() -> None:
         # installed — _load_jobs() is only called from _get_scheduler() which
         # already proved APScheduler is importable.
         from apscheduler.triggers.date import DateTrigger
-        from apscheduler.triggers.cron import CronTrigger
 
         # Snapshot the scheduler we just initialized (caller passes None and
         # we use the module-level singleton). _get_scheduler() calls us right
@@ -154,7 +156,7 @@ def _load_jobs() -> None:
         if sched is None:
             return
 
-        now = datetime.now()
+        n = now()
         rebuilt: Dict[str, Dict[str, Any]] = {}
 
         for job_id, meta in loaded.items():
@@ -165,7 +167,8 @@ def _load_jobs() -> None:
                     cron_expr = meta.get("cron", "")
                     if not cron_expr:
                         continue
-                    trigger = CronTrigger.from_crontab(cron_expr)
+                    # v1.1 DOW FIX: _build_cron_trigger remaps DOW 0=Sunday.
+                    trigger = _build_cron_trigger(cron_expr, get_timezone())
                     sched.add_job(
                         func=_noop_fire,
                         trigger=trigger,
@@ -182,10 +185,10 @@ def _load_jobs() -> None:
                     if not run_at_str:
                         continue
                     try:
-                        run_at = datetime.fromisoformat(run_at_str)
+                        run_at = parse_iso(run_at_str)
                     except (ValueError, TypeError):
                         continue
-                    if run_at <= now:
+                    if run_at <= n:
                         # Fire time already passed while offline — skip.
                         continue
                     sched.add_job(
@@ -255,7 +258,7 @@ def _log_delivery(
         "message": message,
         "method": method,
         "trace_id": trace_id,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now().isoformat(),
     }
     _delivery_log.append(entry)
     # Trim to bound — pop from front (oldest first).
