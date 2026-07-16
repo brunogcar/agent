@@ -7,7 +7,7 @@ v1.4: Added ToolCall dataclass + tool_calls field for native tool calling.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 
 @dataclass
@@ -61,7 +61,9 @@ class LLMResponse:
     # response includes tool_calls (any provider). Existing callers (complete/
     # call/complete_provider) ignore it; complete_with_tools() consumes it.
     iterations: int                   = 0
-    reason:    str                    = ""
+    # v1.5: Literal type — catches typos at static-analysis time. Adding a
+    # new reason is a 2-place edit (here + the dict in subagent._run_multi_turn_native).
+    reason:    Literal["max_iterations", "consecutive_errors", "cancelled", "llm_error", ""] = ""
 
     @classmethod
     def from_error(cls, role: str, model: str, error: str, elapsed: float = 0.0) -> "LLMResponse":

@@ -54,7 +54,6 @@ def mock_client():
     """Build an LLMClient with a mocked provider registry (no real HTTP)."""
     with patch.object(LLMClient, "__init__", lambda self, **kw: None):
         client = LLMClient()
-        client.tool_calling_mode = "native"
         client._breakers = {}
         # Mock _get_breaker to return a always-OK breaker
         breaker = MagicMock()

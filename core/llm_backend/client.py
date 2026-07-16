@@ -44,21 +44,13 @@ class LLMClient:
     MAX_RETRIES = 2
     RETRY_DELAY = 2.0
 
-    def __init__(self, tool_calling_mode: str = "auto") -> None:
+    def __init__(self) -> None:
         self._registry = ProviderRegistry()
         self._roles = _build_role_configs()
 
         # HIG-02: Per-role circuit breakers for resilience
         self._breakers: dict[str, CircuitBreaker] = {}
         self._build_breakers()
-
-        # v1.4: Tool calling mode — "native" (use provider tool APIs),
-        # "json" (use JSON-schema-parsed tool calls — the legacy subagent
-        # path), or "auto" (native if the provider supports it, else json).
-        # Currently only "native" is implemented in complete_with_tools();
-        # "json" raises NotImplementedError (use the subagent's existing
-        # JSON loop for that path). "auto" always tries native in v1.4.
-        self.tool_calling_mode = tool_calling_mode
 
     # [FIX] Changed from @cached_property to @property to reflect dynamic breaker states
     @property
@@ -485,6 +477,7 @@ class LLMClient:
         max_iterations: int = 10,
         execute: "Callable[[ToolCall], dict]",
         max_consecutive_errors: int = 3,
+        tool_timeout: float = 30.0,
         trace_id: str = "",
         **kwargs,
     ) -> LLMResponse:
@@ -513,6 +506,8 @@ class LLMClient:
                      ``{"error": str(e)}``, and appended — the LLM sees the error
                      and can adapt. The loop does NOT break on tool errors.
             max_consecutive_errors: Bail after N consecutive tool errors (default 3).
+            tool_timeout: Per-tool-call timeout in seconds (default 30). A hanging tool
+                          is killed and the error is fed back to the LLM as a tool result.
                                     Prevents silent infinite loops on a misbehaving tool.
             trace_id: Trace identifier for observability.
             **kwargs: Forwarded to ``call()`` → provider's ``chat_completion()``.
@@ -639,11 +634,25 @@ class LLMClient:
                     tracer.step(trace_id, "llm_tools",
                                 f"executing tool '{tc.name}' action='{tc.arguments.get('action', '')}'")
 
+                # v1.5: Tool execution with timeout — prevents a hanging tool from
+                # blocking the loop indefinitely. Uses ThreadPoolExecutor (the tool
+                # runs in a worker thread; the main thread waits with a timeout).
+                # On timeout, the error is fed back to the LLM (same as any exception).
                 try:
-                    tool_result = execute(tc)
+                    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(execute, tc)
+                        tool_result = future.result(timeout=tool_timeout)
                     if not isinstance(tool_result, dict):
                         tool_result = {"result": str(tool_result)}
                     consecutive_errors = 0
+                except FuturesTimeoutError:
+                    had_error = True
+                    consecutive_errors += 1
+                    tool_result = {"error": f"Tool execution timed out after {tool_timeout}s"}
+                    if trace_id:
+                        tracer.warning(trace_id, "llm_tools",
+                                       f"tool '{tc.name}' timed out after {tool_timeout}s")
                 except Exception as e:
                     had_error = True
                     consecutive_errors += 1

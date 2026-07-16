@@ -609,4 +609,65 @@ else:  # hard
 
 ---
 
+## 🧪 Native vs JSON Tool-Calling Benchmark Protocol (v2.2 Milestone)
+
+**Purpose:** Define what "native wins" means before the 2026-07-23 decision point, so the comparison is reproducible and the decision is objective.
+
+### What to compare
+
+| Path | Config | Description |
+|------|--------|-------------|
+| **JSON** (default) | `SUBAGENT_NATIVE_TOOLS=0` | LLM returns JSON with `thought`/`tool_call`/`final_answer`; loop parses + dispatches |
+| **Native** (opt-in) | `SUBAGENT_NATIVE_TOOLS=1` | LLM returns native `tool_calls` via provider API; loop dispatches |
+
+### Tasks
+
+Run the benchmark with `tools="file,git,web,memory"` (the subagent allowlist) on:
+- **10 executor tasks** (medium difficulty — enough for statistical signal without taking hours)
+- **5 router tasks** (easy difficulty — quick sanity check)
+
+Use `max_turns=5` (the subagent default) for both paths.
+
+### Models
+
+Test with at minimum:
+- **1 local model** (LM Studio — e.g., Qwen 2.5 or Llama 3.1 that supports tool calling)
+- **1 cloud model** (OpenAI GPT-4o or Claude 3.5 — known-good native tool calling)
+
+If the local model doesn't support native tool calling, the native path will fail gracefully (the JSON path is the fallback — that's the expected outcome for unsupported models).
+
+### Metrics
+
+| Metric | How to measure | What it tells you |
+|--------|---------------|-------------------|
+| **Pass rate** | `% of tasks with status="success"` | Did the task complete? |
+| **Token usage** | `result["usage"]["total"]` aggregated | Cost per task |
+| **Iterations** | `result["turns"]` (v1.4.1: actual count) | How many LLM calls were needed |
+| **Tool-call accuracy** | Manual inspection: did the LLM call the right tool with right args? | Quality of tool selection |
+| **Error rate** | `% of tasks with error_code != None` | How often does it fail? |
+
+### Decision criteria (2026-07-23)
+
+| Outcome | Decision |
+|---------|----------|
+| **Native wins**: pass rate ≥ JSON AND token usage ≤ JSON × 1.1 | Flip default to `SUBAGENT_NATIVE_TOOLS=1` in v2.2. Deprecate JSON path. |
+| **Native ties**: pass rate ≈ JSON (within 5%) AND token usage ≈ JSON (within 20%) | Keep JSON as default. Mark native as "ready but not default" — let users opt in. Revisit in v3.0. |
+| **Native loses**: pass rate < JSON OR token usage > JSON × 1.5 | Keep JSON as default. Mark native as "experimental". Investigate root causes before re-evaluating. |
+
+### How to run
+
+```powershell
+# JSON path (default)
+.env\Scripts\python -m benchmark --role executor --depth normal --runs 3
+
+# Native path
+$env:SUBAGENT_NATIVE_TOOLS=1
+.env\Scripts\python -m benchmark --role executor --depth normal --runs 3
+$env:SUBAGENT_NATIVE_TOOLS=0
+```
+
+Record results in a comparison table (pass rate, avg tokens, avg iterations, error rate) for each model × path combination.
+
+---
+
 *Architecture: thin facade + role groups + atomic task YAMLs + filter-based depth selection + 70/20/10 scoring + restricted code execution + multi-reference validation + wobble detection + baseline comparison + model recommendation.*
