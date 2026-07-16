@@ -1,6 +1,6 @@
 # 🤖 MCP Agent Stack
 
-> **A fully autonomous local-first AI agent with 15 tools, 5 LangGraph workflows, a 3-tier LLM role system, and a self-improving memory — running on your hardware, with optional cloud LLM escalation.**
+> **A fully autonomous local-first AI agent with 18 tools, 6 LangGraph workflows, a 3-tier LLM role system, and a self-improving memory — running on your hardware, with optional cloud LLM escalation.**
 
 Built on **MCP** (Model Context Protocol), **LM Studio** (local LLM inference), **ChromaDB** (vector memory), **SearXNG** (self-hosted search), and **LangGraph** (state-machine orchestration). The default stack runs entirely on your machine — no API keys required. Cloud LLMs (OpenAI, DeepSeek, Mistral, Qwen, Kimi, Claude, Gemini, Z.ai, MiMo) are supported as opt-in escalation paths via the `consult` tool and `CONSULTOR_MODEL` role.
 
@@ -14,7 +14,7 @@ Built on **MCP** (Model Context Protocol), **LM Studio** (local LLM inference), 
 >
 > **Windows note:** PDF report generation requires the [GTK3 Runtime](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases).
 >
-> [Jump to Quick Start](#-quick-start)
+> [Jump to Quick Start](#-quick-start) · [Repo Structure](docs/STRUCTURE.md) · [AI Contributor Guide](#-ai-contributor-guide)
 
 ---
 
@@ -24,9 +24,10 @@ Built on **MCP** (Model Context Protocol), **LM Studio** (local LLM inference), 
 |----------------|---------------|
 | **3-tier role system with fallback chains** | Not just Planner / Executor / Router — each role has sub-roles (`summarize`, `extract`, `research`, `critique`, `analyze`, `code`, `review`, `refactor`, `test`, `document`, `classify`, `route`, `vision`) with per-role model overrides and automatic fallback to the parent role. Tune models per task, not per agent. |
 | **Self-improving memory** | Three ChromaDB collections (episodic / semantic / procedural) with a background **Sleep & Learn** daemon that distills rules from execution traces and injects them into future Planner prompts. The agent gets better at your workflows over time, autonomously. |
-| **Atomic-action meta-tools** | 15 tools expose ~120 atomic actions via `@meta_tool` + `DISPATCH` registry. Adding an action = creating one file with `@register_action`. Zero wiring in `server.py` or `registry.py`. |
-| **Real TDD autocode** | The `autocode` workflow runs real `pytest` subprocesses, scopes changes to git branches, blocks edits to protected files, and rolls back on failure. 17-node LangGraph state machine. |
-| **Local-first, cloud-optional** | Default = LM Studio + SearXNG + ChromaDB, fully offline. Opt-in cloud escalation via `consult` tool and per-role provider routing (`PLANNER_MODEL=openai` works). |
+| **Atomic-action meta-tools** | 18 tools expose ~130 atomic actions via `@meta_tool` + `DISPATCH` registry. Adding an action = creating one file with `@register_action`. Zero wiring in `server.py` or `registry.py`. See [§ Tools](#-tools) below. |
+| **Real TDD autocode** | The `autocode` workflow runs real `pytest` subprocesses, scopes changes to git branches, blocks edits to protected files, and rolls back on failure. 29-node LangGraph state machine with a debug loop + optional swarm fallback. |
+| **Local-first, cloud-optional** | Default = LM Studio + SearXNG + ChromaDB, fully offline. Opt-in cloud escalation via `consult` tool and per-role provider routing (`PLANNER_MODEL=openai` works). 10 supported LLM providers. |
+| **Tz-aware scheduling + offline recovery** | The `schedule` tool handles cron/interval/one-shot jobs with standard cron semantics (0=Sunday), iCal calendar sync, and **catch-up of missed fires while the server was offline** (misfire policies: skip / fire_last / fire_all). All time operations are tz-aware via `core/time_utils.py`. |
 | **5-file documentation standard** | Every component has `INDEX / ARCHITECTURE / API / CHANGELOG / INSTRUCTIONS` docs. AI editors can read just `INSTRUCTIONS.md` to know what not to break. See [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md). |
 
 ---
@@ -66,7 +67,7 @@ The `understand` workflow can index code for semantic search ("find the function
 
 If the embedding model isn't loaded, the workflow skips vector indexing gracefully — graph edges still work, just no semantic search. See [understand API docs](docs/workflows/understand/API.md) for details.
 
-**Connect to an MCP host** (LM Studio, Claude Desktop, Cursor): copy [`mcp.json`](mcp.json) into your host's MCP settings and update the `command` to point at your `venv/Scripts/python.exe`. See [§ MCP Configuration](#-configure-mcp-servers) below for details.
+**Connect to an MCP host** (LM Studio, Claude Desktop, Cursor): copy [`mcp.json`](mcp.json) into your host's MCP settings and update the `command` to point at your `venv/Scripts/python.exe`. See [§ Configure MCP Servers](#-configure-mcp-servers) below for details.
 
 ---
 
@@ -76,10 +77,10 @@ If the embedding model isn't loaded, the workflow skips vector indexing graceful
 graph TD
     A["User (CLI / MCP Host / REST Gateway)"] -->|"MCP stdio or HTTP"| B["server.py"]
     B --> C["registry.py — @tool auto-discovery"]
-    C --> D["15 Meta-tools"]
+    C --> D["18 Meta-tools"]
     C --> E["Skills Dispatcher<br/>(B3, CVM)"]
-    C --> F["5 LangGraph Workflows"]
-    D & E & F --> G["core/ — brain & nervous system"]
+    C --> F["6 LangGraph Workflows"]
+    D & E & F --> G["core/ — 13 subsystems"]
 
     G -->|"role-based dispatch"| H["core/llm.py"]
     H --> I["Planner tier<br/>long-context, vision"]
@@ -112,41 +113,45 @@ Each sub-role can override its parent's model via `*_MODEL` env vars. Empty valu
 
 ## 🔄 Workflows
 
-Long-running, multi-step orchestration pipelines built on **LangGraph**. Triggered via `workflow(type="...", goal="...")` or the REST API.
+Long-running, multi-step orchestration pipelines built on **LangGraph**. Triggered via `workflow(action="run", type="...", goal="...")` or the REST API. All workflows are at v1.0+.
 
-| Workflow | Status | Use Case | Key Safety |
-|----------|--------|----------|------------|
-| [**Research**](docs/workflows/RESEARCH.md) | Pre-v1.0 | Quick info gathering: single search → parallel scrape → synthesis | SSRF protection, citation tracking, source validation |
-| [**Deep Research**](docs/workflows/DEEP_RESEARCH.md) | v1.0 | Iterative multi-faceted research with ReAct loop and convergence detection | Budget tracking, URL dedup, nested-call guard |
-| [**Data**](docs/workflows/DATA.md) | v1.0 | Pandas/numpy analysis, calculations, dataset generation | Sandboxed `run_data` mode, best-effort critique |
-| [**Autocode**](docs/workflows/AUTOCODE.md) | v1.0 | Autonomous code generation with TDD, git scoping, surgical patching | Protected files, git snapshot/rollback, AST validation |
-| [**Understand**](docs/workflows/UNDERSTAND.md) | Pre-v1.0 | Build deterministic Codebase Knowledge Graph via AST parsing | Size limits, project isolation, incremental indexing |
+| Workflow | Functionality |
+|----------|---------------|
+| [**Research**](docs/workflows/RESEARCH.md) | Quick info gathering: single search → parallel scrape → synthesis. SSRF protection, citation tracking. |
+| [**Deep Research**](docs/workflows/DEEP_RESEARCH.md) | Iterative multi-faceted research with ReAct loop, convergence detection, and budget tracking. |
+| [**Data**](docs/workflows/DATA.md) | Pandas/numpy analysis, calculations, dataset generation. Sandboxed `run_data` mode. |
+| [**Autocode**](docs/workflows/AUTOCODE.md) | Autonomous TDD code generation with git scoping, surgical patching, debug loop, and optional swarm fallback. 29 nodes. |
+| [**Understand**](docs/workflows/UNDERSTAND.md) | Build a deterministic codebase knowledge graph via AST parsing + doc indexing. Semantic search via embeddings. |
+| [**Autoresearch**](docs/workflows/AUTORESEARCH.md) | Autonomous metric optimization (evolutionary loop) — proposes changes to a target file, keeps/discards based on a metric. |
 
-All workflows emit structured traces to `logs/agent_*.jsonl` and follow the memory bookend pattern (recall at start, store at end). See [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) for the full comparison, return schema, and known bugs.
+All workflows emit structured traces to `logs/agent_*.jsonl` and follow the memory bookend pattern (recall at start, store at end). See [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) for the full comparison and return schema.
 
 ---
 
 ## 🛠️ Tools
 
-15 meta-tools expose ~120 atomic actions. Auto-discovered via `@tool` + `@meta_tool` + `@register_action` — zero manual wiring.
+18 meta-tools expose ~130 atomic actions. Auto-discovered via `@tool` + `@meta_tool` + `@register_action` — zero manual wiring. Each tool follows the [`*_ops/` subpackage pattern](docs/STRUCTURE.md#-tools-layer-tools).
 
-| Tool | File | Key Functionality |
-|------|------|-------------------|
-| [**web**](docs/tools/WEB.md) | `tools/web.py` | SearXNG search, BeautifulSoup scraping, SSRF protection, parallel `search_and_read` |
-| [**tavily**](docs/tools/TAVILY.md) | `tools/tavily.py` | AI-ranked search, bulk URL extraction, keyless mode, API budget tracking |
-| [**browser**](docs/tools/BROWSER.md) | `tools/browser.py` | Playwright automation (20 atomic actions), session isolation, screenshot-on-failure |
-| [**python**](docs/tools/PYTHON.md) | `tools/python.py` | Dual-mode execution: strict AST sandbox (`run`) or data-science subprocess (`run_data`) |
-| [**file**](docs/tools/FILE.md) | `tools/file.py` + `file_ops/` | 25+ atomic FS actions: CRUD, directory traversal, document parsing, SQLite FTS |
-| [**git**](docs/tools/GIT.md) | `tools/git.py` + `git_ops/` | 20+ atomic VCS actions: commit, diff, rollback, snapshot, branch/tag management |
-| [**cli**](docs/tools/CLI.md) | `tools/cli.py` + `cli_ops/` | 4-layer NL→shell dispatch: patterns → shell whitelist → router LLM → executor LLM |
-| [**report**](docs/tools/REPORT.md) | `tools/report.py` + `report_ops/` | 11 atomic actions: charts, maps, dashboards, diagrams, export to PDF/PNG |
-| [**vision**](docs/tools/VISION.md) | `tools/vision.py` | Multimodal image analysis via `cfg.vision_model`, 3 input sources, JSON mode |
-| [**memory**](docs/tools/MEMORY.md) | `tools/memory.py` + `memory_ops/` | LLM-facing memory I/O: store, recall, delete, prune, summarize, janitor |
-| [**agent**](docs/tools/AGENT.md) | `tools/agent.py` + `agent_ops/` | 15 specialist sub-roles: classify, route, research, code, review, critique, plan, etc. |
-| [**consult**](docs/tools/CONSULT.md) | `tools/consult.py` | Cloud LLM advisory (opt-in, kill-switch, rate-limit guard) |
-| [**parallel**](docs/tools/PARALLEL.md) | `tools/parallel.py` | Concurrent tool execution with `PARALLEL_SAFE` allowlist and global timeout |
-| [**notify**](docs/tools/NOTIFY.md) | `tools/notify.py` | Cross-platform desktop alerts, APScheduler reminders, graceful console fallback |
-| [**workflow**](docs/tools/WORKFLOW.md) | `tools/workflow.py` | LangGraph workflow launcher with auto-routing and resume support |
+| Tool | Functionality |
+|------|---------------|
+| [**web**](docs/tools/WEB.md) | SearXNG search, BeautifulSoup scraping, SSRF protection, parallel `search_and_read` |
+| [**tavily**](docs/tools/TAVILY.md) | AI-ranked search, bulk URL extraction, keyless mode, API budget tracking |
+| [**browser**](docs/tools/BROWSER.md) | Playwright automation (20 atomic actions), session isolation, screenshot-on-failure |
+| [**python**](docs/tools/PYTHON.md) | Dual-mode execution: strict AST sandbox (`run`) or data-science subprocess (`run_data`) |
+| [**file**](docs/tools/FILE.md) | 25+ atomic FS actions: CRUD, directory traversal, document parsing, SQLite FTS |
+| [**git**](docs/tools/GIT.md) | 20+ atomic VCS actions: commit, diff, rollback, snapshot, branch/tag management |
+| [**github**](docs/tools/GITHUB.md) | 16 actions: PR + issue + release workflow + push/pull (httpx direct, not PyGithub) |
+| [**cli**](docs/tools/CLI.md) | 4-layer NL→shell dispatch: patterns → shell whitelist → router LLM → executor LLM |
+| [**report**](docs/tools/REPORT.md) | 11 atomic actions: charts, maps, dashboards, diagrams, export to PDF/PNG |
+| [**vision**](docs/tools/VISION.md) | Multimodal image analysis via `cfg.vision_model`, 3 input sources, JSON mode |
+| [**memory**](docs/tools/MEMORY.md) | LLM-facing memory I/O: store, recall, delete, prune, summarize, janitor |
+| [**agent**](docs/tools/AGENT.md) | 15 specialist sub-roles: classify, route, research, code, review, critique, plan, etc. |
+| [**consult**](docs/tools/CONSULT.md) | Cloud LLM advisory (opt-in, kill-switch, rate-limit guard) — 3 actions |
+| [**swarm**](docs/tools/SWARM.md) | Multi-model consensus across cloud providers — 5 actions (consensus/race/vote/compare/list_providers) |
+| [**parallel**](docs/tools/PARALLEL.md) | Concurrent tool execution with `PARALLEL_SAFE` allowlist — 3 actions (run/race/pipeline) |
+| [**notify**](docs/tools/NOTIFY.md) | Cross-platform desktop alerts + APScheduler reminders (tz-aware), graceful console fallback |
+| [**schedule**](docs/tools/SCHEDULE.md) | Cron/interval/one-shot jobs + iCal sync, delivered via notify; offline missed-fire recovery |
+| [**workflow**](docs/tools/WORKFLOW.md) | LangGraph workflow launcher with auto-routing and resume support |
 
 See [`docs/TOOLS.md`](docs/TOOLS.md) for the full catalog, return schema, security rules, and testing commands.
 
@@ -154,23 +159,25 @@ See [`docs/TOOLS.md`](docs/TOOLS.md) for the full catalog, return schema, securi
 
 ## 🧠 Core Subsystems
 
-The `core/` module is the foundation layer — everything the agent needs to think, remember, and act.
+The `core/` module is the foundation layer — 13 subsystems that do the thinking, remembering, and orchestration.
 
-| Subsystem | File | Purpose |
-|-----------|------|---------|
-| [**Config**](docs/core/CONFIG.md) | `core/config.py` | Singleton `.env` loader, tiered model roles, path hierarchy, fail-fast validation |
-| [**LLM**](docs/core/LLM.md) | `core/llm.py` + `llm_backend/` | Role-based dispatch, circuit breakers, cognitive context budgeting, JSON parsing |
-| [**Memory**](docs/core/MEMORY.md) | `core/memory_engine.py` + `memory_backend/` | 3-collection ChromaDB, 4-layer dedup, decay scoring, two learning subsystems |
-| [**Router**](docs/core/ROUTER.md) | `core/router.py` | 15s timeout classification, model + heuristic fallback, confidence guard |
-| [**Gateway**](docs/core/GATEWAY.md) | `core/gateway.py` + `gateway_backend/` | FastAPI REST API, Bearer auth, rate limiting, SQLite task store |
-| [**Runtime**](docs/core/RUNTIME.md) | `core/runtime/` | Activity tracking, watchdog, health checks, cancellation guards, task runner |
-| [**Sleep & Learn**](docs/core/SLEEP_LEARN.md) | `core/sleep_learn/` | Background daemon: trace observation → rule distillation → prompt injection |
-| [**Knowledge Graph**](docs/core/KGRAPH.md) | `core/kgraph/` | AST-based codebase analysis, dependency graphs, test targeting, project isolation |
-| [**Tracer**](docs/core/TRACER.md) | `core/tracer.py` | Structured JSONL logging, trace ID propagation, MCP stdio safety, bounded memory |
-| [**NET**](docs/core/NET.md) | `core/net/` | HTTP error classification, SSRF protection, retry/backoff, API budget tracking |
-| [**Standalone**](docs/core/STANDALONE.md) | `core/contracts.py`, `path_guard.py`, `utils.py`, etc. | Shared utilities: standardized responses, path validation, metrics, citations |
+| Subsystem | Purpose |
+|-----------|---------|
+| [**Config**](docs/core/CONFIG.md) | Singleton `.env` loader, 9 builders, tiered model roles, path hierarchy, fail-fast validation |
+| [**LLM**](docs/core/LLM.md) | Role-based dispatch, circuit breakers, 10 providers (LM Studio + 9 cloud), JSON parsing |
+| [**Memory**](docs/core/MEMORY.md) | 3-collection ChromaDB, 4-layer dedup, decay scoring, two learning subsystems |
+| [**Router**](docs/core/ROUTER.md) | 15s timeout classification, model + heuristic + swarm fallback, confidence guard |
+| [**Gateway**](docs/core/GATEWAY.md) | FastAPI REST API, Bearer auth, rate limiting, SQLite task store |
+| [**Runtime**](docs/core/RUNTIME.md) | Activity tracking, watchdog, health checks, cancellation guards, task runner |
+| [**Sleep & Learn**](docs/core/SLEEP_LEARN.md) | Background daemon: trace observation → rule distillation → prompt injection |
+| [**Knowledge Graph**](docs/core/KGRAPH.md) | AST-based codebase analysis, dependency graphs, test targeting, project isolation |
+| [**Tracer**](docs/core/TRACER.md) | Structured JSONL logging, trace ID propagation, MCP stdio safety, bounded memory |
+| [**Observability**](docs/core/OBSERVABILITY.md) | Tracer engine + reader + Prometheus metrics (graceful degradation) |
+| [**NET**](docs/core/NET.md) | HTTP error classification, SSRF protection, retry/backoff, API budget tracking |
+| [**Context Pruner**](docs/core/CONTEXT_PRUNER.md) | Cognitive context budgeting for LLM calls |
+| [**Standalone**](docs/core/STANDALONE.md) | Shared utilities: `contracts.py`, `path_guard.py`, `time_utils.py`, `utils.py`, `citations.py`, `br_validator.py`, `json_extract.py` |
 
-See [`docs/CORE.md`](docs/CORE.md) for the full architecture layers, module map, and `core/net/` adoption roadmap ([`docs/INTEGRATION.md`](docs/INTEGRATION.md)).
+See [`docs/CORE.md`](docs/CORE.md) for the full architecture layers and module map. See [`docs/STRUCTURE.md`](docs/STRUCTURE.md) for the complete file/folder layout.
 
 ---
 
@@ -205,19 +212,19 @@ Features: 6 failure categories (timeout, llm_error, exception, empty_output, for
 
 ## 📈 Project Status
 
-The agent is actively developed. Components are versioned individually — most core subsystems and three workflows are at v1.0; two workflows and several integrations are still pre-v1.
+The agent is actively developed. **All tools, workflows, and core subsystems are at v1.0+** — the pre-v1 refactoring is complete. Individual components are versioned independently (see each component's `CHANGELOG.md`).
 
-**v1.0 (stable):**
-- All 11 core subsystems (config, llm, memory, router, gateway, runtime, sleep_learn, kgraph, tracer, net, standalone)
-- `deep_research`, `data`, `autocode` workflows
-- All 15 tools (tavily at v1.4 hardening, others at v1.0)
+**v1.0+ (stable):**
+- **18 tools** — all refactored to the `@meta_tool` + `*_ops/` subpackage pattern (latest: `schedule` v1.0, `notify` v1.1)
+- **6 workflows** — all LangGraph-based with `*_impl/` subpackages (latest: `autocode` v3.1, `autoresearch` v1.2.2)
+- **13 core subsystems** — all with thin-facade + `*_backend/` pattern (latest: `config` v1.0, `router` v1.0, `observability` reorg)
+- **`core/time_utils.py`** — shared tz-aware time module (replaces the external `@mcpcentral/mcp-time` MCP dependency)
 
-**Pre-v1 (expect breaking changes):**
-- `research` workflow (monolithic, will be split into a subpackage)
-- `understand` workflow (not yet LangGraph-based — direct async calls)
-- `core/net/` adoption across tools — only `tavily` is fully migrated; `web`, `browser`, and research workflows still use legacy HTTP code (see [`docs/INTEGRATION.md`](docs/INTEGRATION.md))
-
-**Known workflow bugs:** Several P0 issues are documented per-workflow in [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) (missing `action="dispatch"` in some `agent()` calls, scale mismatches in convergence thresholds, `.bak` file creation in autocode, etc.). These are tracked openly — check the workflow's `CHANGELOG.md` before relying on it.
+**Recent highlights:**
+- `schedule` tool (v1.0) — cron/interval/one-shot + iCal sync + offline missed-fire recovery
+- `notify` v1.1 — swapped to `core/time_utils` (tz-aware), DOW fix (0=Sunday), store moved to `agent_root/`
+- `swarm` tool (v1.0) — multi-model consensus across 9 cloud providers
+- `github` tool (v1.0) — 16 PR/issue/release actions
 
 ---
 
@@ -229,12 +236,13 @@ Every component follows the **5-file documentation standard**: `INDEX` (overview
 
 | Doc | Covers |
 |-----|--------|
-| [`docs/TOOLS.md`](docs/TOOLS.md) | All 15 tools — status, safety rules, comparison |
-| [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) | All 5 workflows — status, bugs, comparison |
-| [`docs/CORE.md`](docs/CORE.md) | All 11 core subsystems — architecture layers, module map |
+| [`docs/STRUCTURE.md`](docs/STRUCTURE.md) | **Repo layout reference** — where everything lives, naming conventions, patterns |
+| [`docs/TOOLS.md`](docs/TOOLS.md) | All 18 tools — status, safety rules, comparison |
+| [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) | All 6 workflows — status, comparison, return schema |
+| [`docs/CORE.md`](docs/CORE.md) | All 13 core subsystems — architecture layers, module map |
 | [`docs/SKILLS.md`](docs/SKILLS.md) | Skills hub-and-spoke pattern, B3 + CVM domains |
 | [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | Role benchmarking tool, task catalog |
-| [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | `core/net/` adoption roadmap across tools |
+| [`docs/SESSION_WORKFLOW.md`](docs/SESSION_WORKFLOW.md) | AI-assisted dev session workflow (how to work on this repo) |
 | [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md) | The 5-file standard itself |
 
 ### Per-Component Deep Dives
@@ -253,10 +261,32 @@ Each tool, core subsystem, and workflow has its own folder under `docs/<area>/<c
 
 ### Where to look first
 
-1. The relevant component's `INSTRUCTIONS.md` (e.g., `docs/tools/cli/INSTRUCTIONS.md`) — tells you what NOT to break.
-2. The component's `ARCHITECTURE.md` — tells you where things live.
-3. [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md) — tells you how docs are structured.
-4. This README's [§ Repo Hierarchy](#-repo-hierarchy) below for the global map.
+1. [`docs/STRUCTURE.md`](docs/STRUCTURE.md) — where things live (the repo map)
+2. [`docs/SESSION_WORKFLOW.md`](docs/SESSION_WORKFLOW.md) — the 5-step change workflow (investigate → propose → build zip → commands → git)
+3. The relevant component's `INSTRUCTIONS.md` (e.g., `docs/tools/cli/INSTRUCTIONS.md`) — tells you what NOT to break
+4. The component's `ARCHITECTURE.md` — tells you where things live
+5. [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md) — tells you how docs are structured
+
+### The 5-step session workflow
+
+Every change follows this workflow (see [`docs/SESSION_WORKFLOW.md`](docs/SESSION_WORKFLOW.md) for the full guide):
+
+1. **Investigate first** — read the actual code + docs before proposing anything. Verify claims against source (docs drift).
+2. **Propose a plan** — list files to change, describe changes + design decisions, identify findings by priority (P0/P1/P2/P3). **Wait for greenlight.**
+3. **Build a zip** — repo-relative paths, no wrapper folder. Deliver to `/home/z/my-project/zips/<feature>-v<ver>.zip`.
+4. **Give PowerShell commands** — extract + copy + compile-check (emoji ✅/❌ format) + component tests + full suite.
+5. **Give git commands** — `git add` + commit message (via `commit -F commitmsg.txt`) + `git push`, in a single block.
+
+**Hard rules:**
+- Never change code without greenlight — propose first, wait for approval
+- Never write `.bak` files — forbidden by project rules
+- Never rewrite entire files when editing — surgical edits only
+- Never use bare `pytest` — always `python.exe -m pytest`
+- Never omit `-W error` from pytest commands
+- Never put git commands in the extract/copy block — keep them separate
+- Always investigate before proposing — read the actual code, don't guess
+- Always provide compile-check + test commands
+- Always update `CHANGELOG.md` for any version change
 
 ### Agent self-preservation (hard rules for autonomous operation)
 
@@ -273,7 +303,7 @@ These prevent the local agent from breaking its own runtime. AI assistants helpi
 - **Surgical edits only**: Provide exact find→replace blocks. Do not output entire files unless requested.
 - **Respect LangGraph immutability**: Workflow nodes return partial state updates (`return {"key": value}`). NEVER mutate the shared `state` dict in-place.
 - **No hallucinated APIs**: If you need to know how an internal module works, read the file. Do not guess function signatures of `core/` modules.
-- **Tool creation pattern**: Create a file in `tools/`, import `from registry import tool`, use the `@tool` decorator (and `@meta_tool` + `DISPATCH` for atomic-action tools). The docstring becomes the LLM prompt. Always return `{"status": "success/error", ...}`.
+- **Tool creation pattern**: Create a file in `tools/`, import `from registry import tool`, use the `@tool` decorator (and `@meta_tool` + `DISPATCH` for atomic-action tools). The docstring becomes the LLM prompt. Always return `{"status": "success/error", ...}`. See [`docs/TOOLS.md` § New Tool Checklist](docs/TOOLS.md#-new-tool-checklist).
 - **Memory safety**: Respect Tag Validation (MED-05) and the Write-Only Lock pattern (MED-01) in `core/memory_backend/`. Never write directly to the `procedural_meta` ChromaDB collection — the Sleep & Learn daemon owns it.
 - **Testing**: `.\venv\Scripts\python tests/<area>/<component>/ -W error --tb=short -v`
 
@@ -296,84 +326,59 @@ See [`docs/core/SLEEP_LEARN.md`](docs/core/SLEEP_LEARN.md) for the full architec
 
 ## 📂 Repo Hierarchy
 
+The full file/folder layout is documented in [`docs/STRUCTURE.md`](docs/STRUCTURE.md). Below is a condensed view — see STRUCTURE.md for the complete map, naming conventions, and pattern details.
+
 ```text
 agent/
 ├── server.py              # MCP stdio entry point (DO NOT BREAK STDOUT)
 ├── registry.py            # @tool auto-discovery engine
-├── mcp.json               # MCP server configuration example
-├── requirements.txt
-├── pytest.ini
+├── mcp.json               # MCP server configuration
+├── requirements.txt · pytest.ini
 │
-├── core/                  # Foundation layer
-│   ├── config.py          # Singleton cfg (paths, models, env vars)
-│   ├── config_validation.py
-│   ├── llm.py             # Thin facade → llm_backend/
-│   ├── llm_backend/       # LLM subsystem (client, circuit breaker, providers)
-│   ├── memory_engine.py   # Thin facade → memory_backend/
-│   ├── memory_backend/    # Memory subsystem (store, ops, learning, maintenance)
-│   ├── router.py          # Task classification (15s timeout, heuristic fallback)
-│   ├── gateway.py         # Thin facade → gateway_backend/
-│   ├── gateway_backend/   # HTTP gateway (routes, auth, middleware, store)
-│   ├── runtime/           # Process governance (watchdog, health, cancellation)
-│   ├── sleep_learn/       # Background meta-learning daemon
-│   ├── kgraph/            # AST-based codebase knowledge graph
-│   ├── tracer.py          # Structured JSONL logging (stderr only)
-│   ├── tracer_reader.py   # Trace retrieval (memory + disk)
-│   ├── net/               # Shared network infra (SSRF, retry, budget)
-│   ├── contracts.py       # ToolCall/ToolResult schemas, ok()/fail() helpers
-│   ├── path_guard.py      # Path validation, protected files
-│   ├── metrics.py         # Prometheus metrics
-│   ├── parallel_executor.py
-│   ├── citations.py       # Per-trace citation tracking
-│   ├── br_validator.py    # Brazilian financial data parser
-│   └── utils.py
+├── core/                  # 13 subsystems (facade + *_backend/ pattern)
+│   ├── config.py → config_backend/     # 9-builder config system
+│   ├── llm.py → llm_backend/           # 10 providers, role dispatch
+│   ├── memory_engine.py → memory_backend/  # 3-collection ChromaDB
+│   ├── router.py → router_backend/     # 15s classification + fallbacks
+│   ├── gateway.py → gateway_backend/   # FastAPI REST API
+│   ├── runtime/ · sleep_learn/ · kgraph/  # Direct subpackages
+│   ├── observability/                  # tracer_engine + reader + metrics
+│   ├── net/                            # SSRF, retry, budget
+│   ├── context_pruner.py · tracer.py
+│   └── contracts.py · path_guard.py · time_utils.py · utils.py · ...  # Standalone
 │
-├── tools/                 # 15 meta-tools exposed to the LLM
-│   ├── _meta_tool.py      # @meta_tool decorator (Literal enum + docstring generation)
-│   ├── agent.py + agent_ops/         # 15 specialist sub-roles
-│   ├── browser.py + browser_ops/     # 20 Playwright atomic actions
-│   ├── cli.py + cli_ops/             # 4-layer NL→shell dispatch
-│   ├── consult.py                   # Cloud LLM advisory (opt-in)
-│   ├── file.py + file_ops/          # 25+ atomic FS actions
-│   ├── git.py + git_ops/            # 20+ atomic VCS actions
-│   ├── memory.py + memory_ops/      # 8 atomic memory actions
-│   ├── notify.py                    # Desktop notifications & scheduler
-│   ├── parallel.py                  # Concurrent tool execution
-│   ├── python.py               # Dual-mode Python sandbox
-│   ├── report.py + report_ops/      # 11 atomic report actions
-│   ├── tavily.py + tavily_ops/      # 5 atomic AI-search actions
-│   ├── vision.py                    # Multimodal image analysis
-│   ├── web.py + web_ops/            # 4 atomic web actions
-│   └── workflow.py             # LangGraph workflow launcher
+├── tools/                 # 18 meta-tools (facade + *_ops/ pattern)
+│   ├── _meta_tool.py      # @meta_tool decorator
+│   ├── agent.py + agent_ops/     · browser.py + browser_ops/
+│   ├── cli.py + cli_ops/         · consult.py + consult_ops/
+│   ├── file.py + file_ops/       · git.py + git_ops/
+│   ├── github.py + github_ops/   · memory.py + memory_ops/
+│   ├── notify.py + notify_ops/   · parallel.py + parallel_ops/
+│   ├── python.py + python_ops/   · report.py + report_ops/
+│   ├── schedule.py + schedule_ops/  · swarm.py + swarm_ops/
+│   ├── tavily.py + tavily_ops/   · vision.py + vision_ops/
+│   ├── web.py + web_ops/         · workflow.py + workflow_ops/
 │
-├── workflows/             # 5 LangGraph state machines
-│   ├── base.py            # Shared WorkflowState + node helpers + dispatcher
-│   ├── helpers/           # Checkpoint journal
-│   ├── research.py        # 8-node linear pipeline (pre-v1)
-│   ├── data.py            # 5-node linear pipeline
-│   ├── autocode.py → autocode_impl/        # 17-node subpackage (TDD, git, surgical patching)
-│   ├── deep_research.py → deep_research_impl/  # ReAct loop subpackage (budget, convergence)
-│   └── understand.py      # Direct async (not LangGraph) — AST-based KG
+├── workflows/             # 6 LangGraph state machines (facade + *_impl/ pattern)
+│   ├── base.py · helpers/
+│   ├── research.py → research_impl/         (8 nodes)
+│   ├── deep_research.py → deep_research_impl/  (13 nodes)
+│   ├── data.py → data_impl/                 (5 nodes)
+│   ├── autocode.py → autocode_impl/         (29 nodes)
+│   ├── understand.py → understand_impl/     (4 nodes)
+│   └── autoresearch.py → autoresearch_impl/ (8 nodes)
 │
-├── skills/                # Domain knowledge packages (hub-and-spoke)
+├── skills/                # Domain knowledge (hub-and-spoke)
 │   ├── dispatcher.py      # Auto-discovers domain hubs
-│   ├── b3/                # Brazilian Stock Exchange market data
+│   ├── b3/                # Brazilian Stock Exchange
 │   └── cvm/               # Brazilian SEC regulatory data
 │
-├── benchmark/             # Role benchmarking tool (v1.2)
-│
+├── benchmark/             # Role benchmarking tool
 ├── docs/                  # 5-file documentation standard per component
-│   ├── DOCUMENTATION_GUIDE.md
-│   ├── TOOLS.md · WORKFLOWS.md · CORE.md · SKILLS.md
-│   ├── BENCHMARK.md · INTEGRATION.md
-│   ├── system_prompts/    # Per-role LLM contracts
-│   ├── tools/ · core/ · workflows/
-│
 └── tests/                 # Pytest suites mirror source structure
-    ├── core/
-    ├── tools/
-    └── workflows/
 ```
+
+See [`docs/STRUCTURE.md`](docs/STRUCTURE.md) for: the v1.0 `*_ops/` pattern, the `*_impl/` workflow pattern, the `*_backend/` core pattern, standalone modules, naming conventions, and configuration files.
 
 ---
 
@@ -393,6 +398,7 @@ agent/
 | Memory slow | Run `memory(action="janitor")` to archive old episodes and purge stale rules. |
 | Router timeout | Check `ROUTER_MODEL` is loaded in LM Studio. Fallback heuristics will still work. |
 | Gateway 403 errors | Change `GATEWAY_SECRET` from default `changeme` in `.env`. |
+| Cron fires wrong day | Use `schedule` or `notify(recurring)` — both use `_build_cron_trigger` (0=Sunday). Don't use `CronTrigger.from_crontab` directly (0=Monday trap). |
 
 ---
 
@@ -404,13 +410,12 @@ To connect the agent to an MCP host (LM Studio, Claude Desktop, Cursor), add the
 - **`agent` server**: The `command` **must** point to the `python.exe` inside your `venv` folder (e.g., `D:/mcp/agent/venv/Scripts/python.exe`). Global Python won't find your installed dependencies.
 - **Paths**: Update all directory paths in the JSON to match where you cloned this repository.
 
-### Optional community MCP servers
-
-The agent works standalone, but you can enhance it by adding community MCP servers:
-- **Time** (`@mcpcentral/mcp-time`): Current date/time awareness.
-
-These run via `npx` (no `npm install` needed) — just add their `npx` commands to your MCP configuration file. Node.js 18+ is the only requirement.
+> **Note:** The agent no longer depends on the external `@mcpcentral/mcp-time` MCP server for time/timezone functionality. Time operations are handled natively by [`core/time_utils.py`](docs/core/STANDALONE.md) (tz-aware, reads `AGENT_TZ` env var). You can remove the `time` entry from your `mcp.json` if you had it.
 
 ---
 
-*Architecture: 3-tier role system → 15 tools → 5 workflows → 3-collection memory → structured tracing → background learning. Local-first, cloud-optional, fully open-source.*
+*Architecture: 3-tier role system → 18 tools → 6 workflows → 3-collection memory → structured tracing → background learning → tz-aware scheduling. Local-first, cloud-optional, fully open-source.*
+
+---
+
+*Last updated: 2026-07-16. All tools/workflows/subsystems at v1.0+. See [STRUCTURE.md](docs/STRUCTURE.md) for the repo layout, [SESSION_WORKFLOW.md](docs/SESSION_WORKFLOW.md) for the dev workflow, and each component's `CHANGELOG.md` for version history.*
