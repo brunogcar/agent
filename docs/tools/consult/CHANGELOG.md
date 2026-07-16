@@ -59,14 +59,14 @@ The following items are **proposed** for future consult roadmap sessions. They a
 | `consult(action="validate")` | Validate a design decision against best practices. Caller passes a decision + constraints; consultor returns `valid`/`invalid`/`partial` with citations to industry patterns. | P2 |
 | `consult(action="brainstorm")` | Generate N alternative approaches for a problem. Useful as input to `parallel` or `swarm` for downstream evaluation. | P2 |
 | `json_schema` support | Pass `json_schema` to `llm.complete()` for structured output (e.g. `{findings: [{severity, dimension, line, issue, fix}]}` for review). Pairs naturally with `format="json"` but gives type safety. | P2 |
-| Streaming support | Stream consultor responses when `complete_with_tools()` is implemented in `core/llm_backend/`. MCP stdio transport can't stream today — this would require gateway-only mode. | P3 |
+| Streaming support | Stream consultor responses via gateway mode (HTTP transport). MCP stdio transport can't stream today — this would require the gateway-only mode. *(v1.4 note: `complete_with_tools()` is now implemented for native tool calling, but streaming still requires gateway mode — these are separate features.)* | P3 |
 | Conversation memory | Optional episodic memory storage per consult session. Differs from the existing "Memory hook" (which is fire-and-forget storage); this would let follow-up `consult` calls reference prior Q&A in the same trace. | P3 |
 | Multi-model consult | Consult multiple models and compare (like a mini-swarm but routed through the consultor role only). Lower overhead than `swarm` for 2-model tie-breakers. | P3 |
 | Context preprocessing | Auto-detect code language and add language-specific review rules (e.g. Python → PEP 8, Rust → clippy rules). Replaces the manual `context_type="code"` opt-in. | P3 |
 | Severity filtering | For `review` action, filter findings by severity level (`CRITICAL` only, `CRITICAL+WARNING`, etc.). Saves caller-side post-processing. | P3 |
 | Cost tracking (deduplicated) | Tokens × price per consult call. Listed in the In Progress table above — kept here for visibility because it's the most-requested follow-up. | P2 |
 
-> **Note for future maintainers:** items in the table above are *suggestions* gathered during v1.0 docs work. Before implementing any of them, re-check the current source (`tools/consult_ops/`) and `core/llm_backend/` to confirm prerequisites (e.g. `complete_with_tools()` for streaming, `json_schema` plumbing for structured output) are in place.
+> **Note for future maintainers:** items in the table above are *suggestions* gathered during v1.0 docs work. Before implementing any of them, re-check the current source (`tools/consult_ops/`) and `core/llm_backend/` to confirm prerequisites (e.g. gateway mode for streaming, `json_schema` plumbing for structured output) are in place. *(v1.4: `complete_with_tools()` is implemented for native tool calling — not related to streaming.)*
 
 ---
 
@@ -75,7 +75,7 @@ The following items are **proposed** for future consult roadmap sessions. They a
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
 | 1 | **Local model fallback** | Consultor is explicitly *cloud-only*. Local fallback defeats the purpose of stronger external reasoning. | Skip |
-| 2 | **Streaming responses** *(legacy entry)* | MCP stdio transport doesn't support streaming. Re-listed in the Roadmap above for when `complete_with_tools()` lands. | Skip (until gateway mode) |
+| 2 | **Streaming responses** *(legacy entry)* | MCP stdio transport doesn't support streaming. Re-listed in the Roadmap above. Requires gateway mode (HTTP transport) — not `complete_with_tools()`. | Skip (until gateway mode) |
 | 3 | **Conversation history** *(legacy entry)* | `consult` is stateless by design. The Roadmap "Conversation memory" item revisits this with an opt-in episodic variant. | Skip |
 | 4 | **Image/multimodal input** | Vision tasks are handled by the `vision` role. Consultor is text-only advisory. | Skip |
 | 5 | **Configurable `_MAX_CONTEXT_TOKENS` via `.env`** | Hardcoded 2000 is a deliberate safety rail. User must explicitly request a change. | Skip |

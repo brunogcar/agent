@@ -8,7 +8,7 @@
 2. **Never remove the `_lock` from `CircuitBreaker` or `LMStudioProvider`** — thread safety depends on these locks.
 3. **Never hardcode provider names in business logic** — always use the `provider` field from `RoleConfig`.
 4. **Never construct raw HTTP requests to the LLM server** — always use `llm.complete(role="...", ...)` or `llm.call(role="...", ...)`.
-5. **Never add `complete_with_tools()` without verifying it doesn't exist** — confirmed not in codebase. Use `complete()` + `call()` only.
+5. **Never bypass `complete_with_tools()` for multi-turn tool calling** — `complete_with_tools()` (v1.4) is the canonical native tool-calling loop. The legacy JSON-parsing path in `subagent.py` (`_run_multi_turn`) is a fallback for models that don't support native tool calling. Use `complete()` + `call()` for single-turn calls.
 6. **Never create `.bak` files** — forbidden by project rules.
 7. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
 8. **Never skip `compileall` before `pytest`** — catches syntax errors early.

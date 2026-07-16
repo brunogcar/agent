@@ -1106,7 +1106,7 @@ def my_tool(action: str = "", ...) -> dict:
 
 When adding a **new tool** to the MCP Agent Stack, update **all** of the following files. Missing any one of them causes drift between the source code, the docs, and the LLM's tool schema.
 
-> **Future note (v1.3):** When `complete_with_tools()` is implemented (native LLM tool-calling loop — see `docs/core/llm/INSTRUCTIONS.md` → In Progress / Next Up), a new checklist item will be needed: register tool definitions for `complete_with_tools()` so the tool can be called by the LLM natively (via OpenAI `tools` / Claude `tool_use` / Gemini `functionDeclarations`) rather than via JSON-schema-parsed `{tool, action, args}` dispatch.
+> **v1.4 update:** `complete_with_tools()` is now implemented (see [`docs/core/llm/API.md`](core/llm/API.md)). Tools that want to be callable by the LLM natively (via native tool-calling APIs) should register tool definitions — see checklist item #12 below.
 
 | # | File | What to update |
 |---|------|----------------|
@@ -1121,6 +1121,7 @@ When adding a **new tool** to the MCP Agent Stack, update **all** of the followi
 | 9 | `docs/tools/<tool>/` | 4 subfiles following the 5-file standard: `API.md` (signature, params, actions, security), `ARCHITECTURE.md` (source ref, module tree, dispatch flow, design decisions, testing), `CHANGELOG.md` (version history, breaking changes, completed, in-progress, deferred), `INSTRUCTIONS.md` (NEVER DO, ALWAYS DO, anti-patterns). |
 | 10 | `benchmark/benchmark.py` | Add to `ROLE_GROUPS` / `ROLE_TO_GROUP` **only if** benchmark tasks exist for the new tool. Skip if no benchmark tasks. |
 | 11 | `server.py` | Check the tool-count warning threshold (>20 tools triggers a warning). Bump the expected count if hardcoded. |
+| 12 | `core/llm_backend/tools.py` | **(v1.4)** If the tool should be callable by the LLM natively via `complete_with_tools()`, verify `tool_def_from_meta_tool()` generates a valid `ToolDefinition` from `__tool_metadata__`. No registration needed — the generator reads metadata at call time. See `docs/core/llm/API.md`. |
 
 **Order of operations (recommended):**
 1. Write `tools/<tool>_ops/` first (subpackage + actions + helpers + registry).

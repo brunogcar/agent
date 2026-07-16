@@ -51,7 +51,7 @@
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| Streaming partial results | Yield results as each call completes instead of batch return. Needs async — MCP stdio transport doesn't stream today; blocked on `complete_with_tools()` / gateway mode in `core/llm_backend/`. | P2 |
+| Streaming partial results | Yield results as each call completes instead of batch return. Needs async — MCP stdio transport doesn't stream today; requires gateway mode (HTTP transport) in `core/llm_backend/`. *(v1.4 note: `complete_with_tools()` is now implemented for native tool calling, but streaming still requires gateway mode — these are separate features.)* | P2 |
 | Dynamic `PARALLEL_SAFE` | `@tool(parallel_safe=True)` decorator metadata instead of hardcoded frozenset. Requires touching every tool module + the registry. | P3 |
 | Per-tool error handling policy | Continue-on-failure vs abort-all — currently `run` always continues, `pipeline` always aborts. Make this configurable per call. | P3 |
 

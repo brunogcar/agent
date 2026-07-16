@@ -70,14 +70,14 @@ The following items are **proposed** for future vision roadmap sessions. They ar
 | `vision(action="chart_extract")` | Extract data from charts/graphs as structured JSON — bar/line/pie/scatter chart → `{chart_type, axes: {x, y}, series: [{name, points: [...]}]}`. Pairs naturally with `json_schema`. | P3 |
 | `vision(action="diagram_to_code")` | Convert UI mockups/diagrams to code — wireframe → HTML/CSS, ER diagram → SQL DDL, flowchart → Mermaid. Likely needs a `target_format` param (html/react/sql/mermaid/plantuml). | P3 |
 | `vision(action="accessibility_audit")` | WCAG compliance check for UI screenshots — automated contrast ratio estimation, alt-text gaps, focus-indicator audit, semantic-structure review. Output: structured `{violations: [{criterion, severity, element, fix}]}`. | P3 |
-| `streaming` support | Stream vision responses when `complete_with_tools()` is implemented in `core/llm_backend/`. MCP stdio transport can't stream today — this would require gateway-only mode. Useful for large-description feedback during long analyses. | P3 |
+| `streaming` support | Stream vision responses via gateway mode (HTTP transport). MCP stdio transport can't stream today — this would require the gateway-only mode. Useful for large-description feedback during long analyses. *(v1.4 note: `complete_with_tools()` is now implemented for native tool calling, but streaming still requires gateway mode — these are separate features.)* | P3 |
 | `video_frame_extraction` | Extract key frames from a video file for analysis — accept `file_path` to a `.mp4` / `.mov`, extract N evenly-spaced or scene-change frames, then run `describe`/`extract_text` on each. Likely uses `ffmpeg` subprocess. | P3 |
 | `pdf_page_extraction` | Extract images from PDF pages for analysis — accept `file_path` to a `.pdf`, render each page (via `pypdfium2` or `pdf2image`) to PNG, then run a vision action on each. Pairs with `file(read_pdf)` for text+vision combined extraction. | P3 |
 | `ocr_fallback` | Fallback to `pytesseract` (or similar local OCR) when the vision model is unavailable (kill-switch fired). Lower quality than the LLM but works offline. Toggled by an env flag (e.g. `VISION_OCR_FALLBACK=true`). | P3 |
 | `multi_image_context` | Pass multiple images in one call for comparison/sequence analysis — accept `image_sources: List[Dict]` instead of a single source. Enables "compare these two", "describe this sequence of screenshots", "are these the same person" use cases without needing a dedicated `compare` action. | P3 |
 | Remove deprecated `task` param in v2.0 | After `vision_delegate.py` is migrated to `action`+`question` (see In Progress above), remove the `task` parameter from `tools/vision.py` and the deprecation-warning block. Bump the version to v2.0 with a breaking-change entry. | P3 (after delegate migration) |
 
-> **Note for future maintainers:** items in the table above are *suggestions* gathered during v1.0 docs work. Before implementing any of them, re-check the current source (`tools/vision_ops/`), `core/llm/`, and `core/llm_backend/` to confirm prerequisites (e.g. `complete_with_tools()` for streaming, `json_schema` plumbing for structured output, ffmpeg/pytesseract availability) are in place.
+> **Note for future maintainers:** items in the table above are *suggestions* gathered during v1.0 docs work. Before implementing any of them, re-check the current source (`tools/vision_ops/`), `core/llm/`, and `core/llm_backend/` to confirm prerequisites (e.g. gateway mode for streaming, `json_schema` plumbing for structured output, ffmpeg/pytesseract availability) are in place. *(v1.4: `complete_with_tools()` is implemented for native tool calling — not related to streaming.)*
 
 ---
 
@@ -85,7 +85,7 @@ The following items are **proposed** for future vision roadmap sessions. They ar
 
 | # | Feature | Why Deferred | Priority |
 |---|---------|------------|----------|
-| 1 | **Real-time video analysis** | Requires streaming infrastructure. MCP stdio doesn't support streaming. Re-listed in the Roadmap above for when `complete_with_tools()` lands. | Skip (until gateway mode) |
+| 1 | **Real-time video analysis** | Requires streaming infrastructure. MCP stdio doesn't support streaming. Re-listed in the Roadmap above. Requires gateway mode (HTTP transport) — not `complete_with_tools()`. | Skip (until gateway mode) |
 | 2 | **3D model analysis** | No 3D vision model in current stack. | Skip |
 | 3 | **Audio-visual analysis** | Out of scope — use separate audio tool. | Skip |
 | 4 | **Configurable system prompts via `.env`** | Static prompts are deliberate for consistency. Per-action prompts via `action`/`question`/`format`/`context_type` params cover the variance surface. | Skip |
