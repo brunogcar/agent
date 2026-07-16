@@ -51,6 +51,7 @@ class LMStudioProvider(BaseProvider):
         timeout:     int,
         json_mode:   bool,
         json_schema: Optional[dict] = None,
+        tools:       Optional[list] = None,
         **kwargs:    Any,
     ) -> dict:
         payload: dict[str, Any] = {
@@ -59,6 +60,13 @@ class LMStudioProvider(BaseProvider):
             "temperature": temperature,
             "max_tokens":  max_tokens,
         }
+        # v1.4.2: Native tool calling. LM Studio is OpenAI-compatible, so the
+        # conversion is the same as openai_compat.py. Without this named parameter,
+        # tools=[ToolDefinition, ...] would flow through **kwargs → payload.update(kwargs)
+        # → httpx tries to serialize raw ToolDefinition objects → TypeError.
+        if tools:
+            from core.llm_backend.tools import to_openai_tools
+            payload["tools"] = to_openai_tools(tools)
         # v1.2: JSON schema enforcement. When json_schema is provided, use
         # response_format=json_schema (LM Studio enforces via outlines internally).
         # This is stronger than json_object (which only ensures valid JSON, not schema).

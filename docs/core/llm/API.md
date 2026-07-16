@@ -378,6 +378,14 @@ result = llm.complete_with_tools(
 
 **Tool errors stay in-loop:** if `execute()` raises, the error is caught, formatted as `{"error": str(e)}`, and appended as the tool result. The LLM sees the error and adapts. `max_consecutive_errors=3` bails after 3 consecutive failures.
 
+**v1.4.2 hardening:**
+- `max_iterations < 1` → immediate error return (guard)
+- `execute` must be callable (validated before the loop)
+- Tool results that aren't JSON-serializable → `{"error": "non-serializable"}` (loop doesn't crash)
+- Usage is aggregated on ALL return paths (including error bails)
+- Anthropic adapter now converts `assistant`+`tool_calls` and `tool` role messages (was broken for multi-turn Claude)
+- Tool descriptions truncated to 2000 chars (prevents provider 400s)
+
 ### `ToolCall` / `ToolDefinition` / `tool_calling_mode`
 
 See `core/llm_backend/tools.py` + `core/llm_backend/response.py`. `tool_calling_mode` at `LLMClient.__init__`: `"native"` / `"json"` / `"auto"` (default `"auto"` — v1.4 always tries native).

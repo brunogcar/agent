@@ -92,6 +92,41 @@ class AnthropicProvider(BaseProvider):
             content = msg.get("content", "")
             if role == "system":
                 system_text += content + "\n"
+            elif role == "assistant" and msg.get("tool_calls"):
+                # v1.4.2: Convert OpenAI-shape assistant+tool_calls → Anthropic
+                # content blocks. The LLM returned tool_calls (OpenAI shape from
+                # our loop); Anthropic expects [{"type":"text","text":...},
+                # {"type":"tool_use","id":...,"name":...,"input":...}].
+                content_blocks = []
+                if content:
+                    content_blocks.append({"type": "text", "text": content})
+                for tc in msg["tool_calls"]:
+                    fn = tc.get("function", {})
+                    try:
+                        tc_input = json.loads(fn.get("arguments", "{}"))
+                    except (json.JSONDecodeError, TypeError):
+                        tc_input = {}
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", f"anthropic_tc_{len(content_blocks)}"),
+                        "name": fn.get("name", ""),
+                        "input": tc_input,
+                    })
+                anthropic_messages.append({"role": "assistant", "content": content_blocks})
+            elif role == "tool":
+                # v1.4.2: Convert OpenAI-shape tool result → Anthropic tool_result.
+                # OpenAI: {"role":"tool","tool_call_id":"...","content":"..."}
+                # Anthropic: {"role":"user","content":[{"type":"tool_result",
+                #            "tool_use_id":"...","content":"..."}]}
+                tool_call_id = msg.get("tool_call_id", "")
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_call_id,
+                        "content": content,
+                    }],
+                })
             else:
                 anthropic_messages.append({"role": role, "content": content})
 
@@ -190,7 +225,7 @@ class AnthropicProvider(BaseProvider):
                     "type": "function",
                     "function": {
                         "name": part.get("name", ""),
-                        "arguments": json.dumps(part.get("input", {})),
+                        "arguments": json.dumps(part.get("input") or {}),
                     },
                 })
 

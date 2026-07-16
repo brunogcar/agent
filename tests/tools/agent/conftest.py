@@ -6,8 +6,16 @@ from unittest.mock import patch
 
 
 @pytest.fixture(autouse=True)
-def clear_agent_state():
-    """Clear cache and metrics between every test."""
+def clear_agent_state(monkeypatch):
+    """Clear cache and metrics between every test.
+
+    Also ensures SUBAGENT_NATIVE_TOOLS is unset by default — the JSON-path
+    tests (test_subagent.py) mock llm.complete, not llm.complete_with_tools.
+    If the user's .env has SUBAGENT_NATIVE_TOOLS=1, the tests would hit the
+    native path (unmocked) and crash. test_subagent_native.py has its own
+    fixture that re-enables it for the native-path tests.
+    """
+    monkeypatch.delenv("SUBAGENT_NATIVE_TOOLS", raising=False)
     from tools.agent_ops.cache import _clear_cache
     from tools.agent_ops.metrics import _clear_metrics
     from tools.agent_ops.parse_warnings import _clear_parse_warnings

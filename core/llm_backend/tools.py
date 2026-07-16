@@ -88,7 +88,12 @@ def _build_description(tool_name: str, meta: dict, allowed_actions: Optional[fro
         f"The 'action' field selects the behavior; other fields are the "
         f"action's parameters (see each action's help text above)."
     )
-    return "\n".join(lines)
+    desc = "\n".join(lines)
+    # v1.4.2: Truncate to stay within provider description limits
+    # (Anthropic ~1024 chars practical, OpenAI ~4K). 2000 is a safe middle ground.
+    if len(desc) > 2000:
+        desc = desc[:1990] + "\n... (truncated)"
+    return desc
 
 
 def _build_parameters(meta: dict, allowed_actions: Optional[frozenset]) -> dict:

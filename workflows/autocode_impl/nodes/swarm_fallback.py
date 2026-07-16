@@ -90,6 +90,10 @@ def node_swarm_fallback(state: AutocodeState) -> dict:
         # Also set source_code to the suggested fix so debug node can use it
         current_tdd = dict(state.get("tdd", {}))
         current_tdd["status"] = ""  # reset — allows debug loop to retry
+        # v1.4.2: Reset tdd_iteration so the debug node doesn't immediately bail.
+        # tdd_iteration was at max_retries+1 (that's what triggered the fallback);
+        # without this reset, debug.py would immediately bail on re-entry.
+        current_tdd["iteration"] = 0  # reset — gives one full debug cycle
         current_tdd["source_code"] = suggested_fix
         current_tdd["error"] = error  # keep the error for context
 

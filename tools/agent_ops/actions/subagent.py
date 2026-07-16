@@ -867,6 +867,12 @@ def _run_multi_turn_native(
 
     start_time = _time.time()
 
+    # v1.4.2: Filter json_schema from call_kwargs — complete_with_tools() uses
+    # native tool calling (not json_schema). If the caller passed json_schema
+    # (for the final answer), it would leak to the provider and conflict with
+    # tool-call enforcement. The final answer is returned as text.
+    native_kwargs = {k: v for k, v in call_kwargs.items() if k not in ("json_schema", "json_mode")}
+
     # The native loop — llm.complete_with_tools() handles iterations, tool-call
     # dispatch, error-in-loop, and max_iterations. We just map the return shape.
     result = llm.complete_with_tools(
@@ -880,7 +886,7 @@ def _run_multi_turn_native(
         execute=_execute,
         max_consecutive_errors=3,           # v2.1: same bail as _run_multi_turn
         trace_id=trace_id,
-        **call_kwargs,
+        **native_kwargs,
     )
 
     elapsed = round(_time.time() - start_time, 2)

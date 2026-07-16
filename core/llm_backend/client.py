@@ -544,6 +544,12 @@ class LLMClient:
             user_text = f"{user}\n\nContent:\n{content}"
         messages.append({"role": "user", "content": user_text})
 
+        # v1.4.2: Validate inputs before entering the loop.
+        if max_iterations < 1:
+            return LLMResponse.from_error(role, "", "max_iterations must be >= 1", 0.0)
+        if not callable(execute):
+            return LLMResponse.from_error(role, "", "execute must be a callable", 0.0)
+
         total_usage = {"prompt": 0, "completion": 0, "total": 0}
         consecutive_errors = 0
         last_result: LLMResponse | None = None
@@ -580,13 +586,16 @@ class LLMClient:
 
             if not result.ok:
                 # v1.4.1: Tag the bail reason + iteration count.
+                # v1.4.2: Aggregate usage on error bail (was returning single-turn usage).
                 result.reason = "llm_error"
                 result.iterations = iteration + 1
+                result.usage = total_usage
                 return result  # LLM error — bail immediately
 
             # Aggregate usage across iterations (minimax #5)
+            # v1.4.2: defensive — usage could theoretically be None
             for k in total_usage:
-                total_usage[k] += result.usage.get(k, 0)
+                total_usage[k] += (result.usage or {}).get(k, 0)
 
             last_result = result
 
@@ -643,11 +652,17 @@ class LLMClient:
                         tracer.warning(trace_id, "llm_tools",
                                        f"tool '{tc.name}' error: {str(e)[:200]}")
 
-                # Append tool result message (OpenAI shape)
+                # Append tool result message (OpenAI shape).
+                # v1.4.2: Wrap in try/except — a non-serializable tool result
+                # (Path, bytes, custom class) would crash the loop with TypeError.
+                try:
+                    content_str = _json.dumps(tool_result)
+                except (TypeError, ValueError):
+                    content_str = _json.dumps({"error": "Tool returned non-JSON-serializable data"})
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": _json.dumps(tool_result),
+                    "content": content_str,
                 })
 
             # Bail on too many consecutive errors (minimax #4)

@@ -57,6 +57,9 @@ class LLMResponse:
     # reason: structured bail reason — "max_iterations", "consecutive_errors",
     #         "cancelled", "llm_error", or "" for success. Replaces fragile
     #         substring-matching on error text in callers (subagent).
+    # v1.4.2: tool_calls is populated by _parse_response() whenever the LLM
+    # response includes tool_calls (any provider). Existing callers (complete/
+    # call/complete_provider) ignore it; complete_with_tools() consumes it.
     iterations: int                   = 0
     reason:    str                    = ""
 
