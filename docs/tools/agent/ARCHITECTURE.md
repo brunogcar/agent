@@ -40,6 +40,7 @@
 | `tests/tools/agent/test_agent_escalation.py` | Autonomous model escalation tests |
 | `tests/tools/agent/test_agent_fallback.py` | Role fallback chain tests |
 | `tests/tools/agent/test_subagent.py` | Subagent dispatch (v1.5 single-turn) + multi-turn ReAct loop (v2.0) — 16 tests: success, missing task, default/custom system prompt, context passthrough, LLM error, json_schema string parsing, invalid json_schema, role default, temperature/max_tokens, multi-turn final-answer-on-turn-1, tool-call-then-final-answer, max_turns exceeded, disallowed tool rejected, 3 consecutive tool failures bail, python run blocked |
+| `tests/tools/agent/test_subagent_native.py` | **v2.1 NEW.** Native tool-calling path tests — 12 tests: immediate text, tool-call-then-text, tool result truncation, max_turns → max_iterations, consecutive errors bail, LLM error bail, disallowed tool rejected, max_turns bounds, parallel calls. |
 
 ---
 
