@@ -73,7 +73,7 @@ def _validate_tags(tags: str, max_count: int = 6) -> Tuple[bool, str]:
     for p in parts:
         if len(p) > cfg.max_tag_length:
             return False, f"Tag '{p[:20]}...' exceeds length limit ({cfg.max_tag_length})"
-        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_.\s-]*$', p):
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9_.:\s-]*$', p):
             return False, f"Tag '{p}' contains invalid characters"
 
     return True, ""

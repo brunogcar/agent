@@ -14,7 +14,10 @@ Parameters:
   top_k (default 5): Max results.
   collections: Filter to specific collections. Omit for all.
   min_score (default 0.5): Minimum decay score.
-  tags_filter: Comma-separated — only return memories with ANY of these tags.
+  tags_filter: Comma-separated — only return memories with ANY of these tags (OR).
+  tags_required: Comma-separated — only return memories with ALL of these tags (AND).
+    v1.4: Use with the unified tag schema (source:*, domain:*, category:*, status:*, evidence:*).
+    Example: tags_required="source:sleep_learn,domain:python" → must have BOTH.
   trace_id: Trace identifier for logging and correlation.
 
 Examples:
@@ -39,6 +42,7 @@ def run_recall(
     collections=None,
     min_score: float = 0.5,
     tags_filter: str = "",
+    tags_required: str = "",
     trace_id: str = "",
     **kwargs,
 ) -> dict:
@@ -56,6 +60,11 @@ def run_recall(
     if not is_valid:
         return fail(err, trace_id=trace_id)
 
+    # v1.4: Validate tags_required (AND filter — same validation as tags_filter)
+    is_valid, err = _validate_tags(tags_required or "", max_count=10)
+    if not is_valid:
+        return fail(err, trace_id=trace_id)
+
     store = _mem()
     results = store.recall(
         query=query,
@@ -63,6 +72,7 @@ def run_recall(
         collections=collections,
         min_score=min_score,
         tags_filter=tags_filter,
+        tags_required=tags_required,
         trace_id=trace_id,
     )
 

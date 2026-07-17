@@ -87,8 +87,8 @@ class MemoryStore:
 
     # ── Recall Delegators ─────────────────────────────────────────────────
 
-    def recall(self, query: str, top_k: int = None, collections: list[str] = None, min_score: float = 0.5, tags_filter: str = "", trace_id: str = "") -> list[dict]:
-        return read_ops.execute_recall(self, query, top_k, collections, min_score, tags_filter, trace_id)
+    def recall(self, query: str, top_k: int = None, collections: list[str] = None, min_score: float = 0.5, tags_filter: str = "", tags_required: str = "", trace_id: str = "") -> list[dict]:
+        return read_ops.execute_recall(self, query, top_k, collections, min_score, tags_filter, tags_required, trace_id)
 
     def recall_context(self, query: str, top_k: int = None, collections: list[str] = None, trace_id: str = "") -> str:
         return read_ops.execute_recall_context(self, query, top_k, collections, trace_id)

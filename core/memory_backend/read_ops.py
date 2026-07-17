@@ -18,6 +18,7 @@ def execute_recall(
     collections: list[str] = None,
     min_score: float = 0.5,
     tags_filter: str = "",
+    tags_required: str = "",
     trace_id: str = "",
 ) -> list[dict]:
     """Recall memories semantically similar to query."""
@@ -73,6 +74,18 @@ def execute_recall(
                 wanted = {t.strip() for t in tags_filter.split(",")}
                 actual = {t.strip() for t in tags.split(",")}
                 if not wanted  & actual:
+                    continue
+
+            # v1.4 (Commit 5): tags_required — AND semantics.
+            # ALL required tags must be present (subset check). This is the
+            # precise procedural recall the collective review asked for:
+            #   recall(tags_required="source:sleep_learn,confidence:high")
+            # returns only rules tagged with BOTH source:sleep_learn AND confidence:high.
+            # kimi's point: this is a NEW parameter, keep tags_filter as OR.
+            if tags_required:
+                required = {t.strip() for t in tags_required.split(",") if t.strip()}
+                actual = {t.strip() for t in tags.split(",")}
+                if not required <= actual:  # subset check — ALL required must be present
                     continue
 
             # Record telemetry in RAM (0ms latency)
