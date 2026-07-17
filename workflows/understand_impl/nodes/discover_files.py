@@ -45,7 +45,20 @@ def node_discover_files(state: UnderstandState) -> dict:
                 except OSError:
                     continue
 
-                rel_path = full_path.relative_to(pm.source_root).as_posix()
+                # v1.3.1: Resolve full_path before relative_to() — pm.source_root
+                # is already resolved (ProjectManager.__init__ does .resolve()), but
+                # full_path comes from os.walk which returns the OS's raw path.
+                # On Windows, resolve() normalizes drive letter case + expands short
+                # names + resolves symlinks. Without resolving full_path too,
+                # relative_to() raises ValueError when the casings don't match.
+                # Also wrapped in try/except with logging — was unhandled (would
+                # crash the entire file discovery walk on a single bad path).
+                try:
+                    rel_path = full_path.resolve().relative_to(pm.source_root).as_posix()
+                except (ValueError, OSError) as e:
+                    tracer.warning(tid, "discover",
+                                   f"Skipping {full_path}: relative_to failed: {e}")
+                    continue
 
                 node = store.read(
                     "SELECT content_hash, last_modified, file_size FROM nodes WHERE project_id = ? AND path = ?",
