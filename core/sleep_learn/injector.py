@@ -58,7 +58,7 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
         results = col.query(
             query_texts=[query],
             n_results=k,
-            where={"confidence_score": {"$gte": SLEEP_LEARN_MIN_CONFIDENCE}},
+            where={"confidence": {"$gte": SLEEP_LEARN_MIN_CONFIDENCE}},  # v1.0: unified schema field
             include=["documents", "metadatas", "distances"]
         )
         
@@ -76,10 +76,11 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
     except Exception as e:
         tracer.error("daemon", "sleep_learn_injector", f"Failed to query rules: {e}")
     
-    # [FIX 8] Split-brain fallback: also query main memory's procedural collection
-    # so rules learned by meta_learning.py daemon are visible here.
-    # Runs unconditionally (not just on exception) so both collections are merged.
-    # seen_ids: O(n) dedup vs O(n^2) any() scan
+    # v1.0 (Commit 4): Split-brain fallback replaced with unified read.
+    # The unified `procedural` collection now contains rules from ALL writers
+    # (llm, meta_learner, sleep_learn). The injector reads from procedural_meta
+    # (above) for backward compat with pre-migration rules, then from the main
+    # `procedural` collection (below) for all rules — unified + legacy.
     seen_ids = {r["id"] for r in rules}
     try:
         from core.memory_engine import memory
@@ -94,17 +95,15 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
                 rule_id = ex.get("id", ex.get("text", "")[:30])
                 if rule_id not in seen_ids:
                     seen_ids.add(rule_id)
-                    # importance scale: _decay_score writes 0.0-1.0, not 0-10
-                    # clamp to [0,1] to be safe regardless of source scale
-                    raw_conf = ex.get("metadata", {}).get("importance", 0.5)
-                    confidence = min(float(raw_conf), 1.0)
                     ex_meta = ex.get("metadata", {})
+                    # v1.0: Use unified schema field 'confidence' (was 'importance' clamped)
+                    confidence = ex_meta.get("confidence", 0.5)
                     rules.append({
                         "id": rule_id,
                         "rule": ex["text"],
                         "confidence": confidence,
                         "distance": ex.get("distance", 0.5),
-                        "reasoning": ex_meta.get("reasoning", ""),  # v1.0: include reasoning
+                        "reasoning": ex_meta.get("reasoning", ""),
                         "source": ex_meta.get("source", "meta_learner"),
                     })
     except Exception:

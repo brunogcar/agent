@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/sleep_learn/config.py
 Phase 2: Configuration for the Active Distillation daemon.
 Uses the centralized cfg singleton for all path resolution.
@@ -14,6 +14,12 @@ SLEEP_LEARN_IDLE_THRESHOLD_SEC = int(os.getenv("SLEEP_LEARN_IDLE_THRESHOLD_SEC",
 
 # Phase 2: Distillation Limits
 SLEEP_LEARN_COLLECTION_NAME = "procedural_meta"
+
+# v1.0 Migration (Commit 4): when True, sleep_learn writes to the main memory's
+# `procedural` collection instead of the isolated `procedural_meta` collection.
+# The migration script (4b) sets this to True after backfilling. The injector
+# (4c) stops reading from procedural_meta when this is True.
+SLEEP_LEARN_UNIFIED = os.getenv("SLEEP_LEARN_UNIFIED", "true").lower() == "true"
 SLEEP_LEARN_MIN_RULE_WORDS = int(os.getenv("SLEEP_LEARN_MIN_RULE_WORDS", "10"))
 SLEEP_LEARN_MAX_DAILY_DISTILLATIONS = int(os.getenv("SLEEP_LEARN_MAX_DAILY_DISTILLATIONS", "20"))
 

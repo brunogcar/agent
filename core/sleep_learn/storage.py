@@ -20,15 +20,26 @@ _chroma_client = None
 _chroma_collection = None
 
 def _get_collection():
-    """Lazy singleton: load ChromaDB client and collection once."""
+    """Lazy singleton: load ChromaDB client and collection once.
+    
+    v1.0 (Commit 4): when SLEEP_LEARN_UNIFIED=True, writes go to the main
+    memory's `procedural` collection instead of the isolated `procedural_meta`.
+    """
     global _chroma_client, _chroma_collection
     if _chroma_collection is None:
-        import chromadb
-        _chroma_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
-        _chroma_collection = _chroma_client.get_or_create_collection(
-            name=SLEEP_LEARN_COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"}
-        )
+        from core.sleep_learn.config import SLEEP_LEARN_UNIFIED
+        if SLEEP_LEARN_UNIFIED:
+            # Unified mode: use the main memory store's procedural collection
+            from core.memory_engine import memory
+            _chroma_collection = memory._col("procedural")
+        else:
+            # Legacy mode: isolated procedural_meta collection
+            import chromadb
+            _chroma_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
+            _chroma_collection = _chroma_client.get_or_create_collection(
+                name=SLEEP_LEARN_COLLECTION_NAME,
+                metadata={"hnsw:space": "cosine"}
+            )
     return _chroma_collection
 
 def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) -> str:

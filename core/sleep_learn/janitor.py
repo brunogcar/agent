@@ -16,17 +16,26 @@ _chroma_client = None
 _chroma_collection = None
 
 def _get_collection():
-    """Lazy singleton: load ChromaDB client and collection once."""
+    """Lazy singleton: load ChromaDB client and collection once.
+    
+    v1.0 (Commit 4): when SLEEP_LEARN_UNIFIED=True, uses the main memory's
+    procedural collection. purge_stale_rules now operates on the unified
+    collection (folded into memory_backend/janitor.py conceptually, but
+    the function stays here to preserve the Janitor Bypass pattern).
+    """
     global _chroma_client, _chroma_collection
     if _chroma_collection is None:
-        import chromadb
-        _chroma_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
-        # [P0 FIX] Use get_or_create_collection instead of get_collection to avoid
-        # ValueError when the collection doesn't exist yet (e.g., first boot).
-        _chroma_collection = _chroma_client.get_or_create_collection(
-            name=SLEEP_LEARN_COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"}
-        )
+        from core.sleep_learn.config import SLEEP_LEARN_UNIFIED
+        if SLEEP_LEARN_UNIFIED:
+            from core.memory_engine import memory
+            _chroma_collection = memory._col("procedural")
+        else:
+            import chromadb
+            _chroma_client = chromadb.PersistentClient(path=str(_SLEEP_LEARN_DB_PATH))
+            _chroma_collection = _chroma_client.get_or_create_collection(
+                name=SLEEP_LEARN_COLLECTION_NAME,
+                metadata={"hnsw:space": "cosine"}
+            )
     return _chroma_collection
 
 def purge_stale_rules() -> dict:
