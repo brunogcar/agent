@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.5** | 2026-07-17 | **L1 atomic fact extraction + tags_required (AND filtering).** (1) New `extract` action — router-tier LLM extracts atomic facts from text → `atomic` collection. TencentDB L1 layer. (2) `tags_required` parameter on `recall()` — AND-based tag filtering (ALL required tags must be present). (3) Tag validation regex updated to allow `:` (for `source:*`, `domain:*` prefixed tags). (4) Comprehensive docs audit: 15 files updated (factual errors fixed, stale references corrected, cross-links added, module trees updated). |
 | **v1.4** | 2026-07-16 | **Memory tool maturity (pre-merge prep).** 4 new features: (1) `update` action — modify a memory by ID without delete+re-create. Tracks changes in a sidecar SQLite audit table (`memory_db/memory_audit.db`, `rule_history` table) — NOT in ChromaDB metadata (collective review: JSON string bloats queries). Append-only, queryable. (2) `export`/`import` actions — JSONL backup/restore. Needed for the Commit 4 migration (`procedural_meta` → `procedural`). (3) Group-aware `delete` by `source_doc_id` — deletes all chunks sharing a UUID. Prevents orphaned fragments. (4) `tags_required` deferred to Commit 5 (after tag schema is defined — collective review: AND-filter before schema is a bug). |
 | v1.3.1 | 2026-07-12 | **`_mem()` singleton fix.** Was creating a NEW `MemoryStore()` instead of using the module-level singleton. Dedup broken between tool and workflow writes. Fixed + added `[DESIGN]` block. |
 | v1.3 | 2026-07-08 | **Chonkie chunking on `store`.** `chunk`/`chunk_method`/`chunk_size` params. Semantic + episodic only; procedural rejected. Core `store_chunked()` backend. Recall returns `source_doc_id`/`chunk_index`/`chunk_count`. System prompt fixed (50KB limit). |
@@ -37,16 +38,21 @@
 | Monolithic if/elif dispatch | `@meta_tool` + `@register_action` auto-discovery | Same API surface. |
 | 7 actions | 8 actions | Added `recall_context`. |
 
+### ✅ Recently Completed Features
+
+| Feature | Version | Notes |
+|---------|---------|-------|
+| **`update` action** | ✅ v1.4 | Modify a memory by ID without delete+re-create. Sidecar SQLite audit log (`rule_history` table). |
+| **`export`/`import` actions** | ✅ v1.4 | JSONL backup/restore. Path-guard validated. Used for the `procedural_meta` → `procedural` migration. |
+| **Group-aware `delete` by `source_doc_id`** | ✅ v1.4 | Delete all chunks sharing a UUID in one call. Prevents orphaned fragments. |
+| **AND-based tag filtering (`tags_required`)** | ✅ v1.5 (Commit 5) | Complements OR-based `tags_filter` for precise procedural recall. Deferred from v1.4 pending the tag schema (delivered in v1.2 unified rule schema). |
+
 ---
 
 ## 🔄 In Progress / Next Up
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 46 | **Group-aware `delete` by `source_doc_id`** | When deleting a chunked memory, offer to delete all chunks with the same `source_doc_id`. Prevents orphaned fragments. Backend feature — see `docs/core/memory/CHANGELOG.md` (same item). | P1 |
-| — | `export`/`import` actions | JSONL backup/restore for collections. Needs file path validation (path guard). | P1 |
-| — | AND-based tag filtering (`tags_required`) | Current `tags_filter` is OR-based. AND filtering for precise procedural recall. | P1 |
-| — | `update` action | Modify existing memory by ID without losing history or changing ID. | P1 |
 | — | Semantic chunking (`chunk_method="semantic"`) | Uses LM Studio `/v1/embeddings` for topic-aware splitting. Needs design decision on offline fallback. | P2 |
 | — | `memory(action="health")` | Lightweight ChromaDB connectivity check. | P2 |
 | — | `store_batch` action | Store multiple independent memories in one call (not chunks — independent texts). Cap at 20 entries. | P2 |
@@ -82,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-07-14. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

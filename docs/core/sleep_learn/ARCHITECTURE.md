@@ -38,6 +38,7 @@ core/sleep_learn/
 ├── injector.py              # inject_rules_into_prompt() + get_relevant_rules()
 ├── logger.py                # log_event() — structured JSONL logging
 ├── config.py                # SLEEP_* configuration constants
+├── migrate.py               # v1.0 (Commit 4): procedural_meta → procedural migration (idempotent)
 └── janitor.py               # purge_stale_rules() — confidence + age-based rule purging
 ```
 
@@ -114,7 +115,7 @@ graph TD
     F --> D
 ```
 
-> **Note:** The daemon does NOT use `try_acquire_background_slot()` or idle detection. It runs unconditionally at startup and hourly thereafter. Idle detection is planned for a future version.
+> **Note (updated v1.0):** The daemon now gates on `tracker.try_acquire_background_slot(min_idle_seconds=300)` before running — idle detection is enforced. This avoids unnecessary resource usage in test/short-lived sessions. (Earlier pre-v1.0 versions ran unconditionally at startup and hourly thereafter.)
 
 ### Trigger Conditions
 
@@ -168,4 +169,4 @@ graph TD
 
 ---
 
-*Last updated: 2026-07-04. See [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

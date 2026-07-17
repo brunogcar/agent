@@ -6,7 +6,8 @@ The memory backend is a **three-collection ChromaDB vector store** with decay sc
 - **Three collections** — Episodic (what happened), semantic (what you know), procedural (how to do it)
 - **Four-layer dedup** — Hash guard → outer vector → inner vector (inside lock) → procedural reinforcement
 - **Decay scoring** — Memories fade over time; procedural memories bypass decay entirely
-- **Two learning systems** — Inline meta-learning (fast) + background sleep-learning (deep)
+- **Two learning systems** — Inline meta-learning (fast) + background sleep-learning (deep). See [SLEEP_LEARN.md](SLEEP_LEARN.md) for the background daemon.
+- **Unified rule schema (v1.2)** — Both procedural writers conform to `core/memory_backend/rule_schema.py`. See [unified schema docs](memory/API.md#-unified-rule-schema-v12--l3-contract).
 - **Thread-safe writes** — `threading.Lock()` per collection with cancellation guards
 - **Context budgeting** — Cognitive priority-based message trimming before LLM calls
 - **Autonomous maintenance** — Diversity enforcer, janitor daemon, eviction engine
@@ -85,4 +86,4 @@ for r in results:
 
 ---
 
-*Last updated: 2026-07-03. See subfiles for detailed documentation.*
+*Last updated: 2026-07-17. See subfiles for detailed documentation.*

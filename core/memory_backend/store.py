@@ -7,7 +7,7 @@ from __future__ import annotations
 import threading
 
 from core.memory_backend.constants import (
-    COLLECTION_EPISODIC, COLLECTION_SEMANTIC, COLLECTION_PROCEDURAL,
+    COLLECTION_EPISODIC, COLLECTION_SEMANTIC, COLLECTION_PROCEDURAL, COLLECTION_ATOMIC,
     ALL_COLLECTIONS
 )
 from core.memory_backend.client import get_client as _make_client
@@ -69,6 +69,10 @@ class MemoryStore:
 
     def store_procedural(self, text: str, importance: int = 7, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "success") -> dict:
         return self._store(COLLECTION_PROCEDURAL, text, importance, tags, trace_id, goal, outcome)
+
+    def store_atomic(self, text: str, importance: int = 5, tags: str = "", trace_id: str = "", source: str = "") -> dict:
+        """v1.5: Store an atomic fact (L1 layer)."""
+        return self._store(COLLECTION_ATOMIC, text, importance, tags, trace_id, source=source)
 
     def store(self, text: str, memory_type: str = "semantic", importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "") -> dict:
         if memory_type not in ALL_COLLECTIONS:

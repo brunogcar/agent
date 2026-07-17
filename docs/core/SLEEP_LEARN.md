@@ -4,7 +4,7 @@ The Sleep & Learn daemon (`core/sleep_learn/`) is a **background meta-cognition 
 
 **Key characteristics:**
 - **Background execution** — Runs at startup and catches midnight if the agent stays running; never during active use
-- **Physical isolation** — Learned rules stored in separate ChromaDB instance (`procedural_meta`)
+- **Physical isolation** — Learned rules stored in separate ChromaDB instance (`procedural_meta`). **v1.0 (Commit 4): unified into the main `procedural` collection (`SLEEP_LEARN_UNIFIED=true`); `procedural_meta` is deprecated/migrated.**
 - **Quality gates** — Multiple filters reject generic, contradictory, or dangerous rules
 - **Feedback loop** — Rules are scored dynamically: boosted on success, penalized on failure
 - **Ouroboros prevention** — Daemon never reads its own output collection during distillation
@@ -48,7 +48,8 @@ result = distill_observation({
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
 | `SLEEP_LEARN_ENABLED` | `true` | Toggle the entire daemon |
-| `SLEEP_LEARN_IDLE_THRESHOLD_SEC` | `3600` (1h) | Minimum idle time before background learning (planned, not enforced) |
+| `SLEEP_LEARN_UNIFIED` | `true` | **v1.0 (Commit 4):** When true, writers (storage, feedback, janitor) target the main `procedural` collection instead of the isolated `procedural_meta`. The unified rule schema (`core/memory_backend/rule_schema.py`) is used. |
+| `SLEEP_LEARN_IDLE_THRESHOLD_SEC` | `3600` (1h) | Minimum idle time before background learning — **v1.0: now enforced** via `tracker.try_acquire_background_slot(min_idle_seconds=300)` |
 | `SLEEP_LEARN_MIN_RULE_WORDS` | `10` | Minimum words per extracted rule |
 | `SLEEP_LEARN_MAX_DAILY_DISTILLATIONS` | `20` | Maximum distillation runs per day |
 | `SLEEP_LEARN_INJECT_ENABLED` | `true` | Kill switch for rule injection |
@@ -82,6 +83,8 @@ result = distill_observation({
 
 ## 📂 Documentation
 
+> **See also:** [MEMORY.md](MEMORY.md) — the memory backend that sleep_learn now writes to (unified `procedural` collection, v1.0 Commit 4).
+
 | File | Description |
 |------|-------------|
 | [ARCHITECTURE.md](sleep_learn/ARCHITECTURE.md) | Module tree, data flow, relationship to meta-learning, execution flow, hard guardrails, known concerns, testing |
@@ -91,4 +94,4 @@ result = distill_observation({
 
 ---
 
-*Last updated: 2026-07-04. See subfiles for detailed documentation.*
+*Last updated: 2026-07-17. See subfiles for detailed documentation.*

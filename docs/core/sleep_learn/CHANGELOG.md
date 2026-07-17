@@ -42,6 +42,9 @@
 | Janitor | ✅ Pre-v1 | `purge_stale_rules()` — confidence + age-based purging |
 | Lazy loading | ✅ Pre-v1 | All ChromaDB imports inside functions |
 | Zero coupling | ✅ Pre-v1 | Feedback reads JSONL directly, never imports tracer |
+| Idle detection | ✅ v1.0 | `tracker.try_acquire_background_slot(min_idle_seconds=300)` gate before daemon runs |
+| Sweeper integration | ✅ v1.0 | Replaced Phase 1 placeholder with `tracer.recent()` + `memory.recall()` reads; 50-observation cap |
+| Rule explanation | ✅ v1.0 | Injector includes `reasoning` field alongside rule text in the injected prompt |
 
 ---
 
@@ -49,10 +52,7 @@
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| Sweeper integration | Phase 1 passive observation only; needs tracer/memory integration for real events | P1 |
-| Idle detection | `try_acquire_background_slot()` gate before daemon runs; currently unconditional | P1 |
 | Consolidated learning | Merge inline + background into single pipeline with `source` metadata | P2 |
-| Rule explanation | Include reasoning for why each rule was extracted | P2 |
 | Cross-session learning | Share learned rules across agent instances | P3 |
 | Rule visualization | Dashboard showing active rules and their scores | P3 |
 
@@ -72,4 +72,4 @@
 
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

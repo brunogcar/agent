@@ -80,7 +80,7 @@ def _validate_tags(tags: str, max_count: int = 6) -> Tuple[bool, str]:
 
 def _validate_memory_type(memory_type: str) -> Tuple[bool, str]:
     """Reject invalid memory_type before backend silently coerces to 'semantic'."""
-    valid = {"episodic", "semantic", "procedural"}
+    valid = {"episodic", "semantic", "procedural", "atomic"}  # v1.5: +atomic
     if memory_type and memory_type not in valid:
         return False, f"Invalid memory_type '{memory_type}'. Must be one of: {', '.join(sorted(valid))}"
     return True, ""

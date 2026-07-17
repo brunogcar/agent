@@ -66,7 +66,7 @@ tools/
 | `file` | `file_ops/` | 25+ | CRUD, directory traversal, document parsing, SQLite FTS |
 | `git` | `git_ops/` | 20+ | Commit, diff, rollback, snapshot, branch/tag management |
 | `github` | `github_ops/` | 16 | PR + issue + release workflow + push/pull |
-| `memory` | `memory_ops/` | 8 | LLM-facing memory I/O (store, recall, delete, prune, summarize, janitor) |
+| `memory` | `memory_ops/` | 12 | LLM-facing memory I/O (store, recall, recall_context, delete, prune, summarize, stats, janitor, update, export, import, extract) |
 | `notify` | `notify_ops/` | 8 | Desktop alerts + APScheduler reminders, tz-aware via `core/time_utils.py` |
 | `parallel` | `parallel_ops/` | 3 (run, race, pipeline) | Concurrent execution with `PARALLEL_SAFE` allowlist |
 | `python` | `python_ops/` | 5 (run, run_data, eval, profile, lint) | Three-layer security (sandbox → imports → executors) |

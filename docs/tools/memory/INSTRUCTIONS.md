@@ -69,4 +69,4 @@
 
 ---
 
-*Last updated: 2026-07-12 (v1.3.1 — `_mem()` singleton fix; rules #19, #33 added). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-17 (v1.3.1 — `_mem()` singleton fix; rules #19, #33 added; v1.4/v1.5 actions `update`/`export`/`import`/`extract`/`tags_required` documented in CHANGELOG). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

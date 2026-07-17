@@ -233,7 +233,7 @@ tools/
 │       ├── tag_delete.py
 │       └── tag_list.py
 │
-├── memory.py               # Memory meta-tool (8 atomic actions)
+├── memory.py               # Memory meta-tool (12 atomic actions)
 ├── memory_ops/
 │   ├── _registry.py
 │   ├── helpers.py
@@ -594,7 +594,7 @@ Changes not staged for commit:
 **Purpose:** Store, recall, delete, prune, summarize, and get stats across episodic, semantic, and procedural collections.
 
 **Key characteristics:**
-- **8 atomic actions** — `store`, `recall`, `recall_context`, `delete`, `prune`, `summarize`, `stats`, `janitor`
+- **12 atomic actions** — `store`, `recall`, `recall_context`, `delete`, `prune`, `summarize`, `stats`, `janitor`, `update`, `export`, `import`, `extract`
 - **Lazy loading** — ChromaDB imported only on first non-janitor call
 - **Janitor bypass** — `archive_old_episodes()` and `purge_stale_rules()` run without touching memory store
 - **Tag validation** — MED-05 compliant: rejects `< > " ' \` |`, max 6 tags, alphanumeric/hyphens only

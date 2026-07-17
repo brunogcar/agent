@@ -38,7 +38,7 @@ def memory(
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | `Literal[...]` | **Yes** | One of: `store`, `recall`, `recall_context`, `delete`, `prune`, `summarize`, `stats`, `janitor` |
+| `action` | `Literal[...]` | **Yes** | One of: `store`, `recall`, `recall_context`, `delete`, `prune`, `summarize`, `stats`, `janitor`, `update`, `export`, `import`, `extract` |
 | `text` | `str` | No | Memory content. **Required** for `store`. |
 | `memory_type` | `str` | No | Target collection: `episodic` / `semantic` / `procedural`. Default: `semantic`. |
 | `importance` | `int` | No | Base score 1–10. Default: `5`. Higher = slower decay. |
@@ -400,4 +400,4 @@ The facade applies it only to **success** responses (v1.1). Error responses are 
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

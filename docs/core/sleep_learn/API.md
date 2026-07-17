@@ -157,7 +157,9 @@ def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) ->
 
 **Physical Isolation:** The `procedural_meta` collection lives in `memory_root/sleep_learn_db/` — a completely separate ChromaDB instance from the main `memory_db/`.
 
-**Metadata stored:**
+**v1.0: `save_rule()` now uses `build_unified_metadata()` from `core/memory_backend/rule_schema.py`.** The fields below are backward-compat; the unified schema adds `importance`, `version`, `schema_version`, `provenance_count`, etc.
+
+**Metadata stored (backward-compat view):**
 ```python
 {
     "source_memory_id": "...",
@@ -191,6 +193,8 @@ def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") 
 ```
 
 **Split-brain fallback:** The injector queries both the isolated `procedural_meta` collection AND the main memory's `procedural` collection. This ensures rules learned by `meta_learning.py` are visible even if the sleep-learn daemon has not processed them yet.
+
+**v1.0 (Commit 4): Split-brain fallback replaced with unified read.** The injector reads from the main `procedural` collection using the `confidence` field (unified schema). The legacy dual-collection query path is removed; `procedural_meta` is dropped after migration.
 
 **Deduplication:** Uses `seen_ids` set for O(n) dedup (not O(n²) scan).
 
@@ -253,4 +257,4 @@ def purge_stale_rules() -> dict:
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

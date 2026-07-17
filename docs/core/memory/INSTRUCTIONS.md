@@ -57,4 +57,4 @@
 
 ---
 
-*Last updated: 2026-07-08. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [CHANGELOG.md](CHANGELOG.md) for version history.*

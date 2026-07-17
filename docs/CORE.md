@@ -153,6 +153,7 @@ core/
 │   │                     #   (persists evicted CONTEXT into ChromaDB, NOT a deletion mechanism)
 │   ├── janitor.py        # archive_old_episodes() — episodic archival to episodic_archive
 │   ├── constants.py      # COLLECTION_PROCEDURAL, META_FIELDS, dedup thresholds
+│   ├── rule_schema.py    # Unified procedural rule schema (v1.2 L3 contract) — build_unified_metadata(), normalize_rule_fields(), validate_tags(), compute_text_hash()
 │   ├── client.py         # get_client(timeout=60) — ChromaDB client singleton
 │   ├── budget.py         # Cognitive context budgeting — 7-tier ContextClass priority:
 │   │                     #   SYSTEM > USER > ERROR > PROCEDURAL > RECENT > OUTPUT > ARCHIVE
@@ -171,13 +172,14 @@ core/
 ├── sleep_learn/          # Background meta-learning daemon (separate from meta_learning.py)
 │   ├── daemon.py         # start_background_daemon() — started by server.py explicitly
 │   ├── feedback.py       # Pending feedback processing loop (confidence scoring)
-│   ├── distiller.py      # Trace analysis -> rule extraction (LLM, 15s VRAM-safety timeout)
+│   ├── distiller.py      # Trace analysis -> rule extraction (LLM, 60s VRAM-safety timeout)
 │   ├── filters.py        # Quality gates: new rules, dedup, contradictions
 │   ├── storage.py        # Write rules to isolated ChromaDB (sleep_learn_db/)
 │   ├── injector.py       # Merge rules into Planner system prompt (live on request path)
 │   ├── logger.py         # Parse feedback.log for pending entries
 │   ├── config.py         # SLEEP_* configuration constants
 │   ├── sweeper.py        # Phase-1 only — returns heartbeat, NO LLM/ChromaDB yet
+│   ├── migrate.py        # v1.0 (Commit 4): procedural_meta → procedural migration (idempotent)
 │   └── janitor.py        # Purges stale/low-confidence rules from procedural_meta collection
 │
 ├── contracts.py          # ToolCall/ToolResult schemas, ok()/fail() helpers
@@ -308,14 +310,14 @@ result = llm.complete(role="executor", system="...", user="...", json_mode=True)
 
 ### 3. 🧠 Memory Backend — [core/MEMORY.md](core/MEMORY.md)
 
-**Status:** v1.0 — Three-collection ChromaDB vector store with decay scoring and two learning subsystems.
+**Status:** v1.3 — Three-collection ChromaDB vector store with decay scoring and two learning subsystems.
 
 **Purpose:** Persistent knowledge storage across episodic (events), semantic (facts), and procedural (skills) collections.
 
 **Key characteristics:**
 - **Three collections** — Episodic, semantic, procedural
 - **Four-layer dedup** — Hash guard → outer vector → inner vector → procedural reinforcement
-- **Decay scoring** — Episodic/semantic: 30-day half-life. Procedural: bounded decay (floor 0.7)
+- **Decay scoring** — Episodic/semantic: 30-day half-life. Procedural: bypasses decay (no floor — rules persist until purged)
 - **Two learning systems** — `meta_learning.py` (30min daemon) + `sleep_learn/` (idle-gated background)
 - **Thread-safe writes** — `threading.Lock()` per collection + cancellation guards
 - **Context budgeting** — 7-tier ContextClass priority (SYSTEM > USER > ERROR > PROCEDURAL > RECENT > OUTPUT > ARCHIVE)
@@ -418,7 +420,7 @@ health = get_health()
 
 **Key characteristics:**
 - **Background execution** — Runs at startup and catches midnight; never during active use
-- **Physical isolation** — Learned rules stored in separate ChromaDB instance (`procedural_meta`)
+- **Physical isolation** — Learned rules stored in separate ChromaDB instance (`procedural_meta`). **v1.0: unified into main `procedural` collection (SLEEP_LEARN_UNIFIED=true).** The isolated `procedural_meta` collection is deprecated (see Commit 4 migration in `core/sleep_learn/migrate.py`).
 - **Quality gates** — Multiple filters reject generic, contradictory, or dangerous rules
 - **Feedback loop** — Rules scored dynamically: boosted on success, penalized on failure
 - **Ouroboros prevention** — Daemon never reads its own output collection during distillation

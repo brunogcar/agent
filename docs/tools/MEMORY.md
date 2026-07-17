@@ -12,6 +12,11 @@ The `memory()` tool is the **LLM-facing interface** to the agent\'s persistent m
 - **Fail-fast validation** — Invalid `memory_type` and empty `collections=[]` rejected at tool layer, not silently coerced
 - **Facade exception handling** — v1.1: Handler exceptions caught and returned as structured `fail()` responses
 - **Duration tracking** — v1.2: `duration_ms` included in all responses for performance monitoring
+- **`update` action (v1.4)** — Modify a memory by ID without delete+re-create; tracks changes in a sidecar SQLite audit table (`memory_db/memory_audit.db`, `rule_history` table)
+- **`export`/`import` actions (v1.4)** — JSONL backup/restore of collections; used by the `procedural_meta` → `procedural` migration
+- **Group-aware `delete` by `source_doc_id` (v1.4)** — Delete all chunks sharing a UUID in one call (prevents orphaned fragments)
+- **`extract` action (v1.5)** — Atomic fact extraction (`core/memory_backend/atomic_extract.py`)
+- **`tags_required` (v1.5)** — AND-based tag filtering for precise procedural recall (complements the OR-based `tags_filter`)
 
 ---
 
@@ -73,4 +78,4 @@ memory(action="janitor")
 
 ---
 
-*Last updated: 2026-07-03. See subfiles for detailed documentation.*
+*Last updated: 2026-07-17. See subfiles for detailed documentation.*

@@ -6,7 +6,8 @@ core/memory_backend/constants.py — Memory system constants and thresholds.
 COLLECTION_EPISODIC   = "episodic"
 COLLECTION_SEMANTIC   = "semantic"
 COLLECTION_PROCEDURAL = "procedural"
-ALL_COLLECTIONS       = [COLLECTION_EPISODIC, COLLECTION_SEMANTIC, COLLECTION_PROCEDURAL]
+COLLECTION_ATOMIC     = "atomic"  # v1.3: L1 atomic facts (TencentDB-shaped)
+ALL_COLLECTIONS       = [COLLECTION_EPISODIC, COLLECTION_SEMANTIC, COLLECTION_PROCEDURAL, COLLECTION_ATOMIC]
 
 # ── Metadata Fields ───────────────────────────────────────────────────────────
 # Fields stored in ChromaDB metadata.
@@ -21,6 +22,9 @@ META_FIELDS = [
     "source_doc_id",   # UUID shared by all chunks from the same document ("" for non-chunked)
     "chunk_index",     # 0-based position within the document (None for non-chunked)
     "chunk_count",     # Total chunks in the document (0 for non-chunked)
+    # v1.3 — Atomic fact extraction (L1)
+    "source_episodic_id",  # The episodic entry this fact was extracted from
+    "fact_type",           # "config" | "behavior" | "dependency" | "observation"
 ]
 
 # ── Deduplication Thresholds ──────────────────────────────────────────────────
@@ -32,6 +36,7 @@ DEFAULT_DEDUP_THRESHOLDS = {
     COLLECTION_EPISODIC:    0.05,
     COLLECTION_SEMANTIC:    0.15,
     COLLECTION_PROCEDURAL:  0.08,
+    COLLECTION_ATOMIC:      0.10,  # v1.3: atomic facts — moderate dedup (similar facts should merge)
 }
 
 # ── Contextual Feedback Limits ────────────────────────────────────────────────

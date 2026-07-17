@@ -49,6 +49,7 @@ core/memory_backend/
 ├── eviction.py                # EvictionQueue class + flusher_loop() — disk spill queue
 ├── janitor.py                 # archive_old_episodes() — episodic archival only
 ├── constants.py               # COLLECTION_*, META_FIELDS (v1.1: +source_doc_id/chunk_index/chunk_count), dedup thresholds
+├── rule_schema.py             # v1.2 NEW — unified procedural rule schema (L3 contract): build_unified_metadata(), normalize_rule_fields(), validate_tags(), compute_text_hash()
 ├── client.py                  # get_client(timeout=60) — ChromaDB client singleton
 ├── budget.py                  # Cognitive context budgeting (7-tier ContextClass)
 ├── pruner.py                  # VRAM context pruning (artifact preservation + truncation)
@@ -305,6 +306,8 @@ This prevents "ghost mutations" — writes that happen after a workflow is cance
 
 The memory backend has **two parallel systems** that extract procedural rules from execution history:
 
+> **v1.0 (Commit 4): Split-brain RESOLVED.** With `SLEEP_LEARN_UNIFIED=true` (default), both writers now target the same `procedural` collection via `build_unified_metadata()` (`core/memory_backend/rule_schema.py`). The isolated `procedural_meta` collection is deprecated; `core/sleep_learn/migrate.py` migrates existing rules into the unified collection. The injector reads from a single source. The historical two-collection split described below is preserved for context only.
+
 ### System Comparison
 
 ```mermaid
@@ -490,4 +493,4 @@ The `pruner.py` module (`core/memory_backend/pruner.py`) implements VRAM-aware c
 
 ---
 
-*Last updated: 2026-07-08. See [API.md](API.md) for backend API reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [API.md](API.md) for backend API reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

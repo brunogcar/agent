@@ -51,6 +51,9 @@ tools/memory_ops/
     ├── prune.py             # @register_action("memory", "prune")
     ├── summarize.py         # @register_action("memory", "summarize")
     ├── stats.py             # @register_action("memory", "stats")
+    ├── update.py            # @register_action("memory", "update") — NEW v1.4 (SQLite audit log)
+    ├── export_import.py     # @register_action("memory", "export") + ("memory", "import") — NEW v1.4
+    ├── extract.py           # @register_action("memory", "extract") — NEW v1.5 (atomic_extract backend)
     └── janitor.py           # @register_action("memory", "janitor") — NEVER calls _mem()
 
 core/memory_engine.py        # Thin facade — re-exports MemoryStore singleton
@@ -169,4 +172,4 @@ tests/tools/memory/
 
 ---
 
-*Last updated: 2026-07-08. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

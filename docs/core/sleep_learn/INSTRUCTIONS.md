@@ -5,8 +5,8 @@
 ## ❌ NEVER DO
 
 1. **Never bypass `llm.complete()` with raw HTTP calls** — Circuit breakers, rate limiters, and token budgets exist for a reason.
-2. **Never write learned rules to the main `procedural` collection** — Always use `procedural_meta` in the isolated `sleep_learn_db` instance.
-3. **Never read from `procedural_meta` during distillation** — Ouroboros prevention: the daemon must not reinforce its own output.
+2. **v1.0 (Commit 4): This rule is SUPERSEDED.** With `SLEEP_LEARN_UNIFIED=true` (default), sleep_learn writes to the main `procedural` collection via `build_unified_metadata()`. The isolated `procedural_meta` collection is deprecated.
+3. **Never read from `procedural_meta` during distillation** — Ouroboros prevention: the daemon must not reinforce its own output. **v1.0 (Commit 4): `procedural_meta` is deprecated/migrated; with `SLEEP_LEARN_UNIFIED=true` the daemon reads/writes the unified `procedural` collection, and ouroboros prevention is enforced via `source="sleep_learn_daemon"` filtering rather than collection isolation.**
 4. **Never reduce the 60s distiller timeout** — Intentional for local model stability.
 5. **Never put ChromaDB imports at module level** — Lazy loading prevents startup slowdown.
 6. **Never import `core.tracer` or workflow engines from `sleep_learn/`** — Zero coupling: feedback reads JSONL logs directly.
@@ -22,7 +22,7 @@
 ## ✅ ALWAYS DO
 
 15. **Always use `llm.complete()` for distillation** — Public API only; respects all global limits.
-16. **Always write to isolated `sleep_learn_db`** — Physical isolation prevents main collection pollution.
+16. **v1.0 (Commit 4): With `SLEEP_LEARN_UNIFIED=true`, writes go to the main memory's `procedural` collection, not the isolated `sleep_learn_db`.** Physical isolation is deprecated; the unified rule schema (`core/memory_backend/rule_schema.py`) preserves provenance via `source` metadata.
 17. **Always check `SLEEP_LEARN_ENABLED` before daemon operations** — Kill switch for the entire subsystem.
 18. **Always validate rules with `is_quality_rule()` before storage** — Safety gates are mandatory.
 19. **Always use `seen_ids` dedup in the injector** — O(n) hash set, not O(n²) scan.
@@ -45,4 +45,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*

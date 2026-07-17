@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.3** | 2026-07-17 | **L1 atomic fact extraction (TencentDB-shaped).** New `core/memory_backend/atomic_extract.py` — router-tier LLM extracts atomic facts from episodic entries → new `atomic` collection. `extract_facts_from_episodic()` (LLM call, json_schema enforced) + `extract_and_store_facts()` (dedup + store). New memory tool action: `extract`. New collection constant `COLLECTION_ATOMIC`. `store_atomic()` method on MemoryStore. 10 tests. Completes L1→L2→L3 (episodic → atomic → procedural). L0 (working set) deferred. |
 | **v1.2** | 2026-07-16 | **Unified rule schema (L3 contract) — the keystone of the Memory + Sleep_Learn merge.** New `core/memory_backend/rule_schema.py` defines the unified procedural rule shape that both writers (meta_learning + sleep_learn/distiller) will conform to. Key design (from 6-LLM collective review): (1) `importance` (1-10) + `confidence` (0.0-1.0) coexist — `normalize_rule_fields()` derives one from the other so both are always present. (2) `version` + `schema_version` for optimistic locking + future migrations. (3) `provenance_count` derived from `source_trace_ids` for fast filtering. (4) `updated_at` field (set by Commit 1's `update` action). (5) Tag schema enforced at write time — `validate_tags()` + `normalize_tags()` with canonical prefixes (`source:*`, `domain:*`, `category:*`, `status:*`, `evidence:*`). (6) `text_hash` kept for migration dedup. (7) `history` is NOT in ChromaDB metadata — lives in sidecar SQLite (Commit 1). (8) Procedural records are never chunked (stated explicitly). `build_unified_metadata()` is the single entry point both writers call. 28 tests. |
 | v1.2 | 2026-07-08 | **JSON schema enforcement.** `procedural/distill.py` passes `json_schema` to `llm.complete()`. Schema: `{has_insight: bool, rule: str, tags: str}`. |
 | v1.1 | 2026-07-08 | **`store_chunked()` + chunk metadata.** Batch insert with hash-dedup-only. Recall returns `source_doc_id`/`chunk_index`/`chunk_count`. `META_FIELDS` updated. |
@@ -62,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-07-14. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
