@@ -168,7 +168,7 @@ def _flush_telemetry_loop() -> None:
         while True:
             _time.sleep(60)
             try:
-                flushed = tracker.flush(_mem.store)
+                flushed = tracker.flush(_mem)
                 if flushed > 0:
                     print(f"[server] Flushed {flushed} memory telemetry updates", file=sys.stderr)
             except Exception as e:
@@ -185,12 +185,26 @@ def _shutdown_flush() -> None:
     try:
         from core.memory_backend.telemetry import tracker
         from core.memory_engine import memory as _mem
-        flushed = tracker.flush(_mem.store)
+        # v1.0: Guard against _mem being a mock/function during tests —
+        # only flush if it's a real MemoryStore with _write_lock.
+        if not hasattr(_mem, "_write_lock"):
+            return
+        flushed = tracker.flush(_mem)
         if flushed > 0:
             print(f"[server] Final telemetry flush: {flushed} updates", file=sys.stderr)
     except Exception as e:
         print(f"[server] Shutdown flush skipped: {e}", file=sys.stderr)
 _atexit.register(_shutdown_flush)
+
+# -- Graceful shutdown: checkpoint all GraphStore SQLite instances -----------
+def _shutdown_kgraph() -> None:
+    """Force WAL checkpoint on all GraphStore instances before process dies."""
+    try:
+        from core.kgraph.storage import GraphStore
+        GraphStore.close_all()
+    except Exception as e:
+        print(f"[server] KGraph shutdown skipped: {e}", file=sys.stderr)
+_atexit.register(_shutdown_kgraph)
 
 # -- Warm up ChromaDB in background (avoids cold-start MCP timeout) -----------
 def _warmup_chromadb() -> None:
@@ -341,7 +355,7 @@ def _start_diversity_enforcer() -> None:
 
                 try:
                     print("[server] Running Memory Diversity Enforcement...", file=sys.stderr)
-                    result = execute_diversity_maintenance(_mem.store)
+                    result = execute_diversity_maintenance(_mem)
                     print(f"[server] Diversity Maintenance: {result.get('metrics', {})}", file=sys.stderr)
                     last_run = _time.time()
                 finally:

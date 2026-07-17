@@ -137,4 +137,4 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-13 (v1.3)
+*Last updated: 2026-07-17 (v1.3)

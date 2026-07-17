@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/kgraph/ast_parser.py
 Dedicated, bounded AST parsing to prevent event loop blocking and memory leaks.
 
@@ -52,7 +52,14 @@ def _parse_file_dependencies_sync(project_id: str, file_path: str, md5_hash: str
         return frozenset()  # Graceful fallback
 
 async def parse_file_dependencies(project_id: str, file_path: str | Path) -> FrozenSet[str]:
-    """Async wrapper that offloads CPU-bound parsing to the dedicated executor."""
+    """Async wrapper that offloads CPU-bound parsing to the dedicated executor.
+
+    v1.0: Uses the ORIGINAL file_path (not resolved) as the cache key.
+    This ensures cache hits when the project moves to a different absolute
+    path — the relative path + content hash are the same, so the cache
+    should hit. The resolved path is still used for file I/O.
+    """
+    original_path = str(file_path)  # keep original (may be relative) for cache key
     path = Path(file_path).resolve()
     if not path.exists():
         return frozenset()
@@ -69,7 +76,7 @@ async def parse_file_dependencies(project_id: str, file_path: str | Path) -> Fro
         _AST_EXECUTOR,
         _parse_file_dependencies_sync,
         project_id,
-        str(path),
+        original_path,  # v1.0: cache key uses original path (relative if passed)
         md5_hash
     )
 

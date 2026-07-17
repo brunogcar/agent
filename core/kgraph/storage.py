@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/kgraph/storage.py
 Hardened SQLite storage for graph topology with WAL mode and write serialization.
 """
@@ -156,3 +156,21 @@ class GraphStore:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             conn.close()
             self._local.conn = None
+
+    @classmethod
+    def close_all(cls) -> None:
+        """v1.0: Close ALL GraphStore instances (singleton cleanup).
+
+        Called via atexit in server.py to ensure WAL checkpoints are flushed
+        before the process dies. Without this, SQLite WAL files may not be
+        checkpointed → potential data loss on crash/kill.
+
+        Thread-safe: acquires _lock to prevent new instances during cleanup.
+        """
+        with cls._lock:
+            for key, instance in list(cls._instances.items()):
+                try:
+                    instance.close()
+                except Exception:
+                    pass  # Best-effort — don't crash on shutdown
+            cls._instances.clear()

@@ -7,6 +7,7 @@
 | Version | Date | Notes |
 |---------|------|-------|
 | Pre-v1 | 2026-07-04 | Initial implementation. AST-based dependency extraction, SQLite graph storage, test targeting, project isolation. |
+| **v1.0** | 2026-07-17 | **GraphStore.close_all() + atexit + AST cache key fix + roadmap cleanup.** (1) `GraphStore.close_all()` classmethod — closes ALL singleton instances + checkpoints WAL. Registered via `atexit` in `server.py` (was: no shutdown cleanup → potential WAL data loss on crash). (2) AST cache key fix — `parse_file_dependencies()` now uses the ORIGINAL `file_path` (may be relative) as the cache key, not the resolved absolute path. Cache hits survive project moves. (3) Roadmap cleanup — "Incremental indexing" marked ✅ Completed (already works via mtime+hash check in `discover_files.py`); "Fix yaml import" marked ✅ Completed (yaml IS available, was a false report). (4) understand v1.3.1: path resolve fix + ChromaDB path isolation (separate commits). |
 | v1.3 update | 2026-07-13 | `tree_sitter_parser.py`: Added `DOC_EXTENSIONS` (.md/.txt/.rst), `ALL_SUPPORTED_EXTENSIONS`, `is_doc_file()`. `embeddings.py`: Added `extract_doc_chunks()` — chonkie sentence chunking for prose files. Doc chunks have `type: "doc"` metadata. Soft dependency on chonkie (fallback to single chunk). |
 
 ---
@@ -38,12 +39,12 @@
 | Class/function-level nodes | Beyond file-level granularity | P2 |
 | Cross-language support | JavaScript, TypeScript AST parsing | P3 |
 | Call graph analysis | Function-level dependency tracking | P2 |
-| Incremental indexing | Only re-parse changed files (delta updates) | P1 |
+| Incremental indexing | ✅ v1.0 — Already works (mtime + file_size + content_hash check in `discover_files.py`) | — |
 | Visualization | Mermaid/SVG export of dependency graphs | P3 |
 | Test coverage integration | Map coverage data to graph nodes | P3 |
-| Fix `yaml` import in `test_mapper.py` | Add `import yaml` with `ImportError` guard, or document PyYAML as optional dependency | P1 |
-| GraphStore cleanup on shutdown | Add `close_all()` class method, register via `atexit` | P1 |
-| Relative path in AST cache key | Use relative path instead of absolute path for cache key | P2 |
+| Fix `yaml` import in `test_mapper.py` | ✅ v1.0 — Not a bug (yaml IS available; PyYAML is in requirements.txt). The real issue was `tree_sitter_languages` not installed. | — |
+| GraphStore cleanup on shutdown | ✅ v1.0 — `close_all()` classmethod + `atexit` registration in `server.py` | — |
+| Relative path in AST cache key | ✅ v1.0 — `parse_file_dependencies()` uses original `file_path` (not resolved) as cache key | — |
 
 ---
 

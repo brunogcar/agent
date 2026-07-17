@@ -20,6 +20,9 @@
 
 ## ✅ ALWAYS DO
 
+1. **Always use `GraphStore.close_all()` on shutdown** — v1.0: registered via `atexit` in `server.py`. Without this, SQLite WAL files may not checkpoint → potential data loss.
+2. **Always use relative paths for AST cache keys** — v1.0: `parse_file_dependencies()` uses the original `file_path` (not resolved absolute) as the cache key. Cache hits survive project moves.
+
 14. **Always use `ThreadPoolExecutor` for AST parsing** — CPU-bound work must not block the event loop.
 15. **Always use `@lru_cache(maxsize=512)` for parsed dependencies** — Cache key must include `project_id` and content hash for cross-project safety.
 16. **Always return `frozenset()` on parse errors** — `SyntaxError`, `RecursionError`, `MemoryError` must not crash the indexer.
@@ -45,4 +48,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history.*
