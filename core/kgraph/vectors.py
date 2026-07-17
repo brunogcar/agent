@@ -27,13 +27,26 @@ def get_project_vector_collection(project_id: str) -> Any:
     classes, module docstrings) for semantic search. Embeddings are generated
     by core.kgraph.embeddings.embed_texts() and passed explicitly to add() —
     no ChromaDB default embedding function needed.
+
+    v1.3.1: Uses a project-specific ChromaDB path inside .understand/chroma
+    instead of the shared cfg.memory_chroma_path. The shared path caused
+    "An instance of Chroma already exists with different settings" errors
+    because the main memory store creates collections WITHOUT hnsw:space
+    metadata, while the kgraph creates collections WITH hnsw:space=cosine.
+    ChromaDB requires all collections on a PersistentClient to use the same
+    settings — so sharing the path between memory + kgraph is broken.
+    The .understand/chroma path keeps them isolated (as the comment always
+    said it should).
     """
     import chromadb
 
-    path = str(cfg.memory_chroma_path)
+    # v1.3.1: Project-specific path inside .understand/chroma
+    # (was: cfg.memory_chroma_path — shared with the main memory store)
+    path = str(cfg.agent_root / ".understand" / "chroma")
 
     # Reuse existing client for this path, or create and cache
     if path not in _chroma_clients:
+        Path(path).mkdir(parents=True, exist_ok=True)
         _chroma_clients[path] = chromadb.PersistentClient(path=path)
 
     client = _chroma_clients[path]
