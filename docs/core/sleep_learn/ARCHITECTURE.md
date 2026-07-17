@@ -162,7 +162,7 @@ graph TD
 ## ⚠️ Known Concerns
 
 - **Two parallel learning systems** — Both `meta_learning.py` and `sleep_learn/` extract procedural rules. The injector merges both collections. This works, but: (1) semantic duplicates may be injected (paraphrases not caught by hash dedup), (2) conflicting rules have no resolution mechanism, (3) two codebases = two maintenance paths. *(Suggestion: Consider consolidating into a single pipeline with two modes writing to the same collection with `source` metadata.)*
-- **Daemon auto-starts unconditionally** — `daemon.py` runs `process_feedback()` immediately at startup and every hour. No idle detection or `try_acquire_background_slot()` check. In test environments or short-lived scripts, the daemon starts unnecessarily. *(Suggestion: Add an idle detection gate before the first `process_feedback()` call.)*
+- **v1.0: Idle detection added** — `daemon.py` now gates on `tracker.try_acquire_background_slot(min_idle_seconds=300)` before running. Prevents unnecessary resource usage in test/short-lived scripts.
 - **Sweeper is Phase 1 only** — `sweeper.py` returns a heartbeat observation and does not integrate with `core.tracer` or `core.memory_backend`. The distiller relies on external observations being passed in. *(Suggestion: Integrate sweeper with tracer or remove it and have distiller accept observations directly from callers.)*
 - **Injector wiring unclear** — It is not clear from the codebase where `inject_rules_into_prompt()` is actually called during Planner prompt assembly. If not wired into the Planner's `complete()` call path, all the feedback processing, distillation, and filtering infrastructure is unused. *(Suggestion: Document the exact call site or add a TODO to prioritize integration.)*
 

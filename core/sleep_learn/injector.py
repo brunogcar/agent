@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/sleep_learn/injector.py
 Phase 3: Dynamic Rule Injection.
 Retrieves relevant learned rules and injects them into the Planner's context.
@@ -64,11 +64,14 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
         
         if results and results['ids'] and results['ids'][0]:
             for i, rule_id in enumerate(results['ids'][0]):
+                meta = results['metadatas'][0][i]
                 rules.append({
                     "id": rule_id,
                     "rule": results['documents'][0][i],
-                    "confidence": results['metadatas'][0][i].get("confidence_score", 0.0),
-                    "distance": results['distances'][0][i] if results.get('distances') else 0.0
+                    "confidence": meta.get("confidence_score", meta.get("confidence", 0.0)),
+                    "distance": results['distances'][0][i] if results.get('distances') else 0.0,
+                    "reasoning": meta.get("reasoning", ""),  # v1.0: include why the rule was learned
+                    "source": meta.get("source", "sleep_learn"),
                 })
     except Exception as e:
         tracer.error("daemon", "sleep_learn_injector", f"Failed to query rules: {e}")
@@ -95,11 +98,14 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
                     # clamp to [0,1] to be safe regardless of source scale
                     raw_conf = ex.get("metadata", {}).get("importance", 0.5)
                     confidence = min(float(raw_conf), 1.0)
+                    ex_meta = ex.get("metadata", {})
                     rules.append({
                         "id": rule_id,
                         "rule": ex["text"],
                         "confidence": confidence,
-                        "distance": ex.get("distance", 0.5)
+                        "distance": ex.get("distance", 0.5),
+                        "reasoning": ex_meta.get("reasoning", ""),  # v1.0: include reasoning
+                        "source": ex_meta.get("source", "meta_learner"),
                     })
     except Exception:
         pass  # Non-fatal: main memory may not be available
@@ -118,11 +124,25 @@ def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") 
     if not rules:
         return system_prompt
 
-    # Format the rules for the LLM
+    # v1.0: Retrieval ranking formula — sort by combined score:
+    #   rank_score = similarity * (importance/10)  [or similarity * confidence]
+    # This ensures high-similarity + high-confidence rules appear first.
+    # (minimax's point: the ranking formula must be defined, not undefined)
+    def _rank_score(r):
+        similarity = max(0.0, 1.0 - r.get("distance", 0.5))  # distance → similarity
+        confidence = r.get("confidence", 0.5)
+        return similarity * confidence
+    
+    rules.sort(key=_rank_score, reverse=True)
+    
+    # Format the rules for the LLM — v1.0: include reasoning when available
     rules_text = "\n\n--- RELEVANT LEARNED RULES ---\n"
     rules_text += "The following rules were learned from past experiences. Apply them if applicable:\n"
     for i, r in enumerate(rules, 1):
-        rules_text += f"{i}. [Confidence: {r['confidence']:.2f}] {r['rule']}\n"
+        rules_text += f"{i}. [Confidence: {r['confidence']:.2f}] {r['rule']}"
+        if r.get("reasoning"):
+            rules_text += f"\n   Reason: {r['reasoning'][:200]}"
+        rules_text += "\n"
     rules_text += "------------------------------"
 
     tracer.step(

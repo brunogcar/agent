@@ -44,18 +44,32 @@ def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) ->
     if existing and existing['ids']:
         return rule_id  # Already exists, skip silently
 
+    # v1.0: Use the unified rule schema (core/memory_backend/rule_schema.py)
+    # This aligns sleep_learn's output with the L3 contract so the migration
+    # (Commit 4) can move rules into the unified `procedural` collection
+    # without schema conversion.
+    from core.memory_backend.rule_schema import build_unified_metadata
+    import time as _time
+    now = int(_time.time())
+    unified_meta = build_unified_metadata(
+        text=rule_text,
+        source="sleep_learn",
+        confidence=confidence,
+        source_memory_id=source_memory_id,
+        created_at=now,
+        last_accessed_at=now,
+        recall_count=0,
+        reasoning="",  # Commit 3's reasoning field — populated by the distiller in a future commit
+    )
+    # Also keep confidence_score for backward compat with the injector's
+    # where={"confidence_score": {"$gte": ...}} filter (until Commit 4 migration)
+    unified_meta["confidence_score"] = confidence
+    unified_meta["phase"] = "2_active_distillation"  # kept for backward compat
+    
     collection.add(
         ids=[rule_id],
         documents=[rule_text],
-        metadatas=[{
-            "source_memory_id": source_memory_id,
-            "confidence_score": confidence,
-            "created_at": int(time.time()),
-            "last_accessed_at": int(time.time()),
-            "recall_count": 0,
-            "source": "sleep_learn_daemon",
-            "phase": "2_active_distillation"
-        }]
+        metadatas=[unified_meta]
     )
 
     return rule_id

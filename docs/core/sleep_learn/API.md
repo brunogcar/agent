@@ -37,7 +37,7 @@ def start_background_daemon() -> None:
 - Runs `process_feedback()` immediately at startup
 - Checks every hour for midnight (hour 0, new date)
 - Runs in a `daemon=True` thread — dies with the main process
-- No idle detection; runs unconditionally
+- **v1.0: Idle detection added** — gates on `tracker.try_acquire_background_slot(min_idle_seconds=300)`
 
 ---
 
