@@ -187,6 +187,38 @@ Tags are validated in `tools/memory.py` before passing to the backend:
 
 ---
 
+## 📐 Unified Rule Schema (v1.2 — L3 Contract)
+
+The keystone of the Memory + Sleep_Learn merge. Both writers conform to this shape.
+
+```python
+from core.memory_backend.rule_schema import build_unified_metadata
+
+# meta_learning writer (sets importance)
+meta = build_unified_metadata(
+    text="When parsing JSON, handle JSONDecodeError",
+    source="meta_learner", importance=8, tags="category:bugfix",
+    goal="fix JSON parsing", outcome="success", source_trace_ids="trace_001",
+)
+
+# sleep_learn writer (sets confidence)
+meta = build_unified_metadata(
+    text="When parsing JSON, handle JSONDecodeError",
+    source="sleep_learn", confidence=0.85, source_memory_id="mem_123",
+)
+```
+
+**Fields:** `type`, `source`, `source_trace_ids`, `source_memory_id`, `importance` (1-10), `confidence` (0.0-1.0), `reinforcement_count`, `last_reinforced`, `goal`, `outcome`, `reasoning`, `tools_used`, `tags`, `created_at`, `last_accessed_at`, `recall_count`, `updated_at`, `version`, `schema_version`, `provenance_count`, `text_hash`.
+
+**Key design (collective review):**
+- `importance` + `confidence` coexist — `normalize_rule_fields()` derives one from the other
+- Tag schema enforced at write time (`source:*`, `domain:*`, `category:*`, `status:*`, `evidence:*`)
+- `history` NOT in ChromaDB — lives in sidecar SQLite (`rule_history` table)
+- Procedural records are never chunked
+- `text_hash` kept for migration dedup
+
+---
+
 ## ⚠️ Known Concerns
 
 > **Note:** These are MiMo's observations from source code review. They are constructive suggestions, not definitive prescriptions.

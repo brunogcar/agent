@@ -15,6 +15,7 @@
 | `core/memory_backend/telemetry.py` | Opik integration for observability |
 | `core/memory_backend/eviction.py` | `EvictionQueue` + `flusher_loop()` — async WAL-spill for evicted context |
 | `core/memory_backend/janitor.py` | `archive_old_episodes()`: episodic archival only |
+| `core/memory_backend/rule_schema.py` | **v1.2 NEW.** Unified procedural rule schema (L3 contract). `build_unified_metadata()` + `normalize_rule_fields()` + `validate_tags()` + `normalize_tags()` + `compute_text_hash()`. The keystone of the merge — both writers conform to this shape. |
 | `core/memory_backend/constants.py` | Shared constants (banned files, limits, META_FIELDS with v1.1 chunk fields) |
 | `core/memory_backend/client.py` | `get_client(timeout=60)` — ChromaDB client singleton |
 | `core/memory_backend/budget.py` | Cognitive priority-based context budgeting (7-tier) |
