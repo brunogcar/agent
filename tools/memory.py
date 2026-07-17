@@ -58,6 +58,13 @@ def memory(
     chunk: bool = False,
     chunk_method: str = "token",
     chunk_size: int = 512,
+    # v1.4 — update / export / import / group-delete params
+    fields: dict = None,
+    reason: str = "",
+    id: str = "",
+    source_doc_id: str = "",
+    input_path: str = "",
+    output_path: str = "",
 ) -> dict:
     """Memory meta-tool — store, recall, and manage agent memories."""
     action = action.strip().lower() if action else ""
@@ -99,6 +106,13 @@ def memory(
         "chunk": chunk,
         "chunk_method": chunk_method,
         "chunk_size": chunk_size,
+        # v1.4 — new action params
+        "fields": fields,
+        "reason": reason,
+        "id": id,
+        "source_doc_id": source_doc_id,
+        "input_path": input_path,
+        "output_path": output_path,
     }
 
     start = time.time()

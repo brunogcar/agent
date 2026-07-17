@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.4** | 2026-07-16 | **Memory tool maturity (pre-merge prep).** 4 new features: (1) `update` action — modify a memory by ID without delete+re-create. Tracks changes in a sidecar SQLite audit table (`memory_db/memory_audit.db`, `rule_history` table) — NOT in ChromaDB metadata (collective review: JSON string bloats queries). Append-only, queryable. (2) `export`/`import` actions — JSONL backup/restore. Needed for the Commit 4 migration (`procedural_meta` → `procedural`). (3) Group-aware `delete` by `source_doc_id` — deletes all chunks sharing a UUID. Prevents orphaned fragments. (4) `tags_required` deferred to Commit 5 (after tag schema is defined — collective review: AND-filter before schema is a bug). |
 | v1.3.1 | 2026-07-12 | **`_mem()` singleton fix.** Was creating a NEW `MemoryStore()` instead of using the module-level singleton. Dedup broken between tool and workflow writes. Fixed + added `[DESIGN]` block. |
 | v1.3 | 2026-07-08 | **Chonkie chunking on `store`.** `chunk`/`chunk_method`/`chunk_size` params. Semantic + episodic only; procedural rejected. Core `store_chunked()` backend. Recall returns `source_doc_id`/`chunk_index`/`chunk_count`. System prompt fixed (50KB limit). |
 | v1.2 | — | `compress_result()` crash caught, `duration_ms` in all responses, `delete` validation, `recall_context` rejects unsupported params, `stats` validation, tag splitting, janitor guards, destructive actions documented. |

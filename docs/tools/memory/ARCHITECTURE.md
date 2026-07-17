@@ -14,6 +14,8 @@
 | `tools/memory_ops/actions/store.py` | Store action handler (v1.3: chunked store path — `chunk=True` routes to `store_chunked()`) |
 | `tools/memory_ops/actions/recall.py` | Recall action handler |
 | `tools/memory_ops/actions/recall_context.py` | Recall context action handler (v1.0) |
+| `tools/memory_ops/actions/update.py` | **v1.4 NEW.** `update` action — modify by ID with SQLite audit log (`rule_history` table). Append-only history, queryable. Updatable fields: importance, confidence, tags, goal, outcome, reasoning, source, tools_used, enabled. |
+| `tools/memory_ops/actions/export_import.py` | **v1.4 NEW.** `export` + `import` actions — JSONL backup/restore. Needed for the `procedural_meta` → `procedural` migration. |
 | `tools/memory_ops/actions/delete.py` | Delete action handler |
 | `tools/memory_ops/actions/prune.py` | Prune action handler |
 | `tools/memory_ops/actions/summarize.py` | Summarize action handler |

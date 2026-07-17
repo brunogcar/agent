@@ -318,6 +318,43 @@ Runs maintenance without loading the main memory store. This is the **fastest** 
 
 ---
 
+### `update` (v1.4)
+
+Modifies a memory by ID without delete+re-create. Tracks changes in a sidecar SQLite audit table.
+
+```python
+memory(action="update", id="abc123", fields={"importance": 8}, reason="reinforced after success")
+```
+
+**Parameters:** `id` (required), `fields` (dict, required), `reason` (required), `collection` (optional).
+
+**Updatable fields:** `importance`, `confidence`, `tags`, `goal`, `outcome`, `reasoning`, `source`, `tools_used`, `enabled`.
+
+**Audit log:** Changes written to `memory_db/memory_audit.db` (`rule_history` table) — append-only.
+
+---
+
+### `export` / `import` (v1.4)
+
+JSONL backup/restore. Needed for the `procedural_meta` → `procedural` migration.
+
+```python
+memory(action="export", collections=["procedural"], output_path="backup.jsonl")
+memory(action="import", input_path="backup.jsonl")
+```
+
+---
+
+### `delete` with `source_doc_id` (v1.4)
+
+Group-aware deletion — delete all chunks sharing a `source_doc_id`.
+
+```python
+memory(action="delete", source_doc_id="doc-uuid")
+```
+
+---
+
 ## 🔒 Tag Validation
 
 All tag inputs (`tags` for `store`, `tags_filter` for `recall`) pass through `_validate_tags()`:

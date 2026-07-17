@@ -24,6 +24,7 @@ class TestFacadeDispatch:
         expected = {
             "store", "recall", "recall_context", "delete",
             "prune", "summarize", "stats", "janitor",
+            "update", "export", "import",  # v1.4
         }
         assert set(actions.keys()) == expected
 

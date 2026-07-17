@@ -9,7 +9,7 @@ from tools.memory_ops._registry import DISPATCH, register_action
 class TestRegistry:
     def test_dispatch_populated(self):
         assert "memory" in DISPATCH
-        assert len(DISPATCH["memory"]) == 8
+        assert len(DISPATCH["memory"]) == 11  # v1.4: +update, +export, +import
 
     def test_all_actions_have_func(self):
         for name, info in DISPATCH["memory"].items():

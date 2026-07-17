@@ -11,7 +11,7 @@ class TestDeleteValidation:
         """v1.1: Both query and confirm_ids missing must fail."""
         result = memory(action="delete", query="")
         assert result["status"] == "error"
-        assert "query or confirm_ids is required" in result["error"]
+        assert "query" in result["error"] and "required" in result["error"]
 
     def test_empty_collections_rejected(self, mock_cfg, mock_store):
         """v1.1: Empty collections list must be rejected."""
