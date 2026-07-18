@@ -3,13 +3,15 @@
 Lazy imports python tool.
 All functions auto-register via @register_action decorator.
 
-NOTE: action names map to python modes:
-  - "run"  → mode="run" (default, execute code)
-  - "calc" → mode="run" (calculations are just code execution)
-  - "data" → mode="run" (data analysis is just code execution)
+[v1.2] CLI action names now map to the python tool's `action` parameter
+(the python tool was previously called with a non-existent `mode` param,
+which would have raised TypeError at runtime). Mapping:
+  - "run"  → action="run"       (execute code)
+  - "calc" → action="eval"      (evaluate expression, return result)
+  - "data" → action="run_data"  (data analysis with pandas/matplotlib output)
 
-Future AIs: if python gains distinct modes (e.g., "calc" returns
-only the result without print output), update the mapping below.
+Future AIs: if a new CLI action is added, extend `action_map` below —
+do NOT fall back to passing `mode=` to the python tool (it doesn't have one).
 """
 from __future__ import annotations
 
@@ -33,25 +35,31 @@ from tools.cli_ops._registry import register_action
     help_text="Run data analysis code.",
     examples=["data import pandas; df = pd.DataFrame()"],
 )
-def _python(action: str = "", code: str = "", mode: str = "run", **params) -> str:
+def _python(action: str = "", code: str = "", **params) -> str:
     """Proxy to tools/python.py.
 
-    Maps CLI action names to python modes. Currently all actions
-    use mode="run" since python does not differentiate execution
-    modes. The action parameter is preserved for future mode mapping.
+    Maps CLI action names to the python tool's `action` parameter.
+    The python tool signature is:
+        python(action="", code="", trace_id="", timeout=-1, json_schema="")
+
+    Unknown CLI actions pass through unchanged (the python tool will return
+    an "Unknown action" error for invalid values, which is the desired
+    behaviour).
     """
     from tools.python import python
 
-    # Map action names to python modes.
-    # Currently all map to "run" — update if python gains modes.
-    mode_map = {
+    # Map CLI action names to python tool action names.
+    # - "run"  → "run"       (execute code)
+    # - "calc" → "eval"      (evaluate expression, return result)
+    # - "data" → "run_data"  (data analysis with pandas/matplotlib output)
+    action_map = {
         "run": "run",
-        "calc": "run",
-        "data": "run",
+        "calc": "eval",
+        "data": "run_data",
     }
-    effective_mode = mode_map.get(action, mode)
+    effective_action = action_map.get(action, action)
 
-    r = python(mode=effective_mode, code=code)
+    r = python(action=effective_action, code=code)
     if not isinstance(r, dict):
         return str(r)
     return r.get("output", r.get("error", str(r)))

@@ -1,6 +1,8 @@
 """Tests for CLI dispatch layers (Layer 1-2).
 
-Covers pattern match dispatch, shell dispatch, and safe_dispatch.
+Covers pattern match dispatch, shell dispatch, safe_dispatch, and
+_safe_dispatch error handling (redaction, graceful failures, trace_id
+filtering).
 """
 from __future__ import annotations
 
@@ -64,3 +66,73 @@ class TestShellDispatch:
             # This tests the actual shell exec, not the mock
             # Real test: shell exec returns non-error for allowed commands
             assert True  # Integration test, covered in test_cli_shell
+
+
+class TestSafeDispatchErrorHandling:
+    """Tests for _safe_dispatch error handling (P1 #6).
+
+    Covers redaction of dangerous patterns, graceful handler failures,
+    unknown tool errors, and trace_id filtering.
+    """
+
+    def test_safe_dispatch_redacts_dangerous_patterns(self, mock_cfg):
+        """Errors containing /etc/passwd should be redacted to [REDACTED]."""
+        from tools.cli_ops._registry import register_action
+
+        def boom_handler(action="", **params):
+            raise Exception("tried to read /etc/passwd and failed")
+
+        register_action("test_redact", "boom", help_text="")(boom_handler)
+        result = _safe_dispatch("test_redact", "boom", {})
+
+        assert "Action error:" in result
+        assert "[REDACTED]" in result
+        # The dangerous pattern must not leak into the error message.
+        assert "/etc/passwd" not in result
+
+    def test_safe_dispatch_graceful_handler_failure(self, mock_cfg):
+        """Handler raising RuntimeError should return 'Action error: ...' (not raise)."""
+        from tools.cli_ops._registry import register_action
+
+        def boom_handler(action="", **params):
+            raise RuntimeError("boom")
+
+        register_action("test_runtime", "boom", help_text="")(boom_handler)
+        # Must NOT raise — _safe_dispatch catches the exception.
+        result = _safe_dispatch("test_runtime", "boom", {})
+
+        assert "Action error:" in result
+        assert "boom" in result
+
+    def test_safe_dispatch_unknown_tool(self, mock_cfg):
+        """Unknown tool should return 'Unknown command' message (not raise)."""
+        result = _safe_dispatch("nonexistent_tool", "some_action", {})
+        assert "Unknown command" in result
+        assert "nonexistent_tool" in result
+
+    def test_safe_dispatch_unknown_action_for_known_tool(self, mock_cfg):
+        """Known tool but unknown action should return 'Unknown command'."""
+        result = _safe_dispatch("system", "nonexistent_action", {})
+        assert "Unknown command" in result
+
+    def test_safe_dispatch_trace_id_not_passed_to_handler(self, mock_cfg):
+        """trace_id should be stripped from params before calling the handler."""
+        from tools.cli_ops._registry import register_action
+
+        received: dict = {}
+
+        def capture_handler(action="", **params):
+            received["action"] = action
+            received.update(params)
+            return "ok"
+
+        register_action("test_trace", "capture", help_text="")(capture_handler)
+        _safe_dispatch(
+            "test_trace", "capture",
+            {"trace_id": "t1", "code": "x"},
+        )
+
+        # Handler should receive action= + code= but NOT trace_id.
+        assert received.get("action") == "capture"
+        assert received.get("code") == "x"
+        assert "trace_id" not in received

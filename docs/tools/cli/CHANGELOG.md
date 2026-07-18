@@ -5,7 +5,8 @@
 ## 📝 Version History
 
 | Version | Date | Notes |
-|---------|------|-------|
+|------| **v1.1** | 2026-07-18 | **8 P1 fixes.** (1) `python` proxy: fixed `mode=` → `action=` mapping (`run`→`run`, `calc`→`eval`, `data`→`run_data`) — was calling `python(mode=...)` which would TypeError since the python tool has no `mode` param. (2) `_registry.py`: collision guard — `register_action()` now logs a warning when a `tool_name:action_name` is overwritten (was: silent overwrite; patterns.py "read" collision relied on this). (3) 35 new tests: proxy tests (python/memory/lms/skill/notify), integration tests (4-layer flow), Windows command tests (5 skipif + 1 mapping test), `_safe_dispatch` error tests (redaction + graceful failure + trace_id stripping). (4) `lms.py`: hardcoded `http://localhost:1234` → `cfg.lm_studio_base_url` (strips `/v1` suffix). (5) `skill.py`: removed hardcoded `ticker`/`files` mapping → generic `arg` + `**extra` passthrough. |
+---|------|-------|
 | v1.0 | — | Un-multiplex CLI: `@meta_tool`, path guard, registry metadata, 4-layer dispatch, 8 test files |
 
 ---
@@ -35,14 +36,14 @@
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| Fix `python` proxy `mode` mapping | `calc`/`data` actions should set `mode` correctly before calling `python_exec` | P1 |
-| `_CLI_META_DISPATCH` collision guard | Assert no duplicate keys during flattening, or use namespaced keys | P1 |
-| Proxy-specific tests | Add tests for python, memory, notify, cleanup, skill, lms, web proxies | P1 |
-| `cli()` integration test | Full 4-layer flow test through the facade | P1 |
-| `_shell_exec` Windows command tests | Real `dir`, `type`, `copy`, `move`, `del` tests on Windows | P1 |
-| `_safe_dispatch` exception test | Verify error redaction and graceful handler failures | P1 |
-| LMS URL config | Move `http://localhost:1234` to `cfg.lms_base_url` | P1 |
-| Skill parameter genericization | Remove hardcoded `ticker`/`files` mapping from `skill.py` | P1 |
+| ~~Fix `python` proxy `mode` mapping~~ | ✅ v1.1 — `mode=` → `action=` mapping (`run`→`run`, `calc`→`eval`, `data`→`run_data`). | ✅ Done |
+| ~~`_CLI_META_DISPATCH` collision guard~~ | ✅ v1.1 — `register_action()` logs warning on overwrite. | ✅ Done |
+| ~~Proxy-specific tests~~ | ✅ v1.1 — 20 proxy tests across 5 classes (python/memory/lms/skill/notify). | ✅ Done |
+| ~~`cli()` integration test~~ | ✅ v1.1 — 4 integration tests (pattern/shell/router/escalate). | ✅ Done |
+| ~~`_shell_exec` Windows command tests~~ | ✅ v1.1 — 5 skipif-Windows + 1 mapping test. | ✅ Done |
+| ~~`_safe_dispatch` exception test~~ | ✅ v1.1 — 5 tests (redaction, graceful failure, unknown tool, trace_id stripping). | ✅ Done |
+| ~~LMS URL config~~ | ✅ v1.1 — Uses `cfg.lm_studio_base_url` (strips `/v1` suffix). | ✅ Done |
+| ~~Skill parameter genericization~~ | ✅ v1.1 — Generic `arg` + `**extra` passthrough. | ✅ Done |
 | Browser proxy action | Router already knows `browser`, add pattern layer | P2 |
 | Tavily proxy action | Zero-token fast path for research queries | P2 |
 | Parallel proxy action | Batch operations without router overhead | P2 |
@@ -68,4 +69,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.1 — 8 P1 fixes).*

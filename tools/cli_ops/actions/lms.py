@@ -3,18 +3,30 @@
 Provides raw HTTP access to LM Studio API for model management.
 All functions auto-register via @register_action decorator.
 
-NOTE: The LM Studio base URL is hardcoded to http://localhost:1234.
-There is currently no env var or config override. If LM Studio runs
-on a different port or host, this module must be updated.
-Future AIs: consider adding cfg.lms_base_url before changing the
-hardcoded value.
+[v1.2] The LM Studio base URL is now config-driven via
+`cfg.lm_studio_base_url` (defaults to http://localhost:1234/v1 — with the
+`/v1` suffix). The proxy hits both `/api/v0/*` and `/v1/*` endpoints, so
+`_lms_base_url()` strips the trailing `/v1` to expose the bare host.
+Override via the `LM_STUDIO_BASE_URL` env var to point at a non-default
+host/port.
 """
 from __future__ import annotations
 
+from core.config import cfg
 from tools.cli_ops._registry import register_action
 
-# Hardcoded LM Studio API endpoint. See module docstring for rationale.
-_LMS = "http://localhost:1234"
+
+def _lms_base_url() -> str:
+    """Return LM Studio base URL without /v1 suffix.
+
+    cfg.lm_studio_base_url defaults to http://localhost:1234/v1 (with /v1).
+    The lms.py proxy hits /api/v0/* and /v1/* endpoints, so it needs the
+    base URL without the /v1 suffix.
+    """
+    url = cfg.lm_studio_base_url
+    if url.endswith("/v1"):
+        url = url[:-3]
+    return url
 
 
 @register_action(
@@ -26,7 +38,7 @@ def _lms_ls(action: str = "", **params) -> str:
     """List downloaded models."""
     import requests
     try:
-        r = requests.get(f"{_LMS}/api/v0/models", timeout=5)
+        r = requests.get(f"{_lms_base_url()}/api/v0/models", timeout=5)
         r.raise_for_status()
         ms = [m.get("id") or str(m) for m in r.json()]
         return "\n".join(f" • {m}" for m in ms) if ms else "No downloaded models."
@@ -43,7 +55,7 @@ def _lms_ps(action: str = "", **params) -> str:
     """List loaded models."""
     import requests
     try:
-        r = requests.get(f"{_LMS}/v1/models", timeout=5)
+        r = requests.get(f"{_lms_base_url()}/v1/models", timeout=5)
         r.raise_for_status()
         ms = [m.get("id") or str(m) for m in r.json().get("data", [])]
         return "\n".join(f" • {m}" for m in ms) if ms else "No models loaded."
@@ -61,7 +73,7 @@ def _lms_load(action: str = "", model: str = "", **params) -> str:
     import requests
     try:
         r = requests.post(
-            f"{_LMS}/v1/models/load",
+            f"{_lms_base_url()}/v1/models/load",
             json={"model": model},
             timeout=10,
         )
@@ -81,7 +93,7 @@ def _lms_unload(action: str = "", model: str = "", **params) -> str:
     import requests
     try:
         r = requests.post(
-            f"{_LMS}/v1/models/unload",
+            f"{_lms_base_url()}/v1/models/unload",
             json={"model": model} if model else {},
             timeout=10,
         )
@@ -100,7 +112,7 @@ def _lms_log(action: str = "", **params) -> str:
     """Get LM Studio logs."""
     import requests
     try:
-        r = requests.get(f"{_LMS}/api/v0/log", timeout=5)
+        r = requests.get(f"{_lms_base_url()}/api/v0/log", timeout=5)
         r.raise_for_status()
         return r.text[-2000:] if len(r.text) > 2000 else r.text
     except Exception as e:
