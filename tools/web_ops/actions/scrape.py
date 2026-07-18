@@ -6,6 +6,9 @@ this module; other actions that need scraping should call _action_scrape().
 [core/net adoption] Now uses retry_sync() from core/net/retry.py for unified
 retry behavior. Hardcoded constants replaced with core/net/default.py imports.
 Error classification uses is_retryable_error() from core/net/errors.py.
+
+[v1.4] Error responses now include structured error_code from
+classify_http_error() — was: raw "HTTP {status_code}" strings only.
 """
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ import httpx
 from core.config import cfg
 from core.contracts import fail, ok
 from core.net.retry import retry_sync
-from core.net.errors import is_retryable_error, get_retry_delay
+from core.net.errors import is_retryable_error, get_retry_delay, classify_http_error
 from core.net.default import SCRAPE_TIMEOUT, SCRAPE_MAX_RETRIES, RETRY_BASE_DELAY, RETRY_MAX_DELAY
 from tools.web_ops._registry import register_action
 from tools.web_ops.client import _make_client, _pick_user_agent
@@ -57,7 +60,10 @@ def _action_scrape(
 
     html, err = _fetch_html(url)
     if err:
-        return fail(err, url=url)
+        # [v1.4] Surface structured error_code so callers can branch on
+        # RATE_LIMITED / SERVER_ERROR / CLIENT_ERROR / etc. instead of
+        # string-matching the error message.
+        return fail(err, url=url, error_code=_scrape_error_code(err))
 
     text, title = _html_to_text(html, max_chars)
     if not text:
@@ -123,9 +129,13 @@ def _fetch_html(url: str, timeout: int = SCRAPE_TIMEOUT) -> tuple[str, str]:
             is_retryable=is_retryable_error,
         )
     except httpx.HTTPStatusError as e:
-        return "", f"HTTP {e.response.status_code} from {url}"
+        # [v1.4] classify_http_error returns a structured code (RATE_LIMITED,
+        # SERVER_ERROR, CLIENT_ERROR, etc.) so callers can branch on it.
+        error_code = classify_http_error(e)
+        return "", f"HTTP {e.response.status_code} from {url} [{error_code}]"
     except Exception as e:
-        return "", f"{type(e).__name__}: {e}"
+        error_code = classify_http_error(e)
+        return "", f"{type(e).__name__}: {e} [{error_code}]"
 
     # Response size guard — check Content-Length before reading body
     content_length = resp.headers.get("content-length")
@@ -155,6 +165,19 @@ def _fetch_html(url: str, timeout: int = SCRAPE_TIMEOUT) -> tuple[str, str]:
     # missing/unknown content-types (some servers omit the header).
 
     return resp.text, ""
+
+
+def _scrape_error_code(err: str) -> str:
+    """[v1.4] Extract the error_code from the error string.
+
+    _fetch_html() embeds the code in square brackets at the end of the
+    message (e.g. "HTTP 503 from https://... [RATE_LIMITED]"). This helper
+    extracts it so _action_scrape() can pass it to fail(error_code=...).
+    Falls back to "UNKNOWN" if no bracketed code is found.
+    """
+    if "[" in err and err.endswith("]"):
+        return err[err.rfind("[") + 1:-1]
+    return "UNKNOWN"
 
 
 def _html_to_text(html: str, max_chars: Optional[int] = None) -> tuple[str, str]:

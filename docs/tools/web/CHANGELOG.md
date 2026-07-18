@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.4** | 2026-07-18 | **`classify_http_error` adoption in scrape.py.** Error responses now include structured `error_code` (RATE_LIMITED, SERVER_ERROR, CLIENT_ERROR, NOT_FOUND, BOT_BLOCKED, CONNECT_ERROR, TIMEOUT, NETWORK_ERROR, UNKNOWN) so callers can branch on the code instead of string-matching the error message. `search.py` already adopted in its v1.4. Completes the `core/net` adoption P1 items (net CHANGELOG #17-19). |
 | v1.3 | 2026-07-18 | **New action: `crawl`** — crawl4ai prototype. Handles JS-heavy pages natively, returns clean markdown. Soft dependency (lazy import). Async→sync bridge. Does NOT fall back to scrape on failure (prototype). |
 | v1.2 | 2026-07-18 | **core/net adoption.** scrape.py uses `retry_sync()` from `core/net/retry.py`. Constants from `core/net/default.py`. Error classification via `is_retryable_error()`. |
 | v1.1 | — | **Hardening + guards.** `max_chars` sentinel fix, content-type guard, response size guard, retry with backoff, PDF pre-flight, user-agent rotation, scheme allowlist, lazy security import, ThreadPoolExecutor shutdown fix. |
@@ -85,4 +86,4 @@
 
 ---
 
-*Last updated: 2026-07-14. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.4 — classify_http_error adoption).*

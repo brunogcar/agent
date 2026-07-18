@@ -78,9 +78,9 @@
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| Replace inline HTTP error checks in `web` | Use `classify_http_error()` in `web/actions/*.py` | P1 |
-| Replace hardcoded backoff in `web` | Use `get_retry_delay()` instead of `time.sleep(2 ** attempt)` | P1 |
-| Replace duplicated SSRF logic in `web` | Use `_assert_safe_urls()` in `web/utils.py` | P1 |
+| ~~Replace inline HTTP error checks in `web`~~ | ✅ v1.7 — `scrape.py` now uses `classify_http_error()` for structured error codes (RATE_LIMITED, SERVER_ERROR, etc.). `search.py` already adopted in v1.4. | ✅ Done |
+| ~~Replace hardcoded backoff in `web`~~ | ✅ v1.2 — `scrape.py` + `search.py` use `retry_sync()` from `core/net/retry.py` which calls `get_retry_delay()`. No inline `time.sleep` remains. | ✅ Done |
+| ~~Replace duplicated SSRF logic in `web`~~ | ✅ v1.1 — `web/utils.py:_is_safe_url()` delegates to `core.net.security.is_safe_network_address()`. The single-URL wrapper is kept for ergonomic single-URL checks; the list-based `_assert_safe_urls()` is used by tavily. Both use the same `core/net/security.py` backend. | ✅ Done |
 | ~~Replace inline HTTP error checks in `browser`~~ | ✅ N/A — browser doesn't make HTTP calls directly (Playwright handles internally). Only `navigate.py` uses backoff, now via `get_retry_delay()`. | ✅ Done |
 | ~~Replace duplicated SSRF logic in `browser`~~ | ✅ Already uses `core/net/security.is_safe_network_address()` | ✅ Done |
 | Add `check_budget()` + `record_tool_call()` for paid APIs in `web` | If web tool ever calls paid APIs | P2 |
@@ -102,4 +102,4 @@
 
 ---
 
-*Last updated: 2026-07-18 (v1.6 _sleep fix). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.7 — web adoption complete).*

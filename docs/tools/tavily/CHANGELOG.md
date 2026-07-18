@@ -163,8 +163,8 @@
 | Feature | Notes | Priority |
 |---------|-------|----------|
 | Wire `run_research()` into `workflows/deep_research_impl/nodes/search.py` | Trigger: "when iteration > 3 and completeness < 50" as accelerator | P1 |
-| Adopt `core/net/` in `web_ops` | Use `core/net/errors.py`, `core/net/security.py`, `core/net/retry.py` in `web_ops/actions/scrape.py` and `search.py` | P1 |
-| Adopt `core/net/` in `browser` tool | Use `classify_http_error()` for Playwright errors; `get_retry_delay()` for nav retries | P1 |
+| ~~Adopt `core/net/` in `web_ops`~~ | ✅ v1.7 — `scrape.py` + `search.py` fully adopted (`retry_sync`, `is_retryable_error`, `classify_http_error`, `is_safe_network_address`). Completes net CHANGELOG P1 items #17-19. | ✅ Done |
+| ~~Adopt `core/net/` in `browser` tool~~ | ✅ N/A — browser doesn't make HTTP calls directly (Playwright handles internally). `navigate.py` uses `get_retry_delay()` for nav retries. SSRF uses `is_safe_network_address()`. | ✅ Done |
 | `tavily(search)` → `web(search)` fallback chain | ✅ v1.6 — Auto-fallback on CB_OPEN/AUTH_FAILED/RATE_LIMITED/QUOTA_EXHAUSTED | — |
 | ~~`tavily(search)` as primary search in research workflow~~ | **REMOVED (v1.6):** Incorrect — research uses `web(search)` as primary (SearXNG); deep_research uses `tavily(search)`. These are separate workflows by design. | — |
 | Add `@cached` decorator | LRU cache for search/extract results (TTL 300s/1800s) | P2 |
@@ -194,4 +194,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (web_ops adoption complete).*
