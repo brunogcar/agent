@@ -1,5 +1,5 @@
 """
-core/gateway_backend/routes/metrics.py — Telemetry and graph endpoints.
+core/gateway_backend/routes/metrics.py — Telemetry endpoint.
 """
 from __future__ import annotations
 
@@ -20,18 +20,3 @@ def metrics_endpoint(_: None = Depends(check_auth)):
     """
     from core.observability.metrics import generate_metrics, get_content_type
     return Response(content=generate_metrics(), media_type=get_content_type())
-
-@router.get("/autocode/graph")
-def autocode_graph(_: None = Depends(check_auth)):
-    """
-    GET /autocode/graph -- Mermaid flowchart of the autocode state machine.
-
-    Dynamically extracts nodes & routing from the LangGraph definition.
-    Useful for debugging routing loops or documenting workflow structure.
-    Auth: Bearer token (GATEWAY_SECRET).
-    """
-    from workflows.autocode_impl.graph import build_graph
-    from workflows.autocode_impl.mermaid import export_mermaid
-    graph = build_graph()
-    mermaid = export_mermaid(graph)
-    return Response(content=mermaid, media_type="text/plain")

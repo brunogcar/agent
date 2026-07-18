@@ -7,10 +7,12 @@ files. New file writes + artifact persistence are handled by separate nodes:
 
 The _is_path_safe() helper is shared across all write nodes — defined here
 and imported by node_write_new_files.
+
+[v1.2] Removed unused `import json` (no `json.` calls in the body — only
+`_parse_json` from helpers is used).
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 

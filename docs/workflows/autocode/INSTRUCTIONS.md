@@ -51,6 +51,8 @@
 43. **Never assume `input_files` exists in `files_state`** — [v3.0] `input_files` was removed from `FilesState` — it was just a mirror of the core `files` flat field. `validate.py`, `brainstorm.py`, `plan.py`, `tests.py` now read `state.get("files", {})` directly (core flat field). See [SUBSTATE.md](SUBSTATE.md) § "Core Flat Fields".
 44. **Never skip the `ruff --select E999` pre-check in `node_run_pytest`** — [v3.1 #41] The pre-check runs BEFORE pytest to catch syntax errors (saves a ~30s pytest run). If a syntax error exists, pytest would fail anyway with a less clear message. Non-fatal if ruff is not installed — falls through to pytest. Do NOT add an early-return-before-ruff path or bypass the pre-check "for speed".
 45. **Never disable the `MAX_TASK_LENGTH = 2000` check in `node_validate_input`** — [v3.1 #42] Goal sanitization is the entry gate. Tasks > 2000 chars are rejected to prevent LLM token waste + context confusion. If a task legitimately needs more, split it into multiple workflow runs.
+46. **Never call `_call()` without `trace_id=tid`** — [v1.2 P1] `_call()` retry-exhaustion errors include `trace_id` in their `tracer.error(...)` call. If you forget `trace_id=tid`, the error is attributed to `trace_id=""` and is unattributed in the trace viewer — invisible when debugging "which workflow produced this LLM failure?". All 8 in-tree callers (`classify.py`, `brainstorm.py`, `plan.py`, `tests.py`, `execute.py`, `debug.py`, `llm_review.py`, `create_skill.py`) now pass `trace_id=tid`. New `_call()` callers MUST do the same. See ALWAYS DO #43. This was a silent observability regression from v1.1 → v1.2 (the v1.1 hardening pass added `trace_id` to `_call()` but the callers weren't updated until v1.2).
+47. **Never write an empty skill file** — [v1.2 P1] `node_create_skill` previously wrote an empty file + set `skill_created=True` if the LLM returned content under the wrong JSON key (`skill_code` instead of `skill_file`). Now: tries fallback keys (`skill_file` → `skill_code` → `code`), then returns `{"status": "failed", "error": "LLM returned empty skill_file content"}` if all are empty. The smoke-test (ALWAYS DO #44) also catches this at import time. Tests must use the correct key (`skill_file`) in their mock fixtures — the old `test_create_skill.py` was silently passing because it mocked `skill_code` (wrong key), masking the production bug.
 
 ## ✅ ALWAYS DO
 
@@ -127,6 +129,8 @@
 40. **When `AUTOCODE_SUBAGENT_DEBUG=1`, the subagent gets isolated curated context** — The subagent does NOT see autocode session state. It receives only what `node_systematic_debug` constructs: failing test, error output, current source file, prior fix attempts (truncated). This is by design — superpowers pattern: "you construct exactly what they need". Never pass `state` wholesale to `agent(action="subagent")`.
 41. **Always strip control chars from task input — let `node_validate_input` clean it** — [v3.1 #42] The validate node strips `[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]` (control chars except `\n\t\r`) from `task` before downstream nodes see it. Don't bypass it by writing to `state["task"]` directly elsewhere; if you must write task input, run it through the same `re.sub` pattern (or call `node_validate_input`). The cleaned task is returned in the state update so LangGraph merges it.
 42. **When wiring a debug-loop exit, prefer `node_swarm_fallback` over a hard `status="failed"` if `AUTOCODE_SWARM_DEBUG_FALLBACK=1`** — [v3.1 #48] The swarm fallback (default OFF) gives the graph one more chance via multi-model consensus before giving up. HIGH confidence → reset `tdd.status` to `""` (one more debug cycle); LOW/unavailable → set `status="failed"` (proceeds to verify chain). `route_after_run_tests` already handles this — do not duplicate the routing logic in a node.
+43. **Always pass `trace_id=tid` to `_call()`** — [v1.2 P1] `_call(...)` accepts a `trace_id` kwarg; retry-exhaustion errors attribute themselves to that trace. The v1.1 hardening pass added the kwarg to `_call()` but didn't update the callers — retry-exhaustion errors were unattributed (`trace_id=""`) for v1.1 → v1.2 (a silent observability regression). v1.2 wired `trace_id=tid` in all 8 callers (`classify.py`, `brainstorm.py`, `plan.py`, `tests.py`, `execute.py`, `debug.py`, `llm_review.py`, `create_skill.py`). New `_call()` callers MUST follow this pattern: extract `tid = state.get("trace_id", "")` at the top of the node, then pass `trace_id=tid` to every `_call(...)`. See NEVER DO #46.
+44. **Always smoke-test skill files with importlib after writing** — [v1.2 #36] `ast.parse(code)` only verifies SYNTAX — it does NOT verify that imports resolve. A skill file that imports a non-existent module (or a module that doesn't exist in the agent's environment) passes AST validation but crashes on first use. `node_create_skill` now runs `importlib.util.spec_from_file_location(...)` + `spec.loader.exec_module(...)` after writing the file. On import failure: delete the broken file + return `{"status": "failed", "error": "Skill file failed import smoke-test: ..."}`. This catches: (a) missing dependencies, (b) circular imports, (c) top-level code that raises (e.g., `assert` failures, env-var lookups). Use `spec_from_file_location` (not `importlib.import_module`) to bypass namespace-package conflicts when an existing `skills/` package is already cached in `sys.modules`.
 
 ---
 
@@ -140,7 +144,7 @@
 
 > **[v3.0] Sub-state clobbering (no RMW):** LangGraph replaces dict values, doesn't deep-merge. Returning `{"tdd": {"debug_history": [...]}}` clobbers `iteration`, `status`, `source_code`, etc. — every other `tdd` field is lost. The v2.0.1 hardening P0 fix added RMW everywhere; v3.0 made it mandatory because there's no flat-field mirror to silently back you up. **Fix:** Always `current_tdd = dict(state.get("tdd", {}))`, mutate, return `{"tdd": current_tdd}`. See [SUBSTATE.md](SUBSTATE.md) § "RMW Pattern".
 
-> **[v3.0] Reading from the wrong sub-state key:** The `plan` field is overloaded — `state["plan"]` is the flat `list[dict]` step list (kept flat for backward compat with route_after_* lookups), while the sub-state lives under `state["plan_state"]`. `_get_plan(state, key, default)` reads from `plan_state` (NOT `plan`). Don't confuse them. See [SUBSTATE.md](SUBSTATE.md) § "The 8 Sub-states".
+> **[v3.0] Reading from the wrong sub-state key:** The `plan` field is overloaded — `state["plan"]` is the flat `list[dict]` step list (kept flat for backward compat with route_after_* lookups), while the sub-state lives under `state["plan_state"]`. `_get_plan(state, key, default)` reads from `plan_state` (NOT `plan`). Don't confuse them. See [SUBSTATE.md](SUBSTATE.md) § "The 8 Sub-states". **[v1.2 doc fix]** The "kept flat for backward compat" claim is stale — v3.0 removed the flat mirror; `plan` is sub-state-only now.
 
 > **`.bak` files:** `.bak` backup files were created on every file write, violating project rules and cluttering the repo. **Fix:** Use atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) only. Git is the backup.
 
@@ -162,6 +166,179 @@
 
 > **`branch` field TypedDict drift:** `branch: str` was read by `nodes/branch.py` and set by `nodes/plan.py` since v1.0, but was NOT declared in the `AutocodeState` TypedDict. **Fix:** Added `branch: str` declaration (now lives in `VCSState` sub-state since v2.1).
 
+> **[v1.2] `_call()` retry-exhaustion errors unattributed:** The v1.1 hardening pass added `trace_id` as a kwarg to `_call()` but didn't update the 8 callers — retry-exhaustion errors used `trace_id=""` and were invisible in the trace viewer. v1.2 wired `trace_id=tid` in all 8 callers. **Fix:** Always pass `trace_id=tid` to `_call()` (see NEVER DO #46 + ALWAYS DO #43).
+
+> **[v1.2] `node_create_skill` silently wrote empty files:** If the LLM returned content under `skill_code` instead of `skill_file`, the node wrote an empty file + set `skill_created=True`. The test mock used the wrong key too, so the bug was invisible. **Fix:** Tries fallback keys (`skill_file` → `skill_code` → `code`), rejects truly-empty output, runs importlib smoke-test (see NEVER DO #47 + ALWAYS DO #44).
+
 ---
 
-*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; #44 + #45 NEVER DO and #41 + #42 ALWAYS DO added; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, legacy-fallback branches removed from all 8 accessors, #32 + #33 + #41-#43 added for v3.0, ALWAYS DO renumbered 1-40; v2.2 — Track M1 Batch 3c: plan sub-state migration, ALL 8 ACCESSORS NOW SAFE; v2.0.5 — Phase 4g review: split-brain accessor warning (lifted in v3.0); v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+## 🔮 Deferred Roadmap Items (Detailed Design)
+
+The following roadmap items are deferred beyond v1.2. They're documented here so future implementers have a starting point — including the design decisions that need to be made, the dependencies that need to land first, and the inspiration sources.
+
+### #35 — `invoke_with_timeout` daemon-thread zombie risk
+
+**Current state (v1.2):** `invoke_with_timeout()` in `workflows/autocode_impl/graph.py` runs `graph.invoke(initial_state)` in a daemon thread via `threading.Thread(target=_invoke, daemon=True).start(); thread.join(timeout=timeout)`. **[Hardening P0.3]** Graph exceptions inside the daemon thread are captured via `nonlocal _invoke_error` and surfaced as `status="Autocode graph crashed: <exception>"` (was swallowed and misreported as timeout).
+
+**What's deferred:** Python's `threading.Thread` does NOT support `Thread.kill()`. When `thread.join(timeout=...)` returns False (timeout exceeded), the daemon thread is STILL running — `request_cancellation()` is the only signal, and it relies on `_call()` checking `is_cancellation_requested()` between retries. If the thread is stuck inside a non-`_call()` operation (e.g., a long `subprocess.run()` in `node_run_pytest` without a timeout, a `git` invocation, a ChromaDB query), it will run to completion in the background — a zombie. The next workflow run starts a NEW thread while the zombie is still consuming CPU/IO.
+
+**Proposed fix (deferred):** Re-architect `invoke_with_timeout()` to use `multiprocessing.Process` instead of `threading.Thread`:
+- `Process.terminate()` sends SIGTERM (catchable) — `Process.kill()` sends SIGKILL (uncatchable).
+- State must be picklable across the process boundary — `AutocodeState` contains `list[AnyMessage]` (LangGraph messages are dataclasses, should pickle, but verify).
+- Result dict must come back via a `multiprocessing.Queue` or `multiprocessing.Pipe`.
+- Signal handling: install a SIGTERM handler in the child that calls `request_cancellation()` and lets `_call()` finish its current iteration cleanly.
+- Caveat: `multiprocessing.Process` on Windows uses spawn (not fork) — the entire `workflows.autocode_impl` module + `core.config.cfg` must be import-safe at spawn time.
+
+**Estimated complexity:** M (one function rewrite + cross-platform testing + careful signal handling). Risk: regression in the cancellation-flag interplay between `_call()` and the timeout.
+
+**Workaround until shipped:** Operators should set `cfg.autocode_graph_timeout` (or `AUTOCODE_ADAPTIVE_TIMEOUT=1` per-task-type timeouts) tight enough that zombies don't accumulate. Long-running `_call()` operations already honor the cancellation flag — the residual zombie risk is in non-`_call()` subprocess calls.
+
+---
+
+### #38 — Human-in-the-Loop (HiTL) approval
+
+**Current state:** The workflow runs end-to-end without pausing. `node_commit` commits changes; `node_create_skill` writes + commits a new skill file. There's no opportunity for a human to review and approve before these irreversible actions.
+
+**What's deferred:** A pause-before-commit / pause-before-create_skill gate. Two competing designs:
+
+1. **Sync-pause (simpler):** `node_commit` (or a new `node_await_approval` wired before it) blocks on a `threading.Event`. The MCP client receives a "approval needed" notification, the user responds, and the event is set. **Pros:** simple, no state serialization. **Cons:** holds the worker thread for the duration of the human review (could be minutes/hours) — doesn't scale if the agent runs many concurrent workflows.
+
+2. **Async-checkpoint-resume (more complex but cleaner):** The workflow checkpoints state + returns a `status="awaiting_approval"` response. The MCP client displays the diff/skill content to the user. On approval, the client calls `run_workflow(workflow_type="autocode", goal=..., resume=True, approval="approved")` which restores from checkpoint and continues. **Pros:** no held threads; survives process restart; composes with the existing `resume=True` infrastructure in `base.py`. **Cons:** the workflow's `status` field needs a new value (`awaiting_approval`); `node_commit` needs to know it's resuming an approved workflow (not starting fresh); the checkpoint must include the diff/skill content for the client to display.
+
+**Design decision needed:** Pick one. Recommended: **async-checkpoint-resume** — it composes with existing infra and scales. But it requires UI work on the MCP client side.
+
+**Estimated complexity:** M (sync-pause) or L (async-checkpoint-resume).
+
+---
+
+### F1 — Parallel subagent debug
+
+**Current state (v2.0.2):** `AUTOCODE_SUBAGENT_DEBUG=1` enables a SINGLE subagent dispatch per debug iteration. `node_systematic_debug` constructs curated context (failing test + error output + current source + truncated prior fix attempts) and calls `agent(action="subagent", role="planner")` with it. The subagent returns `{fix, root_cause, defense_notes}`. Falls back to single-LLM on subagent failure. Non-blocking — the fix is applied regardless.
+
+**What's deferred:** Parallel subagents — one per hypothesis. When the debug LLM proposes multiple candidate root causes (e.g., "could be a race condition OR a stale cache OR an off-by-one"), spawn N subagents in parallel, each investigating one hypothesis with curated context. Aggregate the N verdicts with a voting layer (similar to swarm's HIGH/MEDIUM/LOW confidence).
+
+**Design:**
+- New node OR new branch inside `node_systematic_debug`: when `AUTOCODE_SUBAGENT_DEBUG=1` AND the debug LLM returned multiple hypotheses, spawn N subagents via a thread pool (`concurrent.futures.ThreadPoolExecutor`).
+- Each subagent gets: the hypothesis it's investigating + the same curated context (failing test, error, source, prior attempts).
+- Aggregation: majority vote on `fix` (or `root_cause` if fixes differ); confidence = agreement fraction (HIGH if unanimous, MEDIUM if majority, LOW if split).
+- Output shape: `{fix, root_cause, defense_notes, confidence, agreement, hypotheses: [...]}` — same shape as `swarm_verdict` so downstream code (PR comment gating, etc.) works unchanged.
+- Non-blocking: if all N subagents fail, fall back to single-LLM (same as v2.0.2).
+
+**Dependency:** v2.0.2 action-level allowlist makes this safe (subagents can't escape the allowlist to do arbitrary work). Already unblocked.
+
+**Estimated complexity:** M (thread pool + aggregation logic + new env flag).
+
+**Inspiration:** obra/superpowers "parallel investigation" pattern.
+
+---
+
+### F7 — Lazy Dev full audit mode (MOST DETAILED)
+
+**This is the most detailed design write-up in this section — the user specifically asked for thorough documentation of F7.**
+
+#### Current state
+
+The 7-rung Lazy Dev ladder (see ALWAYS DO #38) shipped in v2.0 — it's integrated into `CODER_SYSTEM` and `DEBUG_SYSTEM` Phase 4 ("fix"). The ladder is **per-task**: each workflow run applies the ladder to its own task. The `ponytail:` comment convention (ALWAYS DO #39) marks deliberate simplifications.
+
+`task_type="audit"` exists in the classifier enum (`classify.py` line 23) and routes through the SAME TDD pipeline as `feature`:
+- `route_after_classify` sends `audit` → `node_brainstorm` (same as `feature`).
+- `route_after_write_files` sends `audit` → `node_analyze_impact` (correctly added in v1.1).
+- `node_run_tests` runs the TDD tests on the audit's "implementation" — but for an audit, there IS no implementation. The audit produces a REPORT, not code changes.
+
+So today, `task_type="audit"` is functionally `task_type="feature"` with a different brainstorm prompt. It does NOT do a whole-repo scan, does NOT produce an audit-specific report, and does NOT have audit-specific exit criteria.
+
+#### What's missing
+
+1. **Whole-repo scan node.** No node walks `project_root` to enumerate all Python files + their ASTs. `node_analyze_impact` only looks at `modified_files` (the files THIS workflow changed) — for an audit, there are no modified files (or shouldn't be).
+2. **Audit-specific report.** `node_report` generates a "what I did" report — for an audit, the report IS the deliverable. It should summarize: dead code, unused imports, missing type hints, complexity hotspots, dependency-graph anomalies (cycles, orphaned modules).
+3. **Audit-specific exit criteria.** A `feature` workflow exits when tests pass + lint passes + LLM review passes. An audit workflow should exit when the whole-repo scan is complete + the report is generated — no TDD pass/fail to check.
+4. **kgraph coverage dependency.** `core.kgraph` provides `ast_parser` + `get_callers` + dependency-graph queries. If the project hasn't been indexed (no `.kgraph/` cache), `get_callers` returns empty — blast-radius analysis is meaningless. Audit mode needs either a pre-flight index step or a graceful "kgraph empty, falling back to AST-only scan" path.
+
+#### Proposed design
+
+**New nodes:**
+
+1. **`node_audit_scan(state)` — Phase 9a (audit-only):** Walks `project_root` recursively (`.py` files only, respecting `.gitignore` via `pathspec`). For each file:
+   - Parse AST via `core.kgraph.ast_parser`.
+   - Extract: imports, definitions (functions/classes/modules), call sites, complexity (cyclomatic via `radon` if installed, else AST-approximation).
+   - Batch through `kgraph` for cross-file queries: `get_callers(symbol)`, `get_callees(symbol)`.
+   - Accumulate findings: dead code (defined but never called), unused imports, missing type hints (functions with no annotations), complexity hotspots (functions with cyclomatic > N), circular dependencies (via DFS on the import graph).
+   - Output: `audit_findings: list[dict]` — each finding is `{category, file, line, symbol, severity, suggestion}`.
+
+2. **`node_audit_report(state)` — Phase 13a (audit-only, replaces `node_report` for audit):** Reads `audit_findings` from the `audit` sub-state (NEW sub-state, see below) + generates a Markdown report grouped by category + severity. Optionally writes the report to `audit_report.md` in `autocode_run_path`.
+
+**New sub-state:**
+
+```python
+class AuditState(TypedDict, total=False):
+    findings: list[dict]            # from node_audit_scan
+    report: str                     # from node_audit_report (Markdown)
+    files_scanned: int              # for the verify chain / report
+    kgraph_coverage: float          # fraction of files with kgraph data (0.0-1.0)
+    skipped: list[str]              # files skipped (binary, too large, parse error)
+```
+
+**Routing changes:**
+
+- `route_after_classify`: `audit` → `node_audit_scan` (NEW path, bypasses brainstorm/plan/execute/TDD entirely).
+- After `node_audit_scan`: → `node_audit_report` (linear, no conditional).
+- After `node_audit_report`: → `node_distill_memory` → END (skip the publish chain — an audit doesn't produce code changes to push/PR).
+
+**New prompts:**
+
+- `AUDIT_SCAN_SYSTEM` — instructs the LLM (if used) on how to categorize findings. Likely most of the scan is deterministic (AST + kgraph queries) — the LLM is only needed for "is this dead code or is it a public API?" judgment calls.
+- `AUDIT_REPORT_SYSTEM` — instructs the LLM on how to structure the report (group by category, sort by severity, include code snippets, suggest fixes).
+
+**Configuration:**
+
+- `AUTOCODE_AUDIT_MAX_FILES` (default 1000) — cap on files to scan (prevent runaway on monorepos).
+- `AUTOCODE_AUDIT_COMPLEXITY_THRESHOLD` (default 10) — cyclomatic complexity threshold for "hotspot" findings.
+- `AUTOCODE_AUDIT_SKIP_DIRS` (default `[".git", "__pycache__", ".venv", "node_modules", "build", "dist"]`) — directories to skip.
+
+#### Design decision needed: does audit skip TDD?
+
+**Option A (current behavior): audit keeps TDD.** The audit "writes a test" that asserts the codebase has no dead code, then "implements" by removing dead code. This is contrived — the test is tautological (it passes once the dead code is removed) and the "implementation" is just deletion.
+
+**Option B (proposed): audit bypasses TDD.** `route_after_classify` sends `audit` → `node_audit_scan` directly, skipping `node_brainstorm` → `node_write_plan` → `node_git_branch` → `node_write_tests` → `node_execute_step` → `node_apply_patches` → `node_write_new_files` → `node_persist_artifacts` → `node_analyze_impact` → `node_run_tests`. The audit's deliverable is a REPORT, not code changes — TDD doesn't apply.
+
+**Recommendation: Option B.** TDD-for-audit is forced and doesn't add value. The audit pipeline should be a separate, simpler pipeline: `node_audit_scan` → `node_audit_report` → `node_distill_memory` → END. This is a significant routing change (a new conditional branch in `route_after_classify`) but produces a cleaner workflow.
+
+If the user wants the audit to ALSO propose fixes (not just report), that's a follow-up: a second pass that takes each finding + generates a `feature` workflow for it. But that's out of scope for F7 v1.
+
+#### Dependency: kgraph coverage
+
+If `project_root` is not indexed by `core.kgraph`, `get_callers(symbol)` returns `[]` — dead-code detection will mark EVERY function as "never called" (false positives). Two options:
+
+1. **Pre-flight index:** `node_audit_scan` calls `kgraph.index_project(project_root)` if the cache is stale or missing. Slow (could be minutes for large repos) but accurate.
+2. **Graceful degradation:** `node_audit_scan` checks `kgraph.coverage(project_root)` — if < 50%, skip cross-file queries and rely on AST-only checks (unused imports, complexity, missing types). Log a warning that the audit is incomplete.
+
+**Recommendation: Option 2 (graceful degradation) + a `tracer.warning` telling the user to run `kgraph.index_project` for a complete audit.** This keeps the audit fast by default and lets the user opt into the slow path.
+
+#### Inspiration
+
+The 7-rung Lazy Dev ladder is inspired by [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) — the "be lazy about the solution, never about reading" principle. The ladder is ALREADY shipped (v2.0) and applies per-task. F7 extends it from per-task to whole-repo: instead of asking "what's the minimum code to fix THIS bug?", the audit asks "what's the minimum code in THIS REPO, and what's dead/unused/complex?"
+
+Ponytail's "lazy auditor" pattern: a tool that reads the codebase exhaustively (reading is not lazy) but is conservative about flagging things (only flag clear wins — dead code is a clear win, "could be refactored" is not). F7 should follow this: high-confidence findings (unused imports, dead code with zero callers) are flagged; low-confidence findings (this function is "too complex", this name is "bad") are reported separately as "suggestions" not "findings".
+
+#### Estimated complexity
+
+**L (large).** Breakdown:
+- New `node_audit_scan` + `node_audit_report` nodes: M.
+- New `AuditState` sub-state + accessor (`_get_audit`): S.
+- Routing changes in `routes.py` + `graph.py`: S.
+- New prompts in `constants.py`: S.
+- kgraph coverage check + graceful degradation: M.
+- Tests (mock kgraph, mock filesystem, test routing, test report generation): M.
+- Documentation (this section + NODES.md + API.md + ARCHITECTURE.md updates): S.
+
+Total: ~L. Recommend splitting into two PRs: (1) `AuditState` + `node_audit_scan` (AST-only, no kgraph) + routing + tests; (2) kgraph integration + cross-file queries + `node_audit_report` LLM-powered categorization.
+
+#### Open questions
+
+- Should the audit write its report to `autocode_run_path/audit_report.md` (file) or return it as `state["result"]` (string)? Both? (Recommendation: both — file for human reading, string for MCP client display.)
+- Should the audit commit the report to git? (Recommendation: NO — audits are read-only. If the user wants to commit the report, they can do it manually. This avoids the "audit accidentally creates a branch + PR" footgun.)
+- Should `node_distill_memory` store audit findings as procedural memory for future runs? (Recommendation: YES — patterns like "this repo has a lot of dead code in `tools/legacy/`" are useful for future audits.)
+
+---
+
+*Last updated: 2026-07-18 (v1.2 — NEVER DO #46 + #47 added: never call `_call()` without `trace_id=tid`, never write an empty skill file; ALWAYS DO #43 + #44 added: always pass `trace_id=tid` to `_call()`, always smoke-test skill files with importlib; new § "Deferred Roadmap Items (Detailed Design)" added with #35 + #38 + F1 + F7 (F7 has the most detailed design write-up per user request); v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; #44 + #45 NEVER DO and #41 + #42 ALWAYS DO added; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, legacy-fallback branches removed from all 8 accessors, #32 + #33 + #41-#43 added for v3.0, ALWAYS DO renumbered 1-40; v2.2 — Track M1 Batch 3c: plan sub-state migration, ALL 8 ACCESSORS NOW SAFE; v2.0.5 — Phase 4g review: split-brain accessor warning (lifted in v3.0); v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

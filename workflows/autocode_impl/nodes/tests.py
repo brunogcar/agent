@@ -4,8 +4,6 @@ Test writing node.
 
 from __future__ import annotations
 
-from typing import Any
-
 from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT, _get_plan  # [v3.0] _get_files removed (files is core flat)
 from workflows.autocode_impl.constants import TEST_SYSTEM
 from workflows.autocode_impl.helpers import _call, _extract_code, _files_context
@@ -35,6 +33,7 @@ def node_write_tests(state: AutocodeState) -> dict:
             f"Step: {step['description']}"
         ),
         timeout = EXECUTOR_TIMEOUT,
+        trace_id=tid,  # [v1.2 P1] attribute retry-exhaustion errors to this trace
     )
     test_code = _extract_code(raw)
     tracer.step(tid, "write_tests", f"tests written ({len(test_code)} chars)")

@@ -69,6 +69,7 @@ def node_llm_review(state: AutocodeState) -> dict:
                 f"{debug_context_block}"  # [v3.1 F3] appended only if debug_history > 5
             ),
             timeout=EXECUTOR_TIMEOUT,
+            trace_id=tid,  # [v1.2 P1] attribute retry-exhaustion errors to this trace
         )
         data = _parse_json(raw) if raw else {}
     except Exception as e:

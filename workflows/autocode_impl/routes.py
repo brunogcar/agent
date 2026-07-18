@@ -2,7 +2,6 @@
 Routing functions for the autocode state machine.
 """
 from __future__ import annotations
-from typing import Any
 from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_verify
 from core.config import cfg  # [v3.1 #48] for autocode_swarm_debug_fallback flag
 

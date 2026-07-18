@@ -5,6 +5,17 @@ Skill creation node.
 [P2 #15] Skill name sanitized — no path separators allowed (prevents path traversal).
 [P2 #16] Skill code validated with ast.parse() before writing.
 [P2 #17] skill_created flag is now set on success.
+
+[v1.2 #36] Added:
+  - Empty-file early rejection (was: silently wrote empty file when LLM
+    returned no skill_file content).
+  - Skill code fallback keys (skill_code, code) — LLMs sometimes use
+    alternate keys.
+  - Smoke-test: importlib.import_module the new skill file to catch
+    missing-dep / import-time errors before reporting success.
+  - Git commit the new skill file so the workflow's git history captures
+    the skill creation.
+[v1.2] Removed unused `from typing import Any` import.
 """
 
 from __future__ import annotations
@@ -12,7 +23,6 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
-from typing import Any
 
 from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT
 from workflows.autocode_impl.constants import CREATE_SKILL_SYSTEM
@@ -52,6 +62,7 @@ def node_create_skill(state: AutocodeState) -> dict:
         system=CREATE_SKILL_SYSTEM,
         user=f"Task:\n{task}",
         timeout=EXECUTOR_TIMEOUT,
+        trace_id=tid,  # [v1.2 P1] attribute retry-exhaustion errors to this trace
     )
     data = _parse_json(raw)
 
@@ -59,6 +70,17 @@ def node_create_skill(state: AutocodeState) -> dict:
     skill_name = _sanitize_skill_name(data.get("skill_name", "unknown"))
     skill_file_content = data.get("skill_file", "")
     explanation = data.get("explanation", "")
+
+    # [v1.2 fix] Reject empty skill_file content early — prevents silent empty-file write.
+    # Also try common alternative key names the LLM might use.
+    if not skill_file_content:
+        skill_file_content = data.get("skill_code", "") or data.get("code", "")
+    if not skill_file_content:
+        updates = {}
+        updates["error"] = "LLM returned empty skill_file content"
+        updates["status"] = "failed"
+        tracer.error(tid, "node_create_skill", updates["error"])
+        return updates
 
     updates = {}
 
@@ -102,6 +124,56 @@ def node_create_skill(state: AutocodeState) -> dict:
             updates["result"] = f"Skill created: {skill_path}\n{explanation}"
 
             tracer.step(tid, "node_create_skill", f"Created skill: {skill_path}")
+
+            # [v1.2 #36] Smoke-test: import the module to catch missing deps.
+            try:
+                import importlib
+                import importlib.util
+                import sys
+                # Add skill parent dir to path so relative imports inside the
+                # skill file (e.g. `from skills.x import y`) can resolve.
+                parent_dir = str(skill_path.parent.parent)
+                if parent_dir not in sys.path:
+                    sys.path.insert(0, parent_dir)
+                # [v1.2 fix] Use spec_from_file_location to load the module
+                # directly from the file path. This bypasses namespace-package
+                # conflicts when an existing `skills/` package (e.g. the agent's
+                # own skills dir) is already in sys.modules — the naive
+                # `importlib.import_module("skills.<name>")` lookup would fail
+                # because Python caches the first-loaded `skills` package's
+                # __path__.
+                spec = importlib.util.spec_from_file_location(
+                    f"_smoke_test_{skill_name}", skill_path
+                )
+                _smoke_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_smoke_module)
+            except Exception as e:
+                # Import failed — delete the broken file
+                try:
+                    skill_path.unlink()
+                except Exception:
+                    pass
+                updates["error"] = f"Skill file failed import smoke-test: {e}"
+                updates["status"] = "failed"
+                updates.pop("skill_created", None)
+                tracer.error(tid, "node_create_skill", updates["error"])
+                return updates
+
+            # [v1.2 #36] Git commit the new skill file
+            try:
+                from workflows.autocode_impl.git_ops import _git_commit
+                # NOTE: _git_commit signature is (message, tid, project_root) —
+                # no `files=` param. It commits the entire working tree (which
+                # includes the new skill file). Spec called for a `files=` param
+                # but vcs_ops._git_commit doesn't accept one — we adapt here.
+                _git_commit(
+                    message=f"skill(autocode): {skill_name}",
+                    tid=tid,
+                    project_root=state.get("project_root", ""),
+                )
+                tracer.step(tid, "node_create_skill", f"Committed skill: {skill_name}")
+            except Exception as e:
+                tracer.warning(tid, "node_create_skill", f"Git commit failed (non-fatal): {e}")
         except Exception as e:
             updates["error"] = f"Failed to create skill: {e}"
             updates["status"] = "failed"

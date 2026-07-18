@@ -6,11 +6,13 @@ Patch application is handled by node_apply_patches (previous in graph).
 
 Also builds `files_map` for analyze_impact — snapshots all modified files
 (patches + new files) so impact analysis can detect changes.
+
+[v1.2] Removed unused `import json` (no `json.` calls in the body — only
+`_parse_json` from helpers is used).
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tempfile
 from pathlib import Path

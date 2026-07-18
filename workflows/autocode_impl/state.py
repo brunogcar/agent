@@ -16,13 +16,16 @@ safe since v2.7). This module now:
 
 Nodes that previously returned flat-field mirrors alongside the
 sub-state now return sub-state ONLY — callers must use accessors.
+
+[v1.2] Removed unused `Optional` from typing import (no Optional[X]
+annotations remain after the v3.0 cleanup).
 """
 
 from __future__ import annotations
 
 from langgraph.graph.message import add_messages
 from langchain_core.messages import AnyMessage
-from typing import Annotated, TypedDict, Optional, Any
+from typing import Annotated, TypedDict, Any
 
 from core.config import cfg
 

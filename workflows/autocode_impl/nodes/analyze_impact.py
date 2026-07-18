@@ -44,7 +44,7 @@ def node_analyze_impact(state: AutocodeState) -> dict:
     read-modify-write (RMW). The flat-field mirrors were removed in v3.0
     once all readers were migrated to accessors. See Track M1 in CHANGELOG.
     """
-    tid = state.get("trace_id", "unknown")
+    tid = state.get("trace_id", "")  # [v1.2 P2] was literal "unknown" — caused trace_id pollution
     files_map = _get_files(state, "files_map", {})  # [v2.3] accessor
     project_root = state.get("project_root", "")
 

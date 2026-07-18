@@ -2,6 +2,10 @@
 Facade contract tests — verify the public API works (import + run_workflow).
 Also includes #44 (structured artifacts), #46 (git-diff input), and #47
 (dry-run guards on the facade level).
+
+[v1.2] Removed run_autocode_agent tests — the shim was deleted (roadmap #34).
+Callers now use run_workflow("autocode") directly. _shape_artifacts is still
+tested as a public utility.
 """
 from __future__ import annotations
 
@@ -15,7 +19,6 @@ class TestFacadeImports:
     def test_facade_imports_cleanly(self):
         """import workflows.autocode must succeed (was broken for 2 versions)."""
         import workflows.autocode as facade
-        assert hasattr(facade, "run_autocode_agent")
         assert hasattr(facade, "build_graph")
         assert hasattr(facade, "get_graph")
         assert hasattr(facade, "WORKFLOW_METADATA")
@@ -33,6 +36,12 @@ class TestFacadeImports:
         assert not hasattr(facade, "route_after_debug")
         assert not hasattr(facade, "_git_snapshot")
 
+    def test_run_autocode_agent_shim_removed(self):
+        """[v1.2 roadmap #34] run_autocode_agent shim was removed."""
+        import workflows.autocode as facade
+        assert not hasattr(facade, "run_autocode_agent")
+        assert "run_autocode_agent" not in facade.__all__
+
 
 # ─── run_workflow integration ──────────────────────────────────────────────
 
@@ -48,18 +57,6 @@ class TestRunWorkflowAutocode:
             )
             assert result["status"] == "success"
             assert mock_invoke.called
-
-    def test_run_autocode_agent_delegates_to_run_workflow(self):
-        """[v1.1] run_autocode_agent() is a shim → run_workflow()."""
-        from workflows.autocode import run_autocode_agent
-        with patch("workflows.base.run_workflow") as mock_rw:
-            mock_rw.return_value = {"status": "success"}
-            result = run_autocode_agent("test task", mode="feature")
-            assert mock_rw.called
-            _, kwargs = mock_rw.call_args
-            assert kwargs.get("workflow_type") == "autocode"
-            assert kwargs.get("goal") == "test task"
-            assert result["status"] == "success"
 
     def test_kwargs_pass_through(self):
         from workflows.base import run_workflow
@@ -101,21 +98,6 @@ class TestStructuredArtifacts:
         assert art["commit_sha"] == ""
         assert art["modified_files"] == []
         assert art["verification_passed"] is False
-
-    def test_run_autocode_agent_attaches_artifacts(self):
-        from workflows.autocode import run_autocode_agent
-        with patch("workflows.base.run_workflow") as mock_rw:
-            # [v3.0] _shape_artifacts reads via accessors — populate the sub-states.
-            mock_rw.return_value = {
-                "status": "success",
-                "vcs": {"commit_sha": "def456", "branch": "feat-x"},
-                "files_state": {"modified_files": ["c.py"]},
-                "tdd": {"status": "passed", "iteration": 1},
-                "verify": {"passed": True},
-            }
-            result = run_autocode_agent("test task")
-        assert "artifacts" in result
-        assert result["artifacts"]["commit_sha"] == "def456"
 
 
 # ─── #46: Multi-file git-diff input ─────────────────────────────────────────
@@ -239,7 +221,7 @@ class TestDistillMemoryNonFatal:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
                 if (node.body and isinstance(node.body[0], ast.Expr) and
-                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
+                    isinstance(node.body[0].value, (ast.Constant,))):
                     node.body = node.body[1:] if len(node.body) > 1 else [ast.Pass()]
         code_only = ast.unparse(tree)
         code_lines = [line for line in code_only.split("\n") if not line.strip().startswith("#")]

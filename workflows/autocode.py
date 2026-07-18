@@ -1,13 +1,11 @@
 """workflows/autocode.py — Thin facade for the autocode workflow.
 
 v1.1.2: Added structured artifacts (#44), multi-file git-diff input (#46),
-and dry-run guards (#47, in the mutation nodes). Backward-compat shim
-delegates to base.py's run_workflow().
+and dry-run guards (#47, in the mutation nodes).
 
-[BACKWARD COMPAT] run_autocode_agent() is kept as a thin shim that delegates
-to run_workflow(workflow_type="autocode"). This preserves the public API.
-TODO (roadmap #34): audit callers and remove the shim once all use
-run_workflow() directly.
+[v1.2] run_autocode_agent() shim removed — use run_workflow("autocode") directly.
+Callers wanting structured artifacts must call _shape_artifacts() on the
+run_workflow() return value themselves.
 """
 from __future__ import annotations
 
@@ -29,7 +27,6 @@ from workflows.autocode_impl.state import (
 )
 
 __all__ = [
-    "run_autocode_agent",
     "build_graph",
     "get_graph",
     "WORKFLOW_METADATA",
@@ -117,62 +114,3 @@ def _shape_artifacts(final_state: dict) -> dict[str, Any]:
         "skill_created": final_state.get("skill_created", False),
         "skill_path": final_state.get("skill_path", ""),
     }
-
-
-def run_autocode_agent(
-    task: str,
-    files: dict[str, str] | None = None,
-    mode: str = "feature",
-    target_file: str = "",
-    dry_run: bool = False,
-    trace_id: str = "",
-    git_diff: bool = False,
-) -> dict[str, Any]:
-    """Run the autocode workflow.
-
-    [v1.1] Backward-compat shim — delegates to base.py's run_workflow().
-    This gets checkpoint/resume, tracing, and timeout for free.
-
-    [v1.1.2] Added:
-      - #44: structured artifacts in the return dict (``artifacts`` key)
-      - #46: ``git_diff=True`` + ``files={"all changed": ""}`` resolves changed
-        files via ``git diff --name-only`` so callers don't paste every path.
-      - #47: ``dry_run=True`` now actually skips mutations (write_files, commit,
-        branch creation all check the flag).
-
-    Args:
-        task: The task description.
-        files: Dictionary of file paths to content. Use the special key
-            ``"all changed"`` with ``git_diff=True`` to auto-resolve changed files.
-        mode: Task mode (feature, fix, refactor, edit, create_skill, audit).
-        target_file: The target file for the operation.
-        dry_run: If True, skip all mutations (file writes, git commits, branches).
-        trace_id: Optional trace ID (created if empty).
-        git_diff: If True, resolve ``files["all changed"]`` via ``git diff``.
-
-    Returns:
-        Dict with status, result, trace_id, commit_sha, error, and
-        ``artifacts`` (structured #44 dict).
-    """
-    from workflows.base import run_workflow
-
-    # [#46] Preprocess files input (resolve "all changed" via git diff)
-    resolved_files = _resolve_files_input(files, git_diff=git_diff)
-
-    result = run_workflow(
-        workflow_type="autocode",
-        goal=task,
-        task=task,
-        files=resolved_files,
-        mode=mode,
-        target_file=target_file,
-        dry_run=dry_run,
-        trace_id=trace_id,
-    )
-
-    # [#44] Attach structured artifacts. run_workflow returns the final state
-    # merged with the dispatcher's status/result/error keys. We shape the
-    # autocode-specific fields into a typed artifacts dict.
-    result["artifacts"] = _shape_artifacts(result)
-
-    return result

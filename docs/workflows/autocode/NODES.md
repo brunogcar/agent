@@ -12,6 +12,8 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 > **[v3.0]** Every node reads sub-state fields via accessors (`_get_tdd`, `_get_vcs`, etc.) and writes via read-modify-write (RMW). Ephemeral flat fields (`test_results`, `test_code`, `_pytest_output`, etc.) stay flat — read via `state.get(key, default)`. See [SUBSTATE.md](SUBSTATE.md).
 
 > **[v3.1]** Debug loop improvements — (1) `node_validate_input` strips control chars + enforces max 2000 chars (#42); (2) `node_run_pytest` runs `ruff --select E999` syntax pre-check before pytest (#41); (3) `node_llm_review` injects `debug_summary` into the verify LLM prompt when `debug_history` > 5 (F3); (4) NEW `node_swarm_fallback` node (#48) — escalates to swarm consensus when debug retries exhausted + `AUTOCODE_SWARM_DEBUG_FALLBACK=1`.
+>
+> **[v1.2]** Doc-drift + roadmap cleanup — (1) All 8 LLM-calling nodes now pass `trace_id=tid` to `_call()` (P1 — retry-exhaustion errors attributed to the workflow's trace); (2) `node_create_skill` adds empty-file rejection + fallback keys (`skill_file` → `skill_code` → `code`) + importlib smoke-test + git commit (#36); (3) `node_analyze_impact` literal `"unknown"` trace_id → `""` (P2). See [CHANGELOG.md](CHANGELOG.md) § v1.2 for the full list.
 
 **[v2.0] Lazy Dev / YAGNI Ladder:** `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code). Enforced at the prompt level — every code-generating node benefits. See INSTRUCTIONS.md ALWAYS DO #38 + #39.
 
@@ -573,16 +575,23 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 **Purpose:** Create a reusable skill file.
 
 **Logic:**
-1. Generate skill code
+1. Generate skill code via `_call(role="executor", system=CREATE_SKILL_SYSTEM, user=task, trace_id=tid)` (**[v1.2 P1]** `trace_id=tid` attributes retry-exhaustion errors to this workflow's trace — was unattributed `trace_id=""`).
 2. **[Pre-2.0 Fix]** Validate filename via `_sanitize_skill_name()` (strips non-`[a-zA-Z0-9_]` chars — prevents path traversal via `/` or `\` in the skill name).
-3. **[Pre-2.0 Fix]** Validate syntax via `_validate_python_syntax()` (`ast.parse()` — catches `SyntaxError` before writing).
-4. **[Pre-2.0 Fix]** Write atomically via `tempfile.NamedTemporaryFile` + `os.replace` (was: direct `write_text` — a crash mid-write would corrupt the skill file).
-5. Set `skill_created: True` on success (was: never set — `autocode.py` checked it but it was always missing).
+3. **[v1.2 P1] Empty-file rejection + fallback keys:** Read `skill_file_content = data.get("skill_file", "")`. If empty, try fallback keys: `data.get("skill_code", "") or data.get("code", "")`. If still empty, return `{"status": "failed", "error": "LLM returned empty skill_file content"}` — was: silently wrote an empty file + set `skill_created=True` (the LLM sometimes returned content under `skill_code` instead of `skill_file`, masking the bug).
+4. **[Pre-2.0 Fix]** Validate syntax via `_validate_python_syntax()` (`ast.parse()` — catches `SyntaxError` before writing). On syntax failure, return `{"status": "failed", "error": "Skill code has invalid Python syntax: ..."}`.
+5. **[Pre-2.0 Fix]** Write atomically via `tempfile.NamedTemporaryFile` + `os.replace` (was: direct `write_text` — a crash mid-write would corrupt the skill file).
+6. Set `skill_path`, `skill_created: True`, `status="done"`, `result=f"Skill created: {skill_path}\n{explanation}"` on success (was: `skill_created` was never set — `autocode.py` checked it but it was always missing).
+7. **[v1.2 #36] Smoke-test (importlib):** After writing the file, run `importlib.util.spec_from_file_location(f"_smoke_test_{skill_name}", skill_path)` + `spec.loader.exec_module(_smoke_module)`. This catches missing-dep / import-time errors that `ast.parse()` (step 4) misses — `ast.parse` only verifies SYNTAX, not that imports resolve. On import failure: **delete the broken file** (so the next run doesn't pick up a known-broken skill) + return `{"status": "failed", "error": "Skill file failed import smoke-test: ..."}` + `tracer.error(...)`. Uses `spec_from_file_location` (not `importlib.import_module`) to bypass namespace-package conflicts when an existing `skills/` package is already cached in `sys.modules`.
+8. **[v1.2 #36] Git commit:** After the smoke-test passes, call `_git_commit(message=f"skill(autocode): {skill_name}", tid=tid, project_root=state.get("project_root", ""))`. Non-fatal on failure (`tracer.warning`) — the skill file is already on disk; a missed commit just means it won't be in this run's git history. NOTE: `_git_commit`'s signature is `(message, tid, project_root)` — no `files=` param; it commits the entire working tree (which includes the new skill file).
 
-**Output:** Partial dict with `skill_path`, `status`, `result`, `error`.
+**Skip conditions:** `dry_run=True` → returns `{skill_path: "[DRY RUN] Would create: skills/{name}.py", skill_created: True, status: "done", result: "Dry run: ..."}` (no file write, no smoke-test, no git commit).
+
+**Output:** Partial dict with `skill_path`, `skill_created`, `status`, `result`, `error` (failure path only).
 
 **Source:** `workflows/autocode_impl/nodes/create_skill.py`.
 
+**Test coverage:** `tests/workflows/autocode/test_create_skill.py` — name sanitization, syntax validation, `skill_created` flag, **[v1.2]** empty-file rejection (fallback keys), **[v1.2]** importlib smoke-test failure path, **[v1.2]** git commit invocation. (The v1.2 mock-key fix: the test was using `skill_code` + `skill_description` keys that didn't match production expectations, silently passing despite the empty-file bug. Now uses the correct `skill_file` key.)
+
 ---
 
-*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization in `node_validate_input`, #41 AST pre-check in `node_run_pytest`, F3 `debug_summary` injection in `node_llm_review`, #48 NEW `node_swarm_fallback` node; swarm v1.1 #17 — smoke test references added to `node_systematic_debug` + `node_swarm_fallback` node descriptions; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-18 (v1.2 — `node_create_skill` section updated with empty-file rejection + fallback keys + importlib smoke-test + git commit (#36); v1.2 P1 note added re: all 8 LLM-calling nodes passing `trace_id=tid` to `_call()`; v1.2 P2 note added re: `node_analyze_impact` literal `"unknown"` trace_id → `""`; v3.1 — debug loop improvements: #42 goal sanitization in `node_validate_input`, #41 AST pre-check in `node_run_pytest`, F3 `debug_summary` injection in `node_llm_review`, #48 NEW `node_swarm_fallback` node; swarm v1.1 #17 — smoke test references added to `node_systematic_debug` + `node_swarm_fallback` node descriptions; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

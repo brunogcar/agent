@@ -16,10 +16,10 @@ Section layout:
     _github_pr_comment(), _github_pr_merge()
   === Swarm integration (was github_ops.py) ===
     _swarm_debug_consensus()
+
+[v1.2] Removed unused `from typing import Any` import.
 """
 from __future__ import annotations
-
-from typing import Any
 
 from core.config import cfg
 from core.tracer import tracer

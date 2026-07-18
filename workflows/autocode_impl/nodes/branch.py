@@ -13,11 +13,11 @@ the branch and can be reverted via git.
 # TODO(2.0): The FUTURE comment about pushing the branch + creating a draft
 # PR is now implemented in node_publish (v1.3). This node stays focused on
 # local branch creation only.
+
+[v1.2] Removed unused `from typing import Any` import.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 from core.config import cfg
 from workflows.autocode_impl.state import AutocodeState, _get_vcs  # [v2.1] accessor

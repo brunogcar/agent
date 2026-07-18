@@ -38,7 +38,8 @@ def node_execute_step(state: AutocodeState) -> dict:
             role="executor",
             system=system,
             user=user,
-            timeout=cfg.execution_timeout  # Use your actual attribute name
+            timeout=cfg.execution_timeout,  # Use your actual attribute name
+            trace_id=tid,  # [v1.2 P1] attribute retry-exhaustion errors to this trace
         )
     except Exception as e:
         tracer.error(tid, "execute_step", f"LLM call failed: {e}")

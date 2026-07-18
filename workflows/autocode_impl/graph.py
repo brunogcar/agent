@@ -8,6 +8,9 @@ so MCP clients can render the graph correctly.
 from __future__ import annotations
 from langgraph.graph import END, StateGraph
 from workflows.autocode_impl.state import AutocodeState, _get_tdd  # [v3.1 #48] _get_tdd for swarm_fallback routing
+# [v1.2 #36] Module-level imports so test patches like
+# `patch("workflows.autocode_impl.graph.request_cancellation")` resolve.
+from workflows.autocode_impl.helpers import request_cancellation, clear_cancellation
 from workflows.autocode_impl.nodes.classify import node_classify_task
 from workflows.autocode_impl.nodes.validate import node_validate_input
 from workflows.autocode_impl.nodes.brainstorm import node_brainstorm
@@ -307,14 +310,30 @@ def invoke_with_timeout(initial_state: dict) -> dict:
     """
     import threading
     from core.config import cfg
-    from workflows.autocode_impl.helpers import request_cancellation, clear_cancellation
+    # [v1.2 #36] request_cancellation, clear_cancellation now imported at
+    # module level (above) so test patches can target
+    # `workflows.autocode_impl.graph.request_cancellation` directly.
 
     # [v2.0] Clear any stale cancellation flag from a previous run
     clear_cancellation()
 
     graph = get_graph()
     result = {"status": "failed", "error": "Graph invocation timed out"}
+    # [v1.2 #40] Adaptive timeout by task_type — create_skill=120s, audit=300s,
+    # feature=900s, fix/refactor/edit=600s. Falls back to cfg.autocode_graph_timeout.
+    # Opt-in via AUTOCODE_ADAPTIVE_TIMEOUT=1 (default OFF — uses static timeout).
     timeout = getattr(cfg, "autocode_graph_timeout", 300)
+    if getattr(cfg, "autocode_adaptive_timeout", False):
+        _TASK_TYPE_TIMEOUTS = {
+            "create_skill": 120,
+            "audit": 300,
+            "feature": 900,
+            "fix": 600,
+            "refactor": 600,
+            "edit": 600,
+        }
+        task_type = initial_state.get("task_type", "")
+        timeout = _TASK_TYPE_TIMEOUTS.get(task_type, timeout)
 
     # [Hardening P0.3] Capture exceptions inside the daemon thread — without
     # this, any node crash kills the thread silently and is reported as a

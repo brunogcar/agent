@@ -38,6 +38,7 @@ def node_classify_task(state: AutocodeState) -> dict:
         user    = f"Task:\n{state['task']}",
         timeout = ROUTER_TIMEOUT,
         json_schema=_CLASSIFY_SCHEMA,  # [Hardening P1.6]
+        trace_id=tid,  # [v1.2 P1] attribute retry-exhaustion errors to this trace
     )
     data      = _parse_json(raw)
     task_type = data.get("task_type", "feature")

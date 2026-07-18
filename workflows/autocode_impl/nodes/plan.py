@@ -52,7 +52,7 @@ def node_write_plan(state: AutocodeState) -> dict:
             tracer.warning(tid, "write_plan", f"Blast radius query failed: {e}")
 
     raw  = _call(role="planner", system=system,
-                 user=f"Spec:\n{spec}{blast_radius_note}", timeout=PLANNER_TIMEOUT)
+                 user=f"Spec:\n{spec}{blast_radius_note}", timeout=PLANNER_TIMEOUT, trace_id=tid)  # [v1.2 P1] attribute retry-exhaustion errors
     plan = _parse_json_array(raw)
 
     if not plan:

@@ -10,13 +10,16 @@ fail and surface the issue to the user).
 This is the "escalation" pattern from loop-engineering: when a single agent
 can't resolve an issue after N attempts, escalate to a multi-agent consensus
 with a pruned context summary.
+
+[v1.2] Removed unused `from workflows.autocode_impl.helpers import _call`
+import (the node only calls `_swarm_debug_consensus` from vcs_ops — never
+`_call` directly).
 """
 from __future__ import annotations
 
 from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_debug
 from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus
 from workflows.autocode_impl.constants import DEBUG_SYSTEM
-from workflows.autocode_impl.helpers import _call
 from core.config import cfg
 from core.tracer import tracer
 

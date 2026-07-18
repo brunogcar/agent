@@ -1,10 +1,10 @@
 """
 Git commit node.
+
+[v1.2] Removed unused `from typing import Any` import.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify, _get_vcs, _get_plan  # [v2.5+v2.6+v2.1+v2.2] accessors
 from workflows.autocode_impl.vcs_ops import _git_commit

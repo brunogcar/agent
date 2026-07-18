@@ -112,7 +112,7 @@ def node_brainstorm(state: AutocodeState) -> dict:
         + (f"\n\nPast fixes:\n{mem_ctx}" if mem_ctx else "")
     )
 
-    raw = _call(role="planner", system=system, user=user, timeout=PLANNER_TIMEOUT)
+    raw = _call(role="planner", system=system, user=user, timeout=PLANNER_TIMEOUT, trace_id=tid)  # [v1.2 P1] attribute retry-exhaustion errors
     data = _parse_json(raw)
 
     if data.get("questions"):

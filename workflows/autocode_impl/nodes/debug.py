@@ -21,10 +21,12 @@ Debug node for autocode workflow.
     fix-the-line bug).
   - summarize_context node (separate file) compresses debug_history before
     re-entering the loop — keeps context budget bounded (#37).
+
+[v1.2] Removed unused imports (re, Any, get_dependencies) — get_callers is
+the only kgraph query used here.
 """
 from __future__ import annotations
-import json, re
-from typing import Any
+import json
 from core.config import cfg
 from core.memory_engine import memory
 from core.tracer import tracer
@@ -32,7 +34,7 @@ from workflows.autocode_impl.constants import DEBUG_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
 from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_vcs, _get_files  # [v2.1+v2.3] accessors
 from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_comment
-from core.kgraph.queries import get_dependencies, get_callers
+from core.kgraph.queries import get_callers  # [v1.2] removed unused get_dependencies
 
 # [v2.0] Phase 4 — architecture-question threshold.
 # If the last N debug_history entries all have tests_passed=False, the bug is
@@ -357,6 +359,7 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             timeout=cfg.execution_timeout,
             temperature=retry_temp,
             json_schema=_DEBUG_JSON_SCHEMA,
+            trace_id=tid,  # [v1.2 P1] attribute retry-exhaustion errors to this trace
         )
     except Exception as e:
         tracer.error(tid, "systematic_debug", f"Debug LLM call failed: {e}")
