@@ -15,6 +15,11 @@ v1.4 (2026-07-15):
     becomes `GET /releases/tags/v1.0.0%2Bbuild.5`.
   - Removed `status=` kwarg from all fail() calls (fail() contract: status
     is a string, not an int — see core/contracts.py).
+
+[v1.5] Migrated to github_request() helper — eliminates inline 3-stage
+error handling pattern (network → HTTP → JSON parse). The helper also
+adds retry/backoff for transient errors and structured error_code.
+The v1.4 `quote(tag, safe="")` URL-encoding fix is preserved.
 """
 from __future__ import annotations
 from typing import Any
@@ -22,7 +27,8 @@ from urllib.parse import quote
 
 from core.contracts import ok, fail
 from tools.github_ops._registry import register_action
-from tools.github_ops.client import get_client, is_configured, repo_path
+from tools.github_ops.client import repo_path
+from tools.github_ops.helpers import _check_configured, _coerce_int, github_request
 
 
 @register_action(
@@ -57,11 +63,9 @@ def _action_release_get(
         number: Numeric release ID. Used only if tag is empty.
         trace_id: Trace ID forwarded to ok()/fail().
     """
-    if not is_configured():
-        return fail(
-            "GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env",
-            trace_id=trace_id,
-        )
+    err = _check_configured(trace_id)
+    if err:
+        return err
 
     if not tag and not number:
         return fail(
@@ -75,40 +79,24 @@ def _action_release_get(
     # unreserved (alnum + - _ . ~) — same as JavaScript's encodeURIComponent.
     if tag:
         url_path = f"{repo_path()}/releases/tags/{quote(tag, safe='')}"
+        not_found_msg = f"Release tag {tag!r} not found"
     else:
-        try:
-            release_id = int(number)
-        except (TypeError, ValueError):
-            return fail(
-                f"number must be an int — got {number!r}",
-                trace_id=trace_id,
-            )
+        release_id, err = _coerce_int(number, "number", trace_id)
+        if err:
+            return err
         url_path = f"{repo_path()}/releases/{release_id}"
+        not_found_msg = f"Release ID {number!r} not found"
 
-    client = get_client()
-    try:
-        resp = client.get(url_path, timeout=30)
-    except Exception as e:
-        return fail(f"release_get request failed: {e}", trace_id=trace_id)
+    resp, err = github_request(
+        "get",
+        url_path,
+        trace_id,
+        not_found_msg=not_found_msg,
+    )
+    if err:
+        return err
 
-    if resp.status_code == 404:
-        label = f"tag {tag!r}" if tag else f"ID {number!r}"
-        return fail(f"Release {label} not found", trace_id=trace_id)
-    if resp.status_code >= 400:
-        try:
-            err_body = resp.json()
-            msg = err_body.get("message", resp.text)
-        except Exception:
-            msg = resp.text
-        return fail(
-            f"GitHub API error {resp.status_code}: {msg}",
-            trace_id=trace_id,
-        )
-
-    try:
-        data = resp.json()
-    except Exception as e:
-        return fail(f"release_get returned non-JSON response: {e}", trace_id=trace_id)
+    data = resp.json()
 
     assets = [
         {

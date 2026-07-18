@@ -104,12 +104,19 @@ class TestPrGet:
         mock_httpx_client.get.assert_not_called()
 
     def test_pr_get_not_found(self, mock_httpx_client):
-        """404 from GitHub → fail() with 'not found' message."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.json.return_value = {"message": "Not Found"}
-        mock_resp.text = "Not Found"
-        mock_httpx_client.get.return_value = mock_resp
+        """404 from GitHub → fail() with 'not found' message.
+
+        v1.5: 404 now goes through github_request()'s not_found_msg branch,
+        which returns the friendly "PR #<n> not found" message (set by the
+        action) instead of the generic "GitHub API error 404: ...".
+        """
+        # Mutate the default mock_response (which has raise_for_status.side_effect
+        # configured by the conftest fixture) rather than building a fresh
+        # MagicMock that would silently no-op on raise_for_status().
+        mock_httpx_client.get.return_value.status_code = 404
+        mock_httpx_client.get.return_value.json.return_value = {"message": "Not Found"}
+        mock_httpx_client.get.return_value.text = "Not Found"
+        mock_httpx_client.get.return_value.headers = {}
 
         result = github(action="pr_get", number=999)
 

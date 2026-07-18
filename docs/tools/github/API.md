@@ -228,4 +228,4 @@ Per-provider error isolation: N/A (single API). Network errors and JSON-parse er
 
 ---
 
-*Last updated: 2026-07-15 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.5 — all 14 actions migrated).*

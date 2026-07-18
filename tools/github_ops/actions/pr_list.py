@@ -8,13 +8,20 @@ v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
 contract: status is a string, not an int — see core/contracts.py). The
 HTTP code remains in the error message text. Structured classification
 belongs in error_code (see tools/github_ops/helpers.py github_request).
+
+[v1.5] Migrated to github_request() helper — eliminates inline 3-stage
+error handling pattern (network → HTTP → JSON parse). The helper also
+adds retry/backoff for transient errors and structured error_code.
+Pagination (parse_link_header + accumulation) stays; only the inner
+request call is replaced.
 """
 from __future__ import annotations
 from typing import Any
 
 from core.contracts import ok, fail
 from tools.github_ops._registry import register_action
-from tools.github_ops.client import get_client, is_configured, repo_path, parse_link_header
+from tools.github_ops.client import repo_path, parse_link_header
+from tools.github_ops.helpers import _check_configured, github_request
 
 
 @register_action(
@@ -53,11 +60,9 @@ def _action_pr_list(
             more than 100 PRs — the Link header indicates if more pages exist.
         trace_id: Trace ID forwarded to ok()/fail().
     """
-    if not is_configured():
-        return fail(
-            "GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env",
-            trace_id=trace_id,
-        )
+    err = _check_configured(trace_id)
+    if err:
+        return err
 
     # Default state to "open" if not provided (facade passes "" by default)
     if not state:
@@ -89,27 +94,16 @@ def _action_pr_list(
 
     params = {"state": state, "per_page": per_page, "page": page_int}
 
-    client = get_client()
-    try:
-        resp = client.get(f"{repo_path()}/pulls", params=params, timeout=30)
-    except Exception as e:
-        return fail(f"pr_list request failed: {e}", trace_id=trace_id)
+    resp, err = github_request(
+        "get",
+        f"{repo_path()}/pulls",
+        trace_id,
+        params=params,
+    )
+    if err:
+        return err
 
-    if resp.status_code >= 400:
-        try:
-            err_body = resp.json()
-            msg = err_body.get("message", resp.text)
-        except Exception:
-            msg = resp.text
-        return fail(
-            f"GitHub API error {resp.status_code}: {msg}",
-            trace_id=trace_id,
-        )
-
-    try:
-        items = resp.json()
-    except Exception as e:
-        return fail(f"pr_list returned non-JSON response: {e}", trace_id=trace_id)
+    items = resp.json()
 
     if not isinstance(items, list):
         return fail(

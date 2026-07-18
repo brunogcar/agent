@@ -22,13 +22,18 @@ v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
 contract: status is a string, not an int — see core/contracts.py). The
 HTTP code remains in the error message text. Structured classification
 belongs in error_code (see tools/github_ops/helpers.py github_request).
+
+[v1.5] Migrated to github_request() helper — eliminates inline 3-stage
+error handling pattern (network → HTTP → JSON parse). The helper also
+adds retry/backoff for transient errors and structured error_code.
 """
 from __future__ import annotations
 from typing import Any
 
 from core.contracts import ok, fail
 from tools.github_ops._registry import register_action
-from tools.github_ops.client import get_client, is_configured, repo_path
+from tools.github_ops.client import repo_path
+from tools.github_ops.helpers import _check_configured, _coerce_int, github_request
 
 
 @register_action(
@@ -70,18 +75,15 @@ def _action_pr_comment(
         side: "LEFT" or "RIGHT" (default "RIGHT") — only used in line-level mode.
         trace_id: Trace ID forwarded to ok()/fail().
     """
-    if not is_configured():
-        return fail(
-            "GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env",
-            trace_id=trace_id,
-        )
+    err = _check_configured(trace_id)
+    if err:
+        return err
 
     if not number:
         return fail("number is required for pr_comment", trace_id=trace_id)
-    try:
-        pr_number = int(number)
-    except (TypeError, ValueError):
-        return fail(f"number must be an int — got {number!r}", trace_id=trace_id)
+    pr_number, err = _coerce_int(number, "number", trace_id)
+    if err:
+        return err
 
     if not body:
         return fail("body is required for pr_comment", trace_id=trace_id)
@@ -115,41 +117,29 @@ def _action_pr_comment(
 
     payload: dict[str, Any] = {"body": body}
 
-    client = get_client()
-    try:
-        if is_line_level:
-            # Line-level comment on a PR diff
-            payload["path"] = path
-            payload["line"] = line_int
-            payload["side"] = side
-            # subject_type=line tells GitHub this is a line-anchored comment.
-            payload["subject_type"] = "line"
-            url_path = f"{repo_path()}/pulls/{pr_number}/comments"
-        else:
-            # General PR comment — PRs are issues for this endpoint
-            url_path = f"{repo_path()}/issues/{pr_number}/comments"
-        resp = client.post(url_path, json=payload, timeout=30)
-    except Exception as e:
-        return fail(f"pr_comment request failed: {e}", trace_id=trace_id)
+    if is_line_level:
+        # Line-level comment on a PR diff
+        payload["path"] = path
+        payload["line"] = line_int
+        payload["side"] = side
+        # subject_type=line tells GitHub this is a line-anchored comment.
+        payload["subject_type"] = "line"
+        url_path = f"{repo_path()}/pulls/{pr_number}/comments"
+    else:
+        # General PR comment — PRs are issues for this endpoint
+        url_path = f"{repo_path()}/issues/{pr_number}/comments"
 
-    if resp.status_code == 404:
-        return fail(f"PR #{pr_number} not found", trace_id=trace_id)
-    if resp.status_code >= 400:
-        try:
-            err_body = resp.json()
-            msg = err_body.get("message", resp.text)
-        except Exception:
-            msg = resp.text
-        return fail(
-            f"GitHub API error {resp.status_code}: {msg}",
-            trace_id=trace_id,
-        )
+    resp, err = github_request(
+        "post",
+        url_path,
+        trace_id,
+        json=payload,
+        not_found_msg=f"PR #{pr_number} not found",
+    )
+    if err:
+        return err
 
-    try:
-        data = resp.json()
-    except Exception as e:
-        return fail(f"pr_comment returned non-JSON response: {e}", trace_id=trace_id)
-
+    data = resp.json()
     result: dict[str, Any] = {
         "id": data.get("id"),
         "url": data.get("html_url"),

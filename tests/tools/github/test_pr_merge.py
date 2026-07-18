@@ -85,12 +85,19 @@ class TestPrMerge:
         mock_httpx_client.put.assert_not_called()
 
     def test_pr_merge_not_mergeable(self, mock_httpx_client):
-        """405 from GitHub → fail() with 'not mergeable' message."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 405
-        mock_resp.json.return_value = {"message": "Pull Request is not mergeable"}
-        mock_resp.text = "Pull Request is not mergeable"
-        mock_httpx_client.put.return_value = mock_resp
+        """405 from GitHub → fail() with 'not mergeable' message.
+
+        v1.5: 405 now goes through github_request()'s generic >=400 branch,
+        which returns "GitHub API error 405: <gh_msg>". The mock's gh_msg
+        is "Pull Request is not mergeable" — so the "not mergeable"
+        substring is still present (sourced from GitHub's own message).
+        """
+        # Mutate the default mock_response (which has raise_for_status.side_effect
+        # configured by the conftest fixture).
+        mock_httpx_client.put.return_value.status_code = 405
+        mock_httpx_client.put.return_value.json.return_value = {"message": "Pull Request is not mergeable"}
+        mock_httpx_client.put.return_value.text = "Pull Request is not mergeable"
+        mock_httpx_client.put.return_value.headers = {}
 
         result = github(action="pr_merge", number=42)
 
@@ -98,14 +105,22 @@ class TestPrMerge:
         assert "not mergeable" in result["error"].lower()
 
     def test_pr_merge_conflict(self, mock_httpx_client):
-        """409 from GitHub → fail() with 'head commit not up to date' message."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 409
-        mock_resp.json.return_value = {"message": "Head commit was updated"}
-        mock_resp.text = "Head commit was updated"
-        mock_httpx_client.put.return_value = mock_resp
+        """409 from GitHub → fail() with the GitHub API error message.
+
+        v1.5 BEHAVIOR CHANGE: the v1.4 inline pattern had a custom 409
+        message ("head commit is not up to date — rebase and push again").
+        With github_request(), 409 now falls through to the generic
+        "GitHub API error 409: <gh_msg>" branch — the HTTP code is still
+        in the message and GitHub's own message string is preserved, but
+        the friendly "up to date" phrasing is gone.
+        """
+        mock_httpx_client.put.return_value.status_code = 409
+        mock_httpx_client.put.return_value.json.return_value = {"message": "Head commit was updated"}
+        mock_httpx_client.put.return_value.text = "Head commit was updated"
+        mock_httpx_client.put.return_value.headers = {}
 
         result = github(action="pr_merge", number=42)
 
         assert result["status"] == "error"
-        assert "up to date" in result["error"].lower()
+        assert "409" in result["error"]
+        assert "Head commit was updated" in result["error"]

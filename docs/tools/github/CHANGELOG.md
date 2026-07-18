@@ -98,4 +98,4 @@ and ("404" in result["error"] or result.get("error_code") == "NOT_FOUND")`.
 
 ---
 
-*Last updated: 2026-07-15 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.5 — all 14 actions migrated to github_request).*

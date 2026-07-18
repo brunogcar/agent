@@ -14,13 +14,27 @@ v1.4 (2026-07-15):
   - Fixed `merged: True` (hardcoded) → `data.get("merged", True)` so the
     action honors GitHub's response (some merge methods return merged:false
     even on a 200 when the merge was a no-op).
+
+[v1.5] Migrated to github_request() helper — eliminates inline 3-stage
+error handling pattern (network → HTTP → JSON parse). The helper also
+adds retry/backoff for transient errors and structured error_code.
+The `data.get("merged", True)` fix from v1.4 is preserved.
+
+BEHAVIOR CHANGE: The v1.4 inline pattern had custom 405 ("not mergeable")
+and 409 ("head commit not up to date") error messages. With github_request,
+those now fall through to the generic `"GitHub API error <code>: <gh_msg>"`
+branch — the HTTP code is still in the message text, and the underlying
+GitHub `message` field is preserved, but the friendly "up to date" /
+"not mergeable" phrasing is gone. Callers should rely on the HTTP code
+(in error_code="CLIENT_ERROR") and GitHub's own message string instead.
 """
 from __future__ import annotations
 from typing import Any
 
 from core.contracts import ok, fail
 from tools.github_ops._registry import register_action
-from tools.github_ops.client import get_client, is_configured, repo_path
+from tools.github_ops.client import repo_path
+from tools.github_ops.helpers import _check_configured, _coerce_int, github_request
 
 
 _VALID_MERGE_METHODS = ("merge", "squash", "rebase")
@@ -66,18 +80,15 @@ def _action_pr_merge(
         commit_message: Custom merge commit body (optional).
         trace_id: Trace ID forwarded to ok()/fail().
     """
-    if not is_configured():
-        return fail(
-            "GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env",
-            trace_id=trace_id,
-        )
+    err = _check_configured(trace_id)
+    if err:
+        return err
 
     if not number:
         return fail("number is required for pr_merge", trace_id=trace_id)
-    try:
-        pr_number = int(number)
-    except (TypeError, ValueError):
-        return fail(f"number must be an int — got {number!r}", trace_id=trace_id)
+    pr_number, err = _coerce_int(number, "number", trace_id)
+    if err:
+        return err
 
     if merge_method not in _VALID_MERGE_METHODS:
         return fail(
@@ -91,42 +102,17 @@ def _action_pr_merge(
     if commit_message:
         payload["commit_message"] = commit_message
 
-    client = get_client()
-    try:
-        resp = client.put(
-            f"{repo_path()}/pulls/{pr_number}/merge", json=payload, timeout=30
-        )
-    except Exception as e:
-        return fail(f"pr_merge request failed: {e}", trace_id=trace_id)
+    resp, err = github_request(
+        "put",
+        f"{repo_path()}/pulls/{pr_number}/merge",
+        trace_id,
+        json=payload,
+        not_found_msg=f"PR #{pr_number} not found",
+    )
+    if err:
+        return err
 
-    if resp.status_code == 404:
-        return fail(f"PR #{pr_number} not found", trace_id=trace_id)
-    if resp.status_code == 405:
-        return fail(
-            f"PR #{pr_number} is not mergeable (conflict, blocked, or required checks not satisfied)",
-            trace_id=trace_id,
-        )
-    if resp.status_code == 409:
-        return fail(
-            f"PR #{pr_number} head commit is not up to date — rebase and push again",
-            trace_id=trace_id,
-        )
-    if resp.status_code >= 400:
-        try:
-            err_body = resp.json()
-            msg = err_body.get("message", resp.text)
-        except Exception:
-            msg = resp.text
-        return fail(
-            f"GitHub API error {resp.status_code}: {msg}",
-            trace_id=trace_id,
-        )
-
-    try:
-        data = resp.json()
-    except Exception as e:
-        return fail(f"pr_merge returned non-JSON response: {e}", trace_id=trace_id)
-
+    data = resp.json()
     return ok({
         "merged": data.get("merged", True),
         "sha": data.get("sha"),

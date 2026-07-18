@@ -130,4 +130,4 @@ These rules apply to any AI assistant (or human editor) modifying the github too
 
 ---
 
-*Last updated: 2026-07-15 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-18 (v1.5 — all 14 actions migrated).*
