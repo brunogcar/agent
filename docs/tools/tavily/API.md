@@ -237,6 +237,22 @@ Requires API key. Validates `citation_format` against SDK Literal type (`"number
 
 ---
 
+## 🔄 v1.6 Changes
+
+### `search` — Fallback to `web(search)`
+
+When Tavily returns `CB_OPEN`, `AUTH_FAILED`, `RATE_LIMITED`, or `QUOTA_EXHAUSTED`, the search action auto-falls back to `web(search)` (SearXNG). The LLM sees a success response (not an error) with `fallback: "web_search"` + `note` in the data. This lets the agent continue working without manual intervention when Tavily is unavailable.
+
+### `extract` — Batched extraction for >10 URLs
+
+Previously, `extract` rejected >10 URLs with an error. v1.6 auto-batches them in groups of 10, executing each batch via the resilience layer (CB + retry). Partial results are returned if some batches fail (logged as warnings).
+
+### `search` — URL deduplication
+
+Search results are deduplicated by URL, preserving rank order (first occurrence wins). Same pattern as `web(search_and_read)`.
+
+---
+
 ## 🔒 Security
 
 ### SSRF Guard (`_assert_safe_urls`)

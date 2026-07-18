@@ -100,12 +100,30 @@ def _action_search(
         # v1.2 FIX: Pass factory (_call) not coroutine (_call())
         result = bridge._run_async_with_resilience(_call, trace_id=trace_id)
     except Exception as e:
-        return _handle_tavily_error(e, trace_id=trace_id)
+        error_result = _handle_tavily_error(e, trace_id=trace_id)
+        # v1.6: Fallback to web(search) when Tavily is unavailable
+        # (CB open, no API key, rate limited, or quota exhausted)
+        if error_result.get("error_code") in ("CB_OPEN", "AUTH_FAILED", "RATE_LIMITED", "QUOTA_EXHAUSTED"):
+            return _fallback_to_web_search(query, max_results, trace_id)
+        return error_result
 
     # v1.2 FIX: Strip raw_content when not requested
     if not include_raw_content and "results" in result:
         for r in result.get("results", []):
             r.pop("raw_content", None)
+
+    # v1.6: Deduplicate results by URL (preserves rank order — first occurrence wins)
+    if "results" in result and result["results"]:
+        seen_urls = set()
+        deduped = []
+        for r in result["results"]:
+            url = r.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                deduped.append(r)
+            elif not url:
+                deduped.append(r)  # keep results without URL (shouldn't happen, but safe)
+        result["results"] = deduped
 
     # v1.3: Record successful API call
     record_tool_call("tavily.search")
@@ -123,3 +141,39 @@ def _action_search(
 
     from core.memory_backend.pruner import prune_tool_dict
     return prune_tool_dict("tavily", response, trace_id)
+
+
+
+def _fallback_to_web_search(query: str, max_results: int, trace_id: str) -> dict:
+    """v1.6: Fallback to web(search) when Tavily is unavailable.
+
+    Called when Tavily returns CB_OPEN, AUTH_FAILED, RATE_LIMITED, or
+    QUOTA_EXHAUSTED. Uses the web tool's SearXNG search as a graceful
+    degradation path. The LLM sees a success response (not an error) so
+    it can continue working without manual intervention.
+
+    Returns the web search result (different shape from Tavily, but
+    contains the same essential fields: results with url + title + content).
+    """
+    from core.tracer import tracer
+    tracer.step(trace_id, "tavily_search",
+                "Falling back to web(search) — Tavily unavailable")
+
+    try:
+        from tools.web import web
+        result = web(action="search", query=query, max_results=max_results)
+        if isinstance(result, dict) and result.get("status") == "success":
+            # Add a note that this is a fallback
+            data = result.get("data", result)
+            if isinstance(data, dict):
+                data["fallback"] = "web_search"
+                data["note"] = "Tavily unavailable — results from SearXNG (web search)"
+            return result
+        return result  # Pass through web's error if it also failed
+    except Exception as fallback_err:
+        from core.contracts import fail
+        return fail(
+            f"Tavily unavailable and web search fallback also failed: {fallback_err}",
+            trace_id=trace_id,
+            error_code="FALLBACK_FAILED",
+        )

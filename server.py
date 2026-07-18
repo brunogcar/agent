@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import sys
+import os
 from pathlib import Path
 
 def _fix_streams() -> None:
@@ -190,7 +191,9 @@ def _shutdown_flush() -> None:
         if not hasattr(_mem, "_write_lock"):
             return
         flushed = tracker.flush(_mem)
-        if flushed > 0:
+        # v1.6: Only log if flushed > 0 AND not in a test environment
+        # (the atexit handler fires during pytest, flooding output)
+        if flushed > 0 and "PYTEST_CURRENT_TEST" not in os.environ:
             print(f"[server] Final telemetry flush: {flushed} updates", file=sys.stderr)
     except Exception as e:
         print(f"[server] Shutdown flush skipped: {e}", file=sys.stderr)
@@ -203,7 +206,8 @@ def _shutdown_kgraph() -> None:
         from core.kgraph.storage import GraphStore
         GraphStore.close_all()
     except Exception as e:
-        print(f"[server] KGraph shutdown skipped: {e}", file=sys.stderr)
+        if "PYTEST_CURRENT_TEST" not in os.environ:
+            print(f"[server] KGraph shutdown skipped: {e}", file=sys.stderr)
 _atexit.register(_shutdown_kgraph)
 
 # -- Warm up ChromaDB in background (avoids cold-start MCP timeout) -----------

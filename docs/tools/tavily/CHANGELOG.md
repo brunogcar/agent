@@ -12,6 +12,7 @@
 | v1.2 | 2024-05-01 | Coroutine factory, shared `core/net/` infrastructure, structured error codes, API budget tracking, unified retry/backoff, IPv6 SSRF fixes, client lifecycle fixes, error truncation, sanitization v2, BOT_BLOCKED, default constants |
 | v1.3 | 2024-05-15 | `extract`/`research` resilience fix, `CB_OPEN` error code, budget on all actions, `include_domains` validation, `citation_format` isolation, URL normalization, `core/net/__init__.py` re-exports, `retry_async_factory()`, `RLock`, daily reset, DNS timeout, HALF_OPEN fix, `NetworkError` classification, 408 fix, `www.` strip, state sync, `RateLimitError` registration |
 | v1.4 | 2024-06-01 | `on_failure` only for retryable, HTTP 408 -> `RATE_LIMITED`, `httpx` network errors -> `NETWORK_ERROR`, `max_chars` removed, `research` block removed, `www.` boundary fix, `0.0.0.0`/`::` blocked |
+| v1.6 | 2026-07-18 | `search` → `web` fallback chain (CB_OPEN/AUTH_FAILED/RATE_LIMITED/QUOTA_EXHAUSTED), `extract` >10 URL batching, search URL deduplication, roadmap fix (research uses web, not tavily) |
 | v1.5 | 2026-07-05 | Removed dead `citation_format` facade param (was never forwarded to any handler — `research` is workflow-only, not in DISPATCH). `core/net/retry.py` v1.5 fix inherited: CB no longer accumulates failure_count from successful-but-retried calls. |
 
 ---
@@ -164,14 +165,14 @@
 | Wire `run_research()` into `workflows/deep_research_impl/nodes/search.py` | Trigger: "when iteration > 3 and completeness < 50" as accelerator | P1 |
 | Adopt `core/net/` in `web_ops` | Use `core/net/errors.py`, `core/net/security.py`, `core/net/retry.py` in `web_ops/actions/scrape.py` and `search.py` | P1 |
 | Adopt `core/net/` in `browser` tool | Use `classify_http_error()` for Playwright errors; `get_retry_delay()` for nav retries | P1 |
-| `tavily(search)` -> `web(search)` fallback chain | Automatic fallback when CB open / no key / rate limited, using `error_code` | P2 |
-| `tavily(search)` as primary search in research workflow | Replace `web(search)` with `tavily(search)` in `workflows/research.py` when API key present | P2 |
+| `tavily(search)` → `web(search)` fallback chain | ✅ v1.6 — Auto-fallback on CB_OPEN/AUTH_FAILED/RATE_LIMITED/QUOTA_EXHAUSTED | — |
+| ~~`tavily(search)` as primary search in research workflow~~ | **REMOVED (v1.6):** Incorrect — research uses `web(search)` as primary (SearXNG); deep_research uses `tavily(search)`. These are separate workflows by design. | — |
 | Add `@cached` decorator | LRU cache for search/extract results (TTL 300s/1800s) | P2 |
 | URL normalization module | `core/net/url.py` -- strip slashes, sort params, lowercase domain | P2 |
 | Remove backward-compat wrappers | Delete `core/net/security.py` and `core/net/retry.py` re-exports once web_ops/browser migrate | P3 |
-| Search result deduplication | Similar to `web(search_and_read)`, deduplicate identical URLs across Tavily result pages | P3 |
+| Search result deduplication | ✅ v1.6 — URL dedup preserving rank order (first occurrence wins) | — |
 | Response caching | Cache Tavily responses (TTL-based) to avoid redundant API calls | P3 |
-| Client-side batching for `extract` | Split >10 URLs into batches of 10, execute concurrently, merge results | P2 |
+| Client-side batching for `extract` | ✅ v1.6 — >10 URLs auto-batched in groups of 10, partial results on batch failure | — |
 | Persistent event loop in `bridge.py` | Background thread with dedicated loop to save ~1ms per call | P3 |
 | Surface `include_images`/`include_image_descriptions` in `search` | SDK supports it; facade needs param | P2 |
 | Surface `search_depth`/`topic`/`time_range` validation | Client-side enum validation instead of SDK error | P2 |

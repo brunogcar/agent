@@ -23,7 +23,7 @@ from tools.tavily_ops import bridge
 @register_action(
     "tavily", "extract",
     help_text="""extract — Bulk URL content extraction.
-Required: urls (list, max 10)
+Required: urls (list — v1.6: >10 URLs auto-batched in groups of 10)
 Optional: include_images, extract_depth, format""",
     examples=[
         'tavily(action="extract", urls=["https://example.com"])',
@@ -44,8 +44,8 @@ def _action_extract(
     """
     if not urls:
         return fail("urls is required for extract action", trace_id=trace_id)
-    if len(urls) > EXTRACT_MAX_URLS:
-        return fail(f"urls cannot exceed {EXTRACT_MAX_URLS} items", trace_id=trace_id)
+    # v1.6: Batch >10 URLs into groups of 10 (was: hard limit of 10)
+    needs_batching = len(urls) > EXTRACT_MAX_URLS
 
     # v1.3: Normalize URLs for deduplication and cache key consistency
     urls = [normalize_url(u) for u in urls]
@@ -66,20 +66,44 @@ def _action_extract(
     if keyless:
         _client._warn_keyless_once()
 
-    def _call():
-        client = _client._get_singleton_client()
-        return client.extract(
-            urls=urls,
-            include_images=include_images,
-            extract_depth=extract_depth,
-            format=format,
-        )
+    # v1.6: Batch extraction for >10 URLs
+    if needs_batching:
+        all_results = []
+        for i in range(0, len(urls), EXTRACT_MAX_URLS):
+            batch = urls[i:i + EXTRACT_MAX_URLS]
+            def _batch_call(b=batch):
+                client = _client._get_singleton_client()
+                return client.extract(
+                    urls=b,
+                    include_images=include_images,
+                    extract_depth=extract_depth,
+                    format=format,
+                )
+            try:
+                batch_result = bridge._run_async_with_resilience(_batch_call, trace_id=trace_id)
+                all_results.extend(batch_result.get("results", []))
+            except Exception as e:
+                error_result = _handle_tavily_error(e, trace_id=trace_id)
+                # Continue with partial results — don't fail the whole batch
+                from core.tracer import tracer
+                tracer.warning(trace_id, "tavily_extract",
+                               f"Batch {i//EXTRACT_MAX_URLS + 1} failed: {error_result.get('error', '')}")
+        result = {"results": all_results}
+    else:
+        def _call():
+            client = _client._get_singleton_client()
+            return client.extract(
+                urls=urls,
+                include_images=include_images,
+                extract_depth=extract_depth,
+                format=format,
+            )
 
-    try:
-        # v1.3 FIX: Use _run_async_with_resilience instead of _run_async(_call())
-        result = bridge._run_async_with_resilience(_call, trace_id=trace_id)
-    except Exception as e:
-        return _handle_tavily_error(e, trace_id=trace_id)
+        try:
+            # v1.3 FIX: Use _run_async_with_resilience instead of _run_async(_call())
+            result = bridge._run_async_with_resilience(_call, trace_id=trace_id)
+        except Exception as e:
+            return _handle_tavily_error(e, trace_id=trace_id)
 
     # v1.3: Record successful API call
     record_tool_call("tavily.extract")
