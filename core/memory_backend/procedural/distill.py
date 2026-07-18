@@ -11,14 +11,17 @@ from core.memory_backend.procedural.validate import is_valid_rule
 
 # Module-level schema constant (hardening fix: was inline in distill_workflow()).
 # Defined once, reused on every call. Matches SYSTEM_PROMPT in prompts.py.
+# v1.0: Added `reasoning` field — the injector reads meta.get("reasoning", "")
+# and surfaces it in the prompt so future workflows understand WHY a rule holds.
 _DISTILL_JSON_SCHEMA = {
     "type": "object",
     "properties": {
         "has_insight": {"type": "boolean"},
         "rule": {"type": "string"},
         "tags": {"type": "string"},
+        "reasoning": {"type": "string", "maxLength": 500},
     },
-    "required": ["has_insight", "rule", "tags"],
+    "required": ["has_insight", "rule", "tags", "reasoning"],
     "additionalProperties": False,
 }
 
@@ -87,6 +90,7 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
 
     rule_text = data.get("rule", "")
     tags = data.get("tags", "procedural,auto")
+    reasoning = data.get("reasoning", "")  # v1.0: why the rule was learned
 
     # Validate
     is_valid, reason = is_valid_rule(rule_text)
@@ -101,7 +105,8 @@ def distill_workflow(trace_text: str, trace_id: str, timeout: int = 15) -> dict:
         tags=tags,
         trace_id=trace_id,
         goal="workflow_distillation",
-        outcome="success"
+        outcome="success",
+        reasoning=reasoning,
     )
 
     return {"status": "stored", "rule_preview": rule_text[:80], "store_result": store_result}

@@ -44,7 +44,7 @@ core/memory_backend/
 ├── write_ops.py               # execute_store() — TOCTOU-safe dedup + insert; execute_store_chunked() — batch insert (v1.1)
 ├── read_ops.py                # execute_recall(), execute_recall_context()
 ├── scoring.py                 # _decay_score() + _rewrite_query() (model-free)
-├── maintenance.py             # execute_delete/prune/summarize/stats/diversity_maintenance() — v1.4: uses generate_trace_id() (not new_trace) for error-only logging (zero side effects)
+├── maintenance.py             # execute_delete/prune/summarize/stats/diversity_maintenance() — v1.4: uses generate_trace_id() (not new_trace) for error-only logging (zero side effects). v1.5: same pattern extended to sleep_learn/injector.py (error path → generate_trace_id) + sleep_learn/feedback.py (full cycle → tracer.new_trace).
 ├── telemetry.py               # RecallTracker — RAM buffer, periodic ChromaDB flush
 ├── eviction.py                # EvictionQueue class + flusher_loop() — disk spill queue
 ├── janitor.py                 # archive_old_episodes() — episodic archival only
@@ -307,6 +307,8 @@ This prevents "ghost mutations" — writes that happen after a workflow is cance
 The memory backend has **two parallel systems** that extract procedural rules from execution history:
 
 > **v1.0 (Commit 4): Split-brain RESOLVED.** With `SLEEP_LEARN_UNIFIED=true` (default), both writers now target the same `procedural` collection via `build_unified_metadata()` (`core/memory_backend/rule_schema.py`). The isolated `procedural_meta` collection is deprecated; `core/sleep_learn/migrate.py` migrates existing rules into the unified collection. The injector reads from a single source. The historical two-collection split described below is preserved for context only.
+>
+> **v1.5 (Bug 1) update — split-brain ACTUALLY fixed in code.** The v1.0 note above described the intended behavior, but `injector.py get_relevant_rules()` was still querying the legacy `procedural_meta` collection unconditionally AND the unified `procedural` collection — a true split-brain (rules appeared twice or the legacy read masked the unified read). v1.5 gates the legacy query behind `if not SLEEP_LEARN_UNIFIED:`, so when `SLEEP_LEARN_UNIFIED=true` (default) ONLY the unified `procedural` collection is queried (via `memory.recall(collections=["procedural"])`). The legacy path is retained for backward compat but is dead code in default deployments. Also fixed in the same pass: literal `"daemon"` trace_id → `generate_trace_id()` on the error path, and confidence read order canonical-first (`meta.get("confidence", meta.get("confidence_score", 0.0))`).
 
 ### System Comparison
 
@@ -345,9 +347,12 @@ graph TD
 Both systems converge at the **injector** (`sleep_learn/injector.py`), which merges rules from both collections into the Planner's system prompt:
 
 ```python
-# Injector reads from both collections
-rules_main = memory.recall("", collection="procedural", top_k=20)
-rules_sleep = get_relevant_rules(query, k=SLEEP_LEARN_MAX_INJECTED_RULES)
+# v1.5: Injector reads from the unified `procedural` collection ONLY
+# (SLEEP_LEARN_UNIFIED=true, default). The legacy procedural_meta query
+# is gated on `if not SLEEP_LEARN_UNIFIED:` — dead code in default deployments.
+rules = get_relevant_rules(query, k=SLEEP_LEARN_MAX_INJECTED_RULES)
+# get_relevant_rules() internally calls memory.recall(collections=["procedural"])
+# and sorts by rank_score = similarity * confidence.
 
 # Merges by hash dedup, injects into Planner prompt
 prompt = base_prompt + "\n\n# Learned Rules\n" + merged_rules
@@ -493,4 +498,4 @@ The `pruner.py` module (`core/memory_backend/pruner.py`) implements VRAM-aware c
 
 ---
 
-*Last updated: 2026-07-17. See [API.md](API.md) for backend API reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.5: injector unified read path gated on SLEEP_LEARN_UNIFIED; generate_trace_id pattern extended to injector + feedback). See [API.md](API.md) for backend API reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

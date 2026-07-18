@@ -72,6 +72,8 @@ def process_feedback() -> dict:
 | **Infrastructure failure** | Neutral — no change | `0` (timeout, connection, rate limit, etc.) |
 | **Confidence < 0.3** | Auto-purge rule | Deleted from `procedural_meta` |
 
+**v1.5 (Bug 2): `update_rule_confidence()` writes BOTH fields.** `confidence` is the canonical field (per `rule_schema.py`); `confidence_score` is a legacy mirror kept for pre-migration readers. Previously only `confidence_score` was written, so the injector's canonical `meta.get("confidence", ...)` read saw STALE data — boosts/penalties never reached the Planner. Now writes both in sync: `meta["confidence"] = new_conf; meta["confidence_score"] = new_conf`. Reads canonical first: `meta.get("confidence", meta.get("confidence_score", 0.8))`. Also fixed: literal `"daemon"` trace_id → `tracer.new_trace("sleep_learn", goal="feedback cycle")`.
+
 **Key behaviors:**
 - Reads `logs/sleep_learn/injections.jsonl` for pending rule injections
 - Scans `logs/agent_YYYYMMDD.jsonl` for `trace_finish` events
@@ -179,10 +181,11 @@ def save_rule(rule_text: str, source_memory_id: str, confidence: float = 0.8) ->
 ### 7. Injector (`injector.py`)
 
 ```python
-def get_relevant_rules(query: str, k: int = 3) -> list[dict]:
+def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> list[dict]:
     """
-    Queries the procedural_meta collection for rules relevant to the current task.
-    Falls back to main memory's procedural collection for split-brain compatibility.
+    v1.5: Queries the unified `procedural` collection (via memory.recall) when
+    SLEEP_LEARN_UNIFIED=true (default). The legacy `procedural_meta` query is
+    gated behind `if not SLEEP_LEARN_UNIFIED:` — dead code in default deployments.
     """
 
 def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") -> str:
@@ -192,13 +195,15 @@ def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") 
     """
 ```
 
-**Split-brain fallback:** The injector queries both the isolated `procedural_meta` collection AND the main memory's `procedural` collection. This ensures rules learned by `meta_learning.py` are visible even if the sleep-learn daemon has not processed them yet.
+**v1.0 (Commit 4): Split-brain fallback replaced with unified read.** The injector reads from the main `procedural` collection using the `confidence` field (unified schema).
 
-**v1.0 (Commit 4): Split-brain fallback replaced with unified read.** The injector reads from the main `procedural` collection using the `confidence` field (unified schema). The legacy dual-collection query path is removed; `procedural_meta` is dropped after migration.
+**v1.5 (Bug 1): Split-brain ACTUALLY fixed in code.** The v1.0 note described the intent, but `get_relevant_rules()` was still querying `procedural_meta` unconditionally AND `procedural` — a true split-brain (rules appeared twice or the legacy read masked the unified read). Now the legacy query is gated behind `if not SLEEP_LEARN_UNIFIED:`. When `SLEEP_LEARN_UNIFIED=true` (default), ONLY `memory.recall(collections=["procedural"])` is queried. Also fixed: literal `"daemon"` trace_id → `generate_trace_id()` on the error path; confidence read order canonical-first (`meta.get("confidence", meta.get("confidence_score", 0.0))`).
 
 **Deduplication:** Uses `seen_ids` set for O(n) dedup (not O(n²) scan).
 
 **Confidence scale normalization:** Main memory importance (1–10) is clamped to `[0, 1]` for unified scoring.
+
+**v1.5 (Bug 5): `reasoning` field populated end-to-end.** The injector reads `meta.get("reasoning", "")` and surfaces it in the Planner prompt ("Reason: ...") so future workflows understand WHY a rule holds. `procedural/distill.py` now (a) requires `reasoning: {type: string, maxLength: 500}` in `_DISTILL_JSON_SCHEMA` (properties + required), (b) asks for it in the system prompt, and (c) threads it through `store_procedural(reasoning=...)` → `_store()` → `execute_store()` → `build_unified_metadata()`. The `reasoning` field is no longer empty for distilled rules.
 
 **Kill switch:** If `SLEEP_LEARN_INJECT_ENABLED=false`, returns the base prompt unchanged.
 
@@ -244,17 +249,17 @@ def purge_stale_rules() -> dict:
 |----------|--------|-----------|-------------|
 | `start_background_daemon()` | `daemon.py` | `() -> None` | Start the scheduler |
 | `process_feedback()` | `feedback.py` | `() -> dict` | Process all pending feedback entries |
-| `update_rule_confidence()` | `feedback.py` | `(rule_id, success, penalty_override) -> dict` | Update a single rule's confidence |
+| `update_rule_confidence()` | `feedback.py` | `(rule_id, success, penalty_override) -> dict` | Update a single rule's confidence (v1.5: writes BOTH `confidence` + `confidence_score`) |
 | `_update_recall_counts()` | `feedback.py` | `(rule_counts) -> None` | Batch update recall_count for injected rules |
 | `distill_observation()` | `distiller.py` | `(observation: dict) -> dict` | Extract a rule from a single observation |
 | `is_quality_rule()` | `filters.py` | `(rule_text: str) -> tuple[bool, str]` | Validate a single rule |
 | `save_rule()` | `storage.py` | `(rule_text, source_memory_id, confidence=0.8) -> str` | Write validated rule to `procedural_meta` |
 | `get_collection_stats()` | `storage.py` | `() -> dict` | Return count and name of learned rules collection |
-| `get_relevant_rules()` | `injector.py` | `(query, k=3) -> list[dict]` | Query both procedural collections |
+| `get_relevant_rules()` | `injector.py` | `(query, k=3) -> list[dict]` | Query unified `procedural` collection (v1.5: gated on `SLEEP_LEARN_UNIFIED`) |
 | `inject_rules_into_prompt()` | `injector.py` | `(goal, system_prompt, trace_id="") -> str` | Merge rules into Planner prompt |
 | `sweep_recent_observations()` | `sweeper.py` | `(hours=1) -> list[dict]` | Gather high-signal events (Phase 1: heartbeat only) |
 | `purge_stale_rules()` | `janitor.py` | `() -> dict` | Delete old or low-confidence rules |
 
 ---
 
-*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.5: SLEEP_LEARN_UNIFIED gate, confidence mirror, reasoning end-to-end). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

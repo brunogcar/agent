@@ -13,9 +13,10 @@ SYSTEM_PROMPT = (
     "{\n"
     '  "has_insight": true/false,\n'
     '  "rule": "When [specific condition/error], do [specific action] because [technical reason].",\n'
-    '  "tags": "comma,separated,tags"\n'
+    '  "tags": "comma,separated,tags",\n'
+    '  "reasoning": "A short explanation of why this rule is true and what observation led to it (max 500 chars)."\n'
     "}\n"
-    "If no reusable procedural insight exists in the trace, set has_insight to false and rule to empty string."
+    "If no reusable procedural insight exists in the trace, set has_insight to false and rule/reasoning to empty strings."
 )
 
 USER_PROMPT_TEMPLATE = (

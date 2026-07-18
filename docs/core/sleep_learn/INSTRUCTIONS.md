@@ -18,6 +18,8 @@
 12. **Never add `**kwargs` to the `@tool` facade** — FastMCP schema breaks.
 13. **Never print to stdout** — MCP stdio corruption. Return dicts only.
 14. **Never skip `compileall` before `pytest`** — Catches syntax errors early.
+15. **Never query `procedural_meta` when `SLEEP_LEARN_UNIFIED=true`** — v1.5 (Bug 1): the injector's `get_relevant_rules()` previously queried the legacy `procedural_meta` collection unconditionally AND the unified `procedural` collection — a true split-brain (rules appeared twice or the legacy read masked the unified read). Now the legacy query is gated behind `if not SLEEP_LEARN_UNIFIED:`. When `SLEEP_LEARN_UNIFIED=true` (default), ONLY the unified `procedural` collection (via `memory.recall(collections=["procedural"])`) is queried. The legacy path is dead code in default deployments — do not re-enable it.
+16. **Never use `time.sleep()` in daemon loops — use `Event.wait()`** — v1.5 (Bug 4): `meta_learning.py run_forever()` was using `_time.sleep(1800)` unconditionally. `time.sleep` is globally mockable (tests patch it), which can cause daemons to either never sleep or sleep forever in test environments. `threading.Event().wait(timeout=1800)` is immune to `time.sleep` mocks and is the pattern already used in `sleep_learn/daemon.py`. Always use `Event.wait(timeout=...)` for daemon loop pauses.
 
 ## ✅ ALWAYS DO
 
@@ -32,6 +34,7 @@
 23. **Always patch pytest to `D:\mcp\agent\venv\Scripts\pytest.exe`** — per project workflow.
 24. **Always include `-W error` and `--tb=short` in pytest commands** — clean output, catch warnings.
 25. **Always update this doc** when adding components, changing confidence thresholds, or modifying guardrails.
+26. **Always gate background daemons on `tracker.try_acquire_background_slot()`** — v1.5 (Bug 4): `meta_learning.py run_forever()` now mirrors `sleep_learn/daemon.py` — it calls `tracker.try_acquire_background_slot(min_idle_seconds=300)` before running and `tracker.release_background_slot()` in a `finally` block. This prevents the meta-learner from running in test/short-lived sessions (where there's no real idle period) and avoids VRAM contention with user-facing calls. Any new background daemon MUST follow this pattern: acquire slot → run → release in `finally`.
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
@@ -45,4 +48,4 @@
 
 ---
 
-*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-18 (v1.5: SLEEP_LEARN_UNIFIED gate enforced, Event.wait in daemon loops, background-slot gating). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history.*

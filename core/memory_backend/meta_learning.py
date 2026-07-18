@@ -15,10 +15,7 @@ Both write to the 'procedural' collection but with different metadata tags
 (source="meta_learner" vs source="sleep_learn"). The injector.py queries
 both collections to provide a unified view to the planner.
 
-UNIFICATION STATUS: Partial. Collections are unified (both write to 'procedural'),
-but the query logic in injector.py still checks both for backward compatibility.
-Full unification (single query, no fallback) requires further investigation
-and a dedicated testing session.
+UNIFICATION STATUS: Complete. Both meta_learning and sleep_learn write to the unified 'procedural' collection. The injector reads ONLY from 'procedural' when SLEEP_LEARN_UNIFIED=true (default). Legacy 'procedural_meta' reads are gated on SLEEP_LEARN_UNIFIED=false.
 
 
 [DESIGN] KEY DECISIONS — read before modifying:
@@ -46,6 +43,7 @@ from __future__ import annotations
 import json
 import time
 import hashlib
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -152,12 +150,24 @@ def distill_and_store(trace_id: str, trace: dict) -> dict:
 
         # Store with source tag for split-brain tracking
         # [P3 FIX] Added source="meta_learner" to distinguish from sleep_learn rules
+        # [v1.0 FIX] Use canonical tag prefixes (source:, category:) — bare tags
+        # like "meta-learned,auto-distilled" fail validate_tags() and would be
+        # rejected at write time once the schema is enforced.
+        tags = "source:meta_learner,category:auto_distilled"
         try:
+            from core.memory_backend.rule_schema import validate_tags, normalize_tags
+            normalized_tags = normalize_tags(tags, source="meta_learner")
+            is_valid, err = validate_tags(normalized_tags)
+            if not is_valid:
+                tracer.warning(trace_id, "meta_learning", f"Invalid tags: {err}")
+                stats["skipped"] += 1
+                continue
+            tags = normalized_tags
             memory.store(
                 text=text,
                 collection="procedural",
                 importance=rule["importance"],
-                tags="meta-learned,auto-distilled",
+                tags=tags,
                 trace_id=trace_id,
                 source="meta_learner",  # [P3] Tag for unified collection tracking
             )
@@ -195,24 +205,29 @@ class MetaLearner:
 
     def run_forever(self) -> None:
         """Daemon loop. Sleeps 30 mins between scans."""
-        import time as _time
+        from core.runtime.activity_tracker import tracker
+        _idle_event = threading.Event()
+        SLEEP_LEARN_IDLE_THRESHOLD_SEC = 300  # 5 minutes — same as daemon.py
+
         while True:
-            # [v1.1 FIX] Create a unique trace_id per daemon cycle.
-            # Previously used the literal string "daemon" as trace_id,
-            # causing trace collisions across cycles.
-            # See: docs/core/observability/CHANGELOG.md (v1.1)
+            # v1.2: Gate on idle detection — mirror sleep_learn/daemon.py pattern.
+            # Prevents the meta-learner from running in test environments.
             _tid = tracer.new_trace("meta_learning", goal="daemon cycle")
-            try:
-                stats = self.run_once()
-                if stats["stored"] > 0:
-                    tracer.step(
-                        _tid, "meta_learning",
-                        f"Distilled {stats['stored']} rules",
-                        skipped=stats["skipped"], errors=stats["errors"],
-                    )
-            except Exception as e:
-                tracer.error(_tid, "meta_learning", f"Cycle failed: {e}")
-            _time.sleep(1800)  # 30 minutes
+            if tracker.try_acquire_background_slot(min_idle_seconds=SLEEP_LEARN_IDLE_THRESHOLD_SEC):
+                try:
+                    stats = self.run_once()
+                    if stats["stored"] > 0:
+                        tracer.step(
+                            _tid, "meta_learning",
+                            f"Distilled {stats['stored']} rules",
+                            skipped=stats["skipped"], errors=stats["errors"],
+                        )
+                except Exception as e:
+                    tracer.error(_tid, "meta_learning", f"Cycle failed: {e}")
+                finally:
+                    tracker.release_background_slot()
+            # Event.wait, not time.sleep — immune to time.sleep mocks
+            _idle_event.wait(timeout=1800)  # 30 minutes
 
 # -- Singleton --------------------------------------------------------------
 learner = MetaLearner()

@@ -21,6 +21,8 @@
 16. **Never skip `compileall` before `pytest`** — Catches syntax errors early.
 17. **Never run vector dedup on chunked stores** — v1.1: Chunks from the same document are semantically similar and would falsely trigger the vector dedup pipeline. `execute_store_chunked()` does hash-dedup-only. Do not add vector dedup to `execute_store_chunked()`.
 18. **Never call `execute_store()` for chunks** — v1.1: Use `execute_store_chunked()` instead. The standard `execute_store()` runs two-layer dedup on every call; chunks would be silently dropped. See `write_ops.py` block comment for full rationale.
+19. **Never write `confidence_score` without also writing `confidence`** — v1.5 (Bug 2): `confidence` is the canonical field per `rule_schema.py`; `confidence_score` is a legacy mirror kept for pre-migration readers. `feedback.py update_rule_confidence()` previously wrote only `confidence_score`, so the injector's canonical `meta.get("confidence", ...)` read saw STALE data (boosts/penalties never reached the Planner). Always write BOTH: `meta["confidence"] = new_conf; meta["confidence_score"] = new_conf`. When reading, read canonical first: `meta.get("confidence", meta.get("confidence_score", 0.8))`.
+20. **Never use non-canonical tag prefixes** — v1.5 (Bugs 3, 7): `validate_tags()` only accepts the 5 canonical prefixes — `source:`, `domain:`, `category:`, `status:`, `evidence:`. Bare tags like `"meta-learned,auto-distilled"` and non-canonical prefixes like `type:{fact['type']}` fail validation and would be rejected at write time once the schema is enforced. Use `source:meta_learner,category:auto_distilled` and `category:{fact['type']}` instead. (`type:` is NOT in `VALID_TAG_PREFIXES` — common mistake.)
 
 ### ALWAYS DO
 17. **Always use `from core.memory_engine import memory`** — The facade is the only public API surface.
@@ -31,6 +33,9 @@
 21. **Always include `error_code` in `fail()` calls** — Every error response must include a structured code.
 22. **Always run `compileall` after editing memory files** — Verify syntax before running tests.
 23. **Always run targeted tests (`tests/core/memory/`) after changes** — 41 tests cover the full backend.
+24. **Always call `validate_tags()` + `normalize_tags()` before `memory.store()`** — v1.5 (Bug 3): `meta_learning.py` was constructing tags as a raw string (`"meta-learned,auto-distilled"`) and passing them straight to `memory.store()`, bypassing the schema. Now it calls `normalize_tags(tags, source="meta_learner")` then `validate_tags(normalized_tags)` and skips the store on validation failure. This catches non-canonical prefixes (see NEVER DO #20) at write time rather than letting them silently land in ChromaDB.
+25. **Always produce `reasoning` in distillation** — v1.5 (Bug 5): the injector reads `meta.get("reasoning", "")` and surfaces it in the Planner prompt so future workflows understand WHY a rule holds. If the distiller doesn't emit `reasoning`, the injector shows an empty reason and the rule loses explanatory context. `procedural/distill.py` now (a) includes `reasoning: {type: string, maxLength: 500}` in `_DISTILL_JSON_SCHEMA` properties + required, (b) asks for it in the system prompt, and (c) threads it through `store_procedural(reasoning=...)` → `_store()` → `execute_store()` → `build_unified_metadata()`. End-to-end populated.
+26. **Always use `generate_trace_id()` for error-only functions, `tracer.new_trace()` for full trace lifecycle** — v1.5 (Bugs 1, 2 bonus): the v1.4 rule (#19 above) fixed `maintenance.py`; v1.5 extends the SAME pattern to `sleep_learn/injector.py` (error path: literal `"daemon"` → `generate_trace_id()`) and `sleep_learn/feedback.py` (full cycle: literal `"daemon"` → `tracer.new_trace("sleep_learn", goal="feedback cycle")`). The distinction: `generate_trace_id()` returns a unique 12-char hex ID with ZERO side effects (no file I/O, no stderr, no `_TraceStore` insert) — use it when the function only calls `tracer.error()`. `tracer.new_trace()` starts a full trace (writes to JSONL, prints, inserts to store) — use it when the function also calls `step()`/`finish()`. Never reuse a literal string like `"daemon"` as a trace_id — it collides across cycles.
 
 ---
 
@@ -58,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-18 (v1.5 post-merge cleanup: confidence mirror, canonical tags, reasoning field, trace_id discipline). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [CHANGELOG.md](CHANGELOG.md) for version history.*

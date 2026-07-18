@@ -14,7 +14,7 @@ from collections import defaultdict
 
 from core.config import cfg
 from core.sleep_learn.config import _SLEEP_LEARN_DB_PATH, SLEEP_LEARN_COLLECTION_NAME
-from core.tracer import tracer
+from core.tracer import tracer, generate_trace_id
 
 INJECTIONS_LOG = cfg.sleep_learn_log_path / "injections.jsonl"
 CONFIDENCE_BOOST = 0.1
@@ -71,7 +71,7 @@ def update_rule_confidence(rule_id: str, success: bool, penalty_override: float 
             return {"status": "skipped", "reason": "Rule not found"}
 
         meta = existing['metadatas'][0]
-        current_conf = float(meta.get("confidence_score", 0.8))
+        current_conf = float(meta.get("confidence", meta.get("confidence_score", 0.8)))
         delta = CONFIDENCE_BOOST if success else (penalty_override or CONFIDENCE_PENALTY)
         new_conf = round(max(0.0, min(1.0, current_conf + delta)), 2)
 
@@ -79,7 +79,11 @@ def update_rule_confidence(rule_id: str, success: bool, penalty_override: float 
             collection.delete(ids=[rule_id])
             return {"status": "purged", "old_conf": current_conf, "new_conf": new_conf}
 
+        # v1.0: Write BOTH canonical `confidence` and legacy `confidence_score` mirror.
+        # The canonical field per rule_schema.py is `confidence`; `confidence_score`
+        # is kept in sync for backward compat with pre-migration readers.
         meta["confidence_score"] = new_conf
+        meta["confidence"] = new_conf
         meta["last_evaluated_at"] = int(time.time())
         collection.update(ids=[rule_id], metadatas=[meta])
         return {"status": "updated", "old_conf": current_conf, "new_conf": new_conf}
@@ -100,7 +104,7 @@ def _update_recall_counts(rule_counts: Dict[str, int]):
                 meta["last_accessed_at"] = int(time.time())
                 collection.update(ids=[rule_id], metadatas=[meta])
     except Exception as e:
-        tracer.warning("daemon", "sleep_learn_feedback", f"Failed to update recall counts: {e}")
+        tracer.warning(generate_trace_id(), "sleep_learn_feedback", f"Failed to update recall counts: {e}")
 
 def process_feedback() -> dict:
     """

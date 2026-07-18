@@ -58,8 +58,8 @@ class MemoryStore:
 
     # ── Store Delegators ──────────────────────────────────────────────────
 
-    def _store(self, collection: str, text: str, importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "") -> dict:
-        return write_ops.execute_store(self, collection, text, importance, tags, trace_id, goal, outcome, tools_used, source)
+    def _store(self, collection: str, text: str, importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "", reasoning: str = "") -> dict:
+        return write_ops.execute_store(self, collection, text, importance, tags, trace_id, goal, outcome, tools_used, source, reasoning)
 
     def store_episodic(self, text: str, importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "") -> dict:
         return self._store(COLLECTION_EPISODIC, text, importance, tags, trace_id, goal, outcome, tools_used)
@@ -67,27 +67,27 @@ class MemoryStore:
     def store_semantic(self, text: str, importance: int = 5, tags: str = "", trace_id: str = "", source: str = "") -> dict:
         return self._store(COLLECTION_SEMANTIC, text, importance, tags, trace_id, source=source)
 
-    def store_procedural(self, text: str, importance: int = 7, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "success") -> dict:
-        return self._store(COLLECTION_PROCEDURAL, text, importance, tags, trace_id, goal, outcome)
+    def store_procedural(self, text: str, importance: int = 7, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "success", reasoning: str = "") -> dict:
+        return self._store(COLLECTION_PROCEDURAL, text, importance, tags, trace_id, goal, outcome, reasoning=reasoning)
 
     def store_atomic(self, text: str, importance: int = 5, tags: str = "", trace_id: str = "", source: str = "") -> dict:
         """v1.5: Store an atomic fact (L1 layer)."""
         return self._store(COLLECTION_ATOMIC, text, importance, tags, trace_id, source=source)
 
-    def store(self, text: str, memory_type: str = "semantic", importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "") -> dict:
+    def store(self, text: str, memory_type: str = "semantic", importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "", reasoning: str = "") -> dict:
         if memory_type not in ALL_COLLECTIONS:
             memory_type = COLLECTION_SEMANTIC
-        return self._store(memory_type, text, importance, tags, trace_id, goal, outcome, tools_used, source)
+        return self._store(memory_type, text, importance, tags, trace_id, goal, outcome, tools_used, source, reasoning)
 
     # ── v1.1: Chunked Store ─────────────────────────────────────────────
     # Stores a pre-split list of chunks as linked memories.
     # Uses execute_store_chunked() which does hash-dedup-only (skips vector
     # dedup — chunks from the same document would falsely trigger it).
     # See write_ops.execute_store_chunked() for full rationale.
-    def store_chunked(self, chunks: list[str], memory_type: str = "semantic", importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "") -> dict:
+    def store_chunked(self, chunks: list[str], memory_type: str = "semantic", importance: int = 5, tags: str = "", trace_id: str = "", goal: str = "", outcome: str = "unknown", tools_used: str = "", source: str = "", reasoning: str = "") -> dict:
         if memory_type not in ALL_COLLECTIONS:
             memory_type = COLLECTION_SEMANTIC
-        return write_ops.execute_store_chunked(self, memory_type, chunks, importance, tags, trace_id, goal, outcome, tools_used, source)
+        return write_ops.execute_store_chunked(self, memory_type, chunks, importance, tags, trace_id, goal, outcome, tools_used, source, reasoning)
 
     # ── Recall Delegators ─────────────────────────────────────────────────
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import time
+import threading
 from typing import Any
 
 from core.contracts import ok, fail
@@ -28,32 +29,45 @@ from core.config import cfg
 from core.tracer import tracer
 
 
+# v1.0 (P2 FIX): True singleton — was creating a new SQLite connection on
+# every call. SQLite PersistentClient-style cost (file handle + page cache)
+# multiplied per update. Now double-checked-locked at module level.
+_audit_conn = None
+_audit_lock = threading.Lock()
+
+
 def _get_audit_db():
     """Lazy-init the SQLite audit database. Singleton per process.
 
     Uses the same memory_root as ChromaDB (memory_db/memory_audit.db).
-    Thread-safe via check_same_thread=False + the GIL.
+    Thread-safe via double-checked locking + check_same_thread=False.
     """
-    import sqlite3
-    db_path = cfg.memory_root / "memory_audit.db"
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS rule_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            rule_id TEXT NOT NULL,
-            changed_at INTEGER NOT NULL,
-            field TEXT NOT NULL,
-            old_value TEXT,
-            new_value TEXT,
-            reason TEXT,
-            actor TEXT DEFAULT 'unknown'
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_rule_id ON rule_history(rule_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_changed_at ON rule_history(changed_at)")
-    conn.commit()
-    return conn
+    global _audit_conn
+    if _audit_conn is not None:
+        return _audit_conn
+    with _audit_lock:
+        if _audit_conn is not None:
+            return _audit_conn
+        import sqlite3
+        db_path = cfg.memory_root / "memory_audit.db"
+        _audit_conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        _audit_conn.row_factory = sqlite3.Row
+        _audit_conn.execute("""
+            CREATE TABLE IF NOT EXISTS rule_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id TEXT NOT NULL,
+                changed_at INTEGER NOT NULL,
+                field TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                reason TEXT,
+                actor TEXT DEFAULT 'unknown'
+            )
+        """)
+        _audit_conn.execute("CREATE INDEX IF NOT EXISTS idx_rule_id ON rule_history(rule_id)")
+        _audit_conn.execute("CREATE INDEX IF NOT EXISTS idx_changed_at ON rule_history(changed_at)")
+        _audit_conn.commit()
+        return _audit_conn
 
 
 # Fields that can be updated (whitelist — prevents arbitrary metadata writes)
@@ -176,7 +190,7 @@ def run_update(
         changed_fields.append(field)
 
     if not changed_fields:
-        audit_conn.close()
+        # v1.0: Do NOT close the singleton conn — it is shared across calls.
         return ok({
             "action_status": "noop",
             "action": "update",
@@ -203,11 +217,9 @@ def run_update(
         store._col(found_col).update(ids=[id], metadatas=[found_meta])
     except Exception as e:
         audit_conn.commit()
-        audit_conn.close()
         return fail(f"ChromaDB update failed: {e}", trace_id=trace_id, error_code="INTERNAL_ERROR")
 
     audit_conn.commit()
-    audit_conn.close()
 
     if trace_id:
         tracer.step(trace_id, "memory_update", f"Updated {id}: {changed_fields}")

@@ -107,4 +107,37 @@ Two files fixed:
 
 See [observability/CHANGELOG.md](observability/CHANGELOG.md) for details.
 
-*Last updated: 2026-07-18 (v1.1 observability fix). See subfiles for detailed documentation.*
+## 🔧 v1.2 Post-Merge Cleanup (2026-07-18)
+
+12 bugs fixed across the memory + sleep_learn subsystem (minimax post-merge review). Closes the gap between the v1.2 unified rule schema contract (memory `v1.2`) and what the writers/injector actually wrote at runtime.
+
+### P0 (5 bugs — split-brain, confidence drift, reasoning end-to-end)
+
+| # | File | Fix |
+|---|------|-----|
+| 1 | `sleep_learn/injector.py` | **Split-brain ACTUALLY fixed.** `SLEEP_LEARN_UNIFIED` flag now gates the legacy `procedural_meta` query — when `true` (default) ONLY the unified `procedural` collection is queried (was querying both unconditionally → rules appeared twice or the legacy read masked the unified read). Also: literal `"daemon"` trace_id → `generate_trace_id()` on the error path; confidence read order canonical-first (`meta.get("confidence", meta.get("confidence_score", 0.0))`). |
+| 2 | `sleep_learn/feedback.py` | `update_rule_confidence()` now writes BOTH `meta["confidence"]` (canonical) AND `meta["confidence_score"]` (legacy mirror) — was only writing `confidence_score`, so the injector's canonical read saw STALE data (boosts/penalties never reached the Planner). Also reads canonical first; literal `"daemon"` trace_id → `tracer.new_trace("sleep_learn", goal="feedback cycle")`. |
+| 3 | `memory_backend/meta_learning.py` | Canonical tags: `tags="meta-learned,auto-distilled"` → `tags="source:meta_learner,category:auto_distilled"` (bare tags fail `validate_tags()`). Now calls `normalize_tags()` + `validate_tags()` before `memory.store()`. |
+| 4 | `memory_backend/meta_learning.py` | Idle detection added to `run_forever()`: was `_time.sleep(1800)` unconditionally; now mirrors `sleep_learn/daemon.py` — `tracker.try_acquire_background_slot(min_idle_seconds=300)` + `Event.wait(timeout=1800)` (immune to `time.sleep` mocks). Uses `tracer.new_trace()` per cycle. |
+| 5 | `memory_backend/procedural/distill.py` | `reasoning` field added end-to-end: `_DISTILL_JSON_SCHEMA` now has `reasoning: {type: string, maxLength: 500}` in properties + required; system prompt asks for it; `store_procedural(reasoning: str = "")` extended, wired through `_store()` → `execute_store()` → `build_unified_metadata()`. Injector's `meta.get("reasoning", "")` now finds populated data. |
+
+### P1 (4 bugs — dedup, tags, docstring, singleton)
+
+| # | File | Fix |
+|---|------|-----|
+| 6 | `memory_backend/atomic_extract.py` | Dedup: `min_score=0.0` (fetch all, post-filter) → `min_score=0.92` (let ChromaDB filter at the source — simpler + faster). |
+| 7 | `memory_backend/atomic_extract.py` | Tag prefix: `type:{fact['type']}` → `category:{fact['type']}` (canonical — `type:` is not in `VALID_TAG_PREFIXES`). |
+| 8 | `memory_backend/meta_learning.py` | Docstring: "UNIFICATION STATUS: Partial" → "Complete" (the injector split-brain is now actually fixed). |
+| 9 | `tools/memory_ops/actions/update.py` | `_get_audit_db()` singleton: was creating a new SQLite connection on every call (docstring said "Singleton per process" — it wasn't). Now uses module-level `_audit_conn` + `_audit_lock` with double-checked locking; removed 3 `audit_conn.close()` calls that would break the shared connection. |
+
+### P2 (3 bugs — documentation, field rename)
+
+| # | File | Fix |
+|---|------|-----|
+| 10 | `sleep_learn/janitor.py` | Comment clarified: Janitor Bypass is at the ACTION layer (`tools/memory_ops/actions/janitor.py` lazy-imports), not the function layer. |
+| 11 | `sleep_learn/migrate.py` | Merge semantics documented: confidence=MAX (not average), recall_count NOT updated, last_accessed_at NOT updated, provenance_count recomputed from `source_trace_ids` union — all deliberate choices, not bugs. |
+| 12 | `memory_backend/read_ops.py` | Field rename: `"trace_id"` → `"source_trace_id"` in recall results (was confusing — it's the memory's ORIGIN trace, not the current query's trace; matches schema's `source_trace_ids` field naming). |
+
+See [memory/CHANGELOG.md](memory/CHANGELOG.md) and [sleep_learn/CHANGELOG.md](sleep_learn/CHANGELOG.md) for full version-history details.
+
+*Last updated: 2026-07-18 (v1.2 post-merge cleanup: 12 bugs fixed). See subfiles for detailed documentation.*

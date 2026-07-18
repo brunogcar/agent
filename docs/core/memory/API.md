@@ -27,11 +27,13 @@ result = memory.store(
 | `goal` | `str` | `""` | What was being attempted (episodic/procedural) |
 | `outcome` | `str` | `"unknown"` | `success` / `failure` / `partial` / `unknown` |
 | `tools_used` | `str` | `""` | Comma-separated tool names (episodic) |
+| `reasoning` | `str` | `""` | **v1.5.** Why this memory/rule holds — surfaced by the injector in the Planner prompt. Required by `_DISTILL_JSON_SCHEMA` for procedural distillation (`maxLength: 500`). Threaded through `store()` → `store_procedural()` → `store_chunked()` → `build_unified_metadata()`. |
 
 **Typed helpers:**
 - `store_episodic(text, importance=5, tags="", trace_id="", goal="", outcome="unknown", tools_used="")`
 - `store_semantic(text, importance=5, tags="", trace_id="", source="")`
-- `store_procedural(text, importance=7, tags="", trace_id="", goal="", outcome="success")`
+- `store_procedural(text, importance=7, tags="", trace_id="", goal="", outcome="success", reasoning="")`
+  - **v1.5 (Bug 5):** `reasoning: str = ""` param added — threads through `_store()` → `execute_store()` → `build_unified_metadata()`. The injector reads `meta.get("reasoning", "")` and surfaces it in the Planner prompt ("why this rule holds"). Distillers (`procedural/distill.py`) MUST populate it; the `_DISTILL_JSON_SCHEMA` now requires `reasoning: {type: string, maxLength: 500}`. The base `store()` and `store_chunked()` methods also accept `reasoning` (same plumbing).
 
 **Returns:** `dict` — `{"status": "stored", "id": "uuid"}` or `{"status": "skipped_duplicate", ...}` or `{"status": "reinforced", ...}`
 
@@ -93,7 +95,12 @@ results = memory.recall(
 | `min_score` | `float` | `0.5` | Minimum confidence threshold |
 | `tags_filter` | `str` | `""` | Comma-separated — only return memories with ANY of these tags |
 
-**Returns:** `list[dict]` — Each result has `text`, `collection`, `score`, `tags`, `metadata`, `id`
+**Returns:** `list[dict]` — Each result has `text`, `collection`, `score`, `tags`, `metadata`, `id`, plus:
+  - **`source_trace_id`** — **v1.5 (Bug 12) rename:** was `trace_id`. This is the memory's ORIGIN trace (the trace that created the memory), NOT the current query's `trace_id`. Renamed to match the unified schema's `source_trace_ids` field naming and avoid confusion with the recall call's own `trace_id` param.
+  - **`source_doc_id` / `chunk_index` / `chunk_count`** — v1.1 chunk metadata (defaults `""` / `None` / `0` for non-chunked memories).
+  - **`goal` / `outcome` / `tools_used` / `source`** — episodic/procedural context fields.
+
+> **v1.5 (Bug 2) canonical confidence field:** In `metadata`, `confidence` is the canonical field (per `rule_schema.py`); `confidence_score` is a legacy mirror kept for pre-migration readers. When reading rule metadata, read canonical first: `meta.get("confidence", meta.get("confidence_score", 0.8))`. Writers (e.g. `feedback.update_rule_confidence()`) MUST write BOTH fields in sync — writing only `confidence_score` leaves the canonical read stale.
 
 ### `recall_context()` — Formatted Context String
 
@@ -254,4 +261,4 @@ Consolidate into a single module. Make `core/llm_backend/rate_limit.py` the publ
 
 ---
 
-*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.5: `store_procedural(reasoning=...)`, `source_trace_id` rename, canonical `confidence` field). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

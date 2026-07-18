@@ -15,8 +15,9 @@ from core.sleep_learn.config import (
     SLEEP_LEARN_INJECT_ENABLED,
     SLEEP_LEARN_MIN_CONFIDENCE,
     SLEEP_LEARN_MAX_INJECTED_RULES,
+    SLEEP_LEARN_UNIFIED,
 )
-from core.tracer import tracer
+from core.tracer import tracer, generate_trace_id
 from core.config import cfg
 
 # Lazy-initialized ChromaDB client (avoid import-time side effects)
@@ -54,33 +55,33 @@ def get_relevant_rules(query: str, k: int = SLEEP_LEARN_MAX_INJECTED_RULES) -> L
 
     rules = []
 
-    try:
-        results = col.query(
-            query_texts=[query],
-            n_results=k,
-            where={"confidence": {"$gte": SLEEP_LEARN_MIN_CONFIDENCE}},  # v1.0: unified schema field
-            include=["documents", "metadatas", "distances"]
-        )
-        
-        if results and results['ids'] and results['ids'][0]:
-            for i, rule_id in enumerate(results['ids'][0]):
-                meta = results['metadatas'][0][i]
-                rules.append({
-                    "id": rule_id,
-                    "rule": results['documents'][0][i],
-                    "confidence": meta.get("confidence_score", meta.get("confidence", 0.0)),
-                    "distance": results['distances'][0][i] if results.get('distances') else 0.0,
-                    "reasoning": meta.get("reasoning", ""),  # v1.0: include why the rule was learned
-                    "source": meta.get("source", "sleep_learn"),
-                })
-    except Exception as e:
-        tracer.error("daemon", "sleep_learn_injector", f"Failed to query rules: {e}")
-    
     # v1.0 (Commit 4): Split-brain fallback replaced with unified read.
-    # The unified `procedural` collection now contains rules from ALL writers
-    # (llm, meta_learner, sleep_learn). The injector reads from procedural_meta
-    # (above) for backward compat with pre-migration rules, then from the main
-    # `procedural` collection (below) for all rules — unified + legacy.
+    # When SLEEP_LEARN_UNIFIED=true (default), ONLY the main `procedural`
+    # collection is queried. When false (legacy), the old `procedural_meta`
+    # collection is queried first for backward compat.
+    if not SLEEP_LEARN_UNIFIED:
+        try:
+            results = col.query(
+                query_texts=[query],
+                n_results=k,
+                where={"confidence": {"$gte": SLEEP_LEARN_MIN_CONFIDENCE}},  # v1.0: unified schema field
+                include=["documents", "metadatas", "distances"]
+            )
+            
+            if results and results['ids'] and results['ids'][0]:
+                for i, rule_id in enumerate(results['ids'][0]):
+                    meta = results['metadatas'][0][i]
+                    rules.append({
+                        "id": rule_id,
+                        "rule": results['documents'][0][i],
+                        "confidence": meta.get("confidence", meta.get("confidence_score", 0.0)),
+                        "distance": results['distances'][0][i] if results.get('distances') else 0.0,
+                        "reasoning": meta.get("reasoning", ""),  # v1.0: include why the rule was learned
+                        "source": meta.get("source", "sleep_learn"),
+                    })
+        except Exception as e:
+            tracer.error(generate_trace_id(), "sleep_learn_injector", f"Failed to query rules: {e}")
+    
     seen_ids = {r["id"] for r in rules}
     try:
         from core.memory_engine import memory

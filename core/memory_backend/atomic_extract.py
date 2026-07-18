@@ -136,14 +136,16 @@ def extract_and_store_facts(
 
     for fact in facts:
         try:
-            # Dedup: check if a similar fact already exists
+            # Dedup: let ChromaDB filter at the source. Pre-filtering with
+            # min_score=0.92 (was 0.0 + post-check) avoids fetching and
+            # post-checking results that will never pass the threshold.
             existing = memory.recall(
                 query=fact["fact"],
                 collections=[COLLECTION_ATOMIC],
                 top_k=1,
-                min_score=0.0,
+                min_score=0.92,
             )
-            if existing and existing[0].get("score", 0) > 0.92:
+            if existing:
                 stats["skipped_duplicates"] += 1
                 continue
 
@@ -152,7 +154,7 @@ def extract_and_store_facts(
                 text=fact["fact"],
                 memory_type="atomic",
                 importance=max(1, round(fact["confidence"] * 10)),
-                tags=f"source:atomic_extract,type:{fact['type']}",
+                tags=f"source:atomic_extract,category:{fact['type']}",
                 trace_id=tid,
                 source="atomic_extractor",
                 source_doc_id=episodic_id or "",

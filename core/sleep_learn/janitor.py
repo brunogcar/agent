@@ -20,8 +20,12 @@ def _get_collection():
     
     v1.0 (Commit 4): when SLEEP_LEARN_UNIFIED=True, uses the main memory's
     procedural collection. purge_stale_rules now operates on the unified
-    collection (folded into memory_backend/janitor.py conceptually, but
-    the function stays here to preserve the Janitor Bypass pattern).
+    collection (folded into memory_backend/janitor.py conceptually).
+
+    The Janitor Bypass is at the action layer — `tools/memory_ops/actions/janitor.py`
+    lazy-imports this function to avoid loading the full MemoryStore. This
+    function stays here so the action can lazy-import it without pulling in
+    the entire memory backend.
     """
     global _chroma_client, _chroma_collection
     if _chroma_collection is None:

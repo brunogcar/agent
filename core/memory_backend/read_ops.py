@@ -103,7 +103,11 @@ def execute_recall(
                 "outcome":    meta.get("outcome", ""),
                 "tools_used": meta.get("tools_used", ""),
                 "source":     meta.get("source", ""),
-                "trace_id":   meta.get("trace_id", ""),
+                # v1.0: Renamed from `trace_id` to `source_trace_id` to match the
+                # schema's `source_trace_ids` field naming. This is the memory's
+                # ORIGIN trace (the trace that created the memory), NOT the
+                # current query's trace. Same name was confusing.
+                "source_trace_id": meta.get("trace_id", ""),
                 "age_days":   age_days,
                 "collection": col_name,
                 # ── v1.1: Chunking metadata ───────────────────────────────

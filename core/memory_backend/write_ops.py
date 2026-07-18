@@ -66,6 +66,7 @@ def execute_store(
     outcome: str = "unknown",
     tools_used: str = "",
     source: str = "",
+    reasoning: str = "",
 ) -> dict:
     """Internal store logic — shared by all three typed store methods."""
     
@@ -205,6 +206,9 @@ def execute_store(
                 "text_hash":  text_hash,
                 "reinforcement_count": 0,
                 "last_reinforced": int(time.time()),
+                # v1.0: reasoning field — surfaces WHY a rule holds in future
+                # prompts. Capped at 1000 chars (matches build_unified_metadata).
+                "reasoning":  reasoning[:1000],
             })
             store._hash_cache.add(text_hash)
             return {"status": "stored", "id": memory_id, "collection": collection}
@@ -260,6 +264,7 @@ def execute_store_chunked(
     outcome: str = "unknown",
     tools_used: str = "",
     source: str = "",
+    reasoning: str = "",
 ) -> dict:
     """Store a list of text chunks as linked memories in a single batch.
 
@@ -335,6 +340,8 @@ def execute_store_chunked(
             "text_hash":  text_hash,
             "reinforcement_count": 0,
             "last_reinforced": now,
+            # v1.0: reasoning field (mirrors execute_store; capped at 1000 chars)
+            "reasoning":  reasoning[:1000],
             # ── v1.1 chunking metadata ──────────────────────────────────
             # source_doc_id: UUID linking all chunks from the same document.
             #                Empty string "" for non-chunked memories (default).

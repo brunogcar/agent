@@ -112,6 +112,17 @@ def migrate_rules(dry_run: bool = False) -> dict:
             text_hash = compute_text_hash(text)
             if text_hash in existing_hashes:
                 # Merge: update the existing rule's confidence + source_trace_ids
+                #
+                # Merge semantics (v1.0 — deliberate choices, not bugs):
+                # - confidence: take the MAX (not average) — a rule confirmed by multiple
+                #   sources should be more confident, not diluted.
+                # - recall_count: NOT updated on merge — the existing rule's recall history
+                #   is preserved; the migrated rule's recall count is discarded.
+                # - last_accessed_at: NOT updated on merge — the existing rule's access
+                #   recency is preserved.
+                # - provenance_count: recomputed from the union of source_trace_ids —
+                #   reflects how many distinct traces contributed to this rule.
+                # - source_trace_ids: union (comma-joined, capped at 500 chars).
                 existing_id = existing_hashes[text_hash]
                 if not dry_run:
                     existing_meta = proc_col.get(ids=[existing_id], include=["metadatas"])
