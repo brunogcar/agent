@@ -32,6 +32,12 @@ in isolation.
   including errors from early validation. fail() from registry.py doesn't
   include trace_id. The workflow tool also returns status="error" (not
   "failed") for backwards compat with the existing JSONL log analyzers.
+
+[v1.1-p1] timeout passthrough:
+  _execute_workflow() reads `timeout` from **kwargs (default 0) and forwards
+  it to run_workflow(). Type handlers don't need to special-case timeout —
+  it flows through **kwargs. For autocode, run_workflow ignores the timeout
+  param (autocode manages its own via invoke_with_timeout).
 """
 from __future__ import annotations
 
@@ -115,6 +121,7 @@ def _execute_workflow(
     goal: str,
     trace_id: str,
     resume: bool = False,
+    timeout: int = 0,
     **kwargs: Any,
 ) -> dict:
     """Invoke workflows.base.run_workflow with the correct kwargs per type.
@@ -128,6 +135,11 @@ def _execute_workflow(
         goal: Goal text — always passed to run_workflow.
         trace_id: Observability threading ID — always passed.
         resume: Whether to resume from checkpoint.
+        timeout: Per-workflow timeout in seconds (0 = no timeout). For
+                 autocode, this is ignored — autocode uses
+                 cfg.autocode_graph_timeout + invoke_with_timeout. For
+                 other workflows, wraps graph.invoke() with a daemon-thread
+                 deadline.
         **kwargs: Type-specific kwargs (code, target_file, mode, error_msg,
                   feature_desc, files, git_diff, dry_run, project_root).
                   Only the kwargs that match wf_type's signature are
@@ -184,6 +196,13 @@ def _execute_workflow(
 
     # research + deep_research: no extra kwargs (just goal + trace_id).
 
+    # v1.1-p1: Forward timeout to run_workflow for ALL workflow types.
+    # run_workflow ignores it for autocode (which manages its own timeout
+    # via invoke_with_timeout + cfg.autocode_graph_timeout). For other
+    # workflows, timeout > 0 wraps graph.invoke() with a daemon-thread deadline.
+    if timeout > 0:
+        run_kwargs["timeout"] = timeout
+
     result = run_workflow(
         workflow_type=wf_type,
         resume=resume,
@@ -201,7 +220,7 @@ def _execute_workflow(
 
 
 # ── Workflow metadata discovery ──────────────────────────────────────────────
-# Mapping of workflow type → graph module path. The list action iterates this
+# Mapping of workflow type -> graph module path. The list action iterates this
 # and imports each module to read its WORKFLOW_METADATA attribute. If the
 # module can't be imported (e.g. heavy optional dep missing), it shows up as
 # an "error" entry rather than crashing the list action.
@@ -216,7 +235,7 @@ _WORKFLOW_MODULES: Dict[str, str] = {
 
 
 def _get_all_workflow_metadata() -> dict:
-    """Return a dict mapping workflow_type → metadata dict (or error).
+    """Return a dict mapping workflow_type -> metadata dict (or error).
 
     For each workflow module in _WORKFLOW_MODULES, imports it and reads
     WORKFLOW_METADATA. If the import fails or WORKFLOW_METADATA is absent,

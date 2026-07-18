@@ -15,6 +15,7 @@ Usage from a tool or the agent meta-tool:
 """
 from __future__ import annotations
 import time
+import threading
 from typing import Any, Optional
 from typing_extensions import TypedDict
 from core.tracer import tracer
@@ -23,6 +24,44 @@ from core.config import cfg
 # v1.3.1 (P3-3): Extracted constant — used by both trim_state() and trim_state_node().
 # v1.3.1 (P2-3): Added 'memory_context' — recalled memories can be large.
 _EVICTABLE_FIELDS = ("search_results", "output", "analysis", "memory_context")
+
+# ── Per-workflow cancellation flag ───────────────────────────────────────────
+# v1.1-p1 (workflow-v1.1-p1): General-purpose cancellation for ALL workflows.
+# Holds trace_ids of workflows that have been cancelled via the cancel action.
+# run_workflow() checks is_workflow_cancelled(trace_id) AFTER the dispatch
+# returns — for non-autocode workflows the check is post-hoc (graph.invoke()
+# is blocking and can't be interrupted from outside). For autocode, the
+# existing invoke_with_timeout() + _call() cancellation flag handles
+# mid-execution interruption.
+_workflow_cancelled: set[str] = set()
+
+
+def request_workflow_cancel(trace_id: str) -> None:
+    """Mark a workflow as cancelled. Idempotent — calling twice is a no-op.
+
+    Called by tools/workflow_ops/actions/cancel.py when the user requests
+    cancellation. run_workflow() will check is_workflow_cancelled(trace_id)
+    after the dispatch returns and short-circuit with a "cancelled" status
+    (saving a checkpoint first so the workflow can be resumed if desired).
+    """
+    if trace_id:
+        _workflow_cancelled.add(trace_id)
+
+
+def is_workflow_cancelled(trace_id: str) -> bool:
+    """Check whether a workflow has been cancelled."""
+    return trace_id in _workflow_cancelled
+
+
+def clear_workflow_cancel(trace_id: str) -> None:
+    """Clear the cancellation flag for a trace_id.
+
+    Called by run_workflow() after it has observed the cancellation and
+    returned the cancelled status. Ensures a subsequent resume of the same
+    trace_id doesn't immediately bail out.
+    """
+    _workflow_cancelled.discard(trace_id)
+
 
 # -- Shared workflow state ----------------------------------------------------
 class WorkflowState(TypedDict, total=False):
@@ -250,6 +289,7 @@ def run_workflow(
     goal: str,
     trace_id: str = "",
     resume: bool = False,
+    timeout: int = 0,
     **kwargs,
 ) -> dict:
     """
@@ -258,6 +298,13 @@ def run_workflow(
     goal          : what to accomplish
     trace_id      : attach to existing trace (creates new one if empty)
     resume        : if True, attempt to restore from checkpoint journal
+    timeout       : per-workflow timeout in seconds (0 = no timeout, use
+                    existing behavior). For non-autocode workflows, wraps the
+                    graph.invoke() call with a threading-based deadline. On
+                    timeout, saves a checkpoint and returns status="failed"
+                    with error="Workflow timed out after {timeout}s". For
+                    autocode, this param is IGNORED — autocode manages its
+                    own timeout via cfg.autocode_graph_timeout + invoke_with_timeout.
     **kwargs      : workflow-specific inputs (see each workflow module)
 
     Returns the final WorkflowState as a plain dict with at minimum:
@@ -322,29 +369,39 @@ def run_workflow(
     if wf_type == "autocode":
         initial_state["task"] = goal
 
-    try:
+    # v1.1-p1 (workflow-v1.1-p1): Per-workflow timeout + graceful cancel.
+    # Build a closure that runs the actual dispatch (the original if/elif
+    # chain). For autocode, invoke_with_timeout() manages its own timeout —
+    # the `timeout` param is intentionally ignored (autocode uses
+    # cfg.autocode_graph_timeout instead). For other workflows, when
+    # timeout > 0, we wrap the dispatch in a daemon-thread + join(timeout)
+    # pattern (same shape as invoke_with_timeout).
+    def _dispatch() -> dict:
         if wf_type == "research":
             from workflows.research import build_research_graph
             graph = build_research_graph()
-            result = graph.invoke(initial_state)
+            return graph.invoke(initial_state)
 
         elif wf_type == "data":
             from workflows.data import build_data_graph
             graph = build_data_graph()
-            result = graph.invoke(initial_state)
+            return graph.invoke(initial_state)
 
         elif wf_type == "autocode":
-            from workflows.autocode import build_graph as build_autocode_graph
             # [v1.1] build_graph() returns uncompiled StateGraph — must compile
             # before .invoke(). Was crashing with AttributeError. Also wire
             # invoke_with_timeout so cfg.autocode_graph_timeout is respected.
+            #
+            # v1.1-p1: The `timeout` param is IGNORED for autocode — it manages
+            # its own timeout via invoke_with_timeout() + cfg.autocode_graph_timeout
+            # (or adaptive per-task-type timeouts when AUTOCODE_ADAPTIVE_TIMEOUT=1).
             from workflows.autocode_impl.graph import invoke_with_timeout
-            result = invoke_with_timeout(initial_state)
+            return invoke_with_timeout(initial_state)
 
         elif wf_type == "deep_research":
             from workflows.deep_research_impl import build_deep_research_graph
             graph = build_deep_research_graph()
-            result = graph.invoke(initial_state)
+            return graph.invoke(initial_state)
 
         elif wf_type == "understand":
             # [Architecture] Now routes through standard graph.invoke() like all
@@ -364,25 +421,28 @@ def run_workflow(
             # v1.4: Run with a 10-minute timeout (was: bare graph.invoke() —
             # could block the MCP channel for minutes on large projects).
             # Uses a daemon thread + result container (same pattern as autocode).
-            import threading as _threading
+            #
+            # v1.1-p1: When the caller passes timeout > 0, the OUTER timeout
+            # wrapper in run_workflow() takes precedence — this inner 600s
+            # cap still applies as a hard floor. When timeout=0 (default),
+            # only the inner 600s cap applies.
             _result_container: list = []
             def _run_understand():
                 try:
                     _result_container.append(graph.invoke(understand_state))
                 except Exception as e:
                     _result_container.append({"status": "failed", "errors": [str(e)]})
-            _t = _threading.Thread(target=_run_understand, daemon=True)
+            _t = _threading_local_Thread(target=_run_understand, daemon=True)
             _t.start()
             _t.join(timeout=600)  # 10min cap
             if _t.is_alive():
-                result = {"status": "failed", "errors": ["Understand workflow timed out after 600s — try skip_embeddings=True for graph-only mode"]}
-            else:
-                result = _result_container[0] if _result_container else {"status": "failed", "errors": ["Understand workflow returned no result"]}
+                return {"status": "failed", "errors": ["Understand workflow timed out after 600s — try skip_embeddings=True for graph-only mode"]}
+            return _result_container[0] if _result_container else {"status": "failed", "errors": ["Understand workflow returned no result"]}
 
         elif wf_type == "autoresearch":
             # [v1.0] Autonomous experiment-driven optimization.
-            # Evolutionary loop: propose → modify → run → evaluate → decide →
-            # log → propose (repeat). Runs indefinitely until human interrupt.
+            # Evolutionary loop: propose -> modify -> run -> evaluate -> decide ->
+            # log -> propose (repeat). Runs indefinitely until human interrupt.
             #
             # The default LangGraph recursion_limit (25) is too low for an
             # overnight autoresearch run (each iteration is ~6 node calls).
@@ -409,7 +469,7 @@ def run_workflow(
             # Default to 1000 iterations (~6000 node calls) — enough for an
             # overnight run. Callers wanting more should invoke the graph
             # directly with their own recursion_limit.
-            result = graph.invoke(
+            return graph.invoke(
                 ar_state,
                 config={"recursion_limit": 1000},
             )
@@ -422,6 +482,40 @@ def run_workflow(
                 "error": f"Unknown workflow type '{wf_type}'. Use: research | data | autocode | deep_research | understand | autoresearch",
                 "result": "",
                 "artifacts": [],
+            }
+
+    try:
+        # ── Dispatch with optional timeout wrapper ──────────────────────────
+        # Autocode manages its own timeout via invoke_with_timeout — never
+        # wrap it. For other workflows, wrap in a daemon-thread + join when
+        # timeout > 0 (same pattern as invoke_with_timeout).
+        if wf_type == "autocode" or timeout <= 0:
+            result = _dispatch()
+        else:
+            result = _run_with_timeout(_dispatch, timeout, trace_id, initial_state)
+
+        # ── Post-dispatch cancellation check ────────────────────────────────
+        # For non-autocode workflows, graph.invoke() is blocking — we can't
+        # interrupt it mid-execution. We check the cancel flag AFTER it returns
+        # and short-circuit with a "cancelled" status if the user requested
+        # cancellation while the workflow was running.
+        if is_workflow_cancelled(trace_id):
+            from core.observability.checkpoint import save_checkpoint
+            try:
+                save_checkpoint(
+                    trace_id, "cancelled",
+                    {**initial_state, "status": "cancelled", "error": "Workflow cancelled by user"},
+                )
+            except Exception:
+                pass  # Non-fatal
+            clear_workflow_cancel(trace_id)
+            tracer.step(trace_id, "dispatch", "Workflow cancelled by user request")
+            return {
+                "status": "cancelled",
+                "error": "Workflow cancelled by user",
+                "result": "",
+                "artifacts": [],
+                "trace_id": trace_id,
             }
 
         return dict(result)
@@ -443,3 +537,84 @@ def run_workflow(
             "result": "",
             "artifacts": [],
         }
+
+
+def _run_with_timeout(
+    dispatch_fn,
+    timeout: int,
+    trace_id: str,
+    initial_state,
+) -> dict:
+    """Run dispatch_fn() in a daemon thread with a timeout deadline.
+
+    Mirrors the invoke_with_timeout pattern from workflows.autocode_impl.graph:
+    start a daemon thread, join(timeout), and if the thread is still alive
+    treat it as a timeout — save a checkpoint and return a "timed out" status.
+
+    The daemon thread can't be killed (Python limitation) — it will exit on
+    its own when the process exits or when the underlying graph.invoke()
+    returns. This matches the autocode behavior.
+
+    Args:
+        dispatch_fn: Zero-arg callable that runs the actual dispatch.
+        timeout: Timeout in seconds.
+        trace_id: Trace ID for checkpoint + tracer logging.
+        initial_state: WorkflowState dict — saved as checkpoint on timeout.
+
+    Returns:
+        Result dict from dispatch_fn, or a "timed out" failure dict.
+    """
+    result_container: list = []
+    invoke_error: Exception | None = None
+
+    def _run():
+        nonlocal invoke_error
+        try:
+            result_container.append(dispatch_fn())
+        except Exception as e:
+            invoke_error = e
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+
+    if invoke_error is not None:
+        # Surface the inner exception — without this, the caller sees a
+        # generic "timed out" error when the graph actually crashed.
+        raise invoke_error
+
+    if thread.is_alive():
+        # Timeout fired — save a checkpoint so the workflow can be resumed.
+        from core.observability.checkpoint import save_checkpoint
+        try:
+            save_checkpoint(
+                trace_id, "timeout",
+                {**initial_state, "status": "failed", "error": f"Workflow timed out after {timeout}s"},
+            )
+        except Exception:
+            pass  # Non-fatal
+        tracer.error(trace_id, "dispatch", f"Workflow timed out after {timeout}s")
+        return {
+            "status": "failed",
+            "error": f"Workflow timed out after {timeout}s",
+            "result": "",
+            "artifacts": [],
+            "trace_id": trace_id,
+        }
+
+    if not result_container:
+        return {
+            "status": "failed",
+            "error": "Workflow returned no result",
+            "result": "",
+            "artifacts": [],
+            "trace_id": trace_id,
+        }
+
+    return result_container[0]
+
+
+# Local alias so the understand branch's threading usage doesn't add a new
+# top-level import (keeps the diff minimal — `threading` is already imported
+# at module level for the timeout wrapper).
+_threading_local_Thread = threading.Thread

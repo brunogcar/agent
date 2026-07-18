@@ -5,7 +5,8 @@
 ## 📝 Version History
 
 | Version | Date | Changes |
-|---------|------|---------|
+|---------| **v1.1** | 2026-07-18 | **3 P1 items.** (1) `type="compose"` — chain multiple workflows sequentially (research → data → report); passes `prev_result` + `step_results` to each step; stops on first failure. (2) Per-workflow `timeout` param — wraps `run_workflow()` in a daemon-thread deadline; on timeout saves checkpoint + returns `"timed out"` status. Autocode ignores `timeout` (uses its own `invoke_with_timeout` + `cfg.autocode_graph_timeout`). (3) Graceful cancel for ALL workflows — new `request_workflow_cancel(trace_id)` / `is_workflow_cancelled(trace_id)` in `base.py`; cancel action calls BOTH the autocode flag AND the general flag. Non-autocode workflows check the flag post-dispatch (graph.invoke is blocking). 28 new tests (12 compose + 6 timeout + 10 cancel). |
+|------|---------|
 | **v1.0** | 2026-07-15 | **`@meta_tool` refactor with two-level dispatch.** Facade collapsed from 263 → 174 lines; all implementation moved to `workflow_ops/` subpackage (18 files: `_registry.py`, `_type_registry.py`, `helpers.py`, `actions/` (5 files), `types/` (7 files) + 2 `__init__.py`). **Breaking change:** `type` alone no longer works — callers MUST use `action="run"` + `type="..."`. 5 actions (`run`/`list`/`status`/`cancel`/`history`), 7 workflow types (`research`/`data`/`autocode`/`deep_research`/`understand`/`autoresearch`/`auto`). New params: `files` (JSON dict of filename→content for autocode pass-through), `git_diff` (autocode v1.1.2 git-diff input mode), `dry_run` (pre-flight: validate params + routing without executing). Tests restructured: deleted old `test_workflow.py` (304 lines, 4 classes), added 11-file test suite with 98 tests (10 test files + `conftest.py`). Old `VALID_WORKFLOWS` frozenset + `WorkflowType` Literal replaced by `TYPE_DISPATCH` registry (auto-discovered via `types/__init__.py` glob). |
 | Pre-v1.2 | 2026-07-05 | Added `deep_research` to `VALID_WORKFLOWS`, `WorkflowType` Literal, and docstring (was missing — LLM couldn't invoke directly). Removed `report` from all three (no `report` workflow exists — it's a tool, not a workflow). |
 | Pre-v1.1 | 2026-07-05 | Bugfix batch: `WorkflowType` Literal now includes `understand` (#4); docstring lists `understand` for LLM discovery (#5); `understand` workflow now forwards `project_root` to `run_workflow` (#3); auto-routing low-confidence guard now aborts even when `clarifying_questions` is empty (#6). |
@@ -64,9 +65,9 @@
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| `workflow(action="run", type="compose")` | Chain multiple workflows (research → data → report). Composition primitive — pass outputs of one workflow as inputs to the next. | P1 |
-| Per-workflow timeout | `timeout` parameter for long-running workflows. Wraps `run_workflow()` with a hard deadline + graceful checkpoint save on expiry. | P1 |
-| Workflow cancellation — graceful cancel for ALL workflows | Currently only autocode supports cancellation (via `workflows.autocode_impl.helpers.request_cancellation`). Extend the cancel action to checkpoint-save + gracefully exit other workflow types. | P1 |
+| ~~`workflow(action="run", type="compose")`~~ | ✅ v1.1 — `type="compose"` with `steps=[...]` param. | ✅ Done |
+| ~~Per-workflow timeout~~ | ✅ v1.1 — `timeout` param in `run_workflow()`. | ✅ Done |
+| ~~Workflow cancellation — graceful cancel for ALL workflows~~ | ✅ v1.1 — `request_workflow_cancel(trace_id)` in `base.py`; cancel action calls both flags. | ✅ Done |
 | Progress streaming | Yield intermediate results for long workflows. Requires MCP transport changes (currently request/response only). | P2 |
 | Workflow templates | Pre-configured parameter sets for common tasks. Stored in a new `templates/` subfolder under `workflow_ops/`. E.g. "bug-fix" template pre-sets `mode="fix_error"` + scaffolds `error_msg`. | P2 |
 | Parallel workflows | Run multiple workflows concurrently. Requires careful thought about `PARALLEL_SAFE` semantics (workflow is currently NOT parallel-safe — long-running blocking calls). | P3 |
@@ -88,4 +89,4 @@
 
 ---
 
-*Last updated: 2026-07-15 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.1 — 3 P1 items: compose, timeout, cancel).*

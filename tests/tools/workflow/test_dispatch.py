@@ -5,7 +5,7 @@ Mirrors the structure of tests/tools/vision/test_dispatch.py. Covers:
   - Empty action → error explaining action is required
   - Case insensitivity (RUN / Run / run all dispatch the same handler)
   - All 5 actions present in DISPATCH with full metadata
-  - All 7 types present in TYPE_DISPATCH with full metadata
+  - All 8 types present in TYPE_DISPATCH with full metadata
   - Literal[...] generation for the `action` parameter
   - Docstring generation with action list + doc_sections
   - duration_ms always present
@@ -137,13 +137,16 @@ class TestRegistry:
 
 
 class TestTypeRegistry:
-    """Verify all 7 workflow types are registered in TYPE_DISPATCH."""
+    """Verify all 8 workflow types are registered in TYPE_DISPATCH.
 
-    def test_type_dispatch_has_7_types(self):
+    v1.1-p1: Added 'compose' type (chain multiple workflows sequentially).
+    """
+
+    def test_type_dispatch_has_8_types(self):
         from tools.workflow_ops._type_registry import TYPE_DISPATCH
-        assert len(TYPE_DISPATCH) == 7
+        assert len(TYPE_DISPATCH) == 8
         expected = {"research", "data", "autocode", "deep_research",
-                    "understand", "autoresearch", "auto"}
+                    "understand", "autoresearch", "auto", "compose"}
         assert set(TYPE_DISPATCH.keys()) == expected
 
     def test_all_types_have_metadata(self):

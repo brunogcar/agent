@@ -14,6 +14,12 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+# Explicit import of compose ensures the type is registered even before
+# the glob runs (defensive — the glob below would catch it anyway, but the
+# explicit import documents the dependency and makes registration order
+# deterministic for readers).
+from . import compose  # noqa: F401
+
 _types_dir = Path(__file__).parent
 for py_file in sorted(_types_dir.glob("*.py")):
     if py_file.name != "__init__.py":

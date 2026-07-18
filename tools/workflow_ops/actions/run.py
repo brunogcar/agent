@@ -15,6 +15,13 @@ workflow-specific validation (target_file, project_root, etc.). That
 validation lives in the type handler so it's co-located with the type's
 other logic. The run action only validates that `type` is non-empty and
 registered.
+
+[DESIGN] **kwargs forwarding: the run action signature includes a fixed
+list of well-known params (code, target_file, etc.) PLUS **kwargs. The
+**kwargs catch-all lets list-valued params (e.g. `steps` for type="compose")
+flow through without polluting the MCP schema — FastMCP doesn't handle
+list-typed params well, so `steps` stays in **kwargs and the compose type
+handler reads it from there.
 """
 from __future__ import annotations
 
@@ -26,9 +33,10 @@ from tools.workflow_ops.helpers import _ensure_trace_id, _make_error
 @register_action(
     "workflow", "run",
     help_text="""run — Launch a multi-step autonomous workflow.
-Required: type (research|data|autocode|deep_research|understand|autoresearch|auto), goal
+Required: type (research|data|autocode|deep_research|understand|autoresearch|auto|compose), goal
 Optional: code (data), target_file/mode/error_msg/feature_desc/files/git_diff/dry_run (autocode),
-          project_root (understand/autoresearch), trace_id, resume
+          project_root (understand/autoresearch), trace_id, resume, timeout,
+          steps (compose — list of step dicts, each {type, goal, ...})
 Returns: {status, workflow, trace_id, ...} (workflow-specific)""",
     examples=[
         'workflow(action="run", type="research", goal="Survey LLM agent frameworks")',
@@ -36,6 +44,7 @@ Returns: {status, workflow, trace_id, ...} (workflow-specific)""",
         'workflow(action="run", type="autocode", goal="Fix login bug", target_file="auth.py", mode="fix_error", error_msg="KeyError: user")',
         'workflow(action="run", type="understand", goal="Map codebase", project_root="/path/to/repo")',
         'workflow(action="run", type="auto", goal="Find recent papers on RAG")',
+        'workflow(action="run", type="compose", goal="Survey + analyze", steps=[{"type":"research","goal":"Survey X"},{"type":"data","goal":"Analyze","code":"print(1)"}])',
     ],
 )
 def _action_run(
@@ -56,6 +65,9 @@ def _action_run(
     # common
     trace_id: str = "",
     resume: bool = False,
+    # per-workflow timeout (0 = use workflow default; autocode ignores this
+    # and uses cfg.autocode_graph_timeout instead)
+    timeout: int = 0,
     **kwargs,
 ) -> dict:
     """Run a workflow of the given type.
@@ -96,4 +108,6 @@ def _action_run(
         project_root=project_root,
         trace_id=trace_id,
         resume=resume,
+        timeout=timeout,
+        **kwargs,
     )
