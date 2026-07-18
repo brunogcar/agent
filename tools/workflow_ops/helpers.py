@@ -171,6 +171,7 @@ def _execute_workflow(
         # validated but never forwarded to run_workflow, causing it to default
         # to agent root instead of the specified project directory.
         run_kwargs["project_root"] = kwargs.get("project_root", "")
+        run_kwargs["skip_embeddings"] = kwargs.get("skip_embeddings", False)
 
     elif wf_type == "autoresearch":
         # [v1.0] autoresearch: pass target_file + project_root to the

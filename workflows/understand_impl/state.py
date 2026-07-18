@@ -23,6 +23,7 @@ class UnderstandState(TypedDict, total=False):
     edges_created: int
     vectors_created: int  # [#3] code embeddings stored in ChromaDB
     errors: list[str]
+    skip_embeddings: bool  # v1.4: skip vector indexing (graph-only mode)
 
 
 def _default_state(project_path: str, is_agent_root: bool = False, trace_id: str = "") -> UnderstandState:

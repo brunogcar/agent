@@ -357,8 +357,27 @@ def run_workflow(
             project_root = initial_state.get("project_root", "")
             is_agent = is_same_path(Path(project_root), cfg.agent_root) if project_root else False
             understand_state = _default_state(project_root, is_agent_root=is_agent, trace_id=trace_id)
+            # v1.4: Pass skip_embeddings from initial_state
+            if initial_state.get("skip_embeddings"):
+                understand_state["skip_embeddings"] = True
             graph = build_understand_graph()
-            result = graph.invoke(understand_state)
+            # v1.4: Run with a 10-minute timeout (was: bare graph.invoke() —
+            # could block the MCP channel for minutes on large projects).
+            # Uses a daemon thread + result container (same pattern as autocode).
+            import threading as _threading
+            _result_container: list = []
+            def _run_understand():
+                try:
+                    _result_container.append(graph.invoke(understand_state))
+                except Exception as e:
+                    _result_container.append({"status": "failed", "errors": [str(e)]})
+            _t = _threading.Thread(target=_run_understand, daemon=True)
+            _t.start()
+            _t.join(timeout=600)  # 10min cap
+            if _t.is_alive():
+                result = {"status": "failed", "errors": ["Understand workflow timed out after 600s — try skip_embeddings=True for graph-only mode"]}
+            else:
+                result = _result_container[0] if _result_container else {"status": "failed", "errors": ["Understand workflow returned no result"]}
 
         elif wf_type == "autoresearch":
             # [v1.0] Autonomous experiment-driven optimization.

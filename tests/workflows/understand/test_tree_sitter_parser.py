@@ -38,8 +38,8 @@ class TestLanguageDetection:
 
     def test_unsupported_returns_none(self):
         from core.kgraph.tree_sitter_parser import get_language_for_file
-        assert get_language_for_file("foo.rb") is None
-        assert get_language_for_file("foo.java") is None
+        assert get_language_for_file("foo.rb") == "ruby"  # v1.4: .rb is now supported
+        assert get_language_for_file("foo.java") == "java"  # v1.4: .java is now supported
         assert get_language_for_file("foo.txt") is None
         assert get_language_for_file("Makefile") is None
 
@@ -50,7 +50,7 @@ class TestLanguageDetection:
         assert is_supported("foo.ts") is True
         assert is_supported("foo.go") is True
         assert is_supported("foo.rs") is True
-        assert is_supported("foo.rb") is False
+        assert is_supported("foo.rb") is True  # v1.4: .rb is now supported
 
 
 # ─── Import extraction ──────────────────────────────────────────────────────
@@ -218,6 +218,6 @@ class TestSupportedExtensions:
 
     def test_excludes_unsupported(self):
         from core.kgraph.tree_sitter_parser import SUPPORTED_EXTENSIONS
-        assert ".rb" not in SUPPORTED_EXTENSIONS
-        assert ".java" not in SUPPORTED_EXTENSIONS
+        assert ".rb" in SUPPORTED_EXTENSIONS  # v1.4: .rb is now supported
+        assert ".java" in SUPPORTED_EXTENSIONS  # v1.4: .java is now supported
         assert ".txt" not in SUPPORTED_EXTENSIONS

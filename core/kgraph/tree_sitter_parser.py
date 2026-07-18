@@ -9,6 +9,14 @@ all supported languages through one API. Currently supports:
   - TypeScript (.ts, .tsx)
   - Go (.go)
   - Rust (.rs)
+  - Java (.java)        [v1.4]
+  - C/C++ (.c, .h, .cpp, .cc, .cxx, .hpp)  [v1.4]
+  - Ruby (.rb)          [v1.4]
+  - Lua (.lua)          [v1.4]
+  - PHP (.php)          [v1.4]
+  - Scala (.scala)      [v1.4]
+  - Swift (.swift)      [v1.4]
+  - Kotlin (.kt)        [v1.4]
 
 Two main functions:
   1. extract_imports(source, language) — dependency edges for the graph
@@ -37,6 +45,20 @@ LANGUAGE_MAP = {
     ".tsx": "typescript",
     ".go":  "go",
     ".rs":  "rust",
+    # v1.4: Additional languages (tree-sitter-languages bundles these)
+    ".java":  "java",
+    ".c":     "c",
+    ".h":     "c",
+    ".cpp":   "cpp",
+    ".cc":    "cpp",
+    ".cxx":   "cpp",
+    ".hpp":   "cpp",
+    ".rb":    "ruby",
+    ".lua":   "lua",
+    ".php":   "php",
+    ".scala": "scala",
+    ".swift": "swift",
+    ".kt":    "kotlin",
 }
 
 # Languages we support (for discover_files.py)

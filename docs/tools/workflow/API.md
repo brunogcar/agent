@@ -24,7 +24,7 @@ from tools.workflow_ops._registry import DISPATCH  # populated by workflow_ops/_
         " | Cancel a workflow | workflow(cancel, trace_id=...) | Set cancellation flag (autocode only) |",
         " | Show recent runs | workflow(history) | Query tracer for recent workflow executions |",
         "",
-        "Workflow types (for action=run): research, data, autocode, deep_research, understand, autoresearch, auto",
+        "Workflow types (for action=run): research, data, autocode, deep_research, understand (v1.4: skip_embeddings=True for graph-only mode), autoresearch, auto",
         "NOT parallel-safe — workflows are long-running blocking calls.",
     ],
 )

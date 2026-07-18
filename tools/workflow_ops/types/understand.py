@@ -35,6 +35,7 @@ def _type_understand(
     project_root: str = "",
     trace_id: str = "",
     resume: bool = False,
+    skip_embeddings: bool = False,
     **kwargs,
 ) -> dict:
     trace_id = _ensure_trace_id(trace_id, goal)
@@ -52,4 +53,5 @@ def _type_understand(
     return _execute_workflow(
         "understand", goal, trace_id, resume,
         project_root=project_root,
+        skip_embeddings=skip_embeddings,
     )

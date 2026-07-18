@@ -17,9 +17,17 @@ def node_report(state: UnderstandState) -> dict:
     edges_created = state.get("edges_created", 0)
     errors = state.get("errors", [])
 
+    note = state.get("note", "")
+    if files_parsed == 0 and not errors:
+        summary = f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}\n\n✅ Codebase is up to date — no changes since last index."
+    elif files_parsed == 0 and errors:
+        summary = f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}\n\n⚠️ No files were parsed (errors occurred)."
+    else:
+        summary = f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}"
+
     sections = [
         {"title": "Project", "content": f"`{project_path}`"},
-        {"title": "Indexing Summary", "content": f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}"},
+        {"title": "Indexing Summary", "content": summary},
     ]
 
     if errors:
@@ -40,4 +48,7 @@ def node_report(state: UnderstandState) -> dict:
     except Exception as e:
         tracer.error(tid, "understand_report", f"Report generation failed: {e}")
 
-    return {}
+    result = {}
+    if note:
+        result["note"] = note
+    return result

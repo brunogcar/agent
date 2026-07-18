@@ -48,6 +48,47 @@ def extract_definitions(content: str, language: str = "python") -> list[dict]:
 
 # ─── LM Studio embedding client ─────────────────────────────────────────────
 
+# v1.4: Module-level flag — once embedding fails, skip all subsequent calls
+# in this session (avoids 965 × 30s timeouts when LM Studio is down).
+_embedding_available: Optional[bool] = None
+
+
+def is_embedding_available() -> bool:
+    """v1.4: Check if LM Studio embedding endpoint is reachable.
+
+    Caches the result — once it returns False, all subsequent embed_texts()
+    calls skip the HTTP request and return None immediately. This prevents
+    965 × 30s timeouts when indexing a large project with LM Studio down.
+
+    Resets on process restart (module reload).
+    """
+    global _embedding_available
+    if _embedding_available is not None:
+        return _embedding_available
+
+    if not cfg.embedding_enabled:
+        _embedding_available = False
+        return False
+
+    import httpx
+    try:
+        resp = httpx.get(
+            f"{cfg.embedding_base_url.rstrip('/')}/models",
+            timeout=5.0,
+        )
+        _embedding_available = resp.status_code == 200
+    except Exception:
+        _embedding_available = False
+
+    return _embedding_available
+
+
+def reset_embedding_check() -> None:
+    """Reset the cached embedding availability (for testing)."""
+    global _embedding_available
+    _embedding_available = None
+
+
 def embed_texts(texts: list[str], trace_id: str = "") -> Optional[list[list[float]]]:
     """Embed a list of texts via LM Studio's /v1/embeddings endpoint.
 
@@ -58,6 +99,10 @@ def embed_texts(texts: list[str], trace_id: str = "") -> Optional[list[list[floa
     (OpenAI-compatible endpoints support `"input": [text1, text2, ...]`).
     """
     if not cfg.embedding_enabled:
+        return None
+
+    # v1.4: Skip if embedding service is known to be unavailable (cached check)
+    if not is_embedding_available():
         return None
 
     if not texts:

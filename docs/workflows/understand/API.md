@@ -7,7 +7,8 @@
 The understand workflow is triggered via:
 
 ```python
-workflow(type="understand", goal="Map the auth module", project_root="D:/projects/myapp")
+workflow(type="understand", goal="Map the auth module", project_root
+- `skip_embeddings` (bool, default False): v1.4 — Skip vector embedding indexing. Graph edges still stored. Use when LM Studio is slow/unavailable or for fast re-indexing.="D:/projects/myapp")
 ```
 
 Or directly via `base.py`:

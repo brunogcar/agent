@@ -8,7 +8,7 @@
 |------|---------|
 | `core/kgraph/__init__.py` | Public API exports |
 | `core/kgraph/ast_parser.py` | AST parsing (delegates to tree-sitter for Python; backward-compatible API) |
-| `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust via tree-sitter |
+| `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust, Java, C/C++, Ruby, Lua, PHP, Scala, Swift, Kotlin (v1.4) via tree-sitter |
 | `core/kgraph/cleanup.py` | `KGCleanup`: disk space + WAL management |
 | `core/kgraph/project.py` | `ProjectManager`: isolation, paths, indexing mode |
 | `core/kgraph/queries.py` | `find_relevant_files()`, `get_dependencies()`, `get_callers()` |
