@@ -4,6 +4,8 @@ The Tracer (`core/tracer.py` — now a **thin facade** → `core/observability/t
 
 > **v1.3 extraction:** The Tracer implementation moved to `core/observability/tracer_engine.py`. `core/tracer.py` is now a thin facade that re-exports `tracer`, `Tracer`, `_TraceStore`, `generate_trace_id`, `_writer` (and other module-level names) so 71+ callsites don't need to change import paths. The full observability subsystem — including `tracer_reader` (now `core/observability/reader.py`), `metrics` (now `core/observability/metrics.py`), and `checkpoint` (now `core/observability/checkpoint.py`) — is documented at [OBSERVABILITY.md](observability/OBSERVABILITY.md).
 
+> **v1.1 update (2026-07-18):** Fixed `tracer.step/error/warning/finish` 2-arg misuse across 10 callers. All callers that passed a literal string or empty string as `trace_id` (e.g., `tracer.step("health", ...)`) now use `tracer.new_trace()` to create a unique trace_id. This was causing trace collisions in the in-memory `_TraceStore` and ambiguous JSONL log queries. `warning()` is NOT a trace-free escape hatch — it requires a real `trace_id` from `new_trace()`, same as `step()`/`error()`. See [observability/CHANGELOG.md](observability/CHANGELOG.md) for the full fix list.
+
 **Key characteristics:**
 - **MCP stdio safety** — NEVER writes to `sys.stdout`; all output goes to stderr and JSONL files
 - **Dual output** — Structured stderr (console) + JSONL files (persistent, queryable)
@@ -51,10 +53,12 @@ tracer.finish(tid, success=True, result="committed abc123")
 |----------|--------|-----|
 | Trace a workflow | `tracer.new_trace()` + `tracer.step()` | End-to-end correlation |
 | Log an error | `tracer.error()` | Captures failure context |
-| Non-trace warning | `tracer.warning()` | No trace_id required |
+| Trace-scoped warning | `tracer.warning()` | Non-fatal issue on an active trace (requires `trace_id` from `new_trace()`) |
 | Query traces | `tracer.get()` / `tracer.recent()` | Fast in-memory lookup |
 | Post-mortem | `tracer_reader.read_trace()` | Disk scan for old traces |
 | Prometheus metrics | `core/metrics.py` | Quantitative monitoring |
+
+> ⚠️ **v1.1:** `tracer.warning()` takes the same signature as `step()` — `warning(trace_id, node, message="", **kwargs)`. It is NOT a trace-free logging call; it requires a real `trace_id` from `new_trace()`. The old "When to Use" row claiming "No trace_id required" was incorrect and has been fixed.
 
 ---
 
@@ -62,12 +66,12 @@ tracer.finish(tid, success=True, result="committed abc123")
 
 | File | Description |
 |------|-------------|
-| [ARCHITECTURE.md](tracer/ARCHITECTURE.md) | Module tree, data flow, MCP stdio safety, trace lifecycle, observability integration, known concerns, testing (legacy v1 view — for the v1.3 extraction, see [observability/ARCHITECTURE.md](observability/ARCHITECTURE.md)) |
-| [API.md](tracer/API.md) | Core methods, trace record structure, trace retrieval, structlog & fallback, CLI querying |
+| [ARCHITECTURE.md](tracer/ARCHITECTURE.md) | Legacy v1 view — module tree, data flow, MCP stdio safety, trace lifecycle, observability integration, known concerns, testing. The v1.3+ canonical architecture doc is [observability/ARCHITECTURE.md](observability/ARCHITECTURE.md) (covers tracer_engine + reader + metrics + checkpoint as a single subsystem). |
+| [API.md](tracer/API.md) | Core methods, trace record structure, trace retrieval, structlog & fallback, CLI querying (facade view — for the full API incl. reader/metrics/checkpoint, see [observability/API.md](observability/API.md)) |
 | [CHANGELOG.md](tracer/CHANGELOG.md) | Version history, completed milestones, roadmap |
 | [INSTRUCTIONS.md](tracer/INSTRUCTIONS.md) | AI editing rules — NEVER DO, ALWAYS DO, anti-patterns |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | v1.3 canonical root for the full observability subsystem (tracer engine + reader + metrics + checkpoint) |
 
 ---
 
-*Last updated: 2026-07-10. See subfiles for detailed documentation. (v1.3: implementation moved to core/observability/tracer_engine.py; core/tracer.py is now a facade)*
+*Last updated: 2026-07-18. See subfiles for detailed documentation. (v1.3: implementation moved to core/observability/tracer_engine.py; core/tracer.py is now a facade. v1.1: tracer.step 2-arg misuse fixed across 10 callers.)*

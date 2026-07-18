@@ -7,7 +7,7 @@ from __future__ import annotations
 import time
 
 from core.config import cfg
-from core.tracer import tracer
+from core.tracer import tracer, generate_trace_id
 from core.memory_backend.constants import (
     COLLECTION_EPISODIC, COLLECTION_SEMANTIC, COLLECTION_PROCEDURAL,
     ALL_COLLECTIONS
@@ -21,6 +21,14 @@ def execute_delete(store, query: str, collections: list[str] = None, threshold: 
     Always returns what was found and what was deleted so the caller
     can show a dry-run preview before confirming.
     """
+    # [v1.1 FIX] Use a unique trace_id for error correlation. Previously used
+    # empty string "" as trace_id, causing all maintenance errors to collide
+    # in the in-memory store under trace_id="". Uses generate_trace_id()
+    # (not new_trace) because these functions only log errors — no step/finish
+    # events — so there's no need for a full trace record with store insert +
+    # file write + stderr print side effects.
+    # See: docs/core/observability/CHANGELOG.md (v1.1)
+    _tid = generate_trace_id()
     threshold   = threshold or cfg.memory_delete_threshold
     collections = collections or ALL_COLLECTIONS
     rewritten   = _rewrite_query(query)
@@ -49,7 +57,7 @@ def execute_delete(store, query: str, collections: list[str] = None, threshold: 
                         "_hash":      meta.get("text_hash"),  # For cache cleanup
                     })
         except Exception as e:
-            tracer.error("", "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
+            tracer.error(_tid, "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
             continue
 
     if not candidates:
@@ -78,7 +86,7 @@ def execute_delete(store, query: str, collections: list[str] = None, threshold: 
             deleted += len(ids)
             successful_ids.update(ids)
         except Exception as e:
-            tracer.error("", "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
+            tracer.error(_tid, "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
             pass
 
     # 🔴 CRITICAL FIX: Keep the O(1) Hash Guard in sync ONLY for successful deletes
@@ -104,6 +112,9 @@ def execute_prune(store, max_age_days: int = 30, min_importance: int = 3, dry_ru
     - anything tagged "summary", "critical", or "protected"
     - importance >= min_importance
     """
+    # [v1.1 FIX] Use a unique trace_id for error correlation.
+    # See: docs/core/observability/CHANGELOG.md (v1.1)
+    _tid = generate_trace_id()
     collections = collections or [COLLECTION_EPISODIC, COLLECTION_SEMANTIC]
     if COLLECTION_PROCEDURAL in collections:
         collections = [c for c in collections if c != COLLECTION_PROCEDURAL]
@@ -119,7 +130,7 @@ def execute_prune(store, max_age_days: int = 30, min_importance: int = 3, dry_ru
             docs  = data.get("documents", [])
             metas = data.get("metadatas", [])
         except Exception as e:
-            tracer.error("", "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
+            tracer.error(_tid, "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
             continue
 
         for id_, doc, meta in zip(ids, docs, metas):
@@ -165,7 +176,7 @@ def execute_prune(store, max_age_days: int = 30, min_importance: int = 3, dry_ru
             deleted += len(ids)
             successful_ids.update(ids)
         except Exception as e:
-            tracer.error("", "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
+            tracer.error(_tid, "maintenance", f"Failed to delete memory from collection {col_name}: {e}")
             pass
 
     # 🔴 CRITICAL FIX: Keep the O(1) Hash Guard in sync ONLY for successful deletes
@@ -182,6 +193,10 @@ def execute_summarize(store, collections: list[str] = None, top_n: int = 30, sto
     Summarize stored memories using the planner model.
     Stores the summary as a high-importance semantic memory.
     """
+    # [v1.1 FIX] Use the caller-provided trace_id if available, else generate
+    # a unique one. Previously used empty string "" as trace_id.
+    # See: docs/core/observability/CHANGELOG.md (v1.1)
+    _tid = trace_id or generate_trace_id()
     from core.llm import llm
 
     collections = collections or ALL_COLLECTIONS
@@ -202,7 +217,7 @@ def execute_summarize(store, collections: list[str] = None, top_n: int = 30, sto
                     "reinf":      meta.get("reinforcement_count", 0),
                 })
         except Exception as e:
-            tracer.error("", "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
+            tracer.error(_tid, "maintenance", f"ChromaDB query failed for collection {col_name}: {e}")
             continue
 
     if len(all_docs) < 3:
@@ -255,6 +270,9 @@ def execute_summarize(store, collections: list[str] = None, top_n: int = 30, sto
 
 def execute_stats(store) -> dict:
     """Return counts and basic stats for each collection."""
+    # [v1.1 FIX] Use a unique trace_id for error correlation.
+    # See: docs/core/observability/CHANGELOG.md (v1.1)
+    _tid = generate_trace_id()
     result = {}
     for col_name in ALL_COLLECTIONS:
         col = store._col(col_name)
@@ -262,7 +280,7 @@ def execute_stats(store) -> dict:
             count = col.count()
             result[col_name] = {"count": count}
         except Exception as e:
-            tracer.error("", "maintenance", f"Failed to get count from collection {col_name}: {e}")
+            tracer.error(_tid, "maintenance", f"Failed to get count from collection {col_name}: {e}")
             result[col_name] = {"count": 0, "error": str(e)}
     return result
 

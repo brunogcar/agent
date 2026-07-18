@@ -15,6 +15,13 @@ class KGCleanup:
         Clean up old KG artifacts to prevent disk space exhaustion.
         Runs on startup or periodically.
         """
+        # [v1.1 FIX] Create a unique trace_id for this cleanup run.
+        # Previously, the WAL checkpoint warning was a 2-arg call:
+        #   tracer.warning("kg_cleanup", f"Failed to checkpoint {kg_db}: {e}")
+        # This set trace_id="kg_cleanup" and node=f"Failed to checkpoint..."
+        # with message="" — wrong arity AND a literal-string trace_id.
+        # See: docs/core/observability/CHANGELOG.md (v1.1)
+        _tid = tracer.new_trace("kg_cleanup", goal="WAL checkpoint + cache cleanup")
         understand_dir = project_path / ".understand"
         if not understand_dir.exists():
             return
@@ -31,7 +38,7 @@ class KGCleanup:
                 with sqlite3.connect(str(kg_db)) as conn:
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             except Exception as e:
-                tracer.warning("kg_cleanup", f"Failed to checkpoint {kg_db}: {e}")
+                tracer.warning(_tid, "kg_cleanup", f"Failed to checkpoint {kg_db}: {e}")
 
     @staticmethod
     def _cleanup_dir(dir_path: Path, max_age_days: int, max_size_gb: int) -> None:

@@ -216,5 +216,9 @@ def process_feedback() -> dict:
         except PermissionError:
             pass  # If locked, we'll retry next cycle
 
-    tracer.step("daemon", "sleep_learn_feedback", "cycle_completed", **stats)
+    # [v1.1 FIX] Create a unique trace_id for this feedback cycle.
+    # Previously used the literal string "daemon" as trace_id, causing
+    # trace collisions across cycles. See: docs/core/observability/CHANGELOG.md (v1.1)
+    _daemon_tid = tracer.new_trace("sleep_learn", goal="feedback cycle")
+    tracer.step(_daemon_tid, "sleep_learn_feedback", "cycle_completed", **stats)
     return stats

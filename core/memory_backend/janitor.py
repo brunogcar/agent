@@ -9,6 +9,10 @@ from core.tracer import tracer
 
 def archive_old_episodes() -> dict:
     """Moves episodic memories older than cfg.archive_age_days to episodic_archive."""
+    # [v1.1 FIX] Create a unique trace_id for this archival run.
+    # Previously used the literal string "janitor" as trace_id, causing
+    # trace collisions. See: docs/core/observability/CHANGELOG.md (v1.1)
+    _tid = tracer.new_trace("janitor", goal="archive old episodes")
     stats = {"archived": 0, "error": None}
     try:
         import chromadb  # LAZY IMPORT
@@ -41,6 +45,6 @@ def archive_old_episodes() -> dict:
             
     except Exception as e:
         stats["error"] = str(e)
-        tracer.error("janitor", "archive_episodes", str(e))
+        tracer.error(_tid, "archive_episodes", str(e))
         
     return stats

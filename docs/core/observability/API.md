@@ -37,6 +37,8 @@ Log a step-level event for an active trace.
 
 **Side effects:** Appends to trace's `steps` list in `_TraceStore`. Writes a `step` event to JSONL log. If `cfg.autocode_debug`, also logs to stderr via structlog.
 
+> ⚠️ **v1.1 — `trace_id` must come from `new_trace()`.** NEVER pass a literal string or empty string as `trace_id` (e.g., `tracer.step("health", ...)` or `tracer.step("", "node", ...)`). The signature is `step(trace_id, node, message="")`, so a 2-arg call silently sets `trace_id` to your literal and `node` to your message — this causes trace collisions in the in-memory `_TraceStore` and makes JSONL log queries ambiguous. Always call `tracer.new_trace()` first and pass the returned ID. See [INSTRUCTIONS.md](INSTRUCTIONS.md) NEVER DO #15 and Anti-Pattern 6.
+
 ---
 
 ### `tracer.error(trace_id: str, node: str, message: str = "", **kwargs) -> None`
@@ -45,11 +47,15 @@ Log an error event for an active trace. Same signature as `step()`.
 
 **Side effects:** Appends to trace's `steps` list. Writes an `error` event to JSONL log + stderr.
 
+> ⚠️ **v1.1** — same `trace_id` requirement as `step()`: must come from `new_trace()`, never a literal/empty string.
+
 ---
 
 ### `tracer.warning(trace_id: str, node: str, message: str = "", **kwargs) -> None`
 
 Log a warning-level event. Same signature as `step()`. Useful for non-fatal issues (e.g., "Checkpoint version mismatch, starting fresh").
+
+> ⚠️ **v1.1** — `warning()` requires a real `trace_id` from `new_trace()`, just like `step()`/`error()`. It is NOT a trace-free logging escape hatch. For trace-scoped warnings, call `new_trace()` first.
 
 ---
 
@@ -101,11 +107,13 @@ Generate a short hex trace ID. Default length is 12 chars (was 8 in early versio
 Retrieve a full trace timeline by `trace_id`. Two-path strategy:
 
 1. **Fast path:** Check in-memory `_TraceStore` (holds last 200 traces). If found, return formatted timeline.
-2. **Slow path:** Scan JSONL log files in `cfg.log_path` (newest first, limited to last 14 days). Parse each line, filter by `trace_id`, collect `trace_start`/`trace_finish` metadata and `step`/`error`/`warning` events.
+2. **Slow path:** Scan JSONL log files in `cfg.agent_log_path` (newest first, limited to last 14 days). Parse each line, filter by `trace_id`, collect `trace_start`/`trace_finish` metadata and `step`/`error`/`warning` events.
 
 **Returns:** `dict` with `trace_id`, `workflow`, `goal`, `status`, `started_at`, `elapsed_s`, `result`, `steps` — or `None` if not found in memory or on disk.
 
 **Returns `None` for:** empty `trace_id`, missing log dir, no matching records.
+
+> ✅ **v1.1 fix:** The slow path previously scanned `cfg.log_path` (`logs/`) but `_FileWriter` writes to `cfg.agent_log_path` (`logs/agent/`). The non-recursive `glob("agent_*.jsonl")` could never find the writer's files, so the disk-scan fallback was completely broken. It now scans `cfg.agent_log_path`.
 
 ---
 
@@ -212,11 +220,13 @@ Move a workflow journal from `checkpoints/` to `checkpoints/quarantine/`. Called
 
 Recursively extract JSON-safe primitives from a state object. Used by `save_checkpoint()` before serializing.
 
-**Supported types:** `str`, `int`, `float`, `bool`, `None`, `datetime.{datetime,date,time}` (→ ISO format), `datetime.timedelta` (→ seconds), `bytes` (→ UTF-8 decoded), `Decimal` (→ str), `uuid.UUID` (→ str), `Path`-like (→ str), `dict` (recursive), `list`/`tuple` (recursive), `set` (sorted-then-recursive if sortable, else unsorted).
+**Supported types:** `str`, `int`, `float`, `bool`, `None`, `datetime.{datetime,date,time}` (→ ISO format), `datetime.timedelta` (→ seconds), `bytes` (→ UTF-8 decoded), `Decimal` (→ str), `uuid.UUID` (→ str), `Path`-like (→ str via `os.fspath()`), `dict` (recursive), `list`/`tuple` (recursive), `set` (sorted-then-recursive if sortable, else unsorted).
 
 **Dropped types:** Any other object (httpx clients, locks, CircuitBreakers) → `None`. Prevents `json.dumps()` crashes on unserializable workflow state.
 
 **Circular reference handling:** Tracks `id()` of containers (dict/list/tuple/set) in `_seen`. Returns `"<circular_reference>"` if a container is revisited. Does NOT track primitives (they're interned in CPython and would false-positive).
+
+> ✅ **v1.1 fix:** Path-like objects are now converted via `os.fspath(state)` instead of `str(state)`. The old `str()` call fell back to `__repr__` for objects that define `__fspath__` but not `__str__` (e.g., `os.DirEntry`), producing repr garbage instead of the path string. `os.fspath()` correctly invokes `__fspath__()`.
 
 ---
 
@@ -234,4 +244,4 @@ Recursively extract JSON-safe primitives from a state object. Used by `save_chec
 
 ---
 
-*Last updated: 2026-07-10. See [ARCHITECTURE.md](ARCHITECTURE.md) for module layout, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18. See [ARCHITECTURE.md](ARCHITECTURE.md) for module layout, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

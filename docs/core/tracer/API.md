@@ -2,6 +2,10 @@
 
 # 📝 API Reference
 
+> **📍 Implementation location (v1.3+):** The Tracer implementation lives in `core/observability/tracer_engine.py`. This document describes the API as exposed via the `core.tracer` facade. For the full observability subsystem (reader, metrics, checkpoint), see [observability/API.md](../observability/API.md).
+
+> **v1.1 note (2026-07-18):** `tracer.step/error/warning/finish` all require a real `trace_id` from `new_trace()` — never a literal or empty string. The `warning()` row in the Core Methods table below takes the SAME signature as `step()` (`trace_id, node, message, **kwargs`); earlier docs that described it as `(node, **kwargs)` with "no trace_id required" were incorrect.
+
 ## 🔧 API Overview
 
 The Tracer exposes core methods for trace lifecycle management, retrieval, and querying. All output goes to stderr and JSONL files — never stdout.
@@ -19,7 +23,7 @@ The Tracer exposes core methods for trace lifecycle management, retrieval, and q
 | `get()` | `(trace_id: str) -> Optional[dict]` | Retrieve full in-memory trace record |
 | `recent()` | `(n: int = 10) -> list[dict]` | Get N most recent traces (newest first) |
 | `summary()` | `(trace_id: str) -> str` | One-line human-readable summary |
-| `warning()` | `(node: str, **kwargs) -> None` | Log warning (no trace_id required) |
+| `warning()` | `(trace_id: str, node: str, message: str = "", **kwargs) -> None` | Log warning on an active trace (requires `trace_id` from `new_trace()`) |
 
 ---
 
@@ -313,4 +317,4 @@ for line in log_file.read_text().splitlines():
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules. For the full observability subsystem API, see [../observability/API.md](../observability/API.md).*

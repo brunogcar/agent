@@ -86,4 +86,15 @@ for r in results:
 
 ---
 
-*Last updated: 2026-07-17. See subfiles for detailed documentation.*
+---
+
+## 🔧 v1.1 Observability Fix (2026-07-18)
+
+Three files fixed:
+- **`core/memory_backend/janitor.py`** — `archive_old_episodes()` was using `tracer.error("janitor", ...)` with a literal string `trace_id`. Now uses `_tid = tracer.new_trace("janitor", ...)`.
+- **`core/memory_backend/maintenance.py`** — 6 instances of `tracer.error("", "maintenance", ...)` (empty string `trace_id`) across 4 functions (`execute_delete`, `execute_prune`, `execute_summarize`, `execute_stats`). Each function now uses `_tid = generate_trace_id()` (NOT `tracer.new_trace()` — the side effects of `new_trace` — file I/O, stderr print, `_TraceStore` insert — interfered with ChromaDB query timing in `test_hash_cache_syncs_on_delete`, causing the just-stored memory to not be found → `KeyError: 'count'`). `generate_trace_id()` returns a unique 12-char hex ID with ZERO side effects. These functions only call `tracer.error()`, so a full trace record isn't needed. `execute_summarize` uses the caller-provided `trace_id` parameter if available.
+- **`core/memory_backend/meta_learning.py`** — `run_forever()` daemon loop was using `tracer.step("daemon", ...)` per cycle. Now creates one trace per cycle via `_tid = tracer.new_trace("meta_learning", ...)`.
+
+See [observability/CHANGELOG.md](observability/CHANGELOG.md) for details.
+
+*Last updated: 2026-07-18 (v1.1 observability fix + v1.4 maintenance generate_trace_id refinement). See subfiles for detailed documentation.*

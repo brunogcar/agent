@@ -157,6 +157,11 @@ def _cleanup_old_autocode_runs(max_age_days: int = 7) -> None:
     autocode_base = cfg.workspace_root / "autocode"
     if not autocode_base.exists():
         return
+    # [v1.1 FIX] Create ONE trace for the entire cleanup sweep, not one per
+    # directory. Previously called tracer.step("autocode", ...) with a literal
+    # string trace_id, causing trace collisions. See:
+    # docs/core/observability/CHANGELOG.md (v1.1)
+    _tid = tracer.new_trace("autocode_cleanup", goal="artifact cleanup")
     cutoff = datetime.now() - timedelta(days=max_age_days)
     for date_dir in autocode_base.iterdir():
         if not date_dir.is_dir() or not date_dir.name.isdigit() or len(date_dir.name) != 8:
@@ -165,6 +170,6 @@ def _cleanup_old_autocode_runs(max_age_days: int = 7) -> None:
             dir_date = datetime.strptime(date_dir.name, "%Y%m%d")
             if dir_date < cutoff:
                 shutil.rmtree(date_dir, ignore_errors=True)
-                tracer.step("autocode", "cleanup", f"Removed old autocode dir: {date_dir}")
+                tracer.step(_tid, "cleanup", f"Removed old autocode dir: {date_dir}")
         except (ValueError, OSError):
             continue

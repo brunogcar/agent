@@ -12,7 +12,7 @@
 | `core/observability/metrics.py` | Prometheus metrics registry — node duration, task status, TDD iterations, LLM tokens (moved from `core/metrics.py`) |
 | `core/observability/checkpoint.py` | `save_checkpoint()`, `get_latest()`, `mark_complete()`, `scan_incomplete()`, `quarantine()`, `sanitize_state()` — workflow resumability journal (moved from `workflows/helpers/checkpoint.py`) |
 | `core/tracer.py` | Thin facade — re-exports `tracer`, `Tracer`, `_TraceStore`, `generate_trace_id`, `_writer`, and other module-level names from `tracer_engine.py`. Exists so 71+ callers don't need to change import paths. |
-| `core/config.py` | `log_path`, `autocode_debug`, `workspace_root` configuration |
+| `core/config.py` | `log_path`, `agent_log_path`, `autocode_debug`, `workspace_root` configuration |
 | `core/gateway_backend/routes/traces.py` | HTTP endpoints: `GET /traces`, `GET /traces/{id}` — imports `read_trace`/`list_recent_traces` from `core.observability.reader` |
 | `core/gateway_backend/routes/metrics.py` | HTTP endpoint: `GET /metrics` — imports `generate_metrics`/`get_content_type` from `core.observability.metrics` |
 | `workflows/base.py` | Workflow dispatcher — imports `save_checkpoint`/`get_latest`/`mark_complete` from `core.observability.checkpoint` |
@@ -47,7 +47,7 @@ core.tracer (facade)
 
 core.observability.reader
 ├── Fast Path (In-memory lookup via _TraceStore)
-└── Slow Path (Disk scan of last 14 days of JSONL logs)
+└── Slow Path (Disk scan of last 14 days of JSONL logs in cfg.agent_log_path)
 
 core.observability.metrics
 ├── registry (CollectorRegistry — singleton if prometheus_client available)
@@ -61,7 +61,7 @@ core.observability.metrics
 core.observability.checkpoint
 ├── CHECKPOINT_DIR = {workspace_root}/checkpoints
 ├── QUARANTINE_DIR = {workspace_root}/checkpoints/quarantine
-├── sanitize_state() — recursive JSON-safe primitive extraction
+├── sanitize_state() — recursive JSON-safe primitive extraction (os.fspath for Path-like)
 ├── save_checkpoint() — append entry, fsync, zombie-loop counting
 ├── get_latest() — read last entry, zombie quarantine, version validation
 ├── mark_complete() — delete journal on success
@@ -77,10 +77,10 @@ core.observability.checkpoint
 graph TD
     A["Workflow / Tool / LLM call"] --> B["tracer.step(trace_id, node, message)<br/>(via core.tracer facade)"]
     B --> C["structlog stderr<br/>JSON with timestamps + context"]
-    B --> D["_FileWriter<br/>JSONL to logs/agent_YYYYMMDD.jsonl"]
+    B --> D["_FileWriter<br/>JSONL to cfg.agent_log_path/agent_YYYYMMDD.jsonl"]
     B --> E["_TraceStore<br/>In-memory dict, bounded to 200"]
     E --> F["GET /traces<br/>Fast path: memory lookup"]
-    D --> G["GET /traces/{id}<br/>Slow path: JSONL disk scan"]
+    D --> G["GET /traces/{id}<br/>Slow path: JSONL disk scan of cfg.agent_log_path"]
     C --> H["Terminal / MCP host debug console"]
 
     I["Workflow node boundary"] --> J["save_checkpoint(trace_id, node, state)"]
@@ -108,7 +108,7 @@ graph TD
 - **Daily rotation** — JSONL files rotate daily (`agent_YYYYMMDD.jsonl`). `_FileWriter` checks the date on every write.
 - **Silent I/O errors** — `_FileWriter` intentionally ignores non-fatal disk errors. A logging failure should never crash the agent. KeyboardInterrupt/SystemExit are always re-raised.
 - **Auto-flush + atexit close** — `f.flush()` after every write, plus `atexit.register(_writer.close)` for clean shutdown.
-- **Reader dual-path** — `read_trace()` first checks in-memory store (fast path), then falls back to disk scan of last 14 days of JSONL logs (slow path). The 14-day limit prevents I/O explosion on huge log dirs.
+- **Reader dual-path** — `read_trace()` first checks in-memory store (fast path), then falls back to disk scan of last 14 days of JSONL logs in `cfg.agent_log_path` (slow path). The 14-day limit prevents I/O explosion on huge log dirs.
 
 ### Metrics
 - **Prometheus optional** — All metrics helpers are no-ops if `prometheus_client` is not installed. Caller code can call `track_node(...)` from anywhere without guarding imports.
@@ -120,7 +120,7 @@ graph TD
 - **fsync on every write** — `f.flush()` + `os.fsync(f.fileno())` after every append. Crash-safe — the OS is forced to flush to disk before the file is closed.
 - **Zombie detection** — Two heuristics: (1) `resume_count >= MAX_RESUMES (5)` — a workflow that's been resumed 5+ times is stuck in a loop. (2) Consecutive same-node failures (`prev.status == failed && entry.status == failed && prev.node == entry.node`) — pathological retry loop. Either triggers `quarantine()` (move to `quarantine/` subdir) and returns `None` so the caller starts fresh.
 - **Version validation** — Each entry has a `version: 1` field. `get_latest()` injects `_checkpoint_version` into the restored state so consumers (e.g., `workflows/base.py run_workflow`) can reject incompatible checkpoints.
-- **sanitize_state()** — Recursively extracts JSON-safe primitives (str, int, float, bool, None, datetime, Decimal, UUID, Path-like). Drops non-serializable objects (httpx clients, locks, CircuitBreakers) by returning `None`. Prevents `json.dumps()` from crashing on unserializable workflow state.
+- **sanitize_state()** — Recursively extracts JSON-safe primitives (str, int, float, bool, None, datetime, Decimal, UUID, Path-like via `os.fspath()`). Drops non-serializable objects (httpx clients, locks, CircuitBreakers) by returning `None`. Prevents `json.dumps()` from crashing on unserializable workflow state.
 - **MAX_RESUMES = 5** — Hard cap on resume attempts. Tunable via the module-level constant (no env var yet).
 - **scan_incomplete() cutoff** — Only scans journals modified in the last 48 hours. Prevents the boot-time scan from re-trying ancient crashed workflows that the user has likely forgotten about.
 
@@ -130,33 +130,60 @@ graph TD
 
 ```bash
 # Run all observability tests
-python -m pytest tests/core/tracer/ -v
+python -m pytest tests/core/observability/ -v
 ```
 
-**Test layout:**
+**Test layout (v1.1 — 147 tests across 5 files):**
 ```text
-tests/core/tracer/
-├── test_tracer.py    # Tracer + _TraceStore + generate_trace_id (patches core.tracer._writer)
-└── test_reader.py    # read_trace (memory + disk), list_recent_traces
+tests/core/observability/
+├── conftest.py               # Shared fixtures (see below)
+├── test_tracer_engine.py     # generate_trace_id, _TraceStore (create/get/update/append/bounding/thread-safety),
+│                             # _FileWriter (create/append/rollover/error-suppression), Tracer full API
+│                             # (new_trace/step/error/warning/finish/get/recent/summary), P0 kwargs-spread fix,
+│                             # facade re-exports, integration lifecycle
+├── test_reader.py            # read_trace (empty id, fast-path, slow-path, malformed lines, substring prefilter,
+│                             # step sorting, 14-day limit, extra fields, no trace_start), list_recent_traces,
+│                             # _format_trace, _scan_disk
+├── test_metrics.py           # track_node, track_task_status, track_tdd_iterations, track_llm_tokens,
+│                             # generate_metrics, get_content_type, registry
+└── test_checkpoint.py        # sanitize_state (all types: primitives, datetime, Decimal, UUID, Path, bytes,
+                              # dict, list, tuple, set, circular refs, non-serializable, __fspath__),
+                              # save_checkpoint (file creation, append, version, resume_count, empty trace_id,
+                              # sanitization), get_latest (last state, version injection, zombie quarantine by
+                              # resume_count, zombie quarantine by consecutive failures, non-dict state),
+                              # quarantine, mark_complete, scan_incomplete (running, terminal, old, recent,
+                              # empty, malformed)
 ```
+
+**Shared fixtures (`conftest.py`):**
+- `clean_store` (autouse) — resets the module-level `_TraceStore` singleton and the `_FileWriter` before/after every test so tests are isolated.
+- `mock_writer` — patches `core.observability.tracer_engine._writer` with a mock that captures records without touching disk.
+- `isolated_tracer` — returns a `Tracer` instance wired to the clean store + mock writer.
+- `isolated_log_path` — redirects `cfg.agent_log_path` to a `tmp_path` for reader disk-scan tests.
+- `isolated_checkpoint_dirs` — redirects `CHECKPOINT_DIR`/`QUARANTINE_DIR` to `tmp_path` subdirs for checkpoint tests.
 
 **Mock strategy:**
-- Mock `_FileWriter` for unit tests (avoid disk I/O) — `patch("core.tracer._writer")` for tracer tests, `patch("core.observability.reader.tracer")` for reader tests
-- Use real `_TraceStore` for concurrency tests
-- Test structlog fallback by mocking `import structlog` to raise `ImportError`
-- For reader disk-scan tests, mock `cfg.log_path` to a tmp_path and write dummy JSONL files
+- Mock `_FileWriter` for unit tests (avoid disk I/O) — `patch("core.observability.tracer_engine._writer")` for tracer tests (NOT `core.tracer._writer` — see [INSTRUCTIONS.md](INSTRUCTIONS.md) NEVER DO #1 and the v1.1 patch-path fix), `patch("core.observability.reader.tracer")` for reader tests.
+- Use real `_TraceStore` for concurrency tests (with `clean_store` autouse fixture resetting the singleton).
+- Test structlog fallback by mocking `import structlog` to raise `ImportError`.
+- For reader disk-scan tests, use the `isolated_log_path` fixture (sets `cfg.agent_log_path` to a tmp_path) and write dummy JSONL files.
 
-> ⚠️ The checkpoint module currently has no dedicated test file — it's tested indirectly via `tests/workflows/base/test_dispatcher.py` (resume + crash scenarios) and `tests/workflows/base/test_node_helpers.py` (save_checkpoint + mark_complete mocking).
+> ✅ v1.1: The checkpoint module now has a dedicated `test_checkpoint.py` (was previously tested only indirectly via `tests/workflows/base/test_dispatcher.py`).
 
 ---
 
 ## ⚠️ Known Concerns
 
-- **`patch("core.tracer._writer")` semantics** — The v1.3 facade re-exports `_writer` from `tracer_engine`, but `Tracer` method bodies reference `_writer` via `tracer_engine`'s module globals. So `patch("core.tracer._writer")` replaces the name in the facade's namespace but does NOT intercept writes from `Tracer` methods. Tests that need to intercept writes should patch `core.observability.tracer_engine._writer` instead. (The existing test in `test_tracer.py` may need its patch path updated in a follow-up.)
-- **`tracer.step()` 2-arg signature usage** — Some callers use `tracer.step("health", "Health check")` with only 2 positional arguments. The signature is `step(trace_id, node, message="")`, so this sets `trace_id="health"` and `node="Health check"`. This produces trace records with a non-unique identifier that could collide with other health check calls. For non-trace-scoped logging, use `tracer.warning()` or a dedicated logging call.
 - **JSONL file growth** — JSONL files are created daily and never compressed. Over time, a busy agent can produce hundreds of megabytes of logs. No automatic compression or archival. The 14-day scan limit in `reader.py` prevents performance issues, but disk usage grows unbounded.
 - **No trace sampling** — Every operation is traced — no filtering or sampling. High-frequency operations (router calls, memory recalls) produce many low-value trace entries.
 
+### ✅ Resolved in v1.1
+
+- **reader.py log path** — `_scan_disk()` previously scanned `cfg.log_path` (`logs/`) but `_FileWriter` writes to `cfg.agent_log_path` (`logs/agent/`). The non-recursive `glob("agent_*.jsonl")` could never find the writer's files, making the disk-scan fallback completely broken. **Fixed in v1.1** — now scans `cfg.agent_log_path`.
+- **checkpoint.py `sanitize_state()` `__fspath__`** — `sanitize_state()` used `str(state)` for Path-like objects, but `str()` falls back to `__repr__` for objects that define `__fspath__` but not `__str__` (e.g., `os.DirEntry`). **Fixed in v1.1** — now uses `os.fspath(state)` which correctly calls `__fspath__()`.
+- **`tracer.step()` 2-arg usage** — Some callers passed a literal string as `trace_id` (e.g., `tracer.step("health", ...)`), causing trace collisions in the in-memory `_TraceStore` and ambiguous JSONL log queries. **Fixed in v1.1** — all 10 callers now use `tracer.new_trace()` to create a unique trace_id. See [INSTRUCTIONS.md](INSTRUCTIONS.md) NEVER DO #15.
+- **`patch("core.tracer._writer")` semantics** — The v1.3 facade re-exports `_writer`, but `Tracer` method bodies resolve the name via `tracer_engine`'s module globals, so patching the facade namespace didn't intercept writes. **Fixed in v1.1** — tests now patch `core.observability.tracer_engine._writer` (the canonical path). The old `tests/core/tracer/` directory was removed; tests live in `tests/core/observability/`.
+
 ---
 
-*Last updated: 2026-07-10. See [API.md](API.md) for function signatures, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18. See [API.md](API.md) for function signatures, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

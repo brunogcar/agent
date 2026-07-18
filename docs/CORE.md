@@ -610,7 +610,7 @@ from core.br_validator import parse_brl
 | Runtime | `.\venv\Scripts\pytest tests/core/runtime/ -W error --tb=short -v` |
 | Sleep Learn | `.\venv\Scripts\pytest tests/core/sleep_learn/ -W error --tb=short -v` |
 | KGraph | `.\venv\Scripts\pytest tests/core/kgraph/ -W error --tb=short -v` |
-| Tracer | `.\venv\Scripts\pytest tests/core/tracer/ -W error --tb=short -v` |
+| Tracer | `.\venv\Scripts\pytest tests/core/observability/ -W error --tb=short -v` |
 | NET | `.\venv\Scripts\pytest tests/core/net/ -W error --tb=short -v` |
 | Standalone | `.\venv\Scripts\pytest tests/core/extras/ -W error --tb=short -v` |
 

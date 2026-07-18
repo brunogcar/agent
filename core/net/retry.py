@@ -7,11 +7,21 @@ v1.5: Fixed on_failure accumulating per-retry-attempt on retryable errors.
       Now fires only on final raise (retry exhaustion), preserving v1.4 semantics
       (non-retryable errors still don't trip CB). Prevents CB from opening on
       successful-but-retried calls.
+v1.6: Switched time.sleep → _sleep (module-level reference). Tests now patch
+      core.net.retry._sleep instead of core.net.retry.time.sleep. The old
+      patch target was global (time is a singleton module) so ANY background
+      thread calling time.sleep during a test hit the mock — causing
+      assert_called_once() to fail with thousands of stray calls.
 """
 from __future__ import annotations
 
 import time
 from typing import Callable, Any, Optional
+
+# v1.6: Module-level sleep reference so tests can patch core.net.retry._sleep
+# without globally mocking time.sleep (which catches stray calls from
+# background threads like the browser reaper or watchdog).
+_sleep = time.sleep
 
 from core.net.errors import is_retryable_error, get_retry_delay
 
@@ -49,7 +59,7 @@ def retry_sync(
             last_exception = e
             if attempt < max_retries and is_retryable(e):
                 delay = get_retry_delay(attempt, base_delay, max_delay, jitter)
-                time.sleep(delay)
+                _sleep(delay)
             else:
                 raise
 
@@ -106,7 +116,7 @@ def retry_async_factory(
             # Retryable errors: retry if attempts remain, otherwise fall through to raise.
             if is_retryable(e) and attempt < max_retries:
                 delay = get_retry_delay(attempt, base_delay, max_delay, jitter)
-                time.sleep(delay)
+                _sleep(delay)
                 continue
             # Final raise — either retries exhausted (retryable) or non-retryable error.
             #

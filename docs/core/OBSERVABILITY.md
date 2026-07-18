@@ -14,6 +14,19 @@ The Observability subsystem (`core/observability/`) is the **centralized, struct
 
 ---
 
+## 🆕 v1.1 Changes (2026-07-18)
+
+| Area | Change |
+|------|--------|
+| `tracer.step/error/warning` 2-arg fix | 10 callers that passed a literal string or empty string as `trace_id` now use `tracer.new_trace()` to create a unique trace_id. Prevents trace collisions in `_TraceStore` and ambiguous JSONL queries. (`warning()` confirmed to require a real `trace_id` — it is NOT a trace-free escape hatch.) |
+| `reader._scan_disk()` log path | Now scans `cfg.agent_log_path` (`logs/agent/`) instead of `cfg.log_path` (`logs/`). The old non-recursive glob could never find `_FileWriter`'s files, so the disk-scan fallback was completely broken. |
+| `checkpoint.sanitize_state()` `__fspath__` | Path-like objects now converted via `os.fspath()` instead of `str()`. The old `str()` call fell back to `__repr__` for objects that define `__fspath__` but not `__str__` (e.g., `os.DirEntry`). |
+| Test expansion | `tests/core/tracer/` (2 files, ~10 tests) → `tests/core/observability/` (5 files, **147 tests**) with a shared `conftest.py`. Tests now patch `core.observability.tracer_engine._writer` (NOT `core.tracer._writer`). |
+
+See [observability/CHANGELOG.md](observability/CHANGELOG.md) for the full v1.1 changelog and the per-file fix list.
+
+---
+
 ## 🚀 Quick Start
 
 ```python
@@ -62,13 +75,15 @@ incomplete = scan_incomplete()
 |----------|--------|-----|
 | Trace a workflow | `tracer.new_trace()` + `tracer.step()` | End-to-end correlation |
 | Log an error | `tracer.error()` | Captures failure context |
-| Non-trace warning | `tracer.warning()` | No trace_id required |
+| Trace-scoped warning | `tracer.warning()` | Non-fatal issue on an active trace (requires `trace_id` from `new_trace()`) |
 | Query traces | `tracer.get()` / `tracer.recent()` | Fast in-memory lookup |
 | Post-mortem | `read_trace()` | Disk scan for old traces |
 | Prometheus metrics | `core.observability.metrics` | Quantitative monitoring |
 | Save workflow state | `save_checkpoint()` | Crash-safe resumability |
 | Resume a workflow | `get_latest()` | Restore from journal |
 | Find crashed workflows | `scan_incomplete()` | Server-boot recovery |
+
+> ⚠️ **v1.1:** `tracer.warning()` takes the same signature as `step()` — `warning(trace_id, node, message="", **kwargs)`. It requires a real `trace_id` from `new_trace()`. The old "When to Use" row claiming "No trace_id required" was incorrect and has been fixed.
 
 ---
 
@@ -85,4 +100,4 @@ incomplete = scan_incomplete()
 
 ---
 
-*Last updated: 2026-07-10. See subfiles for detailed documentation.*
+*Last updated: 2026-07-18. See subfiles for detailed documentation.*

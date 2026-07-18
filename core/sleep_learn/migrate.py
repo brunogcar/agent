@@ -42,6 +42,15 @@ def migrate_rules(dry_run: bool = False) -> dict:
     from core.memory_backend.rule_schema import build_unified_metadata, compute_text_hash
     from core.memory_engine import memory
     
+    # [v1.1 FIX] Create the migration trace_id at the TOP of the function.
+    # Previously, _mig_tid was only assigned inside the "drop collection" try
+    # block (line ~163), which meant:
+    #   - If dry_run=True: _mig_tid was never assigned → NameError at the
+    #     final tracer.step(_mig_tid, ...) on line 168.
+    #   - If stats["errors"] > 0: the drop block was skipped → same NameError.
+    # Now _mig_tid is always defined. See: docs/core/observability/CHANGELOG.md (v1.1)
+    _mig_tid = tracer.new_trace("migration", goal="rule migration")
+    
     stats = {"migrated": 0, "merged": 0, "skipped": 0, "errors": 0, "dry_run": dry_run}
     
     # 1. Open the old procedural_meta collection
@@ -142,7 +151,7 @@ def migrate_rules(dry_run: bool = False) -> dict:
             stats["migrated"] += 1
             
         except Exception as e:
-            tracer.error("migration", "migrate_rules", f"Failed to migrate rule {rule_id}: {e}")
+            tracer.error(_mig_tid, "migrate_rules", f"Failed to migrate rule {rule_id}: {e}")
             stats["errors"] += 1
     
     # 6. Verify (only if not dry_run)
@@ -160,10 +169,10 @@ def migrate_rules(dry_run: bool = False) -> dict:
         try:
             old_client.delete_collection(name=SLEEP_LEARN_COLLECTION_NAME)
             stats["dropped"] = True
-            tracer.step("migration", "migrate_rules", f"Dropped {SLEEP_LEARN_COLLECTION_NAME}")
+            tracer.step(_mig_tid, "migrate_rules", f"Dropped {SLEEP_LEARN_COLLECTION_NAME}")
         except Exception as e:
             stats["dropped"] = False
             stats["drop_error"] = str(e)
     
-    tracer.step("migration", "migrate_rules", f"Migration complete: {stats}")
+    tracer.step(_mig_tid, "migrate_rules", f"Migration complete: {stats}")
     return stats

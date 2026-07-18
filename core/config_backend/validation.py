@@ -35,6 +35,12 @@ def validate_config() -> None:
     Validate all critical configuration at startup.
     Raises RuntimeError with clear message if validation fails.
     """
+    # [v1.1 FIX] Create a unique trace_id for this validation run.
+    # Previously used the literal string "startup" as trace_id, which caused
+    # trace collisions in the in-memory store (every validation run overwrote
+    # the same trace) and made JSONL log queries ambiguous.
+    # See: docs/core/observability/CHANGELOG.md (v1.1)
+    _startup_tid = tracer.new_trace("startup", goal="config validation")
     errors = []
 
     # -- Paths must exist --
@@ -142,7 +148,7 @@ def validate_config() -> None:
     # -- Raise if any errors --
     if errors:
         error_msg = "Config validation failed:\n  - " + "\n  - ".join(errors)
-        tracer.error("startup", "config_validation", "Startup config check failed", extra={"errors": errors})
+        tracer.error(_startup_tid, "config_validation", "Startup config check failed", extra={"errors": errors})
         raise RuntimeError(error_msg)
 
-    tracer.step("startup", "config_validation", "All config checks passed")
+    tracer.step(_startup_tid, "config_validation", "All config checks passed")

@@ -2,6 +2,8 @@
 
 # 🏗️ Architecture
 
+> **📍 Implementation location (v1.3+):** The Tracer implementation lives in `core/observability/tracer_engine.py`. `core/tracer.py` is a thin re-export facade. **This document is the legacy v1 view** of the tracer in isolation; for the canonical v1.3+ observability subsystem docs (covering tracer_engine + reader + metrics + checkpoint as a single subsystem), see [../../observability/ARCHITECTURE.md](../../observability/ARCHITECTURE.md).
+
 ## 🔗 Source Code Reference
 
 | File | Purpose |
@@ -18,6 +20,8 @@
 | `server.py` | Main entry point — all tools use tracer for logging; imports `scan_incomplete` from `core.observability.checkpoint` |
 
 > **v1.3 extraction note:** This ARCHITECTURE.md preserves the legacy v1 view. For the canonical v1.3 observability subsystem docs (covering tracer_engine + reader + metrics + checkpoint as a single subsystem), see [../../observability/ARCHITECTURE.md](../../observability/ARCHITECTURE.md).
+
+> **v1.1 update (2026-07-18):** Fixed `tracer.step/error/warning` 2-arg misuse across 10 callers — all now use `tracer.new_trace()` for a unique trace_id. Tests moved from `tests/core/observability/` → `tests/core/observability/`. See [../../observability/CHANGELOG.md](../../observability/CHANGELOG.md) for details.
 
 ---
 
@@ -85,26 +89,29 @@ graph TD
 
 ```powershell
 # Run all tracer tests
-.\venv\Scripts\python tests/core/tracer/ -W error --tb=short -v
+.\venv\Scripts\python tests/core/observability/ -W error --tb=short -v
 
 > **Note:** Ensure `pytest` resolves to your venv. If not, use `python -m pytest` or the full venv path (`venv\Scripts\pytest.exe` on Windows, `venv/bin/pytest` on Unix).
 ```
 
-> ⚠️ `tracer_reader.py` currently has no dedicated test file — only `tests/core/tracer/test_tracer.py` exists.
+> ⚠️ `tracer_reader.py` currently has no dedicated test file — only `tests/core/observability/test_tracer.py` exists.
 
 **Mock strategy:**
 - Mock `_FileWriter` for unit tests (avoid disk I/O)
 - Use real `_TraceStore` for concurrency tests
 - Test structlog fallback by mocking `import structlog` to raise `ImportError`
 
+> ✅ **v1.1:** Tests have moved to `tests/core/observability/` (5 files, 147 tests, shared `conftest.py`). The `tests/core/observability/` directory no longer exists. See [../../observability/ARCHITECTURE.md](../../observability/ARCHITECTURE.md) § Testing for the current layout and fixtures.
+
 ---
 
 ## ⚠️ Known Concerns
 
-- **`tracer.step()` 2-arg signature usage** — Some callers use `tracer.step("health", "Health check")` with only 2 positional arguments. The signature is `step(trace_id, node, message="")`, so this sets `trace_id="health"` and `node="Health check"`. This produces trace records with a non-unique identifier that could collide with other health check calls. For non-trace-scoped logging, use `tracer.warning()` or a dedicated logging call. Reserve `tracer.step()` for trace-scoped operations with real trace IDs.
 - **JSONL file growth** — JSONL files are created daily and never compressed. Over time, a busy agent can produce hundreds of megabytes of logs. No automatic compression or archival of old log files. The 14-day scan limit in `tracer_reader.py` prevents performance issues, but disk usage grows unbounded. *(Suggestion: Add a log rotation policy — gzip files older than 7 days, delete files older than 30 days.)*
 - **No trace sampling** — Every operation is traced — no filtering or sampling. High-frequency operations (router calls, memory recalls) produce many low-value trace entries. This increases JSONL file size and in-memory store churn without proportional debugging value. *(Suggestion: Consider trace sampling for high-frequency, low-importance operations — e.g., keep only 10% of router classification traces. Important traces (errors, workflow completions) should always be kept.)*
 
+> ✅ **v1.1 resolved:** The `tracer.step()` 2-arg usage concern (callers passing literal strings as `trace_id`) has been fixed across 10 callers — all now use `tracer.new_trace()`. See [../../observability/CHANGELOG.md](../../observability/CHANGELOG.md).
+
 ---
 
-*Last updated: 2026-07-10. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules. For the v1.3 observability subsystem docs, see [../../observability/ARCHITECTURE.md](../../observability/ARCHITECTURE.md).*
+*Last updated: 2026-07-18. See [API.md](API.md) for method details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules. For the v1.3+ observability subsystem docs, see [../../observability/ARCHITECTURE.md](../../observability/ARCHITECTURE.md).*

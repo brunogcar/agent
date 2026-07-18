@@ -81,4 +81,14 @@ result = llm.call(role="executor", messages=[{"role": "system", "content": "..."
 
 ---
 
-*Last updated: 2026-07-14 (v1.3). See subfiles for detailed documentation.*
+---
+
+## 🔧 v1.1 Observability Fix (2026-07-18)
+
+**`core/llm_backend/client.py`** — `circuit_breaker_states` property fixed:
+- **Before:** `tracer.step("", "circuit_breaker", ...)` with empty string `trace_id`, called once per role in a loop → all breaker events collided in the in-memory store under `trace_id=""`.
+- **After:** ONE `tracer.new_trace("circuit_breaker", goal="breaker state sweep")` call before the loop, with the unique `trace_id` passed to all `step()`/`error()` calls inside.
+
+The test `tests/core/llm/test_llm_tracer.py::test_circuit_breaker_states_uses_tracer_step` was updated to assert the new unique trace_id. See [observability/CHANGELOG.md](observability/CHANGELOG.md) for details.
+
+*Last updated: 2026-07-18 (v1.1 observability fix). See subfiles for detailed documentation.*

@@ -52,7 +52,12 @@ def sanitize_state(state: Any, _seen: set = None) -> Any:
     elif isinstance(state, uuid.UUID):
         return str(state)
     elif hasattr(state, "__fspath__"): # Path-like objects
-        return str(state)
+        # [BUGFIX] Use os.fspath() instead of str() so objects that define
+        # __fspath__ but not __str__ (e.g., os.DirEntry) are converted
+        # correctly. str() would fall back to __repr__ and produce
+        # "<DirEntry ...>" instead of the actual path string.
+        result = os.fspath(state)
+        return result.decode("utf-8", errors="replace") if isinstance(result, bytes) else result
     elif isinstance(state, dict):
         return {str(k): sanitize_state(v, _seen) for k, v in state.items()}
     elif isinstance(state, (list, tuple)):

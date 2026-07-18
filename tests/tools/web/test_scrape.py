@@ -104,7 +104,7 @@ class TestScrape:
 
         mock_httpx.get.side_effect = [exc_503, mock_response_ok]
         # [core/net] retry_sync() sleeps in core/net/retry.py, not scrape.py
-        with patch("core.net.retry.time.sleep") as mock_sleep:
+        with patch("core.net.retry._sleep") as mock_sleep:
             result = web(action="scrape", url="https://example.com", max_chars=8000)
         assert result["status"] == "success"
         assert mock_httpx.get.call_count == 2  # 1 fail + 1 success
@@ -120,7 +120,7 @@ class TestScrape:
 
         mock_httpx.get.side_effect = [httpx.TimeoutException("Timeout"), mock_response_ok]
         # [core/net] retry_sync() sleeps in core/net/retry.py, not scrape.py
-        with patch("core.net.retry.time.sleep") as mock_sleep:
+        with patch("core.net.retry._sleep") as mock_sleep:
             result = web(action="scrape", url="https://example.com", max_chars=8000)
         assert result["status"] == "success"
         assert mock_httpx.get.call_count == 2  # 1 fail + 1 success
@@ -134,7 +134,7 @@ class TestScrape:
         exc_404 = httpx.HTTPStatusError("Not Found", request=MagicMock(), response=error_404)
         mock_httpx.get.side_effect = exc_404
         # [core/net] retry_sync() uses is_retryable_error() which rejects 4xx
-        with patch("core.net.retry.time.sleep") as mock_sleep:
+        with patch("core.net.retry._sleep") as mock_sleep:
             result = web(action="scrape", url="https://example.com/notfound", max_chars=8000)
         assert result["status"] == "error"
         assert "404" in result["error"]

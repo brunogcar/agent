@@ -39,15 +39,29 @@ class TestTracerIntegration:
     """Verify tracer.step() is used correctly — never tracer.log()."""
 
     def test_circuit_breaker_states_uses_tracer_step(self, llm_client):
-        """[BUGFIX-1] circuit_breaker_states must call tracer.step(), not tracer.log()."""
+        """[BUGFIX-1] circuit_breaker_states must call tracer.step(), not tracer.log().
+
+        [v1.1 UPDATE] The trace_id is now a unique hex ID from tracer.new_trace(),
+        not the old empty string "". The test verifies that:
+          - tracer.step() is called (not tracer.log())
+          - the trace_id is a non-empty 12-char hex string (not "" or a literal)
+          - the node is "circuit_breaker"
+          - the role kwarg is present
+        See: docs/core/observability/CHANGELOG.md (v1.1)
+        """
         with patch("core.llm_backend.client.tracer.step") as mock_step, \
-             patch("core.llm_backend.client.tracer.error") as mock_error:
+             patch("core.llm_backend.client.tracer.error") as mock_error, \
+             patch("core.llm_backend.client.tracer.new_trace", return_value="abc123def456") as mock_new:
             states = llm_client.circuit_breaker_states
             # Should call tracer.step for each role
             assert mock_step.called, "tracer.step() was never called"
-            # Verify the call signature matches the fix: step("", "circuit_breaker", role=..., ...)
+            # new_trace should have been called once to create the sweep trace
+            mock_new.assert_called_once()
+            # Verify the call signature: step(trace_id, "circuit_breaker", role=..., ...)
             call_args = mock_step.call_args
-            assert call_args[0][0] == ""  # trace_id = ""
+            trace_id = call_args[0][0]
+            assert trace_id == "abc123def456"  # unique trace_id, not "" or a literal
+            assert len(trace_id) == 12  # 12-char hex
             assert call_args[0][1] == "circuit_breaker"  # node
             assert "role" in call_args[1]  # role kwarg
             # Must NOT call tracer.log() — that method does not exist

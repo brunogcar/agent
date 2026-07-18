@@ -73,4 +73,14 @@ ENV=development                          # Environment mode
 
 ---
 
-*Last updated: 2026-07-04. See subfiles for detailed documentation.*
+---
+
+## 🔧 v1.1 Observability Fix (2026-07-18)
+
+**`core/runtime/health.py`** — `health_check_endpoint()` fixed:
+- **Before:** `tracer.step("health", "Health check", ...)` with literal string `"health"` as `trace_id` → every health check overwrote the same trace in the in-memory store.
+- **After:** `_tid = tracer.new_trace("health", goal="health check")` creates a unique trace per call.
+
+See [observability/CHANGELOG.md](observability/CHANGELOG.md) for details.
+
+*Last updated: 2026-07-18 (v1.1 observability fix). See subfiles for detailed documentation.*

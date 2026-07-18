@@ -26,6 +26,7 @@
 17. **Always use `from core.memory_engine import memory`** — The facade is the only public API surface.
 18. **Always thread `trace_id` through all operations** — For observability and cancellation.
 19. **Always call `ensure_not_cancelled(trace_id)` before writes** — Prevents ghost mutations.
+20. **Always use `generate_trace_id()` (not `new_trace()`) for error-only functions** — The 4 `execute_*` functions in `maintenance.py` only call `tracer.error()` — no `step`/`finish`. Using `tracer.new_trace()` introduces side effects (file I/O, stderr print, `_TraceStore` insert) that can interfere with ChromaDB query timing. `generate_trace_id()` returns a unique 12-char hex ID with ZERO side effects — error events still get a correlation ID, and `tracer.error` still writes to the JSONL log via `_writer.write`. Use `new_trace()` only when you also call `step()`/`finish()` (full trace lifecycle).
 20. **Always use typed helpers (`store_episodic`, `store_semantic`, `store_procedural`)** — Clearer intent than raw `store()`.
 21. **Always include `error_code` in `fail()` calls** — Every error response must include a structured code.
 22. **Always run `compileall` after editing memory files** — Verify syntax before running tests.

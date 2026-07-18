@@ -40,7 +40,7 @@ class TestRetrySync:
                 raise httpx.ConnectError("transient")
             return "ok"
 
-        with patch("core.net.retry.time.sleep"):
+        with patch("core.net.retry._sleep"):
             result = retry_sync(fn, max_retries=3)
             assert result == "ok"
             assert call_count[0] == 3
@@ -53,7 +53,7 @@ class TestRetrySync:
             call_count[0] += 1
             raise httpx.ConnectError("always fails")
 
-        with patch("core.net.retry.time.sleep"):
+        with patch("core.net.retry._sleep"):
             with pytest.raises(httpx.ConnectError, match="always fails"):
                 retry_sync(fn, max_retries=2)
             assert call_count[0] == 3  # initial + 2 retries
@@ -83,7 +83,7 @@ class TestRetrySync:
         def custom_retry(e):
             return isinstance(e, RuntimeError)
 
-        with patch("core.net.retry.time.sleep"):
+        with patch("core.net.retry._sleep"):
             result = retry_sync(fn, max_retries=3, is_retryable=custom_retry)
             assert result == "ok"
             assert call_count[0] == 2
@@ -103,7 +103,7 @@ class TestRetrySync:
         def capture_sleep(duration):
             sleeps.append(duration)
 
-        with patch("core.net.retry.time.sleep", side_effect=capture_sleep):
+        with patch("core.net.retry._sleep", side_effect=capture_sleep):
             retry_sync(fn, max_retries=3, base_delay=1.0, jitter=False)
 
         # Delays: 1.0 * 2^0 = 1.0, 1.0 * 2^1 = 2.0
@@ -158,7 +158,7 @@ class TestRetryAsyncFactory:
             import asyncio
             return asyncio.run(coro)
 
-        with patch("core.net.retry.time.sleep"):
+        with patch("core.net.retry._sleep"):
             with pytest.raises(httpx.TimeoutException, match="fail #3"):
                 retry_async_factory(
                     factory,
@@ -249,7 +249,7 @@ class TestRetryAsyncFactory:
             import asyncio
             return asyncio.run(coro)
 
-        with patch("core.net.retry.time.sleep"):
+        with patch("core.net.retry._sleep"):
             with pytest.raises(httpx.TimeoutException):
                 retry_async_factory(
                     factory,

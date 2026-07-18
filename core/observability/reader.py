@@ -46,7 +46,15 @@ def _format_trace(trace: dict) -> dict:
 
 def _scan_disk(trace_id: str) -> Optional[dict]:
     """Scan JSONL log files in reverse chronological order."""
-    log_dir = cfg.log_path
+    # [v1.1 FIX] Scan cfg.agent_log_path (where _FileWriter writes) instead
+    # of cfg.log_path. The writer creates files at
+    #   cfg.agent_log_path / "agent_YYYYMMDD.jsonl"  (= logs/agent/)
+    # but the reader was globbing cfg.log_path (= logs/) with a non-recursive
+    # pattern, so it could NEVER find the writer's files. This made the
+    # disk-scan fallback completely broken for any trace that fell out of
+    # the 200-trace in-memory store.
+    # See: docs/core/observability/CHANGELOG.md (v1.1)
+    log_dir = cfg.agent_log_path
     if not log_dir.exists():
         return None
 

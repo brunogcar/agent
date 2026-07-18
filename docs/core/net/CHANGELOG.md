@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.6 | 2026-07-18 | `_sleep = time.sleep` module-level reference; `retry_sync()` + `retry_async_factory()` call `_sleep(delay)` instead of `time.sleep(delay)`. Tests patch `core.net.retry._sleep` (scoped) instead of `core.net.retry.time.sleep` (global — `time` is a singleton module, so the old patch caught stray `time.sleep()` calls from background threads like the browser reaper `sleep(60)` and watchdog, causing `assert_called_once()` to fail with 35004 stray calls). |
 | v1.5 | 2026-07-18 | `on_failure()` fires only on final raise (retry exhaustion), not per attempt — prevents CB opening on successful-but-retried calls. Preserves v1.4 retryable-only semantics. |
 | v1.4 | — | `0.0.0.0`/`::` blocked, `on_failure()` retryable-only, `www.` strip boundary, Tavily error handler alignment |
 | v1.3 | — | `RLock`, daily reset, IPv6 bracket parsing, unbracketed IPv6, `get_status()` no-config fallback, `__init__.py` re-exports |
@@ -18,6 +19,12 @@
 ---
 
 ## ⚠️ Breaking Changes
+
+### v1.6
+
+| Change | Impact |
+|--------|--------|
+| Test patch target `core.net.retry.time.sleep` → `core.net.retry._sleep` | Tests that mock retry sleep must update their patch target. The old target was global (`time` is a singleton module); the new target is a module attribute scoped to `retry.py` only. Background threads (browser reaper, watchdog) calling `time.sleep()` no longer hit the mock. |
 
 ### v1.5
 
@@ -95,4 +102,4 @@
 
 ---
 
-*Last updated: 2026-07-18. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.6 _sleep fix). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

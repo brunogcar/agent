@@ -44,7 +44,7 @@ core/memory_backend/
 ├── write_ops.py               # execute_store() — TOCTOU-safe dedup + insert; execute_store_chunked() — batch insert (v1.1)
 ├── read_ops.py                # execute_recall(), execute_recall_context()
 ├── scoring.py                 # _decay_score() + _rewrite_query() (model-free)
-├── maintenance.py             # execute_delete/prune/summarize/stats/diversity_maintenance()
+├── maintenance.py             # execute_delete/prune/summarize/stats/diversity_maintenance() — v1.4: uses generate_trace_id() (not new_trace) for error-only logging (zero side effects)
 ├── telemetry.py               # RecallTracker — RAM buffer, periodic ChromaDB flush
 ├── eviction.py                # EvictionQueue class + flusher_loop() — disk spill queue
 ├── janitor.py                 # archive_old_episodes() — episodic archival only

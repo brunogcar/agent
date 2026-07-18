@@ -71,6 +71,7 @@ graph TD
 - **Lazy SDK exception registration** — Tools call `register_retryable_exception()` at import time to add SDK-specific retryable errors without modifying `core/net/errors.py`.
 - **Cross-tool re-exports** — `core/net/__init__.py` exposes all public APIs so tools can use `from core.net import ...` instead of deep imports.
 - **Circuit breaker integration** — `retry_async_factory` accepts `on_success`/`on_failure` callbacks. `on_failure` only fires for retryable errors (v1.4 fix), and only on final raise / retry exhaustion (v1.5 fix) — not per-attempt. This prevents CB trips on validation/4xx errors AND prevents CB failure_count accumulation on successful-but-retried calls.
+- **Module-level `_sleep` reference (v1.6)** — `retry.py` defines `_sleep = time.sleep` at module level and calls `_sleep(delay)` instead of `time.sleep(delay)`. This lets tests patch `core.net.retry._sleep` (a module attribute, scoped to `retry.py`) without globally mocking `time.sleep` (which is a singleton module — patching `core.net.retry.time.sleep` catches stray calls from ANY background thread, e.g. the browser reaper's `time.sleep(60)` loop, causing `assert_called_once()` to fail with thousands of stray calls).
 - **URL normalization for cache keys** — `normalize_url()` lowercases, strips trailing slashes, sorts query parameters. Deterministic across tools.
 - **Domain comparison with `www.` strip** — `is_same_domain()` considers `www.example.com` and `example.com` as identical (v1.3). Boundary check prevents `www2.example.com` -> `2.example.com` (v1.4).
 - **OPEN→HALF_OPEN transition** — Counts against `half_open_max_calls` (v1.3 fix). Was allowing 1 extra call.
@@ -187,4 +188,4 @@ from core.net.default import SEARCH_MAX_RESULTS
 
 ---
 
-*Last updated: 2026-07-18. See [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.6 _sleep fix). See [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

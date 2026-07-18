@@ -56,13 +56,20 @@ class LLMClient:
     @property
     def circuit_breaker_states(self) -> dict[str, dict] | None:
         """Public API for gateway to query breaker states."""
+        # [v1.1 FIX] Create ONE trace for the entire breaker state sweep,
+        # not one per role. Previously called tracer.step("", ...) with an
+        # empty trace_id, which caused all breaker events to collide in the
+        # in-memory store under trace_id="". Now uses a unique trace_id.
+        # See: docs/core/observability/CHANGELOG.md (v1.1)
+        _tid = tracer.new_trace("circuit_breaker", goal="breaker state sweep")
+
         # 1. Always log states to JSONL for observability
         for role, breaker in self._breakers.items():
             try:
                 # [BUGFIX-1] tracer.log() does not exist; use tracer.step() instead.
-                tracer.step("", "circuit_breaker", f"State check for {role}", role=role, **breaker.get_state_info())
+                tracer.step(_tid, "circuit_breaker", f"State check for {role}", role=role, **breaker.get_state_info())
             except Exception as e:
-                tracer.error("", "circuit_breaker_metrics", f"Metrics failed for {role}", error=str(e), role=role)
+                tracer.error(_tid, "circuit_breaker_metrics", f"Metrics failed for {role}", error=str(e), role=role)
 
         # 2. Optionally expose via property if --metrics flag is enabled
         if getattr(cfg, "enable_metrics_endpoint", False):

@@ -197,16 +197,21 @@ class MetaLearner:
         """Daemon loop. Sleeps 30 mins between scans."""
         import time as _time
         while True:
+            # [v1.1 FIX] Create a unique trace_id per daemon cycle.
+            # Previously used the literal string "daemon" as trace_id,
+            # causing trace collisions across cycles.
+            # See: docs/core/observability/CHANGELOG.md (v1.1)
+            _tid = tracer.new_trace("meta_learning", goal="daemon cycle")
             try:
                 stats = self.run_once()
                 if stats["stored"] > 0:
                     tracer.step(
-                        "daemon", "meta_learning",
+                        _tid, "meta_learning",
                         f"Distilled {stats['stored']} rules",
                         skipped=stats["skipped"], errors=stats["errors"],
                     )
             except Exception as e:
-                tracer.error("daemon", "meta_learning", f"Cycle failed: {e}")
+                tracer.error(_tid, "meta_learning", f"Cycle failed: {e}")
             _time.sleep(1800)  # 30 minutes
 
 # -- Singleton --------------------------------------------------------------

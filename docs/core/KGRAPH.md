@@ -62,4 +62,14 @@ The kgraph module uses no dedicated `.env` variables. It derives all configurati
 
 ---
 
-*Last updated: 2026-07-04. See subfiles for detailed documentation.*
+---
+
+## 🔧 v1.1 Observability Fix (2026-07-18)
+
+**`core/kgraph/cleanup.py`** — `KGCleanup.cleanup_project()` had a **wrong-arity** tracer call:
+- **Before:** `tracer.warning("kg_cleanup", f"Failed to checkpoint {kg_db}: {e}")` — only 2 positional args. The signature is `warning(trace_id, node, message="", **kwargs)`, so this set `trace_id="kg_cleanup"` and `node=f"Failed to checkpoint..."` with `message=""`. The error message ended up in the `node` field.
+- **After:** `_tid = tracer.new_trace("kg_cleanup", goal="WAL checkpoint + cache cleanup")` + `tracer.warning(_tid, "kg_cleanup", f"Failed to checkpoint {kg_db}: {e}")` — proper 3-arg call with a unique trace_id.
+
+See [observability/CHANGELOG.md](observability/CHANGELOG.md) for details.
+
+*Last updated: 2026-07-18 (v1.1 observability fix). See subfiles for detailed documentation.*

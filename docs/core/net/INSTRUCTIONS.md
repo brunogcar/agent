@@ -16,18 +16,20 @@
 10. **Never use `2001:db8::1` as a public IPv6 test address** — It\'s reserved in Python\'s `ipaddress` module. Use `2001:4860:4860::8888` instead.
 11. **Never call `on_failure()` before `is_retryable()`** — Non-retryable errors must NOT trip the circuit breaker. `retry_async_factory` handles this correctly; don\'t bypass it.
 12. **Never forget `ip.is_unspecified` in IP checks** — `0.0.0.0` and `::` are NOT caught by `is_private`/`is_loopback`/`is_reserved`/`is_multicast`.
+13. **Never patch `core.net.retry.time.sleep` in tests** — `time` is a singleton module, so the patch is GLOBAL. Any background thread (browser reaper `time.sleep(60)`, watchdog) calling `time.sleep` during the test hits the mock, causing `assert_called_once()` to fail with thousands of stray calls. Patch `core.net.retry._sleep` instead (v1.6 module-level reference, scoped to `retry.py` only).
 
 ## ✅ ALWAYS DO
 
-13. **Always import from `core.net` package** — `from core.net import ...` not `core.security` or `core.web_errors`.
-14. **Always use `normalize_url()` for cache keys** — Deterministic, sortable, consistent.
-15. **Always patch `allowed_internal_hosts` to empty in security tests** — Prevents environment config from interfering.
-16. **Always reset circuit breakers between tests** — `_MY_CB.reset()` must be in a known state.
-17. **Always use `AsyncMock` for async client methods in tests** — `_run_async_with_resilience` calls `asyncio.run(coro)`.
-18. **Always include `error_code` in `fail()` calls** — Every error response must be programmatically consumable.
-19. **Always check `can_execute()` before CB-protected operations** — Fail fast when circuit is open.
-20. **Always fall through to HALF_OPEN check after OPEN→HALF_OPEN transition** — Don\'t return True immediately (v1.3 fix).
-21. **Always verify `www.` strip boundary** — `www2.example.com` must NOT become `2.example.com`. Use `startswith("www.") and count(".") >= 2`.
+14. **Always import from `core.net` package** — `from core.net import ...` not `core.security` or `core.web_errors`.
+15. **Always use `normalize_url()` for cache keys** — Deterministic, sortable, consistent.
+16. **Always patch `allowed_internal_hosts` to empty in security tests** — Prevents environment config from interfering.
+17. **Always reset circuit breakers between tests** — `_MY_CB.reset()` must be in a known state.
+18. **Always use `AsyncMock` for async client methods in tests** — `_run_async_with_resilience` calls `asyncio.run(coro)`.
+19. **Always include `error_code` in `fail()` calls** — Every error response must be programmatically consumable.
+20. **Always check `can_execute()` before CB-protected operations** — Fail fast when circuit is open.
+21. **Always fall through to HALF_OPEN check after OPEN→HALF_OPEN transition** — Don\'t return True immediately (v1.3 fix).
+22. **Always verify `www.` strip boundary** — `www2.example.com` must NOT become `2.example.com`. Use `startswith("www.") and count(".") >= 2`.
+23. **Always patch `core.net.retry._sleep` in retry tests** — The v1.6 module-level reference. Use `with patch("core.net.retry._sleep") as mock_sleep:` to mock the retry backoff sleep without affecting `time.sleep` globally.
 22. **Always use raw strings for `</` → `<\/` replacement** — `.replace("</", r"<\/")` avoids invalid escape sequence SyntaxError under `-W error`.
 
 ---

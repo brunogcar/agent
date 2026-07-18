@@ -91,5 +91,9 @@ def health_check_endpoint() -> str:
     """
     import json
     health = get_health()
-    tracer.step("health", "Health check", extra={"status": health["status"]})
+    # [v1.1 FIX] Create a unique trace_id for this health check.
+    # Previously used the literal string "health" as trace_id, causing
+    # trace collisions. See: docs/core/observability/CHANGELOG.md (v1.1)
+    _tid = tracer.new_trace("health", goal="health check")
+    tracer.step(_tid, "Health check", extra={"status": health["status"]})
     return json.dumps(health, indent=2)

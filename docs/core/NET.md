@@ -74,4 +74,8 @@ TAVILY_API_KEY=tvly-...                  # Used by tavily tool (via cfg)
 
 ---
 
-*Last updated: 2026-07-03. See subfiles for detailed documentation.*
+## 🔧 v1.6 Fix (2026-07-18)
+
+**`core/net/retry.py`** — `_sleep = time.sleep` module-level reference. `retry_sync()` + `retry_async_factory()` now call `_sleep(delay)` instead of `time.sleep(delay)`. Tests patch `core.net.retry._sleep` (scoped to `retry.py`) instead of `core.net.retry.time.sleep` (global — `time` is a singleton module, so the old patch caught stray `time.sleep()` calls from background threads like the browser reaper `sleep(60)` and watchdog, causing `assert_called_once()` to fail with 35004 stray calls in `test_scrape_retry_on_503`). See [net/CHANGELOG.md](net/CHANGELOG.md) for details.
+
+*Last updated: 2026-07-18 (v1.6 _sleep fix). See subfiles for detailed documentation.*

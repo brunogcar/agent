@@ -1,7 +1,7 @@
 """Tests for tools/tavily_ops/bridge.py — resilience, retry, circuit breaker.
 
 v1.3: Fixed retry count (max_retries=2 means 3 total attempts: initial + 2 retries).
-      Fixed backoff patch target (core.net.retry.time.sleep, not bridge.time.sleep).
+      Fixed backoff patch target (core.net.retry._sleep, not bridge.time.sleep).
       FIXED: test_retry_exhausted_raises matches bridge's max_retries=3 (4 attempts).
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ class TestBridgeResilience:
                 return {"ok": True}
             return _coro()
 
-        with patch("core.net.retry.time.sleep"):
+        with patch("core.net.retry._sleep"):
             result = bridge._run_async_with_resilience(factory, trace_id="test")
             assert result == {"ok": True}
             assert call_count[0] == 3
@@ -54,7 +54,7 @@ class TestBridgeResilience:
                 raise httpx.TimeoutException(f"fail #{call_count[0]}")
             return _coro()
 
-        with patch("core.net.retry.time.sleep"):
+        with patch("core.net.retry._sleep"):
             with pytest.raises(httpx.TimeoutException, match="fail #4"):
                 bridge._run_async_with_resilience(factory, trace_id="test")
             assert call_count[0] == 4  # initial + 3 retries
@@ -88,7 +88,7 @@ class TestBridgeResilience:
     def test_retry_uses_unified_backoff(self):
         """Retry uses get_retry_delay from core.net.errors.
 
-        v1.3 FIX: Patch core.net.retry.time.sleep (not bridge.time.sleep).
+        v1.3 FIX: Patch core.net.retry._sleep (not bridge.time.sleep).
         """
         call_count = [0]
 
@@ -100,7 +100,7 @@ class TestBridgeResilience:
                 return {"ok": True}
             return _coro()
 
-        with patch("core.net.retry.time.sleep") as mock_sleep:
+        with patch("core.net.retry._sleep") as mock_sleep:
             bridge._run_async_with_resilience(factory, trace_id="test")
 
             # Should sleep once (after first failure, before second attempt)

@@ -94,4 +94,17 @@ result = distill_observation({
 
 ---
 
-*Last updated: 2026-07-17. See subfiles for detailed documentation.*
+---
+
+## 🔧 v1.1 Observability Fix (2026-07-18)
+
+Two files fixed:
+- **`core/sleep_learn/feedback.py`** — `process_feedback()` was using `tracer.step("daemon", ...)` with a literal string `trace_id`. Now uses `_daemon_tid = tracer.new_trace("sleep_learn", goal="feedback cycle")`.
+- **`core/sleep_learn/migrate.py`** — `migrate_rules()` had TWO bugs:
+  1. Used literal string `"migration"` as `trace_id`.
+  2. **NameError**: `_mig_tid` was only assigned inside the "drop collection" try block, so `dry_run=True` or `errors>0` caused `NameError` at the final `tracer.step(_mig_tid, ...)`.
+  Now `_mig_tid` is created at the TOP of the function.
+
+See [observability/CHANGELOG.md](observability/CHANGELOG.md) for details.
+
+*Last updated: 2026-07-18 (v1.1 observability fix). See subfiles for detailed documentation.*
