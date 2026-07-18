@@ -15,17 +15,28 @@ from core.tracer import tracer
 _TASK_DB_PATH = None
 _task_db_lock = threading.Lock()
 
+_task_db_conn: _sqlite3.Connection | None = None
+
 def _get_task_db() -> _sqlite3.Connection:
-    global _TASK_DB_PATH
+    """v1.1: Return the singleton SQLite connection (was: per-call open/close).
+
+    The connection is created once and reused across all calls. Thread-safe
+    via _task_db_lock (callers already hold it). WAL mode + busy_timeout
+    prevent lock contention. The connection is never closed during the
+    process lifetime (SQLite handles cleanup on process exit).
+    """
+    global _TASK_DB_PATH, _task_db_conn
+    if _task_db_conn is not None:
+        return _task_db_conn
+
     try:
         if _TASK_DB_PATH is None:
             _TASK_DB_PATH = cfg.memory_root / "gateway_tasks.db"
-        conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False, timeout=30.0)
-        # Strategy C: Enable WAL mode and busy_timeout to prevent lock contention
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-        conn.execute("PRAGMA wal_autocheckpoint=1000;") # Prevents unbounded .wal growth
-        conn.execute("""
+        _task_db_conn = _sqlite3.connect(str(_TASK_DB_PATH), check_same_thread=False, timeout=30.0)
+        _task_db_conn.execute("PRAGMA journal_mode=WAL;")
+        _task_db_conn.execute("PRAGMA busy_timeout=5000;")
+        _task_db_conn.execute("PRAGMA wal_autocheckpoint=1000;")
+        _task_db_conn.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 trace_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL DEFAULT 'pending',
@@ -36,11 +47,10 @@ def _get_task_db() -> _sqlite3.Connection:
                 payload TEXT
             )
         """)
-        conn.commit()
-        return conn
+        _task_db_conn.commit()
+        return _task_db_conn
     except Exception as e:
         tracer.error("", "store_init", f"SQLite init failed: {e}")
-        # Check for critical errors that should prevent startup
         error_str = str(e).lower()
         if any(kw in error_str for kw in ['permission denied', 'no such file or directory', 'read-only']):
             print(f"\n[FATAL] SQLite database initialization failed: {e}", file=sys.stderr)
@@ -55,8 +65,7 @@ def _store_task(trace_id: str, payload: dict) -> None:
             "VALUES (?, 'pending', ?, ?)",
             (trace_id, time.time(), _json_mod.dumps(payload)),
         )
-        db.commit()
-        db.close()
+        db.commit()  # v1.1: singleton — no close
 
 def _update_task(trace_id: str, status: str,
                  result: Any = None, error: str = "") -> None:
@@ -69,8 +78,7 @@ def _update_task(trace_id: str, status: str,
              _json_mod.dumps(result) if result is not None else None,
              error, trace_id),
         )
-        db.commit()
-        db.close()
+        db.commit()  # v1.1: singleton — no close
 
 def _get_task(trace_id: str) -> dict | None:
     with _task_db_lock:
@@ -79,7 +87,7 @@ def _get_task(trace_id: str) -> dict | None:
             "SELECT trace_id, status, submitted, completed, result, error"
             " FROM tasks WHERE trace_id=?", (trace_id,)
         ).fetchone()
-        db.close()
+        # v1.1: singleton — no close
         if not row:
             return None
 

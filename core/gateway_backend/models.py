@@ -53,3 +53,38 @@ class ChatResponse(BaseModel):
     result: Optional[Any] = None
     error: Optional[str] = None
     platform: str
+
+
+# ── v1.1: Response models for health/version/tools endpoints ───────────────
+from typing import List
+
+class VersionResponse(BaseModel):
+    commit: str
+    branch: str
+    env: str
+
+class ToolsResponse(BaseModel):
+    tools: List[str]
+
+class MemoryStatsResponse(BaseModel):
+    episodic: Optional[Any] = None
+    semantic: Optional[Any] = None
+    procedural: Optional[Any] = None
+    atomic: Optional[Any] = None
+
+class HealthStatusResponse(BaseModel):
+    status: str
+    checks: Optional[Any] = None
+    error: Optional[str] = None
+
+class CircuitBreakersResponse(BaseModel):
+    status: str
+    breakers: Optional[Any] = None
+    error: Optional[str] = None
+
+class ModelsHealthResponse(BaseModel):
+    status: str
+    all_loaded: bool
+    models: Optional[Any] = None
+    loaded_models: Optional[List[str]] = None
+    error: Optional[str] = None

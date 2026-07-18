@@ -186,4 +186,4 @@ At startup, the gateway spawns a daemon thread that calls `recall("warmup", top_
 
 ---
 
-*Last updated: 2026-07-04. See [API.md](API.md) for endpoint details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18. See [API.md](API.md) for endpoint details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

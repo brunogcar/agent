@@ -31,18 +31,30 @@
 
 ---
 
+## ✅ v1.1 (2026-07-18)
+
+| Feature | Notes |
+|---------|-------|
+| **WebSocket /ws endpoint** | Real-time task progress streaming. Client connects via WebSocket, submits a task, receives progress events as they happen (instead of polling /result/{trace_id}). Auth via ?token= query param. |
+| **response_model on 6 endpoints** | /version, /tools, /memory/stats, /health/autocode, /health/circuit-breakers, /health/models now have Pydantic response models. Locks down the API contract + clean OpenAPI docs. |
+| **SQLite connection pooling** | store.py now uses a singleton connection (was: per-call open/close). WAL mode + busy_timeout prevent lock contention. |
+| **ChromaDB warmup readiness check** | /health returns 503 until ChromaDB warmup completes. mark_chromadb_ready() called by the lifespan warmup thread. |
+| **uvicorn string reference test** | New test asserting core.gateway:create_app is importable + /ws route is registered. |
+
+---
+
 ## 🔄 In Progress / Next Up
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| WebSocket support | Real-time task progress streaming | P1 |
+| WebSocket support | ✅ v1.1 — /ws endpoint with real-time progress streaming | — |
 | OpenAPI schema versioning | `v1/` prefix for backward compatibility | P2 |
 | API key rotation | Support multiple valid secrets for zero-downtime rotation | P2 |
 | Request logging middleware | Structured request/response logging to tracer | P2 |
-| Add `response_model` to remaining endpoints | Lock down `/version`, `/tools`, `/memory/stats`, `/health` sub-endpoints | P1 |
-| SQLite connection pooling | Use single long-lived connection instead of per-call open/close | P2 |
-| ChromaDB warmup readiness check | Block or return 503 until warmup completes | P2 |
-| uvicorn string reference test | Add test asserting `core.gateway.create_app` is importable | P3 |
+| Add `response_model` to remaining endpoints | ✅ v1.1 — 6 endpoints now have Pydantic response models | — |
+| SQLite connection pooling | ✅ v1.1 — Singleton connection in store.py | — |
+| ChromaDB warmup readiness check | ✅ v1.1 — /health returns 503 until warmup completes | — |
+| uvicorn string reference test | ✅ v1.1 — test_uvicorn_import.py (3 tests) | — |
 
 ---
 
@@ -52,4 +64,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for endpoint details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for endpoint details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

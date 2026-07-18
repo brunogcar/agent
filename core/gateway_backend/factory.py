@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 import threading
 
 # Import routers
-from core.gateway_backend.routes import tasks, chat, health, metrics, traces, reports
+from core.gateway_backend.routes import tasks, chat, health, metrics, traces, reports, websocket
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -68,6 +68,9 @@ def _warmup_memory(timeout: int = 60) -> None:
 
         elapsed = round(time.time() - start, 1)
         print(f"[startup] ChromaDB ready ({elapsed}s)", file=sys.stderr)
+        # v1.1: Mark gateway as ready (health check returns 200 instead of 503)
+        from core.gateway_backend.routes.health import mark_chromadb_ready
+        mark_chromadb_ready()
 
     except FuturesTimeoutError:
         elapsed = round(time.time() - start, 1)
@@ -223,6 +226,7 @@ def create_app():
     app.include_router(metrics.router, tags=["Telemetry"])
     app.include_router(traces.router, tags=["Traces"])
     app.include_router(reports.router, tags=["Reports"])
+    app.include_router(websocket.router, tags=["WebSocket"])
 
     # -- Centralized Exception Handlers (Phase 2 Step 2) ----------------------
     from core.gateway_backend.exceptions import TaskNotFoundError, ToolExecutionError

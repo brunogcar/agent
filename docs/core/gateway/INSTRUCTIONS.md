@@ -16,6 +16,10 @@
 
 ## ✅ ALWAYS DO
 
+1. **Always use response_model on endpoints** — v1.1: All public endpoints should have a Pydantic response model. This locks the API contract, strips internal fields, and generates clean OpenAPI docs.
+2. **Always use the singleton SQLite connection** — v1.1: store.py uses a singleton connection. Never call db.close() on it (the connection lives for the process lifetime).
+3. **Always check ChromaDB readiness** — v1.1: /health returns 503 until warmup completes. Use mark_chromadb_ready() to signal readiness from the lifespan.
+
 10. **Always use Pydantic `response_model` on all endpoints** — never return raw dicts from routes. Lock down the contract.
 11. **Always use lazy imports in dispatcher** — tool imports must remain inside the dispatch function, not at module level.
 12. **Always trace everything** — every request must have a `trace_id` (from header or generated). All exceptions must log with `trace_id`.
@@ -37,4 +41,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for endpoint details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-18. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for endpoint details, [CHANGELOG.md](CHANGELOG.md) for version history.*

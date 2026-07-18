@@ -2,6 +2,7 @@
 """Health, version, and system info endpoints."""
 from __future__ import annotations
 
+import json
 import subprocess as _sp
 import httpx as _httpx
 from fastapi import APIRouter, Depends, Query, Response
@@ -9,10 +10,14 @@ from fastapi import APIRouter, Depends, Query, Response
 from core.config import cfg
 from core.tracer import tracer
 from core.gateway_backend.dependencies import check_auth
+from core.gateway_backend.models import (
+    VersionResponse, ToolsResponse, MemoryStatsResponse,
+    HealthStatusResponse, CircuitBreakersResponse, ModelsHealthResponse,
+)
 
 router = APIRouter()
 
-@router.get("/version")
+@router.get("/version", response_model=VersionResponse)
 def version():
     try:
         commit = _sp.check_output(
@@ -29,14 +34,33 @@ def version():
         branch = "unknown"
     return {"commit": commit, "branch": branch, "env": cfg.env}
 
+# v1.1: ChromaDB warmup readiness flag
+_chromadb_warmed_up = False
+
+def mark_chromadb_ready():
+    """Called by the lifespan warmup thread when ChromaDB is ready."""
+    global _chromadb_warmed_up
+    _chromadb_warmed_up = True
+
 @router.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint.
+
+    v1.1: Returns 503 Service Unavailable when ChromaDB warmup hasn't
+    completed yet. This lets load balancers (e.g., Caddy health checks)
+    wait until the gateway is truly ready before routing traffic.
+    """
+    if not _chromadb_warmed_up:
+        return Response(
+            content=json.dumps({"status": "warming_up", "detail": "ChromaDB warmup in progress"}),
+            media_type="application/json",
+            status_code=503,
+        )
     from core.runtime.health import health_check_endpoint
     return Response(content=health_check_endpoint(), media_type="application/json")
 
 # [PHASE 2 FIX] Autocode health endpoint with optional deep check
-@router.get("/health/autocode")
+@router.get("/health/autocode", response_model=HealthStatusResponse)
 async def health_autocode(deep: bool = Query(False), _: None = Depends(check_auth)):
     """[PHASE 2 FIX] Autocode workflow health check."""
     from core.memory_engine import memory as mem
@@ -65,7 +89,7 @@ async def health_autocode(deep: bool = Query(False), _: None = Depends(check_aut
     return {"status": "ok" if all_ok else "degraded", "checks": checks}
 
 # [PHASE 2 FIX] Circuit breaker monitoring endpoint
-@router.get("/health/circuit-breakers")
+@router.get("/health/circuit-breakers", response_model=CircuitBreakersResponse)
 async def health_circuit_breakers(_: None = Depends(check_auth)):
     """[PHASE 2 FIX] Return state of all LLM circuit breakers for monitoring."""
     from core.llm import llm
@@ -77,7 +101,7 @@ async def health_circuit_breakers(_: None = Depends(check_auth)):
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-@router.get("/health/models")
+@router.get("/health/models", response_model=ModelsHealthResponse)
 def health_models(_: None = Depends(check_auth)):
     required = {
         "planner": cfg.planner_model,
@@ -103,7 +127,7 @@ def health_models(_: None = Depends(check_auth)):
     except Exception as e:
         return {"status": "error", "error": str(e), "all_loaded": False}
 
-@router.get("/tools")
+@router.get("/tools", response_model=ToolsResponse)
 def list_tools(_: None = Depends(check_auth)):
     """
     [P1 FIX] Return the list of registered tools from the registry.
@@ -126,7 +150,7 @@ def list_tools(_: None = Depends(check_auth)):
         ]
     }
 
-@router.get("/memory/stats")
+@router.get("/memory/stats", response_model=MemoryStatsResponse)
 def memory_stats(_: None = Depends(check_auth)):
     from core.memory_engine import memory
     return memory.stats()
