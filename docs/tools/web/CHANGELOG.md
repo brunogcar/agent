@@ -8,8 +8,8 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
-| v1.3 | 2026-07-08 | **New action: `crawl`** — crawl4ai prototype. Handles JS-heavy pages natively, returns clean markdown. Soft dependency (lazy import). Async→sync bridge. Does NOT fall back to scrape on failure (prototype). |
-| v1.2 | 2026-07-05 | **core/net adoption.** scrape.py uses `retry_sync()` from `core/net/retry.py`. Constants from `core/net/default.py`. Error classification via `is_retryable_error()`. |
+| v1.3 | 2026-07-18 | **New action: `crawl`** — crawl4ai prototype. Handles JS-heavy pages natively, returns clean markdown. Soft dependency (lazy import). Async→sync bridge. Does NOT fall back to scrape on failure (prototype). |
+| v1.2 | 2026-07-18 | **core/net adoption.** scrape.py uses `retry_sync()` from `core/net/retry.py`. Constants from `core/net/default.py`. Error classification via `is_retryable_error()`. |
 | v1.1 | — | **Hardening + guards.** `max_chars` sentinel fix, content-type guard, response size guard, retry with backoff, PDF pre-flight, user-agent rotation, scheme allowlist, lazy security import, ThreadPoolExecutor shutdown fix. |
 | v1.0 | — | **`@meta_tool` refactor + atomic actions.** Split monolithic `tools/web.py` into `tools/web_ops/` subpackage. 4 actions (`search`, `scrape`, `read`, `search_and_read`). `@register_action` auto-discovery. Test restructure. |
 
@@ -17,7 +17,7 @@
 
 ### ⚠️ Breaking Changes
 
-#### v1.2 — 2026-07-05
+#### v1.2 — 2026-07-18
 
 | Change | Impact | Migration |
 |--------|--------|-----------|

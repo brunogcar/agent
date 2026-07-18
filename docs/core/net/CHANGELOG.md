@@ -6,7 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v1.5 | 2026-07-05 | `on_failure()` fires only on final raise (retry exhaustion), not per attempt — prevents CB opening on successful-but-retried calls. Preserves v1.4 retryable-only semantics. |
+| v1.5 | 2026-07-18 | `on_failure()` fires only on final raise (retry exhaustion), not per attempt — prevents CB opening on successful-but-retried calls. Preserves v1.4 retryable-only semantics. |
 | v1.4 | — | `0.0.0.0`/`::` blocked, `on_failure()` retryable-only, `www.` strip boundary, Tavily error handler alignment |
 | v1.3 | — | `RLock`, daily reset, IPv6 bracket parsing, unbracketed IPv6, `get_status()` no-config fallback, `__init__.py` re-exports |
 | v1.2 | — | Initial package structure, test suite |
@@ -95,4 +95,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

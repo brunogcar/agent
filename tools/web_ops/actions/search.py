@@ -46,33 +46,43 @@ def _action_search(
             f"SSRF blocked: SearXNG URL {searxng_url} resolves to a private/internal address"
         )
 
-    try:
+    # v1.4: Use retry_sync + classify_http_error (was: bare raise_for_status + inline except)
+    from core.net.retry import retry_sync
+    from core.net.errors import classify_http_error, is_retryable_error
+
+    def _do_search():
         with _make_client() as client:
             resp = client.get(
                 f"{searxng_url}/search",
                 params={"q": query, "format": "json", "categories": "general"},
-                timeout=SEARCH_TIMEOUT,  # [core/net] Was hardcoded 15
+                timeout=SEARCH_TIMEOUT,
             )
             resp.raise_for_status()
-            data = resp.json()
-            raw = data.get("results", [])[:max_results]
-            results = []
-            for r in raw:
-                snippet = r.get("content", "") or r.get("description", "")
-                results.append({
-                    "url": r.get("url", ""),
-                    "title": r.get("title", ""),
-                    "snippet": snippet[:cfg.web_snippet_chars],
-                    "engine": r.get("engine", ""),
-                })
-            return ok({
-                "results": results,
-                "count": len(results),
-                "query": query,
+            return resp
+
+    try:
+        resp = retry_sync(_do_search, max_retries=2, base_delay=1.0, max_delay=5.0)
+        data = resp.json()
+        raw = data.get("results", [])[:max_results]
+        results = []
+        for r in raw:
+            snippet = r.get("content", "") or r.get("description", "")
+            results.append({
+                "url": r.get("url", ""),
+                "title": r.get("title", ""),
+                "snippet": snippet[:cfg.web_snippet_chars],
+                "engine": r.get("engine", ""),
             })
-    except httpx.TimeoutException:
-        return fail(f"SearXNG timeout at {searxng_url}")
-    except httpx.ConnectError:
-        return fail(f"Cannot reach SearXNG at {searxng_url}")
+        return ok({
+            "results": results,
+            "count": len(results),
+            "query": query,
+        })
     except Exception as e:
-        return fail(f"Search failed: {type(e).__name__}: {e}")
+        # v1.4: Use classify_http_error for structured error codes
+        error_code = classify_http_error(e)  # returns str, not tuple
+        return fail(
+            f"SearXNG search failed ({error_code}): {type(e).__name__}: {e}",
+            trace_id=trace_id,
+            error_code=error_code,
+        )

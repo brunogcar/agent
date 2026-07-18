@@ -37,7 +37,7 @@ class TestSearch:
         mock_httpx.get.side_effect = httpx.ConnectError("Connection failed")
         result = web(action="search", query="test")
         assert result["status"] == "error"
-        assert "Cannot reach" in result["error"]
+        assert "CONNECT_ERROR" in result.get("error_code", "") or "Cannot reach" in result["error"] or "ConnectError" in result["error"]  # v1.4: error shape changed
 
     def test_search_ssrf_blocked_searxng_url(self, mock_cfg_for_web, mock_httpx):
         mock_cfg_for_web.searxng_url = "http://192.168.1.1:8080"

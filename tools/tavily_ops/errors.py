@@ -110,71 +110,17 @@ def _handle_tavily_error(e, trace_id=""):
             error_code="API_ERROR",
         )
 
-    # httpx exceptions
-    import httpx
-    if isinstance(e, httpx.TimeoutException):
+    # v1.6: Delegate httpx error classification to core/net/errors.classify_http_error
+    # (was: 85-line httpx isinstance ladder + status-code branches that mirrored
+    # classify_http_error but didn't call it — explicit "align with classify_http_error"
+    # comments in the code but no actual delegation.)
+    from core.net.errors import classify_http_error
+    error_code = classify_http_error(e)  # returns str, not tuple
+    if error_code != "UNKNOWN":
         return fail(
-            f"Tavily request timed out: {raw_msg}",
+            f"Tavily {error_code.lower()}: {raw_msg}",
             trace_id=trace_id,
-            error_code="TIMEOUT",
-        )
-
-    if isinstance(e, httpx.ConnectError):
-        return fail(
-            f"Tavily connection failed: {raw_msg}",
-            trace_id=trace_id,
-            error_code="CONNECT_ERROR",
-        )
-
-    # v1.4: Catch remaining httpx network errors (NetworkError is base class;
-    # ConnectError above already matched, so these are the non-connect variants)
-    if isinstance(e, httpx.NetworkError):
-        return fail(
-            f"Tavily network error: {raw_msg}",
-            trace_id=trace_id,
-            error_code="NETWORK_ERROR",
-        )
-
-    if isinstance(e, httpx.ReadError):
-        return fail(
-            f"Tavily read error: {raw_msg}",
-            trace_id=trace_id,
-            error_code="NETWORK_ERROR",
-        )
-
-    if isinstance(e, httpx.WriteError):
-        return fail(
-            f"Tavily write error: {raw_msg}",
-            trace_id=trace_id,
-            error_code="NETWORK_ERROR",
-        )
-
-    if isinstance(e, httpx.RemoteProtocolError):
-        return fail(
-            f"Tavily protocol error: {raw_msg}",
-            trace_id=trace_id,
-            error_code="NETWORK_ERROR",
-        )
-
-    if isinstance(e, httpx.HTTPStatusError):
-        status = e.response.status_code if e.response else None
-        # v1.4: 408 is retryable — align with classify_http_error() in core/net/errors.py
-        if status == 429 or status == 408:
-            return fail(
-                f"Tavily rate limit (HTTP {status}): {raw_msg}",
-                trace_id=trace_id,
-                error_code="RATE_LIMITED",
-            )
-        if status and status >= 500:
-            return fail(
-                f"Tavily server error (HTTP {status}): {raw_msg}",
-                trace_id=trace_id,
-                error_code="SERVER_ERROR",
-            )
-        return fail(
-            f"Tavily HTTP error (HTTP {status}): {raw_msg}",
-            trace_id=trace_id,
-            error_code="CLIENT_ERROR",
+            error_code=error_code,
         )
 
     # Fallback

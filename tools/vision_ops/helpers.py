@@ -166,11 +166,16 @@ def _do_download(url: str, timeout: float) -> httpx.Response:
     [core/net adoption] This is the function that retry_sync() wraps.
     Only the HTTP fetch is inside the retry boundary. MIME detection and
     base64 encoding happen AFTER retry succeeds, in _download_image_to_data_uri.
+
+    v1.4: Uses core/net/client.get_shared_client() instead of creating a
+    fresh httpx.Client per call (was: `with httpx.Client(timeout=timeout) as client:`
+    → created + destroyed a new connection pool per image download).
     """
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.get(url, follow_redirects=True)
-        resp.raise_for_status()
-        return resp
+    from core.net.client import get_shared_client
+    client = get_shared_client()
+    resp = client.get(url, follow_redirects=True, timeout=timeout)
+    resp.raise_for_status()
+    return resp
 
 
 def _download_image_to_data_uri(url: str, timeout: float = HTTP_TIMEOUT) -> Tuple[str, str]:

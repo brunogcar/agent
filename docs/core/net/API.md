@@ -196,6 +196,28 @@ from core.net.default import (
 
 ---
 
+## 🌐 HTTP Client Factory (v1.6)
+
+`core/net/client.py` — shared `httpx.Client` singleton with standardized settings.
+
+```python
+from core.net.client import get_shared_client, shared_client, close_shared_client
+
+# Direct usage (returns the singleton)
+client = get_shared_client()
+resp = client.get(url)
+
+# Context manager (yields singleton, doesn't close)
+with shared_client() as client:
+    resp = client.get(url)
+```
+
+**Settings standardized:** User-Agent rotation, timeout (30s default), connection limits (20 max), follow_redirects, atexit cleanup.
+
+**Adoption:** `vision_ops/helpers.py` uses this (v1.6). Other tools (`web_ops`, `github_ops`) retain their own singletons for backward compat — can adopt incrementally.
+
+---
+
 ## 🔒 Security
 
 ### 🛡️ SSRF Guard (`is_safe_network_address`)
@@ -354,4 +376,4 @@ is_same_domain("https://www2.example.com/a", "https://example.com/b")
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

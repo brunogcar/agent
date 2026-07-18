@@ -36,6 +36,7 @@ from core.net.budget import (
     set_tool_budget,
 )
 from core.net.url import normalize_url, extract_domain, is_same_domain
+from core.net.client import get_shared_client, shared_client, close_shared_client
 from core.net.default import (
     SEARCH_MAX_RESULTS,
     SEARCH_TIMEOUT,
