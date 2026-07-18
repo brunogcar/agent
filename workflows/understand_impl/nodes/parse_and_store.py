@@ -25,8 +25,15 @@ def node_parse_and_store(state: UnderstandState) -> dict:
     tid = state.get("trace_id", "understand")
     files_to_parse = state.get("files_to_parse", [])
     if not files_to_parse:
-        tracer.step(tid, "parse", "No files changed. Graph is up to date.")
-        return {"status": "completed"}
+        tracer.step(tid, "parse", "No changed files — codebase is up to date.")
+        return {
+            "status": "completed",
+            "files_parsed": 0,
+            "edges_created": 0,
+            "vectors_created": 0,
+            "errors": [],
+            "note": "No changed files — codebase is up to date.",
+        }
 
     tracer.step(tid, "parse", f"Parsing {len(files_to_parse)} changed files...")
 
