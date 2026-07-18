@@ -3,9 +3,17 @@
 Uses httpx directly (consistent with all other providers in the project).
 Auth: Bearer token via GITHUB_TOKEN env var.
 Base URL: https://api.github.com (hardcoded — GitHub API is a fixed endpoint).
+
+v1.4 (2026-07-15):
+  - Fixed parse_link_header regex (was `<[^>]*\\?page=(\\d+)>` — required
+    `?page=` to be the FIRST query param; GitHub actually sends
+    `?per_page=100&page=2`, so pagination was silently broken on every
+    multi-param Link header). New regex: `<[^>]*[?&]page=(\\d+)>`.
+  - Registered close_client via atexit (parity with core/net/client.py).
 """
 from __future__ import annotations
 
+import atexit
 import re
 import threading
 from typing import Optional
@@ -63,16 +71,33 @@ def parse_link_header(link_header) -> dict[str, Optional[int]]:
     GitHub returns a Link header like:
         <https://api.github.com/...?page=2>; rel="next", <https://api.github.com/...?page=5>; rel="last"
 
+    But the URL almost always carries other query params FIRST — GitHub
+    typically sends `?per_page=100&page=2&state=open`, not `?page=2&...`.
+    The pre-v1.4 regex required `?page=` (literal `?` before `page=`),
+    so it failed to match real Link headers and silently returned
+    {"next": None, "last": None} — pagination was broken on every list
+    action whenever per_page wasn't the default. v1.4 fixes this by
+    allowing either `?` or `&` as the leading separator.
+
     Returns:
         {"next": int|None, "last": int|None} — page numbers, or None if absent.
     """
     result: dict[str, Optional[int]] = {"next": None, "last": None}
     if not link_header or not isinstance(link_header, str):
         return result
-    # Match <url>; rel="next" and <url>; rel="last" patterns
-    for match in re.finditer(r'<[^>]*\?page=(\d+)>;\s*rel="(\w+)"', link_header):
+    # Match <url>; rel="next" and <url>; rel="last" patterns.
+    # v1.4: [?&] (was \?) — accepts page= as the 2nd/3rd query param too.
+    for match in re.finditer(r'<[^>]*[?&]page=(\d+)>;\s*rel="(\w+)"', link_header):
         page_num = int(match.group(1))
         rel = match.group(2)
         if rel in result:
             result[rel] = page_num
     return result
+
+
+# v1.4: Ensure the singleton is closed at interpreter shutdown (parity with
+# core/net/client.py — same atexit.register(close_shared_client) pattern).
+# Prevents "Unclosed client" warnings from httpx in long-running processes
+# (autocode loop, parallel() batches) that open + close the github client
+# multiple times.
+atexit.register(close_client)

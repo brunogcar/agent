@@ -3,6 +3,11 @@
 Calls POST /repos/{owner}/{repo}/pulls to create a PR from a head branch
 into a base branch. The head branch must already be pushed to the remote
 (use github(action="push", branch=...) first).
+
+v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
+contract: status is a string, not an int — see core/contracts.py). The
+HTTP code remains in the error message text. Structured classification
+belongs in error_code (see tools/github_ops/helpers.py github_request).
 """
 from __future__ import annotations
 from typing import Any
@@ -81,7 +86,6 @@ def _action_pr_create(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

@@ -17,6 +17,11 @@ Two modes:
   proper review-thread comments, use pr_review with event="COMMENT" and
   pass line-level comments as part of the review payload (deferred — not
   in this action).
+
+v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
+contract: status is a string, not an int — see core/contracts.py). The
+HTTP code remains in the error message text. Structured classification
+belongs in error_code (see tools/github_ops/helpers.py github_request).
 """
 from __future__ import annotations
 from typing import Any
@@ -128,7 +133,7 @@ def _action_pr_comment(
         return fail(f"pr_comment request failed: {e}", trace_id=trace_id)
 
     if resp.status_code == 404:
-        return fail(f"PR #{pr_number} not found", status=404, trace_id=trace_id)
+        return fail(f"PR #{pr_number} not found", trace_id=trace_id)
     if resp.status_code >= 400:
         try:
             err_body = resp.json()
@@ -137,7 +142,6 @@ def _action_pr_comment(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

@@ -1,7 +1,8 @@
 # core/net/default.py
-"""Shared default values for tavily, web_ops, browser, research, deep_research.
+"""Shared default values for tavily, web_ops, browser, research, deep_research, github_ops.
 
 v1.3: Fixed header comment (was "defaults.py").
+v1.4: Added GITHUB_TIMEOUT (30s) for github_ops adoption (helpers.github_request).
 """
 
 # Search
@@ -35,3 +36,6 @@ RETRY_JITTER: bool = True
 CB_FAILURE_THRESHOLD: int = 5
 CB_RECOVERY_TIMEOUT: float = 60.0
 CB_HALF_OPEN_MAX_CALLS: int = 1
+
+# GitHub (v1.4 — adopted by github_ops/helpers.py github_request)
+GITHUB_TIMEOUT: int = 30

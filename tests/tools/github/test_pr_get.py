@@ -113,7 +113,7 @@ class TestPrGet:
 
         result = github(action="pr_get", number=999)
 
-        assert result["status"] == 404
+        assert result["status"] == "error"
         assert "not found" in result["error"].lower()
 
     def test_pr_get_non_numeric_number(self, mock_httpx_client):

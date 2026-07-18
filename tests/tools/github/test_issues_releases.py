@@ -128,7 +128,7 @@ class TestIssueGet:
         mock_httpx_client.get.return_value.json.return_value = {"message": "Not Found"}
         mock_httpx_client.get.return_value.text = "Not Found"
         result = github(action="issue_get", number=999)
-        assert result["status"] == 404
+        assert result["status"] == "error"
         assert "not found" in result["error"].lower()
 
 
@@ -255,7 +255,7 @@ class TestReleaseGet:
         mock_httpx_client.get.return_value.json.return_value = {"message": "Not Found"}
         mock_httpx_client.get.return_value.text = "Not Found"
         result = github(action="release_get", tag="v0.0.0")
-        assert result["status"] == 404
+        assert result["status"] == "error"
         assert "not found" in result["error"].lower()
 
 
@@ -385,38 +385,49 @@ class TestReleaseList:
 class TestV131ErrorHandling:
     """v1.3.1 (P2-1 cross-LLM): v1.1 actions now use the v1.0/v1.2 3-stage
     error-handling pattern — network call → HTTP error → JSON parse, with
-    status= and trace_id= on all fail()/ok() calls.
+    trace_id= on all fail()/ok() calls.
+
+    v1.4 (2026-07-15): fail() no longer takes status=<int> (contract
+    violation — see core/contracts.py ToolResult). The HTTP code remains
+    in the error message text (`"GitHub API error 422: ..."`) so callers
+    can still distinguish 4xx from 5xx; the top-level `status` field is
+    always the string `"error"` for any failure.
     """
 
     def test_issue_create_api_error_has_status_code(self, mock_cfg, mock_httpx_client):
         """v1.1 bug: fail() had no status= kwarg — callers couldn't distinguish
-        404 from 422 from 500. v1.3.1 propagates status_code via fail(status=...).
+        404 from 422 from 500. v1.3.1 added status=<int>; v1.4 reverts that
+        (contract violation — fail() status is a string). The HTTP code now
+        appears in the error message text and (when actions migrate to
+        github_request()) in `error_code`.
         """
         mock_httpx_client.post.return_value.status_code = 422
         mock_httpx_client.post.return_value.headers = {"content-type": "application/json"}
         mock_httpx_client.post.return_value.json.return_value = {"message": "Validation failed"}
         mock_httpx_client.post.return_value.text = '{"message": "Validation failed"}'
         result = github(action="issue_create", title="test")
-        assert result["status"] == 422  # HTTP code propagated (convention: status= is the int)
-        assert "422" in result["error"]
+        assert result["status"] == "error"  # v1.4: status is always the string "error"
+        assert "422" in result["error"]  # HTTP code still in message text
         assert "Validation failed" in result["error"]
 
     def test_release_create_api_error_has_status_code(self, mock_cfg, mock_httpx_client):
+        """v1.4: status is always "error"; HTTP code is in the error message text."""
         mock_httpx_client.post.return_value.status_code = 403
         mock_httpx_client.post.return_value.headers = {"content-type": "application/json"}
         mock_httpx_client.post.return_value.json.return_value = {"message": "Forbidden"}
         mock_httpx_client.post.return_value.text = '{"message": "Forbidden"}'
         result = github(action="release_create", tag="v1.0.0")
-        assert result["status"] == 403
+        assert result["status"] == "error"
         assert "403" in result["error"]
 
     def test_release_list_api_error_has_status_code(self, mock_cfg, mock_httpx_client):
+        """v1.4: status is always "error"; HTTP code is in the error message text."""
         mock_httpx_client.get.return_value.status_code = 500
         mock_httpx_client.get.return_value.headers = {"content-type": "application/json"}
         mock_httpx_client.get.return_value.json.return_value = {"message": "Server error"}
         mock_httpx_client.get.return_value.text = '{"message": "Server error"}'
         result = github(action="release_list")
-        assert result["status"] == 500
+        assert result["status"] == "error"
         assert "500" in result["error"]
 
     def test_issue_comment_network_error_distinct_from_parse_error(self, mock_cfg, mock_httpx_client):

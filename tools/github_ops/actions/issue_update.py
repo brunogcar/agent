@@ -7,6 +7,11 @@ in a single action — follows the pr_review event-param precedent.
 At least one of: state, title, body, labels, assignees must be provided.
 If a field is empty/omitted, it is NOT included in the PATCH payload, so
 GitHub leaves it unchanged.
+
+v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
+contract: status is a string, not an int — see core/contracts.py). The
+HTTP code remains in the error message text. Structured classification
+belongs in error_code (see tools/github_ops/helpers.py github_request).
 """
 from __future__ import annotations
 from typing import Any
@@ -106,7 +111,7 @@ def _action_issue_update(
         return fail(f"issue_update request failed: {e}", trace_id=trace_id)
 
     if resp.status_code == 404:
-        return fail(f"Issue #{issue_number} not found", status=404, trace_id=trace_id)
+        return fail(f"Issue #{issue_number} not found", trace_id=trace_id)
     if resp.status_code >= 400:
         try:
             err_body = resp.json()
@@ -115,7 +120,6 @@ def _action_issue_update(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

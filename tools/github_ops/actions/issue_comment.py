@@ -4,6 +4,11 @@ v1.3.1 (P2-1 cross-LLM): Rewrote error handling to match the v1.0/v1.2
 3-stage pattern. v1.1 used an ambiguous single try/except.
 v1.3.1 (P3-2 cross-LLM): Added int(number) coercion for parity with
 issue_get/issue_update/pr_get/pr_review/pr_merge/pr_comment.
+
+v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
+contract: status is a string, not an int — see core/contracts.py). The
+HTTP code remains in the error message text. Structured classification
+belongs in error_code (see tools/github_ops/helpers.py github_request).
 """
 from __future__ import annotations
 from typing import Any
@@ -63,7 +68,6 @@ def _action_issue_comment(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

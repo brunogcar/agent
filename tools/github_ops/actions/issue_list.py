@@ -3,6 +3,11 @@
 Calls GET /repos/{owner}/{repo}/issues and returns a compact list filtered
 by state. Supports pagination via the `page` param — the GitHub API caps
 per_page at 100, so use `page` for repos with >100 issues.
+
+v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
+contract: status is a string, not an int — see core/contracts.py). The
+HTTP code remains in the error message text. Structured classification
+belongs in error_code (see tools/github_ops/helpers.py github_request).
 """
 from __future__ import annotations
 from typing import Any
@@ -89,7 +94,6 @@ def _action_issue_list(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

@@ -127,7 +127,8 @@ def _start_gateway() -> None:
         except Exception as e:
             print(f"[gateway] Attempt {attempt+1}/3 failed: {e}", file=sys.stderr)
             if attempt < 2:
-                _time.sleep(5)
+                _gw_event = _threading.Event()
+                _gw_event.wait(timeout=5)
             else:
                 print("[gateway] Giving up after 3 attempts.", file=sys.stderr)
 
@@ -166,11 +167,12 @@ def _flush_telemetry_loop() -> None:
         if not _chromadb_ready.wait(timeout=_CHROMADB_READY_TIMEOUT):
             print(f"[server] WARNING: ChromaDB warmup timed out after {_CHROMADB_READY_TIMEOUT}s, "
                   "telemetry flush proceeding anyway", file=sys.stderr)
+        _telemetry_event = _threading.Event()
         while True:
-            _time.sleep(60)
+            _telemetry_event.wait(timeout=60)
             try:
                 flushed = tracker.flush(_mem)
-                if flushed > 0:
+                if flushed > 0 and "PYTEST_CURRENT_TEST" not in os.environ:
                     print(f"[server] Flushed {flushed} memory telemetry updates", file=sys.stderr)
             except Exception as e:
                 print(f"[server] Telemetry flush error: {e}", file=sys.stderr)
@@ -259,7 +261,8 @@ def _warmup_models() -> None:
             except Exception as e:
                 failed += 1
                 print(f"[server] Warmup error for {role}: {type(e).__name__}: {str(e)[:100]}", file=sys.stderr)
-            time.sleep(0.5)  # Stagger to avoid rate limits
+            _stagger_event = _threading.Event()
+            _stagger_event.wait(timeout=0.5)  # Stagger to avoid rate limits
         print(f"[server] Model warmup: {warmed}/{len(roles)} roles ready ({failed} failed)", file=sys.stderr)
     except Exception as e:
         print(f"[server] Model warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
@@ -346,8 +349,9 @@ def _start_diversity_enforcer() -> None:
             print(f"[server] WARNING: ChromaDB warmup timed out after {_CHROMADB_READY_TIMEOUT}s, "
                   "diversity enforcer starting anyway", file=sys.stderr)
         last_run = 0.0
+        _diversity_event = _threading.Event()
         while True:
-            _time.sleep(1800)  # Check every 30 mins
+            _diversity_event.wait(timeout=1800)
             try:
                 # 7 day cooldown
                 if (_time.time() - last_run) < (7 * 86400):
@@ -396,8 +400,9 @@ def _start_schedule_catch_up() -> None:
     try:
         from tools.schedule_ops.state import catch_up_missed_jobs
         # Tiny delay so the scheduler singleton + notify are importable first.
-        import time as _time
-        _time.sleep(1)
+        import threading as _catchup_t
+        _catchup_event = _catchup_t.Event()
+        _catchup_event.wait(timeout=1)
         summary = catch_up_missed_jobs()
         if summary.get("jobs_with_misses", 0) > 0:
             print(f"[server] Schedule catch-up: {summary}", file=sys.stderr)

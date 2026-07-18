@@ -3,6 +3,11 @@
 Calls POST /repos/{owner}/{repo}/pulls/{number}/reviews. Used to APPROVE,
 REQUEST_CHANGES, or leave a COMMENT review on a PR. Requires push access
 to the repo (the GITHUB_TOKEN must belong to a collaborator).
+
+v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
+contract: status is a string, not an int — see core/contracts.py). The
+HTTP code remains in the error message text. Structured classification
+belongs in error_code (see tools/github_ops/helpers.py github_request).
 """
 from __future__ import annotations
 from typing import Any
@@ -88,7 +93,7 @@ def _action_pr_review(
         return fail(f"pr_review request failed: {e}", trace_id=trace_id)
 
     if resp.status_code == 404:
-        return fail(f"PR #{pr_number} not found", status=404, trace_id=trace_id)
+        return fail(f"PR #{pr_number} not found", trace_id=trace_id)
     if resp.status_code >= 400:
         try:
             err_body = resp.json()
@@ -97,7 +102,6 @@ def _action_pr_review(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

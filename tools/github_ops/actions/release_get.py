@@ -4,9 +4,21 @@ Calls GET /repos/{owner}/{repo}/releases/tags/{tag} (by tag name) or
 GET /repos/{owner}/{repo}/releases/{id} (by numeric ID). Tag-based lookup
 is the default — it's more user-friendly since you know the tag from
 release_list or git tags.
+
+v1.4 (2026-07-15):
+  - URL-encode the tag with `quote(tag, safe="")` so tags containing
+    URL-unsafe characters (spaces, slashes, `+`, `#`, `?`, etc.) don't
+    produce malformed request URLs. Real-world example: a `v1.0.0+build.5`
+    semver tag previously hit `GET /releases/tags/v1.0.0+build.5` — the
+    `+` is technically valid in a path segment but the resulting 404 was
+    indistinguishable from a missing release. With quote(), the request
+    becomes `GET /releases/tags/v1.0.0%2Bbuild.5`.
+  - Removed `status=` kwarg from all fail() calls (fail() contract: status
+    is a string, not an int — see core/contracts.py).
 """
 from __future__ import annotations
 from typing import Any
+from urllib.parse import quote
 
 from core.contracts import ok, fail
 from tools.github_ops._registry import register_action
@@ -57,9 +69,12 @@ def _action_release_get(
             trace_id=trace_id,
         )
 
-    # Build the URL — tag takes priority
+    # Build the URL — tag takes priority.
+    # v1.4: URL-encode the tag so URL-unsafe chars (+, #, ?, /, space) don't
+    # produce malformed requests. safe="" encodes everything that's not
+    # unreserved (alnum + - _ . ~) — same as JavaScript's encodeURIComponent.
     if tag:
-        url_path = f"{repo_path()}/releases/tags/{tag}"
+        url_path = f"{repo_path()}/releases/tags/{quote(tag, safe='')}"
     else:
         try:
             release_id = int(number)
@@ -78,7 +93,7 @@ def _action_release_get(
 
     if resp.status_code == 404:
         label = f"tag {tag!r}" if tag else f"ID {number!r}"
-        return fail(f"Release {label} not found", status=404, trace_id=trace_id)
+        return fail(f"Release {label} not found", trace_id=trace_id)
     if resp.status_code >= 400:
         try:
             err_body = resp.json()
@@ -87,7 +102,6 @@ def _action_release_get(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

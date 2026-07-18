@@ -94,7 +94,7 @@ class TestPrMerge:
 
         result = github(action="pr_merge", number=42)
 
-        assert result["status"] == 405
+        assert result["status"] == "error"
         assert "not mergeable" in result["error"].lower()
 
     def test_pr_merge_conflict(self, mock_httpx_client):
@@ -107,5 +107,5 @@ class TestPrMerge:
 
         result = github(action="pr_merge", number=42)
 
-        assert result["status"] == 409
-        assert "up to date" in result["error"].lower() or "409" in str(result["status"])
+        assert result["status"] == "error"
+        assert "up to date" in result["error"].lower()

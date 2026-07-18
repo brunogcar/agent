@@ -6,6 +6,11 @@ v1.3.1 (P2-2 cross-LLM): Added pagination (page param + Link header parsing)
 for parity with pr_list/issue_list. v1.1 was capped at 100 items (GitHub's
 per_page max) with no way to fetch the next page — repos with >100 releases
 returned silently truncated results.
+
+v1.4 (2026-07-15): Removed `status=` kwarg from all fail() calls (fail()
+contract: status is a string, not an int — see core/contracts.py). The
+HTTP code remains in the error message text. Structured classification
+belongs in error_code (see tools/github_ops/helpers.py github_request).
 """
 from __future__ import annotations
 from typing import Any
@@ -72,7 +77,6 @@ def _action_release_list(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 

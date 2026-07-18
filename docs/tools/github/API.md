@@ -38,7 +38,7 @@ The facade uses `action: str` with manual `DISPATCH["github"][action]` dispatch 
 | `force` | `False` | push | `True` → `--force-with-lease` (NOT bare `--force`) |
 | `labels` | `""` | issue_create, issue_list, issue_update | Comma-separated |
 | `assignees` | `""` | issue_create, issue_update | Comma-separated logins |
-| `tag` | `""` | release_create, release_get | Tag name (takes priority over `number` in release_get) |
+| `tag` | `""` | release_create, release_get | Tag name (takes priority over `number` in release_get). v1.4: URL-encoded in release_get |
 | `draft` | `False` | release_create | Create as draft |
 | `prerelease` | `False` | release_create | Mark as prerelease |
 | `trace_id` | `""` | all | Auto-injected into result |
@@ -53,7 +53,7 @@ The facade uses `action: str` with manual `DISPATCH["github"][action]` dispatch 
 | `pr_list` | — | `state`, `limit`, `page` | `{count, pulls, page, has_next, next_page}` |
 | `pr_get` | `number` | — | `{number, title, state, merged, mergeable, mergeable_state, draft, head, base, url, body, user, created_at, updated_at}` |
 | `pr_review` | `number`, `event` | `body` | `{id, state, url}` |
-| `pr_merge` | `number` | `merge_method`, `commit_title`, `commit_message` | `{merged, sha, message}` |
+| `pr_merge` | `number` | `merge_method`, `commit_title`, `commit_message` | `{merged, sha, message}` (v1.4: `merged` from response, was hardcoded `True`) |
 | `pr_comment` | `number`, `body` | `path`, `line`, `side` | `{id, url, body}` (+ `path`, `line` if line-level) |
 | `issue_create` | `title` | `body`, `labels`, `assignees` | `{number, title, url, state}` |
 | `issue_list` | — | `state`, `labels`, `limit`, `page` | `{count, issues, page, has_next, next_page}` |
@@ -62,7 +62,7 @@ The facade uses `action: str` with manual `DISPATCH["github"][action]` dispatch 
 | `issue_comment` | `number`, `body` | — | `{id, url, body, created_at}` |
 | `release_create` | `tag` | `title`, `body`, `draft`, `prerelease` | `{id, tag, name, url, draft, prerelease, created_at}` |
 | `release_list` | — | `limit`, `page` | `{count, releases, page, has_next, next_page}` |
-| `release_get` | `tag` OR `number` | — | `{id, tag, name, url, draft, prerelease, created_at, published_at, body, assets}` |
+| `release_get` | `tag` OR `number` | — | `{id, tag, name, url, draft, prerelease, created_at, published_at, body, assets}` (v1.4: tag URL-encoded) |
 | `push` | `branch` | `remote`, `force` | `{status, branch, remote, pushed, output, forced}` |
 | `pull` | — | `branch`, `remote` | `{status, branch, remote, pulled, output}` |
 
@@ -72,58 +72,58 @@ The facade uses `action: str` with manual `DISPATCH["github"][action]` dispatch 
 ```python
 github(action="pr_create", title="Fix bug", head="fix/branch", base="main", body="...")
 ```
-→ `{number, title, url, state, head, base}`. Head branch must exist on remote (call `push` first).
+`{number, title, url, state, head, base}`. Head branch must exist on remote (call `push` first).
 
 ### `pr_list`
 ```python
 github(action="pr_list")                          # open PRs, page 1
 github(action="pr_list", state="closed", limit=10, page=2)
 ```
-→ `{count, pulls: [{number, title, state, head, base, url, draft}], page, has_next, next_page}`. Iterate: `while has_next: github(action="pr_list", page=next_page)`.
+`{count, pulls: [{number, title, state, head, base, url, draft}], page, has_next, next_page}`. Iterate: `while has_next: github(action="pr_list", page=next_page)`. v1.4: `parse_link_header` regex fixed — was silently broken when Link header had `?per_page=100&page=2` (page= not the first query param).
 
 ### `pr_get`
 ```python
 github(action="pr_get", number=42)
 ```
-→ `{number, title, state, merged, mergeable, mergeable_state, draft, head, base, url, body, user, created_at, updated_at}`. `mergeable: null` = GitHub still computing (retry). `mergeable_state`: `clean`/`blocked`/`unstable`/`dirty`/`unknown`.
+`{number, title, state, merged, mergeable, mergeable_state, draft, head, base, url, body, user, created_at, updated_at}`. `mergeable: null` = GitHub still computing (retry). `mergeable_state`: `clean`/`blocked`/`unstable`/`dirty`/`unknown`.
 
 ### `pr_review`
 ```python
 github(action="pr_review", number=42, event="APPROVE", body="LGTM")
 ```
-→ `{id, state, url}`. `event`: `APPROVE`/`REQUEST_CHANGES`/`COMMENT`. APPROVE/REQUEST_CHANGES require push access; can't review your own PR.
+`{id, state, url}`. `event`: `APPROVE`/`REQUEST_CHANGES`/`COMMENT`. APPROVE/REQUEST_CHANGES require push access; can't review your own PR.
 
 ### `pr_merge`
 ```python
 github(action="pr_merge", number=42)                                          # squash (default)
 github(action="pr_merge", number=42, merge_method="merge", commit_title="...")
 ```
-→ `{merged: true, sha, message}`. 405 = not mergeable (conflict/blocked). 409 = head not up to date (rebase + push). Call `pr_get` first to check `mergeable_state`.
+`{merged, sha, message}`. v1.4: `merged` field now read from GitHub's response (`data.get("merged", True)`) — was hardcoded `True`. 405 = not mergeable (conflict/blocked). 409 = head not up to date (rebase + push). Call `pr_get` first to check `mergeable_state`.
 
 ### `pr_comment`
 ```python
 github(action="pr_comment", number=42, body="General comment")                # general
 github(action="pr_comment", number=42, body="Line note", path="src/x.py", line=42, side="RIGHT")  # line-level
 ```
-→ `{id, url, body}` (+ `path`, `line` if line-level). `path` + `line` must be both-or-neither (XOR validation). General comments use `/issues/{n}/comments`; line-level use `/pulls/{n}/comments` with `subject_type=line`.
+`{id, url, body}` (+ `path`, `line` if line-level). `path` + `line` must be both-or-neither (XOR validation). General comments use `/issues/{n}/comments`; line-level use `/pulls/{n}/comments` with `subject_type=line`.
 
 ### `issue_create`
 ```python
 github(action="issue_create", title="Bug", body="...", labels="bug,ui", assignees="alice,bob")
 ```
-→ `{number, title, url, state}`.
+`{number, title, url, state}`.
 
 ### `issue_list`
 ```python
 github(action="issue_list", state="open", labels="bug", limit=30, page=1)
 ```
-→ `{count, issues: [{number, title, state, url, labels, assignee}], page, has_next, next_page}`.
+`{count, issues: [{number, title, state, url, labels, assignee}], page, has_next, next_page}`. v1.4: same `parse_link_header` regex fix as `pr_list`.
 
 ### `issue_get`
 ```python
 github(action="issue_get", number=42)
 ```
-→ `{number, title, state, body, url, labels, assignee, user, created_at, updated_at, closed_at}`.
+`{number, title, state, body, url, labels, assignee, user, created_at, updated_at, closed_at}`.
 
 ### `issue_update`
 ```python
@@ -131,68 +131,89 @@ github(action="issue_update", number=42, state="closed")                      # 
 github(action="issue_update", number=42, state="open", title="Reopened")      # reopen + retitile
 github(action="issue_update", number=42, labels="duplicate")                  # re-label only
 ```
-→ `{number, title, state, url}`. Unified close/reopen/edit. `state=""` = don't change. At least one field required.
+`{number, title, state, url}`. Unified close/reopen/edit. `state=""` = don't change. At least one field required.
 
 ### `issue_comment`
 ```python
 github(action="issue_comment", number=42, body="Fixed in PR #43")
 ```
-→ `{id, url, body, created_at}`. Shared endpoint for issues + PRs.
+`{id, url, body, created_at}`. Shared endpoint for issues + PRs.
 
 ### `release_create`
 ```python
 github(action="release_create", tag="v1.0.0", title="Release 1.0", body="...", prerelease=False)
 ```
-→ `{id, tag, name, url, draft, prerelease, created_at}`.
+`{id, tag, name, url, draft, prerelease, created_at}`.
 
 ### `release_list`
 ```python
 github(action="release_list", limit=30, page=1)
 ```
-→ `{count, releases: [{id, tag, name, url, draft, prerelease, published_at}], page, has_next, next_page}`. v1.3.1: pagination added.
+`{count, releases: [{id, tag, name, url, draft, prerelease, published_at}], page, has_next, next_page}`. v1.3.1: pagination added. v1.4: `parse_link_header` regex fix.
 
 ### `release_get`
 ```python
 github(action="release_get", tag="v1.0.0")           # by tag (preferred)
 github(action="release_get", number=12345)            # by numeric ID
 ```
-→ `{id, tag, name, url, draft, prerelease, created_at, published_at, body, assets: [{name, url, size, download_count}]}`. `tag` takes priority over `number`.
+`{id, tag, name, url, draft, prerelease, created_at, published_at, body, assets: [{name, url, size, download_count}]}`. `tag` takes priority over `number`. v1.4: tag URL-encoded via `quote(tag, safe="")` so URL-unsafe characters (`+`, `#`, `?`, `/`, spaces) don't produce malformed request URLs.
 
 ### `push`
 ```python
 github(action="push", branch="fix/timeout")                                  # git push origin fix/timeout
 github(action="push", branch="feat/rebase", force=True)                      # --force-with-lease
 ```
-→ `{status: "ok", branch, remote, pushed: true, output, forced}`. LOCAL subprocess (no GITHUB_TOKEN). `force=True` → `--force-with-lease` (safer than `--force`). NOT parallel-safe. 120s timeout.
+`{status: "ok", branch, remote, pushed: true, output, forced}`. LOCAL subprocess (no GITHUB_TOKEN). `force=True` → `--force-with-lease` (safer than `--force`). NOT parallel-safe. 120s timeout.
 
 ### `pull`
 ```python
 github(action="pull")                                                        # git pull origin (current branch)
 github(action="pull", branch="main")                                         # git pull origin main
 ```
-→ `{status: "ok", branch, remote, pulled: true, output}`. LOCAL subprocess. NOT parallel-safe. 120s timeout.
+`{status: "ok", branch, remote, pulled: true, output}`. LOCAL subprocess. NOT parallel-safe. 120s timeout.
 
 ## Error Handling
 
-All errors return `fail(error, status=..., trace_id=...)`:
-- `result["status"] == "error"` → validation error (bad param, not configured)
-- `result["status"] == <int>` → GitHub API HTTP error (404, 405, 422, 500, etc.)
-- `result["error"]` → human-readable message
-- `result["trace_id"]` → trace ID
+**v1.4 contract:** `fail()` always uses the default `status="error"` — never an int HTTP code. The HTTP code remains in the error message text. Structured classification belongs in `error_code` (set by `helpers.github_request()` — not yet wired into the 14 inline actions; planned for next release).
 
-| Error | Trigger | `status` |
-|-------|---------|----------|
-| `action is required` | empty `action` | `"error"` |
-| `Unknown action '<x>'. Use: ...` | action not in DISPATCH | `"error"` |
-| `<param> is required for <action>` | missing required param | `"error"` |
-| `GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env` | `is_configured()` False | `"error"` |
-| `GitHub API error <code>: <msg>` | GitHub returned ≥400 | `<code>` (int) |
-| `PR #<n> not found` | 404 on pr_get/review/merge/comment | `404` |
-| `PR #<n> is not mergeable` | 405 on pr_merge | `405` |
-| `PR #<n> head commit is not up to date` | 409 on pr_merge | `409` |
-| `git push failed (exit <n>): <output>` | subprocess non-zero exit | `"error"` |
-| `git push timed out after 120s` | subprocess timeout | `"error"` |
-| `GitHub action failed: <exception>` | unhandled handler exception | `"error"` |
+All errors return `fail(error, trace_id=..., error_code=...)`:
+- `result["status"]` → always `"error"` for any failure (v1.4 — was sometimes `<int>` in v1.3.1)
+- `result["error"]` → human-readable message (often contains the HTTP code, e.g. `"GitHub API error 422: ..."`)
+- `result["error_code"]` → structured code (only set by `github_request()` until actions migrate — see `core/contracts.py`)
+- `result["trace_id"]` → trace ID
+- `result["rate_limit_remaining"]` → present when `github_request()` saw an `X-RateLimit-Remaining` header (v1.4)
+
+| Error | Trigger | `status` | `error_code` (when set by github_request) |
+|-------|---------|----------|-------------------------------------------|
+| `action is required` | empty `action` | `"error"` | — |
+| `Unknown action '<x>'. Use: ...` | action not in DISPATCH | `"error"` | — |
+| `<param> is required for <action>` | missing required param | `"error"` | — |
+| `GitHub not configured. Set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO in .env` | `is_configured()` False | `"error"` | — |
+| `GitHub API error <code>: <msg>` | GitHub returned ≥400 (inline actions) | `"error"` | — (set after action migration) |
+| `PR #<n> not found` | 404 on pr_get/review/merge/comment (inline actions) | `"error"` | — (set to `"NOT_FOUND"` after migration) |
+| `PR #<n> is not mergeable` | 405 on pr_merge | `"error"` | — |
+| `PR #<n> head commit is not up to date` | 409 on pr_merge | `"error"` | — |
+| `git push failed (exit <n>): <output>` | subprocess non-zero exit | `"error"` | — |
+| `git push timed out after 120s` | subprocess timeout | `"error"` | — |
+| `GitHub action failed: <exception>` | unhandled handler exception | `"error"` | — |
+
+**`error_code` values** (from `core.net.errors.classify_http_error`, used by `github_request()`):
+| Code | Meaning |
+|------|---------|
+| `TIMEOUT` | httpx.TimeoutException |
+| `CONNECT_ERROR` | httpx.ConnectError |
+| `NETWORK_ERROR` | httpx.ReadError / WriteError / RemoteProtocolError / NetworkError |
+| `RATE_LIMITED` | HTTP 408 or 429 |
+| `SERVER_ERROR` | HTTP ≥ 500 |
+| `CLIENT_ERROR` | HTTP 4xx (non-retryable) |
+| `NOT_FOUND` | HTTP 404 (set by `github_request()` when `not_found_msg` provided) |
+| `BOT_BLOCKED` | Cloudflare/cf-ray in response body |
+| `UNKNOWN` | Anything else |
+
+**Retry behavior** (v1.4, only via `github_request()` — not yet wired into inline actions):
+- `core.net.retry.retry_sync` wraps `_do_request` with `max_retries=2`, `base_delay=1.0`, `max_delay=5.0`, jitter enabled.
+- Retries on: `RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}` + `RETRYABLE_EXCEPTIONS = (httpx.TimeoutException, ConnectError, NetworkError, ReadError, WriteError, RemoteProtocolError)`.
+- 3 total attempts max (initial + 2 retries). Backoff: ~1s, ~2s with ±25% jitter.
 
 Per-provider error isolation: N/A (single API). Network errors and JSON-parse errors are distinguished by message prefix (`"request failed:"` vs `"returned non-JSON response:"`).
 
@@ -203,7 +224,8 @@ Per-provider error isolation: N/A (single API). Network errors and JSON-parse er
 - **Subprocess safety:** `push`/`pull` use `subprocess.run(["git", ...], ...)` with list args (NOT `shell=True`). Branch/remote names validated against shell metacharacters (`; & | $ \` ( ) < > \n \r`) as defense-in-depth.
 - **`--force-with-lease`** (not bare `--force`): refuses to overwrite remote refs that moved since last fetch.
 - **No filesystem writes** except via `git push`/`git pull` (which modify the local `.git` directory).
+- **v1.4 retry/backoff:** `github_request()` uses `core.net.retry.retry_sync` with bounded retries (max 3 total attempts, max 5s backoff). No unbounded retry loops.
 
 ---
 
-*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-15 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

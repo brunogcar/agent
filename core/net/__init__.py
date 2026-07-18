@@ -9,6 +9,7 @@ Modules:
 - default: Shared default constants across all network tools
 
 v1.3: Added public re-exports for cross-tool adoption.
+v1.4: Export GITHUB_TIMEOUT (github_ops adoption).
 """
 from __future__ import annotations
 
@@ -56,6 +57,7 @@ from core.net.default import (
     CB_FAILURE_THRESHOLD,
     CB_RECOVERY_TIMEOUT,
     CB_HALF_OPEN_MAX_CALLS,
+    GITHUB_TIMEOUT,
 )
 
 __all__ = [
@@ -104,4 +106,5 @@ __all__ = [
     "CB_FAILURE_THRESHOLD",
     "CB_RECOVERY_TIMEOUT",
     "CB_HALF_OPEN_MAX_CALLS",
+    "GITHUB_TIMEOUT",
 ]

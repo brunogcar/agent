@@ -4,6 +4,16 @@ Calls PUT /repos/{owner}/{repo}/pulls/{number}/merge. Requires the PR to
 be mergeable (status checks passing if required, no conflicts, approvals
 satisfied). Default merge method is "squash" to keep history clean —
 override with merge_method="merge" or "rebase" as needed.
+
+v1.4 (2026-07-15):
+  - Removed `status=` kwarg from all fail() calls (contract violation: fail()
+    expects status: str = "error", not an int — see core/contracts.py).
+    Structured classification belongs in error_code, not status. The
+    inline 3-stage pattern is preserved; migration to github_request()
+    is a follow-up commit.
+  - Fixed `merged: True` (hardcoded) → `data.get("merged", True)` so the
+    action honors GitHub's response (some merge methods return merged:false
+    even on a 200 when the merge was a no-op).
 """
 from __future__ import annotations
 from typing import Any
@@ -90,17 +100,15 @@ def _action_pr_merge(
         return fail(f"pr_merge request failed: {e}", trace_id=trace_id)
 
     if resp.status_code == 404:
-        return fail(f"PR #{pr_number} not found", status=404, trace_id=trace_id)
+        return fail(f"PR #{pr_number} not found", trace_id=trace_id)
     if resp.status_code == 405:
         return fail(
             f"PR #{pr_number} is not mergeable (conflict, blocked, or required checks not satisfied)",
-            status=405,
             trace_id=trace_id,
         )
     if resp.status_code == 409:
         return fail(
             f"PR #{pr_number} head commit is not up to date — rebase and push again",
-            status=409,
             trace_id=trace_id,
         )
     if resp.status_code >= 400:
@@ -111,7 +119,6 @@ def _action_pr_merge(
             msg = resp.text
         return fail(
             f"GitHub API error {resp.status_code}: {msg}",
-            status=resp.status_code,
             trace_id=trace_id,
         )
 
@@ -121,7 +128,7 @@ def _action_pr_merge(
         return fail(f"pr_merge returned non-JSON response: {e}", trace_id=trace_id)
 
     return ok({
-        "merged": True,
+        "merged": data.get("merged", True),
         "sha": data.get("sha"),
         "message": data.get("message"),
     }, trace_id=trace_id)
