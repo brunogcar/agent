@@ -100,3 +100,14 @@ def route_after_swarm_fallback(state: AutocodeState) -> str:
     if _get_tdd(state, "status", "") == "" and state.get("status") != "failed":
         return "node_systematic_debug"
     return "node_verify"
+
+
+def route_after_hitl_gate(state: AutocodeState) -> str:
+    """[v3.4 #38] Route after HiTL gate.
+
+    "awaiting_approval" → END (workflow pauses).
+    else → "node_commit" (approved or HiTL disabled).
+    """
+    if state.get("status") == "awaiting_approval":
+        return "END"
+    return "node_commit"

@@ -40,6 +40,8 @@ def _type_autocode(
     dry_run: bool = False,
     trace_id: str = "",
     resume: bool = False,
+    timeout: int = 0,
+    hitl_approved: bool = False,  # [v3.4 #38] HiTL approval flag — forwarded to run_workflow on resume
     **kwargs,
 ) -> dict:
     trace_id = _ensure_trace_id(trace_id, goal)
@@ -81,4 +83,6 @@ def _type_autocode(
         files=files,
         git_diff=git_diff,
         dry_run=dry_run,
+        timeout=timeout,
+        hitl_approved=hitl_approved,  # [v3.4 #38] forward HiTL approval flag
     )

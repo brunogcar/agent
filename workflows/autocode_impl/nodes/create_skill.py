@@ -52,6 +52,17 @@ def _validate_python_syntax(code: str) -> tuple[bool, str]:
 
 def node_create_skill(state: AutocodeState) -> dict:
     """Create a new skill file based on the task description."""
+    # [v3.4 #38] HiTL check — if enabled and not approved, pause before creating skill
+    if getattr(cfg, "autocode_hitl_enabled", False) and not state.get("hitl_approved", False):
+        tid = state.get("trace_id", "")
+        tracer.step(tid, "hitl_gate", "create_skill paused — awaiting human approval")
+        try:
+            from core.observability.checkpoint import save_checkpoint
+            save_checkpoint(tid, "hitl", state)
+        except Exception:
+            pass
+        return {"status": "awaiting_approval"}
+
     tid = state.get("trace_id", "")
     task = state.get("task", "")
     tracer.step(tid, "node_create_skill", f"Creating skill: {task[:100]}...")

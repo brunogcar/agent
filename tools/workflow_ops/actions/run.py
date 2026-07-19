@@ -68,6 +68,8 @@ def _action_run(
     # per-workflow timeout (0 = use workflow default; autocode ignores this
     # and uses cfg.autocode_graph_timeout instead)
     timeout: int = 0,
+    # [v3.4 #38] HiTL approval flag — set to True when resuming after human approval
+    hitl_approved: bool = False,
     **kwargs,
 ) -> dict:
     """Run a workflow of the given type.
@@ -109,5 +111,6 @@ def _action_run(
         trace_id=trace_id,
         resume=resume,
         timeout=timeout,
+        hitl_approved=hitl_approved,
         **kwargs,
     )

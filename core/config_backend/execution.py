@@ -23,6 +23,7 @@ Env vars read:
         AUTOCODE_DEBUG            — default "0" (truthy: == "1")
         DISABLE_MODEL_WARMUP      — default "0" (truthy: == "1")
         AUTOCODE_GRAPH_TIMEOUT    — default 300  (validated >= max role timeout)
+        AUTOCODE_HITL_ENABLED     — default "0"  (truthy: == "1") [v3.4 #38]
 
     Autoresearch (v1.0):
         AUTORESEARCH_TIME_BUDGET       — default 300
@@ -84,6 +85,7 @@ def _init_execution(cfg) -> None:
     # model_registry above (single source of truth). Do not set them again here.
     cfg.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
     cfg.autocode_adaptive_timeout = os.getenv("AUTOCODE_ADAPTIVE_TIMEOUT", "0") == "1"  # [v1.2 #40] opt-in adaptive timeout by task_type
+    cfg.autocode_hitl_enabled = os.getenv("AUTOCODE_HITL_ENABLED", "0") == "1"  # [v3.4 #38] Human-in-the-Loop approval gate (default OFF)
     cfg.autocode_architecture_question_threshold = int(os.getenv("AUTOCODE_ARCHITECTURE_QUESTION_THRESHOLD", "3"))  # [v3.3 F4] configurable threshold
 
     # -- Autoresearch (v1.0) ------------------------------------------------

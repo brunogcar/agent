@@ -362,6 +362,9 @@ def run_workflow(
                 # If the caller passes a different goal on resume, that overwrites
                 # the original — making the checkpoint meaningless. Keep restored goal.
                 initial_state = {**restored, "status": "running"}
+                # [v3.4 #38] Merge hitl_approved from kwargs (for HiTL resume)
+                if kwargs.get("hitl_approved"):
+                    initial_state["hitl_approved"] = True
         else:
             tracer.warning(trace_id, "resume", "No checkpoint found, starting fresh")
 

@@ -46,12 +46,14 @@ from workflows.autocode_impl.nodes.merge_pr import node_merge_pr  # [v2.0] Phase
 from workflows.autocode_impl.nodes.memory import node_distill_memory
 from workflows.autocode_impl.nodes.create_skill import node_create_skill
 from workflows.autocode_impl.nodes.report import node_report
+from workflows.autocode_impl.nodes.hitl_gate import node_hitl_gate  # [v3.4 #38] HiTL approval gate
 from workflows.autocode_impl.routes import (
     route_after_classify,
     route_after_run_tests,
     route_after_swarm_fallback,  # [v1.4 P2] named function replaces inline lambda
     route_after_write_files,
     route_after_verify,
+    route_after_hitl_gate,  # [v3.4 #38] HiTL gate routing
 )
 # [Pre-2.0 Fix] Removed route_after_analyze_impact import — was always constant,
 # replaced with direct edge.
@@ -61,10 +63,11 @@ from workflows.autocode_impl.routes import (
 # Pragmatic schema: nodes (with type), edges (with condition + loop flag),
 # explicit loops array, explicit branches array. Mirrors the pattern in
 # research/understand/data/deep_research but extended for autocode's
-# complexity (17 nodes, debug loop, create_skill bypass).
+# complexity (30 nodes: 26 active + 3 backward-compat wrappers + 1 hitl_gate,
+# debug loop, create_skill bypass).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "3.1",  # [v3.1] Debug loop improvements: goal sanitization, AST pre-check, debug_summary in verify, swarm fallback
+    "version": "3.4",  # [v3.4] HiTL approval gate; [v3.1] Debug loop improvements: goal sanitization, AST pre-check, debug_summary in verify, swarm fallback
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -96,6 +99,7 @@ WORKFLOW_METADATA = {
         {"name": "node_merge_pr", "type": "tool", "tool": "github", "description": "[v2.0] Auto-merge PR (if enabled)"},
         {"name": "node_distill_memory", "type": "llm", "role": "planner", "description": "Distill procedural memory for future runs"},
         {"name": "node_create_skill", "type": "tool", "tool": "file", "description": "Generate a new skill file (bypasses TDD, has AST validation)"},
+        {"name": "node_hitl_gate", "type": "logic", "description": "[v3.4] Human-in-the-Loop approval gate (opt-in via AUTOCODE_HITL_ENABLED=1)"},
     ],
     "edges": [
         {"from": "node_classify_task", "to": "node_brainstorm", "condition": "route_after_classify: feature/fix/refactor/edit/audit"},
@@ -120,7 +124,9 @@ WORKFLOW_METADATA = {
         {"from": "node_summarize_context", "to": "node_apply_patches", "condition": "debug loop (type: loop)", "type": "loop"},
         {"from": "node_verify_decision", "to": "node_report", "condition": "route_after_verify: verification_passed"},
         {"from": "node_verify_decision", "to": "END", "condition": "route_after_verify: failed"},
-        {"from": "node_report", "to": "node_commit"},
+        {"from": "node_report", "to": "node_hitl_gate"},
+        {"from": "node_hitl_gate", "to": "node_commit", "condition": "route_after_hitl_gate: approved"},
+        {"from": "node_hitl_gate", "to": "END", "condition": "route_after_hitl_gate: awaiting_approval"},
         {"from": "node_commit", "to": "node_push"},  # [v2.0] Phase 3.3 split
         {"from": "node_push", "to": "node_create_pr"},  # [v2.0] Phase 3.3 split
         {"from": "node_create_pr", "to": "node_merge_pr"},  # [v2.0] Phase 3.3 split
@@ -191,6 +197,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_distill_memory", node_distill_memory)
     workflow.add_node("node_create_skill", node_create_skill)
     workflow.add_node("node_report", node_report)
+    workflow.add_node("node_hitl_gate", node_hitl_gate)  # [v3.4 #38] HiTL approval gate
 
     # Set entry point
     workflow.set_entry_point("node_classify_task")
@@ -285,8 +292,14 @@ def build_graph() -> StateGraph:
         },
     )
 
-    # Report -> commit -> push -> create_pr -> merge_pr -> distill -> END  [v2.0: Phase 3.3 split]
-    workflow.add_edge("node_report", "node_commit")
+    # Report -> hitl_gate -> commit -> push -> create_pr -> merge_pr -> distill -> END  [v3.4: HiTL gate]
+    # [v3.4 #38] HiTL gate between report and commit
+    workflow.add_edge("node_report", "node_hitl_gate")
+    workflow.add_conditional_edges(
+        "node_hitl_gate",
+        route_after_hitl_gate,
+        {"node_commit": "node_commit", "END": END},
+    )
     workflow.add_edge("node_commit", "node_push")  # [v2.0] Phase 3.3
     workflow.add_edge("node_push", "node_create_pr")  # [v2.0] Phase 3.3
     workflow.add_edge("node_create_pr", "node_merge_pr")  # [v2.0] Phase 3.3

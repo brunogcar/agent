@@ -169,6 +169,7 @@ class AutocodeState(TypedDict, total=False):
     mode: str
     trace_id: str
     dry_run: bool
+    hitl_approved: bool  # [v3.4 #38] HiTL approval flag — set to True on resume to pass the gate
 
     # Classification (stays flat — used everywhere)
     task_type: str
@@ -317,6 +318,7 @@ def _default_state(
         "target_file": target_file,
         "trace_id": "",
         "dry_run": dry_run,
+        "hitl_approved": False,  # [v3.4 #38] HiTL approval flag — set True on resume to pass the gate
         "task_type": "",
         "project_root": "",
         "autocode_run_path": "",

@@ -93,9 +93,122 @@ selects the 600s bucket.
 
 ---
 
+## 🛑 HiTL Approval Gate (v3.4 #38)
+
+**[v3.4 #38]** The autocode workflow supports an opt-in Human-in-the-Loop
+approval gate that pauses execution before any state-mutating commit. Two
+gates are wired:
+
+| Gate | Location | Triggers when | Default behavior (HiTL OFF) |
+|------|----------|---------------|-----------------------------|
+| **TDD path** | Between `node_report` and `node_commit` | `AUTOCODE_HITL_ENABLED=1` AND `state["hitl_approved"]` is False | `node_hitl_gate` returns `{}` (no-op) → `node_commit` runs |
+| **create_skill path** | Top of `node_create_skill` (before LLM call) | `AUTOCODE_HITL_ENABLED=1` AND `state["hitl_approved"]` is False | HiTL check skipped → skill generation proceeds |
+
+### Config flag
+
+```bash
+# .env
+AUTOCODE_HITL_ENABLED=1   # default: 0 (OFF)
+```
+
+Maps to `cfg.autocode_hitl_enabled` (initialized in
+`core/config_backend/execution.py`). Default OFF — autocode behaves exactly
+as v3.3 unless explicitly opted in.
+
+### State field
+
+`AutocodeState.hitl_approved: bool` (default `False`). Set to `True` on
+resume to pass the gate.
+
+### Pause + resume flow
+
+```
+┌─ run_workflow("autocode", goal="...", mode="feature") ───────────────┐
+│  graph runs: classify → brainstorm → plan → branch → tests → execute  │
+│  → apply_patches → run_tests → debug loop → verify chain → report     │
+│  → node_hitl_gate                                                     │
+│     ├─ cfg.autocode_hitl_enabled=False → returns {} → node_commit     │
+│     └─ cfg.autocode_hitl_enabled=True, hitl_approved=False:           │
+│           save_checkpoint(tid, "hitl", state)                         │
+│           return {"status": "awaiting_approval"}                      │
+│           route_after_hitl_gate → END                                 │
+└──────────────────────────────────────────────────────────────────────┘
+                                ↓
+        Operator reviews the run output (report + modified files)
+                                ↓
+┌─ run_workflow("autocode", goal="...", resume=True, hitl_approved=True) ┐
+│  restore checkpoint → merge hitl_approved=True into initial_state     │
+│  graph runs: ... → node_hitl_gate                                     │
+│     └─ hitl_approved=True → returns {} → node_commit → push → ... → END │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Resume API
+
+```python
+# After the gate returns {"status": "awaiting_approval"}, resume with:
+result = run_workflow(
+    workflow_type="autocode",
+    goal="<original goal>",
+    trace_id="<original trace_id>",
+    resume=True,
+    hitl_approved=True,   # [v3.4 #38] passes the gate
+    # ...other original kwargs (target_file, mode, etc.)
+)
+```
+
+Or via the `workflow` tool:
+
+```python
+workflow(
+    action="run",
+    type="autocode",
+    goal="<original goal>",
+    trace_id="<original trace_id>",
+    resume=True,
+    hitl_approved=True,
+    # ...other original params
+)
+```
+
+### Why async-checkpoint-resume (not sync-pause)
+
+Two design options were considered for #38:
+
+| Option | Mechanism | Pros | Cons |
+|--------|-----------|------|------|
+| **(a) sync-pause** | `threading.Event` — block the worker thread until the MCP client responds | Simple; one round-trip | Holds the worker thread indefinitely; blocks the MCP channel; breaks the "stateless worker" assumption; one worker per request means a paused worker is a dead worker |
+| **(b) async-checkpoint-resume** (CHOSEN) | Save checkpoint → return `{"status": "awaiting_approval"}` → graph routes to END → operator resumes with `hitl_approved=True` | Doesn't hold threads; preserves the worker pool; works with the existing checkpoint infrastructure | Adds one round-trip; requires the operator to pass `goal` + `trace_id` + `resume=True` + `hitl_approved=True` on the second call |
+
+v3.4 chose **(b)** because the gateway's worker pool assumes stateless workers
+— a sync-paused worker would consume a worker slot for the entire review
+duration (which could be hours). The async pattern adds one extra call but
+preserves the worker pool. See INSTRUCTIONS.md NEVER DO #50 + ALWAYS DO #50.
+
+### create_skill path
+
+`node_create_skill` has its own HiTL check at the TOP of the function
+(before the LLM call). When `cfg.autocode_hitl_enabled=True` and
+`hitl_approved=False`, it saves a checkpoint + returns
+`{"status": "awaiting_approval"}`. The graph routes `node_create_skill → END`
+(direct edge), so the workflow pauses. On resume, the operator passes
+`hitl_approved=True`, the check passes, and skill generation proceeds.
+
+### Checkpoint failure is non-fatal
+
+The `save_checkpoint(...)` call inside `node_hitl_gate` (and the
+`node_create_skill` HiTL check) is wrapped in `try/except`. If the checkpoint
+save fails (e.g., disk full, permissions), the gate STILL pauses — but the
+operator won't be able to resume. This is intentional: a checkpoint failure
+shouldn't block the pause (the operator can still manually re-run the
+workflow from scratch). The `tracer.step(...)` call before the checkpoint
+ensures the pause is visible in the trace even if the checkpoint fails.
+
+---
+
 ## 🗺️ Graph Overview
 
-The autocode workflow is a **29-node LangGraph StateGraph** (26 active + 3 backward-compat wrappers — wrappers registered via `add_node(...)` for `import`-compatibility but NOT wired; excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 28 active-node entries). The 3 wrappers (`node_write_files` / `node_verify` / `node_publish`) are KEPT for test compatibility — removal deferred to post-2.0. **[v3.1]** Adds `node_swarm_fallback` (Phase 11b: multi-model escalation when debug retries exhausted).
+The autocode workflow is a **30-node LangGraph StateGraph** (26 active + 3 backward-compat wrappers + 1 HiTL gate — wrappers registered via `add_node(...)` for `import`-compatibility but NOT wired; excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 29 active-node entries). The 3 wrappers (`node_write_files` / `node_verify` / `node_publish`) are KEPT for test compatibility — removal deferred to post-2.0. **[v3.4]** Adds `node_hitl_gate` (Phase 12: opt-in Human-in-the-Loop approval between `node_report` and `node_commit`). **[v3.1]** Adds `node_swarm_fallback` (Phase 11b: multi-model escalation when debug retries exhausted).
 
 | # | Node | Type | Phase | Purpose |
 |---|------|------|-------|---------|
@@ -119,12 +232,13 @@ The autocode workflow is a **29-node LangGraph StateGraph** (26 active + 3 backw
 | 18 | `node_llm_review` | llm (executor) | 12c | LLM spec coverage + cleanliness review (**[v3.1]** injects `debug_summary` when `debug_history` > 5) |
 | 19 | `node_verify_decision` | logic | 12d | Compose results + hallucination guard |
 | 20 | `node_report` | llm (summarize) | 13 | Generate structured report of what was done |
-| 21 | `node_commit` | tool (git) | 14 | Commit changes to the git branch |
-| 22 | `node_push` | tool (github) | 15a | Push branch to remote |
-| 23 | `node_create_pr` | tool (github) | 15b | Create pull request from branch |
-| 24 | `node_merge_pr` | tool (github) | 15c | Auto-merge PR (if enabled) |
-| 25 | `node_distill_memory` | llm (planner) | 16 | Distill procedural memory for future runs |
-| 26 | `node_create_skill` | tool (file) | 17 | Generate a new skill file (bypasses TDD, has AST validation + **[v3.1.2 #36]** importlib smoke-test + git commit) |
+| 21 | `node_hitl_gate` | logic | 13a | **[v3.4 #38]** Opt-in Human-in-the-Loop approval gate (between report and commit). When `AUTOCODE_HITL_ENABLED=1` AND `hitl_approved=False`, saves checkpoint + returns `{"status": "awaiting_approval"}` → graph routes to END. On resume with `hitl_approved=True`, passes through. No-op when HiTL is disabled. |
+| 22 | `node_commit` | tool (git) | 14 | Commit changes to the git branch |
+| 23 | `node_push` | tool (github) | 15a | Push branch to remote |
+| 24 | `node_create_pr` | tool (github) | 15b | Create pull request from branch |
+| 25 | `node_merge_pr` | tool (github) | 15c | Auto-merge PR (if enabled) |
+| 26 | `node_distill_memory` | llm (planner) | 16 | Distill procedural memory for future runs |
+| 27 | `node_create_skill` | tool (file) | 17 | Generate a new skill file (bypasses TDD, has AST validation + **[v3.1.2 #36]** importlib smoke-test + git commit; **[v3.4 #38]** HiTL check at top when `AUTOCODE_HITL_ENABLED=1`) |
 | — | `node_write_files` | composite | wrapper | Backward-compat wrapper (not wired) — calls `node_apply_patches` → `node_write_new_files` → `node_persist_artifacts` |
 | — | `node_verify` | composite | wrapper | Backward-compat wrapper (not wired) — calls the 4 split verify nodes |
 | — | `node_publish` | tool (github) | wrapper | Backward-compat wrapper (not wired) — calls `node_push` → `node_create_pr` → `node_merge_pr` |
@@ -474,4 +588,4 @@ The workflow uses a `status` field on `AutocodeState` to track workflow-level st
 
 ---
 
-*Last updated: 2026-07-19 (v3.2 — 6-LLM collective review hardening: `_git_commit` now returns structured dict `{"committed", "sha", "reason"}` (was `None` for both nothing-to-commit and error — P1-5); unreachable `raise last_error` removed from `helpers._call()` retry loop (P1-6); new § "`_call()` retry mechanism" documents the retry semantics end-to-end; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution) were naming mistakes and are now correctly labeled `v3.1.2` — these were patch releases to v3.1, NOT regressions to v1.x; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.4 — #38 HiTL approval gate: new `node_hitl_gate` between `node_report` and `node_commit` + HiTL check at top of `node_create_skill`; opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF); async-checkpoint-resume pattern; new `route_after_hitl_gate` in `routes.py`; `hitl_approved` state field; `hitl_approved` param threaded through `workflow` tool → `run_workflow` → checkpoint resume; new § "HiTL Approval Gate" documents the pause/resume flow + design rationale (chose async over sync-pause to preserve worker pool); 29 → 30 nodes (26 active + 3 wrappers + 1 hitl_gate); v3.2 — 6-LLM collective review hardening: `_git_commit` now returns structured dict `{"committed", "sha", "reason"}` (was `None` for both nothing-to-commit and error — P1-5); unreachable `raise last_error` removed from `helpers._call()` retry loop (P1-6); new § "`_call()` retry mechanism" documents the retry semantics end-to-end; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution) were naming mistakes and are now correctly labeled `v3.1.2` — these were patch releases to v3.1, NOT regressions to v1.x; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

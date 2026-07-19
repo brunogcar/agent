@@ -202,6 +202,73 @@ The v3.2 release shipped 19 fixes from a 6-LLM collective code review. The four 
 
 The remaining 15 v3.2 fixes are localized to single nodes — see [NODES.md](NODES.md) per-node entries (look for `**[v3.2 ...]` markers) and [CHANGELOG.md](CHANGELOG.md) § v3.2 for the full list.
 
+### v3.4 HiTL approval gate (#38) — async-checkpoint-resume over sync-pause
+
+The v3.4 release added an opt-in Human-in-the-Loop (HiTL) approval gate
+(`node_hitl_gate`) between `node_report` and `node_commit`. The design
+decision was choosing between two pause patterns:
+
+- **(a) sync-pause** — block the worker thread on a `threading.Event` until
+  the MCP client responds. Simple, one round-trip, but holds the worker
+  thread indefinitely. The gateway's worker pool assumes stateless workers
+  (one worker per request) — a paused worker is a dead worker. For a
+  long-running review (could be hours), this would consume a worker slot
+  the entire time, eventually exhausting the pool under load.
+- **(b) async-checkpoint-resume (CHOSEN)** — save a checkpoint via
+  `save_checkpoint(tid, "hitl", state)`, return
+  `{"status": "awaiting_approval"}`, route the graph to END, and release
+  the worker. The operator resumes later with
+  `run_workflow("autocode", goal="...", resume=True, hitl_approved=True)` —
+  `workflows/base.py` merges `hitl_approved=True` into the restored
+  `initial_state`, the gate sees the flag, and passes through to
+  `node_commit`.
+
+v3.4 chose **(b)** because the gateway's worker pool assumes stateless
+workers. The async pattern adds one extra call but preserves the worker
+pool, works with the existing checkpoint infrastructure (no new state
+machinery), and is testable in isolation (the gate is a pure function of
+state + cfg flag). The cost is the operator must pass `goal` + `trace_id`
++ `resume=True` + `hitl_approved=True` on the second call — a minor UX cost
+documented in [API.md](API.md) § "HiTL Approval Gate".
+
+Two gates are wired:
+1. **TDD path** — `node_hitl_gate` between `node_report` and `node_commit`.
+   Routes via the new `route_after_hitl_gate(state)` in `routes.py`:
+   `status == "awaiting_approval"` → `END`; else → `node_commit`.
+2. **create_skill path** — HiTL check at the TOP of `node_create_skill`,
+   before the LLM call. Returns `{"status": "awaiting_approval"}` and the
+   graph's direct edge `node_create_skill → END` handles the pause.
+
+**Checkpoint failure is non-fatal:** `save_checkpoint(...)` is wrapped in
+`try/except`. If the save fails (disk full, permissions), the gate STILL
+pauses — the operator won't be able to resume, but the pause happens. This
+is intentional: a checkpoint failure shouldn't block the pause (the
+operator can still manually re-run from scratch). The `tracer.step(...)`
+call before the checkpoint ensures the pause is visible in the trace even
+if the checkpoint fails.
+
+**Opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF):** the gate is a
+no-op when the flag is off — autocode behaves exactly as v3.3. This
+preserves backward compat for operators who don't want HiTL. The flag
+maps to `cfg.autocode_hitl_enabled` (initialized in
+`core/config_backend/execution.py` alongside the other autocode flags).
+
+**End-to-end param threading:** `hitl_approved: bool` is added to:
+- `AutocodeState` TypedDict (status section, near `dry_run`)
+- `_default_state()` (defaults to `False`)
+- `tools/workflow_ops/actions/run.py::_action_run()` signature (default
+  `False`)
+- `tools/workflow_ops/types/autocode.py::_type_autocode()` signature
+  (default `False`, forwarded to `_execute_workflow`)
+- `tools/workflow_ops/helpers.py::_execute_workflow()` (read from kwargs,
+  forwarded to `run_workflow` only when True — avoids polluting
+  `initial_state` with a False default that would mask a restored True
+  value from a checkpoint)
+- `workflows/base.py::run_workflow()` — on resume, merges `hitl_approved`
+  from kwargs into `initial_state` AFTER the checkpoint restore
+
+Graph: 29 → 30 nodes (26 active + 3 backward-compat wrappers + 1 hitl_gate).
+
 ### Dead-code deletions — do NOT re-add
 - `node_write_files_with_flag_reset` — was registered but never wired; reset a non-existent `step_attempt` field.
 - `route_after_analyze_impact` — was a conditional router that ALWAYS returned `"node_run_tests"`. Replaced with a direct edge.
@@ -313,4 +380,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-19 (v3.2 — 6-LLM collective review hardening: `threading.Lock` on `get_graph()` singleton (P2-3); `_cleanup_old_autocode_runs` wired to `invoke_with_timeout()` (P2-2 — was silent disk leak); `_blast_radius_warning()` extracted into `helpers.py` from duplicated logic in `plan.py` + `debug.py` (P2-1); named `route_after_swarm_fallback()` in `routes.py` (P2-5 — was untestable inline lambda); lazy `kgraph` import in `plan.py` + `debug.py` (P0-1); `_git_commit` structured dict return; `sys.path.insert` leak removed from `create_skill.py`; `cfg.sandbox_timeout` replaces hardcoded `120` in `run_pytest.py`; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution, `node_create_skill` smoke-test #36, `analyze_impact` trace_id P2, test-file v1.2 markers) were naming mistakes and are now correctly labeled `v3.1.2`; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.4 — #38 HiTL approval gate: NEW `node_hitl_gate` between `node_report` and `node_commit` + HiTL check at top of `node_create_skill`; opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF); async-checkpoint-resume pattern (chose over sync-pause to preserve worker pool); new `route_after_hitl_gate` in `routes.py`; `hitl_approved` state field + end-to-end param threading (`run.py` → `types/autocode.py` → `helpers.py` → `base.py`); 29 → 30 nodes; v3.2 — 6-LLM collective review hardening: `threading.Lock` on `get_graph()` singleton (P2-3); `_cleanup_old_autocode_runs` wired to `invoke_with_timeout()` (P2-2 — was silent disk leak); `_blast_radius_warning()` extracted into `helpers.py` from duplicated logic in `plan.py` + `debug.py` (P2-1); named `route_after_swarm_fallback()` in `routes.py` (P2-5 — was untestable inline lambda); lazy `kgraph` import in `plan.py` + `debug.py` (P0-1); `_git_commit` structured dict return; `sys.path.insert` leak removed from `create_skill.py`; `cfg.sandbox_timeout` replaces hardcoded `120` in `run_pytest.py`; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution, `node_create_skill` smoke-test #36, `analyze_impact` trace_id P2, test-file v1.2 markers) were naming mistakes and are now correctly labeled `v3.1.2`; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

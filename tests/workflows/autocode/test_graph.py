@@ -12,7 +12,7 @@ from workflows.autocode_impl.graph import build_graph, get_graph, WORKFLOW_METAD
 # ─── Graph topology ─────────────────────────────────────────────────────────
 
 class TestGraphTopology:
-    def test_graph_has_exactly_29_nodes(self):
+    def test_graph_has_exactly_30_nodes(self):
         g = build_graph()
         expected = {
             "node_classify_task", "node_validate_input", "node_brainstorm",
@@ -34,8 +34,10 @@ class TestGraphTopology:
             "node_commit",
             "node_distill_memory", "node_create_skill",
             "node_analyze_impact", "node_report",
+            # [v3.4 #38] HiTL approval gate (opt-in via AUTOCODE_HITL_ENABLED=1)
+            "node_hitl_gate",
         }
-        # [v3.1] Was 28 (v2.0 Phase 4). v3.1 added node_swarm_fallback = 29 nodes.
+        # [v3.4] Was 29 (v3.1 added node_swarm_fallback). v3.4 added node_hitl_gate = 30 nodes.
         assert set(g.nodes.keys()) == expected, \
             f"Node mismatch. Missing: {expected - set(g.nodes.keys())}"
 
@@ -89,9 +91,9 @@ class TestWorkflowMetadata:
         assert WORKFLOW_METADATA["name"] == "autocode"
         assert "version" in WORKFLOW_METADATA  # [v2.0.4] don't hard-code version (bumps on every release)
 
-    def test_metadata_has_28_nodes(self):
+    def test_metadata_has_29_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 28  # [v3.1] was 27 (v2.0 Phase 4), +1 node_swarm_fallback (v3.1 #48)
+        assert len(nodes) == 29  # [v3.4] was 28 (v3.1 added node_swarm_fallback), +1 node_hitl_gate (v3.4 #38)
 
     def test_metadata_nodes_have_types(self):
         for node in WORKFLOW_METADATA["nodes"]:

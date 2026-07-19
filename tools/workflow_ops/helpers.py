@@ -203,6 +203,12 @@ def _execute_workflow(
     if timeout > 0:
         run_kwargs["timeout"] = timeout
 
+    # [v3.4 #38] Forward HiTL approval flag — only when True so non-HiTL runs
+    # don't pollute the initial_state with a False default that would mask any
+    # restored True value from a checkpoint.
+    if kwargs.get("hitl_approved"):
+        run_kwargs["hitl_approved"] = True
+
     result = run_workflow(
         workflow_type=wf_type,
         resume=resume,

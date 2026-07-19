@@ -483,6 +483,47 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ---
 
+### `node_hitl_gate(state)` — Phase 13a: HiTL Approval Gate (v3.4 #38)
+
+**Purpose:** Opt-in Human-in-the-Loop approval gate between `node_report` and
+`node_commit`. Pauses the workflow when `AUTOCODE_HITL_ENABLED=1` AND
+`state["hitl_approved"]` is False — saves a checkpoint via
+`save_checkpoint(tid, "hitl", state)`, returns
+`{"status": "awaiting_approval"}`, and `route_after_hitl_gate` routes the
+graph to END. The operator reviews the run output, then resumes with
+`run_workflow("autocode", goal="...", resume=True, hitl_approved=True)` —
+`workflows/base.py` merges `hitl_approved=True` into the restored state, the
+gate sees the flag, and passes through to `node_commit`.
+
+**Logic:**
+1. If `cfg.autocode_hitl_enabled` is False (default) → return `{}` (no-op).
+2. If `state.get("hitl_approved", False)` is True → return `{}` (already approved).
+3. Else: `tracer.step(tid, "hitl_gate", "Workflow paused — awaiting human approval before commit")` → `save_checkpoint(tid, "hitl", state)` (wrapped in `try/except` — checkpoint failure is non-fatal, the pause still happens) → return `{"status": "awaiting_approval"}`.
+
+**Output:** `{}` (pass-through) OR `{"status": "awaiting_approval"}` (pause).
+
+**Routing:** `route_after_hitl_gate(state)`:
+- `state.get("status") == "awaiting_approval"` → `"END"` (workflow pauses)
+- else → `"node_commit"` (approved or HiTL disabled)
+
+**Design notes:**
+- **Why async-checkpoint-resume (not sync-pause):** The gateway's worker pool
+  assumes stateless workers. A sync-paused worker (`threading.Event` block)
+  would consume a worker slot for the entire review duration (which could be
+  hours). The async pattern adds one extra call but preserves the worker pool.
+  See INSTRUCTIONS.md NEVER DO #50 + ALWAYS DO #50.
+- **Checkpoint failure is non-fatal:** If `save_checkpoint(...)` raises (disk
+  full, permissions, etc.), the gate STILL pauses — but the operator won't be
+  able to resume. This is intentional: a checkpoint failure shouldn't block
+  the pause (the operator can still manually re-run from scratch). The
+  `tracer.step(...)` call before the checkpoint ensures the pause is visible
+  in the trace even if the checkpoint fails.
+- **create_skill path:** `node_create_skill` has its OWN HiTL check at the TOP
+  of the function (before the LLM call). Same pattern — see `node_create_skill`
+  section below.
+
+---
+
 ### `node_git_commit(state)` — Phase 14: Commit Changes
 
 **Purpose:** Commit the changes to git.
@@ -616,4 +657,4 @@ architecture (TypedDicts, writers/readers, RMW pattern), see [SUBSTATE.md](SUBST
 
 ---
 
-*Last updated: 2026-07-19 (v3.2 — 6-LLM collective review hardening: per-node v3.2 notes added to `node_write_plan` (lazy kgraph import + `_blast_radius_warning` extraction), `node_systematic_debug` (same), `node_swarm_fallback` (HIGH path appends to `debug_history` + clears `last_test_error`), `node_verify_decision` (`automated_checks_passed` default `True` → `False`), `node_llm_review` (`test_code` list handling), `node_apply_patches` (dry_run runs validation + status check includes `"error"`), `node_run_pytest` (`cfg.sandbox_timeout`), `node_create_skill` (`sys.path.insert` removed + `_git_commit` structured dict return); v3.1.2 — version-numbering fix: prior `v1.2` references in this file (intro banner, `node_create_skill` section step 1/3/7/8 + Test coverage line) were naming mistakes and are now correctly labeled `v3.1.2`; `node_create_skill` section updated with empty-file rejection + fallback keys + importlib smoke-test + git commit (#36); v3.1.2 P1 note added re: all 8 LLM-calling nodes passing `trace_id=tid` to `_call()`; v3.1.2 P2 note added re: `node_analyze_impact` literal `"unknown"` trace_id → `""`; v3.1 — debug loop improvements: #42 goal sanitization in `node_validate_input`, #41 AST pre-check in `node_run_pytest`, F3 `debug_summary` injection in `node_llm_review`, #48 NEW `node_swarm_fallback` node; swarm v1.1 #17 — smoke test references added to `node_systematic_debug` + `node_swarm_fallback` node descriptions; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.4 — #38 HiTL approval gate: NEW `node_hitl_gate` section (Phase 13a, between `node_report` and `node_commit`) + HiTL check note in `node_create_skill`; v3.2 — 6-LLM collective review hardening: per-node v3.2 notes added to `node_write_plan` (lazy kgraph import + `_blast_radius_warning` extraction), `node_systematic_debug` (same), `node_swarm_fallback` (HIGH path appends to `debug_history` + clears `last_test_error`), `node_verify_decision` (`automated_checks_passed` default `True` → `False`), `node_llm_review` (`test_code` list handling), `node_apply_patches` (dry_run runs validation + status check includes `"error"`), `node_run_pytest` (`cfg.sandbox_timeout`), `node_create_skill` (`sys.path.insert` removed + `_git_commit` structured dict return); v3.1.2 — version-numbering fix: prior `v1.2` references in this file (intro banner, `node_create_skill` section step 1/3/7/8 + Test coverage line) were naming mistakes and are now correctly labeled `v3.1.2`; `node_create_skill` section updated with empty-file rejection + fallback keys + importlib smoke-test + git commit (#36); v3.1.2 P1 note added re: all 8 LLM-calling nodes passing `trace_id=tid` to `_call()`; v3.1.2 P2 note added re: `node_analyze_impact` literal `"unknown"` trace_id → `""`; v3.1 — debug loop improvements: #42 goal sanitization in `node_validate_input`, #41 AST pre-check in `node_run_pytest`, F3 `debug_summary` injection in `node_llm_review`, #48 NEW `node_swarm_fallback` node; swarm v1.1 #17 — smoke test references added to `node_systematic_debug` + `node_swarm_fallback` node descriptions; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, node Reads/Returns updated to reflect accessor reads + sub-state-only writes; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
