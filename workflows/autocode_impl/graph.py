@@ -348,6 +348,12 @@ def invoke_with_timeout(initial_state: dict) -> dict:
     # [v2.0] Clear any stale cancellation flag from a previous run
     clear_cancellation()
 
+    # [v3.6 #35] Record the graph start time so _remaining_timeout() can
+    # cap subprocess timeouts at the remaining graph budget. Prevents
+    # subprocess.run() from lingering past the graph deadline.
+    from workflows.autocode_impl.helpers import set_graph_start_time
+    set_graph_start_time()
+
     # [v1.4 P2] Best-effort cleanup of old autocode run folders before
     # starting a new run. Non-fatal — cleanup failure must not block the
     # workflow (the new run's folder will still be created on demand).

@@ -122,26 +122,9 @@ resume to pass the gate.
 
 ### Pause + resume flow
 
-```
-┌─ run_workflow("autocode", goal="...", mode="feature") ───────────────┐
-│  graph runs: classify → brainstorm → plan → branch → tests → execute  │
-│  → apply_patches → run_tests → debug loop → verify chain → report     │
-│  → node_hitl_gate                                                     │
-│     ├─ cfg.autocode_hitl_enabled=False → returns {} → node_commit     │
-│     └─ cfg.autocode_hitl_enabled=True, hitl_approved=False:           │
-│           save_checkpoint(tid, "hitl", state)                         │
-│           return {"status": "awaiting_approval"}                      │
-│           route_after_hitl_gate → END                                 │
-└──────────────────────────────────────────────────────────────────────┘
-                                ↓
-        Operator reviews the run output (report + modified files)
-                                ↓
-┌─ run_workflow("autocode", goal="...", resume=True, hitl_approved=True) ┐
-│  restore checkpoint → merge hitl_approved=True into initial_state     │
-│  graph runs: ... → node_hitl_gate                                     │
-│     └─ hitl_approved=True → returns {} → node_commit → push → ... → END │
-└──────────────────────────────────────────────────────────────────────┘
-```
+1. `run_workflow("autocode", goal="...", mode="feature")` → graph runs through classify → ... → report → `node_hitl_gate`. If `cfg.autocode_hitl_enabled=True` AND `hitl_approved=False`: `save_checkpoint(tid, "hitl", state)` + return `{"status": "awaiting_approval"}` + `route_after_hitl_gate → END`.
+2. Operator reviews the run output (report + modified files).
+3. `run_workflow("autocode", goal="...", resume=True, hitl_approved=True)` → restore checkpoint → merge `hitl_approved=True` into `initial_state` → graph runs `... → node_hitl_gate` → `hitl_approved=True` → returns `{}` → `node_commit → push → ... → END`.
 
 ### Resume API
 
@@ -157,62 +140,25 @@ result = run_workflow(
 )
 ```
 
-Or via the `workflow` tool:
-
-```python
-workflow(
-    action="run",
-    type="autocode",
-    goal="<original goal>",
-    trace_id="<original trace_id>",
-    resume=True,
-    hitl_approved=True,
-    # ...other original params
-)
-```
+Or via the `workflow` tool: `workflow(action="run", type="autocode", goal="...", trace_id="...", resume=True, hitl_approved=True, ...)`.
 
 ### Why async-checkpoint-resume (not sync-pause)
 
-Two design options were considered for #38:
-
-| Option | Mechanism | Pros | Cons |
-|--------|-----------|------|------|
-| **(a) sync-pause** | `threading.Event` — block the worker thread until the MCP client responds | Simple; one round-trip | Holds the worker thread indefinitely; blocks the MCP channel; breaks the "stateless worker" assumption; one worker per request means a paused worker is a dead worker |
-| **(b) async-checkpoint-resume** (CHOSEN) | Save checkpoint → return `{"status": "awaiting_approval"}` → graph routes to END → operator resumes with `hitl_approved=True` | Doesn't hold threads; preserves the worker pool; works with the existing checkpoint infrastructure | Adds one round-trip; requires the operator to pass `goal` + `trace_id` + `resume=True` + `hitl_approved=True` on the second call |
-
-v3.4 chose **(b)** because the gateway's worker pool assumes stateless workers
-— a sync-paused worker would consume a worker slot for the entire review
-duration (which could be hours). The async pattern adds one extra call but
-preserves the worker pool. See INSTRUCTIONS.md NEVER DO #50 + ALWAYS DO #50.
+v3.4 chose async-checkpoint-resume over sync-pause (`threading.Event` block) because the gateway's worker pool assumes stateless workers — a sync-paused worker would consume a worker slot for the entire review duration. See INSTRUCTIONS.md NEVER DO #50 + ALWAYS DO #50.
 
 ### create_skill path
 
-`node_create_skill` has its own HiTL check at the TOP of the function
-(before the LLM call). When `cfg.autocode_hitl_enabled=True` and
-`hitl_approved=False`, it saves a checkpoint + returns
-`{"status": "awaiting_approval"}`. The graph routes `node_create_skill → END`
-(direct edge), so the workflow pauses. On resume, the operator passes
-`hitl_approved=True`, the check passes, and skill generation proceeds.
+`node_create_skill` has its own HiTL check at the TOP of the function (before the LLM call). When `cfg.autocode_hitl_enabled=True` and `hitl_approved=False`, it saves a checkpoint + returns `{"status": "awaiting_approval"}`. The graph's direct edge `node_create_skill → END` handles the pause.
 
 ### Checkpoint failure is non-fatal
 
-The `save_checkpoint(...)` call inside `node_hitl_gate` (and the
-`node_create_skill` HiTL check) is wrapped in `try/except`. If the checkpoint
-save fails (e.g., disk full, permissions), the gate STILL pauses — but the
-operator won't be able to resume. This is intentional: a checkpoint failure
-shouldn't block the pause (the operator can still manually re-run the
-workflow from scratch). The `tracer.step(...)` call before the checkpoint
-ensures the pause is visible in the trace even if the checkpoint fails.
+`save_checkpoint(...)` is wrapped in `try/except`. If the save fails, the gate STILL pauses — but the operator won't be able to resume. The `tracer.step(...)` call before the checkpoint ensures the pause is visible in the trace even if the checkpoint fails.
 
 ---
 
 ## 🧬 Parallel Subagent Debug (v3.5 F1)
 
-**[v3.5 F1]** The autocode workflow supports a 4th debug path: **parallel
-subagent debug** — generate N hypotheses, dispatch N subagents in parallel,
-aggregate by highest confidence. Opt-in via `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1`
-(default OFF). Mutually exclusive with `AUTOCODE_SWARM_DEBUG` and
-`AUTOCODE_SUBAGENT_DEBUG` (see INSTRUCTIONS.md NEVER DO #40).
+**[v3.5 F1]** 4th debug path: generate N hypotheses, dispatch N subagents in parallel, aggregate by highest confidence. Opt-in via `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1` (default OFF). Mutually exclusive with `AUTOCODE_SWARM_DEBUG` and `AUTOCODE_SUBAGENT_DEBUG` (NEVER DO #40).
 
 ### Config flags
 
@@ -222,10 +168,7 @@ AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1   # default: 0 (OFF)
 AUTOCODE_PARALLEL_SUBAGENT_COUNT=3   # default: 3 (number of parallel hypotheses)
 ```
 
-Maps to `cfg.autocode_parallel_subagent_debug` +
-`cfg.autocode_parallel_subagent_count` (initialized in
-`core/config_backend/execution.py`). Default OFF — autocode behaves exactly
-as v3.4 unless explicitly opted in.
+Maps to `cfg.autocode_parallel_subagent_debug` + `cfg.autocode_parallel_subagent_count` (in `core/config_backend/execution.py`).
 
 ### Pipeline
 
@@ -258,47 +201,56 @@ node_systematic_debug (AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1)
 
 ### State field
 
-`DebugState.parallel_verdicts: list[dict]` (default `[]`). Populated by
-`_parallel_subagent_debug()` with ALL subagent verdicts (one per dispatched
-hypothesis), sorted by descending `hypothesis_confidence`. Each entry:
-
-```python
-{
-    "hypothesis_id": <int|str>,            # planner-supplied id
-    "hypothesis_root_cause": <str>,         # planner-supplied root cause
-    "hypothesis_confidence": <float>,       # planner-supplied 0.0-1.0
-    "phase": "investigation|pattern|hypothesis|fix",  # subagent-supplied
-    "root_cause": <str>,                    # subagent-supplied (refined)
-    "defense_notes": <str>,                 # subagent-supplied
-    "fix": <str>,                           # subagent-supplied (refined)
-}
-```
+`DebugState.parallel_verdicts: list[dict]` (default `[]`). Populated by `_parallel_subagent_debug()` with ALL subagent verdicts, sorted by descending `hypothesis_confidence`. Each entry: `{hypothesis_id, hypothesis_root_cause, hypothesis_confidence, phase, root_cause, defense_notes, fix}`.
 
 ### Fallback behavior
 
 | Failure mode | Behavior |
 |--------------|----------|
 | Hypothesis generation LLM call raises | Fall through to single-subagent / single-LLM (traced) |
-| Hypothesis JSON parse fails OR < 2 hypotheses returned | Fall through to single-subagent / single-LLM (traced) |
-| All N subagents fail (status != "success" or unparseable JSON) | Fall through to single-subagent / single-LLM (traced) |
+| Hypothesis JSON parse fails OR < 2 hypotheses returned | Fall through (traced) |
+| All N subagents fail | Fall through (traced) |
 | Some subagents fail, ≥1 succeed | Use the highest-confidence surviving verdict |
 | `AUTOCODE_PARALLEL_SUBAGENT_COUNT < 2` | Fall through (traced — parallel is pointless for N<2) |
 
-The parallel path is **non-blocking** — a fall-through is logged via
-`tracer.step(...)` and execution continues with the single-subagent /
-single-LLM path. The workflow never hard-fails because of the parallel path.
+The parallel path is **non-blocking** — fall-through is logged via `tracer.step(...)`.
 
 ### When to use vs. alternatives
 
 | Debug path | When to use |
 |------------|-------------|
 | Single-LLM (default) | Simple, single-hypothesis bugs (most cases) |
-| Swarm (`AUTOCODE_SWARM_DEBUG=1`) | Multi-provider consensus adds confidence signal; useful when you have 2+ cloud providers configured |
-| **Parallel subagent (`AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1`, v3.5 F1)** | **Complex multi-hypothesis bugs** — when the LLM is likely to face competing root causes (race vs. cache vs. off-by-one). Generates N hypotheses and validates them in parallel. |
-| Single subagent (`AUTOCODE_SUBAGENT_DEBUG=1`) | Single-hypothesis bug where isolated curated context helps (no session state contamination) |
+| Swarm (`AUTOCODE_SWARM_DEBUG=1`) | Multi-provider consensus; useful when you have 2+ cloud providers |
+| **Parallel subagent** (`AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1`, v3.5 F1) | **Complex multi-hypothesis bugs** — competing root causes (race vs. cache vs. off-by-one). |
+| Single subagent (`AUTOCODE_SUBAGENT_DEBUG=1`) | Single-hypothesis bug where isolated curated context helps |
 
-See INSTRUCTIONS.md ALWAYS DO #51 for guidance on when to prefer the parallel
-path over the simpler single-subagent path.
+See INSTRUCTIONS.md ALWAYS DO #51 for guidance.
+
+---
+
+## ⏱️ Cancellation-Aware Subprocess (v3.6 #35)
+
+**[v3.6 #35]** `node_run_pytest`, `node_run_lint`, and `node_run_tests` now wrap every `subprocess.run(...)` with three cancellation hooks:
+
+1. **Pre-check** — `is_cancellation_requested()` before invoking the subprocess; bail immediately if the graph already timed out.
+2. **Deadline-aware timeout** — `_remaining_timeout(default)` caps the subprocess `timeout=` at `min(default, remaining_graph_budget)` so the subprocess can't outlive the graph deadline by more than ~1s.
+3. **Post-check** — `is_cancellation_requested()` after the subprocess returns; discard results so the daemon thread can exit promptly.
+
+### New helpers in `helpers.py`
+
+| Function | Signature | Purpose |
+|----------|-----------|---------|
+| `set_graph_start_time()` | `() -> None` | Anchors the graph invocation start time. Called by `invoke_with_timeout()` at the start of each workflow run. |
+| `_remaining_timeout(default)` | `(default: int) -> int` | Returns `min(default, remaining_graph_budget)`. If start time wasn't set (unit tests), returns `default`. If remaining time is ≤ 0, returns `1` (minimum — let the subprocess try, then post-check bails). |
+| `_cancelled()` | `() -> bool` | Shortcut for `is_cancellation_requested()`. |
+
+### Why incremental
+
+Python's `threading.Thread` doesn't support `Thread.kill()`. The v3.6 fix bounds the daemon-thread zombie linger to ≤1s past the graph deadline — but the daemon thread can still linger for ~1s after the deadline. Full process-level termination (the `multiprocessing.Process` rewrite) is still deferred — see [CHANGELOG.md](CHANGELOG.md) roadmap § #35.
+
+### Tests
+
+`tests/workflows/autocode/test_cancellation_aware.py` covers: pre-check bailout, deadline-aware timeout capping, post-check discard, and the `_remaining_timeout()` helper.
 
 ---
 
@@ -485,20 +437,15 @@ For the full field list, see `workflows/autocode_impl/state.py`.
 
 ## 🧭 [v3.0] State Accessors
 
-**[v3.0]** All 8 accessors are the ONLY read path for sub-state fields. Each is a 4-line sub-state-only read — no legacy fallback. For the full accessor reference (signatures, RMW pattern, writer/reader node lists), see [SUBSTATE.md](SUBSTATE.md).
+**[v3.0]** All 8 accessors are the ONLY read path for sub-state fields. Each is a 4-line sub-state-only read — no legacy fallback. **For the full accessor reference** (signatures, RMW pattern, writer/reader node lists), **see [SUBSTATE.md](SUBSTATE.md).**
 
-> **[v3.0] All 8 accessors are safe and are the ONLY path.** Use them for any
-> sub-state field read (`_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`,
-> `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`). For ephemeral flat
-> fields (test_results, test_code, _pytest_output, lint_output, etc.), use
-> `state.get(key, default)` directly. See INSTRUCTIONS.md NEVER DO #33 +
-> ALWAYS DO #29.
+> **[v3.0]** Use accessors (`_get_plan`, `_get_tdd`, `_get_files`, `_get_impact`, `_get_debug`, `_get_verify`, `_get_vcs`, `_get_memory`) for any sub-state field read. For ephemeral flat fields (`test_results`, `test_code`, `_pytest_output`, `lint_output`, etc.), use `state.get(key, default)` directly. See INSTRUCTIONS.md NEVER DO #33 + ALWAYS DO #29.
 
 ### The 8 accessor functions
 
 | Function | Sub-state TypedDict | Reads from |
 |----------|---------------------|------------|
-| `_get_plan(state, key, default=None)` | `PlanState` | `state["plan_state"]` dict (NOT `state["plan"]` — that's the legacy `list[dict]` step list) |
+| `_get_plan(state, key, default=None)` | `PlanState` | `state["plan_state"]` dict |
 | `_get_tdd(state, key, default=None)` | `TDDState` | `state["tdd"]` dict |
 | `_get_files(state, key, default=None)` | `FilesState` | `state["files_state"]` dict |
 | `_get_impact(state, key, default=None)` | `ImpactState` | `state["impact"]` dict |
@@ -518,29 +465,9 @@ def _get_vcs(state: dict, key: str, default: Any = None) -> Any:
     return default
 ```
 
-### Usage in nodes
-
-Every node that reads a sub-state field MUST use the corresponding accessor.
-Example: `node_git_commit` reads the branch name via `_get_vcs(state, "branch", "")`
-instead of the legacy `state.get("branch", "")`:
-
-```python
-# [v3.0] accessor read — sub-state is the ONLY storage
-from workflows.autocode_impl.state import _get_vcs
-branch = _get_vcs(state, "branch", "") or "main"
-
-# [v3.0] ephemeral flat field — read directly (no accessor)
-test_results = state.get("test_results", {})
-```
-
-**[v3.0]** All nodes that read sub-state fields have been migrated: routes.py
-(2 reads), autocode.py `_shape_artifacts` (5 reads), and 11 node files (tdd_*,
-debug_notes, root_cause, modified_files, etc.). The v2.0.5 split-brain warning
-is lifted — there is no flat fallback to be split-brained against.
-
 ### RMW pattern (write side)
 
-LangGraph replaces dict values, doesn't deep-merge. Returning `{"vcs": {"pushed": True}}` clobbers every other `vcs` field. Always do read-modify-write:
+LangGraph replaces dict values, doesn't deep-merge. Always do read-modify-write:
 
 ```python
 current_vcs = dict(state.get("vcs", {}))           # 1. READ (shallow copy)
@@ -552,68 +479,39 @@ See [SUBSTATE.md](SUBSTATE.md) § "RMW Pattern" for full pattern + variants.
 
 ### `helpers._write_files()` — DELETED
 
-The `helpers._write_files()` function is **DELETED as of v2.0 GA (Phase 7.2)**.
-A dead-code audit found it was never called by any node — `execute.py` imported
-it but never used the import. The `helpers.py` source now carries a single
-comment in its place:
-
-```
-# [v2.0] Phase 7: _write_files() DELETED — was dead code (never called by any node).
-# The actual file writing logic lives in nodes/apply_patches.py + nodes/write_new_files.py.
-```
-
-- **DELETED, not deprecated:** Code that imports `helpers._write_files` will now `ImportError`.
-- **Use the split nodes instead:** `node_apply_patches` (for `str_replace` patches) + `node_write_new_files` (for new-file writes) + `node_persist_artifacts` (for run-dir artifact persistence). See NEVER DO #38 + #39 in INSTRUCTIONS.md.
-- **No behavior change:** The function was unreachable before deletion.
+`helpers._write_files()` is **DELETED as of v2.0 GA (Phase 7.2)** — a dead-code audit found it was never called by any node. Code that imports `helpers._write_files` will now `ImportError`. Use the split nodes instead: `node_apply_patches` + `node_write_new_files` + `node_persist_artifacts`. See NEVER DO #38.
 
 ### `vcs_ops.py` — Unified VCS module
 
-The `workflows/autocode_impl/vcs_ops.py` module is the **single source of truth
-for all VCS helpers**. It merges the former `git_ops.py` (local operations) +
-`github_ops.py` (remote operations) into one module, organized in 3 sections:
+`workflows/autocode_impl/vcs_ops.py` is the **single source of truth for all VCS helpers**. 3 sections:
 
 1. **Local operations** — `_git_commit()`, `_git_create_branch()`
 2. **Remote operations** — `_github_pull()`, `_github_push()`, `_github_pr_create()`, `_github_pr_comment()`, `_github_pr_merge()`
 3. **Swarm integration** — `_swarm_debug_consensus()`
 
-All lazy imports, `is_configured()` guards, `tracer.step` logging, and
-structured returns are preserved. `git_ops.py` + `github_ops.py` are kept as
-thin re-export wrappers so existing imports still work. **New code MUST import
-from `vcs_ops.py` directly** — see INSTRUCTIONS.md ALWAYS DO #37.
+All lazy imports, `is_configured()` guards, `tracer.step` logging, and structured returns are preserved. `git_ops.py` + `github_ops.py` are kept as thin re-export wrappers. New code MUST import from `vcs_ops.py` directly (ALWAYS DO #37).
 
-**[v3.2 P1-5]** `_git_commit()` now returns a structured dict `{"committed": bool, "sha": str, "reason": str}` instead of `None` for both the "nothing to commit" and "error" cases (the two cases were indistinguishable to callers). `committed=False` + `reason="nothing to commit"` is the graceful no-op path; `committed=False` + `reason="error: <detail>"` is the failure path; `committed=True` + `sha="<commit_sha>"` + `reason="committed"` is the success path. Callers that branched on `if _git_commit(...) is None:` MUST update to `if not result["committed"]:`.
+**[v3.2 P1-5]** `_git_commit()` returns a structured dict `{"committed": bool, "sha": str, "reason": str}` instead of `None` for both the "nothing to commit" and "error" cases. Callers MUST inspect `result["committed"]` (and optionally `result["reason"]`) — never branch on `is None` (NEVER DO #49).
 
-### `debug_history` field — written by `node_systematic_debug`, read by `node_summarize_context`
+### `debug_history` field
 
-`debug_history` is the within-run debug-loop history that closes the #37 prerequisite (context summarization):
+`debug_history` is the within-run debug-loop history (closes #37 — context summarization). Populated by `node_systematic_debug` on every iteration: `{iteration, phase, root_cause, fix (truncated to 200 chars), tests_passed: bool}`. Swarm-path entries include `confidence`.
 
-**Four debug paths** (mutually exclusive — see INSTRUCTIONS.md NEVER DO #40):
+**Four debug paths** (mutually exclusive — NEVER DO #40):
 
-1. **Single-LLM (default)** — `node_systematic_debug` calls `_call()` directly with the 4-phase `DEBUG_SYSTEM` prompt. No flag required.
-2. **Swarm** (`AUTOCODE_SWARM_DEBUG=1`) — `node_systematic_debug` calls `_swarm_debug_consensus()` which dispatches to 2+ providers, then votes (confidence HIGH/MEDIUM/LOW). Non-blocking: the fix is applied regardless of confidence.
-3. **Parallel subagent** (`AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1`, v3.5 F1) — `node_systematic_debug` calls `_parallel_subagent_debug()` which: (a) generates N distinct hypotheses via a planner LLM call with `PARALLEL_HYPOTHESES_SYSTEM`; (b) dispatches N subagents in parallel via `ThreadPoolExecutor` (one per hypothesis) using `SUBAGENT_VALIDATE_SYSTEM`; (c) aggregates by picking the highest-confidence verdict; (d) stores ALL verdicts in `debug.parallel_verdicts`. Tunable via `AUTOCODE_PARALLEL_SUBAGENT_COUNT` (default 3). Non-blocking: falls through to single-LLM on hypothesis-generation failure or all-subagents-failed.
-4. **Single subagent** (`AUTOCODE_SUBAGENT_DEBUG=1`, v2.0.2) — `node_systematic_debug` calls `agent(action="subagent", role="planner")` with isolated curated context (failing test + error output + current source + truncated prior fix attempts). Subagent does NOT see autocode session state. Non-blocking: falls back to single-LLM on subagent failure.
+1. **Single-LLM (default)** — `_call()` directly with `DEBUG_SYSTEM`. No flag.
+2. **Swarm** (`AUTOCODE_SWARM_DEBUG=1`) — `_swarm_debug_consensus()` (2-run `consensus → vote`). Non-blocking.
+3. **Parallel subagent** (`AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1`, v3.5 F1) — `_parallel_subagent_debug()`. See § "Parallel Subagent Debug" above.
+4. **Single subagent** (`AUTOCODE_SUBAGENT_DEBUG=1`) — `agent(action="subagent", role="planner")` with curated context. Non-blocking.
 
-All four paths populate `debug_history` (with `phase` set accordingly: `investigation`/`pattern`/`hypothesis`/`fix` for single-LLM, `swarm` for swarm, `subagent` for single subagent; the parallel path uses the winner subagent's `phase`).
+- **CONSUMED** by `node_systematic_debug`: last 5 entries injected into the LLM user prompt under a `--- PRIOR DEBUG ATTEMPTS (do NOT repeat these) ---` block.
+- **CONSUMED** by `node_summarize_context`: compresses it into `debug_summary`.
+- **Architecture-question exit:** `node_systematic_debug` reads the last 3 entries — if all have `tests_passed=False`, bails with `tdd_status="max_retries_exceeded"` + procedural memory store. Different from #39 stuck detection.
+- **Accessor:** `_get_tdd(state, "debug_history", [])`.
 
-- **POPULATED** by `node_systematic_debug` on every iteration: `{iteration, phase, root_cause, fix (truncated to 200 chars), tests_passed: bool}` (`tests_passed=False` when the entry is created — `run_tests` updates it to `True` on the next loop iteration if the fix worked). **[Hardening P0.2]** `run_tests` now correctly marks the last entry's `tests_passed=True`. Swarm-path entries use `phase="swarm"` and include `confidence`. Subagent-path entries use `phase="subagent"`.
-- **CONSUMED** by `node_systematic_debug`: last 5 entries are injected into the LLM user prompt under a `--- PRIOR DEBUG ATTEMPTS (do NOT repeat these) ---` block so the LLM doesn't repeat failed hypotheses/fixes.
-- **CONSUMED** by `node_summarize_context`: reads `debug_history` and compresses it into `debug_summary` via chonkie `SentenceChunker` (soft dep, lazy import) before re-entering the loop.
-- **Architecture-question exit:** `node_systematic_debug` reads the last 3 entries — if all have `tests_passed=False`, it bails with `tdd_status="max_retries_exceeded"` + procedural memory store. Different from #39 stuck detection (same error repeating) — this fires when DIFFERENT errors occur each iteration.
-- **Preserved on early exit:** Both early-exit paths (architecture + max_retries) return `"tdd": {"debug_history": debug_history}` so the full history is available for downstream inspection / procedural memory store.
-- **Accessor:** `_get_tdd(state, "debug_history", [])` reads from the TDD sub-state dict (sub-state is the ONLY storage since v3.0 — no legacy fallback).
+### `debug_summary` field
 
-`# TODO(2.0-post):` Cross-run learning (procedural memory recall before debug) is still pending — see CHANGELOG.md § "Future Tracks (Post-2.0)" F5.
-
-### `debug_summary` field — written by `node_summarize_context`, consumed by `node_systematic_debug`
-
-`debug_summary: str` in `TDDState` holds the compressed `debug_history` string
-produced by `node_summarize_context`:
-
-- **WRITTEN** by `node_summarize_context`: reverses history (most recent first), renders each entry as a single sentence, tries `chonkie.SentenceChunker(chunk_size=512)`, returns the FIRST chunk. On any exception falls back to `json.dumps(last_3_entries)`.
-- **[Hardening P2] CONSUMED** by `node_systematic_debug`: when `debug_history` grows past 5 entries, the LLM user prompt replaces the raw last-5-entries block with a "DEBUG SUMMARY (compressed)" block containing the summary string. Keeps LLM context bounded (#37) in long-running debug loops.
-- **Empty when history is empty:** First debug iteration (no prior attempts) → `node_summarize_context` returns `{"tdd": {"debug_summary": ""}}`.
-- **Accessor:** `_get_tdd(state, "debug_summary", "")` reads from the TDD sub-state dict (sub-state is the ONLY storage since v3.0 — no legacy fallback).
+`debug_summary: str` in `TDDState` — compressed `debug_history` produced by `node_summarize_context`. Reverses history (most recent first), renders each entry as a single sentence, tries `chonkie.SentenceChunker(chunk_size=512)` (soft dep), returns the FIRST chunk. On exception falls back to `json.dumps(last_3_entries)`. **CONSUMED** by `node_systematic_debug` when `debug_history` grows past 5 entries — replaces the raw last-5-entries block with a "DEBUG SUMMARY (compressed)" block, keeping LLM context bounded (#37). Empty when history is empty. Accessor: `_get_tdd(state, "debug_summary", "")`.
 
 ---
 
@@ -628,9 +526,7 @@ Before v3.0, sub-state fields had flat-field mirrors that could drift out of syn
 - **Skill names:** `_sanitize_skill_name()` strips non-`[a-zA-Z0-9_]` chars (prevents `/` or `\` path traversal).
 
 ### Secret handling
-- All 8 GitHub/Swarm/Subagent config flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_SUBAGENT_DEBUG`, `AUTOCODE_SWARM_DEBUG_FALLBACK`) default **OFF** — backward compat (with all OFF, autocode behaves identically to v3.1.2). **[v3.1]** `AUTOCODE_SWARM_DEBUG_FALLBACK=1` enables the post-debug-exhaustion swarm escalation node (`node_swarm_fallback`). **[v3.1.2 #40]** `AUTOCODE_ADAPTIVE_TIMEOUT=1` enables per-task-type timeout overrides (default OFF). **[v3.5 F1]** `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1` enables the parallel subagent debug path (4th debug chain path); `AUTOCODE_PARALLEL_SUBAGENT_COUNT` (default 3) tunes the number of parallel hypotheses. Both default OFF/3 — backward compat with v3.4.
-- `is_configured()` guard: every `vcs_ops.py` helper MUST call `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()`) before any GitHub API call. Missing `GITHUB_TOKEN` / `GITHUB_OWNER` / `GITHUB_REPO` → graceful-skip (returns `False`/`None`, workflow continues).
-- `_call()` retries are interruptible via `threading.Event` — secrets/credentials are never logged.
+- All 9 GitHub/Swarm/Subagent/HiTL config flags default **OFF** — backward compat. `is_configured()` guard: every `vcs_ops.py` helper MUST call `_github_is_configured()` before any GitHub API call. Missing `GITHUB_TOKEN`/`GITHUB_OWNER`/`GITHUB_REPO` → graceful-skip. `_call()` retries are interruptible via `threading.Event` — secrets/credentials are never logged.
 
 ### Atomic writes
 - `node_write_new_files` uses `tempfile.NamedTemporaryFile` + `os.replace` + `FileLock` (1 retry on timeout).
@@ -665,26 +561,26 @@ The workflow uses a `status` field on `AutocodeState` to track workflow-level st
 
 | Category | Example | Handling |
 |----------|---------|----------|
-| **LLM failure** | `_call()` exhausted retries, returned `""` | Node falls back to default (e.g., `task_type="unclear"`) or returns `{"status": "error", "error": ...}`. **[v3.1.2 P1]** `_call()` retry-exhaustion errors now include `trace_id=tid` — all 8 callers (`classify.py`, `brainstorm.py`, `plan.py`, `tests.py`, `execute.py`, `debug.py`, `llm_review.py`, `create_skill.py`) pass `trace_id=tid` so retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`). **[v3.2 P1-6]** The unreachable `raise last_error` after the retry loop in `helpers._call()` was removed — it was dead code (the loop always returns or raises within the loop body); a stale comment about it was also fixed. |
+| **LLM failure** | `_call()` exhausted retries, returned `""` | Node falls back to default (e.g., `task_type="unclear"`) or returns `{"status": "error", "error": ...}`. `[v3.1.2 P1]` retry-exhaustion errors include `trace_id=tid` (all 8 callers pass it). |
 | **JSON parse failure** | LLM returned non-JSON or markdown-fenced JSON | `_parse_json()` returns `{}`; node logs warning + uses defaults. |
 | **Subprocess failure** | `pytest` / `ruff` / `git` returned non-zero | Captured as structured return; workflow continues (lint is advisory). |
 | **GitHub API failure** | `_github_pr_create()` raised | Graceful-skip: `is_configured()` returns `False` → helper returns `None`/`False`. |
 | **Path traversal** | LLM returned `../../etc/passwd` | `_is_path_safe()` returns `False`; path added to `patch_errors`. |
-| **Timeout** | `invoke_with_timeout()` exceeded the configured timeout (static `cfg.autocode_graph_timeout` OR per-task-type adaptive timeout when `AUTOCODE_ADAPTIVE_TIMEOUT=1`) | `request_cancellation()` → `_call()` retries abort; status set to `"Autocode graph timed out"`. The daemon thread can't be killed (Python limitation — see roadmap #35); it exits on the next `_call()` check. |
-| **Crashed** | Graph node raised an unhandled exception inside the daemon thread | **Distinct from timeout.** **[Hardening P0.3]** The exception is captured and surfaced as `status="Autocode graph crashed: <exception>"` (was: swallowed and misreported as timeout). The daemon thread dies; the main thread sees the crash result. |
-| **Max retries exceeded** | `iteration > max_retries` in debug loop | `tdd_status="max_retries_exceeded"` + procedural memory store. **[v3.1 #48]** If `AUTOCODE_SWARM_DEBUG_FALLBACK=1`, `route_after_run_tests` routes to `node_swarm_fallback` instead of the verify chain — HIGH-confidence swarm verdict resets `tdd_status` for one more debug cycle; LOW/unavailable still falls through to verify chain (returns `"failed"`). |
+| **Timeout** | `invoke_with_timeout()` exceeded the configured timeout | `request_cancellation()` → `_call()` retries abort; status set to `"Autocode graph timed out"`. The daemon thread can't be killed (Python limitation — see roadmap #35); **[v3.6]** subprocess calls now bounded to ≤1s past the deadline via `_remaining_timeout()`. |
+| **Crashed** | Graph node raised an unhandled exception inside the daemon thread | **Distinct from timeout.** Exception captured and surfaced as `status="Autocode graph crashed: <exception>"`. |
+| **Max retries exceeded** | `iteration > max_retries` in debug loop | `tdd_status="max_retries_exceeded"` + procedural memory store. If `AUTOCODE_SWARM_DEBUG_FALLBACK=1`, routes to `node_swarm_fallback`. |
 | **Stuck detection** | Same error signature on consecutive debug iterations | `route_after_run_tests` routes `"stuck"` → `node_run_pytest` (skips doomed debug). |
 | **Architecture-question exit** | 3+ consecutive `tests_passed=False` (different errors each iteration) | `tdd_status="max_retries_exceeded"` + procedural memory store (different from stuck — fires on architectural bug). |
 
 ### Tracing
 - Every node should call `tracer.step(tid, ...)` for graceful events + `tracer.error(tid, category, message)` (3 args — see NEVER DO #29) for failures.
-- `trace_id` is mandatory on every tracer call (INSTRUCTIONS.md ALWAYS DO).
-- **✅ [v3.1.2]** All 8 `_call()` callers now pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace. (Before v3.1.2, `_call()` retry-exhaustion errors used `trace_id=""` and were unattributed.)
+- `trace_id` is mandatory on every tracer call. All 8 `_call()` callers pass `trace_id=tid`.
 
 ### `_call()` retry mechanism
 
-`_call(role, system, user, ..., retries=2, trace_id="")` (in `helpers.py`) loops `retries + 1` times with exponential backoff (`2 ** attempt` seconds). **[Hardening P1.7]** Backoff is interruptible via `threading.Event.wait(timeout=...)` so `request_cancellation()` from a timeout aborts the sleep immediately (was `time.sleep(...)` — uninterruptible). **[v3.1.2 P1]** `trace_id` is now passed by all 8 in-tree callers — see Tracing section above. **[v3.2 P1-6]** The unreachable `raise last_error` after the retry loop was removed (dead code — the loop body always returns or raises); the stale comment that referenced it (`# re-raise last error if all retries failed`) was corrected. The control flow is unchanged: an exhausted retry loop returns `""` (empty string), which downstream nodes interpret as an LLM failure and handle via their fallback path (e.g., `task_type="unclear"`, `status="error"`).
+`_call(role, system, user, ..., retries=2, trace_id="")` (in `helpers.py`) loops `retries + 1` times with exponential backoff (`2 ** attempt` seconds). Backoff is interruptible via `threading.Event.wait(timeout=...)` so `request_cancellation()` aborts the sleep immediately. An exhausted retry loop returns `""` (empty string), which downstream nodes interpret as an LLM failure and handle via their fallback path (e.g., `task_type="unclear"`, `status="error"`).
 
 ---
 
-*Last updated: 2026-07-19 (v3.5 — F1 parallel subagent debug: new § "Parallel Subagent Debug" documents the 4th debug chain path (hypothesis generation → parallel ThreadPoolExecutor dispatch → confidence-weighted aggregation); new config flags `AUTOCODE_PARALLEL_SUBAGENT_DEBUG` + `AUTOCODE_PARALLEL_SUBAGENT_COUNT`; new state field `parallel_verdicts: list[dict]` on `DebugState`; `subagent_verdict` now also populated by the parallel path (mirrors the winner); "Three debug paths" → "Four debug paths" + new entry in the output-fields table; v3.4 — #38 HiTL approval gate: new `node_hitl_gate` between `node_report` and `node_commit` + HiTL check at top of `node_create_skill`; opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF); async-checkpoint-resume pattern; new `route_after_hitl_gate` in `routes.py`; `hitl_approved` state field; `hitl_approved` param threaded through `workflow` tool → `run_workflow` → checkpoint resume; new § "HiTL Approval Gate" documents the pause/resume flow + design rationale (chose async over sync-pause to preserve worker pool); 29 → 30 nodes (26 active + 3 wrappers + 1 hitl_gate); v3.2 — 6-LLM collective review hardening: `_git_commit` now returns structured dict `{"committed", "sha", "reason"}` (was `None` for both nothing-to-commit and error — P1-5); unreachable `raise last_error` removed from `helpers._call()` retry loop (P1-6); new § "`_call()` retry mechanism" documents the retry semantics end-to-end; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution) were naming mistakes and are now correctly labeled `v3.1.2` — these were patch releases to v3.1, NOT regressions to v1.x; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+

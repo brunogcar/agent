@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 from workflows.autocode_impl.state import AutocodeState
-from workflows.autocode_impl.helpers import _should_skip_node
+from workflows.autocode_impl.helpers import _should_skip_node, is_cancellation_requested, _remaining_timeout  # [v3.6 #35]
 from core.config import cfg
 from core.tracer import tracer
 
@@ -33,6 +33,15 @@ def node_run_pytest(state: AutocodeState) -> dict:
         return {}
 
     tracer.step(tid, "run_pytest", "running fresh pytest")
+
+    # [v3.6 #35] Check cancellation before subprocess — if the graph
+    # already timed out before we entered this node, bail immediately.
+    if is_cancellation_requested():
+        return {
+            "test_results": {"success": False, "stdout": "", "stderr": "Cancelled", "returncode": -1},
+            "tests_passed": False,
+            "_pytest_output": "Cancelled before pytest",
+        }
 
     run_path = state.get("autocode_run_path", "")
     if run_path:
@@ -70,7 +79,9 @@ def node_run_pytest(state: AutocodeState) -> dict:
 
     try:
         syntax_cmd = [sys.executable, "-m", "ruff", "check", "--select", "E999", "--no-cache"] + files_to_check
-        syntax_result = subprocess.run(syntax_cmd, capture_output=True, text=True, timeout=10, encoding='utf-8', cwd=str(base_path))
+        # [v3.6 #35] Cap ruff timeout at the remaining graph budget so it
+        # can't outlive the graph deadline.
+        syntax_result = subprocess.run(syntax_cmd, capture_output=True, text=True, timeout=_remaining_timeout(10), encoding='utf-8', cwd=str(base_path))
         if syntax_result.returncode != 0:
             # Syntax errors found — skip pytest, return the error directly
             syntax_error = syntax_result.stdout.strip() or syntax_result.stderr.strip()
@@ -93,6 +104,15 @@ def node_run_pytest(state: AutocodeState) -> dict:
     except Exception as e:
         tracer.step(tid, "run_pytest", f"ruff pre-check error (non-fatal): {e}")
 
+    # [v3.6 #35] Check cancellation after ruff pre-check — bail before the
+    # expensive pytest call if the graph timed out during ruff.
+    if is_cancellation_requested():
+        return {
+            "test_results": {"success": False, "stdout": "", "stderr": "Cancelled", "returncode": -1},
+            "tests_passed": False,
+            "_pytest_output": "Cancelled after ruff pre-check",
+        }
+
     try:
         cmd = [sys.executable, "-m", "pytest", "--tb=short", "--color=no", "-q"]
         if tests_dir.exists():
@@ -103,11 +123,24 @@ def node_run_pytest(state: AutocodeState) -> dict:
         # Run from project root so imports resolve correctly
         # [v3.1 #41] base_path already computed above for ruff pre-check
         # [v1.4 P1] Use cfg.sandbox_timeout instead of hardcoded 120s.
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=cfg.sandbox_timeout, encoding='utf-8', cwd=str(base_path))
+        # [v3.6 #35] Cap subprocess timeout at the remaining graph budget so
+        # the subprocess can't outlive the graph deadline by more than 1s.
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=_remaining_timeout(cfg.sandbox_timeout), encoding='utf-8', cwd=str(base_path))
         fresh_output = (result.stdout + result.stderr).strip()
         tests_passed = result.returncode == 0
 
         tracer.step(tid, "run_pytest", f"pytest {'PASS' if tests_passed else 'FAIL'} (exit {result.returncode})")
+
+        # [v3.6 #35] Check cancellation after subprocess — if the graph
+        # timed out during the pytest call, discard the results so the
+        # daemon thread can exit promptly.
+        if is_cancellation_requested():
+            tracer.step(tid, "run_pytest", "Cancelled after pytest completed — discarding results")
+            return {
+                "test_results": {"success": False, "stdout": "", "stderr": "Cancelled", "returncode": -1},
+                "tests_passed": False,
+                "_pytest_output": "Cancelled after pytest",
+            }
 
         return {
             "test_results": {

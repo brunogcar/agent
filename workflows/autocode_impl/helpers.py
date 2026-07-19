@@ -1,6 +1,7 @@
 """Helpers for autocode workflow."""
 from __future__ import annotations
 import re
+import time as _time
 import threading as _threading
 from pathlib import Path
 from core.config import cfg
@@ -82,6 +83,57 @@ def clear_cancellation() -> None:
 
 def is_cancellation_requested() -> bool:
     """[v2.0] Check if cancellation was requested."""
+    return _cancellation_requested
+
+
+# [v3.6 #35] Track the graph start time for deadline computation.
+# Set by set_graph_start_time() (called from invoke_with_timeout at the
+# start of each workflow run) and read by _remaining_timeout() to cap
+# subprocess timeouts so they don't exceed the graph's remaining budget.
+_graph_start_time: float = 0.0
+
+
+def set_graph_start_time() -> None:
+    """Record the graph invocation start time for deadline computation.
+
+    Called by invoke_with_timeout() at the start of each workflow run.
+    Used by _remaining_timeout() to cap subprocess timeouts so they
+    don't exceed the graph's remaining time budget.
+
+    [v3.6 #35] Incremental zombie fix — when the graph timeout fires
+    (e.g., 300s), daemon threads blocked on subprocess.run() can linger
+    for up to cfg.sandbox_timeout (e.g., 30s) past the deadline. Capping
+    the subprocess timeout at the remaining graph budget bounds that
+    linger to <=1s.
+    """
+    global _graph_start_time
+    _graph_start_time = _time.time()
+
+
+def _remaining_timeout(default_timeout: int) -> int:
+    """Compute remaining time budget for a subprocess call.
+
+    Returns min(default_timeout, remaining_graph_time).
+    If the graph start time wasn't set (e.g., unit tests), returns default_timeout.
+    If the remaining time is <= 0, returns 1 (minimum — let the subprocess
+    try, then the post-check will catch the cancellation).
+
+    [v3.6 #35] Used by run_pytest/run_lint/run_tests nodes to cap their
+    subprocess.run(timeout=...) so the subprocess can't outlive the graph
+    deadline by more than 1s.
+    """
+    from core.config import cfg
+    if _graph_start_time == 0.0:
+        return default_timeout
+    elapsed = _time.time() - _graph_start_time
+    remaining = cfg.autocode_graph_timeout - elapsed
+    if remaining <= 0:
+        return 1  # expired — minimal timeout, post-check will bail
+    return int(min(default_timeout, remaining))
+
+
+def _cancelled() -> bool:
+    """Check if cancellation was requested. Shortcut for is_cancellation_requested()."""
     return _cancellation_requested
 
 

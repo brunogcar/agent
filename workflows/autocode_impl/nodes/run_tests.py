@@ -11,6 +11,7 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.state import AutocodeState, _get_impact, _get_tdd  # [v3.0] accessors
+from workflows.autocode_impl.helpers import is_cancellation_requested, _remaining_timeout  # [v3.6 #35]
 
 def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_cmd: str | None = None) -> dict:
     """
@@ -40,9 +41,13 @@ def run_tests_on_disk(test_files: list[str], project_root: str = None, targeted_
             cmd,
             capture_output=True,
             text=True,
-            timeout=cfg.sandbox_timeout,
+            timeout=_remaining_timeout(cfg.sandbox_timeout),
             cwd=project_root # Run in the project root directory
         )
+        # [v3.6 #35] Check cancellation after tests — if the graph timed
+        # out during the subprocess, discard the results.
+        if is_cancellation_requested():
+            return {"success": False, "stdout": "", "stderr": "Cancelled", "returncode": -1}
         return {
             "success": result.returncode == 0,
             "stdout": result.stdout,
@@ -70,6 +75,13 @@ def node_run_tests(state: AutocodeState) -> dict:
     """
     tid = state.get("trace_id", "")
     tracer.step(tid, "run_tests", "Running tests")
+
+    # [v3.6 #35] Check cancellation before tests — if the graph already
+    # timed out before we entered this node, bail immediately. Returns
+    # the cancelled dict at the top level so callers see success=False.
+    if is_cancellation_requested():
+        return {"success": False, "stdout": "", "stderr": "Cancelled", "returncode": -1}
+
     # Get test files from state
     test_files = state.get("test_files", [])
     if not test_files:

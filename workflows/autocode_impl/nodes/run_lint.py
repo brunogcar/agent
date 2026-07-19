@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
-from workflows.autocode_impl.helpers import _should_skip_node
+from workflows.autocode_impl.helpers import _should_skip_node, is_cancellation_requested, _remaining_timeout  # [v3.6 #35]
 from core.config import cfg
 from core.tracer import tracer
 
@@ -39,15 +39,26 @@ def node_run_lint(state: AutocodeState) -> dict:
     if not lint_targets:
         return {"lint_output": "No modified files to lint", "lint_passed": None}
 
+    # [v3.6 #35] Check cancellation before subprocess — if the graph
+    # already timed out before we entered this node, bail immediately.
+    if is_cancellation_requested():
+        return {"lint_output": "Cancelled", "lint_passed": None}
+
     try:
         result = subprocess.run(
             [sys.executable, "-m", "ruff", "check"] + lint_targets +
             ["--select", "E,F", "--no-cache"],
-            capture_output=True, text=True, timeout=30, encoding='utf-8'
+            capture_output=True, text=True, timeout=_remaining_timeout(30), encoding='utf-8'
         )
         lint_output = (result.stdout + result.stderr).strip()
         lint_passed = result.returncode == 0
         tracer.step(tid, "run_lint", f"ruff {'OK' if lint_passed else 'WARN'}")
+
+        # [v3.6 #35] Check cancellation after subprocess — if the graph
+        # timed out during the ruff call, discard the results.
+        if is_cancellation_requested():
+            return {"lint_output": "Cancelled", "lint_passed": None}
+
         return {
             "lint_output": lint_output[:500],
             "lint_passed": lint_passed,
