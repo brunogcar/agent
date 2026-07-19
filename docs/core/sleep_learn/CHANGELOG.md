@@ -73,4 +73,4 @@
 
 ---
 
-*Last updated: 2026-07-18 (v1.2 post-merge cleanup: 12 bugs fixed). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for method details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.3 — #7 symbol offloading for injected rules).*

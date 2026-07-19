@@ -2,6 +2,11 @@
 core/sleep_learn/injector.py
 Phase 3: Dynamic Rule Injection.
 Retrieves relevant learned rules and injects them into the Planner's context.
+
+[v1.2 #7] Symbol offloading — when > 5 rules are injected, offload the full
+rule texts to a per-trace file. The injected prompt gets the standard
+formatted rules + a note pointing to the symbol file for drill-down. This
+keeps the LLM context bounded when many rules match.
 """
 from __future__ import annotations
 import json
@@ -19,6 +24,7 @@ from core.sleep_learn.config import (
 )
 from core.tracer import tracer, generate_trace_id
 from core.config import cfg
+from core.symbol_offload import offload_to_file
 
 # Lazy-initialized ChromaDB client (avoid import-time side effects)
 _client = None
@@ -116,6 +122,10 @@ def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") 
     """
     Retrieves relevant rules for the goal and appends them to the system prompt.
     If injection is disabled or no rules are found, returns the original prompt.
+
+    [v1.2 #7] When > 5 rules are injected, offloads the full rule list to a
+    per-trace symbol file. The injected prompt keeps the formatted rules and
+    appends a note pointing to the symbol file for drill-down.
     """
     if not system_prompt:
         return system_prompt
@@ -134,7 +144,19 @@ def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") 
         return similarity * confidence
     
     rules.sort(key=_rank_score, reverse=True)
-    
+
+    # [v1.2 #7] Offload full rule texts when there are many rules.
+    # The injected prompt gets compact summaries; full text is available via
+    # the symbol file for drill-down.
+    symbol_ref = None
+    if len(rules) > 5:
+        symbol_ref = offload_to_file(
+            trace_id or "sleep_learn",
+            "injected_rules",
+            rules,
+            summary=f"{len(rules)} rules (showing summaries, full text in file)",
+        )
+
     # Format the rules for the LLM — v1.0: include reasoning when available
     rules_text = "\n\n--- RELEVANT LEARNED RULES ---\n"
     rules_text += "The following rules were learned from past experiences. Apply them if applicable:\n"
@@ -145,8 +167,11 @@ def inject_rules_into_prompt(goal: str, system_prompt: str, trace_id: str = "") 
         rules_text += "\n"
     rules_text += "------------------------------"
 
+    if symbol_ref:
+        rules_text += f"\n\n[Full rule texts: {symbol_ref['_symbol_file']}]"
+
     tracer.step(
-        trace_id or "daemon", "sleep_learn_injector", "rules_injected",
+        trace_id or generate_trace_id(), "sleep_learn_injector", "rules_injected",
         goal_preview=goal[:50],
         rules_count=len(rules),
         rule_ids=[r["id"] for r in rules]

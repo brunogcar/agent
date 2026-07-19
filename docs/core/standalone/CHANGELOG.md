@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v1.4** | 2026-07-18 | **Added `core/symbol_offload.py`** — new standalone module: `offload_to_file()`, `drill_down()`, `is_symbol_ref()`, `_auto_summary()`. TencentDB-inspired pattern: offload verbose state fields to per-trace files (`workspace/.symbols/{trace_id}/{field}.json`), replace with compact SymbolRef dicts in state. Complements chonkie (within-field compression) with cross-field context management. Used by autocode (`summarize_context.py` — debug_history), memory (`read_ops.py` — recall > 10 results), sleep_learn (`injector.py` — > 5 injected rules). 16 unit tests in `tests/core/test_symbol_offload.py`. |
 | Pre-v1.1 | 2026-07-16 | **Added `core/time_utils.py`** — new standalone module: tz-aware `now()`/`parse_iso()`/`parse_human()`/`parse_duration()`/`cron_next_fire()`/`compute_missed_fires()`/`_build_cron_trigger()`, all reading `cfg.timezone` (`AGENT_TZ` env). Replaces the external `@mcpcentral/mcp-time` MCP dependency for our own tooling. Used by `notify_ops` (v1.1 swap) + `schedule_ops` (v1.0). 44 unit tests in `tests/core/test_time_utils.py`. |
 | Pre-v1.1 | 2026-07-05 | `check_protected_file` now fails-closed on unknown operations (Bug #2). Was fail-open, which allowed new write actions to silently bypass protection on protected files. |
 | Pre-v1 | — | Initial standalone modules created |
@@ -61,4 +62,4 @@
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*

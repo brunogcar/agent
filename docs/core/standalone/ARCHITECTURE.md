@@ -12,6 +12,7 @@
 | `core/contracts.py` | `ok()`, `fail()`, `validate_tool_call()`, `ToolCall` pydantic model | **All tool facades**, **all action files**, **all workflows**, `core/parallel_executor.py`, `core/path_guard.py`, `core/llm_backend/client.py` |
 | `core/metrics.py` | `track_node()`, `track_task_status()`, `generate_metrics()` — Prometheus registry | `core/gateway_backend/metrics.py` (endpoint) |
 | `core/path_guard.py` | `resolve_path()`, `check_protected_file()`, `check_git_operation()`, `make_path_error()` | `tools/file.py`, `tools/git.py`, `tools/browser/actions/upload.py`, `tools/file_ops/helpers.py`, `tools/git_ops/helpers.py`, `tools/file_ops/actions/*.py`, `skills/b3/data.py`, `skills/b3/export.py`, `skills/b3/paths.py` |
+| `core/symbol_offload.py` | `offload_to_file()`, `drill_down()`, `is_symbol_ref()`, `_auto_summary()` — TencentDB-inspired symbol offloading (verbose state → per-trace file + compact SymbolRef) | `workflows/autocode_impl/nodes/summarize_context.py`, `core/memory_backend/read_ops.py`, `core/sleep_learn/injector.py`, `tests/core/test_symbol_offload.py` |
 | `core/time_utils.py` | `now()`, `parse_iso()`, `parse_human()`, `parse_duration()`, `cron_next_fire()`, `compute_missed_fires()`, `_build_cron_trigger()` — tz-aware time + cron helpers, reads `cfg.timezone` | `tools/notify_ops/` (schedule/recurring/state/helpers), `tools/schedule_ops/` (state/actions), `tests/core/test_time_utils.py` |
 | `core/config.py` | `cfg.agent_root`, `cfg.workspace_root`, `cfg.is_protected()` | `path_guard.py` (root resolution), all tools (env vars) |
 | `core/tracer.py` | `tracer.new_trace()` | `path_guard.py` (error trace_id injection) |
@@ -24,6 +25,7 @@
 core/
 ├── utils.py              # Output compression / truncation helpers
 ├── br_validator.py       # Brazilian financial data validation (BRL, dates, tickers)
+├── symbol_offload.py     # TencentDB-inspired symbol offloading (verbose state → file + SymbolRef)
 ├── citations.py          # Per-trace citation tracker (thread-safe singleton)
 ├── contracts.py          # Standardized ok()/fail() responses + ToolCall validation
 ├── metrics.py            # Prometheus metrics registry (graceful degradation)
@@ -62,4 +64,4 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/ -W error --tb=short -v
 
 ---
 
-*Last updated: 2026-07-16 (Pre-v1.1 — added `core/time_utils.py` row/module/design decision). See [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*

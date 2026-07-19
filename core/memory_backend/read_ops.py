@@ -126,6 +126,23 @@ def execute_recall(
     results.sort(key=lambda x: x["score"], reverse=True)
     final = results[:top_k]
 
+    # [v1.6 #47] Offload large recall results to a file.
+    # When recall returns > 10 results, the full list is offloaded and the
+    # in-memory result is truncated to the top 10 + a SymbolRef for drill-down.
+    # This keeps the LLM context bounded for large memory stores. The caller
+    # can `drill_down(ref)` to retrieve the full result list.
+    if len(final) > 10 and trace_id:
+        from core.symbol_offload import offload_to_file
+        ref = offload_to_file(
+            trace_id,
+            "recall",
+            final,
+            summary=f"{len(final)} results (showing top 10)",
+        )
+        # Truncate to top 10 + append the SymbolRef
+        final = final[:10]
+        final.append(ref)
+
     if trace_id:
         tracer.step(trace_id, "memory_recall_done", results=len(final), collections=collections)
 

@@ -435,9 +435,16 @@ Text chunking via [chonkie](https://github.com/chonkie-ai/chonkie) is integrated
 
 `node_summarize_context` compresses `debug_history` via chonkie `SentenceChunker` before re-entering the debug loop. Keeps the LLM context bounded in long-running debug loops. Falls back to JSON-of-last-3-entries if chonkie is missing.
 
-### Roadmap: TencentDB symbol offloading (P2/P3 future)
+### ✅ TencentDB symbol offloading (v1.3 — shipped)
 
-A more sophisticated approach inspired by [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory) would offload verbose state fields to per-run files and replace them with compact Mermaid symbol graphs in state. Nodes that need full data drill down via file path. This would complement the existing chonkie approach — chonkie for within-field compression, Mermaid symbols for cross-field context management.
+Inspired by [TencentDB Agent Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory), verbose state fields are offloaded to per-run files and replaced with compact SymbolRef dicts in state. Nodes that need full data drill down via file path. This complements the existing chonkie approach — chonkie for within-field compression, symbol offloading for cross-field context management.
+
+**Shared utility:** `core/symbol_offload.py` — `offload_to_file()`, `drill_down()`, `is_symbol_ref()`.
+
+**Adoption points:**
+- **autocode** (F8): `summarize_context.py` offloads `debug_history` when > 5 entries → `debug_history_ref` SymbolRef in state.
+- **memory** (#47): `execute_recall()` offloads full results when > 10 → top 10 + SymbolRef returned.
+- **sleep_learn** (#7): `inject_rules_into_prompt()` offloads full rule texts when > 5 → compact summaries + file path in injected prompt.
 
 ---
 

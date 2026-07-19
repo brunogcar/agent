@@ -21,6 +21,7 @@ from core.path_guard import resolve_path, check_protected_file   # File + git to
 from core.utils import compress_result, truncate_output          # Facades use this
 from core.citations import citations                             # Research workflows use this
 from core.br_validator import parse_brl, validate_ticker         # Skills use this
+from core.symbol_offload import offload_to_file, drill_down       # Workflows + memory use this
 
 # v1.3 moves — these now live under core/observability/:
 # from core.tracer import tracer                                  # facade → core/observability/tracer_engine.py
@@ -39,6 +40,7 @@ from core.br_validator import parse_brl, validate_ticker         # Skills use th
 | Output compression | `core/utils.py` | `compress_result()` truncates large string fields recursively |
 | Citation tracking | `core/citations.py` | Per-trace source numbering for research workflows |
 | BRL / BR date / ticker parsing | `core/br_validator.py` | Brazilian financial data validation for `skills/b3` |
+| Symbol offloading (TencentDB pattern) | `core/symbol_offload.py` | Offload verbose state fields to per-trace files, replace with compact SymbolRef dicts. Used by autocode (debug_history), memory (recall > 10 results), sleep_learn (> 5 injected rules). |
 | Tz-aware time + cron helpers | `core/time_utils.py` | `now()` / `parse_iso()` / `parse_human()` / `parse_duration()` / `cron_next_fire()` / `compute_missed_fires()` / `_build_cron_trigger()` — reads `cfg.timezone` (`AGENT_TZ` env); used by `notify_ops` + `schedule_ops`; replaces the external `@mcpcentral/mcp-time` MCP dependency |
 
 > **v1.3 move:** Prometheus metrics (`track_node`, `generate_metrics`) moved to `core/observability/metrics.py` — see [OBSERVABILITY.md](observability/OBSERVABILITY.md).
@@ -62,4 +64,4 @@ from core.br_validator import parse_brl, validate_ticker         # Skills use th
 
 ---
 
-*Last updated: 2026-07-10. See subfiles for detailed documentation. (v1.3: tracer/metrics moved to observability)*
+*Last updated: 2026-07-18 (v1.4 — added symbol_offload.py).*

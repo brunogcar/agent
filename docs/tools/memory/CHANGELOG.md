@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.6 — #47 symbol offloading).*

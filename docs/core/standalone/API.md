@@ -246,4 +246,51 @@ autocode_task_status_total{status="success"} 42
 
 ---
 
-*Last updated: 2026-07-04. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+## `core/symbol_offload.py` — TencentDB symbol offloading
+
+Offload verbose state fields to per-trace files, replace with compact SymbolRef dicts.
+
+### `offload_to_file(trace_id, field_name, content, summary="") -> dict`
+
+Write content to `workspace/.symbols/{trace_id}/{field_name}.json`, return a SymbolRef dict:
+```python
+{
+    "_symbol_ref": "debug_history",          # field name
+    "_symbol_file": "/path/to/file.json",    # absolute path
+    "_symbol_summary": "5 entries (3 failed, 2 passed)",  # auto or custom
+    "_symbol_size": 4523,                    # original content size in bytes
+}
+```
+
+### `drill_down(symbol_ref) -> Optional[Any]`
+
+Read the full content from the offloaded file. Returns `None` if file missing.
+
+### `is_symbol_ref(value) -> bool`
+
+Check if a value is a SymbolRef dict (has `_symbol_ref` + `_symbol_file` keys).
+
+### `_auto_summary(content) -> str`
+
+Auto-generate a one-line summary from content:
+- list with `tests_passed` keys → `"5 entries (3 passed, 2 failed)"`
+- list with `rule` keys → `"5 rules"`
+- dict → `"3 keys"`
+- str → `"100 chars"`
+
+**Usage:**
+```python
+from core.symbol_offload import offload_to_file, drill_down, is_symbol_ref
+
+# Offload verbose debug_history
+ref = offload_to_file(trace_id, "debug_history", debug_history_list)
+
+# Later, drill down for full content
+if is_symbol_ref(ref):
+    full_history = drill_down(ref)
+```
+
+
+---
+
+*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*

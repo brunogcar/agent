@@ -49,4 +49,19 @@
 
 ---
 
-*Last updated: 2026-07-05. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for module details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+## `core/symbol_offload.py` rules
+
+### NEVER DO
+- Never store the full content in state AND the SymbolRef — pick one. The whole point is to keep state compact.
+- Never offload small content (< 5 items / < 500 chars) — the SymbolRef overhead is larger than the content.
+- Never delete the offloaded file while the SymbolRef is still in state — `drill_down()` will return `None`.
+
+### ALWAYS DO
+- Always check `is_symbol_ref(value)` before calling `drill_down(value)` — not all values are SymbolRefs.
+- Always use `offload_to_file()` with a meaningful `field_name` — it becomes the filename.
+- Always pass `trace_id` so files are grouped per-trace in `workspace/.symbols/{trace_id}/`.
+
+
+---
+
+*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*

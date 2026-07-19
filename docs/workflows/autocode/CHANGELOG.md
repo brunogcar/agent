@@ -104,7 +104,7 @@
 | F4 | Adaptive `_ARCHITECTURE_QUESTION_THRESHOLD` | Currently hardcoded to 3. Make configurable per task type (`create_skill`=1, `feature`=5). | P3 |
 | F5 | Procedural memory recall before debug | Cross-run recall (read past failures before debug) still pending. | P3 |
 | F6 | Stream `phase` transitions to MCP client | The `phase` field is currently internal. Stream it to the MCP client so the user sees debug progress. | P3 |
-| F8 | Mermaid symbol context offloading | Offload symbol context to a mermaid diagram instead of chonkie-compressing `debug_history`. TencentDB-inspired. | P3 |
+| ~~F8~~ | ✅ v1.3 — Mermaid symbol context offloading. `summarize_context.py` now offloads full `debug_history` to a per-trace file via `core/symbol_offload.py` when > 5 entries. State gets `debug_history_ref` SymbolRef for drill-down. Complements chonkie (within-field) with cross-field context management. | ✅ Done |
 
 ---
 
@@ -129,4 +129,4 @@
 
 ---
 
-*Last updated: 2026-07-18 (v1.2 — doc-drift + roadmap cleanup batch: P0 `/autocode/graph` endpoint removal, P1 trace_id attribution to all 8 `_call()` callers, P1 `create_skill` empty-file bug fix, P1 `test_create_skill.py` mock fix, P2 `analyze_impact.py` trace_id, P2 13 unused imports, P2 `ast.Str` deprecation, #34 `run_autocode_agent()` shim removal, #36 `create_skill` smoke-test + git commit, #40 adaptive timeout by task type; F7 Lazy Dev full audit mode expanded design notes added; v3.1.1 — `node_swarm_fallback` `tdd_iteration` reset; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; swarm v1.1 #17 smoke test for both swarm-integration paths in `tests/workflows/autocode/test_swarm_integration.py`). See [SUBSTATE.md](SUBSTATE.md) for the v3.0 sub-state architecture, [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for state accessors, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.3 — F8 symbol offloading).*

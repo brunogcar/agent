@@ -12,6 +12,15 @@ not installed or chunking fails, falls back to truncation (last 3 entries as
 JSON). The fallback keeps the node usable in environments where chonkie is
 not yet pip-installed (e.g., CI without optional deps).
 
+[v1.2 F8] After compression, also offloads the full debug_history to a per-trace
+file via `core.symbol_offload.offload_to_file()`. The state keeps:
+  - debug_summary (chonkie-compressed text — stays as-is)
+  - debug_history_ref (NEW — SymbolRef for drill-down)
+  - debug_history (STAYS — backward compat; nodes that read it directly still work)
+This complements chonkie (within-field compression) with cross-field context
+management: the LLM prompt keeps the compact summary, but any node that needs
+the full history can drill down via the symbol file.
+
 Entry shape assumed: {iteration: int, phase: str, root_cause: str, fix: str,
                       tests_passed: bool, [confidence: str]}.
 """
@@ -20,6 +29,7 @@ import json
 from typing import Any
 
 from core.tracer import tracer
+from core.symbol_offload import offload_to_file
 from workflows.autocode_impl.state import AutocodeState, _get_tdd
 
 
@@ -89,11 +99,18 @@ def node_summarize_context(state: AutocodeState) -> dict:
     (debug, verify) can read `debug_summary` instead of the full history to
     keep context bounded (#37).
 
+    [v1.2 F8] Also offloads the full debug_history to a per-trace file when
+    the history is long enough to matter (>5 entries). The resulting
+    SymbolRef is stored as `debug_history_ref` in the TDD sub-state for any
+    node that needs to drill down to the full history. The full
+    `debug_history` list is preserved in state for backward compat.
+
     This node does NOT mutate debug_history — the full history is preserved
     for the architecture-question exit check in node_systematic_debug.
 
     Returns:
-        Partial state update `{"tdd": {"debug_summary": summary}}`.
+        Partial state update `{"tdd": {...}}` with `debug_summary` and
+        (when applicable) `debug_history_ref`.
     """
     tid = state.get("trace_id", "")
     debug_history = _get_tdd(state, "debug_history", []) or []
@@ -117,4 +134,19 @@ def node_summarize_context(state: AutocodeState) -> dict:
     # doesn't deep-merge). Preserve existing fields like debug_history.
     current_tdd = dict(state.get("tdd", {}))
     current_tdd["debug_summary"] = summary
+
+    # [v1.2 F8] Offload full debug_history to a file for drill-down.
+    # The state keeps the chonkie-compressed debug_summary for the LLM prompt,
+    # plus this SymbolRef for nodes that need the full history. The full
+    # debug_history list is preserved in state for backward compat — this
+    # offload is additive and does not change existing prompt logic.
+    if len(debug_history) > 5:
+        # Only offload when the history is long enough to matter.
+        ref = offload_to_file(
+            tid,
+            "debug_history",
+            debug_history,
+        )
+        current_tdd["debug_history_ref"] = ref
+
     return {"tdd": current_tdd}

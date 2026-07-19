@@ -65,4 +65,4 @@
 
 ---
 
-*Last updated: 2026-07-18 (v1.5 post-merge cleanup: 12 bugs fixed). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for API reference, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-18 (v1.6 — #47 symbol offloading).*
