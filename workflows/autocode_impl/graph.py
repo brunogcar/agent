@@ -4,8 +4,14 @@ State machine construction for autocode workflow.
 v1.1: Added WORKFLOW_METADATA for MCP client introspection. Includes
 explicit loops array (debug loop) and branches array (create_skill bypass)
 so MCP clients can render the graph correctly.
+
+[v1.4 P2] get_graph() now uses double-checked locking with a module-level
+threading.Lock — prevents two concurrent callers from each compiling the
+graph (was: race condition where both saw _COMPILED_GRAPH=None and both
+called build_graph() + workflow.compile()).
 """
 from __future__ import annotations
+import threading
 from langgraph.graph import END, StateGraph
 from workflows.autocode_impl.state import AutocodeState, _get_tdd  # [v3.1 #48] _get_tdd for swarm_fallback routing
 # [v1.2 #36] Module-level imports so test patches like
@@ -43,6 +49,7 @@ from workflows.autocode_impl.nodes.report import node_report
 from workflows.autocode_impl.routes import (
     route_after_classify,
     route_after_run_tests,
+    route_after_swarm_fallback,  # [v1.4 P2] named function replaces inline lambda
     route_after_write_files,
     route_after_verify,
 )
@@ -142,6 +149,8 @@ WORKFLOW_METADATA = {
 
 # Global compiled graph instance
 _COMPILED_GRAPH = None
+# [v1.4 P2] Module-level lock for double-checked locking in get_graph().
+_graph_lock = threading.Lock()
 
 def build_graph() -> StateGraph:
     """
@@ -250,9 +259,11 @@ def build_graph() -> StateGraph:
     # [v3.1 #48] Swarm fallback edges:
     #   HIGH confidence → node_systematic_debug (one more debug cycle with swarm verdict)
     #   LOW/unavailable → node_run_pytest (proceed to verify chain, will fail)
+    # [v1.4 P2] Inline lambda replaced with named route_after_swarm_fallback()
+    # so it can be tested directly + documented in routes.py.
     workflow.add_conditional_edges(
         "node_swarm_fallback",
-        lambda state: "node_systematic_debug" if _get_tdd(state, "status", "") == "" and state.get("status") != "failed" else "node_verify",
+        route_after_swarm_fallback,
         {
             "node_systematic_debug": "node_systematic_debug",
             "node_verify": "node_run_pytest",
@@ -287,11 +298,18 @@ def build_graph() -> StateGraph:
 def get_graph():
     """
     Get the singleton compiled graph instance.
+
+    [v1.4 P2] Uses double-checked locking with a module-level threading.Lock
+    to prevent two concurrent callers from each compiling the graph. The
+    first caller acquires the lock and compiles; the second sees the
+    populated _COMPILED_GRAPH and skips compilation.
     """
     global _COMPILED_GRAPH
     if _COMPILED_GRAPH is None:
-        workflow = build_graph()
-        _COMPILED_GRAPH = workflow.compile()
+        with _graph_lock:
+            if _COMPILED_GRAPH is None:
+                workflow = build_graph()
+                _COMPILED_GRAPH = workflow.compile()
     return _COMPILED_GRAPH
 
 
@@ -316,6 +334,15 @@ def invoke_with_timeout(initial_state: dict) -> dict:
 
     # [v2.0] Clear any stale cancellation flag from a previous run
     clear_cancellation()
+
+    # [v1.4 P2] Best-effort cleanup of old autocode run folders before
+    # starting a new run. Non-fatal — cleanup failure must not block the
+    # workflow (the new run's folder will still be created on demand).
+    try:
+        from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs
+        _cleanup_old_autocode_runs()
+    except Exception:
+        pass  # Non-fatal: cleanup failure shouldn't block the workflow
 
     graph = get_graph()
     result = {"status": "failed", "error": "Graph invocation timed out"}

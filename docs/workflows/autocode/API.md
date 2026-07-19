@@ -12,7 +12,7 @@ reference (Purpose / Logic / Output / Notes for each of the 29 nodes), see
 ## 🚀 Facade — `run_workflow("autocode")`
 
 The autocode workflow is invoked through the shared `run_workflow()` facade in
-`workflows/base.py`. **[v1.2 #34]** The autocode-specific backward-compat facade
+`workflows/base.py`. **[v3.1.2 #34]** The autocode-specific backward-compat facade
 shim in `workflows/autocode.py` was REMOVED — it had no production callers, only
 test references. Call `run_workflow("autocode")` directly.
 
@@ -62,9 +62,9 @@ post-2.0 (roadmap #35).
 
 ---
 
-## ⏱️ Adaptive Timeout (v1.2 #40)
+## ⏱️ Adaptive Timeout (v3.1.2 #40)
 
-**[v1.2 #40]** `invoke_with_timeout()` now supports per-task-type timeouts,
+**[v3.1.2 #40]** `invoke_with_timeout()` now supports per-task-type timeouts,
 opt-in via the `AUTOCODE_ADAPTIVE_TIMEOUT=1` env var (mapped to
 `cfg.autocode_adaptive_timeout`, default OFF).
 
@@ -124,7 +124,7 @@ The autocode workflow is a **29-node LangGraph StateGraph** (26 active + 3 backw
 | 23 | `node_create_pr` | tool (github) | 15b | Create pull request from branch |
 | 24 | `node_merge_pr` | tool (github) | 15c | Auto-merge PR (if enabled) |
 | 25 | `node_distill_memory` | llm (planner) | 16 | Distill procedural memory for future runs |
-| 26 | `node_create_skill` | tool (file) | 17 | Generate a new skill file (bypasses TDD, has AST validation + **[v1.2 #36]** importlib smoke-test + git commit) |
+| 26 | `node_create_skill` | tool (file) | 17 | Generate a new skill file (bypasses TDD, has AST validation + **[v3.1.2 #36]** importlib smoke-test + git commit) |
 | — | `node_write_files` | composite | wrapper | Backward-compat wrapper (not wired) — calls `node_apply_patches` → `node_write_new_files` → `node_persist_artifacts` |
 | — | `node_verify` | composite | wrapper | Backward-compat wrapper (not wired) — calls the 4 split verify nodes |
 | — | `node_publish` | tool (github) | wrapper | Backward-compat wrapper (not wired) — calls `node_push` → `node_create_pr` → `node_merge_pr` |
@@ -369,6 +369,8 @@ structured returns are preserved. `git_ops.py` + `github_ops.py` are kept as
 thin re-export wrappers so existing imports still work. **New code MUST import
 from `vcs_ops.py` directly** — see INSTRUCTIONS.md ALWAYS DO #37.
 
+**[v3.2 P1-5]** `_git_commit()` now returns a structured dict `{"committed": bool, "sha": str, "reason": str}` instead of `None` for both the "nothing to commit" and "error" cases (the two cases were indistinguishable to callers). `committed=False` + `reason="nothing to commit"` is the graceful no-op path; `committed=False` + `reason="error: <detail>"` is the failure path; `committed=True` + `sha="<commit_sha>"` + `reason="committed"` is the success path. Callers that branched on `if _git_commit(...) is None:` MUST update to `if not result["committed"]:`.
+
 ### `debug_history` field — written by `node_systematic_debug`, read by `node_summarize_context`
 
 `debug_history` is the within-run debug-loop history that closes the #37 prerequisite (context summarization):
@@ -413,13 +415,13 @@ Before v3.0, sub-state fields had flat-field mirrors that could drift out of syn
 - **Skill names:** `_sanitize_skill_name()` strips non-`[a-zA-Z0-9_]` chars (prevents `/` or `\` path traversal).
 
 ### Secret handling
-- All 8 GitHub/Swarm/Subagent config flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_SUBAGENT_DEBUG`, `AUTOCODE_SWARM_DEBUG_FALLBACK`) default **OFF** — backward compat (with all OFF, autocode behaves identically to v1.2). **[v3.1]** `AUTOCODE_SWARM_DEBUG_FALLBACK=1` enables the post-debug-exhaustion swarm escalation node (`node_swarm_fallback`). **[v1.2 #40]** `AUTOCODE_ADAPTIVE_TIMEOUT=1` enables per-task-type timeout overrides (default OFF).
+- All 8 GitHub/Swarm/Subagent config flags (`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_SUBAGENT_DEBUG`, `AUTOCODE_SWARM_DEBUG_FALLBACK`) default **OFF** — backward compat (with all OFF, autocode behaves identically to v3.1.2). **[v3.1]** `AUTOCODE_SWARM_DEBUG_FALLBACK=1` enables the post-debug-exhaustion swarm escalation node (`node_swarm_fallback`). **[v3.1.2 #40]** `AUTOCODE_ADAPTIVE_TIMEOUT=1` enables per-task-type timeout overrides (default OFF).
 - `is_configured()` guard: every `vcs_ops.py` helper MUST call `_github_is_configured()` (wraps `tools.github_ops.client.is_configured()`) before any GitHub API call. Missing `GITHUB_TOKEN` / `GITHUB_OWNER` / `GITHUB_REPO` → graceful-skip (returns `False`/`None`, workflow continues).
 - `_call()` retries are interruptible via `threading.Event` — secrets/credentials are never logged.
 
 ### Atomic writes
 - `node_write_new_files` uses `tempfile.NamedTemporaryFile` + `os.replace` + `FileLock` (1 retry on timeout).
-- `node_create_skill` uses `tempfile.NamedTemporaryFile` + `os.replace` (was direct `write_text` — crash mid-write corrupted the skill file). **[v1.2 #36]** After write, runs `importlib.util.spec_from_file_location` smoke-test; on import failure, deletes the broken file and returns `status="failed"`.
+- `node_create_skill` uses `tempfile.NamedTemporaryFile` + `os.replace` (was direct `write_text` — crash mid-write corrupted the skill file). **[v3.1.2 #36]** After write, runs `importlib.util.spec_from_file_location` smoke-test; on import failure, deletes the broken file and returns `status="failed"`.
 
 ### LLM JSON parsing
 - All LLM-generated JSON is parsed via `_parse_json()` (in `helpers.py`) which delegates to `core/json_extract.py`. Handles markdown fences (```` ```json ... ``` ````), partial JSON, and trailing content. Never use raw `json.loads()` on LLM output — see INSTRUCTIONS.md NEVER DO #24.
@@ -450,7 +452,7 @@ The workflow uses a `status` field on `AutocodeState` to track workflow-level st
 
 | Category | Example | Handling |
 |----------|---------|----------|
-| **LLM failure** | `_call()` exhausted retries, returned `""` | Node falls back to default (e.g., `task_type="unclear"`) or returns `{"status": "error", "error": ...}`. **[v1.2 P1]** `_call()` retry-exhaustion errors now include `trace_id=tid` — all 8 callers (`classify.py`, `brainstorm.py`, `plan.py`, `tests.py`, `execute.py`, `debug.py`, `llm_review.py`, `create_skill.py`) pass `trace_id=tid` so retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`). |
+| **LLM failure** | `_call()` exhausted retries, returned `""` | Node falls back to default (e.g., `task_type="unclear"`) or returns `{"status": "error", "error": ...}`. **[v3.1.2 P1]** `_call()` retry-exhaustion errors now include `trace_id=tid` — all 8 callers (`classify.py`, `brainstorm.py`, `plan.py`, `tests.py`, `execute.py`, `debug.py`, `llm_review.py`, `create_skill.py`) pass `trace_id=tid` so retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`). **[v3.2 P1-6]** The unreachable `raise last_error` after the retry loop in `helpers._call()` was removed — it was dead code (the loop always returns or raises within the loop body); a stale comment about it was also fixed. |
 | **JSON parse failure** | LLM returned non-JSON or markdown-fenced JSON | `_parse_json()` returns `{}`; node logs warning + uses defaults. |
 | **Subprocess failure** | `pytest` / `ruff` / `git` returned non-zero | Captured as structured return; workflow continues (lint is advisory). |
 | **GitHub API failure** | `_github_pr_create()` raised | Graceful-skip: `is_configured()` returns `False` → helper returns `None`/`False`. |
@@ -464,8 +466,12 @@ The workflow uses a `status` field on `AutocodeState` to track workflow-level st
 ### Tracing
 - Every node should call `tracer.step(tid, ...)` for graceful events + `tracer.error(tid, category, message)` (3 args — see NEVER DO #29) for failures.
 - `trace_id` is mandatory on every tracer call (INSTRUCTIONS.md ALWAYS DO).
-- **✅ [v1.2]** All 8 `_call()` callers now pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace. (Before v1.2, `_call()` retry-exhaustion errors used `trace_id=""` and were unattributed.)
+- **✅ [v3.1.2]** All 8 `_call()` callers now pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace. (Before v3.1.2, `_call()` retry-exhaustion errors used `trace_id=""` and were unattributed.)
+
+### `_call()` retry mechanism
+
+`_call(role, system, user, ..., retries=2, trace_id="")` (in `helpers.py`) loops `retries + 1` times with exponential backoff (`2 ** attempt` seconds). **[Hardening P1.7]** Backoff is interruptible via `threading.Event.wait(timeout=...)` so `request_cancellation()` from a timeout aborts the sleep immediately (was `time.sleep(...)` — uninterruptible). **[v3.1.2 P1]** `trace_id` is now passed by all 8 in-tree callers — see Tracing section above. **[v3.2 P1-6]** The unreachable `raise last_error` after the retry loop was removed (dead code — the loop body always returns or raises); the stale comment that referenced it (`# re-raise last error if all retries failed`) was corrected. The control flow is unchanged: an exhausted retry loop returns `""` (empty string), which downstream nodes interpret as an LLM failure and handle via their fallback path (e.g., `task_type="unclear"`, `status="error"`).
 
 ---
 
-*Last updated: 2026-07-18 (v1.2 — facade drift fixes: legacy facade shim removed (use `run_workflow("autocode")` directly), `_call()` trace_id attribution across all 8 callers, `route_after_verify` fail → END (not debug re-entry), `invoke_with_timeout()` location corrected to `workflows/autocode_impl/graph.py`, `mode` default corrected to `feature` (was wrongly documented as `fix_error`), valid modes list corrected to `feature`/`fix`/`fix_error`/`refactor`/`improve`/`edit`/`create_skill`/`audit` (removed `add_feature` + `unclear` which are not valid modes), crashed-vs-timed-out distinction added, new § "Adaptive Timeout" for v1.2 #40; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.2 — 6-LLM collective review hardening: `_git_commit` now returns structured dict `{"committed", "sha", "reason"}` (was `None` for both nothing-to-commit and error — P1-5); unreachable `raise last_error` removed from `helpers._call()` retry loop (P1-6); new § "`_call()` retry mechanism" documents the retry semantics end-to-end; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution) were naming mistakes and are now correctly labeled `v3.1.2` — these were patch releases to v3.1, NOT regressions to v1.x; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, accessor legacy-fallback branches removed, ephemeral flat fields explicitly declared; v2.0.2 — subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

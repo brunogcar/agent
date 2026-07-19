@@ -48,7 +48,10 @@ def node_commit(state: AutocodeState) -> dict:
 
     # [GIT SCOPING] Route commit to workspace project if set, else agent_root
     root = state.get("project_root")
-    sha = _git_commit(msg, tid, root)
+    # [v1.4 P1] _git_commit now returns a dict — extract sha (with backward-compat
+    # for callers/tests that mock it to return a string).
+    result = _git_commit(msg, tid, root)
+    sha = result.get("sha", "") if isinstance(result, dict) else result
     tracer.step(tid, "commit", f"sha: {sha} @ {root or 'agent_root'}")
 
     # [v2.1] Use _get_vcs accessor (was v2.0.5 band-aid: state.get("branch") directly).

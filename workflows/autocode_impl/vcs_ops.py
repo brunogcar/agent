@@ -27,11 +27,21 @@ from core.tracer import tracer
 
 # === Local operations (was git_ops.py) ===
 
-def _git_commit(message: str, tid: str = "", project_root: str = None) -> str | None:
+def _git_commit(message: str, tid: str = "", project_root: str = None) -> dict:
     """Commit changes in the working tree.
 
     [v1.3] Push + PR creation now handled by node_push/node_create_pr/node_merge_pr.
     This function stays focused on the local commit only.
+
+    [v1.4 P1] Return type changed from `str | None` to `dict` so callers can
+    distinguish "nothing to commit" from "error":
+      - {"committed": True, "sha": sha}                          on success
+      - {"committed": False, "sha": "", "reason": "nothing to commit"}  on clean tree
+      - {"committed": False, "sha": "", "reason": f"error: {e}"}        on exception
+
+    Older callers that did `sha = _git_commit(...)` should switch to:
+      result = _git_commit(...)
+      sha = result.get("sha", "") if isinstance(result, dict) else result
     """
     from tools.git import git
     root = project_root or str(cfg.agent_root)
@@ -42,16 +52,16 @@ def _git_commit(message: str, tid: str = "", project_root: str = None) -> str | 
             sha = r.get("commit_hash", "")
             if tid:
                 tracer.step(tid, "git_commit", f"committed {sha} @ {root}")
-            return sha
+            return {"committed": True, "sha": sha}
         else:
             # Nothing to commit — working tree clean
             if tid:
                 tracer.step(tid, "git_commit", f"nothing to commit @ {root}")
-            return None
+            return {"committed": False, "sha": "", "reason": "nothing to commit"}
     except Exception as e:
         if tid:
             tracer.step(tid, "git_commit", f"commit failed: {e}")
-        return None
+        return {"committed": False, "sha": "", "reason": f"error: {e}"}
 
 
 def _git_create_branch(branch: str, tid: str = "", project_root: str = None) -> bool:

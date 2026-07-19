@@ -4,7 +4,7 @@ The `autocode` workflow handles **autonomous code generation and modification** 
 
 **Key characteristics:**
 - **29-node LangGraph state machine** ([v2.0] — 26 active nodes + 3 backward-compat wrappers + 1 `node_summarize_context` for debug-loop compression + **[v3.1]** `node_swarm_fallback` for swarm escalation when debug retries exhausted)
-- **Mode-driven** — Supports `fix_error`, `improve`, `add_feature`, `create_skill`, and `unclear` modes
+- **Mode-driven** — Supports `feature`, `fix`, `fix_error`, `refactor`, `improve`, `edit`, `create_skill`, and `audit` modes
 - **TDD-first** — Generates tests before implementation (when applicable)
 - **Iterative refinement** — 4-phase debug loop (investigation → pattern → hypothesis → fix) with retry until tests pass or max retries exceeded
 - **Impact analysis** — Analyzes blast radius of changes before execution
@@ -15,6 +15,7 @@ The `autocode` workflow handles **autonomous code generation and modification** 
 - **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code); `ponytail:` comment convention for deliberate simplifications
 - **v3.0 Sub-state architecture** — All state fields live in 8 typed sub-states (plan, tdd, files, impact, debug, verify, vcs, memory). Legacy flat-field mirrors removed. Accessors are the only read path.
 - **[v3.1] Debug loop improvements** — Goal sanitization (#42, max 2000 chars + strip control chars); AST pre-check (#41, `ruff --select E999` before pytest); `debug_summary` in verify chain (F3, injected when `debug_history` > 5); swarm fallback node (#48, escalates to multi-model consensus when debug retries exhausted).
+- **[v3.2] 6-LLM collective review hardening** — 19 fixes shipped (5 P0 + 6 P1 + 8 P2). Highlights: lazy `kgraph` import in `plan.py` + `debug.py` (was top-level, crashed module if `tree_sitter_languages` missing); `swarm_fallback.py` HIGH path now appends to `debug_history` + clears `last_test_error`; `verify_decision.py` `automated_checks_passed` default `True` → `False` (was false-positive "HALLUCINATION DETECTED" on malformed JSON); `apply_patches.py` `dry_run` path now runs validation; `state.py` `test_code` type `str` → `list[str]` + dead `MemoryState.context` field removed; `run_pytest.py` `timeout=120` → `cfg.sandbox_timeout`; `vcs_ops.py` `_git_commit` returns structured dict (`{"committed", "sha", "reason"}` — was `None` for both "nothing to commit" and "error"); `threading.Lock` on `get_graph()` singleton; `_cleanup_old_autocode_runs` wired to `invoke_with_timeout()`; `_blast_radius_warning()` helper extracted from duplicated logic; named `route_after_swarm_fallback()` in `routes.py` (was untestable inline lambda); dead state fields `target_file`/`error_log`/`branch_name` removed from TypedDicts; NEW `test_swarm_fallback_fixes.py` (4 tests for the P0 fixes).
 - **Memory integration** — Stores procedural knowledge for future recall
 - **Report generation** — Generates a structured report with the final result
 
@@ -39,7 +40,7 @@ result = run_workflow(
 result = run_workflow(
     workflow_type="autocode",
     goal="Add retry logic to the web search tool",
-    mode="add_feature",
+    mode="feature",
     feature_desc="Add exponential backoff retry with jitter",
     files={"web.py": "..."},
     trace_id="autocode_002",
@@ -132,4 +133,4 @@ cfg.autocode_swarm_debug_fallback = False  # [v3.1] Escalate to swarm consensus 
 
 ---
 
-*Last updated: 2026-07-14 (v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 `debug_summary` in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are now the PRIMARY + ONLY storage; v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + v2.x→v3.0 migration roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.2 — 6-LLM collective review hardening: 19 fixes shipped — 5 P0 + 6 P1 + 8 P2; mode list corrected to `feature`/`fix`/`fix_error`/`refactor`/`improve`/`edit`/`create_skill`/`audit` (removed stale `add_feature` + `unclear` — `unclear` is a `task_type` value, not a `mode`); v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 `debug_summary` in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are now the PRIMARY + ONLY storage; v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + v2.x→v3.0 migration roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

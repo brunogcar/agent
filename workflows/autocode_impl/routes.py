@@ -85,3 +85,18 @@ def route_after_verify(state: AutocodeState) -> str:
         return "report"
     else:
         return "END"
+
+
+def route_after_swarm_fallback(state: AutocodeState) -> str:
+    """[v1.4 P2] Route after swarm fallback node.
+
+    HIGH confidence → node_systematic_debug (one more debug cycle with the
+    swarm's verdict injected into debug_history).
+    LOW/unavailable → node_verify (verify chain, will fail and surface to user).
+
+    Replaces the inline lambda that was previously in graph.py — extracted so
+    it can be tested directly and documented alongside the other routers.
+    """
+    if _get_tdd(state, "status", "") == "" and state.get("status") != "failed":
+        return "node_systematic_debug"
+    return "node_verify"

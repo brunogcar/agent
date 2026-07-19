@@ -101,7 +101,8 @@ def node_run_pytest(state: AutocodeState) -> dict:
 
         # Run from project root so imports resolve correctly
         # [v3.1 #41] base_path already computed above for ruff pre-check
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding='utf-8', cwd=str(base_path))
+        # [v1.4 P1] Use cfg.sandbox_timeout instead of hardcoded 120s.
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=cfg.sandbox_timeout, encoding='utf-8', cwd=str(base_path))
         fresh_output = (result.stdout + result.stderr).strip()
         tests_passed = result.returncode == 0
 

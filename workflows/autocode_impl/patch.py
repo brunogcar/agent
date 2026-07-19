@@ -1,5 +1,5 @@
 """
-core/patch.py — Surgical str_replace patching for agent-managed files.
+workflows/autocode_impl/patch.py — Surgical str_replace patching for agent-managed files.
 
 WHY THIS EXISTS
 ---------------

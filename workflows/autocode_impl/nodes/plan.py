@@ -6,10 +6,9 @@ import re
 from typing import Any
 from workflows.autocode_impl.state import AutocodeState, PLANNER_TIMEOUT, _get_vcs, _get_plan  # [v3.0] _get_files removed (files is core flat)
 from workflows.autocode_impl.constants import PLAN_SYSTEM
-from workflows.autocode_impl.helpers import _call, _parse_json_array
+from workflows.autocode_impl.helpers import _call, _parse_json_array, _blast_radius_warning  # [v1.4 P2] _blast_radius_warning extracted
 from core.tracer import tracer
 from core.config import cfg
-from core.kgraph.queries import get_callers
 
 def node_write_plan(state: AutocodeState) -> dict:
     """Generate step-by-step implementation plan."""
@@ -25,31 +24,10 @@ def node_write_plan(state: AutocodeState) -> dict:
     system = inject_rules_into_prompt(goal=spec, system_prompt=PLAN_SYSTEM, trace_id=tid)
 
     # ── Phase 8: Blast Radius Context Injection for Planner ──
-    blast_radius_note = ""
+    # [v1.4 P2] Inline block extracted to helpers._blast_radius_warning().
     project_root = state.get("project_root", "")
     files_in_context = list(state.get("files", {}).keys())  # [v3.0] files is core flat field
-
-    if project_root and files_in_context:
-        try:
-            from pathlib import Path
-            from core.kgraph.project import is_same_path, ProjectManager
-            
-            is_agent = is_same_path(Path(project_root), cfg.agent_root)
-            pm = ProjectManager(project_path=project_root, is_agent_root=is_agent)
-             
-            callers = []
-            # Limit to top 3 files to prevent excessive DB queries
-            for f in files_in_context[:3]:
-                deps = get_callers(pm.path, f)
-                callers.extend([c for c in deps if c not in files_in_context])
-            
-            if callers:
-                # 🔴 Limit to top 5 unique callers to prevent token overflow (Mistral's recommendation)
-                unique_callers = list(set(callers))[:5]
-                blast_radius_note = f"\n\n⚠️ BLAST RADIUS WARNING: The files you are planning to modify are also used by: {', '.join(unique_callers)}. Ensure your plan includes steps to verify these callers are not broken."
-        except Exception as e:
-            # 🔴 Phase 8 Final Polish: Observability for KG query failures
-            tracer.warning(tid, "write_plan", f"Blast radius query failed: {e}")
+    blast_radius_note = _blast_radius_warning(project_root, files_in_context, tid)
 
     raw  = _call(role="planner", system=system,
                  user=f"Spec:\n{spec}{blast_radius_note}", timeout=PLANNER_TIMEOUT, trace_id=tid)  # [v1.2 P1] attribute retry-exhaustion errors

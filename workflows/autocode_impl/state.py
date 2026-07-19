@@ -119,10 +119,16 @@ class VerifyState(TypedDict, total=False):
 
 
 class VCSState(TypedDict, total=False):
-    """[v2.0] Version control sub-state — groups git + GitHub fields."""
+    """[v2.0] Version control sub-state — groups git + GitHub fields.
+
+    [v1.4 P2] `branch_name` removed — was declared but never written by any
+    node. The `branch` field (written by plan.py via RMW) is the only one
+    used. commit.py has a `_get_vcs(state, 'branch_name', '')` fallback that
+    now always returns "" — harmless, kept for backward compat with any
+    caller that might have set branch_name directly in tests.
+    """
     commit_sha: str
     branch: str
-    branch_name: str
     pushed: bool
     pr_number: int
     pr_url: str
@@ -131,7 +137,7 @@ class VCSState(TypedDict, total=False):
 class MemoryState(TypedDict, total=False):
     """[v2.0] Memory sub-state."""
     notes: str
-    context: str
+    # context removed — use the flat memory_context field instead (brainstorm.py writes it)
 
 
 class AutocodeState(TypedDict, total=False):
@@ -145,16 +151,22 @@ class AutocodeState(TypedDict, total=False):
     any sub-state: task/files/mode (core), task_type/project_root
     (classification), test_code/test_results/_pytest_output/tests_passed
     (ephemeral test), lint_output/lint_passed/llm_review_data (ephemeral
-    verify), execution_notes/error_log (ephemeral), skill_path/skill_created
+    verify), execution_notes (ephemeral), skill_path/skill_created
     (skill), status/error/result/messages (status),
     patch_errors/evidence_outputs/memory_context (ephemeral).
+
+    [v1.4 P2] `target_file` and `error_log` removed — were declared but
+    never written by any autocode node. `target_file` is still accepted as
+    a _default_state() function param (workflow type handler enforces it)
+    and stored in the state dict at runtime, but no autocode node reads it.
+    `error_log` is read by node_distill_memory via .get() with default "",
+    so removing the TypedDict declaration doesn't break that read.
     """
 
     # Core task (stays flat — used everywhere)
     task: str
     files: dict[str, str]
     mode: str
-    target_file: str
     trace_id: str
     dry_run: bool
 
@@ -174,7 +186,7 @@ class AutocodeState(TypedDict, total=False):
     memory: MemoryState
 
     # Ephemeral test execution (stays flat — written by run_pytest + tests.py)
-    test_code: str
+    test_code: list[str]  # Code blocks from _extract_code. Joined with \n\n in persist_artifacts.
     test_files: list[str]
     test_results: dict
     _pytest_output: str
@@ -186,8 +198,8 @@ class AutocodeState(TypedDict, total=False):
     llm_review_data: dict
 
     # Ephemeral execution (stays flat — written by execute + others)
-    execution_notes: str
-    error_log: str
+    execution_notes: str  # written by node_execute_step
+    # [v1.4 P2] error_log removed — never written by any node (was always "").
 
     # Skill (stays flat — set by create_skill path)
     skill_path: str

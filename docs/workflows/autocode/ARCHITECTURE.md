@@ -6,40 +6,40 @@
 
 | File | Purpose |
 |------|---------|
-| `workflows/autocode.py` | **[v1.2 #34]** Legacy facade shim REMOVED. Now exports `build_graph`, `get_graph`, `WORKFLOW_METADATA`, `AutocodeState`, `_default_state`, `_shape_artifacts`, `_resolve_files_input` only. Main entry point is `run_workflow(workflow_type="autocode", goal="...", **kwargs)` in `workflows/base.py` (delegates to `invoke_with_timeout()` in `workflows/autocode_impl/graph.py`). |
-| `workflows/autocode_impl/graph.py` | `build_graph()` — 29-node LangGraph StateGraph builder (26 active + 3 backward-compat wrappers registered but NOT wired). `WORKFLOW_METADATA["version"] == "3.1"` (debug loop improvements). `invoke_with_timeout(initial_state)` — wraps `graph.invoke()` with `threading.Thread.join(timeout=...)` + cancellation-flag signaling; **[v1.2 #40]** supports adaptive per-task-type timeouts via `AUTOCODE_ADAPTIVE_TIMEOUT=1`. **[v3.1 #48]** `node_run_tests` now has a 3-way conditional edge (verify / debug / swarm_fallback); `node_swarm_fallback` has a 2-way conditional edge (HIGH → debug, LOW → verify). |
+| `workflows/autocode.py` | **[v3.1.2 #34]** Legacy facade shim REMOVED. Now exports `build_graph`, `get_graph`, `WORKFLOW_METADATA`, `AutocodeState`, `_default_state`, `_shape_artifacts`, `_resolve_files_input` only. Main entry point is `run_workflow(workflow_type="autocode", goal="...", **kwargs)` in `workflows/base.py` (delegates to `invoke_with_timeout()` in `workflows/autocode_impl/graph.py`). |
+| `workflows/autocode_impl/graph.py` | `build_graph()` — 29-node LangGraph StateGraph builder (26 active + 3 backward-compat wrappers registered but NOT wired). `WORKFLOW_METADATA["version"] == "3.1"` (debug loop improvements). `invoke_with_timeout(initial_state)` — wraps `graph.invoke()` with `threading.Thread.join(timeout=...)` + cancellation-flag signaling; **[v3.1.2 #40]** supports adaptive per-task-type timeouts via `AUTOCODE_ADAPTIVE_TIMEOUT=1`. **[v3.1 #48]** `node_run_tests` now has a 3-way conditional edge (verify / debug / swarm_fallback); `node_swarm_fallback` has a 2-way conditional edge (HIGH → debug, LOW → verify). **[v3.2 P2-3]** `get_graph()` singleton accessor is now guarded by a `threading.Lock` (was a race condition on concurrent invocation — two threads could both see `None` and both call `build_graph()`). **[v3.2 P2-2]** `invoke_with_timeout()` now also calls `_cleanup_old_autocode_runs()` at start (was never invoked anywhere — silent disk leak from accumulating per-run output directories). **[v3.2 P2-5]** The inline `swarm_fallback` lambda used as the conditional-edge router from `node_swarm_fallback` is replaced with the named `route_after_swarm_fallback()` function in `routes.py` (was untestable inline lambda). |
 | `workflows/autocode_impl/state.py` | `AutocodeState` TypedDict + 8 sub-state TypedDicts + 8 accessor functions. **[v3.0]** Sub-states are the PRIMARY (and ONLY) storage for sub-state fields — legacy flat-field mirrors were removed. Accessors read sub-state ONLY (no legacy fallback). 13 ephemeral flat fields explicitly declared. |
 | `workflows/autocode_impl/routes.py` | `route_after_classify()`, `route_after_write_files()`, `route_after_run_tests()`, `route_after_verify()` — conditional routing. **[Hardening P1.5]** short-circuits to `node_run_pytest` when `status=="error"`. |
-| `workflows/autocode_impl/helpers.py` | `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. `_call()` retries 2× with exponential backoff; **[Hardening P1.7]** backoff is interruptible via `threading.Event` so cancellation aborts retry sleep. **[v1.2 P1]** All 8 in-tree callers pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`). |
+| `workflows/autocode_impl/helpers.py` | `_call()`, `_extract_code()`, `_parse_json()`, `_files_context()` — shared helpers. `_call()` retries 2× with exponential backoff; **[Hardening P1.7]** backoff is interruptible via `threading.Event` so cancellation aborts retry sleep. **[v3.1.2 P1]** All 8 in-tree callers pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`). **[v3.2 P1-6]** Unreachable `raise last_error` after the retry loop removed (dead code — the loop body always returns or raises); stale comment typo fixed. Also hosts `_blast_radius_warning()` (extracted in v3.2 P2-1 from duplicated logic in `plan.py` + `debug.py` — both nodes used to inline the same kgraph-driven blast-radius warning). |
 | `workflows/autocode_impl/constants.py` | All SYSTEM prompts. `DEBUG_SYSTEM` is a 4-phase structured prompt (investigation → pattern → hypothesis → fix). `CODER_SYSTEM` includes the 7-rung Lazy Dev minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code). |
 | `core/json_extract.py` | **[v2.0]** Consolidated JSON extraction utility. 3 functions: `extract_json`, `extract_json_array`, `extract_first_json`. Single source of truth for all LLM JSON parsing. |
 | `workflows/autocode_impl/vcs_ops.py` | **[v2.0]** Unified VCS helper module. 3 sections: Local operations (`_git_commit`, `_git_create_branch`) / Remote operations (`_github_pull`, `_github_push`, `_github_pr_create`, `_github_pr_comment`, `_github_pr_merge`) / Swarm integration (`_swarm_debug_consensus`). |
 | `workflows/autocode_impl/git_ops.py` | Thin re-export wrapper for `vcs_ops.py` Local operations (kept for backward compat). New code imports from `vcs_ops.py`. |
 | `workflows/autocode_impl/github_ops.py` | Thin re-export wrapper for `vcs_ops.py` Remote + Swarm operations (kept for backward compat). New code imports from `vcs_ops.py`. |
 | `workflows/autocode_impl/patch.py` | `apply_patch()`, `apply_patches()`, `extract_relevant_sections()` — patch application |
-| ~~`workflows/autocode_impl/mermaid.py`~~ | DELETED in v1.4 — never called (`WORKFLOW_METADATA` serves the same purpose for MCP clients). **[v1.2]** The `/autocode/graph` HTTP endpoint in `core/gateway_backend/routes/metrics.py` that imported this deleted module is ALSO removed. |
+| ~~`workflows/autocode_impl/mermaid.py`~~ | DELETED in v1.4 — never called (`WORKFLOW_METADATA` serves the same purpose for MCP clients). **[v3.1.2]** The `/autocode/graph` HTTP endpoint in `core/gateway_backend/routes/metrics.py` that imported this deleted module is ALSO removed. |
 | ~~`workflows/autocode_impl/test_mapper.py`~~ | DELETED in v1.4 — unused (analyze_impact imports from `core.kgraph.test_mapper`). |
 | ~~`workflows/autocode_impl/test_runner.py`~~ | DELETED in v1.4 — unused (`node_run_tests` has its own test execution logic). |
-| `workflows/autocode_impl/nodes/classify.py` | `node_classify_task()` — task classification. **[Hardening P1.6]** enforces JSON schema (`task_type` enum). **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/classify.py` | `node_classify_task()` — task classification. **[Hardening P1.6]** enforces JSON schema (`task_type` enum). **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. |
 | `workflows/autocode_impl/nodes/validate.py` | `node_validate_input()` — input validation |
-| `workflows/autocode_impl/nodes/brainstorm.py` | `node_brainstorm()` — approach brainstorming. **[Hardening P1.10]** unconditionally initializes `files_update` before KG block (was using brittle `dir()` check). **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
-| `workflows/autocode_impl/nodes/plan.py` | `node_write_plan()` — plan generation. **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/brainstorm.py` | `node_brainstorm()` — approach brainstorming. **[Hardening P1.10]** unconditionally initializes `files_update` before KG block (was using brittle `dir()` check). **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/plan.py` | `node_write_plan()` — plan generation. **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. **[v3.2 P0-1]** Lazy `kgraph` import (was top-level — crashed the module if `tree_sitter_languages` missing). **[v3.2 P2-1]** `_blast_radius_warning()` extracted into `helpers.py` from inline duplicated logic (shared with `debug.py`). |
 | `workflows/autocode_impl/nodes/branch.py` | `node_git_branch()` — git branch creation |
-| `workflows/autocode_impl/nodes/tests.py` | `node_write_tests()` — test generation. **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
-| `workflows/autocode_impl/nodes/execute.py` | `node_execute_step()` — plan step execution. **[Hardening P2]** dead `json.loads(code)` fallback removed. **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/tests.py` | `node_write_tests()` — test generation. **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/execute.py` | `node_execute_step()` — plan step execution. **[Hardening P2]** dead `json.loads(code)` fallback removed. **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. |
 | `workflows/autocode_impl/nodes/write_files.py` | **[v2.0]** BACKWARD-COMPAT WRAPPER — calls `node_apply_patches` → `node_write_new_files` → `node_persist_artifacts`. Registered, NOT wired. |
 | `workflows/autocode_impl/nodes/apply_patches.py` | **[v2.0]** Applies `str_replace` patches to existing files. Hosts `_is_path_safe()` (shared with `write_new_files.py`). **[Hardening P1.4]** uses `_parse_json` for markdown-fenced JSON. |
 | `workflows/autocode_impl/nodes/write_new_files.py` | **[v2.0]** Writes new files / overwrites existing ones atomically. Builds `files_map` for `analyze_impact`. **[Hardening P1.4 + P1.8]** uses `_parse_json`; propagates new files into `modified_files`. |
 | `workflows/autocode_impl/nodes/persist_artifacts.py` | **[v2.0]** Persists `test_autocode_feature.py` + `generated_code.json` + `debug_log.json` to `run_dir`. |
 | `workflows/autocode_impl/nodes/run_tests.py` | `node_run_tests()` — test execution. **[Hardening P0.2]** marks last `debug_history` entry's `tests_passed=True`. |
 | `workflows/autocode_impl/nodes/swarm_fallback.py` | **[v3.1]** `node_swarm_fallback()` — escalates to `_swarm_debug_consensus` when debug retries exhausted + `AUTOCODE_SWARM_DEBUG_FALLBACK=1`. HIGH confidence → injects verdict + resets `tdd_status` (one more debug cycle); LOW/unavailable → `status="failed"` (verify chain). |
-| `workflows/autocode_impl/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis. **[v2.0]** `_run_async()` simplified to `asyncio.run(coro)`. **[v1.2 P2]** literal `"unknown"` trace_id → `""` (consistency with every other node). |
-| `workflows/autocode_impl/nodes/debug.py` | `node_systematic_debug()` — 4-phase debug analysis. Accumulates `debug_history`. **[Hardening P0.1 + P1.9 + P2]** preserves TDD sub-state on writes; `blast_radius_note` precedes "Output JSON ONLY:"; consumes `debug_summary` when `debug_history` > 5 entries. **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/analyze_impact.py` | `node_analyze_impact()` — blast radius analysis. **[v2.0]** `_run_async()` simplified to `asyncio.run(coro)`. **[v3.1.2 P2]** literal `"unknown"` trace_id → `""` (consistency with every other node). |
+| `workflows/autocode_impl/nodes/debug.py` | `node_systematic_debug()` — 4-phase debug analysis. Accumulates `debug_history`. **[Hardening P0.1 + P1.9 + P2]** preserves TDD sub-state on writes; `blast_radius_note` precedes "Output JSON ONLY:"; consumes `debug_summary` when `debug_history` > 5 entries. **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. **[v3.2 P0-1]** Lazy `kgraph` import (was top-level — crashed the module if `tree_sitter_languages` missing). **[v3.2 P2-1]** `_blast_radius_warning()` extracted into `helpers.py` from inline duplicated logic (shared with `plan.py`). |
 | `workflows/autocode_impl/nodes/summarize_context.py` | **[v2.0]** `node_summarize_context(state)` compresses `debug_history` before re-entering the debug loop. Uses chonkie `SentenceChunker` (soft dep) with JSON-of-last-3-entries fallback. **[Hardening P0.1]** preserves TDD sub-state. |
 | `workflows/autocode_impl/nodes/verify.py` | **[v2.0]** BACKWARD-COMPAT WRAPPER — calls `node_run_pytest` → `node_run_lint` → `node_llm_review` → `node_verify_decision`. Registered, NOT wired. |
 | `workflows/autocode_impl/nodes/run_pytest.py` | **[v2.0]** Fresh pytest subprocess on autocode run directory. **[v3.1 #41]** Runs `ruff --select E999` syntax pre-check BEFORE pytest — skips pytest + returns the syntax error directly if found. Non-fatal if ruff not installed. |
 | `workflows/autocode_impl/nodes/run_lint.py` | **[v2.0]** `ruff check --select E,F --no-cache` scoped to `modified_files` only. |
-| `workflows/autocode_impl/nodes/llm_review.py` | **[v2.0]** LLM spec coverage + cleanliness review. Only LLM-calling node in the verify chain. **[v3.1 F3]** Injects `debug_summary` into the verify LLM prompt when `debug_history` > 5 entries. **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/llm_review.py` | **[v2.0]** LLM spec coverage + cleanliness review. Only LLM-calling node in the verify chain. **[v3.1 F3]** Injects `debug_summary` into the verify LLM prompt when `debug_history` > 5 entries. **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. **[v3.2 P0-4]** Handles `test_code` as `list[str]` (was `[:1000]` on a list returned a list slice + `repr()` garbage in the prompt). |
 | `workflows/autocode_impl/nodes/verify_decision.py` | **[v2.0]** Composes results + hallucination guard (real pytest exit code overrides LLM claim) + max_retries/stuck early-exit. `route_after_verify` routes from this node. |
 | `workflows/autocode_impl/nodes/commit.py` | `node_git_commit()` — git commit. **[v3.0]** Reads `branch` via `_get_vcs` accessor (was the v2.0 proof-of-concept for the accessor pattern; v2.0.5 reverted to direct read due to split-brain bug; v2.1 re-migrated after writer was migrated). |
 | `workflows/autocode_impl/nodes/publish.py` | **[v2.0]** BACKWARD-COMPAT WRAPPER — calls `node_push` → `node_create_pr` → `node_merge_pr`. Registered, NOT wired. |
@@ -47,7 +47,7 @@
 | `workflows/autocode_impl/nodes/create_pr.py` | **[v2.0]** Opens PR via `_github_pr_create` (gated on `AUTOCODE_OPEN_PR`). Hosts `_build_pr_body(state)`. |
 | `workflows/autocode_impl/nodes/merge_pr.py` | **[v2.0]** Auto-merges PR via `_github_pr_merge` (gated on `AUTOCODE_AUTO_MERGE`; terminal). |
 | `workflows/autocode_impl/nodes/memory.py` | `node_distill_memory()` — procedural memory storage |
-| `workflows/autocode_impl/nodes/create_skill.py` | `node_create_skill()` — skill creation (atomic write + AST validation + **[v1.2 #36]** importlib smoke-test + git commit + **[v1.2 P1]** empty-file rejection with fallback keys). **[v1.2 P1]** passes `trace_id=tid` to `_call()`. |
+| `workflows/autocode_impl/nodes/create_skill.py` | `node_create_skill()` — skill creation (atomic write + AST validation + **[v3.1.2 #36]** importlib smoke-test + git commit + **[v3.1.2 P1]** empty-file rejection with fallback keys). **[v3.1.2 P1]** passes `trace_id=tid` to `_call()`. **[v3.2 P1-4]** Removed `sys.path.insert` leak (was never cleaned up after the smoke-test; `spec_from_file_location` doesn't need it on `sys.path`). |
 | `workflows/autocode_impl/nodes/report.py` | `node_report()` — report generation |
 | `workflows/base.py` | `WorkflowState`, `node_step()`, `node_error()`, `node_done()`, `run_workflow()` — shared infrastructure. For autocode, `run_workflow()` delegates to `invoke_with_timeout()` (in `workflows/autocode_impl/graph.py`) which calls `request_cancellation()` on timeout. **[Hardening P0.3]** surfaces graph exceptions as crashes (was misreporting as timeout). |
 | `tools/agent.py` | `agent(action="dispatch", role="...")` — LLM calls |
@@ -56,7 +56,7 @@
 | `tools/memory.py` | `memory.recall()`, `memory.store_procedural()` — memory operations |
 | `tools/notify.py` | `notify(action="notify", message=...)` — user notification |
 | `tools/report.py` | `report(action="report", title=...)` — report generation |
-| `core/config.py` | `cfg.autocode_graph_timeout`, `cfg.autocode_max_retries`, `cfg.autocode_adaptive_timeout` (**[v1.2 #40]** new), etc. — config (6 GitHub/Swarm flags + 1 adaptive-timeout flag default OFF) |
+| `core/config.py` | `cfg.autocode_graph_timeout`, `cfg.autocode_max_retries`, `cfg.autocode_adaptive_timeout` (**[v3.1.2 #40]** new), `cfg.sandbox_timeout` (**[v3.2 P1-3]** now used by `node_run_pytest` — was hardcoded `120`), etc. — config (6 GitHub/Swarm flags + 1 adaptive-timeout flag default OFF) |
 | `core/utils.py` | `compress_result()` — result compression |
 | `tools/github.py` | `github(action="pull"|"push"|"pr_create"|"pr_comment"|"pr_merge")` — remote GitHub operations |
 | `tools/swarm.py` | `swarm(action="consensus"|"vote")` — multi-model consultation |
@@ -68,7 +68,7 @@
 
 ```text
 workflows/base.py
-└── run_workflow(workflow_type="autocode", goal="...", **kwargs)   # Main entry point (v1.2 #34 — legacy facade shim removed)
+└── run_workflow(workflow_type="autocode", goal="...", **kwargs)   # Main entry point (v3.1.2 #34 — legacy facade shim removed)
     ├── invoke_with_timeout(initial_state)     # in workflows/autocode_impl/graph.py (NOT base.py)
     │   ├── build_graph()                       # 29-node LangGraph StateGraph (26 active + 3 backward-compat wrappers)
     │   │   ├── node_classify_task()            # Phase 1: Classify task type
@@ -96,14 +96,14 @@ workflows/base.py
     │   │   ├── node_create_pr()                # Phase 15b: Create PR
     │   │   ├── node_merge_pr()                 # Phase 15c: Auto-merge PR (terminal)
     │   │   ├── node_distill_memory()           # Phase 16: Store procedural memory
-    │   │   └── node_create_skill()             # Phase 17: Create skill (if applicable) — v1.2: importlib smoke-test + git commit
+    │   │   └── node_create_skill()             # Phase 17: Create skill (if applicable) — v3.1.2: importlib smoke-test + git commit
     │   │   # Backward-compat wrappers (registered but NOT wired):
     │   │   # ├── node_write_files()            #   wrapper → apply_patches + write_new_files + persist_artifacts
     │   │   # ├── node_verify()                 #   wrapper → run_pytest + run_lint + llm_review + verify_decision
     │   │   # └── node_publish()                #   wrapper → push + create_pr + merge_pr
     │   └── tracer.finish()                      # Mark trace complete
 └── workflows/autocode.py                         # Exports: build_graph, get_graph, WORKFLOW_METADATA, _shape_artifacts, _resolve_files_input
-                                                  # (legacy facade shim REMOVED in v1.2 #34)
+                                                  # (legacy facade shim REMOVED in v3.1.2 #34)
 ```
 
 The 3 backward-compat wrappers (`node_write_files`, `node_verify`, `node_publish`) are kept for `import`-compatibility (tests import them directly). They are registered via `add_node(...)` but NOT wired — no edges in or out. Excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 28 active nodes. Removal deferred to post-2.0 (`# TODO(2.0-post):`).
@@ -147,7 +147,7 @@ graph TD
     PU --> CPR["node_create_pr<br/>Phase 15b: Create PR"]
     CPR --> MPR["node_merge_pr<br/>Phase 15c: Auto-merge (terminal)"]
     MPR --> Q["node_distill_memory<br/>Phase 16: Memory"]
-    Q --> R["node_create_skill<br/>Phase 17: Skill (v1.2: importlib smoke-test + git commit)"]
+    Q --> R["node_create_skill<br/>Phase 17: Skill (v3.1.2: importlib smoke-test + git commit)"]
     R --> S["END<br/>Success"]
 ```
 
@@ -164,7 +164,7 @@ graph TD
 ## 💡 Key Design Decisions
 
 - **29-node LangGraph StateGraph** — 26 active nodes + 3 backward-compat wrappers (registered, NOT wired) + `node_summarize_context` (Phase 4, debug-loop compression) + `node_swarm_fallback` (Phase 11b, v3.1 swarm escalation). The 3 wrappers preserve `import`-compatibility for external callers + tests; they are excluded from `WORKFLOW_METADATA["nodes"]` so MCP clients render only the 28 active-node entries.
-- **Facade is `run_workflow("autocode")` — NOT the removed v1.0 facade shim** — **[v1.2 #34]** The autocode-specific backward-compat facade shim in `workflows/autocode.py` was REMOVED (no production callers, only test refs). All callers — internal and external — use `run_workflow(workflow_type="autocode", goal="...", **kwargs)` from `workflows/base.py` directly. `workflows/autocode.py` now exports only `build_graph`, `get_graph`, `WORKFLOW_METADATA`, `AutocodeState`, `_default_state`, `_shape_artifacts`, `_resolve_files_input`.
+- **Facade is `run_workflow("autocode")` — NOT the removed v1.0 facade shim** — **[v3.1.2 #34]** The autocode-specific backward-compat facade shim in `workflows/autocode.py` was REMOVED (no production callers, only test refs). All callers — internal and external — use `run_workflow(workflow_type="autocode", goal="...", **kwargs)` from `workflows/base.py` directly. `workflows/autocode.py` now exports only `build_graph`, `get_graph`, `WORKFLOW_METADATA`, `AutocodeState`, `_default_state`, `_shape_artifacts`, `_resolve_files_input`.
 - **Mode-driven** — The task type (`feature`, `fix`, `fix_error`, `refactor`, `improve`, `edit`, `create_skill`, `audit`) determines the workflow path. `node_classify_task` uses the Router LLM to classify (with mode override).
 - **TDD-first** — For `feature`, `fix`, `fix_error`, `refactor`, `improve`, `edit`, and `audit` modes, tests are generated before implementation. (`create_skill` bypasses TDD; `audit` currently keeps TDD but F7 full-audit mode would bypass it — see [INSTRUCTIONS.md](INSTRUCTIONS.md) § "Deferred Roadmap Items → F7".)
 - **Iterative debug loop** — `node_systematic_debug` accumulates `debug_history` across iterations (closes the #37 prerequisite); `node_summarize_context` compresses it before re-entering the loop. Last 5 entries injected into the LLM user prompt under a `PRIOR DEBUG ATTEMPTS (do NOT repeat these)` block. New architecture-question exit fires on 3+ consecutive `tests_passed=False` → `tdd_status="max_retries_exceeded"` + procedural memory store (different from #39 stuck detection — fires on DIFFERENT errors each iteration, suggesting architectural bug).
@@ -173,10 +173,10 @@ graph TD
 - **GitHub integration** — `node_push` → `node_create_pr` → `node_merge_pr` (all gated on config flags + `is_configured()`, all default OFF). With all flags OFF, the 3 nodes are no-ops — autocode behaves identically to a local-only workflow.
 - **Swarm debug integration** — Two independent paths: (1) `node_systematic_debug` optionally uses swarm (2-run pattern: `consensus` → `vote`) INSIDE the debug loop via `AUTOCODE_SWARM_DEBUG=1`. Confidence: HIGH (unanimous) / MEDIUM (majority) / LOW (split). Non-blocking — fix is ALWAYS applied regardless of confidence. LOW confidence surfaces as a PR comment (if `AUTOCODE_DEBUG_COMMENT_PR=1`), not as a workflow block. (2) **[v3.1]** `node_swarm_fallback` consults the swarm AFTER the debug loop is exhausted via `AUTOCODE_SWARM_DEBUG_FALLBACK=1`. HIGH confidence → inject verdict + reset `tdd_status` (one more debug cycle); LOW/unavailable → proceed to verify chain. The two flags are independent — they can be enabled together or separately.
 - **Memory integration** — `node_distill_memory` stores procedural knowledge for future recall. Non-fatal — code is already committed by the time distill runs.
-- **Skill creation** — `node_create_skill` creates a reusable skill file. Atomic write (`tempfile` + `os.replace`) + AST validation. **[v1.2 #36]** After write: (a) `importlib.util.spec_from_file_location` smoke-test (catches missing deps that AST parse misses); (b) `_git_commit(message=f"skill(autocode): {skill_name}")` commits the new skill file. **[v1.2 P1]** Empty-file rejection with fallback keys (`skill_file` → `skill_code` → `code`).
+- **Skill creation** — `node_create_skill` creates a reusable skill file. Atomic write (`tempfile` + `os.replace`) + AST validation. **[v3.1.2 #36]** After write: (a) `importlib.util.spec_from_file_location` smoke-test (catches missing deps that AST parse misses); (b) `_git_commit(message=f"skill(autocode): {skill_name}")` commits the new skill file. **[v3.1.2 P1]** Empty-file rejection with fallback keys (`skill_file` → `skill_code` → `code`). **[v3.2 P1-4]** `sys.path.insert` leak removed (was never cleaned up after the smoke-test).
 - **Filelock + atomic writes** — `node_write_new_files` uses `FileLock` and atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) to prevent race conditions and data corruption.
 - **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code). `DEBUG_SYSTEM` Phase 4 ("fix") also applies the ladder. `ponytail:` comment convention marks deliberate simplifications with known ceilings.
-- **Adaptive timeout** — **[v1.2 #40]** `invoke_with_timeout()` consults `cfg.autocode_adaptive_timeout` (env: `AUTOCODE_ADAPTIVE_TIMEOUT=1`, default OFF). When ON, per-task-type timeout map overrides `cfg.autocode_graph_timeout`: `create_skill`=120s, `audit`=300s, `feature`=900s, `fix`/`refactor`/`edit`=600s. See [API.md](API.md) § "Adaptive Timeout".
+- **Adaptive timeout** — **[v3.1.2 #40]** `invoke_with_timeout()` consults `cfg.autocode_adaptive_timeout` (env: `AUTOCODE_ADAPTIVE_TIMEOUT=1`, default OFF). When ON, per-task-type timeout map overrides `cfg.autocode_graph_timeout`: `create_skill`=120s, `audit`=300s, `feature`=900s, `fix`/`refactor`/`edit`=600s. See [API.md](API.md) § "Adaptive Timeout".
 - **Result compression** — The final result is compressed via `compress_result()` before being returned.
 
 ### `node_publish` is a separate node — NOT folded into `node_commit`
@@ -186,16 +186,27 @@ graph TD
 The `node_validate_input` path traversal check only covers user-supplied paths. LLM-generated paths (`patches[].path`, `new_files{}` keys) are validated via `_is_path_safe(base_path, rel_path) -> bool` in `apply_patches.py` (imported by `write_new_files.py`) — uses `Path.resolve().is_relative_to()` to verify the resolved target stays inside `base_path`.
 
 ### `_call()` retries 2× with exponential backoff + interruptible sleep
-`_call(role, system, user, ..., retries=2, trace_id="")` loops `retries + 1` times, sleeping `2 ** attempt` seconds between attempts. **[Hardening P1.7]** sleep uses `threading.Event.wait(timeout=...)` so `request_cancellation()` from a timeout aborts the backoff immediately (was `time.sleep(...)` — uninterruptible, blocked the timeout). **[v1.2 P1]** All 8 in-tree callers pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`).
+`_call(role, system, user, ..., retries=2, trace_id="")` loops `retries + 1` times, sleeping `2 ** attempt` seconds between attempts. **[Hardening P1.7]** sleep uses `threading.Event.wait(timeout=...)` so `request_cancellation()` from a timeout aborts the backoff immediately (was `time.sleep(...)` — uninterruptible, blocked the timeout). **[v3.1.2 P1]** All 8 in-tree callers pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`). **[v3.2 P1-6]** Unreachable `raise last_error` after the retry loop removed (dead code — the loop body always returns or raises within the loop).
 
-### 6 v1.3 config flags + 1 v2.0.2 + 1 v3.1 + 1 v1.2 default OFF
-`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG` (v1.3); `AUTOCODE_SUBAGENT_DEBUG` (v2.0.2); `AUTOCODE_SWARM_DEBUG_FALLBACK` (v3.1); `AUTOCODE_ADAPTIVE_TIMEOUT` (v1.2 #40). With all flags OFF, autocode behaves identically to v1.1 (local-only, single-LLM debug, no swarm fallback on exhaustion, static graph timeout).
+### 6 v1.3 config flags + 1 v2.0.2 + 1 v3.1 + 1 v3.1.2 default OFF
+`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG` (v1.3 — pre-2.0 GitHub + Swarm integration); `AUTOCODE_SUBAGENT_DEBUG` (v2.0.2); `AUTOCODE_SWARM_DEBUG_FALLBACK` (v3.1); `AUTOCODE_ADAPTIVE_TIMEOUT` (v3.1.2 #40). With all flags OFF, autocode behaves identically to v1.1 (local-only, single-LLM debug, no swarm fallback on exhaustion, static graph timeout).
+
+### v3.2 collective-review hardening (5 P0 + 6 P1 + 8 P2)
+
+The v3.2 release shipped 19 fixes from a 6-LLM collective code review. The four design-level changes are:
+
+- **`threading.Lock` on `get_graph()` singleton (P2-3).** `get_graph()` is the singleton accessor in `graph.py` that returns the compiled `StateGraph`. Previously it used a check-then-set pattern (`if _graph is None: _graph = build_graph().compile(); return _graph`). On concurrent invocation (e.g., two `run_workflow("autocode")` calls in parallel from the gateway), both threads could see `_graph is None`, both call `build_graph()`, and both compile — the loser's graph would clobber the winner's, leaking memory and potentially racing the `add_node(...)` registration. v3.2 wraps the check-then-set in a module-level `threading.Lock` so only one thread performs the build; subsequent threads acquire the lock, see `_graph is not None`, and return it. The lock is held only briefly (during the build) so contention is negligible.
+- **`_cleanup_old_autocode_runs` wired to `invoke_with_timeout()` (P2-2).** `write_new_files.py` defines `_cleanup_old_autocode_runs()` (prunes stale per-run output directories under `cfg.autocode_run_dir` older than the configured TTL), but the function was never invoked from anywhere — a silent disk leak. v3.2 calls it from `invoke_with_timeout()` at the start of each workflow run (before the daemon thread starts). Failure is non-fatal (`tracer.warning`) — disk cleanup is best-effort and must not block the workflow.
+- **`_blast_radius_warning()` helper extracted (P2-1).** `plan.py` and `debug.py` both rendered the same blast-radius warning (query `kgraph.get_callers()` for each modified file + format the affected-caller list as a warning block for the LLM prompt). The logic was duplicated and had drifted slightly (different truncation thresholds, different wording). v3.2 extracted `_blast_radius_warning(modified_files: list[str], kgraph_client) -> str` into `helpers.py`; both nodes now import + call it. The signature is identical at both call sites; the warning text is now consistent.
+- **Named `route_after_swarm_fallback()` in `routes.py` (P2-5).** The conditional edge from `node_swarm_fallback` was wired in `graph.py` via an inline lambda: `graph.add_conditional_edges("node_swarm_fallback", lambda state: "node_systematic_debug" if _get_tdd(state, "status", "") == "" and state.get("status", "") != "failed" else "node_run_pytest")`. Inline lambdas in `add_conditional_edges` are untestable in isolation (you have to invoke the whole graph to exercise them) and don't appear in `WORKFLOW_METADATA["routes"]`. v3.2 extracted it as `route_after_swarm_fallback(state) -> str` in `routes.py` alongside the other 4 `route_after_*` functions, and added a focused unit test in `test_swarm_fallback_fixes.py`.
+
+The remaining 15 v3.2 fixes are localized to single nodes — see [NODES.md](NODES.md) per-node entries (look for `**[v3.2 ...]` markers) and [CHANGELOG.md](CHANGELOG.md) § v3.2 for the full list.
 
 ### Dead-code deletions — do NOT re-add
 - `node_write_files_with_flag_reset` — was registered but never wired; reset a non-existent `step_attempt` field.
 - `route_after_analyze_impact` — was a conditional router that ALWAYS returned `"node_run_tests"`. Replaced with a direct edge.
 - `"node_brainstorm"` mapping in `route_after_classify` — never returned; removed from conditional_edges.
-- `mermaid.py`, `test_mapper.py`, `test_runner.py` — never called. **[v1.2]** The `/autocode/graph` HTTP endpoint in `core/gateway_backend/routes/metrics.py` that imported the deleted `mermaid.py` is also removed.
+- `mermaid.py`, `test_mapper.py`, `test_runner.py` — never called. **[v3.1.2]** The `/autocode/graph` HTTP endpoint in `core/gateway_backend/routes/metrics.py` that imported the deleted `mermaid.py` is also removed.
 
 ---
 
@@ -288,13 +299,13 @@ tests/workflows/autocode/
 ├── conftest.py            # base_state + temp_workspace fixtures
 ├── test_graph.py          # topology + WORKFLOW_METADATA + singleton + state schema + partial-dict
 ├── test_routes.py         # all 5 route_after_* functions + #39 stuck routing
-├── test_facade.py         # imports + run_workflow + #44 artifacts + #46 git-diff + #47 dry-run + distill (v1.2: legacy facade shim removal test)
+├── test_facade.py         # imports + run_workflow + #44 artifacts + #46 git-diff + #47 dry-run + distill (v3.1.2: legacy facade shim removal test)
 ├── test_execute.py        # node_execute_step + node_write_files + .bak checks
 ├── test_run_tests.py      # #39 stuck detection + file-existence + budget wiring
 ├── test_debug.py          # debug loop routing + JSON parsing + max-retries
 ├── test_verify.py         # node_verify + lint + commit + defense_notes
-├── test_branch.py         # node_git_branch + git scoping + dry-run + no-snapshot (v1.2: ast.Str → ast.Constant)
-├── test_create_skill.py   # name sanitization + syntax validation + skill_created flag (v1.2: mock-key fix + empty-file rejection + importlib smoke-test)
+├── test_branch.py         # node_git_branch + git scoping + dry-run + no-snapshot (v3.1.2: ast.Str → ast.Constant)
+├── test_create_skill.py   # name sanitization + syntax validation + skill_created flag (v3.1.2: mock-key fix + empty-file rejection + importlib smoke-test)
 ├── test_helpers.py        # path helpers + patch + protected files + path traversal
 ├── test_safety.py         # dry-run mode + protected files + memory callbacks + TDD loop + dead routes
 └── test_analyze_impact.py # AST parser
@@ -302,4 +313,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-18 (v1.2 — legacy facade shim removed from `workflows/autocode.py` (use `run_workflow("autocode")` directly), module tree updated to show `run_workflow` as the main entry point with `invoke_with_timeout()` in `workflows/autocode_impl/graph.py` (not `base.py`), `/autocode/graph` endpoint removal noted alongside `mermaid.py` deletion, adaptive timeout #40 added to design decisions + config flags, `_call()` trace_id attribution noted across all 8 callers, `node_create_skill` v1.2 smoke-test + git commit noted; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.2 — 6-LLM collective review hardening: `threading.Lock` on `get_graph()` singleton (P2-3); `_cleanup_old_autocode_runs` wired to `invoke_with_timeout()` (P2-2 — was silent disk leak); `_blast_radius_warning()` extracted into `helpers.py` from duplicated logic in `plan.py` + `debug.py` (P2-1); named `route_after_swarm_fallback()` in `routes.py` (P2-5 — was untestable inline lambda); lazy `kgraph` import in `plan.py` + `debug.py` (P0-1); `_git_commit` structured dict return; `sys.path.insert` leak removed from `create_skill.py`; `cfg.sandbox_timeout` replaces hardcoded `120` in `run_pytest.py`; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution, `node_create_skill` smoke-test #36, `analyze_impact` trace_id P2, test-file v1.2 markers) were naming mistakes and are now correctly labeled `v3.1.2`; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

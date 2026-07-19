@@ -26,8 +26,10 @@ class TestGitOpsFallback:
                 {"status": "ok", "count": 1},
                 {"status": "committed", "commit_hash": "abc123"},
             ]
-            sha = _git_commit("test commit", tid="t2", project_root="")
-            assert sha == "abc123"
+            # [v1.4 P1] _git_commit now returns a dict with {committed, sha}.
+            result = _git_commit("test commit", tid="t2", project_root="")
+            assert result["sha"] == "abc123"
+            assert result["committed"] is True
             for call in mock_git.call_args_list:
                 assert call[1]["root"] == str(temp_agent_root)
 
@@ -43,8 +45,10 @@ class TestGitOpsOverride:
                 {"status": "ok", "count": 2},
                 {"status": "committed", "commit_hash": "def456"},
             ]
-            sha = _git_commit("override commit", tid="t4", project_root=custom_root)
-            assert sha == "def456"
+            # [v1.4 P1] _git_commit now returns a dict with {committed, sha}.
+            result = _git_commit("override commit", tid="t4", project_root=custom_root)
+            assert result["sha"] == "def456"
+            assert result["committed"] is True
             for call in mock_git.call_args_list:
                 assert call[1]["root"] == custom_root
 

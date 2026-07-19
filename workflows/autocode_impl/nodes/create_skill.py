@@ -129,12 +129,9 @@ def node_create_skill(state: AutocodeState) -> dict:
             try:
                 import importlib
                 import importlib.util
-                import sys
-                # Add skill parent dir to path so relative imports inside the
-                # skill file (e.g. `from skills.x import y`) can resolve.
-                parent_dir = str(skill_path.parent.parent)
-                if parent_dir not in sys.path:
-                    sys.path.insert(0, parent_dir)
+                # [v1.4 P1] Removed sys.path.insert — spec_from_file_location loads
+                # directly from the file path, doesn't need sys.path. The insert
+                # was unnecessary AND leaked parent_dir into sys.path permanently.
                 # [v1.2 fix] Use spec_from_file_location to load the module
                 # directly from the file path. This bypasses namespace-package
                 # conflicts when an existing `skills/` package (e.g. the agent's

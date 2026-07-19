@@ -55,7 +55,7 @@ def node_apply_patches(state: AutocodeState) -> dict:
       - status: "error" if JSON parse fails, "dry_run" if dry_run
     """
     tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed"):
+    if state.get("status") in ("needs_clarification", "failed", "error"):  # [v1.4 P2] added "error"
         return {}
 
     if not _get_tdd(state, "source_code", ""):  # [v3.0] accessor (was flat field)
@@ -73,26 +73,22 @@ def node_apply_patches(state: AutocodeState) -> dict:
         tracer.step(tid, "apply_patches", f"JSON parse failed: {e}")
         return {"status": "error", "error": f"apply_patches JSON parse failed: {e}"}
 
-    # [#47] Dry-run: skip all file writes AFTER validation checks pass.
-    if state.get("dry_run"):
-        tracer.step(tid, "apply_patches", "dry_run=True — skipping patch application")
-        # [v2.3] RMW: write to files sub-state
-        current_files = dict(state.get("files_state", {}))
-        current_files["modified_files"] = []
-        return {"status": "dry_run", "files_state": current_files}
-
     from workflows.autocode_impl.patch import apply_patch
 
     patches = data.get("patches", [])
     patch_errors = []
     modified_files = []
 
+    base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
+
+    # [v1.4 P0] Validation loop runs for BOTH dry_run and normal paths.
+    # Path traversal, protected file, and file-exists checks must run even in
+    # dry_run so callers learn about malformed patches before applying them.
     for p in patches:
         rel_path = p.get("path", "")
         old_text = p.get("old", "")
         new_text = p.get("new", "")
 
-        base_path = Path(state.get("project_root", "")) if state.get("project_root") else cfg.workspace_root
         target = base_path / rel_path
 
         # [Pre-2.0 Fix] Path traversal guard
@@ -110,6 +106,10 @@ def node_apply_patches(state: AutocodeState) -> dict:
             patch_errors.append(f"{rel_path}: file not found for patch")
             continue
 
+        # [v1.4 P0] Skip actual apply_patch() in dry_run — validation already done above.
+        if state.get("dry_run"):
+            continue
+
         result = apply_patch(target, old_text, new_text)
         if result.ok:
             tracer.step(tid, "apply_patches", f"patched {rel_path} ({result.lines_changed} lines changed)")
@@ -121,10 +121,23 @@ def node_apply_patches(state: AutocodeState) -> dict:
     if patch_errors:
         tracer.step(tid, "apply_patches", f"{len(patch_errors)} patch error(s): {patch_errors[0]}")
 
+    # [#47] Dry-run: skip all file writes AFTER validation checks pass.
+    # [v1.4 P0] Moved dry_run check to AFTER validation loop so path traversal,
+    # protected file, and file-exists checks still run in dry_run mode.
+    if state.get("dry_run"):
+        tracer.step(tid, "apply_patches", "dry_run=True — skipping patch application")
+        # [v2.3] RMW: write to files sub-state
+        current_files = dict(state.get("files_state", {}))
+        current_files["modified_files"] = []
+        updates: dict[str, Any] = {"status": "dry_run", "files_state": current_files}
+        if patch_errors:
+            updates["patch_errors"] = patch_errors
+        return updates
+
     # [v2.3] RMW: write to files sub-state
     current_files = dict(state.get("files_state", {}))
     current_files["modified_files"] = modified_files
-    updates: dict[str, Any] = {"files_state": current_files}
+    updates = {"files_state": current_files}
     if patch_errors:
         updates["patch_errors"] = patch_errors
     return updates

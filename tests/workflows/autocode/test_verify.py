@@ -62,8 +62,9 @@ class TestCommitAndGitEdgeCases:
                 {"status": "ok", "count": 0},
                 {"status": "nothing_to_commit"},
             ]
-            sha = _git_commit("empty commit", tid="t1", project_root=str(temp_workspace))
-            assert sha is None
+            # [v1.4 P1] _git_commit now returns a dict with {committed, sha, reason}.
+            result = _git_commit("empty commit", tid="t1", project_root=str(temp_workspace))
+            assert result == {"committed": False, "sha": "", "reason": "nothing to commit"}
 
 
 class TestCommitDefenseNotes:

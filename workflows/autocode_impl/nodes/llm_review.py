@@ -56,13 +56,17 @@ def node_llm_review(state: AutocodeState) -> dict:
         tracer.step(tid, "llm_review", f"Injected debug_summary ({len(debug_summary)} chars) — {debug_history_len} iterations")
 
     try:
+        # [v1.4 P0] Handle test_code as list[str] (from _extract_code) or str.
+        _test_code = state.get('test_code', '')
+        if isinstance(_test_code, list):
+            _test_code = '\n\n'.join(_test_code)
         raw = _call(
             role="executor",
             system=VERIFY_SYSTEM,
             user=(
                 f"Spec:\n{_get_plan(state, 'spec', '')}\n\n"  # [v2.2] accessor
                 f"Implementation:\n```python\n{impl_ctx[:3000]}\n```\n\n"
-                f"Tests:\n```python\n{state.get('test_code', '')[:1000]}\n```\n\n"
+                f"Tests:\n```python\n{_test_code[:1000]}\n```\n\n"
                 f"FRESH PYTEST OUTPUT (exit code {'0' if tests_passed else '1'}):\n"
                 f"{fresh_output[:2000]}\n\n"
                 f"RUFF OUTPUT:\n{lint_output[:500]}"

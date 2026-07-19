@@ -100,6 +100,22 @@ def node_swarm_fallback(state: AutocodeState) -> dict:
         current_tdd["source_code"] = suggested_fix
         current_tdd["error"] = error  # keep the error for context
 
+        # [v1.4 P0] Append swarm verdict to debug_history so the debug LLM sees it.
+        # Without this, the LLM repeats the same failed hypotheses the swarm already rejected.
+        new_entry = {
+            "iteration": 0,  # reset
+            "phase": "swarm_fallback",
+            "root_cause": root_cause,
+            "fix": (suggested_fix or "")[:200],
+            "tests_passed": False,
+            "confidence": "HIGH",
+        }
+        current_tdd["debug_history"] = debug_history + [new_entry]
+
+        # [v1.4 P0] Clear last_test_error so stuck detection doesn't short-circuit
+        # the new debug cycle. The swarm's fix gets a clean retry.
+        current_tdd["last_test_error"] = ""
+
         return {
             "tdd": current_tdd,
             "debug": current_debug,

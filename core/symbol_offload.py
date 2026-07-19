@@ -1,4 +1,4 @@
-"""core/context/symbol_offload.py — TencentDB-inspired symbol offloading.
+"""core/symbol_offload.py — TencentDB-inspired symbol offloading.
 
 Offloads verbose state fields to per-run files on disk, replacing them
 in-state with compact SymbolRef dicts. Nodes that need full data drill

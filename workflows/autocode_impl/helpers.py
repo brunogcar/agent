@@ -132,8 +132,6 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
                 continue
             tracer.error(trace_id, "llm_call", f"Failed to call {role} model after {retries+1} attempts: {e}")
             raise
-    # Should never reach here, but defensive
-    raise last_error  # type: ignore[misc]
 
 # [v2.0] Phase 7: _write_files() DELETED — was dead code (never called by any node).
 # The actual file writing logic lives in nodes/apply_patches.py + nodes/write_new_files.py.
@@ -169,3 +167,31 @@ def _cleanup_old_autocode_runs(max_age_days: int = 7) -> None:
                 tracer.step(_tid, "cleanup", f"Removed old autocode dir: {date_dir}")
         except (ValueError, OSError):
             continue
+
+
+def _blast_radius_warning(project_root: str, files: list[str], tid: str) -> str:
+    """[v1.4 P2] Return BLAST RADIUS WARNING string, or '' if no callers found.
+
+    Extracted from near-identical inline blocks in plan.py (Phase 8) and
+    debug.py (Phase 6). Both blocks did the same thing — query kgraph for
+    callers of the files being modified, warn if any callers exist outside
+    the modified set.
+    """
+    if not project_root or not files:
+        return ""
+    try:
+        from core.kgraph.queries import get_callers
+        from core.kgraph.project import ProjectManager
+        is_agent = str(Path(project_root).resolve()) == str(cfg.agent_root.resolve())
+        pm = ProjectManager(project_root, is_agent_root=is_agent)
+        callers = []
+        for f in files[:3]:
+            deps = get_callers(pm.path, f)
+            callers.extend([c for c in deps if c not in files])
+        if not callers:
+            return ""
+        unique = list(set(callers))[:5]
+        return f"\n\n⚠️ BLAST RADIUS WARNING: The files you are modifying are also used by: {', '.join(unique)}. Ensure your fix does not break these callers."
+    except Exception as e:
+        tracer.warning(tid, "blast_radius", f"Query failed: {e}")
+        return ""

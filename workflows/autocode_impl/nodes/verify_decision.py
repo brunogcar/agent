@@ -69,7 +69,7 @@ def node_verify_decision(state: AutocodeState) -> dict:
         f"lint={'OK' if lint_passed else 'WARN'})")
 
     # Hallucination guard: real exit code overrides LLM claim
-    llm_claims_tests_ok = data.get("automated_checks_passed", True)
+    llm_claims_tests_ok = data.get("automated_checks_passed", False)
     if not tests_passed and llm_claims_tests_ok:
         tracer.step(tid, "verify_decision", "HALLUCINATION DETECTED: LLM claimed tests passed but pytest failed")
 

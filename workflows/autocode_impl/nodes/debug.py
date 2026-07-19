@@ -31,10 +31,9 @@ from core.config import cfg
 from core.memory_engine import memory
 from core.tracer import tracer
 from workflows.autocode_impl.constants import DEBUG_SYSTEM
-from workflows.autocode_impl.helpers import _call, _parse_json
+from workflows.autocode_impl.helpers import _call, _parse_json, _blast_radius_warning  # [v1.4 P2] _blast_radius_warning extracted
 from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_vcs, _get_files  # [v2.1+v2.3] accessors
 from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_comment
-from core.kgraph.queries import get_callers  # [v1.2] removed unused get_dependencies
 
 # [v2.0] Phase 4 — architecture-question threshold.
 # If the last N debug_history entries all have tests_passed=False, the bug is
@@ -149,27 +148,10 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     retry_temp = min(base_temp + jitter, 0.8)
 
     # --- Phase 6: Blast Radius Context Injection ---
-    blast_radius_note = ""
+    # [v1.4 P2] Inline block extracted to helpers._blast_radius_warning().
     project_root = state.get("project_root", "")
     modified_files = _get_files(state, "modified_files", [])  # [v2.3] accessor
-
-    if project_root and modified_files:
-        try:
-            from pathlib import Path
-            is_agent = (str(Path(project_root).resolve()) == str(cfg.agent_root.resolve()))
-            from core.kgraph.project import ProjectManager
-            pm = ProjectManager(project_root, is_agent_root=is_agent)
-            
-            callers = []
-            for f in modified_files[:3]:
-                deps = get_callers(pm.path, f)
-                callers.extend([c for c in deps if c not in modified_files])
-            
-            if callers:
-                unique_callers = list(set(callers))[:5]
-                blast_radius_note = f"\n\n⚠️ BLAST RADIUS WARNING: The files you are modifying are also used by: {', '.join(unique_callers)}. Ensure your fix does not break these callers."
-        except Exception:
-            pass
+    blast_radius_note = _blast_radius_warning(project_root, modified_files, tid)
 
     # [v2.0] Phase 4 — use DEBUG_SYSTEM from constants (4-phase structured prompt).
     # [Hardening P1.9] blast_radius_note was appended AFTER the "Output JSON ONLY:"
