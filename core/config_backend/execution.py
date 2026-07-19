@@ -84,6 +84,7 @@ def _init_execution(cfg) -> None:
     # model_registry above (single source of truth). Do not set them again here.
     cfg.autocode_graph_timeout = int(os.getenv("AUTOCODE_GRAPH_TIMEOUT", "300"))
     cfg.autocode_adaptive_timeout = os.getenv("AUTOCODE_ADAPTIVE_TIMEOUT", "0") == "1"  # [v1.2 #40] opt-in adaptive timeout by task_type
+    cfg.autocode_architecture_question_threshold = int(os.getenv("AUTOCODE_ARCHITECTURE_QUESTION_THRESHOLD", "3"))  # [v3.3 F4] configurable threshold
 
     # -- Autoresearch (v1.0) ------------------------------------------------
     # Autonomous experiment-driven optimization loop. Each experiment run

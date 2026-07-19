@@ -8,6 +8,7 @@ from __future__ import annotations
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.state import AutocodeState, _get_verify, _get_vcs  # [v2.6+v2.1] accessors
+from workflows.autocode_impl.helpers import _should_skip_node
 from workflows.autocode_impl.vcs_ops import _github_pr_merge
 
 
@@ -22,7 +23,7 @@ def node_merge_pr(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
 
     # Skip conditions
-    if state.get("status") in ("needs_clarification", "failed", "skipped"):
+    if _should_skip_node(state):
         return {}
     if not _get_verify(state, "passed", False):
         return {}

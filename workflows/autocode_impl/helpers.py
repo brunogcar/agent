@@ -195,3 +195,33 @@ def _blast_radius_warning(project_root: str, files: list[str], tid: str) -> str:
     except Exception as e:
         tracer.warning(tid, "blast_radius", f"Query failed: {e}")
         return ""
+
+
+# [v3.3 #58] Canonical skip-status set for all nodes.
+# Nodes should use _should_skip_node(state) instead of inline status checks.
+# The set includes all terminal/error statuses that mean "don't run this node".
+_SKIP_STATUSES = frozenset({
+    "needs_clarification",  # node_brainstorm asked questions → wait for user input
+    "failed",               # a previous node failed → skip downstream
+    "error",                # a previous node errored → skip downstream
+    "skipped",              # a previous node was skipped (e.g. dry_run) → skip downstream
+})
+
+
+def _should_skip_node(state: dict) -> bool:
+    """Check if the current node should be skipped based on the workflow status.
+
+    [v3.3 #58] Standardizes the status-check pattern across all nodes.
+    Before this, nodes had 4 different sets:
+      - ("needs_clarification", "failed") — missing "error" + "skipped"
+      - ("needs_clarification", "failed", "error") — missing "skipped"
+      - ("needs_clarification", "failed", "skipped") — missing "error"
+      - ("needs_clarification", "failed", "error", "skipped") — correct
+
+    Now all nodes use _should_skip_node(state) which checks the canonical set.
+
+    Usage:
+        if _should_skip_node(state):
+            return {}
+    """
+    return state.get("status") in _SKIP_STATUSES

@@ -39,7 +39,8 @@ from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_c
 # If the last N debug_history entries all have tests_passed=False, the bug is
 # likely architectural (not a fix-the-line bug). Bail and store a procedural
 # memory so the human can be asked an architecture-level question.
-_ARCHITECTURE_QUESTION_THRESHOLD = 3
+# [v3.3 F4] Configurable via AUTOCODE_ARCHITECTURE_QUESTION_THRESHOLD env var (default 3)
+_ARCHITECTURE_QUESTION_THRESHOLD = cfg.autocode_architecture_question_threshold
 
 # [v2.0.4] Shared JSON schema for the debug LLM response. Used by both the
 # single-LLM debug path (default) and the subagent debug path

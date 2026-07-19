@@ -20,7 +20,7 @@ from typing import Any
 from filelock import FileLock, Timeout
 
 from workflows.autocode_impl.state import AutocodeState, _get_files, _get_tdd  # [v2.3+v3.0] accessors
-from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs, _parse_json  # [Hardening P1.4] added _parse_json
+from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs, _parse_json, _should_skip_node
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autocode_impl.nodes.apply_patches import _is_path_safe
@@ -39,7 +39,7 @@ def node_write_new_files(state: AutocodeState) -> dict:
       - files_map: dict of {path: FileSnapshot} for analyze_impact
     """
     tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed", "error"):
+    if _should_skip_node(state):
         return {}
 
     if not _get_tdd(state, "source_code", ""):  # [v3.0] accessor (was flat field)

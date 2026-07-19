@@ -18,7 +18,7 @@ from typing import Any
 from filelock import FileLock, Timeout
 
 from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_tdd  # [v2.5+v3.0] accessors
-from workflows.autocode_impl.helpers import _get_autocode_run_path
+from workflows.autocode_impl.helpers import _get_autocode_run_path, _should_skip_node
 from core.config import cfg
 from core.tracer import tracer
 
@@ -34,7 +34,7 @@ def node_persist_artifacts(state: AutocodeState) -> dict:
       - autocode_run_path: path to the per-run folder
     """
     tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed", "error"):
+    if _should_skip_node(state):
         return {}
 
     # [#47] Dry-run: skip persistence

@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from workflows.autocode_impl.state import AutocodeState, _get_files  # [v2.3] accessor
+from workflows.autocode_impl.helpers import _should_skip_node
 from core.config import cfg
 from core.tracer import tracer
 
@@ -23,7 +24,7 @@ def node_run_lint(state: AutocodeState) -> dict:
       - lint_passed: bool | None (None if ruff unavailable or no files)
     """
     tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed"):
+    if _should_skip_node(state):
         return {}
 
     # [Pre-2.0 Fix] Was: ruff check on entire workspace_root (slow, noisy).

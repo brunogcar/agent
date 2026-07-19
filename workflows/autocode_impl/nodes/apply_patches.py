@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from workflows.autocode_impl.state import AutocodeState, _get_files, _get_tdd  # [v2.3+v3.0] accessors
-from workflows.autocode_impl.helpers import _parse_json  # [Hardening P1.4]
+from workflows.autocode_impl.helpers import _parse_json, _should_skip_node
 from core.config import cfg
 from core.tracer import tracer
 
@@ -55,7 +55,7 @@ def node_apply_patches(state: AutocodeState) -> dict:
       - status: "error" if JSON parse fails, "dry_run" if dry_run
     """
     tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed", "error"):  # [v1.4 P2] added "error"
+    if _should_skip_node(state):
         return {}
 
     if not _get_tdd(state, "source_code", ""):  # [v3.0] accessor (was flat field)

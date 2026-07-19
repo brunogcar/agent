@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from workflows.autocode_impl.state import AutocodeState, _get_tdd  # [v3.0] accessor
+from workflows.autocode_impl.helpers import _should_skip_node
 from core.config import cfg
 from core.tracer import tracer
 
@@ -51,7 +52,7 @@ def node_verify_decision(state: AutocodeState) -> dict:
             "trace_id": tid,
         }
 
-    if state.get("status") in ("needs_clarification", "failed"):
+    if _should_skip_node(state):
         return {}
 
     # Read results from previous nodes

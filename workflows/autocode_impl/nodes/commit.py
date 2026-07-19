@@ -7,13 +7,14 @@ Git commit node.
 from __future__ import annotations
 
 from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify, _get_vcs, _get_plan  # [v2.5+v2.6+v2.1+v2.2] accessors
+from workflows.autocode_impl.helpers import _should_skip_node
 from workflows.autocode_impl.vcs_ops import _git_commit
 from core.tracer import tracer
 
 def node_commit(state: AutocodeState) -> dict:
     """Commit the verified change."""
     tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed"):
+    if _should_skip_node(state):
         return {}
     if not _get_verify(state, "passed", False):
         # [v2.1] RMW: write to vcs sub-state

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT, _get_plan, _get_tdd  # [v2.2+v3.0] accessors
 from workflows.autocode_impl.constants import VERIFY_SYSTEM
-from workflows.autocode_impl.helpers import _call, _parse_json
+from workflows.autocode_impl.helpers import _call, _parse_json, _should_skip_node
 from core.tracer import tracer
 
 
@@ -19,7 +19,7 @@ def node_llm_review(state: AutocodeState) -> dict:
       - llm_review_data: dict with {automated_checks_passed, checks, summary}
     """
     tid = state.get("trace_id", "")
-    if state.get("status") in ("needs_clarification", "failed"):
+    if _should_skip_node(state):
         return {}
 
     # Build implementation context from generated code artifacts
