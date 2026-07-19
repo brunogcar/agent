@@ -15,6 +15,7 @@ The `autocode` workflow handles **autonomous code generation and modification** 
 - **Cancellation-aware subprocess** (v3.6) — `node_run_pytest` / `node_run_lint` / `node_run_tests` wrap `subprocess.run(...)` with pre-check + deadline-aware timeout + post-check (bounds zombie linger to ≤1s past graph deadline).
 - **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes the 7-rung minimization ladder; `ponytail:` comment convention for deliberate simplifications.
 - **v3.0 Sub-state architecture** — All state fields live in 8 typed sub-states. Accessors are the only read path. See [SUBSTATE.md](autocode/SUBSTATE.md).
+- **[v3.7] Full audit mode** — `task_type="audit"` routes to a dedicated read-only pipeline (`node_audit_scan` → `node_audit_report` → END) that scans the whole repo for dead code, missing type hints, and complexity hotspots. Bypasses TDD entirely.
 - **Memory integration** — Stores procedural knowledge for future recall.
 - **Report generation** — Generates a structured report with the final result.
 
@@ -141,4 +142,4 @@ cfg.autocode_parallel_subagent_count = 3      # [v3.5 F1] Number of parallel hyp
 
 ---
 
-*Last updated: 2026-07-19 (v3.6). See [CHANGELOG.md](autocode/CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.7). See [autocode/CHANGELOG.md](autocode/CHANGELOG.md) for version history.*

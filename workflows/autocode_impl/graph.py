@@ -47,6 +47,8 @@ from workflows.autocode_impl.nodes.memory import node_distill_memory
 from workflows.autocode_impl.nodes.create_skill import node_create_skill
 from workflows.autocode_impl.nodes.report import node_report
 from workflows.autocode_impl.nodes.hitl_gate import node_hitl_gate  # [v3.4 #38] HiTL approval gate
+from workflows.autocode_impl.nodes.audit_scan import node_audit_scan  # [v3.7 F7] audit pipeline
+from workflows.autocode_impl.nodes.audit_report import node_audit_report  # [v3.7 F7] audit pipeline
 from workflows.autocode_impl.routes import (
     route_after_classify,
     route_after_run_tests,
@@ -63,11 +65,11 @@ from workflows.autocode_impl.routes import (
 # Pragmatic schema: nodes (with type), edges (with condition + loop flag),
 # explicit loops array, explicit branches array. Mirrors the pattern in
 # research/understand/data/deep_research but extended for autocode's
-# complexity (30 nodes: 26 active + 3 backward-compat wrappers + 1 hitl_gate,
-# debug loop, create_skill bypass).
+# complexity (32 nodes: 26 active + 3 backward-compat wrappers + 1 hitl_gate
+# + 2 audit pipeline nodes [v3.7 F7], debug loop, create_skill + audit bypasses).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "3.4",  # [v3.4] HiTL approval gate; [v3.1] Debug loop improvements: goal sanitization, AST pre-check, debug_summary in verify, swarm fallback
+    "version": "3.7",  # [v3.7 F7] Audit pipeline (node_audit_scan + node_audit_report); [v3.4] HiTL approval gate; [v3.1] Debug loop improvements
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -100,9 +102,16 @@ WORKFLOW_METADATA = {
         {"name": "node_distill_memory", "type": "llm", "role": "planner", "description": "Distill procedural memory for future runs"},
         {"name": "node_create_skill", "type": "tool", "tool": "file", "description": "Generate a new skill file (bypasses TDD, has AST validation)"},
         {"name": "node_hitl_gate", "type": "logic", "description": "[v3.4] Human-in-the-Loop approval gate (opt-in via AUTOCODE_HITL_ENABLED=1)"},
+        # [v3.7 F7] Audit pipeline (bypasses TDD — read-only scan + report)
+        {"name": "node_audit_scan", "type": "logic", "description": "[v3.7 F7] Whole-repo audit scan (walks files, finds dead code, missing types)"},
+        {"name": "node_audit_report", "type": "logic", "description": "[v3.7 F7] LLM audit report from scan results"},
     ],
     "edges": [
-        {"from": "node_classify_task", "to": "node_brainstorm", "condition": "route_after_classify: feature/fix/refactor/edit/audit"},
+        {"from": "node_classify_task", "to": "node_brainstorm", "condition": "route_after_classify: feature/fix/refactor/edit"},
+        # [v3.7 F7] Audit pipeline bypasses TDD (was: routed through TDD)
+        {"from": "node_classify_task", "to": "node_audit_scan", "condition": "route_after_classify: audit"},
+        {"from": "node_audit_scan", "to": "node_audit_report"},
+        {"from": "node_audit_report", "to": "END", "condition": "audit pipeline end"},
         {"from": "node_classify_task", "to": "node_create_skill", "condition": "route_after_classify: create_skill"},
         {"from": "node_classify_task", "to": "node_validate_input", "condition": "route_after_classify: validate first"},
         {"from": "node_classify_task", "to": "END", "condition": "route_after_classify: unclear"},
@@ -148,6 +157,13 @@ WORKFLOW_METADATA = {
             "path": ["node_classify_task", "node_create_skill", "END"],
             "skips": ["validate", "brainstorm", "plan", "branch", "tests", "execute", "write_files", "analyze_impact", "run_tests", "debug", "verify", "report", "commit", "distill_memory"],
             "note": "Bypasses TDD but has AST syntax validation (v1.0.2 #16) before writing the skill file.",
+        },
+        # [v3.7 F7] Audit branch — read-only whole-repo scan + LLM report
+        {
+            "name": "audit",
+            "path": ["node_classify_task", "node_audit_scan", "node_audit_report", "END"],
+            "skips": ["validate", "brainstorm", "plan", "branch", "tests", "execute", "write_files", "analyze_impact", "run_tests", "debug", "verify", "report", "commit", "distill_memory"],
+            "note": "Read-only whole-repo audit — no TDD, no commit, no code changes. Produces a structured report only.",
         },
     ],
     "safety_features": ["protected_files", "git_branch", "atomic_writes", "test_verification", "path_traversal_guard"],
@@ -198,6 +214,9 @@ def build_graph() -> StateGraph:
     workflow.add_node("node_create_skill", node_create_skill)
     workflow.add_node("node_report", node_report)
     workflow.add_node("node_hitl_gate", node_hitl_gate)  # [v3.4 #38] HiTL approval gate
+    # [v3.7 F7] Audit pipeline nodes (bypass TDD — read-only scan + report)
+    workflow.add_node("node_audit_scan", node_audit_scan)
+    workflow.add_node("node_audit_report", node_audit_report)
 
     # Set entry point
     workflow.set_entry_point("node_classify_task")
@@ -212,9 +231,15 @@ def build_graph() -> StateGraph:
             # goes through validate_input first).
             "node_create_skill": "node_create_skill",
             "node_validate_input": "node_validate_input",
+            # [v3.7 F7] audit → node_audit_scan (bypasses TDD pipeline)
+            "node_audit_scan": "node_audit_scan",
             "END": END,
         },
     )
+
+    # [v3.7 F7] Audit pipeline (bypasses TDD — read-only scan + report)
+    workflow.add_edge("node_audit_scan", "node_audit_report")
+    workflow.add_edge("node_audit_report", END)
 
     # Input validation
     workflow.add_edge("node_validate_input", "node_brainstorm")

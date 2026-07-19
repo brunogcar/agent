@@ -140,6 +140,23 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ---
 
+
+### `node_audit_scan(state)` — [v3.7 F7] Audit: Whole-Repo Scan
+
+**Purpose:** Walk `project_root`, collect codebase metrics for audit mode.
+**Reads:** `project_root`, `trace_id`
+**Writes:** `impact.audit_scan` (dict with `total_files`, `total_lines`, `files`, `dead_code_candidates`, `missing_type_hints`, `complexity_hotspots`, `dependency_map`)
+**Logic:** Walks `.py` files (skips `__pycache__`, `.git`, `venv`, etc.), counts lines, uses AST to find dead code (files not imported by anyone) + missing return type hints. Lazily queries kgraph for dependency maps (non-fatal if unavailable).
+**Status:** Returns `{"status": "audit_scan_complete"}` on success.
+
+### `node_audit_report(state)` — [v3.7 F7] Audit: LLM Report
+
+**Purpose:** Call planner LLM to summarize audit findings into a structured report.
+**Reads:** `impact.audit_scan`, `trace_id`
+**Writes:** `result` (str — the report), `status` ("success")
+**Logic:** Builds a user prompt from the scan results (JSON-dumped), calls `_call(role="planner", system=AUDIT_REPORT_SYSTEM, ...)`, stores the response in `state["result"]`.
+**Status:** Returns `{"status": "success", "result": report}` on success, `{"status": "failed", "error": ...}` on LLM failure.
+
 ### `node_write_files(state)` — Phase 8: BACKWARD-COMPAT WRAPPER
 
 **Purpose:** File writing — apply patches, write new files, persist run-dir artifacts.
@@ -566,4 +583,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ---
 
-*Last updated: 2026-07-19 (v3.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*

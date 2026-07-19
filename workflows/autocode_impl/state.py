@@ -100,6 +100,7 @@ class ImpactState(TypedDict, total=False):
     warnings: list[dict]
     targeted_test_cmd: str | None
     failed: bool
+    audit_scan: dict  # [v3.7 F7] Whole-repo audit scan results
 
 
 class DebugState(TypedDict, total=False):

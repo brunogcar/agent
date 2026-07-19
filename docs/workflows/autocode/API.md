@@ -62,6 +62,19 @@ post-2.0 (roadmap #35).
 
 ---
 
+## 🔍 Audit Mode (v3.7 F7)
+
+`task_type="audit"` routes to a dedicated read-only pipeline:
+
+```
+node_classify_task → node_audit_scan → node_audit_report → END
+```
+
+- `node_audit_scan`: walks `project_root`, finds dead code + missing type hints + complexity hotspots
+- `node_audit_report`: LLM summarizes findings into a structured report
+- **Bypasses TDD entirely** — audit is read-only (no tests, no commits, no code changes)
+- Result stored in `state["result"]`
+
 ## ⏱️ Adaptive Timeout (v3.1.2 #40)
 
 **[v3.1.2 #40]** `invoke_with_timeout()` now supports per-task-type timeouts,
@@ -582,5 +595,5 @@ The workflow uses a `status` field on `AutocodeState` to track workflow-level st
 
 ---
 
-*Last updated: 2026-07-19 (v3.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*
 

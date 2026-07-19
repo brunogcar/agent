@@ -145,11 +145,13 @@
 
 ---
 
+52. **Always use `task_type="audit"` for read-only codebase audits** (v3.7 F7) — Routes to `node_audit_scan → node_audit_report → END`. Bypasses TDD (no tests, no commits). Produces a structured report.
+
 ## 🔮 Deferred Roadmap Items
 
 See [CHANGELOG.md](CHANGELOG.md) roadmap section for deferred items (F7 Lazy Dev full audit mode, #35 full process-level termination, etc.).
 
 ---
 
-*Last updated: 2026-07-19 (v3.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*
 

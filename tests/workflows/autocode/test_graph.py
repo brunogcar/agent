@@ -12,7 +12,7 @@ from workflows.autocode_impl.graph import build_graph, get_graph, WORKFLOW_METAD
 # ─── Graph topology ─────────────────────────────────────────────────────────
 
 class TestGraphTopology:
-    def test_graph_has_exactly_30_nodes(self):
+    def test_graph_has_exactly_32_nodes(self):
         g = build_graph()
         expected = {
             "node_classify_task", "node_validate_input", "node_brainstorm",
@@ -36,8 +36,11 @@ class TestGraphTopology:
             "node_analyze_impact", "node_report",
             # [v3.4 #38] HiTL approval gate (opt-in via AUTOCODE_HITL_ENABLED=1)
             "node_hitl_gate",
+            # [v3.7 F7] Audit pipeline (bypasses TDD — read-only scan + report)
+            "node_audit_scan", "node_audit_report",
         }
-        # [v3.4] Was 29 (v3.1 added node_swarm_fallback). v3.4 added node_hitl_gate = 30 nodes.
+        # [v3.7 F7] Was 30 (v3.4 added node_hitl_gate). v3.7 added node_audit_scan
+        # + node_audit_report = 32 nodes.
         assert set(g.nodes.keys()) == expected, \
             f"Node mismatch. Missing: {expected - set(g.nodes.keys())}"
 
@@ -91,9 +94,9 @@ class TestWorkflowMetadata:
         assert WORKFLOW_METADATA["name"] == "autocode"
         assert "version" in WORKFLOW_METADATA  # [v2.0.4] don't hard-code version (bumps on every release)
 
-    def test_metadata_has_29_nodes(self):
+    def test_metadata_has_31_nodes(self):
         nodes = WORKFLOW_METADATA["nodes"]
-        assert len(nodes) == 29  # [v3.4] was 28 (v3.1 added node_swarm_fallback), +1 node_hitl_gate (v3.4 #38)
+        assert len(nodes) == 31  # [v3.7 F7] was 29 (v3.4 added node_hitl_gate), +2 audit pipeline nodes (node_audit_scan + node_audit_report)
 
     def test_metadata_nodes_have_types(self):
         for node in WORKFLOW_METADATA["nodes"]:

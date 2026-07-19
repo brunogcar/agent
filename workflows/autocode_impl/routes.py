@@ -6,12 +6,19 @@ from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_verify
 from core.config import cfg  # [v3.1 #48] for autocode_swarm_debug_fallback flag
 
 def route_after_classify(state: AutocodeState) -> str:
-    """Route after task classification node."""
+    """Route after task classification node.
+
+    [v3.7 F7] audit now bypasses the TDD pipeline entirely — routes to
+    node_audit_scan, which scans the whole repo and produces a read-only
+    report. No tests written, no code modified, no commit.
+    """
     task_type = state.get("task_type", "unclear")
     if task_type == "unclear":
         return "END"
     elif task_type == "create_skill":
         return "node_create_skill"
+    elif task_type == "audit":
+        return "node_audit_scan"  # [v3.7 F7] audit bypasses TDD
     else:
         return "node_validate_input"
 

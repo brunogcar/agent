@@ -221,6 +221,11 @@ The v3.6 release added cancellation-aware `subprocess.run(...)` wrappers in `nod
 
 New helpers in `helpers.py`: `set_graph_start_time()` (called by `invoke_with_timeout()` at run start), `_remaining_timeout(default)` (computes remaining budget), `_cancelled()` (shortcut). See [API.md](API.md) § "Cancellation-Aware Subprocess" for the helper signatures + tests.
 
+### v3.7 F7 — Audit mode bypasses TDD
+- `task_type="audit"` routes to `node_audit_scan → node_audit_report → END` (read-only, no TDD, no commit)
+- `node_audit_scan` uses AST analysis (not kgraph-dependent — kgraph is optional enhancement)
+- Audit is the only task_type that skips the TDD pipeline entirely
+
 ### Dead-code deletions — do NOT re-add
 - `node_write_files_with_flag_reset` — was registered but never wired; reset a non-existent `step_attempt` field.
 - `route_after_analyze_impact` — was a conditional router that ALWAYS returned `"node_run_tests"`. Replaced with a direct edge.
@@ -332,4 +337,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-19 (v3.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -381,3 +381,34 @@ failure? If yes, refine the fix. If no, explain why and suggest an alternative.
 Return JSON with: phase, root_cause, defense_notes, fix (same schema as
 the standard debug response).
 """
+
+# [v3.7 F7] Lazy Dev full audit mode — LLM prompt for the audit report.
+# node_audit_report calls the planner LLM with this system prompt + the
+# scan results from node_audit_scan (file list, dead code candidates,
+# complexity hotspots, missing type hints, dependency map).
+AUDIT_REPORT_SYSTEM = """\
+You are a code auditor. Given scan results from a Python codebase audit,
+produce a structured report with the following sections:
+
+## Summary
+- Total files, total lines, average file size
+- Overall code health assessment (excellent/good/fair/poor)
+
+## Dead Code Candidates
+- List files that appear to have no importers
+- For each, note whether it's likely safe to remove or if it might be an entry point
+
+## Complexity Hotspots
+- List the largest files by line count
+- Note which ones might benefit from refactoring
+
+## Missing Type Hints
+- List functions missing return type annotations
+- Note which ones are public API (should be typed first)
+
+## Recommendations
+- Prioritized list of improvements (P0/P1/P2)
+- Focus on actionable, specific changes
+
+Be concise — this is a report, not a tutorial. Use bullet points.
+"""

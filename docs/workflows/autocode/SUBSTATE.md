@@ -175,4 +175,4 @@ See [CHANGELOG.md](CHANGELOG.md) § "Track M1" for the full per-version narrativ
 
 ---
 
-*Last updated: 2026-07-19 (v3.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*
