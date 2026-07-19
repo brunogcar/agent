@@ -348,3 +348,36 @@ Output JSON ONLY:
   "all_passed": true/false,
   "summary": "<one honest sentence>"
 }"""
+
+# [v3.5 F1] Parallel subagent debug — hypothesis generation prompt.
+# Used by _parallel_subagent_debug() to ask the planner to emit N distinct
+# hypotheses as a JSON array. Each hypothesis is then dispatched to its own
+# subagent for validation/refinement (SUBAGENT_VALIDATE_SYSTEM below).
+PARALLEL_HYPOTHESES_SYSTEM = """\
+You are a debugging hypothesis generator. Given test failures and code context,
+generate {count} DISTINCT hypotheses about the root cause. Each hypothesis must
+be independent — different root causes, not variations of the same idea.
+
+For each hypothesis, provide:
+- hypothesis_id: unique identifier (1, 2, 3, ...)
+- root_cause: your best guess at what's wrong
+- proposed_fix: a concrete fix to try
+- confidence: 0.0-1.0 (how confident you are this is the right fix)
+
+Return a JSON array of {count} objects. Be creative — explore different
+failure modes (logic error, missing import, type mismatch, race condition,
+edge case, etc.).
+"""
+
+# [v3.5 F1] Parallel subagent debug — per-hypothesis validation prompt.
+# Each parallel subagent receives this system prompt + the specific hypothesis
+# it must validate. The subagent either refines the fix (if the hypothesis
+# explains the failure) or rejects it and proposes an alternative.
+SUBAGENT_VALIDATE_SYSTEM = """\
+You are a debugging subagent. You've been given a specific hypothesis about
+a bug. Your job is to validate it: does the hypothesis explain the test
+failure? If yes, refine the fix. If no, explain why and suggest an alternative.
+
+Return JSON with: phase, root_cause, defense_notes, fix (same schema as
+the standard debug response).
+"""

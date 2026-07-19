@@ -36,6 +36,8 @@ Env vars read:
         AUTOCODE_OPEN_PR, AUTOCODE_AUTO_MERGE, AUTOCODE_DEBUG_COMMENT_PR,
         AUTOCODE_SWARM_DEBUG, AUTOCODE_SUBAGENT_DEBUG [v1.1],
         AUTOCODE_SWARM_DEBUG_FALLBACK [v3.1 #48],
+        AUTOCODE_PARALLEL_SUBAGENT_DEBUG [v3.5 F1],
+        AUTOCODE_PARALLEL_SUBAGENT_COUNT [v3.5 F1],
         ROUTER_SWARM_FALLBACK [v1.1 #18]
 """
 
@@ -109,4 +111,6 @@ def _init_execution(cfg) -> None:
     cfg.autocode_swarm_debug = os.getenv("AUTOCODE_SWARM_DEBUG", "0") == "1"
     cfg.autocode_subagent_debug = os.getenv("AUTOCODE_SUBAGENT_DEBUG", "0") == "1"  # [v1.1] subagent dispatch
     cfg.autocode_swarm_debug_fallback = os.getenv("AUTOCODE_SWARM_DEBUG_FALLBACK", "0") == "1"  # [v3.1 #48] swarm fallback when debug exhausted
+    cfg.autocode_parallel_subagent_debug = os.getenv("AUTOCODE_PARALLEL_SUBAGENT_DEBUG", "0") == "1"  # [v3.5 F1] parallel subagent debug
+    cfg.autocode_parallel_subagent_count = int(os.getenv("AUTOCODE_PARALLEL_SUBAGENT_COUNT", "3"))  # [v3.5 F1] number of parallel hypotheses
     cfg.router_swarm_fallback = os.getenv("ROUTER_SWARM_FALLBACK", "0") == "1"  # [v1.1 #18] swarm vote for low-confidence routing

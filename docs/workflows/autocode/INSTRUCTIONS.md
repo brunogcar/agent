@@ -45,7 +45,7 @@
 37. **Never wire `node_summarize_context` as a wrapper or skip it in the debug loop** — It is a FULLY-WIRED active node. Skipping it means the LLM sees unbounded `debug_history` in long-running debug loops.
 38. **Never call `helpers._write_files()` — it is DELETED** — Use the split nodes: `node_apply_patches` + `node_write_new_files` + `node_persist_artifacts`.
 39. **Never hand-roll what the stdlib ships — check rung 3 first** — The 7-rung Lazy Dev ladder (see ALWAYS DO #38) prefers stdlib over hand-rolled equivalents.
-40. **Never enable `AUTOCODE_SWARM_DEBUG` and `AUTOCODE_SUBAGENT_DEBUG` simultaneously** — They're alternative debug paths. Pick ONE per workflow run.
+40. **Never enable more than ONE of `AUTOCODE_SWARM_DEBUG`, `AUTOCODE_PARALLEL_SUBAGENT_DEBUG`, and `AUTOCODE_SUBAGENT_DEBUG` simultaneously** — They're alternative debug paths. Pick ONE per workflow run. **[v3.5 F1]** The three opt-in debug flags are mutually exclusive: swarm (multi-provider consensus → vote), parallel subagent (N hypotheses → N subagents → confidence-weighted aggregation), single subagent (one isolated dispatch). Enabling more than one is a configuration error — the first to fire in the chain (swarm → parallel → single subagent → single-LLM) wins, the others are unreachable code paths that mislead operators reading the trace.
 41. **Never use `state.get()` for sub-state fields** — [v3.0] Sub-state fields live ONLY in sub-state dicts (`state["tdd"]`, `state["vcs"]`, etc.). The legacy flat fields were removed — `state.get("tdd_status")`, `state.get("modified_files")`, `state.get("branch")`, etc. will return `None`. Use accessors (`_get_tdd`, `_get_files`, `_get_vcs`, etc.) instead. See [SUBSTATE.md](SUBSTATE.md).
 42. **Never write flat-field mirrors in node returns** — [v3.0] Node returns MUST write sub-state only via RMW. Do NOT include legacy flat fields like `{"modified_files": [...], "branch": "..."}` — write `{"files_state": current_files, "vcs": current_vcs}` instead. Ephemeral flat fields (`test_results`, `test_code`, etc.) are still flat by design. See [SUBSTATE.md](SUBSTATE.md) § "RMW Pattern".
 43. **Never assume `input_files` exists in `files_state`** — [v3.0] `input_files` was removed from `FilesState` — it was just a mirror of the core `files` flat field. `validate.py`, `brainstorm.py`, `plan.py`, `tests.py` now read `state.get("files", {})` directly (core flat field). See [SUBSTATE.md](SUBSTATE.md) § "Core Flat Fields".
@@ -230,22 +230,21 @@ The following roadmap items are deferred beyond v3.2. They're documented here so
 
 ---
 
-### F1 — Parallel subagent debug
+### F1 — Parallel subagent debug ✅ SHIPPED IN v3.5
 
-**Current state (v2.0.2):** `AUTOCODE_SUBAGENT_DEBUG=1` enables a SINGLE subagent dispatch per debug iteration. `node_systematic_debug` constructs curated context (failing test + error output + current source + truncated prior fix attempts) and calls `agent(action="subagent", role="planner")` with it. The subagent returns `{fix, root_cause, defense_notes}`. Falls back to single-LLM on subagent failure. Non-blocking — the fix is applied regardless.
+**Status:** Shipped in v3.5. This section is retained for design context; the live reference is now [CHANGELOG.md](CHANGELOG.md) § v3.5 + [API.md](API.md) § "Parallel Subagent Debug" + [NODES.md](NODES.md) § `node_systematic_debug`.
 
-**What's deferred:** Parallel subagents — one per hypothesis. When the debug LLM proposes multiple candidate root causes (e.g., "could be a race condition OR a stale cache OR an off-by-one"), spawn N subagents in parallel, each investigating one hypothesis with curated context. Aggregate the N verdicts with a voting layer (similar to swarm's HIGH/MEDIUM/LOW confidence).
+**v2.0.2 baseline:** `AUTOCODE_SUBAGENT_DEBUG=1` enabled a SINGLE subagent dispatch per debug iteration. `node_systematic_debug` constructs curated context (failing test + error output + current source + truncated prior fix attempts) and calls `agent(action="subagent", role="planner")` with it. The subagent returns `{fix, root_cause, defense_notes}`. Falls back to single-LLM on subagent failure. Non-blocking — the fix is applied regardless.
 
-**Design:**
-- New node OR new branch inside `node_systematic_debug`: when `AUTOCODE_SUBAGENT_DEBUG=1` AND the debug LLM returned multiple hypotheses, spawn N subagents via a thread pool (`concurrent.futures.ThreadPoolExecutor`).
-- Each subagent gets: the hypothesis it's investigating + the same curated context (failing test, error, source, prior attempts).
-- Aggregation: majority vote on `fix` (or `root_cause` if fixes differ); confidence = agreement fraction (HIGH if unanimous, MEDIUM if majority, LOW if split).
-- Output shape: `{fix, root_cause, defense_notes, confidence, agreement, hypotheses: [...]}` — same shape as `swarm_verdict` so downstream code (PR comment gating, etc.) works unchanged.
-- Non-blocking: if all N subagents fail, fall back to single-LLM (same as v2.0.2).
-
-**Dependency:** v2.0.2 action-level allowlist makes this safe (subagents can't escape the allowlist to do arbitrary work). Already unblocked.
-
-**Estimated complexity:** M (thread pool + aggregation logic + new env flag).
+**v3.5 design shipped:**
+- New 4th debug path inside `node_systematic_debug`, gated on `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1` (default OFF). Inserted between the swarm path and the single-subagent path so the chain is now: swarm → parallel subagent → single subagent → single-LLM.
+- The path generates N distinct hypotheses via a planner LLM call with `PARALLEL_HYPOTHESES_SYSTEM` (new in `constants.py`), then dispatches N subagents in parallel via `concurrent.futures.ThreadPoolExecutor(max_workers=N)` — one per hypothesis.
+- Each subagent gets `SUBAGENT_VALIDATE_SYSTEM` (new in `constants.py`) + the hypothesis + the original debug context (test failure + history) and is asked to validate/refine it via `agent(action="subagent", role="executor", ...)`.
+- Aggregation: pick the verdict with the highest `hypothesis_confidence` (the planner-supplied 0.0-1.0 score). ALL verdicts are stored in `debug.parallel_verdicts` for observability. The winner is mirrored into `debug.subagent_verdict` so downstream readers see a unified shape.
+- Non-blocking: if hypothesis generation fails OR all subagents fail, fall through to single-LLM (same as v2.0.2).
+- New config flags: `cfg.autocode_parallel_subagent_debug` + `cfg.autocode_parallel_subagent_count` (default 3) in `core/config_backend/execution.py`.
+- New state field: `parallel_verdicts: list[dict]` on `DebugState` + in `_default_state()`.
+- Mutually exclusive with `AUTOCODE_SWARM_DEBUG` and `AUTOCODE_SUBAGENT_DEBUG` (NEVER DO #40 updated).
 
 **Inspiration:** obra/superpowers "parallel investigation" pattern.
 
@@ -393,5 +392,6 @@ Total: ~L. Recommend splitting into two PRs: (1) `AuditState` + `node_audit_scan
 
 49. **Always use `_should_skip_node(state)` for status checks** (v3.3 #58) — Never write inline `state.get("status") in (...)`. The canonical set is `{"needs_clarification", "failed", "error", "skipped"}`.
 50. **Always use the async-checkpoint-resume pattern for HiTL — never sync-pause** (v3.4 #38) — When implementing any human-in-the-loop pause (HiTL approval gate, manual review checkpoint, etc.), the node MUST: (1) save a checkpoint via `save_checkpoint(tid, "<gate_name>", state)`; (2) return `{"status": "awaiting_approval"}` (or similar non-terminal-yet-non-running status); (3) let `route_after_<gate>` route to `END`. The operator then resumes with `run_workflow("autocode", goal="...", resume=True, hitl_approved=True)` — `workflows/base.py` merges `hitl_approved` from kwargs into the restored state, and the gate sees `state["hitl_approved"] == True` and passes through. NEVER block on a `threading.Event` — see NEVER DO #50. The `node_hitl_gate` (between `node_report` and `node_commit`) and the HiTL check at the top of `node_create_skill` both follow this pattern. Checkpoint failure is non-fatal (wrapped in `try/except`) — the pause still happens, just without the resume capability.
+51. **Always use parallel subagent debug for complex multi-hypothesis bugs** (v3.5 F1) — When the debug LLM is likely to face multiple competing root-cause hypotheses (race condition vs. stale cache vs. off-by-one; logic error vs. type mismatch vs. missing import), enable `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1` and let `_parallel_subagent_debug()` dispatch N subagents in parallel — one per hypothesis. The planner LLM emits N distinct hypotheses via `PARALLEL_HYPOTHESES_SYSTEM`; each subagent validates/refines one via `SUBAGENT_VALIDATE_SYSTEM`; aggregation picks the highest-confidence verdict. Tunable via `AUTOCODE_PARALLEL_SUBAGENT_COUNT` (default 3, recommended 2-5). Non-blocking: hypothesis-generation failure or all-subagents-failed falls through to single-LLM. Mutually exclusive with `AUTOCODE_SWARM_DEBUG` and `AUTOCODE_SUBAGENT_DEBUG` (NEVER DO #40). For single-hypothesis bugs, prefer the simpler `AUTOCODE_SUBAGENT_DEBUG=1` path — the parallel path is overhead for cases where one hypothesis is enough. All N verdicts are stored in `debug.parallel_verdicts` for observability; the winner is mirrored into `debug.subagent_verdict` so downstream readers see a unified shape.
 
-*Last updated: 2026-07-19 (v3.4 — #38 HiTL approval gate; NEVER DO #50 + ALWAYS DO #50).*
+*Last updated: 2026-07-19 (v3.5 — F1 parallel subagent debug: NEVER DO #40 updated to cover 3 mutually-exclusive flags + ALWAYS DO #51 added; v3.4 — #38 HiTL approval gate; NEVER DO #50 + ALWAYS DO #50).*

@@ -8,6 +8,18 @@ Debug node for autocode workflow.
   - Non-blocking: fix always applies; LOW confidence → optional PR comment
   - Falls back to single-LLM debug if swarm unavailable or flag off
 
+[v3.5 F1] Parallel subagent debug (AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1):
+  - 4th debug path, inserted between swarm and single-subagent in the chain.
+  - Generates N distinct hypotheses via a planner LLM call
+    (PARALLEL_HYPOTHESES_SYSTEM), dispatches N subagents in parallel via
+    ThreadPoolExecutor (one per hypothesis, SUBAGENT_VALIDATE_SYSTEM),
+    aggregates by picking the highest-confidence verdict. All verdicts
+    stored in debug.parallel_verdicts for observability.
+  - Mutually exclusive with AUTOCODE_SWARM_DEBUG and AUTOCODE_SUBAGENT_DEBUG
+    (INSTRUCTIONS.md NEVER DO #40).
+  - Falls through to single-LLM on hypothesis-generation failure or all-
+    subagents-failed.
+
 [v2.0] Phase 4 — 4-phase debug loop refactor (obra/superpowers systematic-debugging):
   - DEBUG_SYSTEM prompt restructured into investigation / pattern / hypothesis /
     fix. The LLM must declare its current phase in every JSON response.
@@ -26,11 +38,16 @@ Debug node for autocode workflow.
 the only kgraph query used here.
 """
 from __future__ import annotations
+import concurrent.futures  # [v3.5 F1] parallel subagent dispatch
 import json
 from core.config import cfg
 from core.memory_engine import memory
 from core.tracer import tracer
-from workflows.autocode_impl.constants import DEBUG_SYSTEM
+from workflows.autocode_impl.constants import (
+    DEBUG_SYSTEM,
+    PARALLEL_HYPOTHESES_SYSTEM,  # [v3.5 F1]
+    SUBAGENT_VALIDATE_SYSTEM,    # [v3.5 F1]
+)
 from workflows.autocode_impl.helpers import _call, _parse_json, _blast_radius_warning  # [v1.4 P2] _blast_radius_warning extracted
 from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_vcs, _get_files  # [v2.1+v2.3] accessors
 from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_comment
@@ -60,6 +77,218 @@ _DEBUG_JSON_SCHEMA = {
     "required": ["phase", "root_cause", "defense_notes", "fix"],
     "additionalProperties": False,
 }
+
+
+def _parallel_subagent_debug(
+    system: str,
+    user: str,
+    tid: str,
+    retry_temp: float,
+    debug_history: list[dict],
+    current_iteration: int,
+    state: dict,
+) -> dict | None:
+    """[v3.5 F1] Parallel subagent debug — N hypotheses, N subagents, aggregate.
+
+    Pipeline:
+      1. Call the planner LLM with ``PARALLEL_HYPOTHESES_SYSTEM`` (templated with
+         ``cfg.autocode_parallel_subagent_count``) to emit N distinct hypotheses
+         as a JSON array.
+      2. Parse the JSON array. If parsing fails OR fewer than 2 hypotheses are
+         returned, return ``None`` so the caller falls through to single-LLM.
+      3. Dispatch N subagents in parallel via
+         ``concurrent.futures.ThreadPoolExecutor(max_workers=N)`` — one per
+         hypothesis. Each subagent gets ``SUBAGENT_VALIDATE_SYSTEM`` + the
+         hypothesis + the original debug context (test failure + history) and
+         is asked to validate/refine it.
+      4. Aggregate: pick the verdict with the highest ``hypothesis_confidence``
+         (the planner-supplied confidence). Store ALL verdicts in
+         ``debug.parallel_verdicts`` for observability.
+      5. Build the same return shape as the existing single-subagent path so
+         the rest of ``node_systematic_debug`` doesn't change.
+
+    Returns:
+        Partial state update dict (same shape as the single-subagent path) —
+        or ``None`` to signal "fall through to single-subagent / single-LLM".
+    """
+    from core.json_extract import extract_json, extract_json_array
+    from tools.agent import agent
+
+    n = cfg.autocode_parallel_subagent_count
+    if n < 2:
+        # < 2 hypotheses makes parallel dispatch pointless — fall through.
+        tracer.step(
+            tid, "systematic_debug",
+            f"parallel subagent count={n} < 2 — falling back to single-LLM",
+        )
+        return None
+
+    # 1. Generate hypotheses via a planner LLM call.
+    hypotheses_system = PARALLEL_HYPOTHESES_SYSTEM.format(count=n)
+    try:
+        hypotheses_response = _call(
+            role="planner",
+            system=hypotheses_system,
+            user=user,
+            timeout=cfg.execution_timeout,
+            temperature=retry_temp,
+            trace_id=tid,
+        )
+    except Exception as e:
+        tracer.step(
+            tid, "systematic_debug",
+            f"Parallel hypothesis generation failed: {e} — falling back to single-LLM",
+        )
+        return None
+
+    # 2. Parse JSON array of hypotheses.
+    try:
+        hypotheses = extract_json_array(hypotheses_response)
+    except Exception:
+        hypotheses = []
+    if not isinstance(hypotheses, list) or len(hypotheses) < 2:
+        got = len(hypotheses) if isinstance(hypotheses, list) else 0
+        tracer.step(
+            tid, "systematic_debug",
+            f"Parallel hypothesis generation returned {got} hypotheses "
+            f"(need >= 2) — falling back to single-LLM",
+        )
+        return None
+
+    # Cap to the configured count (LLM may return extra or fewer).
+    hypotheses = hypotheses[:n]
+    tracer.step(
+        tid, "systematic_debug",
+        f"Parallel subagent debug: dispatching {len(hypotheses)} subagents "
+        f"(confidence-weighted aggregation)",
+    )
+
+    # 3. Dispatch N subagents in parallel — one per hypothesis.
+    # Each subagent gets: the hypothesis it must validate + the original debug
+    # context (test failure + history) so it can reason about whether the
+    # hypothesis explains the failure.
+    def _dispatch(hypothesis: dict) -> dict | None:
+        hid = hypothesis.get("hypothesis_id", "?")
+        h_root_cause = hypothesis.get("root_cause", "?")
+        h_proposed_fix = hypothesis.get("proposed_fix", "")
+        try:
+            h_confidence = float(hypothesis.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            h_confidence = 0.0
+        subagent_task = (
+            f"Hypothesis #{hid} (confidence={h_confidence:.2f}):\n"
+            f"  root_cause: {h_root_cause}\n"
+            f"  proposed_fix: {h_proposed_fix}\n\n"
+            f"--- DEBUG CONTEXT ---\n{user}\n--- END CONTEXT ---\n\n"
+            f"Validate this hypothesis. If it explains the test failure, "
+            f"refine the fix. If not, propose an alternative root_cause + fix."
+        )
+        try:
+            result = agent(
+                action="subagent",
+                role="executor",
+                task=subagent_task,
+                system=SUBAGENT_VALIDATE_SYSTEM,
+                trace_id=tid,
+                temperature=retry_temp,
+                json_schema=json.dumps(_DEBUG_JSON_SCHEMA),
+            )
+            if result.get("status") != "success":
+                return None
+            debug_data = extract_json(result.get("response", ""))
+            if not debug_data:
+                tracer.warning(
+                    tid, "systematic_debug",
+                    f"Parallel subagent #{hid} returned unparseable response: "
+                    f"{result.get('response', '')[:200]}",
+                )
+                return None
+            return {
+                "hypothesis_id": hid,
+                "hypothesis_root_cause": h_root_cause,
+                "hypothesis_confidence": h_confidence,
+                "phase": debug_data.get("phase", "investigation"),
+                "root_cause": debug_data.get("root_cause", "Unknown"),
+                "defense_notes": debug_data.get("defense_notes", ""),
+                "fix": debug_data.get("fix", ""),
+            }
+        except Exception as e:
+            tracer.warning(
+                tid, "systematic_debug",
+                f"Parallel subagent #{hid} exception: {e}",
+            )
+            return None
+
+    verdicts: list[dict] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(hypotheses)) as pool:
+        future_map = {pool.submit(_dispatch, h): h for h in hypotheses}
+        for future in concurrent.futures.as_completed(future_map):
+            v = future.result()
+            if v is not None:
+                verdicts.append(v)
+
+    # 4. Aggregate — pick highest hypothesis_confidence. If no verdicts
+    # survived, fall through.
+    if not verdicts:
+        tracer.step(
+            tid, "systematic_debug",
+            "All parallel subagents failed — falling back to single-LLM debug",
+        )
+        return None
+
+    verdicts.sort(
+        key=lambda v: v.get("hypothesis_confidence", 0.0),
+        reverse=True,
+    )
+    best = verdicts[0]
+    tracer.step(
+        tid, "systematic_debug",
+        f"Parallel subagent aggregation: {len(verdicts)}/{len(hypotheses)} "
+        f"succeeded — winner hypothesis #{best.get('hypothesis_id', '?')} "
+        f"(confidence={best.get('hypothesis_confidence', 0.0):.2f})",
+    )
+
+    # 5. Build the same return shape as the single-subagent path so the rest
+    # of node_systematic_debug doesn't change.
+    phase = best.get("phase", "investigation")
+    if phase not in ("investigation", "pattern", "hypothesis", "fix"):
+        phase = "investigation"
+    root_cause = best.get("root_cause", "Unknown")
+    defense_notes = best.get("defense_notes", "")
+    suggested_fix = best.get("fix", "")
+
+    new_entry = {
+        "iteration": current_iteration,
+        "phase": phase,
+        "root_cause": root_cause,
+        "fix": (suggested_fix or "")[:200],
+        "tests_passed": False,
+    }
+    updated_history = debug_history + [new_entry]
+
+    # [Hardening] Read-modify-write to preserve sibling sub-state fields.
+    current_tdd = dict(state.get("tdd", {}))
+    current_tdd["debug_history"] = updated_history
+    current_tdd["source_code"] = suggested_fix
+    current_debug = dict(state.get("debug", {}))
+    current_debug["root_cause"] = root_cause
+    current_debug["defense_notes"] = defense_notes
+    current_debug["notes"] = (
+        f"Debug iteration {current_iteration} (parallel subagent {phase}, "
+        f"{len(verdicts)}/{len(hypotheses)} hypotheses): {root_cause}"
+    )
+    current_debug["parallel_verdicts"] = verdicts  # ALL verdicts for observability
+    # Mirror the winning verdict into subagent_verdict so downstream readers
+    # that already look at subagent_verdict see the parallel winner too.
+    current_debug["subagent_verdict"] = {
+        "fix": suggested_fix,
+        "root_cause": root_cause,
+        "defense_notes": defense_notes,
+    }
+    return {
+        "tdd": current_tdd,
+        "debug": current_debug,
+    }
 
 
 def node_systematic_debug(state: AutocodeState) -> dict:
@@ -263,6 +492,25 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             }
         # Swarm failed — fall through to subagent or single-LLM debug
         tracer.step(tid, "systematic_debug", "Swarm unavailable — falling back")
+
+    # [v3.5 F1] Parallel subagent debug — N hypotheses, N subagents, aggregate.
+    # Generates N distinct hypotheses via a planner LLM call, dispatches N
+    # subagents in parallel via ThreadPoolExecutor (one per hypothesis),
+    # aggregates by picking the highest-confidence verdict. Falls through to
+    # single-subagent / single-LLM on hypothesis-generation failure or all-
+    # subagents-failed. Mutually exclusive with swarm + single-subagent flags
+    # (INSTRUCTIONS.md NEVER DO #40).
+    if cfg.autocode_parallel_subagent_debug:
+        result = _parallel_subagent_debug(
+            system, user, tid, retry_temp, debug_history, current_iteration, state
+        )
+        if result:
+            return result
+        # Fall through to single-subagent / single-LLM if parallel failed
+        tracer.step(
+            tid, "systematic_debug",
+            "Parallel subagent debug yielded no usable result — falling back to single-LLM",
+        )
 
     # [v1.1] Subagent debug — isolated curated-context LLM dispatch.
     # Uses agent(action="subagent") for a fresh LLM call with NO session history.

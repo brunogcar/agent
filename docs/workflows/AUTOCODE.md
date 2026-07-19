@@ -12,6 +12,7 @@ The `autocode` workflow handles **autonomous code generation and modification** 
 - **GitHub integration** — Optional push + PR + auto-merge (all gated on config flags + `is_configured()`, all default OFF)
 - **Swarm debug** — Optional 2-run multi-model debug (consensus → vote, confidence HIGH/MEDIUM/LOW) via `AUTOCODE_SWARM_DEBUG=1`
 - **Subagent debug** — Optional third debug path: single isolated subagent dispatch with curated context (no session state) via `AUTOCODE_SUBAGENT_DEBUG=1` (v2.0.2)
+- **Parallel subagent debug** — Optional 4th debug path: generates N distinct hypotheses via a planner LLM, dispatches N subagents in parallel (one per hypothesis) via `ThreadPoolExecutor`, aggregates by highest confidence. Opt-in via `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1` (default OFF). Tunable via `AUTOCODE_PARALLEL_SUBAGENT_COUNT` (default 3). All verdicts stored in `debug.parallel_verdicts` for observability. Mutually exclusive with swarm + single-subagent flags. (v3.5 F1)
 - **Lazy Dev / YAGNI Ladder** — `CODER_SYSTEM` includes the 7-rung minimization ladder (YAGNI → reuse → stdlib → native → installed dep → one line → minimum code); `ponytail:` comment convention for deliberate simplifications
 - **v3.0 Sub-state architecture** — All state fields live in 8 typed sub-states (plan, tdd, files, impact, debug, verify, vcs, memory). Legacy flat-field mirrors removed. Accessors are the only read path.
 - **[v3.1] Debug loop improvements** — Goal sanitization (#42, max 2000 chars + strip control chars); AST pre-check (#41, `ruff --select E999` before pytest); `debug_summary` in verify chain (F3, injected when `debug_history` > 5); swarm fallback node (#48, escalates to multi-model consensus when debug retries exhausted).
@@ -80,6 +81,8 @@ AUTOCODE_DEBUG_COMMENT_PR=0         # Post LOW-confidence swarm verdict as PR co
 AUTOCODE_SWARM_DEBUG=0              # Use swarm (consensus → vote) for debug
 AUTOCODE_SUBAGENT_DEBUG=0           # Use single isolated subagent dispatch for debug (v2.0.2)
 AUTOCODE_SWARM_DEBUG_FALLBACK=0      # [v3.1] Escalate to swarm consensus when debug retries exhausted (HIGH → one more cycle, LOW → verify)
+AUTOCODE_PARALLEL_SUBAGENT_DEBUG=0  # [v3.5 F1] Use parallel subagent debug (N hypotheses → N subagents → aggregate)
+AUTOCODE_PARALLEL_SUBAGENT_COUNT=3  # [v3.5 F1] Number of parallel hypotheses (default 3, recommended 2-5)
 ```
 
 ```python
@@ -96,6 +99,8 @@ cfg.autocode_debug_comment_pr = False    # Post LOW-confidence swarm verdict as 
 cfg.autocode_swarm_debug = False         # Use swarm (consensus → vote) for debug
 cfg.autocode_subagent_debug = False      # Use single isolated subagent dispatch for debug (v2.0.2)
 cfg.autocode_swarm_debug_fallback = False  # [v3.1] Escalate to swarm consensus when debug retries exhausted
+cfg.autocode_parallel_subagent_debug = False  # [v3.5 F1] Use parallel subagent debug
+cfg.autocode_parallel_subagent_count = 3      # [v3.5 F1] Number of parallel hypotheses
 ```
 
 > **Note on stale timeout env vars:** Earlier versions of this doc listed `AUTOCODE_PLANNER_TIMEOUT`, `AUTOCODE_EXECUTOR_TIMEOUT`, and `AUTOCODE_ROUTER_TIMEOUT`. **These env vars DO NOT EXIST.** Per-role LLM timeouts come from `cfg.model_registry[role]["timeout"]` (see `core/config.py`). `AUTOCODE_GRAPH_TIMEOUT` is the only autocode timeout; it must be ≥ the max per-role timeout (validated at config load time).
@@ -134,4 +139,4 @@ cfg.autocode_swarm_debug_fallback = False  # [v3.1] Escalate to swarm consensus 
 
 ---
 
-*Last updated: 2026-07-19 (v3.4 — #38 HiTL approval gate: NEW `node_hitl_gate` between `node_report` and `node_commit` + HiTL check at top of `node_create_skill`; opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF); async-checkpoint-resume pattern (chose over sync-pause to preserve worker pool); `hitl_approved` state field + end-to-end param threading; 29 → 30 nodes; v3.2 — 6-LLM collective review hardening: 19 fixes shipped — 5 P0 + 6 P1 + 8 P2; mode list corrected to `feature`/`fix`/`fix_error`/`refactor`/`improve`/`edit`/`create_skill`/`audit` (removed stale `add_feature` + `unclear` — `unclear` is a `task_type` value, not a `mode`); v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 `debug_summary` in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are now the PRIMARY + ONLY storage; v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + v2.x→v3.0 migration roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.5 — F1 parallel subagent debug: NEW 4th debug chain path (hypothesis generation → parallel ThreadPoolExecutor dispatch → confidence-weighted aggregation); new config flags `AUTOCODE_PARALLEL_SUBAGENT_DEBUG` + `AUTOCODE_PARALLEL_SUBAGENT_COUNT`; new state field `parallel_verdicts: list[dict]` on `DebugState`; new `_parallel_subagent_debug()` function in `debug.py`; mutually exclusive with swarm + single-subagent flags (NEVER DO #40); v3.4 — #38 HiTL approval gate: NEW `node_hitl_gate` between `node_report` and `node_commit` + HiTL check at top of `node_create_skill`; opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF); async-checkpoint-resume pattern (chose over sync-pause to preserve worker pool); `hitl_approved` state field + end-to-end param threading; 29 → 30 nodes; v3.2 — 6-LLM collective review hardening: 19 fixes shipped — 5 P0 + 6 P1 + 8 P2; mode list corrected to `feature`/`fix`/`fix_error`/`refactor`/`improve`/`edit`/`create_skill`/`audit` (removed stale `add_feature` + `unclear` — `unclear` is a `task_type` value, not a `mode`); v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 `debug_summary` in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are now the PRIMARY + ONLY storage; v2.0.5 — Phase 4g review: split-brain sub-state fix + state schema gaps + v2.x→v3.0 migration roadmap; v2.0.4 subagent debug path; v2.0.1 hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*

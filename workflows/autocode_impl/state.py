@@ -109,6 +109,7 @@ class DebugState(TypedDict, total=False):
     defense_notes: str
     swarm_verdict: dict
     subagent_verdict: dict  # [v2.0.4] P1-1: subagent debug path verdict (was doc'd but never set)
+    parallel_verdicts: list[dict]  # [v3.5 F1] All subagent verdicts from parallel debug
 
 
 class VerifyState(TypedDict, total=False):
@@ -356,6 +357,7 @@ def _default_state(
             "defense_notes": "",
             "swarm_verdict": {},
             "subagent_verdict": {},  # [v2.0.4] P1-1
+            "parallel_verdicts": [],  # [v3.5 F1] populated by _parallel_subagent_debug()
         },
         "verify": {
             "notes": "",

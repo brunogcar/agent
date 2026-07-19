@@ -172,6 +172,7 @@ graph TD
 - **Git integration** — `node_git_branch` creates a new branch (optionally pulls first via `AUTOCODE_PULL_BEFORE_BRANCH`); `node_git_commit` commits changes with a descriptive message. `node_write_plan` appends `trace_id` suffix (`autocode/{slug}-{tid_suffix}`) for branch-name uniqueness.
 - **GitHub integration** — `node_push` → `node_create_pr` → `node_merge_pr` (all gated on config flags + `is_configured()`, all default OFF). With all flags OFF, the 3 nodes are no-ops — autocode behaves identically to a local-only workflow.
 - **Swarm debug integration** — Two independent paths: (1) `node_systematic_debug` optionally uses swarm (2-run pattern: `consensus` → `vote`) INSIDE the debug loop via `AUTOCODE_SWARM_DEBUG=1`. Confidence: HIGH (unanimous) / MEDIUM (majority) / LOW (split). Non-blocking — fix is ALWAYS applied regardless of confidence. LOW confidence surfaces as a PR comment (if `AUTOCODE_DEBUG_COMMENT_PR=1`), not as a workflow block. (2) **[v3.1]** `node_swarm_fallback` consults the swarm AFTER the debug loop is exhausted via `AUTOCODE_SWARM_DEBUG_FALLBACK=1`. HIGH confidence → inject verdict + reset `tdd_status` (one more debug cycle); LOW/unavailable → proceed to verify chain. The two flags are independent — they can be enabled together or separately.
+- **Parallel subagent debug (v3.5 F1)** — `node_systematic_debug` optionally dispatches N subagents in parallel — one per hypothesis — via `concurrent.futures.ThreadPoolExecutor`. Gated on `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1` (default OFF). Pipeline: (1) planner LLM generates `AUTOCODE_PARALLEL_SUBAGENT_COUNT` (default 3) distinct hypotheses via `PARALLEL_HYPOTHESES_SYSTEM`; (2) `ThreadPoolExecutor(max_workers=N)` dispatches one `agent(action="subagent")` per hypothesis using `SUBAGENT_VALIDATE_SYSTEM`; (3) aggregate by highest `hypothesis_confidence`; (4) store ALL verdicts in `debug.parallel_verdicts` for observability; (5) mirror winner into `debug.subagent_verdict`. Falls through to single-LLM on hypothesis-generation failure OR all-subagents-failed. Mutually exclusive with `AUTOCODE_SWARM_DEBUG` and `AUTOCODE_SUBAGENT_DEBUG` (NEVER DO #40 updated). See [API.md](API.md) § "Parallel Subagent Debug".
 - **Memory integration** — `node_distill_memory` stores procedural knowledge for future recall. Non-fatal — code is already committed by the time distill runs.
 - **Skill creation** — `node_create_skill` creates a reusable skill file. Atomic write (`tempfile` + `os.replace`) + AST validation. **[v3.1.2 #36]** After write: (a) `importlib.util.spec_from_file_location` smoke-test (catches missing deps that AST parse misses); (b) `_git_commit(message=f"skill(autocode): {skill_name}")` commits the new skill file. **[v3.1.2 P1]** Empty-file rejection with fallback keys (`skill_file` → `skill_code` → `code`). **[v3.2 P1-4]** `sys.path.insert` leak removed (was never cleaned up after the smoke-test).
 - **Filelock + atomic writes** — `node_write_new_files` uses `FileLock` and atomic writes (`tempfile.NamedTemporaryFile` + `os.replace`) to prevent race conditions and data corruption.
@@ -188,8 +189,8 @@ The `node_validate_input` path traversal check only covers user-supplied paths. 
 ### `_call()` retries 2× with exponential backoff + interruptible sleep
 `_call(role, system, user, ..., retries=2, trace_id="")` loops `retries + 1` times, sleeping `2 ** attempt` seconds between attempts. **[Hardening P1.7]** sleep uses `threading.Event.wait(timeout=...)` so `request_cancellation()` from a timeout aborts the backoff immediately (was `time.sleep(...)` — uninterruptible, blocked the timeout). **[v3.1.2 P1]** All 8 in-tree callers pass `trace_id=tid` — retry-exhaustion errors are attributed to the workflow's trace (was: unattributed `trace_id=""`). **[v3.2 P1-6]** Unreachable `raise last_error` after the retry loop removed (dead code — the loop body always returns or raises within the loop).
 
-### 6 v1.3 config flags + 1 v2.0.2 + 1 v3.1 + 1 v3.1.2 default OFF
-`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG` (v1.3 — pre-2.0 GitHub + Swarm integration); `AUTOCODE_SUBAGENT_DEBUG` (v2.0.2); `AUTOCODE_SWARM_DEBUG_FALLBACK` (v3.1); `AUTOCODE_ADAPTIVE_TIMEOUT` (v3.1.2 #40). With all flags OFF, autocode behaves identically to v1.1 (local-only, single-LLM debug, no swarm fallback on exhaustion, static graph timeout).
+### 6 v1.3 config flags + 1 v2.0.2 + 1 v3.1 + 1 v3.1.2 + 1 v3.4 + 2 v3.5 default OFF
+`AUTOCODE_PULL_BEFORE_BRANCH`, `AUTOCODE_PUSH_ON_COMMIT`, `AUTOCODE_OPEN_PR`, `AUTOCODE_AUTO_MERGE`, `AUTOCODE_DEBUG_COMMENT_PR`, `AUTOCODE_SWARM_DEBUG` (v1.3 — pre-2.0 GitHub + Swarm integration); `AUTOCODE_SUBAGENT_DEBUG` (v2.0.2); `AUTOCODE_SWARM_DEBUG_FALLBACK` (v3.1); `AUTOCODE_ADAPTIVE_TIMEOUT` (v3.1.2 #40); `AUTOCODE_HITL_ENABLED` (v3.4 #38); `AUTOCODE_PARALLEL_SUBAGENT_DEBUG` (v3.5 F1). `AUTOCODE_PARALLEL_SUBAGENT_COUNT` (v3.5 F1, default 3) tunes the parallel hypothesis count. With all flags OFF, autocode behaves identically to v1.1 (local-only, single-LLM debug, no swarm fallback on exhaustion, static graph timeout, no HiTL gate, no parallel subagent dispatch).
 
 ### v3.2 collective-review hardening (5 P0 + 6 P1 + 8 P2)
 
@@ -269,6 +270,42 @@ maps to `cfg.autocode_hitl_enabled` (initialized in
 
 Graph: 29 → 30 nodes (26 active + 3 backward-compat wrappers + 1 hitl_gate).
 
+### v3.5 F1 — Parallel subagent debug (4th debug chain path)
+
+The v3.5 release added a 4th debug path inside `node_systematic_debug`,
+gated on `AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1` (default OFF). The new path is
+inserted **between the swarm path and the single-subagent path** in the
+debug chain, so the chain is now:
+
+```
+swarm (AUTOCODE_SWARM_DEBUG=1)
+  → parallel subagent (AUTOCODE_PARALLEL_SUBAGENT_DEBUG=1)   ← NEW
+  → single subagent (AUTOCODE_SUBAGENT_DEBUG=1)
+  → single-LLM (default)
+```
+
+All three opt-in flags are mutually exclusive (NEVER DO #40 updated). The
+chain is fall-through: each path's failure (or unavailability) leads to the
+next path. The parallel path's pipeline:
+
+1. **Hypothesis generation** — `_call(role="planner", system=PARALLEL_HYPOTHESES_SYSTEM.format(count=N), user=user)` emits `N = cfg.autocode_parallel_subagent_count` (default 3) distinct hypotheses as a JSON array. Each hypothesis: `{hypothesis_id, root_cause, proposed_fix, confidence}`.
+2. **Parallel dispatch** — `concurrent.futures.ThreadPoolExecutor(max_workers=N)` submits N `agent(action="subagent", role="executor", ...)` calls — one per hypothesis. Each subagent gets `SUBAGENT_VALIDATE_SYSTEM` + the hypothesis + the original debug context (test failure + history) and is asked to validate/refine it. The 4-field `_DEBUG_JSON_SCHEMA` enforces the response shape.
+3. **Aggregation** — sort verdicts by descending `hypothesis_confidence`; the winner is `verdicts[0]`. All N verdicts are stored in `debug.parallel_verdicts` for observability; the winner is mirrored into `debug.subagent_verdict` so downstream readers see a unified shape.
+4. **State update** — RMW the `tdd` sub-state (`debug_history` += winner entry, `source_code` = winner fix) + the `debug` sub-state (`root_cause`, `defense_notes`, `notes`, `parallel_verdicts`, `subagent_verdict`).
+
+**Design decisions:**
+
+- **`ThreadPoolExecutor` over `asyncio`** — the rest of autocode is synchronous (LangGraph invokes nodes one at a time, and `_call()` blocks). Mixing async dispatch into a sync workflow would require either an event-loop runner or full async migration. `ThreadPoolExecutor` is the right tool: it parallelizes the N subagent `_call()` invocations (each is I/O-bound on the LLM API) without touching the workflow's sync structure.
+- **`hypothesis_confidence` (planner-supplied) as the aggregation key** — the planner LLM emits the 0.0-1.0 confidence per hypothesis when generating them; the subagents only validate/refine the fix, they don't re-score confidence. Using the planner's confidence keeps the aggregation deterministic and avoids needing the subagents to agree on a scoring scheme.
+- **All verdicts stored, not just the winner** — `debug.parallel_verdicts` holds every surviving verdict so operators can inspect why the winner was chosen and what the alternative hypotheses were. This is critical for debugging the debug system itself.
+- **Winner mirrored into `subagent_verdict`** — downstream readers (e.g., `_shape_artifacts`) already look at `subagent_verdict`; mirroring the parallel winner there means they don't need a parallel-aware code path. `parallel_verdicts` is the observability field; `subagent_verdict` is the unified "best subagent verdict" field.
+- **Fall-through on failure** — if hypothesis generation fails (LLM error, unparseable JSON, < 2 hypotheses) OR all N subagents fail (status != "success" or unparseable JSON), `_parallel_subagent_debug()` returns `None` and the chain continues with the single-subagent path. The fall-through is logged via `tracer.step(...)`. The workflow never hard-fails because of the parallel path.
+- **`max_workers=N` (not a fixed cap)** — the pool size equals the hypothesis count, so all N subagents run concurrently. This is bounded by `cfg.autocode_parallel_subagent_count` (default 3, recommended 2-5). A separate cap would just be a redundant limit.
+
+**Inspiration:** obra/superpowers "parallel investigation" pattern — when faced with multiple competing hypotheses, dispatch one investigator per hypothesis in parallel, then aggregate.
+
+Graph: unchanged (30 nodes — no new node; the parallel path is a branch inside `node_systematic_debug`).
+
 ### Dead-code deletions — do NOT re-add
 - `node_write_files_with_flag_reset` — was registered but never wired; reset a non-existent `step_attempt` field.
 - `route_after_analyze_impact` — was a conditional router that ALWAYS returned `"node_run_tests"`. Replaced with a direct edge.
@@ -299,7 +336,7 @@ The autocode state is split into 8 focused sub-state TypedDicts behind an access
 | TDD | `TDDState` | `iteration`, `source_code`, `error`, `status`, `max_retries`, `last_test_error`, `tests_written`, `debug_history`, `debug_summary` |
 | Files | `FilesState` | `files_map`, `modified_files` (`input_files` removed in v3.0 — use core `files` flat field) |
 | Impact | `ImpactState` | `warnings`, `targeted_test_cmd`, `failed` |
-| Debug | `DebugState` | `notes`, `root_cause`, `defense_notes`, `swarm_verdict`, `subagent_verdict` |
+| Debug | `DebugState` | `notes`, `root_cause`, `defense_notes`, `swarm_verdict`, `subagent_verdict`, `parallel_verdicts` |
 | Verify | `VerifyState` | `notes`, `report`, `passed` |
 | VCS | `VCSState` | `commit_sha`, `branch`, `branch_name`, `pushed`, `pr_number`, `pr_url` |
 | Memory | `MemoryState` | `notes`, `context` |
@@ -380,4 +417,4 @@ tests/workflows/autocode/
 
 ---
 
-*Last updated: 2026-07-19 (v3.4 — #38 HiTL approval gate: NEW `node_hitl_gate` between `node_report` and `node_commit` + HiTL check at top of `node_create_skill`; opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF); async-checkpoint-resume pattern (chose over sync-pause to preserve worker pool); new `route_after_hitl_gate` in `routes.py`; `hitl_approved` state field + end-to-end param threading (`run.py` → `types/autocode.py` → `helpers.py` → `base.py`); 29 → 30 nodes; v3.2 — 6-LLM collective review hardening: `threading.Lock` on `get_graph()` singleton (P2-3); `_cleanup_old_autocode_runs` wired to `invoke_with_timeout()` (P2-2 — was silent disk leak); `_blast_radius_warning()` extracted into `helpers.py` from duplicated logic in `plan.py` + `debug.py` (P2-1); named `route_after_swarm_fallback()` in `routes.py` (P2-5 — was untestable inline lambda); lazy `kgraph` import in `plan.py` + `debug.py` (P0-1); `_git_commit` structured dict return; `sys.path.insert` leak removed from `create_skill.py`; `cfg.sandbox_timeout` replaces hardcoded `120` in `run_pytest.py`; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution, `node_create_skill` smoke-test #36, `analyze_impact` trace_id P2, test-file v1.2 markers) were naming mistakes and are now correctly labeled `v3.1.2`; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
+*Last updated: 2026-07-19 (v3.5 — F1 parallel subagent debug: NEW § "v3.5 F1 — Parallel subagent debug (4th debug chain path)" design-note section + new bullet in "Key Design Decisions" + DebugState representative fields updated to include `parallel_verdicts` + config-flags section expanded (v3.5 F1: `AUTOCODE_PARALLEL_SUBAGENT_DEBUG` + `AUTOCODE_PARALLEL_SUBAGENT_COUNT`); v3.4 — #38 HiTL approval gate: NEW `node_hitl_gate` between `node_report` and `node_commit` + HiTL check at top of `node_create_skill`; opt-in via `AUTOCODE_HITL_ENABLED=1` (default OFF); async-checkpoint-resume pattern (chose over sync-pause to preserve worker pool); new `route_after_hitl_gate` in `routes.py`; `hitl_approved` state field + end-to-end param threading (`run.py` → `types/autocode.py` → `helpers.py` → `base.py`); 29 → 30 nodes; v3.2 — 6-LLM collective review hardening: `threading.Lock` on `get_graph()` singleton (P2-3); `_cleanup_old_autocode_runs` wired to `invoke_with_timeout()` (P2-2 — was silent disk leak); `_blast_radius_warning()` extracted into `helpers.py` from duplicated logic in `plan.py` + `debug.py` (P2-1); named `route_after_swarm_fallback()` in `routes.py` (P2-5 — was untestable inline lambda); lazy `kgraph` import in `plan.py` + `debug.py` (P0-1); `_git_commit` structured dict return; `sys.path.insert` leak removed from `create_skill.py`; `cfg.sandbox_timeout` replaces hardcoded `120` in `run_pytest.py`; v3.1.2 — version-numbering fix: prior `v1.2` references in this file (facade shim removal #34, Adaptive Timeout #40, `_call()` trace_id attribution, `node_create_skill` smoke-test #36, `analyze_impact` trace_id P2, test-file v1.2 markers) were naming mistakes and are now correctly labeled `v3.1.2`; v3.1 — debug loop improvements: #42 goal sanitization, #41 AST pre-check, F3 debug_summary in verify chain, #48 swarm fallback; 28 → 29 nodes; v3.0 — flat-field removal, Track M1 ✅ COMPLETE, sub-states are the PRIMARY + ONLY storage; v2.0.1 — hardening pass; v2.0 GA all 7 phases ✅ COMPLETE). See git history for per-phase details.*
