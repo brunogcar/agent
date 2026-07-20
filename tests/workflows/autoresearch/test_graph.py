@@ -2,6 +2,11 @@
 
 [v1.0] Graph topology + WORKFLOW_METADATA tests for the autoresearch workflow.
 
+[v1.3 tests] Merged the full-loop integration test that previously lived in
+test_loop_integration.py. The 7 per-node integration tests that were also
+in that file have been moved into the new test_nodes_*.py files
+(test_nodes_setup, test_nodes_propose, test_nodes_decide, test_nodes_run).
+
 Tests:
   test_graph_has_exactly_7_nodes          — setup, propose, modify, run_experiment,
                                             evaluate, decide, log
@@ -11,8 +16,13 @@ Tests:
   test_metadata_has_correct_name         — name == "autoresearch"
   test_build_graph_returns_stategraph    — build_autoresearch_graph returns a
                                             compiled graph with .invoke()
+  test_loop_runs_one_iteration_then_recurses — [merged] full-loop integration
+                                            test that verifies the 7-node call
+                                            order with all I/O mocked
 """
 from __future__ import annotations
+
+from unittest.mock import patch
 
 import pytest
 
@@ -190,3 +200,120 @@ class TestAutoresearchFacade:
         import workflows.autoresearch as facade
         assert "build_autoresearch_graph" in facade.__all__
         assert "WORKFLOW_METADATA" in facade.__all__
+
+
+class TestAutoresearchLoopIntegration:
+    """Full-loop integration tests (all 7 nodes mocked) — merged here from
+    the deleted test_loop_integration.py.
+
+    The per-node tests in test_nodes_*.py cover individual node behavior;
+    this test class verifies the actual graph WIRING — that the 7 nodes
+    are invoked in the correct order and the loop back-edge closes the
+    loop. Catches state-passing bugs that the topology tests can't.
+    """
+
+    def test_loop_runs_one_iteration_then_recurses(self, ar_state, tmp_path):
+        """The loop must execute setup → propose → modify → run_experiment →
+        evaluate → decide → log → propose (loop) in the correct order.
+
+        [v1.3 P0-1] Graph order changed from `evaluate → log → decide` to
+        `evaluate → decide → log` — `decide` now annotates `current_experiment`
+        BEFORE `log` reads it (was: log read pre-decide status, so the ledger
+        always said "discard").
+
+        We mock every node to return trivial state and let the loop hit
+        LangGraph's recursion_limit (set low) — that proves the loop is wired
+        correctly. The GraphRecursionError is the EXPECTED exit condition
+        (the loop is supposed to run indefinitely).
+        """
+        # Write a fake train.py so modify's atomic write succeeds
+        (tmp_path / "train.py").write_text("print('hello')\n", encoding="utf-8")
+
+        call_order = []
+
+        def _make_node(name, return_value):
+            def _node(state):
+                call_order.append(name)
+                return dict(return_value)
+            return _node
+
+        # IMPORTANT: patches must be active BEFORE build_autoresearch_graph()
+        # is called, because the graph captures references to the node functions
+        # at build time. Patching the module attribute after build doesn't
+        # affect what the graph invokes.
+        #
+        # We patch at the graph module level (workflows.autoresearch_impl.graph)
+        # because graph.py does `from .nodes.setup import node_setup` — that
+        # creates a binding in graph.py's namespace. Patching the original
+        # module (workflows.autoresearch_impl.nodes.setup.node_setup) does NOT
+        # affect the binding in graph.py.
+        with patch("workflows.autoresearch_impl.graph.node_setup",
+                   side_effect=_make_node("setup", {
+                       "status": "running",
+                       "experiment_count": 0,
+                       "current_best": 0.5,
+                       "baseline_metric": 0.5,
+                       "branch": "autoresearch/test",
+                       "results_path": ar_state["results_path"],
+                   })), \
+             patch("workflows.autoresearch_impl.graph.node_propose",
+                   side_effect=_make_node("propose", {
+                       "current_experiment": {
+                           "iteration": 1,
+                           "description": "test proposal",
+                           "new_content": "print('hello')\n",
+                       },
+                   })), \
+             patch("workflows.autoresearch_impl.graph.node_modify",
+                   side_effect=_make_node("modify", {"status": "running"})), \
+             patch("workflows.autoresearch_impl.graph.node_run_experiment",
+                   side_effect=_make_node("run_experiment", {
+                       "experiment_output": "val_bpb: 0.45\n",
+                   })), \
+             patch("workflows.autoresearch_impl.graph.node_evaluate",
+                   side_effect=_make_node("evaluate", {
+                       "current_metric": 0.45,
+                       "status": "running",
+                   })), \
+             patch("workflows.autoresearch_impl.graph.node_decide",
+                   side_effect=_make_node("decide", {
+                       "current_best": 0.45,
+                       "current_experiment": {
+                           "iteration": 1, "status": "keep", "commit": "abc1234",
+                           "metric": 0.45, "description": "test proposal",
+                       },
+                   })), \
+             patch("workflows.autoresearch_impl.graph.node_log",
+                   side_effect=_make_node("log", {
+                       "experiment_count": 1,
+                       "experiment_history": [{"iteration": 1, "status": "keep"}],
+                       "current_experiment": {},
+                   })):
+            # Build the graph INSIDE the patch context so the compiled graph
+            # captures the mocked node functions.
+            graph = build_autoresearch_graph()
+            # recursion_limit=12 → ~2 iterations (7 nodes per iter: setup+6)
+            with pytest.raises(Exception) as exc_info:
+                graph.invoke(ar_state, config={"recursion_limit": 12})
+            # The expected exception is GraphRecursionError
+            assert "Recursion" in type(exc_info.value).__name__ or \
+                   "recursion" in str(exc_info.value).lower(), (
+                f"expected GraphRecursionError, got {type(exc_info.value).__name__}: {exc_info.value}"
+            )
+
+        # Verify the call order: setup must come first, then propose → modify
+        # → run_experiment → evaluate → decide → log → propose (loop)
+        # [v1.3 P0-1] Order changed: was evaluate → log → decide; now evaluate → decide → log
+        assert call_order[0] == "setup", (
+            f"setup must be called first, got: {call_order[:5]}"
+        )
+        # The first iteration (after setup) must follow the expected order
+        post_setup = call_order[1:7]
+        assert post_setup == ["propose", "modify", "run_experiment",
+                              "evaluate", "decide", "log"], (
+            f"first iteration must follow the expected order, got: {post_setup}"
+        )
+        # The loop must come back to propose (now via log → propose edge)
+        assert "propose" in call_order[7:], (
+            f"loop must come back to propose after log, got: {call_order[7:]}"
+        )

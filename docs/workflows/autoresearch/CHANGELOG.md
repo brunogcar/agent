@@ -8,7 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
-| v1.3.0 | 2026-07-15 | **Hardening batch (5-reviewer collective audit).** P0-1: graph order swapped `evaluate → log → decide` → `evaluate → decide → log` — log was reading pre-decide status, so the ledger ALWAYS said "discard". P0-2: `GraphRecursionError` caught explicitly in dispatcher (was caught by generic `except Exception` → `status="failed"` + all state lost). P1-1: empty SHA (commit failed) → discard (was: `status="keep"` with empty commit). P1-2: `_call_planner` retries 3× with 2s/4s backoff (was: single attempt). P1-3: path traversal + protected-file guard in `node_modify`. P1-4: `_git_reset_hard` safety guard (refuses no-root / non-repo). P1-5: target-file content capped at `cfg.autocode_max_file_chars` (default 6000). P2-1: shared `run_target_subprocess` in helpers.py (was duplicated in setup + run_experiment). P2-2: forward ALL params (metric_name, metric_direction, time_budget, branch, results_path) through type handler + `_execute_workflow`. P2-3: `experiment_history` capped at 100 entries. P2-4: removed 4 dead conftest fixtures. P2-5: fake conditional edges (`route_after_evaluate` / `route_after_decide`) replaced with direct edges; both routers deleted. |
+| v1.3.0 | 2026-07-15 | **Hardening batch (5-reviewer collective audit).** P0-1: graph order swapped `evaluate → log → decide` → `evaluate → decide → log` (log was reading pre-decide status → ledger ALWAYS said "discard"). P0-2: `GraphRecursionError` caught explicitly (was: generic `except Exception` → `status="failed"` + state lost). P1-1: empty SHA → discard (was: `status="keep"` with empty commit). P1-2: `_call_planner` retries 3× with 2s/4s backoff. P1-3: path traversal + protected-file guard in `node_modify`. P1-4: `_git_reset_hard` safety guard (refuses no-root / non-repo). P1-5: target-file content capped at `cfg.autocode_max_file_chars` (6000). P2-1: shared `run_target_subprocess` in helpers.py (was duplicated). P2-2: forward ALL params (metric_name, metric_direction, time_budget, branch, results_path) through type handler. P2-3: `experiment_history` capped at 100. P2-4: removed 4 dead conftest fixtures. P2-5: fake conditional edges (`route_after_evaluate` / `route_after_decide`) replaced with direct edges; both routers deleted. |
 | v1.2.2 | 2026-07-14 | **Phase 4g review — subagent dispatch doc fixes + version sync.** P1-2: Removed incorrect `_call()` fallback claim (no fallback exists). P2-2: `WORKFLOW_METADATA["version"]` synced from `"1.2"` to `"1.2.2"`. P3-2: `propose.py` docstring updated for v1.1+ subagent dispatch. |
 | v1.2.1 | 2026-07-14 | **Bugfix batch.** P1-1: `route_after_setup` conditional edge — setup failure routes to END (was infinite loop). P1-2: Extracted `_extract_metric` to `helpers.py`. P2-1/P2-2/P2-3/P3-1: tracer tid, KEPT message direction, version sync, `git add` scoping. |
 | v1.2 | 2026-07-12 | **[Hardening] Propose node hardened.** `_PROPOSE_JSON_SCHEMA` enforcement added. Removed duplicate `history_str` from `context` param. |
@@ -23,11 +23,11 @@
 
 | Change | Impact | Migration |
 |--------|--------|-----------|
-| Graph order changed: `evaluate → log → decide` → `evaluate → decide → log` | `log` now reads `current_experiment.status` AFTER `decide` annotates it — ledger finally records the correct `keep`/`discard`. Pre-v1.3 ledgers always said "discard" for every experiment (silent bug). | Operators re-running overnight: ledger will now show mixed `keep`/`discard`. Pre-v1.3 ledgers should be re-checked against `git log autoresearch/{branch}` to find the true keeps. |
-| `route_after_evaluate` + `route_after_decide` deleted from `routes.py` | Both were unconditional single-destination "fake" conditionals. Replaced with direct `add_edge` calls. | Code that imported these symbols must remove the import (none found in the codebase — only `graph.py` imported them, and it's updated). |
-| `_run_experiment_subprocess` (setup.py) + `_run_subprocess` (run_experiment.py) deleted | Consolidated into `helpers.run_target_subprocess`. | Code that imported these private helpers must switch to the shared one (none found — they were private). |
-| Conftest fixtures `base_state`, `mock_subprocess`, `mock_git`, `tmp_project` removed | Dead code — defined but never used by any test. | None — they were unused. |
-| `node_log` no longer returns `status`/`error` reset | Reset moved to `node_decide` (which runs first in the new order). | Internal — no caller-facing impact. |
+| Graph order changed: `evaluate → log → decide` → `evaluate → decide → log` | `log` now reads `current_experiment.status` AFTER `decide` annotates it — ledger records correct `keep`/`discard`. Pre-v1.3 ledgers always said "discard" (silent bug). | Operators: ledger will now show mixed `keep`/`discard`. Pre-v1.3 ledgers should be re-checked against `git log autoresearch/{branch}`. |
+| `route_after_evaluate` + `route_after_decide` deleted from `routes.py` | Both were unconditional "fake" conditionals. Replaced with direct `add_edge` calls. | Code that imported these must remove the import (none found — only `graph.py` imported them). |
+| `_run_experiment_subprocess` (setup.py) + `_run_subprocess` (run_experiment.py) deleted | Consolidated into `helpers.run_target_subprocess`. | Code importing these private helpers must switch (none found — private). |
+| Conftest fixtures `base_state`, `mock_subprocess`, `mock_git`, `tmp_project` removed | Dead code — defined but never used. | None. |
+| `node_log` no longer returns `status`/`error` reset | Reset moved to `node_decide` (runs first in new order). | Internal — no caller-facing impact. |
 
 #### v1.1 — 2026-07-12
 
@@ -45,15 +45,28 @@
 
 ## 🔄 In Progress / Next Up
 
-| # | Feature | Notes | Priority |
-|---|---------|-------|----------|
-| 1 | **Parallel experiments** | Branch N proposals, run all N subprocesses in parallel, keep the best. Would multiply iteration throughput on multi-GPU boxes. | P2 |
-| 2 | **Multi-metric optimization** | Add `metric_name: list[str]` + a Pareto-front decide node. | P3 |
-| 3 | **Human-in-the-Loop (HiTL) checkpoints** | Pause the loop every N iterations for operator review. | P3 |
-| 4 | **Parallel subagent dispatch for proposals** | Single-subagent dispatch is done (v1.1). Replace with PARALLEL subagents (one per hypothesis family). | P3 |
-| 5 | **Cross-run learning** | Store procedural memory when a proposal type repeatedly fails. | P3 |
-| 6 | **Adaptive `time_budget`** | Detect if experiments consistently time out and either raise `time_budget` or surface a warning. | P3 |
-| 7 | **Integration tests for `_call_planner` retry (P1-2)** | The 3× retry loop is unit-tested implicitly via mock but not exercised by integration tests. | P3 |
+Items N1–N10 are from the post-v1.3 collective review; items 1–7 are from earlier roadmap planning. Higher priority (P2) items are scheduled for v1.4.
+
+| # | Feature | Priority | Notes |
+|---|---------|----------|-------|
+| N1 | **Reflect node between log and propose** | P2 | LLM looks at full history + adapts strategy before next proposal. |
+| N2 | **Stuck detector** | P2 | If last N experiments all discarded within ε, surface warning (doesn't auto-exit). |
+| N3 | **Resume support** | P2 | Accept `branch` from caller, skip baseline, reload `experiment_history` from `results.tsv`. |
+| N4 | **Cross-run learning** (merged with prior item 5) | P2 | Store procedural memory when a proposal type repeatedly fails. Persistent cache keyed by `{goal, target_file_hash, proposal_description_hash}`. |
+| N5 | **Experiment output logging** | P3 | Per-iteration `{results_path}.d/{iteration}.log` with full stdout+stderr (not just 50KB tail). |
+| N6 | **Cost/token tracking** | P3 | Per-iteration `tokens_in` / `tokens_out` / `cost_usd` in `experiment_history` entries. |
+| N7 | **Checkpoint on every keep** | P3 | Save checkpoint after every keep so resume picks up from last-known-good. |
+| N8 | **Experiment deduplication** | P3 | Hash check on `new_content` to skip duplicate proposals (semantic dedup deferred). |
+| N9 | **Sandbox experiment subprocess** | P3 | Restricted filesystem for untrusted experiment code. |
+| N10 | **Output truncation improvement** | P3 | Extract metric BEFORE truncation, or increase cap to 200KB. |
+| 1 | **Parallel experiments** | P2 | Branch N proposals, run all N subprocesses in parallel, keep the best. Multi-GPU throughput. |
+| 2 | **Multi-metric optimization** | P3 | `metric_name: list[str]` + a Pareto-front decide node. |
+| 3 | **Human-in-the-Loop (HiTL) checkpoints** | P3 | Pause the loop every N iterations for operator review. |
+| 4 | **Parallel subagent dispatch for proposals** | P3 | PARALLEL subagents (one per hypothesis family); single-subagent dispatch done in v1.1. |
+| 6 | **Adaptive `time_budget`** | P3 | Detect consistent timeouts → raise `time_budget` or surface a warning. |
+| 7 | **Integration tests for `_call_planner` retry (P1-2)** | P3 | The 3× retry loop is unit-tested via mock but not exercised by integration tests. |
+
+> Prior item 5 ("Cross-run learning", P3) merged into N4 above (promoted to P2 after the collective review).
 
 ---
 
@@ -71,4 +84,4 @@
 
 ---
 
-*Last updated: 2026-07-15 (v1.3.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-20 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
