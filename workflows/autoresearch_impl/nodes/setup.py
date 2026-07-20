@@ -11,6 +11,11 @@ against. If a proposed change makes the metric worse, we git-reset back to
 the baseline (or last-kept commit).
 
 Returns a PARTIAL state dict (LangGraph pattern — only changed keys).
+
+[v1.3 P2-1] `_run_experiment_subprocess` removed — replaced with the shared
+`workflows.autoresearch_impl.helpers.run_target_subprocess`. The two
+originals (in setup.py + run_experiment.py) had drifted in subtle ways;
+consolidating eliminates that drift.
 """
 from __future__ import annotations
 
@@ -23,53 +28,18 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
-from workflows.autoresearch_impl.helpers import extract_metric as _extract_metric_from_output
+from workflows.autoresearch_impl.helpers import (
+    extract_metric as _extract_metric_from_output,
+    run_target_subprocess as _run_experiment_subprocess,
+)
 
 # v1.2.1 (P1-2): _extract_metric_from_output now imported from helpers.py
+# v1.3 (P2-1): _run_experiment_subprocess now imported from helpers.py
 
 
 # Header for results.tsv. Tab-separated so it's easy to grep/awk/cut.
 # Columns: iteration, commit, metric, status, description
 _RESULTS_HEADER = "iteration\tcommit\tmetric\tstatus\tdescription\n"
-
-
-def _run_experiment_subprocess(
-    target_file: str,
-    project_root: str,
-    time_budget: int,
-) -> str:
-    """Run the target file as a subprocess and capture stdout+stderr.
-
-    Time-boxed: if the run exceeds `time_budget` seconds, the subprocess is
-    killed and a sentinel error message is returned. The captured output
-    (partial, if killed) is returned so the evaluate node can still attempt
-    metric extraction.
-
-    Args:
-        target_file: File to execute (e.g. "train.py").
-        project_root: Working directory for the subprocess.
-        time_budget: Max wall-clock seconds before SIGTERM.
-
-    Returns:
-        Combined stdout+stderr as a string.
-    """
-    cmd = [sys.executable, target_file]
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=time_budget,
-            cwd=project_root or None,
-        )
-        out = (result.stdout or "") + (result.stderr or "")
-        return out
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or "") + (e.stderr or "") if isinstance(e.stdout, str) else ""
-        return out + f"\n[autoresearch] experiment timed out after {time_budget}s\n"
-    except Exception as e:
-        return f"[autoresearch] experiment failed to start: {e}\n"
-
 
 
 def _git_create_branch(branch: str, project_root: str, tid: str) -> bool:
@@ -136,6 +106,8 @@ def node_setup(state: AutoresearchState) -> dict:
 
     # 3. Baseline experiment — run the target_file as-is
     tracer.step(tid, "setup", f"running baseline experiment: {target_file}")
+    # v1.3 (P2-1): Use the shared helper — was a local _run_experiment_subprocess
+    # with slightly different exception handling.
     baseline_output = _run_experiment_subprocess(target_file, project_root, time_budget)
     baseline_metric = _extract_metric_from_output(baseline_output, metric_name)
     if baseline_metric is None:

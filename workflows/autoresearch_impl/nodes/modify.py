@@ -10,6 +10,16 @@ experiment.
 
 Returns a PARTIAL state dict with the new file content (for the trace log)
 and a status flag indicating whether the modify succeeded.
+
+[v1.3 P1-3] Path traversal guard — `target_file` must resolve to a path
+inside `project_root`. Was: a malicious or hallucinating LLM could propose
+`target_file="../../../etc/passwd"` and the node would happily write to it.
+Now blocked with a clear error.
+
+[v1.3 P1-3] Protected file check — `target_file` is checked against
+`cfg.is_protected()` (the same list used by the `file` tool). Was: autoresearch
+could modify protected files (e.g. `.env`, `pyproject.toml`, agent source)
+without any guardrail. Now blocked with a clear error.
 """
 from __future__ import annotations
 
@@ -73,6 +83,30 @@ def node_modify(state: AutoresearchState) -> dict:
         }
 
     target_path = Path(project_root) / target_file if project_root else Path(target_file)
+
+    # [v1.3 P1-3] Path traversal guard — target_file must be within project_root.
+    # A malicious or hallucinating LLM could propose target_file="../../etc/passwd"
+    # and we'd happily write to it. Block with a clear error.
+    if project_root:
+        try:
+            target_path.resolve().relative_to(Path(project_root).resolve())
+        except ValueError:
+            tracer.error(tid, "modify", f"path traversal blocked: {target_file}")
+            return {
+                "status": "failed",
+                "error": f"path traversal blocked: {target_file}",
+            }
+
+    # [v1.3 P1-3] Protected file check — same list used by the `file` tool.
+    # Autoresearch should NOT modify .env, pyproject.toml, agent source, etc.
+    from core.config import cfg
+    if cfg.is_protected(target_path):
+        tracer.error(tid, "modify", f"protected file: {target_file}")
+        return {
+            "status": "failed",
+            "error": f"protected file: {target_file}",
+        }
+
     tracer.step(
         tid, "modify",
         f"writing {len(new_content)} chars to {target_file} (proposal: {description[:60]})",

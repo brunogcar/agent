@@ -190,9 +190,25 @@ def _execute_workflow(
         # experiment-driven optimization loop. target_file is the script the
         # workflow will modify + run repeatedly; project_root is the git repo
         # where the experiment branch is created.
+        #
+        # [v1.3 P2-2] Forward ALL autoresearch params — was only target_file +
+        # project_root. Callers passing metric_name, metric_direction,
+        # time_budget, branch, or results_path previously had them silently
+        # dropped — the workflow ran with cfg defaults instead of the
+        # caller-supplied values.
         run_kwargs["target_file"] = kwargs.get("target_file", "")
         if kwargs.get("project_root"):
             run_kwargs["project_root"] = kwargs["project_root"]
+        if kwargs.get("metric_name"):
+            run_kwargs["metric_name"] = kwargs["metric_name"]
+        if kwargs.get("metric_direction"):
+            run_kwargs["metric_direction"] = kwargs["metric_direction"]
+        if kwargs.get("time_budget"):
+            run_kwargs["time_budget"] = kwargs["time_budget"]
+        if kwargs.get("branch"):
+            run_kwargs["branch"] = kwargs["branch"]
+        if kwargs.get("results_path"):
+            run_kwargs["results_path"] = kwargs["results_path"]
 
     # research + deep_research: no extra kwargs (just goal + trace_id).
 

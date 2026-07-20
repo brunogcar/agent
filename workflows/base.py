@@ -444,8 +444,12 @@ def run_workflow(
 
         elif wf_type == "autoresearch":
             # [v1.0] Autonomous experiment-driven optimization.
-            # Evolutionary loop: propose -> modify -> run -> evaluate -> decide ->
-            # log -> propose (repeat). Runs indefinitely until human interrupt.
+            # Evolutionary loop: propose -> modify -> run -> evaluate ->
+            # decide -> log -> propose (repeat). Runs indefinitely until
+            # human interrupt.
+            #
+            # [v1.3 P0-1] Loop order changed from evaluate → log → decide
+            # to evaluate → decide → log. See graph.py docstring.
             #
             # The default LangGraph recursion_limit (25) is too low for an
             # overnight autoresearch run (each iteration is ~6 node calls).
@@ -472,10 +476,42 @@ def run_workflow(
             # Default to 1000 iterations (~6000 node calls) — enough for an
             # overnight run. Callers wanting more should invoke the graph
             # directly with their own recursion_limit.
-            return graph.invoke(
-                ar_state,
-                config={"recursion_limit": 1000},
-            )
+            #
+            # [v1.3 P0-2] GraphRecursionError is the EXPECTED exit for the
+            # autoresearch loop (it's an evolutionary infinite loop — the
+            # recursion_limit is the only safety cap). Was: caught by the
+            # generic `except Exception` in run_workflow, returning
+            # {"status": "failed"} — discarding all accumulated state
+            # (experiment_count, current_best, experiment_history). Now
+            # caught explicitly here and returned as {"status": "success"}
+            # with the trace_id; operators inspect results.tsv for the
+            # experiment count + best metric.
+            try:
+                return graph.invoke(
+                    ar_state,
+                    config={"recursion_limit": 1000},
+                )
+            except Exception as e:
+                # String-match to avoid a hard dependency on
+                # langgraph.errors.GraphRecursionError (import path varies
+                # across langgraph versions).
+                if "Recursion" in type(e).__name__ or "recursion" in str(e).lower():
+                    tracer.step(
+                        trace_id, "dispatch",
+                        "Recursion limit reached (expected for autoresearch) — "
+                        "see results.tsv for experiment count + best metric",
+                    )
+                    return {
+                        "status": "success",
+                        "result": (
+                            "Recursion limit reached — check results.tsv for "
+                            "experiment count and best metric"
+                        ),
+                        "trace_id": trace_id,
+                        "experiment_count": ar_state.get("experiment_count", 0),
+                        "current_best": ar_state.get("current_best", 0.0),
+                    }
+                raise
 
         else:
             tracer.error(trace_id, "dispatch", f"Unknown workflow type: {wf_type!r}")

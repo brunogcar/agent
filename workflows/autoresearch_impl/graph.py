@@ -4,6 +4,18 @@
 
     setup → propose → modify → run_experiment → evaluate → decide → log → propose (loop)
 
+[v1.3 P0-1] Graph order swapped from `evaluate → log → decide` to
+`evaluate → decide → log`. The OLD order was broken: `log` read
+`proposal.get("status")` BEFORE `decide` set it → the ledger ALWAYS said
+"discard" (even for keeps). The NEW order lets `decide` annotate
+`current_experiment` with `status` + `commit` first, then `log` writes
+the annotated dict to the ledger.
+
+[v1.3 P2-5] `route_after_evaluate` and `route_after_decide` (both
+unconditional single-destination "fake" conditionals) have been replaced
+with direct `add_edge(...)` calls. Only `route_after_setup` remains
+conditional (it has real branching: success → propose, failure → END).
+
 The experiment loop runs indefinitely until a human interrupts the process.
 LangGraph's recursion_limit caps the number of iterations per invocation —
 callers should set a high limit (or use invoke_with_recursion_limit) when
@@ -25,11 +37,7 @@ from workflows.autoresearch_impl.nodes.run_experiment import node_run_experiment
 from workflows.autoresearch_impl.nodes.evaluate import node_evaluate
 from workflows.autoresearch_impl.nodes.decide import node_decide
 from workflows.autoresearch_impl.nodes.log import node_log
-from workflows.autoresearch_impl.routes import (
-    route_after_setup,
-    route_after_evaluate,
-    route_after_decide,
-)
+from workflows.autoresearch_impl.routes import route_after_setup
 
 
 # [WORKFLOW_METADATA] Structured metadata for MCP client introspection.
@@ -38,7 +46,7 @@ from workflows.autoresearch_impl.routes import (
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.2.2",  # [v1.2.2] subagent fallback doc fix + propose docstring + version sync
+    "version": "1.3.0",  # [v1.3] graph reorder (P0-1) + direct edges (P2-5) + hardening
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
@@ -95,34 +103,43 @@ WORKFLOW_METADATA = {
             "tool": "git",
             "description": (
                 "Compare current_metric vs current_best; if improved → git "
-                "commit (keep), else → git reset --hard (discard)"
+                "commit (keep) + annotate current_experiment, else → git "
+                "reset --hard (discard). Resets status to 'running' so the "
+                "next iteration starts clean (v1.3 P0-1)."
             ),
         },
         {
             "name": "log",
             "type": "logic",
             "description": (
-                "Append result row to results.tsv (tab-separated: iteration, "
-                "commit, metric, status, description) and update "
-                "experiment_history"
+                "Append the annotated experiment (post-decide) to results.tsv "
+                "(tab-separated: iteration, commit, metric, status, description) "
+                "and update experiment_history. Reads current_experiment.status "
+                "+ commit set by decide (v1.3 P0-1 — was reading pre-decide "
+                "values, so ledger always said 'discard')."
             ),
         },
     ],
     "edges": [
-        {"from": "setup", "to": "propose"},
+        {
+            "from": "setup",
+            "to": "propose",
+            "condition": "route_after_setup: success → propose, failure → END",
+        },
         {"from": "propose", "to": "modify"},
         {"from": "modify", "to": "run_experiment"},
         {"from": "run_experiment", "to": "evaluate"},
+        # [v1.3 P0-1 + P2-5] Direct edge — was a fake conditional (route_after_evaluate).
+        # Order changed from evaluate → log → decide to evaluate → decide → log
+        # so that decide can annotate current_experiment BEFORE log reads it.
+        {"from": "evaluate", "to": "decide"},
+        {"from": "decide", "to": "log"},
+        # [v1.3 P0-1 + P2-5] Direct loop edge — was a fake conditional (route_after_decide
+        # returning "propose"). Now log → propose closes the loop.
         {
-            "from": "evaluate",
-            "to": "log",
-            "condition": "route_after_evaluate: always log (complete ledger)",
-        },
-        {"from": "log", "to": "decide"},
-        {
-            "from": "decide",
+            "from": "log",
             "to": "propose",
-            "condition": "route_after_decide: always loop (runs until human interrupt)",
+            "condition": "always loop (runs until human interrupt or recursion_limit)",
             "type": "loop",
         },
     ],
@@ -131,7 +148,7 @@ WORKFLOW_METADATA = {
             "name": "experiment_loop",
             "nodes": [
                 "propose", "modify", "run_experiment",
-                "evaluate", "log", "decide",
+                "evaluate", "decide", "log",
             ],
             "exit_condition": "human interrupt",
             "max_iterations": "unlimited (runs until stopped)",
@@ -144,6 +161,9 @@ WORKFLOW_METADATA = {
         "time_budget",         # each experiment run is time-boxed
         "atomic_writes",       # modify node uses tempfile + os.replace
         "git_reset_on_discard",  # worse experiments rolled back to HEAD
+        "path_traversal_guard",  # [v1.3 P1-3] modify node blocks ../ escapes
+        "protected_file_guard",  # [v1.3 P1-3] modify node blocks cfg.protected list
+        "git_reset_safety",       # [v1.3 P1-4] _git_reset_hard refuses no-root / non-repo
     ],
 }
 
@@ -152,8 +172,17 @@ def build_autoresearch_graph():
     """Build and compile the autoresearch workflow graph.
 
     Returns a compiled LangGraph that can be .invoke()'d with an
-    AutoresearchState dict. The compiled graph includes a conditional edge
-    from decide → propose that creates the infinite experiment loop.
+    AutoresearchState dict.
+
+    [v1.3 P0-1] Graph order is `evaluate → decide → log → propose`.
+    The OLD order (`evaluate → log → decide`) was broken — `log` read
+    `current_experiment.status` BEFORE `decide` annotated it, so the
+    ledger ALWAYS recorded "discard" (even for keeps). `decide` now
+    annotates first, then `log` writes the correct status.
+
+    [v1.3 P2-5] `route_after_evaluate` and `route_after_decide` (both
+    unconditional single-destination "fake" conditionals) replaced with
+    direct edges. Only `route_after_setup` is conditional (real branching).
 
     Callers should pass a high recursion_limit when invoking, e.g.:
 
@@ -187,23 +216,21 @@ def build_autoresearch_graph():
     g.add_edge("modify", "run_experiment")
     g.add_edge("run_experiment", "evaluate")
 
-    # After evaluate: always go to log (we log every experiment, even failures)
-    g.add_conditional_edges(
-        "evaluate",
-        route_after_evaluate,
-        {"log": "log"},
-    )
+    # [v1.3 P0-1 + P2-5] evaluate → decide (was: evaluate → log).
+    # Was a fake conditional (route_after_evaluate always returned "log").
+    # Now a direct edge; decide annotates current_experiment before log reads it.
+    g.add_edge("evaluate", "decide")
 
-    # log → decide (decide reads current_metric + current_best and either
-    # commits or resets)
-    g.add_edge("log", "decide")
+    # [v1.3 P0-1 + P2-5] decide → log (was: log → decide).
+    # Was a fake conditional (route_after_decide always returned "propose").
+    # Now a direct edge; decide runs first to annotate current_experiment
+    # with {status, commit}, then log writes the annotated dict to the ledger.
+    g.add_edge("decide", "log")
 
-    # After decide: always loop back to propose (infinite loop until human
-    # interrupt). This is the core of the autoresearch workflow.
-    g.add_conditional_edges(
-        "decide",
-        route_after_decide,
-        {"propose": "propose"},
-    )
+    # [v1.3 P0-1 + P2-5] log → propose (the infinite loop back-edge).
+    # Was: log → decide → propose. Now log → propose (since decide runs
+    # BEFORE log). Loop runs indefinitely until human interrupt or
+    # LangGraph's recursion_limit is hit (GraphRecursionError).
+    g.add_edge("log", "propose")
 
     return g.compile()

@@ -10,6 +10,19 @@ experiment_history entry's `status` field is set to "keep" or "discard".
 
 Returns a PARTIAL state dict with `current_best` (updated if kept) and
 `current_experiment` (annotated with `status` and `commit`).
+
+[v1.3 P0-1] This node now runs BEFORE `log` (was: AFTER). It annotates
+`current_experiment` with `status` + `commit` + `metric` so `log` can
+write the CORRECT status to the ledger. Also takes over the
+`status="running"` + `error=""` reset (was: done by `log`).
+
+[v1.3 P1-1] Treat empty SHA (git commit failed) as discard — don't update
+`current_best`. Was: set `status="keep"` with empty commit, which made the
+ledger record an ambiguous "keep with no SHA".
+
+[v1.3 P1-4] `_git_reset_hard` safety guard — refuses to reset without an
+explicit `project_root` or when `project_root` isn't a git repo. Prevents
+accidentally resetting the agent's own working tree.
 """
 from __future__ import annotations
 
@@ -49,7 +62,7 @@ def _git_commit(message: str, project_root: str, tid: str, target_file: str = ""
     v1.2.1 (P3-1): git add <target_file> instead of git add -A (was staging
     ALL files — could commit unexpected artifacts from the experiment subprocess).
 
-    Returns "" if the commit failed (caller treats as discard).
+    Returns "" if the commit failed (caller treats as discard — v1.3 P1-1).
     """
     try:
         # v1.2.1 (P3-1): Stage only the target_file, not all changes.
@@ -90,7 +103,23 @@ def _git_reset_hard(project_root: str, tid: str) -> bool:
     Used when an experiment made the metric worse (or failed to parse) — we
     want to restore the working tree to the last-known-good state so the
     next experiment starts from a clean baseline.
+
+    [v1.3 P1-4] Safety guard — refuse to reset without an explicit
+    `project_root` or when `project_root` isn't a git repo. Prevents
+    accidentally resetting the agent's own working tree (or a parent
+    directory that happens to be a repo) when state is misconfigured.
     """
+    # [v1.3 P1-4] Safety guard — refuse to reset without explicit project_root
+    if not project_root:
+        tracer.warning(tid, "decide", "git reset skipped — no project_root specified")
+        return False
+    # [v1.3 P1-4] Verify .git exists — don't reset in a non-repo directory
+    if not (Path(project_root) / ".git").exists():
+        tracer.warning(
+            tid, "decide",
+            f"git reset skipped — {project_root} is not a git repo",
+        )
+        return False
     try:
         subprocess.run(
             ["git", "reset", "--hard", "HEAD"],
@@ -114,8 +143,15 @@ def node_decide(state: AutoresearchState) -> dict:
     """Keep (commit) or discard (reset) the current experiment.
 
     Returns a partial state dict with:
-      current_best     — updated if the experiment was kept
-      current_experiment — annotated with {status, commit}
+      current_best      — updated if the experiment was kept
+      current_experiment — annotated with {status, commit, metric}
+      status            — reset to "running" (v1.3 P0-1: was log's job)
+      error             — cleared (v1.3 P0-1: was log's job)
+
+    The status reset is the loop's recovery point — without it, the next
+    iteration's `node_run_experiment` would skip the run (thinking a prior
+    node failed). This reset moved from `log` to `decide` in v1.3 P0-1
+    because `decide` now runs BEFORE `log`.
     """
     tid = state.get("trace_id", "")
     project_root = state.get("project_root", "")
@@ -138,6 +174,9 @@ def node_decide(state: AutoresearchState) -> dict:
         return {
             "current_experiment": proposal,
             "current_best": current_best,
+            # [v1.3 P0-1] status reset moved here from log.py
+            "status": "running",
+            "error": "",
         }
 
     improved = _is_improvement(current_metric, current_best, direction)
@@ -154,6 +193,9 @@ def node_decide(state: AutoresearchState) -> dict:
         return {
             "current_experiment": proposal,
             "current_best": current_best,
+            # [v1.3 P0-1] status reset moved here from log.py
+            "status": "running",
+            "error": "",
         }
 
     # Improvement — commit and update current_best
@@ -162,6 +204,27 @@ def node_decide(state: AutoresearchState) -> dict:
         f"{metric_name}: {current_metric} (was {current_best}, direction={direction})"
     )
     sha = _git_commit(commit_msg, project_root, tid, state.get("target_file", ""))
+    # [v1.3 P1-1] Treat empty SHA (commit failed) as discard — don't update
+    # current_best. Was: set status="keep" with empty commit, which made the
+    # ledger record an ambiguous "keep with no SHA".
+    if not sha:
+        tracer.warning(
+            tid, "decide",
+            f"iter {iteration}: commit failed — discarding despite improvement "
+            f"({metric_name}={current_metric} vs best={current_best})",
+        )
+        _git_reset_hard(project_root, tid)
+        proposal["status"] = "discard"
+        proposal["commit"] = ""
+        proposal["metric"] = current_metric
+        return {
+            "current_experiment": proposal,
+            "current_best": current_best,
+            # [v1.3 P0-1] status reset moved here from log.py
+            "status": "running",
+            "error": "",
+        }
+
     tracer.step(
         tid, "decide",
         f"iter {iteration}: KEPT {sha} "
@@ -173,4 +236,7 @@ def node_decide(state: AutoresearchState) -> dict:
     return {
         "current_experiment": proposal,
         "current_best": current_metric,
+        # [v1.3 P0-1] status reset moved here from log.py
+        "status": "running",
+        "error": "",
     }

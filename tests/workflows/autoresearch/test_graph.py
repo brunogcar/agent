@@ -148,15 +148,21 @@ class TestAutoresearchMetadata:
         assert "time_budget" in safety, "time_budget safety feature missing"
 
     def test_metadata_edges_include_loop_edge(self):
-        """WORKFLOW_METADATA['edges'] must include the decide → propose loop edge."""
+        """WORKFLOW_METADATA['edges'] must include the log → propose loop edge.
+
+        [v1.3 P0-1] The loop back-edge moved from `decide → propose` to
+        `log → propose` (graph order changed from evaluate → log → decide
+        to evaluate → decide → log). The loop edge is now the one that
+        closes the loop after log records the experiment outcome.
+        """
         edges = WORKFLOW_METADATA["edges"]
-        # Find the loop edge (decide → propose)
-        loop_edges = [e for e in edges if e.get("from") == "decide" and e.get("to") == "propose"]
+        # Find the loop edge (log → propose) — was decide → propose pre-v1.3
+        loop_edges = [e for e in edges if e.get("from") == "log" and e.get("to") == "propose"]
         assert len(loop_edges) == 1, (
-            f"expected exactly 1 decide → propose edge (the loop), got {len(loop_edges)}"
+            f"expected exactly 1 log → propose edge (the loop), got {len(loop_edges)}"
         )
         assert loop_edges[0].get("type") == "loop", (
-            f"decide → propose edge must be type='loop', got: {loop_edges[0]}"
+            f"log → propose edge must be type='loop', got: {loop_edges[0]}"
         )
 
 

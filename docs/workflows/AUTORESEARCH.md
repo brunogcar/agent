@@ -8,15 +8,16 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch) �
 
 **Key characteristics:**
 - **Evolutionary, not convergent** — Unlike `autocode` (one task, one convergent debug loop), autoresearch tries many approaches and keeps only the winners.
-- **Indefinite loop** — `decide → propose` is an unconditional back-edge; the loop exits only when a human stops the process (or LangGraph's `recursion_limit` is hit).
+- **Indefinite loop** — `log → propose` is an unconditional back-edge (v1.3 P0-1: was `decide → propose`); the loop exits only when a human stops the process (or LangGraph's `recursion_limit` is hit, which the dispatcher catches as a `success` — v1.3 P0-2).
 - **Metric-driven** — Every iteration is judged by a single numeric metric extracted from the experiment output (e.g. `val_bpb`, `accuracy`, `loss`).
-- **7-node LangGraph StateGraph** — `setup → propose → modify → run_experiment → evaluate → log → decide → propose (loop)`
+- **7-node LangGraph StateGraph** — `setup → propose → modify → run_experiment → evaluate → decide → log → propose (loop)` (v1.3 P0-1: was `evaluate → log → decide` — the OLD order made the ledger ALWAYS say "discard" because `log` read pre-decide state)
 - **Git-based keep/discard** — Improvements are committed; failures are `git reset --hard HEAD` + `git clean -fd` so the next iteration starts from a clean baseline.
 - **Results ledger** — Every experiment (keep *or* discard) is appended to `results.tsv` so operators can `tail -f` while the loop runs.
 - **Atomic writes** — `modify` uses `tempfile.mkstemp` + `os.fsync` + `os.replace`; the target file is never in a half-written state if the process is killed mid-write.
 - **Time-boxed experiments** — Each run is killed via `subprocess.run(timeout=...)` after `autoresearch_time_budget` seconds.
-- **Subagent dispatch for proposals** — `propose` node calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch (v1.1; was `autocode_impl.helpers._call()`). Subagent gets only experiment history + target file content — no session history (superpowers pattern: "you construct exactly what they need"). On subagent failure, the iteration halts with `status="failed"` (no `_call()` fallback — v1.2.2 doc fix: earlier docs incorrectly claimed a fallback existed).
+- **Subagent dispatch for proposals** — `propose` node calls `agent(action="subagent", role="planner")` for isolated curated-context LLM dispatch (v1.1+; NOT `autocode_impl.helpers._call()` — that was the v1.0 implementation, removed in v1.1). Subagent gets only experiment history + target file content — no session history (superpowers pattern: "you construct exactly what they need"). 3× retry with 2s/4s backoff (v1.3 P1-2). On subagent failure (after all 3 attempts), the iteration halts with `status="failed"` (no `_call()` fallback — v1.2.2 doc fix: earlier docs incorrectly claimed a fallback existed).
 - **JSON extraction** — Uses `core.json_extract.extract_json()` for proposal parsing.
+- **[v1.3] Hardening** — Path traversal + protected-file guards in `modify` (P1-3); `_git_reset_hard` safety guard refuses no-root / non-repo (P1-4); empty commit SHA treated as discard (P1-1); target file content capped at `cfg.autocode_max_file_chars` (P1-5); `experiment_history` capped at 100 (P2-3); shared `run_target_subprocess` in `helpers.py` (P2-1); all params forwarded through type handler (P2-2).
 
 ---
 
@@ -110,4 +111,4 @@ All four knobs have sane defaults; you can override any of them per-invocation b
 
 ---
 
-*Last updated: 2026-07-14 (v1.2.2 — Phase 4g review: removed incorrect `_call()` fallback claim from v1.1 docs; propose docstring updated; v1.2.1 routing + helpers fixes; v1.1 subagent dispatch). See [AR1 worklog](../../../../worklog.md) for implementation details.*
+*Last updated: 2026-07-15 (v1.3.0 — hardening batch: graph reorder P0-1, GraphRecursionError catch P0-2, commit-failed-as-discard P1-1, subagent retry P1-2, path/protected guards P1-3, git reset safety P1-4, file size cap P1-5, helpers dedup P2-1, kwarg forwarding P2-2, history cap P2-3, dead fixture removal P2-4, fake-conditional removal P2-5). See [AR1 worklog](../../../../worklog.md) for implementation details.*

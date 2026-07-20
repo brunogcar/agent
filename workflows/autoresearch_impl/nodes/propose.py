@@ -20,10 +20,22 @@ The subagent returns a JSON object describing the proposed change:
 Removed duplicate `history_str` from `context` param (was in both `user` and
 `context` — wasted tokens).
 
-On subagent failure, `_call_planner` raises `RuntimeError`; `node_propose`
-catches it and returns `status="failed"`. There is NO `_call()` fallback —
-a subagent failure halts the current iteration (v1.2.2 doc fix: earlier docs
-incorrectly claimed a fallback existed).
+[v1.3 P1-2] `_call_planner` now retries the subagent call up to 3×
+(1 initial + 2 retries) with exponential backoff (2s, 4s). Was: single
+attempt → any transient subagent failure (network blip, rate limit) halted
+the iteration. The retry uses string-matching on the exception type so we
+don't need a hard dependency on langgraph.errors.GraphRecursionError.
+
+[v1.3 P1-5] `node_propose` caps `current_content` at
+`cfg.autocode_max_file_chars` (default 6000) before sending to the LLM.
+Was: a 50KB target_file would burn ~12K tokens per iteration just for
+context, blowing the context window on long files.
+
+On subagent failure (after all retries), `_call_planner` raises
+`RuntimeError`; `node_propose` catches it and returns `status="failed"`.
+There is NO `_call()` fallback — a subagent failure halts the current
+iteration (v1.2.2 doc fix: earlier docs incorrectly claimed a fallback
+existed).
 
 The propose node only produces the proposal — modify.py applies it. This
 separation lets us retry modify without re-querying the LLM if the patch
@@ -118,20 +130,38 @@ def _call_planner(system: str, user: str, tid: str = "") -> str:
 
     [v1.2] Hardening: added json_schema enforcement. Removed context param
     (was duplicating history_str already in user — Kimi B2 finding).
+
+    [v1.3 P1-2] Added 3× retry with exponential backoff (2s, 4s).
+    Transient subagent failures (network blips, rate limits, provider 5xx)
+    used to halt the iteration immediately. Now we retry up to 2 times
+    before giving up and raising RuntimeError. Raises only after all 3
+    attempts fail.
     """
     import json as _json
     from tools.agent import agent
-    result = agent(
-        action="subagent",
-        role="planner",
-        task=user,
-        system=system,
-        json_schema=_json.dumps(_PROPOSE_JSON_SCHEMA),  # [Hardening] enforce schema
-        trace_id=tid,
-    )
-    if result.get("status") == "success":
-        return result.get("response", "")
-    raise RuntimeError(f"Subagent planner failed: {result.get('error', 'unknown')}")
+
+    last_error = None
+    for attempt in range(3):  # 1 initial + 2 retries
+        try:
+            result = agent(
+                action="subagent",
+                role="planner",
+                task=user,
+                system=system,
+                json_schema=_json.dumps(_PROPOSE_JSON_SCHEMA),
+                trace_id=tid,
+            )
+            if result.get("status") == "success":
+                return result.get("response", "")
+            last_error = result.get("error", "unknown")
+        except Exception as e:
+            last_error = str(e)
+        # Brief backoff before retry (2s, 4s) — only between attempts, not after the last.
+        if attempt < 2:
+            import time as _time
+            _time.sleep(2 ** (attempt + 1))
+
+    raise RuntimeError(f"Subagent planner failed after 3 attempts: {last_error}")
 
 
 def _parse_proposal(raw: str) -> dict:
@@ -174,6 +204,26 @@ def node_propose(state: AutoresearchState) -> dict:
     tracer.step(tid, "propose", f"iteration {iteration}: querying planner")
 
     current_content = _read_target_file(target_file, project_root)
+    # [v1.3 P1-5] Cap target file content to prevent context window overflow.
+    # Was: a 50KB target_file would burn ~12K tokens per iteration just for
+    # context, blowing the context window on long files. Cap to first/last
+    # half of cfg.autocode_max_file_chars (default 6000) so the LLM sees
+    # both the imports/structure (top) and the recent changes (bottom).
+    max_chars = getattr(cfg, "autocode_max_file_chars", 6000)
+    if len(current_content) > max_chars:
+        half = max_chars // 2
+        original_len = len(current_content)
+        current_content = (
+            current_content[:half]
+            + f"\n... [TRUNCATED — file is {original_len} chars, showing first {half} + last {half}] ...\n"
+            + current_content[-half:]
+        )
+        tracer.warning(
+            tid, "propose",
+            f"target file truncated from {original_len} to {max_chars} chars "
+            f"(autocode_max_file_chars)",
+        )
+
     history_str = _format_history(history, metric_name)
 
     user = (

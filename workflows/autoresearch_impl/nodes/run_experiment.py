@@ -8,6 +8,12 @@ budget is exceeded, the subprocess is killed and a sentinel message is
 appended to the output so the evaluate node can detect the timeout.
 
 Returns a PARTIAL state dict with `experiment_output` and a status flag.
+
+[v1.3 P2-1] `_run_subprocess` removed — replaced with the shared
+`workflows.autoresearch_impl.helpers.run_target_subprocess`. The two
+originals (in setup.py + run_experiment.py) had drifted in subtle ways
+(one caught FileNotFoundError, the other didn't); consolidating eliminates
+that drift.
 """
 from __future__ import annotations
 
@@ -17,41 +23,9 @@ import sys
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
+from workflows.autoresearch_impl.helpers import run_target_subprocess as _run_subprocess
 
-
-def _run_subprocess(target_file: str, project_root: str, time_budget: int) -> str:
-    """Run target_file as `python <target_file>` in project_root.
-
-    Time-boxed via subprocess.run(timeout=...). On timeout, the partial
-    output captured so far is returned with a sentinel appended so the
-    evaluate node can detect the timeout condition.
-
-    Returns combined stdout+stderr as a string.
-    """
-    cmd = [sys.executable, target_file]
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=time_budget,
-            cwd=project_root or None,
-        )
-        return (result.stdout or "") + (result.stderr or "")
-    except subprocess.TimeoutExpired as e:
-        # TimeoutExpired.stdout/stderr may be bytes or str depending on the
-        # `text=` flag — we set text=True so they're strings (or None).
-        out = ""
-        if isinstance(e.stdout, str):
-            out += e.stdout or ""
-        if isinstance(e.stderr, str):
-            out += e.stderr or ""
-        out += f"\n[autoresearch] experiment timed out after {time_budget}s\n"
-        return out
-    except FileNotFoundError as e:
-        return f"[autoresearch] target_file not found: {e}\n"
-    except Exception as e:
-        return f"[autoresearch] experiment crashed: {type(e).__name__}: {e}\n"
+# v1.3 (P2-1): _run_subprocess now imported from helpers.py (was a local copy).
 
 
 def node_run_experiment(state: AutoresearchState) -> dict:

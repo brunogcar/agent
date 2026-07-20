@@ -35,7 +35,12 @@ class TestAutoresearchLoop:
 
     def test_loop_runs_one_iteration_then_recurses(self, ar_state, tmp_path):
         """The loop must execute setup → propose → modify → run_experiment →
-        evaluate → log → decide → propose (loop) in the correct order.
+        evaluate → decide → log → propose (loop) in the correct order.
+
+        [v1.3 P0-1] Graph order changed from `evaluate → log → decide` to
+        `evaluate → decide → log` — `decide` now annotates `current_experiment`
+        BEFORE `log` reads it (was: log read pre-decide status, so the ledger
+        always said "discard").
 
         We mock every node to return trivial state and let the loop hit
         LangGraph's recursion_limit (set low) — that proves the loop is wired
@@ -118,19 +123,20 @@ class TestAutoresearchLoop:
             )
 
         # Verify the call order: setup must come first, then propose → modify
-        # → run_experiment → evaluate → log → decide → propose (loop)
+        # → run_experiment → evaluate → decide → log → propose (loop)
+        # [v1.3 P0-1] Order changed: was evaluate → log → decide; now evaluate → decide → log
         assert call_order[0] == "setup", (
             f"setup must be called first, got: {call_order[:5]}"
         )
         # The first iteration (after setup) must follow the expected order
         post_setup = call_order[1:7]
         assert post_setup == ["propose", "modify", "run_experiment",
-                              "evaluate", "log", "decide"], (
+                              "evaluate", "decide", "log"], (
             f"first iteration must follow the expected order, got: {post_setup}"
         )
-        # The loop must come back to propose
+        # The loop must come back to propose (now via log → propose edge)
         assert "propose" in call_order[7:], (
-            f"loop must come back to propose after decide, got: {call_order[7:]}"
+            f"loop must come back to propose after log, got: {call_order[7:]}"
         )
 
     def test_decide_discard_does_not_update_current_best(self, ar_state, tmp_path):
