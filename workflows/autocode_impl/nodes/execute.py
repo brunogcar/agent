@@ -78,7 +78,6 @@ def node_execute_step(state: AutocodeState) -> dict:
             pass  # modified_files_list stays empty
 
     tracer.step(tid, "execute_step", "Code generated and written")
-    updates["execution_notes"] = f"Executed step: {current_step.get('description', '')}"
     # [v2.2] RMW: write to plan sub-state for current_step (sub-state only in v3.0)
     current_plan = dict(state.get("plan_state", {}))
     current_plan["current_step"] = current_step_idx + 1

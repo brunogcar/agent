@@ -90,7 +90,7 @@ def is_cancellation_requested() -> bool:
 # Set by set_graph_start_time() (called from invoke_with_timeout at the
 # start of each workflow run) and read by _remaining_timeout() to cap
 # subprocess timeouts so they don't exceed the graph's remaining budget.
-_graph_start_time: float = 0.0
+_graph_local = _threading.local()  # [v3.9 Bug A] per-thread start time (was module global)
 
 
 def set_graph_start_time() -> None:
@@ -106,8 +106,7 @@ def set_graph_start_time() -> None:
     the subprocess timeout at the remaining graph budget bounds that
     linger to <=1s.
     """
-    global _graph_start_time
-    _graph_start_time = _time.time()
+    _graph_local.start_time = _time.time()  # [v3.9 Bug A] per-thread (was module global)
 
 
 def _remaining_timeout(default_timeout: int) -> int:
@@ -123,9 +122,10 @@ def _remaining_timeout(default_timeout: int) -> int:
     deadline by more than 1s.
     """
     from core.config import cfg
-    if _graph_start_time == 0.0:
+    start = getattr(_graph_local, 'start_time', 0.0)
+    if start == 0.0:
         return default_timeout
-    elapsed = _time.time() - _graph_start_time
+    elapsed = _time.time() - start
     remaining = cfg.autocode_graph_timeout - elapsed
     if remaining <= 0:
         return 1  # expired — minimal timeout, post-check will bail
@@ -242,7 +242,7 @@ def _blast_radius_warning(project_root: str, files: list[str], tid: str) -> str:
             callers.extend([c for c in deps if c not in files])
         if not callers:
             return ""
-        unique = list(set(callers))[:5]
+        unique = sorted(set(callers))[:5]  # [v3.9 Bug F] deterministic order
         return f"\n\n⚠️ BLAST RADIUS WARNING: The files you are modifying are also used by: {', '.join(unique)}. Ensure your fix does not break these callers."
     except Exception as e:
         tracer.warning(tid, "blast_radius", f"Query failed: {e}")

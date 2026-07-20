@@ -16,7 +16,7 @@ Single source of truth for the v3.0 sub-state architecture. 8 TypedDicts, 8 acce
 | `tdd` | `TDDState` | `debug.py`, `summarize_context.py`, `run_tests.py`, `execute.py`, `swarm_fallback.py` | `debug.py`, `llm_review.py`, `verify_decision.py`, `persist_artifacts.py`, `summarize_context.py` | `iteration`, `source_code`, `error`, `status`, `max_retries`, `last_test_error`, `tests_written`, `debug_history`, `debug_summary` |
 | `files_state` | `FilesState` | `apply_patches.py`, `write_new_files.py`, `persist_artifacts.py`, `brainstorm.py`, `execute.py` | `analyze_impact.py`, `brainstorm.py`, `debug.py`, `memory.py`, `plan.py`, `report.py`, `run_lint.py`, `validate.py`, `write_new_files.py` | `files_map`, `modified_files` |
 | `impact` | `ImpactState` | `analyze_impact.py`, `audit_scan.py` | `run_tests.py`, `audit_report.py` | `warnings`, `targeted_test_cmd`, `failed`, `audit_scan` |
-| `debug` | `DebugState` | `debug.py`, `swarm_fallback.py` | `commit.py`, `create_pr.py`, `memory.py`, `persist_artifacts.py` | `notes`, `root_cause`, `defense_notes`, `swarm_verdict`, `subagent_verdict`, `parallel_verdicts` |
+| `debug` | `DebugState` | `debug.py`, `swarm_fallback.py` | `commit.py`, `create_pr.py`, `memory.py`, `persist_artifacts.py` | `notes`, `root_cause`, `defense_notes`, `swarm_verdict`, `subagent_verdict`, `parallel_verdicts (list[dict]: `{hypothesis_id, hypothesis_root_cause, hypothesis_confidence, phase, root_cause, defense_notes, fix}`)` |
 | `verify` | `VerifyState` | `verify_decision.py` | `commit.py`, `create_pr.py`, `merge_pr.py`, `push.py`, `report.py` | `notes`, `report`, `passed` |
 | `vcs` | `VCSState` | `commit.py`, `branch.py`, `plan.py`, `push.py`, `create_pr.py`, `merge_pr.py` | `commit.py`, `create_pr.py`, `push.py`, `branch.py`, `report.py`, `debug.py`, `merge_pr.py` | `commit_sha`, `branch`, `pushed`, `pr_number`, `pr_url` |
 | `memory` | `MemoryState` | `memory.py` | (internal only) | `notes` |
@@ -115,4 +115,4 @@ For the complete flat-field tables (core + ephemeral), see [API.md](API.md) § S
 
 ---
 
-*Last updated: 2026-07-19 (v3.8). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.9).*

@@ -17,7 +17,6 @@ class TestNodeExecuteStep:
             result = node_execute_step(base_state)
             # [v3.0] tdd_source_code lives ONLY in the tdd sub-state now.
             assert result["tdd"]["source_code"] == "def helper(): pass"
-            assert "execution_notes" in result
 
     def test_empty_plan_returns_error(self):
         from workflows.autocode_impl.nodes.execute import node_execute_step

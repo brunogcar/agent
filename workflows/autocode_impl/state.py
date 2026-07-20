@@ -12,7 +12,6 @@ safe since v2.7). This module now:
   * Simplifies the 8 accessor functions to read sub-state ONLY (no
     legacy fallback).
   * Keeps the ephemeral flat fields (test_results, test_code,
-    execution_notes, etc.) which are not part of any sub-state.
 
 Nodes that previously returned flat-field mirrors alongside the
 sub-state now return sub-state ONLY — callers must use accessors.
@@ -153,7 +152,6 @@ class AutocodeState(TypedDict, total=False):
     any sub-state: task/files/mode (core), task_type/project_root
     (classification), test_code/test_results/_pytest_output/tests_passed
     (ephemeral test), lint_output/lint_passed/llm_review_data (ephemeral
-    verify), execution_notes (ephemeral), skill_path/skill_created
     (skill), status/error/result/messages (status),
     patch_errors/evidence_outputs/memory_context (ephemeral).
 
@@ -201,7 +199,6 @@ class AutocodeState(TypedDict, total=False):
     llm_review_data: dict
 
     # Ephemeral execution (stays flat — written by execute + others)
-    execution_notes: str  # written by node_execute_step
     # [v1.4 P2] error_log removed — never written by any node (was always "").
 
     # Skill (stays flat — set by create_skill path)
@@ -307,7 +304,6 @@ def _default_state(
     fields — the legacy flat-field mirrors that _default_state used to
     write alongside the sub-states have been removed. The remaining flat
     fields are core/ephemeral (task, files, mode, test_code, test_results,
-    execution_notes, status, etc.) which are not part of any sub-state.
 
     Accessors (_get_tdd, _get_vcs, etc.) read sub-state ONLY — there is
     no legacy fallback. Tests + nodes must use accessors for sub-state
@@ -385,7 +381,6 @@ def _default_state(
         "lint_output": "",
         "lint_passed": None,
         "llm_review_data": {},
-        "execution_notes": "",
         "error_log": "",
         "skill_path": "",
         "skill_created": False,

@@ -47,7 +47,7 @@ Editing rules for the autocode subsystem. NEVER DO and ALWAYS DO are 1-line each
 37. Never wire `node_summarize_context` as a wrapper or skip it — fully-wired active node; skipping causes unbounded `debug_history`.
 38. Never call `helpers._write_files()` — DELETED in v2.0; use split nodes.
 39. Never hand-roll what the stdlib ships — check rung 3 of the Lazy Dev ladder first.
-40. Never enable more than ONE of `AUTOCODE_SWARM_DEBUG` / `AUTOCODE_PARALLEL_SUBAGENT_DEBUG` / `AUTOCODE_SUBAGENT_DEBUG` — mutually exclusive.
+40. Never enable more than ONE of `AUTOCODE_SWARM_DEBUG` / `AUTOCODE_PARALLEL_SUBAGENT_DEBUG` / `AUTOCODE_SUBAGENT_DEBUG` — mutually exclusive. Priority order if multiple are set: swarm → parallel subagent → single subagent → single-LLM.
 41. Never write flat-field mirrors in node returns — write sub-state only via RMW (`{"files_state": current_files}` not `{"modified_files": [...]}`).
 42. Never assume `input_files` exists in `files_state` — removed in v3.0; readers use core `files` flat field directly.
 43. Never skip the `ruff --select E999` pre-check in `node_run_pytest` (v3.1 #41) — non-fatal if ruff missing.
@@ -155,4 +155,4 @@ Patterns that have bitten production. Each entry: bad pattern + why + fix. NOT d
 
 ---
 
-*Last updated: 2026-07-19 (v3.8). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.9).*

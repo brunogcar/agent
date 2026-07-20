@@ -13,7 +13,7 @@ called build_graph() + workflow.compile()).
 from __future__ import annotations
 import threading
 from langgraph.graph import END, StateGraph
-from workflows.autocode_impl.state import AutocodeState, _get_tdd  # [v3.1 #48] _get_tdd for swarm_fallback routing
+from workflows.autocode_impl.state import AutocodeState  # [v3.9 Bug G] removed dead _get_tdd import
 # [v1.2 #36] Module-level imports so test patches like
 # `patch("workflows.autocode_impl.graph.request_cancellation")` resolve.
 from workflows.autocode_impl.helpers import request_cancellation, clear_cancellation

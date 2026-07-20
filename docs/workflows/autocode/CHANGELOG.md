@@ -10,6 +10,7 @@ Version history (newest first), completed roadmap items (1-line each), open road
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v3.9** | 2026-07-19 | **Minimax follow-up review — 6 fixes.** (Bug A) `_graph_start_time` module global → `threading.local()` — concurrent workflows no longer race on the start time. (Bug C) `parallel_verdicts` schema documented in SUBSTATE.md. (Bug E) Removed dead `execution_notes` field from state + execute.py. (Bug F) `sorted(set(callers))[:5]` for deterministic blast-radius ordering. (Bug G) Removed dead `_get_tdd` import from graph.py. (Doc) Documented debug chain priority order in INSTRUCTIONS.md. |
 | **v3.8** | 2026-07-19 | **#57 — Per-node test coverage.** 4 new test files covering 14 previously-untested nodes (`test_nodes_pre_tdd.py` — 12 tests, `test_nodes_verify.py` — 16 tests, `test_nodes_publish.py` — 17 tests, `test_nodes_write.py` — 17 tests). 2 merges (`test_call_trace_id.py` → `test_helpers.py`, `test_swarm_fallback_fixes.py` → `test_swarm_integration.py`). Total: 186 → 248 tests (+62 new, 0 net from merges). |
 | **v3.7** | 2026-07-19 | **F7 — Lazy Dev full audit mode.** `task_type="audit"` routes to a dedicated read-only pipeline bypassing TDD. Two new nodes: `node_audit_scan` (walks `project_root`, enumerates `.py` files, finds dead code via AST importer analysis, missing type hints, lazily queries kgraph for dependency maps) → `node_audit_report` (planner LLM with `AUDIT_REPORT_SYSTEM` produces structured report). `route_after_classify` routes `audit` → `node_audit_scan` (was: → `node_validate_input`). Graph: 30 → 32 nodes. New `AUDIT_REPORT_SYSTEM` prompt in `constants.py`. New `audit_scan: dict` field in `ImpactState`. 9 new tests in `test_audit_mode.py`. |
 | **v3.6** | 2026-07-19 | **#35 — incremental zombie fix (cancellation-aware subprocess calls).** `run_pytest.py`, `run_lint.py`, `run_tests.py` wrap every `subprocess.run(...)` with: pre-check `is_cancellation_requested()`, deadline-aware timeout via `_remaining_timeout(default)`, post-check `is_cancellation_requested()`. New helpers in `helpers.py`: `set_graph_start_time()`, `_remaining_timeout(default)`, `_cancelled()`. Bounds daemon-thread zombie linger to ≤1s past the graph deadline. Full process-level termination still deferred (see roadmap § 35). New tests in `test_cancellation_aware.py`. |
@@ -152,4 +153,4 @@ Version history (newest first), completed roadmap items (1-line each), open road
 
 ---
 
-*Last updated: 2026-07-19 (v3.8). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-19 (v3.9 — minimax follow-up).*

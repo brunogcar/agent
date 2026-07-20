@@ -10,13 +10,16 @@ class TestRemainingTimeout:
 
     def test_returns_default_when_no_start_time(self):
         from workflows.autocode_impl.helpers import _remaining_timeout
-        # _graph_start_time is 0.0 in tests (not set)
+        # _graph_local is 0.0 in tests (not set)
         assert _remaining_timeout(30) == 30
 
     def test_caps_at_remaining_time(self):
-        from workflows.autocode_impl.helpers import _remaining_timeout, _graph_start_time
+        from workflows.autocode_impl.helpers import _remaining_timeout, _graph_local
         import time as _time
-        with patch("workflows.autocode_impl.helpers._graph_start_time", _time.time() - 290):
+        # [v3.9 Bug A] _graph_local is now threading.local — patch with an object that has .start_time
+        _mock_local = MagicMock()
+        _mock_local.start_time = _time.time() - 290  # 290s ago
+        with patch("workflows.autocode_impl.helpers._graph_local", _mock_local):
             with patch("core.config.cfg") as mock_cfg:
                 mock_cfg.autocode_graph_timeout = 300
                 result = _remaining_timeout(30)
@@ -24,9 +27,11 @@ class TestRemainingTimeout:
                 assert result <= 11  # allow 1s slack
 
     def test_returns_1_when_expired(self):
-        from workflows.autocode_impl.helpers import _remaining_timeout
+        from workflows.autocode_impl.helpers import _remaining_timeout, _graph_local
         import time as _time
-        with patch("workflows.autocode_impl.helpers._graph_start_time", _time.time() - 500):
+        _mock_local = MagicMock()
+        _mock_local.start_time = _time.time() - 500  # expired
+        with patch("workflows.autocode_impl.helpers._graph_local", _mock_local):
             with patch("core.config.cfg") as mock_cfg:
                 mock_cfg.autocode_graph_timeout = 300
                 assert _remaining_timeout(30) == 1
