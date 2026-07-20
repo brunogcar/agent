@@ -31,6 +31,11 @@ Env vars read:
         AUTORESEARCH_METRIC_NAME       — default "val_bpb"
         AUTORESEARCH_METRIC_DIRECTION  — default "lower"
 
+    Autoresearch v1.4 loop control:
+        AUTORESEARCH_MAX_ITERATIONS        — default 0 (0=unlimited)
+        AUTORESEARCH_CONVERGENCE_WINDOW    — default 10 (N consecutive non-improvements → stop)
+        AUTORESEARCH_CONVERGENCE_EPSILON   — default 0.001 (metric plateau threshold)
+
     Autocode v1.3: GitHub + Swarm integration flags (all default OFF):
         AUTOCODE_PULL_BEFORE_BRANCH, AUTOCODE_PUSH_ON_COMMIT,
         AUTOCODE_OPEN_PR, AUTOCODE_AUTO_MERGE, AUTOCODE_DEBUG_COMMENT_PR,
@@ -99,6 +104,11 @@ def _init_execution(cfg) -> None:
     cfg.autoresearch_target_file = os.getenv("AUTORESEARCH_TARGET_FILE", "train.py")
     cfg.autoresearch_metric_name = os.getenv("AUTORESEARCH_METRIC_NAME", "val_bpb")
     cfg.autoresearch_metric_direction = os.getenv("AUTORESEARCH_METRIC_DIRECTION", "lower")
+    # [v1.4] Loop-control flags — stop the experiment loop automatically.
+    # max_iterations=0 (default) = unlimited (legacy v1.3 behavior).
+    cfg.autoresearch_max_iterations = int(os.getenv("AUTORESEARCH_MAX_ITERATIONS", "0"))  # 0=unlimited
+    cfg.autoresearch_convergence_window = int(os.getenv("AUTORESEARCH_CONVERGENCE_WINDOW", "10"))  # stop after N consecutive non-improvements
+    cfg.autoresearch_convergence_epsilon = float(os.getenv("AUTORESEARCH_CONVERGENCE_EPSILON", "0.001"))  # metric plateau threshold
 
     # -- Autocode v1.3: GitHub + Swarm integration flags -------------------
     # All default OFF — autocode behaves exactly as v1.2 unless explicitly opted in.

@@ -62,8 +62,14 @@ class AutoresearchState(WorkflowState, total=False):
     baseline_metric: float     # metric from the unmodified target_file
     current_best: float        # best metric seen so far
 
+    # -- [v1.4] Loop control --
+    max_iterations: int         # [v1.4] 0=unlimited; stop after N experiments
+    convergence_window: int     # [v1.4] stop after N consecutive non-improvements
+    convergence_epsilon: float  # [v1.4] metric plateau threshold
+
     # -- Per-iteration state --
-    # Each entry: {iteration, description, metric, status, commit}
+    # Each entry: {iteration, description, metric, status, commit, content_hash}
+    # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
     experiment_history: list[dict]
     current_experiment: dict   # the proposed experiment being run
     experiment_output: str     # stdout/stderr from the last experiment run
@@ -86,6 +92,9 @@ def _default_state(
     time_budget: Optional[int] = None,
     branch: str = "",
     results_path: str = "",
+    max_iterations: int = 0,
+    convergence_window: int = 10,
+    convergence_epsilon: float = 0.001,
 ) -> dict:
     """Create a default state dictionary for the autoresearch workflow.
 
@@ -103,6 +112,9 @@ def _default_state(
         time_budget: Per-experiment wall-clock budget in seconds.
         branch: Git branch for experiment commits.
         results_path: Path to results.tsv ledger.
+        max_iterations: [v1.4] Stop after N experiments. 0=unlimited (legacy).
+        convergence_window: [v1.4] Stop after N consecutive non-improvements.
+        convergence_epsilon: [v1.4] Metric plateau threshold (stuck detector).
 
     Returns:
         A dict suitable as LangGraph initial state.
@@ -118,6 +130,14 @@ def _default_state(
     if not project_root:
         project_root = str(getattr(cfg, "workspace_root", ""))
 
+    # [v1.4] Pull loop-control defaults from cfg (env-overridable).
+    if max_iterations == 0:
+        max_iterations = int(getattr(cfg, "autoresearch_max_iterations", 0))
+    if convergence_window == 10:
+        convergence_window = int(getattr(cfg, "autoresearch_convergence_window", 10))
+    if convergence_epsilon == 0.001:
+        convergence_epsilon = float(getattr(cfg, "autoresearch_convergence_epsilon", 0.001))
+
     return {
         "workflow": "autoresearch",
         "goal": goal,
@@ -132,6 +152,9 @@ def _default_state(
         "experiment_count": 0,
         "baseline_metric": 0.0,
         "current_best": 0.0,
+        "max_iterations": max_iterations,
+        "convergence_window": convergence_window,
+        "convergence_epsilon": convergence_epsilon,
         "experiment_history": [],
         "current_experiment": {},
         "experiment_output": "",

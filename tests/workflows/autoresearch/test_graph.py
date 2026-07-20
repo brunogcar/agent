@@ -164,6 +164,12 @@ class TestAutoresearchMetadata:
         `log → propose` (graph order changed from evaluate → log → decide
         to evaluate → decide → log). The loop edge is now the one that
         closes the loop after log records the experiment outcome.
+
+        [v1.4] The loop edge is now CONDITIONAL (was a direct edge in v1.3).
+        `route_after_log` checks 3 stopping conditions (max_iterations /
+        convergence / stuck) before looping back to propose. All default
+        OFF — v1.4 preserves v1.3's "loop forever" behavior unless a
+        caller opts in.
         """
         edges = WORKFLOW_METADATA["edges"]
         # Find the loop edge (log → propose) — was decide → propose pre-v1.3
@@ -173,6 +179,13 @@ class TestAutoresearchMetadata:
         )
         assert loop_edges[0].get("type") == "loop", (
             f"log → propose edge must be type='loop', got: {loop_edges[0]}"
+        )
+        # [v1.4] The loop edge must declare a non-trivial condition now that
+        # it's a conditional edge (route_after_log checks stopping conditions).
+        condition = loop_edges[0].get("condition", "")
+        assert "route_after_log" in condition, (
+            f"log → propose edge condition must reference route_after_log, "
+            f"got: {condition!r}"
         )
 
 
@@ -221,10 +234,18 @@ class TestAutoresearchLoopIntegration:
         BEFORE `log` reads it (was: log read pre-decide status, so the ledger
         always said "discard").
 
+        [v1.4] The log → propose back-edge is now CONDITIONAL (was a direct
+        edge in v1.3). `route_after_log` checks max_iterations + convergence
+        + stuck before looping back. With the default ar_state fixture
+        (max_iterations=0, convergence_window=10, history shorter than
+        window), all 3 conditions are OFF — the loop continues to propose
+        exactly as in v1.3.
+
         We mock every node to return trivial state and let the loop hit
         LangGraph's recursion_limit (set low) — that proves the loop is wired
         correctly. The GraphRecursionError is the EXPECTED exit condition
-        (the loop is supposed to run indefinitely).
+        (the loop is supposed to run indefinitely when no stopping condition
+        is met).
         """
         # Write a fake train.py so modify's atomic write succeeds
         (tmp_path / "train.py").write_text("print('hello')\n", encoding="utf-8")

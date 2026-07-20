@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.4 | 2026-07-20 | **Loop control + dedup.** `max_iterations` param (caller-set hard cap; 0=unlimited). `route_after_log` conditional edge replaces the v1.3 direct `log → propose` edge — checks 3 stopping conditions: (1) max_iterations reached, (2) convergence: last N all discarded, (3) stuck: last N metrics all within ε of current_best. All default OFF → v1.4 preserves v1.3 "loop forever" behavior unless caller opts in. Experiment deduplication (N8): `node_modify` md5-hashes `new_content` and skips duplicates from `experiment_history`; `content_hash` stored on each history entry by `node_log`. 3 new env vars: `AUTORESEARCH_MAX_ITERATIONS`, `AUTORESEARCH_CONVERGENCE_WINDOW`, `AUTORESEARCH_CONVERGENCE_EPSILON`. |
 | v1.3.0 | 2026-07-15 | **Hardening batch (5-reviewer collective audit).** P0-1: graph order swapped `evaluate → log → decide` → `evaluate → decide → log` (log was reading pre-decide status → ledger ALWAYS said "discard"). P0-2: `GraphRecursionError` caught explicitly (was: generic `except Exception` → `status="failed"` + state lost). P1-1: empty SHA → discard (was: `status="keep"` with empty commit). P1-2: `_call_planner` retries 3× with 2s/4s backoff. P1-3: path traversal + protected-file guard in `node_modify`. P1-4: `_git_reset_hard` safety guard (refuses no-root / non-repo). P1-5: target-file content capped at `cfg.autocode_max_file_chars` (6000). P2-1: shared `run_target_subprocess` in helpers.py (was duplicated). P2-2: forward ALL params (metric_name, metric_direction, time_budget, branch, results_path) through type handler. P2-3: `experiment_history` capped at 100. P2-4: removed 4 dead conftest fixtures. P2-5: fake conditional edges (`route_after_evaluate` / `route_after_decide`) replaced with direct edges; both routers deleted. |
 | v1.2.2 | 2026-07-14 | **Phase 4g review — subagent dispatch doc fixes + version sync.** P1-2: Removed incorrect `_call()` fallback claim (no fallback exists). P2-2: `WORKFLOW_METADATA["version"]` synced from `"1.2"` to `"1.2.2"`. P3-2: `propose.py` docstring updated for v1.1+ subagent dispatch. |
 | v1.2.1 | 2026-07-14 | **Bugfix batch.** P1-1: `route_after_setup` conditional edge — setup failure routes to END (was infinite loop). P1-2: Extracted `_extract_metric` to `helpers.py`. P2-1/P2-2/P2-3/P3-1: tracer tid, KEPT message direction, version sync, `git add` scoping. |
@@ -18,6 +19,14 @@
 ---
 
 ### ⚠️ Breaking Changes
+
+#### v1.4 — 2026-07-20
+
+| Change | Impact | Migration |
+|--------|--------|------------|
+| `log → propose` back-edge changed from direct edge to conditional edge (`route_after_log`) | The loop now checks stopping conditions (max_iterations / convergence / stuck) after each `node_log`. All 3 default OFF → v1.3 "loop forever" behavior preserved unless caller opts in. | Callers wanting the v1.3 indefinite-loop behavior: do nothing (defaults). Callers wanting auto-stop: pass `max_iterations=N` or set `AUTORESEARCH_MAX_ITERATIONS=N` env var. |
+| `experiment_history` entries now include `content_hash` field | History entries gained a new key (md5 of `new_content`). No existing key removed. | None — additive change. Code reading history by key keeps working. |
+| `node_modify` now md5-hashes `new_content` and skips duplicates | A proposal whose `new_content` matches a prior experiment's hash now returns `status="failed"` with a "duplicate" error (was: re-wrote the same content + re-ran the experiment). | None — duplicates were wasted iterations pre-v1.4. |
 
 #### v1.3 — 2026-07-15
 
@@ -50,13 +59,13 @@ Items N1–N10 are from the post-v1.3 collective review; items 1–7 are from ea
 | # | Feature | Priority | Notes |
 |---|---------|----------|-------|
 | N1 | **Reflect node between log and propose** | P2 | LLM looks at full history + adapts strategy before next proposal. |
-| N2 | **Stuck detector** | P2 | If last N experiments all discarded within ε, surface warning (doesn't auto-exit). |
+| N2 | ~~**Stuck detector**~~ | ~~P2~~ | ✅ **Done in v1.4** — `route_after_log` checks metric plateau (last N within ε of best). |
 | N3 | **Resume support** | P2 | Accept `branch` from caller, skip baseline, reload `experiment_history` from `results.tsv`. |
 | N4 | **Cross-run learning** (merged with prior item 5) | P2 | Store procedural memory when a proposal type repeatedly fails. Persistent cache keyed by `{goal, target_file_hash, proposal_description_hash}`. |
 | N5 | **Experiment output logging** | P3 | Per-iteration `{results_path}.d/{iteration}.log` with full stdout+stderr (not just 50KB tail). |
 | N6 | **Cost/token tracking** | P3 | Per-iteration `tokens_in` / `tokens_out` / `cost_usd` in `experiment_history` entries. |
 | N7 | **Checkpoint on every keep** | P3 | Save checkpoint after every keep so resume picks up from last-known-good. |
-| N8 | **Experiment deduplication** | P3 | Hash check on `new_content` to skip duplicate proposals (semantic dedup deferred). |
+| N8 | ~~**Experiment deduplication**~~ | ~~P3~~ | ✅ **Done in v1.4** — `node_modify` md5-hashes `new_content`; duplicates skipped with `status="failed"`. Semantic dedup still deferred (N4). |
 | N9 | **Sandbox experiment subprocess** | P3 | Restricted filesystem for untrusted experiment code. |
 | N10 | **Output truncation improvement** | P3 | Extract metric BEFORE truncation, or increase cap to 200KB. |
 | 1 | **Parallel experiments** | P2 | Branch N proposals, run all N subprocesses in parallel, keep the best. Multi-GPU throughput. |
@@ -77,11 +86,11 @@ Items N1–N10 are from the post-v1.3 collective review; items 1–7 are from ea
 | 1 | **Remove the indefinite loop** | The whole point — the loop runs until a human is satisfied. | Skip |
 | 2 | **Skip the ledger** | `results.tsv` is the human audit trail; operators `tail -f` it. | Skip |
 | 3 | **Modify `target_file` outside `node_modify`** | Atomic-write invariant — every modification goes through `tempfile + os.replace`. | Skip |
-| 4 | **Auto-stop on convergence** | No clean convergence signal (unlike `deep_research` cosine similarity). Human judgment required. | Skip |
+| 4 | **Auto-stop on convergence** | ✅ **Done in v1.4** — `route_after_log` checks last-N-discarded (convergence) AND last-N-within-ε (stuck). Was deferred as "no clean convergence signal"; v1.4 adds an OPT-IN detector (all defaults OFF → legacy behavior preserved). | ✅ Done |
 | 5 | **Use the `git` tool for `decide`** | Adds tracing + compression noise. `subprocess.run` direct git calls are deliberately chosen. | Skip |
 | 6 | **Multi-file modifications** | `target_file` is a single file (matches karpathy/autoresearch scope). | P3 future |
 | 7 | **Non-Python target files** | `run_experiment` runs `python <target_file>`. Other runtimes would need a `runner` config field. | P3 future |
 
 ---
 
-*Last updated: 2026-07-20 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-20 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

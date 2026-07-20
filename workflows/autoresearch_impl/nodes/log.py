@@ -24,6 +24,11 @@ status, it would clobber decide's reset and break the contract.
 
 [v1.3 P2-3] `experiment_history` is capped at 100 entries (most recent)
 to prevent state bloat on long overnight runs.
+
+[v1.4 N8] Each history entry now includes `content_hash` (md5 of the
+proposal's `new_content`, set by `node_modify`) so `node_modify` can dedup
+future proposals against it. Ledger row format is unchanged (hash lives
+only in the in-memory history — operators don't need it in `results.tsv`).
 """
 from __future__ import annotations
 
@@ -92,6 +97,7 @@ def node_log(state: AutoresearchState) -> dict:
         "metric": metric,
         "status": status,
         "commit": commit,
+        "content_hash": proposal.get("content_hash", ""),  # [v1.4 N8] for dedup
     }
     history = list(state.get("experiment_history", []) or [])
     history.append(history_entry)

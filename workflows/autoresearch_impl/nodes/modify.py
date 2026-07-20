@@ -20,9 +20,18 @@ Now blocked with a clear error.
 `cfg.is_protected()` (the same list used by the `file` tool). Was: autoresearch
 could modify protected files (e.g. `.env`, `pyproject.toml`, agent source)
 without any guardrail. Now blocked with a clear error.
+
+[v1.4 N8] Experiment deduplication — `new_content` is md5-hashed BEFORE the
+write. If the hash matches any previous experiment's `content_hash` in
+`experiment_history`, the write is skipped and `status="failed"` is returned
+with a "duplicate" error. Prevents the LLM from re-proposing the exact same
+change (which the loop would otherwise re-run + re-evaluate pointlessly).
+The hash is stored on `current_experiment.content_hash` so `node_log` can
+persist it in `experiment_history` for future dedup checks.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -73,6 +82,32 @@ def node_modify(state: AutoresearchState) -> dict:
     proposal = state.get("current_experiment", {}) or {}
 
     new_content = proposal.get("new_content", "")
+
+    # [v1.4 N8] Deduplication — skip if this exact content was already tried.
+    # md5 is fast and we only need exact-content dedup (semantic dedup is N4,
+    # deferred). The hash is stored on the proposal for `node_log` to persist
+    # in `experiment_history` so future iterations can dedup against it.
+    content_hash = hashlib.md5(new_content.encode("utf-8")).hexdigest()
+    history = state.get("experiment_history", []) or []
+    for h in history:
+        if h.get("content_hash") == content_hash:
+            tracer.warning(
+                tid, "modify",
+                f"duplicate experiment (hash={content_hash[:8]}) — skipping",
+            )
+            return {
+                "status": "failed",
+                "error": (
+                    f"duplicate experiment — same content as iteration "
+                    f"{h.get('iteration', '?')}"
+                ),
+            }
+
+    # Store the hash on the proposal so node_log persists it in history.
+    # Mutates the dict in-place — same pattern as node_decide annotating
+    # status/commit/metric on the proposal (see INSTRUCTIONS.md #16).
+    proposal["content_hash"] = content_hash
+
     description = proposal.get("description", "")
 
     if not new_content:

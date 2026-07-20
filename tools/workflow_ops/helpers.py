@@ -209,6 +209,10 @@ def _execute_workflow(
             run_kwargs["branch"] = kwargs["branch"]
         if kwargs.get("results_path"):
             run_kwargs["results_path"] = kwargs["results_path"]
+        # [v1.4] Forward max_iterations (0 = unlimited). Type handler pulls
+        # from cfg.autoresearch_max_iterations if caller didn't pass it.
+        if kwargs.get("max_iterations"):
+            run_kwargs["max_iterations"] = kwargs["max_iterations"]
 
     # research + deep_research: no extra kwargs (just goal + trace_id).
 

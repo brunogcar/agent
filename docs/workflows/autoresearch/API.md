@@ -23,6 +23,7 @@ result = run_workflow(
     time_budget=300,                     # forwarded (v1.3 P2-2)
     branch="autoresearch/my-run",        # forwarded (v1.3 P2-2)
     results_path="/path/to/results.tsv", # forwarded (v1.3 P2-2)
+    max_iterations=20,                   # [v1.4] stop after 20 experiments (0=unlimited)
     trace_id="autoresearch_001",         # auto-created if empty
 )
 ```
@@ -38,11 +39,12 @@ result = run_workflow(
 | `time_budget` | `int` | `cfg.autoresearch_time_budget` (`300`) | Per-experiment wall-clock seconds. |
 | `branch` | `str` | `"autoresearch/{YYYYMMDD-HHMMSS}"` | Git branch for experiment commits. Setup creates it or reuses if it exists. |
 | `results_path` | `str` | `"{project_root}/results.tsv"` | Path to the results ledger. Setup writes the header if the file doesn't exist. |
+| `max_iterations` | `int` | `0` (unlimited) | **[v1.4]** Hard cap on experiments. `0` = unlimited (legacy v1.3 behavior). Also settable via `AUTORESEARCH_MAX_ITERATIONS` env var. |
 | `trace_id` | `str` | (auto-created) | Trace correlation ID. |
 
-**Dispatcher behavior:** Initializes state via `_default_state()`, merges in caller kwargs (caller wins), invokes the graph with `config={"recursion_limit": 1000}`. **[v1.3 P0-2]** `GraphRecursionError` is caught explicitly and returned as `{"status": "success"}` (was: caught by generic `except Exception` → `status="failed"`, state lost).
+**Dispatcher behavior:** Initializes state via `_default_state()`, merges in caller kwargs (caller wins), invokes the graph with `config={"recursion_limit": 1000}`. **[v1.3 P0-2]** `GraphRecursionError` is caught explicitly and returned as `{"status": "success"}` (was: caught by generic `except Exception` → `status="failed"`, state lost). **[v1.4]** If `max_iterations > 0`, the loop stops at N experiments via `route_after_log` (before recursion_limit is hit).
 
-**Graph order:** `setup → propose → modify → run_experiment → evaluate → decide → log → propose (loop)` (v1.3 P0-1; was `evaluate → log → decide`). With `recursion_limit=1000`, dispatcher caps at ~166 experiments per invocation. See [ARCHITECTURE.md](ARCHITECTURE.md) for the mermaid diagram + module tree.
+**Graph order:** `setup → propose → modify → run_experiment → evaluate → decide → log → propose (loop)` (v1.3 P0-1; was `evaluate → log → decide`). The `log → propose` back-edge is **conditional** (v1.4 — was a direct edge in v1.3): `route_after_log` checks `max_iterations` + convergence + stuck before looping. All 3 stopping conditions default OFF → v1.4 preserves v1.3 "loop forever" behavior unless caller opts in. See [ARCHITECTURE.md](ARCHITECTURE.md) for the mermaid diagram + module tree.
 
 ---
 
@@ -54,6 +56,9 @@ result = run_workflow(
 | `AUTORESEARCH_TARGET_FILE` | `cfg.autoresearch_target_file` | `"train.py"` | File to modify each iteration |
 | `AUTORESEARCH_METRIC_NAME` | `cfg.autoresearch_metric_name` | `"val_bpb"` | Metric name to extract |
 | `AUTORESEARCH_METRIC_DIRECTION` | `cfg.autoresearch_metric_direction` | `"lower"` | `"lower"` or `"higher"` |
+| `AUTORESEARCH_MAX_ITERATIONS` | `cfg.autoresearch_max_iterations` | `0` | **[v1.4]** Hard cap on experiments (0=unlimited) |
+| `AUTORESEARCH_CONVERGENCE_WINDOW` | `cfg.autoresearch_convergence_window` | `10` | **[v1.4]** Stop after N consecutive non-improvements |
+| `AUTORESEARCH_CONVERGENCE_EPSILON` | `cfg.autoresearch_convergence_epsilon` | `0.001` | **[v1.4]** Metric plateau threshold (stuck detector) |
 
 Also uses `cfg.autocode_max_file_chars` (default 6000) to cap target file content in the proposal prompt (v1.3 P1-5) and `cfg.is_protected(path)` to block writes to `.env`, `pyproject.toml`, agent source, etc. (v1.3 P1-3).
 
@@ -112,7 +117,10 @@ The state is a `TypedDict(total=False)` defined in `workflows/autoresearch_impl/
 | `experiment_count` | `int` | `0` | Total experiments completed (incremented by `node_log`). |
 | `baseline_metric` | `float` | `0.0` | Metric from unmodified target_file (set by `node_setup`). |
 | `current_best` | `float` | `0.0` | Best metric so far. Updated only on keep (`node_decide`). |
-| `experiment_history` | `list[dict]` | `[]` | All experiments (capped at 100, v1.3 P2-3). Read by `node_propose` (last 20). |
+| `max_iterations` | `int` | `0` | **[v1.4]** Hard cap on experiments (0=unlimited). Set via `run_workflow(max_iterations=N)` or `AUTORESEARCH_MAX_ITERATIONS`. |
+| `convergence_window` | `int` | `10` | **[v1.4]** Stop after N consecutive non-improvements (last N all discarded OR last N within ε of best). |
+| `convergence_epsilon` | `float` | `0.001` | **[v1.4]** Metric plateau threshold (stuck detector). |
+| `experiment_history` | `list[dict]` | `[]` | All experiments (capped at 100, v1.3 P2-3). Read by `node_propose` (last 20) + `node_modify` (dedup, v1.4 N8). Each entry: `{iteration, description, metric, status, commit, content_hash}`. |
 | `current_experiment` | `dict` | `{}` | The proposal being processed. Annotated by `decide`, cleared by `log`. |
 | `experiment_output` | `str` | `""` | Combined stdout+stderr (truncated to 50KB). Set by `node_setup` + `node_run_experiment`. |
 | `current_metric` | `float` | `0.0` | Metric from last experiment. Set by `node_setup` + `node_evaluate`. |
@@ -131,25 +139,37 @@ Nodes in graph-execution order: `setup → propose → modify → run_experiment
 |---|------|--------|------------------------|
 | 1 | `node_setup` | `nodes/setup.py` | Create branch `autoresearch/{tag}` via `git(action="checkout_new")` (fallback `checkout_branch` if exists; non-fatal). Compute `results_path`; write TSV header IF file doesn't exist (resume). Run baseline via `helpers.run_target_subprocess` (v1.3 P2-1). Extract baseline metric via `helpers.extract_metric`; if missing → `status="failed"`. **Returns:** `branch`, `results_path`, `baseline_metric`, `current_best=baseline_metric`, `experiment_output`, `current_metric=baseline_metric`, `status`. |
 | 2 | `node_propose` | `nodes/propose.py` | Compute `iteration = experiment_count + 1`. Read `target_file`; **[v1.3 P1-5]** truncate to first+last half with `[TRUNCATED]` marker if `len > cfg.autocode_max_file_chars` (6000). Format `experiment_history` (most-recent-first, capped 20). Call `_call_planner` via `agent(action="subagent", role="planner")` with 3× retry + 2s/4s backoff (v1.3 P1-2). Parse via `core.json_extract.extract_json()` (falls back to `"(unparseable proposal)"` + empty `new_content`). **[v1.1+]** Subagent dispatch (NOT `_call()`); no `_call()` fallback. **Returns:** `current_experiment = {iteration, description, rationale, new_content}`, `status`. |
-| 3 | `node_modify` | `nodes/modify.py` | Read `new_content = current_experiment["new_content"]`. If empty → `status="failed"`. Compute `target_path`. **[v1.3 P1-3]** Path traversal guard via `relative_to(project_root.resolve())`. **[v1.3 P1-3]** Protected-file check via `cfg.is_protected(target_path)`. Otherwise `_atomic_write`: `tempfile.mkstemp(dir=parent)` + `os.fsync` + `os.replace` (tempfile `os.unlink`'d on failure). **Returns:** `status` + `error`. |
+| 3 | `node_modify` | `nodes/modify.py` | Read `new_content = current_experiment["new_content"]`. **[v1.4 N8]** md5-hash `new_content`; if hash matches any prior `experiment_history.content_hash`, return `status="failed"` with a "duplicate" error (no write). Store hash on `current_experiment.content_hash` for `node_log` to persist. If empty → `status="failed"`. Compute `target_path`. **[v1.3 P1-3]** Path traversal guard via `relative_to(project_root.resolve())`. **[v1.3 P1-3]** Protected-file check via `cfg.is_protected(target_path)`. Otherwise `_atomic_write`: `tempfile.mkstemp(dir=parent)` + `os.fsync` + `os.replace` (tempfile `os.unlink`'d on failure). **Returns:** `status` + `error`. |
 | 4 | `node_run_experiment` | `nodes/run_experiment.py` | If `status=="failed"`: skip run, return existing `experiment_output` (decide discards). Build `cmd = [sys.executable, target_file]`. **[v1.3 P2-1]** Call `helpers.run_target_subprocess(target_file, project_root, time_budget)`. On `TimeoutExpired`: return partial output + sentinel. On `FileNotFoundError`: return sentinel. Truncate to last 50KB if larger. **Returns:** `experiment_output`, `status="running"`, `error=""`. |
 | 5 | `node_evaluate` | `nodes/evaluate.py` | If `status=="failed"`: propagate (return `current_metric=0.0`; decide discards). Use `helpers.extract_metric(output, metric_name)` (shared regex, v1.2.1) — escapes metric name, accepts `:` or `=` separator, takes `matches[-1]` (last occurrence). If no match: `current_metric=0.0` + `status="failed"` + `error="metric '{metric_name}' not found ..."`. **Returns:** `current_metric`, `status`. |
 | 6 | `node_decide` | `nodes/decide.py` | **[v1.3 P0-1]** Runs BEFORE `node_log`. Annotates `current_experiment` with `status` + `commit` + `metric`. Takes over `status="running"` + `error=""` reset (was `log`'s job). If `status=="failed"`: always discard. `_is_improvement` — `"lower"` → `new < best`; `"higher"` → `new > best`; equality NOT improvement. If NOT improved: `_git_reset_hard` (`git reset --hard HEAD` + `git clean -fd`); annotate `status="discard"`. If improved: `_git_commit` (`git add <target_file>` + `git commit -m` + `git rev-parse --short HEAD`). **[v1.3 P1-1]** Empty SHA → discard (don't update `current_best`). Otherwise annotate `status="keep"`, `commit=sha`, update `current_best`. **Returns:** `current_experiment` (annotated), `current_best`, `status="running"`, `error=""`. |
-| 7 | `node_log` | `nodes/log.py` | **[v1.3 P0-1]** Runs AFTER `decide`. Reads the ANNOTATED `current_experiment`. Sanitize `description` (collapse whitespace). Append `f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\n"` via `_append_to_ledger` (non-fatal). Append `{iteration, description, metric, status, commit}` to `experiment_history` (copy the list, don't mutate). **[v1.3 P2-3]** Cap `experiment_history` at 100. Increment `experiment_count`. Clear `current_experiment`. No longer returns `status`/`error` — `decide` does the reset. **Returns:** `experiment_history`, `experiment_count`, `current_experiment={}`. |
+| 7 | `node_log` | `nodes/log.py` | **[v1.3 P0-1]** Runs AFTER `decide`. Reads the ANNOTATED `current_experiment`. Sanitize `description` (collapse whitespace). Append `f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\n"` via `_append_to_ledger` (non-fatal). Append `{iteration, description, metric, status, commit, content_hash}` to `experiment_history` (copy the list, don't mutate). **[v1.4 N8]** `content_hash` added (md5 of `new_content`, set by `node_modify`) for dedup. **[v1.3 P2-3]** Cap `experiment_history` at 100. Increment `experiment_count`. Clear `current_experiment`. No longer returns `status`/`error` — `decide` does the reset. **Returns:** `experiment_history`, `experiment_count`, `current_experiment={}`. |
 
 ---
 
 ## 🔀 Routes
 
-`workflows/autoresearch_impl/routes.py` defines **1 routing function** (v1.3 P2-5: was 3, but 2 "fake" conditionals → deleted). Only `route_after_setup` is conditional — the experiment loop has no exit other than human interruption (or `recursion_limit`).
+`workflows/autoresearch_impl/routes.py` defines **2 routing functions** (v1.4: was 1 in v1.3 — `route_after_log` added). Both are conditional — the experiment loop now has an OPT-IN auto-stop (default OFF → v1.3 "loop forever" behavior preserved).
 
 ### `route_after_setup(state) -> str`
 
 **Returns:** `"propose"` on success, `"end"` on failure. **Rationale:** v1.2.1 (P1-1) — if setup fails (baseline metric not extracted), the workflow used to spin infinitely. Now routes to END.
 
+### `route_after_log(state) -> str` — **[v1.4]**
+
+**Returns:** `"propose"` to continue the loop, `"end"` to stop. **Rationale:** v1.4 replaces the v1.3 direct `log → propose` edge with a conditional edge that checks 3 stopping conditions in order:
+
+| # | Condition | Default | Trigger |
+|---|-----------|---------|---------|
+| 1 | `max_iterations` reached | `0` (unlimited) | `max_iter > 0 and experiment_count >= max_iter` |
+| 2 | Convergence: last N all discarded | N=`10` | `len(history) >= window and all(h.status == "discard" for h in recent)` |
+| 3 | Stuck: last N within ε of best | N=`10`, ε=`0.001` | `len(history) >= window and all(abs(h.metric - current_best) < ε for h in recent)` |
+
+All 3 default OFF → v1.4 preserves v1.3 "loop forever" behavior unless caller opts in via `max_iterations=N` or env vars. Each condition 2/3 requires `len(history) >= window` so the first few iterations never false-positive.
+
 ### [v1.3 P2-5] DELETED: `route_after_evaluate` + `route_after_decide`
 
-Both were unconditional single-destination "fake" conditionals (always returned the same value). Replaced with direct `add_edge` calls in `graph.py`: `evaluate → decide` (was: `evaluate → log`); `decide → log` (was: `log → decide`); `log → propose` (was: `decide → propose`). The graph order changed from `evaluate → log → decide` to `evaluate → decide → log` (v1.3 P0-1).
+Both were unconditional single-destination "fake" conditionals (always returned the same value). Replaced with direct `add_edge` calls in `graph.py`: `evaluate → decide` (was: `evaluate → log`); `decide → log` (was: `log → decide`). The graph order changed from `evaluate → log → decide` to `evaluate → decide → log` (v1.3 P0-1).
 
 ---
 
@@ -161,12 +181,13 @@ The loop is **fail-soft by design**: every per-node failure (except baseline-met
 - **LLM call fails** (`node_propose._call_planner`): **[v1.3 P1-2]** Retries 3× with 2s/4s backoff. After all 3 fail, raises `RuntimeError`; `node_propose` returns `status="failed"`. `node_decide` discards.
 - **Empty SHA** (`node_decide._git_commit` returns `""`): **[v1.3 P1-1]** Treated as DISCARD — runs `_git_reset_hard`, sets `status="discard"`, does NOT update `current_best`.
 - **Path traversal / protected file** (`node_modify`): **[v1.3 P1-3]** Returns `status="failed"`. `node_decide` discards.
+- **Duplicate `new_content`** (`node_modify`): **[v1.4 N8]** md5 hash matches a prior `experiment_history` entry → returns `status="failed"` with a "duplicate" error. `node_decide` discards. Prevents re-running the same experiment.
 - **`_git_reset_hard` with no `project_root` or non-repo**: **[v1.3 P1-4]** `tracer.warning`, returns `False`, skips reset. Prevents resetting the agent's own working tree.
-- **`GraphRecursionError`** (dispatcher): **[v1.3 P0-2]** **EXPECTED exit.** Caught explicitly and returned as `{"status": "success", "result": "Recursion limit reached — ..."}`.
+- **`GraphRecursionError`** (dispatcher): **[v1.3 P0-2]** **EXPECTED exit.** Caught explicitly and returned as `{"status": "success", "result": "Recursion limit reached — ..."}`. **[v1.4]** `route_after_log` may terminate the loop BEFORE recursion_limit is hit if a stopping condition is met.
 - **Non-fatal failures** (branch creation, ledger init/append, git reset failure): `tracer.warning` and continue — in-memory `experiment_history` is the LLM's source of truth; `results.tsv` is the human audit trail (best-effort).
 
 For AI-editing rules around these failure modes, see [INSTRUCTIONS.md](INSTRUCTIONS.md).
 
 ---
 
-*Last updated: 2026-07-20 (v1.3). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-20 (v1.4). See [CHANGELOG.md](CHANGELOG.md) for version history.*

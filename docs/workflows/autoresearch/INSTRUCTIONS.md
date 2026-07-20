@@ -30,6 +30,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 22. Never bypass the protected-file check in `node_modify` — `cfg.is_protected(target_path)` MUST run before any write (v1.3 P1-3).
 23. Never call `_git_reset_hard` without verifying `project_root` — the function has a safety guard that refuses no-root / non-repo (v1.3 P1-4).
 24. Never re-add `route_after_evaluate` or `route_after_decide` routers — both deleted in v1.3 P2-5 (were fake conditionals); use direct `add_edge` calls.
+25. Never re-add the direct `log → propose` edge — v1.4 replaced it with a conditional edge via `route_after_log` (checks max_iterations / convergence / stuck). The direct edge would bypass all stopping conditions.
+26. Never skip the md5 dedup check in `node_modify` — `hashlib.md5(new_content.encode()).hexdigest()` MUST run before the write; duplicates return `status="failed"` (v1.4 N8).
+27. Never set `max_iterations` default to non-zero — the v1.4 default MUST be `0` (unlimited) so v1.3 "loop forever" behavior is preserved unless a caller explicitly opts in.
+28. Never trigger convergence/stuck stops with `len(history) < window` — the first few iterations must NEVER false-positive (v1.4).
 
 ## ✅ ALWAYS DO
 
@@ -57,6 +61,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 22. Always check `cfg.is_protected(target_path)` before writing in `node_modify` — same list as `file` tool (blocks `.env`, `pyproject.toml`, agent source).
 23. Always verify `project_root` is a git repo before `_git_reset_hard` — the safety guard (v1.3 P1-4) refuses when `.git` is missing.
 24. Always update this doc when adding nodes, changing routing logic, or modifying error handling.
+25. Always check `route_after_log`'s 3 stopping conditions in order: `max_iterations` → convergence (all discarded) → stuck (within ε of best) — short-circuits on the first hit (v1.4).
+26. Always store `content_hash` on `current_experiment` in `node_modify` — `node_log` reads it via `proposal.get("content_hash", "")` and persists it in `experiment_history` for future dedup (v1.4 N8).
+27. Always use `hashlib.md5(new_content.encode("utf-8"))` for dedup — md5 is fast and we only need exact-content dedup (semantic dedup is N4, deferred).
+28. Always pull `max_iterations` from `cfg.autoresearch_max_iterations` in the type handler when the caller didn't pass it — env-overridable for operators who want auto-stop on every run (v1.4).
 
 ---
 
@@ -80,6 +88,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 
 > **[v1.3 P1-4] Don't run `git reset --hard` without verifying the repo:** A prototype called `_git_reset_hard(project_root)` without checking if `project_root` was a git repo. When `project_root` was empty (misconfigured state), `subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=None)` reset the agent's own working tree — losing uncommitted agent code. Added safety guard: refuse to reset when `project_root` is empty OR `.git` doesn't exist.
 
+> **[v1.4] Don't auto-stop the loop on by default:** The v1.3 "loop forever" behavior was deliberate — autoresearch has no clean convergence signal (the metric can plateau for 50 iterations then jump 10%). v1.4 adds an OPT-IN `route_after_log` with 3 stopping conditions (max_iterations / convergence / stuck), but ALL defaults are OFF (max_iterations=0, window large, ε small). An overnight run making progress should NEVER auto-stop. Callers wanting auto-stop must explicitly pass `max_iterations=N` or set env vars.
+
+> **[v1.4 N8] Don't re-run the same experiment:** A prototype accepted any `new_content` from the LLM, even if it was byte-identical to a prior experiment. The LLM (especially with low temperature) would re-propose the same change repeatedly — wasting an entire experiment cycle (LLM call + write + subprocess + git). Added md5 hash check in `node_modify`: if `hashlib.md5(new_content) == any prior experiment_history.content_hash`, return `status="failed"` with a "duplicate" error. Semantic dedup (catching whitespace-only diffs) deferred to N4.
+
 ---
 
-*Last updated: 2026-07-20 (v1.3). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-20 (v1.4). See [CHANGELOG.md](CHANGELOG.md) for version history.*

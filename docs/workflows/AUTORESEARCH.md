@@ -6,6 +6,8 @@ The `autoresearch` workflow runs an **autonomous experiment-driven optimization 
 
 Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — point it at a training script, come back in the morning, and (hopefully) the metric has improved. Unlike `autocode` (convergent: one task, iterate until tests pass), autoresearch is **evolutionary**: many experiments, one git branch, `results.tsv` ledger of outcomes. Every experiment — keep *or* discard — is logged; improvements are committed, failures are `git reset --hard HEAD` + `git clean -fd` so the next iteration starts from a clean baseline.
 
+**[v1.4] Loop control:** The loop runs indefinitely by default (legacy v1.3 behavior). Callers can opt in to auto-stop via `max_iterations=N` (hard cap) or env vars (`AUTORESEARCH_MAX_ITERATIONS`, `AUTORESEARCH_CONVERGENCE_WINDOW`, `AUTORESEARCH_CONVERGENCE_EPSILON`). The `route_after_log` router checks 3 stopping conditions after each `node_log`: max-iterations, convergence (last N all discarded), stuck (last N within ε of best). All default OFF. Experiments are also deduplicated by md5 hash of `new_content` (N8) — duplicate proposals skip the write and return `status="failed"`.
+
 ## 🚀 Quick Start
 
 ```python
@@ -30,8 +32,11 @@ The loop runs until you interrupt the process (Ctrl-C) or LangGraph's `recursion
 | `autoresearch_target_file` | `"train.py"` | File to modify (relative to `project_root`) |
 | `autoresearch_metric_name` | `"val_bpb"` | Metric name to extract from output |
 | `autoresearch_metric_direction` | `"lower"` | `"lower"` (lower is better) \| `"higher"` |
+| `autoresearch_max_iterations` | `0` | **[v1.4]** Hard cap on experiments (0=unlimited) |
+| `autoresearch_convergence_window` | `10` | **[v1.4]** Stop after N consecutive non-improvements |
+| `autoresearch_convergence_epsilon` | `0.001` | **[v1.4]** Metric plateau threshold (stuck detector) |
 
-All four knobs have sane defaults; override any per-invocation by passing through `run_workflow()` (forwarded via the type handler — v1.3 P2-2). **Metric extraction:** `evaluate` greps the LAST occurrence of `{metric_name}: <float>` (or `=` separator) — training scripts that print the metric per epoch just work. **Git prerequisite:** `project_root` must be a git repo (decide runs raw `git` via `subprocess.run`; setup creates branch `autoresearch/{YYYYMMDD-HHMMSS}` via the `git` tool).
+All knobs have sane defaults; override any per-invocation by passing through `run_workflow()` (forwarded via the type handler — v1.3 P2-2 + v1.4 max_iterations). **Metric extraction:** `evaluate` greps the LAST occurrence of `{metric_name}: <float>` (or `=` separator) — training scripts that print the metric per epoch just work. **Git prerequisite:** `project_root` must be a git repo (decide runs raw `git` via `subprocess.run`; setup creates branch `autoresearch/{YYYYMMDD-HHMMSS}` via the `git` tool). **[v1.4] Loop control:** All 3 stopping conditions (max_iterations / convergence / stuck) default OFF → v1.3 "loop forever" behavior preserved unless caller opts in.
 
 ## 🔄 When to Use vs Alternatives
 
@@ -56,4 +61,4 @@ All four knobs have sane defaults; override any per-invocation by passing throug
 
 ---
 
-*Last updated: 2026-07-20 (v1.3). See [CHANGELOG.md](autoresearch/CHANGELOG.md) for version history.*
+*Last updated: 2026-07-20 (v1.4). See [CHANGELOG.md](autoresearch/CHANGELOG.md) for version history.*

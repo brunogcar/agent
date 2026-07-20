@@ -10,12 +10,17 @@ Validation:
 
 Execution: calls _execute_workflow("autoresearch", goal, trace_id, resume,
     target_file=target_file, project_root=project_root, metric_name=...,
-    metric_direction=..., time_budget=..., branch=..., results_path=...).
+    metric_direction=..., time_budget=..., branch=..., results_path=...,
+    max_iterations=...).
 
 [v1.3 P2-2] Forwards ALL autoresearch params to `_execute_workflow` (was:
 only target_file + project_root). Callers passing metric_name,
 metric_direction, time_budget, branch, or results_path previously had them
 silently dropped — the workflow ran with cfg defaults instead.
+
+[v1.4] Forwards `max_iterations` (caller-set hard cap on experiments).
+0 = unlimited (legacy v1.3 behavior). Also picked up from
+`cfg.autoresearch_max_iterations` if not passed.
 """
 from __future__ import annotations
 
@@ -41,6 +46,7 @@ def _type_autoresearch(
     time_budget: int = 0,
     branch: str = "",
     results_path: str = "",
+    max_iterations: int = 0,
     trace_id: str = "",
     resume: bool = False,
     **kwargs,
@@ -62,6 +68,13 @@ def _type_autoresearch(
     # time_budget, branch, or results_path previously had them silently
     # dropped. _execute_workflow's autoresearch branch picks them up from
     # kwargs and forwards them to run_workflow.
+    #
+    # [v1.4] Forward max_iterations (0 = unlimited). Pulled from
+    # cfg.autoresearch_max_iterations if caller didn't pass it.
+    if max_iterations == 0:
+        from core.config import cfg
+        max_iterations = int(getattr(cfg, "autoresearch_max_iterations", 0))
+
     return _execute_workflow(
         "autoresearch", goal, trace_id, resume,
         target_file=target_file,
@@ -71,4 +84,5 @@ def _type_autoresearch(
         time_budget=time_budget if time_budget > 0 else None,
         branch=branch,
         results_path=results_path,
+        max_iterations=max_iterations,
     )
