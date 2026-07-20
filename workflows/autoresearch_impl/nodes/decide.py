@@ -139,6 +139,59 @@ def _git_reset_hard(project_root: str, tid: str) -> bool:
         return False
 
 
+def _record_failure_memory(
+    proposal: dict,
+    metric_name: str,
+    current_metric: float,
+    current_best: float,
+    direction: str,
+    tid: str,
+    goal: str,
+) -> None:
+    """[v1.5 N4] Cross-run learning — record a procedural memory on discard.
+
+    Checks if a similar failure has been recorded before (`min_score=0.7`).
+    If yes, the failure pattern is already known — just trace a "repeated
+    failure pattern detected" log line so operators can spot when the LLM
+    keeps hitting the same wall. If no, stores a fresh procedural memory so
+    the next run's `node_propose` can recall it (via
+    `memory.recall(collections=["procedural"])`) and avoid re-proposing the
+    same dead-end.
+
+    Failures are non-fatal — `core.memory_engine.memory` may not be available
+    (e.g. in tests, or if ChromaDB is disabled). The whole call is wrapped
+    in try/except so a memory-store error never halts the experiment loop.
+    """
+    try:
+        from core.memory_engine import memory
+        desc = proposal.get("description", "")[:100]
+        if not desc:
+            return
+        existing = memory.recall(
+            query=f"autoresearch failed: {desc}",
+            collections=["procedural"],
+            top_k=1,
+            min_score=0.7,
+            trace_id=tid,
+        )
+        if existing:
+            tracer.step(tid, "decide", f"repeated failure pattern detected: {desc[:60]}")
+        else:
+            memory.store_procedural(
+                text=(
+                    f"autoresearch: proposal '{desc}' did not improve {metric_name} "
+                    f"(metric={current_metric}, best={current_best}, direction={direction})"
+                ),
+                importance=5,
+                tags="source:autoresearch,category:failed_experiment",
+                trace_id=tid,
+                goal=goal,
+                outcome="failure",
+            )
+    except Exception:
+        pass  # Non-fatal — memory may not be available
+
+
 def node_decide(state: AutoresearchState) -> dict:
     """Keep (commit) or discard (reset) the current experiment.
 
@@ -157,6 +210,7 @@ def node_decide(state: AutoresearchState) -> dict:
     project_root = state.get("project_root", "")
     direction = state.get("metric_direction", "") or cfg.autoresearch_metric_direction
     metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
+    goal = state.get("goal", "")  # [v1.5 N4] forwarded to memory.store_procedural
 
     proposal = dict(state.get("current_experiment", {}) or {})
     iteration = proposal.get("iteration", state.get("experiment_count", 0) + 1)
@@ -168,6 +222,11 @@ def node_decide(state: AutoresearchState) -> dict:
     if state.get("status") == "failed":
         tracer.step(tid, "decide", f"iter {iteration}: discarding (prior failure)")
         _git_reset_hard(project_root, tid)
+        # [v1.5 N4] Cross-run learning — record procedural memory on discard
+        # so future runs can avoid re-proposing this dead-end.
+        _record_failure_memory(
+            proposal, metric_name, current_metric, current_best, direction, tid, goal,
+        )
         proposal["status"] = "discard"
         proposal["commit"] = ""
         proposal["metric"] = current_metric
@@ -187,6 +246,11 @@ def node_decide(state: AutoresearchState) -> dict:
             f"({metric_name}={current_metric} vs best={current_best}, direction={direction})",
         )
         _git_reset_hard(project_root, tid)
+        # [v1.5 N4] Cross-run learning — record procedural memory on discard
+        # so future runs can avoid re-proposing this dead-end.
+        _record_failure_memory(
+            proposal, metric_name, current_metric, current_best, direction, tid, goal,
+        )
         proposal["status"] = "discard"
         proposal["commit"] = ""
         proposal["metric"] = current_metric

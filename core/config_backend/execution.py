@@ -36,6 +36,9 @@ Env vars read:
         AUTORESEARCH_CONVERGENCE_WINDOW    — default 10 (N consecutive non-improvements → stop)
         AUTORESEARCH_CONVERGENCE_EPSILON   — default 0.001 (metric plateau threshold)
 
+    Autoresearch v1.5 reflect + cross-run learning:
+        AUTORESEARCH_REFLECT_INTERVAL      — default 5 (reflect every N iterations; 0=disabled)
+
     Autocode v1.3: GitHub + Swarm integration flags (all default OFF):
         AUTOCODE_PULL_BEFORE_BRANCH, AUTOCODE_PUSH_ON_COMMIT,
         AUTOCODE_OPEN_PR, AUTOCODE_AUTO_MERGE, AUTOCODE_DEBUG_COMMENT_PR,
@@ -109,6 +112,10 @@ def _init_execution(cfg) -> None:
     cfg.autoresearch_max_iterations = int(os.getenv("AUTORESEARCH_MAX_ITERATIONS", "0"))  # 0=unlimited
     cfg.autoresearch_convergence_window = int(os.getenv("AUTORESEARCH_CONVERGENCE_WINDOW", "10"))  # stop after N consecutive non-improvements
     cfg.autoresearch_convergence_epsilon = float(os.getenv("AUTORESEARCH_CONVERGENCE_EPSILON", "0.001"))  # metric plateau threshold
+    # [v1.5 N1] Reflect node — every N iterations the planner LLM reflects on
+    # the full experiment history and writes a strategy summary that gets
+    # folded into the next proposal prompt. 0 = disabled (legacy v1.4 behavior).
+    cfg.autoresearch_reflect_interval = int(os.getenv("AUTORESEARCH_REFLECT_INTERVAL", "5"))  # reflect every N iterations (0=disabled)
 
     # -- Autocode v1.3: GitHub + Swarm integration flags -------------------
     # All default OFF — autocode behaves exactly as v1.2 unless explicitly opted in.

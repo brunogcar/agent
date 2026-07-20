@@ -24,6 +24,14 @@ conditional edge — `route_after_log` checks 3 stopping conditions:
 All three are OFF by default — v1.4 preserves v1.3's "loop forever"
 behavior unless a caller opts in.
 
+[v1.5 N1] A `node_reflect` node is inserted between `log` and the
+`route_after_log` conditional. It is a no-op most of the time — only fires
+every `autoresearch_reflect_interval` iterations (default 5). On a reflect
+iteration it calls the planner LLM with the full experiment history and
+stores the strategy summary in `state["reflect_notes"]`, which the next
+`node_propose` call surfaces in its prompt. Failures are non-fatal — the
+node returns `{}` so the loop continues with the prior reflection.
+
 The experiment loop runs indefinitely (v1.3 behavior) or until a stopping
 condition is met (v1.4 opt-in). LangGraph's recursion_limit is still the
 ultimate safety cap — callers should set a high limit (or use
@@ -45,6 +53,7 @@ from workflows.autoresearch_impl.nodes.run_experiment import node_run_experiment
 from workflows.autoresearch_impl.nodes.evaluate import node_evaluate
 from workflows.autoresearch_impl.nodes.decide import node_decide
 from workflows.autoresearch_impl.nodes.log import node_log
+from workflows.autoresearch_impl.nodes.reflect import node_reflect
 from workflows.autoresearch_impl.routes import route_after_setup, route_after_log
 
 
@@ -54,7 +63,7 @@ from workflows.autoresearch_impl.routes import route_after_setup, route_after_lo
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.4",  # [v1.4] loop control (max_iterations + convergence + stuck + dedup)
+    "version": "1.5",  # [v1.5 N1+N4] reflect node + cross-run procedural memory
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
@@ -128,6 +137,18 @@ WORKFLOW_METADATA = {
                 "content_hash on the history entry for dedup."
             ),
         },
+        {
+            "name": "reflect",
+            "type": "llm",
+            "role": "planner",
+            "description": (
+                "[v1.5 N1] No-op pass-through most iterations. Every "
+                "autoresearch_reflect_interval iterations (default 5; 0=disabled) "
+                "calls the planner LLM with full experiment history and stores "
+                "the reflection in state[\"reflect_notes\"] for the next "
+                "propose prompt. Failures are non-fatal (returns {})."
+            ),
+        },
     ],
     "edges": [
         {
@@ -143,13 +164,18 @@ WORKFLOW_METADATA = {
         # so that decide can annotate current_experiment BEFORE log reads it.
         {"from": "evaluate", "to": "decide"},
         {"from": "decide", "to": "log"},
+        # [v1.5 N1] Reflect node between log and route_after_log.
+        # No-op most iterations; calls planner LLM every N iterations to
+        # refresh state["reflect_notes"] (surfaced to the next propose prompt).
+        {"from": "log", "to": "reflect"},
         # [v1.4] Conditional edge — was a direct edge in v1.3.
         # route_after_log checks max_iterations + convergence + stuck before
         # looping back to propose. All conditions default OFF (max_iterations=0,
         # window large, ε small) so v1.4 preserves v1.3 "loop forever" behavior
         # unless a caller opts in.
+        # [v1.5 N1] Conditional edge now starts from `reflect` (was `log`).
         {
-            "from": "log",
+            "from": "reflect",
             "to": "propose",
             "condition": (
                 "route_after_log: continue → propose, stop → END "
@@ -163,7 +189,7 @@ WORKFLOW_METADATA = {
             "name": "experiment_loop",
             "nodes": [
                 "propose", "modify", "run_experiment",
-                "evaluate", "decide", "log",
+                "evaluate", "decide", "log", "reflect",
             ],
             "exit_condition": (
                 "human interrupt OR recursion_limit OR "
@@ -186,6 +212,8 @@ WORKFLOW_METADATA = {
         "convergence_detector",   # [v1.4] stop after N consecutive discards
         "stuck_detector",         # [v1.4] stop on metric plateau (within ε of best)
         "experiment_dedup",       # [v1.4 N8] md5 hash check on new_content
+        "reflection_step",        # [v1.5 N1] LLM strategy reflection every N iterations
+        "cross_run_learning",     # [v1.5 N4] procedural memory on repeated failures
     ],
 }
 
@@ -219,7 +247,7 @@ def build_autoresearch_graph():
     """
     g = StateGraph(AutoresearchState)
 
-    # Add all 7 nodes
+    # Add all 8 nodes
     g.add_node("setup", node_setup)
     g.add_node("propose", node_propose)
     g.add_node("modify", node_modify)
@@ -227,6 +255,7 @@ def build_autoresearch_graph():
     g.add_node("evaluate", node_evaluate)
     g.add_node("decide", node_decide)
     g.add_node("log", node_log)
+    g.add_node("reflect", node_reflect)  # [v1.5 N1] no-op most iterations
 
     # Entry point
     g.set_entry_point("setup")
@@ -254,13 +283,21 @@ def build_autoresearch_graph():
     # with {status, commit}, then log writes the annotated dict to the ledger.
     g.add_edge("decide", "log")
 
+    # [v1.5 N1] reflect between log and route_after_log — no-op most
+    # iterations; every `autoresearch_reflect_interval` (default 5) it calls
+    # the planner LLM to refresh state["reflect_notes"]. The next
+    # node_propose surfaces the reflection in its prompt so the LLM has
+    # strategic context, not just raw history.
+    g.add_edge("log", "reflect")
+
     # [v1.4] Conditional edge after log — replaces the v1.3 direct edge.
     # route_after_log checks max_iterations + convergence + stuck before
     # looping back to propose. All 3 conditions default OFF (max_iterations=0,
     # window large, ε small) so v1.4 preserves v1.3 "loop forever" behavior
     # unless a caller opts in via run_workflow(max_iterations=...) or env vars.
+    # [v1.5 N1] The conditional edge now starts from `reflect` (was `log`).
     g.add_conditional_edges(
-        "log",
+        "reflect",
         route_after_log,
         {"propose": "propose", "end": END},
     )

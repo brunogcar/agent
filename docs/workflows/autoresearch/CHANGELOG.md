@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.5 | 2026-07-21 | **Reflect node (N1) + cross-run learning (N4).** New `node_reflect` between `log` and `route_after_log` — every `autoresearch_reflect_interval` iterations (default 5; 0=disabled) calls the planner LLM with the full experiment history + `REFLECT_SYSTEM` prompt and stores the reflection in `state["reflect_notes"]`. `node_propose` surfaces the reflection in its prompt (when non-empty) so the LLM has strategic context, not just raw history. No-op on non-reflect iterations (returns `{}`). New env var: `AUTORESEARCH_REFLECT_INTERVAL`. Cross-run learning (N4): `node_decide` records a procedural memory via `memory.store_procedural()` on every discard path (prior failure + no-improvement); `node_propose` recalls procedural memories before generating the next proposal so the LLM avoids re-proposing known dead-ends. Failures non-fatal (memory may be unavailable — try/except wraps all calls). Graph bumps to 8 nodes. |
 | v1.4 | 2026-07-20 | **Loop control + dedup.** `max_iterations` param (caller-set hard cap; 0=unlimited). `route_after_log` conditional edge replaces the v1.3 direct `log → propose` edge — checks 3 stopping conditions: (1) max_iterations reached, (2) convergence: last N all discarded, (3) stuck: last N metrics all within ε of current_best. All default OFF → v1.4 preserves v1.3 "loop forever" behavior unless caller opts in. Experiment deduplication (N8): `node_modify` md5-hashes `new_content` and skips duplicates from `experiment_history`; `content_hash` stored on each history entry by `node_log`. 3 new env vars: `AUTORESEARCH_MAX_ITERATIONS`, `AUTORESEARCH_CONVERGENCE_WINDOW`, `AUTORESEARCH_CONVERGENCE_EPSILON`. |
 | v1.3.0 | 2026-07-15 | **Hardening batch (5-reviewer collective audit).** P0-1: graph order swapped `evaluate → log → decide` → `evaluate → decide → log` (log was reading pre-decide status → ledger ALWAYS said "discard"). P0-2: `GraphRecursionError` caught explicitly (was: generic `except Exception` → `status="failed"` + state lost). P1-1: empty SHA → discard (was: `status="keep"` with empty commit). P1-2: `_call_planner` retries 3× with 2s/4s backoff. P1-3: path traversal + protected-file guard in `node_modify`. P1-4: `_git_reset_hard` safety guard (refuses no-root / non-repo). P1-5: target-file content capped at `cfg.autocode_max_file_chars` (6000). P2-1: shared `run_target_subprocess` in helpers.py (was duplicated). P2-2: forward ALL params (metric_name, metric_direction, time_budget, branch, results_path) through type handler. P2-3: `experiment_history` capped at 100. P2-4: removed 4 dead conftest fixtures. P2-5: fake conditional edges (`route_after_evaluate` / `route_after_decide`) replaced with direct edges; both routers deleted. |
 | v1.2.2 | 2026-07-14 | **Phase 4g review — subagent dispatch doc fixes + version sync.** P1-2: Removed incorrect `_call()` fallback claim (no fallback exists). P2-2: `WORKFLOW_METADATA["version"]` synced from `"1.2"` to `"1.2.2"`. P3-2: `propose.py` docstring updated for v1.1+ subagent dispatch. |
@@ -19,6 +20,14 @@
 ---
 
 ### ⚠️ Breaking Changes
+
+#### v1.5 — 2026-07-21
+
+| Change | Impact | Migration |
+|--------|--------|------------|
+| New `reflect` node inserted between `log` and `route_after_log` | The graph now has 8 nodes (was 7). `route_after_log` is now invoked from `reflect` (was from `log`). The conditional edge `log → propose (type=loop)` is replaced by `log → reflect` (linear) + `reflect → propose (type=loop, conditional)`. | Code that imports `WORKFLOW_METADATA` and asserts `len(nodes) == 7` must update to 8. Code reading edges must handle the new `log → reflect` + `reflect → propose` pair. |
+| New `reflect_notes` state field | `AutoresearchState` gained a new `str` field. Defaults to `""`. | None — additive change. Code reading state by key keeps working. |
+| `node_decide` now calls `memory.store_procedural()` on discard | Discard paths now invoke `core.memory_engine.memory.store_procedural()` (wrapped in try/except — non-fatal). If chromadb is unavailable, the call silently no-ops. | None — additive change. Operators without chromabd see no behavior change. |
 
 #### v1.4 — 2026-07-20
 
@@ -54,18 +63,18 @@
 
 ## 🔄 In Progress / Next Up
 
-Items N1–N10 are from the post-v1.3 collective review; items 1–7 are from earlier roadmap planning. Higher priority (P2) items are scheduled for v1.4.
+Items N1–N10 are from the post-v1.3 collective review; items 1–7 are from earlier roadmap planning. Higher priority (P2) items N1, N2, N4, N8 are done (v1.4 + v1.5).
 
 | # | Feature | Priority | Notes |
 |---|---------|----------|-------|
-| N1 | **Reflect node between log and propose** | P2 | LLM looks at full history + adapts strategy before next proposal. |
+| N1 | ~~**Reflect node between log and propose**~~ | ~~P2~~ | ✅ **Done in v1.5** — `node_reflect` between `log` and `route_after_log` calls planner LLM every `autoresearch_reflect_interval` iterations (default 5). Reflection stored in `state["reflect_notes"]` and surfaced to `node_propose`. |
 | N2 | ~~**Stuck detector**~~ | ~~P2~~ | ✅ **Done in v1.4** — `route_after_log` checks metric plateau (last N within ε of best). |
 | N3 | **Resume support** | P2 | Accept `branch` from caller, skip baseline, reload `experiment_history` from `results.tsv`. |
-| N4 | **Cross-run learning** (merged with prior item 5) | P2 | Store procedural memory when a proposal type repeatedly fails. Persistent cache keyed by `{goal, target_file_hash, proposal_description_hash}`. |
+| N4 | ~~**Cross-run learning** (merged with prior item 5)~~ | ~~P2~~ | ✅ **Done in v1.5** — `node_decide` stores procedural memory on every discard; `node_propose` recalls procedural memories before proposing. |
 | N5 | **Experiment output logging** | P3 | Per-iteration `{results_path}.d/{iteration}.log` with full stdout+stderr (not just 50KB tail). |
 | N6 | **Cost/token tracking** | P3 | Per-iteration `tokens_in` / `tokens_out` / `cost_usd` in `experiment_history` entries. |
 | N7 | **Checkpoint on every keep** | P3 | Save checkpoint after every keep so resume picks up from last-known-good. |
-| N8 | ~~**Experiment deduplication**~~ | ~~P3~~ | ✅ **Done in v1.4** — `node_modify` md5-hashes `new_content`; duplicates skipped with `status="failed"`. Semantic dedup still deferred (N4). |
+| N8 | ~~**Experiment deduplication**~~ | ~~P3~~ | ✅ **Done in v1.4** — `node_modify` md5-hashes `new_content`; duplicates skipped with `status="failed"`. Semantic dedup still deferred (cross-run learning in v1.5 N4 catches repeated failures but does not byte-similar dedup). |
 | N9 | **Sandbox experiment subprocess** | P3 | Restricted filesystem for untrusted experiment code. |
 | N10 | **Output truncation improvement** | P3 | Extract metric BEFORE truncation, or increase cap to 200KB. |
 | 1 | **Parallel experiments** | P2 | Branch N proposals, run all N subprocesses in parallel, keep the best. Multi-GPU throughput. |

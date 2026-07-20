@@ -34,6 +34,9 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 26. Never skip the md5 dedup check in `node_modify` — `hashlib.md5(new_content.encode()).hexdigest()` MUST run before the write; duplicates return `status="failed"` (v1.4 N8).
 27. Never set `max_iterations` default to non-zero — the v1.4 default MUST be `0` (unlimited) so v1.3 "loop forever" behavior is preserved unless a caller explicitly opts in.
 28. Never trigger convergence/stuck stops with `len(history) < window` — the first few iterations must NEVER false-positive (v1.4).
+29. Never wire `route_after_log` directly from `log` — v1.5 N1 inserted `node_reflect` between them; the conditional edge must start from `reflect` (was `log` in v1.4).
+30. Never let `node_reflect` raise out — LLM failure must be caught and return `{}` (non-fatal) so the loop continues with the prior reflection.
+31. Never let `_record_failure_memory` or `node_propose`'s memory recall raise out — `core.memory_engine` may be unavailable (chromadb missing) and the experiment loop must NEVER halt on a memory call. Wrap in `try/except Exception: pass`.
 
 ## ✅ ALWAYS DO
 
@@ -65,6 +68,9 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 26. Always store `content_hash` on `current_experiment` in `node_modify` — `node_log` reads it via `proposal.get("content_hash", "")` and persists it in `experiment_history` for future dedup (v1.4 N8).
 27. Always use `hashlib.md5(new_content.encode("utf-8"))` for dedup — md5 is fast and we only need exact-content dedup (semantic dedup is N4, deferred).
 28. Always pull `max_iterations` from `cfg.autoresearch_max_iterations` in the type handler when the caller didn't pass it — env-overridable for operators who want auto-stop on every run (v1.4).
+29. Always check `experiment_count % interval == 0` (and `experiment_count != 0`) in `node_reflect` before calling the planner LLM — non-reflect iterations must short-circuit and return `{}` (v1.5 N1).
+30. Always reuse `propose._call_planner` from `node_reflect` (module-level import so tests can patch `reflect._call_planner`) — don't reimplement subagent dispatch + retry (v1.5 N1).
+31. Always wrap `_record_failure_memory`'s `memory.recall` + `memory.store_procedural` calls in try/except — `core.memory_engine` may not be importable (chromadb missing), and the discard path must NEVER fail because of a memory-store error (v1.5 N4).
 
 ---
 
@@ -92,6 +98,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 
 > **[v1.4 N8] Don't re-run the same experiment:** A prototype accepted any `new_content` from the LLM, even if it was byte-identical to a prior experiment. The LLM (especially with low temperature) would re-propose the same change repeatedly — wasting an entire experiment cycle (LLM call + write + subprocess + git). Added md5 hash check in `node_modify`: if `hashlib.md5(new_content) == any prior experiment_history.content_hash`, return `status="failed"` with a "duplicate" error. Semantic dedup (catching whitespace-only diffs) deferred to N4.
 
+> **[v1.5 N1] Don't reflect on every iteration:** A prototype called the planner LLM at the end of every iteration to generate a strategy reflection. The extra LLM call DOUBLED token cost per iteration and added ~2s latency (even with subagent dispatch). Switched to a configurable interval (`autoresearch_reflect_interval`, default 5) — the LLM reflects only on multiples of the interval. The reflection is stored in `state["reflect_notes"]` and surfaced to the next `node_propose`, so strategy context persists across the non-reflect iterations. `interval=0` disables reflection entirely (legacy v1.4 behavior).
+
+> **[v1.5 N4] Don't let cross-run learning block the experiment loop:** A prototype called `memory.store_procedural(...)` directly in `node_decide` without a try/except wrapper. When chromadb was unavailable (test environment, fresh install), the call raised and the ENTIRE discard path aborted — the loop stuck. Wrapped every memory call in `try/except Exception: pass` so cross-run learning is best-effort: it activates when chromadb is available and silently no-ops otherwise. Same pattern in `node_propose`'s `memory.recall` — a recall failure never blocks proposal generation.
+
 ---
 
-*Last updated: 2026-07-20 (v1.4). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-21 (v1.5). See [CHANGELOG.md](CHANGELOG.md) for version history.*

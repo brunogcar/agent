@@ -199,8 +199,9 @@ def node_propose(state: AutoresearchState) -> dict:
     history = state.get("experiment_history", []) or []
     target_file = state.get("target_file", "") or cfg.autoresearch_target_file
     project_root = state.get("project_root", "")
+    experiment_count = state.get("experiment_count", 0)
 
-    iteration = state.get("experiment_count", 0) + 1
+    iteration = experiment_count + 1
     tracer.step(tid, "propose", f"iteration {iteration}: querying planner")
 
     current_content = _read_target_file(target_file, project_root)
@@ -226,13 +227,50 @@ def node_propose(state: AutoresearchState) -> dict:
 
     history_str = _format_history(history, metric_name)
 
+    # [v1.5 N1] Include reflection notes in the prompt (if available).
+    # The reflect node (runs every N iterations, default 5) writes a strategy
+    # summary to state["reflect_notes"]. When present, we surface it so the
+    # LLM has strategic context, not just raw experiment history.
+    reflect_notes = state.get("reflect_notes", "")
+    reflect_block = ""
+    if reflect_notes:
+        reflect_block = (
+            f"\n\nStrategist reflection (from iteration {experiment_count}):\n"
+            f"{reflect_notes}\n"
+        )
+
+    # [v1.5 N4] Recall procedural memories (cross-run learning).
+    # When a proposal type has repeatedly failed in this or prior runs, a
+    # procedural memory is stored via memory.store_procedural(). Recall
+    # those memories here so the LLM doesn't re-propose known-bad strategies.
+    # Failures are non-fatal — memory may not be available (e.g. tests).
+    memory_block = ""
+    try:
+        from core.memory_engine import memory
+        memories = memory.recall(
+            query=f"autoresearch {goal} {metric_name}",
+            collections=["procedural"],
+            top_k=3,
+            min_score=0.3,
+            trace_id=tid,
+        )
+        if memories:
+            memory_lines = [f"  - {m.get('text', '')[:200]}" for m in memories]
+            memory_block = (
+                "\n\nPast learned rules (from previous runs):\n"
+                + "\n".join(memory_lines) + "\n"
+            )
+    except Exception:
+        pass  # Non-fatal — memory may not be available
+
     user = (
         f"Goal: {goal}\n"
         f"Metric: {metric_name} ({metric_direction} is better)\n"
         f"Current best: {current_best}\n"
         f"Target file: {target_file}\n\n"
         f"Past experiments (most recent first):\n{history_str}\n\n"
-        f"Current target file content:\n```\n{current_content}\n```\n\n"
+        f"Current target file content:\n```\n{current_content}\n```\n"
+        f"{reflect_block}{memory_block}\n"
         f"Propose the next experiment. Return STRICT JSON with keys: "
         f"description, rationale, new_content."
     )

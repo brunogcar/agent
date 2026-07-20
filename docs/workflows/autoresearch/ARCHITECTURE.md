@@ -11,19 +11,20 @@ Module tree, dispatch flow (mermaid), design decisions, state TypedDict. For fac
 ```text
 workflows/autoresearch.py
 ├── build_autoresearch_graph()        # Re-exported from autoresearch_impl/graph.py
-└── WORKFLOW_METADATA                 # Re-exported (name="autoresearch", version="1.4")
+└── WORKFLOW_METADATA                 # Re-exported (name="autoresearch", version="1.5")
 
 workflows/autoresearch_impl/
 ├── __init__.py                       # Empty
 ├── state.py
 │   ├── AutoresearchState             # TypedDict(WorkflowState, total=False)
-│   └── _default_state(...)           # Factory pulling defaults from cfg (incl. v1.4 loop-control knobs)
+│   └── _default_state(...)           # Factory pulling defaults from cfg (incl. v1.4 loop-control knobs + v1.5 reflect_notes)
 ├── graph.py
-│   ├── WORKFLOW_METADATA             # MCP client introspection dict (v1.4)
-│   └── build_autoresearch_graph()    # 7-node StateGraph builder (1 conditional loop edge)
+│   ├── WORKFLOW_METADATA             # MCP client introspection dict (v1.5)
+│   └── build_autoresearch_graph()    # 8-node StateGraph builder (1 conditional loop edge from reflect)
 ├── routes.py
 │   ├── route_after_setup             # success → propose, failure → END
 │   └── route_after_log               # [v1.4] continue → propose, stop → END (max_iter / convergence / stuck)
+│                                     # [v1.5 N1] now invoked from `reflect` (was `log`)
 │                                     # [v1.3 P2-5] route_after_evaluate + route_after_decide DELETED
 ├── helpers.py
 │   ├── extract_metric()              # [v1.2.1] shared regex (setup + evaluate)
@@ -31,20 +32,22 @@ workflows/autoresearch_impl/
 └── nodes/
     ├── __init__.py
     ├── setup.py                      # node_setup — branch + ledger + baseline
-    ├── propose.py                    # node_propose — LLM proposal (subagent, 3× retry)
+    ├── propose.py                    # node_propose — LLM proposal (subagent, 3× retry) + [v1.5 N1] reflect_notes block + [v1.5 N4] procedural memory recall
     ├── modify.py                     # node_modify — atomic write + path/protected guards + [v1.4 N8] md5 dedup
     ├── run_experiment.py             # node_run_experiment — time-boxed subprocess
     ├── evaluate.py                   # node_evaluate — regex metric extraction
-    ├── decide.py                     # node_decide — keep (commit) / discard (reset) + status reset
-    └── log.py                        # node_log — append to results.tsv + history (capped at 100) + [v1.4] content_hash
+    ├── decide.py                     # node_decide — keep (commit) / discard (reset) + status reset + [v1.5 N4] _record_failure_memory on discard
+    ├── log.py                        # node_log — append to results.tsv + history (capped at 100) + [v1.4] content_hash
+    └── reflect.py                    # [v1.5 N1] node_reflect — LLM strategy reflection every N iterations (no-op otherwise)
 ```
 
 **External dependencies (lazy-imported inside node functions):**
 - `workflows/base.py` — `WorkflowState` (parent TypedDict) + `run_workflow()` dispatcher. **[v1.3 P0-2]** Autoresearch branch catches `GraphRecursionError` and returns `{"status": "success"}`.
-- `core/config.py` — 4 autoresearch knobs + 3 v1.4 loop-control knobs + `cfg.is_protected()` (v1.3 P1-3) + `cfg.autocode_max_file_chars` (6000, v1.3 P1-5).
+- `core/config.py` — 4 autoresearch knobs + 3 v1.4 loop-control knobs + 1 v1.5 reflect knob + `cfg.is_protected()` (v1.3 P1-3) + `cfg.autocode_max_file_chars` (6000, v1.3 P1-5).
 - `core/json_extract.py` — `extract_json()` (used by `node_propose._parse_proposal()` to strip markdown fences).
 - `core/tracer.py` — `tracer.step()` / `tracer.warning()` / `tracer.error()` — observability (MCP stdio safety — no `print()`).
-- `tools/agent.py` — `agent(action="subagent", role="planner")` — used by `node_propose._call_planner` (v1.1+).
+- `tools/agent.py` — `agent(action="subagent", role="planner")` — used by `node_propose._call_planner` (v1.1+) + `node_reflect` (v1.5 N1, reuses the same helper).
+- `core/memory_engine.py` — `memory.recall()` + `memory.store_procedural()` — used by `node_propose` (v1.5 N4, recall procedural memories before proposing) + `node_decide` (v1.5 N4, store procedural memory on discard). Lazy-imported + wrapped in try/except (non-fatal — chromadb may be unavailable).
 - `tools/git.py` — `git(action="checkout_new"|"checkout_branch")` — used by `node_setup` only (NOT `node_decide`, which uses raw `subprocess.run`).
 - `tools/workflow_ops/{types/autoresearch.py,helpers.py}` — type handler + `_execute_workflow()`. **[v1.3 P2-2]** Forwards ALL autoresearch params. **[v1.4]** Forwards `max_iterations`.
 - `tests/workflows/autoresearch/` — per-concern test files (see [Testing](#-testing) below).
@@ -55,19 +58,22 @@ workflows/autoresearch_impl/
 
 ```mermaid
 graph TD
-    A["node_setup<br/>Phase 1: Branch + ledger + baseline"] --> B["node_propose<br/>Phase 2: LLM proposes next experiment"]
+    A["node_setup<br/>Phase 1: Branch + ledger + baseline"] --> B["node_propose<br/>Phase 2: LLM proposes next experiment + [v1.5 N4] recall procedural memory"]
     B --> C["node_modify<br/>Phase 3: Atomic write to target_file + [v1.4] md5 dedup"]
     C --> D["node_run_experiment<br/>Phase 4: Time-boxed subprocess"]
     D --> E["node_evaluate<br/>Phase 5: Regex extract LAST metric"]
-    E --> F["node_decide<br/>Phase 6: Keep (commit) / discard (reset) + status reset"]
+    E --> F["node_decide<br/>Phase 6: Keep (commit) / discard (reset) + status reset + [v1.5 N4] store procedural memory on discard"]
     F --> G["node_log<br/>Phase 7: Append annotated experiment to results.tsv + history"]
-    G -->|"route_after_log: continue → propose"| B
-    G -.->|"[v1.4] max_iter / convergence / stuck → END"| S["END<br/>(stopping condition OR recursion_limit)"]
+    G --> H["node_reflect<br/>Phase 8: [v1.5 N1] no-op OR reflect on history every N iterations"]
+    H -->|"route_after_log: continue → propose"| B
+    H -.->|"[v1.4] max_iter / convergence / stuck → END"| S["END<br/>(stopping condition OR recursion_limit)"]
 ```
 
 - **[v1.3 P0-1] Graph order:** `setup → propose → modify → run_experiment → evaluate → decide → log → propose (loop)`. OLD order (`evaluate → log → decide`) was broken — `log` read `current_experiment.status` BEFORE `decide` annotated it → ledger ALWAYS recorded `"discard"`. NEW order lets `decide` annotate first, then `log` writes the correct status. `status="running"` reset moved from `node_log` to `node_decide`.
 - **[v1.3 P2-5] Direct edges after `run_experiment`** — the two pre-v1.3 "fake" conditionals (`route_after_evaluate` always→`"log"`, `route_after_decide` always→`"propose"`) were deleted → direct `add_edge` calls.
 - **[v1.4] Conditional `log → propose` back-edge** — replaced the v1.3 direct edge with `route_after_log`, which checks 3 stopping conditions in order: (1) `max_iterations` reached (caller-set hard cap; 0=unlimited); (2) convergence: last N all discarded (N=`convergence_window`, default 10); (3) stuck: last N metrics all within ε of `current_best` (ε=`convergence_epsilon`, default 0.001). All 3 default OFF → v1.4 preserves v1.3 "loop forever" behavior unless caller opts in via `max_iterations=N` or env vars.
+- **[v1.5 N1] Reflect node between `log` and `route_after_log`** — `node_reflect` is a no-op most iterations (returns `{}`). Every `autoresearch_reflect_interval` iterations (default 5; 0=disabled) it calls the planner LLM with `REFLECT_SYSTEM` + the full experiment history and stores the strategy summary in `state["reflect_notes"]`. The next `node_propose` surfaces the reflection in its prompt (when non-empty) so the LLM has strategic context, not just raw history. Failures are non-fatal — `node_reflect` returns `{}` on LLM error so the loop continues with whatever reflection was previously stored. The conditional edge `route_after_log` now starts from `reflect` (was `log`) — `log → reflect → route_after_log → propose` is the new loop tail.
+- **[v1.5 N4] Cross-run learning** — `node_decide` calls `_record_failure_memory()` on every discard path (prior-failure AND no-improvement). The helper lazily imports `core.memory_engine.memory`, checks if a similar failure has been recorded before (via `memory.recall(collections=["procedural"], min_score=0.7)`) — if yes, traces a "repeated failure pattern detected" log line; if no, calls `memory.store_procedural()` with `importance=5`, `tags="source:autoresearch,category:failed_experiment"`, `outcome="failure"`. `node_propose` lazily recalls procedural memories before generating the next proposal (via `memory.recall(collections=["procedural"], top_k=3, min_score=0.3)`) and surfaces them in the prompt as "Past learned rules". All memory calls are wrapped in try/except — if `core.memory_engine` is unavailable (e.g. chromadb not installed), cross-run learning silently no-ops. This is non-blocking on the experiment loop.
 - **[v1.3 P0-2] `GraphRecursionError` is the EXPECTED exit** — the dispatcher's autoresearch branch catches it explicitly and returns `{"status": "success"}` with the trace_id (was: caught by generic `except Exception` → `status="failed"`, state lost).
 - **Capacity:** With `recursion_limit=1000`, ~166 experiments per invocation. With `max_iterations=N` (v1.4 opt-in), the loop stops at N regardless of recursion_limit. Invoke graph directly with a higher limit for longer runs.
 
@@ -99,6 +105,9 @@ class AutoresearchState(WorkflowState, total=False):
     max_iterations: int        # 0=unlimited; stop after N experiments
     convergence_window: int    # stop after N consecutive non-improvements
     convergence_epsilon: float # metric plateau threshold (stuck detector)
+
+    # -- [v1.5 N1] Reflect node --
+    reflect_notes: str         # LLM strategy reflection (updated every N iterations)
 
     # -- Per-iteration state (each history entry: {iteration, description, metric, status, commit, content_hash}) --
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
@@ -145,7 +154,7 @@ For the field-by-field reference table, see [API.md § State Fields](API.md#-sta
 python -m pytest tests/workflows/autoresearch/ -v -W error --tb=short
 ```
 
-**86/86 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control).
+**98/98 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control + v1.5 reflect + cross-run learning).
 
 **Mock strategy:** Patch `workflows.autoresearch_impl.graph.node_<name>` for end-to-end loop tests; patch `nodes.decide._git_commit` / `_git_reset_hard` for `node_decide` unit tests; patch `tools.git.git` for `node_setup._git_create_branch`. No live LLM/subprocess/git operations.
 
@@ -156,6 +165,7 @@ tests/workflows/autoresearch/
 ├── conftest.py                  # Shared `ar_state` fixture
 ├── test_graph.py                # Topology + WORKFLOW_METADATA + facade + full-loop integration
 ├── test_loop_control.py         # [v1.4] route_after_log + experiment dedup (8 tests)
+├── test_reflect.py              # [v1.5] node_reflect + propose reflection block + cross-run learning (12 tests)
 ├── test_nodes_setup.py          # extract_metric + run_target_subprocess + node_setup + node_evaluate
 ├── test_nodes_propose.py        # _format_history + _parse_proposal + _call_planner + node_propose + _atomic_write + node_modify
 ├── test_nodes_decide.py         # _is_improvement + _git_commit + _git_reset_hard + node_decide + node_log
@@ -166,4 +176,4 @@ The dispatcher test (`tests/workflows/base/test_dispatcher.py`) asserts the unkn
 
 ---
 
-*Last updated: 2026-07-20 (v1.4). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-21 (v1.5). See [CHANGELOG.md](CHANGELOG.md) for version history.*

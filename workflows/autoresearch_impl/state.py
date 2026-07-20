@@ -67,6 +67,9 @@ class AutoresearchState(WorkflowState, total=False):
     convergence_window: int     # [v1.4] stop after N consecutive non-improvements
     convergence_epsilon: float  # [v1.4] metric plateau threshold
 
+    # -- [v1.5 N1] Reflect node --
+    reflect_notes: str          # LLM reflection on strategy (updated every N iterations)
+
     # -- Per-iteration state --
     # Each entry: {iteration, description, metric, status, commit, content_hash}
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
@@ -155,6 +158,7 @@ def _default_state(
         "max_iterations": max_iterations,
         "convergence_window": convergence_window,
         "convergence_epsilon": convergence_epsilon,
+        "reflect_notes": "",
         "experiment_history": [],
         "current_experiment": {},
         "experiment_output": "",
