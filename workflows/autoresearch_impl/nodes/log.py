@@ -29,6 +29,13 @@ to prevent state bloat on long overnight runs.
 proposal's `new_content`, set by `node_modify`) so `node_modify` can dedup
 future proposals against it. Ledger row format is unchanged (hash lives
 only in the in-memory history — operators don't need it in `results.tsv`).
+
+[v1.6] When `parallel_count > 1`, appends N rows to the ledger (one per
+experiment in `current_experiments`) and N entries to
+`experiment_history`. `experiment_count` increments by N. Both
+`current_experiments` (plural) and `current_experiment` (singular) are
+cleared for the next iteration. When `parallel_count == 1`, the v1.5
+single-row path runs unchanged.
 """
 from __future__ import annotations
 
@@ -57,6 +64,22 @@ def _append_to_ledger(results_path: str, row: str, tid: str = "") -> None:
         tracer.warning(tid, "log", f"ledger append failed: {e}")
 
 
+def _build_history_entry(proposal: dict, fallback_metric: float) -> dict:
+    """Build a single experiment_history entry from an annotated proposal.
+
+    Shared between the v1.5 single path and the v1.6 parallel path so the
+    row schema stays in sync.
+    """
+    return {
+        "iteration": proposal.get("iteration", 0),
+        "description": proposal.get("description", ""),
+        "metric": proposal.get("metric", fallback_metric),
+        "status": proposal.get("status", "discard"),
+        "commit": proposal.get("commit", ""),
+        "content_hash": proposal.get("content_hash", ""),  # [v1.4 N8] for dedup
+    }
+
+
 def node_log(state: AutoresearchState) -> dict:
     """Append the experiment result to results.tsv and experiment_history.
 
@@ -71,9 +94,55 @@ def node_log(state: AutoresearchState) -> dict:
 
     [v1.3 P0-1] No longer returns `status` / `error` — `decide` now resets
     them. Returning them here would clobber `decide`'s reset.
+
+    [v1.6] When `parallel_count > 1`, loops through `current_experiments`
+    and writes N ledger rows + N history entries. `experiment_count`
+    increments by N. Both `current_experiments` (plural) and
+    `current_experiment` (singular) are cleared.
     """
     tid = state.get("trace_id", "")
     results_path = state.get("results_path", "results.tsv")
+    parallel_count = int(state.get("parallel_count", 1) or 1)
+    history = list(state.get("experiment_history", []) or [])
+
+    # ── [v1.6] Parallel path: log all N experiments ────────────────────────
+    if parallel_count > 1:
+        proposals = state.get("current_experiments", []) or []
+        n = len(proposals)
+
+        for proposal in proposals:
+            iteration = proposal.get("iteration", state.get("experiment_count", 0) + 1)
+            commit = proposal.get("commit", "")
+            metric = proposal.get("metric", 0.0)
+            status = proposal.get("status", "discard")
+            description = proposal.get("description", "")
+
+            # Sanitize description — strip newlines/tabs so the row stays one line.
+            safe_desc = " ".join(str(description).split())
+            row = f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\n"
+            _append_to_ledger(results_path, row, tid)
+
+            history.append(_build_history_entry(proposal, 0.0))
+
+        # [v1.3 P2-3] Cap history to prevent state bloat on long runs.
+        if len(history) > 100:
+            history = history[-100:]
+
+        new_count = state.get("experiment_count", 0) + n
+        tracer.step(
+            tid, "log",
+            f"parallel: logged {n} experiments (total: {new_count})",
+        )
+
+        return {
+            "experiment_history": history,
+            "experiment_count": new_count,
+            "current_experiments": [],  # clear for the next iteration
+            "current_experiment": {},   # backward compat
+            # [v1.3 P0-1] status/error reset moved to decide.py.
+        }
+
+    # ── v1.5 single-experiment path (unchanged) ────────────────────────────
     proposal = state.get("current_experiment", {}) or {}
 
     iteration = proposal.get("iteration", state.get("experiment_count", 0) + 1)
@@ -91,16 +160,7 @@ def node_log(state: AutoresearchState) -> dict:
     _append_to_ledger(results_path, row, tid)
 
     # 2. Append to in-memory experiment_history
-    history_entry = {
-        "iteration": iteration,
-        "description": description,
-        "metric": metric,
-        "status": status,
-        "commit": commit,
-        "content_hash": proposal.get("content_hash", ""),  # [v1.4 N8] for dedup
-    }
-    history = list(state.get("experiment_history", []) or [])
-    history.append(history_entry)
+    history.append(_build_history_entry(proposal, state.get("current_metric", 0.0)))
     # [v1.3 P2-3] Cap history to prevent state bloat on long runs.
     # Most-recent entries are kept (the LLM only reads the last 20 anyway).
     if len(history) > 100:

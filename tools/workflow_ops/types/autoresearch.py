@@ -11,7 +11,7 @@ Validation:
 Execution: calls _execute_workflow("autoresearch", goal, trace_id, resume,
     target_file=target_file, project_root=project_root, metric_name=...,
     metric_direction=..., time_budget=..., branch=..., results_path=...,
-    max_iterations=...).
+    max_iterations=..., parallel_count=...).
 
 [v1.3 P2-2] Forwards ALL autoresearch params to `_execute_workflow` (was:
 only target_file + project_root). Callers passing metric_name,
@@ -21,6 +21,10 @@ silently dropped — the workflow ran with cfg defaults instead.
 [v1.4] Forwards `max_iterations` (caller-set hard cap on experiments).
 0 = unlimited (legacy v1.3 behavior). Also picked up from
 `cfg.autoresearch_max_iterations` if not passed.
+
+[v1.6] Forwards `parallel_count` (N parallel proposals + subprocesses per
+iteration). 1 = v1.5 single-experiment mode. Also picked up from
+`cfg.autoresearch_parallel_count` if not passed.
 """
 from __future__ import annotations
 
@@ -47,6 +51,7 @@ def _type_autoresearch(
     branch: str = "",
     results_path: str = "",
     max_iterations: int = 0,
+    parallel_count: int = 1,
     trace_id: str = "",
     resume: bool = False,
     **kwargs,
@@ -75,6 +80,12 @@ def _type_autoresearch(
         from core.config import cfg
         max_iterations = int(getattr(cfg, "autoresearch_max_iterations", 0))
 
+    # [v1.6] Forward parallel_count (1 = v1.5 single-experiment mode).
+    # Pulled from cfg.autoresearch_parallel_count if caller didn't pass it.
+    if parallel_count == 1:
+        from core.config import cfg
+        parallel_count = int(getattr(cfg, "autoresearch_parallel_count", 1))
+
     return _execute_workflow(
         "autoresearch", goal, trace_id, resume,
         target_file=target_file,
@@ -85,4 +96,5 @@ def _type_autoresearch(
         branch=branch,
         results_path=results_path,
         max_iterations=max_iterations,
+        parallel_count=parallel_count,
     )

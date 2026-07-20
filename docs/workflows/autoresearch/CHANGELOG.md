@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.6 | 2026-07-21 | **Parallel experiments (batch mode).** When `parallel_count > 1`, each iteration proposes N experiments in parallel via ThreadPoolExecutor(max_workers=N) — each with the SAME prompt (the LLM produces different proposals via sampling temperature). Per-call LLM failures are recorded as failed-proposal placeholders so the batch isn't aborted. `node_modify` writes each proposal to its own temp dir under `{project_root}/.autoresearch/parallel/{i}/{target_file}` (the real `target_file` is only touched by `node_decide`). `node_run_experiment` runs N subprocesses concurrently in their own temp dirs as cwd. `node_evaluate` extracts N metrics. `node_decide` picks the best, copies the winner's content to the real `target_file`, git commits it, discards the rest, and cleans up the temp dir. `node_log` writes N ledger rows + N history entries (experiment_count increments by N). When `parallel_count == 1` (default), all nodes behave exactly as v1.5 (single-experiment). New env var: `AUTORESEARCH_PARALLEL_COUNT`. 4 new state fields: `parallel_count`, `current_experiments`, `experiment_outputs`, `current_metrics` (singular fields kept for v1.5 backward compat). |
 | v1.5 | 2026-07-21 | **Reflect node (N1) + cross-run learning (N4).** New `node_reflect` between `log` and `route_after_log` — every `autoresearch_reflect_interval` iterations (default 5; 0=disabled) calls the planner LLM with the full experiment history + `REFLECT_SYSTEM` prompt and stores the reflection in `state["reflect_notes"]`. `node_propose` surfaces the reflection in its prompt (when non-empty) so the LLM has strategic context, not just raw history. No-op on non-reflect iterations (returns `{}`). New env var: `AUTORESEARCH_REFLECT_INTERVAL`. Cross-run learning (N4): `node_decide` records a procedural memory via `memory.store_procedural()` on every discard path (prior failure + no-improvement); `node_propose` recalls procedural memories before generating the next proposal so the LLM avoids re-proposing known dead-ends. Failures non-fatal (memory may be unavailable — try/except wraps all calls). Graph bumps to 8 nodes. |
 | v1.4 | 2026-07-20 | **Loop control + dedup.** `max_iterations` param (caller-set hard cap; 0=unlimited). `route_after_log` conditional edge replaces the v1.3 direct `log → propose` edge — checks 3 stopping conditions: (1) max_iterations reached, (2) convergence: last N all discarded, (3) stuck: last N metrics all within ε of current_best. All default OFF → v1.4 preserves v1.3 "loop forever" behavior unless caller opts in. Experiment deduplication (N8): `node_modify` md5-hashes `new_content` and skips duplicates from `experiment_history`; `content_hash` stored on each history entry by `node_log`. 3 new env vars: `AUTORESEARCH_MAX_ITERATIONS`, `AUTORESEARCH_CONVERGENCE_WINDOW`, `AUTORESEARCH_CONVERGENCE_EPSILON`. |
 | v1.3.0 | 2026-07-15 | **Hardening batch (5-reviewer collective audit).** P0-1: graph order swapped `evaluate → log → decide` → `evaluate → decide → log` (log was reading pre-decide status → ledger ALWAYS said "discard"). P0-2: `GraphRecursionError` caught explicitly (was: generic `except Exception` → `status="failed"` + state lost). P1-1: empty SHA → discard (was: `status="keep"` with empty commit). P1-2: `_call_planner` retries 3× with 2s/4s backoff. P1-3: path traversal + protected-file guard in `node_modify`. P1-4: `_git_reset_hard` safety guard (refuses no-root / non-repo). P1-5: target-file content capped at `cfg.autocode_max_file_chars` (6000). P2-1: shared `run_target_subprocess` in helpers.py (was duplicated). P2-2: forward ALL params (metric_name, metric_direction, time_budget, branch, results_path) through type handler. P2-3: `experiment_history` capped at 100. P2-4: removed 4 dead conftest fixtures. P2-5: fake conditional edges (`route_after_evaluate` / `route_after_decide`) replaced with direct edges; both routers deleted. |
@@ -20,6 +21,16 @@
 ---
 
 ### ⚠️ Breaking Changes
+
+#### v1.6 — 2026-07-21
+
+| Change | Impact | Migration |
+|--------|--------|------------|
+| New `parallel_count` state field + 3 plural state fields (`current_experiments`, `experiment_outputs`, `current_metrics`) | `AutoresearchState` gained 4 new fields. Defaults: `parallel_count=1`, the lists `[]`. When `parallel_count == 1`, all nodes use the v1.5 singular fields only — the plural fields are unused (additive, no behavior change). When `parallel_count > 1`, all nodes use the plural fields; the singular fields mirror the first list element for v1.5 backward compat. | None — additive change. Code reading state by key keeps working. |
+| New env var `AUTORESEARCH_PARALLEL_COUNT` | `cfg.autoresearch_parallel_count` (default 1) controls how many parallel experiments run per iteration. | Set `AUTORESEARCH_PARALLEL_COUNT=N` (N > 1) to enable batch mode. Default 1 = v1.5 behavior. |
+| `node_modify` in parallel mode writes to `{project_root}/.autoresearch/parallel/{i}/{target_file}` (NOT the real `target_file`) | The real `target_file` is only modified by `node_decide` (which copies the winner's content back). Pre-v1.6 modify wrote directly to `target_file`. | None — in `parallel_count == 1` mode (default), modify still writes directly to `target_file` exactly as v1.5. |
+| `node_decide` in parallel mode picks the best of N experiments, copies winner's content, commits, cleans up temp dir | Operators see one git commit per iteration (same as v1.5) even though N experiments ran. The commit message includes `[parallel best of N]` marker. | None — additive change. |
+| `node_log` in parallel mode appends N rows to `results.tsv` + N entries to `experiment_history` + increments `experiment_count` by N | Pre-v1.6 incremented `experiment_count` by 1 per iteration. With `parallel_count=N`, it now increments by N. | Operators tailing `results.tsv` will see N rows per iteration when batch mode is on. |
 
 #### v1.5 — 2026-07-21
 
@@ -77,7 +88,7 @@ Items N1–N10 are from the post-v1.3 collective review; items 1–7 are from ea
 | N8 | ~~**Experiment deduplication**~~ | ~~P3~~ | ✅ **Done in v1.4** — `node_modify` md5-hashes `new_content`; duplicates skipped with `status="failed"`. Semantic dedup still deferred (cross-run learning in v1.5 N4 catches repeated failures but does not byte-similar dedup). |
 | N9 | **Sandbox experiment subprocess** | P3 | Restricted filesystem for untrusted experiment code. |
 | N10 | **Output truncation improvement** | P3 | Extract metric BEFORE truncation, or increase cap to 200KB. |
-| 1 | **Parallel experiments** | P2 | Branch N proposals, run all N subprocesses in parallel, keep the best. Multi-GPU throughput. |
+| 1 | ~~**Parallel experiments**~~ | ~~P2~~ | ✅ **Done in v1.6** — `parallel_count` param + node-internal N-way parallelism (propose / modify / run_experiment / evaluate / decide / log). Each iteration generates N proposals, runs N subprocesses concurrently, picks the best, commits it. Multi-GPU throughput. Default 1 = v1.5 single-experiment mode. |
 | 2 | **Multi-metric optimization** | P3 | `metric_name: list[str]` + a Pareto-front decide node. |
 | 3 | **Human-in-the-Loop (HiTL) checkpoints** | P3 | Pause the loop every N iterations for operator review. |
 | 4 | **Parallel subagent dispatch for proposals** | P3 | PARALLEL subagents (one per hypothesis family); single-subagent dispatch done in v1.1. |
@@ -102,4 +113,4 @@ Items N1–N10 are from the post-v1.3 collective review; items 1–7 are from ea
 
 ---
 
-*Last updated: 2026-07-20 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-21 (v1.6). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -37,6 +37,16 @@ There is NO `_call()` fallback — a subagent failure halts the current
 iteration (v1.2.2 doc fix: earlier docs incorrectly claimed a fallback
 existed).
 
+[v1.6] When `parallel_count > 1`, `node_propose` dispatches N parallel
+`_call_planner` calls via ThreadPoolExecutor(max_workers=N) — each with the
+SAME prompt (the LLM is expected to produce different proposals due to
+sampling temperature). Per-call failures (after the v1.3 P1-2 retry logic)
+are recorded as failed-proposal placeholders so the batch isn't aborted by
+one bad call. The N parsed proposals are stored in `current_experiments`
+(plural); the first is mirrored to `current_experiment` (singular) for
+v1.5 backward compat. When `parallel_count == 1`, the v1.5 single-call
+path runs unchanged.
+
 The propose node only produces the proposal — modify.py applies it. This
 separation lets us retry modify without re-querying the LLM if the patch
 fails to apply.
@@ -185,11 +195,48 @@ def _parse_proposal(raw: str) -> dict:
     }
 
 
+def _generate_single_proposal(system: str, user: str, tid: str, iteration: int) -> dict:
+    """[v1.6] Call the planner once, parse, and return a proposal dict.
+
+    Extracted from `node_propose` so the parallel path can call it N times
+    via ThreadPoolExecutor. Both paths share the same prompt-building +
+    parsing logic — only the dispatch differs (1 call vs N parallel calls).
+
+    Raises:
+        RuntimeError: if `_call_planner` fails after all retries (v1.3 P1-2).
+            The parallel caller catches this and records a failed-proposal
+            placeholder so the batch isn't aborted by one bad call.
+
+    Args:
+        system: System prompt (the _PROPOSE_SYSTEM constant).
+        user: User prompt (built once, reused for all N parallel calls —
+            the LLM is expected to produce different proposals due to
+            sampling temperature).
+        tid: Trace ID for observability.
+        iteration: The iteration number to stamp on the returned proposal.
+
+    Returns:
+        Parsed proposal dict with `iteration` set.
+    """
+    raw = _call_planner(system, user, tid)
+    proposal = _parse_proposal(raw)
+    proposal["iteration"] = iteration
+    return proposal
+
+
 def node_propose(state: AutoresearchState) -> dict:
     """Propose the next experiment via the planner LLM.
 
     Returns a partial state dict with `current_experiment` set to the
     proposal dict {iteration, description, rationale, new_content}.
+
+    [v1.6] When `parallel_count > 1`, generates N proposals in parallel
+    via ThreadPoolExecutor(max_workers=N). Each call uses the SAME prompt
+    — the LLM is expected to produce different proposals due to sampling
+    temperature. Stores all N in `current_experiments` (plural) AND mirrors
+    the first to `current_experiment` (singular) for v1.5 backward compat.
+    When `parallel_count == 1`, behaves exactly as v1.5 (single call,
+    single result in `current_experiment`).
     """
     tid = state.get("trace_id", "")
     goal = state.get("goal", "")
@@ -200,6 +247,9 @@ def node_propose(state: AutoresearchState) -> dict:
     target_file = state.get("target_file", "") or cfg.autoresearch_target_file
     project_root = state.get("project_root", "")
     experiment_count = state.get("experiment_count", 0)
+    # [v1.6] parallel_count=1 (default) preserves v1.5 single-experiment
+    # behavior. > 1 activates the parallel proposal path.
+    parallel_count = int(state.get("parallel_count", 1) or 1)
 
     iteration = experiment_count + 1
     tracer.step(tid, "propose", f"iteration {iteration}: querying planner")
@@ -275,6 +325,77 @@ def node_propose(state: AutoresearchState) -> dict:
         f"description, rationale, new_content."
     )
 
+    # ── [v1.6] Parallel path: N proposals via ThreadPoolExecutor ───────────
+    # Each call uses the SAME prompt — the LLM is expected to produce
+    # different proposals due to sampling temperature. Per-call failures
+    # (after the v1.3 P1-2 retry logic) are recorded as failed-proposal
+    # placeholders so the batch isn't aborted by one bad call.
+    if parallel_count > 1:
+        import concurrent.futures
+
+        tracer.step(
+            tid, "propose",
+            f"parallel mode: generating {parallel_count} proposals concurrently",
+        )
+
+        proposals: list[dict] = []
+        fail_count = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as pool:
+            future_to_iter = {}
+            for i in range(parallel_count):
+                it = experiment_count + 1 + i
+                fut = pool.submit(_generate_single_proposal, _PROPOSE_SYSTEM, user, tid, it)
+                future_to_iter[fut] = it
+
+            for future in concurrent.futures.as_completed(future_to_iter):
+                it = future_to_iter[future]
+                try:
+                    proposal = future.result()
+                    proposals.append(proposal)
+                    tracer.step(
+                        tid, "propose",
+                        f"parallel proposal iter {it}: {proposal.get('description', '')[:80]}",
+                    )
+                except Exception as e:
+                    fail_count += 1
+                    tracer.warning(
+                        tid, "propose",
+                        f"parallel proposal iter {it} failed: {e}",
+                    )
+                    proposals.append({
+                        "iteration": it,
+                        "description": f"(LLM call failed: {e})",
+                        "rationale": "",
+                        "new_content": "",
+                        "status": "failed",  # signals modify/run to skip
+                    })
+
+        # Sort by iteration so the order matches the batch indices downstream.
+        proposals.sort(key=lambda p: p.get("iteration", 0))
+
+        # If ALL N calls failed, propagate status="failed" (mirrors v1.5
+        # single-call failure behavior). Otherwise status="running" —
+        # individual failed proposals are handled per-experiment downstream.
+        if fail_count == parallel_count:
+            return {
+                "current_experiments": proposals,
+                "current_experiment": proposals[0] if proposals else {},
+                "status": "failed",
+                "error": f"all {parallel_count} parallel planner calls failed",
+            }
+
+        return {
+            "current_experiments": proposals,
+            # Mirror the first proposal for v1.5 backward compat (singular
+            # field is still used by node_modify / node_run_experiment /
+            # node_evaluate / node_decide / node_log when parallel_count==1;
+            # the parallel path reads the plural fields).
+            "current_experiment": proposals[0] if proposals else {},
+            "status": "running",
+            "error": "",
+        }
+
+    # ── v1.5 single-proposal path (unchanged) ──────────────────────────────
     try:
         raw = _call_planner(_PROPOSE_SYSTEM, user, tid)
     except Exception as e:

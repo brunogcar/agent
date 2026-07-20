@@ -469,6 +469,7 @@ def run_workflow(
                 branch=initial_state.get("branch", ""),
                 results_path=initial_state.get("results_path", ""),
                 max_iterations=initial_state.get("max_iterations", 0),
+                parallel_count=initial_state.get("parallel_count", 1),
             )
             # Merge any extra kwargs the caller passed (e.g. dry_run, overrides)
             ar_state.update({k: v for k, v in initial_state.items()

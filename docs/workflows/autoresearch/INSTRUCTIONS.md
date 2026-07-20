@@ -37,6 +37,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 29. Never wire `route_after_log` directly from `log` — v1.5 N1 inserted `node_reflect` between them; the conditional edge must start from `reflect` (was `log` in v1.4).
 30. Never let `node_reflect` raise out — LLM failure must be caught and return `{}` (non-fatal) so the loop continues with the prior reflection.
 31. Never let `_record_failure_memory` or `node_propose`'s memory recall raise out — `core.memory_engine` may be unavailable (chromadb missing) and the experiment loop must NEVER halt on a memory call. Wrap in `try/except Exception: pass`.
+32. Never activate the parallel path when `parallel_count == 1` — the v1.5 single-experiment path MUST run unchanged (singular state fields only). The parallel path is ONLY for `parallel_count > 1` (plural state fields). Mixing the two breaks backward compat.
+33. Never touch the real `target_file` in `node_modify` when `parallel_count > 1` — write each proposal to its own temp dir under `{project_root}/.autoresearch/parallel/{i}/{target_file}`. The real `target_file` is only modified by `node_decide` (which copies the winner back).
+34. Never skip `shutil.rmtree(parallel_dir, ignore_errors=True)` in `node_decide` — the temp dir MUST be cleaned up on EVERY exit path (improvement, no-improvement, commit failure). Leaking temp dirs accumulates disk usage over overnight runs.
+35. Never let one parallel LLM call abort the batch — per-call failures (after the v1.3 P1-2 retry) must be recorded as failed-proposal placeholders (`status="failed"`); the remaining N-1 calls continue. Only set `status="failed"` for the iteration if ALL N calls fail.
 
 ## ✅ ALWAYS DO
 
@@ -71,6 +75,11 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 29. Always check `experiment_count % interval == 0` (and `experiment_count != 0`) in `node_reflect` before calling the planner LLM — non-reflect iterations must short-circuit and return `{}` (v1.5 N1).
 30. Always reuse `propose._call_planner` from `node_reflect` (module-level import so tests can patch `reflect._call_planner`) — don't reimplement subagent dispatch + retry (v1.5 N1).
 31. Always wrap `_record_failure_memory`'s `memory.recall` + `memory.store_procedural` calls in try/except — `core.memory_engine` may not be importable (chromadb missing), and the discard path must NEVER fail because of a memory-store error (v1.5 N4).
+32. Always check `parallel_count > 1` at the top of every node (propose / modify / run_experiment / evaluate / decide / log) — when False, run the v1.5 single-experiment path UNCHANGED (singular state fields). The parallel path is the ONLY place plural state fields are read or written (v1.6).
+33. Always mirror the first element of plural state fields to the singular field for v1.5 backward compat — `current_experiments[0]` → `current_experiment`, `experiment_outputs[0]` → `experiment_output`, `current_metrics[0]` → `current_metric` (v1.6).
+34. Always run each parallel subprocess in its OWN temp dir as cwd — `{project_root}/.autoresearch/parallel/{i}/` — so relative paths in the experiment script still resolve (v1.6).
+35. Always copy the winner's temp-file content to the REAL `target_file` in `node_decide` before `git add + commit` — the real file is the source of truth for the next iteration's `node_propose` (which reads it via `_read_target_file`) (v1.6).
+36. Always pull `parallel_count` from `cfg.autoresearch_parallel_count` in the type handler when the caller didn't pass it — env-overridable via `AUTORESEARCH_PARALLEL_COUNT` for operators who want batch mode on every run (v1.6).
 
 ---
 
@@ -102,6 +111,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 
 > **[v1.5 N4] Don't let cross-run learning block the experiment loop:** A prototype called `memory.store_procedural(...)` directly in `node_decide` without a try/except wrapper. When chromadb was unavailable (test environment, fresh install), the call raised and the ENTIRE discard path aborted — the loop stuck. Wrapped every memory call in `try/except Exception: pass` so cross-run learning is best-effort: it activates when chromadb is available and silently no-ops otherwise. Same pattern in `node_propose`'s `memory.recall` — a recall failure never blocks proposal generation.
 
+> **[v1.6] Don't write N proposals to the same `target_file`:** First prototype tried to write all N proposals sequentially to the real `target_file`, run each, then restore the winner. Race conditions + state tracking made this fragile. Switched to per-experiment temp dirs: `{project_root}/.autoresearch/parallel/{i}/{target_file}`. The real `target_file` is only touched by `node_decide` (which copies the winner back). Clean separation, no race conditions, easy cleanup (`shutil.rmtree(parallel_dir)`).
+
+> **[v1.6] Don't change the graph topology for parallel mode:** First prototype added new nodes (e.g. `parallel_propose`, `parallel_decide`) and conditional edges. Doubled the graph complexity + required new routing logic. Switched to NODE-INTERNAL parallelism: each node handles N experiments internally when `parallel_count > 1`, branching on the state field. The graph topology stays UNCHANGED — the 8-node v1.5 graph handles both single (parallel_count=1) and batch (parallel_count>1) modes via the same edges. Coordination happens inside the nodes via the `parallel_count` state field.
+
 ---
 
-*Last updated: 2026-07-21 (v1.5). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-21 (v1.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*

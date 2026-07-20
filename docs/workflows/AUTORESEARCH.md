@@ -10,6 +10,8 @@ Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch) �
 
 **[v1.5] Reflect + cross-run learning:** A new `node_reflect` sits between `log` and `route_after_log`. It is a no-op most iterations but every `autoresearch_reflect_interval` iterations (default 5; `0=disabled` via `AUTORESEARCH_REFLECT_INTERVAL`) it calls the planner LLM with the full experiment history and stores the strategy summary in `state["reflect_notes"]` — surfaced to the next `node_propose` so the LLM has strategic context, not just raw history. `node_decide` records a procedural memory via `memory.store_procedural()` on every discard (cross-run learning, N4); `node_propose` recalls procedural memories before proposing so the LLM avoids re-proposing known-bad strategies. All memory calls are non-fatal (chromadb may be unavailable — try/except wraps them).
 
+**[v1.6] Parallel experiments (batch mode):** When `parallel_count > 1` (env: `AUTORESEARCH_PARALLEL_COUNT`, default 1), each iteration runs N experiments in parallel: `node_propose` dispatches N `_call_planner` calls via ThreadPoolExecutor (each with the SAME prompt — the LLM produces different proposals via sampling temperature); `node_modify` writes each proposal to its own temp dir under `{project_root}/.autoresearch/parallel/{i}/{target_file}` (the real `target_file` is only touched by `node_decide`); `node_run_experiment` runs N subprocesses concurrently; `node_evaluate` extracts N metrics; `node_decide` picks the best, copies the winner's content to the real `target_file`, git commits it, discards the rest, and cleans up the temp dir; `node_log` writes N ledger rows + N history entries (experiment_count increments by N). When `parallel_count == 1` (default), all nodes behave exactly as v1.5 (single-experiment, singular state fields only). The graph topology is UNCHANGED — parallelism is node-internal, coordinated via the `parallel_count` state field.
+
 ## 🚀 Quick Start
 
 ```python
@@ -38,8 +40,9 @@ The loop runs until you interrupt the process (Ctrl-C) or LangGraph's `recursion
 | `autoresearch_convergence_window` | `10` | **[v1.4]** Stop after N consecutive non-improvements |
 | `autoresearch_convergence_epsilon` | `0.001` | **[v1.4]** Metric plateau threshold (stuck detector) |
 | `autoresearch_reflect_interval` | `5` | **[v1.5 N1]** Reflect every N iterations (0=disabled) |
+| `autoresearch_parallel_count` | `1` | **[v1.6]** N parallel experiments per iteration (1 = v1.5 single-experiment mode) |
 
-All knobs have sane defaults; override any per-invocation by passing through `run_workflow()` (forwarded via the type handler — v1.3 P2-2 + v1.4 max_iterations). **Metric extraction:** `evaluate` greps the LAST occurrence of `{metric_name}: <float>` (or `=` separator) — training scripts that print the metric per epoch just work. **Git prerequisite:** `project_root` must be a git repo (decide runs raw `git` via `subprocess.run`; setup creates branch `autoresearch/{YYYYMMDD-HHMMSS}` via the `git` tool). **[v1.4] Loop control:** All 3 stopping conditions (max_iterations / convergence / stuck) default OFF → v1.3 "loop forever" behavior preserved unless caller opts in. **[v1.5] Reflect + cross-run learning:** `autoresearch_reflect_interval=0` disables reflection entirely. Cross-run learning (N4) is best-effort — if chromadb is unavailable, `node_decide` silently skips the procedural-memory store and `node_propose` silently skips the recall.
+All knobs have sane defaults; override any per-invocation by passing through `run_workflow()` (forwarded via the type handler — v1.3 P2-2 + v1.4 max_iterations + v1.6 parallel_count). **Metric extraction:** `evaluate` greps the LAST occurrence of `{metric_name}: <float>` (or `=` separator) — training scripts that print the metric per epoch just work. **Git prerequisite:** `project_root` must be a git repo (decide runs raw `git` via `subprocess.run`; setup creates branch `autoresearch/{YYYYMMDD-HHMMSS}` via the `git` tool). **[v1.4] Loop control:** All 3 stopping conditions (max_iterations / convergence / stuck) default OFF → v1.3 "loop forever" behavior preserved unless caller opts in. **[v1.5] Reflect + cross-run learning:** `autoresearch_reflect_interval=0` disables reflection entirely. Cross-run learning (N4) is best-effort — if chromadb is unavailable, `node_decide` silently skips the procedural-memory store and `node_propose` silently skips the recall. **[v1.6] Parallel experiments:** `parallel_count=1` (default) preserves v1.5 single-experiment behavior exactly. `parallel_count>1` activates batch mode — effective experiment throughput scales N× (subject to LLM + subprocess parallelism limits). Each iteration produces N ledger rows in `results.tsv`; one git commit per iteration (the winner).
 
 ## 🔄 When to Use vs Alternatives
 
@@ -64,4 +67,4 @@ All knobs have sane defaults; override any per-invocation by passing through `ru
 
 ---
 
-*Last updated: 2026-07-21 (v1.5). See [CHANGELOG.md](autoresearch/CHANGELOG.md) for version history.*
+*Last updated: 2026-07-21 (v1.6). See [CHANGELOG.md](autoresearch/CHANGELOG.md) for version history.*

@@ -32,6 +32,16 @@ stores the strategy summary in `state["reflect_notes"]`, which the next
 `node_propose` call surfaces in its prompt. Failures are non-fatal — the
 node returns `{}` so the loop continues with the prior reflection.
 
+[v1.6] Graph topology is UNCHANGED — the 8 nodes (setup → propose → modify
+→ run_experiment → evaluate → decide → log → reflect → propose) stay in
+the same order. Parallelism is NODE-INTERNAL: when `parallel_count > 1`,
+each of propose / modify / run_experiment / evaluate / decide / log
+handles N experiments internally (N parallel LLM calls, N temp files, N
+subprocesses, N metrics, pick-best, N ledger rows). When `parallel_count
+== 1`, all nodes behave exactly as v1.5 (single-experiment). The graph
+doesn't need new edges — the parallel coordination happens inside the
+nodes via the `parallel_count` state field.
+
 The experiment loop runs indefinitely (v1.3 behavior) or until a stopping
 condition is met (v1.4 opt-in). LangGraph's recursion_limit is still the
 ultimate safety cap — callers should set a high limit (or use
@@ -63,7 +73,7 @@ from workflows.autoresearch_impl.routes import route_after_setup, route_after_lo
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.5",  # [v1.5 N1+N4] reflect node + cross-run procedural memory
+    "version": "1.6",  # [v1.6] parallel experiments (batch mode) — node-internal N-way parallelism
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
@@ -85,7 +95,10 @@ WORKFLOW_METADATA = {
             "role": "planner",
             "description": (
                 "LLM proposes the next experiment (description + rationale + "
-                "new_content) based on history and current best metric"
+                "new_content) based on history and current best metric. "
+                "[v1.6] When parallel_count > 1, dispatches N parallel _call_planner "
+                "calls via ThreadPoolExecutor — each with the SAME prompt (the LLM "
+                "produces different proposals via sampling temperature)."
             ),
         },
         {
@@ -94,7 +107,10 @@ WORKFLOW_METADATA = {
             "tool": "file",
             "description": (
                 "Apply the proposed new_content to target_file via atomic "
-                "tempfile + os.replace write"
+                "tempfile + os.replace write. [v1.6] When parallel_count > 1, "
+                "writes each proposal to {project_root}/.autoresearch/parallel/{i}/"
+                "{target_file} — the real target_file is only touched by decide "
+                "(which copies the winner back)."
             ),
         },
         {
@@ -103,7 +119,9 @@ WORKFLOW_METADATA = {
             "tool": "subprocess",
             "description": (
                 "Execute target_file as a time-boxed subprocess "
-                "(time_budget seconds), capture stdout+stderr"
+                "(time_budget seconds), capture stdout+stderr. [v1.6] When "
+                "parallel_count > 1, runs N subprocesses concurrently via "
+                "ThreadPoolExecutor — each in its own temp dir as cwd."
             ),
         },
         {
@@ -111,7 +129,8 @@ WORKFLOW_METADATA = {
             "type": "logic",
             "description": (
                 "Extract metric from experiment output via regex "
-                "({metric_name}: <float>), take the last occurrence"
+                "({metric_name}: <float>), take the last occurrence. [v1.6] "
+                "When parallel_count > 1, extracts N metrics from N outputs."
             ),
         },
         {
@@ -122,7 +141,10 @@ WORKFLOW_METADATA = {
                 "Compare current_metric vs current_best; if improved → git "
                 "commit (keep) + annotate current_experiment, else → git "
                 "reset --hard (discard). Resets status to 'running' so the "
-                "next iteration starts clean (v1.3 P0-1)."
+                "next iteration starts clean (v1.3 P0-1). [v1.6] When "
+                "parallel_count > 1, picks the best of N experiments, copies "
+                "the winner's temp file to the real target_file, commits it, "
+                "discards the rest, and cleans up the temp dir."
             ),
         },
         {
@@ -134,7 +156,9 @@ WORKFLOW_METADATA = {
                 "and update experiment_history. Reads current_experiment.status "
                 "+ commit set by decide (v1.3 P0-1 — was reading pre-decide "
                 "values, so ledger always said 'discard'). [v1.4] Stores "
-                "content_hash on the history entry for dedup."
+                "content_hash on the history entry for dedup. [v1.6] When "
+                "parallel_count > 1, appends N rows + N history entries and "
+                "increments experiment_count by N."
             ),
         },
         {
@@ -214,6 +238,9 @@ WORKFLOW_METADATA = {
         "experiment_dedup",       # [v1.4 N8] md5 hash check on new_content
         "reflection_step",        # [v1.5 N1] LLM strategy reflection every N iterations
         "cross_run_learning",     # [v1.5 N4] procedural memory on repeated failures
+        "parallel_experiments",   # [v1.6] N proposals + N subprocesses per iteration
+        "parallel_temp_isolation",  # [v1.6] each parallel experiment runs in its own temp dir
+        "parallel_best_wins",     # [v1.6] only the best experiment is committed; losers discarded
     ],
 }
 

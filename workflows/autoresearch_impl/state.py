@@ -70,6 +70,15 @@ class AutoresearchState(WorkflowState, total=False):
     # -- [v1.5 N1] Reflect node --
     reflect_notes: str          # LLM reflection on strategy (updated every N iterations)
 
+    # -- [v1.6] Parallel experiments (batch mode) --
+    # parallel_count=N runs N proposals + N subprocesses per iteration.
+    # parallel_count=1 (default) preserves v1.5 single-experiment behavior —
+    # nodes branch on this and use the singular fields below.
+    parallel_count: int          # [v1.6] N parallel experiments per iteration (default 1)
+    current_experiments: list[dict]  # [v1.6] N proposals being evaluated
+    experiment_outputs: list[str]    # [v1.6] N outputs from N subprocesses
+    current_metrics: list[float]     # [v1.6] N metrics from N evaluations
+
     # -- Per-iteration state --
     # Each entry: {iteration, description, metric, status, commit, content_hash}
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
@@ -98,6 +107,7 @@ def _default_state(
     max_iterations: int = 0,
     convergence_window: int = 10,
     convergence_epsilon: float = 0.001,
+    parallel_count: int = 1,
 ) -> dict:
     """Create a default state dictionary for the autoresearch workflow.
 
@@ -118,6 +128,8 @@ def _default_state(
         max_iterations: [v1.4] Stop after N experiments. 0=unlimited (legacy).
         convergence_window: [v1.4] Stop after N consecutive non-improvements.
         convergence_epsilon: [v1.4] Metric plateau threshold (stuck detector).
+        parallel_count: [v1.6] Run N proposals + N subprocesses per iteration.
+            1 (default) preserves v1.5 single-experiment behavior.
 
     Returns:
         A dict suitable as LangGraph initial state.
@@ -141,6 +153,12 @@ def _default_state(
     if convergence_epsilon == 0.001:
         convergence_epsilon = float(getattr(cfg, "autoresearch_convergence_epsilon", 0.001))
 
+    # [v1.6] Pull parallel_count from cfg (env-overridable via
+    # AUTORESEARCH_PARALLEL_COUNT). The caller's explicit value wins when > 1;
+    # default 1 falls through to the cfg default (also 1 unless overridden).
+    if parallel_count == 1:
+        parallel_count = int(getattr(cfg, "autoresearch_parallel_count", 1))
+
     return {
         "workflow": "autoresearch",
         "goal": goal,
@@ -159,6 +177,10 @@ def _default_state(
         "convergence_window": convergence_window,
         "convergence_epsilon": convergence_epsilon,
         "reflect_notes": "",
+        "parallel_count": parallel_count,
+        "current_experiments": [],
+        "experiment_outputs": [],
+        "current_metrics": [],
         "experiment_history": [],
         "current_experiment": {},
         "experiment_output": "",

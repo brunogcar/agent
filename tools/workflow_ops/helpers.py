@@ -213,6 +213,11 @@ def _execute_workflow(
         # from cfg.autoresearch_max_iterations if caller didn't pass it.
         if kwargs.get("max_iterations"):
             run_kwargs["max_iterations"] = kwargs["max_iterations"]
+        # [v1.6] Forward parallel_count (1 = v1.5 single-experiment mode).
+        # Type handler pulls from cfg.autoresearch_parallel_count if caller
+        # didn't pass it.
+        if kwargs.get("parallel_count"):
+            run_kwargs["parallel_count"] = kwargs["parallel_count"]
 
     # research + deep_research: no extra kwargs (just goal + trace_id).
 

@@ -39,6 +39,9 @@ Env vars read:
     Autoresearch v1.5 reflect + cross-run learning:
         AUTORESEARCH_REFLECT_INTERVAL      — default 5 (reflect every N iterations; 0=disabled)
 
+    Autoresearch v1.6 parallel experiments:
+        AUTORESEARCH_PARALLEL_COUNT        — default 1 (N parallel proposals + subprocesses per iteration; 1 = v1.5 single-experiment mode)
+
     Autocode v1.3: GitHub + Swarm integration flags (all default OFF):
         AUTOCODE_PULL_BEFORE_BRANCH, AUTOCODE_PUSH_ON_COMMIT,
         AUTOCODE_OPEN_PR, AUTOCODE_AUTO_MERGE, AUTOCODE_DEBUG_COMMENT_PR,
@@ -116,6 +119,14 @@ def _init_execution(cfg) -> None:
     # the full experiment history and writes a strategy summary that gets
     # folded into the next proposal prompt. 0 = disabled (legacy v1.4 behavior).
     cfg.autoresearch_reflect_interval = int(os.getenv("AUTORESEARCH_REFLECT_INTERVAL", "5"))  # reflect every N iterations (0=disabled)
+    # [v1.6] Parallel experiments — when > 1, each iteration proposes N
+    # experiments in parallel (ThreadPoolExecutor of N _call_planner calls),
+    # writes them to {project_root}/.autoresearch/parallel/{i}/{target_file},
+    # runs N subprocesses in parallel, evaluates N metrics, and decide picks
+    # the best. 1 (default) preserves v1.5 single-experiment behavior —
+    # nodes branch on this and only the parallel path uses the plural state
+    # fields (current_experiments / experiment_outputs / current_metrics).
+    cfg.autoresearch_parallel_count = int(os.getenv("AUTORESEARCH_PARALLEL_COUNT", "1"))  # N parallel experiments per iteration (1 = v1.5 mode)
 
     # -- Autocode v1.3: GitHub + Swarm integration flags -------------------
     # All default OFF — autocode behaves exactly as v1.2 unless explicitly opted in.
