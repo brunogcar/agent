@@ -31,12 +31,12 @@ workflows/autoresearch_impl/
 │   └── run_target_subprocess()       # [v1.3 P2-1] shared subprocess runner (setup + run_experiment)
 └── nodes/
     ├── __init__.py
-    ├── setup.py                      # node_setup — branch + ledger + baseline
+    ├── setup.py                      # node_setup — branch + ledger + baseline + [v1.7 N3] resume: skip branch/baseline + reload history from ledger
     ├── propose.py                    # node_propose — LLM proposal (subagent, 3× retry) + [v1.5 N1] reflect_notes block + [v1.5 N4] procedural memory recall + [v1.6] parallel N-proposal path via ThreadPoolExecutor
     ├── modify.py                     # node_modify — atomic write + path/protected guards + [v1.4 N8] md5 dedup + [v1.6] parallel N-temp-dirs path under .autoresearch/parallel/{i}/
     ├── run_experiment.py             # node_run_experiment — time-boxed subprocess + [v1.6] parallel N-subprocess path via ThreadPoolExecutor
     ├── evaluate.py                   # node_evaluate — regex metric extraction + [v1.6] parallel N-metric extraction
-    ├── decide.py                     # node_decide — keep (commit) / discard (reset) + status reset + [v1.5 N4] _record_failure_memory on discard + [v1.6] parallel pick-best + copy winner to real target_file + cleanup temp dir
+    ├── decide.py                     # node_decide — keep (commit) / discard (reset) + status reset + [v1.5 N4] _record_failure_memory on discard + [v1.6] parallel pick-best + copy winner to real target_file + cleanup temp dir + [v1.7 N7] save_checkpoint on every keep (single + parallel)
     ├── log.py                        # node_log — append to results.tsv + history (capped at 100) + [v1.4] content_hash + [v1.6] parallel N-row ledger + experiment_count += N
     └── reflect.py                    # [v1.5 N1] node_reflect — LLM strategy reflection every N iterations (no-op otherwise)
 ```
@@ -49,7 +49,8 @@ workflows/autoresearch_impl/
 - `tools/agent.py` — `agent(action="subagent", role="planner")` — used by `node_propose._call_planner` (v1.1+) + `node_reflect` (v1.5 N1, reuses the same helper).
 - `core/memory_engine.py` — `memory.recall()` + `memory.store_procedural()` — used by `node_propose` (v1.5 N4, recall procedural memories before proposing) + `node_decide` (v1.5 N4, store procedural memory on discard). Lazy-imported + wrapped in try/except (non-fatal — chromadb may be unavailable).
 - `tools/git.py` — `git(action="checkout_new"|"checkout_branch")` — used by `node_setup` only (NOT `node_decide`, which uses raw `subprocess.run`).
-- `tools/workflow_ops/{types/autoresearch.py,helpers.py}` — type handler + `_execute_workflow()`. **[v1.3 P2-2]** Forwards ALL autoresearch params. **[v1.4]** Forwards `max_iterations`. **[v1.6]** Forwards `parallel_count`.
+- `tools/workflow_ops/{types/autoresearch.py,helpers.py}` — type handler + `_execute_workflow()`. **[v1.3 P2-2]** Forwards ALL autoresearch params. **[v1.4]** Forwards `max_iterations`. **[v1.6]** Forwards `parallel_count`. **[v1.7 N3]** Forwards `resume` (already in the type handler signature; passed through `_execute_workflow` → `run_workflow` → autoresearch dispatch).
+- `core/observability/checkpoint.py` — **[v1.7 N7]** `save_checkpoint(trace_id, "keep", state)` called from `node_decide` after every successful `_git_commit`; `get_latest(trace_id)` called from the dispatcher's autoresearch branch when `resume=True` to restore the last-known-good state.
 - `tests/workflows/autoresearch/` — per-concern test files (see [Testing](#-testing) below).
 
 ---
@@ -75,6 +76,7 @@ graph TD
 - **[v1.5 N1] Reflect node between `log` and `route_after_log`** — `node_reflect` is a no-op most iterations (returns `{}`). Every `autoresearch_reflect_interval` iterations (default 5; 0=disabled) it calls the planner LLM with `REFLECT_SYSTEM` + the full experiment history and stores the strategy summary in `state["reflect_notes"]`. The next `node_propose` surfaces the reflection in its prompt (when non-empty) so the LLM has strategic context, not just raw history. Failures are non-fatal — `node_reflect` returns `{}` on LLM error so the loop continues with whatever reflection was previously stored. The conditional edge `route_after_log` now starts from `reflect` (was `log`) — `log → reflect → route_after_log → propose` is the new loop tail.
 - **[v1.5 N4] Cross-run learning** — `node_decide` calls `_record_failure_memory()` on every discard path (prior-failure AND no-improvement). The helper lazily imports `core.memory_engine.memory`, checks if a similar failure has been recorded before (via `memory.recall(collections=["procedural"], min_score=0.7)`) — if yes, traces a "repeated failure pattern detected" log line; if no, calls `memory.store_procedural()` with `importance=5`, `tags="source:autoresearch,category:failed_experiment"`, `outcome="failure"`. `node_propose` lazily recalls procedural memories before generating the next proposal (via `memory.recall(collections=["procedural"], top_k=3, min_score=0.3)`) and surfaces them in the prompt as "Past learned rules". All memory calls are wrapped in try/except — if `core.memory_engine` is unavailable (e.g. chromadb not installed), cross-run learning silently no-ops. This is non-blocking on the experiment loop.
 - **[v1.6] Node-internal parallelism (batch mode)** — When `parallel_count > 1`, each iteration runs N experiments in parallel: `node_propose` dispatches N `_call_planner` calls via `ThreadPoolExecutor(max_workers=N)` (each with the SAME prompt — the LLM produces different proposals via sampling temperature); `node_modify` writes each proposal to its own temp dir under `{project_root}/.autoresearch/parallel/{i}/{target_file}` (the REAL `target_file` is NOT touched in parallel mode — only `node_decide` copies the winner back); `node_run_experiment` runs N subprocesses concurrently in their own temp dirs as cwd; `node_evaluate` extracts N metrics; `node_decide` picks the best (greedy `min`/`max` over the N metrics, skipping any proposal marked `status="failed"` by modify), copies the winner's content to the real `target_file`, git commits it, annotates losers as `status="discard"`, and `shutil.rmtree`s the temp dir; `node_log` writes N ledger rows + N history entries (experiment_count increments by N). When `parallel_count == 1` (default), ALL nodes behave EXACTLY as v1.5 (single-experiment, singular state fields only). The graph topology is UNCHANGED — parallelism is node-internal, coordinated via the `parallel_count` state field. Per-call LLM failures are recorded as failed-proposal placeholders so the batch isn't aborted by one bad call.
+- **[v1.7 N3 + N7] Resume + checkpoint** — `run_workflow(resume=True)` triggers checkpoint restore for autoresearch. The dispatcher's autoresearch branch calls `core.observability.checkpoint.get_latest(trace_id)` AFTER `_ar_default(...)` builds a fresh state; if a checkpoint exists, it merges in only the autoresearch-specific fields (`experiment_count`, `current_best`, `baseline_metric`, `experiment_history`, `branch`, `results_path`, `reflect_notes`) — caller params (`goal`, `target_file`, etc.) are preserved as-is. It then sets `ar_state["resume"] = True`. `node_setup` reads this flag: when `resume=True` AND `state["branch"]` is non-empty, branch creation is skipped (the prior run's branch is reused); when `state["current_best"] > 0.0`, the baseline run is ALSO skipped, and `experiment_history` is reloaded from `results.tsv` via the new `_load_history_from_ledger` helper (parses TSV rows back into `{iteration, commit, metric, status, description}` dicts). `experiment_count` is set to `len(history)`. When `resume=False` (default), behavior is exactly v1.6. To support resume, `node_decide` calls `save_checkpoint(tid, "keep", state)` after every successful `_git_commit` (both single-experiment AND parallel paths) — the saved state includes the updated `current_best` so a crashed run resumes from the last-known-good metric. Discard paths do NOT checkpoint (the working tree was reset to the prior HEAD — no recoverable state worth resuming from). Checkpoint write failures are non-fatal (try/except) so the experiment loop is never blocked by a checkpoint-disk error.
 - **[v1.3 P0-2] `GraphRecursionError` is the EXPECTED exit** — the dispatcher's autoresearch branch catches it explicitly and returns `{"status": "success"}` with the trace_id (was: caught by generic `except Exception` → `status="failed"`, state lost).
 - **Capacity:** With `recursion_limit=1000`, ~166 experiments per invocation (8 nodes per iteration: setup + 7 loop nodes). With `max_iterations=N` (v1.4 opt-in), the loop stops at N regardless of recursion_limit. With `parallel_count=M` (v1.6), each iteration produces M experiments — effective experiment throughput is M× the single-mode rate (subject to LLM + subprocess parallelism limits). Invoke graph directly with a higher limit for longer runs.
 
@@ -115,6 +117,9 @@ class AutoresearchState(WorkflowState, total=False):
     current_experiments: list[dict]  # N proposals being evaluated (parallel mode only)
     experiment_outputs: list[str]    # N outputs from N subprocesses (parallel mode only)
     current_metrics: list[float]     # N metrics from N evaluations (parallel mode only)
+
+    # -- [v1.7 N3] Resume support --
+    resume: bool                # True = skip baseline + branch, reload history from ledger
 
     # -- Per-iteration state (each history entry: {iteration, description, metric, status, commit, content_hash}) --
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
@@ -174,14 +179,15 @@ tests/workflows/autoresearch/
 ├── test_loop_control.py         # [v1.4] route_after_log + experiment dedup (8 tests)
 ├── test_reflect.py              # [v1.5] node_reflect + propose reflection block + cross-run learning (12 tests)
 ├── test_parallel.py             # [v1.6] parallel_count=1 backward compat + parallel_count>1 path (20 tests)
+├── test_resume.py               # [v1.7] resume: skip baseline/branch + reload history + checkpoint on keep (8 tests)
 ├── test_nodes_setup.py          # extract_metric + run_target_subprocess + node_setup + node_evaluate
 ├── test_nodes_propose.py        # _format_history + _parse_proposal + _call_planner + node_propose + _atomic_write + node_modify
 ├── test_nodes_decide.py         # _is_improvement + _git_commit + _git_reset_hard + node_decide + node_log
 └── test_nodes_run.py            # node_run_experiment + run_target_subprocess (run-time)
 ```
 
-The dispatcher test (`tests/workflows/base/test_dispatcher.py`) asserts the unknown-type error message includes `"autoresearch"` in the valid workflow types list.
+**126/126 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control + v1.5 reflect + cross-run learning + v1.6 parallel + v1.7 resume + checkpoint).
 
 ---
 
-*Last updated: 2026-07-21 (v1.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*

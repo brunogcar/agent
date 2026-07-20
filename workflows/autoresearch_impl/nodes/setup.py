@@ -16,6 +16,14 @@ Returns a PARTIAL state dict (LangGraph pattern — only changed keys).
 `workflows.autoresearch_impl.helpers.run_target_subprocess`. The two
 originals (in setup.py + run_experiment.py) had drifted in subtle ways;
 consolidating eliminates that drift.
+
+[v1.7 N3] Resume support — when `state["resume"]` is True AND `state["branch"]`
+is non-empty, branch creation is skipped (the prior run's branch is reused).
+When `state["current_best"]` is also > 0.0, the baseline run is skipped too,
+and `experiment_history` is reloaded from `results.tsv` (via the new
+`_load_history_from_ledger` helper) so `node_propose` has the prior
+experiments in context. When `resume=False` (default), behavior is exactly
+v1.6 (new branch, run baseline, fresh ledger).
 """
 from __future__ import annotations
 
@@ -40,6 +48,42 @@ from workflows.autoresearch_impl.helpers import (
 # Header for results.tsv. Tab-separated so it's easy to grep/awk/cut.
 # Columns: iteration, commit, metric, status, description
 _RESULTS_HEADER = "iteration\tcommit\tmetric\tstatus\tdescription\n"
+
+
+def _load_history_from_ledger(results_path: str) -> list[dict]:
+    """[v1.7 N3] Parse results.tsv back into experiment_history dicts for resume.
+
+    Each ledger row is `iteration\\tcommit\\tmetric\\tstatus\\tdescription`.
+    The header line starts with `iteration\\t` and is skipped. Rows with fewer
+    than 5 columns (corrupt / partial writes) are skipped. Non-fatal — any
+    parse error returns an empty list (the loop continues with no history;
+    the LLM just won't see prior experiments on the first resumed iteration).
+
+    The reloaded history is what `node_propose` reads (last 20 entries) so the
+    LLM has context for the next proposal. Without this reload, a resumed run
+    would start with `experiment_history=[]` and the LLM would re-propose
+    experiments that were already tried.
+    """
+    history: list[dict] = []
+    try:
+        p = Path(results_path)
+        if not p.exists():
+            return []
+        for line in p.read_text(encoding="utf-8").strip().split("\n"):
+            if line.startswith("iteration\t") or not line.strip():
+                continue  # header or empty line
+            parts = line.split("\t")
+            if len(parts) >= 5:
+                history.append({
+                    "iteration": int(parts[0]) if parts[0].isdigit() else 0,
+                    "commit": parts[1],
+                    "metric": float(parts[2]) if parts[2] else 0.0,
+                    "status": parts[3],
+                    "description": parts[4],
+                })
+    except Exception:
+        pass  # Non-fatal — resume continues with empty history on parse error
+    return history
 
 
 def _git_create_branch(branch: str, project_root: str, tid: str) -> bool:
@@ -82,13 +126,24 @@ def node_setup(state: AutoresearchState) -> dict:
     metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
     time_budget = state.get("time_budget", cfg.autoresearch_time_budget)
 
+    # [v1.7 N3] Resume awareness — caller passes resume=True when continuing
+    # from a prior run (via run_workflow(resume=True)). When resuming AND
+    # the caller supplied an existing branch + current_best, we skip branch
+    # creation + baseline and reload experiment_history from results.tsv.
+    is_resume = bool(state.get("resume", False))
+
     # 1. Branch name + creation
-    tag = datetime.now().strftime("%Y%m%d-%H%M%S")
-    branch = state.get("branch", "") or f"autoresearch/{tag}"
-    if not _git_create_branch(branch, project_root, tid):
-        # Non-fatal: experiments can still proceed on the current branch,
-        # but the safety net (revert via branch) is gone. Log and continue.
-        tracer.warning(tid, "setup", "branch creation failed — continuing on current branch")
+    # [v1.7 N3] Skip branch creation if resuming with an existing branch.
+    if is_resume and state.get("branch", ""):
+        branch = state.get("branch", "")
+        tracer.step(tid, "setup", f"resume: using existing branch {branch} (skipping creation)")
+    else:
+        tag = datetime.now().strftime("%Y%m%d-%H%M%S")
+        branch = state.get("branch", "") or f"autoresearch/{tag}"
+        if not _git_create_branch(branch, project_root, tid):
+            # Non-fatal: experiments can still proceed on the current branch,
+            # but the safety net (revert via branch) is gone. Log and continue.
+            tracer.warning(tid, "setup", "branch creation failed — continuing on current branch")
 
     # 2. Results ledger (results.tsv)
     results_path = state.get("results_path", "") or str(
@@ -103,6 +158,31 @@ def node_setup(state: AutoresearchState) -> dict:
             tracer.step(tid, "setup", f"initialized ledger @ {results_path}")
     except Exception as e:
         tracer.warning(tid, "setup", f"ledger init failed: {e}")
+
+    # [v1.7 N3] Skip baseline if resuming with existing current_best — the
+    # prior run already established the baseline; re-running it wastes time
+    # (and could change current_best if the target_file is non-deterministic).
+    # Reload experiment_history from results.tsv so node_propose has context.
+    if is_resume and state.get("current_best", 0.0) > 0.0:
+        tracer.step(
+            tid, "setup",
+            f"resume: skipping baseline (current_best={state.get('current_best')})",
+        )
+        history = _load_history_from_ledger(results_path)
+        experiment_count = len(history)
+        tracer.step(
+            tid, "setup",
+            f"resume: reloaded {experiment_count} experiments from ledger",
+        )
+        return {
+            "branch": branch,
+            "results_path": results_path,
+            "experiment_count": experiment_count,
+            "baseline_metric": state.get("baseline_metric", 0.0),
+            "current_best": state.get("current_best", 0.0),
+            "experiment_history": history,
+            "status": "running",
+        }
 
     # 3. Baseline experiment — run the target_file as-is
     tracer.step(tid, "setup", f"running baseline experiment: {target_file}")

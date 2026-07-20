@@ -41,6 +41,9 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 33. Never touch the real `target_file` in `node_modify` when `parallel_count > 1` — write each proposal to its own temp dir under `{project_root}/.autoresearch/parallel/{i}/{target_file}`. The real `target_file` is only modified by `node_decide` (which copies the winner back).
 34. Never skip `shutil.rmtree(parallel_dir, ignore_errors=True)` in `node_decide` — the temp dir MUST be cleaned up on EVERY exit path (improvement, no-improvement, commit failure). Leaking temp dirs accumulates disk usage over overnight runs.
 35. Never let one parallel LLM call abort the batch — per-call failures (after the v1.3 P1-2 retry) must be recorded as failed-proposal placeholders (`status="failed"`); the remaining N-1 calls continue. Only set `status="failed"` for the iteration if ALL N calls fail.
+36. Never checkpoint on a discard path — only successful `_git_commit` (non-empty SHA) triggers `save_checkpoint(tid, "keep", state)` in `node_decide` (v1.7 N7). Discard paths have NO recoverable state (the working tree was reset to the prior HEAD), so checkpointing them would mislead resume into restoring a non-improvement.
+37. Never run the baseline on resume — when `state["resume"]=True` AND `state["current_best"] > 0.0`, `node_setup` MUST skip the baseline run and reload `experiment_history` from `results.tsv` via `_load_history_from_ledger` (v1.7 N3). Re-running the baseline wastes time AND can change `current_best` if the target_file is non-deterministic, invalidating prior comparisons.
+38. Never let `save_checkpoint` raise out of `node_decide` — the `try/except Exception: pass` wrapper is mandatory (v1.7 N7). A checkpoint-disk error must NEVER halt the experiment loop. The keep still completes; only the journal write fails.
 
 ## ✅ ALWAYS DO
 
@@ -80,6 +83,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 34. Always run each parallel subprocess in its OWN temp dir as cwd — `{project_root}/.autoresearch/parallel/{i}/` — so relative paths in the experiment script still resolve (v1.6).
 35. Always copy the winner's temp-file content to the REAL `target_file` in `node_decide` before `git add + commit` — the real file is the source of truth for the next iteration's `node_propose` (which reads it via `_read_target_file`) (v1.6).
 36. Always pull `parallel_count` from `cfg.autoresearch_parallel_count` in the type handler when the caller didn't pass it — env-overridable via `AUTORESEARCH_PARALLEL_COUNT` for operators who want batch mode on every run (v1.6).
+37. Always call `save_checkpoint(tid, "keep", state)` after a successful `_git_commit` in `node_decide` (both single-experiment and parallel paths) — non-fatal try/except, but the call must happen so resume can pick up from the last-known-good metric (v1.7 N7).
+38. Always set `ar_state["resume"] = True` in the dispatcher's autoresearch branch when `resume=True` AND `get_latest(trace_id)` returns a checkpoint — without this flag, `node_setup` will run the v1.6 fresh-start path (new branch + baseline) instead of resuming (v1.7 N3).
+39. Always reload `experiment_history` from `results.tsv` via `_load_history_from_ledger` when resuming — the in-memory history was lost when the prior run crashed; the ledger is the persistent source of truth (v1.7 N3).
+40. Always preserve caller params (goal, target_file, metric_name, etc.) when merging a restored checkpoint into `ar_state` — only autoresearch-specific fields (`experiment_count`, `current_best`, `baseline_metric`, `experiment_history`, `branch`, `results_path`, `reflect_notes`) should be merged from the checkpoint. The caller's params are the authoritative inputs for THIS run (v1.7 N3).
 
 ---
 
@@ -115,6 +122,10 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 
 > **[v1.6] Don't change the graph topology for parallel mode:** First prototype added new nodes (e.g. `parallel_propose`, `parallel_decide`) and conditional edges. Doubled the graph complexity + required new routing logic. Switched to NODE-INTERNAL parallelism: each node handles N experiments internally when `parallel_count > 1`, branching on the state field. The graph topology stays UNCHANGED — the 8-node v1.5 graph handles both single (parallel_count=1) and batch (parallel_count>1) modes via the same edges. Coordination happens inside the nodes via the `parallel_count` state field.
 
+> **[v1.7 N3] Don't re-run the baseline on resume:** First prototype ran `node_setup`'s baseline path unconditionally — every resumed run wasted one experiment cycle re-establishing the metric. Worse, if the target_file was non-deterministic (e.g. random seed not fixed), the baseline metric would CHANGE between runs, invalidating the prior `current_best` and causing the LLM to discard improvements that were actually keeps. Fix: `node_setup` checks `state["resume"]` AND `state["current_best"] > 0.0` — if both, skip the baseline AND reload `experiment_history` from `results.tsv` via the new `_load_history_from_ledger` helper so `node_propose` has the prior experiments in context.
+
+> **[v1.7 N7] Don't checkpoint discards:** First prototype called `save_checkpoint` on every `node_decide` exit path (both keep AND discard). On resume, the dispatcher's `get_latest(trace_id)` would restore a discarded state — `current_best` was unchanged (good) but `current_experiment` was annotated `status="discard"` with empty commit, which made `node_propose` think the last experiment was a known dead-end. Fix: only checkpoint on the keep path (after a successful `_git_commit`). Discards represent a reset to the prior HEAD — there's no recoverable state worth resuming from beyond the prior keep's checkpoint.
+
 ---
 
-*Last updated: 2026-07-21 (v1.6). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*

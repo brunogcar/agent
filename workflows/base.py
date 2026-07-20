@@ -474,6 +474,38 @@ def run_workflow(
             # Merge any extra kwargs the caller passed (e.g. dry_run, overrides)
             ar_state.update({k: v for k, v in initial_state.items()
                              if k not in ar_state or ar_state.get(k) in ("", None, 0, 0.0)})
+
+            # [v1.7 N3] If resuming, restore from checkpoint (overrides the
+            # _ar_default fresh state). The top-level checkpoint resume code
+            # already runs `initial_state = {**restored, ...}` for all workflow
+            # types, but autoresearch needs the explicit merge here because:
+            #   (a) ar_state["resume"] must be set to True so node_setup's
+            #       resume path activates (skip baseline + branch creation).
+            #   (b) Only autoresearch-specific fields are merged in — caller
+            #       params (goal, target_file, etc.) are preserved as-is from
+            #       _ar_default (which already pulled them from initial_state).
+            #   (c) The "no checkpoint found" case is traced explicitly so
+            #       operators know a resume request fell back to a fresh start.
+            if resume:
+                from core.observability.checkpoint import get_latest
+                restored = get_latest(trace_id)
+                if restored:
+                    tracer.step(trace_id, "dispatch", "autoresearch: resuming from checkpoint")
+                    # Merge restored state (experiment_count, current_best,
+                    # history, etc.) but keep the caller's params (goal,
+                    # target_file, etc.) which _ar_default already set.
+                    for key in ("experiment_count", "current_best", "baseline_metric",
+                                "experiment_history", "branch", "results_path",
+                                "reflect_notes"):
+                        if key in restored:
+                            ar_state[key] = restored[key]
+                    ar_state["resume"] = True
+                else:
+                    tracer.warning(
+                        trace_id, "dispatch",
+                        "autoresearch: no checkpoint found, starting fresh",
+                    )
+
             graph = build_autoresearch_graph()
             # Default to 1000 iterations (~6000 node calls) — enough for an
             # overnight run. Callers wanting more should invoke the graph

@@ -36,6 +36,14 @@ experiment improves on `current_best`, all N are discarded and
 recorded for each discarded experiment so future runs can avoid the same
 dead-ends. When `parallel_count == 1`, the v1.5 single-experiment path
 runs unchanged.
+
+[v1.7 N7] Checkpoint on every keep — after `_git_commit` returns a non-empty
+SHA (both single-experiment and parallel paths), `save_checkpoint(tid,
+"keep", state)` is called so a crashed run can resume from the last-known-
+good state via `get_latest(trace_id)`. Non-fatal: checkpoint write failures
+are swallowed (try/except) so the experiment loop is never blocked. Discard
+paths do NOT checkpoint — only keeps represent a recoverable state worth
+resuming from.
 """
 from __future__ import annotations
 
@@ -316,6 +324,23 @@ def node_decide(state: AutoresearchState) -> dict:
                 f"parallel: KEPT {sha or '(no commit)'} (idx={best_idx}, "
                 f"{metric_name}={metrics[best_idx]} vs best={current_best})",
             )
+
+            # [v1.7 N7] Checkpoint on every keep (parallel path) — only when
+            # the winner was actually committed (sha truthy). Mirrors the
+            # single-experiment path: a crashed run resumes from the last
+            # known good parallel-keep via get_latest(trace_id). Non-fatal.
+            if sha:
+                try:
+                    from core.observability.checkpoint import save_checkpoint
+                    save_checkpoint(tid, "keep", {
+                        **state,
+                        "current_best": new_best,
+                        "current_experiment": proposals[best_idx],
+                        "experiment_count": state.get("experiment_count", 0),
+                    })
+                except Exception:
+                    pass  # Non-fatal — checkpoint failure shouldn't block the loop
+
             return {
                 "current_experiments": proposals,
                 "current_experiment": proposals[best_idx],  # backward compat
@@ -435,6 +460,25 @@ def node_decide(state: AutoresearchState) -> dict:
     proposal["status"] = "keep"
     proposal["commit"] = sha
     proposal["metric"] = current_metric
+
+    # [v1.7 N7] Checkpoint on every keep — so a crashed run can resume from
+    # the last-known-good state via get_latest(trace_id). Non-fatal: a
+    # checkpoint write failure must NOT block the experiment loop. The state
+    # saved here includes the updated current_best + current_experiment so
+    # node_setup's resume path can skip the baseline (current_best > 0.0)
+    # and node_propose gets the most recent keep in experiment_history (via
+    # the ledger reload in _load_history_from_ledger).
+    try:
+        from core.observability.checkpoint import save_checkpoint
+        save_checkpoint(tid, "keep", {
+            **state,
+            "current_best": current_metric,
+            "current_experiment": proposal,
+            "experiment_count": state.get("experiment_count", 0),
+        })
+    except Exception:
+        pass  # Non-fatal — checkpoint failure shouldn't block the loop
+
     return {
         "current_experiment": proposal,
         "current_best": current_metric,

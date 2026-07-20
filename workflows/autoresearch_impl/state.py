@@ -79,6 +79,9 @@ class AutoresearchState(WorkflowState, total=False):
     experiment_outputs: list[str]    # [v1.6] N outputs from N subprocesses
     current_metrics: list[float]     # [v1.6] N metrics from N evaluations
 
+    # -- [v1.7 N3] Resume support --
+    resume: bool                # True = skip baseline + branch, reload history from ledger
+
     # -- Per-iteration state --
     # Each entry: {iteration, description, metric, status, commit, content_hash}
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
@@ -181,6 +184,7 @@ def _default_state(
         "current_experiments": [],
         "experiment_outputs": [],
         "current_metrics": [],
+        "resume": False,  # [v1.7 N3] default False — only True on checkpoint resume
         "experiment_history": [],
         "current_experiment": {},
         "experiment_output": "",
