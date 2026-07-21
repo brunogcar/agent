@@ -677,3 +677,57 @@ class TestParallelEndToEnd:
         assert state["experiment_count"] == 3
         # Plural field cleared for next iteration.
         assert state["current_experiments"] == []
+
+
+# ===========================================================================
+# [v1.9 C1] Atomic batched parallel ledger write (mimo C3, qwen P2-5)
+# ===========================================================================
+
+
+class TestLedgerAtomicBatchedWrite:
+    """[v1.9 C1] Parallel path batches all N rows into a SINGLE open("a")
+    call (was: N separate calls). The single path adds f.flush() +
+    os.fsync(f.fileno()) before close.
+    """
+
+    def test_parallel_log_writes_all_rows_in_single_call(self, ar_state, tmp_path):
+        """Patch builtins.open to track call count — verify the parallel path
+        opens the file ONCE (not N times)."""
+        from workflows.autoresearch_impl.nodes import log as log_mod
+        results_path = tmp_path / "results.tsv"
+        results_path.write_text(
+            "iteration\tcommit\tmetric\tstatus\tdescription\tcontent_hash\n",
+            encoding="utf-8",
+        )
+        state = dict(ar_state)
+        state["parallel_count"] = 3
+        state["results_path"] = str(results_path)
+        state["experiment_count"] = 0
+        state["experiment_history"] = []
+        state["current_experiments"] = [
+            {"iteration": 1, "description": "a", "metric": 0.45,
+             "status": "discard", "commit": "", "content_hash": "h1"},
+            {"iteration": 2, "description": "b", "metric": 0.40,
+             "status": "keep", "commit": "abc1234", "content_hash": "h2"},
+            {"iteration": 3, "description": "c", "metric": 0.50,
+             "status": "discard", "commit": "", "content_hash": "h3"},
+        ]
+
+        # Track open() calls in append mode ("a").
+        original_open = __builtins__.open if hasattr(__builtins__, "open") else open
+        open_calls = []
+
+        def tracking_open(path, mode="r", *args, **kwargs):
+            if "a" in mode:
+                open_calls.append((str(path), mode))
+            return original_open(path, mode, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=tracking_open):
+            log_mod.node_log(state)
+
+        # Filter to only the results.tsv appends (fsync opens the fd, not the file).
+        tsv_appends = [c for c in open_calls if "results.tsv" in c[0]]
+        assert len(tsv_appends) == 1, (
+            f"parallel path should open results.tsv ONCE in append mode, "
+            f"got {len(tsv_appends)} calls"
+        )

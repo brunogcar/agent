@@ -152,12 +152,16 @@ def node_modify(state: AutoresearchState) -> dict:
                 proposal["error"] = "empty new_content"
                 continue
 
-            # [v1.4 N8] Dedup check — skip if this exact content was already
-            # tried. Hash is stored on the proposal so node_log persists it
-            # in experiment_history for future dedup checks.
+            # [v1.4 N8 / v1.9 C4] Dedup check — skip if this exact content was
+            # already tried. Hash is stored on the proposal so node_log
+            # persists it in experiment_history for future dedup checks.
+            # [v1.9 C4] Also check `state["seen_hashes"]` — survives the
+            # 100-entry history cap. (qwen P2-1)
             content_hash = hashlib.md5(new_content.encode("utf-8")).hexdigest()
             proposal["content_hash"] = content_hash
-            is_dup = any(h.get("content_hash") == content_hash for h in history)
+            seen_hashes = state.get("seen_hashes", []) or []
+            is_dup = any(h.get("content_hash") == content_hash for h in history) \
+                or content_hash in seen_hashes
             if is_dup:
                 tracer.warning(
                     tid, "modify",
@@ -209,11 +213,17 @@ def node_modify(state: AutoresearchState) -> dict:
 
     new_content = proposal.get("new_content", "")
 
-    # [v1.4 N8] Deduplication — skip if this exact content was already tried.
-    # md5 is fast and we only need exact-content dedup (semantic dedup is N4,
-    # deferred). The hash is stored on the proposal for `node_log` to persist
-    # in `experiment_history` so future iterations can dedup against it.
+    # [v1.4 N8 / v1.9 C4] Deduplication — skip if this exact content was
+    # already tried. md5 is fast and we only need exact-content dedup
+    # (semantic dedup is N4, deferred). The hash is stored on the proposal
+    # for `node_log` to persist in `experiment_history` so future iterations
+    # can dedup against it.
+    # [v1.9 C4] Also check `state["seen_hashes"]` — a 1000-entry list that
+    # survives the 100-entry `experiment_history` cap. Without this, the LLM
+    # could re-propose an experiment tried 101 iterations ago (the hash was
+    # evicted from history but is still in seen_hashes). (qwen P2-1)
     content_hash = hashlib.md5(new_content.encode("utf-8")).hexdigest()
+    seen_hashes = state.get("seen_hashes", []) or []
     for h in history:
         if h.get("content_hash") == content_hash:
             tracer.warning(
@@ -227,6 +237,19 @@ def node_modify(state: AutoresearchState) -> dict:
                     f"{h.get('iteration', '?')}"
                 ),
             }
+    if content_hash in seen_hashes:
+        tracer.warning(
+            tid, "modify",
+            f"duplicate experiment (hash={content_hash[:8]}, found in "
+            f"seen_hashes — evicted from history cap) — skipping",
+        )
+        return {
+            "status": "failed",
+            "error": (
+                f"duplicate experiment — content hash matches a prior "
+                f"experiment (evicted from in-memory history cap)"
+            ),
+        }
 
     # Store the hash on the proposal so node_log persists it in history.
     # Mutates the dict in-place — same pattern as node_decide annotating

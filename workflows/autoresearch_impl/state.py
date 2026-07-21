@@ -94,6 +94,50 @@ class AutoresearchState(WorkflowState, total=False):
     # extracts per-output metrics from experiment_outputs directly.
     pre_extracted_metric: Optional[float]
 
+    # -- [v1.9-V2 / mistral #10] Pre-extracted metrics in parallel mode --
+    # List of metrics extracted from the FULL parallel outputs BEFORE
+    # truncation to 50KB. Mirrors `pre_extracted_metric` (singular) for the
+    # parallel path — same truncation-safety guarantee (a verbose parallel
+    # experiment > 50KB can lose its metric in the truncation tail, just like
+    # single mode). `node_evaluate` (parallel path) checks
+    # `pre_extracted_metrics[i]` FIRST for each output `i`; when set (not None),
+    # it trusts it + skips re-extracting from the (possibly truncated)
+    # `experiment_outputs[i]`. Empty list when no metrics were found OR when
+    # not in parallel mode (the single path still uses `pre_extracted_metric`
+    # singular). Each entry is `None` when no metric was found in that
+    # experiment's full output (evaluate falls back to re-extracting from the
+    # truncated output, which will also yield None).
+    pre_extracted_metrics: list[float]
+
+    # -- [v1.9] Cross-run dedup + reflect-on-iteration parity --
+    # iteration_count: incremented by 1 PER ITERATION in node_log (NOT by N —
+    #   it counts iterations, not experiments). node_reflect fires on
+    #   iteration_count % interval == 0 (was experiment_count). With
+    #   parallel_count=4 and interval=5, experiment_count jumps 4→8→12→16→20
+    #   and never hits a multiple of 5, so reflect NEVER fired pre-v1.9.
+    #   iteration_count fixes this — it advances by 1 per iteration regardless
+    #   of parallel_count.
+    iteration_count: int
+
+    # seen_hashes: list of md5 content_hash strings (deduped, capped at 1000).
+    #   Used by node_modify to detect duplicates that were evicted from the
+    #   100-entry experiment_history cap (qwen P2-1). The ledger TSV stores
+    #   content_hash as the 6th column (v1.9 A2) — node_setup populates
+    #   seen_hashes from the reloaded history on resume. node_log appends each
+    #   new hash here too.
+    seen_hashes: list[str]
+
+    # consecutive_discards: count of trailing experiment_history entries with
+    #   status="discard". Recomputed on resume by scanning the reloaded history
+    #   tail (qwen P1-2). Was: reset to 0 on resume — convergence detector
+    #   wouldn't fire until N MORE discards happened (4+10=14 total instead of 10).
+    consecutive_discards: int
+
+    # consecutive_no_improvement: count of trailing history entries whose
+    #   metric is NOT strictly better than current_best (per direction).
+    #   Recomputed on resume alongside consecutive_discards.
+    consecutive_no_improvement: int
+
     # -- Per-iteration state --
     # Each entry: {iteration, description, metric, status, commit, content_hash, tokens}
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
@@ -198,6 +242,12 @@ def _default_state(
         "experiment_outputs": [],
         "current_metrics": [],
         "resume": False,  # [v1.7 N3] default False — only True on checkpoint resume
+        "pre_extracted_metric": None,  # [v1.8 N10] single-path; cleared in parallel
+        "pre_extracted_metrics": [],  # [v1.9-V2 / mistral #10] parallel-path; empty in single mode
+        "iteration_count": 0,  # [v1.9] incremented by 1 per iteration (not by N)
+        "seen_hashes": [],  # [v1.9] dedup across history cap (qwen P2-1)
+        "consecutive_discards": 0,  # [v1.9] recomputed on resume (qwen P1-2)
+        "consecutive_no_improvement": 0,  # [v1.9] recomputed on resume
         "experiment_history": [],
         "current_experiment": {},
         "experiment_output": "",

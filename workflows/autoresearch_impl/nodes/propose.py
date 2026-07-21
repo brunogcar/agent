@@ -164,6 +164,12 @@ def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
     versions, mocked tests), an empty dict is returned — callers default
     `tokens` to 0 via `usage.get("total", 0)`.
 
+    [v1.9-V2 / mistral #5] When `usage` is None/missing/empty, a
+    `tracer.warning(tid, "propose", "subagent did not report usage dict —
+    tokens will be 0")` is logged BEFORE defaulting to {}. Operators need
+    to know when token tracking is broken so they can debug cost reports.
+    The behavior is unchanged (tokens default to 0); just made visible.
+
     Returns:
         `(response_text, usage_dict)` — the LLM response string + the usage
         dict from the subagent dispatch. `usage_dict` is `{}` when the
@@ -190,10 +196,27 @@ def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
                 # [v1.8 N6] Capture usage dict for token tracking. Older
                 # subagent versions / mocked tests may not include `usage` —
                 # default to {} so callers' `usage.get("total", 0)` yields 0.
-                usage = result.get("usage", {}) or {}
+                # [v1.9-V2 / mistral #5] When `usage` is None/missing/empty,
+                # log a tracer.warning BEFORE defaulting (was: silently
+                # defaulted to {}). Operators need to know when token
+                # tracking is broken so they can debug cost reports. The
+                # behavior is unchanged (tokens default to 0); just visible.
+                raw_usage = result.get("usage")
+                if not raw_usage:
+                    tracer.warning(
+                        tid, "propose",
+                        "subagent did not report usage dict — tokens will be 0",
+                    )
+                usage = raw_usage or {}
                 return result.get("response", ""), usage
             last_error = result.get("error", "unknown")
-        except Exception as e:
+        except (RuntimeError, ConnectionError, TimeoutError, OSError, ValueError) as e:
+            # [v1.9 B4] Narrow the catch — was: `except Exception as e:` which
+            # caught ImportError, AttributeError, etc. (real bugs that should
+            # propagate immediately, not be retried). Now only transient
+            # failure types are retried. KeyboardInterrupt, SystemExit,
+            # ImportError, AttributeError, etc. propagate immediately.
+            # (deepseek P2 2.4)
             last_error = str(e)
         # Brief backoff before retry (2s, 4s) — only between attempts, not after the last.
         if attempt < 2:
@@ -224,12 +247,26 @@ def _parse_proposal(raw: str) -> dict:
     }
 
 
-def _generate_single_proposal(system: str, user: str, tid: str, iteration: int) -> dict:
+def _generate_single_proposal(
+    system: str,
+    user: str,
+    tid: str,
+    iteration: int,
+    variant_seed: str = "",
+) -> dict:
     """[v1.6] Call the planner once, parse, and return a proposal dict.
 
     Extracted from `node_propose` so the parallel path can call it N times
     via ThreadPoolExecutor. Both paths share the same prompt-building +
     parsing logic — only the dispatch differs (1 call vs N parallel calls).
+
+    [v1.9 D4] `variant_seed` — when non-empty, a `--- VARIANT {seed}: explore
+    a DIFFERENT angle from the other variants. Aim for a distinct hypothesis.
+    ---` block is appended to the user prompt BEFORE the closing "Propose
+    the next experiment..." line. This guarantees diversity even when the
+    operator pins `temperature=0` (which would otherwise make all N parallel
+    calls return byte-identical outputs). The single path passes
+    `variant_seed=""` (no change to v1.5 behavior). (minimax Risk #3)
 
     Raises:
         RuntimeError: if `_call_planner` fails after all retries (v1.3 P1-2).
@@ -243,12 +280,31 @@ def _generate_single_proposal(system: str, user: str, tid: str, iteration: int) 
             sampling temperature).
         tid: Trace ID for observability.
         iteration: The iteration number to stamp on the returned proposal.
+        variant_seed: [v1.9 D4] When non-empty, appends a variant directive
+            to the user prompt so parallel calls produce diverse proposals
+            even at temperature=0.
 
     Returns:
         Parsed proposal dict with `iteration` and `tokens` set. `tokens`
         is the total LLM token count from the subagent's `usage` dict
         (v1.8 N6) — 0 when usage is unavailable.
     """
+    # [v1.9 D4] Inject the variant directive into the user prompt.
+    if variant_seed:
+        # Insert BEFORE the closing "Propose the next experiment..." line so
+        # the LLM sees it as part of the task framing, not as an afterthought.
+        variant_block = (
+            f"\n--- VARIANT {variant_seed}: explore a DIFFERENT angle from "
+            f"the other variants. Aim for a distinct hypothesis. ---\n"
+        )
+        # Find the closing "Propose the next experiment." line and insert
+        # the variant block before it.
+        marker = "Propose the next experiment."
+        if marker in user:
+            user = user.replace(marker, variant_block + marker, 1)
+        else:
+            # Fallback: append at the end if the marker isn't found.
+            user = user + variant_block
     raw, usage = _call_planner(system, user, tid)
     proposal = _parse_proposal(raw)
     proposal["iteration"] = iteration
@@ -326,24 +382,51 @@ def node_propose(state: AutoresearchState) -> dict:
     # procedural memory is stored via memory.store_procedural(). Recall
     # those memories here so the LLM doesn't re-propose known-bad strategies.
     # Failures are non-fatal — memory may not be available (e.g. tests).
+    # [v1.9-V2 / mistral #7] When memory is unavailable, log a tracer.warning
+    # (was: silently swallowed via `except Exception: pass`). Operators need
+    # to know when cross-run learning is disabled.
     memory_block = ""
     try:
         from core.memory_engine import memory
-        memories = memory.recall(
-            query=f"autoresearch {goal} {metric_name}",
-            collections=["procedural"],
-            top_k=3,
-            min_score=0.3,
-            trace_id=tid,
-        )
+        # [v1.9 D6] Filter by `tags_filter="source:autoresearch"` so only
+        # memories stored by autoresearch (not unrelated procedural memories
+        # from other workflows) are surfaced. Wrapped in try/except so a
+        # tag-filter API mismatch doesn't break the recall entirely — falls
+        # back to no filter. (minimax Risk #5)
+        try:
+            memories = memory.recall(
+                query=f"autoresearch {goal} {metric_name}",
+                collections=["procedural"],
+                top_k=3,
+                min_score=0.3,
+                tags_filter="source:autoresearch",
+                trace_id=tid,
+            )
+        except TypeError:
+            # Older memory.recall signature may not accept tags_filter —
+            # fall back to the unfiltered call so recall still works.
+            memories = memory.recall(
+                query=f"autoresearch {goal} {metric_name}",
+                collections=["procedural"],
+                top_k=3,
+                min_score=0.3,
+                trace_id=tid,
+            )
         if memories:
             memory_lines = [f"  - {m.get('text', '')[:200]}" for m in memories]
             memory_block = (
                 "\n\nPast learned rules (from previous runs):\n"
                 + "\n".join(memory_lines) + "\n"
             )
-    except Exception:
-        pass  # Non-fatal — memory may not be available
+    except Exception as e:
+        # [v1.9-V2 / mistral #7] Surface memory unavailability via a tracer
+        # warning (was: silently swallowed). Operators need to know when
+        # cross-run learning is disabled so they can debug — silent swallow
+        # hides the fact that procedural memories aren't being recalled.
+        tracer.warning(
+            tid, "propose",
+            f"memory engine unavailable — cross-run learning disabled: {e}",
+        )
 
     user = (
         f"Goal: {goal}\n"
@@ -364,6 +447,7 @@ def node_propose(state: AutoresearchState) -> dict:
     # placeholders so the batch isn't aborted by one bad call.
     if parallel_count > 1:
         import concurrent.futures
+        import time as _time
 
         tracer.step(
             tid, "propose",
@@ -376,7 +460,25 @@ def node_propose(state: AutoresearchState) -> dict:
             future_to_iter = {}
             for i in range(parallel_count):
                 it = experiment_count + 1 + i
-                fut = pool.submit(_generate_single_proposal, _PROPOSE_SYSTEM, user, tid, it)
+                # [v1.9 C6] Stagger parallel _call_planner calls by i*0.5s
+                # (capped at 2.0s) to avoid thundering-herd 429s on rate-
+                # limited LLM providers. The sleep happens INSIDE the
+                # submitted function (not the main thread) so all N futures
+                # are submitted immediately and the pool manages concurrency.
+                # (qwen P2-6)
+                stagger = min(i * 0.5, 2.0)
+                # [v1.9 D4] Pass variant_seed=str(i) so each parallel call
+                # gets a distinct variant directive in its prompt —
+                # guarantees diversity even at temperature=0. (minimax Risk #3)
+                def _submit_with_stagger(_system=_PROPOSE_SYSTEM, _user=user,
+                                         _tid=tid, _it=it, _seed=str(i),
+                                         _stagger=stagger):
+                    if _stagger > 0:
+                        _time.sleep(_stagger)
+                    return _generate_single_proposal(
+                        _system, _user, _tid, _it, variant_seed=_seed,
+                    )
+                fut = pool.submit(_submit_with_stagger)
                 future_to_iter[fut] = it
 
             for future in concurrent.futures.as_completed(future_to_iter):

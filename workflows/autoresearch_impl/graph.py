@@ -73,7 +73,7 @@ from workflows.autoresearch_impl.routes import route_after_setup, route_after_lo
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.8",  # [v1.8] observability — output logging (N5) + token tracking (N6) + truncation fix (N10)
+    "version": "1.9",  # [v1.9] hardening — 3 confirmed bugs + 4 P1 + 6 P2 + 5 high-value P3 from 7-reviewer collective audit + log dir relocation
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
@@ -206,6 +206,7 @@ WORKFLOW_METADATA = {
                 "(max_iterations / convergence / stuck; all default OFF)"
             ),
             "type": "loop",
+            "conditional": True,  # [v1.9 E2] — was listed as unconditional but is actually conditional (route_after_log)
         },
     ],
     "loops": [
@@ -241,9 +242,19 @@ WORKFLOW_METADATA = {
         "parallel_experiments",   # [v1.6] N proposals + N subprocesses per iteration
         "parallel_temp_isolation",  # [v1.6] each parallel experiment runs in its own temp dir
         "parallel_best_wins",     # [v1.6] only the best experiment is committed; losers discarded
-        "output_logging",          # [v1.8 N5] full stdout+stderr logged to {results_path}.d/{iteration}.log
+        "output_logging",          # [v1.8 N5] full stdout+stderr logged to logs/autoresearch/{iteration}.log
         "token_tracking",          # [v1.8 N6] per-iteration LLM tokens persisted in experiment_history
         "pre_extracted_metric",    # [v1.8 N10] metric extracted from full output BEFORE truncation
+        # [v1.9] hardening safety features
+        "iteration_count_field",           # [v1.9 D5] reflect fires on iteration_count (not experiment_count) — fixes parallel-mode never-reflect bug
+        "seen_hashes_dedup",               # [v1.9 C4] cross-run dedup survives the 100-entry history cap via seen_hashes list (capped at 1000)
+        "atomic_parallel_winner_copy",     # [v1.9 A3] parallel winner copy uses _atomic_write (was: non-atomic write_text)
+        "log_rotation_cap",                # [v1.9 D2] logs/autoresearch/ size capped at AUTORESEARCH_LOG_DIR_MAX_MB (default 1GB)
+        "configurable_recursion_limit",    # [v1.9 D3] recursion_limit from AUTORESEARCH_RECURSION_LIMIT env var (was: hardcoded 1000)
+        "parallel_variant_seeds",          # [v1.9 D4] parallel _call_planner calls get distinct variant_seed prompts — diversity at temperature=0
+        "memory_recall_tag_filter",        # [v1.9 D6] memory.recall filters by tags_filter="source:autoresearch"
+        "git_toplevel_verify",             # [v1.9 B3] _git_reset_hard verifies git rev-parse --show-toplevel matches project_root
+        "logs_subfolder",                  # [v1.9 D1] log dir relocated from {results_path}.d/ to logs/autoresearch/
     ],
 }
 

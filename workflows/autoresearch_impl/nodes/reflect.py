@@ -59,8 +59,13 @@ def node_reflect(state: AutoresearchState) -> dict:
     if interval <= 0:
         return {}  # disabled — caller opted out via AUTORESEARCH_REFLECT_INTERVAL=0
 
-    experiment_count = state.get("experiment_count", 0)
-    if experiment_count == 0 or experiment_count % interval != 0:
+    # [v1.9 D5] Use `iteration_count` (not `experiment_count`) for the
+    # reflect interval check. With parallel_count=4, experiment_count jumps
+    # 4→8→12→16→20 and never hits a multiple of 5 → reflect NEVER fired
+    # pre-v1.9. iteration_count advances by 1 per iteration regardless of
+    # parallel_count, so reflect fires correctly. (minimax Risk #4)
+    iteration_count = state.get("iteration_count", 0)
+    if iteration_count == 0 or iteration_count % interval != 0:
         return {}  # not a reflect iteration (only fires on multiples of `interval`)
 
     history = state.get("experiment_history", []) or []
@@ -68,10 +73,13 @@ def node_reflect(state: AutoresearchState) -> dict:
     metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
     goal = state.get("goal", "")
 
-    # Build the reflection prompt from full history (most recent at the end).
-    # Cap at 100 entries (matches experiment_history's own cap, v1.3 P2-3) so
-    # an overnight run doesn't blow the planner's context window.
-    trimmed = history[-100:]
+    # Build the reflection prompt from recent history (most recent at the end).
+    # [v1.9 C5] Cap at 20 entries (was: 100) — matches _format_history's limit
+    # in propose.py. The reflect node only needs recent trends, not the full
+    # history. 100 entries × ~100 chars = ~10KB of JSON injected into the
+    # planner's context, combined with target_content (up to 30KB) could
+    # approach the context limit. (qwen P2-2)
+    trimmed = history[-20:]
     history_str = "\n".join(
         f"  #{h.get('iteration', '?')} [{h.get('status', '?')}] "
         f"{metric_name}={h.get('metric', '?')} — {h.get('description', '')}"
@@ -82,12 +90,12 @@ def node_reflect(state: AutoresearchState) -> dict:
         f"Goal: {goal}\n"
         f"Metric: {metric_name}\n"
         f"Current best: {current_best}\n"
-        f"Total experiments: {experiment_count}\n\n"
-        f"Full experiment history:\n{history_str}\n\n"
+        f"Total iterations: {iteration_count}\n\n"
+        f"Recent experiment history (last 20):\n{history_str}\n\n"
         f"Reflect on what's working and suggest a strategy for the next experiments."
     )
 
-    tracer.step(tid, "reflect", f"reflecting on {experiment_count} experiments (interval={interval})")
+    tracer.step(tid, "reflect", f"reflecting on iteration {iteration_count} (interval={interval})")
 
     try:
         # Reuse the same _call_planner as propose (subagent dispatch with 3×

@@ -55,10 +55,10 @@ class TestResumeSetup:
         ar_state["branch"] = "autoresearch/existing"
         ar_state["project_root"] = str(tmp_path)
         ar_state["results_path"] = str(tmp_path / "results.tsv")
-        # Create a fake ledger with 1 prior experiment.
+        # Create a fake ledger with 1 prior experiment (v1.9 A2: 6-col format).
         (tmp_path / "results.tsv").write_text(
-            "iteration\tcommit\tmetric\tstatus\tdescription\n"
-            "1\tabc123\t0.42\tkeep\ttest change\n",
+            "iteration\tcommit\tmetric\tstatus\tdescription\tcontent_hash\n"
+            "1\tabc123\t0.42\tkeep\ttest change\th123\n",
             encoding="utf-8",
         )
 
@@ -107,12 +107,13 @@ class TestResumeSetup:
           - All 3 rows returned in order
         """
         from workflows.autoresearch_impl.nodes.setup import _load_history_from_ledger
+        # [v1.9 A2] 6-col ledger format (with content_hash).
         ledger = tmp_path / "results.tsv"
         ledger.write_text(
-            "iteration\tcommit\tmetric\tstatus\tdescription\n"
-            "1\tabc\t0.5\tkeep\tfirst\n"
-            "2\t\t0.6\tdiscard\tsecond\n"
-            "3\tdef\t0.45\tkeep\tthird\n",
+            "iteration\tcommit\tmetric\tstatus\tdescription\tcontent_hash\n"
+            "1\tabc\t0.5\tkeep\tfirst\th1\n"
+            "2\t\t0.6\tdiscard\tsecond\t\n"
+            "3\tdef\t0.45\tkeep\tthird\th3\n",
             encoding="utf-8",
         )
         history = _load_history_from_ledger(str(ledger))
@@ -120,8 +121,11 @@ class TestResumeSetup:
         assert history[0]["iteration"] == 1
         assert history[0]["status"] == "keep"
         assert history[0]["commit"] == "abc"
+        assert history[0]["content_hash"] == "h1"  # [v1.9 A2] 6th column parsed
         assert history[1]["commit"] == ""  # discard row has empty commit
+        assert history[1]["content_hash"] == ""  # empty hash
         assert history[2]["metric"] == 0.45
+        assert history[2]["content_hash"] == "h3"
 
     def test_load_history_handles_missing_file(self, tmp_path):
         """[v1.7 N3] Missing ledger file → empty list (no crash)."""
@@ -134,7 +138,7 @@ class TestResumeSetup:
         from workflows.autoresearch_impl.nodes.setup import _load_history_from_ledger
         ledger = tmp_path / "results.tsv"
         ledger.write_text(
-            "iteration\tcommit\tmetric\tstatus\tdescription\n",
+            "iteration\tcommit\tmetric\tstatus\tdescription\tcontent_hash\n",
             encoding="utf-8",
         )
         history = _load_history_from_ledger(str(ledger))

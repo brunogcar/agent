@@ -42,6 +42,10 @@ Env vars read:
     Autoresearch v1.6 parallel experiments:
         AUTORESEARCH_PARALLEL_COUNT        — default 1 (N parallel proposals + subprocesses per iteration; 1 = v1.5 single-experiment mode)
 
+    Autoresearch v1.9 hardening:
+        AUTORESEARCH_RECURSION_LIMIT       — default 1000 (LangGraph recursion_limit for the autoresearch loop; raise for very long overnight runs)
+        AUTORESEARCH_LOG_DIR_MAX_MB        — default 1024 (1GB cap on logs/autoresearch/ — when exceeded, new log writes are skipped + a tracer warning is emitted; 0 = no cap)
+
     Autocode v1.3: GitHub + Swarm integration flags (all default OFF):
         AUTOCODE_PULL_BEFORE_BRANCH, AUTOCODE_PUSH_ON_COMMIT,
         AUTOCODE_OPEN_PR, AUTOCODE_AUTO_MERGE, AUTOCODE_DEBUG_COMMENT_PR,
@@ -127,6 +131,17 @@ def _init_execution(cfg) -> None:
     # nodes branch on this and only the parallel path uses the plural state
     # fields (current_experiments / experiment_outputs / current_metrics).
     cfg.autoresearch_parallel_count = int(os.getenv("AUTORESEARCH_PARALLEL_COUNT", "1"))  # N parallel experiments per iteration (1 = v1.5 mode)
+    # [v1.9] Configurable recursion_limit (minimax Risk #2) — was hardcoded
+    # to 1000 in workflows/base.py. Operators running overnight with fast
+    # experiments may need more (each iteration = 8 nodes; 1000 → ~125 iter).
+    # 0 means "use the LangGraph default" (25 — too low for autoresearch).
+    cfg.autoresearch_recursion_limit = int(os.getenv("AUTORESEARCH_RECURSION_LIMIT", "1000"))  # LangGraph recursion_limit
+    # [v1.9] Log rotation cap (minimax Risk #1) — when the total size of
+    # logs/autoresearch/ exceeds this many MB, new log writes are SKIPPED +
+    # a tracer.warning is emitted. Prevents unbounded disk usage on long
+    # overnight runs (parallel_count=4 × 5 iter/min × 12h = ~14k files).
+    # 0 = no cap (write all logs — same as v1.8 behavior).
+    cfg.autoresearch_log_dir_max_mb = int(os.getenv("AUTORESEARCH_LOG_DIR_MAX_MB", "1024"))  # 1GB cap on logs/autoresearch/ (0 = no cap)
 
     # -- Autocode v1.3: GitHub + Swarm integration flags -------------------
     # All default OFF — autocode behaves exactly as v1.2 unless explicitly opted in.

@@ -521,9 +521,14 @@ def run_workflow(
             # with the trace_id; operators inspect results.tsv for the
             # experiment count + best metric.
             try:
+                # [v1.9 D3] Read recursion_limit from cfg (env-overridable via
+                # AUTORESEARCH_RECURSION_LIMIT, default 1000). Was: hardcoded
+                # 1000 — operators couldn't raise it for long overnight runs.
+                # (minimax Risk #2)
+                _ar_recursion_limit = int(getattr(cfg, "autoresearch_recursion_limit", 1000))
                 return graph.invoke(
                     ar_state,
-                    config={"recursion_limit": 1000},
+                    config={"recursion_limit": _ar_recursion_limit},
                 )
             except Exception as e:
                 # String-match to avoid a hard dependency on

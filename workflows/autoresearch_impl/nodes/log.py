@@ -36,9 +36,27 @@ experiment in `current_experiments`) and N entries to
 `current_experiments` (plural) and `current_experiment` (singular) are
 cleared for the next iteration. When `parallel_count == 1`, the v1.5
 single-row path runs unchanged.
+
+[v1.9] Hardening — 4 changes:
+  (A2) The TSV row now has a 6th `content_hash` column (was: in-memory only).
+  This survives resume — `_load_history_from_ledger` parses it back so dedup
+  works across crashed/restarted runs. (minimax Bug #2)
+  (C1) The parallel path now batches all N rows into a SINGLE `open("a")`
+  call (was: N separate calls) — atomic on POSIX for writes < PIPE_BUF=4096,
+  reduces syscall overhead, and prevents interleaving on Windows. The single
+  path adds `f.flush()` + `os.fsync(f.fileno())` before close for crash-safety.
+  (C4) Each new content_hash is appended to `state["seen_hashes"]` (deduped,
+  capped at 1000) so cross-run dedup survives the 100-entry history cap.
+  (qwen P2-1)
+  (D5) `iteration_count` is incremented by 1 per iteration (NOT by N — it
+  counts iterations, not experiments). `node_reflect` now fires on
+  `iteration_count % interval == 0` so reflect actually fires in parallel
+  mode (pre-v1.9, `experiment_count` jumped by N=4 each iter and never hit
+  a multiple of 5 → reflect NEVER fired). (minimax Risk #4)
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -47,17 +65,23 @@ from workflows.autoresearch_impl.state import AutoresearchState
 
 
 def _append_to_ledger(results_path: str, row: str, tid: str = "") -> None:
-    """Append a single row to results.tsv.
+    """Append a single row (or a batch of rows concatenated into `row`) to results.tsv.
 
-    Uses a simple open(..., "a") — autoresearch runs single-threaded per
-    branch, so concurrent writers aren't a concern. The row is expected to
-    already be tab-separated and end with a newline.
+    Uses `open(..., "a")` with `f.flush()` + `os.fsync(f.fileno())` before
+    close — [v1.9 C1] the fsync forces bytes to disk so a crash mid-write
+    doesn't leave a partial row. The row is expected to already be
+    tab-separated and end with a newline. For the parallel path, callers
+    concatenate all N rows into a single `row` string and call this ONCE —
+    atomic on POSIX for writes < PIPE_BUF=4096 and prevents interleaving
+    on Windows. (mimo C3, qwen P2-5)
     """
     try:
         p = Path(results_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a", encoding="utf-8") as f:
             f.write(row)
+            f.flush()
+            os.fsync(f.fileno())
     except Exception as e:
         # Non-fatal — the in-memory history is the source of truth for the
         # LLM; the ledger is for human audit. Log and continue.
@@ -117,33 +141,63 @@ def node_log(state: AutoresearchState) -> dict:
         proposals = state.get("current_experiments", []) or []
         n = len(proposals)
 
+        # [v1.9 C1] Build ALL N rows as a single string and write them in ONE
+        # open("a") call (was: N separate calls). Atomic on POSIX for writes
+        # < PIPE_BUF=4096, reduces syscall overhead, and prevents interleaving
+        # on Windows. (mimo C3, qwen P2-5)
+        batch_rows = ""
+        # [v1.9 C4] Track new content_hashes to append to seen_hashes.
+        seen_hashes = list(state.get("seen_hashes", []) or [])
+        seen_set = set(seen_hashes)
         for proposal in proposals:
             iteration = proposal.get("iteration", state.get("experiment_count", 0) + 1)
             commit = proposal.get("commit", "")
             metric = proposal.get("metric", 0.0)
             status = proposal.get("status", "discard")
             description = proposal.get("description", "")
+            # [v1.9 A2] Append the content_hash as the 6th column. Use
+            # .get("content_hash", "") so failed-proposal placeholders (no
+            # hash) write empty — backward compatible with the new 6-col header.
+            content_hash = proposal.get("content_hash", "")
 
-            # Sanitize description — strip newlines/tabs so the row stays one line.
+            # Sanitize description + content_hash — strip newlines/tabs so
+            # the row stays one line.
             safe_desc = " ".join(str(description).split())
-            row = f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\n"
-            _append_to_ledger(results_path, row, tid)
+            safe_hash = " ".join(str(content_hash).split()) if content_hash else ""
+            row = f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\t{safe_hash}\n"
+            batch_rows += row
 
             history.append(_build_history_entry(proposal, 0.0))
+
+            # [v1.9 C4] Append to seen_hashes (deduped, capped at 1000).
+            if content_hash and content_hash not in seen_set:
+                seen_set.add(content_hash)
+                seen_hashes.append(content_hash)
+
+        # [v1.9 C1] Single atomic batched write — was N separate _append_to_ledger calls.
+        _append_to_ledger(results_path, batch_rows, tid)
 
         # [v1.3 P2-3] Cap history to prevent state bloat on long runs.
         if len(history) > 100:
             history = history[-100:]
+        # [v1.9 C4] Cap seen_hashes at 1000 (keep most recent — older ones
+        # are less likely to re-appear).
+        if len(seen_hashes) > 1000:
+            seen_hashes = seen_hashes[-1000:]
 
         new_count = state.get("experiment_count", 0) + n
+        # [v1.9 D5] iteration_count increments by 1 per ITERATION (not by N).
+        new_iter_count = state.get("iteration_count", 0) + 1
         tracer.step(
             tid, "log",
-            f"parallel: logged {n} experiments (total: {new_count})",
+            f"parallel: logged {n} experiments (total: {new_count}, iter: {new_iter_count})",
         )
 
         return {
             "experiment_history": history,
             "experiment_count": new_count,
+            "iteration_count": new_iter_count,  # [v1.9 D5]
+            "seen_hashes": seen_hashes,  # [v1.9 C4]
             "current_experiments": [],  # clear for the next iteration
             "current_experiment": {},   # backward compat
             # [v1.3 P0-1] status/error reset moved to decide.py.
@@ -159,11 +213,16 @@ def node_log(state: AutoresearchState) -> dict:
     # the correct "keep"/"discard" (was: always "discard" because log ran first).
     status = proposal.get("status", "discard")
     description = proposal.get("description", "")
+    # [v1.9 A2] Append the content_hash as the 6th column. Use .get(..., "")
+    # so failed-proposal placeholders (no hash) write empty.
+    content_hash = proposal.get("content_hash", "")
 
     # 1. Append to results.tsv
-    # Sanitize description — strip newlines/tabs so the row stays one line.
+    # Sanitize description + content_hash — strip newlines/tabs so the row
+    # stays one line.
     safe_desc = " ".join(str(description).split())
-    row = f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\n"
+    safe_hash = " ".join(str(content_hash).split()) if content_hash else ""
+    row = f"{iteration}\t{commit}\t{metric}\t{status}\t{safe_desc}\t{safe_hash}\n"
     _append_to_ledger(results_path, row, tid)
 
     # 2. Append to in-memory experiment_history
@@ -173,7 +232,16 @@ def node_log(state: AutoresearchState) -> dict:
     if len(history) > 100:
         history = history[-100:]
 
+    # [v1.9 C4] Append content_hash to seen_hashes (deduped, capped at 1000).
+    seen_hashes = list(state.get("seen_hashes", []) or [])
+    if content_hash and content_hash not in seen_hashes:
+        seen_hashes.append(content_hash)
+        if len(seen_hashes) > 1000:
+            seen_hashes = seen_hashes[-1000:]
+
     new_count = state.get("experiment_count", 0) + 1
+    # [v1.9 D5] iteration_count increments by 1 per ITERATION.
+    new_iter_count = state.get("iteration_count", 0) + 1
     tracer.step(
         tid, "log",
         f"iter {iteration} logged: {status} {state.get('metric_name', '')}={metric} "
@@ -183,6 +251,8 @@ def node_log(state: AutoresearchState) -> dict:
     return {
         "experiment_history": history,
         "experiment_count": new_count,
+        "iteration_count": new_iter_count,  # [v1.9 D5]
+        "seen_hashes": seen_hashes,  # [v1.9 C4]
         "current_experiment": {},  # clear for the next proposal
         # [v1.3 P0-1] status/error reset moved to decide.py (which runs first
         # in the new evaluate → decide → log order).

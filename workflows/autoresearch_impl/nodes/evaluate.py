@@ -29,8 +29,17 @@ trusts it and skips re-extracting from the (possibly truncated)
 printed early and the script produced lots of output after, pushing the
 metric out of the 50KB tail. When None (no metric in the full output),
 falls through to the existing extraction-from-output path (which will also
-yield None → status="failed"). The parallel path is unchanged — it doesn't
-read `pre_extracted_metric` (parallel run_experiment doesn't populate it).
+yield None → status="failed").
+
+[v1.9-V2 / mistral #10] The parallel path now ALSO checks
+`state["pre_extracted_metrics"][i]` FIRST for each output i — mirrors the
+single-path pre-extract (v1.8 N10). A verbose parallel experiment >50KB
+can lose its metric in the truncation tail, just like single mode. When set
+(not None), `node_evaluate` trusts it and skips re-extracting from the
+(possibly truncated) `experiment_outputs[i]`. When None or when `i` is past
+the end of the list (defensive — should not happen since run_experiment
+always populates N entries), falls through to the existing extraction-from-
+output path.
 """
 from __future__ import annotations
 
@@ -52,6 +61,11 @@ def node_evaluate(state: AutoresearchState) -> dict:
     Per-output failures (no metric found) yield 0.0 for that slot — the
     downstream `node_decide` parallel path skips experiments whose proposal
     has `status="failed"` (set by modify) OR whose metric didn't improve.
+
+    [v1.9-V2 / mistral #10] Parallel path checks `pre_extracted_metrics[i]`
+    FIRST for each output i (mirrors single-path v1.8 N10). Falls through to
+    re-extracting from the (possibly truncated) output when the pre-extracted
+    value is None or missing.
     """
     tid = state.get("trace_id", "")
     metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
@@ -60,8 +74,27 @@ def node_evaluate(state: AutoresearchState) -> dict:
     # ── [v1.6] Parallel path: extract N metrics from N outputs ─────────────
     if parallel_count > 1:
         outputs = state.get("experiment_outputs", []) or []
+        # [v1.9-V2 / mistral #10] Pre-extracted per-output metrics from the
+        # FULL outputs (before truncation). node_run_experiment populates this
+        # list in parallel mode — mirrors the single-path pre_extracted_metric.
+        pre_metrics = state.get("pre_extracted_metrics", []) or []
         metrics: list[float] = []
         for i, output in enumerate(outputs):
+            # [v1.9-V2 / mistral #10] Check pre_extracted_metrics[i] FIRST.
+            # When set (not None), trust it + skip re-extracting from the
+            # (possibly truncated) output. Defensive: also bounds-check i
+            # so a malformed state dict (pre_metrics shorter than outputs)
+            # doesn't IndexError.
+            pre_m = pre_metrics[i] if i < len(pre_metrics) else None
+            if pre_m is not None:
+                tracer.step(
+                    tid, "evaluate",
+                    f"parallel experiment {i}: {metric_name}={pre_m} "
+                    f"(pre-extracted from full output)",
+                )
+                metrics.append(pre_m)
+                continue
+            # Fall back to extracting from the (possibly truncated) output.
             m = _extract_metric(output, metric_name)
             if m is None:
                 tracer.warning(

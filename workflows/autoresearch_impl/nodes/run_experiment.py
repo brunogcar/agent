@@ -26,21 +26,28 @@ temp file is missing (because `node_modify` marked them failed) get a
 `experiment_output` (singular) for v1.5 backward compat. When
 `parallel_count == 1`, the v1.5 single-subprocess path runs unchanged.
 
-[v1.8 N5] Full output logging — BEFORE truncation, the full stdout+stderr
-is written to `{results_path}.d/{iteration}.log` (single mode) or
-`{results_path}.d/{iteration}_{i}.log` (parallel mode, one per experiment).
-Operators can inspect the full output for debugging when the truncated
-state copy doesn't have enough context. Non-fatal — disk errors don't
-halt the loop.
+[v1.8 N5 / v1.9-V2 correction #1] Full output logging — BEFORE truncation,
+the full stdout+stderr is written to `{project_root}/.autoresearch/logs/
+{iteration}.log` (single mode) or `{project_root}/.autoresearch/logs/
+{iteration}_{i}.log` (parallel mode, one per experiment). Operators can
+inspect the full output for debugging when the truncated state copy doesn't
+have enough context. Non-fatal — disk errors don't halt the loop.
 
-[v1.8 N10] Pre-extract metric BEFORE truncation — the single-mode path now
-extracts the metric from the FULL output before truncating to 50KB, and
-stores it in `pre_extracted_metric`. `node_evaluate` reads this first and
-skips re-extracting from the (possibly truncated) `experiment_output`.
-Prevents false negatives when the metric was printed early and the script
-produced lots of output after, pushing the metric out of the 50KB tail.
-Parallel mode does NOT pre-extract (its evaluate path handles N outputs
-individually — pre-extraction would need a list; deferred until needed).
+[v1.9-V2 correction #1] Log dir relocated from `logs/autoresearch/` (which
+lived at the project root level) to `{project_root}/.autoresearch/logs/` —
+mirrors the `.understand` project-scoped pattern (`.autoresearch/` already
+holds the `parallel/` subdir; `logs/` lives alongside it).
+
+[v1.8 N10 / v1.9-V2 mistral #10] Pre-extract metric BEFORE truncation — the
+single-mode path extracts the metric from the FULL output before truncating
+to 50KB and stores it in `pre_extracted_metric`. The parallel-mode path
+extracts each per-output metric into `pre_extracted_metrics` (plural list).
+`node_evaluate` reads these FIRST and skips re-extracting from the (possibly
+truncated) `experiment_output` / `experiment_outputs`. Prevents false
+negatives when the metric was printed early and the script produced lots of
+output after, pushing the metric out of the 50KB tail. Single path clears
+`pre_extracted_metrics=[]`; parallel path clears `pre_extracted_metric=None`
+(backward compat — singular field not used in parallel).
 """
 from __future__ import annotations
 
@@ -56,6 +63,8 @@ from workflows.autoresearch_impl.helpers import extract_metric as _extract_metri
 # v1.3 (P2-1): _run_subprocess now imported from helpers.py (was a local copy).
 # v1.8 (N10): _extract_metric imported here too — used to pre-extract the
 # metric from the FULL output before truncation (single-mode path only).
+# v1.9-V2 (mistral #10): parallel-mode path now also pre-extracts per-output
+# metrics into the new `pre_extracted_metrics` list field.
 
 
 def _write_full_output_log(
@@ -63,31 +72,86 @@ def _write_full_output_log(
     iteration: int,
     output: str,
     slot: int = -1,
+    project_root: str = "",
 ) -> None:
-    """[v1.8 N5] Write the FULL output to a per-iteration log file.
+    """[v1.8 N5 / v1.9 D2 / v1.9-V2 correction #1] Write the FULL output to a
+    per-iteration log file.
 
-    Writes to `{results_path}.d/{iteration}.log` (single mode, slot=-1) or
-    `{results_path}.d/{iteration}_{slot}.log` (parallel mode, slot=i).
+    [v1.9-V2 correction #1] Log dir relocated to
+    `{project_root}/.autoresearch/logs/` — mirrors the `.understand` project-
+    scoped pattern (`.autoresearch/` already holds the `parallel/` subdir;
+    `logs/` lives alongside it). The previous v1.9 location
+    `Path(results_path).parent / "logs" / "autoresearch"` added a `logs/`
+    subfolder at the project root level; V2 corrects this to keep all
+    autoresearch artifacts under one `.autoresearch/` folder. Falls back to
+    `Path(results_path).parent / ".autoresearch" / "logs"` when `project_root`
+    is empty (safety).
+
+    [v1.9 D2] Log rotation cap — before writing, check the total size of the
+    log dir. If it exceeds `cfg.autoresearch_log_dir_max_mb` (default 1024 =
+    1GB), SKIP the write + trace a warning. We don't delete old logs
+    (operators may want them); we just stop adding new ones. The walk is
+    capped at 2000 files via `itertools.islice` so the size check itself
+    doesn't become slow on dirs with 10k+ files. (minimax Risk #1)
+
+    Filenames: `{iteration}.log` (single mode, slot=-1) or
+    `{iteration}_{slot}.log` (parallel mode, slot=i).
 
     Non-fatal — disk errors are swallowed so the experiment loop is never
     blocked by a log-write failure. Operators can inspect the full output
     for debugging when the truncated state copy doesn't have enough context.
 
     Args:
-        results_path: Path to the results.tsv ledger. The log dir is its
-            sibling: `{results_path}.d/`.
+        results_path: Path to the results.tsv ledger. Used as the FALLBACK
+            locator for the log dir when `project_root` is empty
+            (`{parent}/.autoresearch/logs/`).
         iteration: The 1-indexed iteration number (experiment_count + 1).
         output: The full stdout+stderr captured from the subprocess (BEFORE
             any truncation).
         slot: For parallel mode, the per-experiment slot index (0-based).
             -1 (default) means single mode — the filename is just
             `{iteration}.log`.
+        project_root: [v1.9-V2] Project root path. The log dir is
+            `{project_root}/.autoresearch/logs/` when non-empty (preferred —
+            mirrors `.understand` pattern). Falls back to
+            `{results_path}.parent / ".autoresearch" / "logs"` when empty.
     """
-    if not results_path:
+    if not results_path and not project_root:
         return
     try:
+        import itertools
         from pathlib import Path
-        log_dir = Path(f"{results_path}.d")
+        from core.config import cfg
+        # [v1.9-V2 correction #1] Log dir under .autoresearch/ (project-scoped,
+        # mirrors .understand pattern). Falls back to results_path parent when
+        # project_root is empty.
+        if project_root:
+            log_dir = Path(project_root) / ".autoresearch" / "logs"
+        else:
+            log_dir = Path(results_path).parent / ".autoresearch" / "logs"
+
+        # [v1.9 D2] Check total dir size — skip write if over the cap.
+        max_mb = int(getattr(cfg, "autoresearch_log_dir_max_mb", 1024))
+        if max_mb > 0 and log_dir.exists():
+            total_bytes = 0
+            # Cap the walk at 2000 files so the size check itself doesn't
+            # become slow on dirs with 10k+ files.
+            for entry in itertools.islice(log_dir.iterdir(), 2000):
+                try:
+                    if entry.is_file():
+                        total_bytes += entry.stat().st_size
+                except OSError:
+                    continue
+            if total_bytes >= max_mb * 1024 * 1024:
+                from core.tracer import tracer
+                tracer.warning(
+                    "", "run_experiment",
+                    f".autoresearch/logs/ size {total_bytes // (1024*1024)}MB "
+                    f"exceeds cap {max_mb}MB (AUTORESEARCH_LOG_DIR_MAX_MB) — "
+                    f"skipping log write for iteration {iteration}",
+                )
+                return
+
         log_dir.mkdir(parents=True, exist_ok=True)
         if slot >= 0:
             log_file = log_dir / f"{iteration}_{slot}.log"
@@ -109,16 +173,18 @@ def node_run_experiment(state: AutoresearchState) -> dict:
     (missing temp file → sentinel output, timeout, crash) are isolated;
     the batch is never aborted by a single bad subprocess.
 
-    [v1.8 N5] In BOTH single and parallel paths, writes the FULL output to
-    `{results_path}.d/{iteration}.log` (or `{iteration}_{i}.log` in parallel
-    mode) BEFORE truncation — operators can inspect the full output for
-    debugging. Non-fatal.
+    [v1.8 N5 / v1.9-V2 correction #1] In BOTH single and parallel paths,
+    writes the FULL output to `{project_root}/.autoresearch/logs/{iteration}.log`
+    (or `{iteration}_{i}.log` in parallel mode) BEFORE truncation — operators
+    can inspect the full output for debugging. Non-fatal.
 
-    [v1.8 N10] In the single path, extracts the metric from the FULL output
-    BEFORE truncation and stores it in `pre_extracted_metric`. `node_evaluate`
-    reads this first (skipping re-extraction from the truncated output),
-    preventing false negatives when the metric was printed early and the
-    script produced lots of output after.
+    [v1.8 N10 / v1.9-V2 mistral #10] In BOTH single AND parallel paths,
+    extracts the metric from the FULL output BEFORE truncation and stores
+    it. Single path stores it in `pre_extracted_metric` (singular); parallel
+    path stores per-output metrics in `pre_extracted_metrics` (plural list).
+    `node_evaluate` reads these FIRST (skipping re-extraction from the
+    truncated output), preventing false negatives when the metric was
+    printed early and the script produced lots of output after.
     """
     tid = state.get("trace_id", "")
     target_file = state.get("target_file", "") or cfg.autoresearch_target_file
@@ -172,19 +238,43 @@ def node_run_experiment(state: AutoresearchState) -> dict:
                         f"{type(e).__name__}: {e}\n"
                     )
 
-        # [v1.8 N5] Write each output to its own per-iteration log file BEFORE
-        # truncation. One log per experiment: `{iteration}_{i}.log`. Iteration
-        # is computed from experiment_count + 1 (matches the singular path).
-        # Non-fatal — disk errors don't halt the loop.
+        # [v1.8 N5 / v1.9-V2 correction #1] Write each output to its own
+        # per-iteration log file BEFORE truncation. One log per experiment:
+        # `{iteration}_{i}.log`. Iteration is computed from experiment_count
+        # + 1 (matches the singular path). Non-fatal — disk errors don't halt
+        # the loop.
         results_path = state.get("results_path", "")
         iteration = state.get("experiment_count", 0) + 1
         for i, output in enumerate(results):
             if output:
-                _write_full_output_log(results_path, iteration, output, slot=i)
+                _write_full_output_log(
+                    results_path, iteration, output, slot=i,
+                    project_root=project_root,
+                )
+
+        # [v1.9-V2 / mistral #10] Pre-extract each output's metric from the
+        # FULL output BEFORE truncation — mirrors the single-path pre-extract
+        # (v1.8 N10). A verbose parallel experiment >50KB can lose its metric
+        # in the truncation tail, just like single mode. node_evaluate
+        # (parallel path) checks `pre_extracted_metrics[i]` FIRST and skips
+        # re-extracting from the (possibly truncated) `experiment_outputs[i]`.
+        metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
+        pre_metrics: list = []
+        for i, output in enumerate(results):
+            m = _extract_metric(output, metric_name) if output else None
+            pre_metrics.append(m)
+            if m is not None:
+                tracer.step(
+                    tid, "run_experiment",
+                    f"parallel experiment {i}: pre-extracted {metric_name}={m} "
+                    f"from full output ({len(output)} chars before truncation)",
+                )
 
         # Truncate very large outputs to prevent state bloat. 50KB each is
         # enough for evaluate to find the metric (usually printed at the end)
-        # while keeping the trace log + state dict manageable.
+        # while keeping the trace log + state dict manageable. Truncation
+        # happens AFTER pre-extraction so the pre_extracted_metrics list holds
+        # the metrics from the FULL outputs.
         for i, output in enumerate(results):
             if output and len(output) > 50_000:
                 results[i] = output[-50_000:]
@@ -200,10 +290,17 @@ def node_run_experiment(state: AutoresearchState) -> dict:
             "experiment_output": results[0] if results else "",
             "status": "running",
             "error": "",
-            # [v1.8 N10] Parallel mode does NOT pre-extract — the parallel
-            # evaluate path extracts per-output metrics from experiment_outputs
-            # directly. Explicitly clear pre_extracted_metric so a stale value
-            # from a prior single-mode iteration doesn't leak in.
+            # [v1.9-V2 / mistral #10] Pre-extracted per-output metrics from
+            # the FULL outputs (before truncation). node_evaluate (parallel
+            # path) reads these FIRST and skips re-extracting from the
+            # (possibly truncated) experiment_outputs. Entries are None when
+            # no metric was found in that output's full text.
+            "pre_extracted_metrics": pre_metrics,
+            # [v1.8 N10] Parallel mode does NOT populate the SINGULAR
+            # pre_extracted_metric — explicitly clear it so a stale value
+            # from a prior single-mode iteration doesn't leak in. Parallel
+            # evaluate reads the plural list above; single evaluate reads
+            # this singular field.
             "pre_extracted_metric": None,
         }
 
@@ -213,9 +310,13 @@ def node_run_experiment(state: AutoresearchState) -> dict:
         tracer.step(tid, "run_experiment", "skipping run — prior node failed")
         # [v1.8 N10] Clear pre_extracted_metric on the skip path too — a stale
         # value from a prior iteration would mislead evaluate.
+        # [v1.9-V2] Also clear pre_extracted_metrics (plural) for the same
+        # reason — a stale list from a prior parallel iteration could mislead
+        # parallel evaluate.
         return {
             "experiment_output": state.get("experiment_output", ""),
             "pre_extracted_metric": None,
+            "pre_extracted_metrics": [],
         }
 
     tracer.step(
@@ -224,17 +325,20 @@ def node_run_experiment(state: AutoresearchState) -> dict:
     )
     output = _run_subprocess(target_file, project_root, time_budget)
 
-    # [v1.8 N5] Write the FULL output to a per-iteration log file BEFORE any
-    # truncation. Operators can inspect the full output for debugging when
-    # the truncated state copy doesn't have enough context. Non-fatal.
+    # [v1.8 N5 / v1.9-V2 correction #1] Write the FULL output to a per-
+    # iteration log file BEFORE any truncation. Operators can inspect the
+    # full output for debugging when the truncated state copy doesn't have
+    # enough context. Non-fatal.
     results_path = state.get("results_path", "")
     iteration = state.get("experiment_count", 0) + 1
-    _write_full_output_log(results_path, iteration, output)
+    _write_full_output_log(results_path, iteration, output, project_root=project_root)
 
-    # [v1.8 N10] Extract metric BEFORE truncation — prevents false negatives
-    # when the metric is printed early and the script produces lots of output
-    # after (pushing the metric out of the 50KB tail). node_evaluate reads
-    # this first and skips re-extracting from the (possibly truncated) output.
+    # [v1.8 N10 / v1.9-V2] Extract metric BEFORE truncation — prevents false
+    # negatives when the metric is printed early and the script produces lots
+    # of output after (pushing the metric out of the 50KB tail). node_evaluate
+    # reads this first and skips re-extracting from the (possibly truncated)
+    # output. Single path uses pre_extracted_metric (singular); parallel path
+    # uses pre_extracted_metrics (plural list).
     metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
     pre_extracted_metric = _extract_metric(output, metric_name)
     if pre_extracted_metric is not None:
@@ -255,6 +359,7 @@ def node_run_experiment(state: AutoresearchState) -> dict:
     return {
         "experiment_output": output,
         "pre_extracted_metric": pre_extracted_metric,  # [v1.8 N10]
+        "pre_extracted_metrics": [],  # [v1.9-V2] single mode — plural list unused
         "status": "running",
         "error": "",
     }

@@ -4,8 +4,11 @@
 
 Coverage:
   N5  — Output logging: full stdout+stderr written to
-        `{results_path}.d/{iteration}.log` BEFORE truncation (single path)
+        `{project_root}/.autoresearch/logs/{iteration}.log` BEFORE truncation (single path)
         and `{iteration}_{i}.log` (parallel path, one per experiment).
+        [v1.9-V2 correction #1] Log dir relocated from `logs/autoresearch/` (at
+        project root level) to `{project_root}/.autoresearch/logs/` (mirrors
+        the `.understand` project-scoped pattern).
   N6  — Cost/token tracking: `_call_planner` returns `(response, usage)`
         tuple; `node_propose` captures `usage.get("total", 0)` on the
         proposal as `tokens`; `node_log._build_history_entry` persists
@@ -38,8 +41,10 @@ import pytest
 
 
 class TestOutputLogging:
-    """[v1.8 N5] Full output written to {results_path}.d/{iteration}.log
+    """[v1.8 N5] Full output written to {project_root}/.autoresearch/logs/{iteration}.log
     BEFORE truncation. Operators can inspect the full output for debugging.
+    [v1.9-V2 correction #1] Log dir relocated from `logs/autoresearch/` (at
+    project root level) to `{project_root}/.autoresearch/logs/`.
     """
 
     def test_single_path_writes_full_output_to_log(self, ar_state, tmp_path):
@@ -49,6 +54,7 @@ class TestOutputLogging:
         state = dict(ar_state)
         state["status"] = "running"
         state["results_path"] = str(results_path)
+        state["project_root"] = str(tmp_path)
         state["experiment_count"] = 7  # → iteration 8
         # 60KB output — bigger than the 50KB truncation threshold.
         full_output = "val_bpb: 0.42\n" + ("DEBUG: training step\n" * 5000)
@@ -57,7 +63,9 @@ class TestOutputLogging:
                    return_value=full_output):
             node_run_experiment(state)
 
-        log_file = Path(f"{results_path}.d") / "8.log"
+        # [v1.9-V2 correction #1] Log dir relocated from logs/autoresearch/
+        # (at project root level) to {project_root}/.autoresearch/logs/
+        log_file = tmp_path / ".autoresearch" / "logs" / "8.log"
         assert log_file.exists(), f"log file {log_file} not created"
         logged = log_file.read_text(encoding="utf-8")
         # The log file contains the FULL output — not truncated.
@@ -75,15 +83,25 @@ class TestOutputLogging:
         state = dict(ar_state)
         state["status"] = "running"
         state["results_path"] = str(results_path)
+        state["project_root"] = str(tmp_path)
         state["experiment_count"] = 3
         with patch("workflows.autoresearch_impl.nodes.run_experiment._run_subprocess",
                    return_value="val_bpb: 0.5\n"):
             node_run_experiment(state)
         # experiment_count=3 → iteration=4 → log filename "4.log".
-        assert (Path(f"{results_path}.d") / "4.log").exists()
+        # [v1.9-V2 correction #1] Log dir relocated to {project_root}/.autoresearch/logs/
+        assert (tmp_path / ".autoresearch" / "logs" / "4.log").exists()
 
     def test_parallel_path_writes_one_log_per_experiment(self, ar_state, tmp_path):
-        """Parallel path: writes N log files named {iteration}_{i}.log."""
+        """Parallel path: writes N log files named {iteration}_{i}.log.
+
+        [v1.9 fix] Deterministic output mapping — the side_effect inspects the
+        target_path arg (which encodes the slot index `parallel/{i}/`) and
+        returns the output for THAT slot. This avoids the pre-existing thread-
+        scheduling flakiness where `as_completed` could yield futures in a
+        different order than submission, causing `results[idx]` to get the
+        wrong output from a naive `side_effect=outputs` list.
+        """
         from workflows.autoresearch_impl.nodes.run_experiment import node_run_experiment
         results_path = tmp_path / "results.tsv"
         parallel_dir = tmp_path / ".autoresearch" / "parallel"
@@ -101,12 +119,25 @@ class TestOutputLogging:
         state["target_file"] = "train.py"
         state["current_experiments"] = [{"iteration": i + 1} for i in range(n)]
 
-        outputs = [f"val_bpb: 0.4{i}\n" for i in range(n)]
+        # Map slot index → output. The side_effect function parses the
+        # target_path arg (e.g. ".../.autoresearch/parallel/1/train.py") to
+        # extract the slot index, so the right output goes to the right slot
+        # regardless of thread completion order.
+        outputs = {i: f"val_bpb: 0.4{i}\n" for i in range(n)}
+
+        def _fake_run(target_path, project_root, time_budget):
+            # target_path looks like ".../.autoresearch/parallel/{i}/train.py"
+            # Extract the slot index from the path.
+            from pathlib import Path as _P
+            slot = int(_P(target_path).parent.name)
+            return outputs[slot]
+
         with patch("workflows.autoresearch_impl.nodes.run_experiment._run_subprocess",
-                   side_effect=outputs):
+                   side_effect=_fake_run):
             node_run_experiment(state)
 
-        log_dir = Path(f"{results_path}.d")
+        # [v1.9-V2 correction #1] Log dir relocated to {project_root}/.autoresearch/logs/
+        log_dir = tmp_path / ".autoresearch" / "logs"
         # One log file per experiment: 1_0.log, 1_1.log, 1_2.log
         for i in range(n):
             log_file = log_dir / f"1_{i}.log"
@@ -121,6 +152,7 @@ class TestOutputLogging:
         state = dict(ar_state)
         state["status"] = "running"
         state["results_path"] = str(results_path)
+        state["project_root"] = str(tmp_path)
         state["experiment_count"] = 0
         # Force the log file write to fail by patching Path.write_text.
         with patch("pathlib.Path.write_text", side_effect=OSError("disk full")), \
@@ -132,7 +164,8 @@ class TestOutputLogging:
         assert result["experiment_output"] == "val_bpb: 0.42\n"
         assert result["pre_extracted_metric"] == 0.42
         # And the log file was NOT created (write failed).
-        assert not (Path(f"{results_path}.d") / "1.log").exists()
+        # [v1.9-V2 correction #1] Log dir relocated to {project_root}/.autoresearch/logs/
+        assert not (tmp_path / ".autoresearch" / "logs" / "1.log").exists()
 
     def test_no_log_file_when_results_path_empty(self, ar_state):
         """When results_path is empty, no log file is written (non-fatal

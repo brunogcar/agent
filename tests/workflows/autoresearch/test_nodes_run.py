@@ -53,7 +53,9 @@ class TestNodeRunExperiment:
             result = node_run_experiment(state)
         # Skip path returns the prior experiment_output and does NOT call subprocess.
         # [v1.8 N10] Also clears pre_extracted_metric to None (no new run).
-        assert result == {"experiment_output": "prior output\n", "pre_extracted_metric": None}
+        # [v1.9-V2] Also clears pre_extracted_metrics (plural) — stale list from a
+        # prior parallel iteration would mislead parallel evaluate.
+        assert result == {"experiment_output": "prior output\n", "pre_extracted_metric": None, "pre_extracted_metrics": []}
         m.assert_not_called()
 
     def test_output_over_50kb_is_truncated(self, ar_state):
@@ -111,3 +113,72 @@ class TestRunTargetSubprocessForRun:
         assert "experiment crashed" in out
         assert "PermissionError" in out
         assert "denied" in out
+
+
+# ===========================================================================
+# [v1.9 D1] Log dir relocation to .autoresearch/logs/ (user request)
+# ===========================================================================
+
+
+class TestLogDirRelocation:
+    """[v1.9 D1] Log dir moved from {results_path}.d/ to
+    {project_root}/.autoresearch/logs/. User explicitly requested: "we use
+    logs/ if needed, create subfolder there more descriptive than .d/".
+    """
+
+    def test_log_dir_is_autoresearch_logs_not_d_suffix(self, ar_state, tmp_path):
+        """Verify the log file is written to
+        {project_root}/.autoresearch/logs/{iteration}.log, NOT
+        {results_path}.d/{iteration}.log."""
+        from workflows.autoresearch_impl.nodes.run_experiment import node_run_experiment
+        results_path = tmp_path / "results.tsv"
+        state = dict(ar_state)
+        state["status"] = "running"
+        state["results_path"] = str(results_path)
+        state["experiment_count"] = 0
+        with patch("workflows.autoresearch_impl.nodes.run_experiment._run_subprocess",
+                   return_value="val_bpb: 0.42\n"):
+            node_run_experiment(state)
+
+        # The log file must be under .autoresearch/logs/, NOT results.tsv.d/
+        log_dir = tmp_path / ".autoresearch" / "logs"
+        assert log_dir.exists(), f"log dir {log_dir} not created"
+        assert (log_dir / "1.log").exists(), "log file 1.log not created"
+        # The OLD .d/ location must NOT exist.
+        assert not (tmp_path / "results.tsv.d").exists(), (
+            "old {results_path}.d/ dir should NOT exist after v1.9 relocation"
+        )
+
+
+# ===========================================================================
+# [v1.9 D2] Log rotation / size cap (minimax Risk #1)
+# ===========================================================================
+
+
+class TestLogRotationCap:
+    """[v1.9 D2] When .autoresearch/logs/ exceeds
+    cfg.autoresearch_log_dir_max_mb, new log writes are SKIPPED + a
+    tracer.warning is emitted.
+    """
+
+    def test_log_write_skipped_when_dir_exceeds_cap(self, ar_state, tmp_path, monkeypatch):
+        """Pre-populate .autoresearch/logs/ with files totaling >1MB, set
+        cfg.autoresearch_log_dir_max_mb=1, call _write_full_output_log →
+        no new file written + tracer.warning called."""
+        from workflows.autoresearch_impl.nodes.run_experiment import _write_full_output_log
+        import core.config
+        # Set the cap to 1MB.
+        monkeypatch.setattr(core.config.cfg, "autoresearch_log_dir_max_mb", 1)
+        # Pre-populate the log dir with a 2MB file.
+        results_path = tmp_path / "results.tsv"
+        log_dir = tmp_path / ".autoresearch" / "logs"
+        log_dir.mkdir(parents=True)
+        (log_dir / "big.log").write_text("X" * (2 * 1024 * 1024), encoding="utf-8")
+
+        with patch("workflows.autoresearch_impl.nodes.run_experiment.tracer.warning") as mock_warn:
+            _write_full_output_log(str(results_path), 5, "new output\n")
+
+        # No new log file should be created.
+        assert not (log_dir / "5.log").exists()
+        # tracer.warning was called.
+        assert mock_warn.called

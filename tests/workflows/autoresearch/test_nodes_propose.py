@@ -288,3 +288,216 @@ class TestNodeModify:
             result = node_modify(state)
         assert result["status"] == "failed"
         assert "protected" in result["error"]
+
+
+# ===========================================================================
+# [v1.9 B4] _call_planner exception scope (deepseek P2 2.4)
+# ===========================================================================
+
+
+class TestCallPlannerExceptionScope:
+    """[v1.9 B4] _call_planner catches only transient failure types
+    (RuntimeError, ConnectionError, TimeoutError, OSError, ValueError).
+    KeyboardInterrupt, SystemExit, ImportError, AttributeError propagate.
+    """
+
+    def test_call_planner_does_not_swallow_keyboard_interrupt(self):
+        """Patch tools.agent.agent to raise KeyboardInterrupt → _call_planner
+        propagates it (doesn't retry, doesn't swallow)."""
+        from workflows.autoresearch_impl.nodes.propose import _call_planner
+        with patch("tools.agent.agent", side_effect=KeyboardInterrupt), \
+             patch("time.sleep"):  # skip backoff if it DID retry
+            with pytest.raises(KeyboardInterrupt):
+                _call_planner("sys", "user", tid="t1")
+
+    def test_call_planner_does_not_swallow_import_error(self):
+        """ImportError indicates a bug, not a transient failure — must propagate."""
+        from workflows.autoresearch_impl.nodes.propose import _call_planner
+        with patch("tools.agent.agent", side_effect=ImportError("missing module")), \
+             patch("time.sleep"):
+            with pytest.raises(ImportError):
+                _call_planner("sys", "user", tid="t1")
+
+    def test_call_planner_retries_runtime_error(self):
+        """RuntimeError IS a transient type — must be retried 3× then raised."""
+        from workflows.autoresearch_impl.nodes.propose import _call_planner
+        with patch("tools.agent.agent", side_effect=RuntimeError("transient")), \
+             patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="3 attempts"):
+                _call_planner("sys", "user", tid="t1")
+
+
+# ===========================================================================
+# [v1.9 C6] Parallel propose stagger (qwen P2-6)
+# ===========================================================================
+
+
+class TestParallelProposeStagger:
+    """[v1.9 C6] Each parallel _call_planner call sleeps i*0.5s (capped at
+    2.0s) before submitting. Prevents thundering-herd 429s on rate-limited
+    providers.
+    """
+
+    def test_parallel_propose_staggers_calls(self, ar_state, tmp_path):
+        """Patch time.sleep to record durations — verify sleeps are
+        [0, 0.5, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0] for N=8 (capped at 2.0)."""
+        from workflows.autoresearch_impl.nodes.propose import node_propose
+        (tmp_path / "train.py").write_text("print('hi')\n", encoding="utf-8")
+        state = dict(ar_state)
+        state["parallel_count"] = 8
+        state["experiment_count"] = 0
+
+        sleep_durations = []
+        proposal_json = json.dumps({
+            "description": "d", "rationale": "r", "new_content": "print('new')\n",
+        })
+
+        def fake_sleep(seconds):
+            sleep_durations.append(seconds)
+
+        # Each call returns a successful tuple.
+        def fake_call(system, user, tid=""):
+            return proposal_json, {"total": 0}
+
+        with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
+                   side_effect=fake_call), \
+             patch("time.sleep", side_effect=fake_sleep):
+            result = node_propose(state)
+
+        # The stagger happens INSIDE the submitted function, so we expect 8
+        # sleeps (one per parallel call). i=0 → 0s (no sleep), i=1 → 0.5s,
+        # i=2 → 1.0s, i=3 → 1.5s, i=4..7 → 2.0s (capped).
+        # Note: the order depends on thread scheduling, so we sort + compare.
+        # i=0's stagger is 0, so it might not call sleep at all (we skip sleep
+        # when stagger == 0). So we expect 7 non-zero sleeps OR 8 sleeps with
+        # one being 0. Sort + filter zeros, then check the non-zero set.
+        non_zero = sorted(s for s in sleep_durations if s > 0)
+        # Expected non-zero staggers: 0.5, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0 (7 values).
+        assert len(non_zero) == 7, (
+            f"expected 7 non-zero staggers for N=8 (i=0 skips sleep), "
+            f"got {len(non_zero)}: {non_zero}"
+        )
+        expected = [0.5, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0]
+        for actual, exp in zip(non_zero, expected):
+            assert abs(actual - exp) < 0.01, (
+                f"stagger mismatch: expected {exp}, got {actual}"
+            )
+
+
+# ===========================================================================
+# [v1.9 D4] Variant seeds for parallel propose (minimax Risk #3)
+# ===========================================================================
+
+
+class TestParallelVariantSeeds:
+    """[v1.9 D4] Parallel _call_planner calls get a distinct variant_seed
+    appended to the prompt. Guarantees diversity even at temperature=0.
+    """
+
+    def test_parallel_propose_includes_variant_seed(self, ar_state, tmp_path):
+        """Patch _call_planner to record the task arg, verify each of the N
+        calls has a distinct '--- VARIANT 0/1/2 ---' marker. Single path
+        (parallel_count=1) has NO variant marker."""
+        from workflows.autoresearch_impl.nodes.propose import node_propose
+        (tmp_path / "train.py").write_text("print('hi')\n", encoding="utf-8")
+
+        captured_tasks = []
+        proposal_json = json.dumps({
+            "description": "d", "rationale": "r", "new_content": "print('new')\n",
+        })
+
+        def fake_call(system, user, tid=""):
+            captured_tasks.append(user)
+            return proposal_json, {"total": 0}
+
+        # Parallel path — 3 calls, each with a distinct variant marker.
+        state = dict(ar_state)
+        state["parallel_count"] = 3
+        state["experiment_count"] = 0
+        with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
+                   side_effect=fake_call), \
+             patch("time.sleep"):
+            node_propose(state)
+
+        assert len(captured_tasks) == 3
+        # Each call must have a distinct VARIANT marker.
+        markers = []
+        for task in captured_tasks:
+            # Look for "--- VARIANT 0 ---", "--- VARIANT 1 ---", etc.
+            for i in range(3):
+                if f"VARIANT {i}" in task:
+                    markers.append(i)
+                    break
+        assert sorted(markers) == [0, 1, 2], (
+            f"expected variant markers [0,1,2], got {markers}"
+        )
+
+    def test_single_path_has_no_variant_marker(self, ar_state, tmp_path):
+        """Single path (parallel_count=1) must NOT have a variant marker."""
+        from workflows.autoresearch_impl.nodes.propose import node_propose
+        (tmp_path / "train.py").write_text("print('hi')\n", encoding="utf-8")
+
+        captured_task = []
+        proposal_json = json.dumps({
+            "description": "d", "rationale": "r", "new_content": "print('new')\n",
+        })
+
+        def fake_call(system, user, tid=""):
+            captured_task.append(user)
+            return proposal_json, {"total": 0}
+
+        state = dict(ar_state)
+        state["parallel_count"] = 1
+        state["experiment_count"] = 0
+        with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
+                   side_effect=fake_call):
+            node_propose(state)
+
+        assert len(captured_task) == 1
+        assert "VARIANT" not in captured_task[0], (
+            "single path must NOT have a variant marker"
+        )
+
+
+# ===========================================================================
+# [v1.9 D6] Memory recall tag filter (minimax Risk #5)
+# ===========================================================================
+
+
+class TestMemoryRecallTagFilter:
+    """[v1.9 D6] node_propose's memory.recall call passes
+    tags_filter='source:autoresearch' so only autoresearch-stored memories
+    are surfaced (not unrelated procedural memories from other workflows).
+    """
+
+    def test_memory_recall_filters_by_source_tag(self, ar_state, tmp_path):
+        """Patch core.memory_engine.memory.recall to record kwargs, verify
+        tags_filter='source:autoresearch' is passed."""
+        from workflows.autoresearch_impl.nodes.propose import node_propose
+        (tmp_path / "train.py").write_text("print('hi')\n", encoding="utf-8")
+
+        # Inject a fake memory_engine module.
+        mock_mem = MagicMock()
+        mock_mem.recall.return_value = []
+        fake_module = MagicMock()
+        fake_module.memory = mock_mem
+
+        state = dict(ar_state)
+        state["experiment_count"] = 0
+        # [v1.9 hardening] Patch _call_planner so node_propose doesn't fire a
+        # real LLM call (was 8s; now <0.5s). The planner returns a minimal
+        # valid proposal JSON; node_propose parses it without ever calling
+        # tools.agent.agent.
+        fake_proposal = '{"description": "test", "rationale": "test", "new_content": "print(1)"}'
+        with patch.dict("sys.modules", {"core.memory_engine": fake_module}), \
+             patch("workflows.autoresearch_impl.nodes.propose._call_planner",
+                   return_value=(fake_proposal, {"total": 0})):
+            node_propose(state)
+
+        mock_mem.recall.assert_called()
+        call_kwargs = mock_mem.recall.call_args
+        # tags_filter must be passed (either as kwarg or positional).
+        tags_filter = call_kwargs.kwargs.get("tags_filter") or call_kwargs[1].get("tags_filter", "")
+        assert tags_filter == "source:autoresearch", (
+            f"expected tags_filter='source:autoresearch', got {tags_filter!r}"
+        )

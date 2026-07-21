@@ -55,6 +55,10 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
+# [v1.9 A3] Import _atomic_write for the parallel winner copy — was using
+# non-atomic real_path.write_text(...) which leaves the target_file empty/
+# partial on SIGKILL/OOM mid-write. (minimax Bug #3)
+from workflows.autoresearch_impl.nodes.modify import _atomic_write
 
 
 def _is_improvement(new: float, best: float, direction: str) -> bool:
@@ -65,7 +69,20 @@ def _is_improvement(new: float, best: float, direction: str) -> bool:
 
     Equality is NOT an improvement — we want to discourage the LLM from
     proposing no-op changes that just shuffle code without moving the metric.
+
+    [v1.9 E1] NaN handling — `float('nan')` comparisons are always False in
+    Python, so a NaN metric would silently fail both `new < best` and
+    `new > best` → returns False (not an improvement). This is the CORRECT
+    behavior (a NaN metric means the experiment crashed numerically and
+    should be discarded), but it was implicit. The explicit `new != new` check
+    (the canonical NaN self-test) documents the intent and guards against a
+    future contributor "fixing" the comparison.
     """
+    # [v1.9 E1] Explicit NaN check — `new != new` is True only for NaN.
+    # Mirrors the implicit behavior (NaN comparisons are always False), but
+    # documents the intent: a NaN metric is never an improvement.
+    if new != new:  # NaN check (NaN != NaN is the only True case)
+        return False
     if direction == "lower":
         return new < best
     elif direction == "higher":
@@ -130,6 +147,14 @@ def _git_reset_hard(project_root: str, tid: str) -> bool:
     `project_root` or when `project_root` isn't a git repo. Prevents
     accidentally resetting the agent's own working tree (or a parent
     directory that happens to be a repo) when state is misconfigured.
+
+    [v1.9 B3] Toplevel verify — on Windows, `Path(project_root).is_dir()`
+    returns True for junctions pointing to non-git directories. The `.git`
+    check mitigates this, but if the junction points to a DIFFERENT git repo,
+    the reset would nuke that repo's working tree. Now we run
+    `git rev-parse --show-toplevel` and verify the returned path matches
+    `Path(project_root).resolve()`. If they don't match, refuse to reset +
+    trace a warning. (qwen P1-4)
     """
     # [v1.3 P1-4] Safety guard — refuse to reset without explicit project_root
     if not project_root:
@@ -141,6 +166,53 @@ def _git_reset_hard(project_root: str, tid: str) -> bool:
             tid, "decide",
             f"git reset skipped — {project_root} is not a git repo",
         )
+        return False
+    # [v1.9 B3] Verify git toplevel matches project_root — prevents resetting
+    # a DIFFERENT git repo when project_root is a junction/symlink (Windows)
+    # or a subdirectory of another repo. (qwen P1-4)
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=project_root or None,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode != 0:
+            tracer.warning(
+                tid, "decide",
+                f"git rev-parse --show-toplevel failed — skipping reset: "
+                f"{r.stderr.strip()[:200]}",
+            )
+            return False
+        toplevel = r.stdout.strip()
+        try:
+            resolved_root = str(Path(project_root).resolve())
+        except Exception:
+            resolved_root = project_root
+        # Compare resolved paths (handles symlinks, .., etc.). Some OSes
+        # report trailing slashes differently, so compare via Path.
+        try:
+            if Path(toplevel).resolve() != Path(project_root).resolve():
+                tracer.warning(
+                    tid, "decide",
+                    f"git reset skipped — toplevel mismatch: "
+                    f"git says {toplevel!r}, project_root resolves to "
+                    f"{resolved_root!r} (possible symlink/junction to a "
+                    f"different repo — refusing to nuke its working tree)",
+                )
+                return False
+        except Exception:
+            # If path resolution fails, be conservative and skip the reset.
+            tracer.warning(
+                tid, "decide",
+                f"git reset skipped — path resolution failed for toplevel "
+                f"{toplevel!r} vs project_root {project_root!r}",
+            )
+            return False
+    except Exception as e:
+        # Missing git binary, permission error, etc. — be conservative.
+        tracer.warning(tid, "decide", f"git toplevel verify exception: {e}")
         return False
     try:
         subprocess.run(
@@ -183,6 +255,10 @@ def _record_failure_memory(
     Failures are non-fatal — `core.memory_engine.memory` may not be available
     (e.g. in tests, or if ChromaDB is disabled). The whole call is wrapped
     in try/except so a memory-store error never halts the experiment loop.
+    [v1.9-V2 / mistral #7] The except block now logs a `tracer.warning`
+    (was: silently swallowed via `except Exception: pass`). Operators need
+    to know when cross-run learning is disabled so they can debug — a silent
+    swallow hides the fact that procedural memory isn't being recorded.
     """
     try:
         from core.memory_engine import memory
@@ -210,8 +286,17 @@ def _record_failure_memory(
                 goal=goal,
                 outcome="failure",
             )
-    except Exception:
-        pass  # Non-fatal — memory may not be available
+    except Exception as e:
+        # [v1.9-V2 / mistral #7] Surface memory unavailability via a tracer
+        # warning (was: silently swallowed via `except Exception: pass`).
+        # Operators need to know when cross-run learning is disabled so they
+        # can debug — a silent swallow hides the fact that procedural memory
+        # isn't being recorded. The behavior is unchanged (feature disabled),
+        # just made visible.
+        tracer.warning(
+            tid, "decide",
+            f"memory engine unavailable — cross-run learning disabled: {e}",
+        )
 
 
 def node_decide(state: AutoresearchState) -> dict:
@@ -251,128 +336,160 @@ def node_decide(state: AutoresearchState) -> dict:
         base_path = Path(project_root) if project_root else Path(".")
         parallel_dir = base_path / ".autoresearch" / "parallel"
 
-        # Pad metrics to len(proposals) so zip() stays aligned.
-        while len(metrics) < len(proposals):
-            metrics.append(0.0)
+        # [v1.9-V2 / mistral #3] Wrap the ENTIRE parallel path body in
+        # try/finally with `shutil.rmtree(parallel_dir)` in `finally`. The
+        # previous code had TWO inline `shutil.rmtree(parallel_dir, ...)` calls
+        # — one on the winner-takes-all path + one on the no-improvement path.
+        # Both ran on the SUCCESS paths only; an exception raised BETWEEN them
+        # (e.g. `_git_commit` raised) leaked the temp dir. The `finally` block
+        # ALWAYS runs — on return from inside the try AND on exception — so the
+        # temp dir is cleaned up regardless of how the parallel path exits.
+        # The inline rmtree calls are removed (replaced by this single finally).
+        try:
+            # Pad metrics to len(proposals) so zip() stays aligned.
+            while len(metrics) < len(proposals):
+                metrics.append(0.0)
 
-        # Find the best experiment — the one that maximally improves on
-        # current_best (greedy: each iteration lowers/raises the bar).
-        # Skip proposals already marked "failed" by modify (empty content /
-        # dedup / path / protected) — they didn't even run.
-        best_idx = None
-        best_metric = current_best
-        for i, (proposal, metric) in enumerate(zip(proposals, metrics)):
-            if proposal.get("status") == "failed":
-                continue
-            if _is_improvement(metric, best_metric, direction):
-                best_metric = metric
-                best_idx = i
+            # Find the best experiment — the one that maximally improves on
+            # current_best (greedy: each iteration lowers/raises the bar).
+            # Skip proposals already marked "failed" by modify (empty content /
+            # dedup / path / protected) — they didn't even run.
+            best_idx = None
+            best_metric = current_best
+            for i, (proposal, metric) in enumerate(zip(proposals, metrics)):
+                if proposal.get("status") == "failed":
+                    continue
+                if _is_improvement(metric, best_metric, direction):
+                    best_metric = metric
+                    best_idx = i
 
-        if best_idx is not None:
-            # Copy the winner's content to the real target_file.
-            winner_path = parallel_dir / str(best_idx) / target_file
-            real_path = base_path / target_file
-            if winner_path.exists():
-                try:
-                    real_path.parent.mkdir(parents=True, exist_ok=True)
-                    real_path.write_text(
-                        winner_path.read_text(encoding="utf-8"),
-                        encoding="utf-8",
-                    )
-                except Exception as e:
-                    tracer.warning(
-                        tid, "decide",
-                        f"failed to copy winner {best_idx} to {real_path}: {e}",
-                    )
-
-            # Commit the winner.
-            winner = proposals[best_idx]
-            commit_msg = (
-                f"autoresearch: iter {winner.get('iteration', '?')} — "
-                f"{winner.get('description', '')[:80]}\n\n"
-                f"{metric_name}: {metrics[best_idx]} (was {current_best}, "
-                f"direction={direction}) [parallel best of {len(proposals)}]"
-            )
-            sha = _git_commit(commit_msg, project_root, tid, target_file)
-
-            # Annotate all proposals — winner="keep" (or "discard" if commit
-            # failed), others="discard". Mirrors v1.5 P1-1 empty-SHA handling.
-            for i, proposal in enumerate(proposals):
-                proposal["metric"] = metrics[i]
-                if i == best_idx and sha:
-                    proposal["status"] = "keep"
-                    proposal["commit"] = sha
-                else:
-                    proposal["status"] = "discard"
-                    proposal["commit"] = ""
-                    # [v1.5 N4] Record procedural memory for each discarded
-                    # experiment (parallel mode — N discards per iteration).
-                    # Skip the winner when commit failed (i == best_idx and
-                    # not sha) — recording it would mislead future runs.
-                    if i != best_idx:
-                        _record_failure_memory(
-                            proposal, metric_name, metrics[i],
-                            current_best, direction, tid, goal,
+            if best_idx is not None:
+                # Copy the winner's content to the real target_file.
+                winner_path = parallel_dir / str(best_idx) / target_file
+                real_path = base_path / target_file
+                if winner_path.exists():
+                    try:
+                        real_path.parent.mkdir(parents=True, exist_ok=True)
+                        # [v1.9 A3] Use _atomic_write (tempfile + os.fsync +
+                        # os.replace) — was: real_path.write_text(...) which is
+                        # non-atomic. SIGKILL/OOM mid-write left target_file
+                        # empty/partial → next node_propose reads "" → chaos.
+                        # (minimax Bug #3)
+                        _atomic_write(
+                            real_path,
+                            winner_path.read_text(encoding="utf-8"),
+                        )
+                    except Exception as e:
+                        tracer.warning(
+                            tid, "decide",
+                            f"failed to copy winner {best_idx} to {real_path}: {e}",
                         )
 
-            # Clean up temp dirs (best-effort — ignore errors).
-            shutil.rmtree(parallel_dir, ignore_errors=True)
+                # Commit the winner.
+                winner = proposals[best_idx]
+                commit_msg = (
+                    f"autoresearch: iter {winner.get('iteration', '?')} — "
+                    f"{winner.get('description', '')[:80]}\n\n"
+                    f"{metric_name}: {metrics[best_idx]} (was {current_best}, "
+                    f"direction={direction}) [parallel best of {len(proposals)}]"
+                )
+                sha = _git_commit(commit_msg, project_root, tid, target_file)
 
-            new_best = metrics[best_idx] if sha else current_best
+                # Annotate all proposals — winner="keep" (or "discard" if commit
+                # failed), others="discard". Mirrors v1.5 P1-1 empty-SHA handling.
+                for i, proposal in enumerate(proposals):
+                    proposal["metric"] = metrics[i]
+                    if i == best_idx and sha:
+                        proposal["status"] = "keep"
+                        proposal["commit"] = sha
+                    else:
+                        proposal["status"] = "discard"
+                        proposal["commit"] = ""
+                        # [v1.5 N4] Record procedural memory for each discarded
+                        # experiment (parallel mode — N discards per iteration).
+                        # Skip the winner when commit failed (i == best_idx and
+                        # not sha) — recording it would mislead future runs.
+                        # [v1.9 A1] Gate on `not _is_improvement(...)` — a loser
+                        # that DID improve over the OUTER current_best (but lost
+                        # to the winner) must NOT be recorded as a failure.
+                        # Pre-v1.9, every loser got _record_failure_memory called
+                        # with current_best = the OUTER (pre-iteration) best, so
+                        # a loser with metric 0.45 (better than outer 0.5) was
+                        # stored as "did not improve" → future runs would avoid
+                        # a perfectly valid change. (minimax Bug #1)
+                        if i != best_idx and not _is_improvement(
+                            metrics[i], current_best, direction
+                        ):
+                            _record_failure_memory(
+                                proposal, metric_name, metrics[i],
+                                current_best, direction, tid, goal,
+                            )
+
+                new_best = metrics[best_idx] if sha else current_best
+                tracer.step(
+                    tid, "decide",
+                    f"parallel: KEPT {sha or '(no commit)'} (idx={best_idx}, "
+                    f"{metric_name}={metrics[best_idx]} vs best={current_best})",
+                )
+
+                # [v1.7 N7] Checkpoint on every keep (parallel path) — only when
+                # the winner was actually committed (sha truthy). Mirrors the
+                # single-experiment path: a crashed run resumes from the last
+                # known good parallel-keep via get_latest(trace_id). Non-fatal.
+                if sha:
+                    try:
+                        from core.observability.checkpoint import save_checkpoint
+                        save_checkpoint(tid, "keep", {
+                            **state,
+                            "current_best": new_best,
+                            "current_experiment": proposals[best_idx],
+                            "experiment_count": state.get("experiment_count", 0),
+                        })
+                    except Exception:
+                        pass  # Non-fatal — checkpoint failure shouldn't block the loop
+
+                return {
+                    "current_experiments": proposals,
+                    "current_experiment": proposals[best_idx],  # backward compat
+                    "current_best": new_best,
+                    "status": "running",
+                    "error": "",
+                }
+
+            # No improvement — discard all N. Temp dir cleaned up by finally.
             tracer.step(
                 tid, "decide",
-                f"parallel: KEPT {sha or '(no commit)'} (idx={best_idx}, "
-                f"{metric_name}={metrics[best_idx]} vs best={current_best})",
+                f"parallel: no improvement across {len(proposals)} experiments — discarding all",
             )
-
-            # [v1.7 N7] Checkpoint on every keep (parallel path) — only when
-            # the winner was actually committed (sha truthy). Mirrors the
-            # single-experiment path: a crashed run resumes from the last
-            # known good parallel-keep via get_latest(trace_id). Non-fatal.
-            if sha:
-                try:
-                    from core.observability.checkpoint import save_checkpoint
-                    save_checkpoint(tid, "keep", {
-                        **state,
-                        "current_best": new_best,
-                        "current_experiment": proposals[best_idx],
-                        "experiment_count": state.get("experiment_count", 0),
-                    })
-                except Exception:
-                    pass  # Non-fatal — checkpoint failure shouldn't block the loop
+            for i, proposal in enumerate(proposals):
+                proposal["metric"] = metrics[i]
+                proposal["status"] = "discard"
+                proposal["commit"] = ""
+                # [v1.5 N4] Record procedural memory for each discarded experiment.
+                # [v1.9 A1] Gate on `not _is_improvement(...)` — even on the
+                # no-improvement path, a proposal whose metric IS strictly better
+                # than the OUTER current_best (rare but possible when none beat
+                # best_metric which started equal to current_best) must NOT be
+                # recorded as a failure. (minimax Bug #1)
+                if not _is_improvement(metrics[i], current_best, direction):
+                    _record_failure_memory(
+                        proposal, metric_name, metrics[i],
+                        current_best, direction, tid, goal,
+                    )
 
             return {
                 "current_experiments": proposals,
-                "current_experiment": proposals[best_idx],  # backward compat
-                "current_best": new_best,
+                "current_experiment": proposals[0] if proposals else {},
+                "current_best": current_best,
                 "status": "running",
                 "error": "",
             }
-
-        # No improvement — discard all N. Clean up temp dirs.
-        tracer.step(
-            tid, "decide",
-            f"parallel: no improvement across {len(proposals)} experiments — discarding all",
-        )
-        for i, proposal in enumerate(proposals):
-            proposal["metric"] = metrics[i]
-            proposal["status"] = "discard"
-            proposal["commit"] = ""
-            # [v1.5 N4] Record procedural memory for each discarded experiment.
-            _record_failure_memory(
-                proposal, metric_name, metrics[i],
-                current_best, direction, tid, goal,
-            )
-
-        shutil.rmtree(parallel_dir, ignore_errors=True)
-
-        return {
-            "current_experiments": proposals,
-            "current_experiment": proposals[0] if proposals else {},
-            "current_best": current_best,
-            "status": "running",
-            "error": "",
-        }
+        finally:
+            # [v1.9-V2 / mistral #3] ALWAYS clean up the temp dir — runs on
+            # return from inside the try AND on exception. The previous inline
+            # rmtree calls only ran on success paths; an exception between them
+            # (e.g. _git_commit raised mid-block) leaked the temp dir.
+            shutil.rmtree(parallel_dir, ignore_errors=True)
 
     # ── v1.5 single-experiment path (unchanged) ────────────────────────────
     proposal = dict(state.get("current_experiment", {}) or {})

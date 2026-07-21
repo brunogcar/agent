@@ -162,3 +162,45 @@ class TestExperimentDeduplication:
         # must NOT see is "duplicate".
         assert result.get("status") != "failed" or \
             "duplicate" not in result.get("error", "").lower()
+
+
+# ===========================================================================
+# [v1.9 D3] recursion_limit from cfg + env (minimax Risk #2)
+# ===========================================================================
+
+
+class TestRecursionLimitFromCfg:
+    """[v1.9 D3] recursion_limit is read from cfg.autoresearch_recursion_limit
+    (env: AUTORESEARCH_RECURSION_LIMIT, default 1000). Was: hardcoded 1000.
+    """
+
+    def test_recursion_limit_read_from_cfg(self, monkeypatch, tmp_path):
+        """Set cfg.autoresearch_recursion_limit=500, call run_workflow with a
+        mocked graph, verify graph.invoke was called with
+        config={'recursion_limit': 500}."""
+        import core.config
+        monkeypatch.setattr(core.config.cfg, "autoresearch_recursion_limit", 500)
+
+        # Mock build_autoresearch_graph to return a Mock whose .invoke()
+        # records the config.
+        mock_graph = MagicMock()
+        mock_graph.invoke.return_value = {"status": "success", "trace_id": "t1"}
+
+        with patch("workflows.autoresearch.build_autoresearch_graph",
+                   return_value=mock_graph):
+            from workflows.base import run_workflow
+            run_workflow(
+                workflow_type="autoresearch",
+                goal="minimize val_bpb",
+                project_root=str(tmp_path),
+                trace_id="test-recursion",
+                target_file="train.py",
+            )
+
+        # Verify graph.invoke was called with config={'recursion_limit': 500}.
+        mock_graph.invoke.assert_called_once()
+        call_args = mock_graph.invoke.call_args
+        config = call_args[1]["config"] if "config" in call_args[1] else call_args[0][1]
+        assert config["recursion_limit"] == 500, (
+            f"expected recursion_limit=500, got {config.get('recursion_limit')}"
+        )
