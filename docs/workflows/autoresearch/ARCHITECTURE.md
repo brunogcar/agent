@@ -11,15 +11,15 @@ Module tree, dispatch flow (mermaid), design decisions, state TypedDict. For fac
 ```text
 workflows/autoresearch.py
 ├── build_autoresearch_graph()        # Re-exported from autoresearch_impl/graph.py
-└── WORKFLOW_METADATA                 # Re-exported (name="autoresearch", version="1.6")
+└── WORKFLOW_METADATA                 # Re-exported (name="autoresearch", version="1.8")
 
 workflows/autoresearch_impl/
 ├── __init__.py                       # Empty
 ├── state.py
 │   ├── AutoresearchState             # TypedDict(WorkflowState, total=False)
-│   └── _default_state(...)           # Factory pulling defaults from cfg (incl. v1.4 loop-control knobs + v1.5 reflect_notes + v1.6 parallel_count)
+│   └── _default_state(...)           # Factory pulling defaults from cfg (incl. v1.4 loop-control knobs + v1.5 reflect_notes + v1.6 parallel_count + v1.8 pre_extracted_metric)
 ├── graph.py
-│   ├── WORKFLOW_METADATA             # MCP client introspection dict (v1.6)
+│   ├── WORKFLOW_METADATA             # MCP client introspection dict (v1.8)
 │   └── build_autoresearch_graph()    # 8-node StateGraph builder (1 conditional loop edge from reflect)
 ├── routes.py
 │   ├── route_after_setup             # success → propose, failure → END
@@ -27,18 +27,18 @@ workflows/autoresearch_impl/
 │                                     # [v1.5 N1] now invoked from `reflect` (was `log`)
 │                                     # [v1.3 P2-5] route_after_evaluate + route_after_decide DELETED
 ├── helpers.py
-│   ├── extract_metric()              # [v1.2.1] shared regex (setup + evaluate)
+│   ├── extract_metric()              # [v1.2.1] shared regex (setup + evaluate + run_experiment [v1.8 N10])
 │   └── run_target_subprocess()       # [v1.3 P2-1] shared subprocess runner (setup + run_experiment)
 └── nodes/
     ├── __init__.py
     ├── setup.py                      # node_setup — branch + ledger + baseline + [v1.7 N3] resume: skip branch/baseline + reload history from ledger
-    ├── propose.py                    # node_propose — LLM proposal (subagent, 3× retry) + [v1.5 N1] reflect_notes block + [v1.5 N4] procedural memory recall + [v1.6] parallel N-proposal path via ThreadPoolExecutor
+    ├── propose.py                    # node_propose — LLM proposal (subagent, 3× retry) + [v1.5 N1] reflect_notes block + [v1.5 N4] procedural memory recall + [v1.6] parallel N-proposal path + [v1.8 N6] _call_planner returns (response, usage) tuple + captures tokens on proposal
     ├── modify.py                     # node_modify — atomic write + path/protected guards + [v1.4 N8] md5 dedup + [v1.6] parallel N-temp-dirs path under .autoresearch/parallel/{i}/
-    ├── run_experiment.py             # node_run_experiment — time-boxed subprocess + [v1.6] parallel N-subprocess path via ThreadPoolExecutor
-    ├── evaluate.py                   # node_evaluate — regex metric extraction + [v1.6] parallel N-metric extraction
+    ├── run_experiment.py             # node_run_experiment — time-boxed subprocess + [v1.6] parallel N-subprocess path + [v1.8 N5] full output logged to {results_path}.d/{iteration}.log BEFORE truncation + [v1.8 N10] pre-extract metric from full output before truncation
+    ├── evaluate.py                   # node_evaluate — regex metric extraction + [v1.6] parallel N-metric extraction + [v1.8 N10] reads pre_extracted_metric FIRST (skips re-extraction from truncated output)
     ├── decide.py                     # node_decide — keep (commit) / discard (reset) + status reset + [v1.5 N4] _record_failure_memory on discard + [v1.6] parallel pick-best + copy winner to real target_file + cleanup temp dir + [v1.7 N7] save_checkpoint on every keep (single + parallel)
-    ├── log.py                        # node_log — append to results.tsv + history (capped at 100) + [v1.4] content_hash + [v1.6] parallel N-row ledger + experiment_count += N
-    └── reflect.py                    # [v1.5 N1] node_reflect — LLM strategy reflection every N iterations (no-op otherwise)
+    ├── log.py                        # node_log — append to results.tsv + history (capped at 100) + [v1.4] content_hash + [v1.6] parallel N-row ledger + [v1.8 N6] tokens field in history entries
+    └── reflect.py                    # [v1.5 N1] node_reflect — LLM strategy reflection every N iterations (no-op otherwise) + [v1.8 N6] unpacks _call_planner tuple (discards usage)
 ```
 
 **External dependencies (lazy-imported inside node functions):**
@@ -77,6 +77,7 @@ graph TD
 - **[v1.5 N4] Cross-run learning** — `node_decide` calls `_record_failure_memory()` on every discard path (prior-failure AND no-improvement). The helper lazily imports `core.memory_engine.memory`, checks if a similar failure has been recorded before (via `memory.recall(collections=["procedural"], min_score=0.7)`) — if yes, traces a "repeated failure pattern detected" log line; if no, calls `memory.store_procedural()` with `importance=5`, `tags="source:autoresearch,category:failed_experiment"`, `outcome="failure"`. `node_propose` lazily recalls procedural memories before generating the next proposal (via `memory.recall(collections=["procedural"], top_k=3, min_score=0.3)`) and surfaces them in the prompt as "Past learned rules". All memory calls are wrapped in try/except — if `core.memory_engine` is unavailable (e.g. chromadb not installed), cross-run learning silently no-ops. This is non-blocking on the experiment loop.
 - **[v1.6] Node-internal parallelism (batch mode)** — When `parallel_count > 1`, each iteration runs N experiments in parallel: `node_propose` dispatches N `_call_planner` calls via `ThreadPoolExecutor(max_workers=N)` (each with the SAME prompt — the LLM produces different proposals via sampling temperature); `node_modify` writes each proposal to its own temp dir under `{project_root}/.autoresearch/parallel/{i}/{target_file}` (the REAL `target_file` is NOT touched in parallel mode — only `node_decide` copies the winner back); `node_run_experiment` runs N subprocesses concurrently in their own temp dirs as cwd; `node_evaluate` extracts N metrics; `node_decide` picks the best (greedy `min`/`max` over the N metrics, skipping any proposal marked `status="failed"` by modify), copies the winner's content to the real `target_file`, git commits it, annotates losers as `status="discard"`, and `shutil.rmtree`s the temp dir; `node_log` writes N ledger rows + N history entries (experiment_count increments by N). When `parallel_count == 1` (default), ALL nodes behave EXACTLY as v1.5 (single-experiment, singular state fields only). The graph topology is UNCHANGED — parallelism is node-internal, coordinated via the `parallel_count` state field. Per-call LLM failures are recorded as failed-proposal placeholders so the batch isn't aborted by one bad call.
 - **[v1.7 N3 + N7] Resume + checkpoint** — `run_workflow(resume=True)` triggers checkpoint restore for autoresearch. The dispatcher's autoresearch branch calls `core.observability.checkpoint.get_latest(trace_id)` AFTER `_ar_default(...)` builds a fresh state; if a checkpoint exists, it merges in only the autoresearch-specific fields (`experiment_count`, `current_best`, `baseline_metric`, `experiment_history`, `branch`, `results_path`, `reflect_notes`) — caller params (`goal`, `target_file`, etc.) are preserved as-is. It then sets `ar_state["resume"] = True`. `node_setup` reads this flag: when `resume=True` AND `state["branch"]` is non-empty, branch creation is skipped (the prior run's branch is reused); when `state["current_best"] > 0.0`, the baseline run is ALSO skipped, and `experiment_history` is reloaded from `results.tsv` via the new `_load_history_from_ledger` helper (parses TSV rows back into `{iteration, commit, metric, status, description}` dicts). `experiment_count` is set to `len(history)`. When `resume=False` (default), behavior is exactly v1.6. To support resume, `node_decide` calls `save_checkpoint(tid, "keep", state)` after every successful `_git_commit` (both single-experiment AND parallel paths) — the saved state includes the updated `current_best` so a crashed run resumes from the last-known-good metric. Discard paths do NOT checkpoint (the working tree was reset to the prior HEAD — no recoverable state worth resuming from). Checkpoint write failures are non-fatal (try/except) so the experiment loop is never blocked by a checkpoint-disk error.
+- **[v1.8 N5 + N6 + N10] Observability** — Three observability features layered on top of v1.7. **N5 (output logging):** `node_run_experiment` writes the FULL stdout+stderr to `{results_path}.d/{iteration}.log` (single mode) or `{results_path}.d/{iteration}_{i}.log` (parallel mode, one per experiment) BEFORE truncating to 50KB. Operators can `cat {results_path}.d/42.log` to inspect the full output for debugging when the truncated state copy doesn't have enough context. The log dir is a sibling of `results.tsv` (the `.d` suffix mirrors the Unix "directory" convention). Non-fatal — disk errors are swallowed so the experiment loop is never blocked. **N6 (cost/token tracking):** `_call_planner` now returns a `(response, usage)` tuple (was: just the response string). `usage` is the dict from the subagent dispatch (has `total` / `prompt` / `completion` token counts). `node_propose` captures `usage.get("total", 0)` on the proposal as `tokens` (both single and parallel paths). `node_log._build_history_entry` persists `tokens` in `experiment_history` entries — operators can sum `tokens` across entries to estimate LLM cost per run. When `usage` is missing or malformed (older subagent versions, mocked tests), `tokens` defaults to 0. `node_reflect` also calls `_call_planner` but discards the usage (reflection isn't an experiment — its tokens aren't tracked in `experiment_history`). **N10 (truncation fix):** `node_run_experiment` (single path) now extracts the metric from the FULL output BEFORE truncating to 50KB and stores it in new `pre_extracted_metric` state field. `node_evaluate` (single path) reads this FIRST and skips re-extracting from the (possibly truncated) `experiment_output` — prevents false negatives when the metric was printed early and the script produced lots of output after, pushing the metric out of the 50KB tail. When `pre_extracted_metric` is None (no metric in the full output), evaluate falls through to the existing extraction-from-output path (which will also yield None → status="failed"). Parallel paths unchanged — parallel `evaluate` already handles per-output extraction; `pre_extracted_metric` is explicitly cleared to `None` in parallel `run_experiment` to avoid stale-state leakage across mode switches.
 - **[v1.3 P0-2] `GraphRecursionError` is the EXPECTED exit** — the dispatcher's autoresearch branch catches it explicitly and returns `{"status": "success"}` with the trace_id (was: caught by generic `except Exception` → `status="failed"`, state lost).
 - **Capacity:** With `recursion_limit=1000`, ~166 experiments per invocation (8 nodes per iteration: setup + 7 loop nodes). With `max_iterations=N` (v1.4 opt-in), the loop stops at N regardless of recursion_limit. With `parallel_count=M` (v1.6), each iteration produces M experiments — effective experiment throughput is M× the single-mode rate (subject to LLM + subprocess parallelism limits). Invoke graph directly with a higher limit for longer runs.
 
@@ -121,11 +122,20 @@ class AutoresearchState(WorkflowState, total=False):
     # -- [v1.7 N3] Resume support --
     resume: bool                # True = skip baseline + branch, reload history from ledger
 
-    # -- Per-iteration state (each history entry: {iteration, description, metric, status, commit, content_hash}) --
+    # -- [v1.8 N10] Pre-extracted metric (truncation safety) --
+    # Set by node_run_experiment (single path) to the metric extracted from the
+    # FULL output BEFORE truncation to 50KB. node_evaluate reads this first and
+    # skips re-extracting from the (possibly truncated) experiment_output.
+    # None when no metric was found in the full output. Parallel mode does NOT
+    # populate this field (parallel evaluate extracts per-output directly).
+    pre_extracted_metric: Optional[float]
+
+    # -- Per-iteration state (each history entry: {iteration, description, metric, status, commit, content_hash, tokens}) --
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
+    # [v1.8 N6] tokens added — total LLM tokens used by the planner call.
     experiment_history: list[dict]
     current_experiment: dict   # the proposed experiment being run
-    experiment_output: str     # stdout+stderr from the last experiment run
+    experiment_output: str     # stdout+stderr from the last experiment run (truncated to 50KB)
     current_metric: float      # metric extracted from the last run
 
     # -- LangGraph plumbing --
@@ -166,9 +176,7 @@ For the field-by-field reference table, see [API.md § State Fields](API.md#-sta
 python -m pytest tests/workflows/autoresearch/ -v -W error --tb=short
 ```
 
-**118/118 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control + v1.5 reflect + cross-run learning + v1.6 parallel).
-
-**Mock strategy:** Patch `workflows.autoresearch_impl.graph.node_<name>` for end-to-end loop tests; patch `nodes.decide._git_commit` / `_git_reset_hard` for `node_decide` unit tests; patch `tools.git.git` for `node_setup._git_create_branch`. No live LLM/subprocess/git operations.
+**Mock strategy:** Patch `workflows.autoresearch_impl.graph.node_<name>` for end-to-end loop tests; patch `nodes.decide._git_commit` / `_git_reset_hard` for `node_decide` unit tests; patch `tools.git.git` for `node_setup._git_create_branch`. **[v1.8 N6]** Tests that mock `_call_planner` must return a `(response, usage)` tuple (was: just a response string). No live LLM/subprocess/git operations.
 
 **Test layout:**
 
@@ -180,14 +188,15 @@ tests/workflows/autoresearch/
 ├── test_reflect.py              # [v1.5] node_reflect + propose reflection block + cross-run learning (12 tests)
 ├── test_parallel.py             # [v1.6] parallel_count=1 backward compat + parallel_count>1 path (20 tests)
 ├── test_resume.py               # [v1.7] resume: skip baseline/branch + reload history + checkpoint on keep (8 tests)
+├── test_observability.py        # [v1.8] N5 output logging + N6 token tracking + N10 pre-extract metric (20 tests)
 ├── test_nodes_setup.py          # extract_metric + run_target_subprocess + node_setup + node_evaluate
-├── test_nodes_propose.py        # _format_history + _parse_proposal + _call_planner + node_propose + _atomic_write + node_modify
+├── test_nodes_propose.py        # _format_history + _parse_proposal + _call_planner (tuple) + node_propose + _atomic_write + node_modify
 ├── test_nodes_decide.py         # _is_improvement + _git_commit + _git_reset_hard + node_decide + node_log
-└── test_nodes_run.py            # node_run_experiment + run_target_subprocess (run-time)
+└── test_nodes_run.py            # node_run_experiment + run_target_subprocess (run-time) + [v1.8 N10] pre-extract
 ```
 
-**126/126 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control + v1.5 reflect + cross-run learning + v1.6 parallel + v1.7 resume + checkpoint).
+**146/146 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control + v1.5 reflect + cross-run learning + v1.6 parallel + v1.7 resume + checkpoint + v1.8 observability).
 
 ---
 
-*Last updated: 2026-07-22 (v1.7). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-23 (v1.8). See [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -69,6 +69,12 @@ def _build_history_entry(proposal: dict, fallback_metric: float) -> dict:
 
     Shared between the v1.5 single path and the v1.6 parallel path so the
     row schema stays in sync.
+
+    [v1.8 N6] Now includes `tokens` — the total LLM token count used by the
+    planner call (set by `node_propose` from the subagent's `usage` dict).
+    Operators can sum `tokens` across history entries to estimate LLM cost
+    per run. Defaults to 0 when the proposal didn't carry a `tokens` field
+    (e.g. failed-proposal placeholders in parallel mode).
     """
     return {
         "iteration": proposal.get("iteration", 0),
@@ -77,6 +83,7 @@ def _build_history_entry(proposal: dict, fallback_metric: float) -> dict:
         "status": proposal.get("status", "discard"),
         "commit": proposal.get("commit", ""),
         "content_hash": proposal.get("content_hash", ""),  # [v1.4 N8] for dedup
+        "tokens": proposal.get("tokens", 0),  # [v1.8 N6] total tokens used
     }
 
 

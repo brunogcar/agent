@@ -63,8 +63,9 @@ class TestParallelBackwardCompat:
         proposal_json = json.dumps({
             "description": "increase lr", "rationale": "r", "new_content": "print('new')\n",
         })
+        # [v1.8 N6] _call_planner now returns (response, usage) tuple.
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
-                   return_value=proposal_json):
+                   return_value=(proposal_json, {"total": 0})):
             result = node_propose(state)
         # Singular field set (v1.5 behavior).
         assert "current_experiment" in result
@@ -116,8 +117,10 @@ class TestParallelPropose:
                         "new_content": f"# v{i}\n"})
             for i in range(3)
         ]
+        # [v1.8 N6] _call_planner now returns (response, usage) tuple.
+        side_effects = [(p, {"total": 100 * i}) for i, p in enumerate(proposals)]
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
-                   side_effect=proposals) as m:
+                   side_effect=side_effects) as m:
             result = node_propose(state)
 
         assert m.call_count == 3
@@ -141,8 +144,10 @@ class TestParallelPropose:
 
         # Call 1 succeeds, call 2 raises, call 3 succeeds.
         good = json.dumps({"description": "ok", "rationale": "r", "new_content": "x\n"})
+        # [v1.8 N6] _call_planner now returns (response, usage) tuple.
+        side_effects = [(good, {"total": 10}), RuntimeError("LLM down"), (good, {"total": 10})]
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
-                   side_effect=[good, RuntimeError("LLM down"), good]):
+                   side_effect=side_effects):
             result = node_propose(state)
 
         proposals = result["current_experiments"]
@@ -629,8 +634,10 @@ class TestParallelEndToEnd:
                         "new_content": f"print('v{i}'); print('val_bpb: {0.45 + i * 0.05}')\n"})
             for i in range(3)
         ]
+        # [v1.8 N6] _call_planner now returns (response, usage) tuple.
+        side_effects = [(p, {"total": 0}) for p in proposals]
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
-                   side_effect=proposals):
+                   side_effect=side_effects):
             state.update(node_propose(state))
         assert len(state["current_experiments"]) == 3
 

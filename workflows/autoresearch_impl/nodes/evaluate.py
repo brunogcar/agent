@@ -20,6 +20,17 @@ the baseline metric which is always > 0 for real metrics). The N metrics
 are stored in `current_metrics` (plural); the first is mirrored to
 `current_metric` (singular) for v1.5 backward compat. When
 `parallel_count == 1`, the v1.5 single-extraction path runs unchanged.
+
+[v1.8 N10] The single-extraction path now checks `state["pre_extracted_metric"]`
+FIRST. `node_run_experiment` extracts the metric from the FULL output BEFORE
+truncating to 50KB and stores it there. When set (not None), `node_evaluate`
+trusts it and skips re-extracting from the (possibly truncated)
+`experiment_output`. This prevents false negatives when the metric was
+printed early and the script produced lots of output after, pushing the
+metric out of the 50KB tail. When None (no metric in the full output),
+falls through to the existing extraction-from-output path (which will also
+yield None → status="failed"). The parallel path is unchanged — it doesn't
+read `pre_extracted_metric` (parallel run_experiment doesn't populate it).
 """
 from __future__ import annotations
 
@@ -80,6 +91,26 @@ def node_evaluate(state: AutoresearchState) -> dict:
         tracer.step(tid, "evaluate", "skipping — prior node failed")
         return {"current_metric": 0.0}
 
+    # [v1.8 N10] Use pre-extracted metric if available — prevents truncation
+    # false negatives. node_run_experiment extracts the metric from the FULL
+    # output BEFORE truncating to 50KB and stores it in `pre_extracted_metric`.
+    # When set (not None), we trust it and skip re-extracting from the
+    # (possibly truncated) `experiment_output`. When None (no metric in the
+    # full output), fall through to the extraction below — which will also
+    # yield None and produce the same "metric not found" failure path.
+    pre_metric = state.get("pre_extracted_metric")
+    if pre_metric is not None:
+        tracer.step(
+            tid, "evaluate",
+            f"{metric_name}={pre_metric} (pre-extracted from full output)",
+        )
+        return {
+            "current_metric": pre_metric,
+            "status": "running",
+            "error": "",
+        }
+
+    # Fall back to extracting from (possibly truncated) output.
     metric = _extract_metric(output, metric_name)
     if metric is None:
         tracer.warning(

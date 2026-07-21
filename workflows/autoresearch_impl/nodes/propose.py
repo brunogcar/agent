@@ -47,6 +47,15 @@ one bad call. The N parsed proposals are stored in `current_experiments`
 v1.5 backward compat. When `parallel_count == 1`, the v1.5 single-call
 path runs unchanged.
 
+[v1.8 N6] `_call_planner` now returns a `(response, usage)` tuple instead
+of just the response string. `usage` is the dict returned by the subagent
+dispatch (has `total` / `prompt` / `completion` token counts). The total
+token count is captured on the proposal as `proposal["tokens"]` (both
+single and parallel paths) and persisted in `experiment_history` entries
+by `node_log._build_history_entry`. Operators can sum `tokens` across
+history entries to estimate LLM cost per run. When `usage` is missing or
+malformed (older subagent versions, mocked tests), `tokens` defaults to 0.
+
 The propose node only produces the proposal — modify.py applies it. This
 separation lets us retry modify without re-querying the LLM if the patch
 fails to apply.
@@ -135,7 +144,7 @@ _PROPOSE_JSON_SCHEMA = {
 }
 
 
-def _call_planner(system: str, user: str, tid: str = "") -> str:
+def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
     """Call the planner LLM via subagent dispatch.
 
     [v1.2] Hardening: added json_schema enforcement. Removed context param
@@ -146,6 +155,22 @@ def _call_planner(system: str, user: str, tid: str = "") -> str:
     used to halt the iteration immediately. Now we retry up to 2 times
     before giving up and raising RuntimeError. Raises only after all 3
     attempts fail.
+
+    [v1.8 N6] Returns a `(response, usage)` tuple instead of just the
+    response string. `usage` is the dict returned by the subagent dispatch
+    (has `total` / `prompt` / `completion` token counts). Callers capture
+    `usage.get("total", 0)` on the proposal as `proposal["tokens"]` for
+    cost tracking. When `usage` is missing or malformed (older subagent
+    versions, mocked tests), an empty dict is returned — callers default
+    `tokens` to 0 via `usage.get("total", 0)`.
+
+    Returns:
+        `(response_text, usage_dict)` — the LLM response string + the usage
+        dict from the subagent dispatch. `usage_dict` is `{}` when the
+        subagent didn't report usage (older versions / mocks).
+
+    Raises:
+        RuntimeError: after all 3 attempts fail.
     """
     import json as _json
     from tools.agent import agent
@@ -162,7 +187,11 @@ def _call_planner(system: str, user: str, tid: str = "") -> str:
                 trace_id=tid,
             )
             if result.get("status") == "success":
-                return result.get("response", "")
+                # [v1.8 N6] Capture usage dict for token tracking. Older
+                # subagent versions / mocked tests may not include `usage` —
+                # default to {} so callers' `usage.get("total", 0)` yields 0.
+                usage = result.get("usage", {}) or {}
+                return result.get("response", ""), usage
             last_error = result.get("error", "unknown")
         except Exception as e:
             last_error = str(e)
@@ -216,11 +245,14 @@ def _generate_single_proposal(system: str, user: str, tid: str, iteration: int) 
         iteration: The iteration number to stamp on the returned proposal.
 
     Returns:
-        Parsed proposal dict with `iteration` set.
+        Parsed proposal dict with `iteration` and `tokens` set. `tokens`
+        is the total LLM token count from the subagent's `usage` dict
+        (v1.8 N6) — 0 when usage is unavailable.
     """
-    raw = _call_planner(system, user, tid)
+    raw, usage = _call_planner(system, user, tid)
     proposal = _parse_proposal(raw)
     proposal["iteration"] = iteration
+    proposal["tokens"] = usage.get("total", 0)  # [v1.8 N6] total tokens used
     return proposal
 
 
@@ -397,7 +429,11 @@ def node_propose(state: AutoresearchState) -> dict:
 
     # ── v1.5 single-proposal path (unchanged) ──────────────────────────────
     try:
-        raw = _call_planner(_PROPOSE_SYSTEM, user, tid)
+        # [v1.8 N6] _call_planner now returns (response, usage) tuple.
+        # usage is the dict from the subagent dispatch (has total/prompt/
+        # completion token counts). Capture total on the proposal for
+        # cost tracking — node_log persists it in experiment_history entries.
+        raw, usage = _call_planner(_PROPOSE_SYSTEM, user, tid)
     except Exception as e:
         tracer.error(tid, "propose", f"planner LLM call failed: {e}")
         return {
@@ -413,6 +449,7 @@ def node_propose(state: AutoresearchState) -> dict:
 
     proposal = _parse_proposal(raw)
     proposal["iteration"] = iteration
+    proposal["tokens"] = usage.get("total", 0)  # [v1.8 N6] total tokens used
     tracer.step(tid, "propose", f"proposed: {proposal.get('description', '')[:80]}")
 
     return {

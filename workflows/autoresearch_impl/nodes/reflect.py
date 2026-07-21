@@ -93,7 +93,10 @@ def node_reflect(state: AutoresearchState) -> dict:
         # Reuse the same _call_planner as propose (subagent dispatch with 3×
         # retry + 2s/4s backoff). Bound at module load so tests can patch
         # `reflect._call_planner` without touching the real propose module.
-        reflection = _call_planner(REFLECT_SYSTEM, user, tid)
+        # [v1.8 N6] _call_planner now returns (response, usage) tuple — we
+        # discard the usage dict here (reflect doesn't track tokens; only
+        # node_propose + node_log do, for experiment_history cost tracking).
+        reflection, _usage = _call_planner(REFLECT_SYSTEM, user, tid)
         tracer.step(tid, "reflect", f"reflection: {reflection[:200]}")
         return {"reflect_notes": reflection}
     except Exception as e:

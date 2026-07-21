@@ -102,21 +102,24 @@ class TestCallPlanner:
     def test_success_returns_response(self):
         from workflows.autoresearch_impl.nodes.propose import _call_planner
         with patch("tools.agent.agent",
-                   return_value={"status": "success", "response": '{"x": 1}'}) as m:
-            out = _call_planner("sys", "user", tid="t1")
+                   return_value={"status": "success", "response": '{"x": 1}',
+                                 "usage": {"total": 42}}) as m:
+            out, usage = _call_planner("sys", "user", tid="t1")
         assert out == '{"x": 1}'
+        assert usage == {"total": 42}
         m.assert_called_once()
 
     def test_retry_then_success(self):
         from workflows.autoresearch_impl.nodes.propose import _call_planner
         responses = [
             {"status": "error", "error": "blip"},
-            {"status": "success", "response": "ok"},
+            {"status": "success", "response": "ok", "usage": {"total": 7}},
         ]
         with patch("tools.agent.agent", side_effect=responses) as m, \
              patch("time.sleep"):  # skip backoff
-            out = _call_planner("sys", "user", tid="t1")
+            out, usage = _call_planner("sys", "user", tid="t1")
         assert out == "ok"
+        assert usage == {"total": 7}
         assert m.call_count == 2
 
     def test_all_retries_fail_raises_runtimeerror(self):
@@ -126,6 +129,15 @@ class TestCallPlanner:
             with pytest.raises(RuntimeError, match="3 attempts"):
                 _call_planner("sys", "user", tid="t1")
         assert m.call_count == 3
+
+    def test_missing_usage_defaults_to_empty_dict(self):
+        """[v1.8 N6] When subagent doesn't report usage, return ({}, {})."""
+        from workflows.autoresearch_impl.nodes.propose import _call_planner
+        with patch("tools.agent.agent",
+                   return_value={"status": "success", "response": "ok"}):
+            out, usage = _call_planner("sys", "user", tid="t1")
+        assert out == "ok"
+        assert usage == {}
 
 
 # ---------------------------------------------------------------------------
@@ -144,13 +156,15 @@ class TestNodePropose:
             "rationale": "faster convergence",
             "new_content": "print('new')\n",
         })
+        # [v1.8 N6] _call_planner now returns (response, usage) tuple.
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
-                   return_value=proposal_json):
+                   return_value=(proposal_json, {"total": 1234})):
             result = node_propose(state)
         ce = result["current_experiment"]
         assert ce["iteration"] == 1
         assert ce["description"] == "increase lr"
         assert ce["new_content"] == "print('new')"  # .strip() drops trailing \n
+        assert ce["tokens"] == 1234  # [v1.8 N6] total tokens captured
         assert result["status"] == "running"
 
     def test_llm_failure_returns_failed_status(self, ar_state):
@@ -176,7 +190,8 @@ class TestNodePropose:
 
         def _fake_call(system, user, tid=""):
             captured["user"] = user
-            return proposal_json
+            # [v1.8 N6] _call_planner now returns (response, usage) tuple.
+            return proposal_json, {"total": 0}
 
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner",
                    side_effect=_fake_call):

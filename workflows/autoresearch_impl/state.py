@@ -82,9 +82,22 @@ class AutoresearchState(WorkflowState, total=False):
     # -- [v1.7 N3] Resume support --
     resume: bool                # True = skip baseline + branch, reload history from ledger
 
+    # -- [v1.8 N10] Pre-extracted metric (truncation safety) --
+    # Set by node_run_experiment (single path) to the metric extracted from the
+    # FULL output BEFORE truncation to 50KB. node_evaluate reads this first and
+    # skips re-extracting from the (possibly truncated) experiment_output. This
+    # prevents false negatives when the metric was printed early and the script
+    # produced lots of output after (pushing the metric out of the 50KB tail).
+    # None when no metric was found in the full output (evaluate falls back to
+    # re-extracting from the truncated output, which will also yield None).
+    # Parallel mode does NOT populate this field — the parallel evaluate path
+    # extracts per-output metrics from experiment_outputs directly.
+    pre_extracted_metric: Optional[float]
+
     # -- Per-iteration state --
-    # Each entry: {iteration, description, metric, status, commit, content_hash}
+    # Each entry: {iteration, description, metric, status, commit, content_hash, tokens}
     # [v1.4] content_hash added for dedup (N8) — md5 of new_content.
+    # [v1.8 N6] tokens added — total LLM tokens used by the planner call.
     experiment_history: list[dict]
     current_experiment: dict   # the proposed experiment being run
     experiment_output: str     # stdout/stderr from the last experiment run

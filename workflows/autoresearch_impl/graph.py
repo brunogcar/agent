@@ -73,7 +73,7 @@ from workflows.autoresearch_impl.routes import route_after_setup, route_after_lo
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.6",  # [v1.6] parallel experiments (batch mode) — node-internal N-way parallelism
+    "version": "1.8",  # [v1.8] observability — output logging (N5) + token tracking (N6) + truncation fix (N10)
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
@@ -241,6 +241,9 @@ WORKFLOW_METADATA = {
         "parallel_experiments",   # [v1.6] N proposals + N subprocesses per iteration
         "parallel_temp_isolation",  # [v1.6] each parallel experiment runs in its own temp dir
         "parallel_best_wins",     # [v1.6] only the best experiment is committed; losers discarded
+        "output_logging",          # [v1.8 N5] full stdout+stderr logged to {results_path}.d/{iteration}.log
+        "token_tracking",          # [v1.8 N6] per-iteration LLM tokens persisted in experiment_history
+        "pre_extracted_metric",    # [v1.8 N10] metric extracted from full output BEFORE truncation
     ],
 }
 

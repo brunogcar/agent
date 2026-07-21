@@ -39,6 +39,8 @@ class TestNodeRunExperiment:
         assert result["experiment_output"] == "val_bpb: 0.42\n"
         assert result["status"] == "running"
         assert result["error"] == ""
+        # [v1.8 N10] pre_extracted_metric should be set from the full output.
+        assert result["pre_extracted_metric"] == 0.42
 
     def test_prior_failure_skips_run(self, ar_state):
         from workflows.autoresearch_impl.nodes.run_experiment import node_run_experiment
@@ -50,7 +52,8 @@ class TestNodeRunExperiment:
         with patch("workflows.autoresearch_impl.nodes.run_experiment._run_subprocess") as m:
             result = node_run_experiment(state)
         # Skip path returns the prior experiment_output and does NOT call subprocess.
-        assert result == {"experiment_output": "prior output\n"}
+        # [v1.8 N10] Also clears pre_extracted_metric to None (no new run).
+        assert result == {"experiment_output": "prior output\n", "pre_extracted_metric": None}
         m.assert_not_called()
 
     def test_output_over_50kb_is_truncated(self, ar_state):
@@ -64,6 +67,8 @@ class TestNodeRunExperiment:
         # Truncated to last 50KB.
         assert len(result["experiment_output"]) == 50_000
         assert result["experiment_output"] == big[-50_000:]
+        # [v1.8 N10] No metric in the output → pre_extracted_metric is None.
+        assert result["pre_extracted_metric"] is None
 
 
 # ---------------------------------------------------------------------------

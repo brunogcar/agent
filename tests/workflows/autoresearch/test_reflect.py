@@ -64,7 +64,8 @@ class TestReflectNode:
             {"iteration": 1, "status": "keep", "metric": 0.5, "description": "test"},
         ]
         with patch("workflows.autoresearch_impl.nodes.reflect._call_planner") as mock_call:
-            mock_call.return_value = "Reflection: try different learning rates."
+            # [v1.8 N6] _call_planner now returns (response, usage) tuple.
+            mock_call.return_value = ("Reflection: try different learning rates.", {"total": 100})
             result = node_reflect(ar_state)
         assert "reflect_notes" in result
         assert "Reflection" in result["reflect_notes"]
@@ -108,7 +109,7 @@ class TestReflectNode:
             {"iteration": 2, "status": "discard", "metric": 0.6, "description": "lr=1e-2"},
         ]
         with patch("workflows.autoresearch_impl.nodes.reflect._call_planner",
-                   return_value="NEXT STRATEGY: try AdamW") as mock_call:
+                   return_value=("NEXT STRATEGY: try AdamW", {"total": 50})) as mock_call:
             node_reflect(ar_state)
         _, user, _ = mock_call.call_args[0]
         # Both history entries must appear in the prompt (so the LLM has full context).
@@ -130,8 +131,10 @@ class TestProposeWithReflection:
             "print('hi')\n", encoding="utf-8",
         )
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner") as mock_call:
+            # [v1.8 N6] _call_planner now returns (response, usage) tuple.
             mock_call.return_value = (
-                '{"description": "test", "rationale": "test", "new_content": "print(1)"}'
+                '{"description": "test", "rationale": "test", "new_content": "print(1)"}',
+                {"total": 0},
             )
             node_propose(ar_state)
             # Check the user prompt includes the reflection
@@ -149,8 +152,10 @@ class TestProposeWithReflection:
             "print('hi')\n", encoding="utf-8",
         )
         with patch("workflows.autoresearch_impl.nodes.propose._call_planner") as mock_call:
+            # [v1.8 N6] _call_planner now returns (response, usage) tuple.
             mock_call.return_value = (
-                '{"description": "test", "rationale": "test", "new_content": "print(1)"}'
+                '{"description": "test", "rationale": "test", "new_content": "print(1)"}',
+                {"total": 0},
             )
             node_propose(ar_state)
             call_args = mock_call.call_args
