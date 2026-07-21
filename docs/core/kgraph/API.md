@@ -303,12 +303,18 @@ Returns files that the given file imports (outgoing edges).
 
 [v1.4.1] Multi-language support — returns target_ids matching ANY supported extension (not just `.py`). Also keeps raw module-name forms (e.g. `react`, `fmt`, `std::collections::HashMap`) since they're useful for cross-language understanding + impact analysis even when they don't map 1:1 to a file.
 
+[v1.8] Cross-language import resolution — JS/TS relative imports (`./foo`, `../utils`) are now resolved to up to 13 candidate file paths at parse time (by `parse_and_store._resolve_import_to_file_paths`), so `get_dependencies` for a JS/TS file returns resolved paths like `src/foo.ts`, `src/foo/index.js` alongside the raw `./foo` form. The query layer itself needed NO code changes (the v1.4.1 multi-language filter already accepted any path-like target_id); it just returns richer results. Go package imports include the package short-name as a derivative (`github.com/foo/bar` → also `bar`). Rust `use` declarations include each `::`-separated segment except the last item name (`std::collections::HashMap` → also `std` + `collections`).
+
 ```python
 deps = get_dependencies("/project", "core/llm.py")
 # Returns: ["core/config.py", "core/tracer.py", "core/llm_backend/client.py"]
-# For JS/TS files: deps may include "./utils", "react"
-# For Go: deps may include "fmt", "os", "strings"
-# For Rust: deps may include "std::collections::HashMap"
+# For JS/TS files (v1.8): deps include RESOLVED file paths
+#   get_dependencies("/project", "src/app.ts")
+#   → ["./utils", "react", "src/utils.ts", "src/utils.tsx", "src/utils.js",
+#      "src/utils/index.ts", "src/utils/index.tsx", ...]
+#   (raw import "./utils" + up to 12 file-path candidates + non-relative "react" raw)
+# For Go: deps may include "fmt", "os", "strings" (+ short-name derivatives)
+# For Rust: deps may include "std::collections::HashMap" (+ "std", "collections")
 ```
 
 #### `get_callers(project_path, file_path)`
@@ -533,5 +539,5 @@ Prevents disk space exhaustion and WAL file bloat during long-term unattended op
 
 ---
 
-*Last updated: 2026-07-22 (v1.7)
+*Last updated: 2026-07-22 (v1.8)
 

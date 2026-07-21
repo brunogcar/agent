@@ -22,6 +22,7 @@
 16. **[v1.4.1 P1-3] Never hardcode the agent_root ChromaDB path for all projects** — The vector path must be project-scoped (`{project}/.understand/chroma/` for projects, `memory_db/understand/chroma/` for agent root). Hardcoding `agent_root/.understand/chroma/` orphans vectors when a project's `.understand/` is deleted.
 17. **[v1.4.1 P2-12] Never claim "checkpoint/resume" without verifying** — Understand does NOT save node-level mid-execution checkpoints (nodes use `tracer.step` directly, not `node_step(checkpoint=True)`). Checkpoints ARE saved on crash/cancel/timeout by base.py's exception handler. Don't claim more than what's actually implemented.
 18. **[v1.5] Never run the full indexing graph when the user just wants to search** — Use `action="query"` (semantic/keyword/dependencies/callers) or `action="health"` (index stats). The graph takes 5+ minutes on large projects; a query takes milliseconds. The `action` parameter is checked BEFORE `build_understand_graph()` is called, so query/health bypass the graph entirely.
+19. **[v1.8] Never resolve non-relative JS/TS imports (`react`, `lodash`, `@scope/pkg`) to file paths** — They're node_modules packages, not project source. Storing file-path candidates for them would pollute the edge table with phantom paths that never match a stored node. `_resolve_import_to_file_paths` only resolves imports starting with `./` or `../` for JS/TS; everything else is stored raw only.
 
 ## ✅ ALWAYS DO
 
@@ -48,6 +49,7 @@
 39. **[v1.6] Always run stale cleanup in `discover_files`** — Deleted files must not leave orphaned nodes/edges/vectors. The Phase 2 stale-cleanup phase computes `orphans = stored_paths - disk_paths` and removes each orphan's graph entries (via `GraphStore.delete_file_entry`) + ChromaDB vectors (via `collection.delete(where={"file_path": ...})`). ChromaDB cleanup is skipped when `skip_embeddings=True` (we never indexed vectors). Never disable stale cleanup — orphans compound over time and bloat the index with phantom entries that don't reflect the actual codebase.
 40. **[v1.7] Always use `UNDERSTAND_SKIP_DIRS` for project-specific skip dirs** — Don't modify `_DEFAULT_SKIP_DIRS` (the class constant is the canonical default; modifying it affects every project). Instead, set `UNDERSTAND_SKIP_DIRS=vendor,third_party` in `.env` to add extras at runtime. `ProjectManager.get_skip_dirs()` merges the two; `node_discover_files` and `_get_project_stats` both call it.
 41. **[v1.7] Always use `UNDERSTAND_TIMEOUT_SECONDS` to configure the workflow timeout** — Don't change the hardcoded value in `base.py` (it's now read from `cfg.understand_timeout_seconds`). Set `UNDERSTAND_TIMEOUT_SECONDS=900` in `.env` for large codebases, or `300` for small ones. The timeout error message uses this value so operators see the configured number, not 600.
+42. **[v1.8] Always store ALL candidate file paths for JS/TS relative imports** — Don't try to pick the 'right' one at parse time (the file might not exist yet, or might be a `.js` imported from `.ts`). `_resolve_import_to_file_paths` returns up to 13 candidates (1 raw + 6 extension variants + 6 index-file variants); store ALL of them as edge targets. Edges are cheap (strings in SQLite); the query layer dedupes. Candidates that don't exist on disk never match a stored node, so they're harmless.
 
 ---
 
@@ -74,4 +76,4 @@
 
 ---
 
-*Last updated: 2026-07-22 (v1.7). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.8). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

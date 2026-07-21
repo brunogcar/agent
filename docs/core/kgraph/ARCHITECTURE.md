@@ -11,7 +11,7 @@
 | `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust, Java, C/C++, Ruby, Lua, PHP, Scala, Swift, Kotlin (v1.4) via tree-sitter |
 | `core/kgraph/cleanup.py` | `KGCleanup`: disk space + WAL management |
 | `core/kgraph/project.py` | `ProjectManager`: isolation, paths, indexing mode. [v1.7] `_DEFAULT_SKIP_DIRS` (renamed) + `get_skip_dirs()` (env-merged) + `get_embedding_model()` (per-project override via `.understand/config.json`). |
-| `core/kgraph/queries.py` | `find_relevant_files()`, `get_dependencies()`, `get_callers()` |
+| `core/kgraph/queries.py` | `find_relevant_files()`, `get_dependencies()`, `get_callers()`. [v1.8] `get_dependencies` now returns resolved file-path candidates for JS/TS relative imports (was: raw import strings only — `./foo` instead of `src/foo.ts`). The query layer itself needed NO code changes; it benefits transitively from the richer edge targets produced by `parse_and_store._resolve_import_to_file_paths`. |
 | `core/kgraph/storage.py` | `GraphStore`: SQLite graph with WAL, thread-local connections. [v1.6] +`get_all_file_paths(project_id)` + `delete_file_entry(project_id, path)` for stale cleanup. |
 | `core/kgraph/test_index.py` | `load_test_index()`, `save_test_index()`, hybrid validation |
 | `core/kgraph/test_mapper.py` | `get_targeted_tests()`, `rebuild_test_index()`, `CRITICAL_PATHS` |
@@ -107,6 +107,7 @@ project_root/
 - **Singleton GraphStore** — `__new__` with class-level lock ensures one instance per database path. Prevents connection pool exhaustion.
 - **Fail silently on parse errors** — Broken files return `frozenset()` (or a single module chunk for definitions) instead of crashing the indexer. The codebase may contain syntax errors in files under development. [v1.4.1] The optional `errors` parameter on `extract_imports` + `extract_definitions_ts` surfaces parse-failure messages when the caller wants them — graceful-fallback contract preserved.
 - **[v1.4.1] Multi-language query support** — `get_dependencies` + `get_callers` accept any supported file extension (was: Python-only `.py` hardcoding — silently dropped JS/TS/Go/Rust/Java/etc. dependency edges). `get_dependencies` keeps target_ids matching any supported extension OR raw module-name forms. `get_callers` queries both `file_path` and module-name form (Python dotted, JS relative `./`, Go package path).
+- **[v1.8] Cross-language import resolution (in understand_impl, affects kgraph queries)** — `parse_and_store._resolve_import_to_file_paths(dep, rel_path, language)` resolves JS/TS relative imports (`./foo`, `../utils`) to up to 13 candidate file paths (1 raw + 6 extension variants + 6 index-file variants) before storing them as edge targets. Go package imports store the package short-name as a derivative. Rust `use` declarations store each `::`-segment except the last item name. **Effect on queries:** `get_dependencies` now returns resolved file paths for JS/TS (e.g. `src/foo.ts`) in addition to the raw `./foo` form. The query layer itself needed NO code changes — the v1.4.1 multi-language filter already accepted any path-like target_id; it just returns richer results. `get_callers` benefits transitively (more edge target forms to match). Candidates that don't exist on disk never match a stored node — harmless.
 - **Critical paths trigger full suite** — Modifying `core/config.py`, `core/llm.py`, etc. triggers the full test suite because these files have global impact.
 - **Manual test mapping override** — `test_mapping.yaml` allows users to override AST-derived mappings. Takes priority over heuristic mappings.
 
@@ -135,5 +136,5 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-22 (v1.7)
+*Last updated: 2026-07-22 (v1.8)
 

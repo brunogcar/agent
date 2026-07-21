@@ -72,6 +72,16 @@ from workflows.understand_impl.routes import route_after_init
 # override the global cfg.embedding_model. embed_texts() gained an optional
 # `model` parameter.
 #
+# [v1.8] Cross-language import resolution. JS/TS relative imports (./foo,
+# ../utils) now resolve to candidate file paths (up to 13 candidates per
+# import: 1 raw + 6 extension variants + 6 index-file variants) via
+# _resolve_import_to_file_paths() in parse_and_store.py. Go package imports
+# store the package short-name as a derivative. Rust use declarations store
+# each ::-separated path segment except the last item name. Python unchanged.
+# Non-relative JS/TS imports (react, @scope/pkg) stored raw only — they're
+# in node_modules, not project source. Candidates stored as edge targets;
+# the query layer dedupes.
+#
 # [v1.4.1 P2-11] safety_features list added — mirrors the autoresearch pattern
 # for clients that surface "what guarantees does this workflow give me?".
 WORKFLOW_METADATA = {
@@ -82,7 +92,10 @@ WORKFLOW_METADATA = {
     # v1.6: stale index cleanup + module move (understand_query.py → understand_impl/query.py).
     # v1.7: configurability bundle — skip_dirs + timeout + embedding cache +
     #       progress reporting + per-project embedding model.
-    "version": "1.7",
+    # v1.8: cross-language import resolution — JS/TS relative imports →
+    #       candidate file paths; Go/Rust store raw + package/module-name
+    #       derivatives.
+    "version": "1.8",
     "description": "Build codebase knowledge graph + doc embeddings: init → discover → parse → report",
     "entry_point": "node_init_project",
     "nodes": [
@@ -130,6 +143,7 @@ WORKFLOW_METADATA = {
         "configurable_timeout",      # v1.7: UNDERSTAND_TIMEOUT_SECONDS env var (default 600) — was hardcoded in base.py
         "embedding_cache",           # v1.7: embed_texts() caches by md5(text); cache hits skip the HTTP call. Cap 10000 entries.
         "per_project_embedding_model",  # v1.7: .understand/config.json can override cfg.embedding_model per-project
+        "cross_language_import_resolution",  # v1.8: JS/TS relative imports → candidate file paths; Go/Rust store raw + package/module-name derivatives
     ],
 }
 

@@ -14,7 +14,7 @@
 | `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust + 9 more via tree-sitter. [v1.4.1] Optional `errors` param on `extract_imports` + `extract_definitions_ts`. |
 | `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) + `extract_doc_chunks()` (chonkie). [v1.4.1] Doc chunk line numbers; empty-list short-circuit before availability check. [v1.7] Embedding cache (md5-keyed, 10000-entry cap) + `clear_embedding_cache()` + optional `model` param for per-project overrides. |
 | `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. [v1.7] Passes `pm.get_embedding_model()` to `embed_texts()`. |
-| `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. |
+| `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. [v1.8] Now returns resolved file-path candidates for JS/TS (was: raw import strings only). |
 | `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. [v1.5] Understand branch routes by `action` param (index/query/health) before graph construction. [v1.6] Understand query/health imports moved to `workflows.understand_impl.query`. [v1.7] Understand timeout read from `cfg.understand_timeout_seconds` (env: `UNDERSTAND_TIMEOUT_SECONDS`, default 600). |
 | `tests/workflows/understand/` | Test files (14 test files + conftest — see Testing section below). [v1.5] +test_query.py, +test_health.py. [v1.6] +test_stale_cleanup.py. |
 | `tests/core/kgraph/` | [v1.4.2] kgraph-module tests (8 test files + conftest) — embeddings, tree_sitter_parser, queries, ast_parser, project, storage, test_mapper, kgraph_fixes. |
@@ -34,7 +34,7 @@ workflows/understand_impl/
 └── nodes/
     ├── init_project.py                    # node_init_project — PM init, GraphStore verify [v1.4.1: returns project_id + artifact_dir]
     ├── discover_files.py                  # node_discover_files — os.walk, chunked MD5 [v1.4.1: cancel checks, GraphStore in try, SKIP_DIRS constant] [v1.6: Phase 2 stale cleanup — deletes orphan nodes/edges/vectors] [v1.7: configurable skip_dirs + progress reporting every 1000 files]
-    ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, [#3] embeddings [v1.4.1: cancel checks, error cap, batch errors, file-size recheck]
+    ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, [#3] embeddings [v1.4.1: cancel checks, error cap, batch errors, file-size recheck] [v1.8: _resolve_import_to_file_paths — JS/TS relative imports → candidate file paths; Go/Rust raw + package/module-name derivatives]
     └── report.py                          # node_report — report generation [v1.4.1: vectors_created in summary]
 
 core/kgraph/
@@ -97,6 +97,20 @@ files (was: silent for minutes on huge codebases). (5) Per-project
 embedding model — `.understand/config.json` can specify
 `{"embedding_model": "..."}` to override the global `cfg.embedding_model`.
 
+**[v1.8] Cross-language import resolution:** JS/TS relative imports
+(`./foo`, `../utils`) now resolve to candidate file paths (up to 13
+candidates per import: 1 raw + 6 extension variants + 6 index-file
+variants) via `_resolve_import_to_file_paths()` in `parse_and_store.py`.
+Go package imports (`github.com/foo/bar`) store the package short-name
+(`bar`) as a derivative. Rust `use` declarations store each `::`-separated
+path segment except the last item name. Non-relative JS/TS imports (`react`,
+`@scope/pkg`) are stored raw only — they're in `node_modules`, not project
+source. Python unchanged (already resolved in v1.4). Candidates are stored
+as edge targets (cheap — strings in SQLite); the query layer dedupes.
+Candidates that don't exist on disk never match a stored node, so they're
+harmless. Resolving to the 'wrong' extension is also harmless (a `.ts` file
+importing a `.js` file matches the `.js` candidate, and vice versa).
+
 **Key design decisions:**
 - **Sync nodes (v1.0)** — All nodes are `def` (sync), not `async def`. Consistent with research, data, autocode, and deep_research workflows. No event loop, no ThreadPoolExecutor, no async complexity.
 - **[v1.4.1 P0-1] Conditional init edge** — `route_after_init` (in `workflows/understand_impl/routes.py`) short-circuits to END when `node_init_project` returns `status="failed"`. Mirrors the autoresearch `route_after_setup` pattern. Was: direct edge that let init failures run discover anyway → empty kg.db → "✅ up to date" masking the failure.
@@ -110,8 +124,9 @@ embedding model — `.understand/config.json` can specify
 - **[v1.4.1 P1-3] Project-scoped vectors** — ChromaDB path is now per-project: `{project}/.understand/chroma/` for workspace projects, `memory_db/understand/chroma/` for agent root. Was: always `agent_root/.understand/chroma/` (orphaned vectors when a project's `.understand/` was deleted). Existing agent-root data should be manually deleted + re-indexed.
 - **[v1.4.1 P1-6] Cancellation checks** — `discover_files` and `parse_and_store` poll `workflows.base.is_workflow_cancelled(trace_id)` at entry + inside loops (every 100 files in discover, every 10 files + per-batch in parse). Returns `{"status": "failed", "errors": ["Workflow cancelled"]}` on cancel. The base.py 600s daemon-thread timeout doesn't kill the thread (Python limitation) — these checks let the workflow exit cooperatively.
 - **[v1.4.1 P2-10] Errors capped at 100** — The `parse_and_store` errors list is capped at `_ERRORS_CAP = 100` entries. A final `"... and N more errors (capped at 100)"` entry is appended when the cap is hit. Was: unbounded — a project with 1000 broken files would bloat the final state dict + report.
+- **[v1.8] Cross-language import resolution** — JS/TS relative imports resolve to candidate file paths (up to 13 candidates per import: 1 raw + 6 extension variants + 6 index-file variants: `.ts`/`.tsx`/`.js`/`.mjs`/`.cjs`/`.jsx`). Go/Rust store raw + package/module-name derivatives. Python unchanged. Candidates are stored as edge targets (cheap — strings in SQLite). The query layer dedupes. Non-relative imports (node_modules packages) are stored raw only.
 
-### 🛡️ Safety Features (v1.7)
+### 🛡️ Safety Features (v1.8)
 
 `WORKFLOW_METADATA["safety_features"]` lists the guarantees the workflow provides:
 
@@ -138,6 +153,7 @@ embedding model — `.understand/config.json` can specify
 | `configurable_timeout` | v1.7: `UNDERSTAND_TIMEOUT_SECONDS` env var (default 600) — was hardcoded 600 in `workflows/base.py` |
 | `embedding_cache` | v1.7: `embed_texts()` caches by md5(text); cache hits skip the HTTP call entirely. Cap 10000 entries (cleared when exceeded). `clear_embedding_cache()` for testing |
 | `per_project_embedding_model` | v1.7: `.understand/config.json` can specify `{"embedding_model": "..."}` to override the global `cfg.embedding_model`. Resolution via `pm.get_embedding_model()` |
+| `cross_language_import_resolution` | v1.8: JS/TS relative imports (`./foo`, `../utils`) resolve to candidate file paths (up to 13 candidates per import: 1 raw + 6 extension variants + 6 index-file variants) via `_resolve_import_to_file_paths()` in `parse_and_store.py`. Go package imports store the package short-name as a derivative. Rust `use` declarations store each `::`-separated path segment except the last item name. Python unchanged. Candidates stored as edge targets; the query layer dedupes. Non-relative JS/TS imports (`react`, `@scope/pkg`) stored raw only. |
 
 ---
 
@@ -159,6 +175,7 @@ tests/workflows/understand/
 ├── test_route_after_init.py       # [v1.4.1 P0-1] route_after_init conditional edge + [v1.4.2] integration test
 ├── test_discover_files.py         # [v1.4.1] defensive bail, cancellation, GraphStore in try, SKIP_DIRS + [v1.4.2] mid-walk cancel + [v1.7] skip_dirs env override + progress reporting
 ├── test_parse_and_store.py        # [v1.4.1] batch errors, cancellation, GraphStore in try, error cap, file-size recheck, batch size + [v1.4.2] mid-parse cancel, error cap, embed batch failure
+├── test_import_resolution.py     # [v1.8 NEW] _resolve_import_to_file_paths — Python / JS / TS / Go / Rust / edge cases
 ├── test_report.py                 # [v1.4.1 P2-4] vectors_created in summary
 ├── test_facade.py                 # [v1.4.1 P0-2 + P2-7 + P2-9] lazy import, return shape, path validation + [v1.5] action routing (index/query/health) + [v1.7] configurable timeout
 ├── test_query.py                  # [v1.5 NEW] query_codebase — semantic/keyword/dependencies/callers + error paths [v1.6: import moved to understand_impl.query]
@@ -233,9 +250,10 @@ tests/core/kgraph/                 # [v1.4.2] kgraph-module tests (moved from te
 - [v1.7] configurable timeout: cfg.understand_timeout_seconds (env: UNDERSTAND_TIMEOUT_SECONDS, default 600)
 - [v1.7] embedding cache: md5(text)-keyed, cache hits skip HTTP, 10000-entry cap, clear_embedding_cache()
 - [v1.7] per-project embedding model: .understand/config.json overrides cfg.embedding_model via pm.get_embedding_model()
+- [v1.8] _resolve_import_to_file_paths: Python module → file path; JS/TS relative → 13 candidates (1 raw + 6 ext + 6 index); non-relative JS/TS → raw only; Go → raw + package short-name; Rust → raw + each ::-segment except the last item name
 
 ---
 
 - **Completion pattern** — Unlike `data`/`research` which call `node_done()` in their final node, understand sets `status` in `node_parse_and_store` (`"completed"` or `"completed_with_errors"`). `node_report` is side-effect-only (returns `{}` or `{"note": ...}`). The `run_understand_workflow_sync` facade calls `tracer.finish()` itself. This is intentional — understand uses `"completed"`/`"completed_with_errors"` (not `"success"`) to distinguish partial failures.
 
-*Last updated: 2026-07-22 (v1.7). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.8). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

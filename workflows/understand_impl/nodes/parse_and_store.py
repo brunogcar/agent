@@ -6,6 +6,17 @@
 If the embedding service (LM Studio) is unavailable, vector indexing is skipped
 gracefully — the graph edges in SQLite are still stored.
 
+[v1.8] Cross-language import resolution. JS/TS relative imports (`./foo`,
+`../utils`) now resolve to candidate file paths (up to 13 candidates per
+import: 1 raw + 6 extension variants + 6 index-file variants) via
+`_resolve_import_to_file_paths()`. Go package imports store the package
+short-name as a derivative (`github.com/foo/bar` → also `bar`). Rust
+`use` declarations store each `::`-separated path segment except the
+last item name. Python unchanged (already resolved in v1.4 via
+`dep.replace(".", "/") + ".py"`). Non-relative JS/TS imports (`react`,
+`@scope/pkg`) are stored raw only — they're in node_modules, not project
+source. Candidates are stored as edge targets — the query layer dedupes.
+
 [v1.4.1 P1-1] Defensive `status=="failed"` bail at the top of the node.
 Belt-and-suspenders alongside route_after_init (P0-1) — if a future graph
 refactor accidentally adds a direct init→parse edge, the node itself
@@ -75,6 +86,128 @@ from core.kgraph.vectors import upsert_file_vectors
 # state dict + the report. The final "... and N more" entry preserves
 # the count for the operator.
 _ERRORS_CAP = 100
+
+
+# [v1.8] Candidate file extensions for JS/TS relative-import resolution.
+# Stored as a module-level constant so tests can reference the same list
+# (and a future change only touches one place). The set is the union of:
+#   - TypeScript file extensions (.ts, .tsx)
+#   - JavaScript file extensions (.js, .mjs, .cjs, .jsx)
+# We always include BOTH the TS + JS variants for any JS/TS import — a
+# .ts file can import a .js file (typed wrappers around legacy JS), and
+# vice versa. Resolving to the "wrong" extension is harmless because the
+# query layer dedupes; the candidates that don't exist on disk simply
+# never match a stored node.
+_JS_TS_EXTENSIONS = (".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx")
+
+
+def _resolve_import_to_file_paths(dep: str, rel_path: str, language: str) -> list[str]:
+    """[v1.8] Resolve an import string to candidate file paths.
+
+    Returns a list of relative file paths (POSIX-style) that the import
+    COULD resolve to. The caller stores ALL candidates as edge targets —
+    edges are cheap (strings in SQLite), and the query layer dedupes.
+
+    For languages where file-path resolution isn't possible (Go packages,
+    Rust crates), returns ``[dep]`` (the raw import string) + any useful
+    derivatives (package name, module name).
+
+    Resolution rules per language:
+
+    - **python** (unchanged from v1.4): ``import core.config`` → also
+      stores ``core/config.py`` (file-path form). Raw module name kept.
+    - **javascript / typescript** (NEW): relative imports (``./foo``,
+      ``../utils``) resolve to up to 13 candidate file paths
+      (1 raw + 6 extension variants + 6 index-file variants). The
+      candidate list is built from the importing file's directory
+      (``Path(rel_path).parent``), stripped of leading ``./`` /
+      ``../`` segments (each ``../`` walks one parent dir).
+      Non-relative imports (``react``, ``lodash``, ``@scope/pkg``) are
+      stored raw only — they're in ``node_modules``, not project source.
+    - **go**: ``import "github.com/foo/bar"`` → stores raw
+      ``github.com/foo/bar`` + ``bar`` (the package name, useful for
+      queries). No file-path resolution (would need GOPATH).
+    - **rust**: ``use std::collections::HashMap`` → stores raw
+      ``std::collections::HashMap`` + each ``::``-separated path segment
+      except the last item name (so ``std::collections::HashMap`` →
+      also stores ``std`` and ``collections``). No file-path resolution.
+
+    Args:
+        dep: The raw import string from tree-sitter (e.g. "core.config",
+            "./foo", "../utils", "react", "fmt", "std::collections::HashMap").
+        rel_path: The relative path of the importing file
+            (e.g. "src/app.ts").
+        language: The tree-sitter language name ("python", "javascript",
+            "typescript", "go", "rust").
+
+    Returns:
+        List of candidate target paths/strings to store as edge targets.
+        Always includes the raw ``dep`` as the first element (when dep
+        is non-empty). Returns ``[]`` for empty ``dep``.
+    """
+    if not dep:
+        return []
+
+    candidates: list[str] = [dep]  # Always store the raw import string.
+
+    if language == "python":
+        # import core.config → also core/config.py
+        candidates.append(dep.replace(".", "/") + ".py")
+
+    elif language in ("javascript", "typescript"):
+        # Only resolve RELATIVE imports (./ or ../). Non-relative
+        # imports (react, lodash, @scope/pkg) are node_modules packages
+        # — not project source. Storing file-path candidates for them
+        # would pollute the edge table with phantom paths.
+        if dep.startswith("./") or dep.startswith("../"):
+            importing_dir = Path(rel_path).parent
+            stripped = dep
+            # Strip each leading ./ or ../ — one parent dir per ../
+            while stripped.startswith("./") or stripped.startswith("../"):
+                if stripped.startswith("../"):
+                    stripped = stripped[3:]
+                    importing_dir = importing_dir.parent
+                else:
+                    stripped = stripped[2:]
+            # Join the resolved dir with the stripped import path.
+            # Path("./foo").as_posix() collapses to "foo".
+            resolved_base_str = (importing_dir / stripped).as_posix()
+            # Candidate extension variants — both TS + JS so a .ts file
+            # importing a .js file (or vice versa) resolves correctly.
+            for ext in _JS_TS_EXTENSIONS:
+                candidates.append(resolved_base_str + ext)
+            # Index file variants — `./foo` may resolve to `foo/index.ts`
+            # etc. (CommonJS / ES module folder convention).
+            for ext in _JS_TS_EXTENSIONS:
+                candidates.append(resolved_base_str + "/index" + ext)
+        # Non-relative imports: fall through with just [dep].
+
+    elif language == "go":
+        # import "github.com/foo/bar" → also store "bar" (package name).
+        # The raw package path is kept; the package name is a useful
+        # derivative for query-side impact analysis (callers searching
+        # for "who imports the bar package" match by short name too).
+        if "/" in dep:
+            pkg_name = dep.rsplit("/", 1)[-1]
+            if pkg_name and pkg_name not in candidates:
+                candidates.append(pkg_name)
+        # No file-path resolution — Go packages don't map 1:1 to files
+        # without GOPATH/module info, which we don't have at parse time.
+
+    elif language == "rust":
+        # use std::collections::HashMap → store each ::-separated path
+        # segment except the last (which is the item name like HashMap).
+        # use crate::models::User → also store "crate" + "models".
+        if "::" in dep:
+            parts = dep.split("::")
+            # parts[:-1] = crate + each intermediate module name.
+            for part in parts[:-1]:
+                if part and part not in candidates:
+                    candidates.append(part)
+        # No file-path resolution — Rust modules map to files via
+        # `mod` declarations, not import paths.
+
+    return candidates
 
 
 def node_parse_and_store(state: UnderstandState) -> dict:
@@ -197,9 +330,16 @@ def node_parse_and_store(state: UnderstandState) -> dict:
 
                     target_paths = set()
                     for dep in deps:
-                        target_paths.add(dep)
-                        if language == "python":
-                            target_paths.add(dep.replace(".", "/") + ".py")
+                        # [v1.8] Cross-language import resolution — JS/TS
+                        # relative imports now resolve to candidate file
+                        # paths (up to 13 candidates per import: 1 raw +
+                        # 6 extension variants + 6 index-file variants).
+                        # Go/Rust store raw + package/module-name
+                        # derivatives. Python unchanged.
+                        for candidate in _resolve_import_to_file_paths(
+                            dep, rel_path, language
+                        ):
+                            target_paths.add(candidate)
 
                     store.upsert_file_graph(
                         state["project_id"], rel_path, current_hash,

@@ -209,6 +209,32 @@ the `UNDERSTAND_SKIP_DIRS` env var (merged with `_DEFAULT_SKIP_DIRS`).
 
 **Status values:** `"completed"` (no errors) or `"completed_with_errors"` (some files failed but workflow succeeded), or `"failed"` (cancelled).
 
+**[v1.8] Cross-language import resolution in Phase 1:** For each code
+file, after tree-sitter extracts the raw import strings, the new
+`_resolve_import_to_file_paths(dep, rel_path, language)` helper is called
+on each dep. The function returns a list of candidate target paths/strings
+(per-language rules below); ALL candidates are stored as edge targets
+(edges are cheap — strings in SQLite; the query layer dedupes).
+
+- **python** (unchanged): `core.config` → also `core/config.py` (file-path form). Raw module name kept.
+- **javascript / typescript** (NEW): relative imports (`./foo`, `../utils`)
+  resolve to up to 13 candidate file paths: 1 raw + 6 extension variants
+  (`.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`, `.jsx`) + 6 index-file variants
+  (`/index.ts`, `/index.tsx`, etc.). The candidate base is computed from
+  `Path(rel_path).parent` with leading `./` / `../` segments stripped
+  (each `../` walks one parent dir). Non-relative imports (`react`, `lodash`,
+  `@scope/pkg`) are stored raw only — they're node_modules packages, not
+  project source. Resolving to the 'wrong' extension is harmless (a `.ts`
+  file importing a `.js` file matches the `.js` candidate).
+- **go**: `github.com/foo/bar` → also `bar` (package short-name derivative).
+  No file-path resolution (would need GOPATH).
+- **rust**: `std::collections::HashMap` → also `std` + `collections`
+  (each `::`-separated segment except the last item name). No file-path
+  resolution (Rust modules map to files via `mod` declarations, not import paths).
+
+Candidates that don't exist on disk never match a stored node, so they're
+harmless. The query layer (`get_dependencies` / `get_callers`) dedupes.
+
 **[v1.4.1 P2-14]** The outer Phase-1 batch loop was removed. Was: `for i in range(0, len(files), batch_size):` — each file is processed one at a time, so the batching added no value. `cfg.understand_batch_size` is kept for backward compat (unused in Phase 1; Phase 2 uses `cfg.understand_embed_batch_size`).
 
 **Graceful degradation:** If LM Studio is unavailable or the embedding model isn't loaded, `embed_texts()` returns `None` and the batch is skipped with an error entry. The workflow continues — graph edges are still stored.
@@ -570,4 +596,4 @@ first (or restart the process).
 
 ---
 
-*Last updated: 2026-07-22 (v1.7). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.8). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
