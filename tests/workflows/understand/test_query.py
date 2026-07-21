@@ -1,11 +1,14 @@
 """tests/workflows/understand/test_query.py
 
-[v1.5] Tests for workflows.understand_query.query_codebase — the unified
-query interface that routes to semantic / keyword / dependencies / callers
-based on the `query_type` parameter.
+[v1.5] Tests for workflows.understand_impl.query.query_codebase — the
+unified query interface that routes to semantic / keyword / dependencies /
+callers based on the `query_type` parameter.
 
 Each test class covers one query_type + the error paths (invalid type,
 missing file_path, not indexed, graceful degradation).
+
+[v1.5.1] Import path changed from `workflows.understand_query` to
+`workflows.understand_impl.query` (module move).
 """
 from __future__ import annotations
 
@@ -16,7 +19,7 @@ import pytest
 
 from core.kgraph.project import ProjectManager
 from core.kgraph.storage import GraphStore
-from workflows.understand_query import query_codebase
+from workflows.understand_impl.query import query_codebase
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────

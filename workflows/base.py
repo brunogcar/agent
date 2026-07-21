@@ -437,7 +437,7 @@ def run_workflow(
 
             # ─── action="query" — semantic/keyword/dependencies/callers ──
             if action == "query":
-                from workflows.understand_query import query_codebase
+                from workflows.understand_impl.query import query_codebase
                 return query_codebase(
                     project_path=project_root,
                     question=goal,  # the search query IS the goal
@@ -450,7 +450,7 @@ def run_workflow(
 
             # ─── action="health" — index stats (no graph run) ─────────────
             if action == "health":
-                from workflows.understand_query import health_check
+                from workflows.understand_impl.query import health_check
                 return health_check(
                     project_path=project_root,
                     is_agent_root=is_same_path(Path(project_root), cfg.agent_root),

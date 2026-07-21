@@ -1,6 +1,6 @@
 """tests/workflows/understand/test_health.py
 
-[v1.5] Tests for workflows.understand_query.health_check — the index
+[v1.5] Tests for workflows.understand_impl.query.health_check — the index
 health stats endpoint.
 
 Covers:
@@ -9,6 +9,9 @@ Covers:
   - project_id is in the response.
   - kg_db_size_bytes > 0 when indexed.
   - embedding_available field is reflected from is_embedding_available().
+
+[v1.5.1] Import path changed from `workflows.understand_query` to
+`workflows.understand_impl.query` (module move).
 """
 from __future__ import annotations
 
@@ -19,7 +22,7 @@ import pytest
 
 from core.kgraph.project import ProjectManager
 from core.kgraph.storage import GraphStore
-from workflows.understand_query import health_check
+from workflows.understand_impl.query import health_check
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────

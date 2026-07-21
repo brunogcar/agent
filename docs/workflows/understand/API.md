@@ -114,6 +114,8 @@ Or call the query/health functions directly (bypass both base.py + the facade):
 
 ```python
 from workflows.understand import query_codebase, health_check
+# [v1.5.1] These are re-exported from workflows.understand_impl.query
+# (was: workflows.understand_query — moved in v1.5.1).
 
 results = query_codebase(
     project_path="/path/to/project",
@@ -149,22 +151,35 @@ stats = health_check(project_path="/path/to/project")
 ### `node_discover_files(state)` — Phase 2: File Discovery
 
 **Purpose:** Scan the project for changed/new files that need indexing.
+**[v1.5.1]** Also detect files that were indexed but have since been deleted
+from disk, and remove their graph nodes + edges + ChromaDB vectors.
 
 **Logic:**
 1. [v1.4.1 P1-1] Bail early if `status == "failed"` (belt-and-suspenders alongside `route_after_init`).
 2. [v1.4.1 P1-6] Check `is_workflow_cancelled(trace_id)` at start + every 100 files.
-3. Walk the source tree with `os.walk()`, skipping `ProjectManager.SKIP_DIRS` directories.
-4. For each file with a supported extension (`.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.go`, `.rs` + 9 more + `.md`/`.txt`/`.rst`), check if it changed since last index (mtime + size).
-5. If changed, compute chunked MD5 hash and compare with stored hash.
-6. Collect all changed files as `(full_path, rel_path, hash, mtime, size)` tuples.
+3. **Phase 1 (existing behavior — disk walk + change detection):**
+   - Walk the source tree with `os.walk()`, skipping `ProjectManager.SKIP_DIRS`.
+   - For each file with a supported extension, check if it changed since last index (mtime + size fast path, then chunked MD5).
+   - Collect changed files as `(full_path, rel_path, hash, mtime, size)` tuples.
+   - [v1.5.1] Collect every walked rel_path into a `disk_paths` set for Phase 2.
+4. **[v1.5.1] Phase 2 (stale cleanup):**
+   - Query `GraphStore.get_all_file_paths(project_id)` for stored paths.
+   - Compute `orphans = stored_paths - disk_paths` (set difference).
+   - For each orphan: `GraphStore.delete_file_entry(project_id, orphan_path)`
+     (deletes the node + all outgoing/incoming edges).
+   - Unless `skip_embeddings=True`: `collection.delete(where={"file_path": orphan_path})`
+     for each orphan (wrapped in try/except — ChromaDB may be unavailable).
+   - Trace: `Cleaned up N stale files from index` (or `No stale files detected` if empty).
 
 **Output:** Partial dict with `files_to_parse` (list of tuples), or `{"status": "failed", "errors": ["Workflow cancelled"]}` on cancel.
 
-**Performance:** Uses `_chunked_md5()` (8KB chunks) instead of `read_bytes()` to avoid memory spikes on large files.
+**Performance:** Uses `_chunked_md5()` (8KB chunks) instead of `read_bytes()` to avoid memory spikes on large files. Phase 2 is O(stored_paths) — a single SQL SELECT + one DELETE per orphan (cheap).
 
 **[v1.4.1 P1-7]** GraphStore is created INSIDE the `try` block; `finally` checks `if store is not None` before calling `close()`. Was: bare `store.close()` in finally that raised `NameError` when the constructor itself raised.
 
 **[v1.4.1 P2-2]** Uses `ProjectManager.SKIP_DIRS` (class constant) instead of a local set. Includes `.mypy_cache`, `.ruff_cache`, `.tox`, `htmlcov` (new in v1.4.1).
+
+**[v1.5.1] ChromaDB cleanup skipped when `skip_embeddings=True`** — we never indexed vectors in the first place, so there's nothing to clean up. (And the ChromaDB collection may not even exist.)
 
 ---
 
@@ -511,4 +526,4 @@ result = run_workflow(
 
 ---
 
-*Last updated: 2026-07-22 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.5.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -244,6 +244,31 @@ store2 = GraphStore(Path("project/.understand/kg.db"))
 assert store1 is store2  # Same instance
 ```
 
+#### [v1.5.1] Stale-index Cleanup Methods
+
+Two new methods added to support understand v1.5.1's `node_discover_files` Phase 2 (deleting graph entries for files that were indexed but have since been deleted from disk):
+
+```python
+# Get all file paths currently stored for a project (for orphan computation).
+paths = store.get_all_file_paths(project_id)
+# → ["core/config.py", "src/utils.py", ...]
+
+# Delete a file's node + ALL its edges (outgoing + incoming).
+store.delete_file_entry(project_id, "core/config.py")
+# → deletes node + edges where source_id = "file:core/config.py"
+#   + edges where target_id ∈ {"core/config.py", "file:core/config.py", "core.config"}
+```
+
+**`delete_file_entry` deletes 3 target_id forms** because `parse_and_store` stores edges with target_ids that vary by importer language:
+
+| target_id form | Example | Language |
+|----------------|---------|----------|
+| path verbatim | `core/config.py` | Python file-path form, JS/TS relative imports |
+| `file:{path}` (node-id form) | `file:core/config.py` | Stored by `upsert_file_graph` as the source_id |
+| Python module-name form | `core.config` | Python `from core.config import cfg` |
+
+DELETEs that match nothing are no-ops, so over-deletion is harmless. Under-deletion would leave orphaned edges whose target no longer resolves.
+
 ---
 
 ### 4. Graph Queries (`queries.py`)
@@ -485,4 +510,5 @@ Prevents disk space exhaustion and WAL file bloat during long-term unattended op
 
 ---
 
-*Last updated: 2026-07-21 (v1.4.1)
+*Last updated: 2026-07-22 (v1.5.1)
+

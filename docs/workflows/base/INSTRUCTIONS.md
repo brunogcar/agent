@@ -27,6 +27,7 @@
 18. **Always save full state in `node_error` checkpoint** — [v1.2] `{**state, "status": "failed", "error": msg}`, not just `{"status": "failed", "error": msg}`.
 19. **Always save success checkpoint in `node_done` before `mark_complete`** — [v1.2] So the final state is preserved if the process dies.
 20. **Always update this doc** when adding fields to `WorkflowState`, changing helper signatures, or modifying dispatch logic.
+21. **[v1.4] Always pass `action="query"` or `action="health"` for understand when the user wants to search/check** — Don't run the full indexing graph just to query the index. `action="query"` with `query_type` (semantic/keyword/dependencies/callers) routes directly to `query_codebase()`; `action="health"` routes to `health_check()`. Both bypass the graph entirely (no build, no invoke, no 600s timeout). Only `action="index"` (the default — backward compat) runs the full 4-node graph.
 
 ---
 
@@ -50,4 +51,4 @@
 
 ---
 
-*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.4 — understand `action` parameter rule added). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [CHANGELOG.md](CHANGELOG.md) for version history.*

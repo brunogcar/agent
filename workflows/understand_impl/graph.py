@@ -53,6 +53,14 @@ from workflows.understand_impl.routes import route_after_init
 # health_check). No changes to the indexing graph itself — v1.5 is purely
 # additive (new entry points that bypass the graph for query/health).
 #
+# [v1.6] Version bumped 1.5 → 1.6. Two changes: (1) module move —
+# workflows/understand_query.py → workflows/understand_impl/query.py
+# (matches the user's `<workflow>_impl/` pattern; the facade only
+# re-exports). (2) Stale index cleanup — node_discover_files now detects
+# files indexed-but-deleted-from-disk and removes their graph nodes +
+# edges + vectors (was: orphans accumulated forever). New GraphStore
+# methods: get_all_file_paths() + delete_file_entry().
+#
 # [v1.4.1 P2-11] safety_features list added — mirrors the autoresearch pattern
 # for clients that surface "what guarantees does this workflow give me?".
 WORKFLOW_METADATA = {
@@ -60,7 +68,8 @@ WORKFLOW_METADATA = {
     # v1.4: skip_embeddings + two-phase batched embedding were already in the
     # code; the version field just hadn't been bumped. v1.4.1 is the hardening.
     # v1.5: query interface + health check (action parameter).
-    "version": "1.5",
+    # v1.6: stale index cleanup + module move (understand_query.py → understand_impl/query.py).
+    "version": "1.6",
     "description": "Build codebase knowledge graph + doc embeddings: init → discover → parse → report",
     "entry_point": "node_init_project",
     "nodes": [
@@ -103,6 +112,7 @@ WORKFLOW_METADATA = {
         "project_scoped_vectors",     # v1.4.1 P1-3: ChromaDB path is per-project (was: always agent_root)
         "query_interface",           # v1.5: action="query" routes to query_codebase (semantic/keyword/deps/callers) without running the graph
         "health_check",              # v1.5: action="health" returns index stats (file/edge/vector counts, sizes, embedding availability) without running the graph
+        "stale_index_cleanup",       # v1.6: discover_files detects files indexed-but-deleted-from-disk and removes their graph nodes + edges + vectors
     ],
 }
 

@@ -32,12 +32,18 @@ but returning earlier is cleaner + avoids the cost of constructing the
 graph).
 
 [v1.5] Re-exports `query_codebase` + `health_check` from
-`workflows.understand_query` so callers that already import from this
+`workflows.understand_impl.query` so callers that already import from this
 facade get the new query/health entry points without an extra import.
 The `action` parameter on `run_workflow(type='understand')` (in base.py)
 routes to these — but they're also available directly:
 
     from workflows.understand import query_codebase, health_check
+
+[v1.5.1] The query module was MOVED from `workflows/understand_query.py`
+to `workflows/understand_impl/query.py` to match the user's standard
+`<workflow>_impl/` pattern (all implementation in the subpackage; the
+facade only re-exports). The re-export below now imports from the new
+location.
 
 [v1.5] `run_understand_workflow_sync` now accepts an `action` parameter
 (default "index") so standalone callers can route to query/health without
@@ -54,7 +60,7 @@ from typing import Any
 
 from workflows.understand_impl.graph import build_understand_graph, WORKFLOW_METADATA
 from workflows.understand_impl.state import _default_state, UnderstandState
-from workflows.understand_query import query_codebase, health_check
+from workflows.understand_impl.query import query_codebase, health_check
 from core.tracer import tracer
 from core.config import cfg
 
@@ -98,7 +104,7 @@ def run_understand_workflow_sync(
     Unknown action → clean failure dict.
     """
     # [v1.5] Route by action BEFORE trace creation — query/health have
-    # their own trace creation in understand_query.py with action-specific
+    # their own trace creation in understand_impl/query.py with action-specific
     # goal strings. For action="index", we create the trace here (unchanged).
     if action == "query":
         # Validate project_path exists (consistent with the index path).
@@ -182,8 +188,8 @@ __all__ = [
     "UnderstandState",
     "run_understand_workflow_sync",
     # [v1.5] Query interface + health check (re-exported from
-    # workflows.understand_query). Surface here for callers that already
-    # import from this facade.
+    # workflows/understand_impl.query). Surface here for callers that
+    # already import from this facade.
     "query_codebase",
     "health_check",
 ]

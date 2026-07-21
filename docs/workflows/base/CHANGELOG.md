@@ -6,6 +6,7 @@
 
 | Version | Date | Status |
 |---------|------|--------|
+| v1.4 | 2026-07-22 | **Understand action routing.** `run_workflow()` understand branch now checks `initial_state.get("action", "index")` and routes to: `index` (default — runs the graph, backward compat), `query` (calls `query_codebase` — semantic/keyword/dependencies/callers search without running the graph), `health` (calls `health_check` — index stats without running the graph). Action checked BEFORE graph construction → query/health never build or invoke the LangGraph. Unknown action returns `status="failed"`. Backward compatible — existing callers without `action` get the original graph.invoke() behavior. |
 | v1.3.1 | 2026-07-13 | **Doc drift + input validation:** `autoresearch` added to all docs (was missing — shipped in code but not docs). `memory_context` added to evictable fields. `_EVICTABLE_FIELDS` constant extracted. `run_workflow()` input validation (non-empty `goal` + `workflow_type`). Module docstring "seven" → "six". All "Last updated" dates bumped. |
 | v1.3.2 | 2026-07-14 | **Post-Phase-4 doc cleanup:** `WORKFLOWS.md` restructured to match TOOLS.md/CORE.md index pattern (removed per-workflow version numbers, node counts, and bug counts from the central index — those live in per-workflow docs). base/CHANGELOG roadmap #13 (input validation) moved to Completed (shipped in v1.3.1). Roadmap #18 (trim_state wiring) clarified: data + research have their own trim nodes that call `trim_state()` internally; `trim_state()` is NOT an unused utility. |
 | v1.3 | 2026-07-08 | **Chonkie-aware `trim_state()`:** When chonkie is available, splits oversized fields into sentence-aware chunks and evicts each individually (precise recall later). Keeps first chunk as preview in state. Falls back to whole-string eviction (v1.0 behavior) if chonkie is missing or chunking fails. New `_evict_field()` helper. Tests updated to mock `_chunk_text` for deterministic path control. **Note:** `trim_state()` is currently a utility — no workflow calls it yet (#18 tracks wiring it in). |
@@ -94,4 +95,4 @@
 
 ---
 
-*Last updated: 2026-07-14 (v1.3.2 — post-Phase-4 doc cleanup + WORKFLOWS.md restructure). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.4 — understand action routing in `run_workflow()` dispatcher). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for utility signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

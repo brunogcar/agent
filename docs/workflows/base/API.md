@@ -124,7 +124,7 @@ Routes to the correct workflow graph:
 | `data` | `workflows.data.build_data_graph()` | Standard StateGraph |
 | `autocode` | `workflows.autocode_impl.graph.invoke_with_timeout()` | Converts `goal` → `task`; timeout wrapper |
 | `deep_research` | `workflows.deep_research_impl.build_deep_research_graph()` | Standard StateGraph |
-| `understand` | `workflows.understand.build_understand_graph()` | Uses `_default_state()` + standard `graph.invoke()` |
+| `understand` | `workflows.understand.build_understand_graph()` | Uses `_default_state()` + standard `graph.invoke()`. **[v1.4]** `action` parameter (default `"index"`) routes BEFORE graph construction: `index` → graph.invoke(); `query` → `query_codebase()` (semantic/keyword/dependencies/callers search — no graph); `health` → `health_check()` (index stats — no graph). Unknown action → `status="failed"`. |
 | `autoresearch` | `workflows.autoresearch.build_autoresearch_graph()` | Uses `_default_state()` + `recursion_limit=1000` for overnight runs |
 
 **Returns:** `dict` with at minimum `{status, result, error, artifacts}`.
@@ -162,4 +162,4 @@ The dispatcher returns a `dict`:
 
 ---
 
-*Last updated: 2026-07-13 (v1.3.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.4 — understand `action` parameter noted in dispatcher table). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

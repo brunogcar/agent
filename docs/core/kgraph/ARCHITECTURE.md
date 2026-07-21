@@ -12,7 +12,7 @@
 | `core/kgraph/cleanup.py` | `KGCleanup`: disk space + WAL management |
 | `core/kgraph/project.py` | `ProjectManager`: isolation, paths, indexing mode |
 | `core/kgraph/queries.py` | `find_relevant_files()`, `get_dependencies()`, `get_callers()` |
-| `core/kgraph/storage.py` | `GraphStore`: SQLite graph with WAL, thread-local connections |
+| `core/kgraph/storage.py` | `GraphStore`: SQLite graph with WAL, thread-local connections. [v1.5.1] +`get_all_file_paths(project_id)` + `delete_file_entry(project_id, path)` for stale cleanup. |
 | `core/kgraph/test_index.py` | `load_test_index()`, `save_test_index()`, hybrid validation |
 | `core/kgraph/test_mapper.py` | `get_targeted_tests()`, `rebuild_test_index()`, `CRITICAL_PATHS` |
 | `core/kgraph/embeddings.py` | `extract_definitions()` (AST chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) |
@@ -135,4 +135,5 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-21 (v1.4.1)
+*Last updated: 2026-07-22 (v1.5.1)
+

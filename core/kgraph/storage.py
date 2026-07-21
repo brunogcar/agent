@@ -124,6 +124,97 @@ class GraphStore:
         rows = self.read("SELECT content_hash FROM nodes WHERE project_id = ? AND path = ? AND type = 'file'", (project_id, path))
         return rows[0]["content_hash"] if rows else None
 
+    # [v1.5.1] Stale-index cleanup support — discover_files uses these two
+    # methods to detect files indexed-but-deleted-from-disk and remove their
+    # graph nodes + edges (orphans that would otherwise accumulate forever).
+    def get_all_file_paths(self, project_id: str) -> list[str]:
+        """Return all file paths currently stored for this project.
+
+        Used by node_discover_files' stale-cleanup phase to compute the
+        set difference `stored_paths - disk_paths` → orphan paths whose
+        nodes + edges + vectors should be removed.
+
+        Args:
+            project_id: The 16-char hex project_id (sha256 of resolved
+                absolute path, taken by ProjectManager.project_id).
+
+        Returns:
+            List of relative file paths (e.g. ["core/config.py",
+            "src/utils.py"]). Empty list if no files indexed yet.
+        """
+        rows = self.read(
+            "SELECT path FROM nodes WHERE project_id = ? AND type = 'file'",
+            (project_id,)
+        )
+        return [row["path"] for row in rows]
+
+    def delete_file_entry(self, project_id: str, path: str) -> None:
+        """Delete a file's node + all its edges (outgoing + incoming).
+
+        [v1.5.1] Used by the stale-cleanup phase in node_discover_files to
+        remove orphaned graph entries for files that were indexed but have
+        since been deleted from disk.
+
+        Outgoing edges: source_id = `file:{path}`.
+        Incoming edges: target_id may be ANY of three forms, depending on
+        the importer's language:
+          - the file_path verbatim (Python file-path form, JS/TS relative)
+          - `file:{path}` (the node id stored by `upsert_file_graph`)
+          - the Python module-name form (e.g. `core.config` for
+            `core/config.py`)
+
+        We delete ALL three forms to be safe — DELETEs that match nothing
+        are no-ops, so over-deletion is harmless. Under-deletion would
+        leave orphaned edges whose target no longer resolves.
+
+        Args:
+            project_id: The project_id from ProjectManager.
+            path: Relative file path (e.g. `core/config.py`).
+        """
+        node_id = f"file:{path}"
+        # Python-style module-name form: "core/config.py" → "core.config".
+        # Other languages won't match this form (harmless — DELETE no-op).
+        # Strip any supported code extension, then convert `/` → `.`.
+        module_name = path
+        for ext in (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go",
+                    ".rs", ".java", ".c", ".h", ".cpp", ".cc", ".cxx",
+                    ".hpp", ".rb", ".lua", ".php", ".scala", ".swift", ".kt",
+                    ".md", ".txt", ".rst"):
+            if module_name.endswith(ext):
+                module_name = module_name[: -len(ext)]
+                break
+        module_name = module_name.replace("/", ".").lstrip(".")
+        with self._write_lock:
+            conn = self._get_conn()
+            # 1. Delete the file node itself.
+            conn.execute(
+                "DELETE FROM nodes WHERE project_id = ? AND path = ?",
+                (project_id, path)
+            )
+            # 2. Delete outgoing edges (source_id = file:{path}).
+            conn.execute(
+                "DELETE FROM edges WHERE project_id = ? AND source_id = ?",
+                (project_id, node_id)
+            )
+            # 3. Delete incoming edges — try all 3 target_id forms.
+            conn.execute(
+                "DELETE FROM edges WHERE project_id = ? AND target_id = ?",
+                (project_id, path)
+            )
+            conn.execute(
+                "DELETE FROM edges WHERE project_id = ? AND target_id = ?",
+                (project_id, node_id)
+            )
+            conn.execute(
+                "DELETE FROM edges WHERE project_id = ? AND target_id = ?",
+                (project_id, module_name)
+            )
+            conn.commit()
+            self._write_count += 1
+            if self._write_count >= self._CHECKPOINT_EVERY:
+                self._force_checkpoint(conn)
+                self._write_count = 0
+
     def upsert_file_graph(self, project_id: str, path: str, content_hash: str, dependencies: list[str], last_modified: float = 0.0, file_size: int = 0) -> None:
         """Atomically update a file's node and its dependency edges."""
         node_id = f"file:{path}"

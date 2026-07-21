@@ -1,4 +1,4 @@
-"""workflows/understand_query.py — Query interface + health check for understand.
+"""workflows/understand_impl/query.py — Query interface + health check for understand.
 
 [v1.5 Commit 3A] Adds two new entry points that DON'T run the full
 understand indexing graph:
@@ -157,7 +157,7 @@ def query_codebase(
             f"Invalid query_type: {query_type}. "
             f"Use: {', '.join(_VALID_QUERY_TYPES)}"
         )
-        tracer.error(tid, "understand_query", msg)
+        tracer.error(tid, "query", msg)
         tracer.finish(tid, success=False, result=msg)
         return {
             "status": "failed",
@@ -174,7 +174,7 @@ def query_codebase(
     # file_path required for dependencies + callers.
     if query_type in ("dependencies", "callers") and not file_path:
         msg = "file_path is required for dependencies/callers queries"
-        tracer.error(tid, "understand_query", msg)
+        tracer.error(tid, "query", msg)
         tracer.finish(tid, success=False, result=msg)
         return {
             "status": "failed",
@@ -205,7 +205,7 @@ def query_codebase(
             f"Project not indexed. Run understand(action='index') first. "
             f"Expected: {kg_db_path}"
         )
-        tracer.error(tid, "understand_query", msg)
+        tracer.error(tid, "query", msg)
         tracer.finish(tid, success=False, result=msg)
         return {
             "status": "failed",
@@ -231,7 +231,7 @@ def query_codebase(
                     "Embedding service unavailable — semantic search requires "
                     "LM Studio running"
                 )
-                tracer.warning(tid, "understand_query", msg)
+                tracer.warning(tid, "query", msg)
                 tracer.finish(tid, success=True, result="semantic: degraded (no embeddings)")
                 return {
                     "status": "success",
@@ -276,7 +276,7 @@ def query_codebase(
             results = []
 
         tracer.step(
-            tid, "understand_query",
+            tid, "query",
             f"query_type={query_type} → {len(results)} results",
         )
         tracer.finish(tid, success=True, result=f"{len(results)} results")
@@ -293,7 +293,7 @@ def query_codebase(
         }
     except Exception as e:
         msg = f"Query failed: {type(e).__name__}: {e}"
-        tracer.error(tid, "understand_query", msg)
+        tracer.error(tid, "query", msg)
         tracer.finish(tid, success=False, result=msg)
         return {
             "status": "failed",
