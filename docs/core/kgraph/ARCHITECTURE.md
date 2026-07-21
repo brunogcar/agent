@@ -26,7 +26,7 @@
 core/kgraph/
 ├── __init__.py              # Public API exports
 ├── ast_parser.py            # AST parsing (delegates to tree-sitter; backward-compatible)
-├── tree_sitter_parser.py    # [#4] Multi-language: Python, JS/TS, Go, Rust
+├── tree_sitter_parser.py    # [#4] Multi-language: Python, JS/TS, Go, Rust, Java, C/C++, Ruby, Lua, PHP, Scala, Swift, Kotlin
 ├── cleanup.py               # Disk space and WAL file management
 ├── project.py          # Project isolation, path management, indexing mode
 ├── queries.py          # Read-only graph queries (dependencies, callers, file search)
@@ -96,16 +96,17 @@ project_root/
 
 ## 💡 Key Design Decisions
 
-- **Deterministic AST parsing** — No LLM calls; pure Python `ast` module for import extraction. This is intentional for speed, determinism, and zero external dependencies.
+- **Deterministic AST parsing** — No LLM calls; pure Python `ast` module for import extraction. This is intentional for speed, determinism, and zero external dependencies. (v1.2+: tree-sitter replaces `ast` for multi-language support — same principle: deterministic, no LLM.)
 - **SQLite graph storage** — WAL-enabled, thread-safe, with automatic checkpoint management. Chosen for reliability, zero-config setup, and Python stdlib availability.
 - **Hybrid validation** — mtime + size (fast path) then MD5 (authoritative slow path) for cache invalidation. The fast path avoids expensive MD5 computation for unchanged files.
 - **Test targeting via AST** — Maps source files to their test files by analyzing test file imports. More accurate than filename heuristics alone.
-- **Project isolation** — Each project gets its own `.understand/` artifact directory and project-specific ChromaDB collection. Prevents cross-project contamination.
+- **Project isolation** — Each project gets its own `.understand/` artifact directory and project-specific ChromaDB collection. Prevents cross-project contamination. [v1.4.1] ChromaDB is now project-scoped: `{project}/.understand/chroma/` for workspace projects, `memory_root/understand/chroma/` for the agent root (was: always `agent_root/.understand/chroma/` — orphaned vectors when a project's `.understand/` was deleted).
 - **Thread-local SQLite connections** — Each thread gets its own connection. Concurrent reads are safe; writes are serialized via `_write_lock`.
 - **WAL checkpoint every 100 writes** — Prevents WAL file bloat. Falls back to PASSIVE mode if TRUNCATE fails.
 - **Windows WAL repair** — `_repair_wal_on_windows()` deletes stale WAL artifacts on startup to prevent corruption from unclean shutdowns.
 - **Singleton GraphStore** — `__new__` with class-level lock ensures one instance per database path. Prevents connection pool exhaustion.
-- **Fail silently on parse errors** — Broken Python files return `frozenset()` instead of crashing the indexer. The codebase may contain syntax errors in files under development.
+- **Fail silently on parse errors** — Broken files return `frozenset()` (or a single module chunk for definitions) instead of crashing the indexer. The codebase may contain syntax errors in files under development. [v1.4.1] The optional `errors` parameter on `extract_imports` + `extract_definitions_ts` surfaces parse-failure messages when the caller wants them — graceful-fallback contract preserved.
+- **[v1.4.1] Multi-language query support** — `get_dependencies` + `get_callers` accept any supported file extension (was: Python-only `.py` hardcoding — silently dropped JS/TS/Go/Rust/Java/etc. dependency edges). `get_dependencies` keeps target_ids matching any supported extension OR raw module-name forms. `get_callers` queries both `file_path` and module-name form (Python dotted, JS relative `./`, Go package path).
 - **Critical paths trigger full suite** — Modifying `core/config.py`, `core/llm.py`, etc. triggers the full test suite because these files have global impact.
 - **Manual test mapping override** — `test_mapping.yaml` allows users to override AST-derived mappings. Takes priority over heuristic mappings.
 
@@ -113,10 +114,7 @@ project_root/
 
 ## ⚠️ Known Concerns
 
-- **`test_mapper.py` references undefined `yaml` import** — `_load_test_mapping()` uses `yaml.safe_load(f)` but `import yaml` is not at the top of the file and `PyYAML` may not be installed. If `.understand/test_mapping.yaml` exists but `PyYAML` is not installed, the function will raise a `NameError`. The `try/except Exception` catches this, but the error is silently swallowed — manual test mappings are never loaded. *(Suggestion: Add `import yaml` at the top with a `try/except ImportError` guard, or document that `PyYAML` is an optional dependency.)*
-- **GraphStore singleton never cleaned up** — `GraphStore._instances` is a class-level dict that grows as new database paths are requested. Instances are never removed. In long-running processes with many projects, the singleton dict accumulates entries. Each instance holds thread-local connections that are never closed unless `close()` is explicitly called. *(Suggestion: Add a `close_all()` class method that closes all instances and clears `_instances`. Call it during app shutdown.)*
-- **AST parser cache key includes full file path** — The `@lru_cache` key is `(project_id, file_path, md5_hash)`. The `file_path` is the full absolute path. If the project is moved, all cached entries become stale but remain in the LRU cache, wasting the 512-entry budget. *(Suggestion: Use the relative path as part of the cache key instead of the absolute path.)*
-- **No explicit `close()` calls in the codebase** — `GraphStore.close()` exists but is never called by any consumer. Thread-local connections remain open until process exit. On Windows, SQLite WAL files may not be cleaned up if the process crashes without calling `close()`. The `_repair_wal_on_windows()` handles this on next startup, but it's a workaround, not a solution. *(Suggestion: Register `GraphStore.close_all()` via `atexit` to ensure clean shutdown.)*
+*All previously-listed concerns (test_mapper yaml import, GraphStore singleton cleanup, AST cache key path, missing close() calls) were resolved in v1.0 — see [CHANGELOG.md](CHANGELOG.md) for details. No outstanding concerns as of v1.4.1.*
 
 ---
 
@@ -137,4 +135,4 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-17 (v1.3)
+*Last updated: 2026-07-21 (v1.4.1)

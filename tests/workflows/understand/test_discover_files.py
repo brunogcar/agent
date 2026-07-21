@@ -124,3 +124,50 @@ class TestSkipDirsConstant:
             assert required in ProjectManager.SKIP_DIRS, (
                 f"v1.3 skip_dir entry missing: {required}"
             )
+
+
+# ─── [v1.4.2] Additional gap-fill tests ──────────────────────────────────────
+
+class TestCancellationMidWalk:
+    """[v1.4.2] When cancellation fires mid-walk (not at entry), early return."""
+
+    def test_cancellation_mid_walk(self, mocker, tmp_path):
+        """Patch is_workflow_cancelled to return False on entry, True thereafter.
+
+        Creates 150 .py files so the every-100-files cancel check fires at
+        files_walked=100. The entry check passes (False), the mid-walk check
+        at file 100 returns True → discover returns {"status": "failed"} early.
+        """
+        from workflows.understand_impl.nodes.discover_files import node_discover_files
+
+        project_path = tmp_path / "proj"
+        (project_path / "code").mkdir(parents=True)
+        # discover_files constructs GraphStore at pm.artifact_root / "kg.db" —
+        # the .understand/ dir must exist or GraphStore raises OperationalError.
+        (project_path / ".understand").mkdir(parents=True)
+        # Create 150 .py files so the every-100-files check fires at file 100.
+        for i in range(150):
+            (project_path / "code" / f"f{i}.py").write_text("x = 1\n")
+
+        # is_workflow_cancelled: False on entry (1st call), True thereafter.
+        # Entry check is call 1 (returns False). Mid-walk check at files_walked=100
+        # is call 2 (returns True).
+        call_count = [0]
+
+        def fake_cancelled(tid):
+            call_count[0] += 1
+            return call_count[0] > 1  # False on entry, True thereafter
+
+        mocker.patch("workflows.base.is_workflow_cancelled", side_effect=fake_cancelled)
+
+        state = {
+            "project_path": str(project_path),
+            "is_agent_root": False,
+            "project_id": "test",
+            "trace_id": "t1",
+            "status": "running",
+        }
+        result = node_discover_files(state)
+
+        assert result["status"] == "failed"
+        assert "cancelled" in result["errors"][0].lower()

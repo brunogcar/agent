@@ -4,7 +4,7 @@
 
 ## ❌ NEVER DO
 
-1. **Never use LLM for parsing** — AST parsing is deterministic by design. Never replace `ast.parse()` with LLM-based extraction.
+1. **Never use LLM for parsing** — Tree-sitter parsing is deterministic by design. Never replace `tree_sitter_parser` with LLM-based extraction.
 2. **Never block the event loop** — AST parsing is CPU-bound. Always use `_AST_EXECUTOR` via `run_in_executor()`.
 3. **Never remove LRU cache** — The `@lru_cache` prevents re-parsing unchanged files. Clear it with `clear_ast_cache()` only for testing or major refactors.
 4. **Never share SQLite connections across threads** — Each thread gets its own connection. Thread-local connections are mandatory.
@@ -13,15 +13,18 @@
 7. **Never skip the fast path in hybrid validation** — Test index uses mtime + size (fast) then MD5 (slow). MD5 is expensive for large projects.
 8. **Never remove files from `CRITICAL_PATHS` without explicit user approval** — These files have global impact and trigger full test suite.
 9. **Never share graph data across projects** — Each project has its own `project_id` based on path hash. Project isolation is mandatory.
-10. **Never crash the indexer on parse errors** — Broken Python files should return `frozenset()`, not crash. Use `try/except` around `ast.parse()`.
+10. **Never crash the indexer on parse errors** — Broken files should return `frozenset()` (any language), not crash. Use `try/except` around the parse call. Surface failures via the optional `errors` parameter when the caller wants them.
 11. **Never create `.bak` files** — forbidden by project rules.
 12. **Never rewrite the entire file** — surgical edits only. Preserve existing code exactly.
 13. **Never skip `compileall` before `pytest`** — catches syntax errors early.
+14. **[v1.4.1] Never hardcode `.py` in query functions** — Use `ALL_SUPPORTED_EXTENSIONS` for multi-language support. `get_dependencies` + `get_callers` must accept any supported file extension (was: `.py`-only filter that silently dropped JS/TS/Go/Rust/Java/etc. dependency edges).
 
 ## ✅ ALWAYS DO
 
 1. **Always use `GraphStore.close_all()` on shutdown** — v1.0: registered via `atexit` in `server.py`. Without this, SQLite WAL files may not checkpoint → potential data loss.
 2. **Always use relative paths for AST cache keys** — v1.0: `parse_file_dependencies()` uses the original `file_path` (not resolved absolute) as the cache key. Cache hits survive project moves.
+3. **[v1.4.1] Always pass `pm: ProjectManager` to `get_project_vector_collection`** — was `project_id: str`. The path is computed from `pm` so it's properly project-scoped (`{project}/.understand/chroma/` for projects, `memory_root/understand/chroma/` for agent root). Internal callers (`upsert_file_vectors`, `query_similar_code`) take `pm` too.
+4. **[v1.4.1] Always surface tree-sitter parse errors via the optional `errors` parameter** — `extract_imports(source, language, errors=errors)` + `extract_definitions_ts(source, language, errors=errors)`. Lets callers (like `node_parse_and_store`) collect parse-failure messages instead of having them silently swallowed. Graceful-fallback contract preserved (still returns empty frozenset / module chunk).
 
 14. **Always use `ThreadPoolExecutor` for AST parsing** — CPU-bound work must not block the event loop.
 15. **Always use `@lru_cache(maxsize=512)` for parsed dependencies** — Cache key must include `project_id` and content hash for cross-project safety.
@@ -48,4 +51,4 @@
 
 ---
 
-*Last updated: 2026-07-17. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-21 (v1.4.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for component details, [CHANGELOG.md](CHANGELOG.md) for version history.*

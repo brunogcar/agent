@@ -15,7 +15,8 @@
 | `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. |
 | `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. |
 | `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. |
-| `tests/workflows/understand/` | Test files (12 test files + conftest — see Testing section below). |
+| `tests/workflows/understand/` | Test files (11 test files + conftest — see Testing section below). |
+| `tests/core/kgraph/` | [v1.4.2] kgraph-module tests (8 test files + conftest) — embeddings, tree_sitter_parser, queries, ast_parser, project, storage, test_mapper, kgraph_fixes. |
 
 ---
 
@@ -108,16 +109,25 @@ tests/workflows/understand/
 ├── test_graph.py                  # topology + WORKFLOW_METADATA [v1.4.1: conditional edge + safety_features]
 ├── test_state.py                  # _default_state structure [v1.4.1: pure defaults, skip_embeddings, no PM]
 ├── test_init_project.py           # node_init_project [v1.4.1: returns project_id + artifact_dir]
-├── test_helpers.py                # _chunked_md5 + sync nodes + trace ID + partial dicts
-├── test_embeddings.py             # [#3] extract_definitions + embed_texts + upsert_file_vectors [v1.4.1: pm signature, project-scoped path]
-├── test_tree_sitter_parser.py     # [#4] multi-language [v1.4.1: errors param for parse failure surfacing]
+├── test_helpers.py                # _chunked_md5 + trace ID propagation [v1.4.2: split — structure tests moved to test_structure.py]
 ├── test_doc_indexing.py           # v1.3: doc chunks [v1.4.1: non-zero line numbers]
-├── test_route_after_init.py       # [v1.4.1 P0-1] route_after_init conditional edge
-├── test_discover_files.py         # [v1.4.1] defensive bail, cancellation, GraphStore in try, SKIP_DIRS
-├── test_parse_and_store.py        # [v1.4.1] batch errors, cancellation, GraphStore in try, error cap, file-size recheck, batch size
+├── test_route_after_init.py       # [v1.4.1 P0-1] route_after_init conditional edge + [v1.4.2] integration test
+├── test_discover_files.py         # [v1.4.1] defensive bail, cancellation, GraphStore in try, SKIP_DIRS + [v1.4.2] mid-walk cancel
+├── test_parse_and_store.py        # [v1.4.1] batch errors, cancellation, GraphStore in try, error cap, file-size recheck, batch size + [v1.4.2] mid-parse cancel, error cap, embed batch failure
 ├── test_report.py                 # [v1.4.1 P2-4] vectors_created in summary
 ├── test_facade.py                 # [v1.4.1 P0-2 + P2-7 + P2-9] lazy import, return shape, path validation
-└── test_queries.py                # [v1.4.1 P1-2] multi-language get_dependencies + get_callers
+└── test_structure.py              # [v1.4.2] structural tests moved from test_helpers.py (sync nodes, no event loop hack, subpackage structure, completed_with_errors)
+
+tests/core/kgraph/                 # [v1.4.2] kgraph-module tests (moved from tests/workflows/understand/)
+├── conftest.py                    # [v1.4.2] mocker shim (mirrors understand conftest)
+├── test_ast_parser.py             # AST parser + cache (existing)
+├── test_embeddings.py             # [v1.4.2 MOVED] extract_definitions + embed_texts + upsert_file_vectors
+├── test_kgraph_fixes.py           # GraphStore.close_all() + AST cache key (existing)
+├── test_project.py                # ProjectManager (existing)
+├── test_queries.py                # [v1.4.2 MERGED] existing 3 tests + multi-language tests from understand
+├── test_storage.py                # GraphStore SQLite (existing)
+├── test_test_mapper.py            # test_mapper + CRITICAL_PATHS (existing)
+└── test_tree_sitter_parser.py     # [v1.4.2 MOVED] multi-language parser tests
 ```
 
 **Test coverage:**

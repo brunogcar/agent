@@ -271,18 +271,27 @@ files = find_relevant_files("/project", "fix the timeout in web scraper")
 
 Returns files that the given file imports (outgoing edges).
 
+[v1.4.1] Multi-language support — returns target_ids matching ANY supported extension (not just `.py`). Also keeps raw module-name forms (e.g. `react`, `fmt`, `std::collections::HashMap`) since they're useful for cross-language understanding + impact analysis even when they don't map 1:1 to a file.
+
 ```python
 deps = get_dependencies("/project", "core/llm.py")
 # Returns: ["core/config.py", "core/tracer.py", "core/llm_backend/client.py"]
+# For JS/TS files: deps may include "./utils", "react"
+# For Go: deps may include "fmt", "os", "strings"
+# For Rust: deps may include "std::collections::HashMap"
 ```
 
 #### `get_callers(project_path, file_path)`
 
 Returns files that import the given file (incoming edges).
 
+[v1.4.1] Multi-language support — queries BOTH the raw `file_path` (covers JS/TS/Go/Rust where imports ARE paths) AND a Python-style module-name transformation (covers Python `from core.config import ...` → stored target_id `core.config`). The transformation strips any supported extension (not just `.py`) before computing the dotted module name. For non-Python files this produces a candidate that just won't match any stored edge — harmless (SQL OR absorbs it).
+
 ```python
 callers = get_callers("/project", "core/config.py")
 # Returns: ["core/llm.py", "core/memory.py", "server.py"]
+# For JS/TS: get_callers("/project", "app.js") matches edges whose target_id is
+# "app.js", "app", or "./app" (covers default + relative imports).
 ```
 
 ---
@@ -408,7 +417,7 @@ defs = extract_definitions_ts(source_code, "typescript")
 # → [{"name": "foo", "type": "function", "source": "...", "line_start": 1, "line_end": 5}, ...]
 ```
 
-**Supported extensions:** `.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.go`, `.rs`
+**Supported extensions:** `.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.go`, `.rs`, `.java`, `.c`, `.h`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.rb`, `.lua`, `.php`, `.scala`, `.swift`, `.kt`
 **Adding a language:** 3-line change — add to `LANGUAGE_MAP`, `_IMPORT_NODE_TYPES`, `_DEFINITION_NODE_TYPES`.
 **Error recovery:** Tree-sitter handles syntax errors gracefully (extracts partial definitions, unlike `ast` which drops everything).
 **Backward compatibility:** `ast_parser.py` delegates to tree-sitter for Python — existing callers see no change.
@@ -441,20 +450,25 @@ vectors = embed_texts(["def foo(): pass", "class Bar: pass"])
 
 Project-specific ChromaDB collections for code embeddings, physically isolated from the main memory system.
 
+[v1.4.1] Signature changed: `pm: ProjectManager` (was: `project_id: str`). The ChromaDB path is now project-scoped: `{project}/.understand/chroma/` for workspace projects, `memory_root/understand/chroma/` for the agent root (was: always `agent_root/.understand/chroma/`).
+
 ```python
 from core.kgraph.vectors import upsert_file_vectors, query_similar_code
+from core.kgraph.project import ProjectManager
+
+pm = ProjectManager("/path/to/project")
 
 # Store embeddings for a file's definitions (delete old, insert new)
-count = upsert_file_vectors("abc123def456", "core/config.py", definitions, trace_id="t1")
+count = upsert_file_vectors(pm, "core/config.py", definitions, trace_id="t1")
 # → 5  (number of vectors stored; 0 if LM Studio unavailable)
 
 # Semantic search: find code similar to a query
-results = query_similar_code("abc123def456", "how does config loading work?", n_results=10)
+results = query_similar_code(pm, "how does config loading work?", n_results=10)
 # → [{"file_path": "core/config.py", "name": "Config.__init__", "type": "function",
 #     "line_start": 50, "line_end": 120, "distance": 0.23, "source": "..."}, ...]
 ```
 
-**Collection naming:** `kg_{project_id}_embeddings` (cosine similarity, stored in main ChromaDB path).
+**Collection naming:** `kg_{project_id}_embeddings` (cosine similarity, stored in project-scoped ChromaDB path — `{project}/.understand/chroma/` for projects, `memory_root/understand/chroma/` for agent root).
 **Delete-then-insert:** `upsert_file_vectors` deletes old vectors for the file before inserting, so renamed/deleted definitions don't leave stale vectors.
 
 ---
@@ -471,4 +485,4 @@ Prevents disk space exhaustion and WAL file bloat during long-term unattended op
 
 ---
 
-*Last updated: 2026-07-17 (v1.3)
+*Last updated: 2026-07-21 (v1.4.1)

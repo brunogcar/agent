@@ -3,13 +3,13 @@
 The `understand` workflow analyzes a **project's codebase** to build a dependency graph, map file relationships, and identify architectural patterns. It is the foundation for intelligent code navigation, impact analysis, and automated refactoring suggestions.
 
 **Key characteristics:**
-- **Multi-language static analysis** — Tree-sitter parser supports Python, JavaScript/TypeScript, Go, and Rust (v1.2). Extracts imports, class hierarchies, and function calls.
+- **Multi-language static analysis** — Tree-sitter parser supports Python, JavaScript/TypeScript, Go, Rust, Java, C/C++, Ruby, Lua, PHP, Scala, Swift, Kotlin (v1.2 + v1.4). Extracts imports, class hierarchies, and function calls.
 - **Document indexing** — `.md`/`.txt`/`.rst` files indexed via chonkie sentence chunking (v1.3). Doc chunks get vector embeddings with `type: "doc"` metadata — searchable alongside code definitions.
 - **Dependency graph** — Builds a graph in SQLite (via `GraphStore`) for fast querying
 - **Incremental updates** — Only re-parses changed files (MD5 hash comparison)
-- **Project isolation** — Each project gets its own graph database and artifact directory
+- **Project isolation** — Each project gets its own graph database and artifact directory; [v1.4.1] ChromaDB vectors are project-scoped (`{project}/.understand/chroma/` for projects, `memory_root/understand/chroma/` for agent root)
 - **Semantic search** — Per-definition code embeddings + doc chunk embeddings in ChromaDB via LM Studio `/v1/embeddings` (v1.1). Graceful degradation if embedding model is unavailable.
-- **LangGraph StateGraph** — Sync nodes, routed through `base.py`'s `graph.invoke()`. Supports checkpoint/resume.
+- **LangGraph StateGraph** — Sync nodes, routed through `base.py`'s `graph.invoke()`. [v1.4.1] Checkpoints saved on crash/cancel/timeout by `base.py`'s exception handler (mid-execution node-level resume is NOT supported — see ARCHITECTURE.md § "Checkpoint/resume").
 
 ---
 
@@ -49,17 +49,18 @@ print(result["result"])  # "Project analysis complete: 42 files, 156 dependencie
 
 ```ini
 # .env
-UNDERSTAND_MAX_FILE_SIZE_MB=1          # Max file size to parse (MB)
-UNDERSTAND_BATCH_SIZE=10               # Files per batch
-UNDERSTAND_TIMEOUT_SECONDS=300         # Workflow timeout (seconds)
+UNDERSTAND_BATCH_SIZE=10               # [v1.4.1 P2-14] Unused in Phase 1 (batch loop removed). Kept for backward compat.
+UNDERSTAND_EMBED_BATCH_SIZE=100         # [v1.4.1 P2-8] Phase-2 embedding batch size — definitions per HTTP call to LM Studio.
 ```
 
 ```python
 # core/config.py
-cfg.understand_max_file_size_mb = 1    # Max file size to parse (MB)
-cfg.understand_batch_size = 10          # Files per batch
-cfg.understand_timeout_seconds = 300    # Workflow timeout (seconds)
+cfg.understand_batch_size = 10          # [v1.4.1 P2-14] Unused in Phase 1 (kept for backward compat).
+cfg.understand_embed_batch_size = 100   # [v1.4.1 P2-8] Phase-2 embedding batch size.
 ```
+
+Other relevant env vars: `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED` (see kgraph [API.md](kgraph/API.md)).
+Hard limits are in code: `MAX_FILES_FOR_FOREGROUND=5000`, `MAX_FILE_SIZE_BYTES=1MB`, `MAX_TOTAL_PROJECT_SIZE_MB=500` (see `core/kgraph/project.py`).
 
 ---
 
@@ -74,4 +75,4 @@ cfg.understand_timeout_seconds = 300    # Workflow timeout (seconds)
 
 ---
 
-*Architecture: 4-node sync LangGraph StateGraph (init → discover → parse+store → report) with GraphStore dependency graph, incremental updates, batch processing, and ChromaDB vector indexing. Routed through base.py's `graph.invoke()`.*
+*Architecture: 4-node sync LangGraph StateGraph (init → discover → parse+store → report) with GraphStore dependency graph, incremental updates, batch processing, and ChromaDB vector indexing. Routed through base.py's `graph.invoke()`. [v1.4.1] Conditional init edge via `route_after_init` short-circuits to END on init failure.*

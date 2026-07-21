@@ -284,3 +284,191 @@ class TestEmbedBatchSizeFromCfg:
         assert vectors == 7
         # 3 upsert calls (one per batch).
         assert mock_collection.upsert.call_count == 3
+
+
+# ─── [v1.4.2] Additional gap-fill tests ──────────────────────────────────────
+
+class TestCancellationMidParse:
+    """[v1.4.2] When cancellation fires mid-parse (not at entry), partial files_parsed."""
+
+    def test_cancellation_mid_parse(self, mocker, tmp_path):
+        """Patch is_workflow_cancelled to return False on entry, True thereafter.
+
+        With 11 code files, the every-10-files cancel check fires at idx=10
+        AFTER files 0-9 are parsed. Verify status="failed" + 0 < files_parsed < 11.
+        """
+        from workflows.understand_impl.nodes.parse_and_store import (
+            node_parse_and_store, _reset_dropped_counter,
+        )
+        _reset_dropped_counter()
+
+        # 11 code files — idx=10 cancel check fires after 10 files parsed.
+        code_files = []
+        for i in range(11):
+            f = tmp_path / f"f{i}.py"
+            f.write_text(f"def fn{i}():\n    pass\n")
+            code_files.append((str(f), f"f{i}.py", "h", 0.0, 100))
+
+        mock_store = MagicMock()
+        mocker.patch(
+            "workflows.understand_impl.nodes.parse_and_store.GraphStore",
+            return_value=mock_store,
+        )
+        mock_pm_class = mocker.patch(
+            "workflows.understand_impl.nodes.parse_and_store.ProjectManager",
+        )
+        mock_pm_class.MAX_FILE_SIZE_BYTES = ProjectManager.MAX_FILE_SIZE_BYTES
+        mock_pm_class.return_value.project_id = "test"
+        mock_pm_class.return_value.artifact_root = tmp_path / ".understand"
+        mock_pm_class.return_value.is_agent_root = False
+        mocker.patch(
+            "workflows.understand_impl.nodes.parse_and_store.extract_imports",
+            return_value=frozenset(),
+        )
+        mocker.patch(
+            "workflows.understand_impl.nodes.parse_and_store.extract_definitions",
+            return_value=[],
+        )
+
+        # is_workflow_cancelled: False on entry (1st call), True thereafter.
+        # The entry check is call 1 (returns False). The idx=10 check is call 2
+        # (returns True). Side-effect list pattern: [False, True] — but
+        # subsequent calls (if any) would raise StopIteration, so we use a
+        # counter-based callable instead.
+        call_count = [0]
+
+        def fake_cancelled(tid):
+            call_count[0] += 1
+            return call_count[0] > 1  # False on entry, True thereafter
+
+        mocker.patch("workflows.base.is_workflow_cancelled", side_effect=fake_cancelled)
+
+        state = _state(tmp_path, code_files, skip_embeddings=True)
+        result = node_parse_and_store(state)
+
+        assert result["status"] == "failed"
+        # Some files were parsed before the cancel check fired at idx=10.
+        assert result["files_parsed"] > 0, "at least one file should parse before mid-parse cancel"
+        assert result["files_parsed"] < len(code_files), (
+            f"should NOT have parsed all 11 files (cancel fired mid-parse); "
+            f"got files_parsed={result['files_parsed']}"
+        )
+        assert "cancelled" in result["errors"][0].lower()
+
+
+class TestErrorCapExactly100PlusSummary:
+    """[v1.4.2] 150 failing files → errors list has exactly 100 entries + 1 summary."""
+
+    def test_error_cap_at_100(self, mocker, tmp_path):
+        from workflows.understand_impl.nodes.parse_and_store import (
+            node_parse_and_store, _ERRORS_CAP, _reset_dropped_counter,
+        )
+        _reset_dropped_counter()
+
+        # 150 fake file entries. We create the files on disk so stat() succeeds
+        # (skipping the "Stat failed" branch), but patch read_text to raise
+        # IOError so each parse produces a "Failed to parse" error.
+        files = []
+        for i in range(150):
+            f = tmp_path / f"f{i}.py"
+            f.write_text("x = 1\n")
+            files.append((str(f), f"f{i}.py", "h", 0.0, 10))
+
+        mock_store = MagicMock()
+        mocker.patch(
+            "workflows.understand_impl.nodes.parse_and_store.GraphStore",
+            return_value=mock_store,
+        )
+        mock_pm_class = mocker.patch(
+            "workflows.understand_impl.nodes.parse_and_store.ProjectManager",
+        )
+        mock_pm_class.MAX_FILE_SIZE_BYTES = ProjectManager.MAX_FILE_SIZE_BYTES
+        mock_pm_class.return_value.project_id = "test"
+        mock_pm_class.return_value.artifact_root = tmp_path / ".understand"
+        mock_pm_class.return_value.is_agent_root = False
+
+        # read_text raises — stat succeeds (file exists), then read_text fails
+        # so each file produces a "Failed to parse {rel_path}: ..." error.
+        def raising_read_text(self, *args, **kwargs):
+            raise IOError("simulated read failure")
+
+        mocker.patch("pathlib.Path.read_text", raising_read_text)
+
+        state = _state(tmp_path, files, skip_embeddings=True)
+        result = node_parse_and_store(state)
+
+        # The errors list should have EXACTLY _ERRORS_CAP (100) + 1 summary = 101.
+        assert len(result["errors"]) == _ERRORS_CAP + 1, (
+            f"errors list should be {_ERRORS_CAP + 1} (100 cap + 1 summary), "
+            f"got {len(result['errors'])}"
+        )
+        # First 100 entries are individual failure messages ("Failed to parse ...").
+        for i, err in enumerate(result["errors"][:_ERRORS_CAP]):
+            assert "Failed to parse" in err or "simulated read failure" in err, (
+                f"errors[{i}] should be an individual failure message, got: {err}"
+            )
+        # Last entry is the "... and N more" summary.
+        last = result["errors"][-1]
+        assert "more errors" in last.lower() or "capped" in last.lower(), (
+            f"last entry should be the cap summary, got: {last}"
+        )
+        # 150 total failures - 100 kept = 50 dropped.
+        assert "50" in last, (
+            f"summary should mention 50 dropped errors, got: {last}"
+        )
+
+
+class TestEmbeddingBatchFailureAccumulated:
+    """[v1.4.2] Failed embedding batch error is accumulated even if other batches succeed."""
+
+    def test_embedding_batch_failure_accumulated(self, mocker, tmp_path):
+        """Mock embed_texts to return None for 1 batch + vectors for the next.
+
+        Verifies the failure is recorded in the errors list even though the
+        subsequent batch succeeded — i.e., errors accumulate, they don't get
+        overwritten by later successes.
+        """
+        from workflows.understand_impl.nodes.parse_and_store import (
+            _batch_embed_and_store, _reset_dropped_counter,
+        )
+        _reset_dropped_counter()
+
+        # 4 items, batch_size=2 → 2 batches.
+        definitions = [
+            (f"file{i}.py", {"name": f"fn{i}", "type": "function", "source": "x",
+                             "line_start": 1, "line_end": 1})
+            for i in range(4)
+        ]
+        mock_collection = MagicMock()
+        mock_pm = MagicMock(project_id="test", is_agent_root=False,
+                            artifact_root=tmp_path / ".understand")
+
+        # Patch cfg to use batch_size=2 so we get 2 batches.
+        mocker.patch(
+            "workflows.understand_impl.nodes.parse_and_store.cfg.understand_embed_batch_size",
+            2,
+        )
+        mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
+
+        # Batch 1 (2 items) → None (failure). Batch 2 (2 items) → 2 vectors (success).
+        mocker.patch(
+            "core.kgraph.embeddings.embed_texts",
+            side_effect=[None, [[0.1, 0.2], [0.3, 0.4]]],
+        )
+
+        vectors, errors = _batch_embed_and_store(
+            mock_collection, mock_pm, definitions, [], "t1"
+        )
+
+        # Batch 2 succeeded → 2 vectors stored.
+        assert vectors == 2, f"expected 2 vectors (batch 2 only), got {vectors}"
+        # Batch 1 failed → 1 error in the list.
+        assert len(errors) == 1, (
+            f"expected 1 error (batch 1 failure), got {len(errors)}: {errors}"
+        )
+        assert "batch 1" in errors[0].lower(), (
+            f"error should reference batch 1, got: {errors[0]}"
+        )
+        assert "skipped" in errors[0].lower() or "failed" in errors[0].lower(), (
+            f"error should mention skip/failure, got: {errors[0]}"
+        )

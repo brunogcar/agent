@@ -350,3 +350,62 @@ class TestProjectScopedVectorPath:
         assert "path" in captured_path
         expected = str(cfg.memory_root / "understand" / "chroma")
         assert captured_path["path"] == expected
+
+
+# ─── [v1.4.2] extract_doc_chunks line numbers ───────────────────────────────
+# (The `test_chromadb_path_project_scoped` test from the v1.4.2 task description
+# is already covered by TestProjectScopedVectorPath above — added in Phase 1.)
+
+class TestDocChunkLineNumbers:
+    """[v1.4.2] extract_doc_chunks computes non-zero line_start/line_end.
+
+    Tests the kgraph-level extract_doc_chunks directly (the understand-side
+    test_doc_indexing.py has equivalent coverage at the node-integration
+    level — these tests are here because extract_doc_chunks lives in
+    core.kgraph.embeddings, which is the right home for kgraph-module tests
+    after the v1.4.2 test refactor).
+    """
+
+    def test_doc_chunk_line_numbers(self):
+        """Multi-line .md content → chunks carry non-zero line numbers.
+
+        Was: 0/0 because chonkie chunks don't expose line numbers directly
+        (v1.4.1 P2-3 fix). Now: line_start is computed by scanning the
+        original content for the chunk's first character.
+        """
+        from core.kgraph.embeddings import extract_doc_chunks
+        multi_line_content = "line 1\nline 2\nline 3\nline 4"
+        # Patch chonkie to return a chunk starting at line 3.
+        with patch("tools.file_ops.actions.read_file._chunk_text",
+                   return_value=["line 3\nline 4"]):
+            chunks = extract_doc_chunks(multi_line_content, "test.md", "t1")
+        assert len(chunks) == 1
+        # "line 3\nline 4" starts at line 3 (1-based) and ends at line 4.
+        assert chunks[0]["line_start"] == 3, (
+            f"expected line_start=3, got {chunks[0]['line_start']}"
+        )
+        assert chunks[0]["line_end"] == 4, (
+            f"expected line_end=4, got {chunks[0]['line_end']}"
+        )
+
+    def test_first_chunk_starts_at_line_1(self):
+        """[v1.4.1 P2-3] A chunk matching the start of content has line_start=1."""
+        from core.kgraph.embeddings import extract_doc_chunks
+        # Note: NO trailing newline — chunk_text.count("\n") = 1, so line_end = 1 + 1 = 2.
+        content = "first line\nsecond line"
+        with patch("tools.file_ops.actions.read_file._chunk_text",
+                   return_value=["first line\nsecond line"]):
+            chunks = extract_doc_chunks(content, "test.md", "t1")
+        assert len(chunks) == 1
+        assert chunks[0]["line_start"] == 1
+        assert chunks[0]["line_end"] == 2  # line_start (1) + 1 newline in chunk = 2
+
+    def test_chunk_not_in_content_falls_back_to_zero(self):
+        """[v1.4.1 P2-3] Defensive — chunk text not found → line_start=0."""
+        from core.kgraph.embeddings import extract_doc_chunks
+        content = "completely different content"
+        with patch("tools.file_ops.actions.read_file._chunk_text",
+                   return_value=["this chunk text is not in the content"]):
+            chunks = extract_doc_chunks(content, "test.md", "t1")
+        assert len(chunks) == 1
+        assert chunks[0]["line_start"] == 0
