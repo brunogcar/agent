@@ -13,6 +13,8 @@
 | `core/metrics.py` | `track_node()`, `track_task_status()`, `generate_metrics()` — Prometheus registry | `core/gateway_backend/metrics.py` (endpoint) |
 | `core/path_guard.py` | `resolve_path()`, `check_protected_file()`, `check_git_operation()`, `make_path_error()` | `tools/file.py`, `tools/git.py`, `tools/browser/actions/upload.py`, `tools/file_ops/helpers.py`, `tools/git_ops/helpers.py`, `tools/file_ops/actions/*.py`, `skills/b3/data.py`, `skills/b3/export.py`, `skills/b3/paths.py` |
 | `core/symbol_offload.py` | `offload_to_file()`, `drill_down()`, `is_symbol_ref()`, `_auto_summary()` — TencentDB-inspired symbol offloading (verbose state → per-trace file + compact SymbolRef) | `workflows/autocode_impl/nodes/summarize_context.py`, `core/memory_backend/read_ops.py`, `core/sleep_learn/injector.py`, `tests/core/test_symbol_offload.py` |
+| `core/atomic_write.py` | `atomic_write(path, content, *, encoding)` — tempfile + fsync + os.replace; parent dir creation; tempfile cleanup on failure (v1.5) | `workflows/autoresearch_impl/nodes/modify.py`, `workflows/autoresearch_impl/nodes/decide.py` (parallel winner copy), `workflows/autocode_impl/patch.py` (apply_patch + apply_patches), `workflows/autocode_impl/nodes/write_new_files.py`, `workflows/autocode_impl/nodes/create_skill.py`, `tests/core/test_atomic_write.py` |
+| `core/backoff_retry.py` | `retry_with_backoff(fn, retries, base_delay, cancellation_check, tid)` — exponential backoff + interruptible sleep + cancellation integration (v1.5) | `workflows/autocode_impl/helpers.py::_call`, `workflows/autoresearch_impl/nodes/propose.py::_call_planner`, `tests/core/test_backoff_retry.py` |
 | `core/time_utils.py` | `now()`, `parse_iso()`, `parse_human()`, `parse_duration()`, `cron_next_fire()`, `compute_missed_fires()`, `_build_cron_trigger()` — tz-aware time + cron helpers, reads `cfg.timezone` | `tools/notify_ops/` (schedule/recurring/state/helpers), `tools/schedule_ops/` (state/actions), `tests/core/test_time_utils.py` |
 | `core/config.py` | `cfg.agent_root`, `cfg.workspace_root`, `cfg.is_protected()` | `path_guard.py` (root resolution), all tools (env vars) |
 | `core/tracer.py` | `tracer.new_trace()` | `path_guard.py` (error trace_id injection) |
@@ -26,6 +28,8 @@ core/
 ├── utils.py              # Output compression / truncation helpers
 ├── br_validator.py       # Brazilian financial data validation (BRL, dates, tickers)
 ├── symbol_offload.py     # TencentDB-inspired symbol offloading (verbose state → file + SymbolRef)
+├── atomic_write.py       # Atomic file writes (tempfile + fsync + os.replace)  [v1.5]
+├── backoff_retry.py          # LLM retry with exponential backoff + cancellation  [v1.5]
 ├── citations.py          # Per-trace citation tracker (thread-safe singleton)
 ├── contracts.py          # Standardized ok()/fail() responses + ToolCall validation
 ├── metrics.py            # Prometheus metrics registry (graceful degradation)
@@ -64,4 +68,4 @@ D:\mcp\agent\venv\Scripts\pytest.exe tests/ -W error --tb=short -v
 
 ---
 
-*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*
+*Last updated: 2026-07-25 (v1.5 — added atomic_write.py + backoff_retry.py).*

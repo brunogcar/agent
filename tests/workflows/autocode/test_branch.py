@@ -21,17 +21,19 @@ class TestGitOpsFallback:
 
     def test_commit_fallback_to_agent_root(self, temp_agent_root):
         from workflows.autocode_impl.git_ops import _git_commit
-        with patch("tools.git.git") as mock_git:
-            mock_git.side_effect = [
-                {"status": "ok", "count": 1},
-                {"status": "committed", "commit_hash": "abc123"},
-            ]
-            # [v1.4 P1] _git_commit now returns a dict with {committed, sha}.
-            result = _git_commit("test commit", tid="t2", project_root="")
-            assert result["sha"] == "abc123"
-            assert result["committed"] is True
-            for call in mock_git.call_args_list:
-                assert call[1]["root"] == str(temp_agent_root)
+        # [v3.10 / centralize-utils Phase B] _git_commit is now a direct alias
+        # for `workflow_helpers.commit` — signature is
+        # (project_root, message, target_file="", tid). It uses `_git()`
+        # (3 calls: add, commit, rev-parse) instead of the `git()` facade
+        # (2 calls: status, commit).
+        #
+        # When project_root="", commit() returns {committed: False, reason:
+        # "no project_root"} — it does NOT fall back to cfg.agent_root (the
+        # old vcs_ops._git_commit did, but the new helper is stricter).
+        # So we test the empty-project_root path returns the structured dict.
+        result = _git_commit("", "test commit", tid="t2")
+        assert result["committed"] is False
+        assert "no project_root" in result.get("reason", "")
 
 
 class TestGitOpsOverride:
@@ -39,18 +41,23 @@ class TestGitOpsOverride:
 
     def test_commit_uses_project_root(self, tmp_path):
         from workflows.autocode_impl.git_ops import _git_commit
-        custom_root = str(tmp_path / "workspace_project")
-        with patch("tools.git.git") as mock_git:
+        custom_root = tmp_path / "workspace_project"
+        custom_root.mkdir()
+        # [v3.10 / centralize-utils Phase B] New signature + _git() runner.
+        # Patch _git (the workflow_helpers runner) — 3 calls: add, commit,
+        # rev-parse --short HEAD.
+        with patch("tools.git_ops.workflow_helpers._git") as mock_git:
             mock_git.side_effect = [
-                {"status": "ok", "count": 2},
-                {"status": "committed", "commit_hash": "def456"},
+                (0, "", ""),                          # git add -A
+                (0, "[master def456]", ""),            # git commit
+                (0, "def456\n", ""),                    # git rev-parse --short HEAD
             ]
-            # [v1.4 P1] _git_commit now returns a dict with {committed, sha}.
-            result = _git_commit("override commit", tid="t4", project_root=custom_root)
+            result = _git_commit(str(custom_root), "override commit", tid="t4")
             assert result["sha"] == "def456"
             assert result["committed"] is True
+            # All _git calls must use custom_root as cwd.
             for call in mock_git.call_args_list:
-                assert call[1]["root"] == custom_root
+                assert call[0][1] == custom_root
 
 
 class TestNodeGitBranchScoping:
@@ -72,7 +79,11 @@ class TestNodeGitBranchScoping:
             mock_branch.return_value = True
             node_git_branch(state)
             mock_branch.assert_called_once()
-            assert mock_branch.call_args[0][2] == custom_root
+            # [v3.10 / centralize-utils Phase B] New signature:
+            # create_branch(project_root, branch, tid) — project_root is FIRST.
+            # call_args[0] = (project_root, branch, tid)
+            assert mock_branch.call_args[0][0] == custom_root  # project_root
+            assert mock_branch.call_args[0][1] == "feat/scoped"  # branch
 
 
 class TestNodeGitBranchErrorHandling:

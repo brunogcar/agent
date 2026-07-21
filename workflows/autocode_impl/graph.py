@@ -69,7 +69,7 @@ from workflows.autocode_impl.routes import (
 # + 2 audit pipeline nodes [v3.7 F7], debug loop, create_skill + audit bypasses).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "3.7",  # [v3.7 F7] Audit pipeline (node_audit_scan + node_audit_report); [v3.4] HiTL approval gate; [v3.1] Debug loop improvements
+    "version": "3.8",  # [v3.8] centralize-workflow-utils: _git_commit + _git_create_branch moved to tools/git_ops/workflow_helpers.py; _call uses core/backoff_retry.py; atomic_write uses core/atomic_write.py. [v3.7 F7] Audit pipeline; [v3.4] HiTL; [v3.1] Debug loop
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [

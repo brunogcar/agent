@@ -24,6 +24,7 @@ import ast
 import re
 from pathlib import Path
 
+from core.atomic_write import atomic_write
 from workflows.autocode_impl.state import AutocodeState, EXECUTOR_TIMEOUT
 from workflows.autocode_impl.constants import CREATE_SKILL_SYSTEM
 from workflows.autocode_impl.helpers import _call, _parse_json
@@ -116,18 +117,10 @@ def node_create_skill(state: AutocodeState) -> dict:
                 base = cfg.agent_root / "skills"
 
             skill_path = base / f"{skill_name}.py"
-            skill_path.parent.mkdir(parents=True, exist_ok=True)
-            # [Pre-2.0 Fix] Atomic write — was: direct write_text (crash mid-write
-            # corrupts the skill file). Now: tempfile + os.replace.
-            import tempfile
-            import os
-            with tempfile.NamedTemporaryFile(
-                mode='w', encoding='utf-8', dir=skill_path.parent,
-                delete=False, suffix='.tmp'
-            ) as tmp:
-                tmp.write(skill_file_content)
-                tmp_path = Path(tmp.name)
-            os.replace(tmp_path, skill_path)
+            # [Pre-2.0 Fix / v1.10 Phase A] Atomic write — was: direct write_text
+            # (crash mid-write corrupts the skill file). Now: tempfile + os.replace
+            # via the shared core.atomic_write helper (replaces the inline block).
+            atomic_write(skill_path, skill_file_content)
 
             updates["skill_path"] = str(skill_path)
             updates["skill_created"] = True  # [P2 #17] Set flag so autocode.py can detect it
@@ -169,15 +162,17 @@ def node_create_skill(state: AutocodeState) -> dict:
 
             # [v1.2 #36] Git commit the new skill file
             try:
+                # [v1.10 / Phase B] _git_commit signature changed: now
+                # `commit(project_root, message, target_file="", tid="")`
+                # (project_root FIRST). The backward-compat alias in
+                # workflows.autocode_impl.git_ops points at the new function
+                # object — so we use the new arg order here.
                 from workflows.autocode_impl.git_ops import _git_commit
-                # NOTE: _git_commit signature is (message, tid, project_root) —
-                # no `files=` param. It commits the entire working tree (which
-                # includes the new skill file). Spec called for a `files=` param
-                # but vcs_ops._git_commit doesn't accept one — we adapt here.
                 _git_commit(
-                    message=f"skill(autocode): {skill_name}",
-                    tid=tid,
-                    project_root=state.get("project_root", ""),
+                    state.get("project_root", ""),
+                    f"skill(autocode): {skill_name}",
+                    "",
+                    tid,
                 )
                 tracer.step(tid, "node_create_skill", f"Committed skill: {skill_name}")
             except Exception as e:

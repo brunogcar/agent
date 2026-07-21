@@ -36,7 +36,7 @@ workflows/autoresearch_impl/
     ├── modify.py                     # node_modify — atomic write + path/protected guards + [v1.4 N8] md5 dedup + [v1.6] parallel N-temp-dirs path + [v1.9 C4] seen_hashes dedup (survives history cap)
     ├── run_experiment.py             # node_run_experiment — time-boxed subprocess + [v1.6] parallel N-subprocess path + [v1.8 N5] full output logged to .autoresearch/logs/{iteration}.log BEFORE truncation + [v1.8 N10] pre-extract metric + [v1.9 D1] log dir relocated to .autoresearch/logs/ + [v1.9 D2] rotation cap (AUTORESEARCH_LOG_DIR_MAX_MB)
     ├── evaluate.py                   # node_evaluate — regex metric extraction + [v1.6] parallel N-metric extraction + [v1.8 N10] reads pre_extracted_metric FIRST (skips re-extraction from truncated output)
-    ├── decide.py                     # node_decide — keep (commit) / discard (reset) + status reset + [v1.5 N4] _record_failure_memory on discard + [v1.6] parallel pick-best + copy winner to real target_file + cleanup temp dir + [v1.7 N7] save_checkpoint on every keep + [v1.9 A1] memory gate (skip improving losers) + [v1.9 A3] atomic winner copy + [v1.9 B3] git toplevel verify + [v1.9 E1] NaN handling
+    ├── decide.py                     # node_decide — keep (commit) / discard (reset) + status reset + [v1.5 N4] _record_failure_memory on discard + [v1.6] parallel pick-best + copy winner to real target_file + cleanup temp dir + [v1.7 N7] save_checkpoint on every keep + [v1.9 A1] memory gate (skip improving losers) + [v1.9 A3] atomic winner copy + [v1.9 B3] git toplevel verify + [v1.9 E1] NaN handling + [v1.10 Phase B] _git_commit + _git_reset_hard imported from tools.git_ops.workflow_helpers (local raw-subprocess definitions deleted); cancellation check before git commit
     ├── log.py                        # node_log — append to results.tsv (6-col w/ content_hash) + history (capped at 100) + [v1.4] content_hash + [v1.6] parallel N-row ledger + [v1.8 N6] tokens + [v1.9 A2] 6-col TSV + [v1.9 C1] batched atomic parallel write + [v1.9 C4] seen_hashes append + [v1.9 D5] iteration_count increment
     └── reflect.py                    # [v1.5 N1] node_reflect — LLM strategy reflection every N iterations (no-op otherwise) + [v1.8 N6] unpacks _call_planner tuple + [v1.9 C5] history cap at 20 + [v1.9 D5] fires on iteration_count (not experiment_count)
 ```
@@ -213,4 +213,4 @@ tests/workflows/autoresearch/
 
 ---
 
-*Last updated: 2026-07-24 (v1.9). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-25 (v1.10). See [CHANGELOG.md](CHANGELOG.md) for version history.*

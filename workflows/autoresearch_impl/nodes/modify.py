@@ -43,41 +43,18 @@ the v1.5 single-write path runs unchanged.
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 from pathlib import Path
 
+from core.atomic_write import atomic_write
 from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
 
 
-def _atomic_write(path: Path, content: str) -> None:
-    """Write content to path atomically.
-
-    Writes to a tempfile in the same directory, then os.replace()s it into
-    place. os.replace is atomic on POSIX and Windows for same-filesystem
-    renames, so readers never see a partial file.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # tempfile in the same directory guarantees same-filesystem rename
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=str(path.parent),
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-    except Exception:
-        # Clean up the tempfile on failure — don't leak .tmp files
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+# [v1.10 / Phase A] `atomic_write` was extracted to `core/atomic_write.py`.
+# The local `_atomic_write` definition is removed — all callers below now
+# use `atomic_write` directly. Module-level alias kept for backward compat
+# with `decide.py` (parallel winner copy) which still imports `_atomic_write`.
+_atomic_write = atomic_write
 
 
 def _check_target_safety(target_path: Path, target_file: str, project_root: str, tid: str) -> str:
@@ -184,7 +161,7 @@ def node_modify(state: AutoresearchState) -> dict:
                 continue
 
             try:
-                _atomic_write(target_path, new_content)
+                atomic_write(target_path, new_content)
                 tracer.step(
                     tid, "modify",
                     f"parallel proposal {i}: wrote {len(new_content)} chars to {target_path}",
@@ -281,7 +258,7 @@ def node_modify(state: AutoresearchState) -> dict:
     )
 
     try:
-        _atomic_write(target_path, new_content)
+        atomic_write(target_path, new_content)
     except Exception as e:
         tracer.error(tid, "modify", f"atomic write failed: {e}")
         return {

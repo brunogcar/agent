@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from workflows.autocode_impl.state import AutocodeState, _get_debug, _get_verify, _get_vcs, _get_plan  # [v2.5+v2.6+v2.1+v2.2] accessors
 from workflows.autocode_impl.helpers import _should_skip_node
-from workflows.autocode_impl.vcs_ops import _git_commit
+# [v1.10 / Phase B] _git_commit now imported from tools.git_ops.workflow_helpers
+# (was: workflows.autocode_impl.vcs_ops). The vcs_ops.py shim still exists for
+# github_* + swarm helpers; the local git ops were extracted to workflow_helpers.
+# Signature change: `commit(project_root, message, target_file="", tid="")`.
+from tools.git_ops.workflow_helpers import commit as _git_commit
 from core.tracer import tracer
 
 def node_commit(state: AutocodeState) -> dict:
@@ -51,7 +55,9 @@ def node_commit(state: AutocodeState) -> dict:
     root = state.get("project_root")
     # [v1.4 P1] _git_commit now returns a dict — extract sha (with backward-compat
     # for callers/tests that mock it to return a string).
-    result = _git_commit(msg, tid, root)
+    # [v1.10 / Phase B] _git_commit signature changed: now
+    # `commit(project_root, message, target_file="", tid="")` (project_root FIRST).
+    result = _git_commit(root or "", msg, "", tid)
     sha = result.get("sha", "") if isinstance(result, dict) else result
     tracer.step(tid, "commit", f"sha: {sha} @ {root or 'agent_root'}")
 

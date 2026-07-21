@@ -48,7 +48,6 @@ resuming from.
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +57,34 @@ from workflows.autoresearch_impl.state import AutoresearchState
 # [v1.9 A3] Import _atomic_write for the parallel winner copy — was using
 # non-atomic real_path.write_text(...) which leaves the target_file empty/
 # partial on SIGKILL/OOM mid-write. (minimax Bug #3)
-from workflows.autoresearch_impl.nodes.modify import _atomic_write
+# [v1.10 / Phase A] _atomic_write now lives in core.atomic_write (alias kept
+# in modify.py for backward compat).
+from core.atomic_write import atomic_write as _atomic_write
+# [v1.10 / Phase B] _git_commit + _git_reset_hard extracted to
+# tools.git_ops.workflow_helpers. Old local `_git_commit(message, project_root,
+# tid, target_file) -> str` is replaced by `commit(project_root, message,
+# target_file, tid) -> dict`. We import under the old name `_git_commit_w`
+# so the parallel-path call sites can be updated surgically.
+from tools.git_ops.workflow_helpers import (
+    commit as _git_commit_w,
+    reset_hard as _git_reset_hard,
+)
+
+
+def _is_cancelled(tid: str) -> bool:
+    """[v1.10 / Phase B] Lazy + safe cancellation check.
+
+    Wraps `workflows.base.is_workflow_cancelled` in a try/except so a broken
+    import doesn't crash the node. Returns False on any failure — fail-open
+    so a broken cancellation system doesn't halt the experiment loop.
+    """
+    if not tid:
+        return False
+    try:
+        from workflows.base import is_workflow_cancelled
+        return is_workflow_cancelled(tid)
+    except Exception:
+        return False
 
 
 def _is_improvement(new: float, best: float, direction: str) -> bool:
@@ -91,146 +117,37 @@ def _is_improvement(new: float, best: float, direction: str) -> bool:
     return new < best
 
 
+# [v1.10 / Phase B] The OLD local _git_commit (raw subprocess.run) +
+# _git_reset_hard (raw subprocess.run with toplevel verify) were DELETED —
+# both are now imported from tools.git_ops.workflow_helpers. See the imports
+# at the top of this file. The _git_commit wrapper below preserves the old
+# (message, project_root, tid, target_file) -> str call shape used by the
+# parallel + single decide paths.
+
+
 def _git_commit(message: str, project_root: str, tid: str, target_file: str = "") -> str:
-    """Stage the target_file and commit. Returns the short commit SHA.
+    """[v1.10 / Phase B] Backward-compat wrapper around
+    `tools.git_ops.workflow_helpers.commit`.
 
-    Uses subprocess directly (not the git tool) to keep this node self-
-    contained — the git tool's commit action goes through compression and
-    tracing that adds noise to the experiment loop.
+    Old signature: `(message, project_root, tid, target_file) -> str`.
+    New signature: `commit(project_root, message, target_file, tid) -> dict`.
 
-    v1.2.1 (P3-1): git add <target_file> instead of git add -A (was staging
-    ALL files — could commit unexpected artifacts from the experiment subprocess).
+    This wrapper preserves the OLD call shape so the parallel + single
+    decide paths don't need to be rewritten — they call `_git_commit(msg,
+    project_root, tid, target_file)` and expect a short SHA string (or ""
+    on failure). Internally, we adapt to the new dict return.
 
-    Returns "" if the commit failed (caller treats as discard — v1.3 P1-1).
+    Returns the short SHA string, or "" on failure (nothing to commit,
+    exception, etc.).
     """
-    try:
-        # v1.2.1 (P3-1): Stage only the target_file, not all changes.
-        add_cmd = ["git", "add", target_file] if target_file else ["git", "add", "-A"]
-        subprocess.run(
-            add_cmd,
-            cwd=project_root or None,
-            capture_output=True,
-            timeout=15,
-        )
-        r = subprocess.run(
-            ["git", "commit", "-m", message],
-            cwd=project_root or None,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if r.returncode != 0:
-            tracer.warning(tid, "decide", f"git commit failed: {r.stderr.strip()[:200]}")
-            return ""
-        # Get the short SHA of the new commit
-        r = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=project_root or None,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except Exception as e:
-        tracer.warning(tid, "decide", f"git commit exception: {e}")
-        return ""
+    result = _git_commit_w(project_root, message, target_file, tid)
+    if isinstance(result, dict) and result.get("committed"):
+        return result.get("sha", "")
+    return ""
 
 
-def _git_reset_hard(project_root: str, tid: str) -> bool:
-    """Discard uncommitted changes via `git reset --hard HEAD` + `git clean -fd`.
-
-    Used when an experiment made the metric worse (or failed to parse) — we
-    want to restore the working tree to the last-known-good state so the
-    next experiment starts from a clean baseline.
-
-    [v1.3 P1-4] Safety guard — refuse to reset without an explicit
-    `project_root` or when `project_root` isn't a git repo. Prevents
-    accidentally resetting the agent's own working tree (or a parent
-    directory that happens to be a repo) when state is misconfigured.
-
-    [v1.9 B3] Toplevel verify — on Windows, `Path(project_root).is_dir()`
-    returns True for junctions pointing to non-git directories. The `.git`
-    check mitigates this, but if the junction points to a DIFFERENT git repo,
-    the reset would nuke that repo's working tree. Now we run
-    `git rev-parse --show-toplevel` and verify the returned path matches
-    `Path(project_root).resolve()`. If they don't match, refuse to reset +
-    trace a warning. (qwen P1-4)
-    """
-    # [v1.3 P1-4] Safety guard — refuse to reset without explicit project_root
-    if not project_root:
-        tracer.warning(tid, "decide", "git reset skipped — no project_root specified")
-        return False
-    # [v1.3 P1-4] Verify .git exists — don't reset in a non-repo directory
-    if not (Path(project_root) / ".git").exists():
-        tracer.warning(
-            tid, "decide",
-            f"git reset skipped — {project_root} is not a git repo",
-        )
-        return False
-    # [v1.9 B3] Verify git toplevel matches project_root — prevents resetting
-    # a DIFFERENT git repo when project_root is a junction/symlink (Windows)
-    # or a subdirectory of another repo. (qwen P1-4)
-    try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=project_root or None,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if r.returncode != 0:
-            tracer.warning(
-                tid, "decide",
-                f"git rev-parse --show-toplevel failed — skipping reset: "
-                f"{r.stderr.strip()[:200]}",
-            )
-            return False
-        toplevel = r.stdout.strip()
-        try:
-            resolved_root = str(Path(project_root).resolve())
-        except Exception:
-            resolved_root = project_root
-        # Compare resolved paths (handles symlinks, .., etc.). Some OSes
-        # report trailing slashes differently, so compare via Path.
-        try:
-            if Path(toplevel).resolve() != Path(project_root).resolve():
-                tracer.warning(
-                    tid, "decide",
-                    f"git reset skipped — toplevel mismatch: "
-                    f"git says {toplevel!r}, project_root resolves to "
-                    f"{resolved_root!r} (possible symlink/junction to a "
-                    f"different repo — refusing to nuke its working tree)",
-                )
-                return False
-        except Exception:
-            # If path resolution fails, be conservative and skip the reset.
-            tracer.warning(
-                tid, "decide",
-                f"git reset skipped — path resolution failed for toplevel "
-                f"{toplevel!r} vs project_root {project_root!r}",
-            )
-            return False
-    except Exception as e:
-        # Missing git binary, permission error, etc. — be conservative.
-        tracer.warning(tid, "decide", f"git toplevel verify exception: {e}")
-        return False
-    try:
-        subprocess.run(
-            ["git", "reset", "--hard", "HEAD"],
-            cwd=project_root or None,
-            capture_output=True,
-            timeout=15,
-        )
-        subprocess.run(
-            ["git", "clean", "-fd"],
-            cwd=project_root or None,
-            capture_output=True,
-            timeout=15,
-        )
-        return True
-    except Exception as e:
-        tracer.warning(tid, "decide", f"git reset exception: {e}")
-        return False
+# [v1.10 / Phase B] _git_reset_hard is imported from tools.git_ops.workflow_helpers
+# (see top-of-file imports). The local raw-subprocess definition is DELETED.
 
 
 def _record_failure_memory(
@@ -324,6 +241,25 @@ def node_decide(state: AutoresearchState) -> dict:
     metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
     goal = state.get("goal", "")  # [v1.5 N4] forwarded to memory.store_procedural
     parallel_count = int(state.get("parallel_count", 1) or 1)
+
+    # [v1.10 / Phase B] Cancellation check — before the git commit. If cancelled,
+    # return status="failed" so the loop exits. In the parallel path, still
+    # clean up the temp dir (the try/finally below handles that).
+    if _is_cancelled(tid):
+        tracer.step(tid, "decide", "workflow cancelled — skipping git commit")
+        # Parallel path: clean up temp dir before returning.
+        if parallel_count > 1:
+            base_path = Path(project_root) if project_root else Path(".")
+            parallel_dir = base_path / ".autoresearch" / "parallel"
+            try:
+                shutil.rmtree(parallel_dir, ignore_errors=True)
+            except Exception:
+                pass
+        return {
+            "status": "failed",
+            "errors": ["Workflow cancelled"],
+            "error": "Workflow cancelled",
+        }
 
     # ── [v1.6] Parallel path: pick best of N, copy winner, cleanup ─────────
     if parallel_count > 1:

@@ -59,41 +59,33 @@ class TestIsImprovement:
 
 class TestGitCommit:
     def test_success_returns_short_sha(self, tmp_path):
+        """[v1.10 / Phase B] _git_commit is now a wrapper around
+        tools.git_ops.workflow_helpers.commit (imported as _git_commit_w).
+        Patch _git_commit_w to return a dict, verify the wrapper extracts sha."""
         from workflows.autoresearch_impl.nodes.decide import _git_commit
-        # Three sequential subprocess.run calls: add, commit, rev-parse.
-        side = [
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="abc1234\n", stderr=""),
-        ]
-        with patch("workflows.autoresearch_impl.nodes.decide.subprocess.run",
-                   side_effect=side) as m:
+        with patch("workflows.autoresearch_impl.nodes.decide._git_commit_w",
+                   return_value={"committed": True, "sha": "abc1234"}) as m:
             sha = _git_commit("msg", str(tmp_path), "tid", "train.py")
         assert sha == "abc1234"
-        assert m.call_count == 3
+        m.assert_called_once_with(str(tmp_path), "msg", "train.py", "tid")
 
     def test_commit_fails_returns_empty(self, tmp_path):
+        """[v1.10 / Phase B] When commit returns {committed: False}, wrapper returns ""."""
         from workflows.autoresearch_impl.nodes.decide import _git_commit
-        side = [
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=1, stdout="", stderr="git commit failed"),
-        ]
-        with patch("workflows.autoresearch_impl.nodes.decide.subprocess.run",
-                   side_effect=side) as m:
+        with patch("workflows.autoresearch_impl.nodes.decide._git_commit_w",
+                   return_value={"committed": False, "sha": "", "reason": "commit failed"}):
             sha = _git_commit("msg", str(tmp_path), "tid", "train.py")
         assert sha == ""
-        # Third call (rev-parse) must NOT happen on commit failure.
-        assert m.call_count == 2
 
     def test_rev_parse_fails_returns_empty(self, tmp_path):
+        """[v1.10 / Phase B] committed=True but sha="" → wrapper returns "".
+
+        (rev-parse failure in workflow_helpers.commit yields {committed: True,
+        sha: ""} — unusual but the wrapper handles it by returning the empty string.)
+        """
         from workflows.autoresearch_impl.nodes.decide import _git_commit
-        side = [
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=1, stdout="", stderr=""),
-        ]
-        with patch("workflows.autoresearch_impl.nodes.decide.subprocess.run",
-                   side_effect=side):
+        with patch("workflows.autoresearch_impl.nodes.decide._git_commit_w",
+                   return_value={"committed": True, "sha": ""}):
             sha = _git_commit("msg", str(tmp_path), "tid", "train.py")
         assert sha == ""
 
@@ -105,26 +97,38 @@ class TestGitCommit:
 
 class TestGitResetHard:
     def test_no_project_root_returns_false(self):
+        """[v1.10 / Phase B] _git_reset_hard is now imported from
+        tools.git_ops.workflow_helpers. When project_root is empty, it
+        returns False without calling _git."""
         from workflows.autoresearch_impl.nodes.decide import _git_reset_hard
-        assert _git_reset_hard("", "tid") is False
+        # No patch — call the real function. With project_root="", it should
+        # return False immediately (no _git call). Patch _git to verify it's
+        # NOT called.
+        with patch("tools.git_ops.workflow_helpers._git") as m_git:
+            assert _git_reset_hard("", "tid") is False
+        m_git.assert_not_called()
 
     def test_no_git_directory_returns_false(self, tmp_path):
+        """[v1.10 / Phase B] workflow_helpers.reset_hard checks toplevel;
+        non-repo dir → _git rev-parse fails → returns False."""
         from workflows.autoresearch_impl.nodes.decide import _git_reset_hard
-        # tmp_path has no .git dir.
-        assert _git_reset_hard(str(tmp_path), "tid") is False
+        # _git (rev-parse --show-toplevel) returns rc=1 → reset_hard returns False.
+        with patch("tools.git_ops.workflow_helpers._git",
+                   return_value=(1, "", "not a git repo")):
+            assert _git_reset_hard(str(tmp_path), "tid") is False
 
     def test_success_returns_true(self, tmp_path):
+        """[v1.10 / Phase B] Toplevel matches → reset + clean succeed → True."""
         from workflows.autoresearch_impl.nodes.decide import _git_reset_hard
-        (tmp_path / ".git").mkdir()  # fake .git dir
-        # [v1.9 B3] _git_reset_hard now calls `git rev-parse --show-toplevel`
-        # first and verifies it matches project_root. Mock must return a
-        # proper stdout string for the toplevel call.
-        toplevel_mock = MagicMock(returncode=0, stdout=str(tmp_path) + "\n", stderr="")
-        reset_mock = MagicMock(returncode=0, stdout="", stderr="")
-        with patch("workflows.autoresearch_impl.nodes.decide.subprocess.run",
-                   side_effect=[toplevel_mock, reset_mock, reset_mock]) as m:
+        # 3 calls: rev-parse (returns tmp_path), reset --hard, clean -fd.
+        side = [
+            (0, str(tmp_path) + "\n", ""),
+            (0, "", ""),
+            (0, "", ""),
+        ]
+        with patch("tools.git_ops.workflow_helpers._git", side_effect=side) as m:
             assert _git_reset_hard(str(tmp_path), "tid") is True
-        assert m.call_count == 3  # rev-parse + reset --hard + clean -fd
+        assert m.call_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -394,16 +398,14 @@ class TestGitToplevelVerify:
     """
 
     def test_git_reset_refuses_when_toplevel_mismatches(self, tmp_path):
-        """Patch subprocess.run to return a different toplevel path →
-        _git_reset_hard returns False + tracer.warning called."""
+        """[v1.10 / Phase B] _git_reset_hard is now imported from
+        workflow_helpers. Patch _git to return a different toplevel path →
+        reset_hard returns False + tracer.warning called."""
         from workflows.autoresearch_impl.nodes.decide import _git_reset_hard
-        (tmp_path / ".git").mkdir()  # fake .git dir
         # rev-parse returns a DIFFERENT path → mismatch.
         different_path = str(tmp_path.parent / "other_repo")
-        toplevel_mock = MagicMock(returncode=0, stdout=different_path + "\n", stderr="")
-
-        with patch("workflows.autoresearch_impl.nodes.decide.subprocess.run",
-                   return_value=toplevel_mock), \
+        with patch("tools.git_ops.workflow_helpers._git",
+                   return_value=(0, different_path + "\n", "")), \
              patch("workflows.autoresearch_impl.nodes.decide.tracer.warning") as mock_warn:
             result = _git_reset_hard(str(tmp_path), "tid")
 

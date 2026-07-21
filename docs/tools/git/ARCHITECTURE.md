@@ -10,12 +10,13 @@
 | `tools/_meta_tool.py` | `@meta_tool` decorator: auto `Literal`, docstring, metadata |
 | `tools/git_ops/_registry.py` | `DISPATCH` dict, `@register_action` decorator |
 | `tools/git_ops/helpers.py` | `_git` runner, `_resolve_root`, `_check_repo` |
+| `tools/git_ops/workflow_helpers.py` | **[v1.2]** Internal workflow helpers: `commit`, `create_branch`, `reset_hard` (NOT LLM-facing actions) |
 | `tools/git_ops/actions/*.py` | Individual atomic action handlers |
 | `registry.py` | `get_tool_names()`, `get_tool_actions()` for router introspection |
-| `tests/tools/git/` | Test files covering all actions |
+| `tests/tools/git/` | Test files covering all actions + workflow helpers |
 | `tests/tools/git/conftest.py` | Test fixtures: `mock_cfg` (autouse), `git_repo` |
 | `tests/tools/test_meta_tool.py` | `@meta_tool` decorator unit tests |
-| `workflows/autocode_impl/git_ops.py` | Autocode workflow helpers: `_git_snapshot`, `_git_commit`, `_git_create_branch` |
+| `workflows/autocode_impl/git_ops.py` | **[v1.2]** Backward-compat shim re-exporting `_git_commit` + `_git_create_branch` from `tools/git_ops/workflow_helpers` |
 
 ---
 
@@ -27,6 +28,7 @@ tools/_meta_tool.py              # @meta_tool decorator — auto Literal + docst
 tools/git_ops/
 ├── _registry.py                 # DISPATCH dict + @register_action decorator
 ├── helpers.py                   # Git executable detection, subprocess runner, repo resolution
+├── workflow_helpers.py          # [v1.2] Internal workflow helpers: commit, create_branch, reset_hard
 └── actions/
     ├── init.py                  # Initialise new repo
     ├── clone.py                 # Clone remote repo (v1.1 — WORKSPACE_ROOT only)
@@ -124,4 +126,4 @@ graph TD
 
 ---
 
-*Last updated: 2026-07-03. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-25. See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

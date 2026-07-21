@@ -1,16 +1,21 @@
 """[v2.0] Unified VCS helper functions for autocode workflow.
 
-Merges the former git_ops.py (local git operations) + github_ops.py (remote
-GitHub operations) into a single module. The split existed in v1.3 because
-git (local) and github (remote) are separate tools, but the Phase 5
-consolidation merges them for simpler imports and maintenance.
+[v1.10 / Phase B] Local git operations (`_git_commit`, `_git_create_branch`)
+have been EXTRACTED to `tools/git_ops/workflow_helpers.py` (commit,
+create_branch, reset_hard). This module now ONLY contains:
+  - Remote operations (was github_ops.py): _github_pull, _github_push,
+    _github_pr_create, _github_pr_comment, _github_pr_merge
+  - Swarm integration (was github_ops.py): _swarm_debug_consensus
+
+The backward-compat shim `workflows/autocode_impl/git_ops.py` re-exports
+`_git_commit` + `_git_create_branch` from `tools.git_ops.workflow_helpers`
+(aliased to the new function names) so external callers using the old
+import path keep working.
 
 All functions follow the same pattern: lazy imports, project_root scoping,
 tracer.step logging, structured returns.
 
 Section layout:
-  === Local operations (was git_ops.py) ===
-    _git_commit(), _git_create_branch()
   === Remote operations (was github_ops.py) ===
     _github_pull(), _github_push(), _github_pr_create(),
     _github_pr_comment(), _github_pr_merge()
@@ -26,80 +31,9 @@ from core.tracer import tracer
 
 
 # === Local operations (was git_ops.py) ===
-
-def _git_commit(message: str, tid: str = "", project_root: str = None) -> dict:
-    """Commit changes in the working tree.
-
-    [v1.3] Push + PR creation now handled by node_push/node_create_pr/node_merge_pr.
-    This function stays focused on the local commit only.
-
-    [v1.4 P1] Return type changed from `str | None` to `dict` so callers can
-    distinguish "nothing to commit" from "error":
-      - {"committed": True, "sha": sha}                          on success
-      - {"committed": False, "sha": "", "reason": "nothing to commit"}  on clean tree
-      - {"committed": False, "sha": "", "reason": f"error: {e}"}        on exception
-
-    Older callers that did `sha = _git_commit(...)` should switch to:
-      result = _git_commit(...)
-      sha = result.get("sha", "") if isinstance(result, dict) else result
-    """
-    from tools.git import git
-    root = project_root or str(cfg.agent_root)
-    try:
-        status = git(action="status", root=root)
-        if status.get("count", 0) > 0:
-            r = git(action="commit", message=message, root=root)
-            sha = r.get("commit_hash", "")
-            if tid:
-                tracer.step(tid, "git_commit", f"committed {sha} @ {root}")
-            return {"committed": True, "sha": sha}
-        else:
-            # Nothing to commit — working tree clean
-            if tid:
-                tracer.step(tid, "git_commit", f"nothing to commit @ {root}")
-            return {"committed": False, "sha": "", "reason": "nothing to commit"}
-    except Exception as e:
-        if tid:
-            tracer.step(tid, "git_commit", f"commit failed: {e}")
-        return {"committed": False, "sha": "", "reason": f"error: {e}"}
-
-
-def _git_create_branch(branch: str, tid: str = "", project_root: str = None) -> bool:
-    """Create branch using checkout_new action.
-
-    Falls back to checkout_branch ONLY if checkout_new fails because the
-    branch already exists. All other errors (dirty working tree, invalid
-    branch name, no commits) are logged and returned as failures.
-
-    The branch itself serves as the snapshot/safety net. No separate
-    snapshot action is needed — git revert on the branch recovers state.
-    """
-    from tools.git import git
-    root = project_root or str(cfg.agent_root)
-    try:
-        r = git(action="checkout_new", target=branch, root=root)
-        if r.get("status") == "switched":
-            if tid:
-                tracer.step(tid, "git_branch", f"created and switched to {branch} @ {root}")
-            return True
-
-        # Only fall through to checkout_branch on "already exists" error
-        error = r.get("error", "").lower()
-        if "already exists" in error or "already a worktree" in error:
-            r = git(action="checkout_branch", target=branch, root=root)
-            if r.get("status") == "switched":
-                if tid:
-                    tracer.step(tid, "git_branch", f"switched to existing {branch} @ {root}")
-                return True
-
-        # Any other error: log and fail
-        if tid:
-            tracer.step(tid, "git_branch", f"failed to create {branch} @ {root}: {r.get('error', 'unknown')}")
-        return False
-    except Exception as e:
-        if tid:
-            tracer.step(tid, "git_branch", f"branch failed: {e}")
-        return False
+# [v1.10 / Phase B] _git_commit + _git_create_branch DELETED — moved to
+# tools/git_ops/workflow_helpers.py. Backward-compat aliases live in
+# workflows/autocode_impl/git_ops.py.
 
 
 # === Remote operations (was github_ops.py) ===

@@ -60,6 +60,22 @@ from workflows.autoresearch_impl.state import AutoresearchState
 from workflows.autoresearch_impl.helpers import run_target_subprocess as _run_subprocess
 from workflows.autoresearch_impl.helpers import extract_metric as _extract_metric
 
+
+def _is_cancelled(tid: str) -> bool:
+    """[v1.10 / Phase B] Lazy + safe cancellation check.
+
+    Wraps `workflows.base.is_workflow_cancelled` in a try/except so a broken
+    import doesn't crash the node. Returns False on any failure — fail-open
+    so a broken cancellation system doesn't halt the experiment loop.
+    """
+    if not tid:
+        return False
+    try:
+        from workflows.base import is_workflow_cancelled
+        return is_workflow_cancelled(tid)
+    except Exception:
+        return False
+
 # v1.3 (P2-1): _run_subprocess now imported from helpers.py (was a local copy).
 # v1.8 (N10): _extract_metric imported here too — used to pre-extract the
 # metric from the FULL output before truncation (single-mode path only).
@@ -187,6 +203,16 @@ def node_run_experiment(state: AutoresearchState) -> dict:
     printed early and the script produced lots of output after.
     """
     tid = state.get("trace_id", "")
+    # [v1.10 / Phase B] Cancellation check — before each subprocess (single
+    # + parallel). If cancelled, return status="failed" so the loop exits
+    # cleanly without spawning subprocesses that would outlive the workflow.
+    if _is_cancelled(tid):
+        tracer.step(tid, "run_experiment", "workflow cancelled — skipping subprocess")
+        return {
+            "status": "failed",
+            "errors": ["Workflow cancelled"],
+            "error": "Workflow cancelled",
+        }
     target_file = state.get("target_file", "") or cfg.autoresearch_target_file
     project_root = state.get("project_root", "")
     time_budget = state.get("time_budget", cfg.autoresearch_time_budget)

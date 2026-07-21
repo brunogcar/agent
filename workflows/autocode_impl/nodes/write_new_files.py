@@ -13,12 +13,11 @@ Also builds `files_map` for analyze_impact — snapshots all modified files
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 from filelock import FileLock, Timeout
 
+from core.atomic_write import atomic_write
 from workflows.autocode_impl.state import AutocodeState, _get_files, _get_tdd  # [v2.3+v3.0] accessors
 from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs, _parse_json, _should_skip_node
 from core.config import cfg
@@ -86,20 +85,22 @@ def node_write_new_files(state: AutocodeState) -> dict:
         target.parent.mkdir(parents=True, exist_ok=True)
         lock_path = str(target) + ".lock"
 
-        # [Bug #1] Atomic write — no .bak backup (violates project rules).
+        # [Bug #1 / v1.10 Phase A] Atomic write — no .bak backup (violates
+        # project rules). The atomic_write helper replaces the inline
+        # tempfile + os.replace block. The FileLock wrapper stays (cross-
+        # process coordination); the inner write now delegates to
+        # core.atomic_write (same-filesystem rename, fsync, cleanup on
+        # failure).
         # [P2 #13] Added 1 retry on lock timeout.
         for _attempt in range(2):  # 1 initial + 1 retry
             try:
                 with FileLock(lock_path, timeout=10):
-                    with tempfile.NamedTemporaryFile(
-                        mode='w', encoding='utf-8', dir=target.parent,
-                        delete=False, suffix='.tmp'
-                    ) as tmp:
-                        tmp.write(str(content))
-                        tmp_path = Path(tmp.name)
-                    os.replace(tmp_path, target)
+                    # [v1.10 Phase A] inline tempfile + os.replace → atomic_write.
+                    # FileLock still guards cross-process coordination; the
+                    # inner write is now crash-safe via the shared helper.
+                    atomic_write(target, str(content))
                     tracer.step(tid, "write_new_files", f"wrote {rel_path} ({len(content)} chars)")
-                written_files.append(rel_path)
+                    written_files.append(rel_path)
                 break  # Success — exit retry loop
             except Timeout:
                 if _attempt == 0:
@@ -107,8 +108,6 @@ def node_write_new_files(state: AutocodeState) -> dict:
                     continue
                 tracer.step(tid, "write_new_files", f"lock timeout (giving up): {rel_path}")
             except Exception as e:
-                if 'tmp_path' in locals() and tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
                 tracer.step(tid, "write_new_files", f"write error {rel_path}: {e}")
                 break  # Non-timeout error — don't retry
 

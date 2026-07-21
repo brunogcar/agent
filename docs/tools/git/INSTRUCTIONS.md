@@ -36,6 +36,7 @@
 27. **Add new actions by creating a file + `@register_action`** — DISPATCH and schema auto-update via `@meta_tool`.
 28. **Keep tool facade thin** — validation, dispatch, compression. Business logic lives in action handlers.
 29. **Document design decisions in comments** — explain WHY, not just WHAT. Future AI auditors need context.
+30. **[v1.2] Use `tools/git_ops/workflow_helpers.py` for workflow git ops** — NOT the LLM-facing `git()` facade. Workflows (autocode + autoresearch) need git operations (commit, create_branch, reset_hard) that don't go through compression + tracing (noise in tight loops). The helpers use the `_git()` runner directly with inline `tracer.step(tid, ...)`. The facade is for LLM-initiated git ops only.
 
 ---
 
@@ -51,4 +52,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-25. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

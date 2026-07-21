@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| **v1.5** | 2026-07-25 | **Added `core/atomic_write.py` + `core/backoff_retry.py`** — two new standalone modules extracted from duplicated workflow code (centralize-workflow-utils refactor, Phases A + C). **`atomic_write(path, content, *, encoding="utf-8")`**: tempfile.mkstemp in same dir + os.fdopen + fsync + os.replace; cleans up tempfile on failure; creates parent dirs. Extracted from 4 duplicated implementations (autoresearch `modify.py::_atomic_write`, autocode `patch.py::apply_patch`/`apply_patches`, autocode `write_new_files.py` node, autocode `create_skill.py` node). 7 unit tests in `tests/core/test_atomic_write.py`. **`retry_with_backoff(fn, retries=2, base_delay=2.0, cancellation_check=None, tid="")`**: exponential backoff (base * 2^attempt) with interruptible sleep (polls `cancellation_check` in 0.1s slices when provided, else `time.sleep`). Raises `RuntimeError("cancelled during backoff")` if cancellation fires during sleep. Extracted from autocode `_call()` (manual retry + `threading.Event.wait`) + autoresearch `_call_planner()` (manual retry + `time.sleep`). Return type NOT unified — returns whatever `fn` returns (works for both `str` autocode + `tuple[str, dict]` autoresearch). 6 unit tests in `tests/core/test_backoff_retry.py`. |
 | **v1.4** | 2026-07-18 | **Added `core/symbol_offload.py`** — new standalone module: `offload_to_file()`, `drill_down()`, `is_symbol_ref()`, `_auto_summary()`. TencentDB-inspired pattern: offload verbose state fields to per-trace files (`workspace/.symbols/{trace_id}/{field}.json`), replace with compact SymbolRef dicts in state. Complements chonkie (within-field compression) with cross-field context management. Used by autocode (`summarize_context.py` — debug_history), memory (`read_ops.py` — recall > 10 results), sleep_learn (`injector.py` — > 5 injected rules). 16 unit tests in `tests/core/test_symbol_offload.py`. |
 | Pre-v1.1 | 2026-07-16 | **Added `core/time_utils.py`** — new standalone module: tz-aware `now()`/`parse_iso()`/`parse_human()`/`parse_duration()`/`cron_next_fire()`/`compute_missed_fires()`/`_build_cron_trigger()`, all reading `cfg.timezone` (`AGENT_TZ` env). Replaces the external `@mcpcentral/mcp-time` MCP dependency for our own tooling. Used by `notify_ops` (v1.1 swap) + `schedule_ops` (v1.0). 44 unit tests in `tests/core/test_time_utils.py`. |
 | Pre-v1.1 | 2026-07-05 | `check_protected_file` now fails-closed on unknown operations (Bug #2). Was fail-open, which allowed new write actions to silently bypass protection on protected files. |
@@ -62,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*
+*Last updated: 2026-07-25 (v1.5 — added atomic_write.py + backoff_retry.py).*

@@ -21,7 +21,10 @@ from __future__ import annotations
 
 from core.config import cfg
 from workflows.autocode_impl.state import AutocodeState, _get_vcs  # [v2.1] accessor
-from workflows.autocode_impl.vcs_ops import _git_create_branch
+# [v1.10 / Phase B] _git_create_branch now imported from tools.git_ops.workflow_helpers
+# (was: workflows.autocode_impl.vcs_ops). The vcs_ops.py shim is still present
+# for github_* + swarm helpers, but local git ops were extracted.
+from tools.git_ops.workflow_helpers import create_branch as _git_create_branch
 from workflows.autocode_impl.vcs_ops import _github_pull  # [v1.3]
 from core.tracer import tracer
 
@@ -53,9 +56,11 @@ def node_git_branch(state: AutocodeState) -> dict:
     # [P1 #10] Check return value — if branch creation fails, return error status
     # so the workflow doesn't continue writing to the wrong branch.
     # [v2.1] Use _get_vcs accessor (reads sub-state first, falls back to flat)
+    # [v1.10 / Phase B] _git_create_branch signature changed: now
+    # `create_branch(project_root, branch, tid)` (project_root FIRST).
     branch = _get_vcs(state, "branch", "")
     if branch:
-        success = _git_create_branch(branch, tid, root)
+        success = _git_create_branch(root or "", branch, tid)
         if not success:
             return {
                 "status": "error",

@@ -22,6 +22,22 @@ from workflows.autoresearch_impl.nodes.propose import _call_planner
 from workflows.autoresearch_impl.state import AutoresearchState
 
 
+def _is_cancelled(tid: str) -> bool:
+    """[v1.10 / Phase B] Lazy + safe cancellation check.
+
+    Wraps `workflows.base.is_workflow_cancelled` in a try/except so a broken
+    import doesn't crash the node. Returns False on any failure — fail-open
+    so a broken cancellation system doesn't halt the experiment loop.
+    """
+    if not tid:
+        return False
+    try:
+        from workflows.base import is_workflow_cancelled
+        return is_workflow_cancelled(tid)
+    except Exception:
+        return False
+
+
 REFLECT_SYSTEM = """\
 You are a research strategy advisor. Look at the full experiment history and
 reflect on what's working and what's not. Then suggest a STRATEGY for the next
@@ -58,6 +74,13 @@ def node_reflect(state: AutoresearchState) -> dict:
 
     if interval <= 0:
         return {}  # disabled — caller opted out via AUTORESEARCH_REFLECT_INTERVAL=0
+
+    # [v1.10 / Phase B] Cancellation check — before the reflection LLM call.
+    # If cancelled, no-op (return {} so the loop continues; the next node
+    # will see the cancellation and exit).
+    if _is_cancelled(tid):
+        tracer.step(tid, "reflect", "workflow cancelled — skipping reflection")
+        return {}
 
     # [v1.9 D5] Use `iteration_count` (not `experiment_count`) for the
     # reflect interval check. With parallel_count=4, experiment_count jumps

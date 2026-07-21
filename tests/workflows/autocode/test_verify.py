@@ -57,13 +57,18 @@ class TestCommitAndGitEdgeCases:
 
     def test_commit_handles_nothing_to_commit(self, temp_workspace):
         from workflows.autocode_impl.git_ops import _git_commit
-        with patch("tools.git.git") as mock_git:
+        # [v3.10 / centralize-utils Phase B] _git_commit is now an alias for
+        # workflow_helpers.commit — signature (project_root, message,
+        # target_file="", tid). Uses _git() runner (3 calls: add, commit,
+        # rev-parse) instead of the git() facade.
+        # Patch _git to simulate "nothing to commit" — add succeeds, commit
+        # returns rc=1 with "nothing to commit" in stderr.
+        with patch("tools.git_ops.workflow_helpers._git") as mock_git:
             mock_git.side_effect = [
-                {"status": "ok", "count": 0},
-                {"status": "nothing_to_commit"},
+                (0, "", ""),  # git add -A
+                (1, "", "nothing to commit, working tree clean"),  # git commit
             ]
-            # [v1.4 P1] _git_commit now returns a dict with {committed, sha, reason}.
-            result = _git_commit("empty commit", tid="t1", project_root=str(temp_workspace))
+            result = _git_commit(str(temp_workspace), "empty commit", tid="t1")
             assert result == {"committed": False, "sha": "", "reason": "nothing to commit"}
 
 

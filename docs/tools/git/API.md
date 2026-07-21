@@ -177,4 +177,35 @@ All actions return standardized `dict` via `compress_result()`.
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+## 🔧 Workflow Helpers (v1.2)
+
+`tools/git_ops/workflow_helpers.py` is an **internal library module** (NOT registered as LLM actions) used by the autocode + autoresearch workflows for git operations that don't go through the LLM-facing `git()` facade. The facade adds compression + tracing that adds noise to tight workflow loops; these helpers use the `tools.git_ops.helpers._git()` runner directly with inline `tracer.step(tid, ...)` tracing.
+
+### `commit(project_root, message, target_file="", tid="") -> dict`
+
+Stage `target_file` (or `-A` if empty) and commit. Returns a structured dict:
+
+```python
+{"committed": True, "sha": "abc1234"}                              # success
+{"committed": False, "sha": "", "reason": "nothing to commit"}    # clean tree
+{"committed": False, "sha": "", "reason": "error: ..."}           # exception
+```
+
+The SHA is the SHORT form (`git rev-parse --short HEAD`). Non-raising — exceptions are caught + logged via `tracer.step(tid, "git_commit", ...)`.
+
+### `create_branch(project_root, branch, tid="") -> bool`
+
+Create + checkout a branch via `git checkout -b <branch>`. Falls back to `git checkout <branch>` ONLY if `checkout -b` fails with "already exists". Returns True on success (created OR switched to existing), False on any failure.
+
+### `reset_hard(project_root, tid="") -> bool`
+
+Discard uncommitted changes via `git reset --hard HEAD` + `git clean -fd`. Includes a toplevel-verify safety check: runs `git rev-parse --show-toplevel` and verifies it matches `Path(project_root).resolve()`. If mismatch (e.g. project_root is a junction/symlink to a different repo), refuses + traces a warning + returns False. Prevents accidentally nuking a DIFFERENT git repo's working tree.
+
+**Consumers:**
+- `workflows/autocode_impl/git_ops.py` (backward-compat shim re-exports `commit` as `_git_commit`, `create_branch` as `_git_create_branch`)
+- `workflows/autocode_impl/nodes/commit.py`, `workflows/autocode_impl/nodes/branch.py`, `workflows/autocode_impl/nodes/create_skill.py`
+- `workflows/autoresearch_impl/nodes/decide.py` (`commit` + `reset_hard`), `workflows/autoresearch_impl/nodes/setup.py` (`create_branch`)
+
+---
+
+*Last updated: 2026-07-25. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

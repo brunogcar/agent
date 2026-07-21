@@ -73,7 +73,7 @@ from workflows.autoresearch_impl.routes import route_after_setup, route_after_lo
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.9",  # [v1.9] hardening — 3 confirmed bugs + 4 P1 + 6 P2 + 5 high-value P3 from 7-reviewer collective audit + log dir relocation
+    "version": "1.10",  # [v1.10] centralize-workflow-utils: git ops moved to tools/git_ops/workflow_helpers.py; cancellation checks added (propose/run_experiment/decide/reflect); _call_planner uses core/backoff_retry.py; atomic_write uses core/atomic_write.py. [v1.9] hardening — 3 bugs + 4 P1 + 6 P2 + 5 P3
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"

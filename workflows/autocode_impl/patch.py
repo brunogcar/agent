@@ -42,6 +42,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.atomic_write import atomic_write
+
 
 # ── Result dataclasses ────────────────────────────────────────────────────────
 
@@ -114,21 +116,12 @@ def apply_patch(path: Path, old: str, new: str) -> PatchResult:
 
     updated = content.replace(old, new, 1)
 
-    # [Bug #1] Atomic write — no .bak backup (violates project rules).
-    # Git provides versioning; tempfile + os.replace prevents corruption on crash.
-    import os
-    import tempfile
+    # [Bug #1 / v1.10 Phase A] Atomic write via core.atomic_write (was inline
+    # tempfile + os.replace). No .bak backup (violates project rules). Git
+    # provides versioning; atomic write prevents corruption on crash.
     try:
-        with tempfile.NamedTemporaryFile(
-            mode='w', encoding='utf-8', dir=path.parent,
-            delete=False, suffix='.tmp'
-        ) as tmp:
-            tmp.write(updated)
-            tmp_path = Path(tmp.name)
-        os.replace(tmp_path, path)
+        atomic_write(path, updated)
     except Exception as e:
-        if 'tmp_path' in locals() and tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
         return PatchResult(ok=False, error=f"write error: {e}")
 
     return PatchResult(
@@ -186,20 +179,12 @@ def apply_patches(path: Path, patches: list[dict]) -> PatchResult:
         content = content.replace(old, new, 1)
         total_lines += max(old.count("\n") + 1, new.count("\n") + 1 if new else 0)
 
-    # [Bug #1] Atomic write — no .bak backup (violates project rules).
-    import os
-    import tempfile
+    # [Bug #1 / v1.10 Phase A] Atomic write via core.atomic_write (was inline
+    # tempfile + os.replace). No .bak backup (violates project rules). Git
+    # provides versioning; atomic write prevents corruption on crash.
     try:
-        with tempfile.NamedTemporaryFile(
-            mode='w', encoding='utf-8', dir=path.parent,
-            delete=False, suffix='.tmp'
-        ) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
-        os.replace(tmp_path, path)
+        atomic_write(path, content)
     except Exception as e:
-        if 'tmp_path' in locals() and tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
         return PatchResult(ok=False, error=f"write error: {e}")
 
     return PatchResult(

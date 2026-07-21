@@ -213,9 +213,13 @@ class TestAtomicWrite:
         assert target.read_text(encoding="utf-8") == "hello\n"
 
     def test_write_failure_cleans_tempfile(self, tmp_path):
+        # [v1.10 / Phase A] _atomic_write is now an alias for
+        # core.atomic_write.atomic_write. The implementation lives in
+        # core/atomic_write.py, so we patch os.replace there (was:
+        # workflows.autoresearch_impl.nodes.modify.os.replace).
         from workflows.autoresearch_impl.nodes.modify import _atomic_write
         target = tmp_path / "out.txt"
-        with patch("workflows.autoresearch_impl.nodes.modify.os.replace",
+        with patch("core.atomic_write.os.replace",
                    side_effect=OSError("disk full")):
             with pytest.raises(OSError):
                 _atomic_write(target, "hello\n")

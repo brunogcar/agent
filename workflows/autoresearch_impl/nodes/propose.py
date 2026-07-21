@@ -68,6 +68,27 @@ from typing import Any
 from core.config import cfg
 from core.tracer import tracer
 from workflows.autoresearch_impl.state import AutoresearchState
+# [v1.10 / Phase C] _call_planner retry loop now delegates to
+# core.backoff_retry.retry_with_backoff. The cancellation_check callable is
+# built lazily from workflows.base.is_workflow_cancelled (when tid is set).
+from core.backoff_retry import retry_with_backoff
+
+
+def _is_cancelled(tid: str) -> bool:
+    """[v1.10 / Phase B] Lazy + safe cancellation check.
+
+    Wraps `workflows.base.is_workflow_cancelled` in a try/except so a broken
+    import (e.g. circular import during testing, missing module) doesn't
+    crash the node. Returns False on any failure — fail-open is correct here
+    because a broken cancellation system shouldn't halt the experiment loop.
+    """
+    if not tid:
+        return False
+    try:
+        from workflows.base import is_workflow_cancelled
+        return is_workflow_cancelled(tid)
+    except Exception:
+        return False
 
 
 _PROPOSE_SYSTEM = """\
@@ -170,6 +191,14 @@ def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
     to know when token tracking is broken so they can debug cost reports.
     The behavior is unchanged (tokens default to 0); just made visible.
 
+    [v1.10 / Phase C] Retry loop now delegates to
+    `core.backoff_retry.retry_with_backoff`. The fn closure wraps the
+    `agent(action="subagent", ...)` call + status check + usage extraction.
+    Cancellation integration is via a lambda wrapping
+    `workflows.base.is_workflow_cancelled(tid)` (when tid is non-empty).
+    Keeps the 3-attempt behavior (retries=2). Returns the (response, usage)
+    tuple on success.
+
     Returns:
         `(response_text, usage_dict)` — the LLM response string + the usage
         dict from the subagent dispatch. `usage_dict` is `{}` when the
@@ -181,8 +210,30 @@ def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
     import json as _json
     from tools.agent import agent
 
-    last_error = None
-    for attempt in range(3):  # 1 initial + 2 retries
+    # [v1.9 B4 / v1.10 Phase C] Narrow exception scope — only transient
+    # failure types (RuntimeError, ConnectionError, TimeoutError, OSError,
+    # ValueError) are retried. Non-transient exceptions (ImportError,
+    # AttributeError, etc.) propagate immediately (real bugs shouldn't be
+    # retried). KeyboardInterrupt + SystemExit are BaseException (not
+    # Exception) so they bypass retry_with_backoff's `except Exception`
+    # naturally. Other non-transient Exception subclasses are wrapped in
+    # _PropagateError inside _attempt; retry_with_backoff catches + retries
+    # them, BUT we unwrap + re-raise at the _call_planner level (the
+    # `except _PropagateError` block below) so the original exception
+    # propagates without retry.
+    class _PropagateError(Exception):
+        """Wrapper for non-transient exceptions — unwrapped + re-raised by
+        _call_planner so the original propagates without retry."""
+        pass
+
+    def _attempt() -> tuple[str, dict]:
+        """Single subagent attempt. Raises on any failure (triggers a retry).
+
+        Transient exceptions propagate as-is (trigger retry). Non-transient
+        Exception subclasses are wrapped in _PropagateError (unwrapped by
+        _call_planner). KeyboardInterrupt + SystemExit propagate as-is
+        (they're BaseException, not Exception).
+        """
         try:
             result = agent(
                 action="subagent",
@@ -192,38 +243,68 @@ def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
                 json_schema=_json.dumps(_PROPOSE_JSON_SCHEMA),
                 trace_id=tid,
             )
-            if result.get("status") == "success":
-                # [v1.8 N6] Capture usage dict for token tracking. Older
-                # subagent versions / mocked tests may not include `usage` —
-                # default to {} so callers' `usage.get("total", 0)` yields 0.
-                # [v1.9-V2 / mistral #5] When `usage` is None/missing/empty,
-                # log a tracer.warning BEFORE defaulting (was: silently
-                # defaulted to {}). Operators need to know when token
-                # tracking is broken so they can debug cost reports. The
-                # behavior is unchanged (tokens default to 0); just visible.
-                raw_usage = result.get("usage")
-                if not raw_usage:
-                    tracer.warning(
-                        tid, "propose",
-                        "subagent did not report usage dict — tokens will be 0",
-                    )
-                usage = raw_usage or {}
-                return result.get("response", ""), usage
-            last_error = result.get("error", "unknown")
-        except (RuntimeError, ConnectionError, TimeoutError, OSError, ValueError) as e:
-            # [v1.9 B4] Narrow the catch — was: `except Exception as e:` which
-            # caught ImportError, AttributeError, etc. (real bugs that should
-            # propagate immediately, not be retried). Now only transient
-            # failure types are retried. KeyboardInterrupt, SystemExit,
-            # ImportError, AttributeError, etc. propagate immediately.
-            # (deepseek P2 2.4)
-            last_error = str(e)
-        # Brief backoff before retry (2s, 4s) — only between attempts, not after the last.
-        if attempt < 2:
-            import time as _time
-            _time.sleep(2 ** (attempt + 1))
+        except (RuntimeError, ConnectionError, TimeoutError, OSError, ValueError):
+            # Transient — let retry_with_backoff retry.
+            raise
+        except (KeyboardInterrupt, SystemExit):
+            # BaseException — bypasses retry_with_backoff's `except Exception`
+            # naturally. Re-raise as-is.
+            raise
+        except Exception as e:
+            # Non-transient Exception (ImportError, AttributeError, etc.) —
+            # wrap + re-raise so retry_with_backoff catches it (it's an
+            # Exception), but we unwrap + re-raise the original at the
+            # _call_planner level (no retry).
+            raise _PropagateError(repr(e)) from e
+        if result.get("status") != "success":
+            # Raise with the error — triggers a retry.
+            raise RuntimeError(result.get("error", "unknown"))
+        # [v1.8 N6] Capture usage dict for token tracking. Older
+        # subagent versions / mocked tests may not include `usage` —
+        # default to {} so callers' `usage.get("total", 0)` yields 0.
+        # [v1.9-V2 / mistral #5] When `usage` is None/missing/empty,
+        # log a tracer.warning BEFORE defaulting (was: silently
+        # defaulted to {}). Operators need to know when token
+        # tracking is broken so they can debug cost reports. The
+        # behavior is unchanged (tokens default to 0); just visible.
+        raw_usage = result.get("usage")
+        if not raw_usage:
+            tracer.warning(
+                tid, "propose",
+                "subagent did not report usage dict — tokens will be 0",
+            )
+        usage = raw_usage or {}
+        return result.get("response", ""), usage
 
-    raise RuntimeError(f"Subagent planner failed after 3 attempts: {last_error}")
+    # [v1.10 / Phase C] Build the cancellation_check callable lazily. When
+    # tid is empty (e.g. unit tests), pass None — no cancellation integration
+    # (matches the v1.9 behavior where _call_planner had no cancellation).
+    cancellation_check = None
+    if tid:
+        def _check_cancelled() -> bool:
+            try:
+                from workflows.base import is_workflow_cancelled
+                return is_workflow_cancelled(tid)
+            except Exception:
+                return False
+        cancellation_check = _check_cancelled
+
+    try:
+        return retry_with_backoff(
+            _attempt,
+            retries=2,  # 1 initial + 2 retries = 3 total attempts (matches v1.3)
+            base_delay=2.0,  # 2s, 4s backoff (matches v1.3)
+            cancellation_check=cancellation_check,
+            tid=tid,
+        )
+    except _PropagateError as e:
+        # Non-transient exception — re-raise the original. The `from e`
+        # chain preserves the original traceback.
+        raise e.__cause__ if e.__cause__ else e
+    except Exception:
+        # All retries exhausted — raise the standard RuntimeError (matches
+        # the v1.3 contract that callers catch).
+        raise RuntimeError(f"Subagent planner failed after 3 attempts")
 
 
 def _parse_proposal(raw: str) -> dict:
@@ -327,6 +408,16 @@ def node_propose(state: AutoresearchState) -> dict:
     single result in `current_experiment`).
     """
     tid = state.get("trace_id", "")
+    # [v1.10 / Phase B] Cancellation check — before each _call_planner call
+    # (single + parallel). If cancelled, return status="failed" so the loop
+    # exits cleanly. Mirrors the autocode _call() cancellation flag pattern.
+    if _is_cancelled(tid):
+        tracer.step(tid, "propose", "workflow cancelled — skipping planner call")
+        return {
+            "status": "failed",
+            "errors": ["Workflow cancelled"],
+            "error": "Workflow cancelled",
+        }
     goal = state.get("goal", "")
     metric_name = state.get("metric_name", "") or cfg.autoresearch_metric_name
     metric_direction = state.get("metric_direction", "") or cfg.autoresearch_metric_direction

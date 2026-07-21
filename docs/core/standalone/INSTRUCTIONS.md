@@ -64,4 +64,4 @@
 
 ---
 
-*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*
+*Last updated: 2026-07-25 (v1.5 — added atomic_write.py + backoff_retry.py).*

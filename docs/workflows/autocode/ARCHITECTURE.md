@@ -16,7 +16,7 @@ Module tree, dispatch flow, and the 7 design decisions that shaped the workflow.
 | `workflows/autocode_impl/routes.py` | 6 routing functions: `route_after_classify`, `_write_files`, `_run_tests`, `_verify`, `_swarm_fallback`, `_hitl_gate`. |
 | `workflows/autocode_impl/helpers.py` | `_call()`, `_parse_json()` (delegates to `core.json_extract`), `_should_skip_node()`, `_blast_radius_warning()`, `_get_autocode_run_path()`, `_cleanup_old_autocode_runs()`. Cancellation: `request_cancellation()`, `clear_cancellation()`, `is_cancellation_requested()`, `set_graph_start_time()`, `_remaining_timeout(default)`. |
 | `workflows/autocode_impl/constants.py` | All SYSTEM prompts. `DEBUG_SYSTEM` (4-phase), `CODER_SYSTEM` (Lazy Dev ladder), `PARALLEL_HYPOTHESES_SYSTEM` + `SUBAGENT_VALIDATE_SYSTEM` (v3.5), `AUDIT_REPORT_SYSTEM` (v3.7). |
-| `workflows/autocode_impl/vcs_ops.py` | Unified VCS helpers. Local (`_git_commit`, `_git_create_branch`) / Remote (`_github_pull`, `_github_push`, `_github_pr_create`, `_github_pr_comment`, `_github_pr_merge`) / Swarm (`_swarm_debug_consensus`). `git_ops.py` + `github_ops.py` are thin re-export wrappers. |
+| `workflows/autocode_impl/vcs_ops.py` | **[v3.10]** Remote VCS helpers ONLY (local git ops moved to `tools/git_ops/workflow_helpers.py`): `_github_pull`, `_github_push`, `_github_pr_create`, `_github_pr_comment`, `_github_pr_merge` / Swarm (`_swarm_debug_consensus`). `git_ops.py` is a thin re-export wrapper for `_git_commit` + `_git_create_branch` (aliased to `workflow_helpers.commit` + `create_branch`). |
 | `workflows/autocode_impl/patch.py` | `apply_patch()`, `apply_patches()`, `extract_relevant_sections()`. |
 | `core/json_extract.py` | Consolidated JSON extraction: `extract_json`, `extract_json_array`, `extract_first_json`. Used by `helpers._parse_json` + `core/router._extract_first_json`. |
 | `core/config_backend/execution.py` | All 17 autocode config flags. See [API.md](API.md) § Config Flags. |
@@ -153,4 +153,4 @@ python -m pytest tests/workflows/autocode/ -v
 
 ---
 
-*Last updated: 2026-07-19 (v3.8). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-25 (v3.10). See [CHANGELOG.md](CHANGELOG.md) for version history.*

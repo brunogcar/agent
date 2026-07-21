@@ -7,6 +7,7 @@ from pathlib import Path
 from core.config import cfg
 from core.llm import llm
 from core.tracer import tracer
+from core.backoff_retry import retry_with_backoff
 
 def _extract_code(text: str) -> list[str]:
     """Extract code blocks from text."""
@@ -150,40 +151,47 @@ def _call(role: str, system: str, user: str, timeout: int | None = None, tempera
     so request_cancellation() can wake the thread immediately.
     [v2.0.5] P3-1: Added trace_id param so retry-exhaustion errors are traced to
     the workflow's trace (was: empty trace_id — errors were unattributed).
+    [v1.10 / Phase C] Retry loop now delegates to core.backoff_retry.retry_with_backoff.
+    Cancellation integration is via the `cancellation_check` callable (the
+    autocode module-global `is_cancellation_requested`). The fn closure wraps
+    the llm.complete call + response.ok check (raising on non-ok). Returns
+    the response text on success.
     """
     if timeout is None:
         timeout = cfg.model_registry.get(role, {}).get("timeout", cfg.execution_timeout)
-    last_error = None
-    for attempt in range(retries + 1):
+
+    def _attempt() -> str:
+        """Single LLM attempt. Raises on any failure (triggers a retry)."""
         # [v2.0] Check cancellation flag before each attempt — if the graph
         # timed out during a previous retry's backoff sleep, bail immediately.
+        # (retry_with_backoff also checks cancellation_check before each
+        # attempt, but this explicit check preserves the original error
+        # message for backward compat with tests that assert on it.)
         if _cancellation_requested:
             raise RuntimeError("LLM call cancelled — graph timeout exceeded")
-        try:
-            response = llm.complete(
-                role=role,
-                system=system,
-                user=user,
-                timeout=timeout,
-                temperature=temperature,
-                json_schema=json_schema,
-            )
-            if response.ok:
-                return response.text
-            else:
-                raise RuntimeError(f"LLM error: {response.error}")
-        except Exception as e:
-            last_error = e
-            if attempt < retries:
-                # [Hardening P1.7] Use interruptible Event.wait instead of time.sleep
-                # so request_cancellation() can wake us up immediately. If the event
-                # is set (cancellation requested), bail with RuntimeError instead of
-                # continuing the retry loop.
-                if _cancel_event.wait(timeout=2 ** attempt):
-                    raise RuntimeError("LLM call cancelled during backoff")
-                continue
-            tracer.error(trace_id, "llm_call", f"Failed to call {role} model after {retries+1} attempts: {e}")
-            raise
+        response = llm.complete(
+            role=role,
+            system=system,
+            user=user,
+            timeout=timeout,
+            temperature=temperature,
+            json_schema=json_schema,
+        )
+        if response.ok:
+            return response.text
+        raise RuntimeError(f"LLM error: {response.error}")
+
+    # [v1.10 / Phase C] Use the shared retry helper. cancellation_check is
+    # the autocode module-global flag (kept as-is — too risky to migrate to
+    # workflows.base.is_workflow_cancelled in this refactor). The helper
+    # checks it BEFORE each attempt AND polls it during interruptible backoff.
+    return retry_with_backoff(
+        _attempt,
+        retries=retries,
+        base_delay=2.0,
+        cancellation_check=is_cancellation_requested,
+        tid=trace_id,
+    )
 
 # [v2.0] Phase 7: _write_files() DELETED — was dead code (never called by any node).
 # The actual file writing logic lives in nodes/apply_patches.py + nodes/write_new_files.py.

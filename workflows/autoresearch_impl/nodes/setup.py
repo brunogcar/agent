@@ -53,6 +53,11 @@ from workflows.autoresearch_impl.helpers import (
     extract_metric as _extract_metric_from_output,
     run_target_subprocess as _run_experiment_subprocess,
 )
+# [v1.10 / Phase B] _git_create_branch extracted to tools.git_ops.workflow_helpers
+# (as `create_branch`). Old signature `(branch, project_root, tid) -> bool`;
+# new signature `(project_root, branch, tid) -> bool` (project_root FIRST).
+# The local definition was deleted — call site updated to the new arg order.
+from tools.git_ops.workflow_helpers import create_branch as _git_create_branch
 
 # v1.2.1 (P1-2): _extract_metric_from_output now imported from helpers.py
 # v1.3 (P2-1): _run_experiment_subprocess now imported from helpers.py
@@ -201,33 +206,6 @@ def _populate_seen_hashes_from_history(history: list[dict]) -> list[str]:
     return hashes
 
 
-def _git_create_branch(branch: str, project_root: str, tid: str) -> bool:
-    """Create and checkout a git branch for experiments.
-
-    Uses the git tool's checkout_new action (matches autocode's _git_create_branch
-    pattern). Falls back to checkout_branch if the branch already exists.
-
-    Returns True on success, False on failure.
-    """
-    from tools.git import git
-    try:
-        r = git(action="checkout_new", target=branch, root=project_root)
-        if r.get("status") == "switched":
-            tracer.step(tid, "setup", f"created branch {branch} @ {project_root}")
-            return True
-        error = (r.get("error", "") or "").lower()
-        if "already exists" in error:
-            r = git(action="checkout_branch", target=branch, root=project_root)
-            if r.get("status") == "switched":
-                tracer.step(tid, "setup", f"switched to existing branch {branch} @ {project_root}")
-                return True
-        tracer.step(tid, "setup", f"branch create failed: {r.get('error', 'unknown')}")
-        return False
-    except Exception as e:
-        tracer.step(tid, "setup", f"branch create exception: {e}")
-        return False
-
-
 def node_setup(state: AutoresearchState) -> dict:
     """Setup phase: branch, ledger, baseline.
 
@@ -260,7 +238,9 @@ def node_setup(state: AutoresearchState) -> dict:
     else:
         tag = datetime.now().strftime("%Y%m%d-%H%M%S")
         branch = state.get("branch", "") or f"autoresearch/{tag}"
-        if not _git_create_branch(branch, project_root, tid):
+        # [v1.10 / Phase B] _git_create_branch signature changed: now
+        # `create_branch(project_root, branch, tid)` (project_root FIRST).
+        if not _git_create_branch(project_root, branch, tid):
             # Non-fatal: experiments can still proceed on the current branch,
             # but the safety net (revert via branch) is gone. Log and continue.
             tracer.warning(tid, "setup", "branch creation failed — continuing on current branch")

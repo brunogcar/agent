@@ -6,6 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
+| v1.2 | 2026-07-25 | **Workflow helpers module added.** New `tools/git_ops/workflow_helpers.py` with 3 internal library functions (NOT LLM-facing actions): `commit(project_root, message, target_file="", tid="") -> dict`, `create_branch(project_root, branch, tid="") -> bool`, `reset_hard(project_root, tid="") -> bool`. Extracted from duplicated workflow git code (centralize-workflow-utils Phase B): autocode `vcs_ops.py::_git_commit` + `_git_create_branch`, autoresearch `decide.py::_git_commit` + `_git_reset_hard`, autoresearch `setup.py::_git_create_branch`. All use the `tools.git_ops.helpers._git()` runner (same runner the LLM-facing git tool uses) — same git executable detection, same subprocess environment, same 15s timeout, same never-raise contract. `reset_hard` includes toplevel-verify safety (qwen P1-4 / minimax B3 preserved). 9 unit tests in `tests/tools/git/test_workflow_helpers.py`. |
 | v1.1 | — | Clone action, path_guard hardening, `check_git_operation()` fail-fast fix |
 | v1 | — | Un-multiplex git: 8 atomic actions, `@meta_tool`, semantic params, test restructure |
 
@@ -67,4 +68,4 @@
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-25. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

@@ -293,4 +293,58 @@ if is_symbol_ref(ref):
 
 ---
 
-*Last updated: 2026-07-18 (v1.4 — symbol_offload.py).*
+## `core/atomic_write.py` — Atomic file writes (v1.5)
+
+```python
+from core.atomic_write import atomic_write
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `atomic_write()` | `(path: Path, content: str, *, encoding: str = "utf-8") -> None` | Write `content` to `path` atomically (tempfile + fsync + os.replace). Creates parent dirs. Cleans up tempfile on failure. |
+
+**Pattern:** `tempfile.mkstemp(dir=path.parent)` → `os.fdopen` → `write` → `flush` → `os.fsync` → `os.replace(temp, target)`. On exception, `os.unlink(tempfile)` + re-raise.
+
+**Extracted from (v1.5):**
+- `workflows/autoresearch_impl/nodes/modify.py::_atomic_write` (original implementation)
+- `workflows/autocode_impl/patch.py::apply_patch` / `apply_patches` (inline tempfile + os.replace)
+- `workflows/autocode_impl/nodes/write_new_files.py` (inline inside FileLock)
+- `workflows/autocode_impl/nodes/create_skill.py` (inline tempfile + os.replace)
+
+**Why atomic:** `os.replace` is atomic on POSIX + Windows for same-filesystem renames. Readers never see a partial file. SIGKILL/OOM mid-write doesn't corrupt the target — the tempfile is left behind (cleaned up on the next write attempt or manually).
+
+---
+
+## `core/backoff_retry.py` — LLM retry with backoff (v1.5)
+
+```python
+from core.backoff_retry import retry_with_backoff
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `retry_with_backoff()` | `(fn: Callable[[], Any], retries: int = 2, base_delay: float = 2.0, cancellation_check: Optional[Callable[[], bool]] = None, tid: str = "") -> Any` | Call `fn()` with retry + exponential backoff. Returns whatever `fn` returns. |
+
+**Backoff:** `base_delay * 2^attempt` (exponential). Default 2.0 → delays of 2s, 4s, 8s.
+
+**Sleep behavior:**
+- `cancellation_check=None` → `time.sleep(delay)` (non-interruptible)
+- `cancellation_check` provided → poll `cancellation_check()` in 0.1s slices via `time.sleep`. If it returns True, raise `RuntimeError("cancelled during backoff")` immediately.
+
+**Cancellation checks:**
+- BEFORE each attempt: if `cancellation_check()` returns True, raise `RuntimeError("LLM call cancelled — graph timeout exceeded")`.
+- DURING backoff sleep: polled every 0.1s; raises `RuntimeError("cancelled during backoff")` if True.
+
+**Extracted from (v1.5):**
+- `workflows/autocode_impl/helpers.py::_call` (manual retry + `threading.Event.wait` + module-global `_cancellation_requested` flag)
+- `workflows/autoresearch_impl/nodes/propose.py::_call_planner` (manual retry + `time.sleep`, no cancellation)
+
+**Return type NOT unified:** `retry_with_backoff` returns whatever `fn` returns. Autocode `_call` returns `str`; autoresearch `_call_planner` returns `tuple[str, dict]`. Each caller wraps its LLM-call shape in a closure — the retry logic is shared, the return types are not.
+
+**Consumers:**
+- `workflows/autocode_impl/helpers.py::_call` — passes `cancellation_check=is_cancellation_requested` (autocode module-global).
+- `workflows/autoresearch_impl/nodes/propose.py::_call_planner` — passes `cancellation_check=lambda: is_workflow_cancelled(tid)` (lazy; None when tid is empty).
+
+---
+
+*Last updated: 2026-07-25 (v1.5 — added atomic_write.py + backoff_retry.py).*
