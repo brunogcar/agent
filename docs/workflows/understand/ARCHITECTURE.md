@@ -6,15 +6,16 @@
 
 | File | Purpose |
 |------|---------|
-| `workflows/understand.py` | Thin facade — re-exports from understand_impl + run_understand_workflow_sync() |
-| `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths |
+| `workflows/understand.py` | Thin facade — re-exports from understand_impl + `run_understand_workflow_sync()`. [v1.4.1] Lazy `is_same_path` import; `project_path` validation; normalized return shape. |
+| `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths. [v1.4.1] `SKIP_DIRS` class constant (canonical single source of truth). |
 | `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode |
 | `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — delegates to tree-sitter (Python) |
-| `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust via tree-sitter |
-| `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) |
-| `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store |
-| `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()` |
-| `tests/workflows/understand/` | Test files (test_graph, test_state, test_init_project, test_helpers, test_embeddings, test_tree_sitter_parser + conftest) |
+| `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust + 9 more via tree-sitter. [v1.4.1] Optional `errors` param on `extract_imports` + `extract_definitions_ts`. |
+| `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) + `extract_doc_chunks()` (chonkie). [v1.4.1] Doc chunk line numbers; empty-list short-circuit before availability check. |
+| `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. |
+| `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. |
+| `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. |
+| `tests/workflows/understand/` | Test files (12 test files + conftest — see Testing section below). |
 
 ---
 
@@ -23,19 +24,21 @@
 ```text
 workflows/understand.py                    # Thin facade — re-exports + run_understand_workflow_sync
 workflows/understand_impl/
-├── state.py                               # UnderstandState TypedDict + _default_state()
+├── state.py                               # UnderstandState TypedDict + _default_state() [v1.4.1: pure defaults, no PM]
 ├── helpers.py                             # _chunked_md5()
-├── graph.py                               # build_understand_graph() + WORKFLOW_METADATA
+├── graph.py                               # build_understand_graph() + WORKFLOW_METADATA [v1.4.1: conditional init edge, safety_features]
+├── routes.py                              # [v1.4.1 P0-1] route_after_init — init→discover conditional (END on failure)
 └── nodes/
-    ├── init_project.py                    # node_init_project — ProjectManager init, GraphStore verify
-    ├── discover_files.py                  # node_discover_files — os.walk, chunked MD5, changed file detection
-    ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, GraphStore + [#3] vector embeddings
-    └── report.py                          # node_report — report generation with error logging
+    ├── init_project.py                    # node_init_project — PM init, GraphStore verify [v1.4.1: returns project_id + artifact_dir]
+    ├── discover_files.py                  # node_discover_files — os.walk, chunked MD5 [v1.4.1: cancel checks, GraphStore in try, SKIP_DIRS constant]
+    ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, [#3] embeddings [v1.4.1: cancel checks, error cap, batch errors, file-size recheck]
+    └── report.py                          # node_report — report generation [v1.4.1: vectors_created in summary]
 
 core/kgraph/
-├── tree_sitter_parser.py                   # [#4] Multi-language parser: Python, JS/TS, Go, Rust
-├── embeddings.py                           # [#3] extract_definitions() + embed_texts() (LM Studio)
-└── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() (ChromaDB)
+├── tree_sitter_parser.py                   # [#4] Multi-language parser: Python, JS/TS, Go, Rust + 9 more [v1.4.1: errors param]
+├── embeddings.py                           # [#3] extract_definitions() + embed_texts() + extract_doc_chunks() [v1.4.1: doc line numbers]
+├── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() [v1.4.1: project-scoped path]
+└── queries.py                              # get_dependencies() + get_callers() [v1.4.1: multi-language fix]
 ```
 
 ---
@@ -48,7 +51,8 @@ graph TD
     B --> C["build_understand_graph()"]
     C --> D["graph.invoke(initial_state)"]
     D --> E["node_init_project"]
-    E --> F["node_discover_files"]
+    E -->|"route_after_init"| F["node_discover_files"]
+    E -->|"route_after_init (failed)"| END["END"]
     F --> G["node_parse_and_store"]
     G --> H["node_report"]
     H --> I["Return final_state"]
@@ -56,13 +60,38 @@ graph TD
 
 **Key design decisions:**
 - **Sync nodes (v1.0)** — All nodes are `def` (sync), not `async def`. Consistent with research, data, autocode, and deep_research workflows. No event loop, no ThreadPoolExecutor, no async complexity.
-- **GraphStore lifecycle** — Each node creates its own `GraphStore` instance (thread-local connections), uses it, and calls `.close()` in a `finally` block. No leaked SQLite connections.
+- **[v1.4.1 P0-1] Conditional init edge** — `route_after_init` (in `workflows/understand_impl/routes.py`) short-circuits to END when `node_init_project` returns `status="failed"`. Mirrors the autoresearch `route_after_setup` pattern. Was: direct edge that let init failures run discover anyway → empty kg.db → "✅ up to date" masking the failure.
+- **GraphStore lifecycle** — Each node creates its own `GraphStore` instance (thread-local connections), uses it, and calls `.close()` in a `finally` block. [v1.4.1 P1-7] `store = None` before `try`; `if store is not None: store.close()` in finally — guards against NameError when the constructor itself raises.
 - **Chunked MD5** — `_chunked_md5()` reads files in 8KB chunks instead of `read_bytes()`, preventing memory spikes on large files.
 - **Deduplicated edges** — Target paths are stored in a `set` before passing to `upsert_file_graph()`, preventing duplicate dependency edges.
 - **Trace correlation** — `trace_id` is injected into state by `_default_state()` and read by all nodes via `state.get("trace_id")`. No hardcoded tid strings.
-- **Checkpoint/resume** — Routed through `base.py`'s standard `graph.invoke()` path, which handles checkpoint save/restore automatically.
-- **Code embeddings (v1.1)** — `parse_and_store` now populates ChromaDB vector embeddings for each file's top-level definitions (functions, classes, module docstrings). Uses LM Studio's `/v1/embeddings` endpoint (OpenAI-compatible) with GGUF embedding models (e.g. `all-MiniLM-L6-v2-GGUF`, 25MB q8). Per-definition chunking (not per-file or fixed-window) gives the richest semantic search. Graceful degradation: if LM Studio is unavailable, vector indexing is skipped and the workflow completes with graph edges only. Config: `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED` in `.env`.
-- **Multi-language support (v1.2)** — Tree-sitter replaces Python's `ast` module as the parser. One unified API handles Python, JavaScript/TypeScript, Go, and Rust. `discover_files` finds all supported extensions; `parse_and_store` detects the language per file and uses tree-sitter for both import extraction and definition chunking. The old `ast_parser.py` API is preserved (delegates to tree-sitter) for backward compatibility. Adding a new language is a 3-line change in `tree_sitter_parser.py` (add to `LANGUAGE_MAP`, `_IMPORT_NODE_TYPES`, `_DEFINITION_NODE_TYPES`).
+- **[v1.4.1 P2-12] Checkpoint/resume — CORRECTED** — Understand does NOT save node-level mid-execution checkpoints. `base.py`'s `node_step(checkpoint=True)` / `node_error` / `node_done` helpers are not called by understand nodes (they use `tracer.step` directly). Checkpoints ARE saved on crash (`base.py` exception handler), cancel (post-dispatch check), and timeout. Full mid-execution resume is NOT supported — if understand crashes mid-parse, the next run starts from `node_init_project` again. The v1.0-era claim "Supports checkpoint/resume" was incorrect and has been removed from the docs.
+- **Code embeddings (v1.1)** — `parse_and_store` populates ChromaDB vector embeddings for each file's top-level definitions (functions, classes, module docstrings). Uses LM Studio's `/v1/embeddings` endpoint (OpenAI-compatible) with GGUF embedding models. Per-definition chunking gives the richest semantic search. Graceful degradation: if LM Studio is unavailable, vector indexing is skipped and the workflow completes with graph edges only.
+- **Multi-language support (v1.2)** — Tree-sitter replaces Python's `ast` module. One unified API handles Python, JavaScript/TypeScript, Go, Rust, and 9 more languages (v1.4). Adding a new language is a 3-line change in `tree_sitter_parser.py`.
+- **[v1.4.1 P1-3] Project-scoped vectors** — ChromaDB path is now per-project: `{project}/.understand/chroma/` for workspace projects, `memory_db/understand/chroma/` for agent root. Was: always `agent_root/.understand/chroma/` (orphaned vectors when a project's `.understand/` was deleted). Existing agent-root data should be manually deleted + re-indexed.
+- **[v1.4.1 P1-6] Cancellation checks** — `discover_files` and `parse_and_store` poll `workflows.base.is_workflow_cancelled(trace_id)` at entry + inside loops (every 100 files in discover, every 10 files + per-batch in parse). Returns `{"status": "failed", "errors": ["Workflow cancelled"]}` on cancel. The base.py 600s daemon-thread timeout doesn't kill the thread (Python limitation) — these checks let the workflow exit cooperatively.
+- **[v1.4.1 P2-10] Errors capped at 100** — The `parse_and_store` errors list is capped at `_ERRORS_CAP = 100` entries. A final `"... and N more errors (capped at 100)"` entry is appended when the cap is hit. Was: unbounded — a project with 1000 broken files would bloat the final state dict + report.
+
+### 🛡️ Safety Features (v1.4.1)
+
+`WORKFLOW_METADATA["safety_features"]` lists the guarantees the workflow provides:
+
+| Feature | Description |
+|---------|-------------|
+| `incremental_indexing` | MD5 + mtime fast-path; only changed files re-parsed |
+| `chunked_md5` | 8KB chunks instead of `read_bytes()` — no memory spikes |
+| `graphstore_wal` | SQLite WAL mode + thread-local conns + write serialization |
+| `skip_embeddings_mode` | v1.4: graph-only mode (~5s) when LM Studio is slow/unavailable |
+| `graceful_embedding_degradation` | `embed_texts()` None → vectors skipped, graph edges still stored |
+| `multi_language_support` | v1.2: tree-sitter (Python, JS/TS, Go, Rust + 9 more in v1.4) |
+| `doc_indexing` | v1.3: `.md`/`.txt`/`.rst` via chonkie sentence chunking |
+| `cancellation_checks` | v1.4.1 P1-6: `is_workflow_cancelled()` polled in discover + parse loops |
+| `route_after_init` | v1.4.1 P0-1: init failure short-circuits to END (was: ran discover anyway) |
+| `embedding_batch_errors` | v1.4.1 P1-5: failed batches appended to errors list (was: only warned) |
+| `graphstore_in_try` | v1.4.1 P1-7: GraphStore created inside try; finally checks for None |
+| `errors_capped_at_100` | v1.4.1 P2-10: parse loop caps errors list (was: unbounded) |
+| `file_size_recheck` | v1.4.1 P3-1: parse re-checks size before `read_text` (handles files that grew) |
+| `project_scoped_vectors` | v1.4.1 P1-3: ChromaDB path is per-project (was: always agent_root) |
 
 ---
 
@@ -75,19 +104,26 @@ graph TD
 **Test layout:**
 ```text
 tests/workflows/understand/
-├── conftest.py                # make_project fixture
-├── test_graph.py              # topology + WORKFLOW_METADATA
-├── test_state.py              # _default_state structure + trace_id
-├── test_init_project.py       # node_init_project
-├── test_helpers.py            # _chunked_md5 + sync nodes + trace ID + partial dicts
-├── test_embeddings.py         # [#3] extract_definitions + embed_texts + upsert_file_vectors
-└── test_tree_sitter_parser.py # [#4] multi-language: Python, JS/TS, Go, Rust
+├── conftest.py                    # make_project fixture + [v1.4.1] mocker shim (pytest-mock not installed)
+├── test_graph.py                  # topology + WORKFLOW_METADATA [v1.4.1: conditional edge + safety_features]
+├── test_state.py                  # _default_state structure [v1.4.1: pure defaults, skip_embeddings, no PM]
+├── test_init_project.py           # node_init_project [v1.4.1: returns project_id + artifact_dir]
+├── test_helpers.py                # _chunked_md5 + sync nodes + trace ID + partial dicts
+├── test_embeddings.py             # [#3] extract_definitions + embed_texts + upsert_file_vectors [v1.4.1: pm signature, project-scoped path]
+├── test_tree_sitter_parser.py     # [#4] multi-language [v1.4.1: errors param for parse failure surfacing]
+├── test_doc_indexing.py           # v1.3: doc chunks [v1.4.1: non-zero line numbers]
+├── test_route_after_init.py       # [v1.4.1 P0-1] route_after_init conditional edge
+├── test_discover_files.py         # [v1.4.1] defensive bail, cancellation, GraphStore in try, SKIP_DIRS
+├── test_parse_and_store.py        # [v1.4.1] batch errors, cancellation, GraphStore in try, error cap, file-size recheck, batch size
+├── test_report.py                 # [v1.4.1 P2-4] vectors_created in summary
+├── test_facade.py                 # [v1.4.1 P0-2 + P2-7 + P2-9] lazy import, return shape, path validation
+└── test_queries.py                # [v1.4.1 P1-2] multi-language get_dependencies + get_callers
 ```
 
 **Test coverage:**
-- Graph compilation
-- Default state structure (including trace_id, vectors_created)
-- node_init_project: creates dirs, fails without code/ dir
+- Graph compilation + conditional init edge + safety_features list
+- Default state structure (pure defaults, skip_embeddings, no PM instantiation)
+- node_init_project: creates dirs, fails without code/ dir, returns project_id + artifact_dir
 - Trace ID propagation (no hardcoded tid strings)
 - Sync node verification (no async def)
 - No event loop hacks (no ThreadPoolExecutor, no new_event_loop, no asyncio.gather)
@@ -98,9 +134,26 @@ tests/workflows/understand/
 - [#3] Vector upsert: delete-then-insert, metadata, graceful degradation
 - [#4] Multi-language: import extraction + definition extraction for Python, JS/TS, Go, Rust
 - [#4] Language detection: file extension → tree-sitter language name
+- [v1.4.1] route_after_init: success → discover, failure → end
+- [v1.4.1] Defensive bail on status="failed" in discover + parse
+- [v1.4.1] Cancellation checks in discover + parse
+- [v1.4.1] GraphStore constructor failure doesn't raise NameError
+- [v1.4.1] SKIP_DIRS class constant includes .mypy_cache, .ruff_cache, .tox, htmlcov
+- [v1.4.1] Embedding batch errors appended to errors list
+- [v1.4.1] Errors list capped at 100 + summary entry
+- [v1.4.1] File size re-check before read_text
+- [v1.4.1] Embedding batch size from cfg.understand_embed_batch_size
+- [v1.4.1] Doc chunk line numbers (non-zero for multiline content)
+- [v1.4.1] Report summary includes vectors_created
+- [v1.4.1] Facade lazy import (importable with broken kgraph)
+- [v1.4.1] Facade return shape includes errors: [] on success
+- [v1.4.1] Facade validates project_path (fails fast for non-existent path)
+- [v1.4.1] Multi-language get_dependencies (JS/TS/Go/Rust, not just .py)
+- [v1.4.1] Multi-language get_callers (Python module-name + JS/TS relative + Go package paths)
+- [v1.4.1] tree-sitter parse errors surfaced via errors parameter
 
 ---
 
-- **Completion pattern** — Unlike `data`/`research` which call `node_done()` in their final node, understand sets `status` in `node_parse_and_store` (`"completed"` or `"completed_with_errors"`). `node_report` is side-effect-only (returns `{}`). The `run_understand_workflow_sync` facade calls `tracer.finish()` itself. This is intentional — understand uses `"completed"`/`"completed_with_errors"` (not `"success"`) to distinguish partial failures.
+- **Completion pattern** — Unlike `data`/`research` which call `node_done()` in their final node, understand sets `status` in `node_parse_and_store` (`"completed"` or `"completed_with_errors"`). `node_report` is side-effect-only (returns `{}` or `{"note": ...}`). The `run_understand_workflow_sync` facade calls `tracer.finish()` itself. This is intentional — understand uses `"completed"`/`"completed_with_errors"` (not `"success"`) to distinguish partial failures.
 
-*Last updated: 2026-07-13 (v1.3). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-21 (v1.4.1). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

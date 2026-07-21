@@ -4,6 +4,28 @@ Helper to get or create project-specific ChromaDB collections + populate
 codebase embeddings for semantic search.
 
 [#3] ChromaDB vector indexing for the understand workflow.
+
+[v1.4.1 P1-3] Project-scoped ChromaDB path. Was: hardcoded
+`cfg.agent_root / ".understand" / "chroma"` — used the AGENT root's .understand
+for ALL projects (workspace + agent_root alike). This created an asymmetry:
+deleting a project's `.understand/` directory deleted the kg.db but left
+the project's vectors orphaned in the agent_root's `.understand/chroma/`.
+
+Now: `get_project_vector_collection(pm: ProjectManager)` computes the path
+from `pm`:
+  - Agent root:   cfg.memory_root / "understand" / "chroma"
+                  (per the user's request — vectors for the agent root
+                  itself live under memory_db/understand/chroma/, keeping
+                  them with the rest of the memory store)
+  - Projects:     pm.artifact_root / "chroma"
+                  (i.e. {project}/.understand/chroma/ — same as before for
+                  the agent_root case under the old layout, but now project
+                  vectors are properly per-project)
+
+Migration: existing agent_root ChromaDB data at `agent_root/.understand/chroma/`
+is orphaned by this change. Operators should delete that directory and re-run
+understand. We do NOT auto-migrate (would be a surprise move of multi-GB
+vector stores).
 """
 from __future__ import annotations
 from pathlib import Path
@@ -17,9 +39,15 @@ from core.tracer import tracer
 # expensive (opens SQLite + loads embedding model metadata).
 _chroma_clients: dict[str, Any] = {}
 
-def get_project_vector_collection(project_id: str) -> Any:
+def get_project_vector_collection(pm: Any) -> Any:
     """
     Lazy import and get/create a ChromaDB collection for a specific project.
+
+    [v1.4.1 P1-3] Signature changed: was `project_id: str`, now `pm: ProjectManager`.
+    The path is computed from `pm` so it's properly project-scoped:
+      - Agent root → cfg.memory_root / "understand" / "chroma"
+      - Workspace project → pm.artifact_root / "chroma"  (i.e. {project}/.understand/chroma/)
+
     Keeps project vectors isolated from the main memory_db.
     Reuses the same PersistentClient instance per path (singleton pattern).
 
@@ -37,12 +65,24 @@ def get_project_vector_collection(project_id: str) -> Any:
     settings — so sharing the path between memory + kgraph is broken.
     The .understand/chroma path keeps them isolated (as the comment always
     said it should).
+
+    Args:
+        pm: A `ProjectManager` instance. The function reads `pm.is_agent_root`,
+            `pm.artifact_root`, and `pm.project_id` from it. Accepting `pm`
+            instead of `project_id` lets us compute the right per-project path
+            without re-instantiating ProjectManager (which would re-walk the
+            source tree for stats).
     """
     import chromadb
 
-    # v1.3.1: Project-specific path inside .understand/chroma
-    # (was: cfg.memory_chroma_path — shared with the main memory store)
-    path = str(cfg.agent_root / ".understand" / "chroma")
+    # [v1.4.1 P1-3] Compute the chroma path from the ProjectManager.
+    if getattr(pm, "is_agent_root", False):
+        # Agent root: vectors under memory_db/understand/chroma/ (per user
+        # request — keeps them with the rest of the memory store).
+        path = str(cfg.memory_root / "understand" / "chroma")
+    else:
+        # Workspace project: vectors under {project}/.understand/chroma/.
+        path = str(Path(pm.artifact_root) / "chroma")
 
     # Reuse existing client for this path, or create and cache
     if path not in _chroma_clients:
@@ -50,7 +90,7 @@ def get_project_vector_collection(project_id: str) -> Any:
         _chroma_clients[path] = chromadb.PersistentClient(path=path)
 
     client = _chroma_clients[path]
-    collection_name = f"kg_{project_id}_embeddings"
+    collection_name = f"kg_{pm.project_id}_embeddings"
 
     return client.get_or_create_collection(
         name=collection_name,
@@ -59,12 +99,16 @@ def get_project_vector_collection(project_id: str) -> Any:
 
 
 def upsert_file_vectors(
-    project_id: str,
+    pm: Any,
     file_path: str,
     definitions: list[dict],
     trace_id: str = "",
 ) -> int:
     """[#3] Upsert code embeddings for a file's top-level definitions.
+
+    [v1.4.1 P1-3] Signature changed: was `project_id: str`, now `pm: ProjectManager`.
+    Passed through to `get_project_vector_collection(pm)` so the chroma path
+    is computed from `pm` (project-scoped).
 
     1. Deletes old vectors for this file (definitions may have been removed/renamed)
     2. Embeds the source code of each definition via LM Studio
@@ -74,14 +118,14 @@ def upsert_file_vectors(
     (graceful degradation — the graph edges in SQLite are unaffected).
 
     Args:
-        project_id: The project ID from ProjectManager.
+        pm: The ProjectManager instance for this project.
         file_path: Relative file path (e.g. "core/config.py").
         definitions: List of dicts from extract_definitions(): {name, type, source, line_start, line_end}
         trace_id: For trace logging.
     """
     from core.kgraph.embeddings import embed_texts
 
-    collection = get_project_vector_collection(project_id)
+    collection = get_project_vector_collection(pm)
 
     # Delete old vectors for this file (handles renames/deletions)
     try:
@@ -113,9 +157,9 @@ def upsert_file_vectors(
         return 0
 
     # Build IDs, metadata
-    ids = [f"{project_id}:{file_path}:{d['name']}" for d in definitions]
+    ids = [f"{pm.project_id}:{file_path}:{d['name']}" for d in definitions]
     metadatas = [{
-        "project_id": project_id,
+        "project_id": pm.project_id,
         "file_path": file_path,
         "name": d["name"],
         "type": d["type"],
@@ -134,12 +178,14 @@ def upsert_file_vectors(
 
 
 def query_similar_code(
-    project_id: str,
+    pm: Any,
     query: str,
     n_results: int = 10,
     trace_id: str = "",
 ) -> list[dict]:
     """[#3] Semantic search: find code definitions similar to a query string.
+
+    [v1.4.1 P1-3] Signature changed: was `project_id: str`, now `pm: ProjectManager`.
 
     Returns a list of dicts: {file_path, name, type, line_start, line_end, distance, source}
 
@@ -151,7 +197,7 @@ def query_similar_code(
     if query_embedding is None:
         return []
 
-    collection = get_project_vector_collection(project_id)
+    collection = get_project_vector_collection(pm)
 
     try:
         results = collection.query(

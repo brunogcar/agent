@@ -122,7 +122,7 @@ _IMPORT_NODE_TYPES = {
 }
 
 
-def extract_imports(source: str, language: str) -> frozenset[str]:
+def extract_imports(source: str, language: str, errors: list[str] | None = None) -> frozenset[str]:
     """Extract import/dependency strings from source code.
 
     Returns a frozenset of module/package names. For Python, these are
@@ -131,6 +131,13 @@ def extract_imports(source: str, language: str) -> frozenset[str]:
     For Rust, crate paths.
 
     Returns empty frozenset on parse failure (graceful degradation).
+
+    [v1.4.1 P3-4] Optional `errors` parameter — when provided, parse
+    exceptions are appended to the list (one entry per call) before the
+    empty frozenset is returned. Callers that want to surface parse
+    failures (e.g. node_parse_and_store) pass their errors list; callers
+    that just want graceful degradation (e.g. the legacy
+    _parse_dependencies_sync_from_string wrapper) leave it as None.
     """
     if language not in _IMPORT_NODE_TYPES:
         return frozenset()
@@ -161,7 +168,11 @@ def extract_imports(source: str, language: str) -> frozenset[str]:
 
         walk(root)
         return frozenset(deps)
-    except Exception:
+    except Exception as e:
+        # [v1.4.1 P3-4] Surface the parse error if the caller asked for it.
+        # The graceful-fallback contract (return empty frozenset) is preserved.
+        if errors is not None:
+            errors.append(f"tree-sitter parse error in {language} (extract_imports): {e}")
         return frozenset()
 
 
@@ -245,13 +256,18 @@ _DEFINITION_NODE_TYPES = {
 }
 
 
-def extract_definitions_ts(source: str, language: str) -> list[dict]:
+def extract_definitions_ts(source: str, language: str, errors: list[str] | None = None) -> list[dict]:
     """Extract top-level definitions from source code for embedding.
 
     Returns a list of dicts: {name, type, source, line_start, line_end}
 
     Falls back to a single "module" chunk if the file has no parseable
     definitions (scripts, config files, etc.).
+
+    [v1.4.1 P3-4] Optional `errors` parameter — when provided, parse
+    exceptions are appended to the list (one entry per call) before the
+    fallback module chunk is returned. The graceful-fallback contract
+    (always return a non-empty list of dicts) is preserved.
     """
     if language not in _DEFINITION_NODE_TYPES:
         return [{
@@ -298,7 +314,11 @@ def extract_definitions_ts(source: str, language: str) -> list[dict]:
             })
 
         return definitions
-    except Exception:
+    except Exception as e:
+        # [v1.4.1 P3-4] Surface the parse error if the caller asked for it.
+        # The graceful-fallback contract (return a module chunk) is preserved.
+        if errors is not None:
+            errors.append(f"tree-sitter parse error in {language} (extract_definitions_ts): {e}")
         return [{
             "name": "<module>",
             "type": "module",

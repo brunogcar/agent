@@ -37,6 +37,24 @@ class ProjectManager:
     MAX_FILE_SIZE_BYTES = 1_048_576  # 1MB
     MAX_TOTAL_PROJECT_SIZE_MB = 500
 
+    # [v1.4.1 P2-2] Canonical skip-dirs set, used by both _get_project_stats()
+    # here and node_discover_files (which previously had its own local copy
+    # that drifted out of sync). Frozen so callers can't mutate it. os.walk's
+    # `dirs[:] =` filtering uses exact-name matching (no globs), so we list
+    # the literal directory names. Includes the v1.4.1 additions: .mypy_cache,
+    # .ruff_cache, .tox, htmlcov (was missing — coverage HTML reports were
+    # being walked). `.pytest_cache` was already here; `__pycache__`,
+    # `node_modules`, `.git`, `.venv`, `venv`, `.understand`, `dist`, `build`
+    # carried over from the v1.3 local set.
+    SKIP_DIRS: frozenset[str] = frozenset({
+        "node_modules", "__pycache__", ".git", ".venv", "venv",
+        ".understand", "dist", "build", ".pytest_cache",
+        # v1.4.1 additions (P2-2):
+        ".mypy_cache", ".ruff_cache", ".tox", "htmlcov",
+        # .eggs + .egg-info dirs (legacy Python packaging) — common clutter.
+        ".eggs",
+    })
+
     def __init__(self, project_path: str | Path, is_agent_root: bool = False):
         self.path = Path(project_path).resolve()
         self.is_agent_root = is_agent_root
@@ -90,8 +108,10 @@ class ProjectManager:
         
         count = 0
         total_bytes = 0
-        skip_dirs = {"node_modules", "__pycache__", ".git", ".venv", "venv", ".understand", "dist", "build", ".pytest_cache"}
-        
+        # [v1.4.1 P2-2] Use the canonical SKIP_DIRS class constant (was: a
+        # local set that drifted out of sync with node_discover_files).
+        skip_dirs = ProjectManager.SKIP_DIRS
+
         for root, dirs, files in os.walk(self.source_root):
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for f in files:

@@ -14,7 +14,10 @@ Env vars read:
         AGENT_CACHE_TTL_SECONDS   — default 300
 
     Understand Workflow (Bug #17 fix):
-        UNDERSTAND_BATCH_SIZE     — default 10
+        UNDERSTAND_BATCH_SIZE     — default 10  (v1.4.1: unused in Phase 1;
+                                                kept for backward compat)
+        UNDERSTAND_EMBED_BATCH_SIZE — default 100  [v1.4.1 P2-8] Phase-2
+                                                embedding batch size
 
     Execution & Autocode:
         SANDBOX_TIMEOUT           — default 30
@@ -88,7 +91,16 @@ def _init_execution(cfg) -> None:
 
     # -- Understand Workflow (Bug #17 fix) ---------------------------------
     # Batch size for AST parsing in the understand workflow.
+    # [v1.4.1 P2-14] Phase-1 file-parsing no longer uses this knob (the outer
+    # batch loop was removed — each file is processed one at a time). Kept
+    # for backward compat + in case a future refactor re-introduces batching.
     cfg.understand_batch_size = int(os.getenv("UNDERSTAND_BATCH_SIZE", "10"))
+    # [v1.4.1 P2-8] Embedding batch size — Phase-2 batched embedding groups
+    # `understand_embed_batch_size` definitions per HTTP call to LM Studio.
+    # Default 100 (was hardcoded in parse_and_store._batch_embed_and_store).
+    # Raise for fewer HTTP calls (faster on stable connections); lower for
+    # smaller request payloads (helps on flaky networks / small LLM context).
+    cfg.understand_embed_batch_size = int(os.getenv("UNDERSTAND_EMBED_BATCH_SIZE", "100"))
 
     # -- Execution & Autocode ----------------------------------------------
     cfg.sandbox_timeout = int(os.getenv("SANDBOX_TIMEOUT", "30"))

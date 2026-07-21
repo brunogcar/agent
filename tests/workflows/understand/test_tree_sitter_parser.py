@@ -221,3 +221,95 @@ class TestSupportedExtensions:
         assert ".rb" in SUPPORTED_EXTENSIONS  # v1.4: .rb is now supported
         assert ".java" in SUPPORTED_EXTENSIONS  # v1.4: .java is now supported
         assert ".txt" not in SUPPORTED_EXTENSIONS
+
+
+# ─── [v1.4.1 P3-4] Errors parameter for parse failure surfacing ──────────
+
+class TestExtractImportsErrorsParam:
+    """[v1.4.1 P3-4] extract_imports must surface parse errors when given an errors list."""
+
+    def test_errors_list_populated_on_parse_failure(self):
+        """When tree-sitter parsing raises, the error is appended to the errors list.
+
+        We force a failure by clearing the parser cache + patching the
+        underlying get_parser to raise. The function must still return an
+        empty frozenset (graceful fallback) AND append to the errors list.
+        """
+        from core.kgraph import tree_sitter_parser as tsp
+
+        # Clear the parser cache so our patched get_parser is called.
+        tsp._parsers.clear()
+
+        original_get_parser = tsp._get_parser
+
+        def raising_get_parser(language):
+            raise RuntimeError("simulated tree-sitter failure")
+
+        # Patch _get_parser at the module level.
+        tsp._get_parser = raising_get_parser
+        try:
+            errors: list[str] = []
+            result = tsp.extract_imports("import os\n", "python", errors=errors)
+            # Graceful fallback: empty frozenset.
+            assert result == frozenset()
+            # Error surfaced.
+            assert len(errors) == 1
+            assert "tree-sitter parse error" in errors[0]
+            assert "python" in errors[0]
+            assert "simulated tree-sitter failure" in errors[0]
+        finally:
+            # Restore the original.
+            tsp._get_parser = original_get_parser
+            tsp._parsers.clear()
+
+    def test_no_errors_list_no_surface(self):
+        """When errors=None (default), parse failures are silently swallowed.
+
+        This preserves the pre-v1.4.1 behavior for callers that don't want
+        to surface errors (e.g. the legacy ast_parser wrapper).
+        """
+        from core.kgraph import tree_sitter_parser as tsp
+
+        tsp._parsers.clear()
+        original_get_parser = tsp._get_parser
+
+        def raising_get_parser(language):
+            raise RuntimeError("simulated tree-sitter failure")
+
+        tsp._get_parser = raising_get_parser
+        try:
+            # No errors list passed — should NOT raise, should return empty frozenset.
+            result = tsp.extract_imports("import os\n", "python")
+            assert result == frozenset()
+        finally:
+            tsp._get_parser = original_get_parser
+            tsp._parsers.clear()
+
+
+class TestExtractDefinitionsTsErrorsParam:
+    """[v1.4.1 P3-4] extract_definitions_ts must surface parse errors too."""
+
+    def test_errors_list_populated_on_parse_failure(self):
+        from core.kgraph import tree_sitter_parser as tsp
+
+        tsp._parsers.clear()
+        original_get_parser = tsp._get_parser
+
+        def raising_get_parser(language):
+            raise RuntimeError("simulated tree-sitter failure")
+
+        tsp._get_parser = raising_get_parser
+        try:
+            errors: list[str] = []
+            result = tsp.extract_definitions_ts("def foo(): pass\n", "python", errors=errors)
+            # Graceful fallback: single module chunk.
+            assert isinstance(result, list)
+            assert len(result) == 1
+            assert result[0]["name"] == "<module>"
+            # Error surfaced.
+            assert len(errors) == 1
+            assert "tree-sitter parse error" in errors[0]
+            assert "extract_definitions_ts" in errors[0]
+        finally:
+            tsp._get_parser = original_get_parser
+            tsp._parsers.clear()

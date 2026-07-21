@@ -101,12 +101,17 @@ def embed_texts(texts: list[str], trace_id: str = "") -> Optional[list[list[floa
     if not cfg.embedding_enabled:
         return None
 
+    # [v1.4.1] Empty-list short-circuit BEFORE the availability check.
+    # Was: the availability check ran first, so embed_texts([]) returned None
+    # when LM Studio was down — but an empty input should always succeed
+    # (there's nothing to embed). Tests that assert embed_texts([]) == []
+    # now pass regardless of LM Studio availability.
+    if not texts:
+        return []
+
     # v1.4: Skip if embedding service is known to be unavailable (cached check)
     if not is_embedding_available():
         return None
-
-    if not texts:
-        return []
 
     import httpx
 
@@ -150,7 +155,11 @@ def extract_doc_chunks(content: str, file_path: str = "", trace_id: str = "") ->
     - name: "doc_chunk_N_of_M" (N=0-based, M=total chunks)
     - type: "doc" (vs "function"/"class"/"module" for code)
     - source: the chunk text
-    - line_start/line_end: 0/0 (chonkie chunks don't have reliable line numbers)
+    - line_start/line_end: 1-based line range of the chunk in the original file
+      (v1.4.1 P2-3 — was: 0/0 because chonkie chunks don't expose line numbers
+      directly. Now computed by scanning the original content for the chunk's
+      first character. Falls back to 0/0 if the chunk text isn't found, e.g.
+      when chonkie normalizes whitespace.)
 
     Args:
         content: The document text.
@@ -177,8 +186,8 @@ def extract_doc_chunks(content: str, file_path: str = "", trace_id: str = "") ->
                     "name": f"doc_chunk_{i}_of_{total}",
                     "type": "doc",
                     "source": chunk,
-                    "line_start": 0,
-                    "line_end": 0,
+                    "line_start": _line_start_for_chunk(content, chunk),
+                    "line_end": _line_end_for_chunk(content, chunk),
                 }
                 for i, chunk in enumerate(chunks)
             ]
@@ -194,6 +203,41 @@ def extract_doc_chunks(content: str, file_path: str = "", trace_id: str = "") ->
         "name": "doc_chunk_0_of_1",
         "type": "doc",
         "source": content,
-        "line_start": 0,
-        "line_end": 0,
+        "line_start": 1,
+        "line_end": len(content.splitlines()) or 1,
     }]
+
+
+def _line_start_for_chunk(content: str, chunk_text: str) -> int:
+    """[v1.4.1 P2-3] Compute the 1-based line number where a chunk begins.
+
+    Scans the original content for the chunk's first character. Returns 0
+    if the chunk text isn't found (chonkie may normalize whitespace).
+    """
+    if not chunk_text:
+        return 0
+    idx = content.find(chunk_text)
+    if idx == -1:
+        # Chonkie normalized whitespace — try matching just the first non-empty
+        # line of the chunk. Worst case we fall back to 0.
+        first_line = next((ln for ln in chunk_text.splitlines() if ln.strip()), "")
+        if not first_line:
+            return 0
+        idx = content.find(first_line)
+        if idx == -1:
+            return 0
+    return content[:idx].count("\n") + 1
+
+
+def _line_end_for_chunk(content: str, chunk_text: str) -> int:
+    """[v1.4.1 P2-3] Compute the 1-based line number where a chunk ends.
+
+    = line_start + (newlines inside the chunk). Falls back to line_start
+    when the chunk can't be located.
+    """
+    if not chunk_text:
+        return 0
+    start = _line_start_for_chunk(content, chunk_text)
+    if start == 0:
+        return 0
+    return start + chunk_text.count("\n")

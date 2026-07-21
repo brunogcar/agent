@@ -43,3 +43,38 @@ class TestWorkflowMetadata:
         for node in WORKFLOW_METADATA["nodes"]:
             assert "description" in node
             assert len(node["description"]) > 0
+
+    def test_init_edge_is_conditional(self):
+        """[v1.4.1 P0-1] The init→discover edge must be marked conditional."""
+        edges = WORKFLOW_METADATA["edges"]
+        init_edge = next(
+            (e for e in edges if e["from"] == "node_init_project"),
+            None,
+        )
+        assert init_edge is not None, "init → discover edge must exist"
+        assert init_edge.get("conditional") is True, (
+            "init → discover edge must be conditional (route_after_init short-circuits to END on failure)"
+        )
+        assert "condition" in init_edge, (
+            "conditional edge must document its condition string"
+        )
+
+    def test_metadata_has_safety_features(self):
+        """[v1.4.1 P2-11] WORKFLOW_METADATA must include a safety_features list."""
+        assert "safety_features" in WORKFLOW_METADATA, (
+            "WORKFLOW_METADATA must declare safety_features for MCP client introspection"
+        )
+        features = WORKFLOW_METADATA["safety_features"]
+        assert isinstance(features, list)
+        assert len(features) > 0
+        # Spot-check a few of the v1.4.1 hardening features.
+        for required in (
+            "route_after_init",          # P0-1
+            "cancellation_checks",       # P1-6
+            "project_scoped_vectors",    # P1-3
+            "embedding_batch_errors",    # P1-5
+            "errors_capped_at_100",      # P2-10
+        ):
+            assert required in features, (
+                f"safety_features missing required entry: {required}"
+            )

@@ -8,6 +8,8 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.4.1 | 2026-07-21 | **Phase 1 hardening.** 2 P0 + 7 P1 + 14 P2 + 4 P3 from a 7-reviewer collective audit (mine + mimo + deepseek + mistral; qwen discarded as hallucinated). P0: `route_after_init` conditional edge (init failure no longer silently masks as "✅ up to date"); lazy `is_same_path` import in facade (kgraph import failure no longer cascades). P1: defensive `status=="failed"` bail in discover+parse; `queries.py` multi-language fix (was `.py`-only); ChromaDB project-scoped path (was always agent_root); PM removed from `_default_state`; embedding batch errors accumulated; cancellation checks in loops; GraphStore created inside `try`. P2: version bumped 1.3→1.4; consolidated `SKIP_DIRS`; doc chunk line numbers; report shows `vectors_created`; `skip_embeddings` in default state; `note` field in TypedDict; facade return shape normalized; configurable `UNDERSTAND_EMBED_BATCH_SIZE`; `project_path` validation; errors capped at 100; `safety_features` list; checkpoint/resume claim corrected; Phase-1 batch loop removed. P3: file size re-check; progress reporting; tree-sitter syntax errors surfaced. |
+| v1.4 | 2026-07-15 | **skip_embeddings + two-phase batched embedding.** `skip_embeddings=True` runs graph-only mode (~5s) when LM Studio is slow/unavailable. Two-phase parse: Phase 1 parses all files + stores edges (no LLM); Phase 2 batch-embeds ALL definitions in one pass (was: per-file HTTP calls → 965 requests → timeout). `UNDERSTAND_EMBED_BATCH_SIZE` env var (default 100). v1.4.1 note: the WORKFLOW_METADATA.version field wasn't bumped to 1.4 at the time — fixed in v1.4.1. |
 | v1.3 | 2026-07-13 | **Doc indexing (.md/.txt/.rst).** `discover_files` now finds doc files alongside code. `parse_and_store` branches: code → tree-sitter; docs → chonkie sentence chunking. New `extract_doc_chunks()` in `embeddings.py`. Chonkie is a soft dependency. |
 | v1.2.1 | 2026-07-13 | **Bugfix + doc drift.** P1: `parse_and_store` `store.close()` wrapped in `finally` (was leaking SQLite connection). P2: WORKFLOW_METADATA version "1.0" → "1.2". UNDERSTAND.md rewritten — was describing Pre-v1.0 architecture. |
 | v1.2 | 2026-07-06 | **Multi-language support (tree-sitter).** Tree-sitter replaces `ast` parser. Supports Python, JavaScript/TypeScript, Go, Rust through one unified API. |
@@ -18,6 +20,16 @@
 ---
 
 ### ⚠️ Breaking Changes
+
+#### v1.4.1 — 2026-07-21
+
+| Change | Impact | Migration |
+|--------|--------|-----------|
+| ChromaDB path moved for agent_root | Agent-root vectors now live at `memory_db/understand/chroma/` (was: `agent_root/.understand/chroma/`). | Delete the old `agent_root/.understand/chroma/` directory and re-run understand. We do NOT auto-migrate (would be a surprise move of multi-GB vector stores). |
+| `get_project_vector_collection` signature changed | Was `project_id: str`, now `pm: ProjectManager`. | Pass `pm` (the ProjectManager instance) instead of `project_id`. Internal callers updated. |
+| `upsert_file_vectors` + `query_similar_code` signatures changed | Same: `project_id: str` → `pm: ProjectManager`. | Pass `pm` instead of `project_id`. |
+| `_default_state` no longer sets `project_id` / `artifact_dir` | They start as empty strings; `node_init_project` fills them in. | No migration — `node_init_project` always runs before any node that needs these fields. |
+| `extract_imports` + `extract_definitions_ts` new optional `errors` param | New keyword-only param. | No migration — defaults to `None` (old behavior). |
 
 #### v1.2 — 2026-07-06
 
@@ -42,8 +54,8 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 1 | **Configurable `skip_dirs`** | Currently hardcoded local set. Should be `.env` or `ProjectManager` config. | P3 |
-| 5 | **Additional languages** | Java, C/C++, Ruby via tree-sitter (tree-sitter-languages already bundles these — just add to LANGUAGE_MAP). | P3 |
+| 1 | **Configurable `skip_dirs`** | Currently `ProjectManager.SKIP_DIRS` class constant (v1.4.1 consolidated). Should be `.env`-configurable for project-specific overrides. | P3 |
+| 5 | **Additional languages** | Java, C/C++, Ruby via tree-sitter (tree-sitter-languages already bundles these — just add to LANGUAGE_MAP). [v1.4: .rb, .java, .c, .cpp, .lua, .php, .scala, .swift, .kt already added.] | P3 |
 
 ---
 
@@ -59,4 +71,4 @@
 
 ---
 
-*Last updated: 2026-07-13 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-21 (v1.4.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
