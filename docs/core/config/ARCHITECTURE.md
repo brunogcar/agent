@@ -19,7 +19,7 @@
 | `core/config_backend/models.py` | 136 | `_init_models(cfg)` — the most complex builder. Reads `PLANNER_MODEL` (RuntimeError if missing), 4 group mains + opt-in `CONSULTOR_MODEL`, 9 sub-role overrides with documented fallback chains. Calls `_resolve_role()` 17 times. Builds the 16-key `model_registry` dict (+ conditional consultor). Derives `planner_timeout` / `execution_timeout` / `router_timeout` from the registry (single source of truth). |
 | `core/config_backend/services.py` | 64 | `_init_services(cfg)` — SearXNG URL, Tavily (key + timeout), browser fallback (max + timeout), 6 deep-research knobs. |
 | `core/config_backend/memory.py` | 49 | `_init_memory(cfg)` — 3 memory-tuning, 3 diversity, 1 context-budgeting (`MAX_CONTEXT_TOKENS`). Parse-error handling stays here; range check (1000–100000) lives in `validators.py`. |
-| `core/config_backend/execution.py` | 107 | `_init_execution(cfg)` — 1 timezone (v1.1: `cfg.timezone` / `AGENT_TZ`), 4 parallel-execution (Phase 7), 2 agent-cache (Bug #19), 1 understand-batch (Bug #17), 5 execution/autocode, 4 autoresearch (v1.0), 9 autocode-v1.3/swarm flags. |
+| `core/config_backend/execution.py` | 188 | `_init_execution(cfg)` — 1 timezone (Pre-v1.1: `cfg.timezone` / `AGENT_TZ`), 4 parallel-execution (Phase 7), 2 agent-cache (Bug #19), 4 understand (Bug #17 + v1.4.1 P2-8 `UNDERSTAND_EMBED_BATCH_SIZE` + v1.7 `UNDERSTAND_SKIP_DIRS` + v1.7 `UNDERSTAND_TIMEOUT_SECONDS`), 5 execution/autocode, 4 autoresearch-v1.0 + 3 autoresearch-v1.4 loop-control + 1 autoresearch-v1.5 reflect + 1 autoresearch-v1.6 parallel + 2 autoresearch-v1.9 hardening (`AUTORESEARCH_RECURSION_LIMIT` + `AUTORESEARCH_LOG_DIR_MAX_MB`) = 11 autoresearch total, 9 autocode-v1.3/swarm flags. See [API.md](API.md) → "Workflow-Specific Environment Variables" for the full per-workflow env var table. |
 | `core/config_backend/limits.py` | 60 | `_init_limits(cfg)` — 3 memory-tool limits, 3 web-tool, 2 CLI, 1 file. All ranges validated in `validators.py`. |
 | `core/config_backend/security.py` | 57 | `_init_security(cfg)` — `protected_files` frozenset (7 paths), `allowed_internal_hosts` frozenset (SSRF allowlist), 3 gateway, 3 environment (`env`, `is_dev`, `is_windows`). |
 | `core/config_backend/validators.py` | 108 | `_validate_config(cfg)` — **construction-time** range checks (22 checks total). Called as the LAST step of `Config.__init__`. Raises `ValueError` / `FileNotFoundError` immediately (survives `python -O`). |
@@ -192,4 +192,4 @@ tests/core/config/
 
 ---
 
-*Last updated: 2026-07-14 (v1.0). See [API.md](API.md) for model tiers and config reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.1). See [API.md](API.md) for model tiers and config reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

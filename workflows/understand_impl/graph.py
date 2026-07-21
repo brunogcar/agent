@@ -82,6 +82,19 @@ from workflows.understand_impl.routes import route_after_init
 # in node_modules, not project source. Candidates stored as edge targets;
 # the query layer dedupes.
 #
+# [v1.9] Phase 4 — doc consolidation + cross-component version-drift fix.
+# Doc-accuracy commit (no source changes, no new safety_features). Renumbered
+# kgraph CHANGELOG rows so kgraph follows its OWN monotonic version sequence
+# (was: kgraph versions matched understand's workflow version, breaking
+# kgraph's own sequence with a v1.4.1 → v1.6 jump). Mapping: kgraph v1.6 →
+# v1.5 (stale-index cleanup), kgraph v1.7 → v1.6 (configurability bundle),
+# kgraph v1.8 → v1.7 (cross-language import resolution). Config docs updated
+# for the first time since v1.0 (added v1.1 row + Workflow-Specific
+# Environment Variables section to config API.md). Understand docs verified
+# + kgraph-version references in Source Code Reference table + module tree
+# updated to use kgraph's own version numbers. Tests unchanged: 253 total
+# (27 pre-existing tree-sitter env failures, ZERO new).
+#
 # [v1.4.1 P2-11] safety_features list added — mirrors the autoresearch pattern
 # for clients that surface "what guarantees does this workflow give me?".
 WORKFLOW_METADATA = {
@@ -95,7 +108,13 @@ WORKFLOW_METADATA = {
     # v1.8: cross-language import resolution — JS/TS relative imports →
     #       candidate file paths; Go/Rust store raw + package/module-name
     #       derivatives.
-    "version": "1.8",
+    # v1.9: Phase 4 — doc consolidation + cross-component version-drift fix.
+    #       Doc-accuracy commit (no source changes, no new safety_features).
+    #       Renumbered kgraph CHANGELOG rows so kgraph follows its OWN
+    #       monotonic version sequence. Config docs updated for the first
+    #       time since v1.0 (v1.1 row + Workflow-Specific Environment
+    #       Variables section).
+    "version": "1.9",
     "description": "Build codebase knowledge graph + doc embeddings: init → discover → parse → report",
     "entry_point": "node_init_project",
     "nodes": [

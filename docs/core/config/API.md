@@ -384,6 +384,36 @@ graph LR
 
 ---
 
+## 🧪 Workflow-Specific Environment Variables (v1.1)
+
+Since v1.0, two workflows have registered env vars in `_init_execution()` in `core/config_backend/execution.py` to configure their own behavior. These env vars are owned by their respective workflows (see per-workflow docs for usage details); the config package just loads them via `os.getenv()` and exposes them as `cfg.<attr>` so the workflow can read them. **No structural changes to the config package — just new env var registrations.**
+
+### Autoresearch workflow (7 env vars, added v1.4-v1.9)
+
+| Config Attribute | Env Variable | Default | Added in | Description |
+|------------------|--------------|---------|----------|-------------|
+| `autoresearch_max_iterations` | `AUTORESEARCH_MAX_ITERATIONS` | `0` | autoresearch v1.4 | Hard cap on iteration count. `0` = unlimited (legacy v1.3 behavior). Caller-set `max_iterations` param overrides. |
+| `autoresearch_convergence_window` | `AUTORESEARCH_CONVERGENCE_WINDOW` | `10` | autoresearch v1.4 | Convergence detection — stop after N consecutive non-improvements. |
+| `autoresearch_convergence_epsilon` | `AUTORESEARCH_CONVERGENCE_EPSILON` | `0.001` | autoresearch v1.4 | Metric plateau threshold — metrics within ε of current_best count as non-improvements. |
+| `autoresearch_reflect_interval` | `AUTORESEARCH_REFLECT_INTERVAL` | `5` | autoresearch v1.5 | Reflect node fires every N iterations (0 = disabled, legacy v1.4 behavior). The planner LLM reflects on full experiment history and writes a strategy summary folded into the next proposal prompt. |
+| `autoresearch_parallel_count` | `AUTORESEARCH_PARALLEL_COUNT` | `1` | autoresearch v1.6 | N parallel experiments per iteration via ThreadPoolExecutor. `1` = single-experiment v1.5 mode. |
+| `autoresearch_recursion_limit` | `AUTORESEARCH_RECURSION_LIMIT` | `1000` | autoresearch v1.9 | LangGraph `recursion_limit` for the autoresearch loop. Was hardcoded 1000 in `workflows/base.py`. Raise for very long overnight runs. `0` = use LangGraph default (25 — too low for autoresearch). |
+| `autoresearch_log_dir_max_mb` | `AUTORESEARCH_LOG_DIR_MAX_MB` | `1024` | autoresearch v1.9 | 1GB cap on `.autoresearch/logs/` — when exceeded, new log writes are skipped + a tracer warning is emitted. `0` = no cap (write all logs — same as v1.8 behavior). |
+
+### Understand workflow (3 env vars, added v1.4.1-v1.7)
+
+| Config Attribute | Env Variable | Default | Added in | Description |
+|------------------|--------------|---------|----------|-------------|
+| `understand_embed_batch_size` | `UNDERSTAND_EMBED_BATCH_SIZE` | `100` | understand v1.4.1 (P2-8) | Phase-2 embedding batch size — definitions per HTTP call to LM Studio. Raise for fewer HTTP calls (faster on stable connections); lower for smaller request payloads. |
+| `understand_skip_dirs` | `UNDERSTAND_SKIP_DIRS` | `""` | understand v1.7 | Comma-separated extra directories to skip during discovery (merged with `ProjectManager._DEFAULT_SKIP_DIRS` via `get_skip_dirs()`). Example: `vendor,third_party`. |
+| `understand_timeout_seconds` | `UNDERSTAND_TIMEOUT_SECONDS` | `600` | understand v1.7 | Understand dispatch timeout in seconds. Was hardcoded 600 in `workflows/base.py`; now configurable. The timeout error message uses this value. |
+
+> **Note:** `understand_batch_size` (env: `UNDERSTAND_BATCH_SIZE`, default 10) was added in v1.4.1 P2-14 but is now UNUSED in Phase 1 (the outer batch loop was removed — each file is processed one at a time). Kept for backward compat + in case a future refactor re-introduces batching. Not listed in the "v1.1 additions" row of the CHANGELOG because it was registered in `execution.py` at the same time as `UNDERSTAND_EMBED_BATCH_SIZE` (both v1.4.1) — but it predates the config v1.0 doc consolidation and is documented here for completeness.
+
+> **Workflow ownership:** Each workflow is responsible for documenting its own env vars in its own API.md (see `docs/workflows/autoresearch/API.md` and `docs/workflows/understand/API.md`). The config API.md table above is a cross-workflow index — the canonical reference for any single env var is the owning workflow's docs.
+
+---
+
 ## 🌐 Gateway Configuration
 
 The REST gateway (`core/gateway.py`) exposes the agent over HTTP for external clients.
@@ -539,4 +569,4 @@ Additionally, `core/config_backend/validation.py::validate_config()` (exposed vi
 
 ---
 
-*Last updated: 2026-07-14 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

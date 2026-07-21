@@ -28,6 +28,7 @@
 19. **Always add to `.env.example`** — new env vars must be documented with defaults.
 20. **Always update this doc** — when adding config attributes, update the relevant table in API.md.
 21. **Always test validation** — error paths for invalid config must be tested. Tests that need to mock `cfg` / `tracer` for `validate_config()` must patch `core.config_backend.validation.cfg` / `.tracer` (not the old `core.config_validation.*` paths — the shim re-exports only `validate_config`).
+22. **[v1.1] Always register + document new workflow env vars in BOTH places** — When a workflow (autoresearch, understand, autocode, etc.) adds a new env var, it must be (a) registered in `_init_execution()` in `core/config_backend/execution.py` (with a `cfg.<attr> = os.getenv(...)` line + an inline comment explaining its purpose), (b) documented in the config API.md → "Workflow-Specific Environment Variables" section (with name, default, owner workflow, description), AND (c) documented in the workflow's own API.md (with usage examples). All 3 places must stay in sync — a workflow env var that's only registered in `execution.py` but not documented anywhere is invisible to operators; one that's documented in the config API but not registered in `execution.py` is a doc lie. Add a CHANGELOG row to `docs/core/config/CHANGELOG.md` for the config-side change too (config has its own version history independent of the workflow's version history).
 
 ---
 
@@ -43,4 +44,4 @@
 
 ---
 
-*Last updated: 2026-07-14 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for config reference, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for config reference, [CHANGELOG.md](CHANGELOG.md) for version history.*

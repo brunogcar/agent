@@ -8,13 +8,13 @@
 |------|---------|
 | `workflows/understand.py` | Thin facade — re-exports from understand_impl + `run_understand_workflow_sync()`. [v1.4.1] Lazy `is_same_path` import; `project_path` validation; normalized return shape. [v1.5] `action` parameter routes to query/health; re-exports `query_codebase` + `health_check` from `understand_impl.query` (was `understand_query` — moved in v1.6). |
 | `workflows/understand_impl/query.py` | [v1.5] NEW — `query_codebase()` (semantic/keyword/dependencies/callers) + `health_check()` (index stats). Bypasses the indexing graph entirely. [v1.6] MOVED here from `workflows/understand_query.py` (matches the `<workflow>_impl/` pattern). |
-| `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths. [v1.4.1] `SKIP_DIRS` class constant (canonical single source of truth). [v1.7] `_DEFAULT_SKIP_DIRS` (renamed) + `get_skip_dirs()` (env-merged) + `get_embedding_model()` (per-project override). |
-| `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode. [v1.6] +`get_all_file_paths()` + `delete_file_entry()` for stale cleanup. |
+| `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths. [v1.4.1] `SKIP_DIRS` class constant (canonical single source of truth). [v1.6] `_DEFAULT_SKIP_DIRS` (renamed) + `get_skip_dirs()` (env-merged) + `get_embedding_model()` (per-project override). |
+| `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode. [v1.5] +`get_all_file_paths()` + `delete_file_entry()` for stale cleanup. |
 | `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — delegates to tree-sitter (Python) |
 | `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust + 9 more via tree-sitter. [v1.4.1] Optional `errors` param on `extract_imports` + `extract_definitions_ts`. |
-| `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) + `extract_doc_chunks()` (chonkie). [v1.4.1] Doc chunk line numbers; empty-list short-circuit before availability check. [v1.7] Embedding cache (md5-keyed, 10000-entry cap) + `clear_embedding_cache()` + optional `model` param for per-project overrides. |
-| `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. [v1.7] Passes `pm.get_embedding_model()` to `embed_texts()`. |
-| `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. [v1.8] Now returns resolved file-path candidates for JS/TS (was: raw import strings only). |
+| `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) + `extract_doc_chunks()` (chonkie). [v1.4.1] Doc chunk line numbers; empty-list short-circuit before availability check. [v1.6] Embedding cache (md5-keyed, 10000-entry cap) + `clear_embedding_cache()` + optional `model` param for per-project overrides. |
+| `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. [v1.6] Passes `pm.get_embedding_model()` to `embed_texts()`. |
+| `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. [v1.7] Now returns resolved file-path candidates for JS/TS (was: raw import strings only). |
 | `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. [v1.5] Understand branch routes by `action` param (index/query/health) before graph construction. [v1.6] Understand query/health imports moved to `workflows.understand_impl.query`. [v1.7] Understand timeout read from `cfg.understand_timeout_seconds` (env: `UNDERSTAND_TIMEOUT_SECONDS`, default 600). |
 | `tests/workflows/understand/` | Test files (14 test files + conftest — see Testing section below). [v1.5] +test_query.py, +test_health.py. [v1.6] +test_stale_cleanup.py. |
 | `tests/core/kgraph/` | [v1.4.2] kgraph-module tests (8 test files + conftest) — embeddings, tree_sitter_parser, queries, ast_parser, project, storage, test_mapper, kgraph_fixes. |
@@ -39,9 +39,9 @@ workflows/understand_impl/
 
 core/kgraph/
 ├── tree_sitter_parser.py                   # [#4] Multi-language parser: Python, JS/TS, Go, Rust + 9 more [v1.4.1: errors param]
-├── embeddings.py                           # [#3] extract_definitions() + embed_texts() + extract_doc_chunks() [v1.4.1: doc line numbers] [v1.7: embedding cache + per-project model param]
-├── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() [v1.4.1: project-scoped path] [v1.7: passes pm.get_embedding_model()]
-├── storage.py                              # GraphStore [v1.6: +get_all_file_paths +delete_file_entry for stale cleanup]
+├── embeddings.py                           # [#3] extract_definitions() + embed_texts() + extract_doc_chunks() [v1.4.1: doc line numbers] [v1.6: embedding cache + per-project model param]
+├── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() [v1.4.1: project-scoped path] [v1.6: passes pm.get_embedding_model()]
+├── storage.py                              # GraphStore [v1.5: +get_all_file_paths +delete_file_entry for stale cleanup]
 └── queries.py                              # get_dependencies() + get_callers() [v1.4.1: multi-language fix]
 ```
 
@@ -256,4 +256,4 @@ tests/core/kgraph/                 # [v1.4.2] kgraph-module tests (moved from te
 
 - **Completion pattern** — Unlike `data`/`research` which call `node_done()` in their final node, understand sets `status` in `node_parse_and_store` (`"completed"` or `"completed_with_errors"`). `node_report` is side-effect-only (returns `{}` or `{"note": ...}`). The `run_understand_workflow_sync` facade calls `tracer.finish()` itself. This is intentional — understand uses `"completed"`/`"completed_with_errors"` (not `"success"`) to distinguish partial failures.
 
-*Last updated: 2026-07-22 (v1.8). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.9). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

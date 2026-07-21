@@ -51,12 +51,16 @@ print(result["result"])  # "Project analysis complete: 42 files, 156 dependencie
 # .env
 UNDERSTAND_BATCH_SIZE=10               # [v1.4.1 P2-14] Unused in Phase 1 (batch loop removed). Kept for backward compat.
 UNDERSTAND_EMBED_BATCH_SIZE=100         # [v1.4.1 P2-8] Phase-2 embedding batch size — definitions per HTTP call to LM Studio.
+UNDERSTAND_SKIP_DIRS=vendor,third_party # [v1.7] Comma-separated extra dirs to skip during discovery (merged with _DEFAULT_SKIP_DIRS).
+UNDERSTAND_TIMEOUT_SECONDS=600          # [v1.7] Understand dispatch timeout in seconds. Was hardcoded 600 in base.py.
 ```
 
 ```python
 # core/config.py
 cfg.understand_batch_size = 10          # [v1.4.1 P2-14] Unused in Phase 1 (kept for backward compat).
 cfg.understand_embed_batch_size = 100   # [v1.4.1 P2-8] Phase-2 embedding batch size.
+cfg.understand_skip_dirs = ""           # [v1.7] Extra skip-dirs (comma-separated; merged with _DEFAULT_SKIP_DIRS via get_skip_dirs()).
+cfg.understand_timeout_seconds = 600    # [v1.7] Dispatch timeout (was hardcoded in base.py).
 ```
 
 Other relevant env vars: `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED` (see kgraph [API.md](kgraph/API.md)).

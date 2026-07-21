@@ -83,7 +83,7 @@ callers = get_callers("/project", "core/config.py")
 
 Manages physical isolation and project-level configuration. Each project has a unique `project_id` derived from its absolute path hash.
 
-[v1.7] Two new methods:
+[v1.6] Two new methods:
 
 - **`get_skip_dirs()`** (classmethod) — returns the skip-dirs frozenset, merging `_DEFAULT_SKIP_DIRS` with the comma-separated `cfg.understand_skip_dirs` (env: `UNDERSTAND_SKIP_DIRS`). The class constant `SKIP_DIRS` is kept as a backward-compat alias to `_DEFAULT_SKIP_DIRS`.
 - **`get_embedding_model()`** (instance method) — returns the embedding model for this project, checking `.understand/config.json` for an override (`{"embedding_model": "..."}`) before falling back to `cfg.embedding_model`.
@@ -249,7 +249,7 @@ store2 = GraphStore(Path("project/.understand/kg.db"))
 assert store1 is store2  # Same instance
 ```
 
-#### [v1.6] Stale-index Cleanup Methods
+#### [v1.5] Stale-index Cleanup Methods
 
 Two new methods added to support understand v1.6's `node_discover_files` Phase 2 (deleting graph entries for files that were indexed but have since been deleted from disk):
 
@@ -303,12 +303,12 @@ Returns files that the given file imports (outgoing edges).
 
 [v1.4.1] Multi-language support — returns target_ids matching ANY supported extension (not just `.py`). Also keeps raw module-name forms (e.g. `react`, `fmt`, `std::collections::HashMap`) since they're useful for cross-language understanding + impact analysis even when they don't map 1:1 to a file.
 
-[v1.8] Cross-language import resolution — JS/TS relative imports (`./foo`, `../utils`) are now resolved to up to 13 candidate file paths at parse time (by `parse_and_store._resolve_import_to_file_paths`), so `get_dependencies` for a JS/TS file returns resolved paths like `src/foo.ts`, `src/foo/index.js` alongside the raw `./foo` form. The query layer itself needed NO code changes (the v1.4.1 multi-language filter already accepted any path-like target_id); it just returns richer results. Go package imports include the package short-name as a derivative (`github.com/foo/bar` → also `bar`). Rust `use` declarations include each `::`-separated segment except the last item name (`std::collections::HashMap` → also `std` + `collections`).
+[v1.7] Cross-language import resolution — JS/TS relative imports (`./foo`, `../utils`) are now resolved to up to 13 candidate file paths at parse time (by `parse_and_store._resolve_import_to_file_paths`), so `get_dependencies` for a JS/TS file returns resolved paths like `src/foo.ts`, `src/foo/index.js` alongside the raw `./foo` form. The query layer itself needed NO code changes (the v1.4.1 multi-language filter already accepted any path-like target_id); it just returns richer results. Go package imports include the package short-name as a derivative (`github.com/foo/bar` → also `bar`). Rust `use` declarations include each `::`-separated segment except the last item name (`std::collections::HashMap` → also `std` + `collections`).
 
 ```python
 deps = get_dependencies("/project", "core/llm.py")
 # Returns: ["core/config.py", "core/tracer.py", "core/llm_backend/client.py"]
-# For JS/TS files (v1.8): deps include RESOLVED file paths
+# For JS/TS files (v1.7): deps include RESOLVED file paths
 #   get_dependencies("/project", "src/app.ts")
 #   → ["./utils", "react", "src/utils.ts", "src/utils.tsx", "src/utils.js",
 #      "src/utils/index.ts", "src/utils/index.tsx", ...]
@@ -475,10 +475,10 @@ definitions = extract_definitions(source_code)
 vectors = embed_texts(["def foo(): pass", "class Bar: pass"])
 # → [[0.1, 0.2, ...], [0.3, 0.4, ...]]  or None if LM Studio unavailable
 
-# [v1.7] Per-project model override (empty string falls back to cfg.embedding_model)
+# [v1.6] Per-project model override (empty string falls back to cfg.embedding_model)
 vectors = embed_texts(["def foo(): pass"], model="bge-large-en-v1.5-Q8")
 
-# [v1.7] Clear the embedding cache (testing / memory management)
+# [v1.6] Clear the embedding cache (testing / memory management)
 clear_embedding_cache()
 ```
 
@@ -486,14 +486,14 @@ clear_embedding_cache()
 **Recommended model:** All-MiniLM-L6-v2-Embedding-GGUF (q8, 25MB) in LM Studio.
 **Graceful degradation:** Returns `None` on failure — callers must handle this.
 
-**[v1.7] Embedding cache:**
+**[v1.6] Embedding cache:**
 - Keyed by `md5(text)` — identical texts (same source chunk seen twice, or re-embeds after a metadata change) skip the HTTP call entirely.
 - Cap: 10000 entries. When exceeded, the entire cache is cleared (simplest correct behavior; an LRU would be more precise but adds complexity for rare benefit).
 - `clear_embedding_cache()` empties the cache. Tests should call this between cases to avoid cross-test contamination.
 - Partial cache hits: when SOME texts are cached and others aren't, only the uncached ones hit LM Studio (cached ones are merged back into the result list in their original positions).
 - HTTP failures return `None` (not partial cache) — callers expect either the full list or `None`. Returning partial results would mask a real LM Studio outage.
 
-**[v1.7] Per-project model:**
+**[v1.6] Per-project model:**
 - The optional `model` parameter overrides `cfg.embedding_model`. When empty (default), uses `cfg.embedding_model` (backward compat).
 - Callers with a per-project config (e.g. `ProjectManager.get_embedding_model()`) should pass it through.
 - **Cache caveat:** the cache does NOT differentiate by model. If you switch models, call `clear_embedding_cache()` first to avoid returning the wrong model's vectors.
@@ -539,5 +539,5 @@ Prevents disk space exhaustion and WAL file bloat during long-term unattended op
 
 ---
 
-*Last updated: 2026-07-22 (v1.8)
+*Last updated: 2026-07-22 (v1.7)
 
