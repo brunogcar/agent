@@ -410,11 +410,66 @@ def run_workflow(
             # [Architecture] Now routes through standard graph.invoke() like all
             # other workflows. Was: run_understand_workflow_sync() with
             # ThreadPoolExecutor + new_event_loop() hack. Now: sync nodes, direct invoke.
+            #
+            # [v1.5] `action` parameter routes BEFORE graph construction:
+            #   - action="index"  (default) → run the full LangGraph (was: only path).
+            #   - action="query"  → call query_codebase() directly (no graph).
+            #   - action="health" → call health_check() directly (no graph).
+            # The query/health paths skip the is_agent computation + 600s
+            # timeout + graph building — they're cheap + don't need any of it.
+            # project_root is validated for ALL actions (query/health need a
+            # valid path to compute ProjectManager).
             from pathlib import Path
-            from workflows.understand import build_understand_graph, _default_state
             from core.kgraph.project import is_same_path
 
             project_root = initial_state.get("project_root", "")
+            action = initial_state.get("action", "index")
+
+            # Validate project_root exists for ALL actions — query/health
+            # still need a real path to construct ProjectManager + look up
+            # kg.db. Fail fast before touching kgraph.
+            if not project_root or not Path(project_root).exists():
+                return {
+                    "status": "failed",
+                    "errors": [f"project_root does not exist: {project_root}"],
+                    "trace_id": trace_id,
+                }
+
+            # ─── action="query" — semantic/keyword/dependencies/callers ──
+            if action == "query":
+                from workflows.understand_query import query_codebase
+                return query_codebase(
+                    project_path=project_root,
+                    question=goal,  # the search query IS the goal
+                    query_type=initial_state.get("query_type", "semantic"),
+                    file_path=initial_state.get("file_path", ""),
+                    top_k=initial_state.get("top_k", 10),
+                    is_agent_root=is_same_path(Path(project_root), cfg.agent_root),
+                    trace_id=trace_id,
+                )
+
+            # ─── action="health" — index stats (no graph run) ─────────────
+            if action == "health":
+                from workflows.understand_query import health_check
+                return health_check(
+                    project_path=project_root,
+                    is_agent_root=is_same_path(Path(project_root), cfg.agent_root),
+                    trace_id=trace_id,
+                )
+
+            # ─── unknown action → fail fast ───────────────────────────────
+            if action != "index":
+                return {
+                    "status": "failed",
+                    "errors": [
+                        f"Unknown action: {action}. Use: index (default), query, health"
+                    ],
+                    "trace_id": trace_id,
+                }
+
+            # ─── action="index" (default) — run the full graph ────────────
+            from workflows.understand import build_understand_graph, _default_state
+
             is_agent = is_same_path(Path(project_root), cfg.agent_root) if project_root else False
             understand_state = _default_state(project_root, is_agent_root=is_agent, trace_id=trace_id)
             # v1.4: Pass skip_embeddings from initial_state

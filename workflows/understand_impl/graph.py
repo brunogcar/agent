@@ -47,13 +47,20 @@ from workflows.understand_impl.routes import route_after_init
 # pass; we keep the version label at "1.4" (the feature release) and
 # document the hardening in CHANGELOG.md (v1.4.1 row).
 #
+# [v1.5] Version bumped 1.4 → 1.5. Adds the query interface + health
+# check via the `action` parameter on run_workflow(type='understand').
+# New module: workflows/understand_query.py (query_codebase +
+# health_check). No changes to the indexing graph itself — v1.5 is purely
+# additive (new entry points that bypass the graph for query/health).
+#
 # [v1.4.1 P2-11] safety_features list added — mirrors the autoresearch pattern
 # for clients that surface "what guarantees does this workflow give me?".
 WORKFLOW_METADATA = {
     "name": "understand",
     # v1.4: skip_embeddings + two-phase batched embedding were already in the
     # code; the version field just hadn't been bumped. v1.4.1 is the hardening.
-    "version": "1.4",
+    # v1.5: query interface + health check (action parameter).
+    "version": "1.5",
     "description": "Build codebase knowledge graph + doc embeddings: init → discover → parse → report",
     "entry_point": "node_init_project",
     "nodes": [
@@ -94,6 +101,8 @@ WORKFLOW_METADATA = {
         "errors_capped_at_100",       # v1.4.1 P2-10: parse loop caps errors list (was: unbounded)
         "file_size_recheck",          # v1.4.1 P3-1: parse re-checks size before read_text (handles files that grew)
         "project_scoped_vectors",     # v1.4.1 P1-3: ChromaDB path is per-project (was: always agent_root)
+        "query_interface",           # v1.5: action="query" routes to query_codebase (semantic/keyword/deps/callers) without running the graph
+        "health_check",              # v1.5: action="health" returns index stats (file/edge/vector counts, sizes, embedding availability) without running the graph
     ],
 }
 

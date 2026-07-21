@@ -6,7 +6,8 @@
 
 | File | Purpose |
 |------|---------|
-| `workflows/understand.py` | Thin facade — re-exports from understand_impl + `run_understand_workflow_sync()`. [v1.4.1] Lazy `is_same_path` import; `project_path` validation; normalized return shape. |
+| `workflows/understand.py` | Thin facade — re-exports from understand_impl + `run_understand_workflow_sync()`. [v1.4.1] Lazy `is_same_path` import; `project_path` validation; normalized return shape. [v1.5] `action` parameter routes to query/health; re-exports `query_codebase` + `health_check` from `understand_query`. |
+| `workflows/understand_query.py` | [v1.5] NEW — `query_codebase()` (semantic/keyword/dependencies/callers) + `health_check()` (index stats). Bypasses the indexing graph entirely. |
 | `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths. [v1.4.1] `SKIP_DIRS` class constant (canonical single source of truth). |
 | `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode |
 | `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — delegates to tree-sitter (Python) |
@@ -14,8 +15,8 @@
 | `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) + `extract_doc_chunks()` (chonkie). [v1.4.1] Doc chunk line numbers; empty-list short-circuit before availability check. |
 | `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. |
 | `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. |
-| `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. |
-| `tests/workflows/understand/` | Test files (11 test files + conftest — see Testing section below). |
+| `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. [v1.5] Understand branch routes by `action` param (index/query/health) before graph construction. |
+| `tests/workflows/understand/` | Test files (13 test files + conftest — see Testing section below). [v1.5] +test_query.py, +test_health.py. |
 | `tests/core/kgraph/` | [v1.4.2] kgraph-module tests (8 test files + conftest) — embeddings, tree_sitter_parser, queries, ast_parser, project, storage, test_mapper, kgraph_fixes. |
 
 ---
@@ -23,11 +24,12 @@
 ## 🌳 Module Tree
 
 ```text
-workflows/understand.py                    # Thin facade — re-exports + run_understand_workflow_sync
+workflows/understand.py                    # Thin facade — re-exports + run_understand_workflow_sync [v1.5: action routing]
+workflows/understand_query.py              # [v1.5] NEW — query_codebase + health_check (bypass the graph)
 workflows/understand_impl/
 ├── state.py                               # UnderstandState TypedDict + _default_state() [v1.4.1: pure defaults, no PM]
 ├── helpers.py                             # _chunked_md5()
-├── graph.py                               # build_understand_graph() + WORKFLOW_METADATA [v1.4.1: conditional init edge, safety_features]
+├── graph.py                               # build_understand_graph() + WORKFLOW_METADATA [v1.5: version 1.5, query_interface + health_check in safety_features]
 ├── routes.py                              # [v1.4.1 P0-1] route_after_init — init→discover conditional (END on failure)
 └── nodes/
     ├── init_project.py                    # node_init_project — PM init, GraphStore verify [v1.4.1: returns project_id + artifact_dir]
@@ -48,16 +50,28 @@ core/kgraph/
 
 ```mermaid
 graph TD
-    A["run_workflow(type='understand')"] --> B["_default_state(project_root, trace_id)"]
+    A["run_workflow(type='understand')"] --> ACT{"action?"}
+    ACT -->|"index (default)"| B["_default_state(project_root, trace_id)"]
+    ACT -->|"query"| Q["query_codebase(project_root, goal, query_type, file_path, top_k)"]
+    ACT -->|"health"| H["health_check(project_root)"]
+    ACT -->|"unknown"| FAIL["return status=failed"]
     B --> C["build_understand_graph()"]
     C --> D["graph.invoke(initial_state)"]
     D --> E["node_init_project"]
     E -->|"route_after_init"| F["node_discover_files"]
     E -->|"route_after_init (failed)"| END["END"]
     F --> G["node_parse_and_store"]
-    G --> H["node_report"]
-    H --> I["Return final_state"]
+    G --> H2["node_report"]
+    H2 --> I["Return final_state"]
+    Q --> I
+    H --> I
 ```
+
+**[v1.5] Action routing:** The `action` parameter is checked BEFORE graph
+construction. `action="query"` calls `query_codebase()` directly (no graph
+build, no 600s timeout, no skip_embeddings handling). `action="health"`
+calls `health_check()` directly. Only `action="index"` (default) runs the
+full LangGraph. `project_root` is validated for ALL actions.
 
 **Key design decisions:**
 - **Sync nodes (v1.0)** — All nodes are `def` (sync), not `async def`. Consistent with research, data, autocode, and deep_research workflows. No event loop, no ThreadPoolExecutor, no async complexity.
@@ -93,6 +107,8 @@ graph TD
 | `errors_capped_at_100` | v1.4.1 P2-10: parse loop caps errors list (was: unbounded) |
 | `file_size_recheck` | v1.4.1 P3-1: parse re-checks size before `read_text` (handles files that grew) |
 | `project_scoped_vectors` | v1.4.1 P1-3: ChromaDB path is per-project (was: always agent_root) |
+| `query_interface` | v1.5: `action="query"` routes to `query_codebase` (semantic/keyword/dependencies/callers) without running the graph |
+| `health_check` | v1.5: `action="health"` returns index stats (file/edge/vector counts, sizes, embedding availability) without running the graph |
 
 ---
 
@@ -106,7 +122,7 @@ graph TD
 ```text
 tests/workflows/understand/
 ├── conftest.py                    # make_project fixture + [v1.4.1] mocker shim (pytest-mock not installed)
-├── test_graph.py                  # topology + WORKFLOW_METADATA [v1.4.1: conditional edge + safety_features]
+├── test_graph.py                  # topology + WORKFLOW_METADATA [v1.4.1: conditional edge + safety_features] [v1.5: query_interface + health_check in safety_features]
 ├── test_state.py                  # _default_state structure [v1.4.1: pure defaults, skip_embeddings, no PM]
 ├── test_init_project.py           # node_init_project [v1.4.1: returns project_id + artifact_dir]
 ├── test_helpers.py                # _chunked_md5 + trace ID propagation [v1.4.2: split — structure tests moved to test_structure.py]
@@ -115,7 +131,9 @@ tests/workflows/understand/
 ├── test_discover_files.py         # [v1.4.1] defensive bail, cancellation, GraphStore in try, SKIP_DIRS + [v1.4.2] mid-walk cancel
 ├── test_parse_and_store.py        # [v1.4.1] batch errors, cancellation, GraphStore in try, error cap, file-size recheck, batch size + [v1.4.2] mid-parse cancel, error cap, embed batch failure
 ├── test_report.py                 # [v1.4.1 P2-4] vectors_created in summary
-├── test_facade.py                 # [v1.4.1 P0-2 + P2-7 + P2-9] lazy import, return shape, path validation
+├── test_facade.py                 # [v1.4.1 P0-2 + P2-7 + P2-9] lazy import, return shape, path validation + [v1.5] action routing (index/query/health)
+├── test_query.py                  # [v1.5 NEW] query_codebase — semantic/keyword/dependencies/callers + error paths
+├── test_health.py                 # [v1.5 NEW] health_check — indexed/not-indexed, counts, sizes, embedding_available
 └── test_structure.py              # [v1.4.2] structural tests moved from test_helpers.py (sync nodes, no event loop hack, subpackage structure, completed_with_errors)
 
 tests/core/kgraph/                 # [v1.4.2] kgraph-module tests (moved from tests/workflows/understand/)
@@ -161,9 +179,21 @@ tests/core/kgraph/                 # [v1.4.2] kgraph-module tests (moved from te
 - [v1.4.1] Multi-language get_dependencies (JS/TS/Go/Rust, not just .py)
 - [v1.4.1] Multi-language get_callers (Python module-name + JS/TS relative + Go package paths)
 - [v1.4.1] tree-sitter parse errors surfaced via errors parameter
+- [v1.5] query_codebase: semantic search returns results with snippet (grep -n format)
+- [v1.5] query_codebase: keyword search returns file paths
+- [v1.5] query_codebase: dependencies + callers require file_path (fail fast)
+- [v1.5] query_codebase: invalid query_type returns failed with descriptive error
+- [v1.5] query_codebase: not-indexed project returns failed with hint
+- [v1.5] query_codebase: embedding unavailable → graceful degradation (empty results + error)
+- [v1.5] health_check: not-indexed → indexed=False, all counts 0, status=success
+- [v1.5] health_check: indexed → file_count > 0, edge_count > 0, last_indexed > 0
+- [v1.5] health_check: project_id always in response
+- [v1.5] health_check: kg_db_size_bytes > 0 when indexed
+- [v1.5] health_check: embedding_available field reflected from is_embedding_available()
+- [v1.5] facade action routing: action=index (default) runs graph, action=query/health bypass graph
 
 ---
 
 - **Completion pattern** — Unlike `data`/`research` which call `node_done()` in their final node, understand sets `status` in `node_parse_and_store` (`"completed"` or `"completed_with_errors"`). `node_report` is side-effect-only (returns `{}` or `{"note": ...}`). The `run_understand_workflow_sync` facade calls `tracer.finish()` itself. This is intentional — understand uses `"completed"`/`"completed_with_errors"` (not `"success"`) to distinguish partial failures.
 
-*Last updated: 2026-07-21 (v1.4.1). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.5). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

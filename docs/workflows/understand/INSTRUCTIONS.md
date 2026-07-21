@@ -21,27 +21,30 @@
 15. **[v1.4.1 P1-6] Never ignore cancellation in long loops** — The base.py 600s daemon-thread timeout doesn't kill the thread (Python limitation). Without cooperative `is_workflow_cancelled()` checks, a cancelled understand workflow keeps running in the background, wasting CPU + disk I/O. Always poll `is_workflow_cancelled(trace_id)` at loop boundaries (every 10-100 files, every batch).
 16. **[v1.4.1 P1-3] Never hardcode the agent_root ChromaDB path for all projects** — The vector path must be project-scoped (`{project}/.understand/chroma/` for projects, `memory_db/understand/chroma/` for agent root). Hardcoding `agent_root/.understand/chroma/` orphans vectors when a project's `.understand/` is deleted.
 17. **[v1.4.1 P2-12] Never claim "checkpoint/resume" without verifying** — Understand does NOT save node-level mid-execution checkpoints (nodes use `tracer.step` directly, not `node_step(checkpoint=True)`). Checkpoints ARE saved on crash/cancel/timeout by base.py's exception handler. Don't claim more than what's actually implemented.
+18. **[v1.5] Never run the full indexing graph when the user just wants to search** — Use `action="query"` (semantic/keyword/dependencies/callers) or `action="health"` (index stats). The graph takes 5+ minutes on large projects; a query takes milliseconds. The `action` parameter is checked BEFORE `build_understand_graph()` is called, so query/health bypass the graph entirely.
 
 ## ✅ ALWAYS DO
 
-18. **Always pass `trace_id` to `_default_state()`** — Nodes need it for trace correlation.
-19. **Always close GraphStore connections** — Use `try: ... finally: if store is not None: store.close()`.
-20. **Always use `_chunked_md5()` for file hashing** — Prevents memory spikes.
-21. **Always deduplicate target paths** — Use `set()` before `list()` for edge creation.
-22. **Always treat `completed_with_errors` as success** — The workflow completed, just with some parse failures.
-23. **Always log report generation failures** — Use `tracer.error()`, not bare `except: pass`.
-24. **Always test sync node verification** — Assert `not inspect.iscoroutinefunction(node)`.
-25. **Always update this doc** when adding nodes, changing parsing logic, or modifying storage.
-26. **Always use `extract_definitions()` for chunking** — [v1.1] Per-definition (function/class/module) embeddings, not per-file or fixed-window.
-27. **Always delete old vectors before upserting** — [v1.1] `upsert_file_vectors()` calls `collection.delete(where={"file_path": ...})` first.
-28. **Always batch embedding calls** — [v1.1] `embed_texts()` sends all texts in one HTTP request. Don't call it per-definition in a loop.
-29. **[v1.4.1 P1-1] Always bail on `status == "failed"`** — At the top of every node: `if state.get("status") == "failed": return {}`. Belt-and-suspenders alongside `route_after_init` — if a future graph refactor adds a direct edge past a failed node, the node itself short-circuits.
-30. **[v1.4.1 P1-6] Always check `is_workflow_cancelled()` in loops** — At loop entry + every 10-100 iterations + every batch. Return `{"status": "failed", "errors": ["Workflow cancelled"]}` on cancel.
-31. **[v1.4.1 P2-10] Always cap the errors list at 100** — Use `_append_capped(errors, msg, _ERRORS_CAP)`. A final `"... and N more errors (capped at 100)"` entry preserves the count for the operator.
-32. **[v1.4.1 P3-1] Always re-check file size before `read_text`** — A file can grow between discover and parse (especially on long-running invocations). `if full_path.stat().st_size > ProjectManager.MAX_FILE_SIZE_BYTES: skip + append error`.
-33. **[v1.4.1 P3-4] Always pass `errors=errors` to `extract_imports` + `extract_definitions_ts`** — Lets tree-sitter parse failures surface instead of being silently swallowed.
-34. **[v1.4.1 P2-2] Always use `ProjectManager.SKIP_DIRS`** — Don't define a local `skip_dirs` set in nodes. The class constant is the single source of truth (adding a new dir is a one-line change).
-35. **[v1.4.1 P0-2] Always lazy-import kgraph in the facade** — `from core.kgraph.project import is_same_path` inside the function, not at module top-level. A broken kgraph shouldn't cascade to every caller of `workflows.understand`.
+19. **Always pass `trace_id` to `_default_state()`** — Nodes need it for trace correlation.
+20. **Always close GraphStore connections** — Use `try: ... finally: if store is not None: store.close()`.
+21. **Always use `_chunked_md5()` for file hashing** — Prevents memory spikes.
+22. **Always deduplicate target paths** — Use `set()` before `list()` for edge creation.
+23. **Always treat `completed_with_errors` as success** — The workflow completed, just with some parse failures.
+24. **Always log report generation failures** — Use `tracer.error()`, not bare `except: pass`.
+25. **Always test sync node verification** — Assert `not inspect.iscoroutinefunction(node)`.
+26. **Always update this doc** when adding nodes, changing parsing logic, or modifying storage.
+27. **Always use `extract_definitions()` for chunking** — [v1.1] Per-definition (function/class/module) embeddings, not per-file or fixed-window.
+28. **Always delete old vectors before upserting** — [v1.1] `upsert_file_vectors()` calls `collection.delete(where={"file_path": ...})` first.
+29. **Always batch embedding calls** — [v1.1] `embed_texts()` sends all texts in one HTTP request. Don't call it per-definition in a loop.
+30. **[v1.4.1 P1-1] Always bail on `status == "failed"`** — At the top of every node: `if state.get("status") == "failed": return {}`. Belt-and-suspenders alongside `route_after_init` — if a future graph refactor adds a direct edge past a failed node, the node itself short-circuits.
+31. **[v1.4.1 P1-6] Always check `is_workflow_cancelled()` in loops** — At loop entry + every 10-100 iterations + every batch. Return `{"status": "failed", "errors": ["Workflow cancelled"]}` on cancel.
+32. **[v1.4.1 P2-10] Always cap the errors list at 100** — Use `_append_capped(errors, msg, _ERRORS_CAP)`. A final `"... and N more errors (capped at 100)"` entry preserves the count for the operator.
+33. **[v1.4.1 P3-1] Always re-check file size before `read_text`** — A file can grow between discover and parse (especially on long-running invocations). `if full_path.stat().st_size > ProjectManager.MAX_FILE_SIZE_BYTES: skip + append error`.
+34. **[v1.4.1 P3-4] Always pass `errors=errors` to `extract_imports` + `extract_definitions_ts`** — Lets tree-sitter parse failures surface instead of being silently swallowed.
+35. **[v1.4.1 P2-2] Always use `ProjectManager.SKIP_DIRS`** — Don't define a local `skip_dirs` set in nodes. The class constant is the single source of truth (adding a new dir is a one-line change).
+36. **[v1.4.1 P0-2] Always lazy-import kgraph in the facade** — `from core.kgraph.project import is_same_path` inside the function, not at module top-level. A broken kgraph shouldn't cascade to every caller of `workflows.understand`.
+37. **[v1.5] Always use `action='query'` for search** — Don't run the full graph just to query the index. `action='query'` with `query_type` (semantic/keyword/dependencies/callers) routes directly to the kgraph query function without building or invoking the LangGraph.
+38. **[v1.5] Always check `health_check` before querying** — If `indexed=False`, tell the operator to run `action='index'` first. Querying an un-indexed project returns a failed status with a hint, but checking health up-front is cleaner UX (the operator sees the index state explicitly).
 
 ---
 
@@ -68,4 +71,4 @@
 
 ---
 
-*Last updated: 2026-07-21 (v1.4.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

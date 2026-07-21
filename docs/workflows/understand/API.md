@@ -10,18 +10,74 @@ The understand workflow is triggered via:
 workflow(type="understand", goal="Map the auth module", project_root="D:/projects/myapp")
 ```
 
-Optional parameter:
-- `skip_embeddings` (bool, default False): v1.4 — Skip vector embedding indexing. Graph edges still stored. Use when LM Studio is slow/unavailable or for fast re-indexing.
+Optional parameters:
+- `action` (str, default `"index"`): [v1.5] Routes to one of three modes:
+  - `"index"` (default) — runs the full indexing graph (backward compat).
+  - `"query"` — search the already-indexed codebase (see Query Interface below).
+  - `"health"` — return index stats without running the graph (see Health Check below).
+- `skip_embeddings` (bool, default False): v1.4 — Skip vector embedding indexing. Graph edges still stored. Use when LM Studio is slow/unavailable or for fast re-indexing. (action="index" only.)
+- `query_type` (str, default `"semantic"`): [v1.5] One of `semantic`, `keyword`, `dependencies`, `callers`. (action="query" only.)
+- `file_path` (str, default `""`): [v1.5] Required for `query_type="dependencies"` + `query_type="callers"`. The relative file path to inspect (e.g. `"core/config.py"`). (action="query" only.)
+- `top_k` (int, default 10): [v1.5] Max results to return for semantic + keyword queries. (action="query" only.)
 
 Or directly via `base.py`:
 
 ```python
 from workflows.base import run_workflow
+
+# action="index" (default) — full indexing run
 result = run_workflow(
     workflow_type="understand",
     goal="Index codebase",
     project_root="/path/to/project",
     trace_id="abc123",
+)
+
+# action="query" — semantic search (goal IS the search query)
+result = run_workflow(
+    workflow_type="understand",
+    goal="how does auth work",
+    project_root="/path/to/project",
+    action="query",
+    query_type="semantic",
+    top_k=10,
+)
+
+# action="query" — keyword search
+result = run_workflow(
+    workflow_type="understand",
+    goal="auth config",
+    project_root="/path/to/project",
+    action="query",
+    query_type="keyword",
+)
+
+# action="query" — dependencies of a file
+result = run_workflow(
+    workflow_type="understand",
+    goal="dependencies of main.py",
+    project_root="/path/to/project",
+    action="query",
+    query_type="dependencies",
+    file_path="src/main.py",
+)
+
+# action="query" — callers of a file
+result = run_workflow(
+    workflow_type="understand",
+    goal="callers of utils.py",
+    project_root="/path/to/project",
+    action="query",
+    query_type="callers",
+    file_path="src/utils.py",
+)
+
+# action="health" — index stats
+result = run_workflow(
+    workflow_type="understand",
+    goal="health check",
+    project_root="/path/to/project",
+    action="health",
 )
 ```
 
@@ -29,10 +85,44 @@ Or via the standalone facade:
 
 ```python
 from workflows.understand import run_understand_workflow_sync
+
+# action="index" (default) — full indexing run
 result = run_understand_workflow_sync("/path/to/project", trace_id="abc123")
 # [v1.4.1] Always returns a dict with "status" and "errors" keys.
 # Success path: {"status": "completed", "errors": [], ...}
 # Failure path: {"status": "failed", "errors": ["..."]}
+
+# [v1.5] action="query" — semantic search
+result = run_understand_workflow_sync(
+    "/path/to/project",
+    action="query",
+    question="how does auth work",
+    query_type="semantic",
+    top_k=10,
+    trace_id="abc123",
+)
+
+# [v1.5] action="health" — index stats
+result = run_understand_workflow_sync(
+    "/path/to/project",
+    action="health",
+    trace_id="abc123",
+)
+```
+
+Or call the query/health functions directly (bypass both base.py + the facade):
+
+```python
+from workflows.understand import query_codebase, health_check
+
+results = query_codebase(
+    project_path="/path/to/project",
+    question="how does auth work",
+    query_type="semantic",
+    top_k=10,
+)
+
+stats = health_check(project_path="/path/to/project")
 ```
 
 ---
@@ -175,6 +265,237 @@ result = run_understand_workflow_sync("/path/to/project", trace_id="abc123")
 
 ---
 
+## 🔍 Query Interface (v1.5)
+
+`action="query"` searches an already-indexed codebase WITHOUT running the
+indexing graph. The `goal` parameter is the search query (for semantic +
+keyword) or a description (for dependencies + callers — `file_path` is the
+actual query target).
+
+### `query_type="semantic"` — vector search via ChromaDB
+
+Finds code definitions whose embeddings are closest to the query string.
+Requires LM Studio running with the embedding model loaded.
+
+```python
+result = run_workflow(
+    workflow_type="understand",
+    goal="how does the auth token validation work",
+    project_root="/path/to/project",
+    action="query",
+    query_type="semantic",
+    top_k=10,
+)
+```
+
+**Result shape:**
+```json
+{
+  "status": "success",
+  "action": "query",
+  "query_type": "semantic",
+  "question": "how does the auth token validation work",
+  "project_path": "/path/to/project",
+  "results": [
+    {
+      "file_path": "src/auth/tokens.py",
+      "name": "validate_token",
+      "type": "function",
+      "line_start": 42,
+      "line_end": 58,
+      "distance": 0.123,
+      "source": "def validate_token(token):\n    ...",
+      "snippet": " 42 | def validate_token(token):\n 43 |     if not token:\n 44 |         return False\n 45 |     ..."
+    }
+  ],
+  "count": 1,
+  "trace_id": "abc123",
+  "errors": []
+}
+```
+
+**Snippet format:** `grep -n`-style line-numbered prefix (`  N | <code>`),
+offset by `line_start`. First 5 lines of `source`, capped at 500 chars.
+
+**Graceful degradation:** If LM Studio is unavailable, returns:
+```json
+{
+  "status": "success",
+  "results": [],
+  "count": 0,
+  "errors": ["Embedding service unavailable — semantic search requires LM Studio running"]
+}
+```
+Callers can fall back to `query_type="keyword"` without an extra round-trip.
+
+### `query_type="keyword"` — SQL path match
+
+Finds files whose paths contain keywords from the query. No LM Studio
+required — pure SQL on the kg.db.
+
+```python
+result = run_workflow(
+    workflow_type="understand",
+    goal="auth config",
+    project_root="/path/to/project",
+    action="query",
+    query_type="keyword",
+    top_k=5,
+)
+```
+
+**Result shape:**
+```json
+{
+  "status": "success",
+  "action": "query",
+  "query_type": "keyword",
+  "results": [
+    {"file_path": "src/auth.py"},
+    {"file_path": "core/config.py"}
+  ],
+  "count": 2,
+  "errors": []
+}
+```
+
+### `query_type="dependencies"` — outgoing edges
+
+Returns the files that a given file imports. **Requires `file_path`.**
+
+```python
+result = run_workflow(
+    workflow_type="understand",
+    goal="dependencies of main.py",
+    project_root="/path/to/project",
+    action="query",
+    query_type="dependencies",
+    file_path="src/main.py",
+)
+```
+
+**Result shape:**
+```json
+{
+  "status": "success",
+  "action": "query",
+  "query_type": "dependencies",
+  "results": [
+    {"target": "src/utils.py"},
+    {"target": "src/auth.py"}
+  ],
+  "count": 2,
+  "errors": []
+}
+```
+
+### `query_type="callers"` — incoming edges
+
+Returns the files that import a given file. **Requires `file_path`.**
+
+```python
+result = run_workflow(
+    workflow_type="understand",
+    goal="callers of utils.py",
+    project_root="/path/to/project",
+    action="query",
+    query_type="callers",
+    file_path="src/utils.py",
+)
+```
+
+**Result shape:**
+```json
+{
+  "status": "success",
+  "action": "query",
+  "query_type": "callers",
+  "results": [
+    {"caller": "src/main.py"},
+    {"caller": "src/auth.py"}
+  ],
+  "count": 2,
+  "errors": []
+}
+```
+
+### Query error cases
+
+| Case | status | errors |
+|------|--------|--------|
+| Invalid `query_type` | `failed` | `["Invalid query_type: <x>. Use: semantic, keyword, dependencies, callers"]` |
+| `file_path` missing for dependencies/callers | `failed` | `["file_path is required for dependencies/callers queries"]` |
+| Project not indexed (no kg.db) | `failed` | `["Project not indexed. Run understand(action='index') first. Expected: <path>/kg.db"]` |
+| Embedding service unavailable (semantic only) | `success` | `["Embedding service unavailable — semantic search requires LM Studio running"]` (results=[], count=0) |
+
+---
+
+## 🩺 Health Check (v1.5)
+
+`action="health"` returns index stats WITHOUT running the graph. Operators
+use it to decide whether to index — `indexed=False` is NOT a failure (it's
+the natural state of a project that hasn't been indexed yet).
+
+```python
+result = run_workflow(
+    workflow_type="understand",
+    goal="health check",
+    project_root="/path/to/project",
+    action="health",
+)
+```
+
+**Result shape:**
+```json
+{
+  "status": "success",
+  "action": "health",
+  "project_path": "/path/to/project",
+  "project_id": "abc123def456ghij",
+  "indexed": true,
+  "last_indexed": 1721606400.0,
+  "file_count": 42,
+  "edge_count": 156,
+  "vector_count": 128,
+  "kg_db_size_bytes": 524288,
+  "chroma_dir_size_bytes": 1048576,
+  "embedding_available": true,
+  "trace_id": "abc123",
+  "errors": []
+}
+```
+
+**Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `indexed` | bool | True if kg.db exists at `{project}/.understand/kg.db`. |
+| `last_indexed` | float | kg.db mtime (unix timestamp). 0.0 if not indexed. |
+| `file_count` | int | `COUNT(*) FROM nodes WHERE project_id=? AND type='file'`. |
+| `edge_count` | int | `COUNT(*) FROM edges WHERE project_id=?`. |
+| `vector_count` | int | `collection.count()` from ChromaDB. 0 if ChromaDB unavailable. |
+| `kg_db_size_bytes` | int | kg.db file size. 0 if not indexed. |
+| `chroma_dir_size_bytes` | int | Sum of file sizes under chroma/ dir (capped at 1000 files). |
+| `embedding_available` | bool | `is_embedding_available()` — True if LM Studio is reachable. |
+
+**Not-indexed response** (still `status="success"`):
+```json
+{
+  "status": "success",
+  "action": "health",
+  "indexed": false,
+  "last_indexed": 0.0,
+  "file_count": 0,
+  "edge_count": 0,
+  "vector_count": 0,
+  "kg_db_size_bytes": 0,
+  "chroma_dir_size_bytes": 0,
+  "embedding_available": false,
+  "errors": []
+}
+```
+
+---
+
 ## ⚙️ Configuration
 
 | Config | Source | Default | Description |
@@ -190,4 +511,4 @@ result = run_understand_workflow_sync("/path/to/project", trace_id="abc123")
 
 ---
 
-*Last updated: 2026-07-21 (v1.4.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

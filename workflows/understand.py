@@ -30,18 +30,46 @@ dict for a non-existent path instead of letting ProjectManager raise
 inside node_init_project (which would now be caught by route_after_init,
 but returning earlier is cleaner + avoids the cost of constructing the
 graph).
+
+[v1.5] Re-exports `query_codebase` + `health_check` from
+`workflows.understand_query` so callers that already import from this
+facade get the new query/health entry points without an extra import.
+The `action` parameter on `run_workflow(type='understand')` (in base.py)
+routes to these — but they're also available directly:
+
+    from workflows.understand import query_codebase, health_check
+
+[v1.5] `run_understand_workflow_sync` now accepts an `action` parameter
+(default "index") so standalone callers can route to query/health without
+going through base.py's run_workflow() dispatcher. The action routing
+mirrors base.py's understand branch: action="query" → query_codebase(),
+action="health" → health_check(), action="index" → graph.invoke().
+Backward compatible — existing callers that don't pass action get the
+index behavior.
 """
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from workflows.understand_impl.graph import build_understand_graph, WORKFLOW_METADATA
 from workflows.understand_impl.state import _default_state, UnderstandState
+from workflows.understand_query import query_codebase, health_check
 from core.tracer import tracer
 from core.config import cfg
 
 
-def run_understand_workflow_sync(project_path: str, is_agent_root: bool = False, trace_id: str = "") -> dict:
+def run_understand_workflow_sync(
+    project_path: str,
+    is_agent_root: bool = False,
+    trace_id: str = "",
+    action: str = "index",
+    question: str = "",
+    query_type: str = "semantic",
+    file_path: str = "",
+    top_k: int = 10,
+    **_extra: Any,
+) -> dict:
     """Synchronous entry point for the understand workflow.
 
     [Decision] Kept for backward compat — base.py doesn't use this.
@@ -59,7 +87,57 @@ def run_understand_workflow_sync(project_path: str, is_agent_root: bool = False,
     path (no error) → node_init_project would fail inside is_agent_root
     branch (source_root == path doesn't exist) or workspace branch
     (path/code doesn't exist). Now fails fast at the facade.
+
+    [v1.5] `action` parameter routes BEFORE graph construction:
+      - action="index"  (default) → run the full LangGraph (backward compat).
+      - action="query"  → call query_codebase() directly (no graph).
+      - action="health" → call health_check() directly (no graph).
+    For action="query", pass `question` (the search query), `query_type`
+    (semantic/keyword/dependencies/callers), `file_path` (for deps/callers),
+    and `top_k` (max results). For action="health", no extra params needed.
+    Unknown action → clean failure dict.
     """
+    # [v1.5] Route by action BEFORE trace creation — query/health have
+    # their own trace creation in understand_query.py with action-specific
+    # goal strings. For action="index", we create the trace here (unchanged).
+    if action == "query":
+        # Validate project_path exists (consistent with the index path).
+        if not project_path or not Path(project_path).exists():
+            msg = f"Project path does not exist: {project_path}"
+            tracer.error(trace_id or "understand", "understand", msg)
+            return {"status": "failed", "errors": [msg]}
+        # Lazy import is_same_path to detect agent_root (mirrors index path).
+        from core.kgraph.project import is_same_path
+        is_agent = is_same_path(project_path, cfg.agent_root) if project_path else False
+        return query_codebase(
+            project_path=project_path,
+            question=question,
+            query_type=query_type,
+            file_path=file_path,
+            top_k=top_k,
+            is_agent_root=is_agent or is_agent_root,
+            trace_id=trace_id,
+        )
+
+    if action == "health":
+        if not project_path or not Path(project_path).exists():
+            msg = f"Project path does not exist: {project_path}"
+            tracer.error(trace_id or "understand", "understand", msg)
+            return {"status": "failed", "errors": [msg]}
+        from core.kgraph.project import is_same_path
+        is_agent = is_same_path(project_path, cfg.agent_root) if project_path else False
+        return health_check(
+            project_path=project_path,
+            is_agent_root=is_agent or is_agent_root,
+            trace_id=trace_id,
+        )
+
+    if action != "index":
+        msg = f"Unknown action: {action}. Use: index (default), query, health"
+        tracer.error(trace_id or "understand", "understand", msg)
+        return {"status": "failed", "errors": [msg]}
+
+    # ─── action="index" (default) — original graph.invoke() path ────────
     tid = trace_id or tracer.new_trace("understand", goal=f"Index codebase at {project_path}")
     try:
         # [v1.4.1 P2-9] Validate project_path exists before building the graph.
@@ -103,4 +181,9 @@ __all__ = [
     "_default_state",
     "UnderstandState",
     "run_understand_workflow_sync",
+    # [v1.5] Query interface + health check (re-exported from
+    # workflows.understand_query). Surface here for callers that already
+    # import from this facade.
+    "query_codebase",
+    "health_check",
 ]

@@ -133,3 +133,128 @@ class TestFacadeValidatesProjectPath:
         result = run_understand_workflow_sync("", trace_id="test-empty-path")
         assert result["status"] == "failed"
         assert "does not exist" in result["errors"][0]
+
+
+# ─── [v1.5] Action routing ──────────────────────────────────────────────────
+
+class TestFacadeActionRouting:
+    """[v1.5] run_understand_workflow_sync now accepts an `action` parameter.
+
+    Default action='index' runs the graph (backward compat). action='query'
+    routes to query_codebase(); action='health' routes to health_check().
+    Both query/health bypass graph construction entirely.
+    """
+
+    def test_action_index_default(self, mocker, make_project):
+        """action='index' (default) → runs the graph (backward compat)."""
+        from workflows.understand import run_understand_workflow_sync
+
+        project_path = make_project()
+        # Mock the graph invoke — we only need to verify it WAS called.
+        fake_graph = MagicMock()
+        fake_graph.invoke.return_value = {
+            "status": "completed",
+            "files_parsed": 5,
+            "edges_created": 10,
+            "errors": [],
+        }
+        mocker.patch("workflows.understand.build_understand_graph", return_value=fake_graph)
+        mocker.patch(
+            "workflows.understand._default_state",
+            return_value={"project_path": str(project_path)},
+        )
+        mocker.patch("core.kgraph.project.is_same_path", return_value=False)
+
+        # Call WITHOUT action — should default to "index" and run the graph.
+        result = run_understand_workflow_sync(str(project_path), trace_id="test-idx-default")
+        assert result["status"] == "completed"
+        # The graph's invoke MUST have been called (action=index path).
+        fake_graph.invoke.assert_called_once()
+
+    def test_action_query_routes_to_query_codebase(self, mocker, make_project):
+        """action='query' → calls query_codebase (graph NOT built)."""
+        from workflows.understand import run_understand_workflow_sync
+
+        project_path = make_project()
+        # Patch query_codebase on the understand module (where it's re-exported).
+        mock_query = mocker.patch(
+            "workflows.understand.query_codebase",
+            return_value={
+                "status": "success",
+                "action": "query",
+                "query_type": "semantic",
+                "results": [],
+                "count": 0,
+                "errors": [],
+            },
+        )
+        # Patch build_understand_graph to ensure it's NOT called.
+        mock_build = mocker.patch("workflows.understand.build_understand_graph")
+        mocker.patch("core.kgraph.project.is_same_path", return_value=False)
+
+        result = run_understand_workflow_sync(
+            str(project_path),
+            trace_id="test-query-route",
+            action="query",
+            question="how does auth work",
+            query_type="semantic",
+            top_k=5,
+        )
+        assert result["status"] == "success"
+        assert result["action"] == "query"
+        # query_codebase was called with the right args.
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args[1]
+        assert call_kwargs["question"] == "how does auth work"
+        assert call_kwargs["query_type"] == "semantic"
+        assert call_kwargs["top_k"] == 5
+        # The graph was NOT built (action=query bypasses it).
+        mock_build.assert_not_called()
+
+    def test_action_health_routes_to_health_check(self, mocker, make_project):
+        """action='health' → calls health_check (graph NOT built)."""
+        from workflows.understand import run_understand_workflow_sync
+
+        project_path = make_project()
+        mock_health = mocker.patch(
+            "workflows.understand.health_check",
+            return_value={
+                "status": "success",
+                "action": "health",
+                "indexed": True,
+                "file_count": 42,
+                "edge_count": 100,
+                "errors": [],
+            },
+        )
+        mock_build = mocker.patch("workflows.understand.build_understand_graph")
+        mocker.patch("core.kgraph.project.is_same_path", return_value=False)
+
+        result = run_understand_workflow_sync(
+            str(project_path),
+            trace_id="test-health-route",
+            action="health",
+        )
+        assert result["status"] == "success"
+        assert result["action"] == "health"
+        mock_health.assert_called_once()
+        mock_build.assert_not_called()
+
+    def test_action_unknown_returns_failed(self, mocker, make_project):
+        """Unknown action value → status='failed' with descriptive error."""
+        from workflows.understand import run_understand_workflow_sync
+
+        project_path = make_project()
+        mocker.patch("core.kgraph.project.is_same_path", return_value=False)
+
+        result = run_understand_workflow_sync(
+            str(project_path),
+            trace_id="test-unknown-action",
+            action="bogus",
+        )
+        assert result["status"] == "failed"
+        assert len(result["errors"]) == 1
+        assert "Unknown action" in result["errors"][0]
+        assert "index" in result["errors"][0]
+        assert "query" in result["errors"][0]
+        assert "health" in result["errors"][0]
