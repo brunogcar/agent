@@ -136,9 +136,12 @@ def upsert_file_vectors(
     if not definitions:
         return 0
 
-    # Embed all definitions in one batch
+    # Embed all definitions in one batch.
+    # [v1.7] Pass pm.get_embedding_model() so per-project config overrides
+    # (in .understand/config.json) are respected. Falls back to cfg.embedding_model.
+    model = pm.get_embedding_model() if hasattr(pm, "get_embedding_model") else ""
     texts = [d["source"] for d in definitions]
-    embeddings = embed_texts(texts, trace_id=trace_id)
+    embeddings = embed_texts(texts, trace_id=trace_id, model=model)
 
     if embeddings is None:
         # LM Studio not available — graceful degradation
@@ -193,7 +196,10 @@ def query_similar_code(
     """
     from core.kgraph.embeddings import embed_texts
 
-    query_embedding = embed_texts([query], trace_id=trace_id)
+    # [v1.7] Per-project embedding model. Was: cfg.embedding_model (global).
+    # Now: pm.get_embedding_model() reads .understand/config.json override.
+    model = pm.get_embedding_model() if hasattr(pm, "get_embedding_model") else ""
+    query_embedding = embed_texts([query], trace_id=trace_id, model=model)
     if query_embedding is None:
         return []
 

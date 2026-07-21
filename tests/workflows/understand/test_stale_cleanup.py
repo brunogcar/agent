@@ -1,6 +1,6 @@
 """tests/workflows/understand/test_stale_cleanup.py
 
-[v1.5.1] Tests for the stale-index cleanup phase added to
+[v1.6] Tests for the stale-index cleanup phase added to
 node_discover_files. When a file is indexed but later deleted from disk,
 its graph node + edges + vectors must be removed (was: orphaned forever).
 
@@ -67,7 +67,7 @@ def _make_state(project_path, trace_id="test-stale", skip_embeddings=False):
 # ─── TestStaleCleanup ──────────────────────────────────────────────────────
 
 class TestStaleCleanup:
-    """[v1.5.1] node_discover_files prunes graph entries for deleted files."""
+    """[v1.6] node_discover_files prunes graph entries for deleted files."""
 
     def test_stale_file_node_deleted(self, tmp_path):
         """Index 3 files, delete 1, re-run discover_files → that node is gone."""

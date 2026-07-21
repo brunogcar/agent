@@ -83,6 +83,11 @@ callers = get_callers("/project", "core/config.py")
 
 Manages physical isolation and project-level configuration. Each project has a unique `project_id` derived from its absolute path hash.
 
+[v1.7] Two new methods:
+
+- **`get_skip_dirs()`** (classmethod) — returns the skip-dirs frozenset, merging `_DEFAULT_SKIP_DIRS` with the comma-separated `cfg.understand_skip_dirs` (env: `UNDERSTAND_SKIP_DIRS`). The class constant `SKIP_DIRS` is kept as a backward-compat alias to `_DEFAULT_SKIP_DIRS`.
+- **`get_embedding_model()`** (instance method) — returns the embedding model for this project, checking `.understand/config.json` for an override (`{"embedding_model": "..."}`) before falling back to `cfg.embedding_model`.
+
 #### Project Types
 
 | Type | `source_root` | `artifact_root` | Use Case |
@@ -244,9 +249,9 @@ store2 = GraphStore(Path("project/.understand/kg.db"))
 assert store1 is store2  # Same instance
 ```
 
-#### [v1.5.1] Stale-index Cleanup Methods
+#### [v1.6] Stale-index Cleanup Methods
 
-Two new methods added to support understand v1.5.1's `node_discover_files` Phase 2 (deleting graph entries for files that were indexed but have since been deleted from disk):
+Two new methods added to support understand v1.6's `node_discover_files` Phase 2 (deleting graph entries for files that were indexed but have since been deleted from disk):
 
 ```python
 # Get all file paths currently stored for a project (for orphan computation).
@@ -454,7 +459,7 @@ defs = extract_definitions_ts(source_code, "typescript")
 Tree-sitter-based code chunking + LM Studio embedding client for semantic code search.
 
 ```python
-from core.kgraph.embeddings import extract_definitions, embed_texts
+from core.kgraph.embeddings import extract_definitions, embed_texts, clear_embedding_cache
 
 # Split Python source into top-level definitions for embedding
 definitions = extract_definitions(source_code)
@@ -463,11 +468,29 @@ definitions = extract_definitions(source_code)
 # Embed texts via LM Studio /v1/embeddings (OpenAI-compatible)
 vectors = embed_texts(["def foo(): pass", "class Bar: pass"])
 # → [[0.1, 0.2, ...], [0.3, 0.4, ...]]  or None if LM Studio unavailable
+
+# [v1.7] Per-project model override (empty string falls back to cfg.embedding_model)
+vectors = embed_texts(["def foo(): pass"], model="bge-large-en-v1.5-Q8")
+
+# [v1.7] Clear the embedding cache (testing / memory management)
+clear_embedding_cache()
 ```
 
 **Config:** `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, `EMBEDDING_ENABLED` (in `.env`).
 **Recommended model:** All-MiniLM-L6-v2-Embedding-GGUF (q8, 25MB) in LM Studio.
 **Graceful degradation:** Returns `None` on failure — callers must handle this.
+
+**[v1.7] Embedding cache:**
+- Keyed by `md5(text)` — identical texts (same source chunk seen twice, or re-embeds after a metadata change) skip the HTTP call entirely.
+- Cap: 10000 entries. When exceeded, the entire cache is cleared (simplest correct behavior; an LRU would be more precise but adds complexity for rare benefit).
+- `clear_embedding_cache()` empties the cache. Tests should call this between cases to avoid cross-test contamination.
+- Partial cache hits: when SOME texts are cached and others aren't, only the uncached ones hit LM Studio (cached ones are merged back into the result list in their original positions).
+- HTTP failures return `None` (not partial cache) — callers expect either the full list or `None`. Returning partial results would mask a real LM Studio outage.
+
+**[v1.7] Per-project model:**
+- The optional `model` parameter overrides `cfg.embedding_model`. When empty (default), uses `cfg.embedding_model` (backward compat).
+- Callers with a per-project config (e.g. `ProjectManager.get_embedding_model()`) should pass it through.
+- **Cache caveat:** the cache does NOT differentiate by model. If you switch models, call `clear_embedding_cache()` first to avoid returning the wrong model's vectors.
 
 ---
 
@@ -510,5 +533,5 @@ Prevents disk space exhaustion and WAL file bloat during long-term unattended op
 
 ---
 
-*Last updated: 2026-07-22 (v1.5.1)
+*Last updated: 2026-07-22 (v1.7)
 

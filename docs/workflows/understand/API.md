@@ -114,8 +114,8 @@ Or call the query/health functions directly (bypass both base.py + the facade):
 
 ```python
 from workflows.understand import query_codebase, health_check
-# [v1.5.1] These are re-exported from workflows.understand_impl.query
-# (was: workflows.understand_query — moved in v1.5.1).
+# [v1.6] These are re-exported from workflows.understand_impl.query
+# (was: workflows.understand_query — moved in v1.6).
 
 results = query_codebase(
     project_path="/path/to/project",
@@ -151,18 +151,21 @@ stats = health_check(project_path="/path/to/project")
 ### `node_discover_files(state)` — Phase 2: File Discovery
 
 **Purpose:** Scan the project for changed/new files that need indexing.
-**[v1.5.1]** Also detect files that were indexed but have since been deleted
+**[v1.6]** Also detect files that were indexed but have since been deleted
 from disk, and remove their graph nodes + edges + ChromaDB vectors.
+**[v1.7]** Reports progress every 1000 files via `tracer.step` and respects
+the `UNDERSTAND_SKIP_DIRS` env var (merged with `_DEFAULT_SKIP_DIRS`).
 
 **Logic:**
 1. [v1.4.1 P1-1] Bail early if `status == "failed"` (belt-and-suspenders alongside `route_after_init`).
 2. [v1.4.1 P1-6] Check `is_workflow_cancelled(trace_id)` at start + every 100 files.
 3. **Phase 1 (existing behavior — disk walk + change detection):**
-   - Walk the source tree with `os.walk()`, skipping `ProjectManager.SKIP_DIRS`.
+   - Walk the source tree with `os.walk()`, skipping `ProjectManager.get_skip_dirs()` (v1.7: was `SKIP_DIRS` direct read; now env-merged via `get_skip_dirs()`).
    - For each file with a supported extension, check if it changed since last index (mtime + size fast path, then chunked MD5).
    - Collect changed files as `(full_path, rel_path, hash, mtime, size)` tuples.
-   - [v1.5.1] Collect every walked rel_path into a `disk_paths` set for Phase 2.
-4. **[v1.5.1] Phase 2 (stale cleanup):**
+   - [v1.6] Collect every walked rel_path into a `disk_paths` set for Phase 2.
+   - [v1.7] Every 1000 files, emit `tracer.step(tid, "discover", "Progress: N files found, M files scanned")` for operator visibility on large codebases.
+4. **[v1.6] Phase 2 (stale cleanup):**
    - Query `GraphStore.get_all_file_paths(project_id)` for stored paths.
    - Compute `orphans = stored_paths - disk_paths` (set difference).
    - For each orphan: `GraphStore.delete_file_entry(project_id, orphan_path)`
@@ -177,9 +180,9 @@ from disk, and remove their graph nodes + edges + ChromaDB vectors.
 
 **[v1.4.1 P1-7]** GraphStore is created INSIDE the `try` block; `finally` checks `if store is not None` before calling `close()`. Was: bare `store.close()` in finally that raised `NameError` when the constructor itself raised.
 
-**[v1.4.1 P2-2]** Uses `ProjectManager.SKIP_DIRS` (class constant) instead of a local set. Includes `.mypy_cache`, `.ruff_cache`, `.tox`, `htmlcov` (new in v1.4.1).
+**[v1.4.1 P2-2]** Uses `ProjectManager.get_skip_dirs()` (v1.7: was `SKIP_DIRS` direct read; now respects `UNDERSTAND_SKIP_DIRS` env var). The class constant `_DEFAULT_SKIP_DIRS` includes `.mypy_cache`, `.ruff_cache`, `.tox`, `htmlcov` (new in v1.4.1).
 
-**[v1.5.1] ChromaDB cleanup skipped when `skip_embeddings=True`** — we never indexed vectors in the first place, so there's nothing to clean up. (And the ChromaDB collection may not even exist.)
+**[v1.6] ChromaDB cleanup skipped when `skip_embeddings=True`** — we never indexed vectors in the first place, so there's nothing to clean up. (And the ChromaDB collection may not even exist.)
 
 ---
 
@@ -517,8 +520,10 @@ result = run_workflow(
 |--------|--------|---------|-------------|
 | `UNDERSTAND_BATCH_SIZE` | `.env` | `10` | [v1.4.1 P2-14] Unused in Phase 1 (batch loop removed). Kept for backward compat. |
 | `UNDERSTAND_EMBED_BATCH_SIZE` | `.env` | `100` | [v1.4.1 P2-8] Phase-2 embedding batch size — definitions per HTTP call to LM Studio. |
-| `skip_dirs` | `ProjectManager.SKIP_DIRS` | `node_modules`, `__pycache__`, `.git`, `.venv`, `venv`, `.understand`, `dist`, `build`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `htmlcov`, `.eggs` | [v1.4.1 P2-2] Directories to skip during file discovery. Canonical class constant. |
-| `EMBEDDING_MODEL` | `.env` | `all-MiniLM-L6-v2-GGUF` | LM Studio embedding model name (set to match what LM Studio shows) |
+| `UNDERSTAND_SKIP_DIRS` | `.env` | `""` | [v1.7] Comma-separated extra directories to skip during discovery (merged with `ProjectManager._DEFAULT_SKIP_DIRS` via `get_skip_dirs()`). Example: `vendor,third_party`. |
+| `UNDERSTAND_TIMEOUT_SECONDS` | `.env` | `600` | [v1.7] Understand dispatch timeout in seconds. Was hardcoded 600 in `workflows/base.py`; now configurable. The timeout error message uses this value. |
+| `skip_dirs` | `ProjectManager._DEFAULT_SKIP_DIRS` | `node_modules`, `__pycache__`, `.git`, `.venv`, `venv`, `.understand`, `dist`, `build`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `htmlcov`, `.eggs` | [v1.4.1 P2-2] Canonical default skip-dirs set. [v1.7] Renamed from `SKIP_DIRS` to `_DEFAULT_SKIP_DIRS`; `get_skip_dirs()` returns the env-merged set. The `SKIP_DIRS` class attribute remains as a backward-compat alias. |
+| `EMBEDDING_MODEL` | `.env` | `all-MiniLM-L6-v2-GGUF` | LM Studio embedding model name (set to match what LM Studio shows). [v1.7] Can be overridden per-project via `.understand/config.json`. |
 | `EMBEDDING_BASE_URL` | `.env` | same as `LM_STUDIO_BASE_URL` | OpenAI-compatible embeddings endpoint |
 | `EMBEDDING_ENABLED` | `.env` | `true` | Set to `false` to disable vector indexing entirely |
 
@@ -526,4 +531,43 @@ result = run_workflow(
 
 ---
 
-*Last updated: 2026-07-22 (v1.5.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+## 🏗️ Per-Project Configuration (v1.7)
+
+A project may override the global `cfg.embedding_model` by writing a
+`config.json` in the project's `.understand/` directory:
+
+```json
+{
+  "embedding_model": "bge-large-en-v1.5-Q8"
+}
+```
+
+**Resolution order** (in `ProjectManager.get_embedding_model()`):
+
+1. Project-specific override in `.understand/config.json` (key: `embedding_model`).
+2. Global default `cfg.embedding_model` (set by `EMBEDDING_MODEL` env var).
+
+**Failures fall through gracefully** — a missing `config.json`, a JSON parse
+error, or a config without the `embedding_model` key all fall back to the
+global default. A corrupt project config must NOT crash embedding calls.
+
+**Where it's used:**
+
+- `core.kgraph.vectors.upsert_file_vectors()` passes `pm.get_embedding_model()` to `embed_texts()`.
+- `core.kgraph.vectors.query_similar_code()` does the same for query-time embeddings.
+- `workflows.understand_impl.nodes.parse_and_store._batch_embed_and_store()` also passes the per-project model.
+
+**Important:** if you change the embedding model for an existing project,
+you must re-index (delete `.understand/chroma/` and re-run
+`action="index"`) — embeddings from different models are NOT compatible
+(different vector dimensions, different semantic spaces).
+
+**Cache interaction:** the embedding cache (md5-keyed) does NOT
+differentiate by model — embedding the same text with two different models
+will return the FIRST model's cached vector on the second call. This is a
+known limitation; if you're switching models, call `clear_embedding_cache()`
+first (or restart the process).
+
+---
+
+*Last updated: 2026-07-22 (v1.7). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

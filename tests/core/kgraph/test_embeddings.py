@@ -7,6 +7,10 @@ All tests mock the LM Studio HTTP endpoint — no real LM Studio required.
 [v1.4.1 P1-3] upsert_file_vectors + get_project_vector_collection +
 query_similar_code now take a `pm: ProjectManager` instead of `project_id: str`.
 Tests pass a MagicMock with the required attributes.
+
+[v1.7] Additional tests:
+  - Embedding cache (md5-keyed, 10000-entry cap, clear_embedding_cache()).
+  - Per-project embedding model (pm.get_embedding_model() + embed_texts model=).
 """
 from __future__ import annotations
 
@@ -122,9 +126,17 @@ class TestExtractDefinitions:
 # ─── embed_texts (LM Studio endpoint) ───────────────────────────────────────
 
 class TestEmbedTexts:
+    """[v1.7] All embed_texts tests must clear the module-level cache first,
+    otherwise a cached text from a previous test would short-circuit the HTTP
+    call and the test would silently pass without exercising the path under
+    test (or, worse, return a cached vector when the test expects None).
+    """
+
     def test_returns_vectors_on_success(self, mocker):
         """embed_texts must return a list of vectors when LM Studio responds."""
-        from core.kgraph.embeddings import embed_texts, reset_embedding_check
+        from core.kgraph.embeddings import embed_texts, reset_embedding_check, clear_embedding_cache
+        # [v1.7] Clear cache so we actually hit HTTP.
+        clear_embedding_cache()
         # [v1.4.1] Reset the cached availability flag so our mocked httpx.post
         # is actually reached (is_embedding_available() caches False when LM
         # Studio is unreachable, which short-circuits embed_texts before the
@@ -150,7 +162,9 @@ class TestEmbedTexts:
 
     def test_returns_none_on_connection_failure(self, mocker):
         """If LM Studio is not running, return None (graceful degradation)."""
-        from core.kgraph.embeddings import embed_texts, reset_embedding_check
+        from core.kgraph.embeddings import embed_texts, reset_embedding_check, clear_embedding_cache
+        # [v1.7] Clear cache so we actually hit HTTP (and then fail).
+        clear_embedding_cache()
         # [v1.4.1] Reset + force availability True so the httpx.post call is
         # actually reached (and then fails via the side_effect below).
         reset_embedding_check()
@@ -161,21 +175,30 @@ class TestEmbedTexts:
 
     def test_returns_none_when_disabled(self, mocker):
         """When EMBEDDING_ENABLED=false, return None without calling the endpoint."""
-        from core.kgraph.embeddings import embed_texts
+        from core.kgraph.embeddings import embed_texts, clear_embedding_cache
+        # [v1.7] Clear cache — though it doesn't matter here since disabled
+        # check fires before the cache lookup.
+        clear_embedding_cache()
         mock_post = mocker.patch("httpx.post")
         with patch("core.kgraph.embeddings.cfg") as mock_cfg:
             mock_cfg.embedding_enabled = False
+            mock_cfg.embedding_model = "all-MiniLM-L6-v2-GGUF"
+            mock_cfg.embedding_base_url = "http://localhost:1234/v1"
             result = embed_texts(["hello"])
         assert result is None
         assert not mock_post.called
 
     def test_empty_list_returns_empty(self):
-        from core.kgraph.embeddings import embed_texts
+        from core.kgraph.embeddings import embed_texts, clear_embedding_cache
+        # [v1.7] Clear cache for hygiene.
+        clear_embedding_cache()
         assert embed_texts([]) == []
 
     def test_calls_correct_endpoint(self, mocker):
         """Must POST to {base_url}/embeddings with model + input."""
-        from core.kgraph.embeddings import embed_texts, reset_embedding_check
+        from core.kgraph.embeddings import embed_texts, reset_embedding_check, clear_embedding_cache
+        # [v1.7] Clear cache so httpx.post IS called (cache hit would skip it).
+        clear_embedding_cache()
         # [v1.4.1] Reset + force availability True so the httpx.post call happens.
         reset_embedding_check()
         mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
@@ -409,3 +432,237 @@ class TestDocChunkLineNumbers:
             chunks = extract_doc_chunks(content, "test.md", "t1")
         assert len(chunks) == 1
         assert chunks[0]["line_start"] == 0
+
+
+# ─── [v1.7] Embedding cache ──────────────────────────────────────────────────
+
+class TestEmbeddingCache:
+    """[v1.7] embed_texts() caches by md5(text). Cache hits skip the HTTP call.
+
+    The cache is module-level + keyed by md5(text). It persists across calls
+    in the same process. clear_embedding_cache() empties it (for testing).
+
+    Tests cover: cache hit (no HTTP), cache miss (HTTP called), partial hit
+    (only uncached texts hit HTTP), clear_embedding_cache (cache cleared,
+    next embed hits HTTP again).
+    """
+
+    def test_embedding_cache_hit(self, mocker):
+        """Embed a text, embed again — verify HTTP is called only ONCE."""
+        from core.kgraph.embeddings import (
+            embed_texts, reset_embedding_check, clear_embedding_cache,
+        )
+        clear_embedding_cache()
+        reset_embedding_check()
+        mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"data": [{"embedding": [0.1, 0.2]}]}
+        mock_resp.raise_for_status = MagicMock()
+        mock_post = mocker.patch("httpx.post", return_value=mock_resp)
+
+        # First call — cache miss, HTTP called.
+        r1 = embed_texts(["alpha"])
+        assert r1 == [[0.1, 0.2]]
+        assert mock_post.call_count == 1
+
+        # Second call — cache hit, HTTP NOT called.
+        r2 = embed_texts(["alpha"])
+        assert r2 == [[0.1, 0.2]]
+        assert mock_post.call_count == 1, (
+            f"HTTP should not be called on cache hit; got {mock_post.call_count} calls"
+        )
+
+    def test_embedding_cache_miss(self, mocker):
+        """Embed a new text → HTTP is called (cache miss)."""
+        from core.kgraph.embeddings import (
+            embed_texts, reset_embedding_check, clear_embedding_cache,
+        )
+        clear_embedding_cache()
+        reset_embedding_check()
+        mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"data": [{"embedding": [0.5]}]}
+        mock_resp.raise_for_status = MagicMock()
+        mock_post = mocker.patch("httpx.post", return_value=mock_resp)
+
+        result = embed_texts(["brand-new-text"])
+        assert result == [[0.5]]
+        assert mock_post.call_count == 1, (
+            f"HTTP should be called once on cache miss; got {mock_post.call_count}"
+        )
+
+    def test_embedding_cache_partial_hit(self, mocker):
+        """Embed [A, B], then embed [A, C] — only C hits HTTP."""
+        from core.kgraph.embeddings import (
+            embed_texts, reset_embedding_check, clear_embedding_cache,
+        )
+        clear_embedding_cache()
+        reset_embedding_check()
+        mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
+
+        # Mock returns one embedding per input (the count must match).
+        def fake_post(url, json=None, **kwargs):
+            resp = MagicMock()
+            resp.json.return_value = {
+                "data": [{"embedding": [0.1 * i]} for i in range(len(json["input"]))]
+            }
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        mock_post = mocker.patch("httpx.post", side_effect=fake_post)
+
+        # First call — both A and B miss cache. HTTP called once with [A, B].
+        r1 = embed_texts(["A-text", "B-text"])
+        assert len(r1) == 2
+        assert mock_post.call_count == 1
+        # Verify the first HTTP call was for both texts.
+        first_payload = mock_post.call_args[1]["json"]["input"]
+        assert first_payload == ["A-text", "B-text"]
+
+        # Second call — A is cached, only C is uncached.
+        # HTTP should be called once with just [C-text] (the uncached one).
+        r2 = embed_texts(["A-text", "C-text"])
+        assert len(r2) == 2
+        assert mock_post.call_count == 2, (
+            f"HTTP should be called once more for the partial miss; got {mock_post.call_count}"
+        )
+        # The second call's payload should contain only the uncached text.
+        second_payload = mock_post.call_args[1]["json"]["input"]
+        assert second_payload == ["C-text"], (
+            f"second HTTP call should embed only the uncached text; got: {second_payload}"
+        )
+        # A's vector should be the same as before (cache hit).
+        assert r2[0] == r1[0]
+        # C's vector should be present (newly embedded).
+        assert r2[1] is not None
+
+    def test_clear_embedding_cache(self, mocker):
+        """Embed, clear cache, embed again — HTTP called twice."""
+        from core.kgraph.embeddings import (
+            embed_texts, reset_embedding_check, clear_embedding_cache,
+        )
+        clear_embedding_cache()
+        reset_embedding_check()
+        mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"data": [{"embedding": [0.7]}]}
+        mock_resp.raise_for_status = MagicMock()
+        mock_post = mocker.patch("httpx.post", return_value=mock_resp)
+
+        # First call — cache miss.
+        embed_texts(["clearable-text"])
+        assert mock_post.call_count == 1
+
+        # Clear cache.
+        clear_embedding_cache()
+
+        # Second call — cache miss again (cache was cleared).
+        embed_texts(["clearable-text"])
+        assert mock_post.call_count == 2, (
+            f"HTTP should be called again after clear_embedding_cache; "
+            f"got {mock_post.call_count}"
+        )
+
+
+# ─── [v1.7] Per-project embedding model ──────────────────────────────────────
+
+class TestPerProjectEmbeddingModel:
+    """[v1.7] pm.get_embedding_model() reads .understand/config.json override.
+
+    embed_texts() accepts an optional `model` parameter. When non-empty, it
+    overrides cfg.embedding_model. Callers (vectors.upsert_file_vectors,
+    vectors.query_similar_code) pass pm.get_embedding_model() through.
+    """
+
+    def test_get_embedding_model_fallback(self, tmp_path):
+        """No config.json → returns cfg.embedding_model (global default)."""
+        from core.kgraph.project import ProjectManager
+        from core.config import cfg
+
+        pm = ProjectManager(tmp_path, is_agent_root=False)
+        pm.ensure_initialized()
+        # No config.json written — should fall back to cfg.embedding_model.
+        result = pm.get_embedding_model()
+        assert result == cfg.embedding_model, (
+            f"without config.json, should fall back to cfg.embedding_model; got: {result}"
+        )
+
+    def test_get_embedding_model_override(self, tmp_path):
+        """config.json with embedding_model key → returns the override."""
+        import json
+        from core.kgraph.project import ProjectManager
+
+        pm = ProjectManager(tmp_path, is_agent_root=False)
+        pm.ensure_initialized()
+        # Write a project-specific config.json with a custom model.
+        config_path = pm.artifact_root / "config.json"
+        config_path.write_text(json.dumps({
+            "embedding_model": "custom-model-q8-v1.7",
+        }), encoding="utf-8")
+
+        result = pm.get_embedding_model()
+        assert result == "custom-model-q8-v1.7", (
+            f"should read override from config.json; got: {result}"
+        )
+
+    def test_get_embedding_model_corrupt_config_falls_back(self, tmp_path):
+        """Corrupt config.json (invalid JSON) → falls back to cfg default."""
+        from core.kgraph.project import ProjectManager
+        from core.config import cfg
+
+        pm = ProjectManager(tmp_path, is_agent_root=False)
+        pm.ensure_initialized()
+        # Write corrupt JSON.
+        (pm.artifact_root / "config.json").write_text(
+            "this is not valid json {{{", encoding="utf-8"
+        )
+        result = pm.get_embedding_model()
+        assert result == cfg.embedding_model, (
+            f"corrupt config.json should fall back to global default; got: {result}"
+        )
+
+    def test_embed_texts_uses_model_parameter(self, mocker):
+        """embed_texts(model=...) sends the passed model in the HTTP payload."""
+        from core.kgraph.embeddings import (
+            embed_texts, reset_embedding_check, clear_embedding_cache,
+        )
+        clear_embedding_cache()
+        reset_embedding_check()
+        mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"data": [{"embedding": [0.1]}]}
+        mock_resp.raise_for_status = MagicMock()
+        mock_post = mocker.patch("httpx.post", return_value=mock_resp)
+
+        embed_texts(["some text"], model="custom-model-xyz")
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["model"] == "custom-model-xyz", (
+            f"HTTP payload should use the passed model; got: {payload['model']}"
+        )
+
+    def test_embed_texts_model_empty_uses_cfg_default(self, mocker):
+        """embed_texts(model='') — empty string falls back to cfg.embedding_model."""
+        from core.kgraph.embeddings import (
+            embed_texts, reset_embedding_check, clear_embedding_cache,
+        )
+        from core.config import cfg
+        clear_embedding_cache()
+        reset_embedding_check()
+        mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"data": [{"embedding": [0.1]}]}
+        mock_resp.raise_for_status = MagicMock()
+        mock_post = mocker.patch("httpx.post", return_value=mock_resp)
+
+        embed_texts(["some text"], model="")  # empty → cfg default
+
+        payload = mock_post.call_args[1]["json"]
+        assert payload["model"] == cfg.embedding_model, (
+            f"empty model= should fall back to cfg.embedding_model; got: {payload['model']}"
+        )

@@ -248,6 +248,12 @@ def query_codebase(
             raw_results = query_similar_code(
                 pm, question, n_results=top_k, trace_id=tid
             )
+            # [v1.7] Per-project embedding model: query_similar_code internally
+            # calls pm.get_embedding_model() + passes it to embed_texts().
+            # The query text is embedded with the project's configured model,
+            # matching the model used at index time (so cosine distances
+            # remain meaningful when the project overrides the global default).
+            #
             # Augment each result with a line-numbered snippet for display.
             results = []
             for r in raw_results:

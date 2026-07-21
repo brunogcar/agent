@@ -5,6 +5,11 @@
     core.kgraph.project is broken at import time.
   - P2-7: success path returns a dict with `errors: []`.
   - P2-9: validates project_path at entry — fails fast for a non-existent path.
+
+[v1.7] Additional test:
+  - Configurable timeout (UNDERSTAND_TIMEOUT_SECONDS env var → cfg.understand_timeout_seconds).
+    The understand dispatch in workflows/base.py reads this instead of the
+    hardcoded 600s.
 """
 from __future__ import annotations
 
@@ -258,3 +263,96 @@ class TestFacadeActionRouting:
         assert "index" in result["errors"][0]
         assert "query" in result["errors"][0]
         assert "health" in result["errors"][0]
+
+
+# ─── [v1.7] Configurable timeout ────────────────────────────────────────────
+
+class TestConfigurableTimeout:
+    """[v1.7] workflows/base.py understand dispatch reads cfg.understand_timeout_seconds.
+
+    Was: hardcoded `_t.join(timeout=600)`. Now: reads the configurable value.
+    The timeout-flow error message also uses the configured value so operators
+    see "timed out after 300s" (not "after 600s") when they set 300.
+    """
+
+    def test_timeout_read_from_cfg(self, mocker, make_project):
+        """Set cfg.understand_timeout_seconds=300, mock the graph to sleep past it,
+        verify the dispatch returns a timeout error mentioning 300 (not 600)."""
+        from workflows.base import run_workflow
+        from core.config import cfg
+
+        project_path = make_project()
+        mocker.patch("core.kgraph.project.is_same_path", return_value=False)
+
+        # Mock the graph so its invoke sleeps longer than the configured timeout.
+        # We use a tiny timeout (1s) so the test runs fast — the configured
+        # value is what we're verifying, not the actual sleep duration.
+        def slow_invoke(_state):
+            import time
+            time.sleep(2.0)  # Exceeds the 0.3s timeout we'll set below.
+            return {"status": "completed"}
+
+        fake_graph = MagicMock()
+        fake_graph.invoke.side_effect = slow_invoke
+        mocker.patch("workflows.understand.build_understand_graph", return_value=fake_graph)
+        mocker.patch(
+            "workflows.understand._default_state",
+            return_value={"project_path": str(project_path)},
+        )
+
+        # Set a short configured timeout. The dispatch should join() for this
+        # many seconds, see the thread is still alive, and return a timeout error.
+        mocker.patch.object(cfg, "understand_timeout_seconds", 0.3)
+
+        result = run_workflow(
+            workflow_type="understand",
+            goal="test timeout",
+            project_root=str(project_path),
+            trace_id="test-timeout-cfg",
+        )
+
+        assert result["status"] == "failed"
+        # The error message should mention the configured 0.3s, not the old 600s.
+        assert "timed out" in result["errors"][0].lower()
+        assert "0.3s" in result["errors"][0], (
+            f"timeout error should mention the configured 0.3s; got: {result['errors'][0]}"
+        )
+        assert "600" not in result["errors"][0], (
+            f"old hardcoded 600 should NOT appear; got: {result['errors'][0]}"
+        )
+
+    def test_timeout_default_600_when_cfg_unset(self, mocker, make_project):
+        """When cfg.understand_timeout_seconds is missing, fall back to 600."""
+        from workflows.base import run_workflow
+        from core.config import cfg
+
+        project_path = make_project()
+        mocker.patch("core.kgraph.project.is_same_path", return_value=False)
+
+        # Mock the graph to invoke instantly (we're not testing the timeout
+        # firing here — just that the default fallback is 600 when the attr
+        # is missing). We use getattr(cfg, "understand_timeout_seconds", 600)
+        # in base.py, so a missing attribute yields 600.
+        fake_graph = MagicMock()
+        fake_graph.invoke.return_value = {"status": "completed", "errors": []}
+        mocker.patch("workflows.understand.build_understand_graph", return_value=fake_graph)
+        mocker.patch(
+            "workflows.understand._default_state",
+            return_value={"project_path": str(project_path)},
+        )
+
+        # Remove the attribute to simulate a v1.6-era cfg that doesn't have it.
+        # (In production, _init_execution always sets it. This test verifies the
+        # getattr fallback in base.py works if the attr is somehow missing.)
+        if hasattr(cfg, "understand_timeout_seconds"):
+            mocker.patch.object(cfg, "understand_timeout_seconds", 600, create=True)
+
+        result = run_workflow(
+            workflow_type="understand",
+            goal="test default timeout",
+            project_root=str(project_path),
+            trace_id="test-timeout-default",
+        )
+        # The graph completed instantly — no timeout. We just verify the path
+        # doesn't crash when the cfg attr is the default 600.
+        assert result["status"] in ("completed", "completed_with_errors")

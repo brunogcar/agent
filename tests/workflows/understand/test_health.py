@@ -10,7 +10,7 @@ Covers:
   - kg_db_size_bytes > 0 when indexed.
   - embedding_available field is reflected from is_embedding_available().
 
-[v1.5.1] Import path changed from `workflows.understand_query` to
+[v1.6] Import path changed from `workflows.understand_query` to
 `workflows.understand_impl.query` (module move).
 """
 from __future__ import annotations

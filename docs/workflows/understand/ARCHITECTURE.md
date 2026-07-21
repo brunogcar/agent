@@ -6,17 +6,17 @@
 
 | File | Purpose |
 |------|---------|
-| `workflows/understand.py` | Thin facade — re-exports from understand_impl + `run_understand_workflow_sync()`. [v1.4.1] Lazy `is_same_path` import; `project_path` validation; normalized return shape. [v1.5] `action` parameter routes to query/health; re-exports `query_codebase` + `health_check` from `understand_impl.query` (was `understand_query` — moved in v1.5.1). |
-| `workflows/understand_impl/query.py` | [v1.5] NEW — `query_codebase()` (semantic/keyword/dependencies/callers) + `health_check()` (index stats). Bypasses the indexing graph entirely. [v1.5.1] MOVED here from `workflows/understand_query.py` (matches the `<workflow>_impl/` pattern). |
-| `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths. [v1.4.1] `SKIP_DIRS` class constant (canonical single source of truth). |
-| `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode. [v1.5.1] +`get_all_file_paths()` + `delete_file_entry()` for stale cleanup. |
+| `workflows/understand.py` | Thin facade — re-exports from understand_impl + `run_understand_workflow_sync()`. [v1.4.1] Lazy `is_same_path` import; `project_path` validation; normalized return shape. [v1.5] `action` parameter routes to query/health; re-exports `query_codebase` + `health_check` from `understand_impl.query` (was `understand_query` — moved in v1.6). |
+| `workflows/understand_impl/query.py` | [v1.5] NEW — `query_codebase()` (semantic/keyword/dependencies/callers) + `health_check()` (index stats). Bypasses the indexing graph entirely. [v1.6] MOVED here from `workflows/understand_query.py` (matches the `<workflow>_impl/` pattern). |
+| `core/kgraph/project.py` | `ProjectManager` — project resolution, indexing mode, artifact paths. [v1.4.1] `SKIP_DIRS` class constant (canonical single source of truth). [v1.7] `_DEFAULT_SKIP_DIRS` (renamed) + `get_skip_dirs()` (env-merged) + `get_embedding_model()` (per-project override). |
+| `core/kgraph/storage.py` | `GraphStore` — thread-safe SQLite graph store with WAL mode. [v1.6] +`get_all_file_paths()` + `delete_file_entry()` for stale cleanup. |
 | `core/kgraph/ast_parser.py` | `_parse_dependencies_sync_from_string()` — delegates to tree-sitter (Python) |
 | `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust + 9 more via tree-sitter. [v1.4.1] Optional `errors` param on `extract_imports` + `extract_definitions_ts`. |
-| `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) + `extract_doc_chunks()` (chonkie). [v1.4.1] Doc chunk line numbers; empty-list short-circuit before availability check. |
-| `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. |
+| `core/kgraph/embeddings.py` | `extract_definitions()` (tree-sitter chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) + `extract_doc_chunks()` (chonkie). [v1.4.1] Doc chunk line numbers; empty-list short-circuit before availability check. [v1.7] Embedding cache (md5-keyed, 10000-entry cap) + `clear_embedding_cache()` + optional `model` param for per-project overrides. |
+| `core/kgraph/vectors.py` | `upsert_file_vectors()` + `query_similar_code()` — ChromaDB vector store. [v1.4.1] Project-scoped path; `pm: ProjectManager` signature. [v1.7] Passes `pm.get_embedding_model()` to `embed_texts()`. |
 | `core/kgraph/queries.py` | `get_dependencies()` + `get_callers()` — multi-language query support. [v1.4.1] Fixed `.py`-only filter; generic extension stripping. |
-| `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. [v1.5] Understand branch routes by `action` param (index/query/health) before graph construction. [v1.5.1] Understand query/health imports moved to `workflows.understand_impl.query`. |
-| `tests/workflows/understand/` | Test files (14 test files + conftest — see Testing section below). [v1.5] +test_query.py, +test_health.py. [v1.5.1] +test_stale_cleanup.py. |
+| `workflows/base.py` | `run_workflow()` — standard dispatcher, routes to `graph.invoke()`. [v1.4.1] `is_workflow_cancelled()` polled by discover + parse nodes. [v1.5] Understand branch routes by `action` param (index/query/health) before graph construction. [v1.6] Understand query/health imports moved to `workflows.understand_impl.query`. [v1.7] Understand timeout read from `cfg.understand_timeout_seconds` (env: `UNDERSTAND_TIMEOUT_SECONDS`, default 600). |
+| `tests/workflows/understand/` | Test files (14 test files + conftest — see Testing section below). [v1.5] +test_query.py, +test_health.py. [v1.6] +test_stale_cleanup.py. |
 | `tests/core/kgraph/` | [v1.4.2] kgraph-module tests (8 test files + conftest) — embeddings, tree_sitter_parser, queries, ast_parser, project, storage, test_mapper, kgraph_fixes. |
 
 ---
@@ -24,24 +24,24 @@
 ## 🌳 Module Tree
 
 ```text
-workflows/understand.py                    # Thin facade — re-exports + run_understand_workflow_sync [v1.5: action routing] [v1.5.1: query re-export from understand_impl.query]
+workflows/understand.py                    # Thin facade — re-exports + run_understand_workflow_sync [v1.5: action routing] [v1.6: query re-export from understand_impl.query]
 workflows/understand_impl/
 ├── state.py                               # UnderstandState TypedDict + _default_state() [v1.4.1: pure defaults, no PM]
 ├── helpers.py                             # _chunked_md5()
-├── graph.py                               # build_understand_graph() + WORKFLOW_METADATA [v1.5.1: version 1.5.1, stale_index_cleanup in safety_features]
-├── query.py                               # [v1.5] query_codebase + health_check (bypass the graph) — [v1.5.1] MOVED from workflows/understand_query.py
+├── graph.py                               # build_understand_graph() + WORKFLOW_METADATA [v1.6: version 1.6, stale_index_cleanup in safety_features]
+├── query.py                               # [v1.5] query_codebase + health_check (bypass the graph) — [v1.6] MOVED from workflows/understand_query.py
 ├── routes.py                              # [v1.4.1 P0-1] route_after_init — init→discover conditional (END on failure)
 └── nodes/
     ├── init_project.py                    # node_init_project — PM init, GraphStore verify [v1.4.1: returns project_id + artifact_dir]
-    ├── discover_files.py                  # node_discover_files — os.walk, chunked MD5 [v1.4.1: cancel checks, GraphStore in try, SKIP_DIRS constant] [v1.5.1: Phase 2 stale cleanup — deletes orphan nodes/edges/vectors]
+    ├── discover_files.py                  # node_discover_files — os.walk, chunked MD5 [v1.4.1: cancel checks, GraphStore in try, SKIP_DIRS constant] [v1.6: Phase 2 stale cleanup — deletes orphan nodes/edges/vectors] [v1.7: configurable skip_dirs + progress reporting every 1000 files]
     ├── parse_and_store.py                 # node_parse_and_store — AST parsing, edge dedup, [#3] embeddings [v1.4.1: cancel checks, error cap, batch errors, file-size recheck]
     └── report.py                          # node_report — report generation [v1.4.1: vectors_created in summary]
 
 core/kgraph/
 ├── tree_sitter_parser.py                   # [#4] Multi-language parser: Python, JS/TS, Go, Rust + 9 more [v1.4.1: errors param]
-├── embeddings.py                           # [#3] extract_definitions() + embed_texts() + extract_doc_chunks() [v1.4.1: doc line numbers]
-├── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() [v1.4.1: project-scoped path]
-├── storage.py                              # GraphStore [v1.5.1: +get_all_file_paths +delete_file_entry for stale cleanup]
+├── embeddings.py                           # [#3] extract_definitions() + embed_texts() + extract_doc_chunks() [v1.4.1: doc line numbers] [v1.7: embedding cache + per-project model param]
+├── vectors.py                              # [#3] upsert_file_vectors() + query_similar_code() [v1.4.1: project-scoped path] [v1.7: passes pm.get_embedding_model()]
+├── storage.py                              # GraphStore [v1.6: +get_all_file_paths +delete_file_entry for stale cleanup]
 └── queries.py                              # get_dependencies() + get_callers() [v1.4.1: multi-language fix]
 ```
 
@@ -62,7 +62,7 @@ graph TD
     E -->|"route_after_init"| F["node_discover_files"]
     E -->|"route_after_init (failed)"| END["END"]
     F --> F2["Phase 1: walk disk + detect changed files"]
-    F2 --> F3["Phase 2: stale cleanup (v1.5.1) — delete orphan nodes/edges/vectors"]
+    F2 --> F3["Phase 2: stale cleanup (v1.6) — delete orphan nodes/edges/vectors"]
     F3 --> G["node_parse_and_store"]
     G --> H2["node_report"]
     H2 --> I["Return final_state"]
@@ -76,7 +76,7 @@ build, no 600s timeout, no skip_embeddings handling). `action="health"`
 calls `health_check()` directly. Only `action="index"` (default) runs the
 full LangGraph. `project_root` is validated for ALL actions.
 
-**[v1.5.1] Stale cleanup in discover_files:** Phase 1 walks the disk +
+**[v1.6] Stale cleanup in discover_files:** Phase 1 walks the disk +
 detects changed files (existing behavior — unchanged from v1.4.1). Phase 2
 queries the GraphStore for all stored file paths, computes
 `orphans = stored_paths - disk_paths`, and deletes each orphan's graph
@@ -85,6 +85,17 @@ node + edges (via `GraphStore.delete_file_entry`) and its ChromaDB vectors
 skipped when `state["skip_embeddings"]` is True (we never indexed vectors).
 Was: orphans accumulated forever — each deleted file's node + edges +
 vectors stayed in the store, compounding over time.
+
+**[v1.7] Configurability + embedding cache:** Five new features: (1)
+`UNDERSTAND_SKIP_DIRS` env var adds comma-separated extra dirs to the
+walk's skip set (merged with `_DEFAULT_SKIP_DIRS` via `get_skip_dirs()`).
+(2) `UNDERSTAND_TIMEOUT_SECONDS` env var (default 600) configures the
+dispatch timeout (was: hardcoded in base.py). (3) `embed_texts()` caches
+by md5(text) — cache hits skip the HTTP call entirely. Cap 10000 entries.
+(4) `discover_files` emits a `tracer.step` progress message every 1000
+files (was: silent for minutes on huge codebases). (5) Per-project
+embedding model — `.understand/config.json` can specify
+`{"embedding_model": "..."}` to override the global `cfg.embedding_model`.
 
 **Key design decisions:**
 - **Sync nodes (v1.0)** — All nodes are `def` (sync), not `async def`. Consistent with research, data, autocode, and deep_research workflows. No event loop, no ThreadPoolExecutor, no async complexity.
@@ -100,7 +111,7 @@ vectors stayed in the store, compounding over time.
 - **[v1.4.1 P1-6] Cancellation checks** — `discover_files` and `parse_and_store` poll `workflows.base.is_workflow_cancelled(trace_id)` at entry + inside loops (every 100 files in discover, every 10 files + per-batch in parse). Returns `{"status": "failed", "errors": ["Workflow cancelled"]}` on cancel. The base.py 600s daemon-thread timeout doesn't kill the thread (Python limitation) — these checks let the workflow exit cooperatively.
 - **[v1.4.1 P2-10] Errors capped at 100** — The `parse_and_store` errors list is capped at `_ERRORS_CAP = 100` entries. A final `"... and N more errors (capped at 100)"` entry is appended when the cap is hit. Was: unbounded — a project with 1000 broken files would bloat the final state dict + report.
 
-### 🛡️ Safety Features (v1.4.1)
+### 🛡️ Safety Features (v1.7)
 
 `WORKFLOW_METADATA["safety_features"]` lists the guarantees the workflow provides:
 
@@ -122,7 +133,11 @@ vectors stayed in the store, compounding over time.
 | `project_scoped_vectors` | v1.4.1 P1-3: ChromaDB path is per-project (was: always agent_root) |
 | `query_interface` | v1.5: `action="query"` routes to `query_codebase` (semantic/keyword/dependencies/callers) without running the graph |
 | `health_check` | v1.5: `action="health"` returns index stats (file/edge/vector counts, sizes, embedding availability) without running the graph |
-| `stale_index_cleanup` | v1.5.1: `node_discover_files` Phase 2 — deletes graph nodes + edges + ChromaDB vectors for files indexed-but-deleted-from-disk (was: orphans accumulated forever) |
+| `stale_index_cleanup` | v1.6: `node_discover_files` Phase 2 — deletes graph nodes + edges + ChromaDB vectors for files indexed-but-deleted-from-disk (was: orphans accumulated forever) |
+| `configurable_skip_dirs` | v1.7: `UNDERSTAND_SKIP_DIRS` env var — comma-separated extra dirs merged with `ProjectManager._DEFAULT_SKIP_DIRS` via `get_skip_dirs()` |
+| `configurable_timeout` | v1.7: `UNDERSTAND_TIMEOUT_SECONDS` env var (default 600) — was hardcoded 600 in `workflows/base.py` |
+| `embedding_cache` | v1.7: `embed_texts()` caches by md5(text); cache hits skip the HTTP call entirely. Cap 10000 entries (cleared when exceeded). `clear_embedding_cache()` for testing |
+| `per_project_embedding_model` | v1.7: `.understand/config.json` can specify `{"embedding_model": "..."}` to override the global `cfg.embedding_model`. Resolution via `pm.get_embedding_model()` |
 
 ---
 
@@ -142,13 +157,13 @@ tests/workflows/understand/
 ├── test_helpers.py                # _chunked_md5 + trace ID propagation [v1.4.2: split — structure tests moved to test_structure.py]
 ├── test_doc_indexing.py           # v1.3: doc chunks [v1.4.1: non-zero line numbers]
 ├── test_route_after_init.py       # [v1.4.1 P0-1] route_after_init conditional edge + [v1.4.2] integration test
-├── test_discover_files.py         # [v1.4.1] defensive bail, cancellation, GraphStore in try, SKIP_DIRS + [v1.4.2] mid-walk cancel
+├── test_discover_files.py         # [v1.4.1] defensive bail, cancellation, GraphStore in try, SKIP_DIRS + [v1.4.2] mid-walk cancel + [v1.7] skip_dirs env override + progress reporting
 ├── test_parse_and_store.py        # [v1.4.1] batch errors, cancellation, GraphStore in try, error cap, file-size recheck, batch size + [v1.4.2] mid-parse cancel, error cap, embed batch failure
 ├── test_report.py                 # [v1.4.1 P2-4] vectors_created in summary
-├── test_facade.py                 # [v1.4.1 P0-2 + P2-7 + P2-9] lazy import, return shape, path validation + [v1.5] action routing (index/query/health)
-├── test_query.py                  # [v1.5 NEW] query_codebase — semantic/keyword/dependencies/callers + error paths [v1.5.1: import moved to understand_impl.query]
-├── test_health.py                 # [v1.5 NEW] health_check — indexed/not-indexed, counts, sizes, embedding_available [v1.5.1: import moved to understand_impl.query]
-├── test_stale_cleanup.py          # [v1.5.1 NEW] node_discover_files Phase 2 — orphan node/edge/vector deletion
+├── test_facade.py                 # [v1.4.1 P0-2 + P2-7 + P2-9] lazy import, return shape, path validation + [v1.5] action routing (index/query/health) + [v1.7] configurable timeout
+├── test_query.py                  # [v1.5 NEW] query_codebase — semantic/keyword/dependencies/callers + error paths [v1.6: import moved to understand_impl.query]
+├── test_health.py                 # [v1.5 NEW] health_check — indexed/not-indexed, counts, sizes, embedding_available [v1.6: import moved to understand_impl.query]
+├── test_stale_cleanup.py          # [v1.6 NEW] node_discover_files Phase 2 — orphan node/edge/vector deletion
 └── test_structure.py              # [v1.4.2] structural tests moved from test_helpers.py (sync nodes, no event loop hack, subpackage structure, completed_with_errors)
 
 tests/core/kgraph/                 # [v1.4.2] kgraph-module tests (moved from tests/workflows/understand/)
@@ -206,16 +221,21 @@ tests/core/kgraph/                 # [v1.4.2] kgraph-module tests (moved from te
 - [v1.5] health_check: kg_db_size_bytes > 0 when indexed
 - [v1.5] health_check: embedding_available field reflected from is_embedding_available()
 - [v1.5] facade action routing: action=index (default) runs graph, action=query/health bypass graph
-- [v1.5.1] stale cleanup: deleted file's node is removed from GraphStore
-- [v1.5.1] stale cleanup: deleted file's outgoing + incoming edges are removed (3 target_id forms)
-- [v1.5.1] stale cleanup: deleted file's ChromaDB vectors are removed via collection.delete(where={"file_path": ...})
-- [v1.5.1] stale cleanup: skip_embeddings=True → ChromaDB delete NOT called (GraphStore cleanup still runs)
-- [v1.5.1] stale cleanup: no orphans → "No stale files detected." trace message (no cleanup)
-- [v1.5.1] stale cleanup: trace message includes count of cleaned-up files
-- [v1.5.1] module move: workflows/understand_query.py → workflows/understand_impl/query.py
+- [v1.6] stale cleanup: deleted file's node is removed from GraphStore
+- [v1.6] stale cleanup: deleted file's outgoing + incoming edges are removed (3 target_id forms)
+- [v1.6] stale cleanup: deleted file's ChromaDB vectors are removed via collection.delete(where={"file_path": ...})
+- [v1.6] stale cleanup: skip_embeddings=True → ChromaDB delete NOT called (GraphStore cleanup still runs)
+- [v1.6] stale cleanup: no orphans → "No stale files detected." trace message (no cleanup)
+- [v1.6] stale cleanup: trace message includes count of cleaned-up files
+- [v1.6] module move: workflows/understand_query.py → workflows/understand_impl/query.py
+- [v1.7] skip_dirs env override: cfg.understand_skip_dirs adds extra dirs to the walk's skip set
+- [v1.7] progress reporting: every 1000 files, a tracer.step with the discovered + walked counts
+- [v1.7] configurable timeout: cfg.understand_timeout_seconds (env: UNDERSTAND_TIMEOUT_SECONDS, default 600)
+- [v1.7] embedding cache: md5(text)-keyed, cache hits skip HTTP, 10000-entry cap, clear_embedding_cache()
+- [v1.7] per-project embedding model: .understand/config.json overrides cfg.embedding_model via pm.get_embedding_model()
 
 ---
 
 - **Completion pattern** — Unlike `data`/`research` which call `node_done()` in their final node, understand sets `status` in `node_parse_and_store` (`"completed"` or `"completed_with_errors"`). `node_report` is side-effect-only (returns `{}` or `{"note": ...}`). The `run_understand_workflow_sync` facade calls `tracer.finish()` itself. This is intentional — understand uses `"completed"`/`"completed_with_errors"` (not `"success"`) to distinguish partial failures.
 
-*Last updated: 2026-07-22 (v1.5.1). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.7). See [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

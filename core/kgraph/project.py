@@ -46,7 +46,14 @@ class ProjectManager:
     # being walked). `.pytest_cache` was already here; `__pycache__`,
     # `node_modules`, `.git`, `.venv`, `venv`, `.understand`, `dist`, `build`
     # carried over from the v1.3 local set.
-    SKIP_DIRS: frozenset[str] = frozenset({
+    #
+    # [v1.7] Renamed from SKIP_DIRS → _DEFAULT_SKIP_DIRS. The runtime
+    # skip-dirs set is now obtained via get_skip_dirs() which merges this
+    # default with the UNDERSTAND_SKIP_DIRS env var (comma-separated extras).
+    # The class constant stays as the immutable default; callers should use
+    # get_skip_dirs() (or ProjectManager.SKIP_DIRS for backward compat —
+    # kept as a property aliasing the default).
+    _DEFAULT_SKIP_DIRS: frozenset[str] = frozenset({
         "node_modules", "__pycache__", ".git", ".venv", "venv",
         ".understand", "dist", "build", ".pytest_cache",
         # v1.4.1 additions (P2-2):
@@ -54,6 +61,62 @@ class ProjectManager:
         # .eggs + .egg-info dirs (legacy Python packaging) — common clutter.
         ".eggs",
     })
+
+    # [v1.7] Backward-compat alias. Existing tests + callers that read
+    # ProjectManager.SKIP_DIRS still work — they get the default set.
+    # Callers that want the env-merged set should use get_skip_dirs().
+    SKIP_DIRS = _DEFAULT_SKIP_DIRS
+
+    @classmethod
+    def get_skip_dirs(cls) -> frozenset[str]:
+        """[v1.7] Return the skip_dirs set, merged with UNDERSTAND_SKIP_DIRS.
+
+        The base set is the immutable _DEFAULT_SKIP_DIRS class constant
+        (consolidated in v1.4.1 P2-2). The UNDERSTAND_SKIP_DIRS env var
+        (comma-separated) adds project-specific extras at runtime — e.g.
+        `UNDERSTAND_SKIP_DIRS=vendor,third_party` adds those two dirs.
+
+        Returns a NEW frozenset on each call (base | extra) so callers can
+        safely mutate the result without affecting the class constant.
+
+        Was: callers read cls.SKIP_DIRS directly. The env var had no effect.
+        Now: callers that want env overrides should call get_skip_dirs().
+        The class constant is still available for callers that want the
+        pure default (e.g. tests asserting the default set contents).
+        """
+        base = cls._DEFAULT_SKIP_DIRS
+        env_extra = getattr(cfg, "understand_skip_dirs", "")
+        if env_extra:
+            extra = frozenset(d.strip() for d in env_extra.split(",") if d.strip())
+            return base | extra
+        return base
+
+    def get_embedding_model(self) -> str:
+        """[v1.7] Return the embedding model for this project.
+
+        Resolution order:
+          1. Project-specific override in .understand/config.json
+             (key: "embedding_model"). Lets different projects use different
+             embedding models without changing the global default.
+          2. cfg.embedding_model (the global default, set by EMBEDDING_MODEL
+             env var).
+
+        Returns the model name as a string (e.g. "all-MiniLM-L6-v2-GGUF").
+
+        Failures (missing config.json, JSON parse error, missing key) fall
+        through to the global default — a corrupt project config must NOT
+        crash embedding calls.
+        """
+        config_path = self.artifact_root / "config.json"
+        if config_path.exists():
+            try:
+                import json
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                if "embedding_model" in config:
+                    return config["embedding_model"]
+            except Exception:
+                pass  # Fall through to global default.
+        return getattr(cfg, "embedding_model", "all-MiniLM-L6-v2-GGUF")
 
     def __init__(self, project_path: str | Path, is_agent_root: bool = False):
         self.path = Path(project_path).resolve()
@@ -110,7 +173,9 @@ class ProjectManager:
         total_bytes = 0
         # [v1.4.1 P2-2] Use the canonical SKIP_DIRS class constant (was: a
         # local set that drifted out of sync with node_discover_files).
-        skip_dirs = ProjectManager.SKIP_DIRS
+        # [v1.7] Use get_skip_dirs() so UNDERSTAND_SKIP_DIRS env var is
+        # respected (was: cls.SKIP_DIRS which doesn't read the env var).
+        skip_dirs = ProjectManager.get_skip_dirs()
 
         for root, dirs, files in os.walk(self.source_root):
             dirs[:] = [d for d in dirs if d not in skip_dirs]

@@ -61,6 +61,17 @@ from workflows.understand_impl.routes import route_after_init
 # edges + vectors (was: orphans accumulated forever). New GraphStore
 # methods: get_all_file_paths() + delete_file_entry().
 #
+# [v1.7] Configurability bundle. Five features: (1) UNDERSTAND_SKIP_DIRS
+# env var — comma-separated extra dirs merged with _DEFAULT_SKIP_DIRS via
+# ProjectManager.get_skip_dirs(). (2) UNDERSTAND_TIMEOUT_SECONDS env var
+# (default 600) — was hardcoded in base.py. (3) Embedding cache in
+# embeddings.py — md5(text)-keyed, 10000-entry cap, clear_embedding_cache()
+# for testing. (4) Discover progress reporting — every 1000 files a
+# tracer.step with count. (5) Per-project embedding model —
+# .understand/config.json can specify {"embedding_model": "..."} to
+# override the global cfg.embedding_model. embed_texts() gained an optional
+# `model` parameter.
+#
 # [v1.4.1 P2-11] safety_features list added — mirrors the autoresearch pattern
 # for clients that surface "what guarantees does this workflow give me?".
 WORKFLOW_METADATA = {
@@ -69,7 +80,9 @@ WORKFLOW_METADATA = {
     # code; the version field just hadn't been bumped. v1.4.1 is the hardening.
     # v1.5: query interface + health check (action parameter).
     # v1.6: stale index cleanup + module move (understand_query.py → understand_impl/query.py).
-    "version": "1.6",
+    # v1.7: configurability bundle — skip_dirs + timeout + embedding cache +
+    #       progress reporting + per-project embedding model.
+    "version": "1.7",
     "description": "Build codebase knowledge graph + doc embeddings: init → discover → parse → report",
     "entry_point": "node_init_project",
     "nodes": [
@@ -113,6 +126,10 @@ WORKFLOW_METADATA = {
         "query_interface",           # v1.5: action="query" routes to query_codebase (semantic/keyword/deps/callers) without running the graph
         "health_check",              # v1.5: action="health" returns index stats (file/edge/vector counts, sizes, embedding availability) without running the graph
         "stale_index_cleanup",       # v1.6: discover_files detects files indexed-but-deleted-from-disk and removes their graph nodes + edges + vectors
+        "configurable_skip_dirs",    # v1.7: UNDERSTAND_SKIP_DIRS env var — comma-separated extra dirs merged with _DEFAULT_SKIP_DIRS
+        "configurable_timeout",      # v1.7: UNDERSTAND_TIMEOUT_SECONDS env var (default 600) — was hardcoded in base.py
+        "embedding_cache",           # v1.7: embed_texts() caches by md5(text); cache hits skip the HTTP call. Cap 10000 entries.
+        "per_project_embedding_model",  # v1.7: .understand/config.json can override cfg.embedding_model per-project
     ],
 }
 

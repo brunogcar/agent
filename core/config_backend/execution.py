@@ -18,6 +18,11 @@ Env vars read:
                                                 kept for backward compat)
         UNDERSTAND_EMBED_BATCH_SIZE — default 100  [v1.4.1 P2-8] Phase-2
                                                 embedding batch size
+        UNDERSTAND_SKIP_DIRS      — default ""  [v1.7] comma-separated extra
+                                                dirs to skip during discovery
+                                                (merged with _DEFAULT_SKIP_DIRS)
+        UNDERSTAND_TIMEOUT_SECONDS — default 600  [v1.7] understand dispatch
+                                                timeout (was hardcoded in base.py)
 
     Execution & Autocode:
         SANDBOX_TIMEOUT           — default 30
@@ -101,6 +106,17 @@ def _init_execution(cfg) -> None:
     # Raise for fewer HTTP calls (faster on stable connections); lower for
     # smaller request payloads (helps on flaky networks / small LLM context).
     cfg.understand_embed_batch_size = int(os.getenv("UNDERSTAND_EMBED_BATCH_SIZE", "100"))
+
+    # [v1.7] Configurable extra skip-dirs. Comma-separated list merged with
+    # ProjectManager._DEFAULT_SKIP_DIRS at runtime (via get_skip_dirs()).
+    # Lets operators skip project-specific dirs (e.g. "vendor,third_party")
+    # without modifying the canonical default set.
+    cfg.understand_skip_dirs = os.getenv("UNDERSTAND_SKIP_DIRS", "")
+
+    # [v1.7] Configurable understand timeout (was hardcoded 600 in base.py).
+    # Default 600s = 10min (same as v1.6). Operators with large codebases can
+    # raise this; small projects can lower it to fail faster.
+    cfg.understand_timeout_seconds = int(os.getenv("UNDERSTAND_TIMEOUT_SECONDS", "600"))
 
     # -- Execution & Autocode ----------------------------------------------
     cfg.sandbox_timeout = int(os.getenv("SANDBOX_TIMEOUT", "30"))

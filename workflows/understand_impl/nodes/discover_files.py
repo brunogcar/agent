@@ -30,7 +30,7 @@ via _file_count/_total_size_mb). Re-creation is cheap — just path
 resolution; the stat walk is cached after the first call, but
 discover_files doesn't trigger it (it walks the tree itself).
 
-[v1.5.1] STALE INDEX CLEANUP. The walk now has two phases:
+[v1.6] STALE INDEX CLEANUP. The walk now has two phases:
   Phase 1 — walk disk + detect changed files (existing behavior).
   Phase 2 — query GraphStore for all stored file paths, compute
     `orphans = stored_paths - disk_paths`, and delete each orphan's
@@ -64,7 +64,7 @@ from core.kgraph.tree_sitter_parser import ALL_SUPPORTED_EXTENSIONS
 def node_discover_files(state: UnderstandState) -> dict:
     """Discover changed/new files that need parsing.
 
-    [v1.5.1] Two phases:
+    [v1.6] Two phases:
       Phase 1: walk disk + detect changed files (existing behavior —
         unchanged from v1.4.1).
       Phase 2: stale cleanup — query GraphStore for stored file paths,
@@ -99,11 +99,13 @@ def node_discover_files(state: UnderstandState) -> dict:
     # [v1.4.1 P1-7] GraphStore created INSIDE try; finally checks for None.
     store = None
     # [v1.4.1 P2-2] Use the canonical class constant (was: local frozenset).
-    skip_dirs = ProjectManager.SKIP_DIRS
+    # [v1.7] Use get_skip_dirs() so UNDERSTAND_SKIP_DIRS env var is respected
+    # (was: ProjectManager.SKIP_DIRS which doesn't read the env var).
+    skip_dirs = ProjectManager.get_skip_dirs()
 
     discovered = []
     files_walked = 0
-    # [v1.5.1] Collect disk paths during the walk — needed for Phase 2
+    # [v1.6] Collect disk paths during the walk — needed for Phase 2
     # stale cleanup (orphans = stored_paths - disk_paths). Pre-allocated
     # as a set for O(1) lookup during the set-difference computation.
     disk_paths: set[str] = set()
@@ -138,7 +140,7 @@ def node_discover_files(state: UnderstandState) -> dict:
                                    f"Skipping {full_path}: relative_to failed: {e}")
                     continue
 
-                # [v1.5.1] Record this path as seen-on-disk for Phase 2.
+                # [v1.6] Record this path as seen-on-disk for Phase 2.
                 disk_paths.add(rel_path)
 
                 node = store.read(
@@ -159,11 +161,20 @@ def node_discover_files(state: UnderstandState) -> dict:
 
                 # [v1.4.1 P1-6] Cooperative cancellation check every 100 files.
                 files_walked += 1
+                # [v1.7] Progress reporting every 1000 files. Lets operators
+                # see the walk is making progress on huge codebases — was: a
+                # silent 5+ minute walk on 50k-file monorepos.
+                if files_walked % 1000 == 0:
+                    tracer.step(
+                        tid, "discover",
+                        f"Progress: {len(discovered)} files found, "
+                        f"{files_walked} files scanned"
+                    )
                 if files_walked % 100 == 0 and _is_cancelled(tid):
                     tracer.step(tid, "discover", "Workflow cancelled mid-walk — aborting.")
                     return {"status": "failed", "errors": ["Workflow cancelled"]}
 
-        # [v1.5.1] Phase 2 — stale cleanup. Done INSIDE the try block so
+        # [v1.6] Phase 2 — stale cleanup. Done INSIDE the try block so
         # the GraphStore is still open + can be queried. ChromaDB cleanup
         # is deferred to a helper that handles the optional-skip case.
         skip_embeddings = bool(state.get("skip_embeddings", False))
@@ -193,7 +204,7 @@ def _cleanup_stale_entries(
     tid: str,
     skip_embeddings: bool,
 ) -> None:
-    """[v1.5.1] Phase 2 of node_discover_files — prune orphaned index entries.
+    """[v1.6] Phase 2 of node_discover_files — prune orphaned index entries.
 
     Computes `orphans = stored_paths - disk_paths` and, for each orphan:
       1. Deletes its graph node + all edges (GraphStore.delete_file_entry).

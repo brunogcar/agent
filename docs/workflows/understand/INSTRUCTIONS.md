@@ -45,7 +45,9 @@
 36. **[v1.4.1 P0-2] Always lazy-import kgraph in the facade** — `from core.kgraph.project import is_same_path` inside the function, not at module top-level. A broken kgraph shouldn't cascade to every caller of `workflows.understand`.
 37. **[v1.5] Always use `action='query'` for search** — Don't run the full graph just to query the index. `action='query'` with `query_type` (semantic/keyword/dependencies/callers) routes directly to the kgraph query function without building or invoking the LangGraph.
 38. **[v1.5] Always check `health_check` before querying** — If `indexed=False`, tell the operator to run `action='index'` first. Querying an un-indexed project returns a failed status with a hint, but checking health up-front is cleaner UX (the operator sees the index state explicitly).
-39. **[v1.5.1] Always run stale cleanup in `discover_files`** — Deleted files must not leave orphaned nodes/edges/vectors. The Phase 2 stale-cleanup phase computes `orphans = stored_paths - disk_paths` and removes each orphan's graph entries (via `GraphStore.delete_file_entry`) + ChromaDB vectors (via `collection.delete(where={"file_path": ...})`). ChromaDB cleanup is skipped when `skip_embeddings=True` (we never indexed vectors). Never disable stale cleanup — orphans compound over time and bloat the index with phantom entries that don't reflect the actual codebase.
+39. **[v1.6] Always run stale cleanup in `discover_files`** — Deleted files must not leave orphaned nodes/edges/vectors. The Phase 2 stale-cleanup phase computes `orphans = stored_paths - disk_paths` and removes each orphan's graph entries (via `GraphStore.delete_file_entry`) + ChromaDB vectors (via `collection.delete(where={"file_path": ...})`). ChromaDB cleanup is skipped when `skip_embeddings=True` (we never indexed vectors). Never disable stale cleanup — orphans compound over time and bloat the index with phantom entries that don't reflect the actual codebase.
+40. **[v1.7] Always use `UNDERSTAND_SKIP_DIRS` for project-specific skip dirs** — Don't modify `_DEFAULT_SKIP_DIRS` (the class constant is the canonical default; modifying it affects every project). Instead, set `UNDERSTAND_SKIP_DIRS=vendor,third_party` in `.env` to add extras at runtime. `ProjectManager.get_skip_dirs()` merges the two; `node_discover_files` and `_get_project_stats` both call it.
+41. **[v1.7] Always use `UNDERSTAND_TIMEOUT_SECONDS` to configure the workflow timeout** — Don't change the hardcoded value in `base.py` (it's now read from `cfg.understand_timeout_seconds`). Set `UNDERSTAND_TIMEOUT_SECONDS=900` in `.env` for large codebases, or `300` for small ones. The timeout error message uses this value so operators see the configured number, not 600.
 
 ---
 
@@ -72,4 +74,4 @@
 
 ---
 
-*Last updated: 2026-07-22 (v1.5.1). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.7). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for node details, [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -124,7 +124,7 @@ class GraphStore:
         rows = self.read("SELECT content_hash FROM nodes WHERE project_id = ? AND path = ? AND type = 'file'", (project_id, path))
         return rows[0]["content_hash"] if rows else None
 
-    # [v1.5.1] Stale-index cleanup support — discover_files uses these two
+    # [v1.6] Stale-index cleanup support — discover_files uses these two
     # methods to detect files indexed-but-deleted-from-disk and remove their
     # graph nodes + edges (orphans that would otherwise accumulate forever).
     def get_all_file_paths(self, project_id: str) -> list[str]:
@@ -151,7 +151,7 @@ class GraphStore:
     def delete_file_entry(self, project_id: str, path: str) -> None:
         """Delete a file's node + all its edges (outgoing + incoming).
 
-        [v1.5.1] Used by the stale-cleanup phase in node_discover_files to
+        [v1.6] Used by the stale-cleanup phase in node_discover_files to
         remove orphaned graph entries for files that were indexed but have
         since been deleted from disk.
 

@@ -330,6 +330,9 @@ def _batch_embed_and_store(
 
     errors: list[str] = []
     project_id = pm.project_id
+    # [v1.7] Per-project embedding model. Was: cfg.embedding_model (global).
+    # Now: pm.get_embedding_model() reads .understand/config.json override.
+    model = pm.get_embedding_model() if hasattr(pm, "get_embedding_model") else ""
 
     # Group by file for deletion (delete old vectors per file before inserting)
     files_touched: set[str] = set()
@@ -360,7 +363,8 @@ def _batch_embed_and_store(
         batch = all_items[i:i + batch_size]
         batch_num = i // batch_size + 1
         texts = [d["source"] for _, d in batch]
-        embeddings = embed_texts(texts, trace_id=trace_id)
+        # [v1.7] Pass per-project model to embed_texts.
+        embeddings = embed_texts(texts, trace_id=trace_id, model=model)
 
         if embeddings is None:
             msg = f"Embedding batch {batch_num} failed — skipped {len(batch)} items (LM Studio unavailable or error)"

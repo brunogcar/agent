@@ -39,7 +39,7 @@ routes to these — but they're also available directly:
 
     from workflows.understand import query_codebase, health_check
 
-[v1.5.1] The query module was MOVED from `workflows/understand_query.py`
+[v1.6] The query module was MOVED from `workflows/understand_query.py`
 to `workflows/understand_impl/query.py` to match the user's standard
 `<workflow>_impl/` pattern (all implementation in the subpackage; the
 facade only re-exports). The re-export below now imports from the new

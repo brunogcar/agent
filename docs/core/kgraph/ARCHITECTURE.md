@@ -10,13 +10,13 @@
 | `core/kgraph/ast_parser.py` | AST parsing (delegates to tree-sitter for Python; backward-compatible API) |
 | `core/kgraph/tree_sitter_parser.py` | [#4] Multi-language parser: Python, JS/TS, Go, Rust, Java, C/C++, Ruby, Lua, PHP, Scala, Swift, Kotlin (v1.4) via tree-sitter |
 | `core/kgraph/cleanup.py` | `KGCleanup`: disk space + WAL management |
-| `core/kgraph/project.py` | `ProjectManager`: isolation, paths, indexing mode |
+| `core/kgraph/project.py` | `ProjectManager`: isolation, paths, indexing mode. [v1.7] `_DEFAULT_SKIP_DIRS` (renamed) + `get_skip_dirs()` (env-merged) + `get_embedding_model()` (per-project override via `.understand/config.json`). |
 | `core/kgraph/queries.py` | `find_relevant_files()`, `get_dependencies()`, `get_callers()` |
-| `core/kgraph/storage.py` | `GraphStore`: SQLite graph with WAL, thread-local connections. [v1.5.1] +`get_all_file_paths(project_id)` + `delete_file_entry(project_id, path)` for stale cleanup. |
+| `core/kgraph/storage.py` | `GraphStore`: SQLite graph with WAL, thread-local connections. [v1.6] +`get_all_file_paths(project_id)` + `delete_file_entry(project_id, path)` for stale cleanup. |
 | `core/kgraph/test_index.py` | `load_test_index()`, `save_test_index()`, hybrid validation |
 | `core/kgraph/test_mapper.py` | `get_targeted_tests()`, `rebuild_test_index()`, `CRITICAL_PATHS` |
-| `core/kgraph/embeddings.py` | `extract_definitions()` (AST chunking) + `embed_texts()` (LM Studio `/v1/embeddings`) |
-| `core/kgraph/vectors.py` | `upsert_file_vectors()`, `query_similar_code()`: project-specific ChromaDB vector store |
+| `core/kgraph/embeddings.py` | `extract_definitions()` (AST chunking) + `embed_texts()` (LM Studio `/v1/embeddings`). [v1.7] Embedding cache (md5-keyed, 10000-entry cap, `clear_embedding_cache()`) + optional `model` param for per-project overrides. |
+| `core/kgraph/vectors.py` | `upsert_file_vectors()`, `query_similar_code()`: project-specific ChromaDB vector store. [v1.7] Passes `pm.get_embedding_model()` to `embed_texts()`. |
 
 ---
 
@@ -28,13 +28,13 @@ core/kgraph/
 ├── ast_parser.py            # AST parsing (delegates to tree-sitter; backward-compatible)
 ├── tree_sitter_parser.py    # [#4] Multi-language: Python, JS/TS, Go, Rust, Java, C/C++, Ruby, Lua, PHP, Scala, Swift, Kotlin
 ├── cleanup.py               # Disk space and WAL file management
-├── project.py          # Project isolation, path management, indexing mode
+├── project.py          # Project isolation, path management, indexing mode [v1.7: get_skip_dirs + get_embedding_model]
 ├── queries.py          # Read-only graph queries (dependencies, callers, file search)
-├── storage.py          # SQLite graph store (WAL, thread-local connections, write serialization)
+├── storage.py          # SQLite graph store (WAL, thread-local connections, write serialization) [v1.6: stale-cleanup methods]
 ├── test_index.py       # Persistent test index with hybrid validation
 ├── test_mapper.py      # Source file → test file mapping via AST
-├── embeddings.py       # [#3] extract_definitions() + embed_texts() (LM Studio)
-└── vectors.py          # [#3] upsert_file_vectors() + query_similar_code() (ChromaDB)
+├── embeddings.py       # [#3] extract_definitions() + embed_texts() (LM Studio) [v1.7: embedding cache + per-project model]
+└── vectors.py          # [#3] upsert_file_vectors() + query_similar_code() (ChromaDB) [v1.7: per-project model]
 ```
 
 ---
@@ -135,5 +135,5 @@ project_root/
 
 ---
 
-*Last updated: 2026-07-22 (v1.5.1)
+*Last updated: 2026-07-22 (v1.7)
 

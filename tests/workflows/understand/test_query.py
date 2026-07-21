@@ -7,7 +7,7 @@ callers based on the `query_type` parameter.
 Each test class covers one query_type + the error paths (invalid type,
 missing file_path, not indexed, graceful degradation).
 
-[v1.5.1] Import path changed from `workflows.understand_query` to
+[v1.6] Import path changed from `workflows.understand_query` to
 `workflows.understand_impl.query` (module move).
 """
 from __future__ import annotations

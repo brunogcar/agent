@@ -265,7 +265,8 @@ class TestEmbedBatchSizeFromCfg:
                             artifact_root=tmp_path / ".understand")
 
         # embed_texts returns the right number of vectors per call.
-        def fake_embed(texts, trace_id=""):
+        # [v1.7] Accepts the new `model` kwarg (per-project embedding model).
+        def fake_embed(texts, trace_id="", model="", **kwargs):
             return [[0.1] for _ in texts]
         mocker.patch("core.kgraph.embeddings.embed_texts", side_effect=fake_embed)
         mocker.patch("core.kgraph.embeddings.is_embedding_available", return_value=True)

@@ -492,9 +492,14 @@ def run_workflow(
                     _result_container.append({"status": "failed", "errors": [str(e)]})
             _t = _threading_local_Thread(target=_run_understand, daemon=True)
             _t.start()
-            _t.join(timeout=600)  # 10min cap
+            # [v1.7] Configurable timeout. Was: hardcoded 600s. Now read from
+            # cfg.understand_timeout_seconds (env: UNDERSTAND_TIMEOUT_SECONDS,
+            # default 600). Lets operators raise for large codebases or lower
+            # for small ones (fail faster on stuck graphs).
+            _understand_timeout = getattr(cfg, "understand_timeout_seconds", 600)
+            _t.join(timeout=_understand_timeout)
             if _t.is_alive():
-                return {"status": "failed", "errors": ["Understand workflow timed out after 600s — try skip_embeddings=True for graph-only mode"]}
+                return {"status": "failed", "errors": [f"Understand workflow timed out after {_understand_timeout}s — try skip_embeddings=True for graph-only mode"]}
             return _result_container[0] if _result_container else {"status": "failed", "errors": ["Understand workflow returned no result"]}
 
         elif wf_type == "autoresearch":
