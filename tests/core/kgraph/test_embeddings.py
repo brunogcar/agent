@@ -1,10 +1,10 @@
 """tests/workflows/understand/test_embeddings.py
 Tests for code embedding: extract_definitions (AST chunking) + embed_texts
-(LM Studio endpoint) + upsert_file_vectors (ChromaDB integration).
+(LM Studio endpoint) + ChromaDB integration.
 
 All tests mock the LM Studio HTTP endpoint — no real LM Studio required.
 
-[v1.4.1 P1-3] upsert_file_vectors + get_project_vector_collection +
+[v1.4.1 P1-3] get_project_vector_collection +
 query_similar_code now take a `pm: ProjectManager` instead of `project_id: str`.
 Tests pass a MagicMock with the required attributes.
 
@@ -218,80 +218,6 @@ class TestEmbedTexts:
         assert json_payload["input"] == ["test text"]
 
 
-# ─── upsert_file_vectors (ChromaDB integration) ─────────────────────────────
-
-class TestUpsertFileVectors:
-    def test_deletes_old_vectors_before_inserting(self, mocker):
-        """Must delete old vectors for the file before adding new ones."""
-        from core.kgraph.vectors import upsert_file_vectors
-        mock_collection = MagicMock()
-        mocker.patch(
-            "core.kgraph.vectors.get_project_vector_collection",
-            return_value=mock_collection,
-        )
-        mocker.patch(
-            "core.kgraph.embeddings.embed_texts",
-            return_value=[[0.1, 0.2]],
-        )
-        definitions = [{"name": "foo", "type": "function", "source": "def foo(): pass",
-                        "line_start": 1, "line_end": 1}]
-        upsert_file_vectors(_fake_pm(), "core/x.py", definitions, trace_id="t1")
-        mock_collection.delete.assert_called_once_with(where={"file_path": "core/x.py"})
-
-    def test_upserts_new_vectors(self, mocker):
-        from core.kgraph.vectors import upsert_file_vectors
-        mock_collection = MagicMock()
-        mocker.patch("core.kgraph.vectors.get_project_vector_collection", return_value=mock_collection)
-        mocker.patch("core.kgraph.embeddings.embed_texts", return_value=[[0.1, 0.2], [0.3, 0.4]])
-        definitions = [
-            {"name": "foo", "type": "function", "source": "def foo(): pass", "line_start": 1, "line_end": 1},
-            {"name": "Bar", "type": "class", "source": "class Bar: pass", "line_start": 3, "line_end": 3},
-        ]
-        count = upsert_file_vectors(_fake_pm(), "core/x.py", definitions, trace_id="t1")
-        assert count == 2
-        mock_collection.upsert.assert_called_once()
-        call_kwargs = mock_collection.upsert.call_args[1]
-        assert len(call_kwargs["ids"]) == 2
-        assert len(call_kwargs["embeddings"]) == 2
-
-    def test_returns_zero_when_embedding_fails(self, mocker):
-        """When embed_texts returns None (LM Studio down), return 0 gracefully."""
-        from core.kgraph.vectors import upsert_file_vectors
-        mock_collection = MagicMock()
-        mocker.patch("core.kgraph.vectors.get_project_vector_collection", return_value=mock_collection)
-        mocker.patch("core.kgraph.embeddings.embed_texts", return_value=None)
-        definitions = [{"name": "foo", "type": "function", "source": "code",
-                        "line_start": 1, "line_end": 1}]
-        count = upsert_file_vectors(_fake_pm(), "core/x.py", definitions, trace_id="t1")
-        assert count == 0
-        mock_collection.upsert.assert_not_called()
-
-    def test_empty_definitions_returns_zero(self, mocker):
-        from core.kgraph.vectors import upsert_file_vectors
-        mock_collection = MagicMock()
-        mocker.patch("core.kgraph.vectors.get_project_vector_collection", return_value=mock_collection)
-        count = upsert_file_vectors(_fake_pm(), "core/x.py", [], trace_id="t1")
-        assert count == 0
-        mock_collection.upsert.assert_not_called()
-
-    def test_metadata_includes_file_and_line_info(self, mocker):
-        from core.kgraph.vectors import upsert_file_vectors
-        mock_collection = MagicMock()
-        mocker.patch("core.kgraph.vectors.get_project_vector_collection", return_value=mock_collection)
-        mocker.patch("core.kgraph.embeddings.embed_texts", return_value=[[0.1, 0.2]])
-        definitions = [{"name": "foo", "type": "function", "source": "def foo(): pass",
-                        "line_start": 10, "line_end": 20}]
-        upsert_file_vectors(_fake_pm(), "core/x.py", definitions, trace_id="t1")
-        call_kwargs = mock_collection.upsert.call_args[1]
-        meta = call_kwargs["metadatas"][0]
-        assert meta["file_path"] == "core/x.py"
-        assert meta["name"] == "foo"
-        assert meta["type"] == "function"
-        assert meta["line_start"] == 10
-        assert meta["line_end"] == 20
-
-
-# ─── query_similar_code (semantic search) ───────────────────────────────────
 
 class TestQuerySimilarCode:
     def test_returns_results_on_success(self, mocker):
@@ -573,7 +499,7 @@ class TestPerProjectEmbeddingModel:
     """[v1.7] pm.get_embedding_model() reads .understand/config.json override.
 
     embed_texts() accepts an optional `model` parameter. When non-empty, it
-    overrides cfg.embedding_model. Callers (vectors.upsert_file_vectors,
+    overrides cfg.embedding_model. Callers (vectors.py,
     vectors.query_similar_code) pass pm.get_embedding_model() through.
     """
 

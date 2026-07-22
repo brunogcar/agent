@@ -105,12 +105,15 @@ def is_embedding_available() -> bool:
         return False
 
     import httpx
-    try:
+    from core.backoff_retry import retry_with_backoff
+    def _check():
         resp = httpx.get(
             f"{cfg.embedding_base_url.rstrip('/')}/models",
             timeout=5.0,
         )
-        _embedding_available = resp.status_code == 200
+        return resp.status_code == 200
+    try:
+        _embedding_available = retry_with_backoff(_check, retries=1, base_delay=1.0)
     except Exception:
         _embedding_available = False
 
@@ -169,7 +172,7 @@ def embed_texts(
     # vectors + the indices of texts that still need embedding. The cache key
     # is md5(text) (not text itself) so very long source chunks don't bloat
     # the dict keys.
-    cache_keys = [hashlib.md5(t.encode("utf-8")).hexdigest() for t in texts]
+    cache_keys = [f"{model}:{hashlib.md5(t.encode('utf-8')).hexdigest()}" for t in texts]  # [v1.9.1 P1-2] include model in key
     cached: list[list[float] | None] = [None] * len(texts)
     uncached_indices: list[int] = []
     for i, key in enumerate(cache_keys):

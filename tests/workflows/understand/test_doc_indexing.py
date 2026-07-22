@@ -162,7 +162,6 @@ class TestParseAndStoreDocBranch:
         mock_pm_class.return_value.project_id = "test"
         mock_pm_class.return_value.artifact_root = tmp_path / ".understand"
         mock_pm_class.return_value.is_agent_root = False
-        mocker.patch("workflows.understand_impl.nodes.parse_and_store.upsert_file_vectors", return_value=0)
         mocker.patch("workflows.understand_impl.nodes.parse_and_store.extract_doc_chunks",
                       return_value=[{"name": "d0", "type": "doc", "source": "x", "line_start": 0, "line_end": 0}])
 
@@ -202,7 +201,6 @@ class TestParseAndStoreDocBranch:
         mock_pm_class.return_value.project_id = "test"
         mock_pm_class.return_value.artifact_root = tmp_path / ".understand"
         mock_pm_class.return_value.is_agent_root = False
-        mocker.patch("workflows.understand_impl.nodes.parse_and_store.upsert_file_vectors", return_value=0)
         mocker.patch("workflows.understand_impl.nodes.parse_and_store.extract_definitions", return_value=[])
         mocker.patch("workflows.understand_impl.nodes.parse_and_store.extract_imports", return_value=["os", "sys"])
 

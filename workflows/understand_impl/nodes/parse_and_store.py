@@ -78,7 +78,6 @@ from core.kgraph.project import ProjectManager
 from core.kgraph.storage import GraphStore
 from core.kgraph.tree_sitter_parser import extract_imports, get_language_for_file, is_supported, is_doc_file
 from core.kgraph.embeddings import extract_definitions, extract_doc_chunks
-from core.kgraph.vectors import upsert_file_vectors
 
 
 # [v1.4.1 P2-10] Hard cap on the errors list. A project with 1000 broken
@@ -249,9 +248,7 @@ def node_parse_and_store(state: UnderstandState) -> dict:
 
     # [v1.4.1 P2-13] PM re-created here — see module docstring.
     pm = ProjectManager(state["project_path"], is_agent_root=state["is_agent_root"])
-    # [v1.4.1 P1-4] project_id + artifact_dir may not be set if init was bypassed.
-    state.setdefault("project_id", pm.project_id)
-    state.setdefault("artifact_dir", str(pm.artifact_root))
+    # [v1.9.1 P2-4] Removed state.setdefault — violates no-mutation convention.
 
     db_path = pm.artifact_root / "kg.db"
 
@@ -265,7 +262,7 @@ def node_parse_and_store(state: UnderstandState) -> dict:
 
     # [v1.4.1 P2-10] Reset the dropped-counter at the start of each node
     # invocation so a previous run's cap count doesn't bleed into this one.
-    _reset_dropped_counter()
+    dropped = 0  # [v1.9.1 P2-6] local counter (was module-global _DROPPED)
 
     # v1.4: Collect all definitions for batched embedding (Phase 2)
     all_definitions: list[tuple[str, dict]] = []  # [(rel_path, def_dict), ...]
@@ -282,7 +279,7 @@ def node_parse_and_store(state: UnderstandState) -> dict:
             # [v1.4.1 P1-6] Cooperative cancellation check every 10 files.
             if idx % 10 == 0 and idx > 0 and _is_cancelled(tid):
                 tracer.step(tid, "parse", "Workflow cancelled mid-parse — aborting.")
-                _append_capped(errors, "Workflow cancelled", _ERRORS_CAP)
+                if not _append_capped(errors, "Workflow cancelled", _ERRORS_CAP): dropped += 1
                 return {
                     "status": "failed",
                     "errors": errors,
@@ -301,10 +298,10 @@ def node_parse_and_store(state: UnderstandState) -> dict:
                 full_path_obj = Path(full_path)
                 try:
                     if full_path_obj.stat().st_size > ProjectManager.MAX_FILE_SIZE_BYTES:
-                        _append_capped(errors, f"File too large (>{ProjectManager.MAX_FILE_SIZE_BYTES} bytes): {rel_path}", _ERRORS_CAP)
+                        if not _append_capped(errors, f"File too large (>{ProjectManager.MAX_FILE_SIZE_BYTES} bytes): {rel_path}", _ERRORS_CAP): dropped += 1
                         continue
                 except OSError as size_err:
-                    _append_capped(errors, f"Stat failed for {rel_path}: {size_err}", _ERRORS_CAP)
+                    if not _append_capped(errors, f"Stat failed for {rel_path}: {size_err}", _ERRORS_CAP): dropped += 1
                     continue
 
                 content = full_path_obj.read_text(encoding="utf-8", errors="replace")
@@ -354,7 +351,7 @@ def node_parse_and_store(state: UnderstandState) -> dict:
                         for d in definitions:
                             all_definitions.append((rel_path, d))
             except Exception as e:
-                _append_capped(errors, f"Failed to parse {rel_path}: {e}", _ERRORS_CAP)
+                if not _append_capped(errors, f"Failed to parse {rel_path}: {e}", _ERRORS_CAP): dropped += 1
     finally:
         # [v1.4.1 P1-7] Null check — was bare store.close() that raised NameError.
         if store is not None:
@@ -363,7 +360,7 @@ def node_parse_and_store(state: UnderstandState) -> dict:
     # [v1.4.1 P2-10] Append a "... and N more" summary entry if we dropped
     # error messages during the cap. Placed AFTER the merge so the cap entry
     # itself isn't dropped.
-    dropped = _dropped_count()
+    # [v1.9.1 P2-6] dropped tracked locally via _append_capped return values
     if dropped > 0:
         # The cap entry counts toward the cap+1 slot — that's fine, the final
         # list will be at most _ERRORS_CAP + 1 entries (the summary).
@@ -371,7 +368,13 @@ def node_parse_and_store(state: UnderstandState) -> dict:
 
     # ── Phase 2: Batched embedding (v1.4 — was per-file, now batched) ────
     embed_errors: list[str] = []
+    # [v1.9.1 P1-3] Reset embedding availability check each run
     if not skip_embeddings and (all_definitions or all_doc_chunks):
+        try:
+            from core.kgraph.embeddings import reset_embedding_check
+            reset_embedding_check()
+        except Exception:
+            pass  # Non-fatal
         from core.kgraph.embeddings import is_embedding_available
         from core.kgraph.vectors import get_project_vector_collection
 
@@ -393,7 +396,7 @@ def node_parse_and_store(state: UnderstandState) -> dict:
 
     # [v1.4.1 P1-5] Merge embedding batch errors into the main errors list.
     for e in embed_errors:
-        _append_capped(errors, e, _ERRORS_CAP)
+        if not _append_capped(errors, e, _ERRORS_CAP): dropped += 1
 
     tracer.step(
         tid, "parse",
@@ -408,38 +411,20 @@ def node_parse_and_store(state: UnderstandState) -> dict:
     }
 
 
-def _append_capped(errors: list[str], message: str, cap: int) -> None:
-    """[v1.4.1 P2-10] Append to errors, respecting the cap.
+def _append_capped(errors: list[str], message: str, cap: int) -> bool:
+    """Append to errors, respecting the cap.
 
-    Once the list reaches `cap` entries, subsequent appends are silently
-    dropped (counted via the side-effect counter below). A final
-    "... and N more errors (capped at {cap})" entry is added when the
-    node returns, so the operator sees that truncation happened.
+    [v1.9.1 P2-6] Returns True if appended, False if dropped.
+    Was: module-global _DROPPED counter (shared across concurrent runs).
     """
     if len(errors) < cap:
         errors.append(message)
-    else:
-        _DROPPED[0] += 1
+        return True
+    return False
 
 
-# Side-effect counter for capped errors. Module-level (not thread-local)
-# because understand is single-threaded per invocation — base.py runs it
-# in a daemon thread, but only one understand invocation per trace_id.
-_DROPPED = [0]
-
-
-def _dropped_count() -> int:
-    """[v1.4.1 P2-10] Number of error messages dropped due to the cap."""
-    return _DROPPED[0]
-
-
-def _reset_dropped_counter() -> None:
-    """Reset the module-level dropped-errors counter.
-
-    Called at the start of each node invocation so a previous run's cap
-    count doesn't bleed into this one. Tests can also call this directly.
-    """
-    _DROPPED[0] = 0
+# [v1.9.1 P2-6] _DROPPED module-global + _dropped_count + _reset_dropped_counter
+# removed. _append_capped now returns bool; caller tracks `dropped` locally.
 
 
 def _batch_embed_and_store(

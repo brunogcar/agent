@@ -86,10 +86,9 @@ class TestEmbeddingBatchErrors:
     def test_failed_batch_appends_error(self, mocker, tmp_path):
         """When embed_texts returns None for a batch, an error must be appended."""
         from workflows.understand_impl.nodes.parse_and_store import (
-            node_parse_and_store, _reset_dropped_counter,
+            node_parse_and_store,
         )
-        _reset_dropped_counter()
-
+        
         code_file = tmp_path / "main.py"
         code_file.write_text("def foo():\n    pass\n")
 
@@ -154,10 +153,9 @@ class TestErrorsCappedAt100:
     def test_errors_list_does_not_exceed_cap_plus_one(self, mocker, tmp_path):
         """When more than 100 files fail, the errors list is capped at 100 + summary."""
         from workflows.understand_impl.nodes.parse_and_store import (
-            node_parse_and_store, _ERRORS_CAP, _reset_dropped_counter,
+            node_parse_and_store, _ERRORS_CAP,
         )
-        _reset_dropped_counter()
-
+        
         # Create 200 fake file entries — all will fail to parse because
         # we mock read_text to raise.
         files = [(str(tmp_path / f"f{i}.py"), f"f{i}.py", "h", 0.0, 10) for i in range(200)]
@@ -209,10 +207,9 @@ class TestFileSizeRecheck:
         must reject it.
         """
         from workflows.understand_impl.nodes.parse_and_store import (
-            node_parse_and_store, _reset_dropped_counter,
+            node_parse_and_store,
         )
-        _reset_dropped_counter()
-
+        
         # Write a real 100-byte file.
         big_file = tmp_path / "big.py"
         big_file.write_text("x" * 100 + "\n")  # 101 bytes
@@ -299,10 +296,9 @@ class TestCancellationMidParse:
         AFTER files 0-9 are parsed. Verify status="failed" + 0 < files_parsed < 11.
         """
         from workflows.understand_impl.nodes.parse_and_store import (
-            node_parse_and_store, _reset_dropped_counter,
+            node_parse_and_store,
         )
-        _reset_dropped_counter()
-
+        
         # 11 code files — idx=10 cancel check fires after 10 files parsed.
         code_files = []
         for i in range(11):
@@ -362,10 +358,9 @@ class TestErrorCapExactly100PlusSummary:
 
     def test_error_cap_at_100(self, mocker, tmp_path):
         from workflows.understand_impl.nodes.parse_and_store import (
-            node_parse_and_store, _ERRORS_CAP, _reset_dropped_counter,
+            node_parse_and_store, _ERRORS_CAP,
         )
-        _reset_dropped_counter()
-
+        
         # 150 fake file entries. We create the files on disk so stat() succeeds
         # (skipping the "Stat failed" branch), but patch read_text to raise
         # IOError so each parse produces a "Failed to parse" error.
@@ -430,10 +425,9 @@ class TestEmbeddingBatchFailureAccumulated:
         overwritten by later successes.
         """
         from workflows.understand_impl.nodes.parse_and_store import (
-            _batch_embed_and_store, _reset_dropped_counter,
+            _batch_embed_and_store,
         )
-        _reset_dropped_counter()
-
+        
         # 4 items, batch_size=2 → 2 batches.
         definitions = [
             (f"file{i}.py", {"name": f"fn{i}", "type": "function", "source": "x",

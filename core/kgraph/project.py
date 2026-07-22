@@ -154,14 +154,17 @@ class ProjectManager:
         except Exception:
             pass  # Fail silently, cleanup is best-effort
 
-    def get_indexing_mode(self) -> Literal["foreground", "background", "reject"]:
-        """Determine if the project is safe to index in the foreground."""
+    def get_indexing_mode(self) -> Literal["foreground", "reject"]:
+        """Determine if the project is safe to index.
+
+        [v1.9.1 P2-5] Collapsed from 3-state to 2-state. background mode was
+        aspirational (never implemented). Large projects use UNDERSTAND_TIMEOUT_SECONDS
+        + skip_embeddings=True.
+        """
         count, size_mb = self._get_project_stats()
-        
+
         if size_mb > self.MAX_TOTAL_PROJECT_SIZE_MB:
             return "reject"
-        if count > self.MAX_FILES_FOR_FOREGROUND:
-            return "background"
         return "foreground"
 
     def _get_project_stats(self) -> Tuple[int, float]:

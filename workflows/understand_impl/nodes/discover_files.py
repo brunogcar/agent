@@ -33,7 +33,7 @@ discover_files doesn't trigger it (it walks the tree itself).
 [v1.6] STALE INDEX CLEANUP. The walk now has two phases:
   Phase 1 — walk disk + detect changed files (existing behavior).
   Phase 2 — query GraphStore for all stored file paths, compute
-    `orphans = stored_paths - disk_paths`, and delete each orphan's
+    `orphans = stored_paths - disk_paths - (skipped_paths or set())  # [v1.9.1 P1-1] exclude oversized/unreadable`, and delete each orphan's
     graph node + edges (via GraphStore.delete_file_entry) and its
     ChromaDB vectors (via collection.delete(where={"file_path": ...})).
 
@@ -87,12 +87,9 @@ def node_discover_files(state: UnderstandState) -> dict:
 
     # [v1.4.1 P2-13] PM re-created here — see module docstring.
     pm = ProjectManager(state["project_path"], is_agent_root=state["is_agent_root"])
-    # [v1.4.1 P1-4] project_id + artifact_dir are now filled in by init_project,
-    # but if init was bypassed (e.g. test fixtures) we still need them for the
-    # store.read query below. Mirror init_project's behavior so the node is
-    # self-sufficient.
-    state.setdefault("project_id", pm.project_id)
-    state.setdefault("artifact_dir", str(pm.artifact_root))
+    # [v1.9.1 P2-4] Removed state.setdefault — violates no-mutation convention.
+    # init_project always sets these (route_after_init guarantees it runs first).
+    # Each node creates its own pm anyway.
 
     db_path = pm.artifact_root / "kg.db"
 
@@ -106,9 +103,10 @@ def node_discover_files(state: UnderstandState) -> dict:
     discovered = []
     files_walked = 0
     # [v1.6] Collect disk paths during the walk — needed for Phase 2
-    # stale cleanup (orphans = stored_paths - disk_paths). Pre-allocated
+    # stale cleanup (orphans = stored_paths - disk_paths - (skipped_paths or set())  # [v1.9.1 P1-1] exclude oversized/unreadable). Pre-allocated
     # as a set for O(1) lookup during the set-difference computation.
     disk_paths: set[str] = set()
+    skipped_paths: set[str] = set()  # [v1.9.1 P1-1] oversized/unreadable files (NOT orphans)
     try:
         store = GraphStore(db_path)
         for root, dirs, files in os.walk(pm.source_root):
@@ -120,24 +118,20 @@ def node_discover_files(state: UnderstandState) -> dict:
                 full_path = Path(root) / f
                 try:
                     stat = full_path.stat()
-                    if stat.st_size > ProjectManager.MAX_FILE_SIZE_BYTES:
-                        continue
                 except OSError:
                     continue
 
-                # v1.3.1: Resolve full_path before relative_to() — pm.source_root
-                # is already resolved (ProjectManager.__init__ does .resolve()), but
-                # full_path comes from os.walk which returns the OS's raw path.
-                # On Windows, resolve() normalizes drive letter case + expands short
-                # names + resolves symlinks. Without resolving full_path too,
-                # relative_to() raises ValueError when the casings don't match.
-                # Also wrapped in try/except with logging — was unhandled (would
-                # crash the entire file discovery walk on a single bad path).
+                # [v1.9.1 P1-1] Compute rel_path BEFORE size check so oversized files
+                # are tracked in skipped_paths (not treated as orphans by Phase 2).
                 try:
                     rel_path = full_path.resolve().relative_to(pm.source_root).as_posix()
                 except (ValueError, OSError) as e:
                     tracer.warning(tid, "discover",
                                    f"Skipping {full_path}: relative_to failed: {e}")
+                    continue
+
+                if stat.st_size > ProjectManager.MAX_FILE_SIZE_BYTES:
+                    skipped_paths.add(rel_path)
                     continue
 
                 # [v1.6] Record this path as seen-on-disk for Phase 2.
@@ -185,6 +179,7 @@ def node_discover_files(state: UnderstandState) -> dict:
             pm=pm,
             tid=tid,
             skip_embeddings=skip_embeddings,
+            skipped_paths=skipped_paths,
         )
     finally:
         # [v1.4.1 P1-7] Null check — was bare store.close() that raised NameError
@@ -203,10 +198,11 @@ def _cleanup_stale_entries(
     pm: ProjectManager,
     tid: str,
     skip_embeddings: bool,
+    skipped_paths: set[str] | None = None,
 ) -> None:
     """[v1.6] Phase 2 of node_discover_files — prune orphaned index entries.
 
-    Computes `orphans = stored_paths - disk_paths` and, for each orphan:
+    Computes `orphans = stored_paths - disk_paths - (skipped_paths or set())  # [v1.9.1 P1-1] exclude oversized/unreadable` and, for each orphan:
       1. Deletes its graph node + all edges (GraphStore.delete_file_entry).
       2. Deletes its ChromaDB vectors (collection.delete) — UNLESS
          `skip_embeddings=True` (we never indexed vectors in the first
@@ -234,7 +230,7 @@ def _cleanup_stale_entries(
                        f"Stale cleanup: get_all_file_paths failed: {e}")
         return
 
-    orphans = stored_paths - disk_paths
+    orphans = stored_paths - disk_paths - (skipped_paths or set())  # [v1.9.1 P1-1] exclude oversized/unreadable
     if not orphans:
         tracer.step(tid, "discover", "No stale files detected.")
         return
