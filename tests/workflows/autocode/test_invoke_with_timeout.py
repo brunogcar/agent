@@ -64,3 +64,52 @@ class TestInvokeWithTimeout:
                 # The thread.join timeout should be 120s for create_skill
                 # We can't easily assert the join timeout, but we verify it doesn't crash
                 assert result["status"] == "success"
+
+
+# ===========================================================================
+# [v3.11 B1] Adaptive timeout propagated to _remaining_timeout()
+# ===========================================================================
+
+
+class TestAdaptiveTimeoutRemaining:
+    """[v3.11 B1] _remaining_timeout() must use the per-run adaptive timeout,
+    not the static cfg.autocode_graph_timeout. Pre-v3.11, a feature task with
+    adaptive timeout=900s would still use the static 300s here — at 400s elapsed,
+    remaining = 300-400 = -100 → 1, giving pytest a spurious 1-second timeout.
+    """
+
+    def test_adaptive_timeout_used_by_remaining_timeout(self):
+        """set_graph_start_time(timeout=900) → _remaining_timeout uses 900s budget."""
+        from workflows.autocode_impl.helpers import set_graph_start_time, _remaining_timeout
+        import time
+
+        # Set start time + the resolved adaptive timeout (900s for feature).
+        set_graph_start_time(timeout=900)
+        # Simulate 400s elapsed.
+        with patch("workflows.autocode_impl.helpers._time.time",
+                   return_value=time.time() + 400):
+            # default_timeout=600 (cfg.sandbox_timeout) — should be capped at
+            # remaining = 900 - 400 = 500, NOT 300 - 400 = -100 → 1.
+            result = _remaining_timeout(600)
+
+        assert result == 499 or result == 500, (  # int() truncation may give 499
+            f"_remaining_timeout should return ~500 (900s budget - 400s elapsed), "
+            f"got {result}. Pre-v3.11 returned 1 (300s static - 400s = -100 → 1)."
+        )
+
+    def test_static_timeout_falls_back_to_cfg(self):
+        """set_graph_start_time() with no timeout → _remaining_timeout uses cfg."""
+        from workflows.autocode_impl.helpers import set_graph_start_time, _remaining_timeout
+        import time
+
+        # No timeout param — backward-compatible with v3.10 callers.
+        set_graph_start_time()
+        with patch("workflows.autocode_impl.helpers._time.time",
+                   return_value=time.time() + 100), \
+             patch("core.config.cfg.autocode_graph_timeout", 300):
+            # remaining = 300 - 100 = 200, capped at min(600, 200) = 200.
+            result = _remaining_timeout(600)
+
+        assert result in (199, 200), (  # int() truncation may give 199
+            f"_remaining_timeout should return ~200, got {result}"
+        )

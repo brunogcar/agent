@@ -48,7 +48,7 @@ from workflows.autocode_impl.constants import (
     PARALLEL_HYPOTHESES_SYSTEM,  # [v3.5 F1]
     SUBAGENT_VALIDATE_SYSTEM,    # [v3.5 F1]
 )
-from workflows.autocode_impl.helpers import _call, _parse_json, _blast_radius_warning  # [v1.4 P2] _blast_radius_warning extracted
+from workflows.autocode_impl.helpers import _call, _parse_json, _blast_radius_warning, is_cancellation_requested  # [v1.4 P2] _blast_radius_warning extracted; [v3.11 B5] is_cancellation_requested for debug-path cancellation checks
 from workflows.autocode_impl.state import AutocodeState, _get_tdd, _get_vcs, _get_files  # [v2.1+v2.3] accessors
 from workflows.autocode_impl.vcs_ops import _swarm_debug_consensus, _github_pr_comment
 
@@ -440,7 +440,15 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     # [v2.0] Phase 4 — swarm path now records a debug_history entry with
     # phase="swarm" and includes the swarm confidence.
     if cfg.autocode_swarm_debug:
-        swarm_result = _swarm_debug_consensus(system, user, tid)
+        # [v3.11 B5] Cancellation check before the swarm dispatch — was: no
+        # check, so in-flight swarm() calls (consensus + vote = 2 multi-provider
+        # LLM rounds) outlived the graph deadline. The v3.6 "≤1s zombie linger"
+        # claim only covered subprocess calls, not agent()/swarm() dispatches.
+        swarm_result = None  # [v3.11 B5] init so the `is not None` check works when cancelled
+        if is_cancellation_requested():
+            tracer.step(tid, "systematic_debug", "workflow cancelled — skipping swarm debug")
+        else:
+            swarm_result = _swarm_debug_consensus(system, user, tid)
         if swarm_result is not None:
             root_cause = swarm_result.get("root_cause", "Unknown")
             defense_notes = swarm_result.get("defense_notes", "")
@@ -448,7 +456,6 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             confidence = swarm_result.get("confidence", "LOW")
             agreement = swarm_result.get("agreement", "unknown")
             providers = swarm_result.get("providers", 0)
-
             tracer.step(tid, "systematic_debug", f"Swarm root cause: {root_cause[:100]} (confidence={confidence})")
 
             # If LOW confidence + PR exists + flag enabled → post PR comment
@@ -500,24 +507,30 @@ def node_systematic_debug(state: AutocodeState) -> dict:
     # single-subagent / single-LLM on hypothesis-generation failure or all-
     # subagents-failed. Mutually exclusive with swarm + single-subagent flags
     # (INSTRUCTIONS.md NEVER DO #40).
+    # [v3.11 B5] Cancellation check before hypothesis generation + dispatch.
     if cfg.autocode_parallel_subagent_debug:
-        result = _parallel_subagent_debug(
-            system, user, tid, retry_temp, debug_history, current_iteration, state
-        )
-        if result:
-            return result
-        # Fall through to single-subagent / single-LLM if parallel failed
-        tracer.step(
-            tid, "systematic_debug",
-            "Parallel subagent debug yielded no usable result — falling back to single-LLM",
-        )
+        if is_cancellation_requested():
+            tracer.step(tid, "systematic_debug", "workflow cancelled — skipping parallel subagent debug")
+        else:
+            result = _parallel_subagent_debug(
+                system, user, tid, retry_temp, debug_history, current_iteration, state
+            )
+            if result:
+                return result
+            # Fall through to single-subagent / single-LLM if parallel failed
+            tracer.step(
+                tid, "systematic_debug",
+                "Parallel subagent debug yielded no usable result — falling back to single-LLM",
+            )
 
     # [v1.1] Subagent debug — isolated curated-context LLM dispatch.
     # Uses agent(action="subagent") for a fresh LLM call with NO session history.
     # The subagent gets only the debug system prompt + test failure + history.
     # Different from single-LLM: no retry, no cancellation flag, isolated context.
     # Different from swarm: single LLM, not multi-provider consensus.
-    if cfg.autocode_subagent_debug:
+    # [v3.11 B5] Cancellation check before the subagent dispatch — was: no check,
+    # so in-flight agent() calls outlived the graph deadline.
+    if cfg.autocode_subagent_debug and not is_cancellation_requested():
         from tools.agent import agent
         try:
             subagent_result = agent(
@@ -574,6 +587,8 @@ def node_systematic_debug(state: AutocodeState) -> dict:
             tracer.step(tid, "systematic_debug", "Subagent debug path yielded no usable result — falling back to single-LLM debug")
         except Exception as e:
             tracer.step(tid, "systematic_debug", f"Subagent exception: {e} — falling back to single-LLM debug")
+    elif cfg.autocode_subagent_debug and is_cancellation_requested():
+        tracer.step(tid, "systematic_debug", "workflow cancelled — skipping subagent debug")
 
     # Single-LLM debug (default — used when AUTOCODE_SWARM_DEBUG=0 and
     # AUTOCODE_SUBAGENT_DEBUG=0, or when swarm/subagent are unavailable)

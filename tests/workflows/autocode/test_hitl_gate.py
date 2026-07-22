@@ -89,3 +89,41 @@ class TestCreateSkillHitlCheck:
                 result = node_create_skill(base_state)
         # Should NOT be awaiting_approval — should proceed normally
         assert result.get("status") != "awaiting_approval"
+
+
+# ===========================================================================
+# [v3.11 B2] Checkpoint-save failure surfaced (was: silently swallowed)
+# ===========================================================================
+
+
+class TestHitlCheckpointFailure:
+    """[v3.11 B2] When save_checkpoint raises, the gate must return an error
+    status (was: silently swallowed via `except Exception: pass` → returned
+    awaiting_approval as if the pause succeeded → on resume, no checkpoint
+    found → full restart from node_classify_task, re-executing LLM code
+    generation, potentially producing a different implementation).
+    """
+
+    def test_checkpoint_failure_surfaces_error(self, base_state):
+        """save_checkpoint raises → return status=hitl_checkpoint_failed (NOT awaiting_approval)."""
+        from workflows.autocode_impl.nodes.hitl_gate import node_hitl_gate
+        base_state["hitl_approved"] = False
+        base_state["trace_id"] = "test-hitl-fail-001"
+        with patch("core.config.cfg.autocode_hitl_enabled", True), \
+             patch("core.observability.checkpoint.save_checkpoint",
+                   side_effect=OSError("disk full")):
+            result = node_hitl_gate(base_state)
+        assert result["status"] == "hitl_checkpoint_failed"
+        assert "disk full" in result["error"]
+        assert "checkpoint" in result["error"].lower()
+
+    def test_checkpoint_success_returns_awaiting(self, base_state):
+        """save_checkpoint succeeds → return status=awaiting_approval (unchanged behavior)."""
+        from workflows.autocode_impl.nodes.hitl_gate import node_hitl_gate
+        base_state["hitl_approved"] = False
+        base_state["trace_id"] = "test-hitl-ok-001"
+        with patch("core.config.cfg.autocode_hitl_enabled", True), \
+             patch("core.observability.checkpoint.save_checkpoint") as mock_save:
+            result = node_hitl_gate(base_state)
+        assert result["status"] == "awaiting_approval"
+        mock_save.assert_called_once()

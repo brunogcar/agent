@@ -26,6 +26,16 @@ def node_hitl_gate(state: AutocodeState) -> dict:
     - If hitl_approved is True: return {} (pass through to commit)
 
     When disabled: return {} (no-op).
+
+    [v3.11 B2] Checkpoint-save failures are now SURFACED (was: silently swallowed
+    via `except Exception: pass` → returned awaiting_approval as if the pause
+    succeeded → on resume, no checkpoint found → full restart from
+    node_classify_task, re-executing LLM code generation, potentially producing
+    a different implementation than the human reviewed). Now returns
+    {"status": "hitl_checkpoint_failed", "error": <message>} so route_after_hitl_gate
+    routes to END (operator sees the failure + can retry). The existing
+    route_after_hitl_gate already routes non-running/success statuses to END —
+    no graph change needed.
     """
     # [v3.4 #38] If HiTL is disabled, pass through
     if not getattr(cfg, "autocode_hitl_enabled", False):
@@ -39,10 +49,23 @@ def node_hitl_gate(state: AutocodeState) -> dict:
     tid = state.get("trace_id", "")
     tracer.step(tid, "hitl_gate", "Workflow paused — awaiting human approval before commit")
 
+    # [v3.11 B2] Surface checkpoint-save failures — was: bare `except Exception:
+    # pass` which silently reported success. A failed save means the resume will
+    # find no checkpoint + restart from scratch (potentially producing a
+    # different implementation than the human reviewed). Now return an error
+    # status so the operator knows the pause failed.
     try:
         from core.observability.checkpoint import save_checkpoint
         save_checkpoint(tid, "hitl", state)
-    except Exception:
-        pass  # Non-fatal — checkpoint failure shouldn't block the pause
+    except Exception as e:
+        tracer.error(
+            tid, "hitl_gate",
+            f"Checkpoint save failed — pause NOT reported as successful: {e}",
+        )
+        return {
+            "status": "hitl_checkpoint_failed",
+            "error": f"Failed to save HiTL checkpoint: {e}. Resume would restart "
+                     f"from scratch — fix the checkpoint storage + retry.",
+        }
 
     return {"status": "awaiting_approval"}

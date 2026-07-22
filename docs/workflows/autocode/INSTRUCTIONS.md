@@ -61,6 +61,8 @@ Editing rules for the autocode subsystem. NEVER DO and ALWAYS DO are 1-line each
 51. Never assume `automated_checks_passed` defaults to `True` — default is `False` (v3.2 P0-3).
 52. Never add a debug-chain flag without updating NEVER DO #40.
 53. Never assume `tdd_iteration` is reset by `node_swarm_fallback` — it resets both `tdd.status` AND `tdd.iteration` (v3.1.1).
+54. Never swallow HiTL checkpoint-save failures silently (v3.11 B2) — was: `except Exception: pass` → returned `awaiting_approval` as if the pause succeeded → resume found no checkpoint → full restart, potentially producing a different implementation than reviewed. Now returns `status=hitl_checkpoint_failed` so `route_after_hitl_gate` routes to END.
+55. Never let the debug LLM-dispatch paths (swarm/parallel-subagent/single-subagent) skip the `is_cancellation_requested()` check (v3.11 B5) — in-flight `swarm()`/`agent()` calls outlive the graph deadline if not checked. The v3.6 "≤1s zombie linger" only covers subprocess calls; LLM dispatches need their own check.
 
 ---
 
@@ -118,6 +120,9 @@ Editing rules for the autocode subsystem. NEVER DO and ALWAYS DO are 1-line each
 50. Always prefer `chonkie.SentenceChunker` (soft dep) for `debug_history` compression — JSON fallback.
 51. Always use `cfg.autocode_graph_timeout` (or `_TASK_TYPE_TIMEOUTS[task_type]` when `AUTOCODE_ADAPTIVE_TIMEOUT=1`).
 52. Always populate `parallel_verdicts` (ALL verdicts) alongside the winner in `subagent_verdict`.
+53. Always pass the resolved per-run `timeout` to `set_graph_start_time(timeout)` (v3.11 B1) — was: only stored the start time, so `_remaining_timeout()` read the static `cfg.autocode_graph_timeout` (300s) instead of the adaptive timeout (900s for feature) → spurious 1-second subprocess timeouts at 400s elapsed.
+54. Always surface a `truncated` flag + `files_total` when audit scan caps the file list (v3.11 B3) — dead-code claims are only valid when the full file set was scanned for imports. Use `all_scanned_files` param in `_find_dead_code` so importers in unscanned directories aren't missed.
+55. Always document the git_ops.py aliases as "name-only" not "backward-compat" (v3.11 B7 / git tool v1.3) — the signature changed (project_root first); in-tree callers updated, but external callers using `_git_commit(message, tid, project_root)` must update to `_git_commit(project_root, message, target_file, tid)`.
 
 ---
 
@@ -155,4 +160,4 @@ Patterns that have bitten production. Each entry: bad pattern + why + fix. NOT d
 
 ---
 
-*Last updated: 2026-07-19 (v3.9).*
+*Last updated: 2026-07-22 (v3.11).*

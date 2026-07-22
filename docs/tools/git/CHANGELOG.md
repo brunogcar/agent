@@ -6,6 +6,7 @@
 
 | Version | Date | Notes |
 |---------|------|-------|
+| v1.3 | 2026-07-22 | **Docstring clarification — `workflows/autocode_impl/git_ops.py` aliases are name-only, NOT signature-compatible** (consumed by **autocode v3.11 B7**). The pre-v3.11 docstring called it a "backward-compat wrapper" — misleading. The `_git_commit`/`_git_create_branch` aliases point at the NEW function objects (with `project_root` first), so callers using the alias get the NEW signature. All in-tree callers (commit.py, create_skill.py, branch.py) were updated in v1.2; external callers using `_git_commit(message, tid, project_root)` must update to `_git_commit(project_root, message, target_file, tid)`. No code change to the actual `commit`/`create_branch`/`reset_hard` functions in `workflow_helpers.py` — this is a documentation fix only. |
 | v1.2 | 2026-07-25 | **Workflow helpers module added.** New `tools/git_ops/workflow_helpers.py` with 3 internal library functions (NOT LLM-facing actions): `commit(project_root, message, target_file="", tid="") -> dict`, `create_branch(project_root, branch, tid="") -> bool`, `reset_hard(project_root, tid="") -> bool`. Extracted from duplicated workflow git code (centralize-workflow-utils Phase B): autocode `vcs_ops.py::_git_commit` + `_git_create_branch`, autoresearch `decide.py::_git_commit` + `_git_reset_hard`, autoresearch `setup.py::_git_create_branch`. All use the `tools.git_ops.helpers._git()` runner (same runner the LLM-facing git tool uses) — same git executable detection, same subprocess environment, same 15s timeout, same never-raise contract. `reset_hard` includes toplevel-verify safety (qwen P1-4 / minimax B3 preserved). 9 unit tests in `tests/tools/git/test_workflow_helpers.py`. |
 | v1.1 | — | Clone action, path_guard hardening, `check_git_operation()` fail-fast fix |
 | v1 | — | Un-multiplex git: 8 atomic actions, `@meta_tool`, semantic params, test restructure |
@@ -68,4 +69,4 @@
 
 ---
 
-*Last updated: 2026-07-25. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-22 (v1.3 — git_ops.py docstring clarification). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

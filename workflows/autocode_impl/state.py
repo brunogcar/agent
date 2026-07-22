@@ -364,7 +364,6 @@ def _default_state(
         "vcs": {
             "commit_sha": "",
             "branch": "",
-            "branch_name": "",
             "pushed": False,
             "pr_number": 0,
             "pr_url": "",

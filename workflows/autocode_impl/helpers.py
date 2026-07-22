@@ -94,8 +94,9 @@ def is_cancellation_requested() -> bool:
 _graph_local = _threading.local()  # [v3.9 Bug A] per-thread start time (was module global)
 
 
-def set_graph_start_time() -> None:
-    """Record the graph invocation start time for deadline computation.
+def set_graph_start_time(timeout: int | None = None) -> None:
+    """Record the graph invocation start time (+ optional resolved timeout) for
+    deadline computation.
 
     Called by invoke_with_timeout() at the start of each workflow run.
     Used by _remaining_timeout() to cap subprocess timeouts so they
@@ -106,8 +107,21 @@ def set_graph_start_time() -> None:
     for up to cfg.sandbox_timeout (e.g., 30s) past the deadline. Capping
     the subprocess timeout at the remaining graph budget bounds that
     linger to <=1s.
+
+    [v3.11 B1] Accepts an optional `timeout` param — the RESOLVED per-run
+    timeout (adaptive or static). When provided, _remaining_timeout() reads
+    it instead of cfg.autocode_graph_timeout. Pre-v3.11, _remaining_timeout()
+    always read the static cfg value, so adaptive timeouts (feature=900s,
+    fix/refactor/edit=600s) were never communicated — a feature task at 400s
+    elapsed (within its real 900s budget) computed remaining = 300 - 400 =
+    -100 → 1, giving pytest a spurious 1-second timeout.
     """
     _graph_local.start_time = _time.time()  # [v3.9 Bug A] per-thread (was module global)
+    # [v3.11 B1] Store the resolved per-run timeout so _remaining_timeout()
+    # can use it instead of the static cfg.autocode_graph_timeout. None =
+    # fall back to cfg (backward-compatible with v3.10 callers that don't
+    # pass timeout).
+    _graph_local.timeout = timeout
 
 
 def _remaining_timeout(default_timeout: int) -> int:
@@ -121,13 +135,26 @@ def _remaining_timeout(default_timeout: int) -> int:
     [v3.6 #35] Used by run_pytest/run_lint/run_tests nodes to cap their
     subprocess.run(timeout=...) so the subprocess can't outlive the graph
     deadline by more than 1s.
+
+    [v3.11 B1] Reads the resolved per-run timeout (stored by
+    set_graph_start_time(timeout=...)) instead of cfg.autocode_graph_timeout.
+    Pre-v3.11, a feature task with adaptive timeout=900s would still use the
+    static cfg.autocode_graph_timeout=300s here — at 400s elapsed, remaining =
+    300-400 = -100 → 1, giving pytest a spurious 1-second timeout. Now reads
+    the actual 900s budget → remaining = 900-400 = 500. Falls back to cfg when
+    the per-run timeout wasn't set (legacy callers / unit tests).
     """
     from core.config import cfg
     start = getattr(_graph_local, 'start_time', 0.0)
     if start == 0.0:
         return default_timeout
+    # [v3.11 B1] Use the per-run timeout (set by invoke_with_timeout) when
+    # available; fall back to the static cfg default for backward compat.
+    graph_timeout = getattr(_graph_local, 'timeout', None)
+    if graph_timeout is None:
+        graph_timeout = cfg.autocode_graph_timeout
     elapsed = _time.time() - start
-    remaining = cfg.autocode_graph_timeout - elapsed
+    remaining = graph_timeout - elapsed
     if remaining <= 0:
         return 1  # expired — minimal timeout, post-check will bail
     return int(min(default_timeout, remaining))

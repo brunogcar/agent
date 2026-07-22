@@ -17,8 +17,10 @@ class TestRemainingTimeout:
         from workflows.autocode_impl.helpers import _remaining_timeout, _graph_local
         import time as _time
         # [v3.9 Bug A] _graph_local is now threading.local — patch with an object that has .start_time
+        # [v3.11 B1] Also set .timeout = None so _remaining_timeout falls back to cfg.
         _mock_local = MagicMock()
         _mock_local.start_time = _time.time() - 290  # 290s ago
+        _mock_local.timeout = None  # [v3.11 B1] no per-run timeout set → use cfg
         with patch("workflows.autocode_impl.helpers._graph_local", _mock_local):
             with patch("core.config.cfg") as mock_cfg:
                 mock_cfg.autocode_graph_timeout = 300
@@ -31,6 +33,7 @@ class TestRemainingTimeout:
         import time as _time
         _mock_local = MagicMock()
         _mock_local.start_time = _time.time() - 500  # expired
+        _mock_local.timeout = None  # [v3.11 B1] no per-run timeout set → use cfg
         with patch("workflows.autocode_impl.helpers._graph_local", _mock_local):
             with patch("core.config.cfg") as mock_cfg:
                 mock_cfg.autocode_graph_timeout = 300

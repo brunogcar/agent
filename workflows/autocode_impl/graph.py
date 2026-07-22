@@ -69,7 +69,7 @@ from workflows.autocode_impl.routes import (
 # + 2 audit pipeline nodes [v3.7 F7], debug loop, create_skill + audit bypasses).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "3.8",  # [v3.8] centralize-workflow-utils: _git_commit + _git_create_branch moved to tools/git_ops/workflow_helpers.py; _call uses core/backoff_retry.py; atomic_write uses core/atomic_write.py. [v3.7 F7] Audit pipeline; [v3.4] HiTL; [v3.1] Debug loop
+    "version": "3.11",  # [v3.11] Claude review fixes — B1 (adaptive timeout → _remaining_timeout), B2 (hitl checkpoint failure surfaced), B3 (audit truncation flag), B4 (version drift fix 3.8→3.11), B5 (debug path cancellation checks), B6 (future-dated docs fix), B7 (git_ops docstring honest — delegates to git tool v1.3), B8 (orphaned branch_name removed). [v3.10] centralize-workflow-utils: _git_commit + _git_create_branch moved to tools/git_ops/workflow_helpers.py; _call uses core/backoff_retry.py; atomic_write uses core/atomic_write.py. [v3.8] #57 per-node test coverage. [v3.7] F7 Audit pipeline; [v3.4] HiTL; [v3.1] Debug loop
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [
@@ -376,20 +376,12 @@ def invoke_with_timeout(initial_state: dict) -> dict:
     # [v3.6 #35] Record the graph start time so _remaining_timeout() can
     # cap subprocess timeouts at the remaining graph budget. Prevents
     # subprocess.run() from lingering past the graph deadline.
+    # [v3.11 B1] Pass the RESOLVED per-run timeout (adaptive or static) so
+    # _remaining_timeout() uses the correct budget — was: only stored the
+    # start time, so _remaining_timeout() always read the static cfg value,
+    # giving adaptive-timeout tasks (feature=900s) a spurious 300s budget.
     from workflows.autocode_impl.helpers import set_graph_start_time
-    set_graph_start_time()
-
-    # [v1.4 P2] Best-effort cleanup of old autocode run folders before
-    # starting a new run. Non-fatal — cleanup failure must not block the
-    # workflow (the new run's folder will still be created on demand).
-    try:
-        from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs
-        _cleanup_old_autocode_runs()
-    except Exception:
-        pass  # Non-fatal: cleanup failure shouldn't block the workflow
-
-    graph = get_graph()
-    result = {"status": "failed", "error": "Graph invocation timed out"}
+    # Compute the timeout BEFORE set_graph_start_time so we can pass it in.
     # [v1.2 #40] Adaptive timeout by task_type — create_skill=120s, audit=300s,
     # feature=900s, fix/refactor/edit=600s. Falls back to cfg.autocode_graph_timeout.
     # Opt-in via AUTOCODE_ADAPTIVE_TIMEOUT=1 (default OFF — uses static timeout).
@@ -405,6 +397,22 @@ def invoke_with_timeout(initial_state: dict) -> dict:
         }
         task_type = initial_state.get("task_type", "")
         timeout = _TASK_TYPE_TIMEOUTS.get(task_type, timeout)
+    set_graph_start_time(timeout)
+
+    # [v1.4 P2] Best-effort cleanup of old autocode run folders before
+    # starting a new run. Non-fatal — cleanup failure must not block the
+    # workflow (the new run's folder will still be created on demand).
+    try:
+        from workflows.autocode_impl.helpers import _cleanup_old_autocode_runs
+        _cleanup_old_autocode_runs()
+    except Exception:
+        pass  # Non-fatal: cleanup failure shouldn't block the workflow
+
+    graph = get_graph()
+    result = {"status": "failed", "error": "Graph invocation timed out"}
+    # timeout was already computed above (before set_graph_start_time) for
+    # the adaptive-timeout path. [v3.11 B1] Moved up so it can be passed to
+    # set_graph_start_time(timeout).
 
     # [Hardening P0.3] Capture exceptions inside the daemon thread — without
     # this, any node crash kills the thread silently and is reported as a

@@ -23,18 +23,30 @@ from workflows.autocode_impl.helpers import _should_skip_node
 from workflows.autocode_impl.state import AutocodeState
 
 
-def _walk_python_files(project_root: str, max_files: int = 200) -> list[dict]:
+def _walk_python_files(project_root: str, max_files: int = 200, max_files_to_scan: int = 2000) -> tuple[list[dict], bool, int]:
     """Walk project_root and return a list of .py file dicts.
     
-    Returns: [{"path": "rel/path.py", "lines": 42, "size": 1234}, ...]
-    Sorted by line count descending (biggest files first).
+    Returns: (files, truncated, files_total)
+      - files: [{"path": "rel/path.py", "lines": 42, "size": 1234}, ...] sorted
+        by line count descending (biggest files first), capped at max_files.
+      - truncated: True if files_total > max_files (the returned list is a subset).
+      - files_total: total number of .py files found (before capping).
+    
+    [v3.11 B3] Walk ALL files first (up to max_files_to_scan hard cap), THEN sort,
+    THEN cap at max_files. Pre-v3.11, the walk loop broke at max_files in directory-
+    traversal order, then sorted the (already-truncated) subset — so on a repo with
+    >200 .py files, the returned list was an arbitrary directory-order-dependent
+    200-file subset, NOT the 200 biggest files. The dead-code analysis then ran
+    against that subset, falsely flagging files whose importers lived in unscanned
+    directories. Now the dead-code analysis gets the full file set (up to
+    max_files_to_scan) so importers are never missed.
     """
     root = Path(project_root) if project_root else cfg.agent_root
     skip_dirs = {".git", "__pycache__", ".venv", "venv", "node_modules",
                  ".mypy_cache", ".pytest_cache", ".ruff_cache", "memory_db",
                  "workspace", ".understand", ".symbols"}
     
-    files = []
+    all_files = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs]
         for fname in filenames:
@@ -45,30 +57,48 @@ def _walk_python_files(project_root: str, max_files: int = 200) -> list[dict]:
                 rel = str(fpath.relative_to(root))
                 content = fpath.read_text(encoding="utf-8", errors="replace")
                 lines = content.count("\n") + 1
-                files.append({
+                all_files.append({
                     "path": rel,
                     "lines": lines,
                     "size": len(content),
                 })
             except Exception:
                 continue
-        if len(files) >= max_files:
+        # [v3.11 B3] Hard upper bound so a 50k-file monorepo doesn't hang.
+        # The walk still covers the full repo up to this cap.
+        if len(all_files) >= max_files_to_scan:
             break
     
-    files.sort(key=lambda f: f["lines"], reverse=True)
-    return files[:max_files]
+    files_total = len(all_files)
+    # [v3.11 B3] Sort ALL files by line count BEFORE capping — was: sort after
+    # truncating, so the subset was directory-order-dependent, not the biggest.
+    all_files.sort(key=lambda f: f["lines"], reverse=True)
+    truncated = files_total > max_files
+    return all_files[:max_files], truncated, files_total
 
 
-def _find_dead_code(files: list[dict], project_root: str) -> list[str]:
+def _find_dead_code(files: list[dict], project_root: str, all_scanned_files: list[dict] | None = None) -> list[str]:
     """Find .py files that are never imported by any other file.
     
     Uses simple grep-style analysis (not kgraph) for speed.
     Returns: ["rel/path.py", ...] — files with no importers.
+    
+    [v3.11 B3] Accepts `all_scanned_files` — the FULL scanned file list (before
+    capping at max_files). Pre-v3.11, dead-code analysis ran against the capped
+    200-file subset, so a file whose only importer lived in an unscanned directory
+    was falsely flagged as dead. Now the import scan uses the full file set so
+    importers are never missed. The `files` param (capped subset) is still used
+    for the "is this file dead?" check (we only report dead code for files in the
+    returned subset).
     """
     root = Path(project_root) if project_root else cfg.agent_root
+    # [v3.11 B3] Use the full scanned file set for import scanning — was: only
+    # the capped 200-file subset. A file whose only importer is in an unscanned
+    # directory was falsely flagged as dead.
+    scan_files = all_scanned_files if all_scanned_files is not None else files
     imported = set()
     
-    for f in files:
+    for f in scan_files:
         fpath = root / f["path"]
         try:
             content = fpath.read_text(encoding="utf-8", errors="replace")
@@ -142,13 +172,26 @@ def node_audit_scan(state: AutocodeState) -> dict:
     project_root = state.get("project_root", "")
     tracer.step(tid, "audit_scan", "Starting whole-repo audit scan")
     
-    # 1. Walk files
-    files = _walk_python_files(project_root, max_files=200)
+    # 1. Walk files — [v3.11 B3] returns (files, truncated, files_total).
+    # `files` is the capped subset (for state-size management); the full
+    # scanned set is reconstructed below for the dead-code import scan.
+    files, truncated, files_total = _walk_python_files(project_root, max_files=200)
     total_lines = sum(f["lines"] for f in files)
-    tracer.step(tid, "audit_scan", f"Found {len(files)} .py files ({total_lines} lines)")
+    tracer.step(tid, "audit_scan", f"Found {files_total} .py files (showing top {len(files)}, truncated={truncated}) ({total_lines} lines in shown files)")
     
-    # 2. Find dead code
-    dead_code = _find_dead_code(files, project_root)
+    # [v3.11 B3] Reconstruct the full scanned set for the dead-code import scan.
+    # _walk_python_files capped at max_files=200, but the dead-code analysis needs
+    # the FULL set so importers in unscanned directories aren't missed. We re-walk
+    # with max_files=max_files_to_scan (2000) to get the full set. The walk is
+    # cached by the OS after the first pass, so this is fast.
+    if truncated:
+        full_scan_files, _, _ = _walk_python_files(project_root, max_files=2000, max_files_to_scan=2000)
+    else:
+        full_scan_files = files
+    
+    # 2. Find dead code — [v3.11 B3] pass the full scanned set so importers in
+    # unscanned directories aren't missed.
+    dead_code = _find_dead_code(files, project_root, all_scanned_files=full_scan_files)
     tracer.step(tid, "audit_scan", f"Dead code candidates: {len(dead_code)}")
     
     # 3. Find missing type hints
@@ -177,6 +220,12 @@ def node_audit_scan(state: AutocodeState) -> dict:
     scan_results = {
         "total_files": len(files),
         "total_lines": total_lines,
+        # [v3.11 B3] Truncation flag + counts so the LLM audit report + operator
+        # know the scan was partial. Dead-code claims are only valid when
+        # truncated=False (or when the full scan set was used for import analysis).
+        "truncated": truncated,
+        "files_scanned": len(files),
+        "files_total": files_total,
         "files": [{"path": f["path"], "lines": f["lines"]} for f in files[:20]],
         "dead_code_candidates": dead_code,
         "missing_type_hints": missing_hints,
@@ -184,7 +233,14 @@ def node_audit_scan(state: AutocodeState) -> dict:
         "dependency_map": dependency_map,
     }
     
-    tracer.step(tid, "audit_scan", f"Audit scan complete: {len(files)} files, {len(dead_code)} dead, {len(missing_hints)} missing hints")
+    if truncated:
+        tracer.warning(
+            tid, "audit_scan",
+            f"Scan truncated: {files_total} files found, only top {len(files)} by line count shown. "
+            f"Dead-code analysis used {len(full_scan_files)} files for import scanning.",
+        )
+    
+    tracer.step(tid, "audit_scan", f"Audit scan complete: {len(files)} files shown, {len(dead_code)} dead, {len(missing_hints)} missing hints")
     
     # Store in impact sub-state
     from workflows.autocode_impl.state import _get_impact

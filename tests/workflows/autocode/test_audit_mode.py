@@ -95,3 +95,71 @@ class TestAuditReport:
         base_state["impact"] = {}
         result = node_audit_report(base_state)
         assert result.get("status") == "failed"
+
+
+# ===========================================================================
+# [v3.11 B3] Audit truncation flag + sort-before-truncate
+# ===========================================================================
+
+
+class TestAuditTruncationFlag:
+    """[v3.11 B3] audit_scan must surface a truncated flag when >200 files,
+    and the dead-code analysis must use the FULL scanned file set (not the
+    capped 200-file subset). Pre-v3.11, the walk broke at 200 files in
+    directory-traversal order, then sorted the (already-truncated) subset —
+    so the returned list was an arbitrary directory-order-dependent subset,
+    NOT the 200 biggest files. Worse, dead-code analysis ran against that
+    subset, falsely flagging files whose importers lived in unscanned dirs.
+    """
+
+    def test_truncated_flag_set_when_over_200_files(self, base_state, temp_workspace):
+        """A repo with >200 .py files must set truncated=True + files_total>200."""
+        from workflows.autocode_impl.nodes.audit_scan import node_audit_scan
+        # Create 205 .py files so the scan exceeds max_files=200.
+        for i in range(205):
+            (temp_workspace / f"file_{i:03d}.py").write_text(f"# file {i}\nx = {i}\n", encoding="utf-8")
+        base_state["project_root"] = str(temp_workspace)
+        base_state["task_type"] = "audit"
+        result = node_audit_scan(base_state)
+        scan = result["impact"]["audit_scan"]
+        assert scan["truncated"] is True
+        assert scan["files_total"] == 205
+        assert scan["files_scanned"] == 200  # capped
+
+    def test_truncated_flag_not_set_when_under_200(self, base_state, temp_workspace):
+        """A repo with <200 .py files must set truncated=False."""
+        from workflows.autocode_impl.nodes.audit_scan import node_audit_scan
+        for i in range(10):
+            (temp_workspace / f"file_{i}.py").write_text(f"# file {i}\n", encoding="utf-8")
+        base_state["project_root"] = str(temp_workspace)
+        base_state["task_type"] = "audit"
+        result = node_audit_scan(base_state)
+        scan = result["impact"]["audit_scan"]
+        assert scan["truncated"] is False
+        assert scan["files_total"] == 10
+
+    def test_sort_before_truncate_returns_biggest_files(self, base_state, temp_workspace):
+        """[v3.11 B3] The returned 200-file subset must be the BIGGEST files
+        (by line count), not a directory-order-dependent subset. Pre-v3.11,
+        the walk broke at 200 in directory order, then sorted — so the subset
+        was arbitrary, not the biggest."""
+        from workflows.autocode_impl.nodes.audit_scan import _walk_python_files
+        # Create 205 files. file_0 has 1000 lines (biggest); file_1..204 have 1 line.
+        big_file = temp_workspace / "file_0.py"
+        big_file.write_text("\n".join(f"# line {i}" for i in range(1000)) + "\n", encoding="utf-8")
+        for i in range(1, 205):
+            (temp_workspace / f"file_{i:03d}.py").write_text(f"# small {i}\n", encoding="utf-8")
+        files, truncated, files_total = _walk_python_files(str(temp_workspace), max_files=200)
+        assert truncated is True
+        assert files_total == 205
+        # The biggest file (file_0.py with 1000 lines) must be in the returned subset.
+        # Pre-v3.11 (directory-order truncation), it might not be (if os.walk
+        # visited it after 200 other files were already collected).
+        paths = [f["path"] for f in files]
+        assert "file_0.py" in paths, (
+            "Biggest file (file_0.py) must be in the returned subset — "
+            "pre-v3.11 directory-order truncation could miss it."
+        )
+        # And it must be FIRST (sorted by line count descending).
+        assert files[0]["path"] == "file_0.py"
+        assert files[0]["lines"] >= 1000  # 1000 "line" lines + 1 trailing = 1001
