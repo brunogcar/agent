@@ -160,4 +160,4 @@ Patterns that have bitten production. Each entry: bad pattern + why + fix. NOT d
 
 ---
 
-*Last updated: 2026-07-22 (v3.11).*
+*Last updated: 2026-07-22 (v3.11.1).*

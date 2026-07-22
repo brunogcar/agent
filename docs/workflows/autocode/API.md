@@ -197,4 +197,4 @@ Opt-in via `AUTOCODE_HITL_ENABLED=1`. Two gates: `node_hitl_gate` between `node_
 
 ---
 
-*Last updated: 2026-07-22 (v3.11). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v3.11.1). See [CHANGELOG.md](CHANGELOG.md) for version history.*

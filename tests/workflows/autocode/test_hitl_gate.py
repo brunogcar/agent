@@ -65,6 +65,45 @@ class TestHitlRouting:
         base_state["status"] = "success"
         assert route_after_hitl_gate(base_state) == "node_commit"
 
+    # [v3.11.1 B2-fix] The v3.11 B2 fix introduced hitl_checkpoint_failed but
+    # the router only checked awaiting_approval → hitl_checkpoint_failed fell
+    # through to node_commit, bypassing HiTL entirely. These tests cover the
+    # end-to-end path (node return → router decision) that v3.11 missed.
+
+    def test_checkpoint_failed_routes_to_end(self, base_state):
+        """[v3.11.1 B2-fix] hitl_checkpoint_failed → END (NOT node_commit).
+        Pre-v3.11.1, this fell through to node_commit, bypassing HiTL."""
+        from workflows.autocode_impl.routes import route_after_hitl_gate
+        base_state["status"] = "hitl_checkpoint_failed"
+        assert route_after_hitl_gate(base_state) == "END"
+
+    def test_failed_routes_to_end(self, base_state):
+        """[v3.11.1 B2-fix] Any non-running/success status → END (fail safe)."""
+        from workflows.autocode_impl.routes import route_after_hitl_gate
+        base_state["status"] = "failed"
+        assert route_after_hitl_gate(base_state) == "END"
+
+    def test_error_routes_to_end(self, base_state):
+        """[v3.11.1 B2-fix] error status → END (fail safe)."""
+        from workflows.autocode_impl.routes import route_after_hitl_gate
+        base_state["status"] = "error"
+        assert route_after_hitl_gate(base_state) == "END"
+
+    def test_empty_status_routes_to_commit(self, base_state):
+        """[v3.11.1 B2-fix] Empty/missing status → node_commit (HiTL disabled
+        path — node_hitl_gate returns {} so status stays at whatever it was)."""
+        from workflows.autocode_impl.routes import route_after_hitl_gate
+        base_state["status"] = ""
+        assert route_after_hitl_gate(base_state) == "node_commit"
+
+    def test_unknown_status_routes_to_end(self, base_state):
+        """[v3.11.1 B2-fix] Unrecognized status → END (fail safe by default).
+        This is the key property of the allow-list approach: any future new
+        status fails safe instead of silently committing."""
+        from workflows.autocode_impl.routes import route_after_hitl_gate
+        base_state["status"] = "some_future_status"
+        assert route_after_hitl_gate(base_state) == "END"
+
 
 class TestCreateSkillHitlCheck:
     """create_skill should pause when HiTL enabled and not approved."""

@@ -69,7 +69,7 @@ from workflows.autocode_impl.routes import (
 # + 2 audit pipeline nodes [v3.7 F7], debug loop, create_skill + audit bypasses).
 WORKFLOW_METADATA = {
     "name": "autocode",
-    "version": "3.11",  # [v3.11] Claude review fixes — B1 (adaptive timeout → _remaining_timeout), B2 (hitl checkpoint failure surfaced), B3 (audit truncation flag), B4 (version drift fix 3.8→3.11), B5 (debug path cancellation checks), B6 (future-dated docs fix), B7 (git_ops docstring honest — delegates to git tool v1.3), B8 (orphaned branch_name removed). [v3.10] centralize-workflow-utils: _git_commit + _git_create_branch moved to tools/git_ops/workflow_helpers.py; _call uses core/backoff_retry.py; atomic_write uses core/atomic_write.py. [v3.8] #57 per-node test coverage. [v3.7] F7 Audit pipeline; [v3.4] HiTL; [v3.1] Debug loop
+    "version": "3.11.1",  # [v3.11.1] B2 regression fix — route_after_hitl_gate allow-list (hitl_checkpoint_failed was falling through to node_commit, bypassing HiTL). [v3.11] Claude review fixes — B1 (adaptive timeout → _remaining_timeout), B2 (hitl checkpoint failure surfaced), B3 (audit truncation flag), B4 (version drift fix 3.8→3.11), B5 (debug path cancellation checks), B6 (future-dated docs fix), B7 (git_ops docstring honest — delegates to git tool v1.3), B8 (orphaned branch_name removed). [v3.10] centralize-workflow-utils. [v3.8] #57 per-node test coverage. [v3.7] F7 Audit pipeline; [v3.4] HiTL; [v3.1] Debug loop
     "description": "Autonomous coding with TDD, debug loops, impact analysis, git integration, and procedural memory",
     "entry_point": "node_classify_task",
     "nodes": [

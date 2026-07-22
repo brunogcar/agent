@@ -56,4 +56,4 @@ For the full facade signature + config flags table + return shape, see [API.md](
 
 ---
 
-*Last updated: 2026-07-22 (v3.11). See [CHANGELOG.md](autocode/CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v3.11.1). See [CHANGELOG.md](autocode/CHANGELOG.md) for version history.*

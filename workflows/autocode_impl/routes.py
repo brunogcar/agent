@@ -112,9 +112,22 @@ def route_after_swarm_fallback(state: AutocodeState) -> str:
 def route_after_hitl_gate(state: AutocodeState) -> str:
     """[v3.4 #38] Route after HiTL gate.
 
-    "awaiting_approval" → END (workflow pauses).
-    else → "node_commit" (approved or HiTL disabled).
+    [v3.11.1 B2-fix] Allow-list approach — only "running"/"success"/no-status
+    proceed to node_commit. Everything else (awaiting_approval,
+    hitl_checkpoint_failed, failed, error, or any future new status) routes to
+    END. This fails safe: a checkpoint-save failure (v3.11 B2) or any
+    unrecognized status can NEVER silently fall through to commit. Pre-v3.11.1,
+    the router only checked `status == "awaiting_approval"` → the new
+    `hitl_checkpoint_failed` status fell through to `node_commit`, bypassing
+    HiTL entirely on a plain disk/IO hiccup — strictly worse than the original
+    bug B2 was meant to fix.
     """
-    if state.get("status") == "awaiting_approval":
-        return "END"
-    return "node_commit"
+    # [v3.11.1 B2-fix] Allow-list: only explicit approval/proceed statuses
+    # route to commit. This is safer than block-listing (awaiting_approval +
+    # hitl_checkpoint_failed) because any FUTURE new status added to
+    # node_hitl_gate fails safe → END instead of silently committing.
+    if state.get("status") in ("running", "success", "", None):
+        return "node_commit"
+    # awaiting_approval, hitl_checkpoint_failed, failed, error, or any
+    # unrecognized status → END (fail safe).
+    return "END"

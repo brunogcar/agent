@@ -153,4 +153,4 @@ python -m pytest tests/workflows/autocode/ -v
 
 ---
 
-*Last updated: 2026-07-22 (v3.11). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v3.11.1). See [CHANGELOG.md](CHANGELOG.md) for version history.*
