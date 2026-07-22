@@ -404,19 +404,20 @@ The Router attempts to classify the task using the lightweight Router LLM.
 
 ```
 No thinking. No explanation.
-{"workflow": "research or data or autocode or deep_research or understand",
+{"workflow": "understand or research or deep_research or autoresearch or autocode or data",
  "tool": "web or python or file or git or memory or agent or notify or report or vision or workflow or cli or browser or tavily or consult or parallel",
  "complexity": 5,
  "reason": "one sentence",
  "confidence": "high or medium or low",
  "clarifying_questions": ["question1", "question2"]}
 
-Workflow routing rules:
-- research: finding info, summarising, reading docs, Q&A
-- data: pandas, analysis, calculations, charts, spreadsheets
-- autocode: fixing bugs, editing code files, adding features
-- deep_research: complex multi-faceted research, iterative evidence synthesis
-- understand: build or query codebase knowledge graph, analyze project structure
+Workflow routing rules (each answers a distinct cognitive question):
+- understand: "What is this codebase?" -- build/query codebase knowledge graph, analyze project structure, map dependencies
+- research: "What's known externally?" -- web search, summarizing, reading docs, Q&A about external topics
+- deep_research: "What's known (complex)?" -- multi-faceted iterative research with evidence synthesis
+- autoresearch: "What approach works best?" -- evolutionary experiment loop (propose -> modify -> run -> evaluate -> repeat). For hyperparameter optimization, training-script tuning, config search -- NOT for architecture planning.
+- autocode: "Execute the change" -- fix bugs, edit code files, add features, refactor (TDD + git)
+- data: "What does the data show?" -- pandas, analysis, calculations, charts, spreadsheets
 
 Tool routing rules (for direct workflow):
 - web: general web search and page reading

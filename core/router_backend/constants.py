@@ -7,7 +7,10 @@ inspect.getsource() + ast.literal_eval.
 from __future__ import annotations
 
 # -- Module-level constants for prompt and expected sets ----------------------
-ROUTER_WORKFLOWS = ["research", "data", "autocode", "deep_research", "understand"]
+# [v1.1] `autoresearch` added to ROUTER_WORKFLOWS (was missing -- the router
+# couldn't route to autoresearch via `type="auto"`, so the workflow was
+# unreachable through the auto path even though its type handler existed).
+ROUTER_WORKFLOWS = ["understand", "research", "deep_research", "autoresearch", "autocode", "data"]
 ROUTER_TOOLS = [
     "web", "python", "file", "git", "memory", "agent", "notify", "report",
     "vision", "workflow", "cli", "browser", "tavily", "consult", "parallel", "swarm", "github",
@@ -35,6 +38,13 @@ ROUTER_FEW_SHOT_EXAMPLES = [
         '"Create a bar chart of sales data"',
         '{"workflow": "direct", "tool": "report", "complexity": 3, "reason": "Chart creation request", "confidence": "high", "clarifying_questions": []}',
     ),
+    # [v1.1] Autoresearch few-shot example. Goal must match the heuristic
+    # _RE_AUTORESEARCH pattern (TestFewShotExamples.test_examples_match_heuristic_routes
+    # verifies few-shot goals match heuristic routing).
+    (
+        '"optimize the learning rate of my training script"',
+        '{"workflow": "autoresearch", "tool": "workflow", "complexity": 8, "reason": "Evolutionary experiment loop for hyperparameter optimization", "confidence": "high", "clarifying_questions": []}',
+    ),
 ]
 
 ROUTER_SYSTEM_PROMPT = (
@@ -45,12 +55,13 @@ ROUTER_SYSTEM_PROMPT = (
     + ' "reason": "one sentence",'
     + ' "confidence": "high or medium or low",'
     + ' "clarifying_questions": ["question1", "question2"]}\n'
-    + "\n\nWorkflow routing rules:\n"
-    + "- research: finding info, summarising, reading docs, Q&A\n"
-    + "- data: pandas, analysis, calculations, charts, spreadsheets\n"
-    + "- autocode: fixing bugs, editing code files, adding features\n"
-    + "- deep_research: complex multi-faceted research, iterative evidence synthesis\n"
-    + "- understand: build or query codebase knowledge graph, analyze project structure\n"
+    + "\n\nWorkflow routing rules (each answers a distinct cognitive question):\n"
+    + "- understand: \"What is this codebase?\" -- build/query codebase knowledge graph, analyze project structure, map dependencies\n"
+    + "- research: \"What's known externally?\" -- web search, summarizing, reading docs, Q&A about external topics\n"
+    + "- deep_research: \"What's known (complex)?\" -- multi-faceted iterative research with evidence synthesis\n"
+    + "- autoresearch: \"What approach works best?\" -- evolutionary experiment loop (propose -> modify -> run -> evaluate -> repeat). For hyperparameter optimization, training-script tuning, config search -- NOT for architecture planning.\n"
+    + "- autocode: \"Execute the change\" -- fix bugs, edit code files, add features, refactor (TDD + git)\n"
+    + "- data: \"What does the data show?\" -- pandas, analysis, calculations, charts, spreadsheets\n"
     + "\nTool routing rules (for direct workflow):\n"
     + "- web: general web search and page reading\n"
     + "- python: data analysis, calculations, plotting\n"

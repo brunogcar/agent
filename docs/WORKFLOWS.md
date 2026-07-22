@@ -18,6 +18,27 @@ This document provides a **high-level overview** of all workflows and serves as 
 
 ---
 
+## 🧠 Cognitive Framing
+
+Each workflow answers a distinct cognitive question. The Router uses this framing to classify goals and select the right workflow. Workflows are a **cognitive toolkit**, not a rigid pipeline — most tasks use one workflow; `compose` chains them when needed.
+
+| Cognitive Question | Workflow | What It Does |
+|---|---|---|
+| "What is this codebase?" | **understand** | Build/query codebase knowledge graph, map dependencies, index for semantic search |
+| "What's known externally?" | **research** | Web search, summarize, read docs, Q&A about external topics |
+| "What's known (complex)?" | **deep_research** | Multi-faceted iterative research with evidence synthesis + convergence detection |
+| "What approach works best?" | **autoresearch** | Evolutionary experiment loop (propose → modify → run → evaluate → repeat). For hyperparameter optimization, training-script tuning — NOT architecture planning |
+| "Execute the change" | **autocode** | Fix bugs, add features, refactor code (TDD + git + debug loop) |
+| "What does the data show?" | **data** | pandas, analysis, calculations, charts, spreadsheets |
+
+**Not a rigid pipeline.** 80% of tasks are single-workflow. The Router picks the right tool for the job; `compose` chains them on demand (e.g., `understand → autocode` or `research → data`). Don't force every task through a fixed Understand → Research → AutoCode sequence.
+
+**Swarm is a tool, not a workflow stage.** `swarm` (multi-model consultation) is used INSIDE workflows (e.g., autocode's debug node calls swarm_fallback), not as a pipeline step.
+
+**Memory/Sleep-Learn is infrastructure, not a stage.** Sleep-learn runs in the background (cron-triggered), cross-cutting all workflows — not a sequential step after AutoCode.
+
+---
+
 ## 🏗️ The Foundation Layer
 
 All workflows inherit from a shared foundation defined in `workflows/base.py`.

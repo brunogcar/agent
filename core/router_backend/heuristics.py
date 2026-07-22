@@ -133,6 +133,15 @@ _RE_UNDERSTAND = re.compile(
     r"map dependencies|explore codebase|scan project)\b",
     re.IGNORECASE,
 )
+# [v1.1] Autoresearch workflow -- evolutionary experiment loop for
+# hyperparameter optimization / training-script tuning / config search.
+# Placed BEFORE the generic _RE_RESEARCH check (step #17) so
+# autoresearch-specific goals don't fall through to research. Narrow
+# keywords only -- generic "research" phrases must NOT route here.
+_RE_AUTORESEARCH = re.compile(
+    r"\b(optimize|hyperparameter|experiment loop|autoresearch|evolutionary search)\b",
+    re.IGNORECASE,
+)
 # [HEURISTIC FIX] Added missing heuristic patterns for vision and agent
 # tools that were in the prompt but had no fallback coverage.
 # Uses flexible matching so "analyze this image" and "ocr this screenshot" work.
@@ -189,6 +198,7 @@ def heuristic_route(goal: str) -> RoutingDecision:
     12. Agent (delegate to sub-agent)
     13. Deep Research (iterative research)
     14. Understand (knowledge graph)
+    14b. Autoresearch (evolutionary experiment loop)
     15. Code (autocode workflow)
     16. Data (data analysis workflow)
     17. Research (explicit keywords, medium confidence)
@@ -343,6 +353,18 @@ def heuristic_route(goal: str) -> RoutingDecision:
             "tool": "workflow",
             "complexity": 6,
             "reason": "Codebase analysis and knowledge graph building",
+            "confidence": "medium",
+        })
+
+    # 14b. Autoresearch workflow (evolutionary experiment loop). Checked
+    # BEFORE the generic _RE_RESEARCH check at step #17 so hyperparameter /
+    # experiment-loop goals don't fall through to research.
+    if _RE_AUTORESEARCH.search(goal):
+        return RoutingDecision({
+            "workflow": "autoresearch",
+            "tool": "workflow",
+            "complexity": 8,
+            "reason": "Evolutionary experiment loop -- hyperparameter / config search",
             "confidence": "medium",
         })
 

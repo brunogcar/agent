@@ -18,8 +18,12 @@ ROUTER_EXPECTED_TOOLS = frozenset({
     "cli", "browser", "tavily", "consult", "parallel",
     "swarm", "github", "schedule",
 })
+# [v1.1] `autoresearch` added to the expected workflows set -- was missing
+# from ROUTER_WORKFLOWS, so the router couldn't route to autoresearch via
+# `type="auto"`. Now in both the canonical set + ROUTER_WORKFLOWS.
 ROUTER_EXPECTED_WORKFLOWS = frozenset({
     "research", "data", "autocode", "deep_research", "understand",
+    "autoresearch",
 })
 
 

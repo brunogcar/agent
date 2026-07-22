@@ -5,6 +5,8 @@
 > **v1.0 — `@meta_tool` refactor with two-level dispatch.** The `workflow()` tool now takes an `action` parameter (meta-level: what to do) plus a `type` parameter (workflow-type-level: which workflow to run). Only `action="run"` uses `type`; the other four actions are leaf operations.
 >
 > **v1.2 — Operator UX: resume + logs + templates + kill.** 4 new actions added (resume, logs, templates, kill). `run` action learns `template` param. New `templates/` subfolder with 4 starter templates.
+>
+> **v1.2.1 — Cognitive framing + compose enhancement.** `autoresearch` added to `ROUTER_WORKFLOWS` (was missing). Router prompt uses cognitive-question framing. `compose` steps support `{stepN.field}` + `{prev.field}` placeholders in goal + kwargs.
 
 ## 🔧 Tool Signature
 
@@ -461,7 +463,7 @@ Drop a new `<name>.json` file into `tools/workflow_ops/templates/`. The loader p
 
 ---
 
-## 📂 Workflow Types (7)
+## 📂 Workflow Types (8)
 
 The `type` parameter is only used by `action="run"`. Each type has its own handler in `tools/workflow_ops/types/` that validates type-specific params and calls `_execute_workflow()`.
 
@@ -560,6 +562,61 @@ Lets the Router classify the goal and dynamically select the correct workflow.
 | Router returns `workflow="direct"` | `routed` | Router decides this is not a workflow task. Returns `tool` and `reason` for the LLM to use. |
 | Router returns `confidence="low"` | `needs_clarification` | Goal is too vague. Returns `clarifying_questions` for the user. **Bug #6 fix:** fires EVEN IF `clarifying_questions` is empty/None (provides default question). |
 | Router returns a specific type with non-low confidence | (delegated to that type) | Delegates to `TYPE_DISPATCH[routed_type]["func"]` — re-validates type-specific params. Falls back to `_execute_workflow` directly for unknown routed types. |
+
+---
+
+### `type="compose"` (v1.1 — `{stepN.field}` placeholders added in v1.2.1)
+
+Chain multiple workflows sequentially — pass the output of one as the input to the next. Stops on the first step failure and preserves all completed step results in the `steps` field.
+
+| Required | Optional | Description |
+|----------|----------|-------------|
+| `goal`, `steps` | `trace_id`, `resume` | `steps` is a non-empty list of step dicts (see below). Each step has its own `type` + `goal` + type-specific kwargs. |
+
+**Handler:** `tools/workflow_ops/types/compose.py` → `_type_compose()` → for each step calls `_execute_workflow(step_type, step_goal, trace_id, **step_kwargs)`.
+
+**Step dict shape:**
+
+```python
+{"type": "research", "goal": "Find LLM frameworks", ...type-specific kwargs}
+```
+
+**Forwarded to each step:**
+- `prev_result` — full result dict of step N-1 (only set when step N > 1).
+- `step_results` — list of ALL prior step result dicts (snapshot — frozen at the moment step N is invoked).
+
+**`{stepN.field}` + `{prev.field}` placeholders (v1.2.1):**
+
+Step goals + string-valued step kwargs support placeholders that resolve against prior step results BEFORE the step is executed. This lets step N reference a specific field from a specific prior step (not just the whole `prev_result` dict).
+
+| Placeholder | Resolves to |
+|---|---|
+| `{step1.target_file}` | `step_results[0]["target_file"]` (1-indexed: step1 = index 0) |
+| `{step2.files_parsed}` | `step_results[1]["files_parsed"]` |
+| `{prev.result}` | `step_results[-1]["result"]` — alias for the most recent step |
+
+**Unresolved placeholders are left as-is.** If `{step5.target_file}` appears in a 2-step chain (step 5 doesn't exist), or the named field is missing, the original placeholder text survives so the caller sees a clear signal rather than a silent blank. Non-string kwargs (lists, ints, bools) are skipped — only string values are scanned.
+
+**Example:**
+
+```python
+workflow(
+    action="run", type="compose",
+    goal="understand then fix",
+    steps=[
+        {"type": "understand", "goal": "Map the auth module", "project_root": "/repo"},
+        {
+            "type": "autocode",
+            "goal": "Fix the bug in {step1.target_file}",   # resolved to step1's target_file
+            "mode": "fix_error",
+            "target_file": "{step1.target_file}",            # also resolved in kwargs
+            "error_msg": "KeyError on login",
+        },
+    ],
+)
+```
+
+If step 1 returns `{"status": "success", "target_file": "/repo/auth.py", ...}`, step 2 is invoked with `goal="Fix the bug in /repo/auth.py"` and `target_file="/repo/auth.py"`.
 
 ---
 
@@ -687,4 +744,4 @@ Lets the Router classify the goal and dynamically select the correct workflow.
 
 ---
 
-*Last updated: 2026-07-25 (v1.2 — 4 new actions: resume + logs + templates + kill; `run` learns `template` param). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-26 (v1.2.1 — cognitive framing + autoresearch added to ROUTER_WORKFLOWS + compose `{stepN.field}` placeholders + compose type section added). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

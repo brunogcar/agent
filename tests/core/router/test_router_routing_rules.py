@@ -46,8 +46,11 @@ class TestPromptSectionsPresent:
     """Verify the prompt has the expected structural sections."""
 
     def test_workflow_routing_rules_section(self):
-        assert "Workflow routing rules:" in ROUTER_SYSTEM_PROMPT, (
-            "Missing 'Workflow routing rules:' section in prompt"
+        # [v1.1] Section header now reads "Workflow routing rules (each answers
+        # a distinct cognitive question):" -- match the prefix only so the
+        # test stays valid as the header wording evolves.
+        assert "Workflow routing rules" in ROUTER_SYSTEM_PROMPT, (
+            "Missing 'Workflow routing rules' section in prompt"
         )
 
     def test_tool_routing_rules_section(self):

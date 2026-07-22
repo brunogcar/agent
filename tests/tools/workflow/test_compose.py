@@ -6,12 +6,15 @@ The compose handler:
   - Passes prev_result + step_results from prior steps to subsequent steps.
   - Stops the chain on the first step failure.
   - Returns the full step_results list in the `steps` field.
+
+[v1.2.1] Also tests the {stepN.field} + {prev.field} placeholder resolution
+in step goals + string-valued kwargs (TestComposeStepRefResolution below).
 """
 from __future__ import annotations
 
 from unittest.mock import patch
 
-from tools.workflow_ops.types.compose import _type_compose
+from tools.workflow_ops.types.compose import _type_compose, _resolve_step_refs
 
 
 class TestComposeValidation:
@@ -190,3 +193,130 @@ class TestComposeExecution:
         third_kwargs = mock_exec.call_args_list[2][1]
         assert len(third_kwargs["step_results"]) == 2
         assert third_kwargs["prev_result"]["result"] == "s2"
+
+
+class TestComposeStepRefResolution:
+    """[v1.2.1] {stepN.field} + {prev.field} placeholder resolution tests.
+
+    Step goals + string-valued kwargs support placeholders that resolve
+    to fields from prior step results. Unresolved placeholders are left
+    as-is so callers see a clear signal. Non-string kwargs (lists, ints,
+    bools) are skipped.
+    """
+
+    def test_resolve_step_refs_unit_step(self):
+        """Direct unit test of _resolve_step_refs: {step1.target_file}."""
+        step_results = [{"target_file": "/repo/server.py", "status": "success"}]
+        out = _resolve_step_refs("Fix the bug in {step1.target_file}", step_results)
+        assert out == "Fix the bug in /repo/server.py"
+
+    def test_resolve_step_refs_unit_prev(self):
+        """Direct unit test of _resolve_step_refs: {prev.result}."""
+        step_results = [
+            {"status": "success"},
+            {"result": "step1 done"},
+            {"result": "step2 done"},
+        ]
+        out = _resolve_step_refs("Use {prev.result} as input", step_results)
+        assert out == "Use step2 done as input"
+
+    def test_compose_resolves_step_ref(self, mock_tracer):
+        """2-step compose: step 2 goal references {step1.target_file}.
+
+        Verifies the placeholder is resolved against step_results[0] BEFORE
+        _execute_workflow is invoked for step 2.
+        """
+        with patch("tools.workflow_ops.helpers._execute_workflow") as mock_exec:
+            mock_exec.side_effect = [
+                {"status": "success", "result": "indexed", "target_file": "/repo/auth.py"},
+                {"status": "success", "result": "fixed"},
+            ]
+            result = _type_compose(
+                goal="understand then fix", trace_id="t-stepref",
+                steps=[
+                    {"type": "understand", "goal": "Map the auth module", "project_root": "/repo"},
+                    {
+                        "type": "autocode",
+                        "goal": "Fix the bug in {step1.target_file}",
+                        "mode": "fix_error",
+                        "target_file": "{step1.target_file}",
+                    },
+                ],
+            )
+        assert result["status"] == "success"
+        # Step 2's goal + target_file kwarg should be resolved.
+        second_args = mock_exec.call_args_list[1][0]
+        second_kwargs = mock_exec.call_args_list[1][1]
+        assert second_args[1] == "Fix the bug in /repo/auth.py"  # positional goal
+        assert second_kwargs["target_file"] == "/repo/auth.py"  # string kwarg resolved
+        assert second_kwargs["mode"] == "fix_error"  # non-placeholder kwarg unchanged
+
+    def test_compose_resolves_prev_ref(self, mock_tracer):
+        """2-step compose: step 2 goal references {prev.result}.
+
+        Verifies {prev.field} resolves to the most recent step's field.
+        """
+        with patch("tools.workflow_ops.helpers._execute_workflow") as mock_exec:
+            mock_exec.side_effect = [
+                {"status": "success", "result": "5 sources synthesized", "target_file": ""},
+                {"status": "success", "result": "analyzed"},
+            ]
+            result = _type_compose(
+                goal="research then summarize", trace_id="t-prevref",
+                steps=[
+                    {"type": "research", "goal": "Find LLM frameworks"},
+                    {"type": "data", "goal": "Summarize the findings: {prev.result}"},
+                ],
+            )
+        assert result["status"] == "success"
+        second_args = mock_exec.call_args_list[1][0]
+        assert second_args[1] == "Summarize the findings: 5 sources synthesized"
+
+    def test_compose_unresolved_placeholder_left_as_is(self, mock_tracer):
+        """{step5.field} (step 5 doesn't exist in a 2-step chain) is left as-is.
+
+        Verifies the placeholder survives intact -- the chain doesn't crash
+        and the goal passed to step 2 retains the original placeholder text.
+        """
+        with patch("tools.workflow_ops.helpers._execute_workflow") as mock_exec:
+            mock_exec.side_effect = [
+                {"status": "success", "result": "s1"},
+                {"status": "success", "result": "s2"},
+            ]
+            result = _type_compose(
+                goal="chain with bad ref", trace_id="t-unresolved",
+                steps=[
+                    {"type": "research", "goal": "step1"},
+                    {"type": "data", "goal": "Use {step5.target_file} here"},
+                ],
+            )
+        assert result["status"] == "success"
+        second_args = mock_exec.call_args_list[1][0]
+        # Placeholder untouched because step 5 doesn't exist in a 2-step chain
+        assert second_args[1] == "Use {step5.target_file} here"
+
+    def test_compose_no_step_refs_no_resolution(self, mock_tracer):
+        """Plain goals with no placeholders pass through unchanged.
+
+        Sanity check: the placeholder resolver is a no-op when the goal has
+        no {stepN.field} or {prev.field} patterns.
+        """
+        with patch("tools.workflow_ops.helpers._execute_workflow") as mock_exec:
+            mock_exec.side_effect = [
+                {"status": "success", "result": "s1"},
+                {"status": "success", "result": "s2"},
+            ]
+            result = _type_compose(
+                goal="plain chain", trace_id="t-plain",
+                steps=[
+                    {"type": "research", "goal": "Find LLM frameworks"},
+                    {"type": "data", "goal": "Analyze findings", "code": "print(1)"},
+                ],
+            )
+        assert result["status"] == "success"
+        first_args = mock_exec.call_args_list[0][0]
+        second_args = mock_exec.call_args_list[1][0]
+        second_kwargs = mock_exec.call_args_list[1][1]
+        assert first_args[1] == "Find LLM frameworks"  # unchanged
+        assert second_args[1] == "Analyze findings"  # unchanged
+        assert second_kwargs["code"] == "print(1)"  # unchanged

@@ -66,9 +66,9 @@ def test_router_tool_count_matches():
     )
 
 
-def test_router_workflow_count_is_5():
+def test_router_workflow_count_is_6():
     """Explicit count check to catch silent additions/removals."""
     mentioned = extract_workflows_from_router_prompt()
-    assert len(mentioned) == 5, (
-        f"Expected exactly 5 workflows in prompt, found {len(mentioned)}: {sorted(mentioned)}"
+    assert len(mentioned) == 6, (
+        f"Expected exactly 6 workflows in prompt, found {len(mentioned)}: {sorted(mentioned)}"
     )
