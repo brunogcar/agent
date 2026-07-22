@@ -1,0 +1,10 @@
+{
+  "name": "bug-fix",
+  "type": "autocode",
+  "description": "Fix a bug. Operator provides error_msg + target_file.",
+  "params": {
+    "mode": "fix_error",
+    "goal": "Fix the bug described in error_msg"
+  },
+  "required": ["target_file", "error_msg"]
+}

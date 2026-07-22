@@ -77,13 +77,18 @@ class TestDispatch:
 
 
 class TestRegistry:
-    """Verify all 5 workflow actions are registered in DISPATCH."""
+    """Verify all 9 workflow actions are registered in DISPATCH.
 
-    def test_dispatch_has_5_actions(self):
+    v1.0: 5 actions (run | list | status | cancel | history).
+    v1.2: +4 actions (resume | logs | templates | kill) → 9 total.
+    """
+
+    def test_dispatch_has_9_actions(self):
         from tools.workflow_ops._registry import DISPATCH
         actions = DISPATCH.get("workflow", {})
-        assert len(actions) == 5
-        expected = {"run", "list", "status", "cancel", "history"}
+        assert len(actions) == 9
+        expected = {"run", "list", "status", "cancel", "history",
+                    "resume", "logs", "templates", "kill"}
         assert set(actions.keys()) == expected
 
     def test_all_actions_have_metadata(self):
@@ -110,9 +115,10 @@ class TestRegistry:
         from tools.workflow import workflow as workflow_fn
         hints = get_type_hints(workflow_fn)
         action_hint = hints.get("action")
-        # Literal[...] args should be exactly {run, list, status, cancel, history} (sorted).
+        # Literal[...] args should be exactly the 9 registered actions (v1.2).
         args = set(get_args(action_hint))
-        assert args == {"run", "list", "status", "cancel", "history"}, f"Got: {args}"
+        assert args == {"run", "list", "status", "cancel", "history",
+                        "resume", "logs", "templates", "kill"}, f"Got: {args}"
 
     def test_facade_docstring_has_action_list(self):
         """The @meta_tool decorator should have generated a docstring with action list."""

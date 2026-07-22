@@ -1,0 +1,10 @@
+{
+  "name": "index-codebase",
+  "type": "understand",
+  "description": "Full codebase index with embeddings. Operator provides project_root.",
+  "params": {
+    "goal": "Index the codebase for search + dependency graph",
+    "skip_embeddings": false
+  },
+  "required": ["project_root"]
+}

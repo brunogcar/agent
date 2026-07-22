@@ -1,0 +1,10 @@
+{
+  "name": "refactor",
+  "type": "autocode",
+  "description": "Refactor a file for clarity. Operator provides target_file.",
+  "params": {
+    "mode": "improve",
+    "goal": "Refactor {target_file} for clarity"
+  },
+  "required": ["target_file"]
+}

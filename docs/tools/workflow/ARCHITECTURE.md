@@ -3,23 +3,30 @@
 # 🏗️ Architecture
 
 > **v1.0 — `@meta_tool` refactor with two-level dispatch.** The 263-line monolithic `tools/workflow.py` was collapsed into a 174-line facade + an 18-file `workflow_ops/` subpackage. Two registries drive dispatch: `ACTION_DISPATCH` (what to do) and `TYPE_DISPATCH` (which workflow to run).
+>
+> **v1.2 — Operator UX: resume + logs + templates + kill.** 4 new actions added (`resume`, `logs`, `templates`, `kill`). `run` action learns `template` param. New `templates/` subfolder with 4 starter templates (bug-fix, refactor, index-codebase, index-quick). Action count: 5 → 9. Total `workflow_ops/` files: 18 → 24.
 
 ## 🔗 Source Code Reference
 
 | File | Purpose |
 |------|---------|
 | `tools/workflow.py` | `@tool @meta_tool` facade (174 lines). Validates `action` non-empty + registered, forwards ALL params to the action handler, attaches `duration_ms` + `trace_id` to every result. |
-| `tools/_meta_tool.py` | `@meta_tool` decorator — auto-generates `action: Literal["run", "list", "status", "cancel", "history"]` from `DISPATCH` and builds the docstring from per-action `help_text` + `examples`. |
+| `tools/_meta_tool.py` | `@meta_tool` decorator — auto-generates `action: Literal["run", "list", "status", "cancel", "history", "resume", "logs", "templates", "kill"]` from `DISPATCH` and builds the docstring from per-action `help_text` + `examples`. |
 | `tools/workflow_ops/__init__.py` | Subpackage entry — imports `_registry`, `_type_registry`, `actions/`, `types/` in that order so both dispatch tables are populated before `@meta_tool` reads `DISPATCH`. |
 | `tools/workflow_ops/_registry.py` | **ACTION_DISPATCH** registry. `DISPATCH` is a nested dict keyed by `tool_name` → `action_name` → `{func, help, examples}`. `register_action("workflow", "run", ...)` decorator populates it. Duplicate registration raises `ValueError`. |
 | `tools/workflow_ops/_type_registry.py` | **TYPE_DISPATCH** registry (the second level). Flat dict keyed by `type_name` → `{func, help}`. `register_type("research", ...)` decorator populates it. Duplicate registration raises `ValueError`. |
 | `tools/workflow_ops/helpers.py` | Shared utilities: `_make_error()`, `_ensure_trace_id()`, `_validate_goal()`, `_execute_workflow()` (single entry point to `run_workflow()`), `_get_all_workflow_metadata()` (lazy imports each workflow module's `graph.py`), `_WORKFLOW_MODULES` map. |
 | `tools/workflow_ops/actions/__init__.py` | Auto-discovery: globs `actions/*.py`, imports each — triggers `@register_action` decorators. Adding a new action = drop a file, no edits here. |
-| `tools/workflow_ops/actions/run.py` | `@register_action("workflow", "run")` — the `run` action. Validates `type` non-empty + registered in `TYPE_DISPATCH`, then forwards ALL params to the type handler. Intentionally thin: no type-specific validation here. |
+| `tools/workflow_ops/actions/run.py` | `@register_action("workflow", "run")` — the `run` action. Validates `type` non-empty + registered in `TYPE_DISPATCH`, then forwards ALL params to the type handler. Intentionally thin: no type-specific validation here. **v1.2:** learns `template` param — when non-empty, loads pre-set params from a template JSON file, merges with caller params (caller wins), sets `type` from the template, validates `required` params, then forwards the merged params to the type handler. |
 | `tools/workflow_ops/actions/list.py` | `@register_action("workflow", "list")` (v1.1: renamed from `list_workflows.py`) — calls `_get_all_workflow_metadata()` + augments with `TYPE_DISPATCH` entries that aren't in the static `_WORKFLOW_MODULES` map (e.g. `auto`, a router pseudo-type). |
 | `tools/workflow_ops/actions/status.py` | `@register_action("workflow", "status")` — requires `trace_id`. Wraps `core.observability.checkpoint.get_latest()` + `tracer.summary()` in try/except so a missing module or tracer db error doesn't crash the action. |
 | `tools/workflow_ops/actions/cancel.py` | `@register_action("workflow", "cancel")` — requires `trace_id`. Calls `workflows.autocode_impl.helpers.request_cancellation()` (autocode only). Catches `ImportError` separately (autocode not installed → success with "no cancellation mechanism" message). |
 | `tools/workflow_ops/actions/history.py` | `@register_action("workflow", "history")` — calls `tracer.recent(n=10)`, filters to traces with a `workflow` field OR `category=="workflow"`, truncates `goal` to 80 chars. |
+| `tools/workflow_ops/actions/resume.py` | **[v1.2 NEW]** `@register_action("workflow", "resume")` — two modes: (1) trace_id given → reads checkpoint via `get_latest(trace_id)`, extracts workflow type + goal, forwards to `run_workflow(resume=True, **checkpoint_overrides)`; (2) no trace_id → lists incomplete workflows via `scan_incomplete()` + `get_latest()` for each. |
+| `tools/workflow_ops/actions/logs.py` | **[v1.2 NEW]** `@register_action("workflow", "logs")` — requires `trace_id`. Calls `core.observability.reader.read_trace(trace_id)`, returns full step-by-step timeline with pagination (`limit` default 100 + `offset` default 0). |
+| `tools/workflow_ops/actions/templates.py` | **[v1.2 NEW]** `@register_action("workflow", "templates")` — calls `templates._registry.list_templates()`, returns the 4 starter templates with their pre-set params + required params. |
+| `tools/workflow_ops/actions/kill.py` | **[v1.2 NEW]** `@register_action("workflow", "kill")` — requires `trace_id`. Calls `request_workflow_cancel(trace_id)` (same as cancel) + logs a `tracer.warning`. Returns a message documenting the "can't force-kill Python threads" limitation. |
+| `tools/workflow_ops/templates/` | **[v1.2 NEW]** Pre-configured parameter bundles subfolder. `_registry.py` scans `*.json` at import time + caches in `TEMPLATES` dict. 4 starter templates: bug-fix, refactor, index-codebase, index-quick. |
 | `tools/workflow_ops/types/__init__.py` | Auto-discovery: globs `types/*.py`, imports each — triggers `@register_type` decorators. Adding a new type = drop a file, no edits here. |
 | `tools/workflow_ops/types/research.py` | `@register_type("research")` — validates `goal`, calls `_execute_workflow("research", ...)`. |
 | `tools/workflow_ops/types/data.py` | `@register_type("data")` — validates `goal`, forwards optional `code`. |
@@ -38,7 +45,7 @@
 | `workflows/deep_research_impl/graph.py` | Deep research workflow implementation (ReAct loop). |
 | `workflows/understand_impl/graph.py` | Codebase understanding workflow implementation. |
 | `workflows/autoresearch_impl/graph.py` | Autonomous experiment-driven optimization workflow. |
-| `tests/tools/workflow/` | Test suite (11 files, 98 tests) — see [§ Testing](#-testing). |
+| `tests/tools/workflow/` | Test suite (15 files, 160 tests) — see [§ Testing](#-testing). |
 
 ---
 
@@ -50,20 +57,31 @@ tools/
 └── workflow.py                            # @tool @meta_tool facade (174 lines) — thin router
                                             #   validates action, forwards kwargs, attaches duration_ms
 
-tools/workflow_ops/                        # v1.0 NEW — 18 files, two-level dispatch subpackage
+tools/workflow_ops/                        # v1.0 NEW — 18 files, two-level dispatch subpackage (v1.2: +6 files = 24 files)
 ├── __init__.py                            # imports _registry, _type_registry, actions, types (in order)
 ├── _registry.py                           # ACTION_DISPATCH + register_action() decorator
 ├── _type_registry.py                      # TYPE_DISPATCH + register_type() decorator (second level)
 ├── helpers.py                             # _make_error, _ensure_trace_id, _validate_goal,
 │                                          #   _execute_workflow (single entry to run_workflow),
 │                                          #   _get_all_workflow_metadata, _WORKFLOW_MODULES map
-├── actions/                               # META-level: what to do (5 actions)
+├── actions/                               # META-level: what to do (v1.0: 5 actions; v1.2: +4 = 9 actions)
 │   ├── __init__.py                        # auto-discovery via Path.glob("*.py")
-│   ├── run.py                             # @register_action("workflow", "run")
+│   ├── run.py                             # @register_action("workflow", "run")  (v1.2: +template param)
 │   ├── list.py                            # @register_action("workflow", "list")  (v1.1 rename)
 │   ├── status.py                          # @register_action("workflow", "status")
 │   ├── cancel.py                          # @register_action("workflow", "cancel")
-│   └── history.py                         # @register_action("workflow", "history")
+│   ├── history.py                         # @register_action("workflow", "history")
+│   ├── resume.py                          # @register_action("workflow", "resume")  [v1.2 NEW]
+│   ├── logs.py                            # @register_action("workflow", "logs")    [v1.2 NEW]
+│   ├── templates.py                       # @register_action("workflow", "templates") [v1.2 NEW]
+│   └── kill.py                            # @register_action("workflow", "kill")    [v1.2 NEW]
+├── templates/                             # v1.2 NEW — pre-configured parameter bundles
+│   ├── __init__.py                        # package marker
+│   ├── _registry.py                       # TEMPLATES dict + get_template(name) + list_templates()
+│   ├── bug-fix.json                       # autocode fix_error template
+│   ├── refactor.json                      # autocode improve template
+│   ├── index-codebase.json                # understand full template
+│   └── index-quick.json                   # understand graph-only template
 └── types/                                 # WORKFLOW-TYPE-level: which workflow to run (7 types)
     ├── __init__.py                        # auto-discovery via Path.glob("*.py")
     ├── research.py                        # @register_type("research")
@@ -83,7 +101,7 @@ workflows/                                 # (unchanged in v1.0)
 ├── understand_impl/graph.py
 └── autoresearch_impl/graph.py
 
-tests/tools/workflow/                      # v1.0 NEW — 11 files, 98 tests
+tests/tools/workflow/                      # v1.0 NEW — 11 files; v1.2: +4 files = 15 files
 ├── conftest.py                            # 4 fixtures (mock_tracer, mock_router, mock_run_workflow,
 │                                          #   mock_checkpoint) + make_mock_decision() helper
 ├── test_validation.py                     # 11 tests — action/type/goal validation + trace_id
@@ -95,7 +113,11 @@ tests/tools/workflow/                      # v1.0 NEW — 11 files, 98 tests
 ├── test_status.py                         # 8 tests  — checkpoint + tracer lookup + error resilience
 ├── test_cancel.py                         # 6 tests  — cancel + autocode ImportError handling
 ├── test_history.py                        # 8 tests  — recent traces + workflow filter + goal truncation
-└── test_dispatch.py                       # 16 tests — TestDispatch + TestRegistry + TestTypeRegistry
+├── test_resume.py                         # 8 tests  — [v1.2 NEW] list incomplete + specific trace_id resume + errors
+├── test_logs.py                           # 7 tests  — [v1.2 NEW] full trace timeline + pagination + not-found
+├── test_templates.py                      # 18 tests — [v1.2 NEW] templates action + template loader + run with template
+├── test_kill.py                           # 7 tests  — [v1.2 NEW] kill requests cancel + warning + message + differs-from-cancel
+└── test_dispatch.py                       # 16 tests — TestDispatch + TestRegistry (9 actions) + TestTypeRegistry
 ```
 
 ---
@@ -104,10 +126,10 @@ tests/tools/workflow/                      # v1.0 NEW — 11 files, 98 tests
 
 The v1.0 refactor splits dispatch into **two dimensions**:
 
-1. **ACTION_DISPATCH** (META-level — *what to do*) — `run | list | status | cancel | history`
+1. **ACTION_DISPATCH** (META-level — *what to do*) — `run | list | status | cancel | history | resume | logs | templates | kill` (v1.0: 5 actions; v1.2: +4 = 9 actions)
 2. **TYPE_DISPATCH** (WORKFLOW-TYPE-level — *which workflow to run*) — `research | data | autocode | deep_research | understand | autoresearch | auto`
 
-Only the `run` action touches `TYPE_DISPATCH`. The other four actions (`list`, `status`, `cancel`, `history`) are leaf operations on the tracer / checkpoint journal — they don't need a `type`.
+Only the `run` action touches `TYPE_DISPATCH`. The other eight actions (`list`, `status`, `cancel`, `history`, `resume`, `logs`, `templates`, `kill`) are leaf operations on the tracer / checkpoint journal / template registry — they don't need a `type`.
 
 ```mermaid
 graph TD
@@ -120,9 +142,17 @@ graph TD
   G --> H["facade attaches duration_ms + tracer.step(:complete|:failed)"]
 
   F -.->|action='run'| R["_action_run"]
-  R --> R1{"type non-empty + in TYPE_DISPATCH?"}
+  R --> R0{"template non-empty?"}
+  R0 -->|Yes| R0a["Load template via get_template(name)"]
+  R0a --> R0b{"template exists?"}
+  R0b -->|No| R0c["Return error with available_templates"]
+  R0b -->|Yes| R0d["Merge template params + caller params (caller wins); set type from template"]
+  R0d --> R0e{"required params present?"}
+  R0e -->|No| R0f["Return error listing missing required params"]
+  R0e -->|Yes| R3["type_handler = TYPE_DISPATCH[template.type]['func']"]
+  R0 -->|No| R1{"type non-empty + in TYPE_DISPATCH?"}
   R1 -->|No| R2["Return error: 'Invalid workflow type' with valid_types"]
-  R1 -->|Yes| R3["type_handler = TYPE_DISPATCH[type]['func']"]
+  R1 -->|Yes| R3
   R3 --> R4["type_handler validates type-specific params"]
   R4 --> R5["type_handler calls _execute_workflow()"]
   R5 --> R6["run_workflow(workflow_type=type, resume=resume, **kwargs)"]
@@ -131,6 +161,10 @@ graph TD
   F -.->|action='status'| S["_action_status → checkpoint.get_latest + tracer.summary (both try/except)"]
   F -.->|action='cancel'| CC["_action_cancel → autocode_impl.helpers.request_cancellation (ImportError-safe)"]
   F -.->|action='history'| HH["_action_history → tracer.recent(n=10) + workflow filter"]
+  F -.->|action='resume'| RE["_action_resume → checkpoint.get_latest (mode 1) OR scan_incomplete (mode 2) [v1.2]"]
+  F -.->|action='logs'| LO["_action_logs → reader.read_trace + pagination (limit/offset) [v1.2]"]
+  F -.->|action='templates'| TE["_action_templates → templates._registry.list_templates [v1.2]"]
+  F -.->|action='kill'| KI["_action_kill → request_workflow_cancel + tracer.warning [v1.2]"]
 ```
 
 ### Dispatch flow for `action="run"` (the only action that uses TYPE_DISPATCH)
@@ -184,7 +218,7 @@ Iterates the static `_WORKFLOW_MODULES` map (`research`/`data`/`autocode`/`deep_
 
 - **Auto-discovery for both levels** — Every action AND type module must be imported so its decorator runs. Hardcoding imports would create a maintenance footgun (forgetting to add a new action/type = silent omission from the `Literal` enum + "Unknown action" at runtime). `actions/__init__.py` and `types/__init__.py` both use `Path.glob("*.py")` to import every `.py` file (except `__init__.py` itself), triggering the `@register_action` / `@register_type` decorators. Adding a new file is the only change needed.
 
-- **`@meta_tool` auto-generates the `action: Literal[...]` enum** — The facade declares `action: str = ""` in its signature; `@meta_tool` mutates `__annotations__["action"]` to `Literal["run", "list", "status", "cancel", "history"]` (sorted from `DISPATCH` keys, validated against `^[a-z][a-z0-9_]*$`). It also deletes `__signature__` to force `inspect.signature()` re-derivation, and builds the docstring from per-action `help_text` + `examples`. Decorator order: `@tool` (outer) → `@meta_tool` (inner) — `@meta_tool` mutates in place, `@tool` marks the result.
+- **`@meta_tool` auto-generates the `action: Literal[...]` enum** — The facade declares `action: str = ""` in its signature; `@meta_tool` mutates `__annotations__["action"]` to `Literal["run", "list", "status", "cancel", "history", "resume", "logs", "templates", "kill"]` (sorted from `DISPATCH` keys, validated against `^[a-z][a-z0-9_]*$`). It also deletes `__signature__` to force `inspect.signature()` re-derivation, and builds the docstring from per-action `help_text` + `examples`. Decorator order: `@tool` (outer) → `@meta_tool` (inner) — `@meta_tool` mutates in place, `@tool` marks the result.
 
 - **The `auto` type delegates to `TYPE_DISPATCH[routed_type]`** — Rather than calling `_execute_workflow` directly, the auto type handler calls the routed type's handler (`TYPE_DISPATCH[actual_type]["func"]`). This means the routed type's handler re-validates its specific params (e.g. autocode requires `target_file`). If the auto-routed call is missing required params, the user gets a clean validation error from the type handler instead of a confusing crash inside `run_workflow`. If the routed type isn't in `TYPE_DISPATCH` (unknown routed type), it falls back to calling `_execute_workflow` directly with just `goal` + `trace_id` + `resume` — matching the legacy behavior.
 
@@ -200,7 +234,13 @@ Iterates the static `_WORKFLOW_MODULES` map (`research`/`data`/`autocode`/`deep_
 
 - **Lazy router import** — `core.router` is imported inside `types/auto.py`'s `_type_auto()` body (not at module top) to prevent startup circular dependencies. Same pattern as Pre-v1, just moved into the type handler.
 
-- **Resume support** — `resume=True` passes through `_execute_workflow()` to `run_workflow()` for continuing interrupted workflows from checkpoint. Currently embedded in `run` via the `resume` param; the roadmap suggests extracting it into a separate `action="resume"` (see [CHANGELOG.md § In Progress](CHANGELOG.md#-in-progress--next-up)).
+- **Resume support** — `resume=True` passes through `_execute_workflow()` to `run_workflow()` for continuing interrupted workflows from checkpoint. **v1.2:** also available as a first-class `action="resume"` that reads the workflow type from the checkpoint (cleaner API — caller doesn't need to specify `type`). The `action="resume"` handler has two modes: (1) trace_id given → resume that specific workflow; (2) no trace_id → list incomplete workflows via `scan_incomplete()`.
+
+- **v1.2 Templates — pre-configured parameter bundles** — `templates/` subfolder holds JSON files that pre-set workflow params for common tasks (bug-fix, refactor, index-codebase, index-quick). The `run` action's `template` param loads a template, merges with caller params (caller wins), sets `type` from the template (caller can't override `type` when using a template — the template defines the type), validates `required` params, then forwards the merged params to the type handler. The loader (`templates/_registry.py`) scans `*.json` at import time + caches in `TEMPLATES` dict; `get_template(name) -> dict | None` + `list_templates() -> list[dict]` are the public API. Adding a new template = drop a JSON file, no edits to the loader.
+
+- **v1.2 Logs pagination — limit + offset** — The `logs` action returns the full step-by-step trace timeline but supports `limit` (default 100) + `offset` (default 0) for paging through long traces. The response always includes `total_steps` so callers know how many pages remain. Use them together: `limit=50, offset=0` for first page, `limit=50, offset=50` for second page.
+
+- **v1.2 Kill vs cancel — same mechanism, different intent** — `kill` is stronger than `cancel` in INTENT but uses the same MECHANISM (Python threads can't be force-killed — no `thread.kill()` exists). Both call `request_workflow_cancel(trace_id)`. The differences: (1) `kill` logs `tracer.warning`, `cancel` logs `tracer.step`; (2) `kill`'s response message documents the "can't force-kill" limitation, `cancel`'s message documents the autocode interrupts-mid-execution behavior. Neither can interrupt a mid-LLM-call or mid-subprocess operation — those complete (or time out) before the cancellation flag is observed at the next check point.
 
 - **NOT parallel-safe** — Workflows are long-running blocking calls. The facade's docstring explicitly notes "Do NOT add to PARALLEL_SAFE". The router already routes to `workflow` for workflow intents — no router changes needed for v1.0.
 
@@ -209,15 +249,15 @@ Iterates the static `_WORKFLOW_MODULES` map (`research`/`data`/`autocode`/`deep_
 ## 🧪 Testing
 
 ```powershell
-# Run all workflow tests (11 files, 98 tests)
+# Run all workflow tests (15 files, 160 tests)
 .\venv\Scripts\python tests/tools/workflow/ -W error --tb=short -v
 ```
 
 > **Note:** Ensure `pytest` resolves to your venv. If not, use `python -m pytest` or the full venv path (`venv\Scripts\pytest.exe` on Windows, `venv/bin/pytest` on Unix).
 
-**Current test layout (v1.0):**
+**Current test layout (v1.2):**
 ```text
-tests/tools/workflow/                       # 11 files, 98 tests
+tests/tools/workflow/                       # 15 files, 160 tests (v1.0: 98 → v1.1: 126 → v1.2: 160 = +40)
 ├── conftest.py                             # 4 fixtures + make_mock_decision() helper
 ├── test_validation.py                      # 11 tests
 ├── test_autocode.py                        # 12 tests
@@ -228,8 +268,12 @@ tests/tools/workflow/                       # 11 files, 98 tests
 ├── test_status.py                          # 8 tests
 ├── test_cancel.py                          # 6 tests
 ├── test_history.py                         # 8 tests
-└── test_dispatch.py                        # 16 tests
-                                            # TOTAL: 98 tests
+├── test_resume.py                          # 8 tests   [v1.2 NEW]
+├── test_logs.py                            # 7 tests   [v1.2 NEW]
+├── test_templates.py                       # 18 tests  [v1.2 NEW]
+├── test_kill.py                            # 7 tests   [v1.2 NEW]
+└── test_dispatch.py                        # 16 tests  (v1.2: updated for 9 actions)
+                                            # TOTAL: 160 tests
 ```
 
 **Test coverage by concern:**
@@ -245,7 +289,11 @@ tests/tools/workflow/                       # 11 files, 98 tests
 | `test_status.py` | 8 | requires `trace_id`, whitespace `trace_id`, with checkpoint (reports node + status), without checkpoint (`checkpoint=False`), includes `tracer.summary`, handles tracer error, handles checkpoint `ImportError`, handles checkpoint `RuntimeError` |
 | `test_cancel.py` | 6 | requires `trace_id`, whitespace `trace_id`, calls `request_cancellation`, returns success message mentioning `trace_id` + autocode limitation, handles `request_cancellation` exception, handles `ImportError` (autocode not installed → success with "no cancellation mechanism" message) |
 | `test_history.py` | 8 | returns success, returns `runs` list, filters non-workflow traces (only traces with `workflow` field OR `category==workflow`), truncates `goal` to 80 chars, handles empty recent, includes `trace_id`, calls `tracer.recent(n=10)`, handles tracer exception |
-| `test_dispatch.py` | 16 | `TestDispatch` (unknown action, empty action, case-insensitive, `duration_ms` present, handler exception caught, `trace_id` threaded), `TestRegistry` (5 actions in `DISPATCH`, all have metadata, names match `^[a-z][a-z0-9_]*$`, facade action `Literal` generated, docstring has action list + `doc_sections`), `TestTypeRegistry` (7 types in `TYPE_DISPATCH`, all have metadata, names match pattern, `"report"` excluded) |
+| `test_resume.py` | 8 | **[v1.2]** list incomplete workflows (mode 2), empty incomplete list, whitespace trace_id treated as empty, resume specific trace_id (forwards to type handler with `resume=True`), forwards checkpoint overrides (target_file/mode/error_msg), no checkpoint → error, unknown workflow type → error, checkpoint missing `workflow` field → error |
+| `test_logs.py` | 7 | **[v1.2]** returns full trace (metadata + steps + pagination metadata), requires trace_id, whitespace trace_id, pagination (150 steps / limit=100 / offset=50 → 100 returned), default pagination (limit=100, offset=0), offset beyond end → empty steps, trace not found → error |
+| `test_templates.py` | 18 | **[v1.2]** templates action returns 4 templates, has required fields (name/type/description/params/required), strips `_source_file`, echoes trace_id; `get_template` for all 4 templates + not-found + empty name; `list_templates` returns 4; `TEMPLATES` dict has 4 entries; `run` with template (bug-fix/refactor/index-codebase/index-quick) → type + merged params forwarded; `run` with template not found → error with `available_templates`; `run` with template + caller override → caller wins; `run` with template missing required → error listing missing |
+| `test_kill.py` | 7 | **[v1.2]** requires trace_id, whitespace trace_id, calls `request_workflow_cancel(trace_id)`, returns message mentioning force-kill limitation, logs `tracer.warning` (different from cancel's `tracer.step`), sets `is_workflow_cancelled(trace_id)=True`, kill message differs from cancel message |
+| `test_dispatch.py` | 16 | `TestDispatch` (unknown action, empty action, case-insensitive, `duration_ms` present, handler exception caught, `trace_id` threaded), `TestRegistry` (9 actions in `DISPATCH`, all have metadata, names match `^[a-z][a-z0-9_]*$`, facade action `Literal` generated (9 args), docstring has action list + `doc_sections`), `TestTypeRegistry` (8 types in `TYPE_DISPATCH`, all have metadata, names match pattern, `"report"` excluded) |
 
 **Mock strategy:**
 - `mock_tracer` fixture patches `tracer` in THREE modules simultaneously via `ExitStack`: `tools.workflow.tracer`, `tools.workflow_ops.helpers.tracer`, `tools.workflow_ops.types.auto.tracer`. This is necessary because Python's `from core.tracer import tracer` creates a local binding to the tracer object at import time — patching `core.tracer.tracer` after import doesn't affect existing bindings. Each module that did `from core.tracer import tracer` has its own `tracer` name that must be patched individually. (Same pitfall documented as Anti-Pattern #1 in consult-v1.0-staging and vision-v1.0-staging.)
@@ -255,4 +303,4 @@ tests/tools/workflow/                       # 11 files, 98 tests
 
 ---
 
-*Last updated: 2026-07-15 (v1.0). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-25 (v1.2 — 4 new actions: resume + logs + templates + kill; `run` learns `template` param). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

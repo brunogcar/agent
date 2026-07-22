@@ -3,6 +3,8 @@
 # 🛡️ AI Instructions
 
 > **v1.0 — `@meta_tool` refactor with two-level dispatch.** These rules govern how AI agents (and humans) edit the workflow tool. Read them BEFORE making any change to `tools/workflow.py`, `tools/workflow_ops/`, or the test suite.
+>
+> **v1.2 — Operator UX: resume + logs + templates + kill.** 4 new actions (`resume`, `logs`, `templates`, `kill`) + `template` param on `run` + `templates/` subfolder with 4 starter templates. Rules 21 + 36–40 added for v1.2.
 
 ## ❌ NEVER DO
 
@@ -26,6 +28,7 @@
 18. **Never forget the decorator order: `@tool` (outer) → `@meta_tool` (inner)** — `@meta_tool` mutates `__annotations__` and `__doc__` in place. If `@tool` ran first, it would mark the un-mutated function. `@tool` returns `fn` unchanged (just sets `_is_mcp_tool = True`), so the order works because `@meta_tool` then mutates the same `fn` object.
 19. **Never assume `DISPATCH` is populated when `@meta_tool` runs** — the facade's `from tools import workflow_ops  # noqa: F401` import MUST appear BEFORE the `@meta_tool` decorator. `workflow_ops/__init__.py` triggers the auto-discovery that populates `DISPATCH`. If `@meta_tool` runs first, it raises `ValueError("@meta_tool received empty dispatch...")`.
 20. **Never add workflow to `PARALLEL_SAFE`** — workflows are long-running blocking calls. The facade's docstring explicitly notes "Do NOT add to PARALLEL_SAFE". Nesting workflow inside `parallel()` would deadlock or starve the executor.
+21. **[v1.2] Never use `action="kill"` expecting immediate termination** — Python threads can't be force-killed mid-operation (no `thread.kill()` exists). Kill sets the cancellation flag (`request_workflow_cancel(trace_id)`, same as cancel) + logs `tracer.warning`; the workflow stops at the NEXT cancellation check point (between graph nodes for non-autocode; between LLM retries for autocode). It cannot interrupt a mid-LLM-call or mid-subprocess operation. The kill action's response message documents this limitation explicitly. Use `kill` for intent signaling ("this is stuck") + audit-log differentiation (warning vs step), not for actual force-termination.
 
 ## ✅ ALWAYS DO
 
@@ -43,7 +46,12 @@
 32. **Always patch `tracer` in ALL THREE modules** when testing — `tools.workflow.tracer`, `tools.workflow_ops.helpers.tracer`, `tools.workflow_ops.types.auto.tracer`. Python's `from core.tracer import tracer` creates a local binding at import time; patching `core.tracer.tracer` after import doesn't affect existing bindings. Use `ExitStack` in the `mock_tracer` fixture. (See `tests/tools/workflow/conftest.py`.)
 33. **Always update this doc + API.md + ARCHITECTURE.md + CHANGELOG.md** when adding actions, adding types, changing parameters, or modifying routing logic.
 34. **Always update the `doc_sections` list in the facade** when adding an action — the `| Need | Action | Why |` table in the docstring helps the LLM pick the right action.
-35. **Always sort `DISPATCH` keys when generating error messages** — `sorted(dispatch.keys())` produces a deterministic `"cancel | history | list | run | status"` ordering. Don't rely on dict insertion order.
+35. **Always sort `DISPATCH` keys when generating error messages** — `sorted(dispatch.keys())` produces a deterministic `"cancel | history | kill | list | logs | resume | run | status | templates"` ordering. Don't rely on dict insertion order.
+36. **[v1.2] Always use `action="resume"` (not `run` with `resume=True`) for resuming** — it reads the workflow type from the checkpoint so the caller doesn't need to specify it. `run` with `resume=True` requires the caller to know the workflow type, which is friction + a footgun (what if they specify the wrong type?). The resume action has two modes: `workflow(action="resume", trace_id="...")` resumes a specific workflow; `workflow(action="resume")` lists incomplete workflows.
+37. **[v1.2] Always use templates for repeatable workflows** — `workflow(action="run", template="bug-fix", target_file="...", error_msg="...")` is cleaner than re-specifying `type="autocode", mode="fix_error", goal="Fix the bug described in error_msg"` every time. The 4 starter templates (bug-fix, refactor, index-codebase, index-quick) cover the most common use cases. Add new templates by dropping a JSON file into `tools/workflow_ops/templates/` — the loader picks it up automatically.
+38. **[v1.2] Always include `available_templates` in template-not-found errors** — when `workflow(action="run", template="nonexistent")` is called, the run action returns `_make_error("Template not found: ...", available_templates=sorted(TEMPLATES.keys()))`. This helps the LLM correct itself.
+39. **[v1.2] Always list `missing` + `required` in template-required-param errors** — when a template's `required` params aren't all present after the merge, the run action returns `_make_error("Template '...' requires params that are missing or empty: [...]", missing=[...], required=[...])`. The LLM needs both lists to know what to provide.
+40. **[v1.2] Always use `action="logs"` (not `status` or `history`) for full step-by-step trace** — `status` returns only the current/last node + tracer summary; `history` returns a list of recent runs (10 max, no steps). `logs` returns the full step-by-step timeline with pagination (`limit` + `offset`). Use `limit` + `offset` together for paging through long traces — `total_steps` in the response tells you how many pages remain.
 
 ---
 
@@ -96,4 +104,4 @@
 
 ---
 
-*Last updated: 2026-07-15 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-25 (v1.2 — 4 new actions: resume + logs + templates + kill; `run` learns `template` param). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

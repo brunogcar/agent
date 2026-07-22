@@ -5,7 +5,9 @@
 ## 📝 Version History
 
 | Version | Date | Changes |
-|---------| **v1.1** | 2026-07-18 | **3 P1 items.** (1) `type="compose"` — chain multiple workflows sequentially (research → data → report); passes `prev_result` + `step_results` to each step; stops on first failure. (2) Per-workflow `timeout` param — wraps `run_workflow()` in a daemon-thread deadline; on timeout saves checkpoint + returns `"timed out"` status. Autocode ignores `timeout` (uses its own `invoke_with_timeout` + `cfg.autocode_graph_timeout`). (3) Graceful cancel for ALL workflows — new `request_workflow_cancel(trace_id)` / `is_workflow_cancelled(trace_id)` in `base.py`; cancel action calls BOTH the autocode flag AND the general flag. Non-autocode workflows check the flag post-dispatch (graph.invoke is blocking). 28 new tests (12 compose + 6 timeout + 10 cancel). |
+|---------|---------|---------|
+| **v1.2** | 2026-07-25 | **Operator UX: resume + logs + templates + kill.** (1) New `action="resume"` — resume a specific trace_id or list incomplete workflows. Reads the workflow type from the checkpoint so the caller doesn't need to specify it (cleaner than `run` with `resume=True`). (2) New `action="logs"` — full step-by-step trace timeline with pagination (`limit` default 100 + `offset` default 0). Goes beyond `status` (current/last node) and `history` (recent runs) — every node entry/exit. (3) New `action="templates"` — list available workflow templates from the new `templates/` subfolder. (4) New `action="kill"` — stronger than cancel (same mechanism — Python threads can't be force-killed, but the intent + trace message differ; kill logs `tracer.warning`, cancel logs `tracer.step`). (5) `run` action learns `template` param — applies pre-set params from a template JSON file, caller params override. (6) 4 starter templates: bug-fix (autocode `fix_error`), refactor (autocode `improve`), index-codebase (understand full), index-quick (understand graph-only). New `templates/` subfolder alongside `actions/` + `types/`. 40 new tests (8 resume + 7 logs + 18 templates + 7 kill) + test_dispatch updated for 9 actions. |
+| **v1.1** | 2026-07-18 | **3 P1 items.** (1) `type="compose"` — chain multiple workflows sequentially (research → data → report); passes `prev_result` + `step_results` to each step; stops on first failure. (2) Per-workflow `timeout` param — wraps `run_workflow()` in a daemon-thread deadline; on timeout saves checkpoint + returns `"timed out"` status. Autocode ignores `timeout` (uses its own `invoke_with_timeout` + `cfg.autocode_graph_timeout`). (3) Graceful cancel for ALL workflows — new `request_workflow_cancel(trace_id)` / `is_workflow_cancelled(trace_id)` in `base.py`; cancel action calls BOTH the autocode flag AND the general flag. Non-autocode workflows check the flag post-dispatch (graph.invoke is blocking). 28 new tests (12 compose + 6 timeout + 10 cancel). |
 |------|---------|
 | **v1.0** | 2026-07-15 | **`@meta_tool` refactor with two-level dispatch.** Facade collapsed from 263 → 174 lines; all implementation moved to `workflow_ops/` subpackage (18 files: `_registry.py`, `_type_registry.py`, `helpers.py`, `actions/` (5 files), `types/` (7 files) + 2 `__init__.py`). **Breaking change:** `type` alone no longer works — callers MUST use `action="run"` + `type="..."`. 5 actions (`run`/`list`/`status`/`cancel`/`history`), 7 workflow types (`research`/`data`/`autocode`/`deep_research`/`understand`/`autoresearch`/`auto`). New params: `files` (JSON dict of filename→content for autocode pass-through), `git_diff` (autocode v1.1.2 git-diff input mode), `dry_run` (pre-flight: validate params + routing without executing). Tests restructured: deleted old `test_workflow.py` (304 lines, 4 classes), added 11-file test suite with 98 tests (10 test files + `conftest.py`). Old `VALID_WORKFLOWS` frozenset + `WorkflowType` Literal replaced by `TYPE_DISPATCH` registry (auto-discovered via `types/__init__.py` glob). |
 | Pre-v1.2 | 2026-07-05 | Added `deep_research` to `VALID_WORKFLOWS`, `WorkflowType` Literal, and docstring (was missing — LLM couldn't invoke directly). Removed `report` from all three (no `report` workflow exists — it's a tool, not a workflow). |
@@ -58,6 +60,9 @@
 | `understand` in `WorkflowType` Literal | ✅ v1.0 | Replaced by `register_type("understand")` in `types/understand.py` — type registry is the source of truth. |
 | New params: `files`, `git_diff`, `dry_run` | ✅ v1.0 | Autocode v1.1.2 pass-through params forwarded to `run_workflow()` by `helpers._execute_workflow()` only when non-empty/`True`. |
 | 5 actions: `run`/`list`/`status`/`cancel`/`history` | ✅ v1.0 | `run` dispatches to types; `list`/`status`/`cancel`/`history` are leaf operations on tracer/checkpoint. |
+| 9 actions: `run`/`list`/`status`/`cancel`/`history` + `resume`/`logs`/`templates`/`kill` | ✅ v1.2 | v1.2 added 4 operator-UX actions. `resume` reads workflow type from checkpoint (no caller `type` needed); `logs` returns full step-by-step timeline with pagination; `templates` lists pre-configured parameter bundles; `kill` is stronger-intent cancel (same mechanism — Python threads can't be force-killed). |
+| `workflow(action="run", template=...)` | ✅ v1.2 | `run` action learns `template` param — loads pre-set params from `templates/<name>.json`, caller params override template params, validates `required` params present. 4 starter templates: bug-fix, refactor, index-codebase, index-quick. |
+| `templates/` subfolder | ✅ v1.2 | Pre-configured workflow parameter sets. Drops into `workflow_ops/templates/` alongside `actions/` and `types/`. Loader (`_registry.py`) scans `*.json` at import time + caches. |
 
 ---
 
@@ -68,15 +73,20 @@
 | ~~`workflow(action="run", type="compose")`~~ | ✅ v1.1 — `type="compose"` with `steps=[...]` param. | ✅ Done |
 | ~~Per-workflow timeout~~ | ✅ v1.1 — `timeout` param in `run_workflow()`. | ✅ Done |
 | ~~Workflow cancellation — graceful cancel for ALL workflows~~ | ✅ v1.1 — `request_workflow_cancel(trace_id)` in `base.py`; cancel action calls both flags. | ✅ Done |
+| ~~Workflow templates~~ | ✅ v1.2 — `templates/` subfolder + 4 starter templates (bug-fix, refactor, index-codebase, index-quick) + `templates` action + `template` param on `run`. | ✅ Done |
+| ~~`workflow(action="resume")`~~ | ✅ v1.2 — separate resume action reads workflow type from checkpoint. Two modes: trace_id-specific resume OR list incomplete. | ✅ Done |
+| ~~`workflow(action="logs", trace_id=...)`~~ | ✅ v1.2 — full step-by-step trace timeline with pagination (`limit` + `offset`). | ✅ Done |
+| ~~`templates/` subfolder~~ | ✅ v1.2 — `workflow_ops/templates/` alongside `actions/` + `types/`. Loader scans `*.json` at import time. | ✅ Done |
+| ~~`workflow(action="kill", trace_id=...)`~~ | ✅ v1.2 — stronger-intent cancel (same mechanism — Python threads can't be force-killed). Logs `tracer.warning` instead of `tracer.step`. | ✅ Done |
 | Progress streaming | Yield intermediate results for long workflows. Requires MCP transport changes (currently request/response only). | P2 |
-| Workflow templates | Pre-configured parameter sets for common tasks. Stored in a new `templates/` subfolder under `workflow_ops/`. E.g. "bug-fix" template pre-sets `mode="fix_error"` + scaffolds `error_msg`. | P2 |
 | Parallel workflows | Run multiple workflows concurrently. Requires careful thought about `PARALLEL_SAFE` semantics (workflow is currently NOT parallel-safe — long-running blocking calls). | P3 |
-| `workflow(action="resume")` | Separate resume action (currently embedded in `run` via `resume=True` param). Cleaner API surface — resume doesn't need `type` (read from checkpoint). | P3 |
-| `workflow(action="logs", trace_id=...)` | Fetch detailed step-by-step logs for a workflow. Goes beyond `status` (current/last node) and `history` (recent runs) — full trace of every node entry/exit. | P3 |
+| Template inheritance | Templates could extend other templates (`extends: base-template`). Currently each template is standalone. | P3 |
+| Template validation | Schema validation on template JSON files (e.g. ensure `type` is a registered workflow type, `required` params match type handler signature). Currently ad-hoc. | P3 |
+| Workflow metrics | Per-trace metrics: token count, cost, retry count. Currently only elapsed_s is tracked. | P3 |
+| Workflow artifacts | Persistent artifact storage (output files, charts, etc.) keyed by trace_id. Currently each workflow manages its own. | P3 |
 | `workflow(action="compare", trace_id1=..., trace_id2=...)` | Compare two workflow runs. Useful for A/B testing prompt changes or comparing autocode runs against the same target_file. | P4 |
 | `workflow(action="export", trace_id=...)` | Export workflow results as JSON/markdown. Pulls trace + checkpoint + artifacts into a single portable bundle. | P4 |
 | Dynamic workflow registration | Register new workflow types at runtime (e.g. plugin workflows). Currently `TYPE_DISPATCH` is populated only at import time via `types/__init__.py` glob. | P4 |
-| `templates/` subfolder | Pre-configured workflow parameter sets. Drops into `workflow_ops/templates/` alongside `actions/` and `types/`. | P4 |
 
 ---
 
@@ -89,4 +99,4 @@
 
 ---
 
-*Last updated: 2026-07-18 (v1.1 — 3 P1 items: compose, timeout, cancel).*
+*Last updated: 2026-07-25 (v1.2 — 4 new actions: resume + logs + templates + kill; `run` learns `template` param). See [API.md](API.md) for action details, [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

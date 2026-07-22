@@ -1,0 +1,10 @@
+{
+  "name": "index-quick",
+  "type": "understand",
+  "description": "Graph-only index (~5s). Skips embeddings. Operator provides project_root.",
+  "params": {
+    "goal": "Quick graph-only index of the codebase",
+    "skip_embeddings": true
+  },
+  "required": ["project_root"]
+}

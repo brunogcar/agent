@@ -18,6 +18,13 @@ v1.0 changes (the @meta_tool refactor):
     dry_run (pre-flight: validate params + routing without executing).
   - All implementation logic moved to workflow_ops/ subpackage.
 
+v1.2 changes (workflow tool v2 — resume + logs + templates + kill):
+  - 4 new actions: resume | logs | templates | kill.
+  - New params: limit + offset (for `logs` pagination), template (for
+    `run` with a pre-set parameter bundle from templates/).
+  - 4 starter templates in tools/workflow_ops/templates/: bug-fix,
+    refactor, index-codebase, index-quick.
+
 NOT parallel-safe — workflows are long-running blocking calls. Do NOT add
 to PARALLEL_SAFE.
 The router already routes to `workflow` for workflow intents; no router
@@ -50,9 +57,15 @@ from tools.workflow_ops._registry import DISPATCH
         " | Need | Action | Why |",
         " |------|--------|-----|",
         " | Run a workflow | workflow(run, type=research) | Execute a multi-step autonomous workflow |",
+        " | Run via template | workflow(run, template=bug-fix, target_file=..., error_msg=...) | Pre-set params from a template |",
         " | List available workflows | workflow(list) | Show all workflows + their metadata |",
+        " | List templates | workflow(templates) | Show available workflow templates (bug-fix, refactor, ...) |",
         " | Check workflow status | workflow(status, trace_id=...) | Check checkpoint for a running/completed workflow |",
-        " | Cancel a workflow | workflow(cancel, trace_id=...) | Set cancellation flag (autocode only) |",
+        " | Show full step-by-step logs | workflow(logs, trace_id=...) | Full trace timeline with pagination |",
+        " | Resume an interrupted workflow | workflow(resume, trace_id=...) | Reads workflow type from checkpoint |",
+        " | List incomplete workflows | workflow(resume) | List workflows that didn't finish |",
+        " | Cancel a workflow | workflow(cancel, trace_id=...) | Set cancellation flag (cooperative) |",
+        " | Kill a workflow | workflow(kill, trace_id=...) | Stronger than cancel (same mechanism — can't force-kill Python threads) |",
         " | Show recent runs | workflow(history) | Query tracer for recent workflow executions |",
         "",
         "Workflow types (for action=run): research, data, autocode, deep_research, understand, autoresearch, auto",
@@ -78,8 +91,13 @@ def workflow(
     # common
     trace_id: str = "",
     resume: bool = False,
+    # [v1.2] logs pagination (action="logs")
+    limit: int = 100,
+    offset: int = 0,
+    # [v1.2] template name (action="run")
+    template: str = "",
 ) -> dict:
-    """Workflow meta-tool — run | list | status | cancel | history.
+    """Workflow meta-tool — run | list | status | cancel | history | resume | logs | templates | kill.
 
     Launch and manage LangGraph workflows. The `run` action dispatches
     into a second-level registry (TYPE_DISPATCH) based on the `type`
@@ -87,7 +105,8 @@ def workflow(
 
     Args:
         action: Which action to perform. Auto-restricted by @meta_tool to
-                the registered action names (run | list | status | cancel | history).
+                the registered action names (run | list | status | cancel |
+                history | resume | logs | templates | kill).
         type: Workflow type — only used by action='run'. One of:
               research | data | autocode | deep_research | understand |
               autoresearch | auto.
@@ -102,7 +121,12 @@ def workflow(
         dry_run: Pre-flight: validate params + routing without executing.
         project_root: Required for understand; optional for autoresearch.
         trace_id: Observability threading ID. Auto-generated if missing.
-        resume: Resume from checkpoint.
+        resume: Resume from checkpoint (action='run' only).
+        limit: [v1.2] Max steps returned by action='logs' (default 100).
+        offset: [v1.2] Skip first N steps in action='logs' (default 0).
+        template: [v1.2] Template name for action='run' — loads pre-set
+                  params from templates/<name>.json. Caller params override
+                  template params.
 
     Returns:
         Dict with status="success" | "error" | "routed" |
@@ -115,7 +139,7 @@ def workflow(
     if not action:
         return {
             "status": "error",
-            "error": "action is required (run | list | status | cancel | history)",
+            "error": "action is required (run | list | status | cancel | history | resume | logs | templates | kill)",
             "trace_id": trace_id,
         }
 
@@ -148,6 +172,9 @@ def workflow(
         "project_root": project_root,
         "trace_id": trace_id,
         "resume": resume,
+        "limit": limit,
+        "offset": offset,
+        "template": template,
     }
 
     start = time.time()
