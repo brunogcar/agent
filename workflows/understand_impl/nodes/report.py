@@ -23,6 +23,8 @@ def node_report(state: UnderstandState) -> dict:
     files_parsed = state.get("files_parsed", 0)
     edges_created = state.get("edges_created", 0)
     vectors_created = state.get("vectors_created", 0)
+    files_skipped = state.get("files_skipped", 0)  # [v1.9.2] oversized/unreadable
+    stale_pruned = state.get("stale_pruned", 0)  # [v1.9.2] orphaned entries cleaned
     skip_embeddings = state.get("skip_embeddings", False)
     errors = state.get("errors", [])
 
@@ -30,21 +32,23 @@ def node_report(state: UnderstandState) -> dict:
     # Skip the Vectors line when skip_embeddings=True so the operator doesn't
     # see a misleading "0 vectors" line that actually means "skipped".
     vectors_line = f"\n**Vectors created:** {vectors_created}" if not skip_embeddings else ""
+    skipped_line = f"\n**Files skipped:** {files_skipped} (oversized/unreadable)" if files_skipped else ""
+    pruned_line = f"\n**Stale entries pruned:** {stale_pruned}" if stale_pruned else ""
     note = state.get("note", "")
     if files_parsed == 0 and not errors:
         summary = (
             f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}"
-            f"{vectors_line}\n\n✅ Codebase is up to date — no changes since last index."
+            f"{vectors_line}{skipped_line}{pruned_line}\n\n✅ Codebase is up to date — no changes since last index."
         )
     elif files_parsed == 0 and errors:
         summary = (
             f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}"
-            f"{vectors_line}\n\n⚠️ No files were parsed (errors occurred)."
+            f"{vectors_line}{skipped_line}{pruned_line}\n\n⚠️ No files were parsed (errors occurred)."
         )
     else:
         summary = (
             f"**Files parsed:** {files_parsed}\n**Edges created:** {edges_created}"
-            f"{vectors_line}"
+            f"{vectors_line}{skipped_line}{pruned_line}"
         )
 
     sections = [

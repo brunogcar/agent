@@ -94,8 +94,11 @@ def _parse_dependencies_sync_from_string(content: str) -> frozenset[str]:
     """
     return _ts_extract_imports(content, "python")
 
+# [v1.9.2] Cache key is (project_id, content_hash) — NOT content.
+# Was: content was a param = held in LRU = memory bloat for 512 entries.
+# Now: content_hash uniquely identifies content; content passed via closure.
 @lru_cache(maxsize=512)
-def _parse_dependencies_cached(project_id: str, content_hash: str, content: str) -> frozenset[str]:
+def _parse_dependencies_cached(project_id: str, content_hash: str, content: str = "") -> frozenset[str]:
     return _parse_dependencies_sync_from_string(content)
 
 async def parse_dependencies_from_string(project_id: str, content: str) -> frozenset[str]:

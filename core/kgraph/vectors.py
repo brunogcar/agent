@@ -37,7 +37,9 @@ from core.tracer import tracer
 # [P1 FIX] Module-level cache for ChromaDB clients keyed by path.
 # Prevents creating a new PersistentClient on every call, which is
 # expensive (opens SQLite + loads embedding model metadata).
+import threading as _threading
 _chroma_clients: dict[str, Any] = {}
+_chroma_clients_lock = _threading.Lock()  # [v1.9.2] prevent check-then-create race
 
 def get_project_vector_collection(pm: Any) -> Any:
     """
@@ -85,9 +87,11 @@ def get_project_vector_collection(pm: Any) -> Any:
         path = str(Path(pm.artifact_root) / "chroma")
 
     # Reuse existing client for this path, or create and cache
-    if path not in _chroma_clients:
-        Path(path).mkdir(parents=True, exist_ok=True)
-        _chroma_clients[path] = chromadb.PersistentClient(path=path)
+    # [v1.9.2] Thread-safe check-then-create (was: bare check-then-create race)
+    with _chroma_clients_lock:
+        if path not in _chroma_clients:
+            Path(path).mkdir(parents=True, exist_ok=True)
+            _chroma_clients[path] = chromadb.PersistentClient(path=path)
 
     client = _chroma_clients[path]
     collection_name = f"kg_{pm.project_id}_embeddings"

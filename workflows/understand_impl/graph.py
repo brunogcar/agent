@@ -114,7 +114,7 @@ WORKFLOW_METADATA = {
     #       monotonic version sequence. Config docs updated for the first
     #       time since v1.0 (v1.1 row + Workflow-Specific Environment
     #       Variables section).
-    "version": "1.9.1",  # [v1.9.1] Claude review fixes
+    "version": "1.9.2",  # [v1.9.1] Claude review fixes
     "description": "Build codebase knowledge graph + doc embeddings: init → discover → parse → report",
     "entry_point": "node_init_project",
     "nodes": [

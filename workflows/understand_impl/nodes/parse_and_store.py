@@ -161,10 +161,18 @@ def _resolve_import_to_file_paths(dep: str, rel_path: str, language: str) -> lis
         if dep.startswith("./") or dep.startswith("../"):
             importing_dir = Path(rel_path).parent
             stripped = dep
+            parent_depth = 0
+            max_depth = len(Path(rel_path).parts)  # can't go above project root
             # Strip each leading ./ or ../ — one parent dir per ../
             while stripped.startswith("./") or stripped.startswith("../"):
                 if stripped.startswith("../"):
                     stripped = stripped[3:]
+                    parent_depth += 1
+                    if parent_depth > max_depth:
+                        # [v1.9.2] Import escapes above project root — can't resolve.
+                        # Was: Path('.').parent clamps silently to root (false-positive edges).
+                        # Now: bail with just [dep] (raw only).
+                        return [dep]
                     importing_dir = importing_dir.parent
                 else:
                     stripped = stripped[2:]

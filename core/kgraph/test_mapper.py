@@ -13,7 +13,7 @@ from core.kgraph.ast_parser import parse_file_dependencies
 # Files that always require the full test suite due to global impact
 
 CRITICAL_PATHS: Set[str] = {
-    "core/config.py", "core/llm.py", "core/memory.py",
+    "core/config.py", "core/llm.py", "core/memory_engine.py", "core/memory_backend/store.py",
     "server.py", "registry.py", "core/gateway.py", "core/tracer.py",
     "main.py", "app.py", "manage.py", "settings.py"
 }

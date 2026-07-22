@@ -133,6 +133,7 @@ class ProjectManager:
             
         self._file_count: int | None = None
         self._total_size_mb: float | None = None
+        self._cleanup_done: bool = False  # [v1.9.2] skip cleanup on repeat calls
 
     @property
     def project_id(self) -> str:
@@ -148,11 +149,13 @@ class ProjectManager:
         # NOTE: source_root is created here so tests and init_project can rely on it.
         # For workspace projects, this is the 'code/' subdirectory.
          
-        # 🔴 Phase 7 Step 3: Run cleanup on startup to prevent WAL/cache bloat
-        try:
-            KGCleanup.cleanup_project(self.path, max_age_days=30, max_size_gb=5)
-        except Exception:
-            pass  # Fail silently, cleanup is best-effort
+        # [v1.9.2] Skip cleanup on repeat calls (was: ran every ensure_initialized)
+        if not self._cleanup_done:
+            self._cleanup_done = True
+            try:
+                KGCleanup.cleanup_project(self.path, max_age_days=30, max_size_gb=5)
+            except Exception:
+                pass  # Fail silently, cleanup is best-effort
 
     def get_indexing_mode(self) -> Literal["foreground", "reject"]:
         """Determine if the project is safe to index.

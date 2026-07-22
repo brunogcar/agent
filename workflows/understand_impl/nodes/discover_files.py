@@ -172,7 +172,7 @@ def node_discover_files(state: UnderstandState) -> dict:
         # the GraphStore is still open + can be queried. ChromaDB cleanup
         # is deferred to a helper that handles the optional-skip case.
         skip_embeddings = bool(state.get("skip_embeddings", False))
-        _cleanup_stale_entries(
+        stale_pruned_count = _cleanup_stale_entries(
             store=store,
             project_id=state["project_id"],
             disk_paths=disk_paths,
@@ -188,7 +188,11 @@ def node_discover_files(state: UnderstandState) -> dict:
             store.close()
 
     tracer.step(tid, "discover", f"Found {len(discovered)} changed/new files.")
-    return {"files_to_parse": discovered}
+    return {
+        "files_to_parse": discovered,
+        "files_skipped": len(skipped_paths),  # [v1.9.2] oversized/unreadable
+        "stale_pruned": stale_pruned_count,  # [v1.9.2] orphaned entries cleaned
+    }
 
 
 def _cleanup_stale_entries(
@@ -231,9 +235,10 @@ def _cleanup_stale_entries(
         return
 
     orphans = stored_paths - disk_paths - (skipped_paths or set())  # [v1.9.1 P1-1] exclude oversized/unreadable
+    stale_pruned = len(orphans)  # [v1.9.2] surface in report
     if not orphans:
         tracer.step(tid, "discover", "No stale files detected.")
-        return
+        return 0  # [v1.9.2]
 
     # Delete each orphan's graph entries (node + edges).
     for orphan_path in orphans:
