@@ -21,6 +21,18 @@ are stored in `current_metrics` (plural); the first is mirrored to
 `current_metric` (singular) for v1.5 backward compat. When
 `parallel_count == 1`, the v1.5 single-extraction path runs unchanged.
 
+[v1.11 A3] Parallel path now marks `proposal["status"] = "failed"` when
+no metric is found (crash/timeout/no-print) — was: only `modify.py` set that
+flag. A crashed subprocess with valid content (modify wrote the temp file
+fine) but a runtime crash/timeout got `metric=0.0` WITHOUT `status="failed"`.
+Back in `decide.py`, the winner-selection loop only skips `status=="failed"`
+— so with `direction="lower"` + positive `current_best`, `0.0 <
+current_best` → the crashed run WINS → its content committed as new best →
+`current_best` collapses to 0.0 → run bricked (nothing can beat 0.0). The
+fix mirrors what the single path gets for free via the global
+`state["status"]` check. The false assumption above ("current_best is
+always > 0") is exactly the A3 exploit vector — removed.
+
 [v1.8 N10] The single-extraction path now checks `state["pre_extracted_metric"]`
 FIRST. `node_run_experiment` extracts the metric from the FULL output BEFORE
 truncating to 50KB and stores it there. When set (not None), `node_evaluate`
@@ -60,7 +72,7 @@ def node_evaluate(state: AutoresearchState) -> dict:
     [v1.6] When `parallel_count > 1`, extracts N metrics from N outputs.
     Per-output failures (no metric found) yield 0.0 for that slot — the
     downstream `node_decide` parallel path skips experiments whose proposal
-    has `status="failed"` (set by modify) OR whose metric didn't improve.
+    has `status="failed"` (set by modify OR by [v1.11 A3] evaluate).
 
     [v1.9-V2 / mistral #10] Parallel path checks `pre_extracted_metrics[i]`
     FIRST for each output i (mirrors single-path v1.8 N10). Falls through to
@@ -78,6 +90,13 @@ def node_evaluate(state: AutoresearchState) -> dict:
         # FULL outputs (before truncation). node_run_experiment populates this
         # list in parallel mode — mirrors the single-path pre_extracted_metric.
         pre_metrics = state.get("pre_extracted_metrics", []) or []
+        # [v1.11 A3] Read proposals so we can mark `status="failed"` on
+        # no-metric experiments. Mirrors what the single path gets for free
+        # via the global `state["status"]` check. Without this, a crashed
+        # subprocess with valid content (modify wrote it) but no metric gets
+        # metric=0.0 — with direction="lower" + positive current_best, the
+        # crashed run wins + bricks the loop.
+        proposals = [dict(p) for p in (state.get("current_experiments", []) or [])]
         metrics: list[float] = []
         for i, output in enumerate(outputs):
             # [v1.9-V2 / mistral #10] Check pre_extracted_metrics[i] FIRST.
@@ -100,14 +119,30 @@ def node_evaluate(state: AutoresearchState) -> dict:
                 tracer.warning(
                     tid, "evaluate",
                     f"parallel experiment {i}: metric '{metric_name}' not found "
-                    f"({len(output)} chars captured)",
+                    f"({len(output)} chars captured) — marking proposal failed",
                 )
+                # [v1.11 A3] Mark the proposal as failed so decide's parallel
+                # winner-selection skips it. Was: only modify.py set this flag
+                # → a crashed subprocess with valid content got metric=0.0 +
+                # no failed marker → with direction="lower" + positive
+                # current_best, the crashed run won + bricked the loop.
+                if i < len(proposals):
+                    proposals[i]["status"] = "failed"
+                    proposals[i]["error"] = (
+                        f"no metric '{metric_name}' extracted "
+                        f"(crash/timeout/no-print)"
+                    )
                 metrics.append(0.0)
             else:
                 tracer.step(tid, "evaluate", f"parallel experiment {i}: {metric_name}={m}")
                 metrics.append(m)
 
         return {
+            # [v1.11 A3] Return the updated proposals so decide sees the
+            # failed markers. Without this, the in-place mutation would be
+            # lost (LangGraph nodes return partial dicts — state isn't
+            # mutated in place).
+            "current_experiments": proposals,
             "current_metrics": metrics,
             # Mirror the first metric for v1.5 backward compat (singular
             # field is used by node_decide when parallel_count==1).

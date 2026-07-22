@@ -79,20 +79,30 @@ class TestNodeRunExperiment:
 
 
 class TestRunTargetSubprocessForRun:
+    """[v1.11 A7] run_target_subprocess now uses Popen + process-group kill
+    (was: subprocess.run). Tests updated to mock Popen + communicate."""
+
     def test_success_returns_combined_output(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        fake = MagicMock(stdout="out\n", stderr="", returncode=0)
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run",
-                   return_value=fake):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.communicate.return_value = ("out\n", "")
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
+                   return_value=mock_proc):
             assert run_target_subprocess("train.py", "/proj", 60) == "out\n"
 
     def test_timeout_appends_sentinel_and_partial_output(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=60)
-        exc.stdout = "partial"
-        exc.stderr = "err"
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run",
-                   side_effect=exc):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        # First communicate() raises TimeoutExpired, second (post-kill) returns partial.
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd=["x"], timeout=60),
+            ("partial", "err"),
+        ]
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
+                   return_value=mock_proc), \
+             patch("workflows.autoresearch_impl.helpers._kill_process_tree"):
             out = run_target_subprocess("train.py", "/proj", 60)
         assert "partial" in out
         assert "err" in out
@@ -100,15 +110,19 @@ class TestRunTargetSubprocessForRun:
 
     def test_filenotfound_returns_clear_error(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run",
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
                    side_effect=FileNotFoundError(2, "no train.py")):
             out = run_target_subprocess("train.py", "/proj", 60)
         assert "target_file not found: train.py" in out
 
     def test_generic_exception_returns_error_message(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run",
-                   side_effect=PermissionError("denied")):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.communicate.side_effect = PermissionError("denied")
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
+                   return_value=mock_proc), \
+             patch("workflows.autoresearch_impl.helpers._kill_process_tree"):
             out = run_target_subprocess("train.py", "/proj", 60)
         assert "experiment crashed" in out
         assert "PermissionError" in out

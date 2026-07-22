@@ -70,7 +70,17 @@ def node_reflect(state: AutoresearchState) -> dict:
     (or no reflection at all on the first failed attempt).
     """
     tid = state.get("trace_id", "")
-    interval = getattr(cfg, "autoresearch_reflect_interval", 5)
+    # [v1.11 A8] Read reflect_interval from state FIRST (per-invocation
+    # override), fall back to cfg only when the state field is MISSING (legacy
+    # state dicts). Was: read cfg directly — a caller passing run_workflow(
+    # reflect_interval=10) would have it silently ignored (the type handler
+    # didn't forward it + it wasn't a state field). Now state-overrideable.
+    # [v1.11 A8 fix] Use `is None` check, NOT `or` — `0 or getattr(cfg, 5)`
+    # = 5 (wrong: 0 means "disabled", not "use cfg"). `state.get(...)` returns
+    # None only when the key is missing; 0 is a valid value (disabled).
+    interval = state.get("reflect_interval")
+    if interval is None:
+        interval = getattr(cfg, "autoresearch_reflect_interval", 5)
 
     if interval <= 0:
         return {}  # disabled — caller opted out via AUTORESEARCH_REFLECT_INTERVAL=0

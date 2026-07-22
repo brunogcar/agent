@@ -52,6 +52,9 @@ def _type_autoresearch(
     results_path: str = "",
     max_iterations: int = 0,
     parallel_count: int = 1,
+    reflect_interval: int = 0,
+    convergence_window: int = 10,
+    convergence_epsilon: float = 0.001,
     trace_id: str = "",
     resume: bool = False,
     **kwargs,
@@ -86,6 +89,15 @@ def _type_autoresearch(
         from core.config import cfg
         parallel_count = int(getattr(cfg, "autoresearch_parallel_count", 1))
 
+    # [v1.2.2 / autoresearch v1.11 A8] Forward the 3 loop-control knobs that
+    # were previously NOT forwarded by this type handler.
+    #   - reflect_interval: was cfg-only (not a state field pre-v1.11). Now
+    #     a state field — callers can override per-invocation via
+    #     run_workflow(reflect_interval=10). 0 = use cfg default.
+    #   - convergence_window + convergence_epsilon: were state fields but the
+    #     type handler didn't forward them, so per-call overrides were silently
+    #     dropped (callers had to use env vars). Now forwarded.
+
     return _execute_workflow(
         "autoresearch", goal, trace_id, resume,
         target_file=target_file,
@@ -97,4 +109,7 @@ def _type_autoresearch(
         results_path=results_path,
         max_iterations=max_iterations,
         parallel_count=parallel_count,
+        reflect_interval=reflect_interval,
+        convergence_window=convergence_window,
+        convergence_epsilon=convergence_epsilon,
     )

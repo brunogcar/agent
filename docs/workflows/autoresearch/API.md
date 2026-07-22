@@ -228,4 +228,4 @@ For AI-editing rules around these failure modes, see [INSTRUCTIONS.md](INSTRUCTI
 
 ---
 
-*Last updated: 2026-07-24 (v1.9). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.11). See [CHANGELOG.md](CHANGELOG.md) for version history.*

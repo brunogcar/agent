@@ -190,6 +190,19 @@ def node_modify(state: AutoresearchState) -> dict:
 
     new_content = proposal.get("new_content", "")
 
+    # [v1.11 A6] Empty-content check FIRST — was: AFTER the dedup check.
+    # Two LLM-call failures (both new_content="") hashed to the same md5("")
+    # constant, so the second failure hit the dedup check first and was
+    # misreported as "duplicate experiment" instead of "LLM call failed
+    # (empty content)". The parallel path already had the correct order
+    # (empty check at line ~123, hash at ~137) — this fixes the single path.
+    if not new_content:
+        tracer.warning(tid, "modify", "proposal has empty new_content — skipping write")
+        return {
+            "status": "failed",
+            "error": "proposal new_content is empty — nothing to modify",
+        }
+
     # [v1.4 N8 / v1.9 C4] Deduplication — skip if this exact content was
     # already tried. md5 is fast and we only need exact-content dedup
     # (semantic dedup is N4, deferred). The hash is stored on the proposal
@@ -234,13 +247,6 @@ def node_modify(state: AutoresearchState) -> dict:
     proposal["content_hash"] = content_hash
 
     description = proposal.get("description", "")
-
-    if not new_content:
-        tracer.warning(tid, "modify", "proposal has empty new_content — skipping write")
-        return {
-            "status": "failed",
-            "error": "proposal new_content is empty — nothing to modify",
-        }
 
     target_path = Path(project_root) / target_file if project_root else Path(target_file)
 

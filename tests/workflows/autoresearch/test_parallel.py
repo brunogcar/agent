@@ -731,3 +731,148 @@ class TestLedgerAtomicBatchedWrite:
             f"parallel path should open results.tsv ONCE in append mode, "
             f"got {len(tsv_appends)} calls"
         )
+
+
+# ===========================================================================
+# [v1.11 A3] Parallel crashed-subprocess protection
+# ===========================================================================
+
+
+class TestParallelCrashedSubprocessProtection:
+    """[v1.11 A3] evaluate marks proposals `status="failed"` when no metric
+    is found (crash/timeout/no-print). Pre-v1.11, only modify.py set that
+    flag — a crashed subprocess with valid content (modify wrote the temp
+    file) but a runtime crash got metric=0.0 WITHOUT the failed marker.
+    With direction="lower" + positive current_best, 0.0 < current_best →
+    the crashed run WON → its content committed as new best → current_best
+    collapsed to 0.0 → run bricked.
+    """
+
+    def test_evaluate_marks_crashed_experiment_failed(self, ar_state):
+        """Parallel evaluate: a crashed experiment (no metric in output) gets
+        proposal["status"]="failed" so decide skips it."""
+        from workflows.autoresearch_impl.nodes.evaluate import node_evaluate
+
+        proposals = [
+            {"iteration": 1, "description": "good", "new_content": "# v0"},
+            {"iteration": 2, "description": "crash", "new_content": "# v1"},
+            {"iteration": 3, "description": "also good", "new_content": "# v2"},
+        ]
+        state = dict(ar_state)
+        state["parallel_count"] = 3
+        state["metric_name"] = "val_bpb"
+        state["metric_direction"] = "lower"
+        state["current_experiments"] = proposals
+        # Outputs: exp 0 has metric, exp 1 crashed (no metric), exp 2 has metric.
+        state["experiment_outputs"] = [
+            "val_bpb: 0.45\n",                      # exp 0 — valid
+            "[autoresearch] experiment 1 crashed\n", # exp 1 — crashed, no metric
+            "val_bpb: 0.40\n",                      # exp 2 — valid
+        ]
+        state["pre_extracted_metrics"] = [None, None, None]  # force re-extract
+
+        result = node_evaluate(state)
+
+        # Exp 1 should be marked failed.
+        assert result["current_experiments"][1]["status"] == "failed"
+        assert "no metric" in result["current_experiments"][1]["error"]
+        # Exps 0 + 2 should NOT be marked failed.
+        assert result["current_experiments"][0].get("status") != "failed"
+        assert result["current_experiments"][2].get("status") != "failed"
+        # Metrics list has 3 entries.
+        assert len(result["current_metrics"]) == 3
+        assert result["current_metrics"][1] == 0.0  # crashed → 0.0
+
+    def test_crashed_experiment_does_not_win_in_decide(self, ar_state, tmp_path):
+        """End-to-end: a crashed experiment with metric=0.0 does NOT win over
+        a valid experiment with metric=0.45 when current_best=0.5, direction=lower.
+
+        Pre-v1.11: 0.0 < 0.5 → crashed run wins → current_best=0.0 → bricked.
+        Post-v1.11: evaluate marks it failed → decide skips it → valid 0.45 wins.
+        """
+        from workflows.autoresearch_impl.nodes.evaluate import node_evaluate
+        from workflows.autoresearch_impl.nodes.decide import node_decide
+
+        parallel_dir = tmp_path / ".autoresearch" / "parallel"
+        proposals = []
+        for i in range(2):
+            exp_dir = parallel_dir / str(i)
+            exp_dir.mkdir(parents=True, exist_ok=True)
+            (exp_dir / "train.py").write_text(f"# version {i}\n", encoding="utf-8")
+            proposals.append({
+                "iteration": i + 1,
+                "description": f"change {i}",
+                "new_content": f"# version {i}\n",
+                "content_hash": f"hash{i}",
+            })
+
+        state = dict(ar_state)
+        state["parallel_count"] = 2
+        state["target_file"] = "train.py"
+        state["project_root"] = str(tmp_path)
+        state["metric_direction"] = "lower"
+        state["current_best"] = 0.5
+        state["current_experiments"] = proposals
+        # Exp 0: valid metric 0.45. Exp 1: crashed (no metric → 0.0).
+        state["experiment_outputs"] = ["val_bpb: 0.45\n", "crashed, no output\n"]
+        state["pre_extracted_metrics"] = [None, None]
+
+        # Step 1: evaluate marks exp 1 as failed.
+        eval_result = node_evaluate(state)
+        assert eval_result["current_experiments"][1]["status"] == "failed"
+
+        # Step 2: decide picks the winner — should be exp 0 (0.45), NOT exp 1 (0.0).
+        state["current_experiments"] = eval_result["current_experiments"]
+        state["current_metrics"] = eval_result["current_metrics"]
+
+        with patch("workflows.autoresearch_impl.nodes.decide._git_commit",
+                   return_value="abc1234") as mock_commit:
+            decide_result = node_decide(state)
+
+        # Exp 0 (0.45) should win — NOT exp 1 (0.0, crashed + marked failed).
+        assert decide_result["current_best"] == 0.45
+        # The winner is exp 0.
+        assert decide_result["current_experiment"]["iteration"] == 1
+
+    def test_all_crashed_all_discarded(self, ar_state, tmp_path):
+        """All N experiments crash → all marked failed → decide discards all,
+        current_best unchanged."""
+        from workflows.autoresearch_impl.nodes.evaluate import node_evaluate
+        from workflows.autoresearch_impl.nodes.decide import node_decide
+
+        parallel_dir = tmp_path / ".autoresearch" / "parallel"
+        proposals = []
+        for i in range(3):
+            exp_dir = parallel_dir / str(i)
+            exp_dir.mkdir(parents=True, exist_ok=True)
+            (exp_dir / "train.py").write_text(f"# v{i}\n", encoding="utf-8")
+            proposals.append({
+                "iteration": i + 1, "description": f"c{i}",
+                "new_content": f"# v{i}\n", "content_hash": f"h{i}",
+            })
+
+        state = dict(ar_state)
+        state["parallel_count"] = 3
+        state["target_file"] = "train.py"
+        state["project_root"] = str(tmp_path)
+        state["metric_direction"] = "lower"
+        state["current_best"] = 0.5
+        state["current_experiments"] = proposals
+        # All 3 crashed — no metrics.
+        state["experiment_outputs"] = ["crash\n", "crash\n", "crash\n"]
+        state["pre_extracted_metrics"] = [None, None, None]
+
+        eval_result = node_evaluate(state)
+        # All 3 marked failed.
+        for i in range(3):
+            assert eval_result["current_experiments"][i]["status"] == "failed"
+
+        state["current_experiments"] = eval_result["current_experiments"]
+        state["current_metrics"] = eval_result["current_metrics"]
+
+        with patch("workflows.autoresearch_impl.nodes.decide._git_commit") as mock_commit:
+            decide_result = node_decide(state)
+
+        # No improvement — current_best unchanged.
+        assert decide_result["current_best"] == 0.5
+        mock_commit.assert_not_called()

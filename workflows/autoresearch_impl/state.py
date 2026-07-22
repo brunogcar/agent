@@ -69,6 +69,7 @@ class AutoresearchState(WorkflowState, total=False):
 
     # -- [v1.5 N1] Reflect node --
     reflect_notes: str          # LLM reflection on strategy (updated every N iterations)
+    reflect_interval: int       # [v1.11 A8] reflect every N iterations (0=use cfg default; state-overridable)
 
     # -- [v1.6] Parallel experiments (batch mode) --
     # parallel_count=N runs N proposals + N subprocesses per iteration.
@@ -81,6 +82,16 @@ class AutoresearchState(WorkflowState, total=False):
 
     # -- [v1.7 N3] Resume support --
     resume: bool                # True = skip baseline + branch, reload history from ledger
+
+    # -- [v1.11 A5] Baseline-established flag --
+    # Replaces the v1.7 `current_best > 0.0` sentinel for resume detection.
+    # Set to True by node_setup after the baseline runs successfully (fresh
+    # start) OR when a resume skips the baseline (prior run already established
+    # it). The float sentinel broke for metrics that can legitimately be ≤ 0
+    # at baseline (log-likelihood, correlation, RMSE-perfect, etc.) — a
+    # resumed run with a negative current_best would re-run the baseline,
+    # resetting experiment_count=0 + losing experiment_history.
+    baseline_established: bool
 
     # -- [v1.8 N10] Pre-extracted metric (truncation safety) --
     # Set by node_run_experiment (single path) to the metric extracted from the
@@ -168,6 +179,7 @@ def _default_state(
     convergence_window: int = 10,
     convergence_epsilon: float = 0.001,
     parallel_count: int = 1,
+    reflect_interval: int = 0,
 ) -> dict:
     """Create a default state dictionary for the autoresearch workflow.
 
@@ -190,6 +202,10 @@ def _default_state(
         convergence_epsilon: [v1.4] Metric plateau threshold (stuck detector).
         parallel_count: [v1.6] Run N proposals + N subprocesses per iteration.
             1 (default) preserves v1.5 single-experiment behavior.
+        reflect_interval: [v1.11 A8] Reflect every N iterations. 0 = use
+            `cfg.autoresearch_reflect_interval` (env: AUTORESEARCH_REFLECT_INTERVAL,
+            default 5). Allows per-invocation override of the reflect cadence
+            (was: only configurable via global env var).
 
     Returns:
         A dict suitable as LangGraph initial state.
@@ -219,6 +235,12 @@ def _default_state(
     if parallel_count == 1:
         parallel_count = int(getattr(cfg, "autoresearch_parallel_count", 1))
 
+    # [v1.11 A8] Pull reflect_interval from cfg when caller didn't override.
+    # 0 = "use cfg default" (env AUTORESEARCH_REFLECT_INTERVAL, default 5).
+    # Non-zero caller value wins (per-invocation override).
+    if reflect_interval == 0:
+        reflect_interval = int(getattr(cfg, "autoresearch_reflect_interval", 5))
+
     return {
         "workflow": "autoresearch",
         "goal": goal,
@@ -237,11 +259,13 @@ def _default_state(
         "convergence_window": convergence_window,
         "convergence_epsilon": convergence_epsilon,
         "reflect_notes": "",
+        "reflect_interval": reflect_interval,  # [v1.11 A8] state-overridable
         "parallel_count": parallel_count,
         "current_experiments": [],
         "experiment_outputs": [],
         "current_metrics": [],
         "resume": False,  # [v1.7 N3] default False — only True on checkpoint resume
+        "baseline_established": False,  # [v1.11 A5] replaces current_best>0 sentinel
         "pre_extracted_metric": None,  # [v1.8 N10] single-path; cleared in parallel
         "pre_extracted_metrics": [],  # [v1.9-V2 / mistral #10] parallel-path; empty in single mode
         "iteration_count": 0,  # [v1.9] incremented by 1 per iteration (not by N)

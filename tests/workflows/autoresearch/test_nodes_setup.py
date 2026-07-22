@@ -79,35 +79,50 @@ class TestExtractMetric:
 
 
 class TestRunTargetSubprocess:
+    """[v1.11 A7] run_target_subprocess now uses Popen + process-group kill
+    (was: subprocess.run). Tests updated to mock Popen + communicate."""
+
     def test_success_returns_combined_output(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        fake = MagicMock(stdout="ok\n", stderr="warn\n", returncode=0)
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run", return_value=fake) as m:
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.communicate.return_value = ("ok\n", "warn\n")
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
+                   return_value=mock_proc) as m:
             out = run_target_subprocess("train.py", "/proj", 30)
         assert "ok" in out and "warn" in out
         m.assert_called_once()
 
     def test_timeout_returns_sentinel(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        exc = subprocess.TimeoutExpired(cmd=["x"], timeout=30)
-        exc.stdout = "partial out"
-        exc.stderr = "partial err"
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run", side_effect=exc):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd=["x"], timeout=30),
+            ("partial out", "partial err"),
+        ]
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
+                   return_value=mock_proc), \
+             patch("workflows.autoresearch_impl.helpers._kill_process_tree"):
             out = run_target_subprocess("train.py", "/proj", 30)
         assert "partial out" in out
         assert "timed out after 30s" in out
 
     def test_filenotfound_returns_clear_error(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run",
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
                    side_effect=FileNotFoundError(2, "no such file")):
             out = run_target_subprocess("missing.py", "/proj", 30)
         assert "target_file not found: missing.py" in out
 
     def test_generic_exception_returns_error_message(self):
         from workflows.autoresearch_impl.helpers import run_target_subprocess
-        with patch("workflows.autoresearch_impl.helpers.subprocess.run",
-                   side_effect=OSError("disk full")):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.communicate.side_effect = OSError("disk full")
+        with patch("workflows.autoresearch_impl.helpers.subprocess.Popen",
+                   return_value=mock_proc), \
+             patch("workflows.autoresearch_impl.helpers._kill_process_tree"):
             out = run_target_subprocess("train.py", "/proj", 30)
         assert "experiment crashed" in out
         assert "disk full" in out
@@ -299,6 +314,7 @@ class TestResumeConvergenceCounters:
         from workflows.autoresearch_impl.nodes.setup import node_setup
         ar_state["resume"] = True
         ar_state["current_best"] = 0.42
+        ar_state["baseline_established"] = True  # [v1.11 A5] new flag
         ar_state["baseline_metric"] = 0.50
         ar_state["branch"] = "autoresearch/existing"
         ar_state["project_root"] = str(tmp_path)
@@ -326,6 +342,7 @@ class TestResumeConvergenceCounters:
         from workflows.autoresearch_impl.nodes.setup import node_setup
         ar_state["resume"] = True
         ar_state["current_best"] = 0.42
+        ar_state["baseline_established"] = True  # [v1.11 A5] new flag
         ar_state["baseline_metric"] = 0.50
         ar_state["branch"] = "autoresearch/existing"
         ar_state["project_root"] = str(tmp_path)
@@ -448,6 +465,7 @@ class TestSeenHashesDedup:
         from workflows.autoresearch_impl.nodes.setup import node_setup
         ar_state["resume"] = True
         ar_state["current_best"] = 0.42
+        ar_state["baseline_established"] = True  # [v1.11 A5] new flag
         ar_state["baseline_metric"] = 0.50
         ar_state["branch"] = "autoresearch/existing"
         ar_state["project_root"] = str(tmp_path)
@@ -469,3 +487,125 @@ class TestSeenHashesDedup:
         assert len(result["seen_hashes"]) == 2
         assert "h1" in result["seen_hashes"]
         assert "h3" in result["seen_hashes"]
+
+
+# ===========================================================================
+# [v1.11 A5] Resume baseline_established flag (replaces current_best > 0 sentinel)
+# ===========================================================================
+
+
+class TestResumeBaselineEstablished:
+    """[v1.11 A5] Resume baseline-skip keys off `baseline_established` (bool)
+    instead of `current_best > 0.0` (float sentinel). The sentinel broke for
+    metrics that can legitimately be ≤ 0 at baseline (log-likelihood,
+    correlation, RMSE-perfect, etc.).
+    """
+
+    def test_resume_with_baseline_established_skips_baseline(self, ar_state, tmp_path):
+        """resume=True + baseline_established=True → skip baseline run.
+        Verify experiment_count comes from the ledger + baseline_established
+        is set True in the return."""
+        from workflows.autoresearch_impl.nodes.setup import node_setup
+        state = dict(ar_state)
+        state["resume"] = True
+        state["branch"] = "autoresearch/existing"
+        state["current_best"] = 0.45
+        state["baseline_established"] = True  # [v1.11 A5] the new flag
+
+        # Write a ledger with 3 experiments.
+        results_path = tmp_path / "results.tsv"
+        results_path.write_text(
+            "iteration\tcommit\tmetric\tstatus\tdescription\tcontent_hash\n"
+            "1\tabc\t0.45\tkeep\tfirst\th1\n"
+            "2\t\t0.50\tdiscard\tbad\t\n"
+            "3\tdef\t0.42\tkeep\tthird\th3\n",
+            encoding="utf-8",
+        )
+        state["results_path"] = str(results_path)
+
+        with patch("workflows.autoresearch_impl.nodes.setup._git_create_branch",
+                   return_value=True), \
+             patch("workflows.autoresearch_impl.nodes.setup._run_experiment_subprocess") as mock_run:
+            result = node_setup(state)
+
+        # Baseline NOT re-run (mock_run not called).
+        mock_run.assert_not_called()
+        # experiment_count = 3 (from ledger).
+        assert result["experiment_count"] == 3
+        # baseline_established stays True.
+        assert result["baseline_established"] is True
+
+    def test_resume_with_baseline_established_false_re_runs_baseline(self, ar_state, tmp_path):
+        """resume=True + baseline_established=False → re-run baseline.
+        This is the case where the prior run crashed before establishing
+        the baseline — the baseline must be re-run."""
+        from workflows.autoresearch_impl.nodes.setup import node_setup
+        state = dict(ar_state)
+        state["resume"] = True
+        state["branch"] = "autoresearch/existing"
+        state["current_best"] = 0.0  # no prior baseline
+        state["baseline_established"] = False  # [v1.11 A5] not yet established
+
+        with patch("workflows.autoresearch_impl.nodes.setup._git_create_branch",
+                   return_value=True), \
+             patch("workflows.autoresearch_impl.nodes.setup._run_experiment_subprocess",
+                   return_value="val_bpb: 0.45\n") as mock_run:
+            result = node_setup(state)
+
+        # Baseline IS re-run (mock_run called).
+        mock_run.assert_called_once()
+        # baseline_established set True by the fresh baseline run.
+        assert result["baseline_established"] is True
+        assert result["current_best"] == 0.45
+
+    def test_resume_with_negative_current_best_skips_baseline(self, ar_state, tmp_path):
+        """[v1.11 A5] The KEY fix: resume with a NEGATIVE current_best (e.g.
+        log-likelihood = -2.5) + baseline_established=True → skip baseline.
+
+        Pre-v1.11: `current_best > 0.0` was False for -2.5 → baseline was
+        RE-RUN → experiment_count reset to 0 → experiment_history lost.
+        Post-v1.11: baseline_established=True → baseline skipped correctly.
+        """
+        from workflows.autoresearch_impl.nodes.setup import node_setup
+        state = dict(ar_state)
+        state["resume"] = True
+        state["branch"] = "autoresearch/existing"
+        state["metric_direction"] = "higher"  # log-likelihood: higher is better
+        state["current_best"] = -2.5  # negative — pre-v1.11 sentinel failed here
+        state["baseline_established"] = True  # [v1.11 A5] the fix
+
+        # Write a ledger.
+        results_path = tmp_path / "results.tsv"
+        results_path.write_text(
+            "iteration\tcommit\tmetric\tstatus\tdescription\tcontent_hash\n"
+            "1\tabc\t-2.5\tkeep\tfirst\th1\n",
+            encoding="utf-8",
+        )
+        state["results_path"] = str(results_path)
+
+        with patch("workflows.autoresearch_impl.nodes.setup._git_create_branch",
+                   return_value=True), \
+             patch("workflows.autoresearch_impl.nodes.setup._run_experiment_subprocess") as mock_run:
+            result = node_setup(state)
+
+        # Baseline NOT re-run — even though current_best is negative.
+        mock_run.assert_not_called()
+        assert result["experiment_count"] == 1
+        assert result["current_best"] == -2.5  # preserved
+
+    def test_fresh_run_sets_baseline_established_true(self, ar_state):
+        """A fresh (non-resume) run that completes the baseline sets
+        baseline_established=True."""
+        from workflows.autoresearch_impl.nodes.setup import node_setup
+        state = dict(ar_state)
+        state["resume"] = False  # fresh start
+        state["baseline_established"] = False  # default
+
+        with patch("workflows.autoresearch_impl.nodes.setup._git_create_branch",
+                   return_value=True), \
+             patch("workflows.autoresearch_impl.nodes.setup._run_experiment_subprocess",
+                   return_value="val_bpb: 0.50\n"):
+            result = node_setup(state)
+
+        assert result["baseline_established"] is True
+        assert result["current_best"] == 0.50

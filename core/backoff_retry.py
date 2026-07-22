@@ -57,6 +57,7 @@ def retry_with_backoff(
     base_delay: float = 2.0,
     cancellation_check: Optional[Callable[[], bool]] = None,
     tid: str = "",
+    non_retryable: Optional[tuple] = None,
 ) -> Any:
     """Call `fn()` with retry + exponential backoff.
 
@@ -76,6 +77,16 @@ def retry_with_backoff(
             `time.sleep(delay)` call.
         tid: Trace ID for observability. Passed to `tracer.error` on the
             final-attempt failure.
+        non_retryable: Optional tuple of exception types that should
+            propagate IMMEDIATELY without any retry or backoff sleep.
+            When `fn()` raises an exception matching `isinstance(e,
+            non_retryable)`, the exception is re-raised on the spot (no sleep,
+            no retry, no `tracer.error` log). Default None = retry every
+            `Exception` (backward-compatible v1.5 behavior). [v1.6] Added so
+            callers can distinguish transient failures (network blips, rate
+            limits — worth retrying) from real bugs (ImportError,
+            AttributeError — never worth retrying; each retry is a wasted LLM
+            API hit + backoff sleep).
 
     Returns:
         Whatever `fn()` returns on the first successful attempt.
@@ -85,6 +96,8 @@ def retry_with_backoff(
             returns True during backoff (between attempts).
         RuntimeError("LLM call cancelled — graph timeout exceeded") — if
             `cancellation_check()` returns True BEFORE an attempt.
+        Any exception in `non_retryable` — re-raised immediately on the
+            first occurrence (no retry, no backoff sleep). [v1.6]
         Whatever exception `fn` raised on the final attempt — re-raised after
             the last retry fails. Logged via `tracer.error` first.
     """
@@ -99,6 +112,12 @@ def retry_with_backoff(
             return fn()
         except Exception as e:
             last_error = e
+            # [v1.6] non_retryable exception types propagate immediately —
+            # no sleep, no retry, no tracer.error log. These are real bugs
+            # (ImportError, AttributeError, caller-wrapped _PropagateError,
+            # etc.) where retrying just wastes LLM API budget + backoff time.
+            if non_retryable and isinstance(e, non_retryable):
+                raise
             if attempt < retries:
                 # Exponential backoff: base_delay * 2^attempt.
                 delay = base_delay * (2 ** attempt)

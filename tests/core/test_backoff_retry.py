@@ -154,3 +154,74 @@ def test_no_cancellation_check():
     # Delay = base_delay * 2^0 = 1.0 (first backoff).
     delay = mock_sleep.call_args[0][0]
     assert delay == 1.0
+
+
+# ===========================================================================
+# [v1.6 / autoresearch v1.11 A4] non_retryable exception types
+# ===========================================================================
+
+
+def test_non_retryable_propagates_immediately():
+    """[v1.6 A4] When fn raises an exception in the non_retryable tuple,
+    it propagates IMMEDIATELY — no sleep, no retry, no tracer.error log.
+
+    This is the core A4 fix: pre-v1.6, retry_with_backoff caught bare
+    `except Exception` and retried EVERYTHING. autoresearch's _call_planner
+    wrapped non-transient exceptions (ImportError, AttributeError) in
+    _PropagateError(Exception) — but _PropagateError IS an Exception, so
+    retry_with_backoff caught + retried it 3× (6s wasted backoff + up to 2
+    extra LLM API hits) before the caller could unwrap it.
+    """
+    from core.backoff_retry import retry_with_backoff
+
+    class _PropagateError(Exception):
+        pass
+
+    calls = []
+
+    def fn():
+        calls.append(1)
+        raise _PropagateError("real bug — don't retry")
+
+    # Mock time.sleep so we can assert it was NEVER called (no backoff).
+    with patch("core.backoff_retry.time.sleep") as mock_sleep, \
+         patch("core.backoff_retry.tracer.error") as mock_error:
+        with pytest.raises(_PropagateError, match="real bug"):
+            retry_with_backoff(
+                fn, retries=2, base_delay=2.0,
+                non_retryable=(_PropagateError,),
+            )
+
+    # Only ONE call — no retry.
+    assert len(calls) == 1
+    # NO sleep — propagated immediately.
+    assert mock_sleep.call_count == 0
+    # NO tracer.error log — non_retryable doesn't reach the final-attempt log.
+    assert mock_error.call_count == 0
+
+
+def test_non_retryable_none_retries_everything():
+    """[v1.6 A4] non_retryable=None (default) = retry every Exception
+    (backward-compatible v1.5 behavior)."""
+    from core.backoff_retry import retry_with_backoff
+
+    calls = []
+
+    class CustomError(Exception):
+        pass
+
+    def fn():
+        calls.append(1)
+        raise CustomError("would be non-retryable if registered")
+
+    with patch("core.backoff_retry.time.sleep") as mock_sleep:
+        with pytest.raises(CustomError):
+            retry_with_backoff(
+                fn, retries=2, base_delay=2.0,
+                non_retryable=None,  # default — retry everything
+            )
+
+    # 3 total attempts (1 initial + 2 retries).
+    assert len(calls) == 3
+    # 2 backoff sleeps (between the 3 attempts).
+    assert mock_sleep.call_count == 2

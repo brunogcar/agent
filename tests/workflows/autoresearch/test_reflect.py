@@ -84,11 +84,17 @@ class TestReflectNode:
         assert "#1 [keep]" in user  # the history entry we set
 
     def test_disabled_when_interval_zero(self, ar_state, monkeypatch):
-        """[v1.5 N1] AUTORESEARCH_REFLECT_INTERVAL=0 disables reflection entirely."""
+        """[v1.5 N1] AUTORESEARCH_REFLECT_INTERVAL=0 disables reflection entirely.
+        [v1.11 A8] reflect_interval is now a state field — set it to 0 to disable.
+        The monkeypatch on cfg is kept for backward-compat documentation but the
+        state field takes precedence (was: cfg-only pre-v1.11)."""
         from workflows.autoresearch_impl.nodes.reflect import node_reflect
-        # Use monkeypatch.setattr on the real cfg object so the imported
-        # `from core.config import cfg` binding in reflect.py picks it up
-        # (mirrors the existing pattern in test_nodes_propose.py).
+        # [v1.11 A8] Set the state field directly — this is the new per-invocation
+        # override mechanism. The ar_state fixture already has reflect_interval=5
+        # (cached from cfg by _default_state), so we must override it to 0 here.
+        # Was: monkeypatch cfg only (pre-v1.11 reflect.py read cfg directly).
+        ar_state["reflect_interval"] = 0  # disabled
+        # Also monkeypatch cfg for completeness (harmless — state takes precedence).
         import core.config
         monkeypatch.setattr(core.config.cfg, "autoresearch_reflect_interval", 0)
         # [v1.9 D5] reflect now checks iteration_count (not experiment_count).
@@ -390,3 +396,53 @@ class TestIterationCountField:
             result2 = node_reflect(state2)
         assert "reflect_notes" in result2
         mock_call.assert_called_once()
+
+
+# ===========================================================================
+# [v1.11 A8] reflect_interval from state (per-invocation override)
+# ===========================================================================
+
+
+class TestReflectIntervalFromState:
+    """[v1.11 A8] reflect_interval is now read from state FIRST, falling back
+    to cfg. Pre-v1.11, it was cfg-only — a caller passing
+    run_workflow(reflect_interval=10) would have it silently ignored.
+    """
+
+    def test_state_reflect_interval_overrides_cfg(self, ar_state):
+        """state["reflect_interval"]=3 overrides cfg.autoresearch_reflect_interval=5.
+        At iteration_count=3, reflect fires (3 % 3 == 0). At iteration_count=5
+        (the cfg default), it would NOT have fired with the old cfg-only code.
+        """
+        from workflows.autoresearch_impl.nodes.reflect import node_reflect
+        state = dict(ar_state)
+        state["reflect_interval"] = 3  # state override (cfg default is 5)
+        state["iteration_count"] = 3  # 3 % 3 == 0 → reflect fires
+        state["experiment_history"] = [
+            {"iteration": 1, "status": "keep", "metric": 0.5, "description": "x"}
+        ]
+
+        with patch("workflows.autoresearch_impl.nodes.reflect._call_planner",
+                   return_value=("reflection", {"total": 0})) as mock_call:
+            result = node_reflect(state)
+
+        assert "reflect_notes" in result
+        mock_call.assert_called_once()
+
+    def test_state_reflect_interval_zero_falls_back_to_cfg(self, ar_state):
+        """state["reflect_interval"]=0 → fall back to cfg (default 5).
+        At iteration_count=3, reflect does NOT fire (3 % 5 != 0)."""
+        from workflows.autoresearch_impl.nodes.reflect import node_reflect
+        state = dict(ar_state)
+        state["reflect_interval"] = 0  # 0 = use cfg default (5)
+        state["iteration_count"] = 3  # 3 % 5 != 0 → no reflect
+        state["experiment_history"] = [
+            {"iteration": 1, "status": "keep", "metric": 0.5, "description": "x"}
+        ]
+
+        with patch("workflows.autoresearch_impl.nodes.reflect._call_planner",
+                   return_value=("reflection", {"total": 0})) as mock_call:
+            result = node_reflect(state)
+
+        assert result == {}  # no reflect
+        mock_call.assert_not_called()

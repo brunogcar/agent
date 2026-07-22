@@ -53,6 +53,8 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 45. Never use `write_text` for the parallel winner copy — use `_atomic_write` (v1.9 A3, minimax Bug #3). SIGKILL/OOM mid-`write_text` leaves `target_file` empty/partial; the next `node_propose` reads "" and the LLM proposes a full rewrite of a blank file. `_atomic_write` (tempfile + os.fsync + os.replace) is atomic — either fully succeeds or fully fails.
 46. Never catch bare `Exception` in `_call_planner` — use `(RuntimeError, ConnectionError, TimeoutError, OSError, ValueError)` (v1.9 B4, deepseek P2 2.4). KeyboardInterrupt, SystemExit, ImportError, AttributeError (real bugs) must propagate immediately, not be retried 3×.
 47. Never check `experiment_count` for `node_reflect` — use `iteration_count` (v1.9 D5, minimax Risk #4). With `parallel_count=4`, `experiment_count` jumps 4→8→12→16→20 and never hits a multiple of 5 → reflect NEVER fired pre-v1.9. `iteration_count` increments by 1 per iteration regardless of `parallel_count`.
+48. Never use `current_best > 0.0` as a resume sentinel — use `baseline_established: bool` (v1.11 A5). The float sentinel breaks for metrics that can legitimately be ≤ 0 at baseline (log-likelihood, correlation, RMSE-perfect) — a resumed run with negative `current_best` would re-run the baseline, resetting `experiment_count=0` + losing `experiment_history`.
+49. Never let a parallel crashed subprocess win — `node_evaluate` (parallel path) must mark `proposal["status"]="failed"` when no metric is found (v1.11 A3). Pre-v1.11, only `node_modify` set that flag, so a crashed subprocess with valid content got `metric=0.0` + no failed marker. With `direction="lower"` + positive `current_best`, the crashed run won → `current_best` collapsed to 0.0 → run bricked.
 
 ## ✅ ALWAYS DO
 
@@ -110,6 +112,9 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 52. Always cap `.autoresearch/logs/` at `cfg.autoresearch_log_dir_max_mb` (default 1024 = 1GB) — when exceeded, SKIP new log writes + trace a warning (v1.9 D2, minimax Risk #1). Don't delete old logs (operators may want them); just stop adding new ones. The walk is capped at 2000 files via `itertools.islice`.
 53. Always pass `variant_seed=str(i)` to parallel `_generate_single_proposal` calls — guarantees diversity even at `temperature=0` (v1.9 D4, minimax Risk #3). The variant directive (`--- VARIANT {i}: explore a DIFFERENT angle ---`) is appended to the user prompt BEFORE the closing "Propose the next experiment..." line. The single path passes `variant_seed=""` (no change to v1.5 behavior).
 54. Always filter `memory.recall` by `tags_filter="source:autoresearch"` in `node_propose` (v1.9 D6, minimax Risk #5) — ensures only autoresearch-stored memories are surfaced, not unrelated procedural memories from other workflows. Wrap in try/except TypeError so a tag-filter API mismatch falls back to no filter.
+55. Always pass `non_retryable=(_PropagateError,)` to `retry_with_backoff` in `_call_planner` (v1.11 A4, delegates to **standalone v1.6** `core/backoff_retry.py`). Non-transient exceptions (ImportError, AttributeError) must propagate immediately — no retry, no backoff sleep. Pre-v1.11, the bare `except Exception` caught `_PropagateError` + retried it 3× (6s wasted backoff + up to 2 extra LLM API hits).
+56. Always use `Popen` + process-group isolation in `run_target_subprocess` (v1.11 A7) — `subprocess.run` kills only the immediate child on timeout; PyTorch DataLoader workers, multiprocessing, CUDA contexts survive as orphans. POSIX: `start_new_session=True` + `os.killpg(SIGTERM then SIGKILL)`. Windows: `CREATE_NEW_PROCESS_GROUP` + `taskkill /T /F /PID`.
+57. Always read `reflect_interval` from state FIRST, falling back to cfg (v1.11 A8). Was: cfg-only — a caller passing `run_workflow(reflect_interval=10)` had it silently ignored. The type handler (**workflow tool v1.2.2**) + dispatcher (**base v1.8**) now forward it.
 
 ---
 
@@ -165,4 +170,4 @@ Rules for AI agents editing autoresearch code (same conventions as `autocode/INS
 
 ---
 
-*Last updated: 2026-07-24 (v1.9). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.11). See [CHANGELOG.md](CHANGELOG.md) for version history.*

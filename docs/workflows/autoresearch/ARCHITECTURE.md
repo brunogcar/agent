@@ -209,8 +209,8 @@ tests/workflows/autoresearch/
 └── test_nodes_run.py            # node_run_experiment + run_target_subprocess (run-time) + [v1.8 N10] pre-extract
 ```
 
-**177/177 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control + v1.5 reflect + cross-run learning + v1.6 parallel + v1.7 resume + checkpoint + v1.8 observability + v1.9 hardening).
+**207/207 autoresearch tests pass** with `-W error` (per-node unit tests + integration + graph topology + v1.4 loop-control + v1.5 reflect + cross-run learning + v1.6 parallel + v1.7 resume + checkpoint + v1.8 observability + v1.9 hardening + v1.11 Claude review fixes).
 
 ---
 
-*Last updated: 2026-07-25 (v1.10). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-22 (v1.11). See [CHANGELOG.md](CHANGELOG.md) for version history.*

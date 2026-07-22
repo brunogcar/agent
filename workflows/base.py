@@ -530,6 +530,16 @@ def run_workflow(
                 results_path=initial_state.get("results_path", ""),
                 max_iterations=initial_state.get("max_iterations", 0),
                 parallel_count=initial_state.get("parallel_count", 1),
+                # [v1.8 / autoresearch v1.11 A8] Forward the 3 loop-control
+                # knobs that were previously state fields but NOT forwarded
+                # by the type handler / dispatcher. reflect_interval was
+                # cfg-only (not a state field at all pre-v1.11);
+                # convergence_window + convergence_epsilon were state fields
+                # but the type handler didn't forward them, so per-call
+                # overrides were silently dropped.
+                reflect_interval=initial_state.get("reflect_interval", 0),
+                convergence_window=initial_state.get("convergence_window", 10),
+                convergence_epsilon=initial_state.get("convergence_epsilon", 0.001),
             )
             # Merge any extra kwargs the caller passed (e.g. dry_run, overrides)
             ar_state.update({k: v for k, v in initial_state.items()
@@ -556,7 +566,7 @@ def run_workflow(
                     # target_file, etc.) which _ar_default already set.
                     for key in ("experiment_count", "current_best", "baseline_metric",
                                 "experiment_history", "branch", "results_path",
-                                "reflect_notes"):
+                                "reflect_notes", "baseline_established"):
                         if key in restored:
                             ar_state[key] = restored[key]
                     ar_state["resume"] = True

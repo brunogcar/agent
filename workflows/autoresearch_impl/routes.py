@@ -44,10 +44,24 @@ def route_after_log(state: AutoresearchState) -> str:
 
     Stopping conditions (checked in order):
     1. max_iterations reached — caller-set hard cap (0 = unlimited).
+       [v1.11 A9] Counts EXPERIMENTS (not iterations). In parallel mode
+       (parallel_count=N), experiment_count jumps by N per iteration, so
+       max_iterations=10 with parallel_count=4 trips after ~2.5 iterations.
+       Scale max_iterations by parallel_count if you want iteration-level
+       control.
     2. Convergence: last N experiments all discarded (no improvement).
        N = convergence_window (default 10). Detects "nothing is working".
+       [v1.11 A9] Counts EXPERIMENTS (not iterations). In parallel mode,
+       each iteration appends parallel_count entries to experiment_history,
+       so convergence_window=10 with parallel_count=4 spans ~2.5 iterations.
+       Scale convergence_window by parallel_count if you want iteration-level
+       control (e.g. convergence_window=40 for "10 iterations of all-discards
+       at parallel_count=4"). The per-experiment semantics are arguably more
+       honest (10 bad experiments is a stronger signal than 10 bad
+       iterations), so this is a documentation clarification, not a code fix.
     3. Stuck: last N experiments all have metric within ε of current_best.
        ε = convergence_epsilon (default 0.001). Detects "metric plateau".
+       [v1.11 A9] Same experiment-vs-iteration caveat as condition 2.
 
     All three are OFF by default (max_iterations=0, window large, ε small),
     so v1.4 preserves v1.3's "loop forever" behavior unless a caller opts

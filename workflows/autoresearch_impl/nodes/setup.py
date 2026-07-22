@@ -25,6 +25,15 @@ and `experiment_history` is reloaded from `results.tsv` (via the new
 experiments in context. When `resume=False` (default), behavior is exactly
 v1.6 (new branch, run baseline, fresh ledger).
 
+[v1.11 A5] The resume baseline-skip now keys off `baseline_established`
+(bool) instead of `current_best > 0.0` (float sentinel). The float sentinel
+broke for metrics that can legitimately be ≤ 0 at baseline (log-likelihood,
+correlation, RMSE-perfect, etc.) — a resumed run with a negative
+current_best would re-run the baseline, resetting experiment_count=0 +
+losing experiment_history. `baseline_established` is set True by node_setup
+after a successful baseline run (fresh start) AND on the resume-skip path
+(prior run already established it).
+
 [v1.9] Hardening — 3 changes:
   (A2) The TSV header now has a 6th `content_hash` column so dedup survives
   resume. `_load_history_from_ledger` parses 6 cols (legacy 5-col ledgers
@@ -259,11 +268,15 @@ def node_setup(state: AutoresearchState) -> dict:
     except Exception as e:
         tracer.warning(tid, "setup", f"ledger init failed: {e}")
 
-    # [v1.7 N3] Skip baseline if resuming with existing current_best — the
-    # prior run already established the baseline; re-running it wastes time
-    # (and could change current_best if the target_file is non-deterministic).
-    # Reload experiment_history from results.tsv so node_propose has context.
-    if is_resume and state.get("current_best", 0.0) > 0.0:
+    # [v1.7 N3 / v1.11 A5] Skip baseline if resuming with an established
+    # baseline — the prior run already ran the baseline; re-running it wastes
+    # time (and could change current_best if the target_file is non-
+    # deterministic). Reload experiment_history from results.tsv so node_propose
+    # has context. [v1.11 A5] Keys off `baseline_established` (bool) instead of
+    # the v1.7 `current_best > 0.0` float sentinel — the sentinel broke for
+    # metrics that can legitimately be ≤ 0 at baseline (log-likelihood,
+    # correlation, RMSE-perfect, etc.).
+    if is_resume and state.get("baseline_established", False):
         tracer.step(
             tid, "setup",
             f"resume: skipping baseline (current_best={state.get('current_best')})",
@@ -294,6 +307,7 @@ def node_setup(state: AutoresearchState) -> dict:
             "consecutive_discards": consecutive_discards,
             "consecutive_no_improvement": consecutive_no_improvement,
             "seen_hashes": seen_hashes,
+            "baseline_established": True,  # [v1.11 A5] prior run established it
             "status": "running",
         }
 
@@ -328,5 +342,6 @@ def node_setup(state: AutoresearchState) -> dict:
         "current_best": baseline_metric,
         "experiment_output": baseline_output,
         "current_metric": baseline_metric,
+        "baseline_established": True,  # [v1.11 A5] fresh baseline just ran
         "status": "running",
     }

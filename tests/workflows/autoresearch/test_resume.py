@@ -51,6 +51,7 @@ class TestResumeSetup:
         from workflows.autoresearch_impl.nodes.setup import node_setup
         ar_state["resume"] = True
         ar_state["current_best"] = 0.42
+        ar_state["baseline_established"] = True  # [v1.11 A5] new flag
         ar_state["baseline_metric"] = 0.50
         ar_state["branch"] = "autoresearch/existing"
         ar_state["project_root"] = str(tmp_path)

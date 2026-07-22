@@ -73,7 +73,7 @@ from workflows.autoresearch_impl.routes import route_after_setup, route_after_lo
 # deep_research / understand / data.
 WORKFLOW_METADATA = {
     "name": "autoresearch",
-    "version": "1.10",  # [v1.10] centralize-workflow-utils: git ops moved to tools/git_ops/workflow_helpers.py; cancellation checks added (propose/run_experiment/decide/reflect); _call_planner uses core/backoff_retry.py; atomic_write uses core/atomic_write.py. [v1.9] hardening — 3 bugs + 4 P1 + 6 P2 + 5 P3
+    "version": "1.11",  # [v1.11] hardening — A3 (parallel crashed-subprocess protection), A4 (non_retryable in backoff_retry), A5 (baseline_established flag), A6 (modify single-path reorder), A7 (process-group kill on subprocess timeout), A8 (reflect_interval state-overridable), A9 (route_after_log experiment-vs-iteration doc). [v1.10] centralize-workflow-utils: git ops moved to tools/git_ops/workflow_helpers.py; cancellation checks added (propose/run_experiment/decide/reflect); _call_planner uses core/backoff_retry.py; atomic_write uses core/atomic_write.py. [v1.9] hardening — 3 bugs + 4 P1 + 6 P2 + 5 P3
     "description": (
         "Autonomous experiment-driven optimization: "
         "modify → run → measure → keep/discard → repeat"
@@ -242,6 +242,7 @@ WORKFLOW_METADATA = {
         "parallel_experiments",   # [v1.6] N proposals + N subprocesses per iteration
         "parallel_temp_isolation",  # [v1.6] each parallel experiment runs in its own temp dir
         "parallel_best_wins",     # [v1.6] only the best experiment is committed; losers discarded
+        "parallel_crash_protection",  # [v1.11 A3] evaluate marks proposals failed on no-metric — crashed subprocesses can't win
         "output_logging",          # [v1.8 N5] full stdout+stderr logged to logs/autoresearch/{iteration}.log
         "token_tracking",          # [v1.8 N6] per-iteration LLM tokens persisted in experiment_history
         "pre_extracted_metric",    # [v1.8 N10] metric extracted from full output BEFORE truncation
@@ -255,6 +256,11 @@ WORKFLOW_METADATA = {
         "memory_recall_tag_filter",        # [v1.9 D6] memory.recall filters by tags_filter="source:autoresearch"
         "git_toplevel_verify",             # [v1.9 B3] _git_reset_hard verifies git rev-parse --show-toplevel matches project_root
         "logs_subfolder",                  # [v1.9 D1] log dir relocated from {results_path}.d/ to logs/autoresearch/
+        "baseline_established_flag",       # [v1.11 A5] replaces current_best>0 sentinel for resume — works for negative/zero metrics
+        "process_group_kill",              # [v1.11 A7] subprocess timeout kills the whole process tree (PyTorch workers, multiprocessing)
+        "non_retryable_exceptions",        # [v1.11 A4] backoff_retry non_retryable param — real bugs propagate immediately (no wasted API hits)
+        "modify_empty_check_first",        # [v1.11 A6] single-path empty-content check before dedup hash — correct error reporting
+        "reflect_interval_state_override",  # [v1.11 A8] reflect_interval is now a state field (per-invocation override)
     ],
 }
 

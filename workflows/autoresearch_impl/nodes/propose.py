@@ -210,17 +210,20 @@ def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
     import json as _json
     from tools.agent import agent
 
-    # [v1.9 B4 / v1.10 Phase C] Narrow exception scope — only transient
-    # failure types (RuntimeError, ConnectionError, TimeoutError, OSError,
-    # ValueError) are retried. Non-transient exceptions (ImportError,
+    # [v1.9 B4 / v1.10 Phase C / v1.11 A4] Narrow exception scope — only
+    # transient failure types (RuntimeError, ConnectionError, TimeoutError,
+    # OSError, ValueError) are retried. Non-transient exceptions (ImportError,
     # AttributeError, etc.) propagate immediately (real bugs shouldn't be
-    # retried). KeyboardInterrupt + SystemExit are BaseException (not
-    # Exception) so they bypass retry_with_backoff's `except Exception`
-    # naturally. Other non-transient Exception subclasses are wrapped in
-    # _PropagateError inside _attempt; retry_with_backoff catches + retries
-    # them, BUT we unwrap + re-raise at the _call_planner level (the
-    # `except _PropagateError` block below) so the original exception
-    # propagates without retry.
+    # retried — each retry is a wasted LLM API hit + backoff sleep).
+    # KeyboardInterrupt + SystemExit are BaseException (not Exception) so they
+    # bypass retry_with_backoff's `except Exception` naturally. Other non-
+    # transient Exception subclasses are wrapped in _PropagateError inside
+    # _attempt. [v1.11 A4] retry_with_backoff now receives
+    # `non_retryable=(_PropagateError,)` so it re-raises _PropagateError on
+    # the spot (no sleep, no retry) — was: the bare `except Exception` caught
+    # _PropagateError + retried it 3× (6s wasted backoff + up to 2 extra LLM
+    # API hits) before the `except _PropagateError` block below could unwrap
+    # it. The unwrap block stays (preserves the original exception via __cause__).
     class _PropagateError(Exception):
         """Wrapper for non-transient exceptions — unwrapped + re-raised by
         _call_planner so the original propagates without retry."""
@@ -296,6 +299,12 @@ def _call_planner(system: str, user: str, tid: str = "") -> tuple[str, dict]:
             base_delay=2.0,  # 2s, 4s backoff (matches v1.3)
             cancellation_check=cancellation_check,
             tid=tid,
+            # [v1.11 A4] _PropagateError propagates immediately (no retry,
+            # no backoff sleep). Was: caught by retry_with_backoff's bare
+            # `except Exception` + retried 3× (6s wasted + up to 2 extra LLM
+            # API hits) before unwrapping. The `except _PropagateError` block
+            # below catches it + unwraps the original via __cause__.
+            non_retryable=(_PropagateError,),
         )
     except _PropagateError as e:
         # Non-transient exception — re-raise the original. The `from e`
