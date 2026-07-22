@@ -1,6 +1,52 @@
-# Benchmark Tool v1.4.1
+# Benchmark Tool v1.5
 
 🎯 Benchmark LLM roles for the agent. Measure which model is best for each role.
+
+---
+
+## 🆕 What's New in v1.5
+
+v1.5 adds 2 new features, fixes 2 bugs (1 P1), and adds the first test coverage for the benchmark package.
+
+### New Features
+
+| Feature | Notes |
+|---------|-------|
+| **`--dual-mode` flag** | Runs each role twice (raw + agent-mode) and shows a side-by-side comparison table. Similar to `--compare` but comparing modes instead of models. Helps you see whether agent-mode (real SYSTEM_PROMPT + json_schema) helps or hurts each role. |
+| **Side-by-side comparison table** | After `--compare` or `--dual-mode`, a new table shows each role's score for each model/mode, with the **best score per row highlighted in green**. Makes it easy to see at a glance which model/mode wins each role. |
+| **`--list` flag** | Lists all available roles + task counts (broken down by difficulty), then exits. No benchmark run. Quick way to see what's available. |
+
+### Bug Fixes
+
+| # | Fix | Impact | Files |
+|---|-----|--------|-------|
+| 1 | **P1: `--depth normal` excluded all medium tasks** | The default depth filter checked for `("easy", "normal")` but tasks are labeled `"medium"` (per `DIFFICULTY_ORDER`), never `"normal"`. So `--depth normal` (the default) silently ran only easy tasks — medium tasks were excluded. Fixed to `("easy", "medium")`. | `benchmark.py` |
+| 2 | **P1: `validate_python_execution` namespace bug** | `exec(code, restricted, ns)` put function defs into `ns` (locals), but when those functions ran, they looked up names in `restricted` (globals) — so `test_cases` calling model-defined functions (e.g., `test_add()` calling `add()`) failed with `NameError`, silently scoring 0. Fixed by using the same dict for globals + locals. | `validators.py` |
+| 3 | **Bare `Exception` catch in `validate_python_execution`** | Was: `except (AssertionError, Exception): pass` — swallowed real bugs in `test_cases` YAML. Now `AssertionError` is caught separately (expected), other exceptions are still swallowed but the distinction is clear. | `validators.py` |
+| 4 | **`BENCHMARK_TO_AGENT_ROLE` silent fallback** | When a role wasn't found in `ROLES`, agent-mode silently used the YAML system prompt. Now prints a warning so you know the agent pipeline isn't being tested. | `benchmark.py` |
+| 5 | **Stale README task counts** | README said "36 executor + 30 router tasks" but actual counts are 40 executor + 31 router + 10 planner = 81 total. Fixed. | `README.md` |
+
+### Test Coverage (NEW)
+
+The benchmark package had **zero tests** before v1.5. Added 96 tests across 2 test files:
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `tests/benchmark/test_validators.py` | 68 | All 11 validators: exact_match, contains, fuzzy_match, json_valid, python_ast, python_execution (incl. setup_code + mock_pytest), keyword_coverage, regex_match, composite, json_field, schema_match |
+| `tests/benchmark/test_scoring.py` | 28 | `calculate_task_score` (formula + agent-mode buffer), `calculate_role_score`, `categorize_failure` (7 categories), `consistency_score`, `calculate_difficulty_breakdown` |
+
+### Usage
+
+```bash
+# Compare two models — now with side-by-side comparison table
+python -m benchmark --role executor --depth easy --compare lfm2-1.2b-tool,gemma-2-2b-it
+
+# Compare raw vs agent-mode
+python -m benchmark --role code --depth easy --dual-mode
+
+# List available roles
+python -m benchmark --list
+```
 
 ---
 

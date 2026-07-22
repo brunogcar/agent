@@ -260,3 +260,91 @@ def print_task_result(name: str, score: float, latency: float, tokens: int, stat
         icon = color("✗", RED)
     score_col = color(f"{score:.0f}", GREEN if score >= 80 else YELLOW if score >= 50 else RED)
     print(f" {icon} {name:30s} {score_col:>6s} {latency:5.1f}s {tokens:4d} tok")
+
+
+# ── v1.5: Side-by-side comparison table ─────────────────────────────────────
+
+def print_comparison_table(role_results: dict, labels: list[str], roles: list[str], dual_mode: bool = False):
+    """[v1.5] Print a side-by-side comparison table showing each role's score
+    for each model (or mode). The best score per row is colored green.
+
+    [v1.5.1 fix] Manual padding for colored strings — ANSI codes break
+    f-string width formatting. Uses _pad_visible() to pad based on the
+    VISIBLE length (ANSI codes stripped for measurement).
+
+    Args:
+        role_results: {label: {role: {summary: {final: score, ...}}}}
+        labels: list of comparison labels (model names or ["raw", "agent"])
+        roles: list of role names to include (rows)
+        dual_mode: when True, header says "MODE COMPARISON" instead of "MODEL COMPARISON"
+    """
+    if len(labels) < 2:
+        return  # no comparison to show
+
+    title = "MODE COMPARISON (Raw vs Agent)" if dual_mode else "MODEL COMPARISON"
+    print(f"\n{'━' * 68}")
+    print(f"  {bold(title)}")
+    print(f"{'━' * 68}")
+
+    # Column width: fixed at 15 chars (visible) per column.
+    col_w = 15
+    role_w = 20
+
+    def _pad_visible(text: str, width: int, right_align: bool = True) -> str:
+        """Pad a string to `width` VISIBLE chars (ANSI codes don't count)."""
+        visible_len = len(re.sub(r'\033\[\d+m', '', text))
+        pad = max(0, width - visible_len)
+        if right_align:
+            return " " * pad + text
+        return text + " " * pad
+
+    # Header row
+    header = f" {'Role':<{role_w}s}"
+    for label in labels:
+        # Truncate label if longer than col_w
+        if len(label) > col_w:
+            display_label = label[:col_w - 3] + "..."
+        else:
+            display_label = label
+        header += " " + _pad_visible(display_label, col_w, right_align=True)
+    print(f"\n {header}")
+    print(f" {'─' * (role_w + (col_w + 1) * len(labels))}")
+
+    # Data rows
+    for role in roles:
+        row = f" {role:<{role_w}s}"
+        scores = []
+        for label in labels:
+            score_val = None
+            model_results = role_results.get(label, {})
+            if role in model_results:
+                score_val = model_results[role].get("summary", {}).get("final", 0)
+            scores.append(score_val)
+
+        # Find best score (highest); ties get green too
+        valid_scores = [s for s in scores if s is not None]
+        best_score = max(valid_scores) if valid_scores else None
+
+        for score_val in scores:
+            if score_val is None:
+                cell = _pad_visible("—", col_w, right_align=True)
+            elif best_score is not None and score_val == best_score:
+                # Best score — green
+                cell = _pad_visible(green(f"{score_val:.1f}"), col_w, right_align=True)
+            else:
+                # Not best — color by threshold
+                if score_val >= 80:
+                    cell = _pad_visible(f"{score_val:.1f}", col_w, right_align=True)
+                elif score_val >= 50:
+                    cell = _pad_visible(yellow(f"{score_val:.1f}"), col_w, right_align=True)
+                else:
+                    cell = _pad_visible(red(f"{score_val:.1f}"), col_w, right_align=True)
+            row += " " + cell
+
+        print(row)
+
+    print(f" {'─' * (role_w + (col_w + 1) * len(labels))}")
+    if dual_mode:
+        print(f" {green('Green')} = best score for that role\n")
+    else:
+        print(f" {green('Green')} = best model for that role\n")

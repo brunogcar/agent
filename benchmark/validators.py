@@ -276,23 +276,40 @@ def validate_python_execution(output: str, test_cases: list[str] = None, setup_c
     old_stdout = sys.stdout
     try:
         sys.stdout = io.StringIO()  # suppress any print() in submitted code
-        ns = {}
+        # [v1.5 P1 fix] Use the SAME dict for globals and locals so functions
+        # defined in the model's code can see each other. Pre-v1.5, exec(clean,
+        # restricted, ns) put function defs into `ns` (locals), but when those
+        # functions ran, they looked up names in `restricted` (globals) — so
+        # test cases calling model-defined functions (e.g., `test_add()` calling
+        # `add()`) failed with NameError. This was a real bug: any test_cases
+        # that called functions defined in the model's code silently scored 0.
+        # Fix: use `restricted` as both globals AND locals for exec(). This means
+        # function defs go into `restricted` (globals), so they're visible to
+        # each other + to test_cases.
+        ns = restricted  # [v1.5] same dict for globals + locals
 
         # v1.4.1: Execute setup_code first (provides implementations for test tasks)
         if setup_code:
             try:
-                exec(setup_code, restricted, ns)
+                exec(setup_code, ns, ns)
             except Exception:
                 return 0.0  # setup_code failed -- can't run tests
 
-        exec(clean, restricted, ns)
+        exec(clean, ns, ns)
 
         passed = 0
         for test in test_cases:
             try:
-                exec(test, restricted, ns)
+                exec(test, ns, ns)
                 passed += 1
-            except (AssertionError, Exception):
+            except AssertionError:
+                pass  # Test failed — expected, just count as not-passed
+            except Exception:
+                # [v1.5 #4] Was: bare `except (AssertionError, Exception): pass`
+                # which swallowed real bugs in test_cases YAML (e.g., a NameError
+                # typo in the test string). Now AssertionError is caught separately
+                # (expected), and other exceptions are still swallowed (so the
+                # benchmark doesn't crash) but at least the distinction is clear.
                 pass
 
         return passed / len(test_cases)

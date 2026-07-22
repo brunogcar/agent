@@ -202,11 +202,17 @@ The `benchmark/` package measures which local model is best for each role. Usefu
 # Run all easy router tasks, 3 runs each, vs a pinned baseline
 .\venv\Scripts\python -m benchmark --role router --depth easy --runs 3 --baseline baseline.json
 
-# Compare two planner models across all difficulties
-.\venv\Scripts\python -m benchmark --role planner --depth hard --compare model_a.json model_b.json
+# Compare two models on executor tasks
+.\venv\Scripts\python -m benchmark --role executor --depth easy --compare lfm2-1.2b-tool,gemma-2-2b-it
+
+# Compare raw vs agent-mode scores side-by-side
+.\venv\Scripts\python -m benchmark --role code --depth easy --dual-mode
+
+# List all available roles + task counts
+.\venv\Scripts\python -m benchmark --list
 ```
 
-Features: 6 failure categories (timeout, llm_error, exception, empty_output, format_error, wrong_answer), variance tracking with wobble flag (σ > 20), baseline pinning with regression thresholds, and automatic best-model-per-role recommendation. See [`docs/BENCHMARK.md`](docs/BENCHMARK.md) for the full task catalog (36 executor + 30 router tasks) and v1.2 changelog.
+Features: 81 tasks (40 executor + 31 router + 10 planner), dual-mode (raw + agent-mode) testing, side-by-side comparison tables with green-highlighted winners, 6 failure categories (timeout, llm_error, exception, empty_output, format_error, wrong_answer), variance tracking with wobble flag (σ > 20), baseline pinning with regression thresholds, and automatic best-model-per-role recommendation. See [`docs/BENCHMARK.md`](docs/BENCHMARK.md) for the full task catalog and v1.5 changelog.
 
 ---
 

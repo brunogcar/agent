@@ -120,12 +120,20 @@ def run_task(role, llm_role, task, model_override="", temperature=0.0, agent_mod
         try:
             from tools.agent_ops import ROLES
             # Map benchmark role to agent role key
-            agent_role_key = role
+            agent_role_key = BENCHMARK_TO_AGENT_ROLE.get(role, role)
             if agent_role_key in ROLES:
                 role_data = ROLES[agent_role_key]
                 system_prompt = role_data.get("system_prompt", system_prompt)
                 role_cfg = role_data.get("role_config", {})
                 json_schema = role_cfg.get("json_schema")
+            elif role != agent_role_key:
+                # [v1.5 #3] Warning when the mapping pointed to a different key
+                # that doesn't exist in ROLES (e.g., a stale mapping).
+                print(f" {reports.yellow('!')} Warning: BENCHMARK_TO_AGENT_ROLE maps '{role}' → '{agent_role_key}' but '{agent_role_key}' not found in ROLES. Using YAML system prompt.")
+            else:
+                # [v1.5 #3] Warning when the role has no mapping AND isn't in ROLES
+                # directly — agent-mode will use the YAML system prompt (no schema).
+                print(f" {reports.yellow('!')} Warning: role '{role}' not found in ROLES (no agent-mode system prompt or json_schema). Using YAML system prompt.")
         except Exception:
             pass  # Fall back to YAML system prompt if ROLES not available
 
@@ -256,10 +264,14 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0, a
         return {"role": role, "tasks": [], "summary": {"final": 0.0, "tasks": 0}}
 
     # Depth filter: easy = all easy, normal = easy + medium, hard = all tasks
+    # [v1.5 P1 fix] Was: ("easy", "normal") — but tasks are labeled "medium"
+    # (per DIFFICULTY_ORDER), never "normal". So --depth normal (the DEFAULT)
+    # silently excluded all medium tasks, running only easy tasks. Fixed to
+    # ("easy", "medium").
     if depth == "easy":
         selected = [t for t in tasks if t.get("difficulty", "medium") == "easy"]
     elif depth == "normal":
-        selected = [t for t in tasks if t.get("difficulty", "medium") in ("easy", "normal")]
+        selected = [t for t in tasks if t.get("difficulty", "medium") in ("easy", "medium")]
     else:  # hard
         selected = tasks
 
@@ -358,8 +370,22 @@ def run_role(role, depth="normal", runs=1, model_override="", temperature=0.0, a
         "failure_counts": failure_counts,
     }
 
-def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_models=None, temperature=0.0, output_dir="", tag="", baseline_path="", regression_threshold=5.0, agent_mode=False):
-    """Run benchmark across roles and models."""
+def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_models=None, temperature=0.0, output_dir="", tag="", baseline_path="", regression_threshold=5.0, agent_mode=False, dual_mode=False):
+    """Run benchmark across roles and models.
+
+    [v1.5] dual_mode=True runs each role twice (raw + agent-mode) and produces
+    a side-by-side comparison table. Similar to --compare but comparing modes
+    instead of models.
+    """
+    # [v1.5] dual_mode: treat "raw" and "agent" as the two comparison labels.
+    # The actual agent_mode flag is set per-iteration.
+    if dual_mode:
+        compare_labels = ["raw", "agent"]
+        # When dual_mode is on, --compare models are ignored (we compare modes, not models).
+        compare_models = None
+    else:
+        compare_labels = compare_models or ["default"]
+
     roles_to_test = []
     if all_roles:
         roles_to_test = list(ROLE_GROUPS.keys())
@@ -388,11 +414,18 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         # v1.4: Added agent_mode to config so output JSON distinguishes
         # raw-mode vs agent-mode runs.
-        "config": {"depth": depth, "runs": runs, "temperature": temperature, "roles": individual_roles, "agent_mode": agent_mode},
+        # v1.5: Added dual_mode to config.
+        "config": {"depth": depth, "runs": runs, "temperature": temperature, "roles": individual_roles, "agent_mode": agent_mode, "dual_mode": dual_mode},
         "role_results": {},
     }
 
-    models = compare_models or ["default"]
+    # [v1.5] dual_mode: iterate over ["raw", "agent"] with different agent_mode flags.
+    # Normal mode: iterate over compare_models (or ["default"]) with the single agent_mode flag.
+    if dual_mode:
+        iterations = [("raw", False), ("agent", True)]
+    else:
+        iterations = [(label, agent_mode) for label in compare_labels]
+
     baseline_data = None
     if baseline_path and os.path.exists(baseline_path):
         with open(baseline_path, "r", encoding="utf-8") as f:
@@ -401,8 +434,18 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
     regression_detected = False
     regressions = []
 
-    for model in models:
-        model_override = model if model != "default" else ""
+    for iter_label, iter_agent_mode in iterations:
+        # [v1.5] For dual_mode, model_override is always "" (use default model).
+        # For compare_models, model_override is the model name (or "" for "default").
+        if dual_mode:
+            model_override = ""
+            # In dual_mode, print a mode header instead of a model header
+            print(f"\n{'━' * 68}")
+            print(f"  MODE: {iter_label.upper()}{' (agent-mode)' if iter_agent_mode else ' (raw)'}")
+            print(f"{'━' * 68}\n")
+        else:
+            model_override = iter_label if iter_label != "default" else ""
+
         model_results = {}
         current_group = None
 
@@ -417,11 +460,11 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
                 print(f"{'─' * 68}")
                 print()
 
-            role_result = run_role(role, depth, runs, model_override, temperature, agent_mode=agent_mode)
+            role_result = run_role(role, depth, runs, model_override, temperature, agent_mode=iter_agent_mode)
             model_results[role] = role_result
 
-            # Baseline delta
-            if baseline_data:
+            # Baseline delta (only for non-dual-mode — dual-mode has no baseline concept)
+            if baseline_data and not dual_mode:
                 baseline_model_results = baseline_data.get("role_results", {})
                 # Find matching model/role in baseline
                 baseline_score = None
@@ -437,7 +480,7 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
                         regression_detected = True
                         regressions.append((role, delta))
 
-        results["role_results"][model] = model_results
+        results["role_results"][iter_label] = model_results
 
     all_scores = []
     for model, model_results in results["role_results"].items():
@@ -446,7 +489,10 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
     stack_comp = sum(all_scores) / len(all_scores) if all_scores else 0.0
 
     # Build filename
-    if compare_models and len(compare_models) > 1:
+    # [v1.5] dual_mode gets a _dualmode suffix.
+    if dual_mode:
+        model_str = "dualmode"
+    elif compare_models and len(compare_models) > 1:
         model_str = "_vs_".join(safe_filename(m) for m in compare_models)
     elif compare_models and len(compare_models) == 1:
         model_str = safe_filename(compare_models[0])
@@ -473,7 +519,11 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
 
     tag_part = f"_{safe_filename(tag)}" if tag else ""
     # v1.4: Append _agentmode suffix when --agent-mode is used.
-    mode_part = "_agentmode" if agent_mode else ""
+    # v1.5: dual_mode gets _dualmode (overrides _agentmode since dual includes both).
+    if dual_mode:
+        mode_part = "_dualmode"
+    else:
+        mode_part = "_agentmode" if agent_mode else ""
     safe_ts = time.strftime("%Y%m%d-%H%M%S", time.localtime())
     json_name = f"benchmark_{depth}_{role_str}_{model_str}_runs{runs}_{safe_ts}{tag_part}{mode_part}.json"
     out_dir = Path(output_dir) if output_dir else cfg.workspace_root / "benchmarks"
@@ -483,24 +533,31 @@ def run_benchmark(roles=None, all_roles=False, depth="normal", runs=1, compare_m
         json.dump(results, f, indent=2, ensure_ascii=False)
 
     # Model recommendation after compare
-    if compare_models and len(compare_models) > 1:
+    # [v1.5] Also show recommendations for dual_mode (best mode per role).
+    show_recommendations = (compare_models and len(compare_models) > 1) or dual_mode
+    if show_recommendations:
         recommendations = {}
         for role in individual_roles:
-            best_model = None
+            best_label = None
             best_score = -1
             best_lat = 0
-            for model in compare_models:
-                model_results = results["role_results"].get(model, {})
+            for iter_label in compare_labels:
+                model_results = results["role_results"].get(iter_label, {})
                 if role in model_results:
                     s = model_results[role]["summary"]
                     if s["final"] > best_score:
                         best_score = s["final"]
-                        best_model = model
+                        best_label = iter_label
                         best_lat = s.get("latency", 0)
-            if best_model:
-                recommendations[role] = {"model": best_model, "score": best_score, "latency": best_lat}
+            if best_label:
+                recommendations[role] = {"model": best_label, "score": best_score, "latency": best_lat}
         if recommendations:
             reports.print_recommendation(recommendations)
+
+    # [v1.5] Side-by-side comparison table (after recommendations, before regression alert).
+    # Shows each role's score for each model/mode, with the best per row in green.
+    if len(compare_labels) > 1:
+        reports.print_comparison_table(results["role_results"], compare_labels, individual_roles, dual_mode=dual_mode)
 
     if regression_detected:
         reports.print_regression_alert(regressions)
@@ -520,7 +577,25 @@ def main():
     parser.add_argument("--baseline", help="Baseline JSON file to compare against")
     parser.add_argument("--regression-threshold", type=float, default=5.0, help="Exit non-zero if any role drops > N points from baseline")
     parser.add_argument("--agent-mode", action="store_true", help="v1.3: Use agent role system prompts + json_schema from ROLE_CONFIG. Tests the actual agent pipeline, not just raw model capability.")
+    parser.add_argument("--dual-mode", action="store_true", help="v1.5: Run each role twice (raw + agent-mode) and show a side-by-side comparison. Similar to --compare but comparing modes instead of models.")
+    parser.add_argument("--list", action="store_true", help="v1.5: List all available roles + task counts, then exit (no benchmark run).")
     args = parser.parse_args()
+
+    # [v1.5] --list: enumerate roles + task counts, then exit.
+    if args.list:
+        print(f"\n{reports.bold('Available benchmark roles:')}\n")
+        for group, roles in ROLE_GROUPS.items():
+            print(f"  {reports.cyan(group.upper())}")
+            for role in roles:
+                tasks = load_tasks(role)
+                easy = sum(1 for t in tasks if t.get("difficulty") == "easy")
+                medium = sum(1 for t in tasks if t.get("difficulty") == "medium")
+                hard = sum(1 for t in tasks if t.get("difficulty") == "hard")
+                print(f"    {role:20s}  {len(tasks):3d} tasks  (easy={easy}, medium={medium}, hard={hard})")
+            print()
+        print(f"{reports.yellow('Tip:')} Use --role <name> to test a specific role, or --all for all roles.")
+        print(f"{reports.yellow('Tip:')} Use --dual-mode to compare raw vs agent-mode scores side-by-side.")
+        return
 
     compare_models = None
     if args.compare:
@@ -538,6 +613,7 @@ def main():
         baseline_path=args.baseline,
         regression_threshold=args.regression_threshold,
         agent_mode=args.agent_mode,
+        dual_mode=args.dual_mode,
     )
 
     reports.print_final_table(results["role_results"], stack_comp)
