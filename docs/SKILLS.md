@@ -210,6 +210,44 @@ return {
 
 ---
 
+## 📊 Current Skills (v1.0 — implemented)
+
+The skills layer is now live. Skills are analytical views that combine multiple
+data sources with domain reasoning. They are read-only (no sync) and sit on top
+of `data_sources/`.
+
+### Entry point
+
+```
+skill(domain, sub_domain, mode, params)  # @tool in skills/dispatcher.py
+```
+
+Identical pattern to `data_source()` — JSON params string, auto-discovery.
+
+### CVM Skills
+
+| Sub-domain | Modes | Data Sources |
+|------------|-------|--------------|
+| `shareholders` | shareholders, free_float, equity_structure, summary | FRE (posicao_acionaria, distribuicao_capital) + DFP (BPP 2.03.*) |
+| `dividends` | history, annual, payable, announcements, summary | B3 dividends + DFP (DVA 7.08.04.*, BPP 2.01.05.02.*) + IPE |
+
+See [docs/skills/cvm/SKILLS.md](skills/cvm/SKILLS.md) for details.
+
+### Architecture
+
+```
+LLM → skill(domain, sub_domain, mode, params)  [skills/dispatcher.py @tool]
+       └→ skills/<domain>/__init__.py route()
+          └→ skills/<domain>/<skill>/__init__.py route(mode)
+             └→ skills/<domain>/<skill>/<skill>.py  (calls data_source query engines)
+                └→ data_sources/...
+```
+
+Skills call data_source query engines directly (no JSON round-trip). The bridge
+auto-syncs on first ticker query (`resolve_company(auto_sync=True)`).
+
+---
+
 ## 🚀 Future Skill Domains (Planned)
 
 - **`ibge`**: Brazilian Institute of Geography and Statistics (macroeconomic indicators, census data).
