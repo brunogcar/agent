@@ -72,6 +72,11 @@ def itr_db_path() -> Path:
     return cvm_data_dir() / "itr.db"
 
 
+def fre_db_path() -> Path:
+    """Return the path to the FRE database file."""
+    return cvm_data_dir() / "fre.db"
+
+
 def bridge_db_path() -> Path:
     """Return the path to the B3-CVM bridge database (ticker → CNPJ mapping)."""
     return cvm_data_dir() / "bridge.db"
@@ -119,6 +124,29 @@ def connect_itr(read_only: bool = True) -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         _ensure_schema(conn)
         return conn
+
+    if read_only:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def connect_fre(read_only: bool = True) -> sqlite3.Connection:
+    """Open a connection to the FRE database.
+
+    Args:
+        read_only: If True, opens in read-only mode (for queries).
+                   If False, opens in read-write mode (for sync).
+    """
+    path = fre_db_path()
+    if not path.exists():
+        if read_only:
+            raise FileNotFoundError(f"FRE database not found at {path}. Run sync first.")
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        return conn  # schema created by sync_engine
 
     if read_only:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
