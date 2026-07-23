@@ -69,6 +69,13 @@ def dfp_db(tmp_path, monkeypatch):
     monkeypatch.setattr("data_sources.cvm.dfp.query_engine.connect_dfp", mock_connect_dfp)
     monkeypatch.setattr("data_sources.cvm.dfp.status_reporter.connect_dfp", mock_connect_dfp)
     monkeypatch.setattr("data_sources.cvm.dfp.status_reporter.dfp_db_path", lambda: db_path)
+    # [v1.0.2] Prevent _bridge.py from trying to open the real cad.db during tests.
+    # Without this, _resolve_via_cad() finds the real JHSF in cad.db and returns
+    # JHSF's real CNPJ — which doesn't match the synthetic test data (which uses
+    # Petrobras's CNPJ for a company named JHSF).
+    from pathlib import Path as _P
+    monkeypatch.setattr("data_sources.cvm._bridge.cad_db_path", lambda: _P("/nonexistent/cad.db"))
+    monkeypatch.setattr("data_sources.cvm._bridge._resolve_via_cad", lambda name: (None, None))
     return db_path
 
 

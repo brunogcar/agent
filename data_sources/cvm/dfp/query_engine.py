@@ -51,7 +51,9 @@ def query(
         # Resolve company
         empresa_ids, company_name = resolve_company(conn, company)
         if not empresa_ids:
-            return {"status": "not_found", "error": not_found_message(company)}
+            # [v1.0.2] Surface the AMBIGUOUS disambiguation message from _bridge.py
+            # (company_name contains the message when ambiguous; empty when genuinely not found)
+            return {"status": "not_found", "error": company_name or not_found_message(company)}
 
         # Build query
         placeholders = ",".join("?" * len(empresa_ids))
@@ -150,7 +152,7 @@ def resumo(
     try:
         empresa_ids, company_name = resolve_company(conn, company)
         if not empresa_ids:
-            return {"status": "not_found", "error": not_found_message(company)}
+            return {"status": "not_found", "error": company_name or not_found_message(company)}
 
         # Query only the RESUMO account codes
         resumo_codes = list(RESUMO_LOOKUP.keys())

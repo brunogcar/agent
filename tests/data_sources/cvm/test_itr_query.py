@@ -71,6 +71,10 @@ def itr_db(tmp_path, monkeypatch):
     monkeypatch.setattr("data_sources.cvm.itr.query_engine.connect_itr", mock_connect_itr)
     monkeypatch.setattr("data_sources.cvm.itr.status_reporter.connect_itr", mock_connect_itr)
     monkeypatch.setattr("data_sources.cvm.itr.status_reporter.itr_db_path", lambda: db_path)
+    # [v1.0.2] Prevent _bridge.py from trying to open the real cad.db during tests.
+    from pathlib import Path as _P
+    monkeypatch.setattr("data_sources.cvm._bridge.cad_db_path", lambda: _P("/nonexistent/cad.db"))
+    monkeypatch.setattr("data_sources.cvm._bridge._resolve_via_cad", lambda name: (None, None))
     return db_path
 
 

@@ -47,7 +47,7 @@ def query(
     try:
         empresa_ids, company_name = resolve_company(conn, company)
         if not empresa_ids:
-            return {"status": "not_found", "error": not_found_message(company)}
+            return {"status": "not_found", "error": company_name or not_found_message(company)}
 
         placeholders = ",".join("?" * len(empresa_ids))
         params: list[Any] = list(empresa_ids) + [consolidado]
@@ -142,7 +142,7 @@ def resumo(
     try:
         empresa_ids, company_name = resolve_company(conn, company)
         if not empresa_ids:
-            return {"status": "not_found", "error": not_found_message(company)}
+            return {"status": "not_found", "error": company_name or not_found_message(company)}
 
         resumo_codes = list(RESUMO_LOOKUP.keys())
         code_placeholders = ",".join("?" * len(resumo_codes))
