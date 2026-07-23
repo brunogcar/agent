@@ -34,6 +34,54 @@ def cnpj_digits(raw: str) -> str:
     return digits if len(digits) == 14 else ""
 
 
+# ── Escala (scale) parsing ───────────────────────────────────────────────────
+
+# CVM CSVs store ESCALA_MOEDA as a Portuguese word, not a number.
+# This maps the known values to their numeric multipliers.
+_ESCALA_MAP = {
+    "MIL":      1_000,        # thousands
+    "MILHAR":   1_000,        # thousands (variant)
+    "MILHOES":  1_000_000,    # millions
+    "MILHAO":   1_000_000,    # million (singular variant)
+    "UNIDADE":  1,            # units (no scaling)
+    "UNIDADES": 1,            # units (plural variant)
+    "":         1,            # empty = treat as units
+}
+
+
+def parse_escala(escala: str | None) -> float:
+    """Parse CVM ESCALA_MOEDA string to a numeric multiplier.
+
+    CVM CSVs store scale as Portuguese words: "MIL" (thousands),
+    "MILHOES" (millions), "UNIDADE" (units). This converts them to numbers
+    so valor * escala = actual BRL.
+
+    Args:
+        escala: Raw ESCALA_MOEDA string from CVM CSV (e.g., "MIL", "MILHOES").
+
+    Returns:
+        Numeric multiplier (1, 1000, or 1000000). Returns 1 if unknown/empty.
+
+    Examples:
+        parse_escala("MIL") → 1000.0
+        parse_escala("MILHOES") → 1000000.0
+        parse_escala("UNIDADE") → 1.0
+        parse_escala("") → 1.0
+        parse_escala(None) → 1.0
+    """
+    if not escala:
+        return 1.0
+    key = str(escala).strip().upper()
+    # Direct lookup
+    if key in _ESCALA_MAP:
+        return float(_ESCALA_MAP[key])
+    # Try parsing as a number directly (some sources may store numeric)
+    try:
+        return float(key)
+    except ValueError:
+        return 1.0  # unknown escala = treat as units (safe default)
+
+
 # ── Path resolution ───────────────────────────────────────────────────────────
 
 def cvm_data_dir() -> Path:

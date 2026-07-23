@@ -178,3 +178,28 @@ class TestFREStatus:
         assert result["form"] == "FRE"
         assert result["tables"]["documentos"] == 1
         assert result["tables"]["posicao_acionaria"] == 2
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TUPLE UNPACKING REGRESSION TEST (v1.0.1)
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestFREBridgeTupleFix:
+    """[v1.0.1] Regression: _resolve_via_bridge returns (cnpj, cd_cvm) tuple.
+    FRE _resolve_fre_company must unpack the tuple, not use it as a scalar.
+    Bug: sqlite3.ProgrammingError: type 'tuple' is not supported.
+    """
+
+    def test_shareholders_with_bridge_tuple(self, fre_db, monkeypatch):
+        """shareholders(company='PETR4') must not crash when bridge returns a tuple."""
+        # Mock _resolve_via_bridge to return a tuple (cnpj, cd_cvm) — the v1.2 format
+        monkeypatch.setattr(
+            "data_sources.cvm.fre.query_engine._resolve_via_bridge",
+            lambda ticker: ("33000167000101", "9512"),
+        )
+        from data_sources.cvm.fre.query_engine import shareholders
+        result = shareholders(company="PETR4")
+        # Should return ok (CNPJ 33000167000101 is in the synthetic fre_db)
+        assert result["status"] == "ok"
+        assert result["cnpj"] == "33000167000101"
+        assert len(result["shareholders"]) >= 1

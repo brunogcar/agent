@@ -47,7 +47,8 @@ def query(
                 conditions.append("cnpj = ?")
                 params.append(cnpj)
             elif looks_like_ticker(company):
-                bridge_cnpj = _resolve_via_bridge(company)
+                # [v1.2.1] _resolve_via_bridge now returns (cnpj, cd_cvm) tuple
+                bridge_cnpj, _cd_cvm = _resolve_via_bridge(company)
                 if bridge_cnpj:
                     conditions.append("cnpj = ?")
                     params.append(bridge_cnpj)

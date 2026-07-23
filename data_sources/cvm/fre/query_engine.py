@@ -28,7 +28,8 @@ def _resolve_fre_company(conn: sqlite3.Connection, company: str) -> tuple[list[s
 
     # Try ticker → bridge → CNPJ
     if looks_like_ticker(company):
-        cnpj = _resolve_via_bridge(company)
+        # [v1.2.1] _resolve_via_bridge now returns (cnpj, cd_cvm) tuple
+        cnpj, _cd_cvm = _resolve_via_bridge(company)
         if cnpj:
             rows = conn.execute(
                 "SELECT DISTINCT cnpj, nome FROM documentos WHERE cnpj=? ORDER BY dt_refer DESC",

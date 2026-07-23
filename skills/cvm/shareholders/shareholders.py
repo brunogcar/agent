@@ -77,7 +77,7 @@ def equity_structure(company: str = "", periods: int = 5) -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
 
-    from data_sources.cvm._db import connect_dfp
+    from data_sources.cvm._db import connect_dfp, parse_escala
     from data_sources.cvm._bridge import resolve_company
 
     conn = connect_dfp(read_only=True)
@@ -138,8 +138,8 @@ def equity_structure(company: str = "", periods: int = 5) -> dict:
             date_key = r["data_fim_exerc"]
             if date_key not in periods_data:
                 periods_data[date_key] = {}
-            # valor * escala = actual BRL (escala usually 1000)
-            escala = float(r["escala"] or 1) if r["escala"] else 1
+            # [v1.0.1] parse_escala handles "MIL", "MILHOES", "UNIDADE" strings
+            escala = parse_escala(r["escala"])
             try:
                 valor_brl = float(r["valor"] or 0) * escala
             except (TypeError, ValueError):
