@@ -41,7 +41,7 @@ from typing import Any
 import requests
 
 from core.tracer import tracer
-from data_sources.cvm._db import connect_dfp, dfp_db_path
+from data_sources.cvm._db import connect_dfp, dfp_db_path, cnpj_digits  # [v1.2.1] cnpj_digits added
 from data_sources.cvm._meses import compute_meses, should_keep_row, is_valid_meses
 from data_sources.cvm.dfp.catalog import (
     URL_PATTERN, FIRST_YEAR, CSV_ENCODING, CSV_DELIMITER,
@@ -197,7 +197,8 @@ def _process_row(
       - Invalid meses dropped
     """
     # Extract fields
-    cnpj = (csv_row.get("CNPJ_CIA") or "").strip()
+    # [v1.2.1] Normalize CNPJ to 14 digits (was raw formatted "33.000.167/0001-01")
+    cnpj = cnpj_digits(csv_row.get("CNPJ_CIA") or "")
     nome = (csv_row.get("DENOM_CIA") or "").strip()
     cd_cvm = (csv_row.get("CD_CVM") or "").strip()
     grupo = (csv_row.get("GRUPO_DFP") or "").strip()

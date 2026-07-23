@@ -34,6 +34,13 @@ from data_sources.cvm._db import cnpj_digits, dfp_db_path, itr_db_path, bridge_d
 
 _TICKER_RE = re.compile(r"^[A-Z]{4}\d{1,2}$")
 
+# [v1.2.1] SQL expression to normalize CNPJ on-the-fly during comparison.
+# DFP/ITR sync engines historically stored CNPJ raw (formatted like "33.000.167/0001-01")
+# instead of normalized ("33000167000101"). This REPLACE chain handles both formats
+# so the resolver works with existing data without requiring a re-sync.
+# FRE/IPE sync engines already use cnpj_digits() (normalized), so this is a no-op for them.
+_CNPJ_NORM = "REPLACE(REPLACE(REPLACE(cnpj, '.', ''), '/', ''), '-', '')"
+
 
 def looks_like_ticker(s: str) -> bool:
     """Check if a string looks like a B3 ticker (PETR4, VALE3, etc.)."""
@@ -188,9 +195,10 @@ def resolve_company(
     if looks_like_ticker(query):
         cnpj, cd_cvm = _resolve_via_bridge(query)
         # 1a. Try CNPJ first (preferred join key)
+        # [v1.2.1] Use _CNPJ_NORM to handle formatted CNPJs in dfp.db/itr.db
         if cnpj:
             rows = conn.execute(
-                "SELECT id, nome FROM empresas WHERE cnpj = ? ORDER BY ano DESC",
+                f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
                 (cnpj,),
             ).fetchall()
             if rows:
@@ -219,7 +227,7 @@ def resolve_company(
                 cnpj, cd_cvm = _resolve_via_bridge(query)
                 if cnpj:
                     rows = conn.execute(
-                        "SELECT id, nome FROM empresas WHERE cnpj = ? ORDER BY ano DESC",
+                        f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
                         (cnpj,),
                     ).fetchall()
                     if rows:
@@ -235,10 +243,11 @@ def resolve_company(
                         return ids, rows[0]["nome"]
 
     # Step 2: CNPJ (14 digits)
+    # [v1.2.1] Use _CNPJ_NORM to handle formatted CNPJs in dfp.db/itr.db
     cnpj = cnpj_digits(query)
     if cnpj:
         rows = conn.execute(
-            "SELECT id, nome FROM empresas WHERE cnpj = ? ORDER BY ano DESC",
+            f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
             (cnpj,),
         ).fetchall()
         if rows:
@@ -246,10 +255,11 @@ def resolve_company(
             return ids, rows[0]["nome"]
 
     # Step 3a: [v1.0.1] Name → CAD (cad.db) → single CNPJ → DB
+    # [v1.2.1] Use _CNPJ_NORM to handle formatted CNPJs in dfp.db/itr.db
     cad_cnpj, cad_name = _resolve_via_cad(query)
     if cad_cnpj:
         rows = conn.execute(
-            "SELECT id, nome FROM empresas WHERE cnpj = ? ORDER BY ano DESC",
+            f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
             (cad_cnpj,),
         ).fetchall()
         if rows:

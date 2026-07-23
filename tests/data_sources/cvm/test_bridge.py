@@ -799,3 +799,101 @@ class TestBridgeResolver:
         cnpj, cd_cvm = _resolve_via_bridge("PETR4")
         assert cnpj is None
         assert cd_cvm is None
+
+    def test_resolver_formatted_cnpj_in_dfp(self, tmp_path, monkeypatch):
+        """[v1.2.1] DFP stores CNPJ formatted ('33.000.167/0001-01') but bridge
+        has normalized ('33000167000101'). Resolver must match both via REPLACE.
+
+        This is the exact bug that caused WEGE3 -> not_found: the bridge correctly
+        resolved the ticker to a normalized CNPJ, but dfp.db.empresas had the
+        formatted CNPJ from the raw CVM CSV.
+        """
+        # DFP db with FORMATTED cnpj (as stored by pre-v1.2.1 sync)
+        dfp_path = tmp_path / "dfp.db"
+        conn = sqlite3.connect(str(dfp_path))
+        conn.row_factory = sqlite3.Row
+        from data_sources.cvm._db import _ensure_schema
+        _ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO empresas (id, cnpj, nome, ano, cd_cvm) "
+            "VALUES (1, '33.000.167/0001-01', 'PETROLEO BRASILEIRO S.A.', 2023, '9512')")
+        conn.commit()
+        conn.close()
+
+        # Bridge db with NORMALIZED cnpj (as stored by bridge sync)
+        bridge_path = tmp_path / "bridge.db"
+        conn = sqlite3.connect(str(bridge_path))
+        conn.executescript(SCHEMA_SQL)
+        conn.execute(
+            "INSERT INTO ticker_map (ticker, issuing, cd_cvm, trading_name, cnpj, "
+            "denom_social, denom_comerc, sit, setor_ativ, tp_merc, synced_at) "
+            "VALUES ('PETR4', 'PETR', '9512', 'PETROBRAS', '33000167000101', "
+            "'PETROLEO BRASILEIRO S.A.', 'PETROBRAS', 'ATIVO', 'Petróleo', 'Bolsa', '2024-01-01')")
+        conn.commit()
+        conn.close()
+
+        def mock_connect_dfp(read_only=True):
+            if read_only:
+                c = sqlite3.connect(f"file:{dfp_path}?mode=ro", uri=True)
+            else:
+                c = sqlite3.connect(str(dfp_path))
+            c.row_factory = sqlite3.Row
+            return c
+        monkeypatch.setattr("data_sources.cvm._db.connect_dfp", mock_connect_dfp)
+        monkeypatch.setattr("data_sources.cvm._bridge.bridge_db_path", lambda: bridge_path)
+        monkeypatch.setattr("data_sources.cvm._db.bridge_db_path", lambda: bridge_path)
+        monkeypatch.setattr("data_sources.cvm._bridge.cad_db_path",
+                            lambda: Path("/nonexistent/cad.db"))
+        monkeypatch.setattr("data_sources.cvm._bridge._resolve_via_cad",
+                            lambda name: (None, None))
+
+        from data_sources.cvm._bridge import resolve_company
+        from data_sources.cvm._db import connect_dfp
+        conn = connect_dfp(read_only=True)
+        try:
+            # Bridge has normalized CNPJ, dfp.db has formatted CNPJ — must still match
+            ids, name = resolve_company(conn, "PETR4", auto_sync=False)
+            assert ids == [1], f"Expected [1], got {ids} — CNPJ format mismatch not handled"
+            assert "PETROLEO" in name
+        finally:
+            conn.close()
+
+    def test_resolver_direct_cnpj_query_formatted_db(self, tmp_path, monkeypatch):
+        """[v1.2.1] Direct CNPJ query ('33000167000101') must also match formatted
+        CNPJ in dfp.db ('33.000.167/0001-01') via REPLACE."""
+        dfp_path = tmp_path / "dfp.db"
+        conn = sqlite3.connect(str(dfp_path))
+        conn.row_factory = sqlite3.Row
+        from data_sources.cvm._db import _ensure_schema
+        _ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO empresas (id, cnpj, nome, ano, cd_cvm) "
+            "VALUES (1, '33.000.167/0001-01', 'PETROLEO BRASILEIRO S.A.', 2023, '9512')")
+        conn.commit()
+        conn.close()
+
+        def mock_connect_dfp(read_only=True):
+            if read_only:
+                c = sqlite3.connect(f"file:{dfp_path}?mode=ro", uri=True)
+            else:
+                c = sqlite3.connect(str(dfp_path))
+            c.row_factory = sqlite3.Row
+            return c
+        monkeypatch.setattr("data_sources.cvm._db.connect_dfp", mock_connect_dfp)
+        monkeypatch.setattr("data_sources.cvm._bridge.bridge_db_path",
+                            lambda: tmp_path / "nonexistent.db")
+        monkeypatch.setattr("data_sources.cvm._bridge.cad_db_path",
+                            lambda: Path("/nonexistent/cad.db"))
+        monkeypatch.setattr("data_sources.cvm._bridge._resolve_via_cad",
+                            lambda name: (None, None))
+
+        from data_sources.cvm._bridge import resolve_company
+        from data_sources.cvm._db import connect_dfp
+        conn = connect_dfp(read_only=True)
+        try:
+            # Query by normalized CNPJ, db has formatted — must match
+            ids, name = resolve_company(conn, "33000167000101", auto_sync=False)
+            assert ids == [1]
+            assert "PETROLEO" in name
+        finally:
+            conn.close()
