@@ -1,24 +1,14 @@
 """data_sources/b3/api/sync_engine.py -- Sync B3 data via paginated JSON API.
 
-B3 migrated from the old 3-step CSV download (publications -> token -> CSV)
-to a paginated JSON API. The new API returns JSON with column metadata +
-values, 20 rows per page. No authentication/token needed.
+B3 migrated from the old 3-step CSV download to a paginated JSON API.
+20 rows per page, no authentication needed.
+
+[v1.0.4] Batch commit + resume: Commits every BATCH_SIZE pages (10K rows)
+so a cancelled sync keeps what's been fetched. On restart, resumes from
+the last committed page. Uses ThreadPoolExecutor(10 workers) for speed.
 
 API: GET /tabelas/table/{tableName}/{date}/{page}
   -> {"name", "columns": [...], "values": [[...], ...], "pageCount": N}
-
-Flow:
-  1. Fetch page 1 to get column metadata + pageCount
-  2. Create table schema based on returned columns
-  3. Fetch all pages (1..pageCount), collecting rows
-  4. DELETE old data for this date + INSERT new rows
-  5. Record sync_state
-
-[v1.0.2] Performance: Uses requests.Session for connection reuse (3x faster).
-[v1.0.2] Progress: Prints progress to stderr every page (flush=True) so the
-user sees what's happening. tracer.step only fires every 50 pages to avoid
-trace log bloat.
-[v1.0.2] Empty response: Auto-retries with yesterday if pageCount=0.
 """
 
 from __future__ import annotations
@@ -26,33 +16,23 @@ from __future__ import annotations
 import sqlite3
 import sys
 import time
-from datetime import datetime, date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from typing import Any
 
-import requests
+import httpx
 
 from core.tracer import tracer
 from data_sources.b3.api.catalog import (
     API_BASE, PAGE_SIZE, B3_TABLES, db_path, connect, ensure_schema,
 )
 
-# Shared session for connection reuse (3x faster than per-request connections)
-_session: requests.Session | None = None
-
-
-def _get_session() -> requests.Session:
-    global _session
-    if _session is None:
-        _session = requests.Session()
-        _session.headers.update({
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-        })
-    return _session
+MAX_WORKERS = 10
+BATCH_SIZE = 500  # commit every 500 pages (10K rows)
 
 
 def _progress(msg: str) -> None:
-    """Print progress to stderr (flushed) so the user sees it immediately."""
+    """Print progress to stderr (flushed)."""
     print(msg, file=sys.stderr, flush=True)
 
 
@@ -62,17 +42,16 @@ def sync(
     force: bool = False,
     trace_id: str = "",
 ) -> dict:
-    """Download B3 data via paginated JSON API and store to SQLite.
+    """Download B3 data via concurrent paginated JSON API with batch commit + resume.
 
     Args:
-        table: Table name from B3_TABLES (instruments, trades, after_hours, derivatives).
-               Default: instruments.
-        date_str: Date in YYYY-MM-DD format. Default: today.
-        force: Re-download even if already synced for this date.
-        trace_id: Tracer ID for logging.
+        table: instruments, trades, after_hours, derivatives. Default: instruments.
+        date_str: YYYY-MM-DD. Default: today.
+        force: Re-download from page 1 (ignores partial sync state).
+        trace_id: Tracer ID.
 
     Returns:
-        Dict with sync status, row count, page count.
+        Dict with sync status, row count, page count, elapsed time.
     """
     tid = trace_id or ""
 
@@ -82,128 +61,152 @@ def sync(
 
     if not date_str:
         date_str = datetime.now().strftime("%Y-%m-%d")
-        _user_specified_date = False  # [v1.0.2] auto-date; can retry with yesterday
+        _user_specified_date = False
     else:
-        _user_specified_date = True  # user specified a date; respect it
+        _user_specified_date = True
 
     api_name = B3_TABLES[table]["api_name"]
-    tracer.step(tid, "b3_sync", f"Syncing {table} ({api_name}) for {date_str}")
+    _progress(f"[b3_sync] Syncing {table} ({api_name}) for {date_str}")
 
-    # Check if already synced (unless force)
     conn = connect(table, read_only=False)
     try:
-        # Try to create sync_state if it doesn't exist yet
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sync_state (
-                table_name  TEXT,
-                date        TEXT,
-                synced_at   TEXT,
-                row_count   INTEGER DEFAULT 0,
-                page_count  INTEGER DEFAULT 0,
-                PRIMARY KEY (table_name, date)
-            )
-        """)
-        conn.commit()
+        _ensure_sync_state_table(conn)
 
+        # ── Resume check: do we have a partial sync for this date? ─────────
+        resume_from = 1
         if not force:
-            existing = conn.execute(
+            partial = conn.execute(
                 "SELECT * FROM sync_state WHERE table_name=? AND date=?",
                 (table, date_str),
             ).fetchone()
-            if existing:
-                return {
-                    "status": "skipped",
-                    "table": table,
-                    "date": date_str,
-                    "rows": existing["row_count"],
-                    "synced_at": existing["synced_at"],
-                }
+            if partial:
+                # [v1.0.4 fix] Check if sync is COMPLETE (last_page == page_count)
+                # vs PARTIAL (last_page < page_count). The old check used
+                # row_count > 0 which treated any partial sync as complete.
+                last_page = partial["last_page"] or 0
+                total_pages = partial["page_count"] or 0
+                if last_page > 0 and total_pages > 0 and last_page >= total_pages:
+                    # Complete sync — skip
+                    return {
+                        "status": "skipped",
+                        "table": table, "date": date_str,
+                        "rows": partial["row_count"],
+                        "pages": partial["page_count"],
+                        "synced_at": partial["synced_at"],
+                    }
+                # Partial: resume from last_page + 1
+                resume_from = last_page + 1
+                if resume_from > 1:
+                    _progress(f"[b3_sync] Resuming from page {resume_from:,} (partial sync: {last_page:,}/{total_pages:,} pages, {partial['row_count']:,} rows)")
 
-        # Step 1: Fetch page 1 to get column metadata + pageCount
-        page1 = _fetch_page(api_name, date_str, 1)
-        if not page1:
-            return {"status": "error", "table": table, "date": date_str,
-                    "error": "No data returned from B3 API (page 1 empty)"}
-
-        columns = [c["name"] for c in page1.get("columns", [])]
-        if not columns:
-            return {"status": "error", "table": table, "date": date_str,
-                    "error": "No columns in B3 API response"}
-
-        page_count = page1.get("pageCount", 0)
-        all_values = list(page1.get("values", []))
-
-        # [v1.0.2] Handle empty response (pageCount=0, no values).
-        # B3 may not have published data yet for today. Try previous day.
-        if page_count == 0 and not all_values and not _user_specified_date:
-            from datetime import timedelta
-            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-            tracer.step(tid, "b3_sync", f"No data for today, trying {yesterday}")
-            date_str = yesterday
+        # ── Fetch page 1 to get column metadata + pageCount ─────────────────
+        # [v1.0.4] Skip page 1 fetch on resume — we already have columns from the schema
+        if resume_from > 1:
+            # Resuming: get columns from existing table schema
+            col_rows = conn.execute(f"PRAGMA table_info({B3_TABLES[table]['table']})").fetchall()
+            columns = [r["name"] for r in col_rows if r["name"] != "_ingested_at"]
+            page_count = total_pages  # from partial sync_state
+            page1 = None  # don't re-process page 1
+        else:
             page1 = _fetch_page(api_name, date_str, 1)
-            if not page1 or not page1.get("values"):
-                return {"status": "no_data", "table": table, "date": date_str,
-                        "error": "No data available from B3 API. Market may not have closed yet, or it's a weekend/holiday."}
+            if not page1:
+                # Try yesterday if user didn't specify a date
+                if not _user_specified_date:
+                    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                    _progress(f"[b3_sync] No data for today, trying {yesterday}")
+                    date_str = yesterday
+                    page1 = _fetch_page(api_name, date_str, 1)
+                if not page1:
+                    return {"status": "no_data", "table": table, "date": date_str,
+                            "error": "No data from B3 API. Market may not have closed yet."}
+
             columns = [c["name"] for c in page1.get("columns", [])]
-            page_count = page1.get("pageCount", 1)
-            all_values = list(page1.get("values", []))
+            if not columns:
+                return {"status": "error", "table": table, "date": date_str,
+                        "error": "No columns in B3 API response"}
 
-        if page_count == 0 and not all_values:
-            return {"status": "no_data", "table": table, "date": date_str,
-                    "error": f"B3 API returned 0 pages for {date_str}. Data may not be available yet."}
+            page_count = page1.get("pageCount", 0)
 
-        tracer.step(tid, "b3_sync", f"Page 1: {len(all_values)} rows, {page_count} pages total, {len(columns)} columns")
-        _progress(f"[b3_sync] {table}: {page_count} pages, ~{page_count * 20:,} rows. Syncing...")
+            if page_count == 0:
+                return {"status": "no_data", "table": table, "date": date_str,
+                        "error": f"B3 API returned 0 pages for {date_str}."}
 
-        # Step 2: Create table schema based on API columns
         ensure_schema(conn, table, columns)
-
-        # Step 3: Fetch remaining pages
-        t0 = time.time()
-        for page_num in range(2, page_count + 1):
-            page_data = _fetch_page(api_name, date_str, page_num)
-            if page_data and page_data.get("values"):
-                all_values.extend(page_data["values"])
-
-            # Progress: every page to stderr (flushed), tracer every 50
-            if page_num % 100 == 0 or page_num == page_count:
-                elapsed = time.time() - t0
-                rate = page_num / elapsed if elapsed > 0 else 0
-                eta = (page_count - page_num) / rate if rate > 0 else 0
-                _progress(f"[b3_sync] Page {page_num:,}/{page_count:,} ({len(all_values):,} rows) — {rate:.1f} p/s, ETA {eta:.0f}s")
-            if page_num % 50 == 0:
-                tracer.step(tid, "b3_sync", f"Page {page_num}/{page_count}, {len(all_values)} rows")
-
-        tracer.step(tid, "b3_sync", f"Total: {len(all_values)} rows across {page_count} pages")
-
-        # Step 4: DELETE old data for this date + INSERT new
         db_table = B3_TABLES[table]["table"]
-
-        # Find the date column name (usually "RptDt")
         date_col = "RptDt" if "RptDt" in columns else columns[0]
-
-        conn.execute(f"DELETE FROM {db_table} WHERE {date_col} LIKE ?", (f"%{date_str}%",))
-
-        # Insert rows
         col_str = ", ".join(columns) + ", _ingested_at"
         placeholders = ", ".join(["?"] * (len(columns) + 1))
         insert_sql = f"INSERT INTO {db_table} ({col_str}) VALUES ({placeholders})"
 
+        # ── If starting fresh (page 1), delete old data + store page 1 ──────
+        total_rows = 0
+        if resume_from > 1:
+            # Resuming: keep existing rows, start counting from partial count
+            total_rows = partial["row_count"]
+        elif page1:
+            # Fresh start: delete old data, store page 1 values
+            conn.execute(f"DELETE FROM {db_table} WHERE {date_col} LIKE ?", (f"%{date_str}%",))
+            conn.commit()
+            page1_values = page1.get("values", [])
+            total_rows += _insert_rows(conn, insert_sql, columns, page1_values)
+            _save_partial_state(conn, table, date_str, total_rows, page_count, 1)
+
+        _progress(f"[b3_sync] {table}: {page_count:,} pages total, starting from page {resume_from:,}. Fetching with {MAX_WORKERS} workers...")
+
+        # ── Fetch remaining pages in batches (concurrent + commit) ──────────
+        t0 = time.time()
+        pages_done = resume_from - 1  # already done before resume
+
+        while resume_from <= page_count:
+            # Calculate batch range
+            batch_end = min(resume_from + BATCH_SIZE - 1, page_count)
+            batch_pages = list(range(resume_from, batch_end + 1))
+
+            # Fetch batch concurrently
+            batch_results: dict[int, list] = {}
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                future_to_page = {
+                    pool.submit(_fetch_page, api_name, date_str, p): p
+                    for p in batch_pages
+                }
+                for future in as_completed(future_to_page):
+                    p = future_to_page[future]
+                    try:
+                        data = future.result()
+                        if data and data.get("values"):
+                            batch_results[p] = data["values"]
+                    except Exception:
+                        batch_results[p] = []
+
+            # Insert batch in page order
+            batch_rows = 0
+            for p in sorted(batch_results.keys()):
+                batch_rows += _insert_rows(conn, insert_sql, columns, batch_results[p])
+
+            total_rows += batch_rows
+            pages_done += len(batch_pages)
+
+            # Commit batch + save partial state
+            conn.commit()
+            _save_partial_state(conn, table, date_str, total_rows, page_count, batch_end)
+
+            # Progress
+            elapsed = time.time() - t0
+            rate = pages_done / elapsed if elapsed > 0 else 0
+            eta = (page_count - pages_done) / rate if rate > 0 else 0
+            _progress(f"[b3_sync] {pages_done:,}/{page_count:,} pages ({total_rows:,} rows) — {rate:.1f} p/s, ETA {eta:.0f}s — committed")
+
+            resume_from = batch_end + 1
+
+        elapsed_total = time.time() - t0
+        _progress(f"[b3_sync] Done: {total_rows:,} rows in {elapsed_total:.0f}s")
+
+        # ── Mark sync as complete ───────────────────────────────────────────
         now = datetime.now().isoformat()
-        batch = []
-        for row in all_values:
-            # Pad/truncate row to match columns length
-            vals = list(row) + [""] * (len(columns) - len(row))
-            vals = vals[:len(columns)] + [now]
-            batch.append(tuple(vals))
-
-        conn.executemany(insert_sql, batch)
-
-        # Step 5: Record sync state
         conn.execute(
-            "INSERT OR REPLACE INTO sync_state (table_name, date, synced_at, row_count, page_count) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (table, date_str, now, len(all_values), page_count),
+            "INSERT OR REPLACE INTO sync_state (table_name, date, synced_at, row_count, page_count, last_page) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (table, date_str, now, total_rows, page_count, page_count),
         )
         conn.commit()
 
@@ -211,10 +214,11 @@ def sync(
             "status": "ok",
             "table": table,
             "date": date_str,
-            "rows": len(all_values),
+            "rows": total_rows,
             "pages": page_count,
             "columns": len(columns),
             "synced_at": now,
+            "elapsed_s": round(elapsed_total, 1),
         }
 
     except Exception as e:
@@ -223,14 +227,55 @@ def sync(
         conn.close()
 
 
-def _fetch_page(api_name: str, date_str: str, page: int) -> dict | None:
-    """Fetch a single page from the B3 JSON API using a shared session.
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-    Returns the JSON response dict, or None on failure.
-    """
+def _ensure_sync_state_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sync_state (
+            table_name  TEXT,
+            date        TEXT,
+            synced_at   TEXT,
+            row_count   INTEGER DEFAULT 0,
+            page_count  INTEGER DEFAULT 0,
+            last_page   INTEGER DEFAULT 0,
+            PRIMARY KEY (table_name, date)
+        )
+    """)
+    conn.commit()
+
+
+def _save_partial_state(conn, table, date_str, row_count, page_count, last_page):
+    """Save partial sync state so a cancelled sync can resume."""
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_state (table_name, date, synced_at, row_count, page_count, last_page) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (table, date_str, datetime.now().isoformat(), row_count, page_count, last_page),
+    )
+    conn.commit()
+
+
+def _insert_rows(conn, insert_sql, columns, values) -> int:
+    """Insert a batch of rows. Returns count inserted."""
+    if not values:
+        return 0
+    now = datetime.now().isoformat()
+    batch = []
+    for row in values:
+        vals = list(row) + [""] * (len(columns) - len(row))
+        vals = vals[:len(columns)] + [now]
+        batch.append(tuple(vals))
+    conn.executemany(insert_sql, batch)
+    return len(batch)
+
+
+def _fetch_page(api_name: str, date_str: str, page: int) -> dict | None:
+    """Fetch a single page from the B3 JSON API (thread-safe via httpx)."""
     url = f"{API_BASE}/{api_name}/{date_str}/{page}"
     try:
-        resp = _get_session().get(url, timeout=30)
+        resp = httpx.get(url, timeout=30, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+        })
         if resp.status_code == 200:
             return resp.json()
         return None
