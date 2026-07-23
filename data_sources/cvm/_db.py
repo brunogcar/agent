@@ -92,6 +92,33 @@ def bridge_db_path() -> Path:
     return cvm_data_dir() / "bridge.db"
 
 
+def connect_bridge(read_only: bool = True) -> sqlite3.Connection:
+    """Open a connection to the B3-CVM bridge database.
+
+    Args:
+        read_only: If True, opens in read-only mode (for queries).
+                   If False, opens in read-write mode (for sync).
+
+    The schema (ticker_map + sync_log) is created by the bridge sub-domain's
+    catalog.ensure_schema() during sync. This helper just opens the connection.
+    """
+    path = bridge_db_path()
+    if not path.exists():
+        if read_only:
+            raise FileNotFoundError(
+                f"Bridge database not found at {path}. "
+                f"Run data_source(domain='cvm', sub_domain='bridge', mode='sync') first."
+            )
+        conn = sqlite3.connect(str(path))
+    else:
+        conn = sqlite3.connect(
+            f"file:{path}?mode=ro" if read_only else str(path),
+            uri=read_only,
+        )
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 # ── Connection helpers ────────────────────────────────────────────────────────
 
 def connect_dfp(read_only: bool = True) -> sqlite3.Connection:

@@ -10,6 +10,10 @@ CVM (Comissão de Valores Mobiliários) — the Brazilian SEC. Provides financia
 |---|---|---|---|
 | [DFP](cvm/dfp/) | Annual financial statements (Demonstrações Financeiras Padronizadas) | `memory_db/cvm/dfp.db` | `dados.cvm.gov.br/.../DFP/` |
 | [ITR](cvm/itr/) | Quarterly financial statements (Informações Trimestrais) | `memory_db/cvm/itr.db` | `dados.cvm.gov.br/.../ITR/` |
+| [FRE](cvm/fre/) | Formulário de Referência (governance + ownership) | `memory_db/cvm/fre.db` | `dados.cvm.gov.br/.../FRE/` |
+| [IPE](cvm/ipe/) | Material events (Informações Periódicas e Eventuais) | `memory_db/cvm/ipe.db` | `dados.cvm.gov.br/.../IPE/` |
+| [CAD](cvm/cad/) | Company register (Cadastro de Companhias Abertas) | `memory_db/cvm/cad.db` | `dados.cvm.gov.br/.../CAD/` |
+| [Bridge](cvm/bridge/) | B3-CVM identity bridge (ticker → cd_cvm → CNPJ) | `memory_db/cvm/bridge.db` | b3/dividends API + cvm/cad |
 
 ## Statement Groups (shared)
 
@@ -42,7 +46,7 @@ Both DFP + ITR contain the same statement types:
 | File | Purpose |
 |---|---|
 | `_db.py` | Path resolution, CNPJ normalization, connection helpers, schema creation |
-| `_bridge.py` | Company resolution: ticker → CNPJ → empresa_id (via optional bridge.db) |
+| `_bridge.py` | Company resolution: ticker → (cnpj, cd_cvm) → empresa_id (via optional bridge.db, with cd_cvm fallback). See [Bridge sub-domain](cvm/bridge/) for sync. |
 | `_meses.py` | `compute_meses()`, `is_snapshot()`, `is_flow()`, `should_keep_row()` (ORDEM_EXERC filter) |
 
 ---

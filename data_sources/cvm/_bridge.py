@@ -43,29 +43,36 @@ def looks_like_ticker(s: str) -> bool:
     return bool(_TICKER_RE.match(s))
 
 
-def _resolve_via_bridge(ticker: str) -> str | None:
-    """Resolve a B3 ticker to a CNPJ via the bridge.db.
+def _resolve_via_bridge(ticker: str) -> tuple[str | None, str | None]:
+    """Resolve a B3 ticker via bridge.db (ticker_map table).
 
-    Returns the 14-digit CNPJ, or None if the bridge doesn't exist or the
-    ticker isn't found.
+    [v1.1] Now reads the full ticker_map row and returns (cnpj, cd_cvm).
+    The bridge sync (data_sources/cvm/bridge/) populates this table from the
+    dividends API (codeCVM) + CAD (CNPJ + names).
+
+    Returns:
+        (cnpj, cd_cvm) -- both may be None/empty if bridge.db doesn't exist,
+        the ticker isn't found, or CAD didn't have the cd_cvm.
+        cnpj is preferred for DFP/ITR joins; cd_cvm is a fallback (empresas
+        has a cd_cvm column too).
     """
     bridge = bridge_db_path()
     if not bridge.exists():
-        return None
+        return None, None
 
     try:
         conn = sqlite3.connect(f"file:{bridge}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT cnpj FROM ticker_cnpj WHERE ticker = ?",
+            "SELECT cnpj, cd_cvm FROM ticker_map WHERE ticker = ?",
             (ticker.strip().upper(),),
         ).fetchone()
         conn.close()
         if row:
-            return row["cnpj"]
+            return row["cnpj"] or None, row["cd_cvm"] or None
     except Exception:
         pass
-    return None
+    return None, None
 
 
 def _resolve_via_cad(name: str) -> tuple[str | None, str | None]:
@@ -125,15 +132,38 @@ def _resolve_via_cad(name: str) -> tuple[str | None, str | None]:
         return None, None
 
 
+def _auto_sync_bridge(ticker: str) -> bool:
+    """[v1.2] Auto-sync a ticker into bridge.db. Returns True on success.
+
+    Called by resolve_company when a ticker isn't in bridge.db. Delegates to
+    bridge.sync_engine.sync, which: fetches dividends (if needed) → CAD join →
+    upserts bridge.db. If the sync fails (network error, etc.), returns False
+    and the resolver falls through to other resolution methods.
+
+    Wrapped in a try/except so resolver failures never crash the caller.
+    """
+    try:
+        from data_sources.cvm.bridge.sync_engine import sync as bridge_sync
+        result = bridge_sync(ticker=ticker, force=False)
+        return result.get("status") == "ok"
+    except Exception:
+        return False
+
+
 def resolve_company(
     conn: sqlite3.Connection,
     query: str,
+    auto_sync: bool = True,
 ) -> tuple[list[int], str]:
     """Resolve a company identifier to empresa IDs in the connected DB.
 
     Args:
         conn: SQLite connection to dfp.db or itr.db.
         query: B3 ticker, CNPJ, or company name fragment.
+        auto_sync: [v1.2] If True (default), auto-sync the bridge when a ticker
+            isn't in bridge.db. This makes the first query for a new ticker
+            slower (network fetch) but all subsequent queries instant. Set to
+            False for batch operations or tests.
 
     Returns:
         (empresa_ids, company_name) — list of IDs + the best-matching name.
@@ -143,15 +173,21 @@ def resolve_company(
     (different CNPJs), returns ([], "") — the caller should surface a
     disambiguation error. This prevents silently merging data from
     unrelated companies.
+
+    [v1.2] Auto-sync-on-demand: when a ticker isn't in bridge.db, the resolver
+    calls bridge.sync_engine.sync(ticker=...) transparently, then retries.
+    This means you can query DFP/ITR/FRE/IPE with any ticker without pre-syncing
+    the bridge — the first query populates it.
     """
     if not query or not query.strip():
         return [], ""
 
     query = query.strip()
 
-    # Step 1: B3 ticker → bridge → CNPJ
+    # Step 1: B3 ticker → bridge → (cnpj, cd_cvm)
     if looks_like_ticker(query):
-        cnpj = _resolve_via_bridge(query)
+        cnpj, cd_cvm = _resolve_via_bridge(query)
+        # 1a. Try CNPJ first (preferred join key)
         if cnpj:
             rows = conn.execute(
                 "SELECT id, nome FROM empresas WHERE cnpj = ? ORDER BY ano DESC",
@@ -160,6 +196,43 @@ def resolve_company(
             if rows:
                 ids = [r["id"] for r in rows]
                 return ids, rows[0]["nome"]
+        # 1b. [v1.1] Fallback: try cd_cvm (empresas has a cd_cvm column).
+        #     This handles the case where the bridge has cd_cvm but no CNPJ
+        #     (CAD miss / stale cad.db / very new listing).
+        if cd_cvm:
+            rows = conn.execute(
+                "SELECT id, nome FROM empresas WHERE cd_cvm = ? ORDER BY ano DESC",
+                (str(cd_cvm).strip(),),
+            ).fetchall()
+            if rows:
+                ids = [r["id"] for r in rows]
+                return ids, rows[0]["nome"]
+        # 1c. [v1.2] Auto-sync-on-demand: if the ticker isn't in bridge.db at all
+        #     (both cnpj and cd_cvm are None), automatically sync the bridge for
+        #     this ticker, then retry. This makes the bridge self-healing — the
+        #     first time a ticker is queried, it's fetched + bridged transparently.
+        #     Subsequent queries hit the cache (instant).
+        #     Disabled when auto_sync=False (e.g., tests, batch operations).
+        if auto_sync and cnpj is None and cd_cvm is None:
+            synced = _auto_sync_bridge(query)
+            if synced:
+                cnpj, cd_cvm = _resolve_via_bridge(query)
+                if cnpj:
+                    rows = conn.execute(
+                        "SELECT id, nome FROM empresas WHERE cnpj = ? ORDER BY ano DESC",
+                        (cnpj,),
+                    ).fetchall()
+                    if rows:
+                        ids = [r["id"] for r in rows]
+                        return ids, rows[0]["nome"]
+                if cd_cvm:
+                    rows = conn.execute(
+                        "SELECT id, nome FROM empresas WHERE cd_cvm = ? ORDER BY ano DESC",
+                        (str(cd_cvm).strip(),),
+                    ).fetchall()
+                    if rows:
+                        ids = [r["id"] for r in rows]
+                        return ids, rows[0]["nome"]
 
     # Step 2: CNPJ (14 digits)
     cnpj = cnpj_digits(query)
@@ -212,7 +285,10 @@ def not_found_message(query: str) -> str:
     if looks_like_ticker(query):
         return (
             f"Company '{query}' not found. Ticker resolution requires the B3-CVM "
-            f"bridge database (bridge.db). Try syncing the bridge, or search by "
-            f"company name instead: mode='search', params='{{\"query\": \"{query}\"}}'"
+            f"bridge database (bridge.db). Sync it with: "
+            f"data_source(domain='cvm', sub_domain='bridge', mode='sync', "
+            f"params='{{\"ticker\":\"{query}\"}}'). "
+            f"Or search by company name instead: mode='search', "
+            f"params='{{\"query\":\"{query}\"}}'"
         )
     return f"Company '{query}' not found in the database."
