@@ -23,7 +23,7 @@ Both DFP + ITR contain the same statement types:
 | DFC_MI | Fluxo de Caixa (Indirect Method) | Flow | Yes |
 | DFC_MD | Fluxo de Caixa (Direct Method) | Flow | Yes |
 | DVA | Valor Adicionado (Value Added) | Flow | Yes |
-| DMPL | Mutações do Patr. Líquido (Equity Changes) | Flow | Yes |
+| ~~DMPL~~ | ~~Mutações do Patr. Líquido~~ | ~~Flow~~ | ~~Yes~~ — **excluded v1.0.1** (2D statement, COLUNA_DF) |
 
 ## The `meses` Field
 

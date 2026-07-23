@@ -134,6 +134,10 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str) 
             lower = info.filename.lower()
             if "meta_" in lower or "dicion" in lower:
                 continue
+            # [v1.0.1 P0] Skip DMPL files — 2D statement (COLUNA_DF) needs schema
+            # support. rapinav2 also excludes DMPL for this reason.
+            if "dmpl" in lower:
+                continue
 
             raw_csv = zf.read(info.filename)
             text = raw_csv.decode(CSV_ENCODING, errors="replace")
@@ -171,6 +175,7 @@ def _process_row(
     versao_str = (csv_row.get("VERSAO") or "1").strip()
     moeda = (csv_row.get("MOEDA") or "").strip()
     escala = (csv_row.get("ESCALA_MOEDA") or "").strip()
+    st_conta_fixa = (csv_row.get("ST_CONTA_FIXA") or "").strip()
 
     if not cnpj or not dt_fim or not codigo:
         return 0
@@ -232,11 +237,11 @@ def _process_row(
         """INSERT OR REPLACE INTO contas
            (id_empresa, codigo, descricao, grupo, consolidado,
             data_ini_exerc, data_fim_exerc, meses, ordem_exerc, versao,
-            valor, escala, moeda)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            st_conta_fixa, valor, escala, moeda)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (empresa_id, codigo, descricao, grupo, consolidado,
          dt_ini, dt_fim, meses, ordem, versao,
-         valor, escala, moeda),
+         st_conta_fixa, valor, escala, moeda),
     )
 
     return 1

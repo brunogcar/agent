@@ -249,6 +249,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             meses          INTEGER NOT NULL,
             ordem_exerc    TEXT,
             versao         INTEGER DEFAULT 1,
+            st_conta_fixa  TEXT,
             valor          REAL NOT NULL,
             escala         TEXT,
             moeda          TEXT,
