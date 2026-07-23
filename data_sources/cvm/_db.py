@@ -82,6 +82,11 @@ def ipe_db_path() -> Path:
     return cvm_data_dir() / "ipe.db"
 
 
+def cad_db_path() -> Path:
+    """Return the path to the CAD (company register) database file."""
+    return cvm_data_dir() / "cad.db"
+
+
 def bridge_db_path() -> Path:
     """Return the path to the B3-CVM bridge database (ticker → CNPJ mapping)."""
     return cvm_data_dir() / "bridge.db"
@@ -172,6 +177,29 @@ def connect_ipe(read_only: bool = True) -> sqlite3.Connection:
     if not path.exists():
         if read_only:
             raise FileNotFoundError(f"IPE database not found at {path}. Run sync first.")
+        conn = sqlite3.connect(str(path))
+        conn.row_factory = sqlite3.Row
+        return conn  # schema created by sync_engine
+
+    if read_only:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def connect_cad(read_only: bool = True) -> sqlite3.Connection:
+    """Open a connection to the CAD (company register) database.
+
+    Args:
+        read_only: If True, opens in read-only mode (for queries).
+                   If False, opens in read-write mode (for sync).
+    """
+    path = cad_db_path()
+    if not path.exists():
+        if read_only:
+            raise FileNotFoundError(f"CAD database not found at {path}. Run sync first.")
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
         return conn  # schema created by sync_engine
