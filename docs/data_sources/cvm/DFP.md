@@ -42,6 +42,16 @@ data_source(domain="cvm", sub_domain="dfp", mode="resumo", params='{"company":"P
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync DFP (annual financial statements — all years, ~10 min)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.dfp.sync_engine import sync; print(sync())"
+
+# Sync specific year only (~30s)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.dfp.sync_engine import sync; print(sync(years=[2024]))"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

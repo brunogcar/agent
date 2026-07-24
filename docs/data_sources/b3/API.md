@@ -43,6 +43,25 @@ data_source(domain="b3", sub_domain="api", mode="search_company", params='{"name
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync instruments (all listed securities — ~7000 pages, ~90 min)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.api.sync_engine import sync; print(sync(table='instruments'))"
+
+# Sync trades (daily prices — ~135 pages, ~1 min)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.api.sync_engine import sync; print(sync(table='trades'))"
+
+# Sync after-hours trades
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.api.sync_engine import sync; print(sync(table='after_hours'))"
+
+# Sync derivatives (open interest — ~2300 pages, ~30 min)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.api.sync_engine import sync; print(sync(table='derivatives'))"
+
+# Sync for a specific date (YYYY-MM-DD)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.api.sync_engine import sync; print(sync(table='trades', date_str='2026-07-23'))"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

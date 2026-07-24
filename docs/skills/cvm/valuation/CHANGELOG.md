@@ -8,7 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
-| v1.0 | 2026-07-24 | **Initial implementation.** 2 modes: ratios (P/L, P/VPA, EV, P/EBIT, P/FCO, Dividend Yield, Market Cap) + summary (ratios + data source status). Combines b3 trades.db (price) + cvm dfp.db (financials) + cvm fre.db (shares) + bridge (ticker→CNPJ). Uses core/br_validator. 16 tests. |
+| v1.0 | 2026-07-24 | **Initial implementation.** 2 modes: ratios (P/L, P/VPA, EV, P/EBIT, P/FCO, Dividend Yield, Market Cap) + summary. Price from investsite (primary) or b3 trades.db (fallback). Shares from FRE (primary) or investsite (fallback). Financials from DFP annual. Auto-sync bridge for new tickers. 16 tests. |
 
 ---
 

@@ -40,6 +40,16 @@ data_source(domain="b3", sub_domain="dividends", mode="status")
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync dividends for a single ticker
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.dividends.sync_engine import sync; print(sync(ticker='PETR4'))"
+
+# Force re-download (ignore cache)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.dividends.sync_engine import sync; print(sync(ticker='PETR4', force=True))"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

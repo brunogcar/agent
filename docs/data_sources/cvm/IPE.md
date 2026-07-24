@@ -40,6 +40,16 @@ data_source(domain="cvm", sub_domain="ipe", mode="query", params='{"keyword":"di
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync IPE (material events — all years, ~5 min)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.ipe.sync_engine import sync; print(sync())"
+
+# Sync specific year only (~5s)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.ipe.sync_engine import sync; print(sync(years=[2024]))"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

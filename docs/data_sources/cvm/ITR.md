@@ -36,6 +36,16 @@ data_source(domain="cvm", sub_domain="itr", mode="query", params='{"company":"PE
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync ITR (quarterly financial statements — all years, ~15 min)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.itr.sync_engine import sync; print(sync())"
+
+# Sync specific year only (~30s)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.itr.sync_engine import sync; print(sync(years=[2024]))"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

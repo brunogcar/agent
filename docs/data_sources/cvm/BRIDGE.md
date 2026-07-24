@@ -39,6 +39,22 @@ No bridge-specific env vars. Uses `MEMORY_ROOT` (shared with all CVM data source
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync bridge for a single ticker (fetches dividends + CAD lookup)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.bridge.sync_engine import sync; print(sync(ticker='PETR4'))"
+
+# Sync multiple tickers at once
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.bridge.sync_engine import sync; print(sync(tickers=['PETR4','VALE3','ITUB4']))"
+
+# Force re-sync (re-fetch dividends + re-join CAD)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.bridge.sync_engine import sync; print(sync(ticker='PETR4', force=True))"
+
+# Sync ISIN index (B3 ISIN ZIP — 300k entries, 24h cache)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.bridge.isin_fetcher import sync; print(sync())"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

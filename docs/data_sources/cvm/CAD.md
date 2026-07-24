@@ -39,6 +39,16 @@ data_source(domain="cvm", sub_domain="cad", mode="search", params='{"setor":"Pet
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync CAD (company register — ~2677 companies, ~2s)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.cad.sync_engine import sync; print(sync())"
+
+# Force re-download (ignore cache)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.cad.sync_engine import sync; print(sync(force=True))"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

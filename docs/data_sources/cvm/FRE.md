@@ -39,6 +39,16 @@ data_source(domain="cvm", sub_domain="fre", mode="free_float", params='{"company
 
 ---
 
+## 🔧 Sync Commands
+
+```powershell
+# Sync FRE (governance + shareholders + compensation — all years, ~20 min)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.fre.sync_engine import sync; print(sync())"
+
+# Sync specific year only (~2s)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.fre.sync_engine import sync; print(sync(years=[2024]))"
+```
+
 ## 📁 Subfile Directory
 
 | File | Purpose |

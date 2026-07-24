@@ -226,7 +226,7 @@ Identical pattern to `data_source()` — JSON params string, auto-discovery.
 
 ### CVM Skills
 
-See [CVM Skills Overview](skills/cvm/CVM.md) for the full landing page.
+See [CVM Skills Overview](skills/CVM.md) for the full landing page.
 
 | Sub-domain | Modes | Data Sources |
 |------------|-------|--------------|

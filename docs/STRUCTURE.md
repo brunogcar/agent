@@ -176,7 +176,7 @@ Self-contained library code with no subpackage structure. Each is a single file 
 
 ## 📊 Data Sources Layer (`data_sources/`)
 
-Raw data ingestion + query. Each sub-domain syncs data from an external API into a local SQLite database, then provides query modes. See [DATA_SOURCES.md](data_sources/DATA_SOURCES.md).
+Raw data ingestion + query. Each sub-domain syncs data from an external API into a local SQLite database, then provides query modes. See [DATA_SOURCES.md](DATA_SOURCES.md).
 
 ```text
 data_sources/

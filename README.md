@@ -203,7 +203,7 @@ Data sources are the **raw data ingestion + query layer**. Each sub-domain syncs
 | [**API**](docs/data_sources/b3/API.md) | Market data: instruments, trades, derivatives (paginated JSON API) | `memory_db/b3/{table}.db` |
 | [**DIVIDENDS**](docs/data_sources/b3/DIVIDENDS.md) | Corporate actions: cash/stock dividends, subscriptions (per-ticker) | `memory_db/b3/dividends.db` |
 
-See [`docs/data_sources/DATA_SOURCES.md`](docs/data_sources/DATA_SOURCES.md) for the full architecture, sync commands, and the zero-maintenance auto-discovery design.
+See [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) for the full architecture, sync commands, and the zero-maintenance auto-discovery design.
 
 ---
 
@@ -277,7 +277,7 @@ Every component follows the **5-file documentation standard**: `INDEX` (overview
 | [`docs/TOOLS.md`](docs/TOOLS.md) | All 18 tools — status, safety rules, comparison |
 | [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) | All 6 workflows — status, comparison, return schema |
 | [`docs/CORE.md`](docs/CORE.md) | All 13 core subsystems — architecture layers, module map |
-| [`docs/data_sources/DATA_SOURCES.md`](docs/data_sources/DATA_SOURCES.md) | CVM + B3 data sources — sync, query, bridge |
+| [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) | CVM + B3 data sources — sync, query, bridge |
 | [`docs/SKILLS.md`](docs/SKILLS.md) | Skills layer — analytical views combining data sources |
 | [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | Role benchmarking tool, task catalog |
 | [`docs/SESSION_WORKFLOW.md`](docs/SESSION_WORKFLOW.md) | AI-assisted dev session workflow (how to work on this repo) |
