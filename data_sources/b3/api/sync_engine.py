@@ -27,8 +27,8 @@ from data_sources.b3.api.catalog import (
     API_BASE, PAGE_SIZE, B3_TABLES, db_path, connect, ensure_schema,
 )
 
-MAX_WORKERS = 10
-BATCH_SIZE = 500  # commit every 500 pages (10K rows)
+MAX_WORKERS = 30  # [v1.0.5] 10→30 — I/O bound, CPU at 0%, more workers = faster
+BATCH_SIZE = 100  # [v1.0.5] 500→100 — commit more frequently for better resume
 
 
 def _progress(msg: str) -> None:
@@ -109,16 +109,22 @@ def sync(
             page1 = None  # don't re-process page 1
         else:
             page1 = _fetch_page(api_name, date_str, 1)
-            if not page1:
-                # Try yesterday if user didn't specify a date
+            # [v1.0.5] Check for no data — page1 may be None OR have pageCount=0.
+            # B3 publishes trade data with a delay — today's data is usually
+            # not available until the next business day. Try up to 7 days back.
+            if not page1 or page1.get("pageCount", 0) == 0:
                 if not _user_specified_date:
-                    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-                    _progress(f"[b3_sync] No data for today, trying {yesterday}")
-                    date_str = yesterday
-                    page1 = _fetch_page(api_name, date_str, 1)
-                if not page1:
+                    for days_back in range(1, 8):
+                        try_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+                        _progress(f"[b3_sync] No data for {date_str}, trying {try_date}")
+                        date_str = try_date
+                        page1 = _fetch_page(api_name, date_str, 1)
+                        if page1 and page1.get("pageCount", 0) > 0:
+                            break
+                if not page1 or page1.get("pageCount", 0) == 0:
                     return {"status": "no_data", "table": table, "date": date_str,
-                            "error": "No data from B3 API. Market may not have closed yet."}
+                            "error": f"No data from B3 API for any date tried (today + 7 days back). "
+                                     f"Market may be closed or API is down."}
 
             columns = [c["name"] for c in page1.get("columns", [])]
             if not columns:
