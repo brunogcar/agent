@@ -32,8 +32,8 @@ from data_sources.cvm._db import connect_dfp, connect_itr, parse_escala, cnpj_di
 from data_sources.cvm._bridge import resolve_company
 from skills.cvm.financials.metrics import (
     SUMMARY_CODES, KEY_CODES_BY_GRUPO,
-    derive_standalone_quarters, compute_ratios, compute_ebitda, compute_ttm_ebitda,
-    _f, _quarter_sort_key,
+    compute_ratios, compute_ebitda, compute_ttm_ebitda,
+    _f,
 )
 
 
@@ -142,7 +142,8 @@ def summary(company: str = "", consolidado: int = 1) -> dict:
     try:
         qrt = quarterly(company=company, periods=4, consolidado=consolidado)
         if qrt.get("status") == "ok" and qrt.get("periods"):
-            result["sections"]["latest_quarterly"] = qrt["periods"][0]
+            # [v1.0.1 P1 fix] periods are sorted oldest-first, so latest = periods[-1]
+            result["sections"]["latest_quarterly"] = qrt["periods"][-1]
             result["sections"]["quarterly_trend"] = qrt["periods"]
         else:
             result["sections"]["latest_quarterly"] = {"status": qrt.get("status"),
@@ -217,7 +218,9 @@ def _build_annual_summary(company: str, periods: int, consolidado: int) -> dict:
         for year_key in sorted(by_year.keys(), reverse=True):
             vals = by_year[year_key]
             metrics = _extract_metrics(vals)
-            metrics["ebitda"] = compute_ebitda(metrics.get("ebit"), metrics.get("da"))
+            # [v1.0.1] compute_ebitda returns (value, method) tuple
+            metrics["ebitda"], metrics["ebitda_method"] = compute_ebitda(
+                metrics.get("ebit"), metrics.get("da"))
             ratios = compute_ratios(metrics, is_quarterly=False)
             result_periods.append({
                 "period": year_key,
@@ -236,27 +239,36 @@ def _build_annual_summary(company: str, periods: int, consolidado: int) -> dict:
 
 def _build_quarterly_summary(company: str, periods: int, consolidado: int) -> dict:
     """Quarterly summary with standalone quarters derived from ITR + DFP."""
-    # Get empresa_ids from DFP (same companies in ITR)
+    # [v1.0.1 P0 fix] Resolve empresa_ids SEPARATELY for DFP and ITR.
+    # DFP and ITR are separate SQLite files with independent autoincrement IDs.
+    # Using DFP's IDs to query ITR returns wrong/empty rows in production.
     dfp_conn = connect_dfp(read_only=True)
     try:
-        empresa_ids, company_name = resolve_company(dfp_conn, company)
-        if not empresa_ids:
+        dfp_empresa_ids, company_name = resolve_company(dfp_conn, company)
+        if not dfp_empresa_ids:
             return {"status": "not_found", "error": f"Company '{company}' not found in DFP"}
     except FileNotFoundError as e:
-        dfp_conn.close()
         return {"status": "not_synced", "error": str(e)}
     finally:
         dfp_conn.close()
 
+    # Resolve ITR empresa_ids separately (may differ from DFP's)
+    try:
+        itr_conn = connect_itr(read_only=True)
+        itr_empresa_ids, _ = resolve_company(itr_conn, company)
+        itr_conn.close()
+    except FileNotFoundError:
+        itr_empresa_ids = []  # ITR not synced — Q4 derivation will be incomplete
+    except Exception:
+        itr_empresa_ids = []
+
     # Determine which years to fetch (need current + prior year for Q4 derivation)
-    # Fetch ITR cumulative (meses=3,6,9) + DFP annual (meses=12)
-    # We need ~periods/4 + 1 years of data
     years_needed = (periods // 4) + 2  # current + prior + buffer
 
-    # Fetch ITR data
-    itr_data = _fetch_quarterly_cumulative(empresa_ids, consolidado, years_needed, "ITR")
-    # Fetch DFP annual data (for Q4 derivation + snapshots)
-    dfp_data = _fetch_quarterly_cumulative(empresa_ids, consolidado, years_needed, "DFP")
+    # Fetch ITR data (using ITR's own empresa_ids)
+    itr_data = _fetch_quarterly_cumulative(itr_empresa_ids, consolidado, years_needed, "ITR")
+    # Fetch DFP annual data (using DFP's own empresa_ids)
+    dfp_data = _fetch_quarterly_cumulative(dfp_empresa_ids, consolidado, years_needed, "DFP")
 
     if not itr_data and not dfp_data:
         return {"status": "not_found", "error": f"No quarterly data found for '{company}'"}
@@ -289,18 +301,27 @@ def _build_quarterly_summary(company: str, periods: int, consolidado: int) -> di
             if is_snapshot:
                 standalone_values[code] = cum_values.get(code)
             else:
-                # Standalone = this_cumulative - prev_cumulative
+                # [v1.0.1 P1 fix] Standalone derivation:
+                # Q1: standalone = cumulative (no prior needed — fiscal year resets Jan 1)
+                # Q2/Q3/Q4: standalone = cumulative - prev_cumulative
+                # If prev_cum is missing for Q2-Q4, standalone = None (can't derive)
                 prev_cum = _get_prev_cumulative(code, year, q_num, itr_data, dfp_data)
                 curr_cum = cum_values.get(code)
-                if curr_cum is not None and prev_cum is not None:
+                if curr_cum is None:
+                    standalone_values[code] = None
+                elif q_num == 1:
+                    # Q1 standalone = Q1 cumulative
+                    standalone_values[code] = curr_cum
+                elif prev_cum is not None:
                     standalone_values[code] = curr_cum - prev_cum
-                elif curr_cum is not None and q_num == 1:
-                    standalone_values[code] = curr_cum  # Q1 standalone = cumulative
                 else:
-                    standalone_values[code] = curr_cum  # fallback
+                    # Q2-Q4 but prev_cum missing — can't derive standalone
+                    standalone_values[code] = None
 
         metrics = _extract_metrics(standalone_values)
-        metrics["ebitda"] = compute_ebitda(metrics.get("ebit"), metrics.get("da"))
+        # [v1.0.1] compute_ebitda returns (value, method) tuple
+        metrics["ebitda"], metrics["ebitda_method"] = compute_ebitda(
+            metrics.get("ebit"), metrics.get("da"))
         ratios = compute_ratios(metrics, is_quarterly=True)
 
         result_periods.append({
@@ -416,14 +437,17 @@ def _get_cumulative_value(code, q_label, year, q_num, itr_data, dfp_data):
 def _get_prev_cumulative(code, year, q_num, itr_data, dfp_data):
     """Get the cumulative value for the PREVIOUS quarter (for standalone derivation).
 
-    Q1: previous = Q4 of (year-1) from DFP
+    [v1.0.1 P1 fix] Q1 does NOT need a previous quarter — Q1 cumulative IS the
+    standalone value (fiscal year resets Jan 1). Returns None for Q1 so the
+    caller uses Q1 cumulative directly.
+
     Q2: previous = Q1 (meses=3) of same year from ITR
     Q3: previous = Q2 (meses=6) of same year from ITR
     Q4: previous = Q3 (meses=9) of same year from ITR
     """
     if q_num == 1:
-        # Previous = Q4 of prior year
-        return dfp_data.get(year - 1, {}).get(12, {}).get(code)
+        # Q1 standalone = Q1 cumulative (no subtraction needed)
+        return None
     elif q_num == 2:
         return itr_data.get(year, {}).get(3, {}).get(code)
     elif q_num == 3:
@@ -529,19 +553,28 @@ def _fetch_complete_annual(company, codes, grupo_filter, consolidado, periods) -
 
 def _fetch_complete_quarterly(company, codes, grupo_filter, consolidado, periods) -> dict:
     """Fetch full quarterly statements (key codes, cumulative) from ITR + DFP."""
+    # [v1.0.1 P0 fix] Resolve empresa_ids SEPARATELY for DFP and ITR.
     dfp_conn = connect_dfp(read_only=True)
     try:
-        empresa_ids, company_name = resolve_company(dfp_conn, company)
-        if not empresa_ids:
+        dfp_empresa_ids, company_name = resolve_company(dfp_conn, company)
+        if not dfp_empresa_ids:
             return {"status": "not_found", "error": f"Company '{company}' not found in DFP"}
     except FileNotFoundError as e:
         return {"status": "not_synced", "error": str(e)}
     finally:
         dfp_conn.close()
 
+    # Resolve ITR empresa_ids separately
+    try:
+        itr_conn = connect_itr(read_only=True)
+        itr_empresa_ids, _ = resolve_company(itr_conn, company)
+        itr_conn.close()
+    except (FileNotFoundError, Exception):
+        itr_empresa_ids = []
+
     years_needed = (periods // 4) + 2
-    itr_data = _fetch_quarterly_cumulative(empresa_ids, consolidado, years_needed, "ITR")
-    dfp_data = _fetch_quarterly_cumulative(empresa_ids, consolidado, years_needed, "DFP")
+    itr_data = _fetch_quarterly_cumulative(itr_empresa_ids, consolidado, years_needed, "ITR")
+    dfp_data = _fetch_quarterly_cumulative(dfp_empresa_ids, consolidado, years_needed, "DFP")
 
     if not itr_data and not dfp_data:
         return {"status": "not_found", "error": f"No quarterly data found for '{company}'"}

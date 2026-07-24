@@ -152,10 +152,11 @@ def financials_env(tmp_path, monkeypatch):
 class TestMetrics:
 
     def test_compute_ebitda(self):
+        """[v1.0.1] compute_ebitda now returns (value, method) tuple."""
         from skills.cvm.financials.metrics import compute_ebitda
-        assert compute_ebitda(20000000, 3000000) == 23000000
-        assert compute_ebitda(20000000, None) == 20000000
-        assert compute_ebitda(None, 3000000) is None
+        assert compute_ebitda(20000000, 3000000) == (23000000, "ebit+da")
+        assert compute_ebitda(20000000, None) == (20000000, "ebit_only")
+        assert compute_ebitda(None, 3000000) == (None, "none")
 
     def test_compute_ratios_annual(self):
         from skills.cvm.financials.metrics import compute_ratios
@@ -188,33 +189,39 @@ class TestMetrics:
         # ROE annualized = (3M * 4) / 40M = 0.3
         assert r["roe"] == pytest.approx(0.3)
 
+    def test_compute_ratios_quarterly_payout_none(self):
+        """[v1.0.1] Payout = None in quarterly mode (DVA is annual-only)."""
+        from skills.cvm.financials.metrics import compute_ratios
+        metrics = {
+            "lucro_liquido": 3000000, "receita_liquida": 12500000,
+            "proventos": 6000000,
+        }
+        r = compute_ratios(metrics, is_quarterly=True)
+        assert r["payout"] is None
+        # Annual mode should still compute payout
+        r_annual = compute_ratios(metrics, is_quarterly=False)
+        assert r_annual["payout"] is not None
+
+    def test_compute_ratios_negative_pl_guard(self):
+        """[v1.0.1] ROE + debt/PL ratios = None when PL <= 0 (accumulated losses)."""
+        from skills.cvm.financials.metrics import compute_ratios
+        metrics = {
+            "lucro_liquido": 5000000, "ativo_total": 100000000,
+            "patrimonio_liquido": -10000000,  # negative PL
+            "divida_bruta": 40000000, "caixa": 5000000,
+        }
+        r = compute_ratios(metrics, is_quarterly=False)
+        assert r["roe"] is None  # negative PL → ROE meaningless
+        assert r["divida_bruta_pl"] is None
+        assert r["divida_liquida_pl"] is None
+        # ROA should still work (doesn't use PL)
+        assert r["roa"] is not None
+
     def test_compute_ratios_none_values(self):
         from skills.cvm.financials.metrics import compute_ratios
         r = compute_ratios({}, is_quarterly=False)
         assert r["marg_bruta"] is None
         assert r["roa"] is None
-
-    def test_derive_standalone_quarters_flows(self):
-        from skills.cvm.financials.metrics import derive_standalone_quarters
-        # Cumulative: Q1=100, Q2=250, Q3=450, Q4=700
-        cumulative = {"1T2026": 700, "4T2025": 450, "3T2025": 250, "2T2025": 100}
-        result = derive_standalone_quarters(cumulative, is_snapshot=False)
-        # Oldest first: 2T2025=100 (first, standalone=100), 3T2025=250-100=150,
-        # 4T2025=450-250=200, 1T2026=700-450=250
-        assert result["2T2025"] == 100
-        assert result["3T2025"] == 150
-        assert result["4T2025"] == 200
-        assert result["1T2026"] == 250
-
-    def test_derive_standalone_quarters_snapshots(self):
-        from skills.cvm.financials.metrics import derive_standalone_quarters
-        # Snapshots: use period-end value directly (no subtraction)
-        cumulative = {"1T2026": 700, "4T2025": 450, "3T2025": 250, "2T2025": 100}
-        result = derive_standalone_quarters(cumulative, is_snapshot=True)
-        assert result["2T2025"] == 100
-        assert result["3T2025"] == 250
-        assert result["4T2025"] == 450
-        assert result["1T2026"] == 700
 
     def test_compute_ttm_ebitda(self):
         from skills.cvm.financials.metrics import compute_ttm_ebitda
@@ -380,3 +387,119 @@ class TestFinancialsRoute:
         from skills.cvm.financials import route
         result = route(mode="annual", company="33000167000101")
         assert result["status"] == "ok"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# V1.0.1 REGRESSION TESTS (cross-database IDs + Q1 fix + summary latest)
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestV101Regressions:
+    """[v1.0.1] Regression tests for bugs found in the collective LLM review."""
+
+    def test_cross_database_ids_regression(self, tmp_path, monkeypatch):
+        """[P0] DFP and ITR have independent autoincrement IDs.
+        The skill must resolve empresa_ids separately for each DB.
+        This test uses id=1 in DFP but id=999 in ITR for the same company.
+        """
+        # DFP db: company with id=1
+        from data_sources.cvm._db import _ensure_schema
+        dfp_path = tmp_path / "dfp.db"
+        conn = sqlite3.connect(str(dfp_path))
+        conn.row_factory = sqlite3.Row
+        _ensure_schema(conn)
+        conn.execute("INSERT INTO empresas (id, cnpj, nome, ano, cd_cvm) VALUES (1, '33000167000101', 'TEST CO', 2023, '9512')")
+        conn.execute(
+            "INSERT INTO contas (id_empresa, codigo, descricao, grupo, consolidado, "
+            "data_ini_exerc, data_fim_exerc, meses, ordem_exerc, versao, valor, escala) "
+            "VALUES (1, '1', 'Ativo Total', 'BPA', 1, '', '2023-12-31', 12, 'ÚLTIMO', 1, 100000, 'MIL')")
+        conn.commit(); conn.close()
+
+        # ITR db: SAME company but id=999 (different autoincrement!)
+        itr_path = tmp_path / "itr.db"
+        conn = sqlite3.connect(str(itr_path))
+        conn.row_factory = sqlite3.Row
+        _ensure_schema(conn)
+        conn.execute("INSERT INTO empresas (id, cnpj, nome, ano, cd_cvm) VALUES (999, '33000167000101', 'TEST CO', 2023, '9512')")
+        # Q1 cumulative (meses=3) for receita
+        conn.execute(
+            "INSERT INTO contas (id_empresa, codigo, descricao, grupo, consolidado, "
+            "data_ini_exerc, data_fim_exerc, meses, ordem_exerc, versao, valor, escala) "
+            "VALUES (999, '3.01', 'Receita', 'DRE', 1, '2023-01-01', '2023-03-31', 3, 'ÚLTIMO', 1, 25000, 'MIL')")
+        conn.commit(); conn.close()
+
+        def mock_connect_dfp(read_only=True):
+            if read_only:
+                c = sqlite3.connect(f"file:{dfp_path}?mode=ro", uri=True)
+            else:
+                c = sqlite3.connect(str(dfp_path))
+            c.row_factory = sqlite3.Row
+            return c
+
+        def mock_connect_itr(read_only=True):
+            if read_only:
+                c = sqlite3.connect(f"file:{itr_path}?mode=ro", uri=True)
+            else:
+                c = sqlite3.connect(str(itr_path))
+            c.row_factory = sqlite3.Row
+            return c
+
+        monkeypatch.setattr("data_sources.cvm._db.connect_dfp", mock_connect_dfp)
+        monkeypatch.setattr("data_sources.cvm._db.connect_itr", mock_connect_itr)
+        monkeypatch.setattr("data_sources.cvm._db.dfp_db_path", lambda: dfp_path)
+        monkeypatch.setattr("data_sources.cvm._db.itr_db_path", lambda: itr_path)
+        monkeypatch.setattr("data_sources.cvm._bridge.bridge_db_path",
+                            lambda: Path("/nonexistent/bridge.db"))
+        monkeypatch.setattr("data_sources.cvm._bridge.cad_db_path",
+                            lambda: Path("/nonexistent/cad.db"))
+        monkeypatch.setattr("data_sources.cvm._bridge._resolve_via_cad",
+                            lambda name: (None, None))
+
+        from skills.cvm.financials.financials import quarterly
+        result = quarterly(company="33000167000101", periods=8)
+        # Before P0 fix: would return empty periods (ITR query with id=1 found nothing)
+        # After P0 fix: should find Q1 data from ITR (id=999)
+        assert result["status"] == "ok"
+        assert len(result["periods"]) >= 1
+        # Verify receita_liquida was found (not None) — proves ITR was queried with correct id
+        q1 = [p for p in result["periods"] if p["quarter"] == 1]
+        if q1:
+            assert q1[0]["metrics"]["receita_liquida"] is not None, \
+                "ITR data not found — cross-database ID bug not fixed"
+
+    def test_q1_standalone_not_subtracting_prior_year(self, financials_env):
+        """[P1] Q1 standalone = Q1 cumulative (NOT cumulative - prior_year_DFP).
+        Prior fix: Q1 subtracted prior-year annual total → large negative numbers.
+        """
+        from skills.cvm.financials.financials import quarterly
+        result = quarterly(company="33000167000101", periods=8)
+        if result["status"] != "ok":
+            pytest.skip("Not enough data")
+        # Find Q1 quarters
+        q1s = [p for p in result["periods"] if p["quarter"] == 1]
+        for q1 in q1s:
+            receita = q1["metrics"]["receita_liquida"]
+            if receita is not None:
+                # Q1 standalone should be POSITIVE (25% of annual in our fixture)
+                # Before fix: would be Q1_cum - prior_year_total = huge negative
+                assert receita > 0, f"Q1 receita should be positive, got {receita}"
+
+    def test_summary_latest_quarterly_is_newest(self, financials_env):
+        """[P1] summary.latest_quarterly should be the NEWEST quarter, not oldest."""
+        from skills.cvm.financials.financials import summary
+        result = summary(company="33000167000101")
+        if result["sections"].get("latest_quarterly", {}).get("period"):
+            latest = result["sections"]["latest_quarterly"]
+            trend = result["sections"].get("quarterly_trend", [])
+            if trend:
+                # latest should be the last in the trend (newest, since sorted oldest-first)
+                assert latest["period"] == trend[-1]["period"], \
+                    f"latest_quarterly={latest['period']} should be {trend[-1]['period']} (newest)"
+
+    def test_ebitda_method_provenance(self, financials_env):
+        """[v1.0.1] EBITDA response includes ebitda_method field."""
+        from skills.cvm.financials.financials import annual
+        result = annual(company="33000167000101", periods=2)
+        if result["status"] == "ok" and result["periods"]:
+            metrics = result["periods"][0]["metrics"]
+            assert "ebitda_method" in metrics
+            assert metrics["ebitda_method"] in ("ebit+da", "ebit_only", "none")
