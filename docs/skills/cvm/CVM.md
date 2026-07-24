@@ -16,6 +16,9 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 | [**financials**](FINANCIALS.md) | quarterly (default), annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
 | [**shareholders**](SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
+| [**valuation**](VALUATION.md) | ratios, summary | b3 trades (price) + DFP (financials) + FRE (shares) + bridge — P/L, P/VPA, EV, Div Yield |
+
+All CVM skills use `core/br_validator` for BRL/date/ticker parsing.
 
 ## Quick Start
 

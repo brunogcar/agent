@@ -43,7 +43,7 @@ from core.backoff_retry import retry_with_backoff                     # Workflow
 | Path validation / SSRF guard | `core/path_guard.py` | Centralized `resolve_path()`, `check_protected_file()`, `check_git_operation()` |
 | Output compression | `core/utils.py` | `compress_result()` truncates large string fields recursively |
 | Citation tracking | `core/citations.py` | Per-trace source numbering for research workflows |
-| BRL / BR date / ticker parsing | `core/br_validator.py` | Brazilian financial data validation for `skills/b3` |
+| BRL / BR date / ticker parsing | `core/br_validator.py` | Brazilian financial data validation: `parse_brl()` (handles R$ + B/T/M suffixes + %), `format_brl()`, `parse_percentage()`, `parse_br_date()`, `validate_ticker()` (equities + futures), `parse_escala()` (CVM ESCALA_MOEDA). Used by all financial skills (cvm, investsite). v1.2. |
 | Symbol offloading (TencentDB pattern) | `core/symbol_offload.py` | Offload verbose state fields to per-trace files, replace with compact SymbolRef dicts. Used by autocode (debug_history), memory (recall > 10 results), sleep_learn (> 5 injected rules). |
 | Atomic file writes (v1.5) | `core/atomic_write.py` | `atomic_write(path, content)` — tempfile + fsync + os.replace. Extracted from 4 duplicated implementations (autoresearch modify.py, autocode patch.py / write_new_files.py / create_skill.py). |
 | LLM retry with backoff (v1.5) | `core/backoff_retry.py` | `retry_with_backoff(fn, retries, base_delay, cancellation_check, tid)` — exponential backoff + interruptible sleep. Extracted from autocode `_call` + autoresearch `_call_planner`. |
