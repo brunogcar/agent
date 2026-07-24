@@ -21,7 +21,7 @@ import httpx
 
 from data_sources.b3.cotahist.catalog import (
     COTAHIST_URL, FIRST_YEAR, CSV_ENCODING,
-    COTAHIST_LAYOUT, NUMERIC_COLS, INTEGER_COLS,
+    COTAHIST_LAYOUT, NUMERIC_COLS, INTEGER_COLS, BDI_FILTER,
     connect, ensure_schema,
 )
 
@@ -178,7 +178,8 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
                      ingested_at: str) -> int:
     """Extract ZIP, parse fixed-width lines (streaming), batch insert to SQLite.
 
-    Only processes record type '02' (trades). Skips '01' (header) and '99' (trailer).
+    Only processes record type '01' (daily quote records). Skips '00' (header) and '99' (trailer).
+    [v1.0.1] Also filters by BDI code (equities, FIIs, ETFs, fractional only).
     Uses batch inserts (BATCH_SIZE) for performance.
     """
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
@@ -215,6 +216,16 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
                 continue
             # Only process daily quote records (type 01). Skip header (00) and trailer (99).
             if line[:2] != "01":
+                continue
+
+            # [v1.0.1] Filter by BDI code — only keep equities, FIIs, ETFs, fractional.
+            # This drops ~85% of rows (options, bonds, warrants) and reduces DB from ~5.7GB to ~1-2GB.
+            bdi_str = line[10:12].strip()  # positions 11-12 (0-based: 10-11)
+            try:
+                bdi = int(bdi_str) if bdi_str else 0
+            except ValueError:
+                bdi = 0
+            if bdi not in BDI_FILTER:
                 continue
 
             row = _parse_line(line)

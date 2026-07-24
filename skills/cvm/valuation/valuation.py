@@ -30,6 +30,7 @@ Financial skills MUST use br_validator for consistent BRL/date/ticker handling.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from core.br_validator import validate_ticker
@@ -63,24 +64,25 @@ def ratios(company: str = "") -> dict:
         "sources": {},
     }
 
-    # [v1.0.2] Fetch ALL 3 sources first (best-effort), then compute ratios.
-    # Price: investsite primary (live, always available), b3 trades.db fallback.
+    # [v1.0.8] Fetch ALL 3 sources first (best-effort), then compute ratios.
+    # Price: brapi primary (15-min delay) → investsite fallback → b3 trades fallback.
 
-    # 1. Get latest price — try investsite first, then b3 trades.db
+    # 1. Get latest price
     price_data = _get_price(ticker)
     result["sources"]["price"] = price_data
 
-    # 2. Get latest annual financials from DFP
-    fin_data = _get_latest_financials(ticker)
+    # 2. Get latest annual financials — call financials skill internally
+    #    [v1.0.8] Replaces _get_latest_financials() with financials.annual()
+    #    to eliminate DFP code duplication and get EBITDA/margins/ROE/ROA for free.
+    fin_data = _get_financials(ticker)
     result["sources"]["financials"] = {
         "status": fin_data.get("status"),
         "ano": fin_data.get("ano"),
         "error": fin_data.get("error", ""),
-        # [v1.0.4] Include actual values for diagnostics
         "lucro_liquido": fin_data.get("lucro_liquido"),
         "patrimonio_liquido": fin_data.get("patrimonio_liquido"),
-        "empresa_ids_found": fin_data.get("empresa_ids_count", 0),
-        "rows_found": fin_data.get("rows_found", 0),
+        "ebitda": fin_data.get("ebitda"),
+        "ebitda_method": fin_data.get("ebitda_method"),
     }
 
     # 3. Get shares outstanding from FRE
@@ -118,35 +120,47 @@ def ratios(company: str = "") -> dict:
         return result
 
     # Compute ratios
+    # [v1.0.8] Now gets EBITDA, receita_liquida, fci from financials skill
     lucro_liquido = fin_data.get("lucro_liquido")
     pl = fin_data.get("patrimonio_liquido")
     ebit = fin_data.get("ebit")
+    ebitda = fin_data.get("ebitda")
     fco = fin_data.get("fco")
+    fci = fin_data.get("fci")
+    receita_liquida = fin_data.get("receita_liquida")
     caixa = fin_data.get("caixa")
     divida_bruta = fin_data.get("divida_bruta")
     total_shares = shares_data.get("total_shares")
     annual_dividends = fin_data.get("proventos")  # DVA 7.08.04
 
+    # [v1.0.8] Negative PL guard — P/VPA is meaningless with negative equity
+    pl_positive = pl is not None and pl > 0
+
     ratios_result: dict[str, Any] = {
         "price": price,
         "price_date": price_date,
+        "price_source": price_data.get("source", "?"),
         "total_shares": total_shares,
         "lucro_liquido": lucro_liquido,
         "patrimonio_liquido": pl,
         "ebit": ebit,
+        "ebitda": ebitda,
+        "ebitda_method": fin_data.get("ebitda_method"),
         "fco": fco,
+        "fci": fci,
+        "receita_liquida": receita_liquida,
         "caixa": caixa,
         "divida_bruta": divida_bruta,
         "annual_dividends": annual_dividends,
     }
 
-    # Market Cap = price × shares
+    # Market Cap = price * shares
     if total_shares and total_shares > 0:
         ratios_result["market_cap"] = price * total_shares
     else:
         ratios_result["market_cap"] = None
 
-    # EPS = lucro_liquido / shares
+    # EPS (LPA) = lucro_liquido / shares
     eps = _safe_div(lucro_liquido, total_shares)
     ratios_result["eps"] = eps
 
@@ -157,12 +171,14 @@ def ratios(company: str = "") -> dict:
     vpa = _safe_div(pl, total_shares)
     ratios_result["vpa"] = vpa
 
-    # P/VPA = price / VPA
-    ratios_result["p_vpa"] = _safe_div(price, vpa)
+    # P/VPA = price / VPA (None when PL <= 0)
+    ratios_result["p_vpa"] = _safe_div(price, vpa) if pl_positive else None
 
     # EV = Market Cap + Debt - Cash
+    divida_liquida = None
     if ratios_result["market_cap"] is not None and divida_bruta is not None and caixa is not None:
-        ratios_result["ev"] = ratios_result["market_cap"] + divida_bruta - caixa
+        divida_liquida = divida_bruta - caixa
+        ratios_result["ev"] = ratios_result["market_cap"] + divida_liquida
     elif ratios_result["market_cap"] is not None:
         ratios_result["ev"] = ratios_result["market_cap"]  # partial
     else:
@@ -176,14 +192,31 @@ def ratios(company: str = "") -> dict:
     fco_per_share = _safe_div(fco, total_shares)
     ratios_result["p_fco"] = _safe_div(price, fco_per_share)
 
-    # Dividend Yield = annual dividends / price (per share)
+    # [v1.0.8] PSR (Price-to-Sales) = Market Cap / Receita Liquida
+    ratios_result["psr"] = _safe_div(ratios_result["market_cap"], receita_liquida)
+
+    # [v1.0.8] EV/EBITDA = EV / EBITDA
+    ratios_result["ev_ebitda"] = _safe_div(ratios_result["ev"], ebitda)
+
+    # [v1.0.8] P/FCF = Market Cap / (FCO - CAPEX)
+    # CAPEX ~ FCI (FCI is negative = cash outflow for investing)
+    fcf = None
+    if fco is not None and fci is not None:
+        fcf = fco + fci  # FCI is negative, so this subtracts
+    ratios_result["fcf"] = fcf
+    ratios_result["p_fcf"] = _safe_div(ratios_result["market_cap"], fcf)
+
+    # [v1.0.8] DPA (Dividends Per Share) = annual dividends / shares
     if annual_dividends is not None and total_shares and total_shares > 0:
-        div_per_share = annual_dividends / total_shares
-        ratios_result["dividend_yield"] = _safe_div(div_per_share, price)
-        ratios_result["div_per_share"] = div_per_share
+        dpa = annual_dividends / total_shares
+        ratios_result["dpa"] = dpa
+        ratios_result["dividend_yield"] = _safe_div(dpa, price)
     else:
+        ratios_result["dpa"] = None
         ratios_result["dividend_yield"] = None
-        ratios_result["div_per_share"] = None
+
+    # [v1.0.8] Divida Liquida / EBITDA
+    ratios_result["divida_liquida_ebitda"] = _safe_div(divida_liquida, ebitda)
 
     result["ratios"] = ratios_result
     return result
@@ -259,7 +292,7 @@ def _get_price_brapi(ticker: str) -> dict:
             "status": "ok",
             "source": "brapi",
             "last_price": float(price),
-            "date": "",  # brapi doesn't return date in quote mode
+            "date": datetime.now().strftime("%Y-%m-%d"),  # [v1.0.8] use today's date
             "market_cap": r.get("market_cap"),
             "pe_ratio": r.get("pe_ratio"),
         }
@@ -396,6 +429,43 @@ def _get_latest_price(ticker: str) -> dict:
 
 # ── Internal: get latest annual financials from DFP ──────────────────────────
 
+def _get_financials(ticker: str) -> dict:
+    """[v1.0.8] Get latest annual financials by calling the financials skill.
+
+    Replaces _get_latest_financials() which had its own hardcoded DFP code list.
+    Now calls financials.annual() which returns EBITDA, margins, ROE/ROA, etc.
+    for free — eliminating duplication.
+    """
+    try:
+        from skills.cvm.financials.financials import annual
+        r = annual(company=ticker, periods=1, consolidado=1)
+        if r.get("status") != "ok" or not r.get("periods"):
+            return {"status": "not_found",
+                    "error": r.get("error", "No annual data")}
+
+        p = r["periods"][0]
+        m = p.get("metrics", {})
+
+        return {
+            "status": "ok",
+            "ano": p.get("period"),
+            "company": r.get("company"),
+            "lucro_liquido": m.get("lucro_liquido"),
+            "patrimonio_liquido": m.get("patrimonio_liquido"),
+            "ebit": m.get("ebit"),
+            "ebitda": m.get("ebitda"),
+            "ebitda_method": m.get("ebitda_method"),
+            "fco": m.get("fco"),
+            "fci": m.get("fci"),
+            "receita_liquida": m.get("receita_liquida"),
+            "caixa": m.get("caixa"),
+            "divida_bruta": m.get("divida_bruta"),
+            "proventos": m.get("proventos"),
+        }
+    except Exception as e:
+        return {"status": "error", "error": f"financials: {e}"}
+
+
 def _get_latest_financials(ticker: str) -> dict:
     """Get latest annual financials from DFP."""
     try:
@@ -514,6 +584,7 @@ def _get_shares_outstanding(ticker: str) -> dict:
                 total = (on_shares or 0) + (pn_shares or 0)
 
         # Fallback 1: try capital_social table
+        shares_source = "fre_distribuicao"  # default source
         if not total:
             try:
                 row2 = conn.execute(
@@ -523,7 +594,7 @@ def _get_shares_outstanding(ticker: str) -> dict:
                     (cnpj,),
                 ).fetchone()
                 if row2:
-                    # capital_social has different column names
+                    shares_source = "fre_capital_social"
                     for key in ["qtd_total", "total_shares", "quantidade_total"]:
                         if key in row2.keys() and row2[key]:
                             total = int(row2[key])
@@ -559,7 +630,7 @@ def _get_shares_outstanding(ticker: str) -> dict:
             "on_shares": int(on_shares) if on_shares else None,
             "pn_shares": int(pn_shares) if pn_shares else None,
             "data_referencia": data_ref,
-            "source": "fre",
+            "source": shares_source,
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}

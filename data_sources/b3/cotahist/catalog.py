@@ -21,6 +21,12 @@ COTAHIST_URL = "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A{year
 FIRST_YEAR = 2010  # Match CVM DFP start year — no need to go earlier
 CSV_ENCODING = "latin-1"  # COTAHIST uses latin1
 
+# [v1.0.1] BDI codes to keep during sync (filter out options/bonds/warrants).
+# 02 = Lote Padrão (equities), 12 = Fundos Imobiliários (FIIs),
+# 14 = Certificado de Investimento Coletivo, 96 = Fracionário
+# This reduces the DB from ~5.7GB to ~1-2GB by dropping ~85% of rows.
+BDI_FILTER = {2, 12, 14, 96}
+
 
 # ── Fixed-width column layout ────────────────────────────────────────────────
 # (col_name, type, start_pos_1based, end_pos_1based, description)

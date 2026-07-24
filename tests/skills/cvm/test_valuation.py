@@ -162,6 +162,27 @@ def valuation_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "skills.cvm.valuation.valuation._get_shares_investsite",
         mock_get_shares_investsite)
+    # [v1.0.8] Mock _get_financials (calls financials skill) — return synthetic data
+    def mock_get_financials(ticker):
+        return {
+            "status": "ok",
+            "ano": "2023",
+            "company": "PETROLEO BRASILEIRO S.A.",
+            "lucro_liquido": 120000000000.0,
+            "patrimonio_liquido": 400000000000.0,
+            "ebit": 200000000000.0,
+            "ebitda": 230000000000.0,
+            "ebitda_method": "ebit+da",
+            "fco": 180000000000.0,
+            "fci": -80000000000.0,
+            "receita_liquida": 500000000000.0,
+            "caixa": 34000000000.0,
+            "divida_bruta": 371000000000.0,
+            "proventos": 60000000000.0,
+        }
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation._get_financials",
+        mock_get_financials)
 
     return dfp_path, fre_path, trades_path, bridge_path
 
@@ -213,6 +234,17 @@ class TestRatiosMode:
         # Dividend Yield = (60B / 12.88B) / 38.50
         assert r["dividend_yield"] is not None
         assert 0.05 < r["dividend_yield"] < 0.15  # ~6-15%
+
+        # [v1.0.8] New ratios
+        assert r["psr"] is not None       # PSR = Market Cap / Receita
+        assert r["ev_ebitda"] is not None # EV/EBITDA
+        assert r["fcf"] is not None       # FCF = FCO + FCI
+        assert r["p_fcf"] is not None     # P/FCF
+        assert r["dpa"] is not None       # DPA
+        assert r["divida_liquida_ebitda"] is not None  # Divida Liq/EBITDA
+        assert r["ebitda"] is not None    # EBITDA from financials skill
+        assert r["ebitda_method"] == "ebit+da"
+        assert r["price_source"] is not None  # price_source field
 
     def test_ratios_no_company(self, valuation_env):
         from skills.cvm.valuation.valuation import ratios

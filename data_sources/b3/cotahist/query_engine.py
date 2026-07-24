@@ -16,6 +16,7 @@ def query(
     date_to: str = "",
     year: int = 0,
     limit: int = 100,
+    market_type: int = 10,
 ) -> dict:
     """Query historical OHLCV from COTAHIST.
 
@@ -25,6 +26,8 @@ def query(
         date_to: End date YYYY-MM-DD.
         year: Filter by year (e.g., 2025). Takes precedence over date_from/date_to.
         limit: Max rows. Default: 100.
+        market_type: Filter by market type. 10=lote padrão (default, avoids
+                     duplicate rows from fractional market). 0 = all market types.
 
     Returns:
         Dict with OHLCV rows.
@@ -52,6 +55,11 @@ def query(
             if date_to:
                 conditions.append("refdate <= ?")
                 params.append(date_to)
+
+        # [v1.0.1] Filter by market_type to avoid duplicate rows (lote padrão vs fracionário)
+        if market_type > 0:
+            conditions.append("market_type = ?")
+            params.append(market_type)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

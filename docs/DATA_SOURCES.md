@@ -1,67 +1,69 @@
 # 📊 Data Sources
 
-Data sources are external data connectors that sync from APIs (CVM, B3, etc.) into local SQLite DBs, plus a query interface. They follow the hub-and-spoke pattern: a single `@tool`-decorated dispatcher routes to domain hubs, which route to sub-domains.
+Data sources are external data connectors that sync from APIs (CVM, B3) into local SQLite DBs, plus a query interface. They follow the hub-and-spoke pattern: a single `@tool`-decorated dispatcher routes to domain hubs, which route to sub-domains.
 
-**vs skills/**: Data sources handle raw data storage + retrieval. The skills/ layer (future) handles domain reasoning that combines multiple data sources (e.g., computing standalone quarters from DFP + ITR, or financial ratios).
+**vs skills/**: Data sources handle raw data storage + retrieval. The skills/ layer handles domain reasoning that combines multiple data sources (e.g., computing standalone quarters from DFP + ITR, or valuation ratios). See [SKILLS.md](SKILLS.md).
 
-| Document | Domain | Key Topics |
-|----------|--------|------------|
-| [CVM.md](data_sources/CVM.md) | CVM | Brazilian SEC data: DFP (annual) + ITR (quarterly) |
+## Domains
 
----
+| Domain | What | Landing Page |
+|--------|------|--------------|
+| **CVM** | Brazilian SEC data: DFP (annual), ITR (quarterly), FRE (governance), IPE (events), CAD (register), Bridge (ticker→CNPJ) | [CVM.md](data_sources/CVM.md) |
+| **B3** | Brazilian stock exchange: API (instruments, trades, derivatives), Dividends (corporate actions), BRAPI (quotes/OHLCV), COTAHIST (historical) | [B3.md](data_sources/B3.md) |
 
 ## 🏗️ Architecture
 
 ```text
 data_sources/
-├── __init__.py                    # Package marker
-├── dispatcher.py                  # @tool entry point: data_source(domain, sub_domain, mode, params)
+├── dispatcher.py                  # @tool data_source(domain, sub_domain, mode, params)
 │
-└── cvm/                           # CVM domain
-    ├── __init__.py                # MANIFEST + route (domain hub)
-    ├── _db.py                     # Shared: path resolution, CNPJ, connect helpers
-    ├── _bridge.py                 # Shared: ticker→CNPJ→empresa_id resolution
-    ├── _meses.py                  # Shared: meses computation (rapinav2 formula)
-    │
-    ├── dfp/                       # Annual filings (DFP) → dfp.db
-    │   ├── __init__.py            # MANIFEST + route (sub-domain hub)
-    │   ├── catalog.py             # Schema constants, RESUMO_ACCOUNTS
-    │   ├── sync_engine.py         # Download CVM ZIPs → populate dfp.db
-    │   ├── query_engine.py        # Query annual statements
-    │   └── status_reporter.py     # DB stats
-    │
-    └── itr/                       # Quarterly filings (ITR) → itr.db
-        ├── __init__.py            # MANIFEST + route (sub-domain hub)
-        ├── catalog.py             # Schema constants (same as DFP)
-        ├── sync_engine.py         # Download CVM ZIPs → populate itr.db
-        ├── query_engine.py        # Query quarterly cumulative data
-        └── status_reporter.py     # DB stats
+├── cvm/                           # CVM domain
+│   ├── __init__.py                # Domain hub
+│   ├── _db.py                     # Shared: paths, CNPJ, parse_escala, connect helpers
+│   ├── _bridge.py                 # Shared: resolve_company (ticker → CNPJ → empresa_ids)
+│   ├── _meses.py                  # Shared: meses computation (rapinav2 formula)
+│   ├── dfp/                       # Annual financial statements → dfp.db
+│   ├── itr/                       # Quarterly financial statements → itr.db
+│   ├── fre/                       # Governance + shareholders → fre.db
+│   ├── ipe/                       # Material events → ipe.db
+│   ├── cad/                       # Company register → cad.db
+│   └── bridge/                    # B3-CVM identity bridge → bridge.db + isin_index.db
+│
+└── b3/                            # B3 domain
+    ├── __init__.py                # Domain hub
+    ├── api/                       # Market data (instruments, trades, derivatives)
+    ├── brapi/                     # brapi.dev API (quotes, OHLCV, tickers)
+    ├── cotahist/                  # B3 official historical trade data (COTAHIST)
+    └── dividends/                 # Corporate actions (cash/stock dividends, subscriptions)
 ```
 
 ## 🚀 Quick Start
 
-```python
-from data_sources.cvm.dfp.sync_engine import sync as dfp_sync
-from data_sources.cvm.itr.sync_engine import sync as itr_sync
+```powershell
+# CVM — sync all (run from D:\mcp\agent>)
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.cad.sync_engine import sync; print(sync())"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.dfp.sync_engine import sync; print(sync())"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.itr.sync_engine import sync; print(sync())"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.fre.sync_engine import sync; print(sync())"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.ipe.sync_engine import sync; print(sync())"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.bridge.sync_engine import sync; print(sync(ticker='PETR4'))"
 
-# Sync current year only (~30s each)
-dfp_sync()         # → dfp.db
-itr_sync()         # → itr.db
-
-# Sync specific years
-dfp_sync(years=[2023, 2024])
-
-# Sync full history
-dfp_sync(full_history=True)   # 2010-present
-itr_sync(full_history=True)   # 2015-present
+# B3 — sync all
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.brapi.sync_engine import sync_tickers; print(sync_tickers())"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.brapi.sync_engine import sync_history; print(sync_history(ticker='PETR4'))"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.dividends.sync_engine import sync; print(sync(ticker='PETR4'))"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.api.sync_engine import sync; print(sync(table='trades'))"
+D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.cotahist.sync_engine import sync_full_history; print(sync_full_history())"
 ```
+
+See [CVM.md](data_sources/CVM.md) and [B3.md](data_sources/B3.md) for full sync commands per sub-domain.
 
 ## 🔧 Configuration
 
 Data sources store data in `cfg.memory_root / "<domain>/"` (e.g., `memory_db/cvm/dfp.db`).
 
-No env vars required — data sources use the existing `cfg.memory_root` + `cfg.workspace_root` from `core/config`.
+No env vars required — data sources use the existing `cfg.memory_root` from `core/config`.
 
 ---
 
-*Last updated: 2026-07-23.*
+*Last updated: 2026-07-24.*
