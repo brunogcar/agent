@@ -213,6 +213,7 @@ Skills are **analytical views** that combine multiple data sources with domain r
 
 | Skill | Modes | Combines |
 |-------|-------|----------|
+| [**financials**](docs/skills/cvm/FINANCIALS.md) | quarterly (default), annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
 | [**shareholders**](docs/skills/cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](docs/skills/cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
 
