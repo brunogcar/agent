@@ -206,22 +206,29 @@ def summary(company: str = "") -> dict:
     return r
 
 
-# ── Internal: get price (investsite primary, b3 trades fallback) ─────────────
+# ── Internal: get price (brapi primary → investsite → b3 trades fallback) ────
 
 def _get_price(ticker: str) -> dict:
     """Get latest price for a ticker.
 
-    [v1.0.2] Tries investsite first (live, always available), then falls
-    back to b3 trades.db (local, may not be synced or may be stale).
+    [v1.0.7] 3-tier price source:
+    1. brapi.dev (proper API, 15-min delay, returns price + market_cap + PE)
+    2. investsite.com.br (web scraping, always available)
+    3. b3 trades.db (local, D+1 delay, when synced)
 
     Returns dict with: status, source, last_price, date.
     """
-    # Try investsite first
+    # 1. Try brapi.dev first (best — proper API, fast, 15-min delay)
+    brapi_data = _get_price_brapi(ticker)
+    if brapi_data.get("status") == "ok":
+        return brapi_data
+
+    # 2. Fallback: investsite (web scraping, always available)
     investsite_data = _get_price_investsite(ticker)
     if investsite_data.get("status") == "ok":
         return investsite_data
 
-    # Fallback: b3 trades.db
+    # 3. Fallback: b3 trades.db (local, D+1)
     b3_data = _get_latest_price(ticker)
     if b3_data.get("status") == "ok":
         b3_data["source"] = "b3_trades"
@@ -230,6 +237,34 @@ def _get_price(ticker: str) -> dict:
     # Both failed — return investsite error (more helpful message)
     investsite_data["source"] = "investsite+b3_trades (both failed)"
     return investsite_data
+
+
+def _get_price_brapi(ticker: str) -> dict:
+    """Get latest price from brapi.dev (proper API, 15-min delay).
+
+    brapi.dev returns: regularMarketPrice, marketCap, priceEarnings, volume.
+    Free tier covers PETR4, VALE3, ITUB4, MGLU3 without token.
+    """
+    try:
+        from data_sources.b3.brapi.query_engine import quote as brapi_quote
+        r = brapi_quote(ticker=ticker, force=True)
+        if r.get("status") != "ok":
+            return {"status": "error", "error": f"brapi: {r.get('error','')}"}
+
+        price = r.get("price")
+        if price is None:
+            return {"status": "error", "error": "brapi: no price in response"}
+
+        return {
+            "status": "ok",
+            "source": "brapi",
+            "last_price": float(price),
+            "date": "",  # brapi doesn't return date in quote mode
+            "market_cap": r.get("market_cap"),
+            "pe_ratio": r.get("pe_ratio"),
+        }
+    except Exception as e:
+        return {"status": "error", "error": f"brapi: {e}"}
 
 
 def _get_price_investsite(ticker: str) -> dict:

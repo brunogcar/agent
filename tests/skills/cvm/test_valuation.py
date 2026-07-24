@@ -150,6 +150,12 @@ def valuation_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "skills.cvm.valuation.valuation._get_price_investsite",
         mock_get_price_investsite)
+    # [v1.0.7] Mock brapi price fetcher (now primary) — use b3 trades in tests
+    def mock_get_price_brapi(ticker):
+        return {"status": "error", "error": "brapi mocked out in tests"}
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation._get_price_brapi",
+        mock_get_price_brapi)
     # [v1.0.5] Mock investsite shares fetcher (fallback) — FRE is our primary in tests
     def mock_get_shares_investsite(ticker):
         return {"status": "error", "error": "investsite mocked out in tests"}
