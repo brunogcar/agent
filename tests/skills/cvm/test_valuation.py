@@ -141,7 +141,7 @@ def valuation_env(tmp_path, monkeypatch):
     monkeypatch.setattr("data_sources.cvm._bridge.cad_db_path",
                         lambda: Path("/nonexistent/cad.db"))
     monkeypatch.setattr("data_sources.b3.api.catalog.db_path", mock_b3_db_path)
-    # Disable auto-sync (bridge is already populated)
+    # Disable auto-sync (bridge is already populated in tests)
     monkeypatch.setattr("data_sources.cvm._bridge._auto_sync_bridge", lambda ticker: True)
     # [v1.0.2] Mock investsite price fetcher (primary source) to use b3 trades data
     # In tests, we want b3 trades to be the price source (deterministic)

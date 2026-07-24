@@ -91,6 +91,7 @@ def ratios(company: str = "") -> dict:
         "error": shares_data.get("error", ""),
         "on_shares": shares_data.get("on_shares"),
         "pn_shares": shares_data.get("pn_shares"),
+        "source": shares_data.get("source", "?"),
     }
 
     # If price is missing, we can't compute any ratios — return with source status
@@ -368,10 +369,10 @@ def _get_latest_financials(ticker: str) -> dict:
         return {"status": "not_synced", "error": str(e)}
 
     try:
-        # [v1.0.3] auto_sync=False — avoid triggering bridge sync (which calls
-        # investsite + dividends + CAD) during a valuation query. The user should
-        # pre-sync the bridge separately if needed.
-        empresa_ids, company_name = resolve_company(conn, ticker, auto_sync=False)
+        # [v1.0.6] auto_sync=True — if ticker not in bridge.db, auto-sync it
+        # (fetches dividends + CAD lookup + upserts bridge). This makes the
+        # valuation skill work for ANY ticker without pre-syncing the bridge.
+        empresa_ids, company_name = resolve_company(conn, ticker, auto_sync=True)
         if not empresa_ids:
             return {"status": "not_found",
                     "error": f"Company '{ticker}' not found in DFP. "
@@ -444,8 +445,12 @@ def _get_shares_outstanding(ticker: str) -> dict:
         return {"status": "not_synced", "error": str(e)}
 
     try:
-        from data_sources.cvm._bridge import _resolve_via_bridge
+        from data_sources.cvm._bridge import _resolve_via_bridge, _auto_sync_bridge
         cnpj, _ = _resolve_via_bridge(ticker)
+        if not cnpj:
+            # [v1.0.6] Auto-sync bridge for new tickers
+            if _auto_sync_bridge(ticker):
+                cnpj, _ = _resolve_via_bridge(ticker)
         if not cnpj:
             return {"status": "not_found", "error": f"Ticker '{ticker}' not in bridge.db"}
 
