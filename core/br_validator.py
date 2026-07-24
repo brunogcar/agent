@@ -22,24 +22,49 @@ def parse_brl(value: str | float | int) -> float:
     'R$ 1.000,50' -> 1000.50
     '-R$ 50,00'   -> -50.00
     '1.234,56'    -> 1234.56
+    'R$ 596,36 B' -> 596360000000.0   (billions — investsite format)
+    'R$ 1,25 T'   -> 1250000000000.0  (trillions — investsite format)
+    'R$ 50,00 M'  -> 50000000.0       (millions — investsite format)
+    '27,18%'      -> 0.2718            (percentage)
     """
     if isinstance(value, (int, float)):
         return float(value)
     if not isinstance(value, str):
         raise ValueError(f"Cannot parse BRL from {type(value)}")
-    
+
     clean = value.strip()
     if not clean:
         return 0.0
-        
+
     negative = clean.startswith("-")
     clean = clean.replace("R$", "").replace("-", "").strip()
-    
+
+    # [v1.1] Handle percentage: "27,18%" -> 0.2718
+    is_percentage = "%" in clean
+    clean = clean.replace("%", "")
+
+    # [v1.1] Handle magnitude suffixes (investsite format): B=billion, T=trillion, M=million
+    multiplier = 1.0
+    # Match suffix at end (case-insensitive), must be a standalone letter
+    suffix_match = re.match(r"^(.*?)([BTM])$", clean, re.IGNORECASE)
+    if suffix_match:
+        clean = suffix_match.group(1).strip()
+        suffix = suffix_match.group(2).upper()
+        if suffix == "B":
+            multiplier = 1_000_000_000  # billion
+        elif suffix == "T":
+            multiplier = 1_000_000_000_000  # trillion
+        elif suffix == "M":
+            multiplier = 1_000_000  # million
+
     # Remove thousands separator (.) and replace decimal separator (,) with (.)
     clean = clean.replace(".", "").replace(",", ".")
-    
+
     try:
         result = float(clean)
+        if is_percentage:
+            result = result / 100.0
+        result = result * multiplier
         return -result if negative else result
     except ValueError:
         raise ValueError(f"Invalid BRL format: {value}")

@@ -40,6 +40,26 @@ def _normalize_key(key: str) -> str:
     return ascii_str
 
 
+def _try_parse_brl(value: str) -> str | float:
+    """Try to parse a value as BRL. Return float on success, original string on failure.
+
+    Uses core.br_validator.parse_brl which handles:
+      "R$ 596,36 B" → 596360000000.0
+      "27,18%" → 0.2718
+      "5,15" → 5.15
+      "PETROBRAS" → "PETROBRAS" (not a number, returns as-is)
+
+    Non-numeric strings (company names, dates, descriptions) are returned as-is.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return value
+    try:
+        from core.br_validator import parse_brl
+        return parse_brl(value)
+    except (ValueError, ImportError):
+        return value
+
+
 # ── HTML helpers ─────────────────────────────────────────────────────────────
 
 def _strip_tags(html: str) -> str:
@@ -164,7 +184,9 @@ def parse_indicators(html: str) -> dict:
                 values = row[1:]
                 # [v1.0.1] Normalize keys to ASCII for terminal compatibility
                 normalized_label = _normalize_key(label)
-                section_data[normalized_label] = values[0] if len(values) == 1 else values
+                # [v1.0.2] Parse BRL values to float using core.br_validator
+                parsed_values = [_try_parse_brl(v) for v in values]
+                section_data[normalized_label] = parsed_values[0] if len(parsed_values) == 1 else parsed_values
 
         result["sections"][section_key] = section_data
 

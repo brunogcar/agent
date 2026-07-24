@@ -101,8 +101,9 @@ class TestParsers:
         assert "retornos_margens" in sections
         assert sections["dados_basicos"]["Empresa"] == "PETROBRAS"
         # [v1.0.1] Keys are now ASCII-normalized
-        assert sections["precos_relativos"]["Preco/Lucro"] == "5,15"
-        assert sections["retornos_margens"]["Divida Liquida/EBITDA"] == "1,46"
+        # [v1.0.2] Values are now parsed to float via core.br_validator
+        assert sections["precos_relativos"]["Preco/Lucro"] == 5.15
+        assert sections["retornos_margens"]["Divida Liquida/EBITDA"] == 1.46
 
     def test_parse_statement(self):
         from skills.investsite.parsers import parse_statement
