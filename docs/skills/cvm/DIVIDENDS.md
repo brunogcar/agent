@@ -1,4 +1,4 @@
-<- Back to [CVM Skills](../../SKILLS.md)
+<- Back to [CVM Skills](../CVM.md)
 
 # 💸 DIVIDENDS — Dividend Skill (B3 + DFP + IPE)
 

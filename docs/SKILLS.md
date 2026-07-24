@@ -226,11 +226,19 @@ Identical pattern to `data_source()` — JSON params string, auto-discovery.
 
 ### CVM Skills
 
+See [CVM Skills Overview](skills/cvm/CVM.md) for the full landing page.
+
 | Sub-domain | Modes | Data Sources |
 |------------|-------|--------------|
 | [shareholders](skills/cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (posicao_acionaria, distribuicao_capital) + DFP (BPP 2.03.*) |
 | [dividends](skills/cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 dividends + DFP (DVA 7.08.04.*, BPP 2.01.05.02.*) + IPE |
 | [financials](skills/cvm/FINANCIALS.md) | quarterly, annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) |
+
+### Investsite Skills
+
+| Domain | Modes | Source |
+|--------|-------|--------|
+| [investsite](skills/INVESTSITE.md) | indicators, statements, events, summary, listing | investsite.com.br (live web scraping, no local DB) |
 
 ### Architecture
 

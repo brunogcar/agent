@@ -1,4 +1,4 @@
-<- Back to [CVM Skills](../../SKILLS.md)
+<- Back to [CVM Skills](../CVM.md)
 
 # 📊 FINANCIALS — Financial Statements + Ratios Skill
 

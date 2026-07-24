@@ -216,6 +216,7 @@ Skills are **analytical views** that combine multiple data sources with domain r
 | [**financials**](docs/skills/cvm/FINANCIALS.md) | quarterly (default), annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
 | [**shareholders**](docs/skills/cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](docs/skills/cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
+| [**investsite**](docs/skills/INVESTSITE.md) | indicators, statements, events, summary, listing | investsite.com.br (live web scraping — valuation ratios, full statements, CVM event links) |
 
 Skills call data_source query engines directly (no JSON round-trip). The bridge auto-syncs on first ticker query (`resolve_company(auto_sync=True)`).
 
