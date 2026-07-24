@@ -20,7 +20,8 @@ agent/
 ├── core/                  # Foundation layer — 13 subsystems
 ├── tools/                 # 18 meta-tools exposed to the LLM
 ├── workflows/             # 6 LangGraph state machines
-├── skills/                # Domain knowledge packages (hub-and-spoke)
+├── data_sources/          # Raw data ingestion + query (CVM, B3)
+├── skills/                # Analytical views combining data sources
 ├── benchmark/             # Role benchmarking tool
 ├── docs/                  # 5-file documentation standard per component
 └── tests/                 # Pytest suites mirror source structure
@@ -173,24 +174,50 @@ Self-contained library code with no subpackage structure. Each is a single file 
 
 ---
 
+## 📊 Data Sources Layer (`data_sources/`)
+
+Raw data ingestion + query. Each sub-domain syncs data from an external API into a local SQLite database, then provides query modes. See [DATA_SOURCES.md](data_sources/DATA_SOURCES.md).
+
+```text
+data_sources/
+├── dispatcher.py              # @tool data_source(domain, sub_domain, mode, params)
+├── cvm/                       # Brazilian SEC data
+│   ├── __init__.py            # Domain manifest + route
+│   ├── _db.py                 # Shared: paths, cnpj_digits(), parse_escala(), connect_*
+│   ├── _bridge.py             # Shared: resolve_company() — ticker → CNPJ → empresa_ids
+│   ├── _meses.py              # Shared: rapinav2-compatible meses computation
+│   ├── dfp/                   # Annual financial statements
+│   ├── itr/                   # Quarterly financial statements
+│   ├── fre/                   # Governance + ownership (Formulário de Referência)
+│   ├── ipe/                   # Material events index
+│   ├── cad/                   # Company register (CNPJ → CD_CVM)
+│   └── bridge/                # B3-CVM identity bridge (ticker → cd_cvm → CNPJ)
+└── b3/                        # Brazilian stock exchange data
+    ├── __init__.py            # Domain manifest + route
+    ├── api/                   # Market data: instruments, trades, derivatives
+    └── dividends/             # Corporate actions: cash/stock dividends, subscriptions
+```
+
+**Each sub-domain has:** `__init__.py` (MANIFEST + route), `catalog.py` (schema), `sync_engine.py` (download), `query_engine.py` (read), `status_reporter.py` (stats).
+
+---
+
 ## 🧩 Skills Layer (`skills/`)
 
-Domain knowledge packages following the **hub-and-spoke pattern**. A single `@tool`-decorated hub per domain routes to pure-Python subdomain modules.
+Analytical views that combine multiple data sources with domain reasoning. Read-only (no sync) — they call data_source query engines directly. See [SKILLS.md](SKILLS.md).
 
 ```text
 skills/
-├── dispatcher.py              # Auto-discovers domain hubs at startup
-├── b3/                        # Brazilian Stock Exchange
-│   ├── b3.py                  # @tool hub
-│   ├── data.py                # Sync/query CSV data lake
-│   ├── export.py              # Export helpers
-│   └── paths.py               # Path resolution
-└── cvm/                       # Brazilian SEC regulatory data
-    ├── cvm.py                 # @tool hub
-    └── ...
+├── dispatcher.py              # @tool skill(domain, sub_domain, mode, params)
+└── cvm/                       # CVM analytical skills
+    ├── __init__.py            # Domain manifest + route
+    ├── shareholders/          # Named shareholders + equity structure (FRE + DFP)
+    └── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
 ```
 
-**To add a new domain:** create `skills/<domain>/<domain>.py` with a `@tool`-decorated function. The dispatcher auto-discovers it — no wiring in `server.py` or `registry.py`.
+**Each skill has:** `__init__.py` (MANIFEST + route), `<skill>.py` (logic — delegates to data_source query engines).
+
+**To add a new skill:** create `skills/<domain>/<skill>/__init__.py` with `MANIFEST` + `route()`. The domain router auto-discovers it.
 
 ---
 

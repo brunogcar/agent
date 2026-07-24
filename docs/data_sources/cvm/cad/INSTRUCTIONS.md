@@ -1,23 +1,25 @@
-<- Back to [CVM Overview](../CVM.md)
+<- Back to [CAD Overview](../CAD.md)
 
 # 🛡️ AI Instructions
 
-## ❌ NEVER DO
+### NEVER DO
 
-1. Never use incremental/dedup logic for CAD sync — the CSV is a full snapshot. DELETE + INSERT.
-2. Never use `print()` — use `core.tracer` for logging.
-3. Never create `.bak` files.
-4. Never return all 46 columns by default — use DEFAULT_COLS (24 key columns). `full=True` returns all.
+1. **Never implement partial sync** — CAD is full-replace only. The CSV is a complete snapshot (~2677 companies, ~1.5MB). Incremental sync would miss deletions/status changes.
+2. **Never skip CNPJ normalization** — Always use `cnpj_digits()` when storing or querying CNPJ. The CSV has formatted CNPJs ("33.000.167/0001-01").
+3. **Never change the 46-column schema** — `ALL_COLS` maps the CSV exactly. Adding/removing columns breaks the dynamic INSERT.
+4. **Never create `.bak` files** — Forbidden by project rules.
+5. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
+6. **Never print to stdout** — MCP stdio corruption. Use `core.tracer` or stderr.
 
-## ✅ ALWAYS DO
+### ALWAYS DO
 
-1. Always normalize CNPJ to 14 digits for comparison (CSV stores formatted CNPJ).
-2. Always use `REPLACE(REPLACE(REPLACE(CNPJ_CIA,'.',''),'/',''),'-','')` for CNPJ matching.
-3. Always skip sync if already done today (unless `force=True`).
-4. Always return `{"status": "not_synced"}` when the DB doesn't exist.
-5. Always search both DENOM_SOCIAL (legal) and DENOM_COMERC (commercial) names.
-6. Always default to `active_only=True` in search (most queries are for listed companies).
+1. **Always use `cnpj_digits()` for CNPJ comparisons** — The DB may have formatted CNPJs; normalize before comparing.
+2. **Always use `DEFAULT_COLS` (24) by default** — `full=True` returns all 46 columns (noisy). Only use `full` when explicitly needed.
+3. **Always update `sync_state` after sync** — Records the sync timestamp for freshness checks.
+4. **Always run `compileall` before `pytest`** — Catches syntax errors early.
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+### Anti-patterns & Lessons Learned
+
+*(Fill this section with relevant info from edits and refactors. Add lessons learned as they are discovered.)*

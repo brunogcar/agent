@@ -1,4 +1,4 @@
-<- Back to [B3 Overview](../B3.md)
+<- Back to [DIVIDENDS Overview](../DIVIDENDS.md)
 
 # 🏗️ Architecture
 

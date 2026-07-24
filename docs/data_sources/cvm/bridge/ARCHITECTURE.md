@@ -1,4 +1,4 @@
-<- Back to [CVM Overview](../../CVM.md)
+<- Back to [BRIDGE Overview](../BRIDGE.md)
 
 # 🏗️ Architecture
 

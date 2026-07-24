@@ -228,10 +228,8 @@ Identical pattern to `data_source()` — JSON params string, auto-discovery.
 
 | Sub-domain | Modes | Data Sources |
 |------------|-------|--------------|
-| `shareholders` | shareholders, free_float, equity_structure, summary | FRE (posicao_acionaria, distribuicao_capital) + DFP (BPP 2.03.*) |
-| `dividends` | history, annual, payable, announcements, summary | B3 dividends + DFP (DVA 7.08.04.*, BPP 2.01.05.02.*) + IPE |
-
-See [docs/skills/cvm/SKILLS.md](skills/cvm/SKILLS.md) for details.
+| [shareholders](skills/cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (posicao_acionaria, distribuicao_capital) + DFP (BPP 2.03.*) |
+| [dividends](skills/cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 dividends + DFP (DVA 7.08.04.*, BPP 2.01.05.02.*) + IPE |
 
 ### Architecture
 

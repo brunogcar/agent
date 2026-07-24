@@ -181,16 +181,44 @@ See [`docs/CORE.md`](docs/CORE.md) for the full architecture layers and module m
 
 ---
 
-## 🧩 Skills & Domain Knowledge
+## 📊 Data Sources
 
-Skills are domain-specific knowledge packages. They follow a **hub-and-spoke pattern**: a single `@tool`-decorated hub per domain routes to pure-Python subdomain modules. The `skills/dispatcher.py` module auto-discovers hubs at startup — **to add a new domain, just create `skills/<domain>/<domain>.py`**. No wiring in `server.py` or `registry.py`.
+Data sources are the **raw data ingestion + query layer**. Each sub-domain syncs data from an external API (CVM, B3) into a local SQLite database, then provides query modes for reading it. Single entry point: `data_source(domain, sub_domain, mode, params)`.
 
-| Domain | Hub | Focus |
-|--------|-----|-------|
-| [**B3**](docs/SKILLS.md) | `skills/b3/b3.py` | Brasil, Bolsa, Balcão (Brazilian Stock Exchange) market data. `sync` mode downloads daily CSVs to a local data lake; `query` mode runs SQL/pandas against them. |
-| [**CVM**](docs/SKILLS.md) | `skills/cvm/cvm.py` | Comissão de Valores Mobiliários (Brazilian SEC) regulatory data. Wraps the CVM open data portal: rate-limit handling, CSV extraction, cross-referencing DFP/ITR/FRE statements with market payouts. |
+### CVM (Brazilian SEC)
 
-See [`docs/SKILLS.md`](docs/SKILLS.md) for the hub-and-spoke pattern, subdomain structure, and how to add new domains.
+| Sub-domain | What | Storage |
+|------------|------|---------|
+| [**DFP**](docs/data_sources/cvm/DFP.md) | Annual financial statements (Demonstrações Financeiras Padronizadas) | `memory_db/cvm/dfp.db` |
+| [**ITR**](docs/data_sources/cvm/ITR.md) | Quarterly financial statements (cumulative YTD) | `memory_db/cvm/itr.db` |
+| [**FRE**](docs/data_sources/cvm/FRE.md) | Formulário de Referência — governance, shareholders, compensation | `memory_db/cvm/fre.db` |
+| [**IPE**](docs/data_sources/cvm/IPE.md) | Material events index (earnings, dividends, M&A filings) | `memory_db/cvm/ipe.db` |
+| [**CAD**](docs/data_sources/cvm/CAD.md) | Company register (CNPJ → CD_CVM + names) | `memory_db/cvm/cad.db` |
+| [**Bridge**](docs/data_sources/cvm/BRIDGE.md) | B3-CVM identity bridge (ticker → cd_cvm → CNPJ) + ISIN fallback | `memory_db/cvm/bridge.db` |
+
+### B3 (Brazilian Stock Exchange)
+
+| Sub-domain | What | Storage |
+|------------|------|---------|
+| [**API**](docs/data_sources/b3/API.md) | Market data: instruments, trades, derivatives (paginated JSON API) | `memory_db/b3/{table}.db` |
+| [**DIVIDENDS**](docs/data_sources/b3/DIVIDENDS.md) | Corporate actions: cash/stock dividends, subscriptions (per-ticker) | `memory_db/b3/dividends.db` |
+
+See [`docs/data_sources/DATA_SOURCES.md`](docs/data_sources/DATA_SOURCES.md) for the full architecture, sync commands, and the zero-maintenance auto-discovery design.
+
+---
+
+## 🧩 Skills
+
+Skills are **analytical views** that combine multiple data sources with domain reasoning. They are read-only (no sync) and sit on top of `data_sources/`. Single entry point: `skill(domain, sub_domain, mode, params)`.
+
+| Skill | Modes | Combines |
+|-------|-------|----------|
+| [**shareholders**](docs/skills/cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
+| [**dividends**](docs/skills/cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
+
+Skills call data_source query engines directly (no JSON round-trip). The bridge auto-syncs on first ticker query (`resolve_company(auto_sync=True)`).
+
+See [`docs/SKILLS.md`](docs/SKILLS.md) for the full skills architecture and how to add new skills.
 
 ---
 
@@ -246,7 +274,8 @@ Every component follows the **5-file documentation standard**: `INDEX` (overview
 | [`docs/TOOLS.md`](docs/TOOLS.md) | All 18 tools — status, safety rules, comparison |
 | [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) | All 6 workflows — status, comparison, return schema |
 | [`docs/CORE.md`](docs/CORE.md) | All 13 core subsystems — architecture layers, module map |
-| [`docs/SKILLS.md`](docs/SKILLS.md) | Skills hub-and-spoke pattern, B3 + CVM domains |
+| [`docs/data_sources/DATA_SOURCES.md`](docs/data_sources/DATA_SOURCES.md) | CVM + B3 data sources — sync, query, bridge |
+| [`docs/SKILLS.md`](docs/SKILLS.md) | Skills layer — analytical views combining data sources |
 | [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | Role benchmarking tool, task catalog |
 | [`docs/SESSION_WORKFLOW.md`](docs/SESSION_WORKFLOW.md) | AI-assisted dev session workflow (how to work on this repo) |
 | [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md) | The 5-file standard itself |
@@ -374,10 +403,14 @@ agent/
 │   ├── understand.py → understand_impl/     (4 nodes)
 │   └── autoresearch.py → autoresearch_impl/ (8 nodes)
 │
-├── skills/                # Domain knowledge (hub-and-spoke)
-│   ├── dispatcher.py      # Auto-discovers domain hubs
-│   ├── b3/                # Brazilian Stock Exchange
-│   └── cvm/               # Brazilian SEC regulatory data
+├── data_sources/          # Raw data ingestion + query (CVM, B3)
+│   ├── dispatcher.py      # @tool data_source(domain, sub_domain, mode, params)
+│   ├── cvm/               # Brazilian SEC: DFP, ITR, FRE, IPE, CAD, Bridge
+│   └── b3/                # Brazilian stock exchange: API, Dividends
+│
+├── skills/                # Analytical views (read-only, combine data sources)
+│   ├── dispatcher.py      # @tool skill(domain, sub_domain, mode, params)
+│   └── cvm/               # CVM skills: shareholders, dividends
 │
 ├── benchmark/             # Role benchmarking tool
 ├── docs/                  # 5-file documentation standard per component

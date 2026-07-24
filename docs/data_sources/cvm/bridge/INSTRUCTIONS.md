@@ -1,127 +1,30 @@
-<- Back to [CVM Overview](../../CVM.md)
+<- Back to [BRIDGE Overview](../BRIDGE.md)
 
-# 📋 Instructions
+# 🛡️ AI Instructions
 
-## Quick Start
+### NEVER DO
 
-### 1. Prerequisites
+1. **Never change `_resolve_via_bridge()` return type** — It returns a `(cnpj, cd_cvm)` tuple (v1.2+). FRE + IPE query engines unpack this tuple. Changing it to a scalar breaks every ticker query.
+2. **Never add a `mkt_cap` column** — Market cap lives in instruments.db (may be partial). The bridge is identity-only. Intentionally excluded.
+3. **Never remove the ISIN fallback** — It's the backup when the dividends API returns no codeCVM. Without it, those tickers can't be bridged.
+4. **Never remove the `auto_sync` parameter from `resolve_company()`** — It defaults to `True` and enables auto-sync-on-demand. Removing it breaks the self-healing behavior.
+5. **Never create `.bak` files** — Forbidden by project rules.
+6. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
+7. **Never print to stdout** — MCP stdio corruption. Use `core.tracer` or stderr.
 
-The bridge depends on two other data sources being synced:
+### ALWAYS DO
 
-```
-# CAD (company register) — provides cd_cvm → CNPJ + names
-data_source(domain="cvm", sub_domain="cad", mode="sync")
-
-# Dividends — provides ticker → codeCVM (fetched on-demand by the bridge)
-# No pre-sync needed; the bridge calls dividends sync automatically.
-```
-
-### 2. Bridge a ticker
-
-```
-data_source(domain="cvm", sub_domain="bridge", mode="sync", params='{"ticker":"PETR4"}')
-```
-
-This will:
-1. Check if PETR4 is already in bridge.db (skip if yes, unless `force:true`)
-2. Ensure dividends data exists (fetch from B3 API if not already synced)
-3. Read `codeCVM` from dividends.company_info
-4. Look up CNPJ + names + status + sector in CAD by cd_cvm
-5. Upsert the full identity record into bridge.db
-
-### 3. Query CVM financials by ticker
-
-After bridging, all CVM sub-domains accept the ticker directly:
-
-```
-data_source(domain="cvm", sub_domain="dfp", mode="query", params='{"company":"PETR4"}')
-data_source(domain="cvm", sub_domain="itr", mode="query", params='{"company":"VALE3"}')
-data_source(domain="cvm", sub_domain="fre", mode="query", params='{"company":"PETR4"}')
-data_source(domain="cvm", sub_domain="ipe", mode="search", params='{"company":"PETR4"}')
-```
-
-The resolver (`_bridge.py`) translates the ticker → CNPJ (or cd_cvm fallback)
-→ empresa_ids automatically.
-
-## Bridging Multiple Tickers
-
-```
-data_source(domain="cvm", sub_domain="bridge", mode="sync",
-  params='{"tickers":["PETR4","VALE3","ITUB4","BBDC4","ABEV3"]}')
-```
-
-Already-bridged tickers are skipped (unless `force:true`). The dividends API
-is called once per ticker (it's a per-ticker endpoint, not bulk).
-
-## When to Re-sync
-
-| Situation | Action |
-|-----------|--------|
-| New ticker never bridged | `sync(ticker="WEGE3")` |
-| CAD was refreshed (new companies) | `sync(ticker="PETR4", force=true)` to re-join |
-| Dividends data is stale | `sync(ticker="PETR4", force=true)` re-fetches from API |
-| Everything looks fine | No action — re-syncing a bridged ticker returns `skipped` |
-
-## Checking Bridge Health
-
-```
-data_source(domain="cvm", sub_domain="bridge", mode="status")
-```
-
-Key metrics:
-- `total_tickers` — how many tickers are bridged
-- `with_cnpj` — how many have a CAD-resolved CNPJ
-- `cnpj_coverage_pct` — `with_cnpj / total_tickers * 100`
-- `log.no_cad` — tickers whose cd_cvm wasn't found in CAD (stale CAD or unregistered)
-
-If `cnpj_coverage_pct` is low, re-sync CAD then re-bridge with `force:true`.
-
-## Looking Up a Company
-
-```
-# By ticker
-data_source(domain="cvm", sub_domain="bridge", mode="lookup", params='{"ticker":"PETR4"}')
-
-# By CNPJ
-data_source(domain="cvm", sub_domain="bridge", mode="lookup", params='{"cnpj":"33000167000101"}')
-
-# By CD_CVM
-data_source(domain="cvm", sub_domain="bridge", mode="lookup", params='{"cd_cvm":"9512"}')
-
-# Fuzzy name search
-data_source(domain="cvm", sub_domain="bridge", mode="resolve", params='{"query":"petro"}')
-```
-
-## What's NOT in the Bridge
-
-- **mkt_cap (market capitalization)** — lives in instruments.db, which may not
-  be fully synced. Use `data_source(domain="b3", sub_domain="api", mode="lookup_ticker")`
-  for market data.
-- **ISIN** — not needed for CVM resolution. Available via instruments.db if synced.
-- **Governance level, segment, specification code** — B3 instrument metadata,
-  available via instruments.db. The bridge is identity-only.
-
-## Troubleshooting
-
-### "dividends sync succeeded but no codeCVM in response"
-
-The B3 dividends API returned data but `codeCVM` was empty. This is rare —
-retry with `force:true`. If it persists, the ticker may not have a CVM-registered
-issuer.
-
-### "cd_cvm not in cad.db (partial bridge entry)"
-
-The dividends API returned a codeCVM, but CAD doesn't have that cd_cvm.
-Causes: stale cad.db (re-sync CAD), or the company is very new (not yet in
-the weekly CSV). The bridge stores the ticker + cd_cvm (no CNPJ). The resolver
-will use the cd_cvm fallback to find the company in DFP/ITR.
-
-### Ticker not found in CVM query after bridging
-
-1. Check `data_source(domain="cvm", sub_domain="bridge", mode="lookup", params='{"ticker":"PETR4"}')` — does it return `status: "ok"`?
-2. Check `data_source(domain="cvm", sub_domain="dfp", mode="status")` — is dfp.db synced?
-3. The company may not have DFP/ITR filings (e.g., newly listed). Check CAD: `data_source(domain="cvm", sub_domain="cad", mode="lookup", params='{"cd_cvm":"9512"}')`.
+1. **Always unpack the `(cnpj, cd_cvm)` tuple** when calling `_resolve_via_bridge()` — see FRE/IPE query engines for the pattern.
+2. **Always use `cnpj_digits()` for CNPJ normalization** — CNPJ may be formatted ("33.000.167/0001-01") or normalized ("33000167000101"). `cnpj_digits()` handles both.
+3. **Always use `parse_escala()` for escala values** — DFP stores escala as Portuguese words ("MIL", "MILHOES"), not numbers.
+4. **Always log sync actions to `sync_log`** — `linked`, `linked_isin`, `no_cvm`, `no_cad`, `error` actions for auditability.
+5. **Always run `compileall` before `pytest`** — Catches syntax errors early.
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+### Anti-patterns & Lessons Learned
+
+*(Fill this section with relevant info from edits and refactors. Add lessons learned as they are discovered.)*
+
+- **v1.2.1 lesson:** When changing a function's return type (scalar → tuple), grep for ALL callers and update them. The bridge v1.2 changed `_resolve_via_bridge()` to return a tuple but missed FRE + IPE callers — caused `sqlite3.ProgrammingError: type 'tuple' is not supported`.
+- **v1.2.1 lesson:** DFP/ITR sync stored CNPJ raw (formatted) from the CSV. The resolver now uses `REPLACE()` to normalize on-the-fly, but future syncs should use `cnpj_digits()` at ingest.

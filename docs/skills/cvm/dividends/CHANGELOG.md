@@ -1,4 +1,4 @@
-<- Back to [CVM Skills](../../)
+<- Back to [DIVIDENDS Overview](../DIVIDENDS.md)
 
 # 🗺️ Changelog — dividends skill
 

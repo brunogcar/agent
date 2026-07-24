@@ -1,24 +1,27 @@
-<- Back to [CVM Overview](../CVM.md)
+<- Back to [FRE Overview](../FRE.md)
 
 # 🛡️ AI Instructions
 
-## ❌ NEVER DO
+### NEVER DO
 
-1. Never compute financial ratios or analysis in the FRE data source — that belongs in the skills/ layer.
-2. Never import all 50+ CSVs from the FRE ZIP — only the 5 analytically useful tables.
-3. Never use `print()` — use `core.tracer` for logging.
-4. Never create `.bak` files.
-5. Never skip the documentos table — it's the filing index + provides company resolution for all other tables.
+1. **Never change `_resolve_via_bridge()` tuple unpacking** — It returns `(cnpj, cd_cvm)`. The `_resolve_fre_company` function unpacks this tuple. Changing it to a scalar breaks ticker queries (v1.0.1 lesson).
+2. **Never change `ID_DOC` as primary key** — It's a globally unique CVM filing ID. Changing it breaks dedup across years.
+3. **Never import all 50+ CSVs** — Only 5 tables are imported (the analytically useful ones). The rest are text-heavy governance sections.
+4. **Never create `.bak` files** — Forbidden by project rules.
+5. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
+6. **Never print to stdout** — MCP stdio corruption. Use `core.tracer` or stderr.
 
-## ✅ ALWAYS DO
+### ALWAYS DO
 
-1. Always use ID_DOC as the primary key for documentos (globally unique CVM filing ID).
-2. Always use INSERT OR REPLACE for dedup (idempotent re-syncs).
-3. Always normalize CNPJ to 14 digits via `cnpj_digits()` from `_db.py`.
-4. Always skip META/dicionario files in the ZIP parser.
-5. Always return `{"status": "not_synced"}` when the DB doesn't exist (don't crash).
-6. Always resolve companies via the `documentos` table (FRE has no `empresas` table).
+1. **Always unpack the `(cnpj, cd_cvm)` tuple** when calling `_resolve_via_bridge()`.
+2. **Always use `cnpj_digits()` for CNPJ comparisons** — FRE documentos table may have formatted CNPJs.
+3. **Always use `UNIQUE(id_documento, cpf_cnpj_acionista)` for posicao_acionaria dedup** — Prevents duplicate shareholder rows.
+4. **Always run `compileall` before `pytest`** — Catches syntax errors early.
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+### Anti-patterns & Lessons Learned
+
+*(Fill this section with relevant info from edits and refactors. Add lessons learned as they are discovered.)*
+
+- **v1.0.1 lesson:** `_resolve_fre_company` called `_resolve_via_bridge()` expecting a string, but bridge v1.2 changed it to return a tuple. Caused `sqlite3.ProgrammingError: type 'tuple' is not supported`. Fix: unpack the tuple.

@@ -1,4 +1,4 @@
-<- Back to [CVM Skills](../../)
+<- Back to [SHAREHOLDERS Overview](../SHAREHOLDERS.md)
 
 # 🏗️ Architecture — shareholders skill
 

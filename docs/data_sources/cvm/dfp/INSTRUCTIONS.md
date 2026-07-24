@@ -1,27 +1,30 @@
-<- Back to [CVM Overview](../CVM.md)
+<- Back to [DFP Overview](../DFP.md)
 
 # 🛡️ AI Instructions
 
-## ❌ NEVER DO
+### NEVER DO
 
-1. Never compute standalone quarters (T1/T2/T3/T4) in the data source layer — that belongs in the skills/ layer which combines DFP + ITR.
-2. Never compute ratios (margins, EBITDA) in the data source layer — same reason.
-3. Never store `PENÚLTIMO` rows except for 2009 backfill (creates duplicate prior-year data).
-4. Never set `empresas.ano` from the URL year — always use `DT_FIM_EXERC[:4]` (fiscal year).
-5. Never bucket `meses=15` to 12 — preserve transition periods.
-6. Never use `print()` — use `core.tracer` for logging.
-7. Never create `.bak` files.
+1. **Never change the `meses` computation** — It mirrors rapinav2's `monthsDiff()` (inclusive formula). Changing it breaks period filtering for all downstream consumers.
+2. **Never store DMPL rows** — DMPL is a 2D statement (COLUNA_DF) that conflicts on PK. Intentionally excluded (v1.0.1).
+3. **Never skip the ORDEM_EXERC filter** — Keeps ÚLTIMO only (+ PENÚLTIMO for 2009 transition). Without it, duplicate periods appear.
+4. **Never skip VERSAO dedup** — Keeps the highest version per (cnpj, ano). Without it, restated filings create duplicates.
+5. **Never store CNPJ raw (formatted)** — Always use `cnpj_digits()` at ingest (v1.2.1 fix). The resolver uses `REPLACE()` as a safety net, but clean ingest is preferred.
+6. **Never create `.bak` files** — Forbidden by project rules.
+7. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
+8. **Never print to stdout** — MCP stdio corruption. Use `core.tracer` or stderr.
 
-## ✅ ALWAYS DO
+### ALWAYS DO
 
-1. Always compute `meses` with the inclusive formula: `(anoF-anoI)*12 - mesI + mesF + 1`.
-2. Always default `meses=12` when `DT_INI_EXERC=""` (BPA/BPP snapshots).
-3. Always store `data_ini_exerc` — needed to distinguish flows from snapshots.
-4. Always dedup `VERSAO` — keep only the highest version per (CNPJ, ano).
-5. Always use `INSERT OR IGNORE` for empresas + `INSERT OR REPLACE` for contas.
-6. Always skip META/dicionario files in the ZIP parser.
-7. Always return `{"status": "not_synced"}` when the DB doesn't exist (don't crash).
+1. **Always use `cnpj_digits()` for CNPJ at ingest** — v1.2.1 fix. The CSV has formatted CNPJs.
+2. **Always use `parse_escala()` for escala values** — DFP stores escala as Portuguese words ("MIL", "MILHOES", "UNIDADE"), not numbers.
+3. **Always filter `meses=12` for annual queries** — DFP also has meses=15 (rare transition). Don't assume all rows are annual.
+4. **Always multiply `valor * escala` for BRL amounts** — `valor` is in units of `escala` (usually thousands).
+5. **Always run `compileall` before `pytest`** — Catches syntax errors early.
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+### Anti-patterns & Lessons Learned
+
+*(Fill this section with relevant info from edits and refactors. Add lessons learned as they are discovered.)*
+
+- **v1.2.1 lesson:** DFP sync stored CNPJ raw ("33.000.167/0001-01") from the CSV. The bridge resolver uses `REPLACE()` to normalize on-the-fly, but this is a safety net — sync should use `cnpj_digits()` at ingest.

@@ -1,21 +1,26 @@
-<- Back to [CVM Overview](../CVM.md)
+<- Back to [IPE Overview](../IPE.md)
 
 # 🛡️ AI Instructions
 
-## ❌ NEVER DO
+### NEVER DO
 
-1. Never fetch document content (PDF/XML) — IPE is the event INDEX only. `link_download` points to the document.
-2. Never use `print()` — use `core.tracer` for logging.
-3. Never create `.bak` files.
+1. **Never change `_resolve_via_bridge()` tuple unpacking** — It returns `(cnpj, cd_cvm)`. The `query()` function unpacks this tuple. Changing it to a scalar breaks ticker queries (v1.0.1 lesson).
+2. **Never change `Protocolo_Entrega` as dedup key** — It's the unique CVM filing protocol number. Changing it breaks idempotent re-syncs.
+3. **Never create `.bak` files** — Forbidden by project rules.
+4. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
+5. **Never print to stdout** — MCP stdio corruption. Use `core.tracer` or stderr.
 
-## ✅ ALWAYS DO
+### ALWAYS DO
 
-1. Always use `protocolo` as the dedup key (CVM's unique filing ID).
-2. Always normalize CNPJ to 14 digits via `cnpj_digits()`.
-3. Always try multiple encodings for IPE CSVs (UTF-8-BOM, UTF-8, latin-1, cp1252).
-4. Always skip META/dicionario files in the ZIP parser.
-5. Always return `{"status": "not_synced"}` when the DB doesn't exist.
+1. **Always unpack the `(cnpj, cd_cvm)` tuple** when calling `_resolve_via_bridge()`.
+2. **Always use `cnpj_digits()` for CNPJ comparisons** — IPE eventos table may have formatted CNPJs.
+3. **Always use `UNIQUE(protocolo)` for dedup** — Prevents duplicate event rows on re-sync.
+4. **Always run `compileall` before `pytest`** — Catches syntax errors early.
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+### Anti-patterns & Lessons Learned
+
+*(Fill this section with relevant info from edits and refactors. Add lessons learned as they are discovered.)*
+
+- **v1.0.1 lesson:** `query()` called `_resolve_via_bridge()` expecting a string, but bridge v1.2 changed it to return a tuple. Caused `sqlite3.ProgrammingError: type 'tuple' is not supported`. Fix: unpack the tuple.
