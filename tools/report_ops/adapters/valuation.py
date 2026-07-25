@@ -1,14 +1,10 @@
 """adapters/valuation.py — Flatten valuation skill JSON → table data.
 
 Adapters:
-  valuation_ratios   — KPI strip (Preço, P/L, P/VPA, EV/EBITDA, Div Yield, Market Cap)
-                       + full indicator table (all ratios + underlying values)
-  valuation_summary  — ratios table + data-availability table (which DBs synced)
+  valuation_ratios   — KPI strip + full indicator table (includes ROIC, Graham)
+  valuation_summary  — ratios table + data-availability table
 
-The valuation skill returns a flat-ish ``ratios`` dict mixing multiples (P/L),
-currency values (Market Cap), fractions (Div Yield), and counts (shares). Each
-indicator therefore carries its own unit, so we use a key-value (indicator)
-section with pre-formatted values (see adapters._kv_section).
+v1.0.14: Added ROIC + Graham number to the indicator table.
 """
 from __future__ import annotations
 
@@ -18,7 +14,7 @@ from tools.report_ops.adapters import (
 
 
 def _ratios_section(ratios: dict) -> dict:
-    """Full indicator table — market metrics first, then financials."""
+    """Full indicator table — market metrics first, then financials + value metrics."""
     rows = [
         ("Market Cap",            _safe_num(ratios.get("market_cap")),        "brl"),
         ("Enterprise Value (EV)", _safe_num(ratios.get("ev")),                "brl"),
@@ -35,16 +31,19 @@ def _ratios_section(ratios: dict) -> dict:
         ("EV/EBITDA",             _safe_num(ratios.get("ev_ebitda")),         "num"),
         ("Dividend Yield",        _safe_num(ratios.get("dividend_yield")),    "pct"),
         ("Dívida Líq/EBITDA",     _safe_num(ratios.get("divida_liquida_ebitda")), "num"),
+        # [v1.0.14] Value metrics
+        ("ROIC",                  _safe_num(ratios.get("roic")),              "pct"),
+        ("Graham Number",         _safe_num(ratios.get("graham_number")),     "brl_full"),
         ("Total de Ações",        _safe_num(ratios.get("total_shares")),      "int"),
-        ("Lucro Líquido",         _safe_num(ratios.get("lucro_liquido")),     "brl"),
-        ("EBITDA",                _safe_num(ratios.get("ebitda")),            "brl"),
-        ("EBIT",                  _safe_num(ratios.get("ebit")),              "brl"),
-        ("Receita Líquida",       _safe_num(ratios.get("receita_liquida")),   "brl"),
+        ("Lucro Líquido (TTM)",   _safe_num(ratios.get("lucro_liquido")),     "brl"),
+        ("EBITDA (TTM)",          _safe_num(ratios.get("ebitda")),            "brl"),
+        ("EBIT (TTM)",            _safe_num(ratios.get("ebit")),              "brl"),
+        ("Receita Líquida (TTM)", _safe_num(ratios.get("receita_liquida")),   "brl"),
         ("Patrimônio Líquido",    _safe_num(ratios.get("patrimonio_liquido")),"brl"),
         ("Dívida Bruta",          _safe_num(ratios.get("divida_bruta")),      "brl"),
         ("Caixa",                 _safe_num(ratios.get("caixa")),             "brl"),
-        ("FCO",                   _safe_num(ratios.get("fco")),               "brl"),
-        ("FCF",                   _safe_num(ratios.get("fcf")),               "brl"),
+        ("FCO (TTM)",             _safe_num(ratios.get("fco")),               "brl"),
+        ("FCF (TTM)",             _safe_num(ratios.get("fcf")),               "brl"),
         ("Dividendos Anuais",     _safe_num(ratios.get("annual_dividends")),  "brl"),
     ]
     return _kv_section("Valuation Ratios", rows)
@@ -56,16 +55,16 @@ def _kpis(ratios: dict) -> list[dict]:
         {"label": "P/L",         "value": _safe_num(ratios.get("p_l")),           "format": "num"},
         {"label": "P/VPA",       "value": _safe_num(ratios.get("p_vpa")),         "format": "num"},
         {"label": "EV/EBITDA",   "value": _safe_num(ratios.get("ev_ebitda")),     "format": "num"},
+        {"label": "ROIC",        "value": _safe_num(ratios.get("roic")),          "format": "pct"},
+        {"label": "Graham",      "value": _safe_num(ratios.get("graham_number")), "format": "brl_full"},
         {"label": "Div Yield",   "value": _safe_num(ratios.get("dividend_yield")),"format": "pct"},
         {"label": "Market Cap",  "value": _safe_num(ratios.get("market_cap")),    "format": "brl"},
     ]
 
 
 def _availability_section(result: dict) -> dict:
-    """Data-source availability table (summary mode)."""
     da = result.get("data_availability") or {}
     if not da:
-        # Build from sources if summary didn't populate data_availability
         sources = result.get("sources") or {}
         rows = []
         for key in ("price", "financials", "shares"):
@@ -100,6 +99,8 @@ def ratios(result: dict) -> dict:
         note = f"Preço em {r.get('price_date')} (fonte: {r.get('price_source', '?')})."
     if r.get("ebitda_method"):
         note = (note + " " if note else "") + f"EBITDA method: {r.get('ebitda_method')}."
+    # [v1.0.14] Note about TTM + approximate ROIC
+    note = (note + " " if note else "") + "Financials: TTM (trailing 12 months). ROIC uses 34% tax rate (approximate)."
     sec = _ratios_section(r)
     if note:
         sec["note"] = note

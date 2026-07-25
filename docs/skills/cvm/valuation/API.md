@@ -1,16 +1,33 @@
 <- Back to [VALUATION Overview](../VALUATION.md)
 
-# 📖 API Reference
+# 📝 API Reference
 
-## skill(domain="cvm", sub_domain="valuation", ...)
+## 🔧 Skill Signature
 
-### mode="ratios" (default)
-
-Compute all valuation ratios from b3 price + CVM financials + FRE shares.
+```
+skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"PETR4"}')
+```
 
 | Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| company | str | yes | B3 ticker (PETR4) |
+|-----------|------|----------|-------------|
+| `domain` | `str` | **Yes** | Always `"cvm"` |
+| `sub_domain` | `str` | **Yes** | Always `"valuation"` |
+| `mode` | `str` | **Yes** | `ratios` or `summary` |
+| `params` | `str` (JSON) | **Yes** | JSON string: `{"company":"PETR4"}` |
+
+---
+
+## ⚡ Modes
+
+### `mode="ratios"` (default)
+
+Compute all valuation ratios from b3 price + CVM TTM financials + FRE shares.
+
+**v1.0.14 new metrics:**
+- **ROIC** = NOPAT / Invested Capital. NOPAT = EBIT × (1 - 0.34). Invested Capital = PL + Dívida Bruta - Caixa. Approximate (flat 34% tax rate). Flagged via `roic_tax_rate` field.
+- **Graham Number** = sqrt(22.5 × EPS × VPA). Only computed when EPS > 0 and VPA > 0 (Graham's constraint). Price below Graham = potentially undervalued.
+- **TTM financials** — uses trailing twelve months (sum of last 4 standalone quarters) instead of latest annual DFP. Falls back to annual when TTM key metrics are None.
+- **Data freshness** — `data_freshness` field shows last-sync timestamp for each database.
 
 Returns:
 ```json
@@ -19,67 +36,91 @@ Returns:
   "ticker": "PETR4",
   "ratios": {
     "price": 38.50,
-    "price_date": "2026-07-24",
-    "price_source": "brapi",
+    "price_date": "2026-07-25",
     "unit_ticker": false,
-    "total_shares": 12888732761,
-    "lucro_liquido": 120000000000.0,
-    "patrimonio_liquido": 400000000000.0,
-    "ebit": 200000000000.0,
-    "fco": 180000000000.0,
-    "caixa": 34000000000.0,
-    "divida_bruta": 371000000000.0,
-    "annual_dividends": 60000000000.0,
     "market_cap": 496216309098.5,
     "market_cap_source": "brapi",
-    "eps": 9.31,
     "p_l": 4.13,
     "p_l_source": "computed",
-    "vpa": 31.04,
     "p_vpa": 1.24,
     "ev": 833216309098.5,
-    "p_ebit": 2.48,
-    "p_fco": 2.76,
+    "ev_ebitda": 4.5,
+    "psr": 1.2,
     "dividend_yield": 0.121,
-    "div_per_share": 4.65
+    "roic": 0.15,
+    "roic_tax_rate": 0.34,
+    "graham_number": 36.7,
+    "eps": 9.31,
+    "vpa": 31.04,
+    "dpa": 4.65,
+    "lucro_liquido": 120000000000.0,
+    "ebitda": 185000000000.0,
+    "ebit": 200000000000.0,
+    "receita_liquida": 400000000000.0,
+    "patrimonio_liquido": 400000000000.0,
+    "caixa": 34000000000.0,
+    "divida_bruta": 371000000000.0,
+    "fco": 180000000000.0,
+    "fcf": 150000000000.0,
+    "annual_dividends": 60000000000.0
   },
   "sources": {
-    "price": {"status": "ok", "date": "2026-07-24"},
-    "financials": {"status": "ok", "ano": 2023},
-    "shares": {"status": "ok", "total_shares": 12888732761}
+    "price": {"status": "ok", "source": "brapi"},
+    "financials": {"status": "ok", "source": "ttm", "period": "2T2025–1T2026"},
+    "shares": {"status": "ok", "source": "fre_distribuicao"}
+  },
+  "data_freshness": {
+    "dfp": "2026-07-23T14:26:04",
+    "itr": "2026-07-23T14:39:21",
+    "fre": "2026-07-23T14:41:08",
+    "cad": "2026-07-24T13:07:26",
+    "bridge": "",
+    "b3_dividends": "2026-07-24T22:51:18",
+    "cotahist": "2026-07-23"
   }
 }
 ```
 
-**Provenance fields (v1.0.9+):**
-
-| Field | Values | Description |
-|-------|--------|-------------|
-| `unit_ticker` | `true`/`false` | True for UNIT tickers (suffix 11: KLBN11, TAEE11). Triggers market-cap-based ratio computation. |
-| `market_cap_source` | `"brapi"`/`"investsite"`/`"computed"`/`"none"` | Where market cap came from. "computed" = price×shares (wrong for units). "brapi"/"investsite" = authoritative. |
-| `p_l_source` | `"computed"`/`"investsite"` | Where P/L came from. "investsite" = investsite's pre-computed P/L (fallback for units when market_cap is "computed"). |
-
-For UNIT tickers when brapi fails: `market_cap_source` = "investsite" (if investsite provides it) or "computed" (wrong, fallback to investsite's P/L via `p_l_source` = "investsite").
-
-### mode="summary"
+### `mode="summary"`
 
 Ratios + data source availability.
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| company | str | yes | B3 ticker |
-
-Adds `data_availability` field showing which DBs are synced.
-
----
-
-## Examples
-
-```
-skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"PETR4"}')
-skill(domain="cvm", sub_domain="valuation", mode="summary", params='{"company":"VALE3"}')
+Adds `data_availability` field:
+```json
+{
+  "data_availability": {
+    "price": "ok",
+    "price_source": "brapi",
+    "dfp_ttm": "ok",
+    "fre_shares": "ok"
+  }
+}
 ```
 
 ---
 
-*Last updated: 2026-07-24 (v1.0).*
+## 🔢 Metric Formulas
+
+| Metric | Formula | Notes |
+|--------|---------|-------|
+| P/L | market_cap / lucro_liquido | Market-cap-based (v1.0.9). Correct for UNIT tickers. |
+| P/VPA | market_cap / patrimonio_liquido | None when PL ≤ 0 |
+| EV | market_cap + divida_bruta - caixa | |
+| EV/EBITDA | ev / ebitda | |
+| PSR | market_cap / receita_liquida | |
+| ROIC | (ebit × (1 - 0.34)) / (pl + divida_bruta - caixa) | **v1.0.14**. Approximate — 34% flat tax rate. |
+| Graham Number | sqrt(22.5 × eps × vpa) | **v1.0.14**. Only when EPS > 0 and VPA > 0. |
+| Dividend Yield | (annual_dividends / shares) / price | |
+
+---
+
+## 🔌 Report Adapters
+
+| Adapter | What it tables |
+|---------|----------------|
+| `valuation_ratios` | KPI strip (Preço, P/L, P/VPA, EV/EBITDA, ROIC, Graham, Div Yield, Market Cap) + full indicator table |
+| `valuation_summary` | Ratios table + data-source availability table |
+
+---
+
+*Last updated: 2026-07-25 (v1.0.14).*

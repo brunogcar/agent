@@ -282,7 +282,7 @@ class TestSummaryMode:
         assert "ratios" in result
         assert "data_availability" in result
         assert result["data_availability"]["price"] == "ok"
-        assert result["data_availability"]["dfp_annual"] == "ok"
+        assert result["data_availability"]["dfp_ttm"] == "ok"
         assert result["data_availability"]["fre_shares"] == "ok"
 
     def test_summary_no_company(self, valuation_env):
