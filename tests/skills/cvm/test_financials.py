@@ -503,3 +503,56 @@ class TestV101Regressions:
             metrics = result["periods"][0]["metrics"]
             assert "ebitda_method" in metrics
             assert metrics["ebitda_method"] in ("ebit+da", "ebit_only", "none")
+
+
+class TestTTM:
+    """v1.1 — TTM (trailing twelve months) computation."""
+
+    def test_ttm_insufficient_data(self):
+        from skills.cvm.financials.metrics import compute_ttm
+        r = compute_ttm([])
+        assert r["status"] == "insufficient_data"
+
+    def test_ttm_three_quarters_insufficient(self):
+        from skills.cvm.financials.metrics import compute_ttm
+        r = compute_ttm([{"period": "1T", "year": 2025, "quarter": 1,
+                          "metrics": {"receita_liquida": 100}, "ratios": {}}])
+        assert r["status"] == "insufficient_data"
+
+    def test_ttm_four_quarters_sums_flows(self):
+        from skills.cvm.financials.metrics import compute_ttm
+        periods = [
+            {"period": "1T2024", "year": 2024, "quarter": 1,
+             "metrics": {"receita_liquida": 100, "ebitda": 25, "lucro_liquido": 15,
+                         "ativo_total": 400, "patrimonio_liquido": 200}},
+            {"period": "2T2024", "year": 2024, "quarter": 2,
+             "metrics": {"receita_liquida": 110, "ebitda": 28, "lucro_liquido": 16,
+                         "ativo_total": 420, "patrimonio_liquido": 210}},
+            {"period": "3T2024", "year": 2024, "quarter": 3,
+             "metrics": {"receita_liquida": 120, "ebitda": 30, "lucro_liquido": 18,
+                         "ativo_total": 440, "patrimonio_liquido": 215}},
+            {"period": "4T2024", "year": 2024, "quarter": 4,
+             "metrics": {"receita_liquida": 130, "ebitda": 32, "lucro_liquido": 20,
+                         "ativo_total": 460, "patrimonio_liquido": 220}},
+        ]
+        r = compute_ttm(periods)
+        assert r["status"] == "ok"
+        # TTM revenue = sum of 4 quarters
+        assert r["metrics"]["receita_liquida"] == 460  # 100+110+120+130
+        assert r["metrics"]["ebitda"] == 115  # 25+28+30+32
+        # TTM ativo_total = average of 4 (snapshot)
+        assert r["metrics"]["ativo_total"] == (400+420+440+460) / 4
+        # TTM ROE = TTM lucro / avg PL = (15+16+18+20) / ((200+210+215+220)/4)
+        expected_roe = 69 / ((200+210+215+220) / 4)
+        assert r["ratios"]["roe"] == pytest.approx(expected_roe, rel=1e-3)
+
+    def test_ttm_missing_metric_is_none(self):
+        from skills.cvm.financials.metrics import compute_ttm
+        periods = [
+            {"period": "1T", "year": 2024, "quarter": 1, "metrics": {"receita_liquida": 100}},
+            {"period": "2T", "year": 2024, "quarter": 2, "metrics": {"receita_liquida": 110}},
+            {"period": "3T", "year": 2024, "quarter": 3, "metrics": {"receita_liquida": 120}},
+            {"period": "4T", "year": 2024, "quarter": 4, "metrics": {}},  # missing receita
+        ]
+        r = compute_ttm(periods)
+        assert r["metrics"]["receita_liquida"] is None  # one quarter missing -> None

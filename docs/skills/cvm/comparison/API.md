@@ -64,6 +64,26 @@ params = '{"tickers":["PETR4","VALE3","ITUB4"]}'
 }
 ```
 
+### `mode="growth"`
+
+Growth metrics: QoQ + YoY % change for Receita, EBITDA, Lucro Líquido + TTM Marg. EBITDA + ROE. Calls `financials.quarterly(periods=8)` per ticker.
+
+```python
+params = '{"tickers":["SUZB3","KLBN11"]}'
+```
+
+**Returns:**
+```python
+{
+    "status": "ok",
+    "tickers": ["SUZB3", "KLBN11"],
+    "sections": [{"title": "Growth Metrics (QoQ + YoY + TTM)", "columns": [...], "rows": [...], "formats": {...}}],
+    "errors": [],
+}
+```
+
+Columns: Ticker, Receita QoQ, Receita YoY, EBITDA QoQ, EBITDA YoY, Lucro Liq. QoQ, Lucro Liq. YoY, Marg. EBITDA (TTM), ROE (TTM).
+
 ---
 
 ## 🔌 Report Adapters
@@ -72,6 +92,7 @@ params = '{"tickers":["PETR4","VALE3","ITUB4"]}'
 |---------|-------------|----------------|
 | `comparison_side_by_side` | side_by_side | 3 sections (valuation, financials, dividends), tickers as rows |
 | `comparison_summary` | summary | Single quick-compare table + KPI strip (one card per ticker showing P/L) |
+| `comparison_growth` | growth | Growth metrics table (QoQ + YoY + TTM ratios) |
 
 ```
 report(action="table", title="SUZB3 vs KLBN11",

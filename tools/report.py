@@ -46,11 +46,11 @@ from tools.report_ops.contracts import report_ok, report_fail
         ' financial, code_audit, research, system_health, compare, timeline, scorecard, table',
         "",
         "Adapters (flatten skill JSON for table/export):",
-        ' financials_quarterly | financials_annual | financials_summary',
+        ' financials_quarterly | financials_annual | financials_summary | financials_quarterly_chart',
         ' valuation_ratios | valuation_summary',
         ' shareholders_shareholders | shareholders_free_float | shareholders_equity_structure | shareholders_summary',
         ' dividends_history | dividends_annual | dividends_summary',
-        ' comparison_side_by_side | comparison_summary',
+        ' comparison_side_by_side | comparison_summary | comparison_growth',
     ],
 )
 def report(

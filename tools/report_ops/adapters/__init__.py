@@ -138,6 +138,7 @@ def _safe_num(v: Any) -> Any:
 # Importing the modules here triggers their @register_adapter decorators.
 # Lazy import keeps MCP startup fast (only runs when an adapter is first used).
 from tools.report_ops.adapters import financials  # noqa: E402,F401
+from tools.report_ops.adapters import financials_chart  # noqa: E402,F401
 from tools.report_ops.adapters import valuation   # noqa: E402,F401
 from tools.report_ops.adapters import shareholders  # noqa: E402,F401
 from tools.report_ops.adapters import dividends   # noqa: E402,F401

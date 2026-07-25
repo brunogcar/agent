@@ -163,8 +163,18 @@ report(action="help")
 
 **Chart data:**
 ```python
+# Single-series (backward-compatible)
 data = {"x": ["Q1", "Q2", "Q3"], "y": [100, 150, 130]}
 data = {"labels": ["A", "B"], "values": [30, 70]}  # pie/doughnut
+
+# Multi-series (v1.2.2) — one line per dataset
+data = {"x": ["1T25", "2T25", "3T25"],
+        "datasets": [{"label": "Receita", "data": [100, 120, 130]},
+                     {"label": "EBITDA", "data": [25, 30, 33]}]}
+
+# Via adapter (flattens a skill result into multi-series chart data)
+report(action="chart", title="PETR4 Trends",
+       data=<financials JSON>, config={"chart_type":"line","adapter":"financials_quarterly_chart"})
 ```
 
 **Map data:**
@@ -253,6 +263,8 @@ tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`
 | `dividends_summary` | `cvm/dividends` summary | Recent events table + annual trend table |
 | `comparison_side_by_side` | `cvm/comparison` side_by_side | 3 sections (valuation, financials, dividends), tickers as rows |
 | `comparison_summary` | `cvm/comparison` summary | Single quick-compare table (10 KPIs) + KPI strip (P/L per ticker) |
+| `comparison_growth` | `cvm/comparison` growth | Growth metrics table (QoQ + YoY + TTM ratios) |
+| `financials_quarterly_chart` | `cvm/financials` quarterly | **Chart adapter** — multi-series line chart (Receita + EBITDA + Lucro Líquido over time) |
 
 Error / not_synced skill results render as a small status table (never crash).
 

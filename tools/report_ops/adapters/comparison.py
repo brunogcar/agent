@@ -76,3 +76,24 @@ def summary(result: dict) -> dict:
         "kpis": _kpis_from_summary(section),
         "sources": [],
     }
+
+
+@register_adapter("comparison_growth")
+def growth(result: dict) -> dict:
+    """Flatten comparison.growth result into a table section."""
+    if not _ok(result):
+        return _error_table(result, title="Growth Comparison")
+    sections = result.get("sections") or []
+    if not sections or not isinstance(sections, list):
+        return _error_table(result, title="Growth Comparison")
+
+    section = sections[0]
+    if not isinstance(section, dict) or not section.get("columns"):
+        return _error_table(result, title="Growth Comparison")
+
+    return {
+        "company": " vs ".join(result.get("tickers") or []),
+        "sections": [section],
+        "kpis": [],
+        "sources": [],
+    }

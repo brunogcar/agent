@@ -57,6 +57,7 @@ _FINANCIALS_COLS = [
     ("Marg. Líquida",    "marg_liquida",         "pct"),
     ("ROE",              "roe",                  "pct"),
     ("ROA",              "roa",                  "pct"),
+    ("Payout",           "payout",               "pct"),
 ]
 
 # ── Dividends columns (from dividends.summary) ───────────────────────────────
@@ -68,7 +69,6 @@ _DIVIDENDS_COLS = [
     ("Dividendos (últ ano)", "annual_dividendos", "brl"),
     ("JCP (últ ano)",        "annual_jcp",        "brl"),
     ("Total Remun. (últ a)", "annual_total",      "brl"),
-    ("Payout",               "payout",            "pct"),
 ]
 
 # ── Summary mode: the ~10 KPIs for quick compare ─────────────────────────────
@@ -83,6 +83,20 @@ _SUMMARY_COLS = [
     ("Receita Líquida","receita_liquida","brl"),
     ("EBITDA",        "ebitda",         "brl"),
     ("Lucro Líquido", "lucro_liquido",  "brl"),
+]
+
+# ── Growth mode: QoQ + YoY % change ──────────────────────────────────────────
+# Each entry: (column_label, dict_key, spec). dict_key is looked up in the
+# growth dict returned by _compute_growth().
+_GROWTH_COLS = [
+    ("Receita QoQ",    "receita_qoq",    "pct_raw"),
+    ("Receita YoY",    "receita_yoy",    "pct_raw"),
+    ("EBITDA QoQ",     "ebitda_qoq",     "pct_raw"),
+    ("EBITDA YoY",     "ebitda_yoy",     "pct_raw"),
+    ("Lucro Liq. QoQ", "lucro_qoq",      "pct_raw"),
+    ("Lucro Liq. YoY", "lucro_yoy",      "pct_raw"),
+    ("Marg. EBITDA",   "marg_ebitda",    "pct"),
+    ("ROE (TTM)",      "roe_ttm",        "pct"),
 ]
 
 
@@ -153,6 +167,119 @@ def summary(tickers: list = None, consolidado: int = 1) -> dict:
         "sections": [section],
         "errors": [t["error"] for t in per_ticker if t["error"]],
     }
+
+
+# ── Mode: growth ─────────────────────────────────────────────────────────────
+
+def growth(tickers: list = None, consolidado: int = 1) -> dict:
+    """Compare N tickers on growth metrics: QoQ + YoY % change + TTM ratios.
+
+    Calls financials.quarterly(periods=8) per ticker to get standalone quarters,
+    then computes QoQ (latest vs prior) and YoY (latest vs same quarter prior
+    year) growth for Receita, EBITDA, Lucro Líquido. Also includes TTM
+    Marg. EBITDA and ROE from the financials skill's TTM summary.
+
+    Args:
+        tickers: List of B3 tickers. Required (min 2).
+        consolidado: 1=consolidated (default), 0=individual.
+    """
+    if not tickers or not isinstance(tickers, list):
+        return {"status": "error", "error": "tickers (list) is required"}
+    if len(tickers) < 2:
+        return {"status": "error", "error": "need at least 2 tickers to compare"}
+    tickers = [t.strip().upper() for t in tickers]
+
+    from skills.cvm.financials.financials import quarterly as fin_quarterly
+
+    growth_data = []
+    errors = []
+    for ticker in tickers:
+        try:
+            r = fin_quarterly(company=ticker, periods=8, consolidado=consolidado)
+            if r.get("status") == "ok":
+                growth_data.append(_compute_growth(r))
+            else:
+                growth_data.append({})
+                errors.append(f"{ticker}: financials: {r.get('error', r.get('status', ''))}")
+        except Exception as e:
+            growth_data.append({})
+            errors.append(f"{ticker}: financials: {e}")
+
+    section = _build_section("Growth Metrics (QoQ + YoY + TTM)", _GROWTH_COLS,
+                             growth_data, tickers)
+
+    return {
+        "status": "ok",
+        "tickers": tickers,
+        "sections": [section],
+        "errors": errors,
+    }
+
+
+def _compute_growth(financials_result: dict) -> dict:
+    """Compute QoQ + YoY growth + TTM ratios from a financials.quarterly result.
+
+    QoQ = (latest_quarter - prior_quarter) / |prior_quarter|
+    YoY = (latest_quarter - same_quarter_last_year) / |same_quarter_last_year|
+
+    Returns a flat dict with keys matching _GROWTH_COLS.
+    """
+    periods = financials_result.get("periods") or []
+    ttm = financials_result.get("ttm") or {}
+
+    out = {
+        "receita_qoq": None, "receita_yoy": None,
+        "ebitda_qoq": None, "ebitda_yoy": None,
+        "lucro_qoq": None, "lucro_yoy": None,
+        "marg_ebitda": None, "roe_ttm": None,
+    }
+
+    if not periods:
+        return out
+
+    # Sort newest-first by (year, quarter)
+    sorted_p = sorted(periods,
+                      key=lambda p: (p.get("year", 0), p.get("quarter", 0)),
+                      reverse=True)
+
+    latest = sorted_p[0] if sorted_p else {}
+    latest_m = latest.get("metrics", {}) or {}
+
+    # QoQ: latest vs the one right before it
+    prior = sorted_p[1] if len(sorted_p) > 1 else {}
+    prior_m = prior.get("metrics", {}) or {}
+
+    out["receita_qoq"] = _pct_change(latest_m.get("receita_liquida"),
+                                      prior_m.get("receita_liquida"))
+    out["ebitda_qoq"] = _pct_change(latest_m.get("ebitda"),
+                                     prior_m.get("ebitda"))
+    out["lucro_qoq"] = _pct_change(latest_m.get("lucro_liquido"),
+                                    prior_m.get("lucro_liquido"))
+
+    # YoY: latest vs same quarter prior year (4 periods back)
+    yoy_prior = sorted_p[4] if len(sorted_p) > 4 else {}
+    yoy_m = yoy_prior.get("metrics", {}) or {}
+
+    out["receita_yoy"] = _pct_change(latest_m.get("receita_liquida"),
+                                      yoy_m.get("receita_liquida"))
+    out["ebitda_yoy"] = _pct_change(latest_m.get("ebitda"),
+                                     yoy_m.get("ebitda"))
+    out["lucro_yoy"] = _pct_change(latest_m.get("lucro_liquido"),
+                                    yoy_m.get("lucro_liquido"))
+
+    # TTM ratios from the financials skill's TTM summary
+    ttm_ratios = ttm.get("ratios", {}) or {}
+    out["marg_ebitda"] = ttm_ratios.get("marg_ebitda")
+    out["roe_ttm"] = ttm_ratios.get("roe")
+
+    return out
+
+
+def _pct_change(curr: float | None, prev: float | None) -> float | None:
+    """Compute % change = (curr - prev) / |prev|. Returns None if either is None or prev is 0."""
+    if curr is None or prev is None or prev == 0:
+        return None
+    return (curr - prev) / abs(prev)
 
 
 # ── Internal: fetch all 3 skills per ticker (best-effort) ────────────────────

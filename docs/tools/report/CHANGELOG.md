@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.2.2 | 2026-07-25 | **Multi-series charts + growth/chart adapters.** (1) `charts._to_chartjs_config` now supports multi-series data `{"x":[], "datasets":[{"label","data"},...]}` — backward-compatible with single-series. (2) New `financials_quarterly_chart` adapter — multi-series trend chart (Receita + EBITDA + Lucro Líquido). (3) New `comparison_growth` adapter. (4) Chart action + builder now support `config["adapter"]`. Total 16 adapters. |
 | v1.2.1 | 2026-07-25 | **Comparison skill adapters.** Added `comparison_side_by_side` + `comparison_summary` adapters (2 new, total 14) for the new `cvm/comparison` skill. Updated `report.py` docstring adapter list + API.md adapter table. |
 | v1.2 | 2026-07-25 | **Skill wiring: table action + adapter layer + number formatting + xlsx export.** New `table` action for financial statements/ratio tables. New `adapters/` package (12 adapters) flattening CVM/B3 skill JSON → table data. New `formats.py` (BRL/%/compact) registered as Jinja filters + reused by xlsx. `export` now supports `format:"xlsx"` (openpyxl, multi-sheet, native numeric cells). New `table` preset. `report.py` docstring now lists adapters. See v1.2 detail below. |
 | v1.1 | 2026-07-03 | Security hardening + template fixes (`\| safe` audit, atomic writes, UNC block, `@register_action` dedup, Chart.js dedup, cancellation import fix). |

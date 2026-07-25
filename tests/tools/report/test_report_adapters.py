@@ -64,18 +64,19 @@ DIVIDENDS_HISTORY = {
 
 
 class TestRegistry:
-    def test_fourteen_adapters_registered(self):
+    def test_sixteen_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 14
+        assert len(names) == 16
 
     def test_expected_adapter_names(self):
         expected = {
             "financials_quarterly", "financials_annual", "financials_summary",
+            "financials_quarterly_chart",
             "valuation_ratios", "valuation_summary",
             "shareholders_shareholders", "shareholders_free_float",
             "shareholders_equity_structure", "shareholders_summary",
             "dividends_history", "dividends_annual", "dividends_summary",
-            "comparison_side_by_side", "comparison_summary",
+            "comparison_side_by_side", "comparison_summary", "comparison_growth",
         }
         assert expected == set(list_adapters())
 
@@ -320,3 +321,64 @@ class TestComparisonAdapters:
         out = apply_adapter("comparison_summary",
                             {"status": "error", "error": "failed"})
         assert out["sections"][0]["rows"][0] == ["error", "failed"]
+
+
+# ── Growth comparison + chart adapter ────────────────────────────────────────
+
+COMPARISON_GROWTH = {
+    "status": "ok",
+    "tickers": ["SUZB3", "KLBN11"],
+    "sections": [{
+        "title": "Growth Metrics (QoQ + YoY + TTM)",
+        "columns": ["Ticker", "Receita QoQ", "Receita YoY", "ROE (TTM)"],
+        "rows": [["SUZB3", 0.15, 0.20, 0.30], ["KLBN11", -0.05, 0.10, 0.12]],
+        "formats": {"Ticker": "text", "Receita QoQ": "pct_raw",
+                    "Receita YoY": "pct_raw", "ROE (TTM)": "pct"},
+    }],
+    "errors": [],
+}
+
+FINANCIALS_QUARTERLY_FOR_CHART = {
+    "status": "ok", "company": "PETR4", "period_type": "quarterly",
+    "periods": [
+        {"period": "1T2025", "year": 2025, "quarter": 1,
+         "metrics": {"receita_liquida": 100, "ebitda": 25, "lucro_liquido": 15}},
+        {"period": "2T2025", "year": 2025, "quarter": 2,
+         "metrics": {"receita_liquida": 120, "ebitda": 30, "lucro_liquido": 18}},
+    ],
+    "ttm": {"status": "insufficient_data"},
+}
+
+
+class TestComparisonGrowthAdapter:
+    def test_growth_passes_through_section(self):
+        out = apply_adapter("comparison_growth", COMPARISON_GROWTH)
+        assert len(out["sections"]) == 1
+        assert out["sections"][0]["title"] == "Growth Metrics (QoQ + YoY + TTM)"
+        assert "SUZB3" in out["company"] and "KLBN11" in out["company"]
+
+    def test_growth_error_renders_status(self):
+        out = apply_adapter("comparison_growth",
+                            {"status": "error", "error": "no data"})
+        assert out["sections"][0]["rows"][0] == ["error", "no data"]
+
+
+class TestFinancialsChartAdapter:
+    def test_chart_adapter_multi_series(self):
+        out = apply_adapter("financials_quarterly_chart", FINANCIALS_QUARTERLY_FOR_CHART)
+        assert "x" in out and "datasets" in out
+        # x labels oldest-first
+        assert out["x"] == ["1T2025", "2T2025"]
+        # 3 datasets (Receita, EBITDA, Lucro)
+        assert len(out["datasets"]) == 3
+        labels = [d["label"] for d in out["datasets"]]
+        assert labels == ["Receita Líquida", "EBITDA", "Lucro Líquido"]
+        # values landed
+        assert out["datasets"][0]["data"] == [100, 120]
+        assert out["datasets"][1]["data"] == [25, 30]
+
+    def test_chart_adapter_error_returns_empty(self):
+        out = apply_adapter("financials_quarterly_chart",
+                            {"status": "not_synced", "error": "db"})
+        assert out["x"] == []
+        assert out["y"] == []

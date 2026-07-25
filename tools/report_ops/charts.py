@@ -19,7 +19,17 @@ def build(
     data: Any,
     config: dict,
 ) -> dict:
-    """Build a Chart.js chart and return HTML path."""
+    """Build a Chart.js chart and return HTML path.
+
+    Supports an optional config["adapter"] that flattens a skill result into
+    chart-ready data (see tools/report_ops/adapters/).
+    """
+    # Apply adapter if requested (flattens a skill result into chart data)
+    adapter = (config.get("adapter") or "").strip()
+    if adapter:
+        from tools.report_ops.adapters import apply_adapter
+        data = apply_adapter(adapter, data)
+
     data_path = config.get("data_path", "")
     loaded, err = load_data(data=data, data_path=data_path)
     if err:
@@ -53,17 +63,54 @@ def build(
 
 
 def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> dict:
-    """Convert raw data to a Chart.js config object."""
+    """Convert raw data to a Chart.js config object.
+
+    Supports two data shapes:
+      1. Single-series (backward-compatible): {"x": [...], "y": [...]} or {"labels":[], "values":[]}
+      2. Multi-series (v1.2.2): {"x": [...], "datasets": [{"label":"A","data":[...]}, ...]}
+
+    Multi-series produces one Chart.js dataset per entry, each with a distinct
+    color from the palette. This is what chart adapters (e.g.
+    financials_quarterly_chart) use to render trend lines (Receita + EBITDA +
+    Lucro on one chart).
+    """
+    color = config.get("color", config.get("accent", "#0d9488"))
+
     if isinstance(data, dict):
         labels = data.get("x", data.get("labels", []))
+        # Multi-series: datasets key present
+        if "datasets" in data and isinstance(data["datasets"], list):
+            palette = _generate_palette(len(data["datasets"]), color)
+            datasets = []
+            for i, ds in enumerate(data["datasets"]):
+                c = palette[i] if i < len(palette) else color
+                datasets.append({
+                    "label": ds.get("label", f"Series {i+1}"),
+                    "data": ds.get("data", ds.get("y", [])),
+                    "backgroundColor": c + "40",
+                    "borderColor": c,
+                    "borderWidth": 2,
+                    "tension": 0.3,
+                })
+            return {
+                "type": chart_type,
+                "data": {"labels": labels, "datasets": datasets},
+                "options": {
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "plugins": {
+                        "legend": {"display": True, "position": "bottom"},
+                        "title": {"display": bool(title), "text": title},
+                    },
+                },
+            }
+        # Single-series (backward-compatible)
         values = data.get("y", data.get("values", []))
     elif isinstance(data, list):
         values = data
         labels = list(range(len(data)))
     else:
         labels, values = [], []
-
-    color = config.get("color", config.get("accent", "#0d9488"))
 
     datasets = [{
         "label": title,

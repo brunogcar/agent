@@ -69,10 +69,10 @@ def register_action(
 # to the git/file registry pattern.
 DISPATCH_METADATA: Dict[str, Dict[str, Any]] = {
     "chart": {
-        "description": "Interactive Chart.js chart",
+        "description": "Interactive Chart.js chart (single or multi-series)",
         "required_params": ["action", "title"],
         "optional_params": ["data", "config"],
-        "config_keys": ["chart_type", "x_label", "y_label", "color", "theme"],
+        "config_keys": ["chart_type", "adapter", "x_label", "y_label", "color", "theme"],
     },
     "map": {
         "description": "Interactive Leaflet map",

@@ -106,16 +106,31 @@ def ratios(company: str = "") -> dict:
     price = price_data["last_price"]
     price_date = price_data["date"]
 
+    # [v1.0.9] Detect UNIT tickers (suffix "11") — 1 unit = N individual shares.
+    # For units, price is per-unit but total_shares (from FRE) is individual shares.
+    # brapi returns the correct market_cap for units; we prefer it over price×shares.
+    unit_ticker = ticker.upper().endswith("11")
+
+    # [v1.0.9] Use brapi's market_cap when available (authoritative for units).
+    # Falls back to price × total_shares when brapi doesn't provide it (investsite).
+    brapi_market_cap = price_data.get("market_cap")
+
     # If financials are missing, we can compute Market Cap but not P/L etc.
     if fin_data.get("status") != "ok":
         result["ratios"] = {"status": "partial",
                             "price": price,
                             "price_date": price_date,
+                            "unit_ticker": unit_ticker,
                             "note": f"Financials unavailable: {fin_data.get('error','')}. Only price-based metrics available."}
         # Still compute Market Cap if shares are available
         total_shares = shares_data.get("total_shares")
-        if total_shares and total_shares > 0:
+        if brapi_market_cap is not None:
+            result["ratios"]["market_cap"] = float(brapi_market_cap)
+            result["ratios"]["market_cap_source"] = "brapi"
+        elif total_shares and total_shares > 0:
             result["ratios"]["market_cap"] = price * total_shares
+            result["ratios"]["market_cap_source"] = "computed"
+        if total_shares:
             result["ratios"]["total_shares"] = total_shares
         return result
 
@@ -140,6 +155,7 @@ def ratios(company: str = "") -> dict:
         "price": price,
         "price_date": price_date,
         "price_source": price_data.get("source", "?"),
+        "unit_ticker": unit_ticker,
         "total_shares": total_shares,
         "lucro_liquido": lucro_liquido,
         "patrimonio_liquido": pl,
@@ -154,46 +170,60 @@ def ratios(company: str = "") -> dict:
         "annual_dividends": annual_dividends,
     }
 
-    # Market Cap = price * shares
-    if total_shares and total_shares > 0:
-        ratios_result["market_cap"] = price * total_shares
+    # [v1.0.9] Market Cap: prefer brapi's value (authoritative for UNIT tickers).
+    # For units (KLBN11, TAEE11...), price is per-unit but total_shares is
+    # individual shares — so price×shares overstates market cap. brapi handles
+    # this correctly. Falls back to price×shares when brapi doesn't provide it.
+    if brapi_market_cap is not None:
+        market_cap = float(brapi_market_cap)
+        ratios_result["market_cap"] = market_cap
+        ratios_result["market_cap_source"] = "brapi"
+    elif total_shares and total_shares > 0:
+        market_cap = price * total_shares
+        ratios_result["market_cap"] = market_cap
+        ratios_result["market_cap_source"] = "computed"
     else:
+        market_cap = None
         ratios_result["market_cap"] = None
+        ratios_result["market_cap_source"] = "none"
 
-    # EPS (LPA) = lucro_liquido / shares
+    # EPS (LPA) = lucro_liquido / shares — per-INDIVIDUAL-share (informational).
+    # For unit tickers, multiply by shares-per-unit to get per-unit EPS.
     eps = _safe_div(lucro_liquido, total_shares)
     ratios_result["eps"] = eps
 
-    # P/L = price / EPS
-    ratios_result["p_l"] = _safe_div(price, eps)
-
-    # VPA = PL / shares
+    # VPA = PL / shares — per-INDIVIDUAL-share (informational).
     vpa = _safe_div(pl, total_shares)
     ratios_result["vpa"] = vpa
 
-    # P/VPA = price / VPA (None when PL <= 0)
-    ratios_result["p_vpa"] = _safe_div(price, vpa) if pl_positive else None
+    # [v1.0.9] P/L, P/VPA, P/EBIT, P/FCO computed from MARKET CAP (not per-share).
+    # This is mathematically identical to price/EPS for regular stocks, AND
+    # correct for UNIT tickers (avoids the unit-ratio problem entirely).
+    #   P/L    = market_cap / lucro_liquido
+    #   P/VPA  = market_cap / patrimonio_liquido
+    #   P/EBIT = market_cap / ebit
+    #   P/FCO  = market_cap / fco
+    ratios_result["p_l"] = _safe_div(market_cap, lucro_liquido)
+    ratios_result["p_vpa"] = _safe_div(market_cap, pl) if pl_positive else None
 
     # EV = Market Cap + Debt - Cash
     divida_liquida = None
-    if ratios_result["market_cap"] is not None and divida_bruta is not None and caixa is not None:
+    if market_cap is not None and divida_bruta is not None and caixa is not None:
         divida_liquida = divida_bruta - caixa
-        ratios_result["ev"] = ratios_result["market_cap"] + divida_liquida
-    elif ratios_result["market_cap"] is not None:
-        ratios_result["ev"] = ratios_result["market_cap"]  # partial
+        ratios_result["ev"] = market_cap + divida_liquida
+    elif market_cap is not None:
+        ratios_result["ev"] = market_cap  # partial
     else:
         ratios_result["ev"] = None
 
-    # P/EBIT = price / (EBIT / shares)
-    ebit_per_share = _safe_div(ebit, total_shares)
-    ratios_result["p_ebit"] = _safe_div(price, ebit_per_share)
+    # P/EBIT = market_cap / ebit (v1.0.9: was price / ebit_per_share)
+    ratios_result["p_ebit"] = _safe_div(market_cap, ebit)
 
-    # P/FCO = price / (FCO / shares)
-    fco_per_share = _safe_div(fco, total_shares)
-    ratios_result["p_fco"] = _safe_div(price, fco_per_share)
+    # P/FCO = market_cap / fco (v1.0.9: was price / fco_per_share)
+    ratios_result["p_fco"] = _safe_div(market_cap, fco)
 
     # [v1.0.8] PSR (Price-to-Sales) = Market Cap / Receita Liquida
-    ratios_result["psr"] = _safe_div(ratios_result["market_cap"], receita_liquida)
+    ratios_result["psr"] = _safe_div(market_cap, receita_liquida)
 
     # [v1.0.8] EV/EBITDA = EV / EBITDA
     ratios_result["ev_ebitda"] = _safe_div(ratios_result["ev"], ebitda)
@@ -204,9 +234,10 @@ def ratios(company: str = "") -> dict:
     if fco is not None and fci is not None:
         fcf = fco + fci  # FCI is negative, so this subtracts
     ratios_result["fcf"] = fcf
-    ratios_result["p_fcf"] = _safe_div(ratios_result["market_cap"], fcf)
+    ratios_result["p_fcf"] = _safe_div(market_cap, fcf)
 
     # [v1.0.8] DPA (Dividends Per Share) = annual dividends / shares
+    # For unit tickers, this is per-individual-share (informational).
     if annual_dividends is not None and total_shares and total_shares > 0:
         dpa = annual_dividends / total_shares
         ratios_result["dpa"] = dpa

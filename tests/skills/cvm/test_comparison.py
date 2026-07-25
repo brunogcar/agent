@@ -313,3 +313,98 @@ class TestRoute:
         from skills.cvm.comparison import route
         r = route(mode="side_by_side", tickers=["PETR4", "VALE3"])
         assert r["status"] == "ok"
+
+
+# ── Growth mode ──────────────────────────────────────────────────────────────
+
+FIN_QUARTERLY_SUZB3 = {
+    "status": "ok", "company": "SUZANO", "period_type": "quarterly",
+    "periods": [
+        {"period": "1T2024", "year": 2024, "quarter": 1,
+         "metrics": {"receita_liquida": 100, "ebitda": 30, "lucro_liquido": 15}},
+        {"period": "2T2024", "year": 2024, "quarter": 2,
+         "metrics": {"receita_liquida": 110, "ebitda": 33, "lucro_liquido": 16}},
+        {"period": "3T2024", "year": 2024, "quarter": 3,
+         "metrics": {"receita_liquida": 120, "ebitda": 36, "lucro_liquido": 18}},
+        {"period": "4T2024", "year": 2024, "quarter": 4,
+         "metrics": {"receita_liquida": 130, "ebitda": 39, "lucro_liquido": 20}},
+        {"period": "1T2025", "year": 2025, "quarter": 1,
+         "metrics": {"receita_liquida": 140, "ebitda": 42, "lucro_liquido": 22}},
+    ],
+    "ttm": {"status": "ok", "period_range": "2T2024–1T2025",
+            "metrics": {}, "ratios": {"marg_ebitda": 0.28, "roe": 0.15}},
+}
+
+
+class TestGrowthMode:
+    def test_growth_requires_tickers(self):
+        r = comparison.growth()
+        assert r["status"] == "error"
+
+    def test_growth_requires_min_two(self):
+        r = comparison.growth(tickers=["SUZB3"])
+        assert r["status"] == "error"
+
+    def test_growth_basic_shape(self, monkeypatch):
+        def fake_quarterly(company="", periods=8, consolidado=1):
+            if company == "SUZB3":
+                return FIN_QUARTERLY_SUZB3
+            return {"status": "ok", "company": company, "period_type": "quarterly",
+                    "periods": FIN_QUARTERLY_SUZB3["periods"],
+                    "ttm": FIN_QUARTERLY_SUZB3["ttm"]}
+        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        r = comparison.growth(tickers=["SUZB3", "KLBN11"])
+        assert r["status"] == "ok"
+        assert r["tickers"] == ["SUZB3", "KLBN11"]
+        assert len(r["sections"]) == 1
+        sec = r["sections"][0]
+        assert "Receita QoQ" in sec["columns"]
+        assert "Receita YoY" in sec["columns"]
+        assert "ROE (TTM)" in sec["columns"]
+        assert len(sec["rows"]) == 2
+
+    def test_growth_qoq_computation(self, monkeypatch):
+        """QoQ = (latest - prior) / |prior|."""
+        def fake_quarterly(company="", periods=8, consolidado=1):
+            return FIN_QUARTERLY_SUZB3
+        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        r = comparison.growth(tickers=["SUZB3", "VALE3"])
+        sec = r["sections"][0]
+        qoq_idx = sec["columns"].index("Receita QoQ")
+        # latest=1T2025=140, prior=4T2024=130 -> (140-130)/130 = 0.0769...
+        assert sec["rows"][0][qoq_idx] == pytest.approx((140 - 130) / 130, rel=1e-3)
+
+    def test_growth_yoy_computation(self, monkeypatch):
+        """YoY = (latest - same_q_prior_year) / |same_q_prior_year|."""
+        def fake_quarterly(company="", periods=8, consolidado=1):
+            return FIN_QUARTERLY_SUZB3
+        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        r = comparison.growth(tickers=["SUZB3", "VALE3"])
+        sec = r["sections"][0]
+        yoy_idx = sec["columns"].index("Receita YoY")
+        # latest=1T2025=140, yoy_prior=1T2024=100 (4 periods back) -> (140-100)/100 = 0.4
+        assert sec["rows"][0][yoy_idx] == pytest.approx(0.4, rel=1e-3)
+
+    def test_growth_ttm_ratios(self, monkeypatch):
+        def fake_quarterly(company="", periods=8, consolidado=1):
+            return FIN_QUARTERLY_SUZB3
+        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        r = comparison.growth(tickers=["SUZB3", "VALE3"])
+        sec = r["sections"][0]
+        roe_idx = sec["columns"].index("ROE (TTM)")
+        assert sec["rows"][0][roe_idx] == 0.15  # from ttm.ratios.roe
+
+
+class TestPctChange:
+    def test_positive_growth(self):
+        assert comparison._pct_change(120, 100) == pytest.approx(0.2)
+
+    def test_negative_growth(self):
+        assert comparison._pct_change(80, 100) == pytest.approx(-0.2)
+
+    def test_zero_prev_is_none(self):
+        assert comparison._pct_change(100, 0) is None
+
+    def test_none_values(self):
+        assert comparison._pct_change(None, 100) is None
+        assert comparison._pct_change(100, None) is None

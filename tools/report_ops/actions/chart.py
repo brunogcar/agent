@@ -13,13 +13,17 @@ from tools.report_ops._registry import register_action
 @register_action(
     "report",
     "chart",
-    help_text="""Build an interactive Chart.js chart.
+    help_text="""Build an interactive Chart.js chart (single or multi-series).
 Required: title
-Optional: data (dict/list or file path), config (chart_type, x_label, y_label, color, theme)
+Optional: data (dict/list or file path), config (chart_type, adapter, color, theme)
+Data shapes:
+  single-series: {"x":["Q1","Q2"], "y":[100,150]}
+  multi-series:  {"x":["Q1","Q2"], "datasets":[{"label":"A","data":[1,2]},{"label":"B","data":[3,4]}]}
+Adapter: config["adapter"]="financials_quarterly_chart" flattens a financials skill JSON into multi-series.
 Returns: {type, title, html_path, chart_type}""",
     examples=[
         'report(action="chart", title="Revenue", data={"x":["Q1","Q2"], "y":[100,150]}, config={"chart_type":"bar"})',
-        'report(action="chart", title="Users", data="workspace/metrics.csv", config={"chart_type":"line", "theme":"light"})',
+        'report(action="chart", title="PETR4 Trends", data=<financials JSON>, config={"chart_type":"line","adapter":"financials_quarterly_chart"})',
     ],
 )
 def run_chart(

@@ -45,10 +45,11 @@ report(action="export", title="PETR4 Financials",
 | Skill (mode) | Adapter |
 |--------------|---------|
 | financials quarterly / annual / summary | `financials_quarterly` / `financials_annual` / `financials_summary` |
+| financials quarterly (chart) | `financials_quarterly_chart` (multi-series line chart) |
 | valuation ratios / summary | `valuation_ratios` / `valuation_summary` |
 | shareholders shareholders / free_float / equity_structure / summary | `shareholders_shareholders` / `shareholders_free_float` / `shareholders_equity_structure` / `shareholders_summary` |
 | dividends history / annual / summary | `dividends_history` / `dividends_annual` / `dividends_summary` |
-| comparison side_by_side / summary | `comparison_side_by_side` / `comparison_summary` |
+| comparison side_by_side / summary / growth | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` |
 
 Number formatting (BRL, %) is handled by the report tool's shared `formats.py`
 spec vocabulary — skills don't need to format anything. See

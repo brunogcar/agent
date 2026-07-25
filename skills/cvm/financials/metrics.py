@@ -185,6 +185,73 @@ def compute_ttm_ebitda(standalone_ebitda: list) -> float | None:
     return sum(vals)
 
 
+def compute_ttm(periods: list[dict]) -> dict:
+    """Compute TTM (trailing twelve months) summary from standalone quarters.
+
+    TTM = sum of last 4 standalone quarters for FLOW metrics (revenue, EBIT,
+    EBITDA, lucro_liquido, FCO, FCI, D&A, proventos) and average of last 4
+    for SNAPSHOT metrics (ativo_total, caixa, PL, divida_bruta).
+
+    Ratios (margins, ROA, ROE) are computed from the TTM flows + average
+    snapshots — NOT annualized (×4), which is the v1.1 improvement over v1.0.1.
+
+    Args:
+        periods: list of period dicts (newest-first or oldest-first — we sort).
+            Each must have {metrics: {...}, ratios: {...}}.
+
+    Returns:
+        Dict with TTM metrics + ratios, or {status: "insufficient_data"} if
+        fewer than 4 quarters are available.
+    """
+    if not periods or len(periods) < 4:
+        return {"status": "insufficient_data",
+                "reason": f"need 4 quarters, got {len(periods) if periods else 0}"}
+
+    # Sort newest-first by (year, quarter) — periods have year + quarter keys
+    sorted_periods = sorted(periods,
+                            key=lambda p: (p.get("year", 0), p.get("quarter", 0)),
+                            reverse=True)
+    last4 = sorted_periods[:4]
+
+    # Flow metrics: sum of last 4 standalone quarters
+    flow_keys = ["receita_liquida", "lucro_bruto", "ebit", "ebitda",
+                 "lucro_liquido", "fco", "fci", "fcf", "da", "proventos"]
+    # Snapshot metrics: average of last 4
+    snapshot_keys = ["ativo_total", "caixa", "patrimonio_liquido", "divida_bruta"]
+
+    ttm_metrics: dict = {}
+    for key in flow_keys:
+        vals = []
+        for p in last4:
+            v = (p.get("metrics") or {}).get(key)
+            if v is not None:
+                vals.append(float(v))
+        ttm_metrics[key] = sum(vals) if len(vals) == 4 else None
+
+    for key in snapshot_keys:
+        vals = []
+        for p in last4:
+            v = (p.get("metrics") or {}).get(key)
+            if v is not None:
+                vals.append(float(v))
+        ttm_metrics[key] = (sum(vals) / len(vals)) if vals else None
+
+    # Compute TTM ratios from the TTM metrics
+    ttm_ratios = compute_ratios(ttm_metrics, is_quarterly=False)
+    # Override ROA/ROE: TTM lucro_liquido / average snapshot (not annualized)
+    # compute_ratios with is_quarterly=False already does:
+    #   roa = lucro_liquido / ativo_total
+    #   roe = lucro_liquido / patrimonio_liquido
+    # which is exactly TTM ROA/ROE. No override needed.
+
+    return {
+        "status": "ok",
+        "period_range": f"{last4[-1].get('period','?')}–{last4[0].get('period','?')}",
+        "metrics": ttm_metrics,
+        "ratios": ttm_ratios,
+    }
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _f(d: dict, key: str) -> float | None:

@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.1 | 2026-07-25 | **Growth mode + Payout fix.** (1) New `growth` mode: QoQ + YoY % change for Receita, EBITDA, Lucro Líquido + TTM Marg. EBITDA + ROE. Calls financials.quarterly(periods=8) per ticker. (2) Payout fix: moved Payout column from _DIVIDENDS_COLS (where it was always null — dividends skill doesn't return it) to _FINANCIALS_COLS (where it lives in latest_annual.ratios.payout). (3) New `comparison_growth` adapter. 8 new skill tests + 2 new adapter tests. |
 | v1.0 | 2026-07-25 | **Initial implementation.** 2 modes: side_by_side (3 sections — valuation, financials, dividends), summary (single quick-compare table). Orchestrates financials.summary + valuation.ratios + dividends.summary per ticker. Best-effort per ticker — one source failing doesn't break the comparison. 2 report adapters (comparison_side_by_side, comparison_summary). 22 skill tests + 6 adapter tests. Read-only — no own database. |
 
 ---
@@ -30,4 +31,4 @@
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-25 (v1.1).*

@@ -67,3 +67,34 @@ class TestChartBuilder:
                 data=None,
                 config={},
             )
+
+
+class TestMultiSeriesChart:
+    """v1.2.2 — multi-series chart support."""
+
+    def test_multi_series_config(self):
+        data = {"x": ["Q1", "Q2", "Q3"],
+                "datasets": [{"label": "A", "data": [1, 2, 3]},
+                             {"label": "B", "data": [4, 5, 6]}]}
+        cfg = charts._to_chartjs_config(data, "line", "Multi", {})
+        assert cfg["type"] == "line"
+        assert cfg["data"]["labels"] == ["Q1", "Q2", "Q3"]
+        assert len(cfg["data"]["datasets"]) == 2
+        assert cfg["data"]["datasets"][0]["label"] == "A"
+        assert cfg["data"]["datasets"][0]["data"] == [1, 2, 3]
+        assert cfg["data"]["datasets"][1]["label"] == "B"
+        assert cfg["data"]["datasets"][1]["data"] == [4, 5, 6]
+
+    def test_multi_series_distinct_colors(self):
+        data = {"x": ["Q1"], "datasets": [{"label": "A", "data": [1]},
+                                            {"label": "B", "data": [2]}]}
+        cfg = charts._to_chartjs_config(data, "line", "T", {})
+        c1 = cfg["data"]["datasets"][0]["borderColor"]
+        c2 = cfg["data"]["datasets"][1]["borderColor"]
+        assert c1 != c2  # distinct colors
+
+    def test_single_series_still_works(self):
+        """Backward compat: {"x":[], "y":[]} still produces 1 dataset."""
+        cfg = charts._to_chartjs_config({"x": ["A", "B"], "y": [1, 2]}, "bar", "T", {})
+        assert len(cfg["data"]["datasets"]) == 1
+        assert cfg["data"]["datasets"][0]["data"] == [1, 2]

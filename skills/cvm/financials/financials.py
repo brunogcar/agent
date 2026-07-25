@@ -32,7 +32,7 @@ from data_sources.cvm._db import connect_dfp, connect_itr, parse_escala, cnpj_di
 from data_sources.cvm._bridge import resolve_company
 from skills.cvm.financials.metrics import (
     SUMMARY_CODES, KEY_CODES_BY_GRUPO,
-    compute_ratios, compute_ebitda, compute_ttm_ebitda,
+    compute_ratios, compute_ebitda, compute_ttm_ebitda, compute_ttm,
     _f,
 )
 
@@ -333,7 +333,8 @@ def _build_quarterly_summary(company: str, periods: int, consolidado: int) -> di
         })
 
     return {"status": "ok", "company": company_name,
-            "period_type": "quarterly", "periods": result_periods}
+            "period_type": "quarterly", "periods": result_periods,
+            "ttm": compute_ttm(result_periods)}
 
 
 # ── Internal: data fetching helpers ──────────────────────────────────────────
