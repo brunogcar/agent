@@ -417,15 +417,15 @@ class TestPctChange:
         """Loss -> profit sign change: -R$1M -> +R$3M (noise)."""
         assert comparison._pct_change(3, -1) is None
 
-    def test_extreme_growth_is_none(self):
-        """Tiny-base guard: >500% growth -> None (likely noise)."""
-        assert comparison._pct_change(700, 100) is None  # 600%
+    def test_extreme_growth_is_shown(self):
+        """Extreme but same-sign growth is NOT suppressed — LLM can judge."""
+        assert comparison._pct_change(700, 100) == pytest.approx(6.0)  # 600%
 
     def test_none_values(self):
         assert comparison._pct_change(None, 100) is None
         assert comparison._pct_change(100, None) is None
 
-    def test_boundary_500_pct(self):
-        """Exactly 500% (5.0) is the boundary — should be suppressed."""
-        assert comparison._pct_change(600, 100) is None  # exactly 5.0
-        assert comparison._pct_change(499, 100) == pytest.approx(3.99)  # under 5.0
+    def test_large_same_sign_growth(self):
+        """Large same-sign growth passes through (not noise — just big)."""
+        assert comparison._pct_change(600, 100) == pytest.approx(5.0)  # 500%
+        assert comparison._pct_change(499, 100) == pytest.approx(3.99)  # 399%

@@ -290,14 +290,17 @@ def _compute_growth(financials_result: dict) -> dict:
 def _pct_change(curr: float | None, prev: float | None) -> float | None:
     """Compute % change = (curr - prev) / |prev|.
 
-    Returns None when:
+    Returns None only when:
     - either value is None
     - prev is 0 or negative (can't compute meaningful % from non-positive base)
     - curr and prev have opposite signs (profit→loss or loss→profit — % is
-      meaningless across a sign change, e.g. +R$1M → -R$3M = -400% noise)
-    - |result| >= 5.0 (500%) — likely tiny-base noise
+      meaningless across a sign change)
 
-    This guard prevents the 3612% / -395% noise values seen in v1.1 growth mode.
+    Extreme values (>500%) are NOT suppressed — they may be real (e.g. a company
+    recovering from a tiny-base quarter). The LLM can judge whether the growth
+    is meaningful. The sign-change guard alone catches the truly meaningless
+    cases (the 3612% / -395% noise from v1.1 was caused by sign changes, not
+    just magnitude).
     """
     if curr is None or prev is None:
         return None
@@ -306,11 +309,7 @@ def _pct_change(curr: float | None, prev: float | None) -> float | None:
     # Sign change: profit→loss or loss→profit — % growth is meaningless
     if curr * prev < 0:
         return None
-    result = (curr - prev) / abs(prev)
-    # Guard against tiny-base noise: if |result| >= 5.0 (500%), suppress
-    if abs(result) >= 5.0:
-        return None
-    return result
+    return (curr - prev) / abs(prev)
 
 
 # ── Internal: fetch sectors from CAD ─────────────────────────────────────────

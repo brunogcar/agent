@@ -22,8 +22,17 @@
 
 ## 🚫 Anti-Patterns & Lessons Learned
 
-*(No entries yet. Add lessons here as they are learned from future refactors and bug fixes.)*
+### v1.2.1–v1.2.2 — Growth guard philosophy
+> - **What happened:** v1.1 growth mode showed 3612% (SUZB3) and -395% (KLBN11) for Lucro QoQ — clearly noise. v1.2.1 added a `|result| >= 500%` magnitude guard, but it was TOO AGGRESSIVE — it suppressed legitimate extreme values too (both tickers showed None, hiding real data).
+> - **Why it matters:** The LLM needs to see real data, even when it's extreme. Hiding everything behind None makes the growth table useless.
+> - **v1.2.2 fix:** Removed the magnitude guard entirely. Only sign-change guards remain: `prev <= 0` (negative base = meaningless) and `curr * prev < 0` (opposite signs = sign change, % is meaningless). Extreme same-sign growth (e.g. 600%) passes through — the LLM can judge whether it's meaningful.
+> - **Lesson:** Don't suppress data based on magnitude — the LLM is smart enough to interpret "600% growth" as "probably tiny base, check absolute values." Only suppress when the math is genuinely meaningless (sign changes, division by zero).
+
+### v1.2 — Sector tagging via CAD
+> - **What happened:** Added `sectors` field to all comparison modes — resolves SETOR_ATIV from CAD via bridge → CNPJ.
+> - **Why it matters:** Enables "same sector?" grouping (SUZB3 vs KLBN11 = both "Papel e Celulose"). Without it, the LLM has no way to know if a comparison is apples-to-apples.
+> - **Lesson:** Best-effort per ticker — if CAD/bridge lookup fails, sector is "" (empty string), not an error. The comparison never fails on sector resolution.
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-25 (v1.2.2).*

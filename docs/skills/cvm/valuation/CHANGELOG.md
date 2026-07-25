@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.0.12 | 2026-07-25 | **investsite market_cap exact key match + list handling.** v1.0.11 used substring scan ("mercado" in key) which matched ratio keys like "Valor de Mercado / Receita" (PSR ~3.13) instead of market cap. Fix: (1) use EXACT key match against {"valor de mercado","market cap","valor mercado"} — no substring. (2) Handle list values — investsite returns lists when a row has Consolidado + Individual columns; take first element (Consolidado). KLBN11 market cap now correctly resolves to ~R$ 22B instead of 3.13.
 | v1.0.11 | 2026-07-25 | **investsite market_cap key fix.** v1.0.10 used hardcoded key names ("Valor de Mercado", "Market Cap") but the actual investsite label varies. Fix: scan ALL keys in precos_relativos case-insensitively for anything containing "mercado", "market", or "cap". Now finds market cap regardless of exact label. Combined with the investsite P/L fallback from v1.0.10, unit tickers (KLBN11) now get correct P/L AND market cap when brapi fails. |
 | v1.0.10 | 2026-07-25 | **investsite market_cap fallback.** When brapi fails (free tier doesn't cover all tickers), the unit-ticker fix from v1.0.9 doesn't work — market_cap falls through to price×shares (wrong for units). Fix: (1) extract "Valor de Mercado" from investsite's precos_relativos section and return it as market_cap. (2) Also extract investsite's pre-computed Preco/Lucro + Preco/VPA — for unit tickers when market_cap is still "computed", use investsite's P/L + P/VPA directly (they do market-cap-based math server-side, correct for all types). Added p_l_source field ("computed" or "investsite"). KLBN11 now shows correct P/L regardless of which price source succeeds. |
 | v1.0.9 | 2026-07-25 | **UNIT ticker fix.** For UNIT tickers (suffix 11 — KLBN11, TAEE11...), price is per-unit but total_shares is individual shares, so price×shares overstates market cap and P/L is inflated. Fix: (1) use brapi's `market_cap` when available (authoritative for units), fall back to price×shares. (2) Compute P/L, P/VPA, P/EBIT, P/FCO from `market_cap` (not per-share): `P/L = market_cap / lucro_liquido`. This is mathematically identical for regular stocks AND correct for units. (3) Added `unit_ticker` flag + `market_cap_source` field. EPS/VPA/DPA stay per-individual-share (informational). |
@@ -41,4 +42,4 @@
 
 ---
 
-*Last updated: 2026-07-25 (v1.0.11).*
+*Last updated: 2026-07-25 (v1.0.12).*

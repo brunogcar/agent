@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.2.2 | 2026-07-25 | **Growth guard relaxed.** v1.2.1 suppressed |result| >= 500% (magnitude guard) which hid legitimate extreme values. Removed the magnitude guard — extreme same-sign growth is real data the LLM should see. Only sign-change guards remain: prev <= 0 and curr*prev < 0 (opposite signs = meaningless %). SUZB3 lucro QoQ now shows its real extreme value instead of None; KLBN11 (sign change) stays None. |
 | v1.2.1 | 2026-07-25 | **Growth sign-change guard fix.** v1.2 caught negative prev and >500% results, but missed profit→loss sign changes (prev positive, curr negative) that produce -400% noise. Fix: add curr*prev<0 check — opposite signs = sign change, % is meaningless. KLBN11 lucro QoQ -395% now correctly suppressed. |
 | v1.2 | 2026-07-25 | **Sector tagging + growth guard.** (1) Sector tagging: all 3 modes now return a "sectors" field {ticker: SETOR_ATIV} resolved from CAD via bridge -> CNPJ. (2) Growth sign-change guard: _pct_change returns None when prev <= 0 (sign-change) or |result| >= 500% (tiny-base noise). Fixes the 3612%/-395% noise values seen in v1.1. |
 | v1.1 | 2026-07-25 | **Growth mode + Payout fix.** (1) New `growth` mode: QoQ + YoY % change for Receita, EBITDA, Lucro Líquido + TTM Marg. EBITDA + ROE. Calls financials.quarterly(periods=8) per ticker. (2) Payout fix: moved Payout column from _DIVIDENDS_COLS (where it was always null — dividends skill doesn't return it) to _FINANCIALS_COLS (where it lives in latest_annual.ratios.payout). (3) New `comparison_growth` adapter. 8 new skill tests + 2 new adapter tests. |
@@ -33,4 +34,4 @@
 
 ---
 
-*Last updated: 2026-07-25 (v1.2.1).*
+*Last updated: 2026-07-25 (v1.2.2).*
