@@ -50,6 +50,7 @@ from tools.report_ops.contracts import report_ok, report_fail
         ' cotahist_candlestick_chart (COTAHIST OHLC candlestick chart)',
         ' screener_sector (sector peers table + medians)',
         ' insider_history | insider_by_role | insider_summary',
+        ' governance_practices | governance_score | governance_by_chapter',
     ],
 )
 def report(

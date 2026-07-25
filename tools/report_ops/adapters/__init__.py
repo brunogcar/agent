@@ -111,3 +111,4 @@ from tools.report_ops.adapters import cotahist_chart  # noqa: E402,F401
 from tools.report_ops.adapters import cotahist_candlestick  # noqa: E402,F401
 from tools.report_ops.adapters import screener  # noqa: E402,F401
 from tools.report_ops.adapters import insider  # noqa: E402,F401
+from tools.report_ops.adapters import governance  # noqa: E402,F401
