@@ -98,3 +98,24 @@ class TestMultiSeriesChart:
         cfg = charts._to_chartjs_config({"x": ["A", "B"], "y": [1, 2]}, "bar", "T", {})
         assert len(cfg["data"]["datasets"]) == 1
         assert cfg["data"]["datasets"][0]["data"] == [1, 2]
+
+
+class TestCandlestickChart:
+    """v1.2.6 — candlestick chart support."""
+
+    def test_candlestick_config_shape(self):
+        data = {"_candlestick": True, "ohlc_data": [
+            {"t": "2025-07-01", "o": 38.0, "h": 38.5, "l": 37.8, "c": 38.2},
+            {"t": "2025-07-02", "o": 38.2, "h": 38.6, "l": 38.1, "c": 38.5},
+        ]}
+        cfg = charts._to_chartjs_config(data, "candlestick", "PETR4", {})
+        assert cfg["type"] == "candlestick"
+        assert len(cfg["data"]["datasets"]) == 1
+        assert len(cfg["data"]["datasets"][0]["data"]) == 2
+        assert cfg["data"]["datasets"][0]["data"][0]["o"] == 38.0
+        assert cfg["options"]["scales"]["x"]["type"] == "time"
+
+    def test_candlestick_not_triggered_for_regular_dict(self):
+        """Regular dicts (no _candlestick key) must NOT use candlestick path."""
+        cfg = charts._to_chartjs_config({"x": ["A"], "y": [1]}, "line", "T", {})
+        assert cfg["type"] == "line"  # not candlestick

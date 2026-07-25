@@ -64,9 +64,9 @@ DIVIDENDS_HISTORY = {
 
 
 class TestRegistry:
-    def test_eighteen_adapters_registered(self):
+    def test_nineteen_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 18
+        assert len(names) == 19
 
     def test_expected_adapter_names(self):
         expected = {
@@ -78,6 +78,7 @@ class TestRegistry:
             "dividends_history", "dividends_annual", "dividends_summary",
             "comparison_side_by_side", "comparison_summary", "comparison_growth",
             "cotahist_close_chart",
+            "cotahist_candlestick_chart",
             "screener_sector",
         }
         assert expected == set(list_adapters())
@@ -418,3 +419,42 @@ class TestCotahistChartAdapter:
                             {"status": "ok", "count": 0, "rows": []})
         assert out["x"] == []
         assert "no rows" in out.get("_error", "")
+
+
+# ── COTAHIST candlestick adapter ─────────────────────────────────────────────
+
+COTAHIST_OHLC = {
+    "status": "ok", "count": 3,
+    "rows": [
+        {"refdate": "2025-07-03", "open": 38.5, "high": 39.0, "low": 38.2, "close": 38.8},
+        {"refdate": "2025-07-02", "open": 38.0, "high": 38.5, "low": 37.8, "close": 38.2},
+        {"refdate": "2025-07-01", "open": 37.5, "high": 38.0, "low": 37.3, "close": 37.9},
+    ],
+}
+
+
+class TestCotahistCandlestickAdapter:
+    def test_candlestick_from_result(self):
+        out = apply_adapter("cotahist_candlestick_chart", COTAHIST_OHLC)
+        assert out.get("_candlestick") is True
+        ohlc = out.get("ohlc_data") or []
+        assert len(ohlc) == 3
+        # sorted oldest-first
+        assert ohlc[0]["t"] == "2025-07-01"
+        assert ohlc[0]["o"] == 37.5
+        assert ohlc[2]["c"] == 38.8
+
+    def test_candlestick_error_result(self):
+        out = apply_adapter("cotahist_candlestick_chart",
+                            {"status": "not_synced", "error": "db missing"})
+        assert out.get("_candlestick") is not True
+        assert "db missing" in out.get("_error", "")
+
+    def test_candlestick_skips_incomplete_rows(self):
+        data = {"status": "ok", "rows": [
+            {"refdate": "2025-07-01", "open": 37.5, "high": 38.0, "low": 37.3, "close": 37.9},
+            {"refdate": "2025-07-02", "open": None, "high": 38.5, "low": 38.1, "close": 38.2},
+        ]}
+        out = apply_adapter("cotahist_candlestick_chart", data)
+        ohlc = out.get("ohlc_data") or []
+        assert len(ohlc) == 1  # second row skipped (open=None)

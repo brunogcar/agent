@@ -15,14 +15,21 @@ from tools.report_ops.formats import apply_fmt
 
 
 _PEER_COLS = [
-    ("Ticker",       "ticker",          "text"),
-    ("Preço",        "price",           "brl_full"),
-    ("Market Cap",   "market_cap",      "brl"),
-    ("P/L",          "p_l",             "num"),
-    ("P/VPA",        "p_vpa",           "num"),
-    ("EV/EBITDA",    "ev_ebitda",       "num"),
-    ("ROE",          "roe",             "pct"),
-    ("Div Yield",    "dividend_yield",  "pct"),
+    ("Ticker",        "ticker",          "text"),
+    ("Preço",         "price",           "brl_full"),
+    ("Market Cap",    "market_cap",      "brl"),
+    ("P/L",           "p_l",             "num"),
+    ("P/VPA",         "p_vpa",           "num"),
+    ("EV/EBITDA",     "ev_ebitda",       "num"),
+    ("ROE",           "roe",             "pct"),
+    ("Div Yield",     "dividend_yield",  "pct"),
+    ("Receita Líquida", "receita_liquida", "brl"),
+    ("EBITDA",        "ebitda",          "brl"),
+    ("Lucro Líquido", "lucro_liquido",   "brl"),
+    ("Marg. EBITDA",  "marg_ebitda",     "pct"),
+    ("Marg. Líquida", "marg_liquida",    "pct"),
+    ("Cresc. Receita","receita_growth",  "pct"),
+    ("Payout",        "payout",          "pct"),
 ]
 
 

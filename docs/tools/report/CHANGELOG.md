@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.2.6 | 2026-07-25 | **Candlestick chart + screener financials.** (1) New cotahist_candlestick_chart adapter — OHLC candlestick chart from COTAHIST using chartjs-chart-financial plugin. charts.py detects _candlestick shape, chart.html loads financial plugin CDN conditionally. (2) screener_sector adapter enriched with 7 new columns (Receita, EBITDA, Lucro, Marg. EBITDA, Marg. Liquida, Cresc. Receita, Payout). Total 19 adapters. |
 | v1.2.5 | 2026-07-25 | **Screener adapter.** New screener_sector adapter for the new cvm/screener skill. Peers table sorted by P/L cheapest-first + KPI strip with sector medians. Total 18 adapters. |
 | v1.2.4 | 2026-07-25 | **COTAHIST adapter fix.** v1.2.3 cotahist_close_chart accepted ticker strings, but apply_adapter() requires dicts (all adapters receive dicts). Removed the string path — adapter now accepts COTAHIST query result dicts only. Use the 2-step pattern: query COTAHIST first, then pipe result to chart. |
 | v1.2.3 | 2026-07-25 | **COTAHIST chart adapter.** New cotahist_close_chart adapter — line chart of daily close price from COTAHIST. Accepts a COTAHIST query result OR a ticker string (queries internally). Total 17 adapters. |

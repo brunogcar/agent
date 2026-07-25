@@ -49,6 +49,7 @@ def build(
         # Escape </script> to prevent injection when JSON is embedded in <script> tags
         # v1.4 FIX: Use raw string to avoid invalid escape sequence \/."""
         "chart_config_json": json.dumps(chart_config).replace("</", r"<\/"),
+        "chart_type": chart_type,  # v1.2.6: template uses this to load candlestick plugin
         "theme": config.get("theme", "dark"),
         "accent": config.get("accent", "#0d9488"),
     }
@@ -65,16 +66,40 @@ def build(
 def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> dict:
     """Convert raw data to a Chart.js config object.
 
-    Supports two data shapes:
+    Supports three data shapes:
       1. Single-series (backward-compatible): {"x": [...], "y": [...]} or {"labels":[], "values":[]}
       2. Multi-series (v1.2.2): {"x": [...], "datasets": [{"label":"A","data":[...]}, ...]}
+      3. Candlestick (v1.2.6): {"_candlestick": True, "ohlc_data": [{"t","o","h","l","c"}, ...]}
 
-    Multi-series produces one Chart.js dataset per entry, each with a distinct
-    color from the palette. This is what chart adapters (e.g.
-    financials_quarterly_chart) use to render trend lines (Receita + EBITDA +
-    Lucro on one chart).
+    Candlestick requires the chartjs-chart-financial plugin (loaded via CDN in
+    the chart template when chart_type="candlestick").
     """
     color = config.get("color", config.get("accent", "#0d9488"))
+
+    # [v1.2.6] Candlestick — special shape from cotahist_candlestick_chart adapter
+    if isinstance(data, dict) and data.get("_candlestick"):
+        ohlc = data.get("ohlc_data") or []
+        return {
+            "type": "candlestick",
+            "data": {
+                "datasets": [{
+                    "label": title or "Price",
+                    "data": ohlc,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {
+                    "x": {"type": "time", "time": {"unit": "day"},
+                          "distribution": "series"},
+                },
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": bool(title), "text": title},
+                },
+            },
+        }
 
     if isinstance(data, dict):
         labels = data.get("x", data.get("labels", []))

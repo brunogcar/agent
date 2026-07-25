@@ -52,7 +52,7 @@ report(action="export", title="PETR4 Financials",
 | dividends history / annual / summary | `dividends_history` / `dividends_annual` / `dividends_summary` |
 | comparison side_by_side / summary / growth | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` |
 | screener sector | `screener_sector` |
-| b3 cotahist (price history chart) | `cotahist_close_chart` |
+| b3 cotahist (price history) | `cotahist_close_chart` (line) / `cotahist_candlestick_chart` (candlestick) |
 
 Number formatting (BRL, %) is handled by the report tool's shared `formats.py`
 spec vocabulary — skills don't need to format anything. See

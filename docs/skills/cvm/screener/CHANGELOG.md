@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.1 | 2026-07-25 | **Financials enrichment.** screener.sector now calls financials.annual(periods=2) per peer to add Receita, EBITDA, Lucro Liquido, Marg. EBITDA, Marg. Liquida, Payout, and Cresc. Receita (YoY). Best-effort — financials failures don't skip the peer. Adapter enriched with 7 new columns.
 | v1.0 | 2026-07-25 | **Initial implementation.** 2 modes: sector (list peers + medians), compare (is ticker cheap/expensive vs sector). Orchestrates CAD + bridge + valuation. Best-effort — skips companies without ticker or failed valuation. Peers sorted by P/L cheapest-first. 1 report adapter (screener_sector). 15 skill tests. |
 
 ---
@@ -27,4 +28,4 @@
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-25 (v1.1).*

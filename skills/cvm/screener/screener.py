@@ -42,9 +42,10 @@ def sector(setor: str = "", limit: int = 20) -> dict:
         return {"status": "not_found",
                 "error": f"No active companies found in sector '{setor}'"}
 
-    # 2. For each company: resolve ticker via bridge reverse-lookup, get valuation
+    # 2. For each company: resolve ticker via bridge reverse-lookup, get valuation + financials
     from data_sources.cvm.bridge.query_engine import lookup as bridge_lookup
     from skills.cvm.valuation.valuation import ratios as val_ratios
+    from skills.cvm.financials.financials import annual as fin_annual
 
     peers: list[dict] = []
     errors: list[str] = []
@@ -67,15 +68,13 @@ def sector(setor: str = "", limit: int = 20) -> dict:
             # No ticker — skip (company exists but not publicly traded or not in bridge)
             continue
 
-        # Get valuation ratios
+        # Get valuation ratios (best-effort)
+        peer: dict = {"ticker": ticker, "name": name, "cnpj": cnpj}
         try:
             vr = val_ratios(company=ticker)
             if vr.get("status") == "ok":
                 r = vr.get("ratios", {})
-                peers.append({
-                    "ticker": ticker,
-                    "name": name,
-                    "cnpj": cnpj,
+                peer.update({
                     "price": r.get("price"),
                     "market_cap": r.get("market_cap"),
                     "p_l": r.get("p_l"),
@@ -87,7 +86,37 @@ def sector(setor: str = "", limit: int = 20) -> dict:
             else:
                 errors.append(f"{ticker}: valuation {vr.get('status')}")
         except Exception as e:
-            errors.append(f"{ticker}: {e}")
+            errors.append(f"{ticker}: valuation {e}")
+
+        # [v1.1] Get financials (best-effort) — revenue, EBITDA, margins, growth
+        try:
+            fr = fin_annual(company=ticker, periods=2)
+            if fr.get("status") == "ok" and fr.get("periods"):
+                periods = fr["periods"]
+                latest = periods[0]
+                m = latest.get("metrics", {}) or {}
+                ratios = latest.get("ratios", {}) or {}
+                peer.update({
+                    "receita_liquida": m.get("receita_liquida"),
+                    "ebitda": m.get("ebitda"),
+                    "lucro_liquido": m.get("lucro_liquido"),
+                    "marg_ebitda": ratios.get("marg_ebitda"),
+                    "marg_liquida": ratios.get("marg_liquida"),
+                    "payout": ratios.get("payout"),
+                })
+                # Revenue growth: latest vs prior year (if 2+ periods)
+                if len(periods) >= 2:
+                    prior_rev = (periods[1].get("metrics") or {}).get("receita_liquida")
+                    curr_rev = m.get("receita_liquida")
+                    peer["receita_growth"] = _pct_change(curr_rev, prior_rev)
+                else:
+                    peer["receita_growth"] = None
+            else:
+                errors.append(f"{ticker}: financials {fr.get('status')}")
+        except Exception as e:
+            errors.append(f"{ticker}: financials {e}")
+
+        peers.append(peer)
 
     if not peers:
         return {"status": "not_found",
@@ -217,6 +246,17 @@ def _roe_from_ratios(ratios: dict) -> float | None:
     if ll is not None and pl is not None and pl > 0:
         return ll / pl
     return None
+
+
+def _pct_change(curr: float | None, prev: float | None) -> float | None:
+    """Compute % change = (curr - prev) / |prev|. None on missing/negative/sign-change."""
+    if curr is None or prev is None:
+        return None
+    if prev <= 0:
+        return None
+    if curr * prev < 0:
+        return None
+    return (curr - prev) / abs(prev)
 
 
 def _compute_medians(peers: list[dict]) -> dict:
