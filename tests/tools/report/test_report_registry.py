@@ -7,7 +7,7 @@ class TestRegistry:
 
     def test_dispatch_keys(self):
         expected = {"chart", "map", "report", "dashboard", "diagram", "export",
-                    "compare", "timeline", "scorecard", "list", "help"}
+                    "compare", "timeline", "scorecard", "table", "list", "help"}
         assert set(DISPATCH.get("report", {}).keys()) == expected
 
     def test_metadata_covers_all_actions(self):
@@ -17,7 +17,7 @@ class TestRegistry:
 
     def test_presets_exist(self):
         expected = {"financial", "code_audit", "research", "system_health",
-                    "compare", "timeline", "scorecard"}
+                    "compare", "timeline", "scorecard", "table"}
         assert set(PRESETS.keys()) == expected
 
     def test_all_actions_have_func(self):
@@ -34,8 +34,8 @@ class TestRegistry:
         from tools.report_ops.actions.list import run_list
         result = run_list()
         assert result["type"] == "list"
-        assert result["count"] == 11
-        assert len(result["actions"]) == 11
+        assert result["count"] == 12
+        assert len(result["actions"]) == 12
 
     def test_help_action_specific(self):
         from tools.report_ops.actions.help import run_help
@@ -48,7 +48,7 @@ class TestRegistry:
         from tools.report_ops.actions.help import run_help
         result = run_help()
         assert result["type"] == "help"
-        assert result["count"] == 11
+        assert result["count"] == 12
         assert "actions" in result
 
     def test_help_unknown_action(self):

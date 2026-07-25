@@ -71,7 +71,7 @@ tools/
 | `notify` | `notify_ops/` | 8 | Desktop alerts + APScheduler reminders, tz-aware via `core/time_utils.py` |
 | `parallel` | `parallel_ops/` | 3 (run, race, pipeline) | Concurrent execution with `PARALLEL_SAFE` allowlist |
 | `python` | `python_ops/` | 5 (run, run_data, eval, profile, lint) | Three-layer security (sandbox → imports → executors) |
-| `report` | `report_ops/` | 11 | Charts, maps, dashboards, diagrams, PDF/PNG export |
+| `report` | `report_ops/` | 12 | Charts, maps, dashboards, diagrams, tables, PDF/PNG/xlsx export |
 | `schedule` | `schedule_ops/` | 9 | Cron/interval/one-shot + iCal sync; delivers via notify; offline catch-up |
 | `swarm` | `swarm_ops/` | 5 (consensus, race, vote, compare, list_providers) | Multi-model fan-out across cloud providers |
 | `tavily` | `tavily_ops/` | 5 | AI-ranked search, bulk extraction, keyless mode |
@@ -209,15 +209,20 @@ Analytical views that combine multiple data sources with domain reasoning. Read-
 ```text
 skills/
 ├── dispatcher.py              # @tool skill(domain, sub_domain, mode, params)
-└── cvm/                       # CVM analytical skills
-    ├── __init__.py            # Domain manifest + route
-    ├── shareholders/          # Named shareholders + equity structure (FRE + DFP)
-    └── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
+├── cvm/                       # CVM analytical skills
+│   ├── __init__.py            # Domain manifest + route
+│   ├── shareholders/          # Named shareholders + equity structure (FRE + DFP)
+│   ├── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
+│   ├── financials/            # Financial statements + ratios (DFP + ITR + DVA) — rapina-style
+│   └── valuation/             # Valuation ratios (b3 price + DFP + FRE shares)
+└── investsite/                # Investsite.com.br scraper (indicators, statements, events)
 ```
 
 **Each skill has:** `__init__.py` (MANIFEST + route), `<skill>.py` (logic — delegates to data_source query engines).
 
 **To add a new skill:** create `skills/<domain>/<skill>/__init__.py` with `MANIFEST` + `route()`. The domain router auto-discovers it.
+
+**Report wiring (v1.2):** Skills stay read-only and report-agnostic. The report tool's `tools/report_ops/adapters/` package flattens each skill's JSON into the `table` action (and `export` xlsx) via `config["adapter"]` (e.g. `financials_quarterly`, `valuation_ratios`). See [tools/REPORT.md](tools/REPORT.md).
 
 ---
 
@@ -330,4 +335,4 @@ tests/
 
 ---
 
-*Last updated: 2026-07-16. This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*
+*Last updated: 2026-07-25. This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*

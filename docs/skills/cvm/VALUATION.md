@@ -36,6 +36,24 @@ No skill-specific config. Requires:
 
 ---
 
+## 📊 Rendering & Export
+
+Pipe a `valuation` result into the `report` tool (adapters: `valuation_ratios`,
+`valuation_summary`):
+
+```
+report(action="table", title="PETR4 Valuation",
+       data=<valuation JSON>, config={"adapter":"valuation_ratios"})
+report(action="export", title="PETR4 Valuation",
+       data=<valuation JSON>, config={"format":"xlsx","adapter":"valuation_ratios"})
+```
+
+The `valuation_ratios` adapter builds a KPI strip (Preço, P/L, P/VPA,
+EV/EBITDA, Div Yield, Market Cap) + a full indicator table. See
+[CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
+
+---
+
 ## 📁 Subfile Directory
 
 | File | Purpose |
@@ -47,4 +65,4 @@ No skill-specific config. Requires:
 
 ---
 
-*Last updated: 2026-07-24 (v1.0).*
+*Last updated: 2026-07-25 (v1.0.8 + report wiring).*

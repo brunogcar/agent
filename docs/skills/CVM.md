@@ -20,6 +20,38 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 
 All CVM skills use `core/br_validator` for BRL/date/ticker parsing.
 
+## 📊 Report Integration (v1.2)
+
+CVM skills return nested JSON. To render or export that data, pipe a skill result
+into the `report` tool's `table` action (or `export` xlsx) with the matching
+adapter in `config["adapter"]`. The report tool stays domain-agnostic — adapters
+live in `tools/report_ops/adapters/`.
+
+```
+# 1. Get the data
+skill(domain="cvm", sub_domain="financials", mode="quarterly", params='{"company":"PETR4"}')
+#    -> <financials JSON>
+
+# 2a. Render as an HTML table
+report(action="table", title="PETR4 Financials",
+       data=<financials JSON>, config={"adapter":"financials_quarterly"})
+
+# 2b. Or export to Excel
+report(action="export", title="PETR4 Financials",
+       data=<financials JSON>, config={"format":"xlsx","adapter":"financials_quarterly"})
+```
+
+| Skill (mode) | Adapter |
+|--------------|---------|
+| financials quarterly / annual / summary | `financials_quarterly` / `financials_annual` / `financials_summary` |
+| valuation ratios / summary | `valuation_ratios` / `valuation_summary` |
+| shareholders shareholders / free_float / equity_structure / summary | `shareholders_shareholders` / `shareholders_free_float` / `shareholders_equity_structure` / `shareholders_summary` |
+| dividends history / annual / summary | `dividends_history` / `dividends_annual` / `dividends_summary` |
+
+Number formatting (BRL, %) is handled by the report tool's shared `formats.py`
+spec vocabulary — skills don't need to format anything. See
+[tools/REPORT.md](../tools/REPORT.md) and [report API](../tools/report/API.md).
+
 ## Quick Start
 
 ```
@@ -76,4 +108,4 @@ LLM → skill(domain="cvm", sub_domain=..., mode=..., params=...)  [skills/dispa
 
 ---
 
-*Last updated: 2026-07-24.*
+*Last updated: 2026-07-25.*

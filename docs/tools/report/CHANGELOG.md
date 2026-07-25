@@ -6,8 +6,85 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.2 | 2026-07-25 | **Skill wiring: table action + adapter layer + number formatting + xlsx export.** New `table` action for financial statements/ratio tables. New `adapters/` package (12 adapters) flattening CVM/B3 skill JSON → table data. New `formats.py` (BRL/%/compact) registered as Jinja filters + reused by xlsx. `export` now supports `format:"xlsx"` (openpyxl, multi-sheet, native numeric cells). New `table` preset. `report.py` docstring now lists adapters. See v1.2 detail below. |
+| v1.1 | 2026-07-03 | Security hardening + template fixes (`\| safe` audit, atomic writes, UNC block, `@register_action` dedup, Chart.js dedup, cancellation import fix). |
+| v1.0 | 2026-06-26 | Initial 11-action report tool with `@meta_tool` + `@register_action` auto-discovery. |
 
-*(Fill this section with relevant info from edits and refactors. Add version history as it is learned.)*
+---
+
+## 🆕 v1.2 — Skill Wiring (table + adapters + formats + xlsx)
+
+Wires the CVM/B3 analytical skills to the report tool so the LLM can render and
+export financial statements in one call. Driven by a collective LLM review
+(OpenAI, Claude, Mimo, DeepSeek, Mistral, Qwen) that converged on four needs:
+financial statements are **tables**; skill JSON must be **flattened** by an
+adapter (not coupled into the report tool); numbers need **BRL/% formatting**;
+and statements need **xlsx export**.
+
+### Phase 1 — `table` action
+- New action `report(action="table", ...)` renders one or more tables with
+  per-column number formatting, sticky headers, per-table search filter, and a
+  sidebar section switcher.
+- Data shape: `{"sections":[{title, columns, rows, formats, note}], "kpis":[...], "sources":[...]}`.
+  Rows accept list-of-lists **or** list-of-dicts (columns auto-derived).
+- Template `templates/table.html` (extends `base.html`); builder `table.py`;
+  action wrapper `actions/table.py` (auto-discovered).
+- Registered in `DISPATCH_METADATA["table"]` + `PRESETS["table"]`.
+
+### Phase 2 — `adapters/` adapter layer
+- New package `tools/report_ops/adapters/` with 12 adapters registered via
+  `@register_adapter(name)`: `financials_{quarterly,annual,summary}`,
+  `valuation_{ratios,summary}`, `shareholders_{shareholders,free_float,equity_structure,summary}`,
+  `dividends_{history,annual,summary}`.
+- Each adapter is a pure function `skill_result -> table_data`. The report tool
+  stays domain-agnostic: it never imports CVM/B3 code. Skills don't change.
+- Invoked via `config["adapter"]` on both `table` and `export` actions — the LLM
+  pipes a skill JSON straight in: `report(action="table", data=<skill JSON>,
+  config={"adapter":"financials_quarterly"})`.
+- Error/no-data skill results render as a small status table instead of crashing.
+
+### Phase 3 — Number formatting (`formats.py` + Jinja filters)
+- New `tools/report_ops/formats.py` with spec tags: `brl` (compact R$ 1,23 B),
+  `brl_full` (R$ 1.234,56), `pct` (fraction→12,34%), `pct_raw` (already-%),
+  `num`, `int`, `compact`, `text`. Reuses `core.br_validator.format_brl`.
+- Registered as Jinja filters on the singleton env: `brl`, `pct`, `num`, `int`,
+  `compact`, `dash`, and `fmt(value, spec)` (dispatch by tag). Usable in any
+  template (`{{ x | brl }}`, `{{ m | pct }}`).
+- None/NaN always render as `—` in HTML (empty cell in xlsx) — never `"None"`.
+- `excel_format(spec)` + `is_numeric_spec(spec)` bridge the same spec tags to
+  native Excel number formats, so HTML and xlsx render identically.
+
+### Phase 4 — xlsx export
+- `export` action now accepts `config["format"]="xlsx"`: writes a multi-sheet
+  `.xlsx` from table data (or a skill result via `config["adapter"]`, or a
+  `.json` file path).
+- Each section → one sheet (name sanitized to Excel rules, ≤31 chars, deduped).
+  Header row frozen + styled. **Numeric cells stay native** with Excel number
+  formats (`0.00%`, `"R$ "#,##0.00`, …) so they remain sortable/summable.
+- openpyxl imported lazily; graceful warning if not installed (mirrors the
+  Playwright optional-dep pattern).
+- pdf/png path unchanged — `run()` branches on `format` before touching libs.
+
+### Files added
+- `tools/report_ops/formats.py`
+- `tools/report_ops/table.py`
+- `tools/report_ops/actions/table.py`
+- `tools/report_ops/templates/table.html`
+- `tools/report_ops/adapters/__init__.py` (registry + helpers)
+- `tools/report_ops/adapters/financials.py`
+- `tools/report_ops/adapters/valuation.py`
+- `tools/report_ops/adapters/shareholders.py`
+- `tools/report_ops/adapters/dividends.py`
+
+### Files changed
+- `tools/report_ops/html.py` — register Jinja filters in `_get_env()`.
+- `tools/report_ops/export.py` — added `_export_xlsx()` + `_coerce_xlsx_data()`;
+  `run()` now branches on `format`.
+- `tools/report_ops/_registry.py` — `table` in `DISPATCH_METADATA` + `PRESETS`;
+  `export` config_keys gained `adapter`.
+- `tools/report_ops/actions/export.py` — help text + examples for xlsx/adapter.
+- `tools/report.py` — `doc_sections` now lists `table`, adapters, xlsx example,
+  and the `table` preset.
 
 ---
 
@@ -94,6 +171,11 @@ These were caught by multi-LLM review (Gemini, DeepSeek, Mistral, Qwen, GLM, mim
 
 | Feature | Status | Notes |
 |--------|--------|-------|
+| `table` action | ✅ v1.2 | Multi-table statements, per-column number formatting, search filter |
+| `adapters/` adapter layer | ✅ v1.2 | 12 adapters flatten CVM/B3 skill JSON → table data (domain-agnostic report tool) |
+| Number formatting (`formats.py`) | ✅ v1.2 | BRL/%/compact specs as Jinja filters + Excel number formats |
+| xlsx export | ✅ v1.2 | `export(format="xlsx")` multi-sheet, native numeric cells (openpyxl, lazy) |
+| `table` preset | ✅ v1.2 | Theme/accent defaults for tabular reports |
 | `compare` | ✅ v1.1 | Side-by-side diff with delta highlighting |
 | `timeline` | ✅ v1.1 | SVG Gantt chart with status colors |
 | `scorecard` | ✅ v1.1 | RAG dashboard with radar chart |
@@ -121,13 +203,17 @@ These were caught by multi-LLM review (Gemini, DeepSeek, Mistral, Qwen, GLM, mim
 
 | Feature | Notes | Priority |
 |---------|-------|----------|
-| Action-level presets | Per-action override of global presets | v2 |
-| Action-level timing | `elapsed_ms` in results | v2 |
-| Conditional registration | Hide `export` if Playwright missing | v2 |
-| `report.compose` | Multi-step reports in one call | v3 |
+| Chart presets for skills | `financials_quarterly_chart` adapter (revenue/EBITDA trend line) | v1.3 |
+| Candlestick chart for COTAHIST | OHLCV adapter → `chart` action (Candlestick.js or Chart.js finance) | v1.3 |
+| `compose` multi-action | One call → table + chart + KPIs in a single dashboard | v2 |
+| Adapter registry self-doc | `report(action="help", data="adapters")` lists adapters + source skills | v1.3 |
+| Per-action preset override | Action-level preset merging (currently global only) | v2 |
+| Conditional registration | Hide `export` pdf/png if Playwright missing; xlsx if openpyxl missing | v2 |
 | `report.preview` | Low-res preview before full render | v3 |
 | Template hot-reload | Dev mode: auto-reload templates on change | v3 |
 | Theme system expansion | Custom themes beyond dark/light | v3 |
+| investsite adapters | `investsite_indicators`, `investsite_statements` adapters | v1.3 |
+| Cross-company comparison adapter | Multi-ticker table (P/L, ROE side-by-side) | v1.4 |
 
 ---
 
@@ -143,4 +229,4 @@ These were caught by multi-LLM review (Gemini, DeepSeek, Mistral, Qwen, GLM, mim
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-25 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

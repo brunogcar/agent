@@ -9,7 +9,7 @@ class TestListAction:
         result = report(action="list", trace_id="test-list")
         assert result["status"] == "success"
         assert result["type"] == "list"
-        assert result["count"] == 11
+        assert result["count"] == 12
         actions = result["actions"]
         names = [a["name"] for a in actions]
         assert "chart" in names

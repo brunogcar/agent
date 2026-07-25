@@ -36,7 +36,7 @@ class TestRealIntegration:
         """List action requires no filesystem — pure registry lookup."""
         result = report(action="list", trace_id="real-list-001")
         assert result["status"] == "success"
-        assert result["count"] == 11
+        assert result["count"] == 12
 
     def test_real_help_action(self):
         """Help action requires no filesystem — pure metadata lookup."""

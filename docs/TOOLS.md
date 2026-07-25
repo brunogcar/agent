@@ -19,7 +19,7 @@ This document provides a **high-level overview** of all tools and serves as an *
 | [NOTIFY.md](tools/NOTIFY.md) | Notify | Cross-platform alerts, APScheduler, graceful console fallback |
 | [PARALLEL.md](tools/PARALLEL.md) | Parallel | `@meta_tool` refactor v1.0 — 3 actions (`run`/`race`/`pipeline`), `parallel_ops/` subpackage (8 files), breaking `tools`→`tasks` rename, per-call `timeout`, `PARALLEL_SAFE` (10 tools) + `_TOOL_MAP` (17 tools, lazy), 93 tests |
 | [PYTHON.md](tools/PYTHON.md) | Python | 5 actions (`run`/`run_data`/`eval`/`profile`/`lint`) via `@meta_tool`, `python_ops/` subpackage (11 files), three-layer security (sandbox → imports → executors), `json_schema` validation, `timeout` override |
-| [REPORT.md](tools/REPORT.md) | Report | 11 atomic actions, HTML dashboards, XSS-safe templates, lazy imports |
+| [REPORT.md](tools/REPORT.md) | Report | 12 atomic actions (incl. table), HTML dashboards, xlsx export, skill adapters, XSS-safe templates |
 | [SWARM.md](tools/SWARM.md) | Swarm | Multi-model meta-tool, parallel cloud LLM fan-out, consensus/race/vote/compare/list_providers |
 | [TAVILY.md](tools/TAVILY.md) | Tavily | AI-ranked search, bulk extraction, keyless mode, API budget tracking |
 | [VISION.md](tools/VISION.md) | Vision | Multimodal image analysis — 3 actions (describe/extract_text/analyse_ui) via `@meta_tool`, `vision_ops/` subpackage (8 files), breaking `task`→`action`+`question` rename (with deprecated `task` alias), new params (`json_schema`/`format`/`context_type`), `core/net retry_sync` URL downloads, SSRF protection |
@@ -277,7 +277,7 @@ tools/
 │       ├── profile.py     # @register_action("python", "profile") — cProfile top-20 (NEW v1.0, NOT sandboxed)
 │       └── lint.py        # @register_action("python", "lint") — ruff/flake8 pre-check (NEW v1.0)
 │
-├── report.py               # Report meta-tool (11 atomic actions)
+├── report.py               # Report meta-tool (12 atomic actions incl. table)
 ├── report_ops/
 │   ├── _registry.py
 │   ├── charts.py
@@ -736,18 +736,21 @@ Changes not staged for commit:
 
 ### 11. 📊 Report — [tools/REPORT.md](tools/REPORT.md)
 
-**Status:** v1.0 — 11 atomic actions for interactive HTML reports.
+**Status:** v1.2 — 12 atomic actions for interactive HTML reports + skill wiring (table action, transforms adapters, xlsx export).
 
-**Purpose:** Generate self-contained interactive HTML dashboards, charts, maps, and diagrams.
+**Purpose:** Generate self-contained interactive HTML dashboards, charts, maps, tables, and diagrams; export to PDF/PNG/xlsx; render CVM/B3 skill output as tables.
 
 **Key characteristics:**
-- **11 atomic actions** — `chart`, `map`, `report`, `dashboard`, `diagram`, `export`, `compare`, `timeline`, `scorecard`, `list`, `help`
-- **Lazy heavy imports** — pandas, jinja2, plotly, playwright imported inside function bodies only
+- **12 atomic actions** — `chart`, `map`, `report`, `dashboard`, `diagram`, `export`, `compare`, `timeline`, `scorecard`, `table`, `list`, `help`
+- **Skill wiring (v1.2)** — `adapters/` adapters (12) flatten CVM/B3 skill JSON into the `table` action and `export` xlsx via `config["adapter"]` (e.g. `financials_quarterly`, `valuation_ratios`)
+- **Number formatting (v1.2)** — shared spec vocabulary (`brl`, `pct`, `num`, …) in `formats.py`; one spec renders in HTML (Jinja `fmt` filter) and xlsx (native Excel number format)
+- **xlsx export (v1.2)** — `export(format="xlsx")` multi-sheet, native numeric cells (openpyxl, lazy)
+- **Lazy heavy imports** — pandas, jinja2, plotly, playwright, openpyxl imported inside function bodies only
 - **XSS-safe templates** — Jinja2 autoescape + no `| safe` on user-controlled text
 - **Atomic file writes** — `_atomic_write` prevents partial/corrupted files on crash
 - **Output root** — `workspace/reports/{trace_id}/`
 
-**Safety:** Path guard integration, cancellation guard, XSS-safe templates, atomic writes, optional Playwright for PDF/PNG export.
+**Safety:** Path guard integration, cancellation guard, XSS-safe templates, atomic writes, optional Playwright (PDF/PNG) + openpyxl (xlsx) for export.
 
 **Output:**
 ```json

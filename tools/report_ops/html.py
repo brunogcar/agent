@@ -25,14 +25,32 @@ def _get_template_dir() -> Path:
 
 
 def _get_env():
-    """Lazy singleton Jinja2 Environment with autoescape."""
+    """Lazy singleton Jinja2 Environment with autoescape + number filters.
+
+    Filters registered (see report_ops/formats.py):
+      brl(value, suffix=True)      -> R$ 1,23 B / R$ 1.234,56
+      pct(value, already_pct=False) -> 12,34%
+      num(value, decimals=2)       -> 1.234,56
+      int(value)                   -> 1.234
+      compact(value)               -> 1,23 B
+      dash(value)                  -> None -> "—"
+      fmt(value, spec)             -> dispatch by spec tag ("brl","pct",...)
+    """
     global _JINJA_ENV
     if _JINJA_ENV is None:
         from jinja2 import Environment, FileSystemLoader, select_autoescape
+        from tools.report_ops import formats
         _JINJA_ENV = Environment(
             loader=FileSystemLoader(str(_get_template_dir())),
             autoescape=select_autoescape(["html", "xml"]),
         )
+        _JINJA_ENV.filters["brl"] = formats.fmt_brl
+        _JINJA_ENV.filters["pct"] = formats.fmt_pct
+        _JINJA_ENV.filters["num"] = formats.fmt_num
+        _JINJA_ENV.filters["int"] = formats.fmt_int
+        _JINJA_ENV.filters["compact"] = formats.fmt_compact
+        _JINJA_ENV.filters["dash"] = formats.fmt_dash
+        _JINJA_ENV.filters["fmt"] = formats.apply_fmt
     return _JINJA_ENV
 
 

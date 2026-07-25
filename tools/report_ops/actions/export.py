@@ -13,13 +13,19 @@ from tools.report_ops._registry import register_action
 @register_action(
     "report",
     "export",
-    help_text="""Export an existing HTML report to PDF or PNG.
-Required: data (path to existing HTML file)
-Optional: config (format, width, height)
-Returns: {status, html_path, pdf_path, png_path, warning}""",
+    help_text="""Export to PDF/PNG (from an HTML file) or xlsx (from table data).
+Formats:
+  pdf/png — data = path to an existing HTML report. config: {format, width, height}
+  xlsx    — data = table-shape dict OR skill result (with config['adapter']) OR .json path.
+            config: {format:"xlsx", adapter?: "financials_quarterly"|...}
+            Each section becomes a sheet; numeric cells stay native + Excel-formatted.
+Requires: playwright (pdf/png) or openpyxl (xlsx). Graceful warning if missing.
+Returns: {status, html_path|pdf_path|png_path|xlsx_path, sheets?, warning?}""",
     examples=[
         'report(action="export", data="workspace/reports/trace-123/report.html", config={"format":"pdf"})',
         'report(action="export", data="reports/trace-123/dashboard.html", config={"format":"png"})',
+        'report(action="export", data=<financials skill JSON>, config={"format":"xlsx","adapter":"financials_quarterly"})',
+        'report(action="export", data=<table-shape dict>, config={"format":"xlsx"})',
     ],
 )
 def run_export(

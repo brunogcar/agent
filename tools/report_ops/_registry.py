@@ -99,10 +99,10 @@ DISPATCH_METADATA: Dict[str, Dict[str, Any]] = {
         "config_keys": ["diagram_type", "theme"],
     },
     "export": {
-        "description": "Export existing HTML to PDF/PNG",
+        "description": "Export to PDF/PNG (HTML capture) or xlsx (table data)",
         "required_params": ["action", "data"],
         "optional_params": ["config"],
-        "config_keys": ["format", "width", "height"],
+        "config_keys": ["format", "width", "height", "adapter"],
     },
     "compare": {
         "description": "Side-by-side diff table with delta highlighting",
@@ -121,6 +121,12 @@ DISPATCH_METADATA: Dict[str, Dict[str, Any]] = {
         "required_params": ["action", "title", "data"],
         "optional_params": ["config"],
         "config_keys": ["theme", "accent"],
+    },
+    "table": {
+        "description": "Tabular statements with per-column number formatting (BRL, %, ...)",
+        "required_params": ["action", "title", "data"],
+        "optional_params": ["config"],
+        "config_keys": ["adapter", "theme", "accent", "subtitle"],
     },
     "list": {
         "description": "List all available report actions",
@@ -183,5 +189,11 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "theme": "dark",
         "accent": "#14b8a6",
         "default_sections": ["overview", "radar", "details"],
+    },
+    "table": {
+        "template": "table",
+        "theme": "dark",
+        "accent": "#0d9488",
+        "default_sections": ["tables", "sources"],
     },
 }

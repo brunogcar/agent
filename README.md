@@ -142,7 +142,7 @@ All workflows emit structured traces to `logs/agent_*.jsonl` and follow the memo
 | [**git**](docs/tools/GIT.md) | 20+ atomic VCS actions: commit, diff, rollback, snapshot, branch/tag management |
 | [**github**](docs/tools/GITHUB.md) | 16 actions: PR + issue + release workflow + push/pull (httpx direct, not PyGithub) |
 | [**cli**](docs/tools/CLI.md) | 4-layer NL→shell dispatch: patterns → shell whitelist → router LLM → executor LLM |
-| [**report**](docs/tools/REPORT.md) | 11 atomic actions: charts, maps, dashboards, diagrams, export to PDF/PNG |
+| [**report**](docs/tools/REPORT.md) | 12 atomic actions: charts, maps, dashboards, diagrams, tables, export to PDF/PNG/xlsx + skill adapters |
 | [**vision**](docs/tools/VISION.md) | Multimodal image analysis via `cfg.vision_model`, 3 input sources, JSON mode |
 | [**memory**](docs/tools/MEMORY.md) | LLM-facing memory I/O: store, recall, delete, prune, summarize, janitor |
 | [**agent**](docs/tools/AGENT.md) | 15 specialist sub-roles: classify, route, research, code, review, critique, plan, etc. |

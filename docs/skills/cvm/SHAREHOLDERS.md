@@ -37,6 +37,21 @@ No skill-specific config. Read-only over already-synced data sources:
 
 ---
 
+## 📊 Rendering & Export
+
+Pipe a `shareholders` result into the `report` tool (adapters:
+`shareholders_shareholders`, `shareholders_free_float`,
+`shareholders_equity_structure`, `shareholders_summary`):
+
+```
+report(action="table", title="PETR4 Shareholders",
+       data=<shareholders JSON>, config={"adapter":"shareholders_shareholders"})
+```
+
+See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
+
+---
+
 ## 📁 Subfile Directory
 
 | File | Purpose |
@@ -48,4 +63,4 @@ No skill-specific config. Read-only over already-synced data sources:
 
 ---
 
-*Last updated: 2026-07-23 (v1.0.1).*
+*Last updated: 2026-07-25 (v1.0.1 + report wiring).*

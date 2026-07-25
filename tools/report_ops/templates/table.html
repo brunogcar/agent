@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% block sidebar %}
+<div class="nav-section-label">Tables</div>
+{% for s in sections %}
+<button class="nav-item ok {{ 'active' if loop.first else '' }}" data-target="tbl-sec-{{ loop.index0 }}" onclick="showTableSection(this)">
+  <span class="nav-dot"></span>{{ s.title | default('Table ' + loop.index|string) }}
+</button>
+{% endfor %}
+{% if sources %}
+<div class="nav-section-label" style="margin-top:16px;">Sources</div>
+<button class="nav-item ok" data-target="tbl-sources" onclick="showTableSection(this)">
+  <span class="nav-dot"></span>Sources ({{ sources | length }})
+</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 16px;">
+  <h1 style="font-size: 24px; font-weight: 700; color: var(--text); margin: 0 0 8px;">{{ title }}</h1>
+  {% if subtitle %}<p style="color: var(--text-sec); margin: 0 0 4px;">{{ subtitle }}</p>{% endif %}
+  {% if company %}<p style="color: var(--text-sec); font-size: 12px; margin: 0;">Company: <strong style="color: var(--text);">{{ company }}</strong></p>{% endif %}
+</div>
+
+{% if kpis %}
+<div class="kpi-grid">
+  {% for k in kpis %}
+  {{ m.kpi_card(k.label, k.value, k.delta) }}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% for s in sections %}
+<section id="tbl-sec-{{ loop.index0 }}" class="view-section {{ 'active' if loop.first else '' }}">
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+      <div class="card-title" style="margin:0;">{{ s.title }}</div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="tbl-count" style="font-size:11px; color:var(--text-sec);">{{ s.row_count }} rows</span>
+        <input type="text" class="tbl-search" data-table="tbl-{{ loop.index0 }}"
+               placeholder="Filter rows…" style="background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:6px 10px; font-size:12px; width:180px;">
+      </div>
+    </div>
+
+    {% if s.note %}<div style="font-size:12px; color:var(--text-sec); margin-bottom:10px; font-style:italic;">{{ s.note }}</div>{% endif %}
+
+    <div style="overflow-x:auto; max-height:560px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
+      <table class="data-table" id="tbl-{{ loop.index0 }}" style="width:100%;">
+        <thead>
+          <tr>
+            {% for col in s.columns %}
+            <th style="position:sticky; top:0; background:var(--bg-sec); z-index:1;">{{ col }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in s.rows %}
+          <tr>
+            {% for cell in row %}
+            <td class="{{ 'num' if s.col_formats[loop.index0] != 'text' else '' }}">{{ cell | fmt(s.col_formats[loop.index0]) }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+          {% if not s.rows %}
+          <tr><td colspan="{{ s.columns | length }}" style="color:var(--text-sec); text-align:center; padding:24px;">No data</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endfor %}
+
+{% if sources %}
+<section id="tbl-sources" class="view-section">
+  <div class="card">
+    <div class="card-title">Sources</div>
+    {{ m.source_list(sources) }}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<style>
+  /* Numeric cells right-aligned + mono for scanability */
+  .data-table td.num { text-align: right; font-family: 'JetBrains Mono', ui-monospace, monospace; white-space: nowrap; }
+  .data-table td.num:first-child { text-align: left; } /* first column usually a label even if numeric spec */
+  .view-section { display: none; }
+  .view-section.active { display: block; }
+  .data-table tr.hidden { display: none; }
+</style>
+<script>
+function showTableSection(btn) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  btn.classList.add('active');
+  const target = btn.getAttribute('data-target');
+  document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+  const el = document.getElementById(target);
+  if (el) el.classList.add('active');
+}
+// Per-table client-side row filter (case-insensitive substring match across cells)
+document.querySelectorAll('.tbl-search').forEach(function(input) {
+  input.addEventListener('input', function() {
+    const tableId = this.getAttribute('data-table');
+    const q = this.value.trim().toLowerCase();
+    const rows = document.querySelectorAll('#' + tableId + ' tbody tr');
+    let visible = 0;
+    rows.forEach(function(tr) {
+      if (!q) { tr.classList.remove('hidden'); visible++; return; }
+      const text = tr.textContent.toLowerCase();
+      if (text.indexOf(q) !== -1) { tr.classList.remove('hidden'); visible++; }
+      else { tr.classList.add('hidden'); }
+    });
+    const countEl = this.closest('.card').querySelector('.tbl-count');
+    if (countEl) countEl.textContent = visible + ' rows';
+  });
+});
+</script>
+{% endblock %}

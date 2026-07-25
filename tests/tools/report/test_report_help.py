@@ -18,7 +18,7 @@ class TestHelpAction:
         result = report(action="help", trace_id="test-help-all")
         assert result["status"] == "success"
         assert result["type"] == "help"
-        assert result["count"] == 11
+        assert result["count"] == 12
         assert "actions" in result
         assert "chart" in result["actions"]
 

@@ -23,12 +23,12 @@ def report(
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | `str` | **Yes** | Report type: `chart`, `map`, `report`, `dashboard`, `diagram`, `export`, `compare`, `timeline`, `scorecard`, `list`, `help` |
+| `action` | `str` | **Yes** | Report type: `chart`, `map`, `report`, `dashboard`, `diagram`, `export`, `compare`, `timeline`, `scorecard`, `table`, `list`, `help` |
 | `trace_id` | `str` | No | Trace ID for correlation. Auto-generated if empty. |
 | `title` | `str` | No | Report title. Used in HTML `<title>` and header. |
 | `data` | `Any` | No | Inline data (dict, list) or file path string. Use `data_path` in `config` for files. |
 | `config` | `dict` | No | Action-specific configuration (see below). |
-| `preset` | `str` | No | Pre-configured layout: `financial`, `code_audit`, `research`, `system_health`, `compare`, `timeline`, `scorecard` |
+| `preset` | `str` | No | Pre-configured layout: `financial`, `code_audit`, `research`, `system_health`, `compare`, `timeline`, `scorecard`, `table` |
 
 ---
 
@@ -91,10 +91,13 @@ config = {
 ### `action="export"`
 ```python
 config = {
-    "format": "pdf",            # pdf | png
-    "width": 1920,
-    "height": 1080,
+    "format": "pdf",            # pdf | png | xlsx
+    "width": 1920,              # pdf/png only
+    "height": 1080,             # pdf/png only
+    "adapter": "",              # xlsx only: flatten a skill result into table data
 }
+# pdf/png: data = path to an existing HTML report file
+# xlsx:    data = table-shape dict | list of sections | skill result (with adapter) | .json path
 ```
 
 ### `action="compare"`
@@ -123,6 +126,21 @@ config = {
     "theme": "dark",
     "accent": "#0d9488",
 }
+```
+
+### `action="table"`
+```python
+config = {
+    "adapter": "",              # optional: flatten a skill result into table data
+    "subtitle": "",             # optional subheading
+    "theme": "dark",
+    "accent": "#0d9488",
+}
+# data = {"sections":[...], "kpis":[...], "sources":[...]} (table shape)
+#      OR a skill result dict (when config["adapter"] is set)
+# Each section: {"title","columns"?, "rows","formats"?, "note"?}
+#   rows: list-of-lists OR list-of-dicts (columns auto-derived from keys)
+#   formats: {column_name: spec}  spec in brl|brl_full|pct|pct_raw|num|int|compact|text
 ```
 
 ### `action="list"`
@@ -183,6 +201,91 @@ data = [
 ]
 ```
 
+**Table data:**
+```python
+# Direct table shape
+data = {
+    "company": "PETR4",                          # optional, shown in header
+    "sections": [
+        {
+            "title": "Quarterly Summary",
+            "columns": ["Período", "Receita", "EBITDA", "Marg. EBITDA"],  # optional
+            "rows": [                            # list-of-lists ...
+                ["1T26", 100000, 25000, 0.25],
+                ["4T25", 95000, 23000, 0.24],
+            ],
+            # ...OR list-of-dicts (columns auto-derived from keys):
+            "rows": [{"Período":"1T26","Receita":100000,"EBITDA":25000,"Marg. EBITDA":0.25}],
+            "formats": {"Receita": "brl", "EBITDA": "brl", "Marg. EBITDA": "pct"},
+            "note": "Standalone quarters.",      # optional caption
+        },
+    ],
+    "kpis": [{"label": "Receita", "value": 100000, "format": "brl"}],   # optional
+    "sources": [{"title": "CVM DFP", "url": "..."}],                    # optional
+}
+
+# Adapter path — pipe a skill result straight in:
+report(action="table", title="PETR4 Financials",
+       data=<financials skill JSON>,
+       config={"adapter": "financials_quarterly"})
+```
+
+---
+
+## 🔌 Adapters (skill JSON → table data)
+
+Adapters flatten a CVM/B3 skill result into the table data shape so the report
+tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`.
+
+| Adapter | Source skill (mode) | What it tables |
+|---------|---------------------|----------------|
+| `financials_quarterly` | `cvm/financials` quarterly | Wide table: periods × {Receita, EBITDA, Lucro, margins, ROE} + KPIs |
+| `financials_annual` | `cvm/financials` annual | Same wide table, yearly + ROA/Payout |
+| `financials_summary` | `cvm/financials` summary | KPIs + latest-annual detail (KV) + quarterly trend |
+| `valuation_ratios` | `cvm/valuation` ratios | KPIs (Preço, P/L, P/VPA, EV/EBITDA, Div Yield, Mkt Cap) + full indicator table |
+| `valuation_summary` | `cvm/valuation` summary | Ratios table + data-source availability table |
+| `shareholders_shareholders` | `cvm/shareholders` shareholders | Named shareholders: %ON/%PN/%Total, qty, controlling |
+| `shareholders_free_float` | `cvm/shareholders` free_float | Free float % + PF/PJ/inst counts per period |
+| `shareholders_equity_structure` | `cvm/shareholders` equity_structure | Equity breakdown (BPP 2.03.*) per fiscal year |
+| `shareholders_summary` | `cvm/shareholders` summary | Top shareholders + equity components (KV) |
+| `dividends_history` | `cvm/dividends` history | B3 events: dates, rate, label (Dividendo/JCP) |
+| `dividends_annual` | `cvm/dividends` annual | DVA 7.08.04.* totals (Dividendos, JCP, total) per year |
+| `dividends_summary` | `cvm/dividends` summary | Recent events table + annual trend table |
+
+Error / not_synced skill results render as a small status table (never crash).
+
+---
+
+## 🔢 Number Formatting (specs + Jinja filters)
+
+Format specs are short string tags. A table column declares one spec in
+`formats`; both the HTML template (via the `fmt` Jinja filter) and the xlsx
+exporter (via `excel_format()`) honour it — one tag, two consistent renderings.
+
+| Spec | HTML rendering | Excel number format | Use for |
+|------|----------------|---------------------|---------|
+| `brl` | R$ 1,23 B (compact) | `"R$ "#,##0.00` | Large BRL values (market cap, revenue) |
+| `brl_full` | R$ 1.234,56 | `"R$ "#,##0.00` | Per-share BRL (price, EPS, DPA) |
+| `pct` | 12,34% (from fraction 0.1234) | `0.00%` | Ratios computed as a/b (margins, ROE, yield) |
+| `pct_raw` | 45,23% (from 45.23) | `0.00"%"` | CVM-stored % already in percent units (FRE ownership) |
+| `num` | 1.234,56 | `#,##0.00` | Multiples (P/L, EV/EBITDA) |
+| `int` | 1.234 | `#,##0` | Counts (shares, shareholders) |
+| `compact` | 1,23 B | `#,##0.00` | Magnitude without currency |
+| `text` | as-is | `@` | Labels, dates, strings (default) |
+
+`None` / NaN always render as `—` in HTML and as an empty cell in xlsx.
+
+**Jinja filters** (registered in `html.py`, usable in any template):
+
+```jinja
+{{ market_cap | brl }}              {# R$ 1,23 B #}
+{{ roe | pct }}                      {# 18,50% (from 0.185) #}
+{{ price | brl(false) }}            {# R$ 38,50 (full, no suffix) — 2nd arg = suffix #}
+{{ shares | int }}                   {# 13.000.000.000 #}
+{{ value | fmt("pct_raw") }}         {# dispatch by spec tag #}
+{{ maybe_none | dash }}              {# — #}
+```
+
 ---
 
 ## 🎨 Presets
@@ -198,6 +301,7 @@ Presets auto-configure layout, colors, and default sections.
 | `compare` | Side-by-side diffs | `#0d9488` | diff |
 | `timeline` | Project planning | `#3b82f6` | gantt, events |
 | `scorecard` | Health/status checks | `#14b8a6` | overview, radar, details |
+| `table` | Tabular statements (financials, ratios) | `#0d9488` | tables, sources |
 
 ---
 
@@ -299,12 +403,13 @@ The memory hook is fire-and-forget — if storage fails, the report still return
 
 ---
 
-## 🖨️ Print / PDF / PNG
+## 🖨️ Print / PDF / PNG / xlsx
 
 - **Browser print** (`Ctrl+P`): Hides sidebar, expands all tabs/collapsible sections. Cards use `page-break-inside: avoid`.
-- **Playwright export** (`action="export"`): Captures full report including hidden tabs. Requires `pip install playwright`.
-- **Fallback**: If Playwright is not installed, returns HTML path + warning message.
+- **Playwright export** (`action="export", format="pdf|png"`): Captures full report including hidden tabs. Requires `pip install playwright`.
+- **xlsx export** (`action="export", format="xlsx"`): Writes table data to a multi-sheet `.xlsx` (native numeric cells, per-column Excel formats). Accepts table data, a skill result (`config["adapter"]`), or a `.json` path. Requires `pip install openpyxl`.
+- **Fallback**: If Playwright/openpyxl is not installed, returns the available paths + a warning message.
 
 ---
 
-*Last updated: 2026-07-03. See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-25 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

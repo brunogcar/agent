@@ -41,6 +41,24 @@ No skill-specific config. Read-only over already-synced data sources:
 
 ---
 
+## 📊 Rendering & Export
+
+Pipe a `financials` result into the `report` tool to render a table or export
+to Excel (adapters: `financials_quarterly`, `financials_annual`,
+`financials_summary`):
+
+```
+report(action="table", title="PETR4 Financials",
+       data=<financials JSON>, config={"adapter":"financials_quarterly"})
+report(action="export", title="PETR4 Financials",
+       data=<financials JSON>, config={"format":"xlsx","adapter":"financials_annual"})
+```
+
+See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12) and
+[report API](../../tools/report/API.md#adapters-skill-json--table-data).
+
+---
+
 ## 📁 Subfile Directory
 
 | File | Purpose |
@@ -52,4 +70,4 @@ No skill-specific config. Read-only over already-synced data sources:
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+*Last updated: 2026-07-25 (v1.0.1 + report wiring).*
