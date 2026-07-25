@@ -51,6 +51,7 @@ from tools.report_ops.contracts import report_ok, report_fail
         ' shareholders_shareholders | shareholders_free_float | shareholders_equity_structure | shareholders_summary',
         ' dividends_history | dividends_annual | dividends_summary',
         ' comparison_side_by_side | comparison_summary | comparison_growth',
+        ' cotahist_close_chart (COTAHIST price history line chart)',
     ],
 )
 def report(

@@ -171,13 +171,14 @@ def ratios(company: str = "") -> dict:
     }
 
     # [v1.0.9] Market Cap: prefer brapi's value (authoritative for UNIT tickers).
+    # [v1.0.10] Also accept investsite's "Valor de Mercado" when brapi fails.
     # For units (KLBN11, TAEE11...), price is per-unit but total_shares is
-    # individual shares — so price×shares overstates market cap. brapi handles
-    # this correctly. Falls back to price×shares when brapi doesn't provide it.
+    # individual shares — so price×shares overstates market cap. brapi/investsite
+    # handle this correctly. Falls back to price×shares only when neither provides it.
     if brapi_market_cap is not None:
         market_cap = float(brapi_market_cap)
         ratios_result["market_cap"] = market_cap
-        ratios_result["market_cap_source"] = "brapi"
+        ratios_result["market_cap_source"] = "brapi" if price_data.get("source") == "brapi" else "investsite"
     elif total_shares and total_shares > 0:
         market_cap = price * total_shares
         ratios_result["market_cap"] = market_cap
@@ -186,6 +187,15 @@ def ratios(company: str = "") -> dict:
         market_cap = None
         ratios_result["market_cap"] = None
         ratios_result["market_cap_source"] = "none"
+
+    # [v1.0.10] Fallback for unit tickers when market_cap is "computed" (wrong
+    # for units) — use investsite's pre-computed P/L + P/VPA if available.
+    # investsite does market-cap-based math server-side, correct for all types.
+    investsite_pe = price_data.get("pe_ratio")
+    investsite_pvpa = price_data.get("p_vpa")
+    use_investsite_ratios = (unit_ticker
+                             and ratios_result["market_cap_source"] == "computed"
+                             and investsite_pe is not None)
 
     # EPS (LPA) = lucro_liquido / shares — per-INDIVIDUAL-share (informational).
     # For unit tickers, multiply by shares-per-unit to get per-unit EPS.
@@ -197,14 +207,20 @@ def ratios(company: str = "") -> dict:
     ratios_result["vpa"] = vpa
 
     # [v1.0.9] P/L, P/VPA, P/EBIT, P/FCO computed from MARKET CAP (not per-share).
-    # This is mathematically identical to price/EPS for regular stocks, AND
-    # correct for UNIT tickers (avoids the unit-ratio problem entirely).
-    #   P/L    = market_cap / lucro_liquido
-    #   P/VPA  = market_cap / patrimonio_liquido
+    # [v1.0.10] For unit tickers when market_cap is "computed" (wrong for units),
+    # fall back to investsite's pre-computed P/L + P/VPA (correct for all types).
+    #   P/L    = market_cap / lucro_liquido  (or investsite's Preco/Lucro)
+    #   P/VPA  = market_cap / pl             (or investsite's Preco/VPA)
     #   P/EBIT = market_cap / ebit
     #   P/FCO  = market_cap / fco
-    ratios_result["p_l"] = _safe_div(market_cap, lucro_liquido)
-    ratios_result["p_vpa"] = _safe_div(market_cap, pl) if pl_positive else None
+    if use_investsite_ratios:
+        ratios_result["p_l"] = investsite_pe
+        ratios_result["p_vpa"] = investsite_pvpa if (pl_positive and investsite_pvpa is not None) else None
+        ratios_result["p_l_source"] = "investsite"
+    else:
+        ratios_result["p_l"] = _safe_div(market_cap, lucro_liquido)
+        ratios_result["p_vpa"] = _safe_div(market_cap, pl) if pl_positive else None
+        ratios_result["p_l_source"] = "computed"
 
     # EV = Market Cap + Debt - Cash
     divida_liquida = None
@@ -362,12 +378,52 @@ def _get_price_investsite(ticker: str) -> dict:
                 return {"status": "error",
                         "error": f"investsite: cannot parse price '{price}'"}
 
-        return {
+        # [v1.0.10] Extract market cap from investsite's precos_relativos.
+        # investsite computes market cap correctly for UNIT tickers (KLBN11,
+        # TAEE11...) — this is the fallback when brapi fails (free tier
+        # doesn't cover all tickers). Try both known key names.
+        market_cap = None
+        for key in ("Valor de Mercado", "Market Cap", "Valor Mercado"):
+            raw = precos.get(key)
+            if raw is not None:
+                if isinstance(raw, (int, float)):
+                    market_cap = float(raw)
+                else:
+                    from core.br_validator import parse_brl
+                    try:
+                        market_cap = parse_brl(str(raw))
+                    except ValueError:
+                        pass
+                if market_cap is not None:
+                    break
+
+        # [v1.0.10] Also extract investsite's pre-computed P/L + P/VPA.
+        # For unit tickers these are correct (investsite does market-cap-based
+        # math server-side). We use them as a cross-check / fallback when
+        # our own computation would be wrong (unit ticker + brapi failed).
+        pe_ratio = None
+        raw_pe = precos.get("Preco/Lucro")
+        if raw_pe is not None and isinstance(raw_pe, (int, float)):
+            pe_ratio = float(raw_pe)
+
+        p_vpa_investsite = None
+        raw_pvpa = precos.get("Preco/VPA")
+        if raw_pvpa is not None and isinstance(raw_pvpa, (int, float)):
+            p_vpa_investsite = float(raw_pvpa)
+
+        result = {
             "status": "ok",
             "source": "investsite",
             "last_price": float(price),
             "date": date_str,
         }
+        if market_cap is not None:
+            result["market_cap"] = market_cap
+        if pe_ratio is not None:
+            result["pe_ratio"] = pe_ratio
+        if p_vpa_investsite is not None:
+            result["p_vpa"] = p_vpa_investsite
+        return result
     except Exception as e:
         return {"status": "error",
                 "error": f"investsite: {e}"}

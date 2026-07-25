@@ -117,6 +117,9 @@ def side_by_side(tickers: list = None, consolidado: int = 1) -> dict:
 
     per_ticker = _fetch_all(tickers, consolidado)
 
+    # [v1.2] Sector tagging — resolve each ticker's sector from CAD
+    sectors = _fetch_sectors(tickers)
+
     sections = {
         "valuation":   _build_section("Valuation Ratios", _VALUATION_COLS,
                                       [t["valuation"] for t in per_ticker], tickers),
@@ -129,6 +132,7 @@ def side_by_side(tickers: list = None, consolidado: int = 1) -> dict:
     return {
         "status": "ok",
         "tickers": tickers,
+        "sectors": sectors,
         "sections": sections,
         "errors": [t["error"] for t in per_ticker if t["error"]],
     }
@@ -161,9 +165,13 @@ def summary(tickers: list = None, consolidado: int = 1) -> dict:
 
     section = _build_section("Quick Compare", _SUMMARY_COLS, merged, tickers)
 
+    # [v1.2] Sector tagging
+    sectors = _fetch_sectors(tickers)
+
     return {
         "status": "ok",
         "tickers": tickers,
+        "sectors": sectors,
         "sections": [section],
         "errors": [t["error"] for t in per_ticker if t["error"]],
     }
@@ -208,9 +216,13 @@ def growth(tickers: list = None, consolidado: int = 1) -> dict:
     section = _build_section("Growth Metrics (QoQ + YoY + TTM)", _GROWTH_COLS,
                              growth_data, tickers)
 
+    # [v1.2] Sector tagging
+    sectors = _fetch_sectors(tickers)
+
     return {
         "status": "ok",
         "tickers": tickers,
+        "sectors": sectors,
         "sections": [section],
         "errors": errors,
     }
@@ -276,10 +288,58 @@ def _compute_growth(financials_result: dict) -> dict:
 
 
 def _pct_change(curr: float | None, prev: float | None) -> float | None:
-    """Compute % change = (curr - prev) / |prev|. Returns None if either is None or prev is 0."""
-    if curr is None or prev is None or prev == 0:
+    """Compute % change = (curr - prev) / |prev|.
+
+    Returns None when:
+    - either value is None
+    - prev is 0 (division by zero)
+    - prev is negative (sign-change — % growth is meaningless across a sign
+      change, e.g. a company going from -R$1M to +R$36M would show 3700%)
+    - the result would be > 500% or < -95% (likely noise from a tiny base —
+      these extremes are almost never meaningful quarterly growth)
+
+    This guard prevents the 3612% / -395% noise values seen in v1.1 growth mode.
+    """
+    if curr is None or prev is None:
         return None
-    return (curr - prev) / abs(prev)
+    if prev <= 0:
+        return None  # can't compute meaningful % growth from non-positive base
+    result = (curr - prev) / abs(prev)
+    # Guard against tiny-base noise: if |result| >= 5.0 (500%), it's likely
+    # a tiny denominator. Suppress — the LLM can look at absolute values.
+    if abs(result) >= 5.0:
+        return None
+    return result
+
+
+# ── Internal: fetch sectors from CAD ─────────────────────────────────────────
+
+def _fetch_sectors(tickers: list[str]) -> dict[str, str]:
+    """Resolve each ticker's sector (SETOR_ATIV) from CAD via bridge → CNPJ.
+
+    Returns {ticker: sector_string}. Best-effort — missing sectors are "".
+    """
+    sectors = {}
+    try:
+        from data_sources.cvm.cad.query_engine import lookup as cad_lookup
+        from data_sources.cvm._bridge import _resolve_via_bridge
+    except ImportError:
+        return {t: "" for t in tickers}
+
+    for ticker in tickers:
+        try:
+            cnpj, _ = _resolve_via_bridge(ticker)
+            if not cnpj:
+                sectors[ticker] = ""
+                continue
+            r = cad_lookup(cnpj=cnpj)
+            if r.get("status") == "ok":
+                sectors[ticker] = (r.get("company") or {}).get("SETOR_ATIV", "") or ""
+            else:
+                sectors[ticker] = ""
+        except Exception:
+            sectors[ticker] = ""
+    return sectors
 
 
 # ── Internal: fetch all 3 skills per ticker (best-effort) ────────────────────

@@ -64,9 +64,9 @@ DIVIDENDS_HISTORY = {
 
 
 class TestRegistry:
-    def test_sixteen_adapters_registered(self):
+    def test_seventeen_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 16
+        assert len(names) == 17
 
     def test_expected_adapter_names(self):
         expected = {
@@ -77,6 +77,7 @@ class TestRegistry:
             "shareholders_equity_structure", "shareholders_summary",
             "dividends_history", "dividends_annual", "dividends_summary",
             "comparison_side_by_side", "comparison_summary", "comparison_growth",
+            "cotahist_close_chart",
         }
         assert expected == set(list_adapters())
 
@@ -382,3 +383,37 @@ class TestFinancialsChartAdapter:
                             {"status": "not_synced", "error": "db"})
         assert out["x"] == []
         assert out["y"] == []
+
+
+# ── COTAHIST chart adapter ───────────────────────────────────────────────────
+
+COTAHIST_RESULT = {
+    "status": "ok",
+    "count": 3,
+    "rows": [
+        {"refdate": "2025-07-03", "close": 38.5},
+        {"refdate": "2025-07-02", "close": 38.2},
+        {"refdate": "2025-07-01", "close": 38.0},
+    ],
+}
+
+
+class TestCotahistChartAdapter:
+    def test_close_chart_from_result(self):
+        out = apply_adapter("cotahist_close_chart", COTAHIST_RESULT)
+        assert "x" in out and "y" in out
+        # sorted oldest-first
+        assert out["x"] == ["2025-07-01", "2025-07-02", "2025-07-03"]
+        assert out["y"] == [38.0, 38.2, 38.5]
+
+    def test_close_chart_error_result(self):
+        out = apply_adapter("cotahist_close_chart",
+                            {"status": "not_synced", "error": "db missing"})
+        assert out["x"] == []
+        assert "db missing" in out.get("_error", "")
+
+    def test_close_chart_empty_rows(self):
+        out = apply_adapter("cotahist_close_chart",
+                            {"status": "ok", "count": 0, "rows": []})
+        assert out["x"] == []
+        assert "no rows" in out.get("_error", "")

@@ -50,6 +50,7 @@ report(action="export", title="PETR4 Financials",
 | shareholders shareholders / free_float / equity_structure / summary | `shareholders_shareholders` / `shareholders_free_float` / `shareholders_equity_structure` / `shareholders_summary` |
 | dividends history / annual / summary | `dividends_history` / `dividends_annual` / `dividends_summary` |
 | comparison side_by_side / summary / growth | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` |
+| b3 cotahist (price history chart) | `cotahist_close_chart` |
 
 Number formatting (BRL, %) is handled by the report tool's shared `formats.py`
 spec vocabulary — skills don't need to format anything. See
