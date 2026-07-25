@@ -116,6 +116,13 @@ def sector(setor: str = "", limit: int = 20) -> dict:
         except Exception as e:
             errors.append(f"{ticker}: financials {e}")
 
+        # [v1.2] Get listing segment from FCA (Novo Mercado, Nível 1, etc.)
+        try:
+            from data_sources.cvm._bridge import _resolve_via_fca_segmento
+            peer["segmento"] = _resolve_via_fca_segmento(ticker) or ""
+        except Exception:
+            peer["segmento"] = ""
+
         peers.append(peer)
 
     if not peers:

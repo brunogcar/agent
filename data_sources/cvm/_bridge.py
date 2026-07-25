@@ -51,18 +51,29 @@ def looks_like_ticker(s: str) -> bool:
 
 
 def _resolve_via_bridge(ticker: str) -> tuple[str | None, str | None]:
-    """Resolve a B3 ticker via bridge.db (ticker_map table).
+    """Resolve a B3 ticker to (cnpj, cd_cvm).
 
-    [v1.1] Now reads the full ticker_map row and returns (cnpj, cd_cvm).
-    The bridge sync (data_sources/cvm/bridge/) populates this table from the
-    dividends API (codeCVM) + CAD (CNPJ + names).
+    RESOLUTION ORDER (v1.3):
+    1. FCA (fca.db) — local query, no network. ticker → CNPJ + CD_CVM directly
+       from fca_valor_mobiliario + fca_geral tables. Fastest path. Also provides
+       listing segment (Novo Mercado, etc.) — see _resolve_via_fca().
+    2. bridge.db (ticker_map) — cached from a prior B3 dividends API + CAD sync.
+       This is the original bridge resolution path.
+    3. B3 dividends API → CAD (via _auto_sync_bridge) — network fallback when
+       both FCA and bridge.db miss. See _auto_sync_bridge().
 
     Returns:
-        (cnpj, cd_cvm) -- both may be None/empty if bridge.db doesn't exist,
-        the ticker isn't found, or CAD didn't have the cd_cvm.
-        cnpj is preferred for DFP/ITR joins; cd_cvm is a fallback (empresas
-        has a cd_cvm column too).
+        (cnpj, cd_cvm) — both may be None/empty if all resolution paths fail.
+        cnpj is preferred for DFP/ITR joins; cd_cvm is a fallback.
     """
+    ticker = ticker.strip().upper()
+
+    # [v1.3] Step 1: FCA (fca.db) — primary source, local query, no network
+    fca_cnpj, fca_cd_cvm = _resolve_via_fca(ticker)
+    if fca_cnpj:
+        return fca_cnpj, fca_cd_cvm
+
+    # Step 2: bridge.db (ticker_map) — cached from prior sync
     bridge = bridge_db_path()
     if not bridge.exists():
         return None, None
@@ -72,7 +83,7 @@ def _resolve_via_bridge(ticker: str) -> tuple[str | None, str | None]:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT cnpj, cd_cvm FROM ticker_map WHERE ticker = ?",
-            (ticker.strip().upper(),),
+            (ticker,),
         ).fetchone()
         conn.close()
         if row:
@@ -80,6 +91,85 @@ def _resolve_via_bridge(ticker: str) -> tuple[str | None, str | None]:
     except Exception:
         pass
     return None, None
+
+
+def _resolve_via_fca(ticker: str) -> tuple[str | None, str | None]:
+    """[v1.3] Resolve a B3 ticker via FCA (fca.db) — primary bridge source.
+
+    FCA's fca_valor_mobiliario table maps Codigo_Negociacao (ticker) → CNPJ.
+    fca_geral table provides CD_CVM. Both are local SQLite queries — no network.
+
+    Returns:
+        (cnpj, cd_cvm) — both may be None if fca.db doesn't exist, the ticker
+        isn't found, or CD_CVM isn't available.
+    """
+    from data_sources.cvm._db import fca_db_path
+    fca = fca_db_path()
+    if not fca.exists():
+        return None, None
+
+    try:
+        conn = sqlite3.connect(f"file:{fca}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+
+        # Get CNPJ from fca_valor_mobiliario (latest filing)
+        row = conn.execute(
+            "SELECT CNPJ_Companhia FROM fca_valor_mobiliario "
+            "WHERE UPPER(Codigo_Negociacao) = ? "
+            "ORDER BY Data_Referencia DESC LIMIT 1",
+            (ticker,),
+        ).fetchone()
+
+        if not row or not row["CNPJ_Companhia"]:
+            conn.close()
+            return None, None
+
+        cnpj = cnpj_digits(row["CNPJ_Companhia"])
+        if not cnpj:
+            conn.close()
+            return None, None
+
+        # Get CD_CVM from fca_geral (latest filing for this CNPJ)
+        cvm_row = conn.execute(
+            "SELECT Codigo_CVM FROM fca_geral "
+            "WHERE REPLACE(REPLACE(REPLACE(CNPJ_Companhia,'.',''),'/',''),'-','') = ? "
+            "ORDER BY Data_Referencia DESC LIMIT 1",
+            (cnpj,),
+        ).fetchone()
+
+        cd_cvm = cvm_row["Codigo_CVM"] if cvm_row and cvm_row["Codigo_CVM"] else None
+        conn.close()
+        return cnpj, cd_cvm
+    except Exception:
+        return None, None
+
+
+def _resolve_via_fca_segmento(ticker: str) -> str | None:
+    """[v1.3] Get the listing segment (Novo Mercado, Nível 1, etc.) for a ticker.
+
+    Returns the Segmento string or None if FCA not synced or ticker not found.
+    Used by the screener skill to filter "only Novo Mercado companies".
+    """
+    from data_sources.cvm._db import fca_db_path
+    fca = fca_db_path()
+    if not fca.exists():
+        return None
+
+    try:
+        conn = sqlite3.connect(f"file:{fca}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT Segmento FROM fca_valor_mobiliario "
+            "WHERE UPPER(Codigo_Negociacao) = ? "
+            "ORDER BY Data_Referencia DESC LIMIT 1",
+            (ticker.strip().upper(),),
+        ).fetchone()
+        conn.close()
+        if row and row["Segmento"]:
+            return row["Segmento"]
+        return None
+    except Exception:
+        return None
 
 
 def _resolve_via_cad(name: str) -> tuple[str | None, str | None]:

@@ -185,16 +185,22 @@ data_sources/
 │   ├── __init__.py            # Domain manifest + route
 │   ├── _db.py                 # Shared: paths, cnpj_digits(), parse_escala(), connect_*
 │   ├── _bridge.py             # Shared: resolve_company() — ticker → CNPJ → empresa_ids
+│   ├── _freshness.py          # Shared: data freshness (sync timestamps for all DBs)
 │   ├── _meses.py              # Shared: rapinav2-compatible meses computation
 │   ├── dfp/                   # Annual financial statements
 │   ├── itr/                   # Quarterly financial statements
 │   ├── fre/                   # Governance + ownership (Formulário de Referência)
 │   ├── ipe/                   # Material events index
 │   ├── cad/                   # Company register (CNPJ → CD_CVM)
-│   └── bridge/                # B3-CVM identity bridge (ticker → cd_cvm → CNPJ)
+│   ├── vlmo/                  # Insider trading disclosures (Valores Mobiliários)
+│   ├── cgvn/                  # Governance practices (Código de Governança)
+│   ├── fca/                   # Registration form (ticker → CNPJ + listing segment) — primary bridge
+│   └── bridge/                # B3-CVM identity bridge (FCA first → bridge.db → B3 API → ISIN)
 └── b3/                        # Brazilian stock exchange data
     ├── __init__.py            # Domain manifest + route
     ├── api/                   # Market data: instruments, trades, derivatives
+    ├── brapi/                 # brapi.dev quotes + OHLCV + ticker list
+    ├── cotahist/              # COTAHIST historical OHLCV (fixed-width ZIP)
     └── dividends/             # Corporate actions: cash/stock dividends, subscriptions
 ```
 
@@ -214,9 +220,11 @@ skills/
 │   ├── shareholders/          # Named shareholders + equity structure (FRE + DFP)
 │   ├── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
 │   ├── financials/            # Financial statements + ratios (DFP + ITR + DVA) — rapina-style
-│   ├── valuation/             # Valuation ratios (b3 price + DFP + FRE shares)
+│   ├── valuation/             # Valuation ratios (b3 price + DFP TTM + FRE shares + ROIC + Graham)
 │   ├── comparison/            # Multi-ticker compare (orchestrates financials + valuation + dividends)
-│   └── screener/              # Sector screener (orchestrates CAD + bridge + valuation)
+│   ├── screener/              # Sector screener (orchestrates CAD + bridge + valuation + FCA)
+│   ├── insider/               # Insider trading analysis (VLMO disclosures)
+│   └── governance/            # Governance practices analysis (CGVN score)
 └── investsite/                # Investsite.com.br scraper (indicators, statements, events)
 ```
 

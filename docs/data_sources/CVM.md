@@ -13,7 +13,10 @@ CVM (Comissão de Valores Mobiliários) — the Brazilian SEC. Provides financia
 | [FRE](FRE.md) | Formulário de Referência (governance + ownership) | `memory_db/cvm/fre.db` | `dados.cvm.gov.br/.../FRE/` |
 | [IPE](IPE.md) | Material events (Informações Periódicas e Eventuais) | `memory_db/cvm/ipe.db` | `dados.cvm.gov.br/.../IPE/` |
 | [CAD](CAD.md) | Company register (Cadastro de Companhias Abertas) | `memory_db/cvm/cad.db` | `dados.cvm.gov.br/.../CAD/` |
-| [Bridge](BRIDGE.md) | B3-CVM identity bridge (ticker → cd_cvm → CNPJ) | `memory_db/cvm/bridge.db` | b3/dividends API + cvm/cad |
+| [VLMO](VLMO.md) | Insider trading disclosures (Valores Mobiliários) | `memory_db/cvm/vlmo.db` | `dados.cvm.gov.br/.../VLMO/` |
+| [CGVN](CGVN.md) | Governance practices (Código de Governança) | `memory_db/cvm/cgvn.db` | `dados.cvm.gov.br/.../CGVN/` |
+| [FCA](FCA.md) | Registration form (ticker → CNPJ + listing segment + ADR) — **primary bridge resolver** | `memory_db/cvm/fca.db` | `dados.cvm.gov.br/.../FCA/` |
+| [Bridge](BRIDGE.md) | B3-CVM identity bridge (FCA first → bridge.db → B3 API → ISIN) | `memory_db/cvm/bridge.db` | b3/dividends API + cvm/cad |
 
 ## Statement Groups (shared)
 

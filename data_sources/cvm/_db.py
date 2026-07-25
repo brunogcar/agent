@@ -99,6 +99,36 @@ def bridge_db_path() -> Path:
     return cvm_data_dir() / "bridge.db"
 
 
+def fca_db_path() -> Path:
+    """Return the path to the FCA (Formulário Cadastral) database file.
+
+    [v1.3] FCA contains ticker → CNPJ mapping (fca_valor_mobiliario table),
+    making it the primary bridge resolver (local query, no network needed).
+    Also contains listing segment (Novo Mercado, Nível 1, etc.) + foreign listings.
+    """
+    return cvm_data_dir() / "fca.db"
+
+
+def connect_fca(read_only: bool = True) -> sqlite3.Connection:
+    """Open a connection to the FCA database.
+
+    Args:
+        read_only: If True, opens in read-only mode (for queries).
+                   If False, opens in read-write mode (for sync).
+    """
+    path = fca_db_path()
+    if not path.exists():
+        if read_only:
+            raise FileNotFoundError(f"FCA database not found at {path}. Run sync first.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+    if read_only:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def connect_bridge(read_only: bool = True) -> sqlite3.Connection:
     """Open a connection to the B3-CVM bridge database.
 

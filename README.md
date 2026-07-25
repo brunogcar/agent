@@ -194,7 +194,10 @@ Data sources are the **raw data ingestion + query layer**. Each sub-domain syncs
 | [**FRE**](docs/data_sources/cvm/FRE.md) | Formulário de Referência — governance, shareholders, compensation | `memory_db/cvm/fre.db` |
 | [**IPE**](docs/data_sources/cvm/IPE.md) | Material events index (earnings, dividends, M&A filings) | `memory_db/cvm/ipe.db` |
 | [**CAD**](docs/data_sources/cvm/CAD.md) | Company register (CNPJ → CD_CVM + names) | `memory_db/cvm/cad.db` |
-| [**Bridge**](docs/data_sources/cvm/BRIDGE.md) | B3-CVM identity bridge (ticker → cd_cvm → CNPJ) + ISIN fallback | `memory_db/cvm/bridge.db` |
+| [**VLMO**](docs/data_sources/cvm/VLMO.md) | Insider trading disclosures (Valores Mobiliários) | `memory_db/cvm/vlmo.db` |
+| [**CGVN**](docs/data_sources/cvm/CGVN.md) | Governance practices (Código de Governança e Melhores Práticas) | `memory_db/cvm/cgvn.db` |
+| [**FCA**](docs/data_sources/cvm/FCA.md) | Registration form (ticker → CNPJ + listing segment + ADR) — **primary bridge resolver** | `memory_db/cvm/fca.db` |
+| [**Bridge**](docs/data_sources/cvm/BRIDGE.md) | B3-CVM identity bridge (FCA first → bridge.db → B3 API → ISIN fallback) | `memory_db/cvm/bridge.db` |
 
 ### B3 (Brazilian Stock Exchange)
 
@@ -216,7 +219,11 @@ Skills are **analytical views** that combine multiple data sources with domain r
 | [**financials**](docs/skills/cvm/FINANCIALS.md) | quarterly (default), annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
 | [**shareholders**](docs/skills/cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](docs/skills/cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
-| [**valuation**](docs/skills/cvm/VALUATION.md) | ratios, summary | b3 trades (price) + DFP (financials) + FRE (shares) — P/L, P/VPA, EV, Div Yield |
+| [**valuation**](docs/skills/cvm/VALUATION.md) | ratios, summary | b3 price + DFP/ITR TTM financials + FRE shares — P/L, P/VPA, EV, ROIC, Graham Number |
+| [**comparison**](docs/skills/cvm/COMPARISON.md) | side_by_side, summary, growth | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
+| [**screener**](docs/skills/cvm/SCREENER.md) | sector, compare | CAD + bridge + valuation + financials + FCA (listing segment) — sector peers + medians |
+| [**insider**](docs/skills/cvm/INSIDER.md) | history, by_role, summary | VLMO (insider trading disclosures) — insider buy/sell + sentiment |
+| [**governance**](docs/skills/cvm/GOVERNANCE.md) | practices, score, by_chapter | CGVN (governance practices) — % adopted, chapter breakdown |
 | [**investsite**](docs/skills/INVESTSITE.md) | indicators, statements, events, summary, listing | investsite.com.br (live web scraping — valuation ratios, full statements, CVM event links) |
 
 Skills call data_source query engines directly (no JSON round-trip). The bridge auto-syncs on first ticker query (`resolve_company(auto_sync=True)`).

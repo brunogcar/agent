@@ -30,6 +30,7 @@ _PEER_COLS = [
     ("Marg. Líquida", "marg_liquida",    "pct"),
     ("Cresc. Receita","receita_growth",  "pct"),
     ("Payout",        "payout",          "pct"),
+    ("Segmento",      "segmento",        "text"),
 ]
 
 

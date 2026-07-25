@@ -64,9 +64,9 @@ DIVIDENDS_HISTORY = {
 
 
 class TestRegistry:
-    def test_nineteen_adapters_registered(self):
+    def test_twentyfive_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 19
+        assert len(names) == 25
 
     def test_expected_adapter_names(self):
         expected = {
@@ -80,6 +80,8 @@ class TestRegistry:
             "cotahist_close_chart",
             "cotahist_candlestick_chart",
             "screener_sector",
+            "insider_history", "insider_by_role", "insider_summary",
+            "governance_practices", "governance_score", "governance_by_chapter",
         }
         assert expected == set(list_adapters())
 

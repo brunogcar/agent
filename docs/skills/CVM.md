@@ -16,9 +16,11 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 | [**financials**](cvm/FINANCIALS.md) | quarterly (default), annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
 | [**shareholders**](cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
-| [**valuation**](cvm/VALUATION.md) | ratios, summary | investsite/b3 trades (price) + DFP (financials) + FRE/investsite (shares) — P/L, P/VPA, EV, Div Yield |
+| [**valuation**](cvm/VALUATION.md) | ratios, summary | b3 price + DFP/ITR TTM financials + FRE shares — P/L, P/VPA, EV, ROIC, Graham Number |
 | [**comparison**](cvm/COMPARISON.md) | side_by_side (default), summary, growth | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
-| [**screener**](cvm/SCREENER.md) | sector, compare | Orchestrates CAD + bridge + valuation — sector peers + medians, is ticker cheap vs sector |
+| [**screener**](cvm/SCREENER.md) | sector, compare | Orchestrates CAD + bridge + valuation + financials + FCA (listing segment) — sector peers + medians |
+| [**insider**](cvm/INSIDER.md) | history, by_role, summary | VLMO (insider trading disclosures) — insider buy/sell + sentiment |
+| [**governance**](cvm/GOVERNANCE.md) | practices, score, by_chapter | CGVN (governance practices) — % adopted, chapter breakdown |
 
 All CVM skills use `core/br_validator` for BRL/date/ticker parsing.
 
@@ -52,6 +54,8 @@ report(action="export", title="PETR4 Financials",
 | dividends history / annual / summary | `dividends_history` / `dividends_annual` / `dividends_summary` |
 | comparison side_by_side / summary / growth | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` |
 | screener sector | `screener_sector` |
+| insider history / by_role / summary | `insider_history` / `insider_by_role` / `insider_summary` |
+| governance practices / score / by_chapter | `governance_practices` / `governance_score` / `governance_by_chapter` |
 | b3 cotahist (price history) | `cotahist_close_chart` (line) / `cotahist_candlestick_chart` (candlestick) |
 
 Number formatting (BRL, %) is handled by the report tool's shared `formats.py`

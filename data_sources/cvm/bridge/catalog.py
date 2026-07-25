@@ -6,18 +6,29 @@ The bridge resolves B3 trading tickers (PETR4, VALE3) to CVM company identity
 (CNPJ, CD_CVM, official names) so that CVM financial queries can accept a
 ticker as input.
 
-RESOLUTION CHAIN (no bulk downloads, no instruments.db dependency)
-------------------------------------------------------------------
+RESOLUTION CHAIN (v1.3 — FCA first)
+------------------------------------
   ticker (PETR4)
     |
-    v  b3/dividends per-ticker API  (already synced by data_sources.b3.dividends)
-    |  dividends.company_info.code_cvm = "9512"
+    v  [v1.3] FCA (fca.db) — LOCAL query, no network (PRIMARY)
+    |  fca_valor_mobiliario.Codigo_Negociacao = "PETR4" -> CNPJ
+    |  fca_geral.CNPJ -> CD_CVM, names, sector
     v
-  cd_cvm ("9512")
+  (cnpj, cd_cvm) — if FCA hit, done! No network needed.
+
+  If FCA miss (fca.db not synced or ticker not in FCA):
     |
-    v  cvm/cad lookup  (cad.db, ~2677 companies, weekly CSV)
-    |  cia_aberta WHERE CD_CVM='9512' -> CNPJ, names, status, sector
+    v  bridge.db (ticker_map) — cached from prior B3 dividends API + CAD sync
+    |  ticker_map WHERE ticker='PETR4' -> cnpj, cd_cvm
     v
+  (cnpj, cd_cvm) — if bridge hit, done!
+
+  If bridge.db also miss:
+    |
+    v  B3 dividends per-ticker API (network) + CAD lookup
+    |  dividends.company_info.code_cvm = "9512"
+    |  cad.cia_aberta WHERE CD_CVM='9512' -> CNPJ, names, status, sector
+    v  (also tries ISIN fallback if dividends API has no codeCVM)
   bridge.db ticker_map: PETR4 -> cd_cvm=9512, cnpj=33000167000101, ...
 
 WHY NOT THE LEGACY 4-SOURCE APPROACH

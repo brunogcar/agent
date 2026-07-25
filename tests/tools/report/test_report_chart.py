@@ -104,16 +104,20 @@ class TestCandlestickChart:
     """v1.2.6 — candlestick chart support."""
 
     def test_candlestick_config_shape(self):
+        """v1.2.8: candlestick rendered as native bar chart (floating bar).
+        Each bar = [low, high], colored green/red by open vs close."""
         data = {"_candlestick": True, "ohlc_data": [
             {"t": "2025-07-01", "o": 38.0, "h": 38.5, "l": 37.8, "c": 38.2},
             {"t": "2025-07-02", "o": 38.2, "h": 38.6, "l": 38.1, "c": 38.5},
         ]}
         cfg = charts._to_chartjs_config(data, "candlestick", "PETR4", {})
-        assert cfg["type"] == "candlestick"
+        assert cfg["type"] == "bar"  # v1.2.8: native bar, not candlestick plugin
         assert len(cfg["data"]["datasets"]) == 1
         assert len(cfg["data"]["datasets"][0]["data"]) == 2
-        assert cfg["data"]["datasets"][0]["data"][0]["o"] == 38.0
-        assert cfg["options"]["scales"]["x"]["type"] == "time"
+        # Each data point = [low, high] (floating bar)
+        assert cfg["data"]["datasets"][0]["data"][0] == [37.8, 38.5]  # [low, high]
+        # Green (close >= open) for first point (38.2 >= 38.0)
+        assert cfg["data"]["datasets"][0]["backgroundColor"][0] == "#22c55e"
 
     def test_candlestick_not_triggered_for_regular_dict(self):
         """Regular dicts (no _candlestick key) must NOT use candlestick path."""
