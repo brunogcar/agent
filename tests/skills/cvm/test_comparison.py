@@ -409,6 +409,14 @@ class TestPctChange:
         """Sign-change guard: negative base -> None (can't compute meaningful %)."""
         assert comparison._pct_change(36, -1) is None
 
+    def test_sign_change_profit_to_loss_is_none(self):
+        """Profit -> loss sign change: +R$1M -> -R$3M = -400% (noise)."""
+        assert comparison._pct_change(-3, 1) is None
+
+    def test_sign_change_loss_to_profit_is_none(self):
+        """Loss -> profit sign change: -R$1M -> +R$3M (noise)."""
+        assert comparison._pct_change(3, -1) is None
+
     def test_extreme_growth_is_none(self):
         """Tiny-base guard: >500% growth -> None (likely noise)."""
         assert comparison._pct_change(700, 100) is None  # 600%

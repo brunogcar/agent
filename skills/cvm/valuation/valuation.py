@@ -381,20 +381,22 @@ def _get_price_investsite(ticker: str) -> dict:
         # [v1.0.10] Extract market cap from investsite's precos_relativos.
         # investsite computes market cap correctly for UNIT tickers (KLBN11,
         # TAEE11...) — this is the fallback when brapi fails (free tier
-        # doesn't cover all tickers). Try both known key names.
+        # doesn't cover all tickers). Scan ALL keys case-insensitively for
+        # anything containing "mercado" or "market" or "cap" — more robust
+        # than guessing the exact label (which varies by page version).
         market_cap = None
-        for key in ("Valor de Mercado", "Market Cap", "Valor Mercado"):
-            raw = precos.get(key)
-            if raw is not None:
+        for key, raw in precos.items():
+            key_lower = key.lower()
+            if "mercado" in key_lower or "market" in key_lower or "cap" in key_lower:
                 if isinstance(raw, (int, float)):
                     market_cap = float(raw)
-                else:
+                elif isinstance(raw, str):
                     from core.br_validator import parse_brl
                     try:
-                        market_cap = parse_brl(str(raw))
+                        market_cap = parse_brl(raw)
                     except ValueError:
                         pass
-                if market_cap is not None:
+                if market_cap is not None and market_cap > 0:
                     break
 
         # [v1.0.10] Also extract investsite's pre-computed P/L + P/VPA.

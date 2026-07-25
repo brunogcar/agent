@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.2.4 | 2026-07-25 | **COTAHIST adapter fix.** v1.2.3 cotahist_close_chart accepted ticker strings, but apply_adapter() requires dicts (all adapters receive dicts). Removed the string path — adapter now accepts COTAHIST query result dicts only. Use the 2-step pattern: query COTAHIST first, then pipe result to chart. |
 | v1.2.3 | 2026-07-25 | **COTAHIST chart adapter.** New cotahist_close_chart adapter — line chart of daily close price from COTAHIST. Accepts a COTAHIST query result OR a ticker string (queries internally). Total 17 adapters. |
 | v1.2.2 | 2026-07-25 | **Multi-series charts + growth/chart adapters.** (1) `charts._to_chartjs_config` now supports multi-series data `{"x":[], "datasets":[{"label","data"},...]}` — backward-compatible with single-series. (2) New `financials_quarterly_chart` adapter — multi-series trend chart (Receita + EBITDA + Lucro Líquido). (3) New `comparison_growth` adapter. (4) Chart action + builder now support `config["adapter"]`. Total 16 adapters. |
 | v1.2.1 | 2026-07-25 | **Comparison skill adapters.** Added `comparison_side_by_side` + `comparison_summary` adapters (2 new, total 14) for the new `cvm/comparison` skill. Updated `report.py` docstring adapter list + API.md adapter table. |

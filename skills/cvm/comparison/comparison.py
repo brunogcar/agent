@@ -292,21 +292,22 @@ def _pct_change(curr: float | None, prev: float | None) -> float | None:
 
     Returns None when:
     - either value is None
-    - prev is 0 (division by zero)
-    - prev is negative (sign-change — % growth is meaningless across a sign
-      change, e.g. a company going from -R$1M to +R$36M would show 3700%)
-    - the result would be > 500% or < -95% (likely noise from a tiny base —
-      these extremes are almost never meaningful quarterly growth)
+    - prev is 0 or negative (can't compute meaningful % from non-positive base)
+    - curr and prev have opposite signs (profit→loss or loss→profit — % is
+      meaningless across a sign change, e.g. +R$1M → -R$3M = -400% noise)
+    - |result| >= 5.0 (500%) — likely tiny-base noise
 
     This guard prevents the 3612% / -395% noise values seen in v1.1 growth mode.
     """
     if curr is None or prev is None:
         return None
     if prev <= 0:
-        return None  # can't compute meaningful % growth from non-positive base
+        return None
+    # Sign change: profit→loss or loss→profit — % growth is meaningless
+    if curr * prev < 0:
+        return None
     result = (curr - prev) / abs(prev)
-    # Guard against tiny-base noise: if |result| >= 5.0 (500%), it's likely
-    # a tiny denominator. Suppress — the LLM can look at absolute values.
+    # Guard against tiny-base noise: if |result| >= 5.0 (500%), suppress
     if abs(result) >= 5.0:
         return None
     return result
