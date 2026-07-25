@@ -141,3 +141,4 @@ from tools.report_ops.adapters import financials  # noqa: E402,F401
 from tools.report_ops.adapters import valuation   # noqa: E402,F401
 from tools.report_ops.adapters import shareholders  # noqa: E402,F401
 from tools.report_ops.adapters import dividends   # noqa: E402,F401
+from tools.report_ops.adapters import comparison  # noqa: E402,F401

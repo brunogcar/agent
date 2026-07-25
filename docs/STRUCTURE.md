@@ -214,7 +214,8 @@ skills/
 │   ├── shareholders/          # Named shareholders + equity structure (FRE + DFP)
 │   ├── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
 │   ├── financials/            # Financial statements + ratios (DFP + ITR + DVA) — rapina-style
-│   └── valuation/             # Valuation ratios (b3 price + DFP + FRE shares)
+│   ├── valuation/             # Valuation ratios (b3 price + DFP + FRE shares)
+│   └── comparison/            # Multi-ticker compare (orchestrates financials + valuation + dividends)
 └── investsite/                # Investsite.com.br scraper (indicators, statements, events)
 ```
 

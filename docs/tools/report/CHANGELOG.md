@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.2.1 | 2026-07-25 | **Comparison skill adapters.** Added `comparison_side_by_side` + `comparison_summary` adapters (2 new, total 14) for the new `cvm/comparison` skill. Updated `report.py` docstring adapter list + API.md adapter table. |
 | v1.2 | 2026-07-25 | **Skill wiring: table action + adapter layer + number formatting + xlsx export.** New `table` action for financial statements/ratio tables. New `adapters/` package (12 adapters) flattening CVM/B3 skill JSON → table data. New `formats.py` (BRL/%/compact) registered as Jinja filters + reused by xlsx. `export` now supports `format:"xlsx"` (openpyxl, multi-sheet, native numeric cells). New `table` preset. `report.py` docstring now lists adapters. See v1.2 detail below. |
 | v1.1 | 2026-07-03 | Security hardening + template fixes (`\| safe` audit, atomic writes, UNC block, `@register_action` dedup, Chart.js dedup, cancellation import fix). |
 | v1.0 | 2026-06-26 | Initial 11-action report tool with `@meta_tool` + `@register_action` auto-discovery. |
@@ -171,6 +172,7 @@ These were caught by multi-LLM review (Gemini, DeepSeek, Mistral, Qwen, GLM, mim
 
 | Feature | Status | Notes |
 |--------|--------|-------|
+| `comparison_side_by_side` / `comparison_summary` adapters | ✅ v1.2.1 | 2 new adapters for `cvm/comparison` skill (total 14) |
 | `table` action | ✅ v1.2 | Multi-table statements, per-column number formatting, search filter |
 | `adapters/` adapter layer | ✅ v1.2 | 12 adapters flatten CVM/B3 skill JSON → table data (domain-agnostic report tool) |
 | Number formatting (`formats.py`) | ✅ v1.2 | BRL/%/compact specs as Jinja filters + Excel number formats |

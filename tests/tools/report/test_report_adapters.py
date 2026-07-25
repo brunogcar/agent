@@ -64,9 +64,9 @@ DIVIDENDS_HISTORY = {
 
 
 class TestRegistry:
-    def test_twelve_adapters_registered(self):
+    def test_fourteen_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 12
+        assert len(names) == 14
 
     def test_expected_adapter_names(self):
         expected = {
@@ -75,6 +75,7 @@ class TestRegistry:
             "shareholders_shareholders", "shareholders_free_float",
             "shareholders_equity_structure", "shareholders_summary",
             "dividends_history", "dividends_annual", "dividends_summary",
+            "comparison_side_by_side", "comparison_summary",
         }
         assert expected == set(list_adapters())
 
@@ -233,3 +234,89 @@ class TestDividendsAdapters:
     def test_history_error(self):
         out = apply_adapter("dividends_history", {"status": "not_synced", "error": "db"})
         assert out["sections"][0]["rows"][0] == ["not_synced", "db"]
+
+
+# ── Comparison skill results ─────────────────────────────────────────────────
+
+COMPARISON_SIDE_BY_SIDE = {
+    "status": "ok",
+    "tickers": ["PETR4", "VALE3"],
+    "sections": {
+        "valuation": {
+            "title": "Valuation Ratios",
+            "columns": ["Ticker", "P/L", "Market Cap"],
+            "rows": [["PETR4", 8.2, 500_000_000_000], ["VALE3", 6.5, 300_000_000_000]],
+            "formats": {"Ticker": "text", "P/L": "num", "Market Cap": "brl"},
+        },
+        "financials": {
+            "title": "Financial Metrics (latest annual)",
+            "columns": ["Ticker", "Receita Líquida", "ROE"],
+            "rows": [["PETR4", 400_000_000_000, 0.15], ["VALE3", 300_000_000_000, 0.14]],
+            "formats": {"Ticker": "text", "Receita Líquida": "brl", "ROE": "pct"},
+        },
+        "dividends": {
+            "title": "Dividend Metrics",
+            "columns": ["Ticker", "Eventos (B3)"],
+            "rows": [["PETR4", 3], ["VALE3", 2]],
+            "formats": {"Ticker": "text", "Eventos (B3)": "int"},
+        },
+    },
+    "errors": [],
+}
+
+COMPARISON_SUMMARY = {
+    "status": "ok",
+    "tickers": ["PETR4", "VALE3"],
+    "sections": [{
+        "title": "Quick Compare",
+        "columns": ["Ticker", "P/L", "ROE", "Receita Líquida"],
+        "rows": [["PETR4", 8.2, 0.15, 400_000_000_000], ["VALE3", 6.5, 0.14, 300_000_000_000]],
+        "formats": {"Ticker": "text", "P/L": "num", "ROE": "pct", "Receita Líquida": "brl"},
+    }],
+    "errors": [],
+}
+
+
+class TestComparisonAdapters:
+    def test_side_by_side_passes_through_3_sections(self):
+        out = apply_adapter("comparison_side_by_side", COMPARISON_SIDE_BY_SIDE)
+        assert len(out["sections"]) == 3
+        titles = [s["title"] for s in out["sections"]]
+        assert "Valuation Ratios" in titles
+        assert "Financial Metrics (latest annual)" in titles
+        assert "Dividend Metrics" in titles
+        # company field joins tickers
+        assert "PETR4" in out["company"] and "VALE3" in out["company"]
+
+    def test_side_by_side_preserves_formats(self):
+        out = apply_adapter("comparison_side_by_side", COMPARISON_SIDE_BY_SIDE)
+        val = out["sections"][0]
+        assert val["formats"]["P/L"] == "num"
+        assert val["formats"]["Market Cap"] == "brl"
+
+    def test_side_by_side_error_renders_status(self):
+        out = apply_adapter("comparison_side_by_side",
+                            {"status": "error", "error": "no tickers"})
+        assert out["sections"][0]["rows"][0] == ["error", "no tickers"]
+
+    def test_side_by_side_empty_sections_errors(self):
+        out = apply_adapter("comparison_side_by_side",
+                            {"status": "ok", "tickers": ["X"], "sections": {}})
+        assert out["sections"][0]["title"] == "Comparison"
+
+    def test_summary_single_section_with_kpis(self):
+        out = apply_adapter("comparison_summary", COMPARISON_SUMMARY)
+        assert len(out["sections"]) == 1
+        assert out["sections"][0]["title"] == "Quick Compare"
+        # KPI strip: one per ticker, showing its P/L
+        assert len(out["kpis"]) == 2
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["PETR4", "VALE3"]
+        # P/L values pre-formatted as "num" spec
+        assert out["kpis"][0]["value"] == "8,20"
+        assert out["kpis"][1]["value"] == "6,50"
+
+    def test_summary_error_renders_status(self):
+        out = apply_adapter("comparison_summary",
+                            {"status": "error", "error": "failed"})
+        assert out["sections"][0]["rows"][0] == ["error", "failed"]

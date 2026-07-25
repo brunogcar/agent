@@ -251,6 +251,8 @@ tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`
 | `dividends_history` | `cvm/dividends` history | B3 events: dates, rate, label (Dividendo/JCP) |
 | `dividends_annual` | `cvm/dividends` annual | DVA 7.08.04.* totals (Dividendos, JCP, total) per year |
 | `dividends_summary` | `cvm/dividends` summary | Recent events table + annual trend table |
+| `comparison_side_by_side` | `cvm/comparison` side_by_side | 3 sections (valuation, financials, dividends), tickers as rows |
+| `comparison_summary` | `cvm/comparison` summary | Single quick-compare table (10 KPIs) + KPI strip (P/L per ticker) |
 
 Error / not_synced skill results render as a small status table (never crash).
 
