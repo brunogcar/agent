@@ -43,8 +43,10 @@ def test_register_all_tools_discovers_and_registers():
          patch("registry.importlib.import_module") as mock_import:
          
         # Simulate finding one module in tools/ and one in skills/
+        # (registry scans in order: tools/ -> data_sources/ -> skills/)
         mock_iter.side_effect = [
             [(None, "fake_tool", False)],  # tools/
+            [],                              # data_sources/ (empty)
             [(None, "fake_skill", False)]  # skills/
         ]
         mock_import.return_value = fake_module
@@ -63,9 +65,11 @@ def test_register_all_tools_skips_skills_subpackages():
          patch("registry.importlib.import_module") as mock_import:
          
         # Simulate tools/ empty, skills/ has a sub-package
+        # (registry scans in order: tools/ -> data_sources/ -> skills/)
         mock_iter.side_effect = [
-            [],  # tools/
-            [(None, "b3", True)]  # skills/ sub-package
+            [],                       # tools/
+            [],                       # data_sources/ (empty)
+            [(None, "b3", True)]     # skills/ sub-package
         ]
         
         count = registry.register_all_tools(mock_mcp)
@@ -80,9 +84,11 @@ def test_register_all_tools_handles_import_errors_gracefully(capsys):
     with patch("registry.pkgutil.iter_modules") as mock_iter, \
          patch("registry.importlib.import_module") as mock_import:
          
+        # (registry scans in order: tools/ -> data_sources/ -> skills/)
         mock_iter.side_effect = [
-            [(None, "broken_tool", False)], 
-            [] 
+            [(None, "broken_tool", False)],  # tools/
+            [],                                # data_sources/ (empty)
+            []                                 # skills/ (empty)
         ]
         mock_import.side_effect = ImportError("Simulated import failure")
         
