@@ -2,6 +2,11 @@
 
 All rendering is client-side. This module produces JSON config objects
 that the Jinja2 template injects into a <canvas> element.
+
+Supports three data shapes:
+  1. Single-series: {"x": [...], "y": [...]}
+  2. Multi-series (v1.2.2): {"x": [...], "datasets": [{"label":"A","data":[...]}, ...]}
+  3. Candlestick (v1.2.6): {"_candlestick": True, "ohlc_data": [{"t","o","h","l","c"}, ...]}
 """
 from __future__ import annotations
 
@@ -38,6 +43,9 @@ def build(
     chart_type = config.get("chart_type", "bar").lower()
     chart_config = _to_chartjs_config(loaded, chart_type, title, config)
 
+    # [v1.2.8] Extract tooltip labels from candlestick config (can't be in JSON)
+    tooltip_labels = chart_config.pop("_tooltip_labels", None)
+
     out_dir = report_out_dir(trace_id)
     safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in (title or "chart"))
     html_path = out_dir / f"{safe_title}.html"
@@ -46,10 +54,9 @@ def build(
     from tools.report_ops import html
     ctx = {
         "title": title,
-        # Escape </script> to prevent injection when JSON is embedded in <script> tags
-        # v1.4 FIX: Use raw string to avoid invalid escape sequence \/."""
         "chart_config_json": json.dumps(chart_config).replace("</", r"<\/"),
-        "chart_type": chart_type,  # v1.2.6: template uses this to load candlestick plugin
+        "chart_type": chart_type,
+        "tooltip_labels_json": json.dumps(tooltip_labels).replace("</", r"<\/") if tooltip_labels else "null",
         "theme": config.get("theme", "dark"),
         "accent": config.get("accent", "#0d9488"),
     }
@@ -67,7 +74,7 @@ def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> 
     """Convert raw data to a Chart.js config object.
 
     Supports three data shapes:
-      1. Single-series (backward-compatible): {"x": [...], "y": [...]} or {"labels":[], "values":[]}
+      1. Single-series (backward-compatible): {"x": [...], "y": [...]}
       2. Multi-series (v1.2.2): {"x": [...], "datasets": [{"label":"A","data":[...]}, ...]}
       3. Candlestick (v1.2.6): {"_candlestick": True, "ohlc_data": [{"t","o","h","l","c"}, ...]}
 
@@ -76,29 +83,75 @@ def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> 
     """
     color = config.get("color", config.get("accent", "#0d9488"))
 
-    # [v1.2.6] Candlestick — special shape from cotahist_candlestick_chart adapter
+    # [v1.2.8] Candlestick — rendered as native Chart.js 4 floating bar chart.
+    # The chartjs-chart-financial plugin doesn't work with Chart.js 4 (unmaintained).
+    # Instead: each bar = [low, high] (floating bar), colored green if close >= open,
+    # red if close < open. OHLC values shown in tooltip. 100% native, no plugin.
     if isinstance(data, dict) and data.get("_candlestick"):
         ohlc = data.get("ohlc_data") or []
+        # Build floating bar data: each point = [low, high]
+        bar_data = []
+        labels = []
+        bar_colors = []
+        for point in ohlc:
+            o = point.get("o")
+            h = point.get("h")
+            l = point.get("l")
+            c = point.get("c")
+            t = point.get("t", "")
+            if None in (o, h, l, c):
+                continue
+            labels.append(t)
+            bar_data.append([l, h])  # floating bar from low to high
+            # Green if close >= open (up day), red if close < open (down day)
+            bar_colors.append("#22c55e" if c >= o else "#ef4444")
+
+        # Store OHLC for tooltip
+        ohlc_tooltips = []
+        for point in ohlc:
+            if None in (point.get("o"), point.get("h"), point.get("l"), point.get("c")):
+                continue
+            ohlc_tooltips.append(
+                f"O: {point['o']:.2f}  H: {point['h']:.2f}  L: {point['l']:.2f}  C: {point['c']:.2f}"
+            )
+
         return {
-            "type": "candlestick",
+            "type": "bar",
             "data": {
+                "labels": labels,
                 "datasets": [{
                     "label": title or "Price",
-                    "data": ohlc,
+                    "data": bar_data,
+                    "backgroundColor": bar_colors,
+                    "borderColor": bar_colors,
+                    "borderWidth": 1,
+                    "barPercentage": 0.8,
+                    "categoryPercentage": 0.9,
                 }],
             },
             "options": {
                 "responsive": True,
                 "maintainAspectRatio": False,
                 "scales": {
-                    "x": {"type": "time", "time": {"unit": "day"},
-                          "distribution": "series"},
+                    "x": {
+                        "type": "category",
+                    },
+                    "y": {
+                        "beginAtZero": False,
+                    },
                 },
                 "plugins": {
                     "legend": {"display": True, "position": "bottom"},
                     "title": {"display": bool(title), "text": title},
+                    "tooltip": {
+                        "callbacks": {
+                            "label": None,  # set via _tooltip_labels below
+                        },
+                    },
                 },
             },
+            # Custom property — template reads this to override tooltip labels
+            "_tooltip_labels": ohlc_tooltips,
         }
 
     if isinstance(data, dict):
@@ -140,7 +193,7 @@ def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> 
     datasets = [{
         "label": title,
         "data": values,
-        "backgroundColor": color + "40",  # 25% opacity hex
+        "backgroundColor": color + "40",
         "borderColor": color,
         "borderWidth": 2,
         "tension": 0.3,
@@ -167,12 +220,7 @@ def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> 
 
 
 def _generate_palette(n: int, base: str = "") -> list:
-    """Generate n distinct colors.
-
-    The base parameter is reserved for future theming support.
-    Currently uses a fixed palette with modulo cycling. When n > 10,
-    colors will repeat — this is expected behavior for large datasets.
-    """
+    """Generate n distinct colors."""
     palette = [
         "#0d9488", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
         "#14b8a6", "#6366f1", "#f97316", "#ec4899", "#84cc16",
