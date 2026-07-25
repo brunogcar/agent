@@ -214,6 +214,14 @@ def ratios(company: str = "") -> dict:
     #   P/EBIT = market_cap / ebit
     #   P/FCO  = market_cap / fco
     if use_investsite_ratios:
+        # [v1.0.13] Back-calculate market_cap from investsite's P/L × lucro_liquido.
+        # investsite's P/L is correct for units (market-cap-based server-side).
+        # P/L = market_cap / lucro_liquido  =>  market_cap = P/L × lucro_liquido
+        # This gives a consistent market cap for EV, P/EBIT, PSR, EV/EBITDA.
+        if investsite_pe is not None and lucro_liquido is not None and lucro_liquido > 0:
+            market_cap = investsite_pe * lucro_liquido
+            ratios_result["market_cap"] = market_cap
+            ratios_result["market_cap_source"] = "investsite_derived"
         ratios_result["p_l"] = investsite_pe
         ratios_result["p_vpa"] = investsite_pvpa if (pl_positive and investsite_pvpa is not None) else None
         ratios_result["p_l_source"] = "investsite"
