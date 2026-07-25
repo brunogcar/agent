@@ -215,7 +215,8 @@ skills/
 │   ├── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
 │   ├── financials/            # Financial statements + ratios (DFP + ITR + DVA) — rapina-style
 │   ├── valuation/             # Valuation ratios (b3 price + DFP + FRE shares)
-│   └── comparison/            # Multi-ticker compare (orchestrates financials + valuation + dividends)
+│   ├── comparison/            # Multi-ticker compare (orchestrates financials + valuation + dividends)
+│   └── screener/              # Sector screener (orchestrates CAD + bridge + valuation)
 └── investsite/                # Investsite.com.br scraper (indicators, statements, events)
 ```
 

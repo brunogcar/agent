@@ -144,3 +144,4 @@ from tools.report_ops.adapters import shareholders  # noqa: E402,F401
 from tools.report_ops.adapters import dividends   # noqa: E402,F401
 from tools.report_ops.adapters import comparison  # noqa: E402,F401
 from tools.report_ops.adapters import cotahist_chart  # noqa: E402,F401
+from tools.report_ops.adapters import screener  # noqa: E402,F401

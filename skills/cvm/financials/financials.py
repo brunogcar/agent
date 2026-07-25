@@ -459,12 +459,24 @@ def _get_prev_cumulative(code, year, q_num, itr_data, dfp_data):
 
 
 def _extract_metrics(vals: dict) -> dict:
-    """Extract named metrics from a {codigo: valor} dict."""
+    """Extract named metrics from a {codigo: valor} dict.
+
+    [v1.2] D&A fallback: try DFC_MI (6.01.01.02) first, then DFC_MD codes
+    (6.02.01.02, 6.01.04) for direct-method filers. compute_ebitda() gets
+    whichever is non-None.
+    """
     divida_bruta = None
     d_circ = _f(vals, "2.01.04")
     d_ncirc = _f(vals, "2.02.01")
     if d_circ is not None or d_ncirc is not None:
         divida_bruta = (d_circ or 0) + (d_ncirc or 0)
+
+    # [v1.2] D&A: try indirect method first, then direct method fallbacks
+    da = _f(vals, "6.01.01.02")
+    if da is None:
+        da = _f(vals, "6.02.01.02")  # DFC_MD direct method
+    if da is None:
+        da = _f(vals, "6.01.04")     # DFC_MD alternative code
 
     return {
         "ativo_total":          _f(vals, "1"),
@@ -479,7 +491,7 @@ def _extract_metrics(vals: dict) -> dict:
         "fco":                  _f(vals, "6.01"),
         "fci":                  _f(vals, "6.02"),
         "fcf":                  _f(vals, "6.03"),
-        "da":                   _f(vals, "6.01.01.02"),
+        "da":                   da,
         "proventos":            _f(vals, "7.08.04"),
     }
 

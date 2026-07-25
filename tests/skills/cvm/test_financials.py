@@ -556,3 +556,40 @@ class TestTTM:
         ]
         r = compute_ttm(periods)
         assert r["metrics"]["receita_liquida"] is None  # one quarter missing -> None
+
+
+class TestDFCMDFallback:
+    """v1.2 — D&A fallback for direct-method (DFC_MD) filers."""
+
+    def test_da_indirect_method_primary(self):
+        """D&A from DFC_MI (6.01.01.02) is the primary source."""
+        from skills.cvm.financials.financials import _extract_metrics
+        vals = {"6.01.01.02": 5000.0, "6.02.01.02": 3000.0}
+        m = _extract_metrics(vals)
+        assert m["da"] == 5000.0  # indirect method wins
+
+    def test_da_direct_method_fallback(self):
+        """When DFC_MI D&A is missing, fall back to DFC_MD (6.02.01.02)."""
+        from skills.cvm.financials.financials import _extract_metrics
+        vals = {"6.02.01.02": 3000.0}  # no 6.01.01.02
+        m = _extract_metrics(vals)
+        assert m["da"] == 3000.0  # direct method fallback
+
+    def test_da_direct_method_alt_fallback(self):
+        """Second fallback: 6.01.04 (DFC_MD alternative code)."""
+        from skills.cvm.financials.financials import _extract_metrics
+        vals = {"6.01.04": 2000.0}  # no 6.01.01.02, no 6.02.01.02
+        m = _extract_metrics(vals)
+        assert m["da"] == 2000.0
+
+    def test_da_none_when_all_missing(self):
+        from skills.cvm.financials.financials import _extract_metrics
+        m = _extract_metrics({})
+        assert m["da"] is None
+
+    def test_ebitda_with_direct_method_da(self):
+        """EBITDA = EBIT + D&A works with direct-method D&A."""
+        from skills.cvm.financials.metrics import compute_ebitda
+        ebitda, method = compute_ebitda(10000.0, 3000.0)
+        assert ebitda == 13000.0
+        assert method == "ebit+da"

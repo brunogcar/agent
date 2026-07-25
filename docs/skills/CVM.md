@@ -17,7 +17,8 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 | [**shareholders**](cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
 | [**valuation**](cvm/VALUATION.md) | ratios, summary | investsite/b3 trades (price) + DFP (financials) + FRE/investsite (shares) — P/L, P/VPA, EV, Div Yield |
-| [**comparison**](cvm/COMPARISON.md) | side_by_side (default), summary | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
+| [**comparison**](cvm/COMPARISON.md) | side_by_side (default), summary, growth | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
+| [**screener**](cvm/SCREENER.md) | sector, compare | Orchestrates CAD + bridge + valuation — sector peers + medians, is ticker cheap vs sector |
 
 All CVM skills use `core/br_validator` for BRL/date/ticker parsing.
 
@@ -50,6 +51,7 @@ report(action="export", title="PETR4 Financials",
 | shareholders shareholders / free_float / equity_structure / summary | `shareholders_shareholders` / `shareholders_free_float` / `shareholders_equity_structure` / `shareholders_summary` |
 | dividends history / annual / summary | `dividends_history` / `dividends_annual` / `dividends_summary` |
 | comparison side_by_side / summary / growth | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` |
+| screener sector | `screener_sector` |
 | b3 cotahist (price history chart) | `cotahist_close_chart` |
 
 Number formatting (BRL, %) is handled by the report tool's shared `formats.py`

@@ -266,6 +266,7 @@ tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`
 | `comparison_growth` | `cvm/comparison` growth | Growth metrics table (QoQ + YoY + TTM ratios) |
 | `financials_quarterly_chart` | `cvm/financials` quarterly | **Chart adapter** — multi-series line chart (Receita + EBITDA + Lucro Líquido over time) |
 | `cotahist_close_chart` | `b3/cotahist` query (or ticker string) | **Chart adapter** — daily close price line chart from COTAHIST |
+| `screener_sector` | `cvm/screener` sector | Peers table (sorted by P/L) + KPI strip (sector medians) |
 
 Error / not_synced skill results render as a small status table (never crash).
 

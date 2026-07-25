@@ -61,8 +61,13 @@ def _build_summary_codes():
     codes["1.01.01"]    = ("BPA", "Caixa e Equivalentes")
     codes["2.01.04"]    = ("BPP", "Empréstimos e Financiamentos (Circulante)")
     codes["2.02.01"]    = ("BPP", "Empréstimos e Financiamentos (Não Circulante)")
-    codes["6.01.01.02"] = ("DFC_MI", "Depreciação e Amortização")
+    codes["6.01.01.02"] = ("DFC_MI", "Depreciação e Amortização (Método Indireto)")
     codes["7.08.04"]    = ("DVA", "Remuneração de Capitais Próprios (total)")
+    # [v1.2] DFC_MD (direct method) D&A fallback codes — some filers use direct
+    # method where D&A is in a different sub-account. We fetch both; the query
+    # engine returns whichever exists for a given company.
+    codes["6.02.01.02"] = ("DFC_MD", "Depreciação e Amortização (Método Direto)")
+    codes["6.01.04"]    = ("DFC_MD", "Depreciação e Amortização (DFC_MD alt)")
     return codes
 
 

@@ -52,6 +52,7 @@ from tools.report_ops.contracts import report_ok, report_fail
         ' dividends_history | dividends_annual | dividends_summary',
         ' comparison_side_by_side | comparison_summary | comparison_growth',
         ' cotahist_close_chart (COTAHIST price history line chart)',
+        ' screener_sector (sector peers table + medians)',
     ],
 )
 def report(

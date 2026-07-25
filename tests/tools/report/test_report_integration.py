@@ -4,14 +4,18 @@ These tests pipe real skill results through the report adapters (table, chart,
 xlsx) to verify the full pipeline works end-to-end. They skip gracefully when
 the required databases are not synced.
 
-Run just these tests:
-    python -m pytest tests/tools/report/test_report_integration.py -v -W error --tb=short
+Marked @pytest.mark.slow — excluded from default runs. Run them explicitly:
+    python -m pytest tests/tools/report/test_report_integration.py -m slow -v -W error --tb=short
+Or run ALL tests (including slow):
+    python -m pytest -m "" -v -W error
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.slow
 
 TICKERS = ["PETR4", "KLBN11", "SUZB3"]
 

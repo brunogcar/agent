@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.2 | 2026-07-25 | **DFC_MD filer support.** Added D| v1.1 | 2026-07-25A fallback codes for direct-method DFC filers (DFC_MD). _extract_metrics now tries 6.01.01.02 (DFC_MI indirect) first, then 6.02.01.02 + 6.01.04 (DFC_MD direct). EBITDA for direct-method filers now uses real D| v1.1 | 2026-07-25A instead of falling back to ebit_only. 5 new tests.
 | v1.1 | 2026-07-25 | **TTM ratios.** Quarterly mode now returns a `ttm` field: trailing twelve months summary computed from the last 4 standalone quarters. Flows (revenue, EBIT, EBITDA, lucro_liquido, FCO) are summed; snapshots (ativo_total, caixa, PL, divida_bruta) are averaged. TTM ROA/ROE replace the v1.0.1 annualized (×4) approach — more accurate for seasonal businesses. New `compute_ttm(periods)` function in metrics.py. |
 | v1.0.1+report | 2026-07-25 | **Report wiring (no skill change).** The `financials` result can now be rendered as a table or exported to xlsx via the report tool's adapters: `financials_quarterly`, `financials_annual`, `financials_summary` (`config["adapter"]`). Number formatting (BRL/%) is handled by `report_ops/formats.py`. See [CVM Skills — Report Integration](../../CVM.md#-report-integration-v12). |
 | v1.0.1 | 2026-07-23 | **Collective LLM review fixes (3 bugs + 6 suggestions).** (P0) Cross-database empresa_ids — DFP and ITR have independent autoincrement IDs; now resolves separately per DB. (P1) Q1 derivation subtracted prior-year DFP — fixed: Q1 standalone = Q1 cumulative. (P1) summary latest_quarterly returned oldest quarter — fixed: periods[-1]. (S) Negative PL guard — ROE/debt ratios return None when PL ≤ 0. (S) Payout = None in quarterly mode (DVA is annual-only). (S) EBITDA method provenance field (ebit+da/ebit_only/none). (S) SUMMARY_CODES now imports from catalog RESUMO_ACCOUNTS (dedup). (S) Deleted dead derive_standalone_quarters(). 4 new regression tests. |
@@ -45,4 +46,4 @@
 
 ---
 
-*Last updated: 2026-07-25 (v1.1).*
+*Last updated: 2026-07-25 (v1.2).*

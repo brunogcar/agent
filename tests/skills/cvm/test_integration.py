@@ -5,16 +5,16 @@ IPE, CAD, bridge, B3 dividends, brapi, COTAHIST). They skip gracefully when
 a required database is not synced — so they run on the user's machine (full
 DBs) but don't fail in CI / sandbox (no DBs).
 
-Run just these tests:
-    python -m pytest tests/skills/cvm/test_integration.py -v -W error --tb=short
-
-Markers:
-    @pytest.mark.integration — tags for selective running
-    DB_AVAILABLE fixture — skips if the needed DB is missing
+Marked @pytest.mark.slow — excluded from default runs. Run them explicitly:
+    python -m pytest tests/skills/cvm/test_integration.py -m slow -v -W error --tb=short
+Or run ALL tests (including slow):
+    python -m pytest -m "" -v -W error
 """
 from __future__ import annotations
 
 import pytest
+
+pytestmark = pytest.mark.slow
 
 TICKERS = ["PETR4", "KLBN11", "SUZB3"]
 
