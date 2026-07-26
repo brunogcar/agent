@@ -178,6 +178,9 @@ Any metric over time. Accepts canonical names and aliases.
 | `dpa` | `dy`, `dividend_yield`, `yld`, `payout` | `rendimento`, `rendimento_dividendo`, `div_yield` | DPA (dividends TTM) | Div Yield (DPA/price) | Payout (DPA/LPA) |
 | `rps` | `psr`, `p/sr`, `price_sales` | `preco_venda`, `p_venda` | RPS (revenue/shares) | PSR (price/RPS) | — |
 | `roe` | `return_on_equity` | `retorno_pl`, `retorno_patrimonio` | — (fundamental) | ROE (earnings/PL) | — |
+| `roa` | `return_on_assets` | `retorno_ativos` | — (fundamental) | ROA (earnings/assets) | — |
+| `gross_margin` | `gm`, `gross_margin_pct` | `margem_bruta` | — (fundamental) | Margem Bruta (gross_profit/revenue) | — |
+| `operating_margin` | `om`, `operating_margin_pct` | `margem_operacional` | — (fundamental) | Margem Operacional (EBIT/revenue) | — |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`

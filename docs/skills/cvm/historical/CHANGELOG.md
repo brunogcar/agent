@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.7** | 2026-07-26 | **ROA + Gross Margin + Operating Margin.** 3 new engines: `assets.py` (BPA 1.01 Ativo Total snapshot, category=bpa), `gross_profit.py` (DRE 3.03 Lucro Bruto TTM, category=dre), `ebit.py` (DRE 3.05 EBIT TTM, category=dre). 3 new fundamental ratio metrics: `roa.py` (ROA = earnings / assets), `gross_margin.py` (Margem Bruta = gross_profit / revenue), `operating_margin.py` (Margem Operacional = EBIT / revenue). All 3 follow the ROE pattern (per_share=None, single-dataset chart). All auto-generated via the registry — zero edits to __init__.py, historical.py, or adapters. PT aliases: retorno_ativos (roa), margem_bruta/gm (gross_margin), margem_operacional/om (operating_margin). 272 tests. Now 9 engines + 8 metrics. |
 | **v1.6** | 2026-07-26 | **Engine categories + Portuguese aliases.** Added `category` field to EngineSpec (market, shares, dre, bpa, bpp, dfc, other) for organizational grouping. New `list_engines(category=...)` filter + `list_engine_categories()` helper. All 6 engines tagged: price/dividends=market, shares=shares, earnings/revenue=dre, pl=bpp. Added Portuguese aliases to all 5 metrics: preco_lucro (lpa), preco_vpa/p_vpa (vpa), rendimento/rendimento_dividendo/div_yield (dpa), preco_venda/p_venda (rps), retorno_pl/retorno_patrimonio (roe). Decision: use category field instead of subfolders — revisit subfolders at 15+ engines. 245 tests. |
 | **v1.5** | 2026-07-26 | **ROE metric + fundamental ratio support.** Extended `MetricSpec` to support fundamental ratios (per_share fields now optional — `None` for metrics like ROE that don't produce a per-share value). New `metrics/roe.py` (ROE = TTM earnings / PL — first fundamental ratio, no price or shares needed). Chart adapter factory handles `per_share_key=None` (single-dataset chart instead of dual). Summary adapter handles `per_share_key=None` (skips per-share KPI/row). `_metric_history()` handles `per_share_key=None`. Updated docs to clarify metrics include 3 types: per-share values, price ratios, fundamental ratios. 233 tests. Now 6 engines + 5 metrics. |
 | **v1.4.1** | 2026-07-26 | **Remove manual inventory from `__init__.py` docstrings.** The `engines/__init__.py` and `metrics/__init__.py` had a manual inventory list that required editing every time a new engine/metric was added — defeating the purpose of auto-discovery. Removed the inventory list. The registry (`list_engines()` / `list_metrics()`) is now the sole source of truth. Added NEVER DO rule #13: never edit `__init__.py` for inventory. Now adding an engine/metric = drop a file + `register_*()`, zero edits to `__init__.py`. |
@@ -62,8 +63,8 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 1 | **EV/EBITDA metric** (ev_ebitda) | Needs balance_sheet engine (debt, cash, EBIT, D&A). 4 DFP/ITR accounts. TTM for flows, snapshot for balances. Fundamental ratio (like ROE — no price/shares needed). | P1 |
-| 2 | **ROA metric** (roa) | Return on Assets = earnings / total assets. Needs assets engine (DFP/ITR BPA 1.01 — Ativo Total). Fundamental ratio. | P2 |
+| 1 | **EV/EBITDA metric** (ev_ebitda) | Needs 2 more engines: debt (BPP 2.01.04) + cash (BPA 1.01.01) + D&A (DFC). EBIT engine already exists (v1.7). | P1 |
+| 2 | **ROIC metric** (roic) | Return on Invested Capital. Needs tax (DRE 3.08) + debt (BPP 2.01.04) engines. NOPAT = earnings + tax. Invested capital = PL + debt. | P2 |
 | 3 | **ROIC metric** (roic) | Return on Invested Capital = NOPAT / invested capital. Needs NOPAT (earnings + tax) + invested capital (PL + debt). Fundamental ratio. | P2 |
 | 4 | **Backtest skill** | Reuse historical engines + metrics. `skills/cvm/backtest/`. Signal generation + return computation. | P3 |
 
