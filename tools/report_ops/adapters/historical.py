@@ -20,18 +20,21 @@ from tools.report_ops.formats import apply_fmt
 # can render them on dual axes if configured.
 
 def _make_metric_chart_adapter(adapter_name: str, metric_name: str,
-                                per_share_key: str, per_share_label: str,
+                                per_share_key: str | None, per_share_label: str | None,
                                 ratio_key: str, ratio_label: str):
     """Factory: create a chart adapter for a specific metric.
 
-    Produces a dual-dataset chart with dual-axis support:
-      - Per-share value (LPA, VPA, DPA) on the LEFT axis ("y")
-      - Price ratio (P/L, P/VPA, Div Yield) on the RIGHT axis ("y1")
+    For per-share + price ratio metrics (lpa, vpa, dpa, rps):
+      Produces a dual-dataset chart with dual-axis support:
+        - Per-share value (LPA, VPA, DPA, RPS) on the LEFT axis ("y")
+        - Price ratio (P/L, P/VPA, Div Yield, PSR) on the RIGHT axis ("y1")
 
-    The per-share value and ratio often have very different scales (e.g.,
-    DPA ~4.5 vs Div Yield ~0.10). Dual-axis makes both lines readable.
+    For fundamental ratio metrics (roe, roa, roic):
+      Produces a single-dataset chart (just the ratio over time, single axis).
+      per_share_key is None — no per-share value to show.
+
     The chart builder (charts.py v1.2.9) detects yAxisID and adds the
-    scales config automatically.
+    scales config automatically for dual-axis charts.
     """
     def _adapter(result: dict) -> dict:
         if not _ok(result):
@@ -42,22 +45,38 @@ def _make_metric_chart_adapter(adapter_name: str, metric_name: str,
             return _error_table(result, title=f"Historical {ratio_label}")
 
         x_labels = [s["date"] for s in series]
-        per_share_data = [s.get(per_share_key) for s in series]  # None for gaps
-        ratio_data = [s.get(ratio_key) for s in series]          # None for gaps
+        ratio_data = [s.get(ratio_key) for s in series]  # None for gaps
 
-        return {
-            "x": x_labels,
-            "datasets": [
-                {"label": per_share_label, "data": per_share_data, "yAxisID": "y"},
-                {"label": ratio_label, "data": ratio_data, "yAxisID": "y1"},
-            ],
-        }
+        if per_share_key:
+            # Per-share + ratio: dual-dataset, dual-axis
+            per_share_data = [s.get(per_share_key) for s in series]
+            return {
+                "x": x_labels,
+                "datasets": [
+                    {"label": per_share_label, "data": per_share_data, "yAxisID": "y"},
+                    {"label": ratio_label, "data": ratio_data, "yAxisID": "y1"},
+                ],
+            }
+        else:
+            # Fundamental ratio: single dataset, single axis
+            return {
+                "x": x_labels,
+                "datasets": [
+                    {"label": ratio_label, "data": ratio_data},
+                ],
+            }
     _adapter.__name__ = adapter_name
     _adapter.__qualname__ = adapter_name
-    _adapter.__doc__ = (
-        f"Flatten historical.{metric_name}_history result into a dual-axis "
-        f"chart: {per_share_label} (left axis) + {ratio_label} (right axis)."
-    )
+    if per_share_label:
+        _adapter.__doc__ = (
+            f"Flatten historical.{metric_name}_history result into a dual-axis "
+            f"chart: {per_share_label} (left axis) + {ratio_label} (right axis)."
+        )
+    else:
+        _adapter.__doc__ = (
+            f"Flatten historical.{metric_name}_history result into a "
+            f"single-axis chart: {ratio_label} over time."
+        )
     return _adapter
 
 
@@ -89,8 +108,13 @@ def summary(result: dict) -> dict:
     """Flatten historical.summary result into KPI strip + summary table.
 
     Metric-aware: reads result["metric"] and result["per_share_label"] /
-    result["ratio_label"] to render the appropriate labels. Displays BOTH
-    the per-share value and the ratio, plus engine-specific components.
+    result["ratio_label"] to render the appropriate labels.
+
+    For per-share + price ratio metrics (lpa, vpa, dpa, rps):
+      Displays BOTH the per-share value and the ratio, plus engine-specific components.
+
+    For fundamental ratio metrics (roe, roa, roic):
+      Displays only the ratio (no per-share value). per_share_label is None.
     """
     if not _ok(result):
         return _error_table(result, title="Historical Summary")
@@ -101,7 +125,7 @@ def summary(result: dict) -> dict:
     rng = result.get("range", {})
 
     # Get labels from the result (set by the registry-driven summary())
-    per_share_label = result.get("per_share_label", "LPA")
+    per_share_label = result.get("per_share_label")
     ratio_label = result.get("ratio_label", "P/L")
 
     # Find the per-share key and ratio key from the registry
@@ -111,30 +135,35 @@ def summary(result: dict) -> dict:
         per_share_key = spec.per_share_key
         ratio_key = spec.ratio_key
     except ValueError:
-        # Fallback for unknown metrics
-        per_share_key = "lpa"
+        per_share_key = None
         ratio_key = "pe"
 
-    # KPI strip — shows both per-share value and ratio + averages + percentile
-    kpis = [
-        {"label": f"Current {per_share_label}", "value": current.get(per_share_key), "format": "num"},
+    # KPI strip — shows per-share value (if applicable) + ratio + averages + percentile
+    kpis = []
+    if per_share_label and per_share_key:
+        kpis.append({"label": f"Current {per_share_label}", "value": current.get(per_share_key), "format": "num"})
+    kpis.extend([
         {"label": f"Current {ratio_label}",     "value": current.get(ratio_key),     "format": "num"},
         {"label": f"1Y Average {ratio_label}",  "value": averages.get("1y"),         "format": "num"},
         {"label": f"3Y Average {ratio_label}",  "value": averages.get("3y"),         "format": "num"},
         {"label": f"5Y Average {ratio_label}",  "value": averages.get("5y"),         "format": "num"},
         {"label": "Percentile",                 "value": result.get("percentile"),   "format": "num"},
-    ]
+    ])
 
-    # Summary table — metric-aware rows showing per-share + ratio + components
+    # Summary table — metric-aware rows
     rows = [
         [f"Current {ratio_label}",      apply_fmt(current.get(ratio_key), "num")],
-        [f"Current {per_share_label}",  apply_fmt(current.get(per_share_key), "num")],
-        ["Current Price",               apply_fmt(current.get("price"), "brl_full")],
     ]
+    if per_share_label and per_share_key:
+        rows.append([f"Current {per_share_label}",  apply_fmt(current.get(per_share_key), "num")])
+    if "price" in current:
+        rows.append(["Current Price",               apply_fmt(current.get("price"), "brl_full")])
 
     # Engine-specific components
     if "ttm_earnings" in current:
         rows.append(["TTM Earnings", apply_fmt(current.get("ttm_earnings"), "brl")])
+    if "ttm_rev" in current:
+        rows.append(["TTM Revenue", apply_fmt(current.get("ttm_rev"), "brl")])
     if "pl" in current:
         rows.append(["Patrimônio Líquido", apply_fmt(current.get("pl"), "brl")])
     if "shares" in current:

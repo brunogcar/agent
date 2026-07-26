@@ -14,11 +14,13 @@ Computes financial ratios over time by combining **engines** (basics: price, ear
   - `pl.py` — DFP + ITR BPP 2.03 Patrimônio Líquido snapshot
   - `dividends.py` — B3 cash_dividends DPA TTM
   - `revenue.py` — DFP + ITR DRE 3.01 TTM net revenue
+  - (roe uses earnings + pl, no new engine)
 - **Metrics** (`metrics/`) — one per ratio. Self-register via `register_metric()`. Auto-discovered by the central `_registry.py`. Each metric produces BOTH a per-share value AND a price ratio (+ optional bonus ratios).
   - `lpa.py` — LPA (earnings/shares) + P/L (price/LPA)
   - `vpa.py` — VPA (pl/shares) + P/VPA (price/VPA)
   - `dpa.py` — DPA (dividends TTM) + Div Yield (DPA/price) + Payout (DPA/LPA)
   - `rps.py` — RPS (revenue/shares) + PSR (price/RPS)
+  - `roe.py` — ROE (earnings/PL, fundamental ratio — no price or shares)
 
 **Each metric produces both:**
 - A **per-share value** (LPA, VPA, DPA) — useful on its own (e.g., backtest filters on EPS)

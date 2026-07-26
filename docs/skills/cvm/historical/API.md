@@ -130,6 +130,36 @@ Returns:
 }
 ```
 
+### `mode="roe_history"` (auto-generated)
+Daily ROE time series. ROE is a fundamental ratio (no price, no shares).
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | B3 ticker |
+| `months` | `int` | `60` | Number of months of history (60 = 5 years) |
+
+Returns:
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "metric": "roe",
+  "per_share_label": null,
+  "ratio_label": "ROE",
+  "date_from": "2019-07-26",
+  "date_to": "2024-07-26",
+  "total_days": 20,
+  "roe_days": 18,
+  "series": [
+    {"date": "2024-03-31", "roe": 0.34, "ttm_earnings": 120e9, "pl": 350e9},
+    ...
+  ],
+  "data_freshness": {...}
+}
+```
+
+**Note:** ROE series has ~4-8 data points per year (quarterly earnings + PL snapshots), not daily. No `price` or `shares` in series entries.
+
 ### `mode="ratio_history"` (generic)
 Any metric over time. Accepts canonical names and aliases.
 
@@ -147,10 +177,11 @@ Any metric over time. Accepts canonical names and aliases.
 | `vpa` | `pvpa`, `p/vpa` | VPA (pl/shares) | P/VPA (price/VPA) | — |
 | `dpa` | `dy`, `dividend_yield`, `yld`, `payout` | DPA (dividends TTM) | Div Yield (DPA/price) | Payout (DPA/LPA) |
 | `rps` | `psr`, `p/sr`, `price_sales` | RPS (revenue/shares) | PSR (price/RPS) | — |
+| `roe` | `return_on_equity` | — (fundamental) | ROE (earnings/PL) | — |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
-- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['dpa', 'lpa', 'rps', 'vpa']"}`
+- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['dpa', 'lpa', 'roe', 'rps', 'vpa']"}`
 
 ### `mode="summary"` (generic, metric-aware)
 Current ratio vs 1Y/3Y/5Y average + min/max/percentile. Includes BOTH per-share value and ratio in the result.
@@ -257,6 +288,7 @@ Chart adapters are auto-registered for each metric. The summary adapter is metri
 | `historical_vpa_chart` | vpa_history | Dual-dataset line chart: VPA (per-share) + P/VPA (ratio) |
 | `historical_dpa_chart` | dpa_history | Dual-dataset line chart: DPA (per-share) + Div Yield (ratio) |
 | `historical_rps_chart` | rps_history | Dual-dataset line chart: RPS (per-share) + PSR (ratio) |
+| `historical_roe_chart` | roe_history | Single-dataset line chart: ROE over time (fundamental ratio, single axis) |
 | `historical_summary` | summary | KPI strip (per-share + ratio + averages + percentile) + summary table. **Metric-aware**: renders TTM Earnings for lpa/dpa, PL for vpa. |
 
 ```python
@@ -353,6 +385,12 @@ dpa_history(ticker: str, date_from: str, date_to: str) -> list[dict]   # [{date,
 rps_at(company: str, date: str) -> float | None            # RPS = revenue / shares (per-share)
 psr_at(company: str, date: str) -> float | None            # PSR = price / RPS (ratio)
 rps_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, price, ttm_rev, shares, rps, psr}, ...]
+```
+
+### `metrics/roe.py` (fundamental ratio — no per-share value, no price)
+```python
+roe_at(company: str, date: str) -> float | None            # ROE = TTM earnings / PL (ratio)
+roe_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, roe, ttm_earnings, pl}, ...]
 ```
 
 ---

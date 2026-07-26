@@ -83,14 +83,23 @@ def _make_metric_history_fn(metric_name: str):
         return _metric_history(company, metric_name, months)
     _fn.__name__ = f"{metric_name}_history"
     _fn.__qualname__ = f"{metric_name}_history"
-    _fn.__doc__ = (
-        f"Daily {resolve_metric(metric_name).per_share_label} + "
-        f"{resolve_metric(metric_name).ratio_label} time series "
-        f"for the last N months.\n\n"
-        f"Args:\n"
-        f"    company: Ticker. Required.\n"
-        f"    months: Number of months of history. Default: 60 (5 years).\n"
-    )
+    spec = resolve_metric(metric_name)
+    if spec.per_share_label:
+        _fn.__doc__ = (
+            f"Daily {spec.per_share_label} + {spec.ratio_label} time series "
+            f"for the last N months.\n\n"
+            f"Args:\n"
+            f"    company: Ticker. Required.\n"
+            f"    months: Number of months of history. Default: 60 (5 years).\n"
+        )
+    else:
+        _fn.__doc__ = (
+            f"Daily {spec.ratio_label} time series "
+            f"for the last N months.\n\n"
+            f"Args:\n"
+            f"    company: Ticker. Required.\n"
+            f"    months: Number of months of history. Default: 60 (5 years).\n"
+        )
     return _fn
 
 
@@ -200,18 +209,22 @@ def summary(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
     else:
         interpretation = "unknown"
 
-    # Build current block — includes BOTH per-share value and ratio + components
+    # Build current block — includes ratio + per-share value (if applicable) + components
     current_block = {
         "date": current_date,
-        spec.per_share_key: (
+        spec.ratio_key: round(current_ratio, 2),
+    }
+    # Add per-share value if this metric has one (None for fundamental ratios)
+    if spec.per_share_key:
+        current_block[spec.per_share_key] = (
             round(series[-1].get(spec.per_share_key), 4)
             if series[-1].get(spec.per_share_key) is not None else None
-        ),
-        spec.ratio_key: round(current_ratio, 2),
-        "price": series[-1].get("price"),
-    }
+        )
+    # Add price if the series has it (fundamental metrics may not)
+    if "price" in series[-1]:
+        current_block["price"] = series[-1]["price"]
     # Include engine-specific fields from the series entry
-    for key in ("ttm_earnings", "pl", "shares"):
+    for key in ("ttm_earnings", "ttm_rev", "pl", "shares", "lpa", "dpa"):
         if key in series[-1]:
             current_block[key] = series[-1][key]
 

@@ -95,9 +95,19 @@ class EngineSpec:
 class MetricSpec:
     """Specification for a historical metric.
 
-    A metric produces BOTH a per-share value AND a price ratio. The per-share
-    value comes from engines (e.g., earnings/shares = LPA). The ratio adds
-    price (e.g., price/LPA = P/L). Both are exposed in the history series.
+    A metric can be one of three types:
+      1. Per-share + price ratio (lpa, vpa, dpa, rps): produces a per-share
+         value (LPA, VPA, DPA, RPS) AND a price ratio (P/L, P/VPA, Div Yield,
+         PSR). Both per_share_* and ratio_* fields are set.
+      2. Fundamental ratio (roe, roa, roic): produces only a ratio of two
+         engine values (e.g., ROE = earnings / PL). No per-share value, no
+         price. per_share_* fields are None.
+      3. (Future) Per-share only: a per-share value without a price ratio.
+         ratio_* fields would be None. Not used yet.
+
+    For per-share + price ratio metrics, the history series includes both
+    the per-share value and the ratio. For fundamental ratios, the series
+    includes only the ratio (+ engine-specific fields).
 
     Some metrics also produce bonus ratios (e.g., dpa produces DPA + DY +
     Payout). The bonus ratios are added to the series entries by the metric's
@@ -107,26 +117,30 @@ class MetricSpec:
     Attributes:
         name:            Canonical metric name (file name without .py).
         per_share_label: Human label for the per-share value (e.g., "LPA").
+                         None for fundamental ratios (ROE, ROA).
         per_share_key:   JSON key in series entries (e.g., "lpa").
+                         None for fundamental ratios.
         per_share_fn:    fn(company, date) -> per-share float | None.
-        ratio_label:     Human label for the price ratio (e.g., "P/L").
-        ratio_key:       JSON key in series entries (e.g., "pe").
+                         None for fundamental ratios.
+        ratio_label:     Human label for the ratio (e.g., "P/L", "ROE").
+        ratio_key:       JSON key in series entries (e.g., "pe", "roe").
         ratio_fn:        fn(company, date) -> ratio float | None.
         history_fn:      fn(company, date_from, date_to) -> list[dict].
-                         Each entry has: date, price, <per_share_key>,
-                         <ratio_key>, + engine-specific fields + bonus ratios.
+                         Each entry has: date, price (if applicable),
+                         <per_share_key> (if applicable), <ratio_key>,
+                         + engine-specific fields + bonus ratios.
         engines:         List of engine names this metric composes (for docs).
         aliases:         Alternative names for dispatch (e.g., ["pe", "pl"]).
     """
     name: str
-    per_share_label: str
-    per_share_key: str
-    per_share_fn: Callable
     ratio_label: str
     ratio_key: str
     ratio_fn: Callable
     history_fn: Callable
     engines: list[str]
+    per_share_label: str | None = None
+    per_share_key: str | None = None
+    per_share_fn: Callable | None = None
     aliases: list[str] = field(default_factory=list)
 
 

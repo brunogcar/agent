@@ -40,12 +40,21 @@ def _build_metric_modes() -> dict:
     modes = {}
     for name in list_metrics():
         spec = METRICS[name]
-        modes[f"{name}_history"] = {
-            "description": (
+        if spec.per_share_label:
+            desc = (
                 f"Daily {spec.per_share_label} + {spec.ratio_label} time series "
                 f"for the last N months. Returns: date, price, "
                 f"{', '.join(spec.engines + [spec.per_share_key, spec.ratio_key])}."
-            ),
+            )
+        else:
+            # Fundamental ratio -- no per-share value, no price
+            desc = (
+                f"Daily {spec.ratio_label} time series "
+                f"for the last N months. Returns: date, "
+                f"{', '.join(spec.engines + [spec.ratio_key])}."
+            )
+        modes[f"{name}_history"] = {
+            "description": desc,
             "include_in_all": False,
             "params": {
                 "company": "str. Ticker. Required.",

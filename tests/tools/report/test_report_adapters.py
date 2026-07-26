@@ -66,7 +66,7 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 30
+        assert len(names) == 31
 
     def test_expected_adapter_names(self):
         expected = {
@@ -83,7 +83,7 @@ class TestRegistry:
             "insider_history", "insider_by_role", "insider_summary",
             "governance_practices", "governance_score", "governance_by_chapter",
             "historical_lpa_chart", "historical_vpa_chart", "historical_dpa_chart",
-            "historical_rps_chart",
+            "historical_rps_chart", "historical_roe_chart",
             "historical_summary",
         }
         assert expected == set(list_adapters())
@@ -733,3 +733,65 @@ class TestHistoricalSummaryRpsMetric:
         assert "PSR" in rows_text
         # The TTM revenue should be in the current block (engine-specific field)
         # The adapter includes engine-specific fields (ttm_rev, pl, ttm_earnings, shares)
+
+
+class TestHistoricalRoeChartAdapter:
+    def test_roe_chart_single_dataset(self):
+        """roe_chart should produce ONE dataset (fundamental ratio, no per-share)."""
+        data = {
+            "status": "ok",
+            "series": [
+                {"date": "2024-03-31", "roe": 0.34},
+                {"date": "2024-06-30", "roe": None},  # gap
+                {"date": "2024-09-30", "roe": 0.38},
+            ],
+        }
+        out = apply_adapter("historical_roe_chart", data)
+        assert out["x"] == ["2024-03-31", "2024-06-30", "2024-09-30"]
+        assert len(out["datasets"]) == 1  # single dataset (fundamental ratio)
+        # Dataset 0 = ratio (ROE), NO yAxisID (single axis)
+        assert out["datasets"][0]["label"] == "ROE"
+        assert out["datasets"][0]["data"] == [0.34, None, 0.38]
+        assert "yAxisID" not in out["datasets"][0]  # no dual-axis for fundamental
+
+    def test_roe_chart_error_result(self):
+        out = apply_adapter("historical_roe_chart",
+                            {"status": "not_found", "error": "no data"})
+        assert "sections" in out  # error table
+
+    def test_roe_chart_empty_series(self):
+        out = apply_adapter("historical_roe_chart",
+                            {"status": "ok", "series": []})
+        assert "sections" in out  # error table
+
+
+class TestHistoricalSummaryRoeMetric:
+    def test_summary_roe_metric(self):
+        """Summary adapter with metric=roe should render ROE + TTM Earnings + PL (no per-share)."""
+        data = {
+            "status": "ok",
+            "company": "PETR4",
+            "metric": "roe",
+            "per_share_label": None,  # fundamental ratio -- no per-share
+            "ratio_label": "ROE",
+            "current": {
+                "date": "2024-06-30", "roe": 0.34,
+                "ttm_earnings": 120e9, "pl": 350e9,
+            },
+            "averages": {"1y": 0.32, "3y": 0.30, "5y": 0.28},
+            "range": {"min": 0.15, "max": 0.40},
+            "percentile": 75.0,
+            "interpretation": "expensive (above 75th percentile of history)",
+            "data_points": 20,
+        }
+        out = apply_adapter("historical_summary", data)
+        # KPI strip -- should have ROE but NO per-share KPI
+        kpi_labels = [k["label"] for k in out["kpis"]]
+        assert "Current ROE" in kpi_labels
+        assert "Current LPA" not in kpi_labels  # no per-share for fundamental
+        assert "Current VPA" not in kpi_labels
+        # Summary table -- should mention ROE, TTM Earnings, PL
+        rows_text = " ".join(str(r) for r in out["sections"][0]["rows"])
+        assert "ROE" in rows_text
+        assert "TTM Earnings" in rows_text
+        assert "Patrim" in rows_text  # Patrimônio Líquido
