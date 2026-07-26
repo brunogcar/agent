@@ -56,7 +56,7 @@ def roic_at(company: str, date: str) -> float | None:
 
     ROIC = NOPAT / Invested Capital
     NOPAT = EBIT - tax_expense (where tax_expense = max(0, -tax))
-    Invested Capital = PL + Debt
+    Invested Capital = PL + Debt - Cash (v1.9: now subtracts cash)
 
     Args:
         company: Ticker, name, or CNPJ.
@@ -87,7 +87,7 @@ def roic_at(company: str, date: str) -> float | None:
     if nopat <= 0:
         return None  # NOPAT <= 0 -- ROIC meaningless
 
-    # Invested Capital = PL + Debt
+    # Invested Capital = PL + Debt - Cash (v1.9: cash subtraction)
     pl = pl_at(company, date)
     if pl is None or pl <= 0:
         return None
@@ -96,7 +96,20 @@ def roic_at(company: str, date: str) -> float | None:
     if debt is None:
         return None  # No debt data -- can't compute IC
 
-    invested_capital = pl + debt
+    # Cash subtraction (v1.9): if cash data available, subtract from IC.
+    # This makes ROIC more accurate -- excess cash is not "invested capital".
+    # If cash is None (no data), fall back to PL + Debt (v1.8 behavior).
+    # Wrapped in try/except so tests without a cash engine mock don't break.
+    try:
+        from skills.cvm.historical.engines.cash import cash_at as _cash_at
+        cash = _cash_at(company, date)
+    except Exception:
+        cash = None
+    if cash is not None and cash > 0:
+        invested_capital = pl + debt - cash
+    else:
+        invested_capital = pl + debt
+
     if invested_capital <= 0:
         return None
 
@@ -109,8 +122,10 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
     """Compute ROIC time series for a date range.
 
     ROIC changes when EBIT (quarterly), tax (quarterly), PL (quarterly),
-    or debt (quarterly) change. No daily price driver -- series based on
-    union of all 4 engine period dates.
+    debt (quarterly), or cash (quarterly) change. No daily price driver --
+    series based on union of all 5 engine period dates.
+
+    v1.9: now subtracts cash from invested capital (IC = PL + Debt - Cash).
 
     Args:
         company: Ticker.
@@ -118,18 +133,25 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
         date_to: YYYY-MM-DD.
 
     Returns:
-        List of {"date", "roic", "ttm_ebit", "ttm_tax", "pl", "debt"}
-        sorted oldest-first. Entries with None ROE (negative earnings/equity,
-        missing data) are included with roe=None so charts show gaps.
+        List of {"date", "roic", "ttm_ebit", "ttm_tax", "pl", "debt", "cash"}
+        sorted oldest-first. Entries with None ROIC are included with
+        roic=None so charts show gaps.
     """
+    from skills.cvm.historical.engines.cash import cash_periods as _cash_periods
+
     ebit_periods_list = ebit_periods(company)
     tax_periods_list = tax_periods(company)
     pl_periods_list = pl_periods(company)
     debt_periods_list = debt_periods(company)
+    try:
+        cash_periods_list = _cash_periods(company)
+    except Exception:
+        cash_periods_list = []
 
-    # Build a union of all dates from all 4 engines
+    # Build a union of all dates from all 5 engines
     all_dates = set()
-    for periods in [ebit_periods_list, tax_periods_list, pl_periods_list, debt_periods_list]:
+    for periods in [ebit_periods_list, tax_periods_list, pl_periods_list,
+                    debt_periods_list, cash_periods_list]:
         for p in periods:
             if date_from <= p["date"] <= date_to:
                 all_dates.add(p["date"])
@@ -169,6 +191,13 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
                 debt = dp["debt"]
                 break
 
+        # Find most recent cash <= date (v1.9)
+        cash = None
+        for cp in reversed(cash_periods_list):
+            if cp["date"] <= date:
+                cash = cp["cash"]
+                break
+
         # Compute NOPAT = EBIT - tax_expense
         nopat = None
         if ttm_ebit is not None and ttm_ebit > 0:
@@ -177,13 +206,20 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
                 tax_expense = -ttm_tax
             nopat = ttm_ebit - tax_expense
 
+        # Compute Invested Capital = PL + Debt - Cash (v1.9)
+        # If cash is None, fall back to PL + Debt (v1.8 behavior)
+        invested_capital = None
+        if pl is not None and pl > 0 and debt is not None:
+            if cash is not None and cash > 0:
+                invested_capital = pl + debt - cash
+            else:
+                invested_capital = pl + debt
+
         # Compute ROIC = NOPAT / Invested Capital
         roic = None
         if (nopat is not None and nopat > 0
-            and pl is not None and pl > 0
-            and debt is not None
-            and (pl + debt) > 0):
-            roic = nopat / (pl + debt)
+            and invested_capital is not None and invested_capital > 0):
+            roic = nopat / invested_capital
 
         result.append({
             "date": date,
@@ -192,6 +228,7 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
             "ttm_tax": ttm_tax,
             "pl": pl,
             "debt": debt,
+            "cash": cash,
         })
 
     return result
@@ -208,6 +245,6 @@ register_metric(MetricSpec(
     ratio_key="roic",
     ratio_fn=roic_at,
     history_fn=roic_history,
-    engines=["ebit", "tax", "pl", "debt"],
+    engines=["ebit", "tax", "pl", "debt", "cash"],
     aliases=["return_on_invested_capital", "retorno_capital_investido"],
 ))

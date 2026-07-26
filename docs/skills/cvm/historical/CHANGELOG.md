@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.9** | 2026-07-26 | **EV/EBITDA + cash engine + da engine + ROIC cash update.** 2 new engines: `cash.py` (BPA 1.01.01 Caixa e Equivalentes, snapshot, category=bpa), `da.py` (D&A from DFC -- first description-based search engine, TTM, category=dfc, NEW category). New `metrics/ev_ebitda.py` (EV/EBITDA -- composes 6 engines: price+shares+debt+cash+ebit+da, the most complex metric). Per-share value: EBITDA/Ação = (EBIT+D&A)/shares. Ratio: EV/EBITDA = (price×shares+debt-cash)/(EBIT+D&A). Updated ROIC to subtract cash from invested capital (IC = PL+Debt-Cash). 319 tests. Now 13 engines + 10 metrics + 6 categories. |
 | **v1.8** | 2026-07-26 | **ROIC (Return on Invested Capital).** 2 new engines: `tax.py` (DRE 3.08 IR+CSLL TTM, category=dre), `debt.py` (BPP 2.01.04+2.02.01 Empréstimos e Financiamentos snapshot, category=bpp, sums 2 codes). New `metrics/roic.py` (ROIC = NOPAT / Invested Capital -- first metric to compose 4 engines: ebit + tax + pl + debt). NOPAT = EBIT - max(0, tax_expense). Invested Capital = PL + Debt (simplified -- no cash subtraction yet, cash engine comes in EV/EBITDA). PT aliases: retorno_capital_investido. 294 tests. Now 11 engines + 9 metrics. |
 | **v1.7** | 2026-07-26 | **ROA + Gross Margin + Operating Margin.** 3 new engines: `assets.py` (BPA 1.01 Ativo Total snapshot, category=bpa), `gross_profit.py` (DRE 3.03 Lucro Bruto TTM, category=dre), `ebit.py` (DRE 3.05 EBIT TTM, category=dre). 3 new fundamental ratio metrics: `roa.py` (ROA = earnings / assets), `gross_margin.py` (Margem Bruta = gross_profit / revenue), `operating_margin.py` (Margem Operacional = EBIT / revenue). All 3 follow the ROE pattern (per_share=None, single-dataset chart). All auto-generated via the registry — zero edits to __init__.py, historical.py, or adapters. PT aliases: retorno_ativos (roa), margem_bruta/gm (gross_margin), margem_operacional/om (operating_margin). 272 tests. Now 9 engines + 8 metrics. |
 | **v1.6** | 2026-07-26 | **Engine categories + Portuguese aliases.** Added `category` field to EngineSpec (market, shares, dre, bpa, bpp, dfc, other) for organizational grouping. New `list_engines(category=...)` filter + `list_engine_categories()` helper. All 6 engines tagged: price/dividends=market, shares=shares, earnings/revenue=dre, pl=bpp. Added Portuguese aliases to all 5 metrics: preco_lucro (lpa), preco_vpa/p_vpa (vpa), rendimento/rendimento_dividendo/div_yield (dpa), preco_venda/p_venda (rps), retorno_pl/retorno_patrimonio (roe). Decision: use category field instead of subfolders — revisit subfolders at 15+ engines. 245 tests. |
@@ -64,7 +65,7 @@
 
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
-| 1 | **EV/EBITDA metric** (ev_ebitda) | Needs 2 more engines: debt (BPP 2.01.04) + cash (BPA 1.01.01) + D&A (DFC). EBIT engine already exists (v1.7). | P1 |
+| 1 | ~~EV/EBITDA metric~~ | ~~Done in v1.9~~ | ✅ |
 | 2 | ~~ROIC metric~~ | ~~Done in v1.8~~ | ✅ |
 | 3 | **ROIC metric** (roic) | Return on Invested Capital = NOPAT / invested capital. Needs NOPAT (earnings + tax) + invested capital (PL + debt). Fundamental ratio. | P2 |
 | 4 | **Backtest skill** | Reuse historical engines + metrics. `skills/cvm/backtest/`. Signal generation + return computation. | P3 |
