@@ -1,13 +1,14 @@
 """skills/cvm/historical/historical.py -- Historical ratios main logic.
 
-Orchestrates engines + metrics to produce time series and summaries.
+Orchestrates engines + metrics (via the metric registry) to produce time
+series and summaries. All metric dispatch is registry-driven — adding a new
+metric = drop a file in metrics/ + register_metric(). No edits here.
 
-MODES
------
-  pe_history (default) -- daily P/L time series
-  vpa_history          -- daily P/VPA time series
-  ratio_history        -- any metric over time (pe or vpa)
-  summary              -- current vs 1Y/3Y/5Y average + percentile
+MODES (auto-generated from the registry):
+  lpa_history    -- daily LPA + P/L time series (from lpa metric)
+  vpa_history    -- daily VPA + P/VPA time series (from vpa metric)
+  ratio_history  -- any metric over time (generic, takes metric param)
+  summary        -- current vs 1Y/3Y/5Y average + percentile (generic)
 
 NO SYNC
 -------
@@ -17,9 +18,9 @@ Read-only. Assumes COTAHIST + DFP + ITR + FRE are already synced.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any
 
 from skills.cvm._freshness import add_freshness
+from skills.cvm.historical.metrics._registry import resolve_metric, list_metrics, METRICS
 
 
 def _months_ago(months: int) -> str:
@@ -28,153 +29,117 @@ def _months_ago(months: int) -> str:
     return d.strftime("%Y-%m-%d")
 
 
-# ── Metric dispatch helpers ──────────────────────────────────────────────────
-# Maps metric name → (history_fn, value_key, label_pt)
-# history_fn: function(company, date_from, date_to) -> list[dict]
-# value_key:  the key in each series entry holding the ratio value
-# label_pt:   human-readable label for the metric (used in error messages)
+# ── Generic metric history (used by auto-generated <metric>_history modes) ───
 
-def _metric_dispatch(metric: str):
-    """Return (history_fn, value_key, label_pt) for a metric name.
+def _metric_history(company: str, metric_name: str, months: int) -> dict:
+    """Run a metric's history function and wrap the result.
 
-    Raises ValueError for unknown metrics.
-    """
-    metric = metric.strip().lower()
-    if metric == "pe":
-        from skills.cvm.historical.metrics.pe import pe_history as _fn
-        return _fn, "pe", "P/L"
-    elif metric == "vpa":
-        from skills.cvm.historical.metrics.vpa import vpa_history as _fn
-        return _fn, "vpa", "P/VPA"
-    else:
-        raise ValueError(
-            f"Unknown metric '{metric}'. Available: pe, vpa"
-        )
-
-
-# ── Mode: pe_history (default) ───────────────────────────────────────────────
-
-def pe_history(company: str = "", months: int = 60) -> dict:
-    """Daily P/L time series for the last N months.
-
-    Args:
-        company: Ticker. Required.
-        months: Number of months of history. Default: 60 (5 years).
+    This is the shared implementation behind every <metric>_history mode.
+    Each <metric>_history mode is a thin wrapper that calls this with the
+    canonical metric name.
     """
     if not company:
         return {"status": "error", "error": "company is required"}
 
-    from skills.cvm.historical.metrics.pe import pe_history as _pe_history
+    spec = resolve_metric(metric_name)
 
     date_from = _months_ago(months)
     date_to = datetime.now().strftime("%Y-%m-%d")
 
-    series = _pe_history(company, date_from, date_to)
+    series = spec.history_fn(company, date_from, date_to)
 
     if not series:
         return {"status": "not_found",
                 "error": f"No price data for '{company}' in period {date_from} to {date_to}"}
 
-    # Count how many have valid PE
-    pe_count = sum(1 for s in series if s.get("pe") is not None)
+    # Count how many have a valid ratio
+    ratio_count = sum(1 for s in series if s.get(spec.ratio_key) is not None)
 
     result = {
         "status": "ok",
         "company": company,
-        "metric": "pe",
+        "metric": spec.name,
+        "per_share_label": spec.per_share_label,
+        "ratio_label": spec.ratio_label,
         "date_from": date_from,
         "date_to": date_to,
         "total_days": len(series),
-        "pe_days": pe_count,
+        f"{spec.ratio_key}_days": ratio_count,
         "series": series,
     }
 
     return add_freshness(result)
 
 
-# ── Mode: vpa_history ────────────────────────────────────────────────────────
+# ── Auto-generated <metric>_history modes ────────────────────────────────────
+# These are thin wrappers around _metric_history(). The MANIFEST in __init__.py
+# auto-generates entries for each registered metric. When you add a new metric,
+# a new <metric>_history function appears here automatically — but since Python
+# requires the function to exist at module level, we generate them dynamically.
 
-def vpa_history(company: str = "", months: int = 60) -> dict:
-    """Daily P/VPA time series for the last N months.
-
-    Args:
-        company: Ticker. Required.
-        months: Number of months of history. Default: 60 (5 years).
-    """
-    if not company:
-        return {"status": "error", "error": "company is required"}
-
-    from skills.cvm.historical.metrics.vpa import vpa_history as _vpa_history
-
-    date_from = _months_ago(months)
-    date_to = datetime.now().strftime("%Y-%m-%d")
-
-    series = _vpa_history(company, date_from, date_to)
-
-    if not series:
-        return {"status": "not_found",
-                "error": f"No price data for '{company}' in period {date_from} to {date_to}"}
-
-    # Count how many have valid VPA
-    vpa_count = sum(1 for s in series if s.get("vpa") is not None)
-
-    result = {
-        "status": "ok",
-        "company": company,
-        "metric": "vpa",
-        "date_from": date_from,
-        "date_to": date_to,
-        "total_days": len(series),
-        "vpa_days": vpa_count,
-        "series": series,
-    }
-
-    return add_freshness(result)
+def _make_metric_history_fn(metric_name: str):
+    """Factory: create a <metric>_history function for a registered metric."""
+    def _fn(company: str = "", months: int = 60) -> dict:
+        return _metric_history(company, metric_name, months)
+    _fn.__name__ = f"{metric_name}_history"
+    _fn.__qualname__ = f"{metric_name}_history"
+    _fn.__doc__ = (
+        f"Daily {resolve_metric(metric_name).per_share_label} + "
+        f"{resolve_metric(metric_name).ratio_label} time series "
+        f"for the last N months.\n\n"
+        f"Args:\n"
+        f"    company: Ticker. Required.\n"
+        f"    months: Number of months of history. Default: 60 (5 years).\n"
+    )
+    return _fn
 
 
-# ── Mode: ratio_history ──────────────────────────────────────────────────────
+# Generate lpa_history, vpa_history, etc. for every registered metric
+for _metric_name in list_metrics():
+    _fn = _make_metric_history_fn(_metric_name)
+    globals()[f"{_metric_name}_history"] = _fn
 
-def ratio_history(company: str = "", metric: str = "pe", months: int = 60) -> dict:
-    """Any metric over time. Currently: pe, vpa.
+
+# ── Mode: ratio_history (generic) ────────────────────────────────────────────
+
+def ratio_history(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
+    """Any metric over time. Accepts canonical names and aliases.
 
     Args:
         company: Ticker. Required.
-        metric: Metric name (pe, vpa). Default: pe.
+        metric: Metric name or alias (lpa, pe, pl, p/l, vpa, pvpa, p/vpa).
+                Default: lpa.
         months: Number of months. Default: 60.
     """
     if not company:
         return {"status": "error", "error": "company is required"}
 
-    metric = metric.strip().lower()
+    try:
+        spec = resolve_metric(metric)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
 
-    if metric == "pe":
-        return pe_history(company=company, months=months)
-    elif metric == "vpa":
-        return vpa_history(company=company, months=months)
-    else:
-        return {"status": "error",
-                "error": f"Unknown metric '{metric}'. Available: pe, vpa"}
+    return _metric_history(company, spec.name, months)
 
 
-# ── Mode: summary ────────────────────────────────────────────────────────────
+# ── Mode: summary (generic, metric-aware) ────────────────────────────────────
 
-def summary(company: str = "", metric: str = "pe", months: int = 60) -> dict:
+def summary(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
     """Current ratio vs 1Y/3Y/5Y average + min/max/percentile.
 
-    Tells you if a stock is cheap vs its own history.
+    Metric-aware: works for any registered metric. The current block includes
+    both the per-share value and the ratio, plus engine-specific components.
 
     Args:
         company: Ticker. Required.
-        metric: Metric name (pe, vpa). Default: pe.
-        months: History window for percentile. Default: 60.
+        metric: Metric name or alias. Default: lpa.
+        months: History window for percentile (always uses max(months, 60)).
     """
     if not company:
         return {"status": "error", "error": "company is required"}
 
-    metric = metric.strip().lower()
-
     try:
-        history_fn, value_key, label = _metric_dispatch(metric)
+        spec = resolve_metric(metric)
     except ValueError as e:
         return {"status": "error", "error": str(e)}
 
@@ -182,29 +147,30 @@ def summary(company: str = "", metric: str = "pe", months: int = 60) -> dict:
     date_from = _months_ago(max(months, 60))
     date_to = datetime.now().strftime("%Y-%m-%d")
 
-    series = history_fn(company, date_from, date_to)
+    series = spec.history_fn(company, date_from, date_to)
 
     if not series:
         return {"status": "not_found",
                 "error": f"No price data for '{company}'"}
 
-    # Extract ratio values (filter None and <= 0)
-    values = [s[value_key] for s in series
-              if s.get(value_key) is not None and s[value_key] > 0]
+    # Extract ratio values (filter None and <= 0) — percentile based on RATIO
+    ratio_key = spec.ratio_key
+    ratio_values = [s[ratio_key] for s in series
+                    if s.get(ratio_key) is not None and s[ratio_key] > 0]
 
-    if not values:
+    if not ratio_values:
         return {"status": "not_found",
-                "error": f"No valid {label} data for '{company}' "
+                "error": f"No valid {spec.ratio_label} data for '{company}' "
                          f"(possibly negative earnings/equity)"}
 
-    current_value = values[-1]
+    current_ratio = ratio_values[-1]
     current_date = series[-1]["date"]
 
-    # Compute averages for different windows
+    # Compute averages for different windows (based on ratio)
     def _avg(window_days: int) -> float | None:
         cutoff = (datetime.now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
-        vals = [s[value_key] for s in series
-                if s.get(value_key) is not None and s[value_key] > 0
+        vals = [s[ratio_key] for s in series
+                if s.get(ratio_key) is not None and s[ratio_key] > 0
                 and s["date"] >= cutoff]
         return sum(vals) / len(vals) if vals else None
 
@@ -212,19 +178,18 @@ def summary(company: str = "", metric: str = "pe", months: int = 60) -> dict:
     avg_3y = _avg(365 * 3)
     avg_5y = _avg(365 * 5)
 
-    # Percentile: what % of historical values are below the current value
-    sorted_values = sorted(values)
+    # Percentile: what % of historical ratio values are below the current ratio
+    sorted_values = sorted(ratio_values)
     percentile = None
     for i, v in enumerate(sorted_values):
-        if v >= current_value:
+        if v >= current_ratio:
             percentile = round(i / len(sorted_values) * 100, 1)
             break
 
-    # Min/max
-    min_value = min(values)
-    max_value = max(values)
+    min_value = min(ratio_values)
+    max_value = max(ratio_values)
 
-    # Interpretation
+    # Interpretation (based on ratio percentile)
     if percentile is not None:
         if percentile <= 25:
             interpretation = "cheap (below 25th percentile of history)"
@@ -235,24 +200,27 @@ def summary(company: str = "", metric: str = "pe", months: int = 60) -> dict:
     else:
         interpretation = "unknown"
 
-    # Build current block — include metric-specific extras
+    # Build current block — includes BOTH per-share value and ratio + components
     current_block = {
         "date": current_date,
-        metric: round(current_value, 2),
+        spec.per_share_key: (
+            round(series[-1].get(spec.per_share_key), 4)
+            if series[-1].get(spec.per_share_key) is not None else None
+        ),
+        spec.ratio_key: round(current_ratio, 2),
         "price": series[-1].get("price"),
     }
-    # Include the engine-specific fields from the series entry
-    if metric == "pe":
-        current_block["ttm_earnings"] = series[-1].get("ttm_earnings")
-        current_block["shares"] = series[-1].get("shares")
-    elif metric == "vpa":
-        current_block["pl"] = series[-1].get("pl")
-        current_block["shares"] = series[-1].get("shares")
+    # Include engine-specific fields from the series entry
+    for key in ("ttm_earnings", "pl", "shares"):
+        if key in series[-1]:
+            current_block[key] = series[-1][key]
 
     result = {
         "status": "ok",
         "company": company,
-        "metric": metric,
+        "metric": spec.name,
+        "per_share_label": spec.per_share_label,
+        "ratio_label": spec.ratio_label,
         "current": current_block,
         "averages": {
             "1y": round(avg_1y, 2) if avg_1y else None,
@@ -265,7 +233,7 @@ def summary(company: str = "", metric: str = "pe", months: int = 60) -> dict:
         },
         "percentile": percentile,
         "interpretation": interpretation,
-        "data_points": len(values),
+        "data_points": len(ratio_values),
         "date_range": {"from": date_from, "to": date_to},
     }
 

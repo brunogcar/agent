@@ -1,9 +1,11 @@
 """adapters/historical.py — Flatten historical skill JSON → chart/table data.
 
+Auto-generated metric chart adapters + metric-aware summary adapter.
+
 Adapters:
-  historical_pe_chart    — line chart of P/L over time
-  historical_vpa_chart   — line chart of P/VPA over time
-  historical_summary     — KPI strip + summary table (metric-aware: pe or vpa)
+  historical_lpa_chart   — dual-dataset chart: LPA (per-share) + P/L (ratio)
+  historical_vpa_chart   — dual-dataset chart: VPA (per-share) + P/VPA (ratio)
+  historical_summary     — KPI strip + summary table (metric-aware)
 """
 from __future__ import annotations
 
@@ -11,110 +13,137 @@ from tools.report_ops.adapters import register_adapter, _ok, _error_table
 from tools.report_ops.formats import apply_fmt
 
 
-@register_adapter("historical_pe_chart")
-def pe_chart(result: dict) -> dict:
-    """Flatten historical.pe_history result into a multi-series chart config.
+# ── Metric chart adapter factory ─────────────────────────────────────────────
+# Each metric chart shows BOTH the per-share value and the ratio as separate
+# datasets. The per-share value and ratio often have different scales (e.g.,
+# VPA ~25 vs P/VPA ~1.5), so we emit them as two datasets. The chart builder
+# can render them on dual axes if configured.
 
-    Produces the multi-series chart data shape:
-        {"x": [dates], "datasets": [{"label": "P/L", "data": [values]}]}
-    None P/L values are converted to null (Chart.js handles gaps).
-    """
-    if not _ok(result):
-        return _error_table(result, title="Historical P/L")
+def _make_metric_chart_adapter(adapter_name: str, metric_name: str,
+                                per_share_key: str, per_share_label: str,
+                                ratio_key: str, ratio_label: str):
+    """Factory: create a chart adapter for a specific metric."""
+    def _adapter(result: dict) -> dict:
+        if not _ok(result):
+            return _error_table(result, title=f"Historical {ratio_label}")
 
-    series = result.get("series") or []
-    if not series:
-        return _error_table(result, title="Historical P/L")
+        series = result.get("series") or []
+        if not series:
+            return _error_table(result, title=f"Historical {ratio_label}")
 
-    x_labels = [s["date"] for s in series]
-    pe_data = [s.get("pe") for s in series]  # None for gaps
+        x_labels = [s["date"] for s in series]
+        per_share_data = [s.get(per_share_key) for s in series]  # None for gaps
+        ratio_data = [s.get(ratio_key) for s in series]          # None for gaps
 
-    return {
-        "x": x_labels,
-        "datasets": [{"label": "P/L", "data": pe_data}],
-    }
+        return {
+            "x": x_labels,
+            "datasets": [
+                {"label": per_share_label, "data": per_share_data},
+                {"label": ratio_label, "data": ratio_data},
+            ],
+        }
+    _adapter.__name__ = adapter_name
+    _adapter.__qualname__ = adapter_name
+    _adapter.__doc__ = (
+        f"Flatten historical.{metric_name}_history result into a dual-dataset "
+        f"chart: {per_share_label} (per-share) + {ratio_label} (ratio)."
+    )
+    return _adapter
 
 
-@register_adapter("historical_vpa_chart")
-def vpa_chart(result: dict) -> dict:
-    """Flatten historical.vpa_history result into a multi-series chart config.
+# ── Auto-register chart adapters for all registered metrics ──────────────────
+# This auto-generates historical_lpa_chart, historical_vpa_chart, etc.
+# When a new metric is registered, its chart adapter appears here automatically.
 
-    Produces the multi-series chart data shape:
-        {"x": [dates], "datasets": [{"label": "P/VPA", "data": [values]}]}
-    None P/VPA values are converted to null (Chart.js handles gaps).
-    """
-    if not _ok(result):
-        return _error_table(result, title="Historical P/VPA")
+from skills.cvm.historical.metrics._registry import METRICS  # noqa: E402
 
-    series = result.get("series") or []
-    if not series:
-        return _error_table(result, title="Historical P/VPA")
+for _name in sorted(METRICS.keys()):
+    _spec = METRICS[_name]
+    _adapter_fn = _make_metric_chart_adapter(
+        adapter_name=f"historical_{_name}_chart",
+        metric_name=_name,
+        per_share_key=_spec.per_share_key,
+        per_share_label=_spec.per_share_label,
+        ratio_key=_spec.ratio_key,
+        ratio_label=_spec.ratio_label,
+    )
+    # Register the adapter in the ADAPTERS dict
+    from tools.report_ops.adapters import ADAPTERS  # noqa: E402
+    ADAPTERS[f"historical_{_name}_chart"] = _adapter_fn
 
-    x_labels = [s["date"] for s in series]
-    vpa_data = [s.get("vpa") for s in series]  # None for gaps
 
-    return {
-        "x": x_labels,
-        "datasets": [{"label": "P/VPA", "data": vpa_data}],
-    }
-
+# ── Summary adapter (metric-aware, reads result["metric"]) ───────────────────
 
 @register_adapter("historical_summary")
 def summary(result: dict) -> dict:
     """Flatten historical.summary result into KPI strip + summary table.
 
-    Metric-aware: reads result["metric"] ("pe" or "vpa") and renders the
-    appropriate labels and engine-specific rows.
+    Metric-aware: reads result["metric"] and result["per_share_label"] /
+    result["ratio_label"] to render the appropriate labels. Displays BOTH
+    the per-share value and the ratio, plus engine-specific components.
     """
     if not _ok(result):
         return _error_table(result, title="Historical Summary")
 
-    metric = (result.get("metric") or "pe").lower()
+    metric_name = result.get("metric", "lpa")
     current = result.get("current", {})
     averages = result.get("averages", {})
     rng = result.get("range", {})
 
-    # Metric-specific labels + value keys
-    if metric == "vpa":
-        label = "P/VPA"
-        value_key = "vpa"
-    else:
-        label = "P/L"
-        value_key = "pe"
+    # Get labels from the result (set by the registry-driven summary())
+    per_share_label = result.get("per_share_label", "LPA")
+    ratio_label = result.get("ratio_label", "P/L")
 
-    # KPI strip
+    # Find the per-share key and ratio key from the registry
+    from skills.cvm.historical.metrics._registry import resolve_metric
+    try:
+        spec = resolve_metric(metric_name)
+        per_share_key = spec.per_share_key
+        ratio_key = spec.ratio_key
+    except ValueError:
+        # Fallback for unknown metrics
+        per_share_key = "lpa"
+        ratio_key = "pe"
+
+    # KPI strip — shows both per-share value and ratio + averages + percentile
     kpis = [
-        {"label": f"Current {label}", "value": current.get(value_key), "format": "num"},
-        {"label": "1Y Average",  "value": averages.get("1y"), "format": "num"},
-        {"label": "3Y Average",  "value": averages.get("3y"), "format": "num"},
-        {"label": "5Y Average",  "value": averages.get("5y"), "format": "num"},
-        {"label": "Percentile",  "value": result.get("percentile"), "format": "num"},
+        {"label": f"Current {per_share_label}", "value": current.get(per_share_key), "format": "num"},
+        {"label": f"Current {ratio_label}",     "value": current.get(ratio_key),     "format": "num"},
+        {"label": f"1Y Average {ratio_label}",  "value": averages.get("1y"),         "format": "num"},
+        {"label": f"3Y Average {ratio_label}",  "value": averages.get("3y"),         "format": "num"},
+        {"label": f"5Y Average {ratio_label}",  "value": averages.get("5y"),         "format": "num"},
+        {"label": "Percentile",                 "value": result.get("percentile"),   "format": "num"},
     ]
 
-    # Summary table — metric-aware rows
+    # Summary table — metric-aware rows showing per-share + ratio + components
     rows = [
-        [f"Current {label}",       apply_fmt(current.get(value_key), "num")],
-        ["Current Price",          apply_fmt(current.get("price"), "brl_full")],
+        [f"Current {ratio_label}",      apply_fmt(current.get(ratio_key), "num")],
+        [f"Current {per_share_label}",  apply_fmt(current.get(per_share_key), "num")],
+        ["Current Price",               apply_fmt(current.get("price"), "brl_full")],
     ]
-    if metric == "vpa":
+
+    # Engine-specific components
+    if "ttm_earnings" in current:
+        rows.append(["TTM Earnings", apply_fmt(current.get("ttm_earnings"), "brl")])
+    if "pl" in current:
         rows.append(["Patrimônio Líquido", apply_fmt(current.get("pl"), "brl")])
-    else:
-        rows.append(["TTM Earnings",       apply_fmt(current.get("ttm_earnings"), "brl")])
+    if "shares" in current:
+        rows.append(["Shares", apply_fmt(current.get("shares"), "int")])
+
     rows.extend([
-        ["Shares",                 apply_fmt(current.get("shares"), "int")],
-        [f"1Y Average {label}",    apply_fmt(averages.get("1y"), "num")],
-        [f"3Y Average {label}",    apply_fmt(averages.get("3y"), "num")],
-        [f"5Y Average {label}",    apply_fmt(averages.get("5y"), "num")],
-        [f"Min {label} (5Y)",      apply_fmt(rng.get("min"), "num")],
-        [f"Max {label} (5Y)",      apply_fmt(rng.get("max"), "num")],
-        ["Percentile",             str(result.get("percentile", "")) + "%"],
-        ["Interpretation",         result.get("interpretation", "")],
+        [f"1Y Average {ratio_label}",   apply_fmt(averages.get("1y"), "num")],
+        [f"3Y Average {ratio_label}",   apply_fmt(averages.get("3y"), "num")],
+        [f"5Y Average {ratio_label}",   apply_fmt(averages.get("5y"), "num")],
+        [f"Min {ratio_label} (5Y)",     apply_fmt(rng.get("min"), "num")],
+        [f"Max {ratio_label} (5Y)",     apply_fmt(rng.get("max"), "num")],
+        ["Percentile",                  str(result.get("percentile", "")) + "%"],
+        ["Interpretation",              result.get("interpretation", "")],
     ])
 
     return {
         "company": result.get("company", ""),
         "sections": [{
-            "title": f"Historical {label} Summary — {result.get('company','')}",
+            "title": f"Historical {ratio_label} Summary — {result.get('company','')}",
             "columns": ["Metric", "Value"],
             "rows": rows,
             "formats": {"Metric": "text", "Value": "text"},
