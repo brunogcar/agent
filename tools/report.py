@@ -51,6 +51,7 @@ from tools.report_ops.contracts import report_ok, report_fail
         ' screener_sector (sector peers table + medians)',
         ' insider_history | insider_by_role | insider_summary',
         ' governance_practices | governance_score | governance_by_chapter',
+  ' historical_pe_chart | historical_summary',
     ],
 )
 def report(
