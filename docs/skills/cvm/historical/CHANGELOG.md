@@ -41,7 +41,7 @@
 | # | Feature | Notes | Priority |
 |---|---------|-------|----------|
 | 1 | **EV/EBITDA metric** (ev_ebitda) | Needs balance_sheet engine (debt, cash, EBIT, D&A). 4 DFP/ITR accounts. TTM for flows, snapshot for balances. | P1 |
-| 2 | **PSR metric** (psr) | Needs revenue engine (DFP/ITR DRE codigo 3.01, TTM derivation like earnings). | P2 |
+| ~~2~~ | ~~PSR metric~~ | ~~Done in v1.4 (rps metric with psr alias).~~ | ✅ |
 | 3 | **Dividend Yield metric** (dy) | Needs dividends engine (B3 dividends API + DPA from DFP). | P2 |
 | 4 | **Backtest skill** | Reuse historical engines + metrics. `skills/cvm/backtest/`. Signal generation + return computation. | P3 |
 | 5 | **Dual-axis charts** | Chart adapters currently emit 2 datasets. Configure dual-axis (yAxisID) when scales differ significantly (e.g., VPA ~25 vs P/VPA ~1.5). | P3 |

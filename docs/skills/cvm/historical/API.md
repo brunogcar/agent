@@ -102,6 +102,34 @@ Returns:
 - `dpa: 0.0` → company exists but pays no dividends (valid, dy = 0.0)
 - `payout: null` → LPA <= 0 (negative earnings — payout meaningless) or DPA is None
 
+### `mode="rps_history"` (auto-generated)
+Daily RPS + PSR time series for the last N months.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | B3 ticker |
+| `months` | `int` | `60` | Number of months of history (60 = 5 years) |
+
+Returns:
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "metric": "rps",
+  "per_share_label": "RPS",
+  "ratio_label": "PSR",
+  "date_from": "2019-07-26",
+  "date_to": "2024-07-26",
+  "total_days": 1200,
+  "psr_days": 1100,
+  "series": [
+    {"date": "2019-07-26", "price": 28.5, "ttm_rev": 250e9, "shares": 13e9, "rps": 19.23, "psr": 1.48},
+    ...
+  ],
+  "data_freshness": {...}
+}
+```
+
 ### `mode="ratio_history"` (generic)
 Any metric over time. Accepts canonical names and aliases.
 
@@ -118,10 +146,11 @@ Any metric over time. Accepts canonical names and aliases.
 | `lpa` | `pe`, `pl`, `p/l` | LPA (earnings/shares) | P/L (price/LPA) | — |
 | `vpa` | `pvpa`, `p/vpa` | VPA (pl/shares) | P/VPA (price/VPA) | — |
 | `dpa` | `dy`, `dividend_yield`, `yld`, `payout` | DPA (dividends TTM) | Div Yield (DPA/price) | Payout (DPA/LPA) |
+| `rps` | `psr`, `p/sr`, `price_sales` | RPS (revenue/shares) | PSR (price/RPS) | — |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
-- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['dpa', 'lpa', 'vpa']"}`
+- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['dpa', 'lpa', 'rps', 'vpa']"}`
 
 ### `mode="summary"` (generic, metric-aware)
 Current ratio vs 1Y/3Y/5Y average + min/max/percentile. Includes BOTH per-share value and ratio in the result.
@@ -227,6 +256,7 @@ Chart adapters are auto-registered for each metric. The summary adapter is metri
 | `historical_lpa_chart` | lpa_history | Dual-dataset line chart: LPA (per-share) + P/L (ratio) |
 | `historical_vpa_chart` | vpa_history | Dual-dataset line chart: VPA (per-share) + P/VPA (ratio) |
 | `historical_dpa_chart` | dpa_history | Dual-dataset line chart: DPA (per-share) + Div Yield (ratio) |
+| `historical_rps_chart` | rps_history | Dual-dataset line chart: RPS (per-share) + PSR (ratio) |
 | `historical_summary` | summary | KPI strip (per-share + ratio + averages + percentile) + summary table. **Metric-aware**: renders TTM Earnings for lpa/dpa, PL for vpa. |
 
 ```python
@@ -284,6 +314,12 @@ dividends_at(ticker: str, date: str) -> float | None       # DPA TTM <= date (R$
 dividends_periods(ticker: str) -> list[dict]               # [{date, dpa}, ...] — one per payment date
 ```
 
+### `engines/revenue.py`
+```python
+revenue_at(company: str, date: str) -> float | None        # TTM net revenue <= date (BRL)
+revenue_periods(company: str) -> list[dict]                # [{date, ttm_rev}, ...]
+```
+
 ---
 
 ## 📐 Metric API (for direct import)
@@ -310,6 +346,13 @@ dpa_at(ticker: str, date: str) -> float | None             # DPA = dividends TTM
 dy_at(ticker: str, date: str) -> float | None              # Div Yield = DPA / price (ratio)
 payout_at(ticker: str, date: str) -> float | None          # Payout = DPA / LPA (bonus ratio)
 dpa_history(ticker: str, date_from: str, date_to: str) -> list[dict]   # [{date, price, dpa, dy, payout, ttm_earnings, shares, lpa}, ...]
+```
+
+### `metrics/rps.py`
+```python
+rps_at(company: str, date: str) -> float | None            # RPS = revenue / shares (per-share)
+psr_at(company: str, date: str) -> float | None            # PSR = price / RPS (ratio)
+rps_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, price, ttm_rev, shares, rps, psr}, ...]
 ```
 
 ---

@@ -18,14 +18,15 @@ This skill is the **pattern template** for auto-discovery + registry architectur
 10. **Never rewrite entire files** — surgical edits only.
 11. **Never print to stdout** — MCP stdio corruption.
 12. **Never put auto-discovery code in `engines/__init__.py` or `metrics/__init__.py`** — auto-discovery is in the CENTRAL `_registry.py` (top level). The `__init__.py` files in `engines/` and `metrics/` are minimal docstrings.
-13. **Never import metric modules at the top of `historical.py`** — use the registry (`resolve_metric()`). The registry handles lazy resolution.
-14. **Never manually edit `__init__.py` to add a `<metric>_history` mode** — the MANIFEST auto-generates from the registry. Adding a metric = drop a file + `register_metric()`.
-15. **Never manually edit `adapters/historical.py` to add a chart adapter** — chart adapters auto-register from the registry. The `historical_<metric>_chart` adapter appears automatically.
-16. **Never put non-metric files in `metrics/`** — auto-discovery imports everything (except `__init__.py`). Utility modules will break the registry. The `_registry.py` is at the TOP level, not in `metrics/`.
-17. **Never put non-engine files in `engines/`** — auto-discovery imports everything (except `__init__.py`). Utility modules will be imported as engines.
-18. **Never make `MetricSpec` or `EngineSpec` frozen** — tests need to monkeypatch `spec.history_fn` / `spec.at_fn`. Use `@dataclass` (not `@dataclass(frozen=True)`).
-19. **Never mock the module function in tests** — `_metric_history()` calls `spec.history_fn` (captured at registration time). Mock the registry spec: `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`.
-20. **Never re-run auto-discovery** — `_auto_discover()` is idempotent (uses a `_done` flag). Don't call it manually; it runs once at import time.
+13. **Never edit `engines/__init__.py` or `metrics/__init__.py` to add an engine/metric to a manual inventory list** — there is NO manual inventory. The registry (`list_engines()` / `list_metrics()`) is the source of truth. Adding a file + `register_*()` is all you need. Editing `__init__.py` for inventory defeats the purpose of auto-discovery.
+14. **Never import metric modules at the top of `historical.py`** — use the registry (`resolve_metric()`). The registry handles lazy resolution.
+15. **Never manually edit `__init__.py` to add a `<metric>_history` mode** — the MANIFEST auto-generates from the registry. Adding a metric = drop a file + `register_metric()`.
+16. **Never manually edit `adapters/historical.py` to add a chart adapter** — chart adapters auto-register from the registry. The `historical_<metric>_chart` adapter appears automatically.
+17. **Never put non-metric files in `metrics/`** — auto-discovery imports everything (except `__init__.py`). Utility modules will break the registry. The `_registry.py` is at the TOP level, not in `metrics/`.
+18. **Never put non-engine files in `engines/`** — auto-discovery imports everything (except `__init__.py`). Utility modules will be imported as engines.
+19. **Never make `MetricSpec` or `EngineSpec` frozen** — tests need to monkeypatch `spec.history_fn` / `spec.at_fn`. Use `@dataclass` (not `@dataclass(frozen=True)`).
+20. **Never mock the module function in tests** — `_metric_history()` calls `spec.history_fn` (captured at registration time). Mock the registry spec: `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`.
+21. **Never re-run auto-discovery** — `_auto_discover()` is idempotent (uses a `_done` flag). Don't call it manually; it runs once at import time.
 
 ---
 

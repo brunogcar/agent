@@ -66,7 +66,7 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 29
+        assert len(names) == 30
 
     def test_expected_adapter_names(self):
         expected = {
@@ -83,6 +83,7 @@ class TestRegistry:
             "insider_history", "insider_by_role", "insider_summary",
             "governance_practices", "governance_score", "governance_by_chapter",
             "historical_lpa_chart", "historical_vpa_chart", "historical_dpa_chart",
+            "historical_rps_chart",
             "historical_summary",
         }
         assert expected == set(list_adapters())
@@ -666,3 +667,69 @@ class TestHistoricalSummaryDpaMetric:
         assert "DPA" in rows_text
         assert "Div Yield" in rows_text
         assert "TTM Earnings" in rows_text  # dpa uses earnings for payout
+
+
+class TestHistoricalRpsChartAdapter:
+    def test_rps_chart_dual_dataset_dual_axis(self):
+        """rps_chart should produce TWO datasets with yAxisID for dual-axis."""
+        data = {
+            "status": "ok",
+            "series": [
+                {"date": "2024-01-15", "rps": 19.23, "psr": 1.82},
+                {"date": "2024-02-15", "rps": 19.23, "psr": None},  # gap
+                {"date": "2024-03-15", "rps": 20.00, "psr": 1.90},
+            ],
+        }
+        out = apply_adapter("historical_rps_chart", data)
+        assert out["x"] == ["2024-01-15", "2024-02-15", "2024-03-15"]
+        assert len(out["datasets"]) == 2  # dual dataset
+        # Dataset 0 = per-share value (RPS) on left axis
+        assert out["datasets"][0]["label"] == "RPS"
+        assert out["datasets"][0]["data"] == [19.23, 19.23, 20.00]
+        assert out["datasets"][0]["yAxisID"] == "y"  # left axis
+        # Dataset 1 = ratio (PSR) on right axis
+        assert out["datasets"][1]["label"] == "PSR"
+        assert out["datasets"][1]["data"] == [1.82, None, 1.90]
+        assert out["datasets"][1]["yAxisID"] == "y1"  # right axis (dual-axis)
+
+    def test_rps_chart_error_result(self):
+        out = apply_adapter("historical_rps_chart",
+                            {"status": "not_found", "error": "no data"})
+        assert "sections" in out  # error table
+
+    def test_rps_chart_empty_series(self):
+        out = apply_adapter("historical_rps_chart",
+                            {"status": "ok", "series": []})
+        assert "sections" in out  # error table
+
+
+class TestHistoricalSummaryRpsMetric:
+    def test_summary_rps_metric(self):
+        """Summary adapter with metric=rps should render RPS + PSR + TTM Revenue rows."""
+        data = {
+            "status": "ok",
+            "company": "PETR4",
+            "metric": "rps",
+            "per_share_label": "RPS",
+            "ratio_label": "PSR",
+            "current": {
+                "date": "2024-07-26", "rps": 21.54, "psr": 1.79, "price": 38.5,
+                "ttm_rev": 280e9, "shares": 13e9,
+            },
+            "averages": {"1y": 1.85, "3y": 1.92, "5y": 2.10},
+            "range": {"min": 1.50, "max": 2.80},
+            "percentile": 40.0,
+            "interpretation": "fair (between 25th-75th percentile of history)",
+            "data_points": 1100,
+        }
+        out = apply_adapter("historical_summary", data)
+        # KPI strip — should have both RPS and PSR
+        kpi_labels = [k["label"] for k in out["kpis"]]
+        assert "Current RPS" in kpi_labels
+        assert "Current PSR" in kpi_labels
+        # Summary table — should mention RPS, PSR, and TTM revenue field
+        rows_text = " ".join(str(r) for r in out["sections"][0]["rows"])
+        assert "RPS" in rows_text
+        assert "PSR" in rows_text
+        # The TTM revenue should be in the current block (engine-specific field)
+        # The adapter includes engine-specific fields (ttm_rev, pl, ttm_earnings, shares)
