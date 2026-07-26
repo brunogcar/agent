@@ -139,6 +139,41 @@ def _sync_one(ticker: str, force: bool, trace_id: str) -> dict:
                     "cnpj": existing["cnpj"],
                 }
 
+        # [v1.3] 1b. Try FCA first (local, no network) — PRIMARY source
+        fca_result = _try_fca_resolution(ticker)
+        if fca_result.get("cnpj"):
+            cnpj = fca_result["cnpj"]
+            cd_cvm = fca_result.get("cd_cvm", "")
+            # Try CAD for names + sector (using FCA-resolved CNPJ)
+            cad_row = _cad_lookup_by_cnpj(cnpj)
+            if cad_row:
+                _upsert(conn, ticker, issuing=ticker[:4], cd_cvm=cd_cvm or cad_row.get("CD_CVM",""),
+                        trading_name="", cnpj=cnpj,
+                        denom_social=cad_row.get("DENOM_SOCIAL", ""),
+                        denom_comerc=cad_row.get("DENOM_COMERC", ""),
+                        sit=cad_row.get("SIT", ""),
+                        setor_ativ=cad_row.get("SETOR_ATIV", ""),
+                        tp_merc=cad_row.get("TP_MERC", ""), now=now)
+            else:
+                # FCA has CNPJ but CAD miss — store what we have
+                _upsert(conn, ticker, issuing=ticker[:4], cd_cvm=cd_cvm,
+                        trading_name="", cnpj=cnpj,
+                        denom_social=fca_result.get("nome_empresarial", ""),
+                        denom_comerc="", sit="",
+                        setor_ativ=fca_result.get("setor_atividade", ""),
+                        tp_merc="", now=now)
+            _log(conn, now, ticker, "linked_fca", cd_cvm, cnpj,
+                 f"via FCA (local, no network)")
+            conn.commit()
+            _progress(f"[bridge] {ticker}: FCA resolved cnpj={cnpj} cd_cvm={cd_cvm}")
+            return {
+                "status": "ok", "ticker": ticker, "cd_cvm": cd_cvm,
+                "cnpj": cnpj, "source": "fca",
+                "denom_social": fca_result.get("nome_empresarial", ""),
+                "trading_name": "",
+                "sit": cad_row.get("SIT", "") if cad_row else "",
+            }
+
         # 2. Ensure dividends data (sync checks its own cache)
         cd_cvm, trading_name, div_status, div_detail = _ensure_dividends(
             ticker, force=force, trace_id=trace_id,
@@ -336,6 +371,68 @@ def _cad_lookup_by_cnpj(cnpj: str) -> dict | None:
     if not company:
         return None
     return company
+
+
+# ── FCA resolution [v1.3] ────────────────────────────────────────────────────
+
+def _try_fca_resolution(ticker: str) -> dict:
+    """[v1.3] Resolve a ticker via FCA (fca.db) — local, no network.
+
+    FCA's fca_valor_mobiliario maps Codigo_Negociacao (ticker) -> CNPJ.
+    fca_geral provides CD_CVM + names + sector.
+
+    Returns:
+        {"cnpj": "...", "cd_cvm": "...", "nome_empresarial": "...",
+         "setor_atividade": "..."} on success
+        {"cnpj": ""} on failure (FCA not synced or ticker not found)
+    """
+    from data_sources.cvm._db import fca_db_path, cnpj_digits as _cnpj_digits
+    fca = fca_db_path()
+    if not fca.exists():
+        return {"cnpj": ""}
+
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{fca}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+
+        # Get CNPJ from fca_valor_mobiliario (latest filing)
+        vm_row = conn.execute(
+            "SELECT CNPJ_Companhia FROM fca_valor_mobiliario "
+            "WHERE UPPER(Codigo_Negociacao) = ? "
+            "ORDER BY Data_Referencia DESC LIMIT 1",
+            (ticker.strip().upper(),),
+        ).fetchone()
+
+        if not vm_row or not vm_row["CNPJ_Companhia"]:
+            conn.close()
+            return {"cnpj": ""}
+
+        cnpj = _cnpj_digits(vm_row["CNPJ_Companhia"])
+        if not cnpj:
+            conn.close()
+            return {"cnpj": ""}
+
+        # Get CD_CVM + names + sector from fca_geral (latest filing for this CNPJ)
+        g_row = conn.execute(
+            "SELECT Codigo_CVM, Nome_Empresarial, Setor_Atividade, "
+            "Situacao_Emissor FROM fca_geral "
+            "WHERE REPLACE(REPLACE(REPLACE(CNPJ_Companhia,'.',''),'/',''),'-','') = ? "
+            "ORDER BY Data_Referencia DESC LIMIT 1",
+            (cnpj,),
+        ).fetchone()
+
+        conn.close()
+
+        return {
+            "cnpj": cnpj,
+            "cd_cvm": g_row["Codigo_CVM"] if g_row and g_row["Codigo_CVM"] else "",
+            "nome_empresarial": g_row["Nome_Empresarial"] if g_row else "",
+            "setor_atividade": g_row["Setor_Atividade"] if g_row else "",
+            "situacao": g_row["Situacao_Emissor"] if g_row else "",
+        }
+    except Exception:
+        return {"cnpj": ""}
 
 
 # ── ISIN fallback ────────────────────────────────────────────────────────────

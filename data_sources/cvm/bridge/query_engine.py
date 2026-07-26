@@ -84,11 +84,24 @@ def status() -> dict:
         with_cvm = conn.execute(
             "SELECT COUNT(*) as n FROM ticker_map WHERE cd_cvm != ''"
         ).fetchone()["n"]
+        # [v1.3.1] Count ALL linked actions (linked + linked_fca + linked_isin)
         linked = conn.execute(
-            "SELECT COUNT(*) as n FROM sync_log WHERE action='linked'"
+            "SELECT COUNT(*) as n FROM sync_log WHERE action LIKE 'linked%'"
+        ).fetchone()["n"]
+        linked_fca = conn.execute(
+            "SELECT COUNT(*) as n FROM sync_log WHERE action='linked_fca'"
+        ).fetchone()["n"]
+        linked_isin = conn.execute(
+            "SELECT COUNT(*) as n FROM sync_log WHERE action='linked_isin'"
         ).fetchone()["n"]
         no_cad = conn.execute(
             "SELECT COUNT(*) as n FROM sync_log WHERE action='no_cad'"
+        ).fetchone()["n"]
+        no_cvm = conn.execute(
+            "SELECT COUNT(*) as n FROM sync_log WHERE action='no_cvm'"
+        ).fetchone()["n"]
+        errors = conn.execute(
+            "SELECT COUNT(*) as n FROM sync_log WHERE action='error'"
         ).fetchone()["n"]
 
         last = conn.execute(
@@ -103,7 +116,15 @@ def status() -> dict:
             "with_cnpj": with_cnpj,
             "with_cd_cvm": with_cvm,
             "cnpj_coverage_pct": round(with_cnpj / total * 100, 1) if total else 0,
-            "log": {"linked": linked, "no_cad": no_cad},
+            "cvm_coverage_pct": round(with_cvm / total * 100, 1) if total else 0,
+            "log": {
+                "linked_total": linked,
+                "linked_fca": linked_fca,
+                "linked_isin": linked_isin,
+                "no_cad": no_cad,
+                "no_cvm": no_cvm,
+                "errors": errors,
+            },
             "last_sync": {
                 "synced_at": last["synced_at"] if last else "",
                 "ticker": last["ticker"] if last else "",

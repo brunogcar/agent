@@ -136,6 +136,18 @@ def _patch_cad(monkeypatch, mock_lookup):
     monkeypatch.setattr("data_sources.cvm.cad.query_engine.lookup", mock_lookup)
 
 
+def _patch_fca_miss(monkeypatch):
+    """[v1.3] Mock _try_fca_resolution to return empty — simulates FCA not synced.
+
+    Without this, tests running on a machine with a real fca.db will have FCA
+    resolve the ticker before the mocked dividends/CAD/ISIN paths are reached.
+    """
+    monkeypatch.setattr(
+        "data_sources.cvm.bridge.sync_engine._try_fca_resolution",
+        lambda ticker: {"cnpj": ""},
+    )
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # SYNC ENGINE TESTS
 # ════════════════════════════════════════════════════════════════════════════
@@ -145,6 +157,7 @@ class TestBridgeSync:
 
     def test_sync_single_ticker_success(self, bridge_db, monkeypatch):
         """Full success: dividends ok + CAD ok -> bridge.db has full row."""
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise dividends path
         m_sync, m_info = _mock_dividends_ok("9512", "PETROBRAS")
         _patch_dividends(monkeypatch, m_sync, m_info)
         _patch_cad(monkeypatch, _mock_cad_ok(
@@ -194,6 +207,7 @@ class TestBridgeSync:
 
     def test_sync_force_re_fetches(self, bridge_db, monkeypatch):
         """force=True re-fetches even if already in bridge.db."""
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise dividends path
         _insert_bridge_row(bridge_db, "PETR4", "PETR", "OLD", "OLDNAME",
                            "00000000000000", "OLD", "OLD", "ATIVO", "", "", "2020-01-01")
 
@@ -217,6 +231,7 @@ class TestBridgeSync:
 
     def test_sync_no_code_cvm(self, bridge_db, monkeypatch):
         """Dividends ok but no codeCVM -> 'no_cvm' logged, partial row."""
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise dividends path
         m_sync, m_info = _mock_dividends_no_cvm()
         _patch_dividends(monkeypatch, m_sync, m_info)
         _patch_cad(monkeypatch, _mock_cad_ok(
@@ -239,6 +254,7 @@ class TestBridgeSync:
 
     def test_sync_cad_miss(self, bridge_db, monkeypatch):
         """Dividends returns codeCVM but CAD doesn't have it -> 'no_cad', partial."""
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise dividends path
         m_sync, m_info = _mock_dividends_ok("99999", "UNKNOWN")
         _patch_dividends(monkeypatch, m_sync, m_info)
         _patch_cad(monkeypatch, _mock_cad_miss())
@@ -262,6 +278,7 @@ class TestBridgeSync:
 
     def test_sync_dividends_error(self, bridge_db, monkeypatch):
         """Dividends sync fails -> bridge tries ISIN fallback -> if that fails too, error."""
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise dividends+ISIN path
         m_sync, m_info = _mock_dividends_error()
         _patch_dividends(monkeypatch, m_sync, m_info)
         _patch_cad(monkeypatch, _mock_cad_ok("x", "y", "z"))
@@ -278,6 +295,7 @@ class TestBridgeSync:
 
     def test_sync_multiple_tickers(self, bridge_db, monkeypatch):
         """List of tickers -> aggregated results."""
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise dividends path
         m_sync, m_info = _mock_dividends_ok("9512", "PETROBRAS")
         _patch_dividends(monkeypatch, m_sync, m_info)
         _patch_cad(monkeypatch, _mock_cad_ok(
@@ -301,6 +319,7 @@ class TestBridgeSync:
 
     def test_sync_cad_file_not_found(self, bridge_db, monkeypatch):
         """CAD raises FileNotFoundError -> treated as 'no_cad' (graceful)."""
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise dividends path
         m_sync, m_info = _mock_dividends_ok("9512", "PETROBRAS")
         _patch_dividends(monkeypatch, m_sync, m_info)
         def mock_lookup(cnpj="", cd_cvm="", name="", full=False):
@@ -336,6 +355,7 @@ class TestBridgeISINFallback:
     """Test the ISIN fallback path in sync_engine (v1.1)."""
 
     def test_isin_fallback_success(self, bridge_db, monkeypatch):
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise ISIN path
         """Dividends returns no codeCVM -> ISIN fallback resolves CNPJ -> CAD by cnpj."""
         # Dividends: ok but no codeCVM
         m_sync, m_info = _mock_dividends_no_cvm()
@@ -377,6 +397,7 @@ class TestBridgeISINFallback:
         assert log["action"] == "linked_isin"
 
     def test_isin_fallback_no_isin_in_dividends(self, bridge_db, monkeypatch):
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise ISIN path
         """Dividends returns no codeCVM + no ISIN in dividends.db -> ISIN fallback fails."""
         m_sync, m_info = _mock_dividends_no_cvm()
         _patch_dividends(monkeypatch, m_sync, m_info)
@@ -394,6 +415,7 @@ class TestBridgeISINFallback:
         assert "ISIN fallback failed" in result["error"] or "no codeCVM" in result["error"]
 
     def test_isin_fallback_cad_miss(self, bridge_db, monkeypatch):
+        _patch_fca_miss(monkeypatch)  # [v1.3] FCA not synced -> exercise ISIN path
         """ISIN resolves CNPJ but CAD doesn't have it -> store ticker+cnpj, no_cad."""
         m_sync, m_info = _mock_dividends_no_cvm()
         _patch_dividends(monkeypatch, m_sync, m_info)
@@ -791,9 +813,16 @@ class TestBridgeResolver:
             conn.close()
 
     def test_resolver_no_bridge_db(self, tmp_path, monkeypatch):
-        """bridge.db doesn't exist -> _resolve_via_bridge returns (None, None)."""
+        """bridge.db doesn't exist AND FCA doesn't exist -> _resolve_via_bridge returns (None, None).
+
+        [v1.3] FCA is the primary resolver now. If FCA exists, it resolves
+        even without bridge.db. This test mocks BOTH to be nonexistent.
+        """
         nonexistent = tmp_path / "nonexistent.db"
         monkeypatch.setattr("data_sources.cvm._bridge.bridge_db_path",
+                            lambda: nonexistent)
+        # [v1.3] Also mock FCA as nonexistent so _resolve_via_fca returns None
+        monkeypatch.setattr("data_sources.cvm._db.fca_db_path",
                             lambda: nonexistent)
         from data_sources.cvm._bridge import _resolve_via_bridge
         cnpj, cd_cvm = _resolve_via_bridge("PETR4")
