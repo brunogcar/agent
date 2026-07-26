@@ -155,5 +155,5 @@ register_metric(MetricSpec(
     ratio_fn=roe_at,
     history_fn=roe_history,
     engines=["earnings", "pl"],
-    aliases=["return_on_equity"],
+    aliases=["return_on_equity", "retorno_pl", "retorno_patrimonio"],
 ))

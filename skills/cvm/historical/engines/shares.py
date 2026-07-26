@@ -227,4 +227,5 @@ register_engine(EngineSpec(
     at_fn=shares_at,
     periods_fn=shares_periods,
     source="FRE (distribuicao_capital) + investsite.com.br fallback",
+    category="shares",
 ))

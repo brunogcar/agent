@@ -232,5 +232,5 @@ register_metric(MetricSpec(
     ratio_fn=dy_at,
     history_fn=dpa_history,
     engines=["price", "dividends", "earnings", "shares"],
-    aliases=["dy", "dividend_yield", "yld", "payout"],
+    aliases=["dy", "dividend_yield", "yld", "payout", "rendimento", "rendimento_dividendo", "div_yield"],
 ))

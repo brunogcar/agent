@@ -161,5 +161,5 @@ register_metric(MetricSpec(
     ratio_fn=pe_at,
     history_fn=lpa_history,
     engines=["price", "earnings", "shares"],
-    aliases=["pe", "pl", "p/l"],
+    aliases=["pe", "pl", "p/l", "preco_lucro"],
 ))

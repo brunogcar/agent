@@ -81,12 +81,26 @@ class EngineSpec:
                      oldest-first.
         source:      Human-readable data source. "COTAHIST", "DFP+ITR", etc.
                      Used in docs + for backtest skill discovery.
+        category:    Engine category for organizational grouping. One of:
+                     - "market":  B3 market data (price, dividends)
+                     - "shares":  shares outstanding (FRE/investsite)
+                     - "dre":     DRE statement (earnings, revenue, ebit, etc.)
+                     - "bpa":     BPA statement (assets)
+                     - "bpp":     BPP statement (PL, debt)
+                     - "dfc":     DFC statement (cash flow)
+                     - "other":   anything else
+                     Used by list_engines(category=...) for filtering.
+                     When we reach 15+ engines, we may move to subfolders
+                     (engines/dre/, engines/bpa/, etc.) — until then, the
+                     category field gives organizational clarity without
+                     breaking import paths.
     """
     name: str
     quantity: str
     at_fn: Callable
     periods_fn: Callable
     source: str
+    category: str = "other"
 
 
 # ── Metric spec ──────────────────────────────────────────────────────────────
@@ -202,9 +216,22 @@ def resolve_metric(name: str) -> MetricSpec:
     return METRICS[canonical]
 
 
-def list_engines() -> list[str]:
-    """Return sorted list of engine names."""
-    return sorted(ENGINES.keys())
+def list_engines(category: str | None = None) -> list[str]:
+    """Return sorted list of engine names, optionally filtered by category.
+
+    Args:
+        category: If provided, only return engines with this category
+                  (e.g., "dre", "bpa", "bpp", "market", "shares", "dfc").
+                  If None (default), return all engines.
+    """
+    if category is None:
+        return sorted(ENGINES.keys())
+    return sorted(name for name, spec in ENGINES.items() if spec.category == category)
+
+
+def list_engine_categories() -> list[str]:
+    """Return sorted list of all engine categories currently in use."""
+    return sorted(set(spec.category for spec in ENGINES.values()))
 
 
 def list_metrics() -> list[str]:

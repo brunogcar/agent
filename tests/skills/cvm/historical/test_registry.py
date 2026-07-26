@@ -63,6 +63,48 @@ class TestEngineAutoDiscovery:
         assert "price" in names
         assert "dividends" in names
 
+    def test_price_category_is_market(self):
+        assert ENGINES["price"].category == "market"
+
+    def test_dividends_category_is_market(self):
+        assert ENGINES["dividends"].category == "market"
+
+    def test_shares_category_is_shares(self):
+        assert ENGINES["shares"].category == "shares"
+
+    def test_earnings_category_is_dre(self):
+        assert ENGINES["earnings"].category == "dre"
+
+    def test_revenue_category_is_dre(self):
+        assert ENGINES["revenue"].category == "dre"
+
+    def test_pl_category_is_bpp(self):
+        assert ENGINES["pl"].category == "bpp"
+
+    def test_list_engines_filtered_by_category(self):
+        """list_engines(category='dre') should return only DRE engines."""
+        dre_engines = list_engines(category="dre")
+        assert "earnings" in dre_engines
+        assert "revenue" in dre_engines
+        assert "price" not in dre_engines
+        assert "pl" not in dre_engines
+
+    def test_list_engines_market_category(self):
+        market_engines = list_engines(category="market")
+        assert "price" in market_engines
+        assert "dividends" in market_engines
+        assert len(market_engines) == 2
+
+    def test_list_engine_categories(self):
+        """list_engine_categories should return all categories in use."""
+        from skills.cvm.historical._registry import list_engine_categories
+        cats = list_engine_categories()
+        assert "market" in cats
+        assert "shares" in cats
+        assert "dre" in cats
+        assert "bpp" in cats
+        assert cats == sorted(cats)  # sorted
+
 
 # ── Metric auto-discovery tests ─────────────────────────────────────────────
 
@@ -120,9 +162,18 @@ class TestResolveMetric:
         assert resolve_metric("pl").name == "lpa"
         assert resolve_metric("p/l").name == "lpa"
 
+    def test_lpa_portuguese_aliases(self):
+        """Portuguese alias preco_lucro should resolve to lpa."""
+        assert resolve_metric("preco_lucro").name == "lpa"
+
     def test_vpa_aliases(self):
         assert resolve_metric("pvpa").name == "vpa"
         assert resolve_metric("p/vpa").name == "vpa"
+
+    def test_vpa_portuguese_aliases(self):
+        """Portuguese aliases should resolve to vpa."""
+        assert resolve_metric("preco_vpa").name == "vpa"
+        assert resolve_metric("p_vpa").name == "vpa"
 
     def test_dpa_aliases(self):
         """dy, dividend_yield, yld, payout should all resolve to dpa."""
@@ -130,6 +181,22 @@ class TestResolveMetric:
         assert resolve_metric("dividend_yield").name == "dpa"
         assert resolve_metric("yld").name == "dpa"
         assert resolve_metric("payout").name == "dpa"
+
+    def test_dpa_portuguese_aliases(self):
+        """Portuguese aliases should resolve to dpa."""
+        assert resolve_metric("rendimento").name == "dpa"
+        assert resolve_metric("rendimento_dividendo").name == "dpa"
+        assert resolve_metric("div_yield").name == "dpa"
+
+    def test_rps_portuguese_aliases(self):
+        """Portuguese aliases should resolve to rps."""
+        assert resolve_metric("preco_venda").name == "rps"
+        assert resolve_metric("p_venda").name == "rps"
+
+    def test_roe_portuguese_aliases(self):
+        """Portuguese aliases should resolve to roe."""
+        assert resolve_metric("retorno_pl").name == "roe"
+        assert resolve_metric("retorno_patrimonio").name == "roe"
 
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown metric"):

@@ -171,13 +171,13 @@ Any metric over time. Accepts canonical names and aliases.
 
 **Metric names + aliases:**
 
-| Canonical | Aliases | Per-share | Ratio | Bonus |
-|---|---|---|---|---|
-| `lpa` | `pe`, `pl`, `p/l` | LPA (earnings/shares) | P/L (price/LPA) | — |
-| `vpa` | `pvpa`, `p/vpa` | VPA (pl/shares) | P/VPA (price/VPA) | — |
-| `dpa` | `dy`, `dividend_yield`, `yld`, `payout` | DPA (dividends TTM) | Div Yield (DPA/price) | Payout (DPA/LPA) |
-| `rps` | `psr`, `p/sr`, `price_sales` | RPS (revenue/shares) | PSR (price/RPS) | — |
-| `roe` | `return_on_equity` | — (fundamental) | ROE (earnings/PL) | — |
+| Canonical | Aliases (EN) | Aliases (PT) | Per-share | Ratio | Bonus |
+|---|---|---|---|---|---|
+| `lpa` | `pe`, `pl`, `p/l` | `preco_lucro` | LPA (earnings/shares) | P/L (price/LPA) | — |
+| `vpa` | `pvpa`, `p/vpa` | `preco_vpa`, `p_vpa` | VPA (pl/shares) | P/VPA (price/VPA) | — |
+| `dpa` | `dy`, `dividend_yield`, `yld`, `payout` | `rendimento`, `rendimento_dividendo`, `div_yield` | DPA (dividends TTM) | Div Yield (DPA/price) | Payout (DPA/LPA) |
+| `rps` | `psr`, `p/sr`, `price_sales` | `preco_venda`, `p_venda` | RPS (revenue/shares) | PSR (price/RPS) | — |
+| `roe` | `return_on_equity` | `retorno_pl`, `retorno_patrimonio` | — (fundamental) | ROE (earnings/PL) | — |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
@@ -400,7 +400,7 @@ roe_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date,
 ### `_registry.py` (central — at the skill top level)
 ```python
 # Engine spec
-EngineSpec(name, quantity, at_fn, periods_fn, source)
+EngineSpec(name, quantity, at_fn, periods_fn, source, category="other")
 
 # Metric spec
 MetricSpec(name, per_share_label, per_share_key, per_share_fn,
@@ -413,7 +413,8 @@ register_engine(spec: EngineSpec) -> EngineSpec  # called at import time by each
 register_metric(spec: MetricSpec) -> MetricSpec  # called at import time by each metric
 
 resolve_metric(name: str) -> MetricSpec          # canonical name or alias → spec
-list_engines() -> list[str]                      # engine names
+list_engines(category: str | None = None) -> list[str]  # engine names, optionally filtered by category
+list_engine_categories() -> list[str]                   # all categories in use (market, shares, dre, etc.)
 list_metrics() -> list[str]                      # canonical metric names only
 list_all_metric_names() -> list[str]             # canonical + aliases
 ```

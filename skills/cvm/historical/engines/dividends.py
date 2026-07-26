@@ -197,4 +197,5 @@ register_engine(EngineSpec(
     at_fn=dividends_at,
     periods_fn=dividends_periods,
     source="B3 cash_dividends (rate R$/share, event_date = COALESCE(payment_date, last_date_prior, approved_on))",
+    category="market",
 ))

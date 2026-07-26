@@ -218,4 +218,5 @@ register_engine(EngineSpec(
     at_fn=revenue_at,
     periods_fn=revenue_periods,
     source="DFP (annual) + ITR (quarterly cumulative) DRE 3.01 -- Receita Liquida TTM",
+    category="dre",
 ))

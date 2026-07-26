@@ -175,4 +175,5 @@ register_engine(EngineSpec(
     at_fn=pl_at,
     periods_fn=pl_periods,
     source="DFP + ITR BPP codigo 2.03 (Patrimônio Líquido snapshot)",
+    category="bpp",
 ))

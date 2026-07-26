@@ -96,4 +96,5 @@ register_engine(EngineSpec(
     at_fn=price_at,
     periods_fn=price_series,
     source="COTAHIST (B3 daily OHLCV, 2010+)",
+    category="market",
 ))

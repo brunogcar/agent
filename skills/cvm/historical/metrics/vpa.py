@@ -161,5 +161,5 @@ register_metric(MetricSpec(
     ratio_fn=pvpa_at,
     history_fn=vpa_history,
     engines=["price", "pl", "shares"],
-    aliases=["pvpa", "p/vpa"],
+    aliases=["pvpa", "p/vpa", "preco_vpa", "p_vpa"],
 ))

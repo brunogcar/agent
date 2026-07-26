@@ -219,4 +219,5 @@ register_engine(EngineSpec(
     at_fn=ttm_earnings_at,
     periods_fn=ttm_earnings_periods,
     source="DFP (annual) + ITR (quarterly cumulative) — TTM derivation",
+    category="dre",
 ))
