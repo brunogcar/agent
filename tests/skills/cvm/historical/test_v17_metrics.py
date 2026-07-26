@@ -253,11 +253,11 @@ class TestNewEngineRegistration:
         bpa_engines = list_engines(category="bpa")
         assert "assets" in bpa_engines
 
-    def test_dre_category_has_4_engines(self):
+    def test_dre_category_has_engines(self):
         from skills.cvm.historical._registry import list_engines
         dre_engines = list_engines(category="dre")
         assert "earnings" in dre_engines
         assert "revenue" in dre_engines
         assert "gross_profit" in dre_engines
         assert "ebit" in dre_engines
-        assert len(dre_engines) == 4
+        assert len(dre_engines) >= 4  # v1.7 had 4, v1.8 added tax (5)

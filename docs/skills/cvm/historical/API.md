@@ -181,6 +181,7 @@ Any metric over time. Accepts canonical names and aliases.
 | `roa` | `return_on_assets` | `retorno_ativos` | — (fundamental) | ROA (earnings/assets) | — |
 | `gross_margin` | `gm`, `gross_margin_pct` | `margem_bruta` | — (fundamental) | Margem Bruta (gross_profit/revenue) | — |
 | `operating_margin` | `om`, `operating_margin_pct` | `margem_operacional` | — (fundamental) | Margem Operacional (EBIT/revenue) | — |
+| `roic` | `return_on_invested_capital` | `retorno_capital_investido` | — (fundamental) | ROIC (NOPAT/invested_capital) | — |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
