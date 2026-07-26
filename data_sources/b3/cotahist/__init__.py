@@ -71,7 +71,8 @@ def route(mode: str = "", **kwargs) -> dict:
                 "error": f"Unknown mode '{mode}'. Available: {list(MANIFEST['modes'].keys())}"}
 
     from data_sources.b3.cotahist.sync_engine import sync, sync_full_history
-    from data_sources.b3.cotahist.query_engine import query, status
+    from data_sources.b3.cotahist.query_engine import query
+    from data_sources.b3.cotahist.status_reporter import status
 
     dispatch = {
         "sync": sync,

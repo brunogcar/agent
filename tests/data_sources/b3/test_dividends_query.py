@@ -101,7 +101,7 @@ class TestDividendsQuery:
         assert result["count"] == 0
 
     def test_status(self, div_db):
-        from data_sources.b3.dividends.query_engine import status
+        from data_sources.b3.dividends.status_reporter import status
         result = status()
         assert result["status"] == "ok"
         assert result["totals"]["cash"] == 2

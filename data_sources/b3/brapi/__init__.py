@@ -98,7 +98,8 @@ def route(mode: str = "", **kwargs) -> dict:
                 "error": f"Unknown mode '{mode}'. Available: {list(MANIFEST['modes'].keys())}"}
 
     from data_sources.b3.brapi.sync_engine import sync_tickers, sync_history
-    from data_sources.b3.brapi.query_engine import quote, history, tickers, status
+    from data_sources.b3.brapi.query_engine import quote, history, tickers
+    from data_sources.b3.brapi.status_reporter import status
 
     dispatch = {
         "sync_tickers": sync_tickers,

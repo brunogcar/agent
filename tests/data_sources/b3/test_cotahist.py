@@ -157,7 +157,7 @@ class TestQuery:
 class TestStatus:
 
     def test_status_ok(self, cotahist_db):
-        from data_sources.b3.cotahist.query_engine import status
+        from data_sources.b3.cotahist.status_reporter import status
         r = status()
         assert r["status"] == "ok"
         assert r["total_rows"] == 3

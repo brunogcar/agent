@@ -168,7 +168,7 @@ class TestB3SearchCompany:
 
 class TestB3Status:
     def test_status(self, b3_db):
-        from data_sources.b3.api.query_engine import status
+        from data_sources.b3.api.status_reporter import status
         result = status()
         assert result["status"] == "ok"
         assert "instruments" in result["tables"]

@@ -119,7 +119,7 @@ class TestTickersMode:
 class TestStatusMode:
 
     def test_status_ok(self, brapi_db):
-        from data_sources.b3.brapi.query_engine import status
+        from data_sources.b3.brapi.status_reporter import status
         r = status()
         assert r["status"] == "ok"
         assert r["tickers"] == 4

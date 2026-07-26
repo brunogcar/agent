@@ -9,7 +9,8 @@
 | `data_sources/b3/dividends/__init__.py` | MANIFEST + route — sub-domain hub, 5 modes |
 | `data_sources/b3/dividends/catalog.py` | Schema constants: API URL, SQL schema, DB path/connect helpers |
 | `data_sources/b3/dividends/sync_engine.py` | Download per-ticker JSON → parse → normalize dates → store |
-| `data_sources/b3/dividends/query_engine.py` | Query: dividends(), stock_dividends(), subscriptions(), status() |
+| `data_sources/b3/dividends/query_engine.py` | Query: dividends(), stock_dividends(), subscriptions(), company_info() |
+| `data_sources/b3/dividends/status_reporter.py` | Status: sync statistics for all synced tickers |
 
 ## API
 

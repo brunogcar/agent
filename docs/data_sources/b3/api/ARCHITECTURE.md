@@ -9,7 +9,8 @@
 | `data_sources/b3/api/__init__.py` | MANIFEST + route — sub-domain hub, 5 modes |
 | `data_sources/b3/api/catalog.py` | Schema constants: API base, B3_TABLES registry, DB path/connect helpers, dynamic schema creation |
 | `data_sources/b3/api/sync_engine.py` | Download via paginated JSON API → store to SQLite. Dynamic columns from API response. |
-| `data_sources/b3/api/query_engine.py` | Query: query(), lookup_ticker(), search_company(), status() |
+| `data_sources/b3/api/query_engine.py` | Query: query(), lookup_ticker(), search_company() |
+| `data_sources/b3/api/status_reporter.py` | Status: sync statistics for all B3 tables |
 
 ## API Flow
 

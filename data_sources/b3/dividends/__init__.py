@@ -103,7 +103,7 @@ def route(mode: str = "", **kwargs) -> dict:
             return _sync(**filtered)
 
         elif mode == "status":
-            from data_sources.b3.dividends.query_engine import status as _status
+            from data_sources.b3.dividends.status_reporter import status as _status
             return _status()
 
         elif mode == "dividends":
