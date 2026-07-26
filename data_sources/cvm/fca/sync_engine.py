@@ -16,7 +16,8 @@ import zipfile
 from datetime import datetime
 from typing import Any
 
-from data_sources.cvm.fca.catalog import connect, ensure_schema, db_path
+from data_sources.cvm._db import connect_fca, fca_db_path
+from data_sources.cvm.fca.catalog import ensure_schema
 
 
 FCA_BASE_URL = "http://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS"
@@ -91,7 +92,7 @@ def _sync_single_year(year: int, force: bool = False) -> dict:
     # Check if already synced today
     if not force:
         try:
-            conn = connect(read_only=True)
+            conn = connect_fca(read_only=True)
             row = conn.execute(
                 "SELECT synced_at FROM sync_state WHERE year=? ORDER BY rowid DESC LIMIT 1",
                 (year,),
@@ -146,7 +147,7 @@ def _sync_single_year(year: int, force: bool = False) -> dict:
                 "error": f"valor_mobiliario CSV not found in ZIP. Files: {zf.namelist()}"}
 
     # Parse + insert
-    conn = connect(read_only=False)
+    conn = connect_fca(read_only=False)
     try:
         ensure_schema(conn)
 

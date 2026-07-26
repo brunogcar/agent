@@ -43,8 +43,8 @@ from core.br_validator import parse_escala  # noqa: E402, F401
 
 # ── Path resolution ───────────────────────────────────────────────────────────
 
-def cvm_data_dir() -> Path:
-    """Return the CVM data directory.
+def cvm_db_path() -> Path:
+    """Return the CVM database directory (base path for all CVM .db files).
 
     Uses cfg.memory_root / "cvm" (co-located with ChromaDB + other data).
     Falls back to walking up from cwd to find a directory with "cvm" in it.
@@ -71,32 +71,32 @@ def cvm_data_dir() -> Path:
 
 def dfp_db_path() -> Path:
     """Return the path to the DFP database file."""
-    return cvm_data_dir() / "dfp.db"
+    return cvm_db_path() / "dfp.db"
 
 
 def itr_db_path() -> Path:
     """Return the path to the ITR database file."""
-    return cvm_data_dir() / "itr.db"
+    return cvm_db_path() / "itr.db"
 
 
 def fre_db_path() -> Path:
     """Return the path to the FRE database file."""
-    return cvm_data_dir() / "fre.db"
+    return cvm_db_path() / "fre.db"
 
 
 def ipe_db_path() -> Path:
     """Return the path to the IPE database file."""
-    return cvm_data_dir() / "ipe.db"
+    return cvm_db_path() / "ipe.db"
 
 
 def cad_db_path() -> Path:
     """Return the path to the CAD (company register) database file."""
-    return cvm_data_dir() / "cad.db"
+    return cvm_db_path() / "cad.db"
 
 
 def bridge_db_path() -> Path:
     """Return the path to the B3-CVM bridge database (ticker → CNPJ mapping)."""
-    return cvm_data_dir() / "bridge.db"
+    return cvm_db_path() / "bridge.db"
 
 
 def fca_db_path() -> Path:
@@ -106,7 +106,7 @@ def fca_db_path() -> Path:
     making it the primary bridge resolver (local query, no network needed).
     Also contains listing segment (Novo Mercado, Nível 1, etc.) + foreign listings.
     """
-    return cvm_data_dir() / "fca.db"
+    return cvm_db_path() / "fca.db"
 
 
 def connect_fca(read_only: bool = True) -> sqlite3.Connection:
@@ -129,6 +129,56 @@ def connect_fca(read_only: bool = True) -> sqlite3.Connection:
     return conn
 
 
+
+
+def vlmo_db_path() -> Path:
+    """Return the path to the VLMO (insider trading) database file."""
+    return cvm_db_path() / "vlmo.db"
+
+
+def connect_vlmo(read_only: bool = True) -> sqlite3.Connection:
+    """Open a connection to the VLMO database.
+
+    Args:
+        read_only: If True, opens in read-only mode (for queries).
+                   If False, opens in read-write mode (for sync).
+    """
+    path = vlmo_db_path()
+    if not path.exists():
+        if read_only:
+            raise FileNotFoundError(f"VLMO database not found at {path}. Run sync first.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+    if read_only:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def cgvn_db_path() -> Path:
+    """Return the path to the CGVN (governance practices) database file."""
+    return cvm_db_path() / "cgvn.db"
+
+
+def connect_cgvn(read_only: bool = True) -> sqlite3.Connection:
+    """Open a connection to the CGVN database.
+
+    Args:
+        read_only: If True, opens in read-only mode (for queries).
+                   If False, opens in read-write mode (for sync).
+    """
+    path = cgvn_db_path()
+    if not path.exists():
+        if read_only:
+            raise FileNotFoundError(f"CGVN database not found at {path}. Run sync first.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+    if read_only:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    return conn
 def connect_bridge(read_only: bool = True) -> sqlite3.Connection:
     """Open a connection to the B3-CVM bridge database.
 

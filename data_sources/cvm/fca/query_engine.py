@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from data_sources.cvm._db import cnpj_digits
-from data_sources.cvm.fca.catalog import connect
+from data_sources.cvm._db import connect_fca
 
 
 def query(
@@ -34,7 +34,7 @@ def query(
         return {"status": "error", "error": "company or ticker is required"}
 
     try:
-        conn = connect(read_only=True)
+        conn = connect_fca(read_only=True)
     except FileNotFoundError as e:
         return {"status": "not_synced", "error": str(e)}
 

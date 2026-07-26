@@ -45,9 +45,9 @@ def get_freshness() -> dict[str, str]:
     Missing/unsynced DBs return "".
     """
     from data_sources.cvm._db import (
-        dfp_db_path, itr_db_path, fre_db_path, ipe_db_path, cad_db_path,
+        dfp_db_path, itr_db_path, fre_db_path, ipe_db_path, cad_db_path, vlmo_db_path, cgvn_db_path, fca_db_path,
     )
-    from data_sources.cvm.bridge.catalog import db_path as bridge_path
+    from data_sources.cvm._db import bridge_db_path as bridge_path
     from data_sources.b3.dividends.catalog import db_path as b3_div_path
     from data_sources.b3.cotahist.catalog import db_path as cotahist_path
 
@@ -60,6 +60,9 @@ def get_freshness() -> dict[str, str]:
         ("fre", fre_db_path),
         ("ipe", ipe_db_path),
         ("cad", cad_db_path),
+        ("vlmo", vlmo_db_path),
+        ("cgvn", cgvn_db_path),
+        ("fca", fca_db_path),
     ]:
         try:
             result[name] = _check_db_freshness(path_fn())

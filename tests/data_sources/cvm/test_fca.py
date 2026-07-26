@@ -62,7 +62,7 @@ def fca_db(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr("data_sources.cvm.fca.catalog.db_path", lambda: db)
+    monkeypatch.setattr("data_sources.cvm._db.fca_db_path", lambda: db)
     return db
 
 

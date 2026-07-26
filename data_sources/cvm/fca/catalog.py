@@ -12,31 +12,19 @@ import sqlite3
 from pathlib import Path
 
 
+
 # ── Database path ────────────────────────────────────────────────────────────
 
 def db_path() -> Path:
-    """Return the path to the FCA database.
-
-    Uses the same directory as the other CVM databases (dfp.db, itr.db, etc.)
-    by importing dfp_db_path from _db.py and using its parent directory.
-    """
-    from data_sources.cvm._db import dfp_db_path
-    return dfp_db_path().parent / "fca.db"
+    """Return the path to the FCA database."""
+    from data_sources.cvm._db import fca_db_path
+    return fca_db_path()
 
 
 def connect(read_only: bool = True) -> sqlite3.Connection:
     """Open a connection to the FCA database."""
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"FCA database not found at {path}. Run sync first.")
-        path.parent.mkdir(parents=True, exist_ok=True)
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    from data_sources.cvm._db import connect_fca
+    return connect_fca(read_only=read_only)
 
 
 # ── Schema ───────────────────────────────────────────────────────────────────

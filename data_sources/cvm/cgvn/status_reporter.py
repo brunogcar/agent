@@ -7,8 +7,8 @@ from pathlib import Path
 
 def status() -> dict:
     """Return CGVN database statistics."""
-    from data_sources.cvm.cgvn.catalog import connect, db_path
-    path = db_path()
+    from data_sources.cvm._db import connect_cgvn, cgvn_db_path
+    path = cgvn_db_path()
     if not path.exists():
         return {
             "status": "not_synced",
@@ -16,7 +16,7 @@ def status() -> dict:
             "path": str(path),
         }
 
-    conn = connect(read_only=True)
+    conn = connect_cgvn(read_only=True)
     try:
         doc_count = conn.execute("SELECT COUNT(*) as n FROM cgvn_documents").fetchone()["n"]
         prac_count = conn.execute("SELECT COUNT(*) as n FROM cgvn_practices").fetchone()["n"]

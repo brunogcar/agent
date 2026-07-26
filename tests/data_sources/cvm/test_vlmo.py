@@ -42,7 +42,7 @@ def vlmo_db(tmp_path, monkeypatch):
     conn.close()
 
     # Patch db_path
-    monkeypatch.setattr("data_sources.cvm.vlmo.catalog.db_path", lambda: db)
+    monkeypatch.setattr("data_sources.cvm._db.vlmo_db_path", lambda: db)
     return db
 
 
@@ -100,7 +100,7 @@ class TestStatusReporter:
         assert r["sell_transactions"] == 1
 
     def test_status_not_synced(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("data_sources.cvm.vlmo.catalog.db_path",
+        monkeypatch.setattr("data_sources.cvm._db.vlmo_db_path",
                             lambda: tmp_path / "nonexistent.db")
         from data_sources.cvm.vlmo.status_reporter import status
         r = status()

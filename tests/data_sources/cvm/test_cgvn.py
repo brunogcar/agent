@@ -38,7 +38,7 @@ def cgvn_db(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr("data_sources.cvm.cgvn.catalog.db_path", lambda: db)
+    monkeypatch.setattr("data_sources.cvm._db.cgvn_db_path", lambda: db)
     return db
 
 

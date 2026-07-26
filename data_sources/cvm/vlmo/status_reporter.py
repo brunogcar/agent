@@ -7,8 +7,8 @@ from pathlib import Path
 
 def status() -> dict:
     """Return VLMO database statistics."""
-    from data_sources.cvm.vlmo.catalog import connect, db_path
-    path = db_path()
+    from data_sources.cvm._db import connect_vlmo, vlmo_db_path
+    path = vlmo_db_path()
     if not path.exists():
         return {
             "status": "not_synced",
@@ -16,7 +16,7 @@ def status() -> dict:
             "path": str(path),
         }
 
-    conn = connect(read_only=True)
+    conn = connect_vlmo(read_only=True)
     try:
         doc_count = conn.execute("SELECT COUNT(*) as n FROM vlmo_documents").fetchone()["n"]
         mov_count = conn.execute("SELECT COUNT(*) as n FROM vlmo_movements").fetchone()["n"]

@@ -7,8 +7,8 @@ from pathlib import Path
 
 def status() -> dict:
     """Return FCA database statistics."""
-    from data_sources.cvm.fca.catalog import connect, db_path
-    path = db_path()
+    from data_sources.cvm._db import connect_fca, fca_db_path
+    path = fca_db_path()
     if not path.exists():
         return {
             "status": "not_synced",
@@ -16,7 +16,7 @@ def status() -> dict:
             "path": str(path),
         }
 
-    conn = connect(read_only=True)
+    conn = connect_fca(read_only=True)
     try:
         geral_count = conn.execute("SELECT COUNT(*) as n FROM fca_geral").fetchone()["n"]
         vm_count = conn.execute("SELECT COUNT(*) as n FROM fca_valor_mobiliario").fetchone()["n"]

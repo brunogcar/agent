@@ -12,7 +12,7 @@ from typing import Any
 
 from data_sources.cvm._db import cnpj_digits
 from data_sources.cvm._bridge import _resolve_via_bridge, _auto_sync_bridge
-from data_sources.cvm.vlmo.catalog import connect
+from data_sources.cvm._db import connect_vlmo
 
 
 def query(
@@ -37,7 +37,7 @@ def query(
         return {"status": "error", "error": "company is required"}
 
     try:
-        conn = connect(read_only=True)
+        conn = connect_vlmo(read_only=True)
     except FileNotFoundError as e:
         return {"status": "not_synced", "error": str(e)}
 
