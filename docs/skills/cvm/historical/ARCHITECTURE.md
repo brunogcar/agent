@@ -2,23 +2,25 @@
 
 # 🏗️ Architecture
 
-This skill is the **pattern template** for auto-discovery + registry architecture. The engine/metric separation, auto-discovery via glob+importlib, and MetricSpec registry are designed to be copied by other skills that need extensibility.
+This skill is the **pattern template** for central auto-discovery + registry architecture. The central `_registry.py`, engine/metric separation, and self-registration pattern are designed to be copied by other skills that need extensibility.
 
 ## 🔗 Source Code Reference
 
 | File | Purpose |
 |---|---|
-| `skills/cvm/historical/__init__.py` | MANIFEST + route — modes auto-generated from the registry |
+| `skills/cvm/historical/_registry.py` | **Central registry** — EngineSpec + MetricSpec + auto-discovery for both engines/ and metrics/ |
+| `skills/cvm/historical/__init__.py` | MANIFEST + route — modes auto-generated from the metric registry |
 | `skills/cvm/historical/historical.py` | Main: `_metric_history()`, `ratio_history()`, `summary()`. Auto-generates `<metric>_history` functions from the registry. |
-| `skills/cvm/historical/engines/__init__.py` | Auto-discovery: glob + importlib for `engines/*.py` |
+| `skills/cvm/historical/engines/__init__.py` | Minimal docstring (auto-discovery is in `_registry.py`) |
 | `skills/cvm/historical/engines/price.py` | COTAHIST daily close: `price_at()`, `price_series()` |
 | `skills/cvm/historical/engines/earnings.py` | TTM earnings: `ttm_earnings_at()`, `ttm_earnings_periods()`. DFP + ITR. |
 | `skills/cvm/historical/engines/shares.py` | FRE shares: `shares_at()`, `shares_periods()` (+ investsite fallback) |
 | `skills/cvm/historical/engines/pl.py` | PL snapshot: `pl_at()`, `pl_periods()`. DFP + ITR BPP 2.03. |
-| `skills/cvm/historical/metrics/__init__.py` | Auto-discovery: glob + importlib for `metrics/*.py` (triggers `register_metric`) |
-| `skills/cvm/historical/metrics/_registry.py` | `MetricSpec` dataclass, `METRICS` dict, `register_metric()`, `resolve_metric()` |
+| `skills/cvm/historical/engines/dividends.py` | DPA TTM: `dividends_at()`, `dividends_periods()`. B3 cash_dividends. |
+| `skills/cvm/historical/metrics/__init__.py` | Minimal docstring (auto-discovery is in `_registry.py`) |
 | `skills/cvm/historical/metrics/lpa.py` | LPA + P/L metric: `lpa_at()`, `pe_at()`, `lpa_history()`. Engines: price + earnings + shares. |
 | `skills/cvm/historical/metrics/vpa.py` | VPA + P/VPA metric: `vpa_at()`, `pvpa_at()`, `vpa_history()`. Engines: price + pl + shares. |
+| `skills/cvm/historical/metrics/dpa.py` | DPA + Div Yield + Payout metric: `dpa_at()`, `dy_at()`, `payout_at()`, `dpa_history()`. Engines: price + dividends + earnings + shares. |
 | `skills/cvm/historical/metrics/ev_ebitda.py` | EV/EBITDA stub for future |
 | `tools/report_ops/adapters/historical.py` | Auto-registered chart adapters + metric-aware summary adapter |
 
@@ -34,62 +36,76 @@ An engine fetches ONE raw number at any historical date from its data source(s).
 
 ```
 engines/
-├── price.py    → price_at(ticker, date)          # COTAHIST daily close
-├── earnings.py → ttm_earnings_at(company, date)   # DFP + ITR TTM derivation
-├── shares.py   → shares_at(company, date)         # FRE + investsite fallback
-└── pl.py       → pl_at(company, date)             # DFP + ITR BPP 2.03 snapshot
+├── price.py      → price_at(ticker, date)          # COTAHIST daily close
+├── earnings.py   → ttm_earnings_at(company, date)   # DFP + ITR TTM derivation
+├── shares.py     → shares_at(company, date)         # FRE + investsite fallback
+├── pl.py         → pl_at(company, date)             # DFP + ITR BPP 2.03 snapshot
+└── dividends.py  → dividends_at(ticker, date)       # B3 cash_dividends DPA TTM
 ```
 
 **Engine contract** (every engine follows this shape):
 - `<quantity>_at(company, date) -> float | None` — value at most recent data point <= date
 - `<quantity>_periods(company) -> list[dict]` — all data points `[{"date": "...", "<quantity>": value}, ...]` sorted oldest-first (for step-function optimization)
+- `register_engine(EngineSpec(...))` at module level — self-registers with the central registry
 
-**Auto-discovery**: `engines/__init__.py` globs `*.py` and imports them via `importlib`. This ensures all engine modules are loaded at import time. **No registry** for engines — they are imported by name by metrics (e.g., `from skills.cvm.historical.engines.price import price_at`).
+**EngineSpec dataclass:**
+```python
+@dataclass
+class EngineSpec:
+    name: str           # "price", "earnings", "shares", "pl", "dividends"
+    quantity: str       # "close", "ttm", "shares", "pl", "dpa" — JSON key in periods
+    at_fn: Callable     # price_at, ttm_earnings_at, shares_at, pl_at, dividends_at
+    periods_fn: Callable # price_series, ttm_earnings_periods, ...
+    source: str         # "COTAHIST (B3 daily OHLCV, 2010+)" — for docs + backtest discovery
+```
 
-### Metrics (per-share value + price ratio)
+### Metrics (per-share value + price ratio + optional bonus ratios)
 
 A metric imports 2+ engines and produces BOTH a per-share value AND a price ratio. Metrics **never** query CVM/B3 directly — that's the engine's job.
 
 ```
 metrics/
-├── _registry.py    → MetricSpec + METRICS dict + register_metric() + resolve_metric()
-├── lpa.py          → LPA (earnings/shares) + P/L (price/LPA)
-├── vpa.py          → VPA (pl/shares) + P/VPA (price/VPA)
-└── ev_ebitda.py    → stub for future
+├── lpa.py   → LPA (earnings/shares) + P/L (price/LPA)
+├── vpa.py   → VPA (pl/shares) + P/VPA (price/vpa)
+├── dpa.py   → DPA (dividends TTM) + Div Yield (DPA/price) + Payout (DPA/LPA)  [bonus ratio]
+└── ev_ebitda.py  → stub for future
 ```
 
-**Each metric produces both:**
-- `lpa.py`: `lpa_at()` (per-share, LPA = earnings/shares) + `pe_at()` (ratio, P/L = price/LPA)
-- `vpa.py`: `vpa_at()` (per-share, VPA = pl/shares) + `pvpa_at()` (ratio, P/VPA = price/Vpa)
-
-The per-share value is useful on its own (e.g., backtest filters on EPS). The ratio tells you if the stock is cheap vs history. Both are exposed in the history series.
+**Each metric produces:**
+- **Per-share value**: LPA, VPA, DPA — useful on its own (e.g., backtest filters on EPS)
+- **Price ratio**: P/L, P/VPA, Div Yield — tells you if the stock is cheap vs history
+- **Optional bonus ratios**: Payout (DPA/LPA) — included in the series + summary
 
 **Metric contract:**
 - `<name>_at(company, date) -> float | None` — per-share value
 - `<ratio>_at(company, date) -> float | None` — price ratio
-- `<name>_history(company, date_from, date_to) -> list[dict]` — daily series with BOTH per-share + ratio
-
-**Auto-discovery + self-registration**: `metrics/__init__.py` globs `*.py` and imports them. Each metric module calls `register_metric(MetricSpec(...))` at module level. The registry (`_registry.py`) holds all specs.
+- `<name>_history(company, date_from, date_to) -> list[dict]` — daily series with per-share + ratio + bonus ratios
+- `register_metric(MetricSpec(...))` at module level — self-registers with the central registry
 
 ### Dependency graph (MUST stay acyclic)
 
 ```
-historical.py  (orchestrator — reads from registry, knows both layers)
+historical.py  (orchestrator — reads from central registry, knows both layers)
        │
-       ├── metrics/_registry.py  (MetricSpec registry, resolve_metric)
+       ├── _registry.py  (EngineSpec + MetricSpec + auto-discovery + resolve_metric)
        │       │
-       │       ├── metrics/lpa.py  ──┬── engines/price.py
-       │       │                      ├── engines/earnings.py
-       │       │                      └── engines/shares.py
+       │       ├── engines/price.py      ─┐
+       │       ├── engines/earnings.py    │ (leaves — never import each other or metrics)
+       │       ├── engines/shares.py      │
+       │       ├── engines/pl.py          │
+       │       ├── engines/dividends.py  ─┘
        │       │
-       │       └── metrics/vpa.py  ──┬── engines/price.py
-       │                              ├── engines/pl.py
-       │                              └── engines/shares.py
+       │       ├── metrics/lpa.py  ──┬── engines/price.py + earnings.py + shares.py
+       │       │                      └── (composes 3 engines, produces LPA + P/L)
+       │       ├── metrics/vpa.py  ──┬── engines/price.py + pl.py + shares.py
+       │       │                      └── (composes 3 engines, produces VPA + P/VPA)
+       │       └── metrics/dpa.py  ──┬── engines/price.py + dividends.py + earnings.py + shares.py
+       │                              └── (composes 4 engines, produces DPA + Div Yield + Payout)
        │
        └── (engines never point upward — they're leaves)
 ```
 
-Engines never point upward. Metrics never point at other metrics. `historical.py` is the only module that knows about both engines and metrics together (via the registry).
+Engines never point upward. Metrics never point at other metrics. `historical.py` is the only module that knows about both engines and metrics together (via the central registry).
 
 ---
 
@@ -98,51 +114,108 @@ Engines never point upward. Metrics never point at other metrics. `historical.py
 ```text
 skills/cvm/historical/
 ├── __init__.py              # MANIFEST + route — modes auto-generated from registry
+├── _registry.py             # CENTRAL: EngineSpec + MetricSpec + auto-discovery + resolve_metric
 ├── historical.py            # _metric_history(), ratio_history(), summary()
 ├── engines/
-│   ├── __init__.py          # Auto-discovery: glob + importlib for *.py
-│   ├── price.py             # COTAHIST: price_at(), price_series()
-│   ├── earnings.py          # DFP + ITR TTM: ttm_earnings_at(), ttm_earnings_periods()
-│   ├── shares.py            # FRE + investsite: shares_at(), shares_periods()
-│   └── pl.py                # DFP + ITR BPP 2.03: pl_at(), pl_periods()
+│   ├── __init__.py          # Minimal docstring (auto-discovery is in _registry.py)
+│   ├── price.py             # COTAHIST: price_at(), price_series() + register_engine()
+│   ├── earnings.py          # DFP + ITR TTM: ttm_earnings_at(), ttm_earnings_periods() + register_engine()
+│   ├── shares.py            # FRE + investsite: shares_at(), shares_periods() + register_engine()
+│   ├── pl.py                # DFP + ITR BPP 2.03: pl_at(), pl_periods() + register_engine()
+│   └── dividends.py         # B3 cash_dividends: dividends_at(), dividends_periods() + register_engine()
 └── metrics/
-    ├── __init__.py          # Auto-discovery: glob + importlib for *.py (excludes _registry)
-    ├── _registry.py         # MetricSpec + METRICS + register_metric + resolve_metric
-    ├── lpa.py               # LPA + P/L: lpa_at(), pe_at(), lpa_history()
-    ├── vpa.py               # VPA + P/VPA: vpa_at(), pvpa_at(), vpa_history()
+    ├── __init__.py          # Minimal docstring (auto-discovery is in _registry.py)
+    ├── lpa.py               # LPA + P/L: lpa_at(), pe_at(), lpa_history() + register_metric()
+    ├── vpa.py               # VPA + P/VPA: vpa_at(), pvpa_at(), vpa_history() + register_metric()
+    ├── dpa.py               # DPA + Div Yield + Payout: dpa_at(), dy_at(), payout_at(), dpa_history() + register_metric()
     └── ev_ebitda.py         # stub for future
 ```
 
 ---
 
-## 🔀 Dispatch Flow
+## 🤖 Central Auto-Discovery + Registry Design
 
-```mermaid
-graph TD
-    A["route(mode, **kwargs)"] --> B{"mode?"}
-    B -->|lpa_history| C["_metric_history('lpa', ...) in historical.py"]
-    B -->|vpa_history| D["_metric_history('vpa', ...) in historical.py"]
-    B -->|ratio_history| E["resolve_metric(metric) → MetricSpec"]
-    B -->|summary| F["resolve_metric(metric) → MetricSpec"]
-    E --> G["_metric_history(spec.name, ...)"]
-    F --> H["spec.history_fn(company, date_from, date_to)"]
-    C --> I["resolve_metric('lpa').history_fn(...)"]
-    D --> J["resolve_metric('vpa').history_fn(...)"]
-    I --> K["metrics/lpa.py lpa_history()"]
-    J --> L["metrics/vpa.py vpa_history()"]
-    H --> K
-    H --> L
-    K --> M["engines/price.py + earnings.py + shares.py"]
-    L --> N["engines/price.py + pl.py + shares.py"]
-    M --> O["add_freshness() → return dict"]
-    N --> O
+### Why a central registry?
+
+Before v1.3, the registry lived in `metrics/_registry.py` and only handled metrics. Engines had no registry — they were imported by name by metrics. This created an inconsistency: metrics self-registered, but engines didn't.
+
+In v1.3, the registry moved to the **top level** (`skills/cvm/historical/_registry.py`) and handles BOTH engines and metrics. This gives:
+- **Consistent pattern** — both layers self-register via `register_engine()` / `register_metric()`
+- **Single source of truth** — one file holds all specs + auto-discovery logic
+- **Engine discoverability** — `list_engines()` enables docs auto-generation + backtest skill discovery
+- **Cleaner `__init__.py` files** — `engines/__init__.py` and `metrics/__init__.py` are minimal docstrings (no auto-discovery code)
+
+### How it works
+
+```python
+# _registry.py — central auto-discovery
+
+def _auto_discover():
+    """Glob both engines/*.py and metrics/*.py, import each via importlib."""
+    if getattr(_auto_discover, "_done", False):
+        return  # idempotent — avoid re-running on re-import
+    _auto_discover._done = True
+
+    base = Path(__file__).parent
+
+    # Discover engines (triggers register_engine calls)
+    for py_file in sorted((base / "engines").glob("*.py")):
+        if py_file.name != "__init__.py":
+            importlib.import_module(f"skills.cvm.historical.engines.{py_file.stem}")
+
+    # Discover metrics (triggers register_metric calls)
+    for py_file in sorted((base / "metrics").glob("*.py")):
+        if py_file.name != "__init__.py":
+            importlib.import_module(f"skills.cvm.historical.metrics.{py_file.stem}")
+
+_auto_discover()  # run at import time
 ```
+
+```python
+# engines/price.py — self-registration at module level
+from skills.cvm.historical._registry import EngineSpec, register_engine
+
+register_engine(EngineSpec(
+    name="price",
+    quantity="close",
+    at_fn=price_at,
+    periods_fn=price_series,
+    source="COTAHIST (B3 daily OHLCV, 2010+)",
+))
+```
+
+```python
+# metrics/dpa.py — self-registration at module level
+from skills.cvm.historical._registry import MetricSpec, register_metric
+
+register_metric(MetricSpec(
+    name="dpa",
+    per_share_label="DPA", per_share_key="dpa", per_share_fn=dpa_at,
+    ratio_label="Div Yield", ratio_key="dy", ratio_fn=dy_at,
+    history_fn=dpa_history,
+    engines=["price", "dividends", "earnings", "shares"],
+    aliases=["dy", "dividend_yield", "yld", "payout"],
+))
+```
+
+### Auto-generation chain
+
+When a new metric is registered, the following auto-generate:
+1. **`<metric>_history` mode in MANIFEST** — `_build_metric_modes()` in `__init__.py` iterates `METRICS`
+2. **`<metric>_history` function in historical.py** — `_make_metric_history_fn()` generates functions via `globals()`
+3. **`historical_<metric>_chart` adapter** — `adapters/historical.py` iterates `METRICS` and auto-registers
+4. **`ratio_history(metric=<name>)` dispatch** — `resolve_metric()` handles canonical + alias names
+5. **`summary(metric=<name>)` metric-awareness** — `resolve_metric()` returns the spec, summary reads labels + keys from it
+
+**Adding a metric = drop a file in metrics/ + `register_metric()`.** Zero edits to `__init__.py`, `historical.py`, or `adapters/historical.py`.
 
 ---
 
-## 🔢 TTM Earnings Algorithm (earnings.py)
+## 🔢 Algorithms
 
-The core innovation. Derives trailing twelve months earnings at any date.
+### TTM Earnings (earnings.py)
+
+Derives trailing twelve months earnings at any date.
 
 ```
 For date D, find the most recent ITR period (data_fim_exerc <= D):
@@ -156,13 +229,9 @@ For date D, find the most recent ITR period (data_fim_exerc <= D):
        = 12 months ending 2024-06-30
 ```
 
-**Earnings change quarterly** (when new ITR/DFP is filed). Between filings, TTM is constant.
+### PL Snapshot (pl.py)
 
----
-
-## 🏦 PL Snapshot Algorithm (pl.py)
-
-PL is a **snapshot** (point-in-time balance), not a flow. So this engine is simpler than earnings.py — no TTM derivation. We just find the most recent BPP snapshot with `data_fim_exerc <= date`.
+PL is a **snapshot** (point-in-time balance), not a flow. Simpler than earnings — no TTM derivation. Just find the most recent BPP snapshot with `data_fim_exerc <= date`.
 
 ```
 For date D:
@@ -172,151 +241,91 @@ For date D:
   4. Return that value
 ```
 
-**PL changes quarterly** (when new ITR/DFP is filed). Between filings, PL is constant.
+### DPA TTM (dividends.py)
+
+DPA = trailing 12-month dividends per share. The B3 `cash_dividends.rate` field is already per-share (R$/share), so we just sum rates in the 365-day window.
+
+```
+For date D:
+  DPA_TTM = SUM(cash_dividends.rate WHERE payment_date BETWEEN D-365 AND D)
+
+JCP (Juros sobre Capital Próprio) is included — it's a real cash distribution.
+The label field distinguishes Dividendo vs JCP, but we sum both.
+```
+
+**Special cases:**
+- No payment dates at all → return `None` (no data available)
+- All payment dates after query date → return `None` (can't compute TTM)
+- Company exists but paid nothing in the window → return `0.0` (different from `None`)
+
+### Payout (dpa.py)
+
+Payout = DPA / LPA = dividends per share / earnings per share.
+
+```
+For date D:
+  DPA   = dividends_at(ticker, D)      # TTM dividends per share
+  LPA   = ttm_earnings_at(ticker, D) / shares_at(ticker, D)  # TTM earnings per share
+  Payout = DPA / LPA
+```
+
+**Returns None when:** DPA is None (no dividends data), LPA <= 0 (negative earnings — payout meaningless), or shares missing.
 
 ---
 
-## 📊 Data Flow (example: lpa_history)
+## 📊 Data Flow (example: dpa_history)
 
 ```
-lpa_history("PETR4", "2020-01-01", "2024-12-31")
+dpa_history("PETR4", "2020-01-01", "2024-12-31")
   │
   ├── price_series("PETR4", "2020-01-01", "2024-12-31")
   │     → COTAHIST: ~1200 daily close prices
   │
+  ├── dividends_at("PETR4", date) per day
+  │     → B3 cash_dividends: SUM(rate WHERE payment_date in [date-365, date])
+  │     → Recomputed per day (single SQL query per day — dividends are discrete events)
+  │
   ├── ttm_earnings_periods("PETR4")
-  │     → DFP: all annual earnings (codigo 3.11, meses=12)
-  │     → ITR: all quarterly cumulative earnings (codigo 3.11, meses 3/6/9)
-  │     → Compute TTM for each ITR period (~4 per year)
-  │     → Step function: [{date, ttm}, ...]
+  │     → DFP + ITR: step function [{date, ttm}, ...]
   │
   ├── shares_periods("PETR4")
-  │     → FRE: distribuicao_capital (annual) — or investsite fallback
-  │     → Step function: [{date, shares}, ...]
+  │     → FRE: step function [{date, shares}, ...]
   │
   └── For each daily price:
         find most recent TTM (step function lookup)
         find most recent shares (step function lookup)
         LPA = TTM / shares
-        P/L = price / LPA
-        → [{date, price, ttm_earnings, shares, lpa, pe}, ...]
+        DY = DPA / price
+        Payout = DPA / LPA
+        → [{date, price, dpa, dy, payout, ttm_earnings, shares, lpa}, ...]
 ```
-
-`vpa_history` follows the same pattern but uses `pl_periods()` instead of `ttm_earnings_periods()`, and computes VPA = PL / shares, P/VPA = price / VPA.
-
----
-
-## 🤖 Auto-Discovery + Registry Design
-
-### Why auto-discovery?
-
-Before v1.2, adding a new metric required editing 4 files:
-1. `metrics/<name>.py` (the metric itself)
-2. `metrics/__init__.py` (add to METRICS dict)
-3. `historical.py` (add to `_metric_dispatch` if/elif)
-4. `__init__.py` (add `<name>_history` mode to MANIFEST)
-
-With auto-discovery + registry, adding a metric = **drop a file in `metrics/` + `register_metric()`**. The MANIFEST modes, `ratio_history()` dispatch, `summary()` metric-awareness, and chart adapters all auto-generate from the registry.
-
-### How it works
-
-```python
-# metrics/__init__.py — auto-discovery
-import importlib
-from pathlib import Path
-
-for py_file in sorted(Path(__file__).parent.glob("*.py")):
-    if py_file.name not in ("__init__.py", "_registry.py"):
-        module_name = f"skills.cvm.historical.metrics.{py_file.stem}"
-        importlib.import_module(module_name)  # triggers register_metric()
-```
-
-```python
-# metrics/lpa.py — self-registration at module level
-from skills.cvm.historical.metrics._registry import MetricSpec, register_metric
-
-register_metric(MetricSpec(
-    name="lpa",
-    per_share_label="LPA", per_share_key="lpa", per_share_fn=lpa_at,
-    ratio_label="P/L", ratio_key="pe", ratio_fn=pe_at,
-    history_fn=lpa_history,
-    engines=["price", "earnings", "shares"],
-    aliases=["pe", "pl", "p/l"],
-))
-```
-
-```python
-# __init__.py — MANIFEST auto-generation
-def _build_metric_modes():
-    modes = {}
-    for name in list_metrics():
-        spec = METRICS[name]
-        modes[f"{name}_history"] = {
-            "description": f"Daily {spec.per_share_label} + {spec.ratio_label} time series...",
-            ...
-        }
-    return modes
-```
-
-```python
-# historical.py — auto-generated mode functions
-for _metric_name in list_metrics():
-    _fn = _make_metric_history_fn(_metric_name)
-    globals()[f"{_metric_name}_history"] = _fn
-```
-
-```python
-# adapters/historical.py — auto-registered chart adapters
-for _name in sorted(METRICS.keys()):
-    _spec = METRICS[_name]
-    _adapter_fn = _make_metric_chart_adapter(...)
-    ADAPTERS[f"historical_{_name}_chart"] = _adapter_fn
-```
-
-### MetricSpec dataclass
-
-```python
-@dataclass
-class MetricSpec:
-    name: str               # "lpa", "vpa" — canonical metric name
-    per_share_label: str    # "LPA", "VPA"
-    per_share_key: str      # "lpa", "vpa" — JSON key in series entries
-    per_share_fn: Callable  # lpa_at, vpa_at
-    ratio_label: str        # "P/L", "P/VPA"
-    ratio_key: str          # "pe", "pvpa" — JSON key in series entries
-    ratio_fn: Callable      # pe_at, pvpa_at
-    history_fn: Callable    # lpa_history, vpa_history
-    engines: list[str]      # ["price", "earnings", "shares"] — for docs
-    aliases: list[str]      # ["pe", "pl", "p/l"] — for ratio_history(metric=...)
-```
-
-### Alias resolution
-
-`resolve_metric("pe")` → looks up `_ALIASES["pe"]` → `"lpa"` → returns `METRICS["lpa"]`. This lets users call `ratio_history(metric="pe")` or `summary(metric="p/l")` and get the lpa metric.
 
 ---
 
 ## 💡 Key Design Decisions
 
-- **Engines are standalone**: imported independently by any skill (e.g., future backtest). No coupling to `historical.py` or to each other.
-- **Metrics compose engines**: `lpa.py` imports `price + earnings + shares`. `vpa.py` imports `price + pl + shares`. New metrics import different engine combinations.
-- **Each metric produces both per-share + ratio**: LPA (per-share) is useful on its own; P/L (ratio) tells you if the stock is cheap. Both are in the series + summary.
-- **Step function optimization**: TTM earnings change ~4x per year, PL ~4x per year, shares ~1x per year. Precompute step functions, do O(1) lookups per day.
-- **parse_escala applied**: DFP/ITR store raw values with escala ("MIL", "MILHOES"). Engines apply `parse_escala` to convert to BRL.
-- **Negative earnings/equity → None ratio**: When TTM earnings <= 0 (P/L) or PL <= 0 (P/VPA), the ratio is meaningless. The series includes these days with the ratio = None so charts show gaps. The per-share value may still be returned (negative LPA is a valid number).
-- **Auto-generated MANIFEST modes**: `<metric>_history` modes appear in the MANIFEST automatically when a metric is registered. No manual editing.
-- **Auto-registered chart adapters**: `historical_<metric>_chart` adapters auto-register. Each produces a dual-dataset chart (per-share value + ratio).
-- **Lazy metric imports**: `historical.py` imports metric modules inside `_metric_dispatch()` / `_metric_history()` via the registry, not at module top. This keeps the import graph clean.
+- **Central registry at top level** — `_registry.py` lives at `skills/cvm/historical/`, not inside `engines/` or `metrics/`. This lets it auto-discover BOTH subfolders. Modeled after `tools/report_ops/_registry.py`.
+- **Both layers self-register** — engines via `register_engine(EngineSpec(...))`, metrics via `register_metric(MetricSpec(...))`. Consistent pattern. `list_engines()` enables backtest discovery.
+- **Engines are standalone** — imported independently by any skill (e.g., future backtest). No coupling to `historical.py` or to each other.
+- **Metrics compose engines** — `lpa.py` imports `price + earnings + shares`. `dpa.py` imports `price + dividends + earnings + shares` (4 engines). New metrics import different engine combinations.
+- **Each metric produces per-share + ratio (+ optional bonus)** — DPA (per-share) + Div Yield (ratio) + Payout (bonus). All exposed in the series + summary.
+- **Step function optimization** — TTM earnings change ~4x per year, PL ~4x per year, shares ~1x per year, dividends on payment dates. Precompute step functions, do O(1) lookups per day. (Exception: DPA TTM is a rolling 365-day window, recomputed per day via a single SQL query.)
+- **parse_escala applied** — DFP/ITR store raw values with escala ("MIL", "MILHOES"). Engines apply `parse_escala` to convert to BRL.
+- **Negative earnings/equity → None ratio** — When TTM earnings <= 0 (P/L, Payout) or PL <= 0 (P/VPA), the ratio is meaningless. Return None (chart shows gaps). The per-share value MAY be returned (negative LPA is a valid number).
+- **0.0 vs None for DPA** — 0.0 means "company exists but pays no dividends" (valid, yield = 0). None means "no dividends data available" (can't compute). The dividends engine distinguishes these.
+- **Auto-generated MANIFEST modes** — `<metric>_history` modes appear in the MANIFEST automatically when a metric is registered. No manual editing.
+- **Auto-registered chart adapters** — `historical_<metric>_chart` adapters auto-register. Each produces a dual-dataset chart (per-share value + ratio).
+- **Lazy metric imports** — `historical.py` resolves metrics via the registry (`resolve_metric()`), not at module top. This keeps the import graph clean.
 
 ---
 
 ## ➕ How to Add a New Engine
 
 1. Create a new file in `engines/` (e.g., `revenue.py`).
-2. Query your data source directly (DFP/ITR/FRE/COTAHIST). Apply `parse_escala` to raw CVM values. Use `connect_dfp` / `connect_itr` / `connect_fre` from `data_sources/cvm/_db.py`. Resolve tickers via `data_sources.cvm._bridge.resolve_company()`.
+2. Query your data source directly (DFP/ITR/FRE/COTAHIST/B3). Apply `parse_escala` to raw CVM values. Use `connect_dfp` / `connect_itr` / `connect_fre` from `data_sources/cvm/_db.py`, or `data_sources.b3.dividends.catalog.connect` for B3 dividends. Resolve tickers via `data_sources.cvm._bridge.resolve_company()`.
 3. Implement `<quantity>_at(company, date)` and `<quantity>_periods(company)` following the engine contract.
-4. Add an entry to the engine inventory in `engines/__init__.py` docstring.
-5. **Do NOT register engines in a dict** — they are imported by name by metrics. Auto-discovery just ensures they're loaded.
+4. Call `register_engine(EngineSpec(...))` at module level.
+5. Add an entry to the engine inventory in `engines/__init__.py` docstring.
 6. Add tests in `tests/skills/cvm/historical/` (mock the DB connection).
 7. **NEVER import a metric from an engine.** Engines are below metrics in the dependency graph.
 
@@ -328,7 +337,8 @@ class MetricSpec:
 2. Create `metrics/<name>.py` with:
    - `<name>_at(company, date)` → per-share value
    - `<ratio>_at(company, date)` → price ratio
-   - `<name>_history(company, date_from, date_to)` → daily series with BOTH per-share + ratio
+   - Optional: `<bonus>_at(company, date)` → bonus ratio (e.g., `payout_at`)
+   - `<name>_history(company, date_from, date_to)` → daily series with per-share + ratio + bonus ratios
 3. Call `register_metric(MetricSpec(...))` at module level.
 4. **That's it.** The following auto-generate:
    - `<name>_history` mode in the MANIFEST
@@ -336,9 +346,8 @@ class MetricSpec:
    - `historical_<name>_chart` adapter in `adapters/historical.py`
    - `ratio_history(metric=<name>)` dispatch (via `resolve_metric`)
    - `summary(metric=<name>)` metric-awareness (via `resolve_metric`)
-5. Add a report adapter if you want chart/table rendering (already auto-generated for charts).
-6. Add tests in `tests/skills/cvm/historical/test_<name>.py` (mock the engines via the registry: `monkeypatch.setattr(METRICS["<name>"], "history_fn", fake_fn)`).
-7. Update `docs/skills/cvm/historical/` (API.md + CHANGELOG.md).
+5. Add tests in `tests/skills/cvm/historical/test_<name>.py` (mock the engines via the registry: `monkeypatch.setattr(METRICS["<name>"], "history_fn", fake_fn)`).
+6. Update `docs/skills/cvm/historical/` (API.md + CHANGELOG.md).
 
 ---
 
@@ -351,14 +360,17 @@ The engines are designed for reuse by a future `skills/cvm/backtest/` skill:
 from skills.cvm.historical.engines.price import price_at
 from skills.cvm.historical.metrics.lpa import lpa_at, pe_at
 from skills.cvm.historical.metrics.vpa import vpa_at, pvpa_at
+from skills.cvm.historical.metrics.dpa import dpa_at, dy_at, payout_at
 
-# Signal: buy when P/L < 5 AND P/VPA < 1.0
-if pe_at("PETR4", "2022-06-30") < 5 and pvpa_at("PETR4", "2022-06-30") < 1.0:
+# Signal: buy when P/L < 5 AND P/VPA < 1.0 AND Div Yield > 5%
+if (pe_at("PETR4", "2022-06-30") < 5
+    and pvpa_at("PETR4", "2022-06-30") < 1.0
+    and dy_at("PETR4", "2022-06-30") > 0.05):
     entry_price = price_at("PETR4", "2022-06-30")
     # ... compute returns
 
 # Or use per-share values directly
-if lpa_at("PETR4", "2022-06-30") > 8.0:  # strong earnings per share
+if dpa_at("PETR4", "2022-06-30") > 1.50:  # strong dividend per share
     ...
 ```
 
@@ -366,4 +378,4 @@ No duplication — the backtest skill reuses the same engines and metrics.
 
 ---
 
-*Last updated: 2026-07-26 (v1.2 — auto-discovery + registry). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-26 (v1.3 — central registry + engine self-registration + DPA metric). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

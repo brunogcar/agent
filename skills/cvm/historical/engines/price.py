@@ -84,3 +84,16 @@ def price_series(ticker: str, date_from: str, date_to: str) -> list[dict]:
         return [{"date": r["refdate"], "close": float(r["close"])} for r in rows]
     except (FileNotFoundError, Exception):
         return []
+
+
+# ── Register with the engine registry ────────────────────────────────────────
+
+from skills.cvm.historical._registry import EngineSpec, register_engine  # noqa: E402
+
+register_engine(EngineSpec(
+    name="price",
+    quantity="close",
+    at_fn=price_at,
+    periods_fn=price_series,
+    source="COTAHIST (B3 daily OHLCV, 2010+)",
+))

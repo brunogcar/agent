@@ -163,3 +163,16 @@ def pl_periods(company: str) -> list[dict]:
         by_date[d] = v["value"]
 
     return [{"date": d, "pl": by_date[d]} for d in sorted(by_date.keys())]
+
+
+# ── Register with the engine registry ────────────────────────────────────────
+
+from skills.cvm.historical._registry import EngineSpec, register_engine  # noqa: E402
+
+register_engine(EngineSpec(
+    name="pl",
+    quantity="pl",
+    at_fn=pl_at,
+    periods_fn=pl_periods,
+    source="DFP + ITR BPP codigo 2.03 (Patrimônio Líquido snapshot)",
+))

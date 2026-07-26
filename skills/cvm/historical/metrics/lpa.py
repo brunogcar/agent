@@ -22,7 +22,7 @@ from __future__ import annotations
 from skills.cvm.historical.engines.price import price_at, price_series
 from skills.cvm.historical.engines.earnings import ttm_earnings_at, ttm_earnings_periods
 from skills.cvm.historical.engines.shares import shares_at, shares_periods
-from skills.cvm.historical.metrics._registry import MetricSpec, register_metric
+from skills.cvm.historical._registry import MetricSpec, register_metric
 
 
 # ── Per-share value: LPA = earnings / shares ─────────────────────────────────

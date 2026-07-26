@@ -210,13 +210,13 @@ class TestLpaHistory:
 
 class TestMetricRegistry:
     def test_lpa_registered(self):
-        from skills.cvm.historical.metrics._registry import METRICS
+        from skills.cvm.historical._registry import METRICS
         assert "lpa" in METRICS
         assert METRICS["lpa"].ratio_key == "pe"
         assert METRICS["lpa"].per_share_key == "lpa"
 
     def test_lpa_aliases(self):
-        from skills.cvm.historical.metrics._registry import resolve_metric
+        from skills.cvm.historical._registry import resolve_metric
         assert resolve_metric("pe").name == "lpa"
         assert resolve_metric("pl").name == "lpa"
         assert resolve_metric("p/l").name == "lpa"

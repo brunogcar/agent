@@ -123,3 +123,40 @@ class TestCandlestickChart:
         """Regular dicts (no _candlestick key) must NOT use candlestick path."""
         cfg = charts._to_chartjs_config({"x": ["A"], "y": [1]}, "line", "T", {})
         assert cfg["type"] == "line"  # not candlestick
+
+
+class TestDualAxisChart:
+    """v1.2.9 — dual-axis chart support for per-share + ratio metrics."""
+
+    def test_dual_axis_when_yAxisID_present(self):
+        """When datasets have yAxisID, chart config should include scales with y + y1."""
+        data = {"x": ["D1", "D2", "D3"],
+                "datasets": [{"label": "DPA", "data": [1.85, 1.85, 1.90], "yAxisID": "y"},
+                             {"label": "Div Yield", "data": [0.052, None, 0.050], "yAxisID": "y1"}]}
+        cfg = charts._to_chartjs_config(data, "line", "DPA + DY", {})
+        # Both datasets should have yAxisID passed through
+        assert cfg["data"]["datasets"][0]["yAxisID"] == "y"
+        assert cfg["data"]["datasets"][1]["yAxisID"] == "y1"
+        # Scales config should have y (left) + y1 (right)
+        assert "scales" in cfg["options"]
+        assert "y" in cfg["options"]["scales"]
+        assert "y1" in cfg["options"]["scales"]
+        assert cfg["options"]["scales"]["y"]["position"] == "left"
+        assert cfg["options"]["scales"]["y1"]["position"] == "right"
+
+    def test_no_dual_axis_without_yAxisID(self):
+        """Without yAxisID, chart config should NOT have scales (single axis)."""
+        data = {"x": ["D1", "D2"],
+                "datasets": [{"label": "A", "data": [1, 2]},
+                             {"label": "B", "data": [3, 4]}]}
+        cfg = charts._to_chartjs_config(data, "line", "Multi", {})
+        assert "scales" not in cfg["options"]
+
+    def test_partial_yAxisID_triggers_dual_axis(self):
+        """Even if only one dataset has yAxisID, dual-axis should activate."""
+        data = {"x": ["D1"],
+                "datasets": [{"label": "A", "data": [1], "yAxisID": "y"},
+                             {"label": "B", "data": [2]}]}  # B has no yAxisID
+        cfg = charts._to_chartjs_config(data, "line", "T", {})
+        assert "scales" in cfg["options"]
+        assert "y1" in cfg["options"]["scales"]

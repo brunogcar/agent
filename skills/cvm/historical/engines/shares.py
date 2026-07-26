@@ -215,3 +215,16 @@ def shares_periods(company: str) -> list[dict]:
             periods.append({"date": "2000-01-01", "shares": shares})
 
     return periods
+
+
+# ── Register with the engine registry ────────────────────────────────────────
+
+from skills.cvm.historical._registry import EngineSpec, register_engine  # noqa: E402
+
+register_engine(EngineSpec(
+    name="shares",
+    quantity="shares",
+    at_fn=shares_at,
+    periods_fn=shares_periods,
+    source="FRE (distribuicao_capital) + investsite.com.br fallback",
+))

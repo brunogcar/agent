@@ -22,7 +22,17 @@ from tools.report_ops.formats import apply_fmt
 def _make_metric_chart_adapter(adapter_name: str, metric_name: str,
                                 per_share_key: str, per_share_label: str,
                                 ratio_key: str, ratio_label: str):
-    """Factory: create a chart adapter for a specific metric."""
+    """Factory: create a chart adapter for a specific metric.
+
+    Produces a dual-dataset chart with dual-axis support:
+      - Per-share value (LPA, VPA, DPA) on the LEFT axis ("y")
+      - Price ratio (P/L, P/VPA, Div Yield) on the RIGHT axis ("y1")
+
+    The per-share value and ratio often have very different scales (e.g.,
+    DPA ~4.5 vs Div Yield ~0.10). Dual-axis makes both lines readable.
+    The chart builder (charts.py v1.2.9) detects yAxisID and adds the
+    scales config automatically.
+    """
     def _adapter(result: dict) -> dict:
         if not _ok(result):
             return _error_table(result, title=f"Historical {ratio_label}")
@@ -38,15 +48,15 @@ def _make_metric_chart_adapter(adapter_name: str, metric_name: str,
         return {
             "x": x_labels,
             "datasets": [
-                {"label": per_share_label, "data": per_share_data},
-                {"label": ratio_label, "data": ratio_data},
+                {"label": per_share_label, "data": per_share_data, "yAxisID": "y"},
+                {"label": ratio_label, "data": ratio_data, "yAxisID": "y1"},
             ],
         }
     _adapter.__name__ = adapter_name
     _adapter.__qualname__ = adapter_name
     _adapter.__doc__ = (
-        f"Flatten historical.{metric_name}_history result into a dual-dataset "
-        f"chart: {per_share_label} (per-share) + {ratio_label} (ratio)."
+        f"Flatten historical.{metric_name}_history result into a dual-axis "
+        f"chart: {per_share_label} (left axis) + {ratio_label} (right axis)."
     )
     return _adapter
 
@@ -55,7 +65,7 @@ def _make_metric_chart_adapter(adapter_name: str, metric_name: str,
 # This auto-generates historical_lpa_chart, historical_vpa_chart, etc.
 # When a new metric is registered, its chart adapter appears here automatically.
 
-from skills.cvm.historical.metrics._registry import METRICS  # noqa: E402
+from skills.cvm.historical._registry import METRICS  # noqa: E402
 
 for _name in sorted(METRICS.keys()):
     _spec = METRICS[_name]
@@ -95,7 +105,7 @@ def summary(result: dict) -> dict:
     ratio_label = result.get("ratio_label", "P/L")
 
     # Find the per-share key and ratio key from the registry
-    from skills.cvm.historical.metrics._registry import resolve_metric
+    from skills.cvm.historical._registry import resolve_metric
     try:
         spec = resolve_metric(metric_name)
         per_share_key = spec.per_share_key

@@ -207,3 +207,16 @@ def ttm_earnings_periods(company: str) -> list[dict]:
             seen.add(p["date"])
 
     return result
+
+
+# ── Register with the engine registry ────────────────────────────────────────
+
+from skills.cvm.historical._registry import EngineSpec, register_engine  # noqa: E402
+
+register_engine(EngineSpec(
+    name="earnings",
+    quantity="ttm",
+    at_fn=ttm_earnings_at,
+    periods_fn=ttm_earnings_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) — TTM derivation",
+))

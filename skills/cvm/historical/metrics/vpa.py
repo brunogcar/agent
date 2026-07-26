@@ -22,7 +22,7 @@ from __future__ import annotations
 from skills.cvm.historical.engines.price import price_at, price_series
 from skills.cvm.historical.engines.pl import pl_at, pl_periods
 from skills.cvm.historical.engines.shares import shares_at, shares_periods
-from skills.cvm.historical.metrics._registry import MetricSpec, register_metric
+from skills.cvm.historical._registry import MetricSpec, register_metric
 
 
 # ── Per-share value: VPA = PL / shares ───────────────────────────────────────

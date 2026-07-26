@@ -160,27 +160,53 @@ def _to_chartjs_config(data: Any, chart_type: str, title: str, config: dict) -> 
         if "datasets" in data and isinstance(data["datasets"], list):
             palette = _generate_palette(len(data["datasets"]), color)
             datasets = []
+            has_dual_axis = False
             for i, ds in enumerate(data["datasets"]):
                 c = palette[i] if i < len(palette) else color
-                datasets.append({
+                entry = {
                     "label": ds.get("label", f"Series {i+1}"),
                     "data": ds.get("data", ds.get("y", [])),
                     "backgroundColor": c + "40",
                     "borderColor": c,
                     "borderWidth": 2,
                     "tension": 0.3,
-                })
+                }
+                # [v1.2.9] Dual-axis support: if a dataset has yAxisID, pass it through.
+                # Adapters use this to put per-share values + ratios on separate axes
+                # (e.g., DPA ~4.5 vs Div Yield ~0.10 would be unreadable on one axis).
+                if ds.get("yAxisID"):
+                    entry["yAxisID"] = ds["yAxisID"]
+                    has_dual_axis = True
+                datasets.append(entry)
+
+            options: dict[str, Any] = {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": bool(title), "text": title},
+                },
+            }
+            # [v1.2.9] Add dual-axis scales config when any dataset has yAxisID="y1"
+            if has_dual_axis:
+                options["scales"] = {
+                    "x": {"grid": {"display": False}},
+                    "y": {
+                        "type": "linear",
+                        "position": "left",
+                        "grid": {"color": "rgba(128,128,128,0.1)"},
+                    },
+                    "y1": {
+                        "type": "linear",
+                        "position": "right",
+                        "grid": {"drawOnChartArea": False},
+                    },
+                }
+
             return {
                 "type": chart_type,
                 "data": {"labels": labels, "datasets": datasets},
-                "options": {
-                    "responsive": True,
-                    "maintainAspectRatio": False,
-                    "plugins": {
-                        "legend": {"display": True, "position": "bottom"},
-                        "title": {"display": bool(title), "text": title},
-                    },
-                },
+                "options": options,
             }
         # Single-series (backward-compatible)
         values = data.get("y", data.get("values", []))

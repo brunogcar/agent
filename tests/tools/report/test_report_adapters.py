@@ -66,7 +66,7 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 28
+        assert len(names) == 29
 
     def test_expected_adapter_names(self):
         expected = {
@@ -82,7 +82,8 @@ class TestRegistry:
             "screener_sector",
             "insider_history", "insider_by_role", "insider_summary",
             "governance_practices", "governance_score", "governance_by_chapter",
-            "historical_lpa_chart", "historical_vpa_chart", "historical_summary",
+            "historical_lpa_chart", "historical_vpa_chart", "historical_dpa_chart",
+            "historical_summary",
         }
         assert expected == set(list_adapters())
 
@@ -479,12 +480,14 @@ class TestHistoricalLpaChartAdapter:
         out = apply_adapter("historical_lpa_chart", data)
         assert out["x"] == ["2024-01-15", "2024-02-15", "2024-03-15"]
         assert len(out["datasets"]) == 2  # dual dataset
-        # Dataset 0 = per-share value (LPA)
+        # Dataset 0 = per-share value (LPA) on left axis
         assert out["datasets"][0]["label"] == "LPA"
         assert out["datasets"][0]["data"] == [8.46, 8.46, 8.88]
-        # Dataset 1 = ratio (P/L)
+        assert out["datasets"][0]["yAxisID"] == "y"  # left axis
+        # Dataset 1 = ratio (P/L) on right axis
         assert out["datasets"][1]["label"] == "P/L"
         assert out["datasets"][1]["data"] == [4.5, None, 5.2]
+        assert out["datasets"][1]["yAxisID"] == "y1"  # right axis (dual-axis)
 
     def test_lpa_chart_error_result(self):
         out = apply_adapter("historical_lpa_chart",
@@ -511,12 +514,14 @@ class TestHistoricalVpaChartAdapter:
         out = apply_adapter("historical_vpa_chart", data)
         assert out["x"] == ["2024-01-15", "2024-02-15", "2024-03-15"]
         assert len(out["datasets"]) == 2  # dual dataset
-        # Dataset 0 = per-share value (VPA)
+        # Dataset 0 = per-share value (VPA) on left axis
         assert out["datasets"][0]["label"] == "VPA"
         assert out["datasets"][0]["data"] == [23.08, 23.08, 23.85]
-        # Dataset 1 = ratio (P/VPA)
+        assert out["datasets"][0]["yAxisID"] == "y"  # left axis
+        # Dataset 1 = ratio (P/VPA) on right axis
         assert out["datasets"][1]["label"] == "P/VPA"
         assert out["datasets"][1]["data"] == [1.45, None, 1.52]
+        assert out["datasets"][1]["yAxisID"] == "y1"  # right axis (dual-axis)
 
     def test_vpa_chart_error_result(self):
         out = apply_adapter("historical_vpa_chart",
@@ -596,3 +601,68 @@ class TestHistoricalSummaryAdapter:
         out = apply_adapter("historical_summary",
                             {"status": "not_found", "error": "no data"})
         assert "sections" in out  # error table
+
+
+class TestHistoricalDpaChartAdapter:
+    def test_dpa_chart_dual_dataset_dual_axis(self):
+        """dpa_chart should produce TWO datasets with yAxisID for dual-axis."""
+        data = {
+            "status": "ok",
+            "series": [
+                {"date": "2024-01-15", "dpa": 1.85, "dy": 0.052},
+                {"date": "2024-02-15", "dpa": 1.85, "dy": None},  # gap
+                {"date": "2024-03-15", "dpa": 1.90, "dy": 0.050},
+            ],
+        }
+        out = apply_adapter("historical_dpa_chart", data)
+        assert out["x"] == ["2024-01-15", "2024-02-15", "2024-03-15"]
+        assert len(out["datasets"]) == 2  # dual dataset
+        # Dataset 0 = per-share value (DPA) on left axis
+        assert out["datasets"][0]["label"] == "DPA"
+        assert out["datasets"][0]["data"] == [1.85, 1.85, 1.90]
+        assert out["datasets"][0]["yAxisID"] == "y"  # left axis
+        # Dataset 1 = ratio (Div Yield) on right axis
+        assert out["datasets"][1]["label"] == "Div Yield"
+        assert out["datasets"][1]["data"] == [0.052, None, 0.050]
+        assert out["datasets"][1]["yAxisID"] == "y1"  # right axis (dual-axis)
+
+    def test_dpa_chart_error_result(self):
+        out = apply_adapter("historical_dpa_chart",
+                            {"status": "not_found", "error": "no data"})
+        assert "sections" in out  # error table
+
+    def test_dpa_chart_empty_series(self):
+        out = apply_adapter("historical_dpa_chart",
+                            {"status": "ok", "series": []})
+        assert "sections" in out  # error table
+
+
+class TestHistoricalSummaryDpaMetric:
+    def test_summary_dpa_metric(self):
+        """Summary adapter with metric=dpa should render DPA + Div Yield + TTM Earnings rows."""
+        data = {
+            "status": "ok",
+            "company": "PETR4",
+            "metric": "dpa",
+            "per_share_label": "DPA",
+            "ratio_label": "Div Yield",
+            "current": {
+                "date": "2024-07-26", "dpa": 1.85, "dy": 0.048, "price": 38.5,
+                "ttm_earnings": 134e9, "shares": 13e9,
+            },
+            "averages": {"1y": 0.045, "3y": 0.042, "5y": 0.040},
+            "range": {"min": 0.030, "max": 0.055},
+            "percentile": 75.0,
+            "interpretation": "expensive (above 75th percentile of history)",
+            "data_points": 1100,
+        }
+        out = apply_adapter("historical_summary", data)
+        # KPI strip — should have both DPA and Div Yield
+        kpi_labels = [k["label"] for k in out["kpis"]]
+        assert "Current DPA" in kpi_labels
+        assert "Current Div Yield" in kpi_labels
+        # Summary table — should mention DPA, Div Yield, TTM Earnings
+        rows_text = " ".join(str(r) for r in out["sections"][0]["rows"])
+        assert "DPA" in rows_text
+        assert "Div Yield" in rows_text
+        assert "TTM Earnings" in rows_text  # dpa uses earnings for payout

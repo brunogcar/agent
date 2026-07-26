@@ -2,31 +2,35 @@
 
 # 📈 HISTORICAL — Historical Financial Ratios Skill
 
-Computes financial ratios over time by combining **engines** (basics: price, earnings, shares, PL) into **metrics** (per-share values + price ratios: LPA+P/L, VPA+P/VPA). Tells you if a stock is cheap vs its **own history**.
+Computes financial ratios over time by combining **engines** (basics: price, earnings, shares, PL, dividends) into **metrics** (per-share values + price ratios: LPA+P/L, VPA+P/VPA, DPA+Div Yield+Payout). Tells you if a stock is cheap vs its **own history**.
 
-**This skill is the pattern template** for other skills that need auto-discovery + registry architecture. The engine/metric separation, auto-discovery via glob+importlib, and MetricSpec registry are designed to be copied.
+**This skill is the pattern template** for other skills that need auto-discovery + registry architecture. The central `_registry.py`, engine/metric separation, and self-registration pattern are designed to be copied.
 
 **Architecture — engines vs metrics:**
-- **Engines** (`engines/`) — one per raw quantity. Auto-discovered at import time via glob+importlib. Engines are leaves: they never import each other or metrics.
+- **Engines** (`engines/`) — one per raw quantity. Self-register via `register_engine()`. Auto-discovered by the central `_registry.py`. Engines are leaves: they never import each other or metrics.
   - `price.py` — COTAHIST daily close
   - `earnings.py` — DFP + ITR TTM earnings derivation
   - `shares.py` — FRE shares outstanding (+ investsite fallback)
   - `pl.py` — DFP + ITR BPP 2.03 Patrimônio Líquido snapshot
-- **Metrics** (`metrics/`) — one per ratio. Auto-discovered + self-registered via `@register_metric`. Each metric produces BOTH a per-share value AND a price ratio.
+  - `dividends.py` — B3 cash_dividends DPA TTM
+- **Metrics** (`metrics/`) — one per ratio. Self-register via `register_metric()`. Auto-discovered by the central `_registry.py`. Each metric produces BOTH a per-share value AND a price ratio (+ optional bonus ratios).
   - `lpa.py` — LPA (earnings/shares) + P/L (price/LPA)
   - `vpa.py` — VPA (pl/shares) + P/VPA (price/VPA)
+  - `dpa.py` — DPA (dividends TTM) + Div Yield (DPA/price) + Payout (DPA/LPA)
 
 **Each metric produces both:**
-- A **per-share value** (LPA, VPA) — useful on its own (e.g., backtest filters on EPS)
-- A **price ratio** (P/L, P/VPA) — tells you if the stock is cheap vs history
+- A **per-share value** (LPA, VPA, DPA) — useful on its own (e.g., backtest filters on EPS)
+- A **price ratio** (P/L, P/VPA, Div Yield) — tells you if the stock is cheap vs history
+- Optional **bonus ratios** (e.g., Payout = DPA/LPA) — included in the series + summary
 
 **Key characteristics:**
-- **Auto-discovery** — drop a metric file in `metrics/` + `register_metric()`. The `<metric>_history` mode, chart adapter, and dispatch all auto-generate. No edits to `__init__.py` or `historical.py`.
-- **Step-function optimization** — price changes daily, PL/earnings change quarterly, shares change annually. Precompute step functions, do O(1) lookups per day.
+- **Central auto-discovery** — `_registry.py` lives at the skill top level, globs both `engines/*.py` and `metrics/*.py`. Adding a metric = drop a file + `register_metric()`. Everything else auto-generates.
+- **Both layers self-register** — engines via `register_engine(EngineSpec(...))`, metrics via `register_metric(MetricSpec(...))`. Consistent pattern.
+- **Step-function optimization** — price changes daily, PL/earnings change quarterly, shares change annually, dividends change on payment dates. Precompute step functions, do O(1) lookups per day.
 - **Percentile analysis** — "PETR4 is at 25th percentile of its 5Y P/L range" = cheap vs history
 - **Dual-dataset charts** — each metric chart shows BOTH the per-share value AND the ratio
 - **Backtest foundation** — engines/ are standalone modules importable by a future backtest skill
-- **Data range** — P/L: 2012+ (need 2 years of ITR for TTM). P/VPA: 2010+ (DFP only). COTAHIST prices from 2010.
+- **Data range** — P/L: 2012+ (need 2 years of ITR for TTM). P/VPA: 2010+ (DFP only). Div Yield: depends on B3 dividends data (varies per ticker). COTAHIST prices from 2010.
 
 ---
 
@@ -36,17 +40,19 @@ Computes financial ratios over time by combining **engines** (basics: price, ear
 # 5-year LPA + P/L history (daily series, dual-dataset chart)
 skill(domain="cvm", sub_domain="historical", mode="lpa_history", params='{"company":"PETR4","months":60}')
 
-# 5-year VPA + P/VPA history (daily series, dual-dataset chart)
+# 5-year VPA + P/VPA history
 skill(domain="cvm", sub_domain="historical", mode="vpa_history", params='{"company":"PETR4","months":60}')
 
-# Summary: current P/L vs 1Y/3Y/5Y average + percentile (includes LPA per-share value)
+# 5-year DPA + Div Yield + Payout history
+skill(domain="cvm", sub_domain="historical", mode="dpa_history", params='{"company":"PETR4","months":60}')
+
+# Summary: current ratio vs 1Y/3Y/5Y average + percentile (includes per-share value)
 skill(domain="cvm", sub_domain="historical", mode="summary", params='{"company":"PETR4"}')
-
-# Summary for P/VPA metric (includes VPA per-share value)
 skill(domain="cvm", sub_domain="historical", mode="summary", params='{"company":"PETR4","metric":"vpa"}')
+skill(domain="cvm", sub_domain="historical", mode="summary", params='{"company":"PETR4","metric":"dpa"}')
 
-# Generic ratio history (accepts aliases: pe, pl, p/l → lpa; pvpa, p/vpa → vpa)
-skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"company":"PETR4","metric":"pe"}')
+# Generic ratio history (accepts aliases: pe/pl/p/l → lpa; pvpa/p/vpa → vpa; dy/yld/payout → dpa)
+skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"company":"PETR4","metric":"dy"}')
 ```
 
 ---
@@ -58,9 +64,10 @@ skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"com
 | Is PETR4 cheap vs its own history? | `summary(metric="lpa")` | Current P/L + percentile + interpretation |
 | P/L over time (chart) | `lpa_history` | Daily series, dual-dataset (LPA + P/L) |
 | P/VPA over time (chart) | `vpa_history` | Daily series, dual-dataset (VPA + P/VPA) |
-| Compare P/L and P/VPA side by side | Run both `summary(metric="lpa")` + `summary(metric="vpa")` | Two calls, compare results |
+| Dividend Yield over time (chart) | `dpa_history` | Daily series, dual-dataset (DPA + Div Yield) |
+| Compare P/L, P/VPA, Div Yield | Run multiple `summary(metric=...)` calls | One per metric, compare results |
 | Any metric, generic dispatch | `ratio_history(metric=...)` | Accepts canonical names + aliases |
-| Just the per-share value (LPA, VPA)? | Import engine directly: `from skills.cvm.historical.metrics.lpa import lpa_at` | For backtests / custom analysis |
+| Just the per-share value (LPA, VPA, DPA)? | Import engine directly: `from skills.cvm.historical.metrics.lpa import lpa_at` | For backtests / custom analysis |
 
 ---
 
@@ -68,6 +75,7 @@ skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"com
 
 No skill-specific config. Requires:
 - `data_sources/b3/cotahist` synced (daily prices, 2010-present)
+- `data_sources/b3/dividends` synced (cash dividends per ticker — needed for DPA/Div Yield/Payout)
 - `data_sources/cvm/dfp` synced (annual earnings + PL snapshots)
 - `data_sources/cvm/itr` synced (quarterly cumulative earnings + PL snapshots, 2011-present)
 - `data_sources/cvm/fre` synced (shares outstanding — may be empty; investsite fallback used)
@@ -86,6 +94,10 @@ report(action="chart", title="PETR4 LPA + P/L History",
 report(action="chart", title="PETR4 VPA + P/VPA History",
        data=<vpa_history JSON>, config={"chart_type":"line","adapter":"historical_vpa_chart"})
 
+# DPA + Div Yield chart (dual-dataset line chart)
+report(action="chart", title="PETR4 DPA + Div Yield History",
+       data=<dpa_history JSON>, config={"chart_type":"line","adapter":"historical_dpa_chart"})
+
 # Summary table (metric-aware: shows per-share + ratio + components)
 report(action="table", title="PETR4 Summary",
        data=<summary JSON>, config={"adapter":"historical_summary"})
@@ -97,11 +109,11 @@ report(action="table", title="PETR4 Summary",
 
 | File | Purpose |
 |------|---------|
-| [ARCHITECTURE.md](historical/ARCHITECTURE.md) | Engine/metric pattern, auto-discovery, registry design, TTM/PL algorithms, how to add engines/metrics |
-| [API.md](historical/API.md) | 4 modes (auto-generated), engine API, metric API, report adapters, error cases |
+| [ARCHITECTURE.md](historical/ARCHITECTURE.md) | Central registry design, engine/metric pattern, auto-discovery, TTM/PL/DPA algorithms, how to add engines/metrics |
+| [API.md](historical/API.md) | All modes (auto-generated), engine API, metric API, registry API, report adapters, error cases |
 | [CHANGELOG.md](historical/CHANGELOG.md) | Version history + roadmap (ev_ebitda, psr, backtest) |
-| [INSTRUCTIONS.md](historical/INSTRUCTIONS.md) | AI editing rules — engine/metric separation, auto-discovery, registry, NEVER DO, ALWAYS DO |
+| [INSTRUCTIONS.md](historical/INSTRUCTIONS.md) | AI editing rules — central registry, engine/metric separation, auto-discovery, NEVER DO, ALWAYS DO |
 
 ---
 
-*Last updated: 2026-07-26 (v1.2 — auto-discovery + registry + per-share-and-ratio pattern).*
+*Last updated: 2026-07-26 (v1.3 — central registry + engine self-registration + DPA metric).*

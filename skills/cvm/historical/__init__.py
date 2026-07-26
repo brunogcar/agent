@@ -27,8 +27,8 @@ Example:
 from __future__ import annotations
 import inspect
 
-# Importing metrics triggers auto-discovery, which populates the registry
-from skills.cvm.historical.metrics._registry import METRICS, resolve_metric, list_metrics
+# Importing _registry triggers auto-discovery of engines + metrics
+from skills.cvm.historical._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines
 
 
 def _build_metric_modes() -> dict:

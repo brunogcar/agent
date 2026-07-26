@@ -248,12 +248,12 @@ class TestPlEngine:
 
 class TestMetricRegistry:
     def test_vpa_registered(self):
-        from skills.cvm.historical.metrics._registry import METRICS
+        from skills.cvm.historical._registry import METRICS
         assert "vpa" in METRICS
         assert METRICS["vpa"].ratio_key == "pvpa"
         assert METRICS["vpa"].per_share_key == "vpa"
 
     def test_vpa_aliases_include_pvpa(self):
-        from skills.cvm.historical.metrics._registry import resolve_metric
+        from skills.cvm.historical._registry import resolve_metric
         assert resolve_metric("pvpa").name == "vpa"
         assert resolve_metric("p/vpa").name == "vpa"

@@ -12,19 +12,20 @@ This skill is the **pattern template** for auto-discovery + registry architectur
 4. **Never name a metric after a raw quantity** — `metrics/pl.py` is WRONG. PL is a raw quantity (engine). The metric computes a ratio from PL. Use the per-share quantity name: `metrics/vpa.py` (VPA = PL/shares).
 5. **Never compute TTM/PL for each day individually** — TTM changes quarterly, PL changes quarterly, shares change annually. Use `*_periods()` to get the step function, then do O(1) lookups per day.
 6. **Never forget `parse_escala`** — DFP/ITR store raw values with escala ("MIL", "MILHOES"). Always apply `parse_escala(r["escala"])` before using values.
-7. **Never return a ratio when the denominator <= 0** — P/L with negative earnings, P/VPA with negative equity. Return None (chart shows gaps). The per-share value MAY be returned (negative LPA is a valid number).
+7. **Never return a ratio when the denominator <= 0** — P/L with negative earnings, P/VPA with negative equity, Payout with negative earnings. Return None (chart shows gaps). The per-share value MAY be returned (negative LPA is a valid number).
 8. **Never hardcode empresa_ids** — DFP and ITR have independent autoincrement IDs. Always call `resolve_company()` separately for each database.
 9. **Never create `.bak` files** — forbidden by project rules.
 10. **Never rewrite entire files** — surgical edits only.
 11. **Never print to stdout** — MCP stdio corruption.
-12. **Never register engines in a dict** — engines are imported by name by metrics. Only METRICS have a registry (`metrics/_registry.py`).
+12. **Never put auto-discovery code in `engines/__init__.py` or `metrics/__init__.py`** — auto-discovery is in the CENTRAL `_registry.py` (top level). The `__init__.py` files in `engines/` and `metrics/` are minimal docstrings.
 13. **Never import metric modules at the top of `historical.py`** — use the registry (`resolve_metric()`). The registry handles lazy resolution.
 14. **Never manually edit `__init__.py` to add a `<metric>_history` mode** — the MANIFEST auto-generates from the registry. Adding a metric = drop a file + `register_metric()`.
 15. **Never manually edit `adapters/historical.py` to add a chart adapter** — chart adapters auto-register from the registry. The `historical_<metric>_chart` adapter appears automatically.
-16. **Never put non-metric files in `metrics/`** — auto-discovery imports everything (except `__init__.py` and `_registry.py`). Utility modules will break the registry.
+16. **Never put non-metric files in `metrics/`** — auto-discovery imports everything (except `__init__.py`). Utility modules will break the registry. The `_registry.py` is at the TOP level, not in `metrics/`.
 17. **Never put non-engine files in `engines/`** — auto-discovery imports everything (except `__init__.py`). Utility modules will be imported as engines.
-18. **Never make `MetricSpec` frozen** — tests need to monkeypatch `spec.history_fn`. Use `@dataclass` (not `@dataclass(frozen=True)`).
+18. **Never make `MetricSpec` or `EngineSpec` frozen** — tests need to monkeypatch `spec.history_fn` / `spec.at_fn`. Use `@dataclass` (not `@dataclass(frozen=True)`).
 19. **Never mock the module function in tests** — `_metric_history()` calls `spec.history_fn` (captured at registration time). Mock the registry spec: `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`.
+20. **Never re-run auto-discovery** — `_auto_discover()` is idempotent (uses a `_done` flag). Don't call it manually; it runs once at import time.
 
 ---
 
@@ -34,16 +35,17 @@ This skill is the **pattern template** for auto-discovery + registry architectur
 2. **Always use step-function optimization** — Precompute TTM/PL/shares periods, then lookup per day. Don't recompute for 1200 days.
 3. **Always add `data_freshness`** — Use `add_freshness(result)` from `_freshness.py`.
 4. **Always run `compileall` before `pytest`** — catches syntax errors early.
-5. **Always follow the engine contract** — `<quantity>_at(company, date) -> float | None` + `<quantity>_periods(company) -> list[dict]`. Every engine must have both functions.
-6. **Always follow the metric contract** — `<name>_at(company, date)` (per-share) + `<ratio>_at(company, date)` (ratio) + `<name>_history(company, date_from, date_to)`. Every metric must have all three functions.
-7. **Always call `register_metric()` at module level** — so the metric auto-registers when the module is imported by auto-discovery.
-8. **Always include aliases** — `["pe", "pl", "p/l"]` for lpa. Users expect to call `summary(metric="pe")`, not just `summary(metric="lpa")`.
-9. **Always produce BOTH per-share value and ratio** — LPA + P/L, VPA + P/VPA. The per-share value is useful on its own (backtests). The ratio tells you if the stock is cheap.
+5. **Always follow the engine contract** — `<quantity>_at(company, date) -> float | None` + `<quantity>_periods(company) -> list[dict]` + `register_engine(EngineSpec(...))` at module level. Every engine must have all three.
+6. **Always follow the metric contract** — `<name>_at(company, date)` (per-share) + `<ratio>_at(company, date)` (ratio) + `<name>_history(company, date_from, date_to)` + `register_metric(MetricSpec(...))` at module level. Every metric must have all four.
+7. **Always call `register_engine()` / `register_metric()` at module level** — so the engine/metric auto-registers when the module is imported by auto-discovery.
+8. **Always include aliases** — `["pe", "pl", "p/l"]` for lpa, `["dy", "dividend_yield", "yld", "payout"]` for dpa. Users expect to call `summary(metric="pe")`, not just `summary(metric="lpa")`.
+9. **Always produce BOTH per-share value and ratio** — LPA + P/L, VPA + P/VPA, DPA + Div Yield. The per-share value is useful on its own (backtests). The ratio tells you if the stock is cheap. Bonus ratios (e.g., Payout) are optional.
 10. **Always mock the registry spec in tests** — `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`. Not the module function.
 11. **Always update the adapter count test** when adding a new adapter — `tests/tools/report/test_report_adapters.py` `test_adapters_registered` hardcodes the count.
-12. **Always document the engine in `engines/__init__.py`** inventory when adding one.
+12. **Always document the engine in `engines/__init__.py`** inventory docstring when adding one.
 13. **Always update CHANGELOG.md** when adding metrics/engines/modes — see `docs/DOCUMENTATION_GUIDE.md`.
-14. **Always use `sorted()` in auto-discovery glob** — `sorted(Path(__file__).parent.glob("*.py"))` for deterministic import order across filesystems.
+14. **Always use `sorted()` in auto-discovery glob** — `sorted((base / "engines").glob("*.py"))` for deterministic import order across filesystems.
+15. **Always import from the central `_registry.py`** — `from skills.cvm.historical._registry import MetricSpec, register_metric`. NOT from `metrics._registry` (old v1.2 location, deleted in v1.3).
 
 ---
 
@@ -87,17 +89,24 @@ historical.py  (orchestrator — reads from registry, knows both layers)
 
 ## 📐 Auto-Discovery Rules
 
-1. **`engines/__init__.py`** — globs `*.py` (excluding `__init__.py`). Imports each via `importlib.import_module()`. No registry, no decorator. Engines are imported by name by metrics.
-2. **`metrics/__init__.py`** — globs `*.py` (excluding `__init__.py` and `_registry.py`). Imports each via `importlib.import_module()`. This triggers `register_metric()` in each metric module.
-3. **`adapters/historical.py`** — iterates over `METRICS` dict and auto-registers chart adapters via `ADAPTERS[f"historical_{name}_chart"] = _adapter_fn`.
-4. **`__init__.py`** — `_build_metric_modes()` iterates over `METRICS` and generates `<metric>_history` mode entries for the MANIFEST.
-5. **`historical.py`** — `_make_metric_history_fn()` generates `<metric>_history` functions and assigns them to `globals()`.
+1. **`_registry.py` (top level)** — the CENTRAL auto-discovery module. Globs `engines/*.py` AND `metrics/*.py` (excluding `__init__.py`). Imports each via `importlib.import_module()`. This triggers `register_engine()` and `register_metric()` calls. Idempotent (uses `_done` flag).
+2. **`engines/__init__.py`** — minimal docstring (NO auto-discovery code). Auto-discovery is in the central `_registry.py`.
+3. **`metrics/__init__.py`** — minimal docstring (NO auto-discovery code). Auto-discovery is in the central `_registry.py`.
+4. **`adapters/historical.py`** — iterates over `METRICS` dict and auto-registers chart adapters via `ADAPTERS[f"historical_{name}_chart"] = _adapter_fn`.
+5. **`__init__.py`** (skill manifest) — `_build_metric_modes()` iterates over `METRICS` and generates `<metric>_history` mode entries for the MANIFEST.
+6. **`historical.py`** — `_make_metric_history_fn()` generates `<metric>_history` functions and assigns them to `globals()`.
 
-**Adding a metric = 1 file + `register_metric()`.** Everything else auto-generates.
+**Adding a metric = 1 file in `metrics/` + `register_metric()`.** Everything else auto-generates.
+**Adding an engine = 1 file in `engines/` + `register_engine()`.** It's immediately available for metrics to import.
 
 ---
 
 ## 🚫 Anti-Patterns & Lessons Learned
+
+### v1.3 — Registry scattered across subfolders
+> - **What happened:** In v1.2, the registry lived in `metrics/_registry.py` and only handled metrics. Engines had no registry — they were imported by name by metrics. This created an inconsistency: metrics self-registered, but engines didn't.
+> - **Why it matters:** The pattern wasn't consistent. `list_engines()` didn't exist, so the backtest skill couldn't discover engines programmatically. Adding an engine required editing metrics that needed it, with no central inventory.
+> - **Fix:** Moved `_registry.py` to the skill top level (`skills/cvm/historical/_registry.py`). It now handles BOTH engines and metrics auto-discovery. New `EngineSpec` dataclass + `register_engine()`. Both layers self-register. `list_engines()` enables backtest discovery. `engines/__init__.py` and `metrics/__init__.py` simplified to minimal docstrings.
 
 ### v1.2 — Frozen MetricSpec broke tests
 > - **What happened:** `MetricSpec` was `@dataclass(frozen=True)`. Tests tried to `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)` to mock the history function. Frozen dataclasses raise `FrozenInstanceError` on setattr.
@@ -125,17 +134,17 @@ historical.py  (orchestrator — reads from registry, knows both layers)
 
 If you're creating a new skill that follows this pattern:
 
-- [ ] `engines/__init__.py` — auto-discovery via glob + importlib
-- [ ] `engines/<quantity>.py` — one per raw quantity, follows engine contract
-- [ ] `metrics/__init__.py` — auto-discovery via glob + importlib
-- [ ] `metrics/_registry.py` — spec dataclass + register + resolve + aliases
+- [ ] `_registry.py` (top level) — EngineSpec + MetricSpec + register_engine + register_metric + auto-discovery (globs both engines/ and metrics/) + resolve_metric + aliases
+- [ ] `engines/__init__.py` — minimal docstring (NO auto-discovery code)
+- [ ] `engines/<quantity>.py` — one per raw quantity, follows engine contract + `register_engine()` at module level
+- [ ] `metrics/__init__.py` — minimal docstring (NO auto-discovery code)
 - [ ] `metrics/<per_share>.py` — one per ratio, calls `register_metric()` at module level
 - [ ] `<skill>.py` — `_metric_history()` reads from registry, auto-generates `<metric>_history` functions
-- [ ] `__init__.py` — MANIFEST modes auto-generate from registry
+- [ ] `__init__.py` (skill manifest) — MANIFEST modes auto-generate from registry
 - [ ] `adapters/<skill>.py` — chart adapters auto-register from registry
 - [ ] Tests mock the registry spec (not the module function)
-- [ ] Docs document the engine/metric separation + auto-discovery + registry
+- [ ] Docs document the central registry + engine/metric separation + auto-discovery
 
 ---
 
-*Last updated: 2026-07-26 (v1.2 — auto-discovery + registry). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-26 (v1.3 — central registry + engine self-registration + DPA metric). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history.*

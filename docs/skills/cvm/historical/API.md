@@ -62,6 +62,46 @@ Returns:
 }
 ```
 
+### `mode="dpa_history"` (auto-generated)
+Daily DPA + Dividend Yield + Payout time series for the last N months.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | B3 ticker |
+| `months` | `int` | `60` | Number of months of history (60 = 5 years) |
+
+Returns:
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "metric": "dpa",
+  "per_share_label": "DPA",
+  "ratio_label": "Div Yield",
+  "date_from": "2019-07-26",
+  "date_to": "2024-07-26",
+  "total_days": 1200,
+  "dy_days": 1100,
+  "series": [
+    {"date": "2019-07-26", "price": 28.5, "dpa": 1.50, "dy": 0.053, "payout": 0.19,
+     "ttm_earnings": 100e9, "shares": 13e9, "lpa": 7.69},
+    ...
+  ],
+  "data_freshness": {...}
+}
+```
+
+**Field meanings:**
+- `dpa`: Dividends Per Share, TTM (R$/share) — per-share value
+- `dy`: Dividend Yield = DPA / price (fraction, e.g., 0.053 = 5.3%) — price ratio
+- `payout`: Payout = DPA / LPA (fraction, e.g., 0.19 = 19%) — bonus ratio
+- `lpa`: LPA = TTM earnings / shares (needed for payout)
+
+**Special values:**
+- `dpa: null` → no dividends data available
+- `dpa: 0.0` → company exists but pays no dividends (valid, dy = 0.0)
+- `payout: null` → LPA <= 0 (negative earnings — payout meaningless) or DPA is None
+
 ### `mode="ratio_history"` (generic)
 Any metric over time. Accepts canonical names and aliases.
 
@@ -73,14 +113,15 @@ Any metric over time. Accepts canonical names and aliases.
 
 **Metric names + aliases:**
 
-| Canonical | Aliases | Per-share | Ratio |
-|---|---|---|---|
-| `lpa` | `pe`, `pl`, `p/l` | LPA (earnings/shares) | P/L (price/LPA) |
-| `vpa` | `pvpa`, `p/vpa` | VPA (pl/shares) | P/VPA (price/VPA) |
+| Canonical | Aliases | Per-share | Ratio | Bonus |
+|---|---|---|---|---|
+| `lpa` | `pe`, `pl`, `p/l` | LPA (earnings/shares) | P/L (price/LPA) | — |
+| `vpa` | `pvpa`, `p/vpa` | VPA (pl/shares) | P/VPA (price/VPA) | — |
+| `dpa` | `dy`, `dividend_yield`, `yld`, `payout` | DPA (dividends TTM) | Div Yield (DPA/price) | Payout (DPA/LPA) |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
-- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['lpa', 'vpa']"}`
+- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['dpa', 'lpa', 'vpa']"}`
 
 ### `mode="summary"` (generic, metric-aware)
 Current ratio vs 1Y/3Y/5Y average + min/max/percentile. Includes BOTH per-share value and ratio in the result.
@@ -185,7 +226,8 @@ Chart adapters are auto-registered for each metric. The summary adapter is metri
 |---|---|---|
 | `historical_lpa_chart` | lpa_history | Dual-dataset line chart: LPA (per-share) + P/L (ratio) |
 | `historical_vpa_chart` | vpa_history | Dual-dataset line chart: VPA (per-share) + P/VPA (ratio) |
-| `historical_summary` | summary | KPI strip (per-share + ratio + averages + percentile) + summary table. **Metric-aware**: renders TTM Earnings for lpa, PL for vpa. |
+| `historical_dpa_chart` | dpa_history | Dual-dataset line chart: DPA (per-share) + Div Yield (ratio) |
+| `historical_summary` | summary | KPI strip (per-share + ratio + averages + percentile) + summary table. **Metric-aware**: renders TTM Earnings for lpa/dpa, PL for vpa. |
 
 ```python
 # LPA + P/L dual-dataset chart
@@ -196,7 +238,11 @@ report(action="chart", title="PETR4 LPA + P/L",
 report(action="chart", title="PETR4 VPA + P/VPA",
        data=<vpa_history JSON>, config={"chart_type":"line","adapter":"historical_vpa_chart"})
 
-# Summary table (works for both metrics — reads result["metric"])
+# DPA + Div Yield dual-dataset chart
+report(action="chart", title="PETR4 DPA + Div Yield",
+       data=<dpa_history JSON>, config={"chart_type":"line","adapter":"historical_dpa_chart"})
+
+# Summary table (works for all metrics — reads result["metric"])
 report(action="table", title="PETR4 Summary",
        data=<summary JSON>, config={"adapter":"historical_summary"})
 ```
@@ -231,11 +277,18 @@ pl_at(company: str, date: str) -> float | None             # PL snapshot <= date
 pl_periods(company: str) -> list[dict]                     # [{date, pl}, ...]
 ```
 
+### `engines/dividends.py`
+```python
+dividends_at(ticker: str, date: str) -> float | None       # DPA TTM <= date (R$/share)
+                                                            # None = no data; 0.0 = no dividends in window
+dividends_periods(ticker: str) -> list[dict]               # [{date, dpa}, ...] — one per payment date
+```
+
 ---
 
 ## 📐 Metric API (for direct import)
 
-Each metric produces BOTH a per-share value AND a price ratio.
+Each metric produces BOTH a per-share value AND a price ratio. Some metrics also produce bonus ratios.
 
 ### `metrics/lpa.py`
 ```python
@@ -251,22 +304,39 @@ pvpa_at(company: str, date: str) -> float | None           # P/VPA = price / VPA
 vpa_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, price, pl, shares, vpa, pvpa}, ...]
 ```
 
----
-
-## 📐 Registry API (for skill-internal use)
-
-### `metrics/_registry.py`
+### `metrics/dpa.py`
 ```python
-MetricSpec(name, per_share_label, per_share_key, per_share_fn,
-           ratio_label, ratio_key, ratio_fn, history_fn, engines, aliases)
-
-METRICS: dict[str, MetricSpec]              # all registered metrics
-register_metric(spec: MetricSpec) -> MetricSpec  # called at import time by each metric
-resolve_metric(name: str) -> MetricSpec      # canonical name or alias → spec
-list_metrics() -> list[str]                  # canonical names only
-list_all_names() -> list[str]                # canonical + aliases
+dpa_at(ticker: str, date: str) -> float | None             # DPA = dividends TTM (per-share, R$/share)
+dy_at(ticker: str, date: str) -> float | None              # Div Yield = DPA / price (ratio)
+payout_at(ticker: str, date: str) -> float | None          # Payout = DPA / LPA (bonus ratio)
+dpa_history(ticker: str, date_from: str, date_to: str) -> list[dict]   # [{date, price, dpa, dy, payout, ttm_earnings, shares, lpa}, ...]
 ```
 
 ---
 
-*Last updated: 2026-07-26 (v1.2 — auto-discovery + registry). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+## 📐 Registry API (for skill-internal use)
+
+### `_registry.py` (central — at the skill top level)
+```python
+# Engine spec
+EngineSpec(name, quantity, at_fn, periods_fn, source)
+
+# Metric spec
+MetricSpec(name, per_share_label, per_share_key, per_share_fn,
+           ratio_label, ratio_key, ratio_fn, history_fn, engines, aliases)
+
+ENGINES: dict[str, EngineSpec]                  # all registered engines
+METRICS: dict[str, MetricSpec]                  # all registered metrics
+
+register_engine(spec: EngineSpec) -> EngineSpec  # called at import time by each engine
+register_metric(spec: MetricSpec) -> MetricSpec  # called at import time by each metric
+
+resolve_metric(name: str) -> MetricSpec          # canonical name or alias → spec
+list_engines() -> list[str]                      # engine names
+list_metrics() -> list[str]                      # canonical metric names only
+list_all_metric_names() -> list[str]             # canonical + aliases
+```
+
+---
+
+*Last updated: 2026-07-26 (v1.3 — central registry + engine self-registration + DPA metric). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
