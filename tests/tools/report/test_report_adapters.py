@@ -64,9 +64,9 @@ DIVIDENDS_HISTORY = {
 
 
 class TestRegistry:
-    def test_twentyfive_adapters_registered(self):
+    def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 25
+        assert len(names) == 28
 
     def test_expected_adapter_names(self):
         expected = {
@@ -82,6 +82,7 @@ class TestRegistry:
             "screener_sector",
             "insider_history", "insider_by_role", "insider_summary",
             "governance_practices", "governance_score", "governance_by_chapter",
+            "historical_pe_chart", "historical_vpa_chart", "historical_summary",
         }
         assert expected == set(list_adapters())
 
@@ -460,3 +461,118 @@ class TestCotahistCandlestickAdapter:
         out = apply_adapter("cotahist_candlestick_chart", data)
         ohlc = out.get("ohlc_data") or []
         assert len(ohlc) == 1  # second row skipped (open=None)
+
+
+# ── Historical adapters ─────────────────────────────────────────────────────
+
+class TestHistoricalPeChartAdapter:
+    def test_pe_chart_from_result(self):
+        data = {
+            "status": "ok",
+            "series": [
+                {"date": "2024-01-15", "pe": 4.5},
+                {"date": "2024-02-15", "pe": None},  # gap
+                {"date": "2024-03-15", "pe": 5.2},
+            ],
+        }
+        out = apply_adapter("historical_pe_chart", data)
+        assert out["x"] == ["2024-01-15", "2024-02-15", "2024-03-15"]
+        assert out["datasets"][0]["label"] == "P/L"
+        assert out["datasets"][0]["data"] == [4.5, None, 5.2]
+
+    def test_pe_chart_error_result(self):
+        out = apply_adapter("historical_pe_chart",
+                            {"status": "not_found", "error": "no data"})
+        assert "sections" in out  # error table
+
+    def test_pe_chart_empty_series(self):
+        out = apply_adapter("historical_pe_chart",
+                            {"status": "ok", "series": []})
+        assert "sections" in out  # error table
+
+
+class TestHistoricalVpaChartAdapter:
+    def test_vpa_chart_from_result(self):
+        data = {
+            "status": "ok",
+            "series": [
+                {"date": "2024-01-15", "vpa": 1.45},
+                {"date": "2024-02-15", "vpa": None},  # gap
+                {"date": "2024-03-15", "vpa": 1.52},
+            ],
+        }
+        out = apply_adapter("historical_vpa_chart", data)
+        assert out["x"] == ["2024-01-15", "2024-02-15", "2024-03-15"]
+        assert out["datasets"][0]["label"] == "P/VPA"
+        assert out["datasets"][0]["data"] == [1.45, None, 1.52]
+
+    def test_vpa_chart_error_result(self):
+        out = apply_adapter("historical_vpa_chart",
+                            {"status": "not_found", "error": "no data"})
+        assert "sections" in out  # error table
+
+    def test_vpa_chart_empty_series(self):
+        out = apply_adapter("historical_vpa_chart",
+                            {"status": "ok", "series": []})
+        assert "sections" in out  # error table
+
+
+class TestHistoricalSummaryAdapter:
+    def test_summary_pe_metric(self):
+        """Summary adapter with metric=pe should render P/L rows."""
+        data = {
+            "status": "ok",
+            "company": "PETR4",
+            "metric": "pe",
+            "current": {
+                "date": "2024-07-26", "pe": 4.75, "price": 38.5,
+                "ttm_earnings": 134e9, "shares": 13e9,
+            },
+            "averages": {"1y": 6.2, "3y": 7.5, "5y": 8.1},
+            "range": {"min": 3.1, "max": 12.5},
+            "percentile": 25.0,
+            "interpretation": "cheap (below 25th percentile of history)",
+            "data_points": 1100,
+        }
+        out = apply_adapter("historical_summary", data)
+        assert out["company"] == "PETR4"
+        # KPI strip
+        kpi_labels = [k["label"] for k in out["kpis"]]
+        assert "Current P/L" in kpi_labels
+        assert "Percentile" in kpi_labels
+        # Summary table — should mention P/L and TTM Earnings (pe-specific)
+        rows_text = " ".join(str(r) for r in out["sections"][0]["rows"])
+        assert "P/L" in rows_text
+        assert "TTM Earnings" in rows_text
+
+    def test_summary_vpa_metric(self):
+        """Summary adapter with metric=vpa should render P/VPA + PL rows."""
+        data = {
+            "status": "ok",
+            "company": "PETR4",
+            "metric": "vpa",
+            "current": {
+                "date": "2024-07-26", "vpa": 1.45, "price": 38.5,
+                "pl": 350e9, "shares": 13e9,
+            },
+            "averages": {"1y": 1.5, "3y": 1.6, "5y": 1.7},
+            "range": {"min": 0.9, "max": 2.1},
+            "percentile": 30.0,
+            "interpretation": "fair (between 25th-75th percentile of history)",
+            "data_points": 1100,
+        }
+        out = apply_adapter("historical_summary", data)
+        # KPI strip — should say "Current P/VPA" not "Current P/L"
+        kpi_labels = [k["label"] for k in out["kpis"]]
+        assert "Current P/VPA" in kpi_labels
+        # Summary table — should mention P/VPA and Patrimônio Líquido (vpa-specific)
+        rows_text = " ".join(str(r) for r in out["sections"][0]["rows"])
+        assert "P/VPA" in rows_text
+        assert "Patrim" in rows_text  # "Patrimônio Líquido"
+        # Should NOT have TTM Earnings row for vpa metric
+        assert "TTM Earnings" not in rows_text
+
+    def test_summary_error_result(self):
+        out = apply_adapter("historical_summary",
+                            {"status": "not_found", "error": "no data"})
+        assert "sections" in out  # error table
