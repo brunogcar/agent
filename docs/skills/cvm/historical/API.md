@@ -2,19 +2,21 @@
 
 # 📝 API Reference
 
+The historical skill exposes one `<metric>_history` mode per registered metric (auto-generated from the calculations registry), plus two generic modes (`ratio_history`, `summary`). Engine, metric, and registry function signatures live in the calculations library — see [calculations/API.md](../calculations/API.md) for those.
+
 ## 🔧 Modes
 
-The `<metric>_history` modes are auto-generated from the metric registry. When a new metric is registered, its `<metric>_history` mode appears here automatically. The generic modes (`ratio_history`, `summary`) are static and work with any registered metric.
+### Auto-generated `<metric>_history` modes
 
-### `mode="lpa_history"` (auto-generated)
-Daily LPA + P/L time series for the last N months.
+The `<metric>_history` modes are auto-generated from the calculations metric registry. When a new metric is registered (in `skills/cvm/calculations/metrics/`), its `<metric>_history` mode appears here automatically. The 17 current modes are: `lpa_history`, `vpa_history`, `dpa_history`, `rps_history`, `ev_ebitda_history`, `roe_history`, `roa_history`, `roic_history`, `gross_margin_history`, `operating_margin_history`, `net_margin_history`, `ebitda_margin_history`, `debt_equity_history`, `net_debt_ebitda_history`, `asset_turnover_history`, `capex_revenue_history`, `current_ratio_history`.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `company` | `str` | (required) | B3 ticker |
 | `months` | `int` | `60` | Number of months of history (60 = 5 years) |
 
-Returns:
+#### Example: `mode="lpa_history"` (per-share + ratio — Type 1)
+
 ```json
 {
   "status": "ok",
@@ -34,111 +36,8 @@ Returns:
 }
 ```
 
-### `mode="vpa_history"` (auto-generated)
-Daily VPA + P/VPA time series for the last N months.
+#### Example: `mode="roe_history"` (fundamental ratio — Type 2, no per-share, no price)
 
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | B3 ticker |
-| `months` | `int` | `60` | Number of months of history (60 = 5 years) |
-
-Returns:
-```json
-{
-  "status": "ok",
-  "company": "PETR4",
-  "metric": "vpa",
-  "per_share_label": "VPA",
-  "ratio_label": "P/VPA",
-  "date_from": "2019-07-26",
-  "date_to": "2024-07-26",
-  "total_days": 1200,
-  "pvpa_days": 1100,
-  "series": [
-    {"date": "2019-07-26", "price": 28.5, "pl": 290e9, "shares": 13e9, "vpa": 22.31, "pvpa": 1.27},
-    ...
-  ],
-  "data_freshness": {...}
-}
-```
-
-### `mode="dpa_history"` (auto-generated)
-Daily DPA + Dividend Yield + Payout time series for the last N months.
-
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | B3 ticker |
-| `months` | `int` | `60` | Number of months of history (60 = 5 years) |
-
-Returns:
-```json
-{
-  "status": "ok",
-  "company": "PETR4",
-  "metric": "dpa",
-  "per_share_label": "DPA",
-  "ratio_label": "Div Yield",
-  "date_from": "2019-07-26",
-  "date_to": "2024-07-26",
-  "total_days": 1200,
-  "dy_days": 1100,
-  "series": [
-    {"date": "2019-07-26", "price": 28.5, "dpa": 1.50, "dy": 0.053, "payout": 0.19,
-     "ttm_earnings": 100e9, "shares": 13e9, "lpa": 7.69},
-    ...
-  ],
-  "data_freshness": {...}
-}
-```
-
-**Field meanings:**
-- `dpa`: Dividends Per Share, TTM (R$/share) — per-share value
-- `dy`: Dividend Yield = DPA / price (fraction, e.g., 0.053 = 5.3%) — price ratio
-- `payout`: Payout = DPA / LPA (fraction, e.g., 0.19 = 19%) — bonus ratio
-- `lpa`: LPA = TTM earnings / shares (needed for payout)
-
-**Special values:**
-- `dpa: null` → no dividends data available
-- `dpa: 0.0` → company exists but pays no dividends (valid, dy = 0.0)
-- `payout: null` → LPA <= 0 (negative earnings — payout meaningless) or DPA is None
-
-### `mode="rps_history"` (auto-generated)
-Daily RPS + PSR time series for the last N months.
-
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | B3 ticker |
-| `months` | `int` | `60` | Number of months of history (60 = 5 years) |
-
-Returns:
-```json
-{
-  "status": "ok",
-  "company": "PETR4",
-  "metric": "rps",
-  "per_share_label": "RPS",
-  "ratio_label": "PSR",
-  "date_from": "2019-07-26",
-  "date_to": "2024-07-26",
-  "total_days": 1200,
-  "psr_days": 1100,
-  "series": [
-    {"date": "2019-07-26", "price": 28.5, "ttm_rev": 250e9, "shares": 13e9, "rps": 19.23, "psr": 1.48},
-    ...
-  ],
-  "data_freshness": {...}
-}
-```
-
-### `mode="roe_history"` (auto-generated)
-Daily ROE time series. ROE is a fundamental ratio (no price, no shares).
-
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | B3 ticker |
-| `months` | `int` | `60` | Number of months of history (60 = 5 years) |
-
-Returns:
 ```json
 {
   "status": "ok",
@@ -158,10 +57,13 @@ Returns:
 }
 ```
 
-**Note:** ROE series has ~4-8 data points per year (quarterly earnings + PL snapshots), not daily. No `price` or `shares` in series entries.
+**Note:** Type 1 series (lpa, vpa, dpa, rps, ev_ebitda) are daily (~1200 points over 5 years, driven by price dates). Type 2 series (roe, roa, roic, all margins, leverage, turnover, liquidity) have ~4-8 data points per year (quarterly earnings + balance snapshots) — no daily price driver. No `price` or `shares` in Type 2 series entries.
 
-### `mode="ratio_history"` (generic)
-Any metric over time. Accepts canonical names and aliases.
+---
+
+### `mode="ratio_history"` (generic, alias-aware)
+
+Any metric over time. Accepts canonical names and aliases via `resolve_metric()`.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
@@ -169,42 +71,47 @@ Any metric over time. Accepts canonical names and aliases.
 | `metric` | `str` | `lpa` | Metric name or alias (see table below) |
 | `months` | `int` | `60` | Number of months |
 
-**Metric names + aliases:**
+**Metric names + aliases** (canonical name + PT/EN aliases — full table in [calculations/API.md](../calculations/API.md#metric-aliases-pt--en)):
 
-| Canonical | Aliases (EN) | Aliases (PT) | Per-share | Ratio | Bonus |
-|---|---|---|---|---|---|
-| `lpa` | `pe`, `pl`, `p/l` | `preco_lucro` | LPA (earnings/shares) | P/L (price/LPA) | — |
-| `vpa` | `pvpa`, `p/vpa` | `preco_vpa`, `p_vpa` | VPA (pl/shares) | P/VPA (price/VPA) | — |
-| `dpa` | `dy`, `dividend_yield`, `yld`, `payout` | `rendimento`, `rendimento_dividendo`, `div_yield` | DPA (dividends TTM) | Div Yield (DPA/price) | Payout (DPA/LPA) |
-| `rps` | `psr`, `p/sr`, `price_sales` | `preco_venda`, `p_venda` | RPS (revenue/shares) | PSR (price/RPS) | — |
-| `roe` | `return_on_equity` | `retorno_pl`, `retorno_patrimonio` | — (fundamental) | ROE (earnings/PL) | — |
-| `roa` | `return_on_assets` | `retorno_ativos` | — (fundamental) | ROA (earnings/assets) | — |
-| `gross_margin` | `gm`, `gross_margin_pct` | `margem_bruta` | — (fundamental) | Margem Bruta (gross_profit/revenue) | — |
-| `operating_margin` | `om`, `operating_margin_pct` | `margem_operacional` | — (fundamental) | Margem Operacional (EBIT/revenue) | — |
-| `roic` | `return_on_invested_capital` | `retorno_capital_investido` | — (fundamental) | ROIC (NOPAT/invested_capital) | — |
-| `ev_ebitda` | `ev_ebit`, `evebitda`, `eva_ebitda` | — | EBITDA/Ação (EBIT+D&A)/shares | EV/EBITDA (EV/EBITDA) | — |
-| `net_margin` | `nm`, `net_margin_pct` | `margem_liquida`, `ml` | — (fundamental) | Margem Líquida (earnings/revenue) | — |
-| `ebitda_margin` | `em`, `ebitda_margin_pct` | `margem_ebitda` | — (fundamental) | Margem EBITDA (EBIT+D&A)/revenue | — |
-| `debt_equity` | `de` | `divida_pl`, `divida_patrimonio` | — (fundamental) | Dívida/PL (debt/PL) | — |
-| `net_debt_ebitda` | `nde`, `net_debt_to_ebitda` | `dl_ebitda`, `divida_liquida_ebitda` | — (fundamental) | DL/EBITDA ((debt-cash)/EBITDA) | — |
-| `asset_turnover` | `at`, `asset_turnover_ratio` | `giro_ativos` | — (fundamental) | Giro de Ativos (revenue/assets) | — |
-| `capex_revenue` | `capex_intensity` | `intensidade_capex` | — (fundamental) | CapEx/Receita (capex/revenue) | — |
-| `current_ratio` | `cr`, `current_liquidity` | `liquidez_corrente` | — (fundamental) | Liquidez Corrente (current_assets/current_liabilities) | — |
+| Canonical | Aliases (EN + PT) | Type |
+|---|---|---|
+| `lpa` | pe, pl, p/l, preco_lucro | Per-share+ratio |
+| `vpa` | pvpa, p/vpa, preco_vpa, p_vpa | Per-share+ratio |
+| `dpa` | dy, dividend_yield, yld, payout, rendimento, rendimento_dividendo, div_yield | Per-share+ratio (+payout) |
+| `rps` | psr, p/sr, price_sales, preco_venda, p_venda | Per-share+ratio |
+| `ev_ebitda` | ev_ebit, evebitda, eva_ebitda | Per-share+ratio (6 engines) |
+| `roe` | return_on_equity, retorno_pl, retorno_patrimonio | Fundamental |
+| `roa` | return_on_assets, retorno_ativos | Fundamental |
+| `roic` | return_on_invested_capital, retorno_capital_investido | Fundamental (5 engines) |
+| `gross_margin` | margem_bruta, gm, gross_margin_pct | Fundamental |
+| `operating_margin` | margem_operacional, om, operating_margin_pct | Fundamental |
+| `net_margin` | nm, margem_liquida, ml, net_margin_pct | Fundamental |
+| `ebitda_margin` | em, margem_ebitda, ebitda_margin_pct | Fundamental |
+| `debt_equity` | de, divida_pl, divida_patrimonio | Fundamental |
+| `net_debt_ebitda` | nde, dl_ebitda, divida_liquida_ebitda, net_debt_to_ebitda | Fundamental |
+| `asset_turnover` | at, giro_ativos, asset_turnover_ratio | Fundamental |
+| `capex_revenue` | capex_intensity, intensidade_capex | Fundamental |
+| `current_ratio` | cr, current_liquidity, liquidez_corrente | Fundamental |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
-- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['dpa', 'lpa', 'roe', 'rps', 'vpa']"}`
+- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: [...]"}`
 
-### `mode="summary"` (generic, metric-aware)
-Current ratio vs 1Y/3Y/5Y average + min/max/percentile. Includes BOTH per-share value and ratio in the result.
+Return shape is identical to the matching `<metric>_history` mode.
+
+---
+
+### `mode="summary"` (generic, metric-aware, with percentile)
+
+Current ratio vs 1Y/3Y/5Y average + min/max/percentile. Metric-aware: includes per-share value AND ratio in the result for Type 1 metrics; only the ratio for Type 2 fundamental metrics.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `company` | `str` | (required) | B3 ticker |
 | `metric` | `str` | `lpa` | Metric name or alias |
-| `months` | `int` | `60` | History window for percentile (always uses max(months, 60)) |
+| `months` | `int` | `60` | History window for percentile (always uses `max(months, 60)`) |
 
-Returns (metric=lpa):
+Returns (Type 1 metric — lpa):
 ```json
 {
   "status": "ok",
@@ -230,29 +137,7 @@ Returns (metric=lpa):
 }
 ```
 
-Returns (metric=vpa):
-```json
-{
-  "status": "ok",
-  "company": "PETR4",
-  "metric": "vpa",
-  "per_share_label": "VPA",
-  "ratio_label": "P/VPA",
-  "current": {
-    "date": "2024-07-26",
-    "vpa": 23.85,
-    "pvpa": 1.45,
-    "price": 38.5,
-    "pl": 350e9,
-    "shares": 13e9
-  },
-  "averages": {"1y": 1.5, "3y": 1.6, "5y": 1.7},
-  "range": {"min": 0.9, "max": 2.1},
-  "percentile": 30.0,
-  "interpretation": "fair (between 25th-75th percentile of history)",
-  ...
-}
-```
+Returns (Type 2 metric — roe): same shape, but `current` has no `price`/`shares`, only the ratio + engine components, and `per_share_label` is `null`.
 
 **Interpretation thresholds (all metrics):**
 | Percentile | Interpretation |
@@ -263,36 +148,40 @@ Returns (metric=vpa):
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
-- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: ['lpa', 'vpa']"}`
+- Unknown metric → `{"status": "error", "error": "Unknown metric '<name>'. Available: [..."}`
 - No price data → `{"status": "not_found", "error": "No price data for '<company>'"}`
-- No valid ratio data (negative earnings/equity) → `{"status": "not_found", "error": "No valid <label> data for '<company>' (possibly negative earnings/equity)"}`
+- No valid ratio data (negative earnings/equity in window) → `{"status": "not_found", "error": "No valid <label> data for '<company>' (possibly negative earnings/equity)"}`
 
 ---
 
 ## 🛠️ Tool Invocation
 
 ```python
-# LPA + P/L time series
+# LPA + P/L time series (auto-generated mode)
 skill(domain="cvm", sub_domain="historical", mode="lpa_history", params='{"company":"PETR4","months":60}')
 
 # VPA + P/VPA time series
 skill(domain="cvm", sub_domain="historical", mode="vpa_history", params='{"company":"PETR4","months":60}')
 
+# ROE fundamental ratio time series (Type 2 — ~4-8 points/year, not daily)
+skill(domain="cvm", sub_domain="historical", mode="roe_history", params='{"company":"PETR4","months":60}')
+
 # Summary (default metric = lpa)
 skill(domain="cvm", sub_domain="historical", mode="summary", params='{"company":"PETR4"}')
 
-# Summary for vpa metric
+# Summary for any metric (accepts aliases)
 skill(domain="cvm", sub_domain="historical", mode="summary", params='{"company":"PETR4","metric":"vpa"}')
+skill(domain="cvm", sub_domain="historical", mode="summary", params='{"company":"PETR4","metric":"retorno_pl"}')
 
-# Generic ratio history (accepts aliases: pe → lpa, pvpa → vpa)
-skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"company":"PETR4","metric":"pe","months":120}')
+# Generic ratio history (accepts aliases: pe → lpa, pvpa → vpa, dy → dpa)
+skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"company":"PETR4","metric":"dy","months":120}')
 ```
 
 ---
 
 ## 📊 Report Adapters
 
-Chart adapters are auto-registered for each metric. The summary adapter is metric-aware.
+Chart adapters are auto-registered for each metric from the calculations registry. The summary adapter is metric-aware.
 
 | Adapter | Source mode | What it renders |
 |---|---|---|
@@ -300,21 +189,19 @@ Chart adapters are auto-registered for each metric. The summary adapter is metri
 | `historical_vpa_chart` | vpa_history | Dual-dataset line chart: VPA (per-share) + P/VPA (ratio) |
 | `historical_dpa_chart` | dpa_history | Dual-dataset line chart: DPA (per-share) + Div Yield (ratio) |
 | `historical_rps_chart` | rps_history | Dual-dataset line chart: RPS (per-share) + PSR (ratio) |
+| `historical_ev_ebitda_chart` | ev_ebitda_history | Dual-dataset line chart: EBITDA/Ação (per-share) + EV/EBITDA (ratio) |
 | `historical_roe_chart` | roe_history | Single-dataset line chart: ROE over time (fundamental ratio, single axis) |
-| `historical_summary` | summary | KPI strip (per-share + ratio + averages + percentile) + summary table. **Metric-aware**: renders TTM Earnings for lpa/dpa, PL for vpa. |
+| `historical_<metric>_chart` | `<metric>_history` | One per metric. Dual-dataset for Type 1, single-dataset for Type 2. Auto-registered. |
+| `historical_summary` | summary | KPI strip (per-share + ratio + averages + percentile) + summary table. **Metric-aware**: shows per-share KPI/row for Type 1, skips it for Type 2. |
 
 ```python
 # LPA + P/L dual-dataset chart
 report(action="chart", title="PETR4 LPA + P/L",
        data=<lpa_history JSON>, config={"chart_type":"line","adapter":"historical_lpa_chart"})
 
-# VPA + P/VPA dual-dataset chart
-report(action="chart", title="PETR4 VPA + P/VPA",
-       data=<vpa_history JSON>, config={"chart_type":"line","adapter":"historical_vpa_chart"})
-
-# DPA + Div Yield dual-dataset chart
-report(action="chart", title="PETR4 DPA + Div Yield",
-       data=<dpa_history JSON>, config={"chart_type":"line","adapter":"historical_dpa_chart"})
+# ROE single-dataset chart (fundamental ratio)
+report(action="chart", title="PETR4 ROE",
+       data=<roe_history JSON>, config={"chart_type":"line","adapter":"historical_roe_chart"})
 
 # Summary table (works for all metrics — reads result["metric"])
 report(action="table", title="PETR4 Summary",
@@ -323,114 +210,37 @@ report(action="table", title="PETR4 Summary",
 
 ---
 
-## 🔌 Engine API (for direct import)
+## 🔌 Engine + Metric + Registry API
 
-Engines are standalone — importable by any skill (e.g., future backtest).
+Engines, metrics, and the central registry live in the **calculations library** at `skills/cvm/calculations/`. They are importable directly by any CVM skill (historical, future valuation/financials/backtest).
 
-### `engines/price.py`
+**See [calculations/API.md](../calculations/API.md) for:**
+- All 16 engine function signatures (`*_at()` + `*_periods()` per engine, organized by category: market, shares, dre, bpa, bpp, dfc)
+- All 17 metric function signatures (5 per-share+ratio + 12 fundamental ratio)
+- Registry API (`EngineSpec`, `MetricSpec`, `register_engine`, `register_metric`, `resolve_metric`, `list_engines(category=...)`, `list_metrics`, `list_all_metric_names`, `list_engine_categories`)
+- Full metric aliases table (PT + EN)
+- Error handling (None returns, negative denominators, DPA 0.0 vs None, unknown metric dispatch)
+
+**Direct import examples** (for backtests / custom analysis — bypassing the skill() dispatcher):
+
 ```python
-price_at(ticker: str, date: str) -> float | None          # close on date (or nearest <= date)
-price_series(ticker: str, date_from: str, date_to: str) -> list[dict]  # [{date, close}, ...]
-```
+# Engines — fetch ONE raw quantity at a historical date
+from skills.cvm.calculations.engines.price import price_at, price_series
+from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+from skills.cvm.calculations.engines.pl import pl_at
+from skills.cvm.calculations.engines.da import da_at
 
-### `engines/earnings.py`
-```python
-ttm_earnings_at(company: str, date: str) -> float | None   # TTM earnings ending <= date (BRL)
-ttm_earnings_periods(company: str) -> list[dict]           # [{date, ttm}, ...] sorted oldest-first
-```
+# Metrics — compose engines into a ratio
+from skills.cvm.calculations.metrics.lpa import lpa_at, pe_at, lpa_history
+from skills.cvm.calculations.metrics.roe import roe_at
+from skills.cvm.calculations.metrics.ev_ebitda import ev_ebitda_at
 
-### `engines/shares.py`
-```python
-shares_at(company: str, date: str) -> int | None           # shares outstanding <= date
-shares_periods(company: str) -> list[dict]                 # [{date, shares}, ...]
-```
-
-### `engines/pl.py`
-```python
-pl_at(company: str, date: str) -> float | None             # PL snapshot <= date (BRL)
-pl_periods(company: str) -> list[dict]                     # [{date, pl}, ...]
-```
-
-### `engines/dividends.py`
-```python
-dividends_at(ticker: str, date: str) -> float | None       # DPA TTM <= date (R$/share)
-                                                            # None = no data; 0.0 = no dividends in window
-dividends_periods(ticker: str) -> list[dict]               # [{date, dpa}, ...] — one per payment date
-```
-
-### `engines/revenue.py`
-```python
-revenue_at(company: str, date: str) -> float | None        # TTM net revenue <= date (BRL)
-revenue_periods(company: str) -> list[dict]                # [{date, ttm_rev}, ...]
+# Registry — discover engines/metrics, resolve aliases
+from skills.cvm.calculations._registry import (
+    list_engines, list_metrics, resolve_metric, ENGINES, METRICS,
+)
 ```
 
 ---
 
-## 📐 Metric API (for direct import)
-
-Each metric produces BOTH a per-share value AND a price ratio. Some metrics also produce bonus ratios.
-
-### `metrics/lpa.py`
-```python
-lpa_at(company: str, date: str) -> float | None            # LPA = earnings / shares (per-share)
-pe_at(company: str, date: str) -> float | None             # P/L = price / LPA (ratio)
-lpa_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, price, ttm_earnings, shares, lpa, pe}, ...]
-```
-
-### `metrics/vpa.py`
-```python
-vpa_at(company: str, date: str) -> float | None            # VPA = pl / shares (per-share)
-pvpa_at(company: str, date: str) -> float | None           # P/VPA = price / VPA (ratio)
-vpa_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, price, pl, shares, vpa, pvpa}, ...]
-```
-
-### `metrics/dpa.py`
-```python
-dpa_at(ticker: str, date: str) -> float | None             # DPA = dividends TTM (per-share, R$/share)
-dy_at(ticker: str, date: str) -> float | None              # Div Yield = DPA / price (ratio)
-payout_at(ticker: str, date: str) -> float | None          # Payout = DPA / LPA (bonus ratio)
-dpa_history(ticker: str, date_from: str, date_to: str) -> list[dict]   # [{date, price, dpa, dy, payout, ttm_earnings, shares, lpa}, ...]
-```
-
-### `metrics/rps.py`
-```python
-rps_at(company: str, date: str) -> float | None            # RPS = revenue / shares (per-share)
-psr_at(company: str, date: str) -> float | None            # PSR = price / RPS (ratio)
-rps_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, price, ttm_rev, shares, rps, psr}, ...]
-```
-
-### `metrics/roe.py` (fundamental ratio — no per-share value, no price)
-```python
-roe_at(company: str, date: str) -> float | None            # ROE = TTM earnings / PL (ratio)
-roe_history(company: str, date_from: str, date_to: str) -> list[dict]  # [{date, roe, ttm_earnings, pl}, ...]
-```
-
----
-
-## 📐 Registry API (for skill-internal use)
-
-### `_registry.py` (central — at the skill top level)
-```python
-# Engine spec
-EngineSpec(name, quantity, at_fn, periods_fn, source, category="other")
-
-# Metric spec
-MetricSpec(name, per_share_label, per_share_key, per_share_fn,
-           ratio_label, ratio_key, ratio_fn, history_fn, engines, aliases)
-
-ENGINES: dict[str, EngineSpec]                  # all registered engines
-METRICS: dict[str, MetricSpec]                  # all registered metrics
-
-register_engine(spec: EngineSpec) -> EngineSpec  # called at import time by each engine
-register_metric(spec: MetricSpec) -> MetricSpec  # called at import time by each metric
-
-resolve_metric(name: str) -> MetricSpec          # canonical name or alias → spec
-list_engines(category: str | None = None) -> list[str]  # engine names, optionally filtered by category
-list_engine_categories() -> list[str]                   # all categories in use (market, shares, dre, etc.)
-list_metrics() -> list[str]                      # canonical metric names only
-list_all_metric_names() -> list[str]             # canonical + aliases
-```
-
----
-
-*Last updated: 2026-07-26 (v1.3 — central registry + engine self-registration + DPA metric). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-26 (v2.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for mode dispatch + percentile analysis, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules. Engine/metric/registry API: [calculations/API.md](../calculations/API.md).*

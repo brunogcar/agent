@@ -84,7 +84,7 @@ def _make_metric_chart_adapter(adapter_name: str, metric_name: str,
 # This auto-generates historical_lpa_chart, historical_vpa_chart, etc.
 # When a new metric is registered, its chart adapter appears here automatically.
 
-from skills.cvm.historical._registry import METRICS  # noqa: E402
+from skills.cvm.calculations._registry import METRICS  # noqa: E402
 
 for _name in sorted(METRICS.keys()):
     _spec = METRICS[_name]
@@ -129,7 +129,7 @@ def summary(result: dict) -> dict:
     ratio_label = result.get("ratio_label", "P/L")
 
     # Find the per-share key and ratio key from the registry
-    from skills.cvm.historical._registry import resolve_metric
+    from skills.cvm.calculations._registry import resolve_metric
     try:
         spec = resolve_metric(metric_name)
         per_share_key = spec.per_share_key

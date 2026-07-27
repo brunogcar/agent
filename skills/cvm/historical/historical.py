@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from skills.cvm._freshness import add_freshness
-from skills.cvm.historical._registry import resolve_metric, list_metrics, METRICS
+from skills.cvm.calculations._registry import resolve_metric, list_metrics, METRICS
 
 
 def _months_ago(months: int) -> str:

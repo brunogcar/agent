@@ -28,7 +28,7 @@ from __future__ import annotations
 import inspect
 
 # Importing _registry triggers auto-discovery of engines + metrics
-from skills.cvm.historical._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines
+from skills.cvm.calculations._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines
 
 
 def _build_metric_modes() -> dict:

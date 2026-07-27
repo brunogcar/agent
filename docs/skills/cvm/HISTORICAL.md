@@ -6,7 +6,7 @@ Computes financial ratios over time by combining **engines** (basics: price, ear
 
 **This skill is the pattern template** for other skills that need auto-discovery + registry architecture. The central `_registry.py`, engine/metric separation, and self-registration pattern are designed to be copied.
 
-**Architecture — engines vs metrics:**
+**Architecture — engines + metrics in [calculations/](CALCULATIONS.md):**
 - **Engines** (`engines/`) — one per raw quantity. Self-register via `register_engine()`. Auto-discovered by the central `_registry.py`. Engines are leaves: they never import each other or metrics.
   - `price.py` — COTAHIST daily close
   - `earnings.py` — DFP + ITR TTM earnings derivation
@@ -71,7 +71,7 @@ skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"com
 | Dividend Yield over time (chart) | `dpa_history` | Daily series, dual-dataset (DPA + Div Yield) |
 | Compare P/L, P/VPA, Div Yield | Run multiple `summary(metric=...)` calls | One per metric, compare results |
 | Any metric, generic dispatch | `ratio_history(metric=...)` | Accepts canonical names + aliases |
-| Just the per-share value (LPA, VPA, DPA)? | Import engine directly: `from skills.cvm.historical.metrics.lpa import lpa_at` | For backtests / custom analysis |
+| Just the per-share value (LPA, VPA, DPA)? | Import engine directly: `from skills.cvm.calculations.metrics.lpa import lpa_at` | For backtests / custom analysis |
 
 ---
 
@@ -113,11 +113,15 @@ report(action="table", title="PETR4 Summary",
 
 | File | Purpose |
 |------|---------|
-| [ARCHITECTURE.md](historical/ARCHITECTURE.md) | Central registry design, engine/metric pattern, auto-discovery, TTM/PL/DPA algorithms, how to add engines/metrics |
-| [API.md](historical/API.md) | All modes (auto-generated), engine API, metric API, registry API, report adapters, error cases |
-| [CHANGELOG.md](historical/CHANGELOG.md) | Version history + roadmap (ev_ebitda, psr, backtest) |
-| [INSTRUCTIONS.md](historical/INSTRUCTIONS.md) | AI editing rules — central registry, engine/metric separation, auto-discovery, NEVER DO, ALWAYS DO |
+| [CALCULATIONS.md](CALCULATIONS.md) | Shared engine + metric library (16 engines + 17 metrics) — landing page |
+| [calculations/ARCHITECTURE.md](calculations/ARCHITECTURE.md) | Engine/metric pattern, central auto-discovery, categories, algorithms (TTM, snapshot, description-search, multi-code sum), dependency graph, how-to guides, testing |
+| [calculations/API.md](calculations/API.md) | All 16 engine signatures + 17 metric signatures + registry API + error handling |
+| [calculations/INSTRUCTIONS.md](calculations/INSTRUCTIONS.md) | Engine/metric AI editing rules — NEVER DO, ALWAYS DO, naming convention, anti-patterns v1.2–v1.9, pattern template checklist |
+| [historical/ARCHITECTURE.md](historical/ARCHITECTURE.md) | Mode dispatch flow, MANIFEST auto-generation, percentile analysis, summary interpretation, testing |
+| [historical/API.md](historical/API.md) | All modes (auto-generated `<metric>_history`, generic `ratio_history`, generic `summary`), report adapters, error cases |
+| [historical/CHANGELOG.md](historical/CHANGELOG.md) | Version history (v1.0 → v2.2 — Phase 1 extraction to calculations) |
+| [historical/INSTRUCTIONS.md](historical/INSTRUCTIONS.md) | Historical-skill-specific AI editing rules — never edit MANIFEST, never edit adapters, mode dispatch rules |
 
 ---
 
-*Last updated: 2026-07-26 (v1.3 — central registry + engine self-registration + DPA metric).*
+*Last updated: 2026-07-26 (v2.2).*

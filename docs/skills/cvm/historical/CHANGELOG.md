@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v2.2** | 2026-07-26 | **Phase 1 refactor: extract calculations.** Engines (16) + metrics (17) + registry moved to shared `skills/cvm/calculations/`. Historical now imports from calculations. Test files split by metric name and moved to `tests/skills/cvm/calculations/`. Historical retains only `historical.py` + `__init__.py` + `test_historical.py`. 355 tests pass. |
 | **v2.1** | 2026-07-26 | **Tier 4+5+6: 7 new metrics + 3 new engines.** Tier 4 (0 new engines): net_margin (Margem Líquida), ebitda_margin (Margem EBITDA), debt_equity (Dívida/PL), net_debt_ebitda (DL/EBITDA), asset_turnover (Giro de Ativos). Tier 5 (1 new engine): capex engine (DFC description search for imobilizado/intangivel, TTM, category=dfc) + capex_revenue metric (CapEx/Receita). Tier 6 (2 new engines): total_assets engine (BPA codigo 1, actual Ativo Total — existing assets.py uses 1.01 which is Ativo Circulante), current_liabilities engine (BPP 2.01, Passivo Circulante) + current_ratio metric (Liquidez Corrente). All 7 new metrics are fundamental ratios (per_share=None). PT aliases on all. 355 tests. Now 16 engines + 17 metrics. |
 | **v1.9** | 2026-07-26 | **EV/EBITDA + cash engine + da engine + ROIC cash update.** 2 new engines: `cash.py` (BPA 1.01.01 Caixa e Equivalentes, snapshot, category=bpa), `da.py` (D&A from DFC -- first description-based search engine, TTM, category=dfc, NEW category). New `metrics/ev_ebitda.py` (EV/EBITDA -- composes 6 engines: price+shares+debt+cash+ebit+da, the most complex metric). Per-share value: EBITDA/Ação = (EBIT+D&A)/shares. Ratio: EV/EBITDA = (price×shares+debt-cash)/(EBIT+D&A). Updated ROIC to subtract cash from invested capital (IC = PL+Debt-Cash). 319 tests. Now 13 engines + 10 metrics + 6 categories. |
 | **v1.8** | 2026-07-26 | **ROIC (Return on Invested Capital).** 2 new engines: `tax.py` (DRE 3.08 IR+CSLL TTM, category=dre), `debt.py` (BPP 2.01.04+2.02.01 Empréstimos e Financiamentos snapshot, category=bpp, sums 2 codes). New `metrics/roic.py` (ROIC = NOPAT / Invested Capital -- first metric to compose 4 engines: ebit + tax + pl + debt). NOPAT = EBIT - max(0, tax_expense). Invested Capital = PL + Debt (simplified -- no cash subtraction yet, cash engine comes in EV/EBITDA). PT aliases: retorno_capital_investido. 294 tests. Now 11 engines + 9 metrics. |
@@ -37,7 +38,7 @@
 
 | Change | Impact | Migration |
 |--------|--------|-----------|
-| `metrics/_registry.py` moved → `_registry.py` (top level) | Old import path no longer exists. | `from skills.cvm.historical.metrics._registry import ...` → `from skills.cvm.historical._registry import ...` |
+| `metrics/_registry.py` moved → `_registry.py` (top level) | Old import path no longer exists. | `from skills.cvm.calculations.metrics._registry import ...` → `from skills.cvm.calculations._registry import ...` |
 | `list_all_names()` renamed → `list_all_metric_names()` | Function renamed for clarity. | Update imports. |
 | `engines/__init__.py` no longer does auto-discovery | Auto-discovery moved to central `_registry.py`. | No migration — engines still work. |
 | `metrics/__init__.py` no longer does auto-discovery | Auto-discovery moved to central `_registry.py`. | No migration — metrics still work. |
@@ -46,7 +47,7 @@
 
 | Change | Impact | Migration |
 |--------|--------|-----------|
-| `metrics/pe.py` renamed → `metrics/lpa.py` | Old import path no longer exists. | `from skills.cvm.historical.metrics.pe import ...` → `from skills.cvm.historical.metrics.lpa import ...` |
+| `metrics/pe.py` renamed → `metrics/lpa.py` | Old import path no longer exists. | `from skills.cvm.calculations.metrics.pe import ...` → `from skills.cvm.calculations.metrics.lpa import ...` |
 | `pe_history` mode removed | Old mode name no longer in MANIFEST. | Use `lpa_history` instead. |
 | `vpa` key in series changes meaning | Was: P/VPA ratio. Now: VPA per-share value. | The ratio is now under the `pvpa` key. Update chart/table consumers. |
 | `METRICS` dict format changes | Was: `dict[str, str]` (name → description). Now: `dict[str, MetricSpec]`. | Use `METRICS["lpa"].ratio_label` instead of `METRICS["lpa"]`. |
@@ -58,7 +59,7 @@
 
 | Change | Impact | Migration |
 |--------|--------|-----------|
-| `metrics/pvpa.py` renamed → `metrics/vpa.py` | Old import path no longer exists. | `from skills.cvm.historical.metrics.pvpa import ...` → `from skills.cvm.historical.metrics.vpa import ...` |
+| `metrics/pvpa.py` renamed → `metrics/vpa.py` | Old import path no longer exists. | `from skills.cvm.calculations.metrics.pvpa import ...` → `from skills.cvm.calculations.metrics.vpa import ...` |
 
 ---
 
@@ -105,4 +106,4 @@ This skill is the **pattern template** for central auto-discovery + registry arc
 
 ---
 
-*Last updated: 2026-07-26 (v1.5 — ROE metric + fundamental ratio support).*
+*Last updated: 2026-07-26 (v2.2).*

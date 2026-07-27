@@ -34,13 +34,13 @@ def _mock_lpa_history(monkeypatch):
     """
     def fake_lpa_history(company, date_from, date_to):
         return MOCK_LPA_SERIES
-    from skills.cvm.historical._registry import METRICS
+    from skills.cvm.calculations._registry import METRICS
     monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_lpa_history)
 
 
 def _mock_metric_history(monkeypatch, metric_name: str, series: list[dict]):
     """Mock a metric's history_fn in the registry. Generic helper."""
-    from skills.cvm.historical._registry import METRICS
+    from skills.cvm.calculations._registry import METRICS
     def fake_history(company, date_from, date_to):
         return series
     monkeypatch.setattr(METRICS[metric_name], "history_fn", fake_history)
