@@ -183,6 +183,13 @@ Any metric over time. Accepts canonical names and aliases.
 | `operating_margin` | `om`, `operating_margin_pct` | `margem_operacional` | — (fundamental) | Margem Operacional (EBIT/revenue) | — |
 | `roic` | `return_on_invested_capital` | `retorno_capital_investido` | — (fundamental) | ROIC (NOPAT/invested_capital) | — |
 | `ev_ebitda` | `ev_ebit`, `evebitda`, `eva_ebitda` | — | EBITDA/Ação (EBIT+D&A)/shares | EV/EBITDA (EV/EBITDA) | — |
+| `net_margin` | `nm`, `net_margin_pct` | `margem_liquida`, `ml` | — (fundamental) | Margem Líquida (earnings/revenue) | — |
+| `ebitda_margin` | `em`, `ebitda_margin_pct` | `margem_ebitda` | — (fundamental) | Margem EBITDA (EBIT+D&A)/revenue | — |
+| `debt_equity` | `de` | `divida_pl`, `divida_patrimonio` | — (fundamental) | Dívida/PL (debt/PL) | — |
+| `net_debt_ebitda` | `nde`, `net_debt_to_ebitda` | `dl_ebitda`, `divida_liquida_ebitda` | — (fundamental) | DL/EBITDA ((debt-cash)/EBITDA) | — |
+| `asset_turnover` | `at`, `asset_turnover_ratio` | `giro_ativos` | — (fundamental) | Giro de Ativos (revenue/assets) | — |
+| `capex_revenue` | `capex_intensity` | `intensidade_capex` | — (fundamental) | CapEx/Receita (capex/revenue) | — |
+| `current_ratio` | `cr`, `current_liquidity` | `liquidez_corrente` | — (fundamental) | Liquidez Corrente (current_assets/current_liabilities) | — |
 
 **Error cases:**
 - Missing company → `{"status": "error", "error": "company is required"}`
