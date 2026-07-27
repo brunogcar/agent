@@ -86,8 +86,8 @@ class TestEngineRegistrationExtended:
 
     def test_total_engines_is_16(self):
         from skills.cvm.calculations._registry import list_engines
-        assert len(list_engines()) == 16
+        assert len(list_engines()) == 18
 
     def test_total_metrics_is_17(self):
         from skills.cvm.calculations._registry import list_metrics
-        assert len(list_metrics()) == 17
+        assert len(list_metrics()) == 21

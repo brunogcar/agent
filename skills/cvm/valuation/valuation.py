@@ -2,20 +2,78 @@
 
 Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE shares.
 
-v1.0.14: ROIC + Graham number + TTM valuation + data freshness.
-v1.0.13: Back-calculate market_cap from investsite P/L for unit tickers.
-v1.0.9:  UNIT ticker fix (market-cap-based ratios).
+[v2.0.0] PHASE 2B REFACTOR -- data fetching now via calculations engines.
+  - _get_financials_ttm() (86 lines) REMOVED -> direct engine calls
+  - _get_shares_outstanding() (88 lines) REMOVED -> shares_at() engine
+  - _get_shares_investsite() + _parse_share_count() REMOVED (shares engine has
+    its own investsite fallback built in)
+  - _get_price() + 3 helpers KEPT (brapi+investsite+b3 fallback chain not in
+    calculations price engine, which is COTAHIST-only)
+  - ratios() KEEPS manual ratio computation logic (UNIT ticker handling,
+    brapi market_cap, investsite P/L fallback) -- feeds it data from engines
+  - ROIC now uses calculations.metrics.roic (actual tax rate from DRE 3.08,
+    not the 34% IRPJ+CSLL approximation in v1.0.14)
+  - Graham Number now uses calculations.metrics.graham_number (same formula,
+    delegated to canonical implementation)
+  - NEW ratios added from calculations metrics:
+      roe, roa, margem_bruta, margem_operacional, margem_liquida,
+      divida_pl, giro_ativos, liquidez_corrente
+  - All existing ratio keys preserved (p_l, p_vpa, ev_ebitda, etc.) so
+    comparison + screener callers don't break.
+
+[v1.0.14] ROIC + Graham number + TTM valuation + data freshness.
+[v1.0.13] Back-calculate market_cap from investsite P/L for unit tickers.
+[v1.0.9]  UNIT ticker fix (market-cap-based ratios).
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from core.br_validator import validate_ticker
 
-from data_sources.cvm._db import connect_dfp, connect_fre, parse_escala
-from data_sources.cvm._bridge import resolve_company
+# Phase 2B: calculations engines replace direct data_sources queries.
+# Each engine fetches ONE raw quantity at any date; we compose them in ratios().
+# Engines are imported at module top (not lazy) -- they are now the core
+# dependency of this skill.
+from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+from skills.cvm.calculations.engines.revenue import revenue_at
+from skills.cvm.calculations.engines.ebit import ebit_at
+from skills.cvm.calculations.engines.pl import pl_at
+from skills.cvm.calculations.engines.debt import debt_at
+from skills.cvm.calculations.engines.cash import cash_at
+from skills.cvm.calculations.engines.shares import shares_at
+from skills.cvm.calculations.engines.da import da_at
+from skills.cvm.calculations.engines.operating_cf import operating_cf_at
+from skills.cvm.calculations.engines.investing_cf import investing_cf_at
+from skills.cvm.calculations.engines.dividends import dividends_at
+
+# Phase 2B: calculations metrics for ROIC + Graham + 8 new fundamental ratios.
+# These compose engines internally and handle None/edge cases gracefully.
+from skills.cvm.calculations.metrics.roic import roic_at
+from skills.cvm.calculations.metrics.graham_number import graham_number_at
+from skills.cvm.calculations.metrics.roe import roe_at
+from skills.cvm.calculations.metrics.roa import roa_at
+from skills.cvm.calculations.metrics.gross_margin import gross_margin_at
+from skills.cvm.calculations.metrics.operating_margin import operating_margin_at
+from skills.cvm.calculations.metrics.net_margin import net_margin_at
+from skills.cvm.calculations.metrics.debt_equity import debt_equity_at
+from skills.cvm.calculations.metrics.asset_turnover import asset_turnover_at
+from skills.cvm.calculations.metrics.current_ratio import current_ratio_at
+
+
+def _safe_call(fn: Callable, *args, **kwargs):
+    """Call a calculations engine/metric, return None on any exception.
+
+    Calculations engines raise FileNotFoundError when their backing DB is not
+    synced (e.g., ITR db missing in test environments). Wrap each call so one
+    missing engine doesn't poison the rest of the ratios() result.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return None
 
 
 # ── Mode: ratios (default) ───────────────────────────────────────────────────
@@ -23,12 +81,15 @@ from data_sources.cvm._bridge import resolve_company
 def ratios(company: str = "") -> dict:
     """Compute valuation ratios from b3 price + CVM financials + FRE shares.
 
-    [v1.0.14] Now uses TTM (trailing twelve months) financials instead of
-    latest annual DFP. More current — reflects the last 4 quarters, not the
-    last fiscal year. Also adds ROIC + Graham number.
+    [v2.0.0] Data fetching now via calculations engines (Phase 2B refactor):
+      - TTM financials (earnings, revenue, ebit, da, FCO, FCI) from engines
+      - Snapshot financials (PL, debt, cash, shares) from engines
+      - DPA (per-share, TTM) from dividends engine
+      - ROIC + Graham Number + 8 new fundamental ratios from calculations metrics
 
-    Returns: P/L, P/VPA, EV, P/EBIT, P/FCO, Dividend Yield, Market Cap,
-    ROIC, Graham Number, + data_freshness.
+    Returns: P/L, P/VPA, EV, P/EBIT, P/FCO, PSR, EV/EBITDA, DPA, Div Yield,
+    ROIC, Graham Number, ROE, ROA, Margins, D/PL, Asset Turnover, Current Ratio,
+    Market Cap, + data_freshness.
     """
     if not company:
         return {"status": "error", "error": "company (ticker) is required"}
@@ -46,33 +107,66 @@ def ratios(company: str = "") -> dict:
         "sources": {},
     }
 
-    # 1. Get latest price
+    # 1. Get latest price (brapi -> investsite -> b3 trades)
+    # [v2.0.0] KEPT from v1.0.14 -- calculations price engine is COTAHIST-only,
+    # whereas _get_price has brapi+investsite fallback for the CURRENT price.
     price_data = _get_price(ticker)
     result["sources"]["price"] = price_data
 
-    # 2. Get TTM financials [v1.0.14] — was annual, now quarterly TTM
-    #    Call via _get_financials (alias) so existing test mocks work.
-    fin_data = _get_financials(ticker)
+    # 2. Get TTM financials via calculations engines [v2.0.0]
+    # Each engine fetches ONE quantity at "today" (most recent <= today).
+    # _safe_call swallows FileNotFoundError when an underlying DB is missing.
+    today = datetime.now().strftime("%Y-%m-%d")
+    lucro_liquido = _safe_call(ttm_earnings_at, ticker, today)
+    receita_liquida = _safe_call(revenue_at, ticker, today)
+    ebit = _safe_call(ebit_at, ticker, today)
+    pl = _safe_call(pl_at, ticker, today)
+    divida_bruta = _safe_call(debt_at, ticker, today)
+    caixa = _safe_call(cash_at, ticker, today)
+    da = _safe_call(da_at, ticker, today)
+    fco = _safe_call(operating_cf_at, ticker, today)
+    fci = _safe_call(investing_cf_at, ticker, today)
+    total_shares = _safe_call(shares_at, ticker, today)
+    # dividends_at returns DPA per-share (R$/share TTM), NOT total dividends.
+    dpa_ttm = _safe_call(dividends_at, ticker, today)
+
+    # EBITDA = EBIT + D&A (only computable when both are present)
+    ebitda = (ebit + da) if (ebit is not None and da is not None) else None
+
+    # Backward-compat: derive annual_dividends (BRL total) from per-share DPA.
+    # Original v1.0.14 got "proventos" as a BRL total from financials skill.
+    if dpa_ttm is not None and total_shares:
+        annual_dividends = dpa_ttm * total_shares
+    else:
+        annual_dividends = None
+
+    # Aggregate status for sources/financials (used by summary())
+    fin_any = any(v is not None for v in (
+        lucro_liquido, pl, ebit, ebitda, fco, fci,
+        receita_liquida, caixa, divida_bruta,
+    ))
+    fin_status = "ok" if fin_any else "not_found"
+
     result["sources"]["financials"] = {
-        "status": fin_data.get("status"),
-        "period": fin_data.get("period"),
-        "source": fin_data.get("source", "ttm"),
-        "error": fin_data.get("error", ""),
-        "lucro_liquido": fin_data.get("lucro_liquido"),
-        "patrimonio_liquido": fin_data.get("patrimonio_liquido"),
-        "ebitda": fin_data.get("ebitda"),
-        "ebitda_method": fin_data.get("ebitda_method"),
+        "status": fin_status,
+        "period": "ttm",
+        "source": "calculations_engines",
+        "error": "" if fin_any else "No data from calculations engines",
+        "lucro_liquido": lucro_liquido,
+        "patrimonio_liquido": pl,
+        "ebitda": ebitda,
+        "ebitda_method": "ebit+da" if ebitda is not None else None,
     }
 
-    # 3. Get shares outstanding from FRE
-    shares_data = _get_shares_outstanding(ticker)
+    # 3. Shares source info [v2.0.0] -- shares_at engine has investsite fallback built in
     result["sources"]["shares"] = {
-        "status": shares_data.get("status"),
-        "total_shares": shares_data.get("total_shares"),
-        "error": shares_data.get("error", ""),
-        "on_shares": shares_data.get("on_shares"),
-        "pn_shares": shares_data.get("pn_shares"),
-        "source": shares_data.get("source", "?"),
+        "status": "ok" if total_shares else "not_found",
+        "total_shares": total_shares,
+        "error": "" if total_shares else "No share data",
+        # on_shares/pn_shares not exposed by calculations shares_at (it returns only total)
+        "on_shares": None,
+        "pn_shares": None,
+        "source": "calculations_engine",
     }
 
     # If price is missing, we can't compute any ratios
@@ -92,12 +186,11 @@ def ratios(company: str = "") -> dict:
     brapi_market_cap = price_data.get("market_cap")
 
     # If financials are missing, partial result
-    if fin_data.get("status") != "ok":
+    if fin_status != "ok":
         result["ratios"] = {"status": "partial",
                             "price": price, "price_date": price_date,
                             "unit_ticker": unit_ticker,
-                            "note": f"Financials unavailable: {fin_data.get('error','')}"}
-        total_shares = shares_data.get("total_shares")
+                            "note": "Financials unavailable: no data from calculations engines"}
         if brapi_market_cap is not None:
             result["ratios"]["market_cap"] = float(brapi_market_cap)
             result["ratios"]["market_cap_source"] = "brapi"
@@ -108,19 +201,6 @@ def ratios(company: str = "") -> dict:
             result["ratios"]["total_shares"] = total_shares
         from skills.cvm._freshness import add_freshness
         return add_freshness(result)
-
-    # Extract financials
-    lucro_liquido = fin_data.get("lucro_liquido")
-    pl = fin_data.get("patrimonio_liquido")
-    ebit = fin_data.get("ebit")
-    ebitda = fin_data.get("ebitda")
-    fco = fin_data.get("fco")
-    fci = fin_data.get("fci")
-    receita_liquida = fin_data.get("receita_liquida")
-    caixa = fin_data.get("caixa")
-    divida_bruta = fin_data.get("divida_bruta")
-    total_shares = shares_data.get("total_shares")
-    annual_dividends = fin_data.get("proventos")
 
     pl_positive = pl is not None and pl > 0
 
@@ -134,7 +214,7 @@ def ratios(company: str = "") -> dict:
         "patrimonio_liquido": pl,
         "ebit": ebit,
         "ebitda": ebitda,
-        "ebitda_method": fin_data.get("ebitda_method"),
+        "ebitda_method": "ebit+da" if ebitda is not None else None,
         "fco": fco,
         "fci": fci,
         "receita_liquida": receita_liquida,
@@ -170,7 +250,7 @@ def ratios(company: str = "") -> dict:
     vpa = _safe_div(pl, total_shares)
     ratios_result["vpa"] = vpa
 
-    # P/L, P/VPA — market-cap-based (v1.0.9) or investsite fallback (v1.0.10)
+    # P/L, P/VPA -- market-cap-based (v1.0.9) or investsite fallback (v1.0.10)
     if use_investsite_ratios:
         if investsite_pe is not None and lucro_liquido is not None and lucro_liquido > 0:
             market_cap = investsite_pe * lucro_liquido
@@ -205,40 +285,43 @@ def ratios(company: str = "") -> dict:
     ratios_result["fcf"] = fcf
     ratios_result["p_fcf"] = _safe_div(market_cap, fcf)
 
-    if annual_dividends is not None and total_shares and total_shares > 0:
-        dpa = annual_dividends / total_shares
-        ratios_result["dpa"] = dpa
-        ratios_result["dividend_yield"] = _safe_div(dpa, price)
-    else:
-        ratios_result["dpa"] = None
-        ratios_result["dividend_yield"] = None
+    # [v2.0.0] DPA + Div Yield -- dividends_at returns DPA per-share directly.
+    # (v1.0.14 derived DPA = annual_dividends / shares; we now skip that step.)
+    ratios_result["dpa"] = dpa_ttm
+    ratios_result["dividend_yield"] = _safe_div(dpa_ttm, price)
 
     ratios_result["divida_liquida_ebitda"] = _safe_div(divida_liquida, ebitda)
 
-    # [v1.0.14] ROIC = NOPAT / Invested Capital
-    # NOPAT = EBIT x (1 - tax_rate). Brazil: IRPJ 25% + CSLL 9% = 34% combined.
-    # Invested Capital = PL + Divida Bruta - Caixa (simplified).
-    # Flag as approximate -- actual tax rate varies.
-    if ebit is not None and pl is not None and divida_bruta is not None and caixa is not None:
-        tax_rate = 0.34  # Brazilian combined corporate tax (IRPJ + CSLL)
-        nopat = ebit * (1 - tax_rate)
-        invested_capital = pl + divida_bruta - caixa
-        if invested_capital > 0:
-            ratios_result["roic"] = nopat / invested_capital
-            ratios_result["roic_tax_rate"] = 0.34  # flag: approximate
-        else:
-            ratios_result["roic"] = None
-            ratios_result["roic_tax_rate"] = None
-    else:
-        ratios_result["roic"] = None
-        ratios_result["roic_tax_rate"] = None
+    # [v2.0.0] ROIC via calculations metric -- uses ACTUAL tax (DRE 3.08 IR+CSLL),
+    # not the 34% IRPJ+CSLL approximation in v1.0.14. Better fidelity.
+    # Invested Capital = PL + Debt - Cash (with cash subtraction; v1.9 metric).
+    roic_val = _safe_call(roic_at, ticker, today)
+    ratios_result["roic"] = roic_val
+    # roic_tax_rate is now actual (variable per period) -- not a fixed 0.34.
+    # Leave the key as None for backward-compat; consumers should treat as
+    # "actual tax used" not "34% approximation".
+    ratios_result["roic_tax_rate"] = None
 
-    # [v1.0.14] Graham number = sqrt(22.5 x EPS x VPA)
-    # Only valid when EPS > 0 and VPA > 0 (Graham's original constraint).
-    if eps is not None and vpa is not None and eps > 0 and vpa > 0:
-        ratios_result["graham_number"] = (22.5 * eps * vpa) ** 0.5
-    else:
-        ratios_result["graham_number"] = None
+    # [v2.0.0] Graham Number via calculations metric (same formula as v1.0.14,
+    # delegated to the canonical implementation in metrics.graham_number).
+    ratios_result["graham_number"] = _safe_call(graham_number_at, ticker, today)
+
+    # [v2.0.0] NEW fundamental ratios from calculations metrics.
+    # Each composes engines internally and returns None for missing/edge data.
+    # All wrapped in _safe_call so a failure in one (e.g., gross_profit not
+    # filed for a small-cap) doesn't poison the rest.
+    new_metrics: list[tuple[str, Callable]] = [
+        ("roe", roe_at),
+        ("roa", roa_at),
+        ("margem_bruta", gross_margin_at),
+        ("margem_operacional", operating_margin_at),
+        ("margem_liquida", net_margin_at),
+        ("divida_pl", debt_equity_at),
+        ("giro_ativos", asset_turnover_at),
+        ("liquidez_corrente", current_ratio_at),
+    ]
+    for key, fn in new_metrics:
+        ratios_result[key] = _safe_call(fn, ticker, today)
 
     result["ratios"] = ratios_result
 
@@ -265,6 +348,10 @@ def summary(company: str = "") -> dict:
 
 
 # ── Internal: get price (brapi -> investsite -> b3 trades) ───────────────────
+# [v2.0.0] KEPT from v1.0.14 -- calculations price engine uses COTAHIST only
+# (historical daily prices). This 3-tier fallback gets the CURRENT price from
+# brapi first, then investsite, then b3 trades.db. Will be merged into the
+# price engine in a future phase.
 
 def _get_price(ticker: str) -> dict:
     """3-tier price source: brapi -> investsite -> b3 trades."""
@@ -394,226 +481,15 @@ def _get_latest_price(ticker: str) -> dict:
         return {"status": "error", "error": str(e)}
 
 
-# ── Internal: get TTM financials [v1.0.14] ───────────────────────────────────
-
-def _get_financials_ttm(ticker: str) -> dict:
-    """[v1.0.14] Get TTM financials by calling financials.quarterly().
-
-    Uses the TTM summary (sum of last 4 standalone quarters for flows,
-    average for snapshots). More current than annual DFP.
-    """
-    try:
-        from skills.cvm.financials.financials import quarterly
-        r = quarterly(company=ticker, periods=8, consolidado=1)
-        if r.get("status") != "ok":
-            return {"status": "not_found", "error": r.get("error", "No quarterly data")}
-
-        ttm = r.get("ttm", {})
-        if ttm.get("status") != "ok":
-            # TTM not available -- fall back to latest annual period
-            if not r.get("periods"):
-                return {"status": "not_found", "error": "No periods"}
-            p = r["periods"][0]
-            m = p.get("metrics", {}) or {}
-            return {
-                "status": "ok", "source": "annual_fallback",
-                "period": p.get("period", ""),
-                "lucro_liquido": m.get("lucro_liquido"),
-                "patrimonio_liquido": m.get("patrimonio_liquido"),
-                "ebit": m.get("ebit"),
-                "ebitda": m.get("ebitda"),
-                "ebitda_method": m.get("ebitda_method"),
-                "fco": m.get("fco"),
-                "fci": m.get("fci"),
-                "receita_liquida": m.get("receita_liquida"),
-                "caixa": m.get("caixa"),
-                "divida_bruta": m.get("divida_bruta"),
-                "proventos": m.get("proventos"),
-            }
-
-        m = ttm.get("metrics", {}) or {}
-
-        # [v1.0.14a] If TTM key metrics (lucro_liquido, ebitda) are None, it
-        # means at least one of the 4 quarters is missing that value. Fall back
-        # to financials.annual() — annual DFP always has these values.
-        if m.get("lucro_liquido") is None or m.get("ebitda") is None:
-            try:
-                from skills.cvm.financials.financials import annual
-                ar = annual(company=ticker, periods=1, consolidado=1)
-                if ar.get("status") == "ok" and ar.get("periods"):
-                    p = ar["periods"][0]  # annual periods are newest-first
-                    am = p.get("metrics", {}) or {}
-                    if am.get("lucro_liquido") is not None or am.get("ebitda") is not None:
-                        return {
-                            "status": "ok", "source": "annual_fallback_from_ttm",
-                            "period": p.get("period", "") + " (annual — TTM had None)",
-                            "lucro_liquido": am.get("lucro_liquido"),
-                            "patrimonio_liquido": am.get("patrimonio_liquido"),
-                            "ebit": am.get("ebit"),
-                            "ebitda": am.get("ebitda"),
-                            "ebitda_method": am.get("ebitda_method"),
-                            "fco": am.get("fco"),
-                            "fci": am.get("fci"),
-                            "receita_liquida": am.get("receita_liquida"),
-                            "caixa": am.get("caixa"),
-                            "divida_bruta": am.get("divida_bruta"),
-                            "proventos": am.get("proventos"),
-                        }
-            except Exception:
-                pass
-
-        return {
-            "status": "ok", "source": "ttm",
-            "period": ttm.get("period_range", ""),
-            "lucro_liquido": m.get("lucro_liquido"),
-            "patrimonio_liquido": m.get("patrimonio_liquido"),
-            "ebit": m.get("ebit"),
-            "ebitda": m.get("ebitda"),
-            "ebitda_method": m.get("ebitda_method"),
-            "fco": m.get("fco"),
-            "fci": m.get("fci"),
-            "receita_liquida": m.get("receita_liquida"),
-            "caixa": m.get("caixa"),
-            "divida_bruta": m.get("divida_bruta"),
-            "proventos": m.get("proventos"),
-        }
-    except Exception as e:
-        return {"status": "error", "error": f"financials: {e}"}
-
-
-# ── Internal: get shares outstanding from FRE ────────────────────────────────
-
-def _get_shares_outstanding(ticker: str) -> dict:
-    """Get total shares from FRE distribuicao_capital + investsite fallback."""
-    try:
-        conn = connect_fre(read_only=True)
-    except FileNotFoundError as e:
-        return {"status": "not_synced", "error": str(e)}
-
-    try:
-        from data_sources.cvm._bridge import _resolve_via_bridge, _auto_sync_bridge
-        cnpj, _ = _resolve_via_bridge(ticker)
-        if not cnpj:
-            if _auto_sync_bridge(ticker):
-                cnpj, _ = _resolve_via_bridge(ticker)
-        if not cnpj:
-            return {"status": "not_found", "error": f"Ticker '{ticker}' not in bridge.db"}
-
-        row = conn.execute(
-            "SELECT qtd_on_circulacao, qtd_pn_circulacao, qtd_total_circulacao, "
-            "data_referencia FROM distribuicao_capital "
-            "WHERE REPLACE(REPLACE(REPLACE(cnpj, '.', ''), '/', ''), '-', '')=? "
-            "ORDER BY data_referencia DESC LIMIT 1",
-            (cnpj,),
-        ).fetchone()
-
-        total = None
-        on_shares = None
-        pn_shares = None
-        data_ref = ""
-
-        if row:
-            total = row["qtd_total_circulacao"] if row["qtd_total_circulacao"] else None
-            on_shares = row["qtd_on_circulacao"] if row["qtd_on_circulacao"] else None
-            pn_shares = row["qtd_pn_circulacao"] if row["qtd_pn_circulacao"] else None
-            data_ref = row["data_referencia"] or ""
-            if not total and (on_shares or pn_shares):
-                total = (on_shares or 0) + (pn_shares or 0)
-
-        shares_source = "fre_distribuicao"
-        if not total:
-            try:
-                row2 = conn.execute(
-                    "SELECT * FROM capital_social "
-                    "WHERE REPLACE(REPLACE(REPLACE(cnpj, '.', ''), '/', ''), '-', '')=? "
-                    "ORDER BY data_referencia DESC LIMIT 1",
-                    (cnpj,),
-                ).fetchone()
-                if row2:
-                    shares_source = "fre_capital_social"
-                    for key in ["qtd_total", "total_shares", "quantidade_total"]:
-                        if key in row2.keys() and row2[key]:
-                            total = int(row2[key])
-                            break
-                    if "data_referencia" in row2.keys():
-                        data_ref = row2["data_referencia"] or data_ref
-            except Exception:
-                pass
-
-        conn.close()
-
-        if not total:
-            investsite_shares = _get_shares_investsite(ticker)
-            if investsite_shares.get("total_shares"):
-                return {
-                    "status": "ok",
-                    "total_shares": investsite_shares["total_shares"],
-                    "on_shares": investsite_shares.get("on_shares"),
-                    "pn_shares": investsite_shares.get("pn_shares"),
-                    "data_referencia": investsite_shares.get("data_referencia", ""),
-                    "source": "investsite",
-                }
-
-        if not total:
-            return {"status": "not_found", "error": f"No share data for {ticker}"}
-
-        return {
-            "status": "ok",
-            "total_shares": int(total) if total else None,
-            "on_shares": int(on_shares) if on_shares else None,
-            "pn_shares": int(pn_shares) if pn_shares else None,
-            "data_referencia": data_ref,
-            "source": shares_source,
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-    finally:
-        conn.close()
-
-
-def _get_shares_investsite(ticker: str) -> dict:
-    try:
-        from skills.investsite.investsite import indicators
-        r = indicators(ticker=ticker)
-        if r.get("status") != "ok":
-            return {"status": "error", "error": "investsite indicators failed"}
-        balanco = r.get("sections", {}).get("balanco_patrimonial", {})
-        total_str = balanco.get("Total")
-        on_str = balanco.get("Acoes Ordinarias")
-        pn_str = balanco.get("Acoes Preferenciais")
-        total = _parse_share_count(total_str) if total_str else None
-        on_shares = _parse_share_count(on_str) if on_str else None
-        pn_shares = _parse_share_count(pn_str) if pn_str else None
-        return {"status": "ok" if total else "not_found",
-                "total_shares": total, "on_shares": on_shares, "pn_shares": pn_shares,
-                "data_referencia": "", "source": "investsite"}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-def _parse_share_count(value) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    clean = str(value).strip().replace(".", "").replace(",", "")
-    try:
-        return int(clean)
-    except ValueError:
-        try:
-            return int(float(clean))
-        except ValueError:
-            return None
-
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _safe_div(a: float | None, b: float | None) -> float | None:
+    """Divide a/b, returning None when either side is None or b is zero.
+
+    Used by the manual ratio computations in ratios() (market_cap / lucro_liquido,
+    etc.). Calculations metrics handle None internally, but the manual ratios
+    that compose brapi_market_cap + investsite fallback still need this helper.
+    """
     if a is None or b is None or b == 0:
         return None
     return a / b
-
-
-# [v1.0.14] Backward-compat alias — tests mock _get_financials (old name).
-# _get_financials_ttm is the v1.0.14 name; keep both so existing tests work.
-_get_financials = _get_financials_ttm
