@@ -25,8 +25,8 @@
 
 *(Fill this section with relevant info as the calculations library grows. New tiers of metrics/engines will be added here as they're planned.)*
 
-- **Phase 2 (valuation skill)**: valuation skill will import engines + metrics directly. Calculations library itself stays untouched.
-- **Phase 3 (financials skill)**: financials skill will import engines directly (uses `*_at()` functions for current snapshot tables).
+- **Phase 2 (valuation skill)**: ✅ Done (v1.1 / valuation v1.1, 2026-07-26). Valuation now imports engines + metrics directly.
+- **Phase 3 (financials skill)**: ✅ Done (financials v1.3, 2026-07-27). Financials `summary()` mode delegates point-in-time ratios (ROIC, Graham, EV/EBITDA, P/FCF, P/EBIT, P/FCO) to calculations metrics via lazy imports wrapped in `_safe_call`. Per-period rendering modes (`quarterly`/`annual`/`complete`) keep their own `compute_ratios()` — they operate on raw statement dicts per period, not point-in-time engine snapshots. The two patterns coexist intentionally.
 - **Phase 4 (backtest skill)**: backtest skill will use `list_engines(category=...)` for signal discovery + `*_at()` / `*_periods()` for step-function optimization.
 
 ---
@@ -40,4 +40,4 @@
 
 ---
 
-*Last updated: 2026-07-26 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [API.md](API.md) for function signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-27 (v1.0 + Phase 3 financials integration). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [API.md](API.md) for function signatures, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

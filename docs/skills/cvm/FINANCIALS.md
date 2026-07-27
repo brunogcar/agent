@@ -11,6 +11,7 @@ The `financials` skill combines DFP (annual) + ITR (quarterly cumulative) + DVA 
 - **Default: quarterly** — designed to analyze new financials as companies release them. Default 8 quarters.
 - **4 modes** — quarterly (default), annual, complete, summary.
 - **Read-only** — no sync. Calls DFP/ITR query engines directly.
+- **[v1.3] Calculations integration** — `summary` mode now delegates point-in-time ratios (ROIC, Graham, EV/EBITDA, P/FCF, P/EBIT, P/FCO) to `skills.cvm.calculations.metrics.*`. Statement rendering (quarterly/annual/complete) keeps its own per-period `compute_ratios()` because it operates on raw statement dicts, not point-in-time engine snapshots.
 
 ---
 
@@ -38,6 +39,10 @@ No skill-specific config. Read-only over already-synced data sources:
 - `data_sources/cvm/dfp` (dfp.db — annual)
 - `data_sources/cvm/itr` (itr.db — quarterly cumulative)
 - `data_sources/cvm/bridge` (bridge.db — auto-syncs on ticker query)
+
+[v1.3] `summary` mode additionally consults (best-effort via `_safe_call`, returns None on missing DB):
+- `data_sources/cvm/fre` (fre.db — shares outstanding, via calculations `shares` engine) — for Graham, P/EBIT, P/FCO, P/FCF, EV/EBITDA
+- `b3/cotahist.db` (daily close, via calculations `price` engine) — for price-based ratios
 
 ---
 
@@ -70,4 +75,4 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12) and
 
 ---
 
-*Last updated: 2026-07-25 (v1.0.1 + report wiring).*
+*Last updated: 2026-07-27 (v1.3 — calculations integration + tests split).*

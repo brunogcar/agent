@@ -74,6 +74,30 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 | company | str | — | Required |
 | consolidado | int | 1 | 1=consolidated, 0=individual |
 
+**v1.3 response:**
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "sections": {
+    "latest_annual":   { /* same as annual(periods=1).periods[0] */ },
+    "latest_quarterly": { /* same as quarterly(periods=4).periods[-1] */ },
+    "quarterly_trend":  [ /* quarterly(periods=4).periods, oldest-first */ ],
+    "current_ratios": {
+      "date": "2026-07-27",
+      "roic":          0.18,
+      "graham_number": 75.0,
+      "ev_ebitda":     6.4,
+      "p_fcf":         10.0,
+      "p_ebit":        7.2,
+      "p_fco":         2.8
+    }
+  }
+}
+```
+
+`current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
+
 ---
 
 ## Examples
@@ -87,4 +111,4 @@ skill(domain="cvm", sub_domain="financials", mode="summary", params='{"company":
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+*Last updated: 2026-07-27 (v1.3 — summary current_ratios).*

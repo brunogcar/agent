@@ -91,3 +91,6 @@ class TestEngineRegistrationExtended:
     def test_total_metrics_is_17(self):
         from skills.cvm.calculations._registry import list_metrics
         assert len(list_metrics()) == 21
+
+# ════════════════════════════════════════════════════════════════════════════
+# P/FCF metric (FCF = FCO + FCI, per-share + ratio, dual-axis)

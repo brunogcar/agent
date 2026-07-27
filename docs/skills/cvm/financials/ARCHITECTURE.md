@@ -7,8 +7,23 @@
 | File | Purpose |
 |------|---------|
 | `skills/cvm/financials/__init__.py` | MANIFEST + route — 4 modes |
-| `skills/cvm/financials/financials.py` | Main logic: delegates to DFP/ITR query engines, mode dispatch |
-| `skills/cvm/financials/metrics.py` | Ratio computation + standalone quarter derivation + key account codes |
+| `skills/cvm/financials/financials.py` | Main logic: delegates to DFP/ITR query engines, mode dispatch. v1.3: `summary()` also delegates point-in-time ratios to calculations metrics. |
+| `skills/cvm/financials/metrics.py` | Ratio computation (`compute_ratios`, `compute_ebitda`, `compute_ttm`) + key account codes (`SUMMARY_CODES`, `KEY_CODES_BY_GRUPO`). Operates on raw `{codigo: valor}` dicts — NOT calculations engines. |
+
+### Test module tree
+
+```text
+tests/skills/cvm/financials/
+├── conftest.py            # financials_env fixture — synthetic DFP + ITR DBs
+├── test_metrics.py        # TestMetrics + TestTTM + TestDFCMDFallback (16 tests)
+├── test_annual.py         # TestAnnualMode (3 tests)
+├── test_quarterly.py      # TestQuarterlyMode + TestQuarterlyV101Regressions (5 tests)
+├── test_complete.py       # TestCompleteMode (5 tests)
+├── test_summary.py        # TestSummaryMode + TestSummaryV101Regressions + TestSummaryCurrentRatios (5 tests)
+└── test_route.py          # TestFinancialsRoute (3 tests)
+```
+
+37 tests total (was 36 in v1.2 — added `test_current_ratios_section_populated`).
 
 ## Data Flow
 
@@ -96,8 +111,35 @@ Summary metrics use these CVM account codes:
 | `quarterly` | 8 | ITR + DFP | standalone quarters + ratios |
 | `annual` | 5 | DFP | annual metrics + ratios |
 | `complete` | 8 (quarterly) / 5 (annual) | ITR + DFP or DFP | full statements by grupo + key codes |
-| `summary` | 1 annual + 4 quarterly | all | combined latest + trend |
+| `summary` | 1 annual + 4 quarterly | all + calculations | combined latest + trend + `current_ratios` |
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+## Calculations Integration (v1.3)
+
+`summary()` mode delegates point-in-time ratios to `skills.cvm.calculations.metrics.*`:
+
+| Metric | Calculations function | Engines composed | Needs price? |
+|--------|----------------------|------------------|--------------|
+| ROIC | `roic_at` | ebit + tax + pl + debt + cash | No |
+| Graham Number | `graham_number_at` | earnings + pl + shares | No (returns BRL target) |
+| EV/EBITDA | `ev_ebitda_at` | price + shares + debt + cash + ebit + da | Yes (cotahist) |
+| P/FCF | `p_fcf_at` | price + shares + operating_cf + investing_cf | Yes (cotahist) |
+| P/EBIT | `p_ebit_at` | price + shares + ebit | Yes (cotahist) |
+| P/FCO | `p_fco_at` | price + shares + operating_cf | Yes (cotahist) |
+
+### Why per-period modes (quarterly / annual / complete) do NOT use calculations metrics
+
+Calculations engines are point-in-time: `*_at(company, date)` returns a single TTM/snapshot value for a given date. Financials' statement-rendering modes need **per-period ratios** (e.g., ROE for each of 8 quarters), and they already have the raw `{codigo: valor}` dicts in memory after fetching the statements. Calling calculations metrics per period would re-query DFP/ITR (via `connect_dfp`/`connect_itr`) for each period — wasteful and slower than computing from the already-fetched dict.
+
+The two patterns coexist intentionally:
+- **`compute_ratios(metrics, is_quarterly)`** in `metrics.py` — operates on raw dicts, used by `quarterly` + `annual` modes for per-period ratios.
+- **`<metric>_at(company, date)`** in `calculations/metrics/*` — point-in-time, used by `summary()` for current snapshot.
+
+### Lazy import + `_safe_call` pattern
+
+Calculations imports are lazy (inside `summary()` function body, not at module top) so importing `financials.py` does NOT trigger calculations registry initialization (and the corresponding `PLANNER_MODEL` env-var requirement). Each metric is wrapped in `_safe_call(fn, company, today)` which catches `FileNotFoundError` (missing `cotahist.db`, `fre.db`) and any other exception, returning `None`. This makes the integration best-effort: a missing DB degrades gracefully instead of crashing the whole `summary()` call.
+
+---
+
+*Last updated: 2026-07-27 (v1.3 — calculations integration).*

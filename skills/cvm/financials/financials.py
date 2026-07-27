@@ -26,7 +26,8 @@ Read-only. Assumes dfp.db + itr.db + (optional) dividends.db are synced.
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import date
+from typing import Any, Callable
 
 from data_sources.cvm._db import connect_dfp, connect_itr, parse_escala, cnpj_digits
 from data_sources.cvm._bridge import resolve_company
@@ -35,6 +36,23 @@ from skills.cvm.financials.metrics import (
     compute_ratios, compute_ebitda, compute_ttm_ebitda, compute_ttm,
     _f,
 )
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _safe_call(fn: Callable, *args, **kwargs):
+    """Call a calculations engine/metric and return None on any error.
+
+    Calculations engines call connect_dfp/connect_itr/connect_fre/cotahist,
+    each of which may raise FileNotFoundError when the underlying DB is not
+    synced. Many engines also need optional accounts (e.g. tax 3.08, cash
+    1.01.01) that may not be filed for every company. Without this wrapper,
+    one missing DB or account would crash the entire summary() call.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return None
 
 
 # ── Mode: quarterly (default) ────────────────────────────────────────────────
@@ -121,6 +139,14 @@ def summary(company: str = "", consolidado: int = 1) -> dict:
     """Combined: latest annual + latest quarterly + key ratios.
 
     Best-effort — if one data source is missing, returns what's available.
+
+    [v1.3] Now also includes a `current_ratios` section with calculations
+    metrics (ROIC, Graham Number, EV/EBITDA, P/FCF) computed at today's date.
+    These are point-in-time ratios delegated to skills.cvm.calculations.* —
+    they complement (not replace) the per-period ratios computed by
+    `compute_ratios()` on raw statement data. Calculations metrics are wrapped
+    in _safe_call so a missing DB (e.g. cotahist for price-based ratios)
+    returns None instead of crashing the whole summary.
     """
     if not company:
         return {"status": "error", "error": "company is required"}
@@ -150,6 +176,34 @@ def summary(company: str = "", consolidado: int = 1) -> dict:
                                                        "error": qrt.get("error", "")}
     except Exception as e:
         result["sections"]["latest_quarterly"] = {"status": "error", "error": str(e)}
+
+    # [v1.3] Current ratios from calculations metrics (point-in-time).
+    # Lazy import so importing financials.py does NOT trigger calculations
+    # imports (and the corresponding PLANNER_MODEL env-var requirement).
+    # Each metric is wrapped in _safe_call so a missing DB or account returns
+    # None instead of crashing the whole summary.
+    today = date.today().isoformat()
+    try:
+        from skills.cvm.calculations.metrics.roic import roic_at
+        from skills.cvm.calculations.metrics.graham_number import graham_number_at
+        from skills.cvm.calculations.metrics.ev_ebitda import ev_ebitda_at
+        from skills.cvm.calculations.metrics.p_fcf import p_fcf_at
+        from skills.cvm.calculations.metrics.p_ebit import p_ebit_at
+        from skills.cvm.calculations.metrics.p_fco import p_fco_at
+
+        result["sections"]["current_ratios"] = {
+            "date": today,
+            "roic":           _safe_call(roic_at,           company, today),
+            "graham_number":  _safe_call(graham_number_at,  company, today),
+            "ev_ebitda":      _safe_call(ev_ebitda_at,      company, today),
+            "p_fcf":          _safe_call(p_fcf_at,          company, today),
+            "p_ebit":         _safe_call(p_ebit_at,         company, today),
+            "p_fco":          _safe_call(p_fco_at,          company, today),
+        }
+    except Exception as e:
+        # If calculations library itself is unavailable (circular import,
+        # registry not initialized, etc.), record the error without crashing.
+        result["sections"]["current_ratios"] = {"date": today, "error": str(e)}
 
     return result
 
