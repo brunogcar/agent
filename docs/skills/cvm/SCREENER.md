@@ -9,7 +9,8 @@ The `screener` skill lists companies in a sector and computes sector medians (P/
 - **Orchestration only** — calls CAD + bridge + valuation internally. No own database, no sync.
 - **Best-effort** — companies without a ticker (not in bridge) or with failed valuation are skipped, not fatal.
 - **Sorted by P/L** — peers table is sorted cheapest-first so the LLM sees value opportunities immediately.
-- **Sector medians** — P/L, P/VPA, EV/EBITDA, ROE, Div Yield, Market Cap medians computed from peers.
+- **Sector medians** — P/L, P/VPA, EV/EBITDA, ROE, Div Yield, Market Cap medians computed from peers. [v1.2] Also ROA, Marg. Líquida, Dívida/PL medians (sourced from calculations metrics via valuation.ratios).
+- **Calculations integration (v1.2)** — since Phase 2B, `valuation.ratios()` returns `roe` directly (computed by `calculations.metrics.roe_at`). The `_roe_from_ratios()` helper was simplified to `ratios.get("roe")` — no more lucro_liquido/patrimonio_liquido division. Peer dicts + medians + comparison now also include `roa`, `margem_liquida`, `divida_pl` from the calculations metrics surfaced in valuation.ratios.
 
 ---
 
@@ -61,4 +62,4 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-27 (v1.2 — calculations integration).*

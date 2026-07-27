@@ -23,6 +23,8 @@ skill(domain="cvm", sub_domain="comparison", mode="...", params='{"tickers":[...
 
 Compare N tickers across 3 sections (valuation, financials, dividends). Each section: rows = tickers, columns = metrics.
 
+[v1.3] The valuation section now includes 5 calculations-sourced columns: ROE (val), ROA (val), Marg. Líq. (val), Dívida/PL, Liquidez Corrente. These come from `valuation.ratios()` which delegates to calculations metrics (roe_at, roa_at, net_margin_at, debt_equity_at, current_ratio_at). The `(val)` suffix distinguishes them from the same-named columns in the financials section (which use the annual statement value, not the TTM calculations snapshot).
+
 ```python
 params = '{"tickers":["SUZB3","KLBN11"],"consolidado":1}'
 ```
@@ -38,7 +40,14 @@ params = '{"tickers":["SUZB3","KLBN11"],"consolidado":1}'
     "status": "ok",
     "tickers": ["SUZB3", "KLBN11"],
     "sections": {
-        "valuation":  {"title": "Valuation Ratios", "columns": [...], "rows": [...], "formats": {...}},
+        "valuation":  {"title": "Valuation Ratios",
+                       "columns": ["Ticker", "Preço", "Market Cap", "EV", "P/L", "P/VPA",
+                                    "P/EBIT", "EV/EBITDA", "PSR", "Div Yield", "DPA", "EPS",
+                                    "VPA", "Total Ações",
+                                    "ROE (val)", "ROA (val)", "Marg. Líq. (val)",
+                                    "Dívida/PL", "Liquidez Corrente"],
+                       "rows": [[...], ...],
+                       "formats": {"Ticker": "text", "P/L": "num", "ROE (val)": "pct", ...}},
         "financials": {"title": "Financial Metrics (latest annual)", "columns": [...], "rows": [...], "formats": {...}},
         "dividends":  {"title": "Dividend Metrics", "columns": [...], "rows": [...], "formats": {...}},
     },
@@ -113,4 +122,4 @@ report(action="export", title="SUZB3 vs KLBN11",
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-27 (v1.3).*

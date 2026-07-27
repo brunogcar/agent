@@ -8,7 +8,8 @@ The `comparison` skill compares N tickers across the 3 CVM analytical dimensions
 - **Orchestration only** — no new database, no sync. Calls `financials.summary()`, `valuation.ratios()`, `dividends.summary()` per ticker.
 - **Best-effort per ticker** — if one source fails for a ticker (e.g. price unavailable), that ticker's cells in that section are `None` (rendered as `—`), but the other sections still populate. The comparison never fails wholesale.
 - **Tickers as rows, metrics as columns** — matches how investors read comparison tables, and keeps each section unit-homogeneous so per-column format specs work.
-- **2 modes** — side_by_side (3 sections, full), summary (single quick-compare table, 10 KPIs).
+- **3 modes** — side_by_side (3 sections, full), summary (single quick-compare table, 10 KPIs), growth (QoQ + YoY % change + TTM ratios).
+- **Calculations integration (v1.3)** — since Phase 2B, `valuation.ratios()` returns ~10 additional ratios sourced from the central calculations engines (roe, roa, margem_bruta, margem_operacional, margem_liquida, divida_pl, giro_ativos, liquidez_corrente, roic, graham_number, p_ebit, p_fco, p_fcf). Comparison surfaces 5 of these (ROE, ROA, Marg. Líquida, Dívida/PL, Liquidez Corrente) as new columns in the valuation section of `side_by_side()`. No new data fetching — picked up transitively via the existing `entry["valuation"] = r.get("ratios", {})` line.
 - **Read-only** — no sync. Assumes dfp.db + itr.db + fre.db + bridge.db + dividends.db are synced.
 
 ---
@@ -66,4 +67,4 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-27 (v1.3 — calculations integration).*

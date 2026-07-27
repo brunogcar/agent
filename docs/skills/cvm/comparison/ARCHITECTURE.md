@@ -6,11 +6,29 @@
 
 | File | Purpose |
 |------|---------|
-| `skills/cvm/comparison/__init__.py` | MANIFEST + route() — dispatches side_by_side / summary |
-| `skills/cvm/comparison/comparison.py` | Orchestration logic — calls financials + valuation + dividends per ticker, merges into side-by-side |
-| `tools/report_ops/adapters/comparison.py` | 2 report adapters: comparison_side_by_side, comparison_summary |
-| `tests/skills/cvm/test_comparison.py` | Skill tests (mocked underlying skills, no network) |
-| `tests/tools/report/test_report_adapters.py` | Adapter tests (TestComparisonAdapters class) |
+| `skills/cvm/comparison/__init__.py` | MANIFEST + route() — dispatches side_by_side / summary / growth |
+| `skills/cvm/comparison/comparison.py` | Orchestration logic — calls financials + valuation + dividends per ticker, merges into side-by-side. [v1.3] `_VALUATION_COLS` extended with 5 calculations-sourced metrics (roe, roa, margem_liquida, divida_pl, liquidez_corrente) returned by valuation.ratios(). |
+| `tools/report_ops/adapters/comparison.py` | 3 report adapters: comparison_side_by_side, comparison_summary, comparison_growth |
+| `tests/skills/cvm/comparison/conftest.py` | Shared fixtures — synthetic VAL_* / FIN_* / DIV_* data + `mock_skills` + `petr_vale_env` helpers |
+| `tests/skills/cvm/comparison/test_validation.py` | TestValidation (5 tests) — input validation across all modes |
+| `tests/skills/cvm/comparison/test_side_by_side.py` | TestSideBySide (8 tests) + TestExtractDividendMetrics (3 tests) |
+| `tests/skills/cvm/comparison/test_summary.py` | TestSummary (2 tests) |
+| `tests/skills/cvm/comparison/test_growth.py` | TestGrowthMode (6 tests) + TestPctChange (9 tests) |
+| `tests/skills/cvm/comparison/test_route.py` | TestRoute (3 tests) |
+| `tests/tools/report/test_report_adapters.py` | Adapter tests (TestComparisonAdapters + TestComparisonGrowthAdapter classes) |
+
+### Test module tree
+
+```
+tests/skills/cvm/comparison/
+├── conftest.py            # mock_skills, petr_vale_env, VAL_*, FIN_*, DIV_* fixtures
+├── test_validation.py     # 5 tests — TestValidation
+├── test_side_by_side.py   # 11 tests — TestSideBySide (8) + TestExtractDividendMetrics (3)
+├── test_summary.py        # 2 tests  — TestSummary
+├── test_growth.py         # 15 tests — TestGrowthMode (6) + TestPctChange (9)
+└── test_route.py          # 3 tests  — TestRoute
+                          # 36 tests total
+```
 
 ---
 
@@ -32,7 +50,11 @@ graph TD
     F --> H["_build_section(Financials, cols, per_ticker)"]
     F --> I["_build_section(Dividends, cols, per_ticker)"]
     G & H & I --> J["{status, tickers, sections: {valuation, financials, dividends}, errors}"]
+    D1 -.->|v1.3| K["valuation.ratios() now calls calculations engines/metrics → returns roe, roa, margem_liquida, divida_pl, liquidez_corrente, roic, graham_number, p_ebit, p_fco, p_fcf"]
+    K -.->|transitive| G
 ```
+
+[v1.3] The dashed edge marks the transitive calculations integration. Comparison does NOT import calculations directly — it just consumes the enriched `ratios` dict that `valuation.ratios()` returns after Phase 2B.
 
 ---
 
@@ -43,6 +65,21 @@ graph TD
 - **Tickers as rows, metrics as columns** — each section is unit-homogeneous (all valuation ratios are multiples/fractions, all financials are BRL/%, all dividends are BRL/fractions). This lets the table builder use per-**column** format specs (the existing mechanism) — no per-row format concept needed.
 - **Column sets are module-level constants** (`_VALUATION_COLS`, `_FINANCIALS_COLS`, `_DIVIDENDS_COLS`, `_SUMMARY_COLS`) — each entry is `(label, dict_key, spec)`. Adding a column = one line in the list. The `_build_section()` helper is generic over any column list.
 - **Summary mode merges dicts** — `summary()` merges each ticker's valuation + financials + dividends dicts into one row, then builds a single section from `_SUMMARY_COLS`. This is why `dict_key`s must not collide across the 3 sources (e.g. `dividend_yield` comes from valuation, not dividends).
+- **[v1.3] Transitive calculations integration** — comparison does NOT import calculations directly. It consumes the enriched `ratios` dict that `valuation.ratios()` returns (which since Phase 2B calls the calculations engines + metrics internally). This keeps the orchestration boundary clean: comparison talks to valuation, valuation talks to calculations. If a metric is needed that valuation doesn't expose, the right fix is to extend valuation.ratios() to expose it — not to have comparison call calculations directly. See `Deferred / Out of Scope` in CHANGELOG.md.
+
+### Calculations Integration (v1.3)
+
+The valuation section's new columns come from calculations engines/metrics via `valuation.ratios()`:
+
+| Column label | `ratios` key | Calculations source | Notes |
+|--------------|--------------|---------------------|-------|
+| ROE (val) | `roe` | `metrics.roe.roe_at` | TTM earnings / equity snapshot. Distinct from the financials section's `ROE` (which uses `compute_ratios` on the annual statement dict). |
+| ROA (val) | `roa` | `metrics.roa.roa_at` | TTM earnings / total assets. |
+| Marg. Líq. (val) | `margem_liquida` | `metrics.net_margin.net_margin_at` | TTM net income / TTM revenue. Distinct from financials' `Marg. Líquida` (annual). |
+| Dívida/PL | `divida_pl` | `metrics.debt_equity.debt_equity_at` | Gross debt / equity (point-in-time snapshot). |
+| Liquidez Corrente | `liquidez_corrente` | `metrics.current_ratio.current_ratio_at` | Current assets / current liabilities. |
+
+Both the valuation column (calculations TTM snapshot) and the financials column (annual statement value) are kept deliberately — they cross-check each other. A material gap between the two signals a recent equity raise, debt payoff, or earnings surprise.
 
 ---
 
@@ -64,6 +101,13 @@ graph TD
 | EPS | `eps` | brl_full |
 | VPA | `vpa` | brl_full |
 | Total Ações | `total_shares` | int |
+| ROE (val) | `roe` | pct |
+| ROA (val) | `roa` | pct |
+| Marg. Líq. (val) | `margem_liquida` | pct |
+| Dívida/PL | `divida_pl` | num |
+| Liquidez Corrente | `liquidez_corrente` | num |
+
+[v1.3] The last 5 rows are new — sourced from calculations metrics via `valuation.ratios()`. The `(val)` suffix distinguishes them from the same-named columns in the financials section (which use the annual statement value, not the TTM calculations snapshot).
 
 ### Financials (from `financials.summary` → `latest_annual`)
 | Column | dict_key | spec |
@@ -96,4 +140,4 @@ graph TD
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-27 (v1.3).*

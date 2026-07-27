@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.3 | 2026-07-27 | **Calculations integration.** Side_by_side valuation section now surfaces 5 new columns sourced from `valuation.ratios()` (which since Phase 2B delegates to calculations engines): ROE (val), ROA (val), Marg. Líq. (val), Dívida/PL, Liquidez Corrente. No new data fetching — comparison picks these up transitively via the existing `entry["valuation"] = r.get("ratios", {})` line in `_fetch_all()`. Single test file (431 lines, 7 classes) split into `conftest.py` + 5 per-mode files (validation / side_by_side / summary / growth / route) following the Phase 2C pattern. 36 tests (was 31 — added 1 new test asserting v1.3 metrics land in the valuation section). All existing keys + column labels preserved. |
 | v1.2.2 | 2026-07-25 | **Growth guard relaxed.** v1.2.1 suppressed |result| >= 500% (magnitude guard) which hid legitimate extreme values. Removed the magnitude guard — extreme same-sign growth is real data the LLM should see. Only sign-change guards remain: prev <= 0 and curr*prev < 0 (opposite signs = meaningless %). SUZB3 lucro QoQ now shows its real extreme value instead of None; KLBN11 (sign change) stays None. |
 | v1.2.1 | 2026-07-25 | **Growth sign-change guard fix.** v1.2 caught negative prev and >500% results, but missed profit→loss sign changes (prev positive, curr negative) that produce -400% noise. Fix: add curr*prev<0 check — opposite signs = sign change, % is meaningless. KLBN11 lucro QoQ -395% now correctly suppressed. |
 | v1.2 | 2026-07-25 | **Sector tagging + growth guard.** (1) Sector tagging: all 3 modes now return a "sectors" field {ticker: SETOR_ATIV} resolved from CAD via bridge -> CNPJ. (2) Growth sign-change guard: _pct_change returns None when prev <= 0 (sign-change) or |result| >= 500% (tiny-base noise). Fixes the 3612%/-395% noise values seen in v1.1. |
@@ -31,7 +32,8 @@
 - **Cross-sector benchmarks** — aggregate financials across a whole sector for median P/L, ROE, etc. Separate skill (e.g. `skills/cvm/screener`).
 - **Charts** — radar/spider chart comparing tickers across normalized metrics. Belongs in report tool as a chart adapter (v1.3 roadmap).
 - **Real-time price delta** — comparison uses 15-min delayed brapi prices. Real-time needs paid B3 feeds.
+- **Direct calculations calls** — comparison could in principle call calculations metrics directly (e.g. `roic_at` for a per-ticker ROIC column), but the current design uses valuation.ratios() as the single funnel. This avoids duplicate DB queries (valuation already calls the engines) and keeps the orchestration boundary clean. Deferred until a metric is needed that valuation doesn't expose.
 
 ---
 
-*Last updated: 2026-07-25 (v1.2.2).*
+*Last updated: 2026-07-27 (v1.3).*

@@ -9,6 +9,18 @@ MODES
   side_by_side (default) -- 3 sections (valuation, financials, dividends).
                             Each section: rows = tickers, columns = metrics.
   summary                -- single quick-compare table (10 KPIs).
+  growth                 -- QoQ + YoY % change for Receita, EBITDA, Lucro Líquido.
+
+CALCULATIONS INTEGRATION (v1.3)
+-------------------------------
+Since Phase 2B, valuation.ratios() returns ~10 additional ratios computed by
+the calculations engines (roe, roa, margem_bruta, margem_operacional,
+margem_liquida, divida_pl, giro_ativos, liquidez_corrente, roic,
+graham_number, p_ebit, p_fco, p_fcf). Comparison picks these up transitively
+via the existing `entry["valuation"] = r.get("ratios", {})` line in
+`_fetch_all()` — no new data fetching required. The v1.3 update just adds
+column definitions in `_VALUATION_COLS` so the new metrics render in the
+valuation section of `side_by_side()`.
 
 NO SYNC
 -------
@@ -24,20 +36,34 @@ from typing import Any
 # ── Valuation columns (from valuation.ratios) ────────────────────────────────
 # Each is (column_name, ratios_key, spec). Multiples use "num", BRL uses "brl",
 # fractions use "pct".
+# [v1.3] Added ROE, ROA, Marg. Líquida, Dívida/PL, Liquidez Corrente — these
+# are returned directly by valuation.ratios() since Phase 2B (calculations
+# metrics roe_at, roa_at, net_margin_at, debt_equity_at, current_ratio_at are
+# composed inside valuation.ratios and exposed in the ratios dict). The same
+# metrics also appear in the financials section (computed by compute_ratios
+# from the raw statement dict); the valuation column shows the calculations
+# engine value (point-in-time TTM snapshot), the financials column shows the
+# annual statement value. Both are useful — they cross-check each other.
 _VALUATION_COLS = [
-    ("Preço",         "price",            "brl_full"),
-    ("Market Cap",    "market_cap",       "brl"),
-    ("EV",            "ev",               "brl"),
-    ("P/L",           "p_l",              "num"),
-    ("P/VPA",         "p_vpa",            "num"),
-    ("P/EBIT",        "p_ebit",           "num"),
-    ("EV/EBITDA",     "ev_ebitda",        "num"),
-    ("PSR",           "psr",              "num"),
-    ("Div Yield",     "dividend_yield",   "pct"),
-    ("DPA",           "dpa",              "brl_full"),
-    ("EPS",           "eps",              "brl_full"),
-    ("VPA",           "vpa",              "brl_full"),
-    ("Total Ações",   "total_shares",     "int"),
+    ("Preço",            "price",            "brl_full"),
+    ("Market Cap",       "market_cap",       "brl"),
+    ("EV",               "ev",               "brl"),
+    ("P/L",              "p_l",              "num"),
+    ("P/VPA",            "p_vpa",            "num"),
+    ("P/EBIT",           "p_ebit",           "num"),
+    ("EV/EBITDA",        "ev_ebitda",        "num"),
+    ("PSR",              "psr",              "num"),
+    ("Div Yield",        "dividend_yield",   "pct"),
+    ("DPA",              "dpa",              "brl_full"),
+    ("EPS",              "eps",              "brl_full"),
+    ("VPA",              "vpa",              "brl_full"),
+    ("Total Ações",      "total_shares",     "int"),
+    # [v1.3] New — calculations metrics surfaced via valuation.ratios()
+    ("ROE (val)",        "roe",              "pct"),
+    ("ROA (val)",        "roa",              "pct"),
+    ("Marg. Líq. (val)", "margem_liquida",   "pct"),
+    ("Dívida/PL",        "divida_pl",        "num"),
+    ("Liquidez Corrente","liquidez_corrente","num"),
 ]
 
 # ── Financials columns (from financials.summary -> latest_annual) ────────────

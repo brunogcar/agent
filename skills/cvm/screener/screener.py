@@ -9,6 +9,17 @@ DATA FLOW
   For each company: bridge reverse-lookup (CD_CVM -> ticker) -> valuation.ratios
   Aggregate: sector medians + per-company table
 
+CALCULATIONS INTEGRATION (v1.2)
+-------------------------------
+Since Phase 2B, valuation.ratios() returns ~10 additional ratios computed by
+the calculations engines (roe, roa, margem_liquida, divida_pl,
+liquidez_corrente, etc.). Screener picks these up transitively via the
+existing `peer.update({...})` call from `vr.get("ratios", {})`. The v1.2
+update just (a) simplifies `_roe_from_ratios()` to read `ratios["roe"]`
+directly (no more lucro_liquido/patrimonio_liquido division) and (b) extends
+the peer dict + medians + comparison with roa, margem_liquida, divida_pl
+from valuation.
+
 NO SYNC — read-only. Calls CAD + bridge + valuation internally.
 """
 
@@ -82,6 +93,10 @@ def sector(setor: str = "", limit: int = 20) -> dict:
                     "ev_ebitda": r.get("ev_ebitda"),
                     "roe": _roe_from_ratios(r),
                     "dividend_yield": r.get("dividend_yield"),
+                    # [v1.2] New metrics from calculations engines via valuation.ratios()
+                    "roa": r.get("roa"),
+                    "margem_liquida": r.get("margem_liquida"),
+                    "divida_pl": r.get("divida_pl"),
                 })
             else:
                 errors.append(f"{ticker}: valuation {vr.get('status')}")
@@ -218,6 +233,10 @@ def compare(company: str = "", limit: int = 20) -> dict:
                     "ev_ebitda": r.get("ev_ebitda"),
                     "roe": _roe_from_ratios(r),
                     "dividend_yield": r.get("dividend_yield"),
+                    # [v1.2] New metrics from calculations engines via valuation.ratios()
+                    "roa": r.get("roa"),
+                    "margem_liquida": r.get("margem_liquida"),
+                    "divida_pl": r.get("divida_pl"),
                 }
             else:
                 my_data = {"ticker": ticker, "name": company_name,
@@ -245,14 +264,16 @@ def compare(company: str = "", limit: int = 20) -> dict:
 # ── Internal: helpers ────────────────────────────────────────────────────────
 
 def _roe_from_ratios(ratios: dict) -> float | None:
-    """Extract ROE from valuation ratios (not directly in ratios — compute it)."""
-    # valuation.ratios() doesn't return roe directly, but financials does.
-    # ROE = lucro_liquido / patrimonio_liquido
-    ll = ratios.get("lucro_liquido")
-    pl = ratios.get("patrimonio_liquido")
-    if ll is not None and pl is not None and pl > 0:
-        return ll / pl
-    return None
+    """Extract ROE from valuation ratios.
+
+    [v1.2] Since Phase 2B, valuation.ratios() returns ``roe`` directly
+    (computed by calculations.metrics.roe_at — TTM earnings / equity snapshot).
+    The previous version tried to derive ROE from lucro_liquido /
+    patrimonio_liquido in the ratios dict, but those keys are NOT reliably
+    populated in valuation's output (they live in financials.summary instead).
+    The simplified version just reads the canonical key.
+    """
+    return ratios.get("roe")
 
 
 def _pct_change(curr: float | None, prev: float | None) -> float | None:
@@ -267,7 +288,12 @@ def _pct_change(curr: float | None, prev: float | None) -> float | None:
 
 
 def _compute_medians(peers: list[dict]) -> dict:
-    """Compute median P/L, P/VPA, EV/EBITDA, ROE, Div Yield from peers list."""
+    """Compute sector medians from peers list.
+
+    [v1.2] Added roa, margem_liquida, divida_pl (sourced from valuation.ratios
+    via calculations metrics). Backward-compat preserved — all v1.1 keys
+    (p_l, p_vpa, ev_ebitda, roe, dividend_yield, market_cap) still present.
+    """
     def _median(key: str) -> float | None:
         vals = [p.get(key) for p in peers if p.get(key) is not None]
         return median(vals) if vals else None
@@ -279,12 +305,26 @@ def _compute_medians(peers: list[dict]) -> dict:
         "roe": _median("roe"),
         "dividend_yield": _median("dividend_yield"),
         "market_cap": _median("market_cap"),
+        # [v1.2] New — from calculations metrics via valuation.ratios
+        "roa": _median("roa"),
+        "margem_liquida": _median("margem_liquida"),
+        "divida_pl": _median("divida_pl"),
     }
 
 
 def _build_comparison(my_data: dict, medians: dict) -> dict:
-    """Build a per-metric comparison: my value vs sector median + delta %."""
-    metrics = ["p_l", "p_vpa", "ev_ebitda", "roe", "dividend_yield"]
+    """Build a per-metric comparison: my value vs sector median + delta %.
+
+    [v1.2] Added roa, margem_liquida, divida_pl. Classification:
+      - "cheap"/"expensive" — valuation multiples where lower = cheaper
+        (p_l, p_vpa, ev_ebitda, divida_pl — lower debt-to-equity = less
+        leveraged = "cheaper" risk profile).
+      - "above"/"below" — quality metrics where higher = better
+        (roe, roa, margem_liquida, dividend_yield).
+    """
+    valuation_multiples = ("p_l", "p_vpa", "ev_ebitda", "divida_pl")
+    quality_metrics = ("roe", "dividend_yield", "roa", "margem_liquida")
+    metrics = list(valuation_multiples) + list(quality_metrics)
     out = {}
     for m in metrics:
         my_val = my_data.get(m)
@@ -292,10 +332,12 @@ def _build_comparison(my_data: dict, medians: dict) -> dict:
         entry = {"my_value": my_val, "sector_median": med_val}
         if my_val is not None and med_val is not None and med_val != 0:
             entry["delta_pct"] = (my_val - med_val) / abs(med_val)
-            # Interpretation: for P/L, P/VPA, EV/EBITDA — below median = "cheap"
-            if m in ("p_l", "p_vpa", "ev_ebitda"):
+            # Interpretation: for valuation multiples + leverage — below median
+            # = "cheap" (or "less leveraged" for divida_pl). For quality
+            # metrics — above median = "above".
+            if m in valuation_multiples:
                 entry["vs_sector"] = "cheap" if my_val < med_val else "expensive"
-            elif m in ("roe", "dividend_yield"):
+            elif m in quality_metrics:
                 entry["vs_sector"] = "above" if my_val > med_val else "below"
         else:
             entry["delta_pct"] = None
