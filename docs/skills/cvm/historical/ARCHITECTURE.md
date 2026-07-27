@@ -568,4 +568,58 @@ If you're creating a new skill that follows this pattern, here are the 10 items 
 
 ---
 
-*Last updated: v1.9. See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+## 🧪 Testing
+
+```powershell
+# Run all historical tests
+D:\mcp\agent\venv\Scripts\python.exe -m pytest tests/skills/cvm/historical/ -v -W error --tb=short
+
+# Run all CVM skill tests (includes historical + other skills)
+D:\mcp\agent\venv\Scripts\python.exe -m pytest tests/skills/cvm/ -v -W error --tb=short
+```
+
+**Test architecture:**
+- `tests/skills/cvm/conftest.py` — autouse env var fixture (PLANNER_MODEL etc.) so `core.config` loads during collection
+- Historical tests mock the registry spec (not module functions): `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`
+- Mock ALL engines a metric composes — or use `try/except` if the metric supports missing engines (v1.9 ROIC+cash lesson)
+- Fundamental ratio tests verify `per_share_key is None` and no `price`/`shares` in series entries
+- Per-share+ratio tests verify dual-dataset yAxisID assertions
+
+**Test file layout:**
+```text
+tests/skills/cvm/
+├── conftest.py                           # Autouse env vars (PLANNER_MODEL etc.)
+├── test_integration.py                   # Cross-skill integration
+├── historical/                           # Historical skill tests (10 files)
+│   ├── test_historical.py                # Mode dispatch, MANIFEST, route
+│   ├── test_registry.py                  # Engine + metric auto-discovery, aliases, categories
+│   ├── test_lpa.py                       # LPA + P/L metric
+│   ├── test_vpa.py                       # VPA + P/VPA metric + PL engine
+│   ├── test_dpa.py                       # DPA + DY + Payout metric + dividends engine
+│   ├── test_rps.py                       # RPS + PSR metric + revenue engine
+│   ├── test_roe.py                       # ROE fundamental ratio
+│   ├── test_roa_margins.py               # ROA + Gross Margin + Operating Margin
+│   ├── test_roic.py                      # ROIC + tax engine + debt engine
+│   └── test_ev_ebitda.py                 # EV/EBITDA + cash engine + da engine
+├── comparison/test_comparison.py         # Comparison skill
+├── dividends/test_dividends.py           # Dividends skill
+├── financials/test_financials.py         # Financials skill
+├── governance/test_governance.py         # Governance skill
+├── insider/test_insider.py               # Insider skill
+├── screener/test_screener.py             # Screener skill
+├── shareholders/test_shareholders.py     # Shareholders skill
+└── valuation/test_valuation.py           # Valuation skill
+```
+
+**Bridge test split (v2.0):**
+`test_bridge.py` (968 lines, 42 tests) was split into 4 files under `tests/data_sources/cvm/bridge/`:
+- `conftest.py` — shared fixtures (bridge_db, populated_bridge, dfp_with_bridge)
+- `_helpers.py` — mock factories (_mock_dividends_ok, _patch_cad, etc.)
+- `test_sync.py` — sync engine + ISIN fallback (13 tests)
+- `test_query.py` — query engine lookup/status/resolve (12 tests)
+- `test_resolver.py` — _bridge.py resolve_company (9 tests)
+- `test_parse_escala.py` — parse_escala helper (8 tests)
+
+---
+
+*Last updated: v2.0. See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
