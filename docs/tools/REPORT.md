@@ -10,7 +10,9 @@ The `report()` tool generates self-contained interactive HTML reports — charts
 - **Cancellation guard** — Aborts before any report generation if trace is cancelled
 - **XSS-safe templates** — Jinja2 autoescape + no `| safe` on user-controlled text
 - **Atomic file writes** — `_atomic_write` prevents partial/corrupted files on crash
-- **Skill wiring (v1.2)** — `adapters/` adapters flatten CVM/B3 skill JSON into the `table` action (and `export` xlsx) via `config["adapter"]`. The report tool stays domain-agnostic; number formatting (BRL/%) is shared between HTML and xlsx via one spec vocabulary in `formats.py`.
+- **Skill wiring (v1.3)** — `adapters/` adapters flatten CVM/B3 skill JSON into `table`, `chart`, `report`, AND `dashboard` actions via `config["adapter"]`. 48 adapters total. The report tool stays domain-agnostic; number formatting (BRL/%) is shared between HTML and xlsx via one spec vocabulary in `formats.py`.
+- **Multi-section reports (v1.3)** — `action="report"` renders single-scroll HTML with KPIs + text + charts + tables + mermaid + code + collapsibles. `action="dashboard"` renders multi-tab HTML with sidebar navigation. Both support `config["adapter"]`.
+- **StatusInvest-inspired styling (v1.3)** — rounded cards, larger KPI values, sticky-header tables with alternating rows, badge pills.
 
 ---
 
@@ -63,7 +65,7 @@ report(action="list")
 - **openpyxl** (optional): `pip install openpyxl` — required for xlsx export
 - **Templates**: Jinja2 autoescape enabled; all template-specific JS loaded in `{% block scripts %}`
 - **Number formatting**: shared spec vocabulary (`brl`, `pct`, `num`, …) in `formats.py` — used by the `fmt` Jinja filter (HTML) and `excel_format()` (xlsx)
-- **Adapters**: 12 skill→table adapters in `adapters/`; invoked via `config["adapter"]` on `table`/`export(xlsx)`
+- **Adapters**: 48 adapters (table + chart + report) in `adapters/`; invoked via `config["adapter"]` on `table`/`export(xlsx)`
 - **Output root**: `workspace/reports/{trace_id}/` (resolved via `core.path_guard`)
 
 ---
@@ -79,4 +81,4 @@ report(action="list")
 
 ---
 
-*Architecture: thin facade + @meta_tool + atomic action modules + auto-discovery + lazy imports + XSS-safe templates + atomic file writes + (v1.2) transforms adapters + shared number-format specs.*
+*Architecture: thin facade + @meta_tool + atomic action modules + auto-discovery + lazy imports + XSS-safe templates + atomic file writes + (v1.3) adapter support for report/dashboard + StatusInvest styling.*

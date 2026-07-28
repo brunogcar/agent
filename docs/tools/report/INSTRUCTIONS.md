@@ -23,7 +23,10 @@
 17. **Never import CVM/B3/skill code from `report_ops/`** — the report tool is domain-agnostic. Skill JSON is flattened by `adapters/` adapters only. Coupling here defeats the v1.2 layering.
 18. **Never pre-format numbers into strings inside builders/adapters for multi-period tables** — emit raw numbers + a per-column spec (`brl`/`pct`/…). The `fmt` Jinja filter (HTML) and `excel_format()` (xlsx) render them. Pre-formatting breaks native Excel cells. Exception: key-value indicator tables (`_kv_section`) where each row has its own unit.
 19. **Never register an adapter name that doesn't match `<skill>_<mode>`** — naming convention is how the LLM guesses adapter names without `report(action="help")`.
-20. **Never put adapter modules outside `tools/report_ops/adapters/`** — `adapters/__init__.py` imports the four known modules to trigger `@register_adapter`. New adapter files must be added there.
+20. **Never put adapter modules outside `tools/report_ops/adapters/`** — `adapters/__init__.py` imports the modules to trigger `@register_adapter`. New adapter files must be added there.
+21. **Never use `map(values)` in Jinja2** — it does not exist. Use `columns` + `rows` format.
+22. **Never load Chart.js multiple times** — load ONCE per page.
+23. **Never use `data=None` with report/dashboard** — use `data={}`.
 
 ## ✅ ALWAYS DO
 
@@ -59,4 +62,4 @@
 
 ---
 
-*Last updated: 2026-07-25 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-27 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

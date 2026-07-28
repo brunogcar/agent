@@ -314,7 +314,10 @@ def run(
             if should_exit:
                 exit_price = price
                 pnl = (exit_price - position["entry_price"]) * position["shares"]
-                capital += pnl
+                # Add full proceeds back to cash (not just PnL)
+                # Purchase cost was already subtracted when buying.
+                # capital = (cash_after_buy) + shares * exit_price
+                capital += position["shares"] * exit_price
                 trades.append({
                     "entry_date": position["entry_date"],
                     "entry_price": round(position["entry_price"], 2),
@@ -383,12 +386,17 @@ def run(
         })
 
     # Compute performance metrics
-    final_equity = capital
+    final_equity = max(capital, 0)  # Guard against negative equity (shouldn't happen but safe)
     total_return = (final_equity / initial_capital - 1) * 100 if initial_capital > 0 else 0
 
     days = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days
     years = days / 365.25 if days > 0 else 1
-    cagr = ((final_equity / initial_capital) ** (1 / years) - 1) * 100 if initial_capital > 0 and years > 0 else 0
+    # Guard against complex numbers: (negative) ** fractional = complex in Python
+    ratio = final_equity / initial_capital if initial_capital > 0 else 0
+    if ratio > 0 and years > 0:
+        cagr = (ratio ** (1 / years) - 1) * 100
+    else:
+        cagr = -100.0  # Total loss
 
     if daily_returns:
         avg_return = sum(daily_returns) / len(daily_returns)
