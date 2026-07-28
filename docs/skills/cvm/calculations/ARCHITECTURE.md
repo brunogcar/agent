@@ -18,16 +18,26 @@
 | `skills/cvm/calculations/engines/ebit.py` | TTM EBIT (DRE 3.05): `ebit_at()`, `ebit_periods()` |
 | `skills/cvm/calculations/engines/ebt.py` | TTM EBT (DRE 3.07, with description-search fallback): `ebt_at()`, `ebt_periods()` |
 | `skills/cvm/calculations/engines/tax.py` | TTM income tax (DRE 3.08): `tax_at()`, `tax_periods()` |
+| `skills/cvm/calculations/engines/cogs.py` | TTM COGS (DRE 3.02): `cogs_at()`, `cogs_periods()` |
+| `skills/cvm/calculations/engines/financial_result.py` | TTM financial result (DRE 3.06, net): `financial_result_at()`, `financial_result_periods()` |
 | `skills/cvm/calculations/engines/current_assets.py` | Current assets snapshot (BPA 1.01): `current_assets_at()`, `current_assets_periods()` |
 | `skills/cvm/calculations/engines/cash.py` | Cash snapshot (BPA 1.01.01): `cash_at()`, `cash_periods()` |
 | `skills/cvm/calculations/engines/total_assets.py` | Total assets snapshot (BPA 1): `total_assets_at()`, `total_assets_periods()` |
+| `skills/cvm/calculations/engines/receivables.py` | Receivables snapshot (BPA 1.01.03): `receivables_at()`, `receivables_periods()` |
+| `skills/cvm/calculations/engines/inventory.py` | Inventory snapshot (BPA 1.01.04): `inventory_at()`, `inventory_periods()` |
+| `skills/cvm/calculations/engines/ppe.py` | PP&E snapshot (BPA 1.02.03): `ppe_at()`, `ppe_periods()` |
+| `skills/cvm/calculations/engines/intangibles.py` | Intangibles snapshot (BPA 1.02.04): `intangibles_at()`, `intangibles_periods()` |
 | `skills/cvm/calculations/engines/debt.py` | Debt snapshot (BPP 2.01.04+2.02.01, sum): `debt_at()`, `debt_periods()` |
 | `skills/cvm/calculations/engines/current_liabilities.py` | Current liabilities snapshot (BPP 2.01): `current_liabilities_at()`, `current_liabilities_periods()` |
+| `skills/cvm/calculations/engines/payables.py` | Payables snapshot (BPP 2.01.01): `payables_at()`, `payables_periods()` |
 | `skills/cvm/calculations/engines/da.py` | D&A TTM (DFC description search): `da_at()`, `da_periods()` |
 | `skills/cvm/calculations/engines/capex.py` | CapEx TTM (DFC description search): `capex_at()`, `capex_periods()` |
 | `skills/cvm/calculations/engines/operating_cf.py` | TTM operating cash flow (DFC 6.01): `operating_cf_at()`, `operating_cf_periods()` |
 | `skills/cvm/calculations/engines/investing_cf.py` | TTM investing cash flow (DFC 6.02): `investing_cf_at()`, `investing_cf_periods()` |
 | `skills/cvm/calculations/engines/financing_cf.py` | TTM financing cash flow (DFC 6.03): `financing_cf_at()`, `financing_cf_periods()` |
+| `skills/cvm/calculations/engines/dva_interest_paid.py` | TTM interest paid (DVA grupo='DVA' codigo 8.3): `dva_interest_paid_at()`, `dva_interest_paid_periods()` |
+| `skills/cvm/calculations/engines/dva_total_tax.py` | TTM total tax burden (DVA grupo='DVA' codigo 8.2): `dva_total_tax_at()`, `dva_total_tax_periods()` |
+| `skills/cvm/calculations/engines/dva_value_added.py` | TTM total value added (DVA grupo='DVA' codigo 7): `dva_value_added_at()`, `dva_value_added_periods()` |
 | `skills/cvm/calculations/metrics/__init__.py` | Minimal docstring |
 | `skills/cvm/calculations/metrics/lpa.py` | LPA + P/L: `lpa_at()`, `pe_at()`, `lpa_history()` |
 | `skills/cvm/calculations/metrics/vpa.py` | VPA + P/VPA: `vpa_at()`, `pvpa_at()`, `vpa_history()` |
@@ -51,6 +61,21 @@
 | `skills/cvm/calculations/metrics/current_ratio.py` | Liquidez Corrente (fundamental): `current_ratio_at()`, `current_ratio_history()` |
 | `skills/cvm/calculations/metrics/graham_number.py` | Graham Number (fundamental): `graham_number_at()`, `graham_number_history()` |
 | `skills/cvm/calculations/metrics/effective_tax_rate.py` | Taxa Efetiva (fundamental): `effective_tax_rate_at()`, `effective_tax_rate_history()` |
+| `skills/cvm/calculations/metrics/price_to_tangible_book.py` | Tangible Book/share + P/Tangible Book (Type 1, v1.3): `tangible_book_ps_at()`, `p_tangible_book_at()`, `price_to_tangible_book_history()` |
+| `skills/cvm/calculations/metrics/ev_sales.py` | EV/Sales (fundamental, v1.3): `ev_sales_at()`, `ev_sales_history()` |
+| `skills/cvm/calculations/metrics/ev_fcf.py` | EV/FCF (fundamental, v1.3): `ev_fcf_at()`, `ev_fcf_history()` |
+| `skills/cvm/calculations/metrics/cash_ratio.py` | Cash Ratio (fundamental, v1.3): `cash_ratio_at()`, `cash_ratio_history()` |
+| `skills/cvm/calculations/metrics/ocf_margin.py` | OCF Margin (fundamental, v1.3): `ocf_margin_at()`, `ocf_margin_history()` |
+| `skills/cvm/calculations/metrics/fcf_margin.py` | FCF Margin (fundamental, v1.3): `fcf_margin_at()`, `fcf_margin_history()` |
+| `skills/cvm/calculations/metrics/working_capital.py` | Working Capital (fundamental, BRL value, v1.3): `working_capital_at()`, `working_capital_history()` |
+| `skills/cvm/calculations/metrics/cash_flow_to_debt.py` | Cash Flow to Debt (fundamental, v1.3): `cash_flow_to_debt_at()`, `cash_flow_to_debt_history()` |
+| `skills/cvm/calculations/metrics/retention_ratio.py` | Retention Ratio (fundamental, v1.3): `retention_ratio_at()`, `retention_ratio_history()` |
+| `skills/cvm/calculations/metrics/sustainable_growth.py` | Sustainable Growth Rate (fundamental, composes metrics, v1.3): `sustainable_growth_at()`, `sustainable_growth_history()` |
+| `skills/cvm/calculations/metrics/quick_ratio.py` | Quick Ratio (fundamental, v1.3): `quick_ratio_at()`, `quick_ratio_history()` |
+| `skills/cvm/calculations/metrics/interest_coverage.py` | Interest Coverage (fundamental, v1.3 approximation): `interest_coverage_at()`, `interest_coverage_history()` |
+| `skills/cvm/calculations/metrics/inventory_turnover.py` | Inventory Turnover (fundamental, v1.3): `inventory_turnover_at()`, `inventory_turnover_history()` |
+| `skills/cvm/calculations/metrics/receivables_turnover.py` | Receivables Turnover (fundamental, v1.3): `receivables_turnover_at()`, `receivables_turnover_history()` |
+| `skills/cvm/calculations/metrics/fixed_asset_turnover.py` | Fixed Asset Turnover (fundamental, v1.3): `fixed_asset_turnover_at()`, `fixed_asset_turnover_history()` |
 
 ---
 
@@ -58,23 +83,24 @@
 
 Engines are leaves (one per raw quantity, fetch from data sources). Metrics compose engines (one per ratio). Both self-register. See historical ARCHITECTURE.md for the full pattern documentation — it's the same.
 
-### Engine inventory by category (21 engines, 6 categories):
+### Engine inventory by category (30 engines, 7 categories):
 
 | Category | Engines |
 |----------|---------|
 | market | price, dividends |
 | shares | shares |
-| dre | earnings, revenue, gross_profit, ebit, ebt, tax |
-| bpa | current_assets, cash, total_assets |
-| bpp | pl, debt, current_liabilities |
+| dre | earnings, revenue, gross_profit, ebit, ebt, tax, cogs, financial_result |
+| bpa | current_assets, cash, total_assets, receivables, inventory, ppe, intangibles |
+| bpp | pl, debt, current_liabilities, payables |
 | dfc | da, capex, operating_cf, investing_cf, financing_cf |
+| dva | dva_interest_paid, dva_total_tax, dva_value_added |
 
-### Metric inventory by type (22 metrics):
+### Metric inventory by type (37 metrics):
 
 | Type | Metrics |
 |------|---------|
-| Per-share + price ratio | lpa (LPA+P/L), vpa (VPA+P/VPA), dpa (DPA+DY+Payout), rps (RPS+PSR), ev_ebitda (EBITDA/share+EV/EBITDA), p_ebit (EBIT/share+P/EBIT), p_fco (FCO/share+P/FCO), p_fcf (FCF/share+P/FCF) |
-| Fundamental ratio | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin, debt_equity, net_debt_ebitda, asset_turnover, capex_revenue, current_ratio, graham_number, effective_tax_rate |
+| Per-share + price ratio | lpa (LPA+P/L), vpa (VPA+P/VPA), dpa (DPA+DY+Payout), rps (RPS+PSR), ev_ebitda (EBITDA/share+EV/EBITDA), p_ebit (EBIT/share+P/EBIT), p_fco (FCO/share+P/FCO), p_fcf (FCF/share+P/FCF), price_to_tangible_book (Tangible Book/share+P/Tangible Book) |
+| Fundamental ratio | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin, debt_equity, net_debt_ebitda, asset_turnover, capex_revenue, current_ratio, graham_number, effective_tax_rate, ev_sales, ev_fcf, cash_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, quick_ratio, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover |
 
 ---
 
@@ -89,7 +115,7 @@ calculations/
 │   ├── earnings.py → DFP+ITR (TTM)
 │   ├── shares.py → FRE+investsite
 │   ├── pl.py → DFP+ITR BPP 2.03 (snapshot)
-│   ├── ... (17 more engines)
+│   ├── ... (26 more engines)
 │
 └── metrics/  (compose engines)
     ├── lpa.py → price + earnings + shares
@@ -97,7 +123,7 @@ calculations/
     ├── ev_ebitda.py → price + shares + debt + cash + ebit + da
     ├── roic.py → ebit + tax + ebt + pl + debt + cash (v2.0 EBT-based NOPAT)
     ├── effective_tax_rate.py → tax + ebt
-    └── ... (17 more metrics)
+    └── ... (32 more metrics)
 
          ↓ imported by
 
@@ -130,4 +156,4 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
-*Last updated: 2026-07-28 (v1.2). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-28 (v1.3). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

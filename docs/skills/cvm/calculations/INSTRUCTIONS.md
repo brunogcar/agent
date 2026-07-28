@@ -4,7 +4,7 @@
 
 This library is the **pattern template** for central auto-discovery + registry architecture. Follow these rules when editing this library OR when copying the pattern to a new skill.
 
-**Current scope (v1.2):** 21 engines in 6 categories (market, shares, dre, bpa, bpp, dfc) + 22 metrics in 2 types (8 per-share+ratio and 14 fundamental ratio).
+**Current scope (v1.3):** 30 engines in 7 categories (market, shares, dre, bpa, bpp, dfc, dva) + 37 metrics in 2 types (9 per-share+ratio and 28 fundamental ratio).
 
 ## ❌ NEVER DO
 
@@ -29,7 +29,7 @@ This library is the **pattern template** for central auto-discovery + registry a
 1. **Always use step-function optimization** — Precompute TTM/PL/shares/cash/debt/EBIT/D&A/CapEx periods via `*_periods()`, then do O(1) lookups per day. Don't recompute for 1200 days. (Exception: DPA TTM is a rolling 365-day window recomputed per day via a single SQL query — but it's still O(1) in the metric, the engine does the work.)
 2. **Always follow the engine contract** — `<quantity>_at(company, date) -> float | None` + `<quantity>_periods(company) -> list[dict]` + `register_engine(EngineSpec(...))` at module level. Every engine must have all three.
 3. **Always follow the metric contract** — For per-share+ratio metrics (Type 1): `<name>_at` (per-share) + `<ratio>_at` (ratio) + optional `<bonus>_at` + `<name>_history` + `register_metric(MetricSpec(...))`. For fundamental ratios (Type 2): `<ratio>_at` + `<name>_history` + `register_metric(MetricSpec(..., per_share_*=None))`. Every metric must have `history_fn` + `ratio_fn` + `register_metric`.
-4. **Always set `category` when registering an engine** — one of `market`, `shares`, `dre`, `bpa`, `bpp`, `dfc`, or `other`. The default is `"other"` but should be overridden for every real engine. `list_engines(category="dre")` relies on this for backtest discovery.
+4. **Always set `category` when registering an engine** — one of `market`, `shares`, `dre`, `bpa`, `bpp`, `dfc`, `dva`, or `other`. The default is `"other"` but should be overridden for every real engine. `list_engines(category="dre")` relies on this for backtest discovery.
 5. **Always include aliases (Portuguese + English)** — `["pe", "pl", "p/l", "preco_lucro"]` for lpa, `["dy", "dividend_yield", "yld", "payout", "rendimento", "rendimento_dividendo", "div_yield"]` for dpa, `["return_on_equity", "retorno_pl", "retorno_patrimonio"]` for roe. Users expect to call `summary(metric="retorno_pl")`, not just `summary(metric="roe")`.
 6. **Always set `per_share_label=None` for fundamental ratios** — and `per_share_key=None`, `per_share_fn=None`. Consumer skills' chart adapters + summary adapters inspect `per_share_label`: if `None`, single-dataset chart + skip per-share KPI/row.
 7. **Always mock the registry spec in tests** — `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`. Not the module function. See NEVER DO #11.
@@ -48,9 +48,9 @@ This library is the **pattern template** for central auto-discovery + registry a
 **Rule:** Engine file names are nouns (the raw quantity). Per-share+ratio metric file names are per-share quantity names. Fundamental-ratio metric file names are the ratio name in snake_case. Never mix them — `engines/vpa.py` or `metrics/pl.py` are both WRONG.
 
 **JSON keys in series entries:**
-- Per-share value (Type 1 only): metric name (`lpa`, `vpa`, `dpa`, `rps`, `ebitda_ps`)
-- Ratio: traditional abbreviation (`pe` for P/L, `pvpa` for P/VPA, `dy` for Div Yield, `psr`, `ev_ebitda`, `p_ebit`, `p_fco`, `p_fcf`, `roe`, `roa`, `roic`, `gross_margin`, `operating_margin`, `net_margin`, `ebitda_margin`, `debt_equity`, `net_debt_ebitda`, `asset_turnover`, `capex_revenue`, `current_ratio`, `graham_number`, `effective_tax_rate`)
-- Engine quantities: `price`, `ttm_earnings`, `shares`, `pl`, `ttm_rev`, `ttm_gp`, `ttm_ebit`, `ttm_ebt`, `ttm_tax`, `ttm_da`, `ttm_capex`, `ttm_fco`, `ttm_fci`, `ttm_fcf`, `current_assets`, `cash`, `total_assets`, `debt`, `current_liabilities`
+- Per-share value (Type 1 only): metric name (`lpa`, `vpa`, `dpa`, `rps`, `ebitda_ps`, `tangible_book_ps`)
+- Ratio: traditional abbreviation (`pe` for P/L, `pvpa` for P/VPA, `dy` for Div Yield, `psr`, `ev_ebitda`, `p_ebit`, `p_fco`, `p_fcf`, `p_tangible_book`, `roe`, `roa`, `roic`, `gross_margin`, `operating_margin`, `net_margin`, `ebitda_margin`, `debt_equity`, `net_debt_ebitda`, `asset_turnover`, `capex_revenue`, `current_ratio`, `graham_number`, `effective_tax_rate`, `ev_sales`, `ev_fcf`, `cash_ratio`, `ocf_margin`, `fcf_margin`, `working_capital`, `cash_flow_to_debt`, `retention_ratio`, `sustainable_growth`, `quick_ratio`, `interest_coverage`, `inventory_turnover`, `receivables_turnover`, `fixed_asset_turnover`)
+- Engine quantities: `price`, `ttm_earnings`, `shares`, `pl`, `ttm_rev`, `ttm_gp`, `ttm_ebit`, `ttm_ebt`, `ttm_tax`, `ttm_da`, `ttm_capex`, `ttm_fco`, `ttm_fci`, `ttm_fcf`, `current_assets`, `cash`, `total_assets`, `debt`, `current_liabilities`, `receivables`, `inventory`, `ppe`, `intangibles`, `payables`, `ttm_cogs`, `ttm_financial_result`, `ttm_dva_interest`, `ttm_dva_tax`, `ttm_dva_va`
 
 ---
 
@@ -59,15 +59,16 @@ This library is the **pattern template** for central auto-discovery + registry a
 ```text
 calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + resolve_metric + categories)
        │
-       ├── engines/  (21 engines — LEAVES, never import each other or metrics)
+       ├── engines/  (30 engines — LEAVES, never import each other or metrics)
        │     ├── market: price, dividends
        │     ├── shares: shares
-       │     ├── dre:    earnings, revenue, gross_profit, ebit, ebt, tax
-       │     ├── bpa:    current_assets, cash, total_assets
-       │     ├── bpp:    pl, debt, current_liabilities
-       │     └── dfc:    da, capex, operating_cf, investing_cf, financing_cf
+       │     ├── dre:    earnings, revenue, gross_profit, ebit, ebt, tax, cogs, financial_result
+       │     ├── bpa:    current_assets, cash, total_assets, receivables, inventory, ppe, intangibles
+       │     ├── bpp:    pl, debt, current_liabilities, payables
+       │     ├── dfc:    da, capex, operating_cf, investing_cf, financing_cf
+       │     └── dva:    dva_interest_paid, dva_total_tax, dva_value_added
        │
-       └── metrics/  (22 metrics — compose engines, never point at other metrics)
+       └── metrics/  (37 metrics — compose engines, never point at other metrics)
              ├── lpa.py             → price + earnings + shares                       (Type 1)
              ├── vpa.py             → price + pl + shares                              (Type 1)
              ├── dpa.py             → price + dividends + earnings + shares           (Type 1, +payout)
@@ -76,6 +77,7 @@ calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + 
              ├── p_ebit.py          → price + ebit + shares                            (Type 1)
              ├── p_fco.py           → price + operating_cf + shares                    (Type 1)
              ├── p_fcf.py           → price + operating_cf + investing_cf + shares     (Type 1, 4 engines)
+             ├── price_to_tangible_book.py → price + pl + intangibles + shares        (Type 1, 4 engines, v1.3)
              ├── roe.py             → earnings + pl                                    (Type 2)
              ├── roa.py             → earnings + total_assets                          (Type 2, v1.2: total_assets)
              ├── roic.py            → ebit + tax + ebt + pl + debt + cash              (Type 2, 6 engines, v2.0 EBT-based NOPAT)
@@ -89,7 +91,21 @@ calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + 
              ├── capex_revenue.py   → capex + revenue                                  (Type 2)
              ├── current_ratio.py   → current_assets + current_liabilities            (Type 2, v1.2: current_assets)
              ├── graham_number.py   → earnings + pl + shares                           (Type 2)
-             └── effective_tax_rate.py → tax + ebt                                     (Type 2, v2.0)
+             ├── effective_tax_rate.py → tax + ebt                                     (Type 2, v2.0)
+             ├── ev_sales.py        → price + shares + debt + cash + revenue           (Type 2, 5 engines, v1.3)
+             ├── ev_fcf.py          → price + shares + debt + cash + operating_cf + investing_cf (Type 2, 6 engines, v1.3)
+             ├── cash_ratio.py      → cash + current_liabilities                       (Type 2, v1.3)
+             ├── ocf_margin.py      → operating_cf + revenue                           (Type 2, v1.3)
+             ├── fcf_margin.py      → operating_cf + investing_cf + revenue            (Type 2, 3 engines, v1.3)
+             ├── working_capital.py → current_assets + current_liabilities             (Type 2, BRL value, v1.3)
+             ├── cash_flow_to_debt.py → operating_cf + debt                            (Type 2, v1.3)
+             ├── retention_ratio.py → dividends + earnings                             (Type 2, v1.3)
+             ├── sustainable_growth.py → roe + retention_ratio                         (Type 2, composes metrics, v1.3)
+             ├── quick_ratio.py     → cash + receivables + current_liabilities         (Type 2, v1.3)
+             ├── interest_coverage.py → ebit + financial_result                        (Type 2, v1.3 approximation)
+             ├── inventory_turnover.py → cogs + inventory                              (Type 2, v1.3)
+             ├── receivables_turnover.py → revenue + receivables                       (Type 2, v1.3)
+             └── fixed_asset_turnover.py → revenue + ppe                               (Type 2, v1.3)
 
        (engines never point upward — they're leaves)
 ```
@@ -163,4 +179,4 @@ If you're creating a new skill that follows this pattern:
 
 ---
 
-*Last updated: 2026-07-28 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-28 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*

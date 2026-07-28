@@ -66,7 +66,7 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 49
+        assert len(names) == 64
 
     def test_expected_adapter_names(self):
         expected = {
@@ -94,6 +94,14 @@ class TestRegistry:
             "historical_p_ebit_chart", "historical_p_fco_chart",
             "historical_p_fcf_chart", "historical_graham_number_chart",
             "historical_effective_tax_rate_chart",
+            "historical_ev_sales_chart", "historical_ev_fcf_chart",
+            "historical_cash_ratio_chart", "historical_ocf_margin_chart",
+            "historical_fcf_margin_chart", "historical_working_capital_chart",
+            "historical_cash_flow_to_debt_chart", "historical_retention_ratio_chart",
+            "historical_sustainable_growth_chart",
+            "historical_quick_ratio_chart", "historical_interest_coverage_chart",
+            "historical_inventory_turnover_chart", "historical_receivables_turnover_chart",
+            "historical_fixed_asset_turnover_chart", "historical_price_to_tangible_book_chart",
             "historical_summary",
             "backtest",
         }

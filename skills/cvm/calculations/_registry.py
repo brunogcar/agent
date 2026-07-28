@@ -88,6 +88,7 @@ class EngineSpec:
                      - "bpa":     BPA statement (assets)
                      - "bpp":     BPP statement (PL, debt)
                      - "dfc":     DFC statement (cash flow)
+                     - "dva":     DVA statement (value added, wealth distribution)
                      - "other":   anything else
                      Used by list_engines(category=...) for filtering.
                      When we reach 15+ engines, we may move to subfolders
@@ -221,7 +222,7 @@ def list_engines(category: str | None = None) -> list[str]:
 
     Args:
         category: If provided, only return engines with this category
-                  (e.g., "dre", "bpa", "bpp", "market", "shares", "dfc").
+                  (e.g., "dre", "bpa", "bpp", "market", "shares", "dfc", "dva").
                   If None (default), return all engines.
     """
     if category is None:

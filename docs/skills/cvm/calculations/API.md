@@ -2,7 +2,7 @@
 
 # 📝 API Reference
 
-## 🔌 Engine API (21 engines)
+## 🔌 Engine API (30 engines)
 
 ### `engines/price.py`
 ```python
@@ -124,9 +124,69 @@ financing_cf_at(company: str, date: str) -> float | None       # TTM FCF (DFC 6.
 financing_cf_periods(company: str) -> list[dict]
 ```
 
+### `engines/cogs.py`
+```python
+cogs_at(company: str, date: str) -> float | None              # TTM COGS (DRE 3.02, typically NEGATIVE)
+cogs_periods(company: str) -> list[dict]
+```
+
+### `engines/financial_result.py`
+```python
+financial_result_at(company: str, date: str) -> float | None # TTM Resultado Financeiro (DRE 3.06, net: income - expense, sign preserved)
+financial_result_periods(company: str) -> list[dict]
+```
+
+### `engines/receivables.py`
+```python
+receivables_at(company: str, date: str) -> float | None      # BPA 1.01.03 (Contas a Receber) snapshot
+receivables_periods(company: str) -> list[dict]
+```
+
+### `engines/inventory.py`
+```python
+inventory_at(company: str, date: str) -> float | None        # BPA 1.01.04 (Estoques) snapshot
+inventory_periods(company: str) -> list[dict]
+```
+
+### `engines/ppe.py`
+```python
+ppe_at(company: str, date: str) -> float | None              # BPA 1.02.03 (Imobilizado líquido) snapshot
+ppe_periods(company: str) -> list[dict]
+```
+
+### `engines/intangibles.py`
+```python
+intangibles_at(company: str, date: str) -> float | None      # BPA 1.02.04 (Intangível) snapshot
+intangibles_periods(company: str) -> list[dict]
+```
+
+### `engines/payables.py`
+```python
+payables_at(company: str, date: str) -> float | None         # BPP 2.01.01 (Fornecedores) snapshot
+payables_periods(company: str) -> list[dict]
+```
+
+### `engines/dva_interest_paid.py`
+```python
+dva_interest_paid_at(company: str, date: str) -> float | None    # TTM interest paid (DVA grupo='DVA' codigo 8.3, typically NEGATIVE)
+dva_interest_paid_periods(company: str) -> list[dict]
+```
+
+### `engines/dva_total_tax.py`
+```python
+dva_total_tax_at(company: str, date: str) -> float | None    # TTM total tax burden (DVA grupo='DVA' codigo 8.2, typically NEGATIVE)
+dva_total_tax_periods(company: str) -> list[dict]
+```
+
+### `engines/dva_value_added.py`
+```python
+dva_value_added_at(company: str, date: str) -> float | None  # TTM total value added (DVA grupo='DVA' codigo 7, typically POSITIVE)
+dva_value_added_periods(company: str) -> list[dict]
+```
+
 ---
 
-## 📐 Metric API (22 metrics)
+## 📐 Metric API (37 metrics)
 
 ### Per-share + price ratio metrics
 
@@ -185,6 +245,13 @@ p_fco_history(company, date_from, date_to) -> list[dict]
 fcf_ps_at(company, date) -> float | None      # FCF/share = (operating_cf + investing_cf) / shares
 p_fcf_at(company, date) -> float | None        # P/FCF = price / (fcf / shares)
 p_fcf_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/price_to_tangible_book.py` (v1.3)
+```python
+tangible_book_ps_at(company, date) -> float | None  # Tangible Book/share = (pl - intangibles) / shares
+p_tangible_book_at(company, date) -> float | None   # P/Tangible Book = price / tangible_book_ps
+price_to_tangible_book_history(company, date_from, date_to) -> list[dict]
 ```
 
 ### Fundamental ratio metrics (per_share=None)
@@ -273,6 +340,90 @@ effective_tax_rate_at(company, date) -> float | None       # = tax_expense / EBT
 effective_tax_rate_history(company, date_from, date_to) -> list[dict]
 ```
 
+#### `metrics/ev_sales.py` (v1.3)
+```python
+ev_sales_at(company, date) -> float | None       # EV/Sales = (price*shares + debt - cash) / revenue
+ev_sales_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/ev_fcf.py` (v1.3)
+```python
+ev_fcf_at(company, date) -> float | None         # EV/FCF = (price*shares + debt - cash) / (FCO + FCI), with FCO/FCI date-alignment guard
+ev_fcf_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/cash_ratio.py` (v1.3)
+```python
+cash_ratio_at(company, date) -> float | None     # Cash Ratio = cash / current_liabilities
+cash_ratio_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/ocf_margin.py` (v1.3)
+```python
+ocf_margin_at(company, date) -> float | None     # OCF Margin = operating_cf / revenue
+ocf_margin_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/fcf_margin.py` (v1.3)
+```python
+fcf_margin_at(company, date) -> float | None     # FCF Margin = (FCO + FCI) / revenue, with FCO/FCI date-alignment guard
+fcf_margin_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/working_capital.py` (v1.3)
+```python
+working_capital_at(company, date) -> float | None # Working Capital = current_assets - current_liabilities (BRL value, can be negative)
+working_capital_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/cash_flow_to_debt.py` (v1.3)
+```python
+cash_flow_to_debt_at(company, date) -> float | None # Cash Flow to Debt = operating_cf / debt
+cash_flow_to_debt_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/retention_ratio.py` (v1.3)
+```python
+retention_ratio_at(company, date) -> float | None # Retention Ratio = 1 - (dividends / earnings), with edge-case guards
+retention_ratio_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/sustainable_growth.py` (v1.3)
+```python
+sustainable_growth_at(company, date) -> float | None # Sustainable Growth = ROE × Retention Ratio (composes 2 metrics)
+sustainable_growth_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/quick_ratio.py` (v1.3)
+```python
+quick_ratio_at(company, date) -> float | None    # Quick Ratio (Acid Test) = (cash + receivables) / current_liabilities
+quick_ratio_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/interest_coverage.py` (v1.3 approximation)
+```python
+interest_coverage_at(company, date) -> float | None # Interest Coverage = EBIT / abs(financial_result) (approximation: uses net financial_result, not gross interest expense)
+interest_coverage_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/inventory_turnover.py` (v1.3)
+```python
+inventory_turnover_at(company, date) -> float | None # Inventory Turnover = abs(COGS) / inventory
+inventory_turnover_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/receivables_turnover.py` (v1.3)
+```python
+receivables_turnover_at(company, date) -> float | None # Receivables Turnover = revenue / receivables
+receivables_turnover_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/fixed_asset_turnover.py` (v1.3)
+```python
+fixed_asset_turnover_at(company, date) -> float | None # Fixed Asset Turnover = revenue / ppe
+fixed_asset_turnover_history(company, date_from, date_to) -> list[dict]
+```
+
 ---
 
 ## 📐 Registry API
@@ -301,4 +452,4 @@ list_all_metric_names() -> list[str]
 
 ---
 
-*Last updated: 2026-07-28 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-28 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

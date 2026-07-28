@@ -83,22 +83,22 @@ class TestEngineRegistrationExtended:
         assert ENGINES["current_liabilities"].quantity == "current_liabilities"
 
     def test_engine_count(self):
-        """Verify total engine count is at least the current baseline (18).
+        """Verify total engine count is at least the current baseline (30).
 
         Uses a floor (>=) so new engine additions don't break this test —
         only a registration bug that DROPS engines would fail it.
         """
         from skills.cvm.calculations._registry import list_engines
-        assert len(list_engines()) >= 18
+        assert len(list_engines()) >= 30
 
     def test_metric_count(self):
-        """Verify total metric count is at least the current baseline (21).
+        """Verify total metric count is at least the current baseline (37).
 
         Uses a floor (>=) so new metric additions don't break this test —
         only a registration bug that DROPS metrics would fail it.
         """
         from skills.cvm.calculations._registry import list_metrics
-        assert len(list_metrics()) >= 21
+        assert len(list_metrics()) >= 37
 
 # ════════════════════════════════════════════════════════════════════════════
 # P/FCF metric (FCF = FCO + FCI, per-share + ratio, dual-axis)
