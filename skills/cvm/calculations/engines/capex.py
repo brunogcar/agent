@@ -47,6 +47,8 @@ Usage:
 
 from __future__ import annotations
 
+import unicodedata
+
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
@@ -58,8 +60,48 @@ from data_sources.cvm._bridge import resolve_company
 # in LOWER() so accented Portuguese characters (Imobilizado) are matched
 # case-insensitively too (ASCII substring matches work regardless of accents
 # since we only match the un-accented stems 'imobilizado'/'intangivel').
+#
+# SECTION SCOPING (v1.1 fix):
+# The broad `grupo LIKE '%Fluxo de Caixa%'` filter matches the ENTIRE DFC
+# statement (operating + investing + financing sections).  The keyword
+# 'imobilizado' alone would also match "Baixa de Imobilizado" — a
+# non-cash reconciling line in the OPERATING section (codigo 6.01.xx),
+# not the actual capex outflow which lives in the INVESTING section
+# (codigo 6.02.xx, typically "Aquisição de Imobilizado").  Different sign
+# convention, different section — silently mixing them corrupts the sum.
+# Fix: scope to the investing section via `codigo LIKE '6.02.%'`, plus a
+# Python-side accent-normalized exclusion for 'baixa' (disposal/write-off)
+# as defense-in-depth.
 
 CAPEX_KEYWORDS = ("imobilizado", "intangivel")
+
+# Accent-normalized negative keywords — descriptions containing these stems
+# are disposal/write-off or non-cash reconciling lines, NOT capex outflows.
+_CAPEX_EXCLUDE_STEMS = ("baixa", "alienacao", "despesa")
+
+
+def _strip_accents(s: str) -> str:
+    """Remove diacritics from a Portuguese string (e.g. 'Alienação' -> 'Alienacao').
+
+    SQLite LOWER() only lowercases ASCII; it does NOT strip accents.  We do
+    the accent-stripping in Python where unicodedata is available so 'Alienação'
+    is caught regardless of accent.
+    """
+    if not s:
+        return ""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", s)
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _is_disposal_line(descricao: str) -> bool:
+    """True if a DFC line description is a disposal/write-off, not capex.
+
+    Accent-normalized so 'Alienação de Imobilizado' is caught.
+    """
+    norm = _strip_accents(descricao).lower()
+    return any(stem in norm for stem in _CAPEX_EXCLUDE_STEMS)
 
 
 def _build_desc_filter(column: str = "c.descricao") -> str:
@@ -95,6 +137,7 @@ def _get_dfp_capex(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Fluxo de Caixa%'
+                 AND c.codigo LIKE '6.02.%'
                  AND ({desc_filter})
                  AND c.meses = 12
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
@@ -103,8 +146,13 @@ def _get_dfp_capex(company: str) -> dict[str, dict]:
 
         # Sum all matching line items per (data_fim_exerc, ano)
         # CapEx may be split into multiple codes per filer.
+        # Exclude disposal/write-off lines (e.g. 'Baixa de Imobilizado') that
+        # slip through the 'imobilizado' keyword match despite the 6.02.codigo
+        # scope — defense-in-depth for any edge-case filer.
         by_period: dict[str, dict] = {}
         for r in rows:
+            if _is_disposal_line(r["descricao"] or ""):
+                continue
             escala = parse_escala(r["escala"])
             valor = float(r["valor"] or 0) * escala
             ano = str(r["ano"])
@@ -141,6 +189,7 @@ def _get_itr_capex(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Fluxo de Caixa%'
+                 AND c.codigo LIKE '6.02.%'
                  AND ({desc_filter})
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
@@ -149,6 +198,8 @@ def _get_itr_capex(company: str) -> dict[str, dict]:
 
         by_date: dict[str, dict] = {}
         for r in rows:
+            if _is_disposal_line(r["descricao"] or ""):
+                continue
             escala = parse_escala(r["escala"])
             valor = float(r["valor"] or 0) * escala
             date = r["data_fim_exerc"]

@@ -2,25 +2,31 @@
 
 # 📈 HISTORICAL — Historical Financial Ratios Skill
 
-Computes financial ratios over time by combining **engines** (basics: price, earnings, shares, PL, dividends) into **metrics** (per-share values + price ratios: LPA+P/L, VPA+P/VPA, DPA+Div Yield+Payout). Tells you if a stock is cheap vs its **own history**.
+Computes financial ratios over time by combining **engines** (basics: price, earnings, shares, PL, dividends, etc.) into **metrics** (per-share values + price ratios + fundamental ratios: LPA+P/L, VPA+P/VPA, DPA+Div Yield+Payout, RPS+PSR, EV/EBITDA, ROE, ROA, ROIC, Margins, Leverage, Turnover, Liquidity). Tells you if a stock is cheap vs its **own history**.
 
-**This skill is the pattern template** for other skills that need auto-discovery + registry architecture. The central `_registry.py`, engine/metric separation, and self-registration pattern are designed to be copied.
+**This skill is a thin wrapper over the shared `calculations/` package.** Engines, metrics, and the central registry live in [`skills/cvm/calculations/`](CALCULATIONS.md) — see [CALCULATIONS.md](CALCULATIONS.md) for the engine/metric library docs. Historical adds **mode dispatch** (`<metric>_history`, `summary`, `ratio_history`) + **percentile analysis** on top of the shared engines/metrics.
 
-**Architecture — engines + metrics in [calculations/](CALCULATIONS.md):**
-- **Engines** (`engines/`) — one per raw quantity. Self-register via `register_engine()`. Auto-discovered by the central `_registry.py`. Engines are leaves: they never import each other or metrics.
+**Architecture — engines vs metrics (both live in calculations/):**
+- **Engines** (in [`calculations/engines/`](calculations/ARCHITECTURE.md)) — one per raw quantity. Self-register via `register_engine()`. Auto-discovered by the central `_registry.py`. Engines are leaves: they never import each other or metrics. 18 engines in 7 categories.
   - `price.py` — COTAHIST daily close
   - `earnings.py` — DFP + ITR TTM earnings derivation
   - `shares.py` — FRE shares outstanding (+ investsite fallback)
   - `pl.py` — DFP + ITR BPP 2.03 Patrimônio Líquido snapshot
   - `dividends.py` — B3 cash_dividends DPA TTM
-  - `revenue.py` — DFP + ITR DRE 3.01 TTM net revenue
-  - (roe uses earnings + pl, no new engine)
-- **Metrics** (`metrics/`) — one per ratio. Self-register via `register_metric()`. Auto-discovered by the central `_registry.py`. Each metric produces BOTH a per-share value AND a price ratio (+ optional bonus ratios).
+  - `revenue.py`, `gross_profit.py`, `ebit.py`, `tax.py` — DRE TTM flows
+  - `assets.py`, `total_assets.py`, `cash.py` — BPA snapshots
+  - `debt.py`, `current_liabilities.py` — BPP snapshots
+  - `da.py`, `capex.py` — DFC description-based TTM search engines
+- **Metrics** (in [`calculations/metrics/`](calculations/ARCHITECTURE.md)) — one per ratio. Self-register via `register_metric()`. Auto-discovered by the central `_registry.py`. 21 metrics in 2 types: 8 per-share+ratio (Type 1) + 13 fundamental ratio (Type 2).
   - `lpa.py` — LPA (earnings/shares) + P/L (price/LPA)
   - `vpa.py` — VPA (pl/shares) + P/VPA (price/VPA)
   - `dpa.py` — DPA (dividends TTM) + Div Yield (DPA/price) + Payout (DPA/LPA)
   - `rps.py` — RPS (revenue/shares) + PSR (price/RPS)
-  - `roe.py` — ROE (earnings/PL, fundamental ratio — no price or shares)
+  - `ev_ebitda.py` — EBITDA/Ação + EV/EBITDA (6 engines, most complex)
+  - `roe.py`, `roa.py`, `roic.py` — Returns (fundamental ratios)
+  - `gross_margin.py`, `operating_margin.py`, `net_margin.py`, `ebitda_margin.py` — Margins
+  - `debt_equity.py`, `net_debt_ebitda.py` — Leverage
+  - `asset_turnover.py`, `capex_revenue.py`, `current_ratio.py` — Other fundamentals
 
 **Each metric produces both:**
 - A **per-share value** (LPA, VPA, DPA) — useful on its own (e.g., backtest filters on EPS)
@@ -28,12 +34,13 @@ Computes financial ratios over time by combining **engines** (basics: price, ear
 - Optional **bonus ratios** (e.g., Payout = DPA/LPA) — included in the series + summary
 
 **Key characteristics:**
-- **Central auto-discovery** — `_registry.py` lives at the skill top level, globs both `engines/*.py` and `metrics/*.py`. Adding a metric = drop a file + `register_metric()`. Everything else auto-generates.
+- **Thin wrapper over calculations/** — engines, metrics, and the registry moved to `skills/cvm/calculations/` in v2.2 (Phase 1 refactor). Historical adds mode dispatch + percentile analysis on top.
+- **Central auto-discovery (in calculations/)** — `_registry.py` lives at the calculations top level, globs both `engines/*.py` and `metrics/*.py`. Adding a metric = drop a file + `register_metric()`. Everything else auto-generates.
 - **Both layers self-register** — engines via `register_engine(EngineSpec(...))`, metrics via `register_metric(MetricSpec(...))`. Consistent pattern.
 - **Step-function optimization** — price changes daily, PL/earnings change quarterly, shares change annually, dividends change on payment dates. Precompute step functions, do O(1) lookups per day.
-- **Percentile analysis** — "PETR4 is at 25th percentile of its 5Y P/L range" = cheap vs history
-- **Dual-dataset charts** — each metric chart shows BOTH the per-share value AND the ratio
-- **Backtest foundation** — engines/ are standalone modules importable by a future backtest skill
+- **Percentile analysis** — "PETR4 is at 25th percentile of its 5Y P/L range" = cheap vs history (owned by historical, NOT calculations)
+- **Dual-dataset charts (Type 1) vs single-dataset (Type 2)** — each Type 1 metric chart shows BOTH the per-share value AND the ratio; each Type 2 metric chart shows only the fundamental ratio.
+- **Backtest foundation** — calculations engines/ are standalone modules importable by a future backtest skill.
 - **Data range** — P/L: 2012+ (need 2 years of ITR for TTM). P/VPA: 2010+ (DFP only). Div Yield: depends on B3 dividends data (varies per ticker). COTAHIST prices from 2010.
 
 ---
@@ -71,7 +78,7 @@ skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"com
 | Dividend Yield over time (chart) | `dpa_history` | Daily series, dual-dataset (DPA + Div Yield) |
 | Compare P/L, P/VPA, Div Yield | Run multiple `summary(metric=...)` calls | One per metric, compare results |
 | Any metric, generic dispatch | `ratio_history(metric=...)` | Accepts canonical names + aliases |
-| Just the per-share value (LPA, VPA, DPA)? | Import engine directly: `from skills.cvm.calculations.metrics.lpa import lpa_at` | For backtests / custom analysis |
+| Just the per-share value (LPA, VPA, DPA)? | Import metric directly: `from skills.cvm.calculations.metrics.lpa import lpa_at` | For backtests / custom analysis (engine/metric lives in calculations) |
 
 ---
 
@@ -113,15 +120,20 @@ report(action="table", title="PETR4 Summary",
 
 | File | Purpose |
 |------|---------|
-| [CALCULATIONS.md](CALCULATIONS.md) | Shared engine + metric library (16 engines + 17 metrics) — landing page |
-| [calculations/ARCHITECTURE.md](calculations/ARCHITECTURE.md) | Engine/metric pattern, central auto-discovery, categories, algorithms (TTM, snapshot, description-search, multi-code sum), dependency graph, how-to guides, testing |
-| [calculations/API.md](calculations/API.md) | All 16 engine signatures + 17 metric signatures + registry API + error handling |
-| [calculations/INSTRUCTIONS.md](calculations/INSTRUCTIONS.md) | Engine/metric AI editing rules — NEVER DO, ALWAYS DO, naming convention, anti-patterns v1.2–v1.9, pattern template checklist |
-| [historical/ARCHITECTURE.md](historical/ARCHITECTURE.md) | Mode dispatch flow, MANIFEST auto-generation, percentile analysis, summary interpretation, testing |
-| [historical/API.md](historical/API.md) | All modes (auto-generated `<metric>_history`, generic `ratio_history`, generic `summary`), report adapters, error cases |
-| [historical/CHANGELOG.md](historical/CHANGELOG.md) | Version history (v1.0 → v2.2 — Phase 1 extraction to calculations) |
-| [historical/INSTRUCTIONS.md](historical/INSTRUCTIONS.md) | Historical-skill-specific AI editing rules — never edit MANIFEST, never edit adapters, mode dispatch rules |
+| [CALCULATIONS.md](CALCULATIONS.md) | Shared engine + metric library (18 engines + 21 metrics) |
+| [ARCHITECTURE.md](historical/ARCHITECTURE.md) | Historical architecture — thin wrapper over calculations, mode dispatch, percentile analysis, testing |
+| [API.md](historical/API.md) | All historical modes (auto-generated), error cases, report adapters. Engine/metric/registry API: see [calculations/API.md](calculations/API.md) |
+| [CHANGELOG.md](historical/CHANGELOG.md) | Version history + roadmap (backtest) |
+| [INSTRUCTIONS.md](historical/INSTRUCTIONS.md) | AI editing rules for the historical skill (engine/metric rules: see calculations/INSTRUCTIONS.md) |
+
+**Related:**
+| File | Purpose |
+|------|---------|
+| [CALCULATIONS.md](CALCULATIONS.md) | Overview of the shared calculations package (engines + metrics + registry) |
+| [calculations/ARCHITECTURE.md](calculations/ARCHITECTURE.md) | Central registry design, engine/metric pattern, auto-discovery, TTM/snapshot/multi-code/description-search algorithms |
+| [calculations/API.md](calculations/API.md) | All 18 engine function signatures + all 21 metric function signatures + registry API |
+| [calculations/INSTRUCTIONS.md](calculations/INSTRUCTIONS.md) | AI editing rules for engines/metrics/registry |
 
 ---
 
-*Last updated: 2026-07-26 (v2.2).*
+*Last updated: 2026-07-26 (v2.2 — Phase 1 refactor: engines + metrics + registry extracted to calculations/; historical now a thin wrapper).*

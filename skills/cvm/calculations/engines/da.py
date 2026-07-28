@@ -47,6 +47,8 @@ Usage:
 
 from __future__ import annotations
 
+import unicodedata
+
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
@@ -58,6 +60,45 @@ from data_sources.cvm._bridge import resolve_company
 # in LOWER() so accented Portuguese characters (Depreciação) are matched
 # case-insensitively too (ASCII substring matches work regardless of accents
 # since we only match the un-accented stems 'deprec'/'amort').
+#
+# SECTION SCOPING (v1.1 fix):
+# The broad `grupo LIKE '%Fluxo de Caixa%'` filter matches the ENTIRE DFC
+# statement (operating + investing + financing sections).  The keyword
+# 'amort' alone would also match "Amortização de Empréstimos e Financiamentos"
+# — a FINANCING-activities line (codigo 6.03.xx), not a D&A operating-activities
+# adjustment.  Summing that in would corrupt EBITDA = EBIT + D&A.
+# Fix: scope to the operating section via `codigo LIKE '6.01.%'` (D&A is always
+# an operating-activities non-cash adjustment in both DFC_MI and DFC_MD), plus
+# a Python-side accent-normalized exclusion for 'emprestimo'/'financiamento'
+# as defense-in-depth.
+
+# Accent-normalized negative keywords — descriptions containing these stems
+# are financing/debt lines, NOT depreciation & amortization expense.
+_DA_EXCLUDE_STEMS = ("emprestimo", "financiamento", "divida")
+
+
+def _strip_accents(s: str) -> str:
+    """Remove diacritics from a Portuguese string (e.g. 'Empréstimo' -> 'Emprestimo').
+
+    SQLite LOWER() only lowercases ASCII; it does NOT strip accents, so a SQL
+    `LIKE '%emprestimo%'` would fail to match 'Empréstimo'.  We do the
+    accent-stripping in Python where unicodedata is available.
+    """
+    if not s:
+        return ""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", s)
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _is_financing_line(descricao: str) -> bool:
+    """True if a DFC line description is a financing/debt item, not D&A.
+
+    Accent-normalized so 'Amortização de Empréstimos' is caught.
+    """
+    norm = _strip_accents(descricao).lower()
+    return any(stem in norm for stem in _DA_EXCLUDE_STEMS)
 
 
 def _get_dfp_da(company: str) -> dict[str, dict]:
@@ -82,6 +123,7 @@ def _get_dfp_da(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Fluxo de Caixa%'
+                 AND c.codigo LIKE '6.01.%'
                  AND (LOWER(c.descricao) LIKE '%deprec%' OR LOWER(c.descricao) LIKE '%amort%')
                  AND c.meses = 12
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
@@ -90,8 +132,13 @@ def _get_dfp_da(company: str) -> dict[str, dict]:
 
         # Sum all matching line items per (data_fim_exerc, ano)
         # D&A may be split into multiple codes per filer.
+        # Exclude financing/debt lines (e.g. 'Amortização de Empréstimos e
+        # Financiamentos') that slip through the 'amort' keyword match despite
+        # the 6.01.codigo scope — defense-in-depth for any edge-case filer.
         by_period: dict[str, dict] = {}
         for r in rows:
+            if _is_financing_line(r["descricao"] or ""):
+                continue
             escala = parse_escala(r["escala"])
             valor = float(r["valor"] or 0) * escala
             ano = str(r["ano"])
@@ -126,6 +173,7 @@ def _get_itr_da(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Fluxo de Caixa%'
+                 AND c.codigo LIKE '6.01.%'
                  AND (LOWER(c.descricao) LIKE '%deprec%' OR LOWER(c.descricao) LIKE '%amort%')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
@@ -134,6 +182,8 @@ def _get_itr_da(company: str) -> dict[str, dict]:
 
         by_date: dict[str, dict] = {}
         for r in rows:
+            if _is_financing_line(r["descricao"] or ""):
+                continue
             escala = parse_escala(r["escala"])
             valor = float(r["valor"] or 0) * escala
             date = r["data_fim_exerc"]

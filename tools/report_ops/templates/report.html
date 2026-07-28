@@ -31,6 +31,11 @@
   {% endif %}
   {% if sec.type == 'table' and sec.columns and sec.rows %}
   {{ m.data_table(sec.columns, sec.rows) }}
+  {% elif sec.type == 'table' %}
+  <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
+  {% endif %}
+  {% if sec.note %}
+  <div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
   {% endif %}
   {% if sec.type == 'chart' and sec.chart_data %}
   {{ m.chart_canvas('chart-' + loop.index|string) }}

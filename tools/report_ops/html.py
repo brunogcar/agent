@@ -123,25 +123,67 @@ def _write_metrics(
 
 
 def _normalize_table_sections(sections: list) -> None:
-    """Normalize table sections in-place: convert list-of-dicts (sec["data"])
-    to columns + rows so the templates can render via m.data_table(columns, rows).
+    """Normalize table sections in-place so the templates can render them.
 
-    Adapters always emit columns+rows, but raw config-driven sections or skill
-    payloads sometimes use list-of-dicts. This is the single normalization
-    point for the report/dashboard actions (table.py has its own equivalent
-    in _normalize_section).
+    Three responsibilities (all fixed in v1.2):
+
+    1. **List-of-dicts → columns + rows with PROPER alignment.**
+       Previously used ``list(d.values())`` per row, which misaligns cells if
+       any row after the first has a different key set or insertion order than
+       row 0.  Now builds each row explicitly as ``[d.get(k) for k in columns]``
+       so cells always line up with the header.
+
+    2. **Empty data list → placeholder, not silent vanish.**
+       Previously, an empty ``data`` list left the section with neither
+       ``columns`` nor ``rows`` set, and the template guard
+       ``{% if sec.columns and sec.rows %}`` silently dropped the entire
+       section with no feedback.  Now sets ``columns=[]`` and ``rows=[]``
+       explicitly so the template can render a "No data" placeholder.
+
+    3. **Apply per-column format specs (``sec["formats"]``).**
+       Previously, the ``formats`` dict was dead code on the report/dashboard
+       path — only the standalone ``table`` action (table.py) honored it.
+       Now applies ``apply_fmt(cell, spec)`` to each cell at normalization
+       time, matching table.py's behavior.  This makes the backtest adapter's
+       carefully-built format specs (brl_full, pct_raw, int) actually render
+       as R$/%/thousands-formatted strings instead of raw floats.
     """
+    from tools.report_ops.formats import apply_fmt
+
     for sec in sections or []:
         if not isinstance(sec, dict):
             continue
         if sec.get("type") != "table":
             continue
-        if sec.get("columns") and sec.get("rows"):
-            continue
-        data_list = sec.get("data")
-        if isinstance(data_list, list) and data_list and isinstance(data_list[0], dict):
-            sec["columns"] = list(data_list[0].keys())
-            sec["rows"] = [list(d.values()) for d in data_list]
+
+        # ── (1) + (2): Derive columns/rows from data list if not already set ──
+        if not (sec.get("columns") and sec.get("rows")):
+            data_list = sec.get("data")
+            if isinstance(data_list, list) and data_list and isinstance(data_list[0], dict):
+                sec["columns"] = list(data_list[0].keys())
+                # Build each row ALIGNED to columns — NOT list(d.values()),
+                # which would misalign if a row has different key order.
+                sec["rows"] = [[d.get(k) for k in sec["columns"]] for d in data_list]
+            elif isinstance(data_list, list) and not data_list:
+                # Empty data list: set empty columns/rows so the template
+                # renders a placeholder instead of silently skipping.
+                sec.setdefault("columns", [])
+                sec.setdefault("rows", [])
+
+        # ── (3): Apply per-column format specs to pre-format cell values ──────
+        # Only applies when a formats dict is present.  Sections without a
+        # formats dict (e.g. pre-formatted performance summary) pass through
+        # unchanged.  This makes sec["formats"] live on the report/dashboard
+        # path — previously dead code (only table.py honored it).
+        formats_map = sec.get("formats") or {}
+        if formats_map and sec.get("columns") and sec.get("rows"):
+            col_formats = [formats_map.get(c, "text") for c in sec["columns"]]
+            sec["rows"] = [
+                [apply_fmt(cell, col_formats[j]) for j, cell in enumerate(row)]
+                for row in sec["rows"]
+            ]
+            # Clear formats so re-normalization is a no-op (idempotency).
+            sec["formats"] = {}
 
 
 def _apply_adapter_if_requested(config: dict, data: Any) -> Any:

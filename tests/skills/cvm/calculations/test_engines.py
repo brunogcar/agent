@@ -1,8 +1,5 @@
 """Engine registration tests for the calculations package.
 
-Merged from two prior test files (formerly TestNewEngineRegistration in
-test_roa_margins.py + TestNewEngineRegistration in test_tier56_metrics.py).
-
 Covers registration + category/quantity metadata for every engine that
 was added in tiers 3, 5, and 6:
   - assets (bpa)
@@ -12,7 +9,8 @@ was added in tiers 3, 5, and 6:
   - total_assets (bpa)
   - current_liabilities (bpp)
 
-Plus total engine/metric counts (16 engines, 17 metrics as of v2.1).
+Plus total engine/metric count floors (18 engines, 21 metrics as of current
+state; uses >= so new additions don't break the test).
 """
 from __future__ import annotations
 
@@ -84,13 +82,23 @@ class TestEngineRegistrationExtended:
         assert ENGINES["current_liabilities"].category == "bpp"
         assert ENGINES["current_liabilities"].quantity == "current_liabilities"
 
-    def test_total_engines_is_16(self):
-        from skills.cvm.calculations._registry import list_engines
-        assert len(list_engines()) == 18
+    def test_engine_count(self):
+        """Verify total engine count is at least the current baseline (18).
 
-    def test_total_metrics_is_17(self):
+        Uses a floor (>=) so new engine additions don't break this test —
+        only a registration bug that DROPS engines would fail it.
+        """
+        from skills.cvm.calculations._registry import list_engines
+        assert len(list_engines()) >= 18
+
+    def test_metric_count(self):
+        """Verify total metric count is at least the current baseline (21).
+
+        Uses a floor (>=) so new metric additions don't break this test —
+        only a registration bug that DROPS metrics would fail it.
+        """
         from skills.cvm.calculations._registry import list_metrics
-        assert len(list_metrics()) == 21
+        assert len(list_metrics()) >= 21
 
 # ════════════════════════════════════════════════════════════════════════════
 # P/FCF metric (FCF = FCO + FCI, per-share + ratio, dual-axis)

@@ -2,187 +2,467 @@
 
 # 🏗️ Architecture
 
-The historical skill is the **first consumer** of the shared calculations library. It orchestrates engines + metrics (via the calculations registry) to produce time-series modes, generic ratio history, and metric-aware summaries with percentile analysis.
+**This skill is a thin wrapper over the shared `calculations/` package.** Engines, metrics, and the central `_registry.py` live in `skills/cvm/calculations/` (extracted in v2.2 Phase 1 refactor). Historical adds **mode dispatch** (`<metric>_history`, `summary`, `ratio_history`) + **percentile analysis** on top of the shared engines/metrics.
 
-**This skill no longer contains engines or metrics** — they were extracted to `skills/cvm/calculations/` in v2.2 (Phase 1 refactor). The historical skill now contains only:
-- `__init__.py` — MANIFEST + route (modes auto-generated from the calculations metric registry)
-- `historical.py` — `_metric_history()`, `ratio_history()`, `summary()` (mode dispatch + percentile analysis + summary interpretation)
+For the engine/metric library architecture, see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md). This doc covers only the historical-specific layer.
 
-**For engine + metric architecture, design patterns, algorithms, and how-to guides**, see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md). The historical skill docs cover only skill-specific concerns (mode dispatch, MANIFEST auto-generation, percentile analysis, summary interpretation, testing).
-
----
+**Current scope (v2.2):** 18 engines in 7 categories + 21 metrics in 2 types — all in calculations/. Historical exposes 19 modes (17 auto-generated `<metric>_history` + `ratio_history` + `summary`).
 
 ## 🔗 Source Code Reference
 
+Historical is a thin wrapper — only 2 source files. The engine/metric library lives in `calculations/`.
+
 | File | Purpose |
 |---|---|
-| `skills/cvm/historical/__init__.py` | MANIFEST + route — modes auto-generated from the calculations metric registry via `_build_metric_modes()` + `_build_manifest()`. |
-| `skills/cvm/historical/historical.py` | Main: `_metric_history()` (shared implementation behind every `<metric>_history` mode), `_make_metric_history_fn()` (factory that generates `<metric>_history` functions into `globals()`), `ratio_history()` (generic dispatch via `resolve_metric()`), `summary()` (metric-aware current + 1Y/3Y/5Y averages + percentile + interpretation). Handles BOTH per-share+ratio and fundamental-ratio metrics via `spec.per_share_key` None-check. |
-| `tools/report_ops/adapters/historical.py` | Auto-registered chart adapters + metric-aware summary adapter. Dual-axis for per-share+ratio metrics, single-dataset for fundamental ratios. Iterates `METRICS` from the calculations registry. |
-| `skills/cvm/calculations/_registry.py` | **Central registry** (calculations library) — EngineSpec + MetricSpec + auto-discovery + `resolve_metric()` + `list_engines(category=...)` + `list_metrics()`. Imported by `__init__.py` and `historical.py`. See [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md). |
-| `skills/cvm/calculations/engines/*.py` | 16 engine modules. See [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for the full engine inventory. |
-| `skills/cvm/calculations/metrics/*.py` | 17 metric modules. See [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for the full metric inventory. |
+| `skills/cvm/historical/__init__.py` | MANIFEST + route — modes auto-generated from the metric registry (imported from calculations) |
+| `skills/cvm/historical/historical.py` | Main: `_metric_history()`, `ratio_history()`, `summary()`. Auto-generates `<metric>_history` functions from the registry. Handles BOTH per-share+ratio and fundamental-ratio metrics via `per_share_key` check. Imports `resolve_metric`, `list_metrics`, `METRICS` from `skills.cvm.calculations._registry`. |
+
+**Engine/metric library (in calculations/):**
+
+| File | Purpose |
+|---|---|
+| `skills/cvm/calculations/_registry.py` | **Central registry** — `EngineSpec` + `MetricSpec` + auto-discovery for both `engines/` and `metrics/` + `list_engines(category=...)` + `list_metrics()` + `resolve_metric()`. See [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for full design. |
+| `skills/cvm/calculations/engines/*.py` | 18 engines (price, dividends, shares, earnings, revenue, gross_profit, ebit, tax, assets, total_assets, cash, pl, debt, current_liabilities, da, capex, operating_cf, investing_cf). See [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md#-source-code-reference) for the full list. |
+| `skills/cvm/calculations/metrics/*.py` | 21 metrics (8 per-share+ratio + 13 fundamental). See [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md#-source-code-reference) for the full list. |
+| `tools/report_ops/adapters/historical.py` | Auto-registered chart adapters + metric-aware summary adapter. Dual-axis for per-share+ratio metrics, single-dataset for fundamental ratios. Imports `METRICS` + `resolve_metric` from `skills.cvm.calculations._registry`. |
+
+---
+
+## 🧱 Historical vs Calculations — The Wrapper Relationship
+
+`historical/` is a **thin wrapper** over `calculations/`. It adds **mode dispatch** + **percentile analysis** on top of the shared calculations engines/metrics.
+
+### What historical owns (the thin wrapper layer)
+- **MANIFEST + `route()`** in `__init__.py` — auto-generates `<metric>_history` modes from `METRICS`.
+- **`_metric_history()`** in `historical.py` — wraps each metric's `history_fn` with date windowing + freshness + ratio_count.
+- **`_make_metric_history_fn()`** in `historical.py` — factory that generates `<metric>_history` functions into `globals()`.
+- **`ratio_history()`** in `historical.py` — generic dispatch via `resolve_metric()`.
+- **`summary()`** in `historical.py` — current vs 1Y/3Y/5Y average + min/max/percentile + interpretation. **Percentile analysis is historical-specific** — it lives here, not in calculations.
+- **`adapters/historical.py`** (in `tools/report_ops/adapters/`) — auto-registered chart adapters + metric-aware summary adapter.
+
+### What historical does NOT own (delegated to calculations/)
+- Engines (18) — all in `calculations/engines/`
+- Metrics (21) — all in `calculations/metrics/`
+- Registry (`_registry.py`, `EngineSpec`, `MetricSpec`, `register_*`, `resolve_metric`, `list_*`) — in `calculations/_registry.py`
+- TTM algorithm, snapshot algorithm, description-based search, multi-code sum, step-function optimization — all in calculations engines/metrics
+
+### Import pattern
+
+```python
+# historical/__init__.py + historical.py — top-level imports
+from skills.cvm.calculations._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines
+
+# historical.py — never imports individual engines/metrics at module top.
+# All metric resolution goes through the registry:
+spec = resolve_metric(metric_name)        # canonical name or alias
+series = spec.history_fn(company, from, to)  # delegates to calculations/metrics/<name>.py
+```
+
+This means historical stays in sync with calculations automatically — when a metric is added to calculations, historical's MANIFEST + adapter list + `_make_metric_history_fn` loop all auto-pick it up.
 
 ---
 
 ## 🌳 Module Tree
 
 ```text
-skills/cvm/historical/
+skills/cvm/historical/                       # THIN WRAPPER — only 2 source files
 ├── __init__.py              # MANIFEST + route — modes auto-generated from calculations registry
-└── historical.py            # _metric_history(), ratio_history(), summary() — skill-specific orchestration
+└── historical.py            # _metric_history(), ratio_history(), summary() — handles BOTH metric types
 
-(skills/cvm/calculations/ — shared engine + metric library, see ../calculations/ARCHITECTURE.md)
+skills/cvm/calculations/                     # SHARED ENGINE/METRIC LIBRARY
+├── _registry.py             # CENTRAL: EngineSpec + MetricSpec + auto-discovery + resolve_metric + categories
+├── engines/                 # 18 engines — see calculations/ARCHITECTURE.md for full list
+│   ├── __init__.py
+│   ├── price.py             # market — COTAHIST
+│   ├── dividends.py         # market — B3 cash_dividends DPA TTM
+│   ├── shares.py            # shares — FRE + investsite fallback
+│   ├── earnings.py          # dre — DFP+ITR 3.11 TTM
+│   ├── revenue.py           # dre — DFP+ITR 3.01 TTM
+│   ├── gross_profit.py      # dre — DFP+ITR 3.03 TTM
+│   ├── ebit.py              # dre — DFP+ITR 3.05 TTM
+│   ├── tax.py               # dre — DFP+ITR 3.08 TTM
+│   ├── assets.py            # bpa — DFP+ITR BPA 1.01 snapshot (Ativo Circulante)
+│   ├── total_assets.py      # bpa — DFP+ITR BPA 1 snapshot (Ativo Total)
+│   ├── cash.py              # bpa — DFP+ITR BPA 1.01.01 snapshot
+│   ├── pl.py                # bpp — DFP+ITR BPP 2.03 snapshot
+│   ├── debt.py              # bpp — DFP+ITR BPP 2.01.04+2.02.01 snapshot (multi-code sum)
+│   ├── current_liabilities.py # bpp — DFP+ITR BPP 2.01 snapshot
+│   ├── da.py                # dfc — DFP+ITR DFC %deprec%/%amort% TTM (description search)
+│   └── capex.py             # dfc — DFP+ITR DFC %imobilizado%/%intangivel% TTM (description search)
+└── metrics/                 # 21 metrics — see calculations/ARCHITECTURE.md for full list
+    ├── __init__.py
+    ├── lpa.py               # Type 1: LPA + P/L
+    ├── vpa.py               # Type 1: VPA + P/VPA
+    ├── dpa.py               # Type 1: DPA + Div Yield + Payout
+    ├── rps.py               # Type 1: RPS + PSR
+    ├── ev_ebitda.py         # Type 1: EBITDA/Ação + EV/EBITDA (6 engines)
+    ├── roe.py               # Type 2: ROE
+    ├── roa.py               # Type 2: ROA
+    ├── roic.py              # Type 2: ROIC (5 engines)
+    ├── gross_margin.py      # Type 2: Margem Bruta
+    ├── operating_margin.py  # Type 2: Margem Operacional
+    ├── net_margin.py        # Type 2: Margem Líquida
+    ├── ebitda_margin.py     # Type 2: Margem EBITDA
+    ├── debt_equity.py       # Type 2: Dívida/PL
+    ├── net_debt_ebitda.py   # Type 2: DL/EBITDA
+    ├── asset_turnover.py    # Type 2: Giro de Ativos
+    ├── capex_revenue.py     # Type 2: CapEx/Receita
+    └── current_ratio.py     # Type 2: Liquidez Corrente
+
+tools/report_ops/adapters/
+└── historical.py            # Auto-registered chart adapters + metric-aware summary adapter
 ```
 
 ---
 
-## 🔀 Mode Dispatch Flow
+## 🗂️ Engine Inventory (by category)
 
-The historical skill has THREE categories of modes, all driven by the calculations metric registry:
+The `category` field on `EngineSpec` groups engines by financial statement / data domain. Use `list_engines(category="dre")` to filter. **Engine inventory is owned by calculations/** — see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for the canonical table. Reproduced here for convenience:
 
-### 1. Auto-generated `<metric>_history` modes
+| Category | Engines | Description |
+|---|---|---|
+| `market` | price, dividends | B3 market data (COTAHIST daily close, B3 cash_dividends DPA TTM) |
+| `shares` | shares | FRE shares outstanding (+ investsite fallback when FRE NULL) |
+| `dre` | earnings, revenue, gross_profit, ebit, tax | DRE statement flows (all TTM derivation, by codigo 3.11, 3.01, 3.03, 3.05, 3.08) |
+| `bpa` | assets, total_assets, cash | BPA statement balances (snapshots — 1.01 Ativo Circulante, 1 Ativo Total, 1.01.01 Caixa) |
+| `bpp` | pl, debt, current_liabilities | BPP statement balances (snapshots — 2.03 PL, 2.01.04+2.02.01 Debt, 2.01 Passivo Circulante) |
+| `dfc` | da, capex | DFC statement flows (description-based search — `%deprec%`/`%amort%` for D&A, `%imobilizado%`/`%intangivel%` for CapEx, TTM derivation) |
 
-When the calculations registry loads (at import time of `skills.cvm.calculations._registry`), every registered metric becomes a `<metric>_history` mode in the MANIFEST. The flow:
+**Total: 18 engines in 7 categories.** When we reach 20+ engines, calculations may move to subfolders (`engines/dre/`, `engines/bpa/`, etc.) — until then, the `category` field gives organizational clarity without breaking import paths.
 
-```
-1. import skills.cvm.historical → triggers _build_manifest() in __init__.py
-2. _build_metric_modes() iterates list_metrics() from calculations._registry
-3. For each metric, generates a MANIFEST entry:
-   - description (from spec.per_share_label + spec.ratio_label + spec.engines)
-   - params: {company: str, months: int=60}
-   - examples (one skill() call example)
-4. _build_manifest() also adds the 2 generic modes (ratio_history, summary)
-5. MANIFEST["modes"] = {<metric>_history for each metric} + {ratio_history, summary}
+---
 
-When route(mode="<metric>_history", params=...) is called:
-1. Validate mode is in MANIFEST["modes"]
-2. Build dispatch dict from list_metrics(): dispatch[f"{name}_history"] = getattr(historical, f"{name}_history")
-3. Filter params by inspect.signature(fn).parameters
-4. Call fn(**filtered) → _metric_history(company, metric_name, months)
-5. _metric_history resolves spec via resolve_metric(metric_name), calls spec.history_fn(company, date_from, date_to)
-6. Wraps result with status, metric, per_share_label, ratio_label, date_from, date_to, total_days, <ratio_key>_days, series
-7. Adds data_freshness via add_freshness()
-```
+## 📊 Metric Inventory (by type)
 
-**Adding a metric = drop a file in `skills/cvm/calculations/metrics/` + `register_metric()`.** The `<metric>_history` mode auto-appears in the historical MANIFEST. Zero edits to `historical/__init__.py`, `historical/historical.py`, or `adapters/historical.py`.
+**Metric inventory is owned by calculations/** — see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for the canonical table. Reproduced here for convenience:
 
-### 2. `ratio_history` (generic, alias-aware)
+| Type | Metric | Per-share | Ratio | Bonus | Engines |
+|---|---|---|---|---|---|
+| Per-share + price ratio | `lpa` | LPA | P/L | — | price + earnings + shares |
+| Per-share + price ratio | `vpa` | VPA | P/VPA | — | price + pl + shares |
+| Per-share + price ratio | `dpa` | DPA | Div Yield | Payout | price + dividends + earnings + shares |
+| Per-share + price ratio | `rps` | RPS | PSR | — | price + revenue + shares |
+| Per-share + price ratio | `ev_ebitda` | EBITDA/Ação | EV/EBITDA | — | price + shares + debt + cash + ebit + da (6 engines) |
+| Fundamental ratio | `roe` | — | ROE | — | earnings + pl |
+| Fundamental ratio | `roa` | — | ROA | — | earnings + assets |
+| Fundamental ratio | `roic` | — | ROIC | — | ebit + tax + pl + debt + cash (5 engines, subtracts cash) |
+| Fundamental ratio | `gross_margin` | — | Margem Bruta | — | gross_profit + revenue |
+| Fundamental ratio | `operating_margin` | — | Margem Operacional | — | ebit + revenue |
+| Fundamental ratio | `net_margin` | — | Margem Líquida | — | earnings + revenue |
+| Fundamental ratio | `ebitda_margin` | — | Margem EBITDA | — | ebit + da + revenue |
+| Fundamental ratio | `debt_equity` | — | Dívida/PL | — | debt + pl |
+| Fundamental ratio | `net_debt_ebitda` | — | DL/EBITDA | — | debt + cash + ebit + da |
+| Fundamental ratio | `asset_turnover` | — | Giro de Ativos | — | revenue + assets |
+| Fundamental ratio | `capex_revenue` | — | CapEx/Receita | — | capex + revenue |
+| Fundamental ratio | `current_ratio` | — | Liquidez Corrente | — | assets + current_liabilities |
+
+**Total: 21 metrics — 8 per-share+ratio + 13 fundamental.** All metrics expose Portuguese aliases (e.g., `margem_bruta`, `retorno_pl`, `retorno_ativos`, `retorno_capital_investido`) plus English aliases (`return_on_equity`, etc.) so users can dispatch via either language.
+
+---
+
+## 🤖 Central Auto-Discovery + Registry Design
+
+**The registry is owned by calculations/** — see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for the full design. Historical's interaction with the registry is limited to: importing `METRICS`, `ENGINES`, `resolve_metric`, `list_metrics`, `list_engines` from `skills.cvm.calculations._registry`, and using `resolve_metric()` for metric resolution in `ratio_history()` + `summary()`.
+
+### Why a central registry?
+
+Before v1.3 (historical version), the registry lived in `metrics/_registry.py` and only handled metrics. Engines had no registry — they were imported by name by metrics. This created an inconsistency: metrics self-registered, but engines didn't.
+
+In v1.3, the registry moved to the **top level** (`skills/cvm/historical/_registry.py` at the time) and handles BOTH engines and metrics. In v1.4.1 (historical), the `category` field was added to `EngineSpec` so engines could be grouped + filtered. In v1.7 (historical), `per_share_*` fields on `MetricSpec` became optional, enabling fundamental-ratio metrics. In v2.2 (Phase 1 refactor), the registry + engines + metrics were extracted from `historical/` into the shared `calculations/` package so other CVM skills can reuse them. This gives:
+- **Consistent pattern** — both layers self-register via `register_engine()` / `register_metric()`
+- **Single source of truth** — one file holds all specs + auto-discovery logic + category metadata
+- **Engine discoverability** — `list_engines()` + `list_engines(category=...)` enable docs auto-generation + backtest skill discovery by statement type
+- **Metric type flexibility** — fundamental ratios skip per-share fields cleanly via `None`
+- **Cleaner `__init__.py` files** — `engines/__init__.py` and `metrics/__init__.py` are minimal docstrings (no auto-discovery code)
+- **Cross-skill reuse** — historical, valuation, financials, backtest all import from one calculations package; no duplication
+
+### How it works (in calculations/_registry.py)
 
 ```python
-def ratio_history(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
-    # 1. Resolve alias → canonical via resolve_metric(metric)
-    # 2. If unknown metric: return {"status": "error", "error": "Unknown metric '...'. Available: [...]}
-    # 3. Call _metric_history(company, spec.name, months)
+# calculations/_registry.py — central auto-discovery
+
+def _auto_discover():
+    """Glob both engines/*.py and metrics/*.py, import each via importlib."""
+    if getattr(_auto_discover, "_done", False):
+        return  # idempotent — avoid re-running on re-import
+    _auto_discover._done = True
+
+    base = Path(__file__).parent
+
+    # Discover engines (triggers register_engine calls)
+    for py_file in sorted((base / "engines").glob("*.py")):
+        if py_file.name != "__init__.py":
+            importlib.import_module(f"skills.cvm.calculations.engines.{py_file.stem}")
+
+    # Discover metrics (triggers register_metric calls)
+    for py_file in sorted((base / "metrics").glob("*.py")):
+        if py_file.name != "__init__.py":
+            importlib.import_module(f"skills.cvm.calculations.metrics.{py_file.stem}")
+
+_auto_discover()  # run at import time
 ```
-
-Accepts canonical names (`lpa`, `vpa`, `roe`) AND aliases (`pe`, `pl`, `p/l`, `retorno_pl`). Same return shape as `<metric>_history` modes.
-
-### 3. `summary` (generic, metric-aware, with percentile + interpretation)
 
 ```python
-def summary(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
-    # 1. Resolve alias → canonical via resolve_metric(metric)
-    # 2. Get max(months, 60) months of history (percentile needs ≥ 5Y)
-    # 3. Extract ratio values (filter None and <= 0)
-    # 4. Compute current_ratio + 1Y/3Y/5Y averages + min/max + percentile
-    # 5. Generate interpretation: "cheap" / "fair" / "expensive" based on percentile
-    # 6. Build current block with per_share + ratio + engine components
-    # 7. Return {status, metric, per_share_label, ratio_label, current, averages, range, percentile, interpretation, ...}
+# calculations/engines/da.py — self-registration at module level (dfc category)
+from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
+
+register_engine(EngineSpec(
+    name="da",
+    quantity="ttm_da",
+    at_fn=da_at,
+    periods_fn=da_periods,
+    source="DFP + ITR DFC (Depreciação e Amortização by description search, TTM)",
+    category="dfc",
+))
 ```
 
-**Metric-aware:** the `current` block includes per-share value + ratio when `spec.per_share_label` is set (Type 1), and only the ratio when `per_share_label is None` (Type 2 fundamental). See [API.md](API.md) for the full return schema.
+```python
+# calculations/metrics/roic.py — fundamental ratio (per_share_* = None)
+from skills.cvm.calculations._registry import MetricSpec, register_metric  # noqa: E402
+
+register_metric(MetricSpec(
+    name="roic",
+    per_share_label=None,       # None for fundamental ratios
+    per_share_key=None,
+    per_share_fn=None,
+    ratio_label="ROIC",
+    ratio_key="roic",
+    ratio_fn=roic_at,
+    history_fn=roic_history,
+    engines=["ebit", "tax", "pl", "debt", "cash"],
+    aliases=["return_on_invested_capital", "retorno_capital_investido"],
+))
+```
+
+### Auto-generation chain (in historical — consumer skill side)
+
+When a new metric is registered **in calculations**, the following auto-generate **in historical** (consumer skill):
+1. **`<metric>_history` mode in MANIFEST** — `_build_metric_modes()` in `historical/__init__.py` iterates `METRICS`
+2. **`<metric>_history` function in historical.py** — `_make_metric_history_fn()` generates functions via `globals()`
+3. **`historical_<metric>_chart` adapter** — `adapters/historical.py` iterates `METRICS` and auto-registers. The adapter inspects `spec.per_share_label`: if `None`, single-dataset chart (fundamental); if set, dual-axis chart (per-share + ratio).
+4. **`ratio_history(metric=<name>)` dispatch** — `resolve_metric()` handles canonical + alias names
+5. **`summary(metric=<name>)` metric-awareness** — `resolve_metric()` returns the spec, summary reads labels + keys from it (skips per-share KPI/row when `per_share_label` is `None`)
+
+**Adding a metric to calculations = drop a file in `calculations/metrics/` + `register_metric()`.** Zero edits to `historical/__init__.py`, `historical.py`, or `adapters/historical.py`. The new `<metric>_history` mode appears in historical's MANIFEST automatically.
 
 ---
 
-## 📊 Percentile Analysis + Summary Interpretation
+## 🔢 Algorithms
 
-The `summary` mode computes a percentile rank of the current ratio value against the 5-year history, then maps it to a human-readable interpretation:
+**All algorithms (TTM, snapshot, multi-code sum, description-based search, DPA TTM, Payout, ROIC) live in calculations/** — see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for the full algorithm reference. Historical does NOT implement any algorithm — it delegates to `spec.history_fn` for each metric, which in turn calls the calculations engine functions.
 
-| Percentile | Interpretation | Meaning |
-|---|---|---|
-| ≤ 25 | `cheap (below 25th percentile of history)` | Stock is cheaper than 75% of its 5Y history |
-| 25–75 | `fair (between 25th-75th percentile of history)` | Stock is in the middle of its 5Y range |
-| ≥ 75 | `expensive (above 75th percentile of history)` | Stock is more expensive than 75% of its 5Y history |
+### Percentile analysis (historical-specific — owned by historical)
 
-**Algorithm:**
+The one algorithm that IS historical-specific is **percentile analysis** in `summary()`:
+
 ```
-1. Get ratio_values = [s[ratio_key] for s in series if s[ratio_key] is not None and s[ratio_key] > 0]
-   (filter None — missing data — AND <= 0 — negative earnings/equity make ratio meaningless)
-2. current_ratio = ratio_values[-1]  (most recent valid value)
-3. percentile = 100 * count(ratio_values <= current_ratio) / len(ratio_values)
-4. averages = {
-     "1y": avg(ratio_values within last 365 days),
-     "3y": avg(ratio_values within last 1095 days),
-     "5y": avg(ratio_values within last 1825 days),
-   }
-5. range = {"min": min(ratio_values), "max": max(ratio_values)}
-6. interpretation = "cheap" / "fair" / "expensive" based on percentile
+For a metric's daily series over the last N months:
+  1. Collect all valid ratio values (skip None entries — e.g., negative earnings years)
+  2. Compute current value = ratio at date_to
+  3. Compute averages over the last 1Y / 3Y / 5Y windows
+  4. Compute min / max over the full window
+  5. Compute percentile = (rank of current value in sorted series) / (count of valid values) * 100
+  6. Interpretation:
+     - ≤ 25th percentile → "cheap (below 25th percentile of history)"
+     - 25-75th percentile → "fair (between 25th-75th percentile of history)"
+     - ≥ 75th percentile → "expensive (above 75th percentile of history)"
 ```
 
-**Error cases:**
-- No series (no price data) → `{"status": "not_found", "error": "No price data for '<company>'"}`
-- No valid ratio data (all negative earnings/equity in window) → `{"status": "not_found", "error": "No valid <label> data for '<company>' (possibly negative earnings/equity)"}`
+This logic lives in `historical.py:summary()` and is the reason historical exists as a separate skill from calculations — percentile analysis is a consumer concern, not a library concern.
 
 ---
 
-## 📊 Report Adapters (auto-registered)
+## 📊 Data Flow (example: ev_ebitda_history — most complex metric)
 
-Chart adapters are auto-registered for each metric from the calculations registry. The summary adapter is metric-aware.
+**The data flow below happens inside calculations/metrics/ev_ebitda.py** — historical just calls `spec.history_fn(company, date_from, date_to)` and wraps the result with freshness + ratio_count. The full flow is documented in [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md#-data-flow-example-ev_ebitda_history--most-complex-metric). Summary:
 
-| Adapter | Source mode | What it renders |
-|---|---|---|
-| `historical_<metric>_chart` (one per metric) | `<metric>_history` | **Dual-dataset** line chart (per-share + ratio, dual Y axis) when `spec.per_share_label` is set; **single-dataset** line chart (ratio on one axis) when `None` |
-| `historical_summary` | `summary` | KPI strip + summary table. Metric-aware: renders per-share KPI/row when `spec.per_share_label` is set; skips it when `None` |
+```
+historical._metric_history(company="PETR4", metric_name="ev_ebitda", months=60)
+  │
+  ├── resolve_metric("ev_ebitda")  →  MetricSpec  (from calculations._registry)
+  │
+  ├── date_from = today - 60 months;  date_to = today
+  │
+  ├── spec.history_fn("PETR4", date_from, date_to)   ← delegates to calculations/metrics/ev_ebitda.py
+  │     │
+  │     ├── price_series("PETR4", from, to)  → ~1200 daily prices
+  │     ├── shares_periods("PETR4")  → FRE step function
+  │     ├── debt_periods("PETR4")    → DFP+ITR BPP step function
+  │     ├── cash_periods("PETR4")    → DFP+ITR BPA step function
+  │     ├── ebit_periods("PETR4")    → DFP+ITR DRE step function
+  │     ├── da_periods("PETR4")      → DFP+ITR DFC step function
+  │     └── For each daily price: step-function lookups → EBITDA, EBITDA/share, EV, EV/EBITDA
+  │
+  ├── Wrap result: add status, metric name, labels, total_days, ratio_count, series
+  └── add_freshness(result)  →  final response
+```
 
-Adapters auto-register by iterating `METRICS` from the calculations registry. **Adding a metric = `historical_<metric>_chart` auto-appears.** Zero edits to `adapters/historical.py`.
+Fundamental metrics (roe, roa, roic, margins, leverage, turnover, liquidity) follow a different shape — no daily price driver, so the series is built from the union of engine period dates (~4-8 points/year) rather than 1200 daily points.
+
+---
+
+## 💡 Key Design Patterns (historical-specific)
+
+1. **Thin wrapper over calculations/** — historical owns mode dispatch + percentile analysis only. All engines, metrics, registry, and algorithms live in calculations. This keeps historical focused on user-facing functionality and lets other CVM skills reuse calculations without coupling to historical.
+2. **Auto-generated MANIFEST modes** — `_build_metric_modes()` in `historical/__init__.py` iterates `METRICS` (imported from calculations) and generates one `<metric>_history` mode per metric. Adding a metric to calculations = a new mode appears in historical automatically.
+3. **Auto-generated `<metric>_history` functions** — `_make_metric_history_fn()` in `historical.py` generates functions into `globals()` at import time. Each is a thin wrapper around `_metric_history()`.
+4. **Auto-registered chart adapters** — `adapters/historical.py` iterates `METRICS` and registers `historical_<metric>_chart` for each. Dual-axis for Type 1 metrics (per-share+ratio), single-dataset for Type 2 (fundamental). The adapter inspects `spec.per_share_label`.
+5. **Metric-aware summary** — `summary()` reads `spec.per_share_label`, `spec.per_share_key`, `spec.ratio_label`, `spec.ratio_key` from the registry and renders KPIs/rows conditionally. Skips per-share KPI/row when `per_share_label` is `None` (fundamental ratios).
+6. **Lazy metric resolution** — `historical.py` never imports individual metric modules at module top. All metric resolution goes through `resolve_metric()` from the calculations registry. This keeps the import graph clean and avoids coupling.
+7. **Percentile analysis is historical-specific** — the percentile computation in `summary()` (rank-based, with cheap/fair/expensive interpretation thresholds at 25th/75th percentiles) lives in historical, not calculations. Other consumer skills may have different summary styles.
+
+For the engine/metric library design patterns (central registry, engine categories, TTM derivation, snapshot, description-based search, multi-code sum, step-function optimization, flexible MetricSpec, PT+EN aliases), see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md#-key-design-patterns).
+
+---
+
+## ➕ How to Add a New Engine
+
+**Engines live in calculations/** — see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md#-how-to-add-a-new-engine) for the full guide. Summary:
+
+1. Create a new file in `skills/cvm/calculations/engines/` (e.g., `working_capital.py`).
+2. Query your data source directly (DFP/ITR/FRE/COTAHIST/B3). Apply `parse_escala` to raw CVM values.
+3. Implement `<quantity>_at(company, date)` and `<quantity>_periods(company)` following the engine contract.
+4. Call `register_engine(EngineSpec(...))` at module level with `category` set.
+5. Add tests in `tests/skills/cvm/calculations/` (mock the DB connection).
+6. **NEVER add engines to `skills/cvm/historical/`** — they belong in `skills/cvm/calculations/`.
+7. **NEVER edit `engines/__init__.py`** — there is no manual inventory. The registry is the source of truth.
+
+---
+
+## ➕ How to Add a New Metric
+
+**Metrics live in calculations/** — see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md#-how-to-add-a-new-metric) for the full guide. Summary:
+
+1. **Confirm the engines you need already exist** in calculations. If not, add the ENGINE first.
+2. Create `skills/cvm/calculations/metrics/<name>.py` with `<name>_at` / `<ratio>_at` / `<name>_history` + `register_metric(MetricSpec(...))`.
+3. **That's it for calculations.** The following auto-generate **in historical** (consumer skill):
+   - `<name>_history` mode in the historical MANIFEST
+   - `<name>_history` function in `historical.py`
+   - `historical_<name>_chart` adapter in `adapters/historical.py`
+   - `ratio_history(metric=<name>)` dispatch (via `resolve_metric`)
+   - `summary(metric=<name>)` metric-awareness (via `resolve_metric`)
+4. Add tests in `tests/skills/cvm/calculations/test_<name>.py`:
+   - Mock the registry spec's history_fn: `monkeypatch.setattr(METRICS["<name>"], "history_fn", fake_fn)`
+   - **Mock ALL engines the metric composes** — not just some.
+5. Update `docs/skills/cvm/calculations/` (API.md + CHANGELOG.md) + `docs/skills/cvm/historical/CHANGELOG.md` (consumer-visible new mode).
+6. **NEVER add metrics to `skills/cvm/historical/`** — they belong in `skills/cvm/calculations/`.
+
+---
+
+## 🔮 Backtest Foundation
+
+The calculations engines + metrics are designed for reuse by a future `skills/cvm/backtest/` skill:
+
+```python
+# Future backtest skill — reuses the same 18 engines + 21 metrics from calculations
+from skills.cvm.calculations.engines.price import price_at
+from skills.cvm.calculations.metrics.lpa import lpa_at, pe_at
+from skills.cvm.calculations.metrics.vpa import vpa_at, pvpa_at
+from skills.cvm.calculations.metrics.dpa import dpa_at, dy_at, payout_at
+from skills.cvm.calculations.metrics.rps import rps_at, psr_at
+from skills.cvm.calculations.metrics.ev_ebitda import ebitda_ps_at, ev_ebitda_at
+from skills.cvm.calculations.metrics.roe import roe_at
+from skills.cvm.calculations.metrics.roa import roa_at
+from skills.cvm.calculations.metrics.roic import roic_at
+from skills.cvm.calculations.metrics.gross_margin import gross_margin_at
+from skills.cvm.calculations.metrics.operating_margin import operating_margin_at
+from skills.cvm.calculations.metrics.net_margin import net_margin_at
+from skills.cvm.calculations.metrics.debt_equity import debt_equity_at
+from skills.cvm.calculations.metrics.net_debt_ebitda import net_debt_ebitda_at
+from skills.cvm.calculations.metrics.current_ratio import current_ratio_at
+
+# Per-share+ratio signals: buy when P/L < 5 AND P/VPA < 1.0 AND Div Yield > 5%
+if (pe_at("PETR4", "2022-06-30") < 5
+    and pvpa_at("PETR4", "2022-06-30") < 1.0
+    and dy_at("PETR4", "2022-06-30") > 0.05):
+    entry_price = price_at("PETR4", "2022-06-30")
+    # ... compute returns
+
+# Fundamental signals: buy when ROIC > 15% AND Operating Margin > 10% AND Net Debt/EBITDA < 3
+if (roic_at("PETR4", "2022-06-30") > 0.15
+    and operating_margin_at("PETR4", "2022-06-30") > 0.10
+    and net_debt_ebitda_at("PETR4", "2022-06-30") < 3):
+    ...
+
+# Per-share values directly: strong dividend + cheap on EV/EBITDA
+if (dpa_at("PETR4", "2022-06-30") > 1.50
+    and ev_ebitda_at("PETR4", "2022-06-30") < 6):
+    ...
+```
+
+No duplication — the backtest skill reuses the same engines and metrics from calculations. `list_engines(category=...)` enables discovery by statement type (e.g., "give me all DRE flow engines for a custom signal"). Historical is irrelevant to backtest — backtest imports calculations directly.
+
+---
+
+## 📐 Pattern Template Checklist (when copying to a new skill)
+
+The pattern template is now **calculations**, not historical. See [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md#-pattern-template-checklist-when-copying-to-a-new-skill) for the 10-item checklist. Historical is a consumer of calculations, not a template itself.
 
 ---
 
 ## 🧪 Testing
 
 ```bash
-# Run all historical skill tests (mode dispatch, MANIFEST, route — engines/metrics in calculations/)
+# Run all historical tests (mode dispatch + percentile + MANIFEST + route)
 PLANNER_MODEL=test PLANNER_PROVIDER=test EXECUTOR_MODEL=test EXECUTOR_PROVIDER=test \
   python -m pytest tests/skills/cvm/historical/ -v -W error --tb=short
 
-# Run all CVM skill tests (calculations + historical + comparison + dividends + ...)
+# Run calculations tests (engines + metrics + registry)
 PLANNER_MODEL=test PLANNER_PROVIDER=test EXECUTOR_MODEL=test EXECUTOR_PROVIDER=test \
-  python -m pytest tests/skills/cvm/ -v -W error --tb=short
+  python -m pytest tests/skills/cvm/calculations/ -v -W error --tb=short
+
+# Run both together (historical is a consumer of calculations)
+PLANNER_MODEL=test PLANNER_PROVIDER=test EXECUTOR_MODEL=test EXECUTOR_PROVIDER=test \
+  python -m pytest tests/skills/cvm/calculations/ tests/skills/cvm/historical/ -v -W error --tb=short
 ```
 
 **Test architecture:**
-- `tests/skills/cvm/conftest.py` — autouse env var fixture (`PLANNER_MODEL=test` etc.) so `core.config` loads during collection
-- Historical skill tests now contain only `test_historical.py` (mode dispatch, MANIFEST, route) — engine/metric tests moved to `tests/skills/cvm/calculations/` in v2.2
-- `test_historical.py` mocks the registry spec (not module functions): `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`
-- Mock ALL engines a metric composes — or rely on the `try/except` wrapper in metrics like ROIC (v1.9 lesson; see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) anti-patterns)
-- Fundamental ratio tests verify `per_share_key is None` and no `price`/`shares` in series entries
-- Per-share+ratio tests verify dual-dataset yAxisID assertions
+- `tests/skills/cvm/conftest.py` — autouse env var fixture (PLANNER_MODEL etc.) so `core.config` loads during collection
+- `tests/skills/cvm/calculations/conftest.py` — same env var pattern (safety net for direct calculations test runs)
+- Historical tests (`tests/skills/cvm/historical/test_historical.py`) cover mode dispatch, MANIFEST auto-generation, route(), summary percentile logic. They mock the registry spec: `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`.
+- Calculations tests (`tests/skills/cvm/calculations/test_*.py`) cover each engine + each metric + the registry. Mock ALL engines a metric composes — or use `try/except` if the metric supports missing engines (ROIC+cash lesson).
+- Fundamental ratio tests verify `per_share_key is None` and no `price`/`shares` in series entries.
+- Per-share+ratio tests verify dual-dataset yAxisID assertions (in `tests/tools/report/test_report_chart.py`).
 
 **Test file layout:**
 ```text
 tests/skills/cvm/
-├── conftest.py                           # Autouse env vars (PLANNER_MODEL etc.)
-├── test_integration.py                   # Cross-skill integration
-├── calculations/                         # ← calculations library tests (see ../calculations/ARCHITECTURE.md)
-│   ├── conftest.py
-│   ├── test_engines.py
-│   ├── test_registry.py
-│   └── test_<metric>.py (one per metric)
-├── historical/                           # ← historical skill tests (mode dispatch only)
-│   └── test_historical.py                # Modes (lpa_history, ratio_history, summary), MANIFEST, route
-├── comparison/test_comparison.py         # Comparison skill
-├── dividends/test_dividends.py           # Dividends skill
-├── financials/test_financials.py         # Financials skill
-├── governance/test_governance.py         # Governance skill
-├── insider/test_insider.py               # Insider skill
-├── screener/test_screener.py             # Screener skill
-├── shareholders/test_shareholders.py     # Shareholders skill
-└── valuation/test_valuation.py           # Valuation skill
+├── conftest.py                                # Autouse env vars (PLANNER_MODEL etc.)
+├── test_integration.py                        # Cross-skill integration
+├── calculations/                              # Calculations package tests (11 files)
+│   ├── conftest.py                            # Same env var pattern
+│   ├── test_registry.py                       # Engine + metric auto-discovery, aliases, categories
+│   ├── test_lpa.py                            # LPA + P/L metric
+│   ├── test_vpa.py                            # VPA + P/VPA metric + PL engine
+│   ├── test_dpa.py                            # DPA + DY + Payout metric + dividends engine
+│   ├── test_rps.py                            # RPS + PSR metric + revenue engine
+│   ├── test_roe.py                            # ROE fundamental ratio
+│   ├── test_roa_margins.py                    # ROA + Gross Margin + Operating Margin
+│   ├── test_roic.py                           # ROIC + tax engine + debt engine + cash engine
+│   ├── test_ev_ebitda.py                      # EV/EBITDA + cash engine + da engine
+│   ├── test_fundamental_ratios.py             # net_margin + ebitda_margin + debt_equity + net_debt_ebitda + asset_turnover
+│   └── test_capex_current_ratio.py            # capex_revenue + current_ratio (+ capex + total_assets + current_liabilities engines)
+├── historical/
+│   └── test_historical.py                     # Historical mode dispatch, MANIFEST, route, summary percentile (consumer skill)
+├── comparison/test_comparison.py              # Comparison skill
+├── dividends/test_dividends.py                # Dividends skill
+├── financials/test_financials.py              # Financials skill
+├── governance/test_governance.py              # Governance skill
+├── insider/test_insider.py                    # Insider skill
+├── screener/test_screener.py                  # Screener skill
+├── shareholders/test_shareholders.py          # Shareholders skill
+└── valuation/test_valuation.py                # Valuation skill
 ```
 
-**v2.2 test split:** Engine/metric tests moved from `tests/skills/cvm/historical/test_<metric>.py` to `tests/skills/cvm/calculations/test_<metric>.py`. Historical skill tests slimmed to `test_historical.py` only. See [calculations/CHANGELOG.md](../calculations/CHANGELOG.md) for the v1.0 calculations entry that documents this split.
+**Bridge test split (historical v2.0):**
+`test_bridge.py` (968 lines, 42 tests) was split into 4 files under `tests/data_sources/cvm/bridge/`:
+- `conftest.py` — shared fixtures (bridge_db, populated_bridge, dfp_with_bridge)
+- `_helpers.py` — mock factories (_mock_dividends_ok, _patch_cad, etc.)
+- `test_sync.py` — sync engine + ISIN fallback (13 tests)
+- `test_query.py` — query engine lookup/status/resolve (12 tests)
+- `test_resolver.py` — _bridge.py resolve_company (9 tests)
+- `test_parse_escala.py` — parse_escala helper (8 tests)
 
 ---
 
-*Last updated: 2026-07-26 (v2.2). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules. Engine + metric architecture: [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md).*
+*Last updated: v2.2 (Phase 1 refactor — engines + metrics + registry extracted to calculations/). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for engine/metric library architecture.*

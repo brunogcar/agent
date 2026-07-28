@@ -2,110 +2,120 @@
 
 # 🛡️ AI Instructions
 
-This skill is the **first consumer** of the calculations library. It contains only mode dispatch (`__init__.py` MANIFEST + route) and metric-aware orchestration (`historical.py` — `_metric_history`, `ratio_history`, `summary`). Engines + metrics + the central registry live in `skills/cvm/calculations/` — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric editing rules.
+**This skill is a thin wrapper over the shared `calculations/` package.** Engine/metric/registry editing rules live in [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) — read those FIRST. This doc covers only the historical-specific rules on top.
 
-**This file covers historical-skill-specific rules only.** Engine rules (engine vs metric separation, TTM/snapshot/description-search algorithms, naming convention, auto-discovery, frozen specs, mock-the-registry-spec, anti-patterns v1.2–v1.9) are in [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md).
+**Current scope (v2.2):** 18 engines in 7 categories + 21 metrics in 2 types — all in calculations/. Historical exposes 19 modes (17 auto-generated `<metric>_history` + `ratio_history` + `summary`).
 
 ## ❌ NEVER DO
 
-1. **Never manually edit `__init__.py` to add a `<metric>_history` mode** — the MANIFEST auto-generates from the calculations registry via `_build_metric_modes()`. Adding a metric in `skills/cvm/calculations/metrics/` + `register_metric()` is all you need; the `<metric>_history` mode auto-appears in the historical MANIFEST. Editing `__init__.py` for inventory defeats the purpose of auto-discovery.
-2. **Never manually edit `adapters/historical.py` to add a chart adapter** — chart adapters auto-register from the calculations registry. The `historical_<metric>_chart` adapter appears automatically (dual-axis if `spec.per_share_label` is set, single-dataset if `None`).
-3. **Never import metric modules at the top of `historical.py`** — use the registry (`resolve_metric()`). The registry handles lazy resolution. Importing metrics at module top creates coupling and breaks the auto-discovery contract.
-4. **Never print to stdout** — MCP stdio corruption. Always return a dict from `route()` / mode functions.
-5. **Never create `.bak` files** — forbidden by project rules.
-6. **Never rewrite entire files** — surgical edits only. Preserve all existing code exactly.
-7. **Never add engines or metrics to `skills/cvm/historical/`** — they belong in `skills/cvm/calculations/`. The historical skill contains only `__init__.py` (MANIFEST + route) and `historical.py` (orchestration). See [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for how to add engines/metrics.
-8. **Never duplicate engine/metric logic in `historical.py`** — `historical.py` is an orchestrator. It calls `spec.history_fn` (captured at registration time) and wraps the result. It does NOT re-query CVM/B3, recompute TTM, or re-derive ratios. If you need a new ratio, add a METRIC in the calculations library; the historical mode auto-generates.
+**Engine/metric/registry rules are owned by calculations/** — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-never-do) for the 25 NEVER DO rules there. The rules below are historical-specific.
+
+1. **Never add engines or metrics to `skills/cvm/historical/`** — they belong in `skills/cvm/calculations/`. The historical skill is now a thin consumer of calculations; it has no `engines/` or `metrics/` subfolders. Adding them there defeats the purpose of the shared calculations package.
+2. **Never import engines or metrics directly in `historical.py` at module top** — use the registry (`resolve_metric()`) for metric resolution. The only top-level import from calculations should be: `from skills.cvm.calculations._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines`.
+3. **Never manually edit `historical/__init__.py` to add a `<metric>_history` mode** — the MANIFEST auto-generates from the calculations registry. Adding a metric to calculations = a new mode appears in historical automatically.
+4. **Never manually edit `adapters/historical.py` to add a chart adapter** — chart adapters auto-register from the calculations registry. The `historical_<metric>_chart` adapter appears automatically (dual-axis if `per_share_label` is set, single-dataset if `None`).
+5. **Never duplicate an engine or metric in historical** — if historical needs an engine or metric that already exists in calculations, import it. Don't reimplement. If you need a slightly different behavior, add a new engine/metric to calculations with a different name.
+6. **Never compute TTM/snapshot/multi-code/description-search algorithms in historical** — those live in calculations engines. Historical's `summary()` owns only percentile analysis (rank + thresholds). Everything else delegates to `spec.history_fn`.
+7. **Never edit `historical.py`'s `_metric_history()` to special-case a specific metric** — all metric dispatch goes through `resolve_metric()` + `spec.history_fn()`. The function is metric-agnostic.
+8. **Never create `.bak` files** — forbidden by project rules.
+9. **Never rewrite entire files** — surgical edits only.
+10. **Never print to stdout** — MCP stdio corruption.
 
 ---
 
 ## ✅ ALWAYS DO
 
-1. **Always use `resolve_metric()` for metric dispatch** — `ratio_history(metric="...")` and `summary(metric="...")` must resolve the spec via the calculations registry. Don't import metrics directly. Handle `ValueError` from `resolve_metric()` and return `{"status": "error", "error": str(e)}` (which already includes "Available: [...]").
-2. **Always handle BOTH metric types in `_metric_history()`** — Type 1 (per-share+ratio) and Type 2 (fundamental). Use `spec.per_share_key is None` to detect Type 2 and skip per-share fields in the result wrapper. The same `_metric_history()` code path must work for `lpa_history` (Type 1) and `roe_history` (Type 2).
-3. **Always include `data_freshness`** — Use `add_freshness(result)` from `skills.cvm._freshness` on every response. This adds `data_freshness: {...}` with sync status of underlying data sources.
-4. **Always run `compileall` before `pytest`** — catches syntax errors early. `python -m compileall skills/cvm/historical/ -q && python -m pytest tests/skills/cvm/historical/ -v`.
-5. **Always filter params by `inspect.signature(fn).parameters`** in `route()` — the dispatcher must not pass unexpected kwargs to mode functions. `filtered = {k: v for k, v in kwargs.items() if k in accepted}`.
-6. **Always wrap mode calls in `try/except`** in `route()` — return `{"status": "error", "sub_domain": "historical", "mode": mode, "error": str(e)}` on any exception. Never let an uncaught exception escape to the MCP layer.
-7. **Always use `max(months, 60)` for `summary`** — percentile computation needs at least 5 years of history to be meaningful. Even if the caller passes `months=12`, fetch 60 months internally.
-8. **Always mock the registry spec in tests** — `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`. Not the module function. The spec captures the function reference at registration time; patching the module function does nothing. See [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) anti-patterns (v1.2 lesson).
+**Engine/metric/registry rules are owned by calculations/** — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-always-do) for the 18 ALWAYS DO rules there. The rules below are historical-specific.
+
+1. **Always import registry helpers from calculations** — `from skills.cvm.calculations._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines`. NOT from any historical-internal location (the historical skill no longer has a `_registry.py`).
+2. **Always use `resolve_metric()` for metric resolution in `ratio_history()` + `summary()`** — it handles canonical names + aliases + case-insensitivity. Never import individual metric modules.
+3. **Always wrap metric `history_fn` results with `add_freshness()`** — `historical.py:_metric_history()` calls `add_freshness(result)` before returning. Freshness metadata is consumer-facing.
+4. **Always run `compileall` before `pytest`** — catches syntax errors early.
+5. **Always count `ratio_days` (non-None ratio entries) in `_metric_history()`** — the response includes `f"{spec.ratio_key}_days"` so consumers know how many valid ratio data points exist (vs total days). Negative earnings years return None for the ratio — those don't count.
+6. **Always keep `summary()` metric-aware via `spec.per_share_label`** — skip per-share KPI/row when `per_share_label` is `None` (fundamental ratios). The summary table renders differently for Type 1 vs Type 2 metrics.
+7. **Always mock the registry spec in tests** — `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`. Not the module function. This works because `_metric_history()` calls `spec.history_fn` (captured at registration time).
+8. **Always update the adapter count test in `tests/tools/report/test_report_adapters.py`** when a new metric is added to calculations — `test_adapters_registered` hardcodes the count of `historical_*_chart` adapters. Adding a metric to calculations = +1 adapter here.
+9. **Always update `docs/skills/cvm/historical/CHANGELOG.md`** when a metric is added to calculations (consumer-visible change: new `<metric>_history` mode appears in historical MANIFEST). ALSO update `docs/skills/cvm/calculations/CHANGELOG.md` for the calculations-internal change.
+10. **Always keep percentile interpretation thresholds consistent** — ≤ 25th = cheap, 25-75th = fair, ≥ 75th = expensive. Documented in [API.md](API.md) + [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 📐 Mode Dispatch Rules
+## 📐 Naming Convention
 
-The historical skill has THREE categories of modes:
+Engine + metric naming conventions are owned by calculations — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-naming-convention). Historical follows the same conventions (it has no engines or metrics of its own to name).
 
-1. **Auto-generated `<metric>_history`** — one per registered metric in the calculations registry. Generated by `_build_metric_modes()` in `__init__.py`. Dispatch via `getattr(historical, f"{name}_history")` (functions generated into `globals()` by `_make_metric_history_fn()`).
-2. **`ratio_history` (generic)** — accepts canonical names + aliases via `resolve_metric(metric)`. Same return shape as the matching `<metric>_history` mode.
-3. **`summary` (generic, metric-aware)** — current ratio + 1Y/3Y/5Y averages + min/max + percentile + interpretation. Handles both Type 1 (per-share+ratio) and Type 2 (fundamental) via `spec.per_share_label is None` check.
-
-**Adding a metric = drop a file in `skills/cvm/calculations/metrics/` + `register_metric()`.** The `<metric>_history` mode auto-appears in the historical MANIFEST, the `historical_<metric>_chart` adapter auto-registers, and `ratio_history(metric=...)` + `summary(metric=...)` accept the new metric immediately. Zero edits to `historical/__init__.py`, `historical/historical.py`, or `adapters/historical.py`.
+Historical's own naming is simple:
+- **Modes:** `<metric>_history` (auto-generated from `METRICS`), `ratio_history` (generic), `summary` (generic). Always lowercase, snake_case.
+- **Adapters:** `historical_<metric>_chart` (auto-registered from `METRICS`), `historical_summary` (metric-aware). Always prefixed with `historical_` to namespace from other skills' adapters.
 
 ---
 
-## 📐 Summary Interpretation Rules
+## 📐 Metric Types
 
-The `summary` mode generates a human-readable interpretation based on the percentile rank of the current ratio against 5Y history:
-
-| Percentile | Interpretation |
-|---|---|
-| ≤ 25 | `cheap (below 25th percentile of history)` |
-| 25–75 | `fair (between 25th-75th percentile of history)` |
-| ≥ 75 | `expensive (above 75th percentile of history)` |
-
-**Always:**
-- Filter `None` AND `<= 0` ratio values before computing percentile (negative earnings/equity make ratios meaningless)
-- Compute percentile as `100 * count(ratio_values <= current_ratio) / len(ratio_values)` (rank-based, not distribution-based — no assumptions about normality)
-- Use `max(months, 60)` for the history window (percentile needs ≥ 5Y to be meaningful)
-- Return the interpretation as a string in the `interpretation` field (the chart adapter + summary table adapter display it verbatim)
-
-**For lower-is-better ratios (P/L, P/VPA, EV/EBITDA, DL/EBITDA, Debt/Equity):** "cheap" (low percentile) is good — the stock is cheaper than history. **For higher-is-better ratios (ROE, ROA, ROIC, margins, asset turnover, current ratio):** "expensive" (high percentile) means the ratio is high vs history — interpretation depends on the metric. The string label (`cheap`/`fair`/`expensive`) is the same; the user interprets it based on the metric. We do NOT invert the label for higher-is-better metrics — that would lose information.
+Metric types are owned by calculations — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-metric-types). Historical handles both types uniformly via `spec.per_share_key` None-checks in `_metric_history()` + `summary()` + the chart adapters.
 
 ---
 
-## 📐 Auto-Discovery Rules (historical skill)
+## 📐 Dependency Graph Rule
 
-1. **`historical/__init__.py`** — imports `METRICS`, `ENGINES`, `resolve_metric`, `list_metrics`, `list_engines` from `skills.cvm.calculations._registry`. Importing the calculations registry triggers its auto-discovery (globs `calculations/engines/*.py` and `calculations/metrics/*.py`), which registers all 16 engines + 17 metrics.
-2. **`_build_metric_modes()`** — iterates `list_metrics()` and generates one `<metric>_history` MANIFEST entry per metric. Description is built from `spec.per_share_label` + `spec.ratio_label` + `spec.engines`. Params are always `{company: str, months: int=60}`.
-3. **`_build_manifest()`** — calls `_build_metric_modes()`, then adds the 2 generic modes (`ratio_history`, `summary`) with their param tables + examples. Returns the final `modes` dict for `MANIFEST`.
-4. **`historical.py`** — at module load, generates `<metric>_history` functions into `globals()` via `_make_metric_history_fn(metric_name)` for each metric in `list_metrics()`. The `route()` dispatcher looks these up via `getattr(historical, f"{name}_history")`.
-5. **`adapters/historical.py`** — iterates `METRICS` from the calculations registry and auto-registers a `historical_<metric>_chart` adapter per metric. Adapter inspects `spec.per_share_label`: dual-axis if set (Type 1), single-dataset if `None` (Type 2).
+The dependency graph is owned by calculations — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-dependency-graph-rule). Historical sits at the consumer layer:
 
----
+```
+historical.py  (consumer orchestrator — reads from calculations registry)
+       │
+       └── skills.cvm.calculations._registry
+              │
+              ├── calculations/engines/  (18 engines — LEAVES)
+              └── calculations/metrics/   (21 metrics — compose engines)
+```
 
-## 🚫 Anti-Patterns & Lessons Learned (historical-skill-specific)
-
-### v2.2 — Engine/metric tests in the wrong folder
-> - **What happened:** Before the v2.2 Phase 1 refactor, all engine/metric tests lived in `tests/skills/cvm/historical/test_<metric>.py` because engines + metrics lived in `skills/cvm/historical/`. After extraction to `skills/cvm/calculations/`, the tests still referenced `from skills.cvm.calculations.engines.X import Y` and broke.
-> - **Why it matters:** Tests must live next to the source they test. Engine/metric tests belong with the calculations library, not with the historical skill that consumes them.
-> - **Fix:** Moved all engine/metric tests to `tests/skills/cvm/calculations/test_<metric>.py` + `test_engines.py` + `test_registry.py`. Historical skill tests slimmed to `test_historical.py` only (mode dispatch, MANIFEST, route). See [calculations/CHANGELOG.md](../calculations/CHANGELOG.md) v1.0.
-
-### v1.0 — Mode functions must exist at module level for `getattr()` dispatch
-> - **What happened:** The `route()` dispatcher looks up mode functions via `getattr(historical, f"{name}_history")`. If the function doesn't exist at module level, `getattr()` returns `None` and the mode fails with a cryptic error.
-> - **Why it matters:** Auto-generated modes need real Python functions at module level — MANIFEST entries alone aren't enough.
-> - **Fix:** `_make_metric_history_fn(metric_name)` generates a thin wrapper function and assigns it to `globals()[f"{metric_name}_history"]` at module load. The wrapper calls `_metric_history(company, metric_name, months)`. Each wrapper has the correct `__name__` and `__doc__` for introspection.
-
-### v1.0 — `route()` must filter params by signature
-> - **What happened:** Early versions of `route()` passed all kwargs straight through to the mode function. If the MCP layer sent extra params (like `trace_id` or `sub_domain`), the mode function raised `TypeError: unexpected keyword argument`.
-> - **Why it matters:** MCP callers may include metadata params that mode functions don't accept.
-> - **Fix:** `filtered = {k: v for k, v in kwargs.items() if k in inspect.signature(fn).parameters}`. Only pass params the function actually accepts.
+Historical never imports individual engines or metrics — only the registry helpers. All metric dispatch goes through `resolve_metric()` + `spec.history_fn()`.
 
 ---
 
-## 📐 Pattern Template Checklist (when copying the historical skill to a new consumer skill)
+## 📐 Auto-Discovery Rules
 
-If you're creating a new consumer skill that uses the calculations library:
+Auto-discovery is owned by calculations — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-auto-discovery-rules). Historical has no auto-discovery of its own. It relies on calculations' `_auto_discover()` to populate `ENGINES` + `METRICS` at import time, then iterates `METRICS` to generate modes + adapters.
 
-- [ ] **`<skill>/__init__.py`** — import `METRICS`, `ENGINES`, `resolve_metric`, `list_metrics` from `skills.cvm.calculations._registry`. Build MANIFEST modes via `_build_metric_modes()` (one `<metric>_history` per registered metric) + any skill-specific generic modes.
-- [ ] **`<skill>/<skill>.py`** — orchestrator. `_metric_history()` reads from registry, calls `spec.history_fn`, wraps result with `status` + `metric` + `per_share_label` + `ratio_label` + `series` + `add_freshness()`. Handles BOTH Type 1 and Type 2 via `spec.per_share_key is None` check.
-- [ ] **`adapters/<skill>.py`** — chart adapters auto-register from registry. Inspect `spec.per_share_label`: dual-axis if set, single-dataset if `None`.
-- [ ] **`route()`** — filter params by `inspect.signature(fn).parameters`. Wrap mode calls in `try/except` returning `{"status": "error", ...}`.
-- [ ] **Tests** — mock the registry spec (not the module function): `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`. Mock ALL engines a metric composes.
-- [ ] **Docs** — document skill-specific modes + percentile analysis (if applicable) + report adapters. Cross-reference `calculations/ARCHITECTURE.md` + `calculations/API.md` + `calculations/INSTRUCTIONS.md` for engine/metric details. Do NOT duplicate engine/metric content.
+Historical's auto-generation chain (in `historical/__init__.py` + `historical.py` + `adapters/historical.py`):
+1. `_build_metric_modes()` in `historical/__init__.py` — iterates `METRICS` from calculations registry, generates one `<metric>_history` mode entry per metric.
+2. `_make_metric_history_fn()` in `historical.py` — generates `<metric>_history` functions into `globals()` at import time. Each is a thin wrapper around `_metric_history()`.
+3. `adapters/historical.py` — iterates `METRICS`, registers `historical_<metric>_chart` adapter for each. Inspects `spec.per_share_label`: dual-axis if set, single-dataset if `None`.
 
-**Do NOT replicate the calculations registry.** Your consumer skill imports from `skills.cvm.calculations._registry`. Each consumer skill has its own MANIFEST + route + orchestrator, but they all share the same engines + metrics + registry.
+**Adding a metric to calculations = a new mode + a new adapter appear in historical automatically.** Zero edits to historical source files.
 
 ---
 
-*Last updated: 2026-07-26 (v2.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for mode dispatch flow, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history. Engine/metric/registry editing rules: [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md).*
+## 🚫 Anti-Patterns & Lessons Learned
+
+**Engine/metric/registry anti-patterns are owned by calculations/** — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-anti-patterns--lessons-learned) for the full list (Phase 1 extraction motivation, ROIC+cash, fundamental ratios + None per-share, manual inventory, frozen MetricSpec, name confusion, FRE NULL, TTM edge cases).
+
+Historical-specific lessons:
+
+### v2.2 — Phase 1 refactor motivation
+> - **What happened:** Before v2.2, engines + metrics + the registry lived inside `skills/cvm/historical/`. The historical skill was both a consumer skill (with modes + adapters) AND the canonical home for the engine/metric library. Other CVM skills (valuation, financials) that needed the same engines either duplicated the logic or imported from `skills.cvm.historical.engines.*` — coupling themselves to the historical skill's mode dispatch.
+> - **Why it matters:** Duplication drifts over time. Coupling to a consumer skill for shared logic means changing the historical skill's modes can break unrelated skills.
+> - **Fix:** Extracted engines + metrics + registry into `skills/cvm/calculations/` — a pure library with no modes, no MANIFEST, no adapters. Historical is now a thin consumer. Other CVM skills can import from calculations without coupling to historical. Documented in INSTRUCTIONS rules #1 + #5 (NEVER) + [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) rules #24 + #25.
+
+### v1.0 — Percentile analysis stays in historical
+> - **What happened:** Early in v1.0, there was discussion about whether percentile analysis (cheap/fair/expensive thresholds) belonged in the registry or in the consumer skill.
+> - **Why it matters:** Percentile analysis is a consumer concern — different consumers may want different summary styles (e.g., backtest might want return percentiles, not ratio percentiles). Putting it in the registry would couple the library to one summary style.
+> - **Fix:** Percentile analysis lives in `historical.py:summary()` only. The registry + calculations package has no percentile logic. This is the canonical reason historical exists as a separate skill from calculations.
+
+---
+
+## 📐 Pattern Template Checklist (when copying to a new skill)
+
+The pattern template is now **calculations**, not historical. See [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-pattern-template-checklist-when-copying-to-a-new-skill) for the 10-item checklist. Historical is a consumer of calculations, not a template itself.
+
+If you're creating a new consumer skill (like historical) that wraps calculations, the consumer-specific checklist is:
+
+- [ ] `__init__.py` (skill manifest) — MANIFEST modes auto-generate from calculations registry (`_build_metric_modes()` iterates `METRICS` from `skills.cvm.calculations._registry`).
+- [ ] `<skill>.py` — `_metric_history()` reads from calculations registry, auto-generates `<metric>_history` functions. Handle BOTH Type 1 and Type 2 metrics via `spec.per_share_key` None-check.
+- [ ] `adapters/<skill>.py` — chart adapters auto-register from calculations registry. Inspect `spec.per_share_label`: dual-axis if set, single-dataset if `None`.
+- [ ] Tests mock the calculations registry spec (not the module function): `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`.
+- [ ] Docs reference calculations for engine/metric/registry details; document only the consumer-specific layer (modes, summary style, adapters).
+
+---
+
+*Last updated: v2.2 (Phase 1 refactor — engines + metrics + registry extracted to calculations/). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric/registry editing rules.*

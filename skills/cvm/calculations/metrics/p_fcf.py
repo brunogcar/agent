@@ -64,17 +64,42 @@ def fcf_ps_at(company: str, date: str) -> float | None:
         date: YYYY-MM-DD.
 
     Returns:
-        FCF per share in BRL, or None if any component is missing.
+        FCF per share in BRL, or None if any component is missing OR if the
+        resolved FCO and FCI periods don't align to the same period-end date
+        (defensive guard against summing two different reporting periods).
     """
-    fco = operating_cf_at(company, date)
-    if fco is None:
+    # Resolve FCO period + value (need the date for alignment check)
+    fco_periods_list = operating_cf_periods(company)
+    fco_date: str | None = None
+    fco_val: float | None = None
+    for fp in reversed(fco_periods_list):
+        if fp["date"] <= date:
+            fco_date = fp["date"]
+            fco_val = fp["ttm_fco"]
+            break
+
+    # Resolve FCI period + value (need the date for alignment check)
+    fci_periods_list = investing_cf_periods(company)
+    fci_date: str | None = None
+    fci_val: float | None = None
+    for ip in reversed(fci_periods_list):
+        if ip["date"] <= date:
+            fci_date = ip["date"]
+            fci_val = ip["ttm_fci"]
+            break
+
+    if fco_val is None or fci_val is None:
         return None
 
-    fci = investing_cf_at(company, date)
-    if fci is None:
+    # Alignment guard: FCO and FCI must resolve to the same period-end date.
+    # FCO (6.01) and FCI (6.02) are co-reported in the same DFC filing, so in
+    # practice these almost always coincide.  But if one has a data gap at a
+    # quarter the other doesn't, summing two different periods would silently
+    # produce a nonsense FCF.  Return None (chart shows a gap) instead.
+    if fco_date != fci_date:
         return None
 
-    fcf = fco + fci
+    fcf = fco_val + fci_val
     if fcf <= 0:
         return None  # Negative/zero FCF -- per-share value meaningless
 
@@ -155,18 +180,22 @@ def p_fcf_history(company: str, date_from: str, date_to: str) -> list[dict]:
         date = p["date"]
         price = p["close"]
 
-        # Find most recent TTM FCO <= date
+        # Find most recent TTM FCO <= date (track resolved date for alignment)
         ttm_fco = None
+        fco_resolved_date = None
         for fp in reversed(fco_periods_list):
             if fp["date"] <= date:
                 ttm_fco = fp["ttm_fco"]
+                fco_resolved_date = fp["date"]
                 break
 
-        # Find most recent TTM FCI <= date
+        # Find most recent TTM FCI <= date (track resolved date for alignment)
         ttm_fci = None
+        fci_resolved_date = None
         for ip in reversed(fci_periods_list):
             if ip["date"] <= date:
                 ttm_fci = ip["ttm_fci"]
+                fci_resolved_date = ip["date"]
                 break
 
         # Find most recent shares <= date
@@ -177,8 +206,13 @@ def p_fcf_history(company: str, date_from: str, date_to: str) -> list[dict]:
                 break
 
         # Compute FCF = FCO + FCI
+        # Alignment guard: only sum if both resolved to the SAME period-end
+        # date.  FCO (6.01) and FCI (6.02) are co-reported in the same DFC
+        # filing so this almost always holds, but if one has a data gap at a
+        # quarter the other doesn't, summing two different periods would
+        # silently produce a nonsense FCF.  Leave fcf=None (chart gap) instead.
         fcf = None
-        if ttm_fco is not None and ttm_fci is not None:
+        if ttm_fco is not None and ttm_fci is not None and fco_resolved_date == fci_resolved_date:
             fcf = ttm_fco + ttm_fci
 
         # Compute FCF/Ação = FCF / shares

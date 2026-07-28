@@ -237,7 +237,10 @@ def run(
         start_date: Backtest start date (YYYY-MM-DD). Default: 3 years ago.
         end_date: Backtest end date (YYYY-MM-DD). Default: today.
         initial_capital: Starting capital in BRL. Default: 10000.
-        max_positions: Max simultaneous positions (1 = single position). Default: 1.
+        max_positions: Max simultaneous positions. Currently only 1 is
+            supported (single-position mode). Values > 1 raise ValueError
+            so callers don't silently get single-position behaviour when
+            they expect multi-position. Default: 1.
 
     Returns:
         Dict with trades, performance metrics (CAGR, total return, max drawdown,
@@ -248,6 +251,13 @@ def run(
 
     ticker = ticker.strip().upper()
     strategy = strategy.strip().lower()
+
+    if max_positions != 1:
+        raise ValueError(
+            f"max_positions={max_positions} is not supported. This engine "
+            f"currently runs in single-position mode only (max_positions=1). "
+            f"Multi-position backtesting is not implemented."
+        )
 
     if strategy not in BUILTIN_STRATEGIES:
         return {"status": "error",
@@ -372,7 +382,13 @@ def run(
     if position is not None:
         exit_price = prices[-1]["close"]
         pnl = (exit_price - position["entry_price"]) * position["shares"]
-        capital += pnl
+        # Add full proceeds back to cash (not just PnL).
+        # Purchase cost was already subtracted when buying (line ~346),
+        # so we must credit the full sale proceeds here — same logic as the
+        # mid-loop exit at line ~320.  Using `+= pnl` here would silently
+        # discard the entire cost basis, understating final equity by the
+        # full purchase price of any position still open at end-of-period.
+        capital += position["shares"] * exit_price
         trades.append({
             "entry_date": position["entry_date"],
             "entry_price": round(position["entry_price"], 2),
