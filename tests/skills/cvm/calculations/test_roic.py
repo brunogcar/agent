@@ -1,11 +1,14 @@
-"""Tests for v1.8: ROIC metric + tax engine + debt engine.
+"""Tests for ROIC metric + tax engine + debt engine.
 
 ROIC = NOPAT / Invested Capital
-NOPAT = EBIT - max(0, tax_expense)
-Invested Capital = PL + Debt
+NOPAT = EBIT × (1 - effective_tax_rate)  where effective_tax_rate = tax_expense / EBT
+Invested Capital = PL + Debt - Cash
+
+v2.0 update: ROIC now uses EBT to compute the effective tax rate (correct
+NOPAT formula). Tests mock ebt_at alongside the other engine mocks.
 
 Tests mirror test_roe.py structure (fundamental ratio pattern) + test the
-two new engines (tax = TTM, debt = snapshot summing 2 codes).
+tax engine (TTM) + debt engine (snapshot summing 2 codes).
 """
 from __future__ import annotations
 
@@ -21,48 +24,61 @@ from skills.cvm.calculations.engines import debt as debt_engine
 
 class TestRoicAt:
     def test_basic_computation(self, monkeypatch):
-        """roic_at = NOPAT / (PL + Debt) = (EBIT - tax_expense) / (PL + Debt).
+        """roic_at = NOPAT / (PL + Debt) = (EBIT × (1 - tax_expense/EBT)) / (PL + Debt).
 
         v1.9 update: ROIC now subtracts cash from IC. We mock cash_at to
-        return None so the fallback (PL + Debt) is used, keeping the v1.8
-        expected values.
+        return None so the fallback (PL + Debt) is used, keeping the IC
+        at PL + Debt.
+        v2.0 update: ROIC now uses EBT to compute the effective tax rate.
+        With EBT=90e9 and tax=-15e9: rate = 15/90 = 1/6, NOPAT = 70×(5/6).
         """
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)  # negative = expense
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
-        # NOPAT = 70e9 - 15e9 = 55e9
+        # effective_tax_rate = 15e9 / 90e9 = 1/6
+        # NOPAT = 70e9 × (1 - 1/6) = 70e9 × (5/6) = 58.333...e9
         # IC = 350e9 + 100e9 = 450e9 (no cash subtraction -- fallback)
-        # ROIC = 55e9 / 450e9 = 0.1222...
+        # ROIC = 58.333...e9 / 450e9
+        expected_nopat = 70e9 * (1 - 15e9 / 90e9)
         result = roic_metric.roic_at("PETR4", "2024-06-30")
-        assert result == pytest.approx(55e9 / 450e9, rel=1e-3)
+        assert result == pytest.approx(expected_nopat / 450e9, rel=1e-3)
 
     def test_zero_tax(self, monkeypatch):
-        """If tax is 0 or None, NOPAT = EBIT."""
+        """If tax is 0 or None, effective_tax_rate = 0 and NOPAT = EBIT."""
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: None)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
-        # NOPAT = 70e9 - 0 = 70e9
+        # effective_tax_rate = 0 / 90e9 = 0
+        # NOPAT = 70e9 × (1 - 0) = 70e9
         # ROIC = 70e9 / 450e9
         result = roic_metric.roic_at("PETR4", "2024-06-30")
         assert result == pytest.approx(70e9 / 450e9, rel=1e-3)
 
     def test_positive_tax_is_treated_as_zero_expense(self, monkeypatch):
-        """If tax is positive (tax credit), tax_expense = 0."""
+        """If tax is positive (tax credit), tax_expense = 0 → rate = 0."""
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: 5e9)  # positive = credit
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
-        # NOPAT = 70e9 - 0 = 70e9 (tax credit doesn't increase NOPAT)
+        # effective_tax_rate = 0 / 90e9 = 0 (tax credit doesn't increase NOPAT)
+        # NOPAT = 70e9 × (1 - 0) = 70e9
         result = roic_metric.roic_at("PETR4", "2024-06-30")
         assert result == pytest.approx(70e9 / 450e9, rel=1e-3)
 
     def test_negative_ebit_returns_none(self, monkeypatch):
-        """Operating losses -> ROIC meaningless -> None."""
+        """Operating losses -> ROIC meaningless -> None.
+
+        Returns None at the EBIT check -- never reaches EBT, so no ebt_at
+        mock is needed.
+        """
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: -10e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -5e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
@@ -71,6 +87,8 @@ class TestRoicAt:
         assert roic_metric.roic_at("PETR4", "2024-06-30") is None
 
     def test_missing_ebit(self, monkeypatch):
+        # Returns None at the EBIT check -- never reaches EBT, so no ebt_at
+        # mock is needed (defensive: ebit is None -> return None immediately).
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: None)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
@@ -80,6 +98,7 @@ class TestRoicAt:
 
     def test_missing_pl(self, monkeypatch):
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: None)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
@@ -88,6 +107,7 @@ class TestRoicAt:
 
     def test_missing_debt(self, monkeypatch):
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: None)
@@ -97,6 +117,7 @@ class TestRoicAt:
     def test_negative_pl_returns_none(self, monkeypatch):
         """Negative equity -> ROIC meaningless -> None."""
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: -50e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
@@ -106,7 +127,10 @@ class TestRoicAt:
 
 class TestRoicHistory:
     def test_basic_shape(self, monkeypatch):
-        """roic_history should return series with roic + 4 engine components (no price/shares)."""
+        """roic_history should return series with roic + 5 engine components (no price/shares).
+
+        v2.0: now includes ttm_ebt (EBT engine) alongside ttm_ebit/ttm_tax/pl/debt.
+        """
         monkeypatch.setattr(
             "skills.cvm.calculations.metrics.roic.ebit_periods",
             lambda c: [{"date": "2024-03-31", "ttm_ebit": 70e9}],
@@ -114,6 +138,10 @@ class TestRoicHistory:
         monkeypatch.setattr(
             "skills.cvm.calculations.metrics.roic.tax_periods",
             lambda c: [{"date": "2024-03-31", "ttm_tax": -15e9}],
+        )
+        monkeypatch.setattr(
+            "skills.cvm.calculations.metrics.roic.ebt_periods",
+            lambda c: [{"date": "2024-03-31", "ttm_ebt": 90e9}],
         )
         monkeypatch.setattr(
             "skills.cvm.calculations.metrics.roic.pl_periods",
@@ -130,6 +158,7 @@ class TestRoicHistory:
             assert "roic" in entry
             assert "ttm_ebit" in entry
             assert "ttm_tax" in entry
+            assert "ttm_ebt" in entry
             assert "pl" in entry
             assert "debt" in entry
             assert "price" not in entry
@@ -138,6 +167,7 @@ class TestRoicHistory:
     def test_empty_periods_returns_empty(self, monkeypatch):
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_periods", lambda c: [])
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_periods", lambda c: [])
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_periods", lambda c: [])
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_periods", lambda c: [])
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_periods", lambda c: [])
         monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_periods", lambda c: [])
@@ -153,6 +183,7 @@ class TestRoicRegistry:
         assert spec.per_share_key is None
         assert "ebit" in spec.engines
         assert "tax" in spec.engines
+        assert "ebt" in spec.engines  # v2.0: EBT now composed for effective tax rate
         assert "pl" in spec.engines
         assert "debt" in spec.engines
 

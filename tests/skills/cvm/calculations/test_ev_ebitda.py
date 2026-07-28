@@ -266,38 +266,54 @@ class TestDaEngine:
 
 class TestRoicCashUpdate:
     def test_roic_subtracts_cash_when_available(self, monkeypatch):
-        """v1.9: ROIC should subtract cash from invested capital."""
+        """v1.9: ROIC should subtract cash from invested capital.
+
+        v2.0: ROIC now also composes EBT to compute the effective tax rate.
+        With EBT=90e9 and tax=-15e9: rate = 15/90 = 1/6, NOPAT = 70×(5/6).
+        """
         from skills.cvm.calculations.metrics import roic as roic_metric
 
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         # Mock cash_at to return 50e9
         monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: 50e9)
-        # NOPAT = 70e9 - 15e9 = 55e9
+        # effective_tax_rate = 15e9 / 90e9 = 1/6
+        # NOPAT = 70e9 × (1 - 1/6) = 70e9 × (5/6) = 58.333...e9
         # IC = 350e9 + 100e9 - 50e9 = 400e9 (v1.9: cash subtracted)
-        # ROIC = 55e9 / 400e9 = 0.1375
+        # ROIC = 58.333...e9 / 400e9
+        expected_nopat = 70e9 * (1 - 15e9 / 90e9)
         result = roic_metric.roic_at("PETR4", "2024-06-30")
-        assert result == pytest.approx(55e9 / 400e9, rel=1e-3)
+        assert result == pytest.approx(expected_nopat / 400e9, rel=1e-3)
 
     def test_roic_falls_back_without_cash(self, monkeypatch):
-        """If cash_at returns None (no data), ROIC falls back to PL + Debt."""
+        """If cash_at returns None (no data), ROIC falls back to PL + Debt.
+
+        v2.0: ROIC now also composes EBT to compute the effective tax rate.
+        """
         from skills.cvm.calculations.metrics import roic as roic_metric
 
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         # Mock cash_at to return None
         monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        # effective_tax_rate = 15e9 / 90e9 = 1/6
+        # NOPAT = 70e9 × (5/6) = 58.333...e9
         # IC = 350e9 + 100e9 = 450e9 (fallback, no cash)
-        # ROIC = 55e9 / 450e9 = 0.1222...
+        # ROIC = 58.333...e9 / 450e9
+        expected_nopat = 70e9 * (1 - 15e9 / 90e9)
         result = roic_metric.roic_at("PETR4", "2024-06-30")
-        assert result == pytest.approx(55e9 / 450e9, rel=1e-3)
+        assert result == pytest.approx(expected_nopat / 450e9, rel=1e-3)
 
     def test_roic_engines_includes_cash(self):
         from skills.cvm.calculations._registry import METRICS
         spec = METRICS["roic"]
         assert "cash" in spec.engines
-        assert len(spec.engines) == 5
+        # v2.0: ROIC now composes 6 engines (ebit + tax + ebt + pl + debt + cash)
+        assert len(spec.engines) == 6
+        assert "ebt" in spec.engines

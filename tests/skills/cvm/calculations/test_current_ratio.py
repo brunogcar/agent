@@ -1,6 +1,6 @@
 """Tests for Current Ratio metric (= current_assets / current_liabilities).
 
-Fundamental ratio (per_share=None) composing assets + current_liabilities engines.
+Fundamental ratio (per_share=None) composing current_assets + current_liabilities engines.
 """
 from __future__ import annotations
 
@@ -17,23 +17,23 @@ from skills.cvm.calculations.metrics import current_ratio as crr_metric
 class TestCurrentRatio:
     def test_basic(self, monkeypatch):
         """current_ratio = current_assets / current_liabilities."""
-        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.assets_at", lambda c, d: 150e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_assets_at", lambda c, d: 150e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_liabilities_at", lambda c, d: 100e9)
         assert crr_metric.current_ratio_at("PETR4", "2024-06-30") == pytest.approx(1.5, rel=1e-3)
 
     def test_missing_assets_none(self, monkeypatch):
-        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.assets_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_assets_at", lambda c, d: None)
         monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_liabilities_at", lambda c, d: 100e9)
         assert crr_metric.current_ratio_at("PETR4", "2024-06-30") is None
 
     def test_missing_liabilities_none(self, monkeypatch):
-        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.assets_at", lambda c, d: 150e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_assets_at", lambda c, d: 150e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_liabilities_at", lambda c, d: None)
         assert crr_metric.current_ratio_at("PETR4", "2024-06-30") is None
 
     def test_zero_liabilities_none(self, monkeypatch):
         """Zero liabilities -> division by zero -> None."""
-        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.assets_at", lambda c, d: 150e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_assets_at", lambda c, d: 150e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.current_ratio.current_liabilities_at", lambda c, d: 0)
         assert crr_metric.current_ratio_at("PETR4", "2024-06-30") is None
 

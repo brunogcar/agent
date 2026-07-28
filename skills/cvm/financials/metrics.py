@@ -10,16 +10,30 @@ TWO RESPONSIBILITIES
    [v1.0.1] Negative PL guard — ROE/debt ratios return None when PL <= 0.
    [v1.0.1] Payout = None in quarterly mode (DVA is annual-only).
    [v1.0.1] EBITDA method provenance field (ebit+da / ebit_only / none).
+   [v1.3] Engine-backed variants: compute_ebitda_from_engines() and
+   compute_ttm_with_engines() delegate TTM flow metrics to
+   skills.cvm.calculations engines (ebit_at, da_at, revenue_at,
+   ttm_earnings_at, *_cf_at) instead of summing 4 standalone quarters.
+   The legacy sum-of-4-quarters functions (compute_ebitda, compute_ttm)
+   are preserved unchanged for callers that don't have a company handle.
 
 EBITDA FORMULA
 --------------
 EBITDA = EBIT (DRE 3.05) + Depreciation & Amortization (DFC 6.01.01.02)
 The D&A comes from the cash flow statement, not the DRE.
+[v1.3] compute_ebitda_from_engines() fetches EBIT + D&A directly from the
+skills.cvm.calculations engines (ebit_at + da_at) instead of receiving
+pre-fetched values, with the same ebit_only fallback when D&A is missing.
 
 QUARTERLY ROA/ROE
 -----------------
 For quarterly, ROA/ROE are annualized: (quarterly net income / equity) * 4.
 This is a simplification — TTM (trailing twelve months) is on the roadmap.
+[v1.3] TODO: migrate to calculations.<engine> when period handling aligns.
+The calculations metrics (roa_at, roe_at, *_margin_at) all use TTM
+denominators, while financials.compute_ratios() uses standalone quarterly
+values (annualized ×4 for ROA/ROE). Different period semantics — not a
+clean 1:1 swap.
 """
 
 from __future__ import annotations
@@ -106,6 +120,13 @@ def compute_ratios(metrics: dict, is_quarterly: bool = False) -> dict:
 
     [v1.0.1] Payout = None in quarterly mode. DVA (7.08.04) is annual-only;
     dividing full-year dividends by a single quarter's net income isn't meaningful.
+
+    [v1.3] TODO: migrate to calculations.<metric> when period handling aligns.
+    The calculations metrics (roa_at, roe_at, gross_margin_at, etc.) all use
+    TTM flow denominators, while this function uses standalone quarterly values
+    (annualized ×4 for ROA/ROE in quarterly mode). The period semantics are
+    different — a 1:1 swap would change the values. Leave as-is until the
+    financials skill adopts TTM as its default period.
     """
     receita = _f(metrics, "receita_liquida")
     lucro_bruto = _f(metrics, "lucro_bruto")
@@ -159,6 +180,9 @@ def compute_ebitda(ebit: float | None, da: float | None) -> tuple[float | None, 
       - "ebit_only" — D&A missing (DFC_MD filer or no DFC), EBITDA = EBIT
       - "none"     — EBIT missing, can't compute
 
+    [v1.3] For engine-backed variant (fetches EBIT + D&A directly from
+    skills.cvm.calculations engines), see compute_ebitda_from_engines().
+
     Args:
         ebit: EBIT value (DRE 3.05) or None
         da: D&A value (DFC 6.01.01.02) or None
@@ -168,6 +192,44 @@ def compute_ebitda(ebit: float | None, da: float | None) -> tuple[float | None, 
     """
     if ebit is None:
         return None, "none"
+    if da is None:
+        return ebit, "ebit_only"
+    return ebit + da, "ebit+da"
+
+
+def compute_ebitda_from_engines(company: str, date: str) -> tuple[float | None, str]:
+    """EBITDA via calculations engines — ebit_at + da_at with ebit_only fallback.
+
+    [v1.3 migration] Replaces the pre-fetched (ebit, da) parameter pair with
+    direct calls to the calculations engines:
+      - ebit_at  → DRE 3.05 TTM (with description-search fallback for banks)
+      - da_at    → DFC description-search TTM (deprec/amort keywords)
+
+    Same fallback semantics as compute_ebitda():
+      - both available  → "ebit+da"
+      - D&A missing      → "ebit_only" (EBITDA = EBIT)
+      - EBIT missing     → "none"
+
+    Engine failures (FileNotFoundError, missing accounts, etc.) are swallowed
+    via _safe_engine_call → None, so a missing DFC database degrades to
+    "ebit_only" instead of crashing the caller.
+
+    Args:
+        company: Ticker, name, or CNPJ.
+        date: YYYY-MM-DD (TTM window ends at this date).
+
+    Returns:
+        (ebitda, method) tuple — same shape as compute_ebitda().
+    """
+    # Lazy import so importing metrics.py doesn't trigger calculations
+    # auto-discovery (and the corresponding PLANNER_MODEL env-var requirement).
+    from skills.cvm.calculations.engines.ebit import ebit_at
+    from skills.cvm.calculations.engines.da import da_at
+
+    ebit = _safe_engine_call(ebit_at, company, date)
+    if ebit is None:
+        return None, "none"
+    da = _safe_engine_call(da_at, company, date)
     if da is None:
         return ebit, "ebit_only"
     return ebit + da, "ebit+da"
@@ -199,6 +261,11 @@ def compute_ttm(periods: list[dict]) -> dict:
 
     Ratios (margins, ROA, ROE) are computed from the TTM flows + average
     snapshots — NOT annualized (×4), which is the v1.1 improvement over v1.0.1.
+
+    [v1.3] For engine-backed variant (fetches TTM flows directly from
+    skills.cvm.calculations engines), see compute_ttm_with_engines(). This
+    function is preserved unchanged for callers that only have a periods
+    list (no company handle).
 
     Args:
         periods: list of period dicts (newest-first or oldest-first — we sort).
@@ -257,7 +324,120 @@ def compute_ttm(periods: list[dict]) -> dict:
     }
 
 
+def compute_ttm_with_engines(company: str, date: str, periods: list[dict]) -> dict:
+    """TTM via calculations engines for flow metrics + averaged snapshots.
+
+    [v1.3 migration] Replaces the sum-of-4-quarters derivation for FLOW
+    metrics with direct calls to skills.cvm.calculations engines:
+      - revenue_at      → DRE 3.01 TTM (with description-search fallback)
+      - ebit_at         → DRE 3.05 TTM (with description-search fallback)
+      - da_at           → DFC description-search TTM (deprec/amort)
+      - ttm_earnings_at → DRE 3.11 TTM (with description-search fallback)
+      - operating_cf_at → DFC 6.01 TTM
+      - investing_cf_at → DFC 6.02 TTM
+      - financing_cf_at → DFC 6.03 TTM
+      - compute_ebitda_from_engines → ebit_at + da_at (with ebit_only fallback)
+
+    SNAPSHOT metrics (ativo_total, caixa, patrimonio_liquido, divida_bruta)
+    continue to use the 4-quarter average from `periods`. The calculations
+    engines return a single point-in-time snapshot, which is semantically
+    different from the financials skill's averaging approach — averaging
+    better smooths quarter-end balance sheet fluctuations.
+
+    Args:
+        company: Ticker, name, or CNPJ.
+        date: YYYY-MM-DD (typically the end date of the latest quarter —
+            TTM window ends at this date).
+        periods: list of period dicts (used for snapshot averaging +
+            period_range label). Must have at least 4 entries.
+
+    Returns:
+        Same structure as compute_ttm():
+        {status, period_range, metrics, ratios} on success, or
+        {status: "insufficient_data"} if fewer than 4 quarters in `periods`.
+    """
+    if not periods or len(periods) < 4:
+        return {"status": "insufficient_data",
+                "reason": f"need 4 quarters, got {len(periods) if periods else 0}"}
+
+    # Lazy import — see compute_ebitda_from_engines() for rationale.
+    from skills.cvm.calculations.engines.revenue import revenue_at
+    from skills.cvm.calculations.engines.ebit import ebit_at
+    from skills.cvm.calculations.engines.da import da_at
+    from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+    from skills.cvm.calculations.engines.operating_cf import operating_cf_at
+    from skills.cvm.calculations.engines.investing_cf import investing_cf_at
+    from skills.cvm.calculations.engines.financing_cf import financing_cf_at
+
+    # Sort newest-first by (year, quarter) for snapshot averaging + label
+    sorted_periods = sorted(periods,
+                            key=lambda p: (p.get("year", 0), p.get("quarter", 0)),
+                            reverse=True)
+    last4 = sorted_periods[:4]
+
+    # Snapshot metrics: average of last 4 (same as compute_ttm)
+    snapshot_keys = ["ativo_total", "caixa", "patrimonio_liquido", "divida_bruta"]
+    ttm_metrics: dict = {}
+    for key in snapshot_keys:
+        vals = []
+        for p in last4:
+            v = (p.get("metrics") or {}).get(key)
+            if v is not None:
+                vals.append(float(v))
+        ttm_metrics[key] = (sum(vals) / len(vals)) if vals else None
+
+    # Flow metrics: use calculations engines (TTM derivation is DFP-ITR+ITR,
+    # mathematically equivalent to sum-of-4-standalone-quarters but fetched
+    # directly from the engine layer).
+    ttm_metrics["receita_liquida"] = _safe_engine_call(revenue_at, company, date)
+    ttm_metrics["ebit"]            = _safe_engine_call(ebit_at, company, date)
+    ttm_metrics["da"]              = _safe_engine_call(da_at, company, date)
+    ttm_metrics["lucro_liquido"]   = _safe_engine_call(ttm_earnings_at, company, date)
+    ttm_metrics["fco"]             = _safe_engine_call(operating_cf_at, company, date)
+    ttm_metrics["fci"]             = _safe_engine_call(investing_cf_at, company, date)
+    ttm_metrics["fcf"]             = _safe_engine_call(financing_cf_at, company, date)
+    # EBITDA from engines with ebit_only fallback when D&A missing
+    ttm_metrics["ebitda"], ttm_metrics["ebitda_method"] = compute_ebitda_from_engines(
+        company, date)
+
+    # Flow metrics without a clean engine mapping: fall back to sum-of-4.
+    # TODO: migrate to calculations.<engine> when one is added for these.
+    for key in ("lucro_bruto", "proventos"):
+        vals = []
+        for p in last4:
+            v = (p.get("metrics") or {}).get(key)
+            if v is not None:
+                vals.append(float(v))
+        ttm_metrics[key] = sum(vals) if len(vals) == 4 else None
+
+    # Compute TTM ratios from the TTM metrics (same as compute_ttm)
+    ttm_ratios = compute_ratios(ttm_metrics, is_quarterly=False)
+
+    return {
+        "status": "ok",
+        "period_range": f"{last4[-1].get('period','?')}–{last4[0].get('period','?')}",
+        "metrics": ttm_metrics,
+        "ratios": ttm_ratios,
+    }
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _safe_engine_call(fn, *args, **kwargs):
+    """Call a calculations engine and return None on any error.
+
+    Same pattern as financials.financials._safe_call — calculations engines
+    call connect_dfp/connect_itr which may raise FileNotFoundError when the
+    underlying DB is not synced, and individual accounts may be missing for
+    some filers. Without this wrapper, one missing DB or account would
+    propagate up and crash the caller (compute_ttm_with_engines,
+    compute_ebitda_from_engines).
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return None
+
 
 def _f(d: dict, key: str) -> float | None:
     """Safely get a float from a dict. Returns None if missing/None."""

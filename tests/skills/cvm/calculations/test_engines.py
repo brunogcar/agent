@@ -2,7 +2,7 @@
 
 Covers registration + category/quantity metadata for every engine that
 was added in tiers 3, 5, and 6:
-  - assets (bpa)
+  - current_assets (bpa)
   - gross_profit (dre)
   - ebit (dre)
   - capex (dfc)
@@ -22,13 +22,13 @@ import pytest
 # ════════════════════════════════════════════════════════════════════════════
 
 class TestEngineRegistration:
-    """Engines added in v1.7: assets, gross_profit, ebit."""
+    """Engines added in v1.7: current_assets, gross_profit, ebit."""
 
-    def test_assets_registered(self):
+    def test_current_assets_registered(self):
         from skills.cvm.calculations._registry import ENGINES
-        assert "assets" in ENGINES
-        assert ENGINES["assets"].category == "bpa"
-        assert ENGINES["assets"].quantity == "assets"
+        assert "current_assets" in ENGINES
+        assert ENGINES["current_assets"].category == "bpa"
+        assert ENGINES["current_assets"].quantity == "current_assets"
 
     def test_gross_profit_registered(self):
         from skills.cvm.calculations._registry import ENGINES
@@ -42,10 +42,10 @@ class TestEngineRegistration:
         assert ENGINES["ebit"].category == "dre"
         assert ENGINES["ebit"].quantity == "ttm_ebit"
 
-    def test_bpa_category_has_assets(self):
+    def test_bpa_category_has_current_assets(self):
         from skills.cvm.calculations._registry import list_engines
         bpa_engines = list_engines(category="bpa")
-        assert "assets" in bpa_engines
+        assert "current_assets" in bpa_engines
 
     def test_dre_category_has_engines(self):
         from skills.cvm.calculations._registry import list_engines

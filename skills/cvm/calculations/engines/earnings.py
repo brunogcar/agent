@@ -3,6 +3,20 @@
 The core innovation of the historical skill. Derives TTM earnings at any
 historical date by combining DFP annual + ITR quarterly cumulative data.
 
+DESCRIPTION-SEARCH FALLBACK
+---------------------------
+For commercial/industrial filers, codigo 3.11 is "Lucro Líquido do Período".
+For financial-sector filers (banks/insurers), however, the DRE template
+uses a different bottom-line label like "Lucro do Período" or "Resultado
+Líquido Consolidado", and may shift the position to a different 3.* slot.
+The reference implementation (rapinav2) handles this with a wildcard +
+mandatory description match: codigo '3.*' + descricao LIKE '%Lucro
+Liquido%' (or '%Lucro do Periodo%' / '%Resultado Líquido Consolidado%').
+We mirror that approach as a FALLBACK: the fast path tries the exact 3.11
+code (works for the vast majority of filers and is O(1) on the codigo
+index), and only if that returns nothing do we fall back to the
+description search within the 3.* DRE range.
+
 TTM ALGORITHM
 -------------
 For a date D, find the most recent ITR period (data_fim_exerc <= D):
@@ -37,16 +51,46 @@ from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
 
 
-# CVM account code for net income (lucro líquido)
+# CVM account code for net income (lucro líquido). Standard position in the
+# DRE for commercial/industrial filers. Banks/insurers use a different DRE
+# template (their bottom-line may be labeled "Lucro do Período" or
+# "Resultado Líquido Consolidado" at a different 3.* position), so we fall
+# back to a description-based search within the 3.* DRE range when 3.11
+# returns nothing.
 LUCRO_LIQUIDO_CODE = "3.11"
+
+# Description stems used for the fallback search.  We match on partial
+# stems (not the full string) so minor wording variations across filers
+# are caught.  Banks/insurers may use "Lucro do Periodo" or
+# "Resultado Líquido Consolidado" instead of "Lucro Liquido".
+_EARNINGS_DESC_STEMS = (
+    "Lucro Liquido",
+    "Lucro do Periodo",
+    "Resultado Liquido Consolidado",
+)
 
 
 def _get_dfp_earnings(company: str) -> dict[str, dict]:
     """Get all annual earnings from DFP (codigo 3.11, meses=12).
 
+    Falls back to a description-based search within the DRE (codigo LIKE '3.%')
+    if the exact 3.11 code returns nothing -- handles banks/insurers whose
+    DRE structure uses "Lucro do Período" or "Resultado Líquido Consolidado"
+    instead of "Lucro Líquido".
+
     Returns: {"2024": {"value": 134e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied).
     """
+    result = _get_dfp_earnings_by_code(company, LUCRO_LIQUIDO_CODE)
+    if result:
+        return result
+    # Fallback: description search within DRE (3.*) for filers where 3.11
+    # doesn't land on net income (banks/insurers, non-standard DRE filers).
+    return _get_dfp_earnings_by_desc(company)
+
+
+def _get_dfp_earnings_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.11). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -58,7 +102,7 @@ def _get_dfp_earnings(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{LUCRO_LIQUIDO_CODE}'
+                 AND c.codigo = '{code}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -77,12 +121,68 @@ def _get_dfp_earnings(company: str) -> dict[str, dict]:
         conn.close()
 
 
+def _get_dfp_earnings_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by earnings description stems.
+
+    Used when the exact 3.11 code doesn't match (banks/insurers, non-standard
+    DRE filers). Mirrors rapinav2's wildcard + description-match approach.
+    """
+    conn = connect_dfp(read_only=True)
+    try:
+        empresa_ids, _ = resolve_company(conn, company)
+        if not empresa_ids:
+            return {}
+        emp_ph = ",".join("?" * len(empresa_ids))
+        desc_clause = " OR ".join(
+            f"c.descricao LIKE '%{stem}%'" for stem in _EARNINGS_DESC_STEMS
+        )
+        rows = conn.execute(
+            f"""SELECT c.valor, c.escala, c.data_fim_exerc, e.ano, c.descricao
+               FROM contas c JOIN empresas e ON c.id_empresa = e.id
+               WHERE c.id_empresa IN ({emp_ph})
+                 AND c.consolidado = 1
+                 AND c.codigo LIKE '3.%'
+                 AND ({desc_clause})
+                 AND c.meses = 12
+               ORDER BY e.ano DESC""",
+            empresa_ids,
+        ).fetchall()
+
+        # If multiple rows match per year (shouldn't happen, but defensive),
+        # take the first (most recent descricao match).
+        result = {}
+        for r in rows:
+            ano = str(r["ano"])
+            if ano in result:
+                continue
+            escala = parse_escala(r["escala"])
+            valor = float(r["valor"] or 0) * escala
+            result[ano] = {
+                "value": valor,
+                "date": r["data_fim_exerc"],
+            }
+        return result
+    finally:
+        conn.close()
+
+
 def _get_itr_earnings(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative earnings from ITR (codigo 3.11, meses 3/6/9).
+
+    Falls back to a description-based search within the DRE (codigo LIKE '3.%')
+    if the exact 3.11 code returns nothing -- mirrors the DFP fallback.
 
     Returns: {"2024-06-30": {"value": 67e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan→period end).
     """
+    result = _get_itr_earnings_by_code(company, LUCRO_LIQUIDO_CODE)
+    if result:
+        return result
+    return _get_itr_earnings_by_desc(company)
+
+
+def _get_itr_earnings_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.11). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -94,7 +194,7 @@ def _get_itr_earnings(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{LUCRO_LIQUIDO_CODE}'
+                 AND c.codigo = '{code}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -105,6 +205,47 @@ def _get_itr_earnings(company: str) -> dict[str, dict]:
             escala = parse_escala(r["escala"])
             valor = float(r["valor"] or 0) * escala
             result[r["data_fim_exerc"]] = {
+                "value": valor,
+                "meses": r["meses"],
+                "year": r["ano"],
+            }
+        return result
+    finally:
+        conn.close()
+
+
+def _get_itr_earnings_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by earnings description stems."""
+    conn = connect_itr(read_only=True)
+    try:
+        empresa_ids, _ = resolve_company(conn, company)
+        if not empresa_ids:
+            return {}
+        emp_ph = ",".join("?" * len(empresa_ids))
+        desc_clause = " OR ".join(
+            f"c.descricao LIKE '%{stem}%'" for stem in _EARNINGS_DESC_STEMS
+        )
+        rows = conn.execute(
+            f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.meses, e.ano, c.descricao
+               FROM contas c JOIN empresas e ON c.id_empresa = e.id
+               WHERE c.id_empresa IN ({emp_ph})
+                 AND c.consolidado = 1
+                 AND c.codigo LIKE '3.%'
+                 AND ({desc_clause})
+                 AND c.meses IN (3, 6, 9)
+               ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
+            empresa_ids,
+        ).fetchall()
+
+        # If multiple rows match per period (shouldn't happen), take the first.
+        result = {}
+        for r in rows:
+            date = r["data_fim_exerc"]
+            if date in result:
+                continue
+            escala = parse_escala(r["escala"])
+            valor = float(r["valor"] or 0) * escala
+            result[date] = {
                 "value": valor,
                 "meses": r["meses"],
                 "year": r["ano"],
@@ -218,6 +359,6 @@ register_engine(EngineSpec(
     quantity="ttm",
     at_fn=ttm_earnings_at,
     periods_fn=ttm_earnings_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) — TTM derivation",
+    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.11 — TTM derivation (with description-search fallback for non-standard filers)",
     category="dre",
 ))

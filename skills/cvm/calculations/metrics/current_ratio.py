@@ -4,12 +4,10 @@ Current Ratio = Current Assets / Current Liabilities
               = Ativo Circulante / Passivo Circulante
 
 Measures short-term liquidity — ability to pay short-term obligations.
-Fundamental ratio (no price, no shares). Composes assets + current_liabilities.
+Fundamental ratio (no price, no shares). Composes current_assets +
+current_liabilities engines.
 
-NOTE: The `assets` engine queries BPA codigo 1.01 which is "Ativo Circulante"
-(current assets), NOT "Ativo Total" (total assets, code "1"). This is correct
-for the current ratio — we want current assets here. The `total_assets` engine
-(code "1") is used by ROA for the actual total assets.
+Engines composed: current_assets + current_liabilities.
 
 Interpretation:
   - Current Ratio > 2.0: very liquid (may indicate inefficient cash use)
@@ -23,14 +21,14 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.assets import assets_at, assets_periods
+from skills.cvm.calculations.engines.current_assets import current_assets_at, current_assets_periods
 from skills.cvm.calculations.engines.current_liabilities import current_liabilities_at, current_liabilities_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
 def current_ratio_at(company: str, date: str) -> float | None:
     """Current Ratio = Current Assets / Current Liabilities."""
-    current_assets = assets_at(company, date)
+    current_assets = current_assets_at(company, date)
     if current_assets is None or current_assets <= 0:
         return None
     current_liab = current_liabilities_at(company, date)
@@ -40,8 +38,8 @@ def current_ratio_at(company: str, date: str) -> float | None:
 
 
 def current_ratio_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Current Ratio time series — union of assets + current_liabilities dates."""
-    assets_periods_list = assets_periods(company)
+    """Current Ratio time series — union of current_assets + current_liabilities dates."""
+    assets_periods_list = current_assets_periods(company)
     cl_periods_list = current_liabilities_periods(company)
 
     all_dates = set()
@@ -57,7 +55,7 @@ def current_ratio_history(company: str, date_from: str, date_to: str) -> list[di
         current_assets = None
         for ap in reversed(assets_periods_list):
             if ap["date"] <= date:
-                current_assets = ap["assets"]
+                current_assets = ap["current_assets"]
                 break
         current_liab = None
         for clp in reversed(cl_periods_list):
@@ -80,6 +78,6 @@ register_metric(MetricSpec(
     ratio_key="current_ratio",
     ratio_fn=current_ratio_at,
     history_fn=current_ratio_history,
-    engines=["assets", "current_liabilities"],
+    engines=["current_assets", "current_liabilities"],
     aliases=["liquidez_corrente", "cr", "current_liquidity"],
 ))

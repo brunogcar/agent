@@ -16,20 +16,27 @@
 | `skills/cvm/calculations/engines/revenue.py` | TTM revenue (DRE 3.01): `revenue_at()`, `revenue_periods()` |
 | `skills/cvm/calculations/engines/gross_profit.py` | TTM gross profit (DRE 3.03): `gross_profit_at()`, `gross_profit_periods()` |
 | `skills/cvm/calculations/engines/ebit.py` | TTM EBIT (DRE 3.05): `ebit_at()`, `ebit_periods()` |
+| `skills/cvm/calculations/engines/ebt.py` | TTM EBT (DRE 3.07, with description-search fallback): `ebt_at()`, `ebt_periods()` |
 | `skills/cvm/calculations/engines/tax.py` | TTM income tax (DRE 3.08): `tax_at()`, `tax_periods()` |
-| `skills/cvm/calculations/engines/assets.py` | Current assets snapshot (BPA 1.01): `assets_at()`, `assets_periods()` |
+| `skills/cvm/calculations/engines/current_assets.py` | Current assets snapshot (BPA 1.01): `current_assets_at()`, `current_assets_periods()` |
 | `skills/cvm/calculations/engines/cash.py` | Cash snapshot (BPA 1.01.01): `cash_at()`, `cash_periods()` |
 | `skills/cvm/calculations/engines/total_assets.py` | Total assets snapshot (BPA 1): `total_assets_at()`, `total_assets_periods()` |
 | `skills/cvm/calculations/engines/debt.py` | Debt snapshot (BPP 2.01.04+2.02.01, sum): `debt_at()`, `debt_periods()` |
 | `skills/cvm/calculations/engines/current_liabilities.py` | Current liabilities snapshot (BPP 2.01): `current_liabilities_at()`, `current_liabilities_periods()` |
 | `skills/cvm/calculations/engines/da.py` | D&A TTM (DFC description search): `da_at()`, `da_periods()` |
 | `skills/cvm/calculations/engines/capex.py` | CapEx TTM (DFC description search): `capex_at()`, `capex_periods()` |
+| `skills/cvm/calculations/engines/operating_cf.py` | TTM operating cash flow (DFC 6.01): `operating_cf_at()`, `operating_cf_periods()` |
+| `skills/cvm/calculations/engines/investing_cf.py` | TTM investing cash flow (DFC 6.02): `investing_cf_at()`, `investing_cf_periods()` |
+| `skills/cvm/calculations/engines/financing_cf.py` | TTM financing cash flow (DFC 6.03): `financing_cf_at()`, `financing_cf_periods()` |
 | `skills/cvm/calculations/metrics/__init__.py` | Minimal docstring |
 | `skills/cvm/calculations/metrics/lpa.py` | LPA + P/L: `lpa_at()`, `pe_at()`, `lpa_history()` |
 | `skills/cvm/calculations/metrics/vpa.py` | VPA + P/VPA: `vpa_at()`, `pvpa_at()`, `vpa_history()` |
 | `skills/cvm/calculations/metrics/dpa.py` | DPA + DY + Payout: `dpa_at()`, `dy_at()`, `payout_at()`, `dpa_history()` |
 | `skills/cvm/calculations/metrics/rps.py` | RPS + PSR: `rps_at()`, `psr_at()`, `rps_history()` |
 | `skills/cvm/calculations/metrics/ev_ebitda.py` | EBITDA/share + EV/EBITDA: `ebitda_ps_at()`, `ev_ebitda_at()`, `ev_ebitda_history()` |
+| `skills/cvm/calculations/metrics/p_ebit.py` | EBIT/share + P/EBIT: `ebit_ps_at()`, `p_ebit_at()`, `p_ebit_history()` |
+| `skills/cvm/calculations/metrics/p_fco.py` | FCO/share + P/FCO: `fco_ps_at()`, `p_fco_at()`, `p_fco_history()` |
+| `skills/cvm/calculations/metrics/p_fcf.py` | FCF/share + P/FCF: `fcf_ps_at()`, `p_fcf_at()`, `p_fcf_history()` |
 | `skills/cvm/calculations/metrics/roe.py` | ROE (fundamental): `roe_at()`, `roe_history()` |
 | `skills/cvm/calculations/metrics/roa.py` | ROA (fundamental): `roa_at()`, `roa_history()` |
 | `skills/cvm/calculations/metrics/roic.py` | ROIC (fundamental): `roic_at()`, `roic_history()` |
@@ -42,6 +49,8 @@
 | `skills/cvm/calculations/metrics/asset_turnover.py` | Giro de Ativos (fundamental): `asset_turnover_at()`, `asset_turnover_history()` |
 | `skills/cvm/calculations/metrics/capex_revenue.py` | CapEx/Receita (fundamental): `capex_revenue_at()`, `capex_revenue_history()` |
 | `skills/cvm/calculations/metrics/current_ratio.py` | Liquidez Corrente (fundamental): `current_ratio_at()`, `current_ratio_history()` |
+| `skills/cvm/calculations/metrics/graham_number.py` | Graham Number (fundamental): `graham_number_at()`, `graham_number_history()` |
+| `skills/cvm/calculations/metrics/effective_tax_rate.py` | Taxa Efetiva (fundamental): `effective_tax_rate_at()`, `effective_tax_rate_history()` |
 
 ---
 
@@ -49,23 +58,23 @@
 
 Engines are leaves (one per raw quantity, fetch from data sources). Metrics compose engines (one per ratio). Both self-register. See historical ARCHITECTURE.md for the full pattern documentation — it's the same.
 
-### Engine inventory by category (18 engines, 7 categories):
+### Engine inventory by category (21 engines, 6 categories):
 
 | Category | Engines |
 |----------|---------|
 | market | price, dividends |
 | shares | shares |
-| dre | earnings, revenue, gross_profit, ebit, tax |
-| bpa | assets, cash, total_assets |
+| dre | earnings, revenue, gross_profit, ebit, ebt, tax |
+| bpa | current_assets, cash, total_assets |
 | bpp | pl, debt, current_liabilities |
-| dfc | da, capex, operating_cf, investing_cf |
+| dfc | da, capex, operating_cf, investing_cf, financing_cf |
 
-### Metric inventory by type (21 metrics):
+### Metric inventory by type (22 metrics):
 
 | Type | Metrics |
 |------|---------|
 | Per-share + price ratio | lpa (LPA+P/L), vpa (VPA+P/VPA), dpa (DPA+DY+Payout), rps (RPS+PSR), ev_ebitda (EBITDA/share+EV/EBITDA), p_ebit (EBIT/share+P/EBIT), p_fco (FCO/share+P/FCO), p_fcf (FCF/share+P/FCF) |
-| Fundamental ratio | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin, debt_equity, net_debt_ebitda, asset_turnover, capex_revenue, current_ratio, graham_number |
+| Fundamental ratio | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin, debt_equity, net_debt_ebitda, asset_turnover, capex_revenue, current_ratio, graham_number, effective_tax_rate |
 
 ---
 
@@ -80,13 +89,15 @@ calculations/
 │   ├── earnings.py → DFP+ITR (TTM)
 │   ├── shares.py → FRE+investsite
 │   ├── pl.py → DFP+ITR BPP 2.03 (snapshot)
-│   ├── ... (13 more engines)
+│   ├── ... (17 more engines)
 │
 └── metrics/  (compose engines)
     ├── lpa.py → price + earnings + shares
     ├── roe.py → earnings + pl
     ├── ev_ebitda.py → price + shares + debt + cash + ebit + da
-    └── ... (14 more metrics)
+    ├── roic.py → ebit + tax + ebt + pl + debt + cash (v2.0 EBT-based NOPAT)
+    ├── effective_tax_rate.py → tax + ebt
+    └── ... (17 more metrics)
 
          ↓ imported by
 
@@ -119,4 +130,4 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
-*Last updated: 2026-07-26 (v1.0). See [API.md](API.md) for function signatures, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-28 (v1.2). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

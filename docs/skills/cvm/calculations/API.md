@@ -2,7 +2,7 @@
 
 # 📝 API Reference
 
-## 🔌 Engine API (18 engines)
+## 🔌 Engine API (21 engines)
 
 ### `engines/price.py`
 ```python
@@ -52,16 +52,22 @@ ebit_at(company: str, date: str) -> float | None
 ebit_periods(company: str) -> list[dict]
 ```
 
+### `engines/ebt.py`
+```python
+ebt_at(company: str, date: str) -> float | None       # TTM EBT (DRE 3.07, with description-search fallback)
+ebt_periods(company: str) -> list[dict]
+```
+
 ### `engines/tax.py`
 ```python
 tax_at(company: str, date: str) -> float | None
 tax_periods(company: str) -> list[dict]
 ```
 
-### `engines/assets.py`
+### `engines/current_assets.py`
 ```python
-assets_at(company: str, date: str) -> float | None
-assets_periods(company: str) -> list[dict]
+current_assets_at(company: str, date: str) -> float | None      # BPA 1.01 (Ativo Circulante)
+current_assets_periods(company: str) -> list[dict]
 ```
 
 ### `engines/cash.py`
@@ -100,9 +106,27 @@ capex_at(company: str, date: str) -> float | None
 capex_periods(company: str) -> list[dict]
 ```
 
+### `engines/operating_cf.py`
+```python
+operating_cf_at(company: str, date: str) -> float | None       # TTM FCO (DFC 6.01)
+operating_cf_periods(company: str) -> list[dict]
+```
+
+### `engines/investing_cf.py`
+```python
+investing_cf_at(company: str, date: str) -> float | None       # TTM FCI (DFC 6.02)
+investing_cf_periods(company: str) -> list[dict]
+```
+
+### `engines/financing_cf.py`
+```python
+financing_cf_at(company: str, date: str) -> float | None       # TTM FCF (DFC 6.03, Financing CF -- not Free CF)
+financing_cf_periods(company: str) -> list[dict]
+```
+
 ---
 
-## 📐 Metric API (21 metrics)
+## 📐 Metric API (22 metrics)
 
 ### Per-share + price ratio metrics
 
@@ -142,6 +166,27 @@ ev_ebitda_at(company, date) -> float | None   # EV/EBITDA = (price*shares+debt-c
 ev_ebitda_history(company, date_from, date_to) -> list[dict]
 ```
 
+#### `metrics/p_ebit.py`
+```python
+ebit_ps_at(company, date) -> float | None     # EBIT/share = ebit / shares
+p_ebit_at(company, date) -> float | None       # P/EBIT = price / (ebit / shares)
+p_ebit_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/p_fco.py`
+```python
+fco_ps_at(company, date) -> float | None      # FCO/share = operating_cf / shares
+p_fco_at(company, date) -> float | None        # P/FCO = price / (operating_cf / shares)
+p_fco_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/p_fcf.py`
+```python
+fcf_ps_at(company, date) -> float | None      # FCF/share = (operating_cf + investing_cf) / shares
+p_fcf_at(company, date) -> float | None        # P/FCF = price / (fcf / shares)
+p_fcf_history(company, date_from, date_to) -> list[dict]
+```
+
 ### Fundamental ratio metrics (per_share=None)
 
 #### `metrics/roe.py`
@@ -152,13 +197,13 @@ roe_history(company, date_from, date_to) -> list[dict]
 
 #### `metrics/roa.py`
 ```python
-roa_at(company, date) -> float | None    # ROA = earnings / assets
+roa_at(company, date) -> float | None    # ROA = earnings / total_assets (v1.2: total_assets, was assets)
 roa_history(company, date_from, date_to) -> list[dict]
 ```
 
 #### `metrics/roic.py`
 ```python
-roic_at(company, date) -> float | None   # ROIC = NOPAT / (PL+Debt-Cash)
+roic_at(company, date) -> float | None   # ROIC = NOPAT / (PL+Debt-Cash), NOPAT = EBIT × (1 - tax/EBT) (v2.0 EBT-based)
 roic_history(company, date_from, date_to) -> list[dict]
 ```
 
@@ -200,7 +245,7 @@ net_debt_ebitda_history(company, date_from, date_to) -> list[dict]
 
 #### `metrics/asset_turnover.py`
 ```python
-asset_turnover_at(company, date) -> float | None   # = revenue / assets
+asset_turnover_at(company, date) -> float | None   # = revenue / total_assets (v1.2: total_assets, was assets)
 asset_turnover_history(company, date_from, date_to) -> list[dict]
 ```
 
@@ -214,6 +259,18 @@ capex_revenue_history(company, date_from, date_to) -> list[dict]
 ```python
 current_ratio_at(company, date) -> float | None   # = current_assets / current_liabilities
 current_ratio_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/graham_number.py`
+```python
+graham_number_at(company, date) -> float | None   # Graham Number = sqrt(22.5 × EPS × VPS)
+graham_number_history(company, date_from, date_to) -> list[dict]
+```
+
+#### `metrics/effective_tax_rate.py`
+```python
+effective_tax_rate_at(company, date) -> float | None       # = tax_expense / EBT, clamped to [0, 1.0] (v2.0)
+effective_tax_rate_history(company, date_from, date_to) -> list[dict]
 ```
 
 ---
@@ -244,4 +301,4 @@ list_all_metric_names() -> list[str]
 
 ---
 
-*Last updated: 2026-07-26 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-28 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

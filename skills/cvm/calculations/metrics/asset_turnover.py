@@ -4,7 +4,12 @@ Asset Turnover = TTM Revenue / Total Assets
                = Receita Líquida / Ativo Total
 
 Measures how efficiently a company uses its assets to generate revenue.
-Fundamental ratio (no price, no shares). Composes revenue + assets engines.
+Fundamental ratio (no price, no shares). Composes revenue + total_assets.
+
+NOTE (v1.2 fix): Previously imported `assets_at` (codigo 1.01 = Ativo
+Circulante / current assets), which silently overstated Asset Turnover
+by ~2-5x since current assets are typically a fraction of total assets.
+Now imports `total_assets_at` (codigo 1 = Ativo Total, the true total).
 
 Interpretation:
   - Asset Turnover > 1.0: efficient (generates more revenue than assets)
@@ -19,28 +24,28 @@ Usage:
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.revenue import revenue_at, revenue_periods
-from skills.cvm.calculations.engines.assets import assets_at, assets_periods
+from skills.cvm.calculations.engines.total_assets import total_assets_at, total_assets_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
 def asset_turnover_at(company: str, date: str) -> float | None:
-    """Asset Turnover = TTM Revenue / Total Assets."""
+    """Asset Turnover = TTM Revenue / Total Assets (codigo 1)."""
     revenue = revenue_at(company, date)
     if revenue is None or revenue <= 0:
         return None
-    assets = assets_at(company, date)
-    if assets is None or assets <= 0:
+    total_assets = total_assets_at(company, date)
+    if total_assets is None or total_assets <= 0:
         return None
-    return revenue / assets
+    return revenue / total_assets
 
 
 def asset_turnover_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Asset Turnover time series — union of revenue + assets period dates."""
+    """Asset Turnover time series — union of revenue + total_assets dates."""
     revenue_periods_list = revenue_periods(company)
-    assets_periods_list = assets_periods(company)
+    ta_periods_list = total_assets_periods(company)
 
     all_dates = set()
-    for periods in [revenue_periods_list, assets_periods_list]:
+    for periods in [revenue_periods_list, ta_periods_list]:
         for p in periods:
             if date_from <= p["date"] <= date_to:
                 all_dates.add(p["date"])
@@ -54,17 +59,17 @@ def asset_turnover_history(company: str, date_from: str, date_to: str) -> list[d
             if rp["date"] <= date:
                 ttm_rev = rp["ttm_rev"]
                 break
-        assets = None
-        for ap in reversed(assets_periods_list):
-            if ap["date"] <= date:
-                assets = ap["assets"]
+        total_assets = None
+        for tap in reversed(ta_periods_list):
+            if tap["date"] <= date:
+                total_assets = tap["total_assets"]
                 break
         asset_turnover = None
         if (ttm_rev is not None and ttm_rev > 0
-            and assets is not None and assets > 0):
-            asset_turnover = ttm_rev / assets
+            and total_assets is not None and total_assets > 0):
+            asset_turnover = ttm_rev / total_assets
         result.append({"date": date, "asset_turnover": asset_turnover,
-                        "ttm_rev": ttm_rev, "assets": assets})
+                        "ttm_rev": ttm_rev, "total_assets": total_assets})
     return result
 
 
@@ -75,6 +80,6 @@ register_metric(MetricSpec(
     ratio_key="asset_turnover",
     ratio_fn=asset_turnover_at,
     history_fn=asset_turnover_history,
-    engines=["revenue", "assets"],
+    engines=["revenue", "total_assets"],
     aliases=["at", "giro_ativos", "asset_turnover_ratio"],
 ))

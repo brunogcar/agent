@@ -5,9 +5,14 @@ ROA = TTM earnings / Ativo Total
 
 ROA is a FUNDAMENTAL RATIO -- it measures how efficiently a company uses
 its total assets to generate profit. Like ROE, it does NOT use the price
-or shares engines. Composes only earnings + assets engines.
+or shares engines. Composes only earnings + total_assets engines.
 
-Engines composed: earnings + assets
+NOTE (v1.2 fix): Previously imported `assets_at` (codigo 1.01 = Ativo
+Circulante / current assets), which silently overstated ROA by ~2-5x
+since current assets are typically a fraction of total assets. Now
+imports `total_assets_at` (codigo 1 = Ativo Total, the true total).
+
+Engines composed: earnings + total_assets
 
 Interpretation:
   - ROA > 5%:  good
@@ -24,16 +29,16 @@ Usage:
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.earnings import ttm_earnings_at, ttm_earnings_periods
-from skills.cvm.calculations.engines.assets import assets_at, assets_periods
+from skills.cvm.calculations.engines.total_assets import total_assets_at, total_assets_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
-# -- Ratio: ROA = earnings / assets ------------------------------------------
+# -- Ratio: ROA = earnings / total_assets -------------------------------------
 
 def roa_at(company: str, date: str) -> float | None:
     """Compute ROA (Return on Assets) at a specific date.
 
-    ROA = TTM earnings / Ativo Total
+    ROA = TTM earnings / Ativo Total (codigo 1, total assets)
 
     Args:
         company: Ticker, name, or CNPJ.
@@ -42,17 +47,17 @@ def roa_at(company: str, date: str) -> float | None:
     Returns:
         ROA as a fraction (0.15 = 15%), or None if:
         - earnings is None or <= 0 (negative earnings -- ROA meaningless)
-        - assets is None or <= 0 (zero assets -- ROA meaningless)
+        - total_assets is None or <= 0 (zero assets -- ROA meaningless)
     """
     earnings = ttm_earnings_at(company, date)
     if earnings is None or earnings <= 0:
         return None
 
-    assets = assets_at(company, date)
-    if assets is None or assets <= 0:
+    total_assets = total_assets_at(company, date)
+    if total_assets is None or total_assets <= 0:
         return None
 
-    return earnings / assets
+    return earnings / total_assets
 
 
 # -- History: series with ROA (no price, no shares) ---------------------------
@@ -60,9 +65,9 @@ def roa_at(company: str, date: str) -> float | None:
 def roa_history(company: str, date_from: str, date_to: str) -> list[dict]:
     """Compute ROA time series for a date range.
 
-    ROA changes only when earnings (quarterly) or assets (quarterly) change.
-    No daily price driver -- series based on union of earnings + assets
-    period dates. ~4-8 data points per year.
+    ROA changes only when earnings (quarterly) or total_assets (quarterly)
+    change. No daily price driver -- series based on union of earnings +
+    total_assets period dates. ~4-8 data points per year.
 
     Args:
         company: Ticker.
@@ -70,20 +75,20 @@ def roa_history(company: str, date_from: str, date_to: str) -> list[dict]:
         date_to: YYYY-MM-DD.
 
     Returns:
-        List of {"date", "roa", "ttm_earnings", "assets"} sorted oldest-first.
-        Entries with None ROA (negative earnings/assets, missing data) are
-        included with roa=None so charts show gaps.
+        List of {"date", "roa", "ttm_earnings", "total_assets"} sorted
+        oldest-first. Entries with None ROA (negative earnings/assets,
+        missing data) are included with roa=None so charts show gaps.
     """
     earnings_periods = ttm_earnings_periods(company)
-    assets_periods_list = assets_periods(company)
+    ta_periods_list = total_assets_periods(company)
 
     all_dates = set()
     for ep in earnings_periods:
         if date_from <= ep["date"] <= date_to:
             all_dates.add(ep["date"])
-    for ap in assets_periods_list:
-        if date_from <= ap["date"] <= date_to:
-            all_dates.add(ap["date"])
+    for tap in ta_periods_list:
+        if date_from <= tap["date"] <= date_to:
+            all_dates.add(tap["date"])
 
     if not all_dates:
         return []
@@ -98,22 +103,22 @@ def roa_history(company: str, date_from: str, date_to: str) -> list[dict]:
                 ttm = ep["ttm"]
                 break
 
-        assets = None
-        for ap in reversed(assets_periods_list):
-            if ap["date"] <= date:
-                assets = ap["assets"]
+        total_assets = None
+        for tap in reversed(ta_periods_list):
+            if tap["date"] <= date:
+                total_assets = tap["total_assets"]
                 break
 
         roa = None
         if (ttm is not None and ttm > 0
-            and assets is not None and assets > 0):
-            roa = ttm / assets
+            and total_assets is not None and total_assets > 0):
+            roa = ttm / total_assets
 
         result.append({
             "date": date,
             "roa": roa,
             "ttm_earnings": ttm,
-            "assets": assets,
+            "total_assets": total_assets,
         })
 
     return result
@@ -130,6 +135,6 @@ register_metric(MetricSpec(
     ratio_key="roa",
     ratio_fn=roa_at,
     history_fn=roa_history,
-    engines=["earnings", "assets"],
+    engines=["earnings", "total_assets"],
     aliases=["return_on_assets", "retorno_ativos"],
 ))

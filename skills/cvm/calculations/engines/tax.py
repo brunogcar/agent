@@ -8,7 +8,21 @@ TTM tax using the same DFP + ITR algorithm:
   TTM = DFP_prior_year - ITR_prior_year_same_period + ITR_current_period
 
 The tax value is typically NEGATIVE (it's an expense/deduction on the DRE).
-We return the raw value — callers decide how to interpret the sign.
+We return the raw value -- callers decide how to interpret the sign.
+
+DESCRIPTION-SEARCH FALLBACK
+---------------------------
+For commercial/industrial filers, codigo 3.08 is "Imposto de Renda e
+Contribuição Social sobre o Lucro". For financial-sector filers (banks/
+insurers), however, the DRE template shifts the tax line to a different
+position under the 3.* range, with descriptions like "IRPJ", "CSLL", or
+"Contribuição Social". The reference implementation (rapinav2) handles
+this with a wildcard + mandatory description match: codigo '3.*' +
+descricao LIKE '%Imposto de Renda%' (or 'IRPJ' / 'CSLL' / etc.).  We
+mirror that approach as a FALLBACK: the fast path tries the exact 3.08
+code (works for the vast majority of filers and is O(1) on the codigo
+index), and only if that returns nothing do we fall back to the
+description search within the 3.* DRE range.
 
 DATA SOURCE
 -----------
@@ -36,16 +50,45 @@ from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
 
 
-# CVM account code for income tax (IR + CSLL)
+# CVM account code for income tax (IR + CSLL). Standard position in the DRE
+# for commercial/industrial filers. Banks/insurers may shift this to a
+# different 3.* position with descriptions like "IRPJ", "CSLL", or
+# "Contribuição Social" -- we fall back to a description-based search when
+# 3.08 returns nothing.
 INCOME_TAX_CODE = "3.08"
+
+# Description stems used for the fallback search.  We match on partial
+# stems (not the full string) so minor wording variations across filers
+# are caught.  Banks/insurers may use "IRPJ" / "CSLL" as separate lines.
+_INCOME_TAX_DESC_STEMS = (
+    "Imposto de Renda",
+    "IRPJ",
+    "CSLL",
+    "Contribuicao Social",
+)
 
 
 def _get_dfp_tax(company: str) -> dict[str, dict]:
     """Get all annual income tax from DFP (codigo 3.08, meses=12).
 
+    Falls back to a description-based search within the DRE (codigo LIKE '3.%')
+    if the exact 3.08 code returns nothing -- handles banks/insurers whose
+    DRE structure splits the tax line into IRPJ/CSLL components or uses a
+    different position.
+
     Returns: {"2024": {"value": -35e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied). Typically negative (expense).
     """
+    result = _get_dfp_tax_by_code(company, INCOME_TAX_CODE)
+    if result:
+        return result
+    # Fallback: description search within DRE (3.*) for filers where 3.08
+    # doesn't land on the tax line (banks/insurers with split IRPJ/CSLL).
+    return _get_dfp_tax_by_desc(company)
+
+
+def _get_dfp_tax_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.08). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -57,7 +100,7 @@ def _get_dfp_tax(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{INCOME_TAX_CODE}'
+                 AND c.codigo = '{code}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -76,12 +119,72 @@ def _get_dfp_tax(company: str) -> dict[str, dict]:
         conn.close()
 
 
+def _get_dfp_tax_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by income-tax description stems.
+
+    Used when the exact 3.08 code doesn't match (banks/insurers with split
+    IRPJ/CSLL components, or non-standard DRE filers). Mirrors rapinav2's
+    wildcard + description-match approach. Sums all matching rows per year
+    so that split IRPJ + CSLL lines collapse into a single tax expense value.
+    """
+    conn = connect_dfp(read_only=True)
+    try:
+        empresa_ids, _ = resolve_company(conn, company)
+        if not empresa_ids:
+            return {}
+        emp_ph = ",".join("?" * len(empresa_ids))
+        desc_clause = " OR ".join(
+            f"c.descricao LIKE '%{stem}%'" for stem in _INCOME_TAX_DESC_STEMS
+        )
+        rows = conn.execute(
+            f"""SELECT c.valor, c.escala, c.data_fim_exerc, e.ano, c.descricao
+               FROM contas c JOIN empresas e ON c.id_empresa = e.id
+               WHERE c.id_empresa IN ({emp_ph})
+                 AND c.consolidado = 1
+                 AND c.codigo LIKE '3.%'
+                 AND ({desc_clause})
+                 AND c.meses = 12
+               ORDER BY e.ano DESC""",
+            empresa_ids,
+        ).fetchall()
+
+        # Banks may split IRPJ and CSLL into separate rows under 3.* -- sum
+        # all matching rows per year to recover the total tax expense.
+        result = {}
+        for r in rows:
+            ano = str(r["ano"])
+            escala = parse_escala(r["escala"])
+            valor = float(r["valor"] or 0) * escala
+            if ano not in result:
+                result[ano] = {
+                    "value": valor,
+                    "date": r["data_fim_exerc"],
+                }
+            else:
+                # Sum across split tax lines (IRPJ + CSLL) for the same year.
+                result[ano]["value"] += valor
+        return result
+    finally:
+        conn.close()
+
+
 def _get_itr_tax(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative income tax from ITR (codigo 3.08, meses 3/6/9).
+
+    Falls back to a description-based search within the DRE (codigo LIKE '3.%')
+    if the exact 3.08 code returns nothing -- mirrors the DFP fallback.
 
     Returns: {"2024-06-30": {"value": -17e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan->period end).
     """
+    result = _get_itr_tax_by_code(company, INCOME_TAX_CODE)
+    if result:
+        return result
+    return _get_itr_tax_by_desc(company)
+
+
+def _get_itr_tax_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.08). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -93,7 +196,7 @@ def _get_itr_tax(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{INCOME_TAX_CODE}'
+                 AND c.codigo = '{code}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -108,6 +211,52 @@ def _get_itr_tax(company: str) -> dict[str, dict]:
                 "meses": r["meses"],
                 "year": r["ano"],
             }
+        return result
+    finally:
+        conn.close()
+
+
+def _get_itr_tax_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by income-tax description stems.
+
+    Sums all matching rows per period so that split IRPJ + CSLL lines
+    collapse into a single tax expense value.
+    """
+    conn = connect_itr(read_only=True)
+    try:
+        empresa_ids, _ = resolve_company(conn, company)
+        if not empresa_ids:
+            return {}
+        emp_ph = ",".join("?" * len(empresa_ids))
+        desc_clause = " OR ".join(
+            f"c.descricao LIKE '%{stem}%'" for stem in _INCOME_TAX_DESC_STEMS
+        )
+        rows = conn.execute(
+            f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.meses, e.ano, c.descricao
+               FROM contas c JOIN empresas e ON c.id_empresa = e.id
+               WHERE c.id_empresa IN ({emp_ph})
+                 AND c.consolidado = 1
+                 AND c.codigo LIKE '3.%'
+                 AND ({desc_clause})
+                 AND c.meses IN (3, 6, 9)
+               ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
+            empresa_ids,
+        ).fetchall()
+
+        # Sum across split tax lines (IRPJ + CSLL) for the same period.
+        result = {}
+        for r in rows:
+            date = r["data_fim_exerc"]
+            escala = parse_escala(r["escala"])
+            valor = float(r["valor"] or 0) * escala
+            if date not in result:
+                result[date] = {
+                    "value": valor,
+                    "meses": r["meses"],
+                    "year": r["ano"],
+                }
+            else:
+                result[date]["value"] += valor
         return result
     finally:
         conn.close()
@@ -208,6 +357,6 @@ register_engine(EngineSpec(
     quantity="ttm_tax",
     at_fn=tax_at,
     periods_fn=tax_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.08 -- IR+CSLL TTM",
+    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.08 -- IR+CSLL TTM (with description-search fallback for non-standard filers)",
     category="dre",
 ))

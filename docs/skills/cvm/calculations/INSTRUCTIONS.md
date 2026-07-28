@@ -4,7 +4,7 @@
 
 This library is the **pattern template** for central auto-discovery + registry architecture. Follow these rules when editing this library OR when copying the pattern to a new skill.
 
-**Current scope (v1.0):** 16 engines in 6 categories (market, shares, dre, bpa, bpp, dfc) + 17 metrics in 2 types (5 per-share+ratio and 12 fundamental ratio).
+**Current scope (v1.2):** 21 engines in 6 categories (market, shares, dre, bpa, bpp, dfc) + 22 metrics in 2 types (8 per-share+ratio and 14 fundamental ratio).
 
 ## ❌ NEVER DO
 
@@ -49,8 +49,8 @@ This library is the **pattern template** for central auto-discovery + registry a
 
 **JSON keys in series entries:**
 - Per-share value (Type 1 only): metric name (`lpa`, `vpa`, `dpa`, `rps`, `ebitda_ps`)
-- Ratio: traditional abbreviation (`pe` for P/L, `pvpa` for P/VPA, `dy` for Div Yield, `psr`, `ev_ebitda`, `roe`, `roa`, `roic`, `gross_margin`, `operating_margin`, `net_margin`, `ebitda_margin`, `debt_equity`, `net_debt_ebitda`, `asset_turnover`, `capex_revenue`, `current_ratio`)
-- Engine quantities: `price`, `ttm_earnings`, `shares`, `pl`, `ttm_rev`, `ttm_gp`, `ttm_ebit`, `ttm_tax`, `ttm_da`, `ttm_capex`, `assets`, `cash`, `total_assets`, `debt`, `current_liabilities`
+- Ratio: traditional abbreviation (`pe` for P/L, `pvpa` for P/VPA, `dy` for Div Yield, `psr`, `ev_ebitda`, `p_ebit`, `p_fco`, `p_fcf`, `roe`, `roa`, `roic`, `gross_margin`, `operating_margin`, `net_margin`, `ebitda_margin`, `debt_equity`, `net_debt_ebitda`, `asset_turnover`, `capex_revenue`, `current_ratio`, `graham_number`, `effective_tax_rate`)
+- Engine quantities: `price`, `ttm_earnings`, `shares`, `pl`, `ttm_rev`, `ttm_gp`, `ttm_ebit`, `ttm_ebt`, `ttm_tax`, `ttm_da`, `ttm_capex`, `ttm_fco`, `ttm_fci`, `ttm_fcf`, `current_assets`, `cash`, `total_assets`, `debt`, `current_liabilities`
 
 ---
 
@@ -59,32 +59,37 @@ This library is the **pattern template** for central auto-discovery + registry a
 ```text
 calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + resolve_metric + categories)
        │
-       ├── engines/  (16 engines — LEAVES, never import each other or metrics)
+       ├── engines/  (21 engines — LEAVES, never import each other or metrics)
        │     ├── market: price, dividends
        │     ├── shares: shares
-       │     ├── dre:    earnings, revenue, gross_profit, ebit, tax
-       │     ├── bpa:    assets, cash, total_assets
+       │     ├── dre:    earnings, revenue, gross_profit, ebit, ebt, tax
+       │     ├── bpa:    current_assets, cash, total_assets
        │     ├── bpp:    pl, debt, current_liabilities
-       │     └── dfc:    da, capex
+       │     └── dfc:    da, capex, operating_cf, investing_cf, financing_cf
        │
-       └── metrics/  (17 metrics — compose engines, never point at other metrics)
+       └── metrics/  (22 metrics — compose engines, never point at other metrics)
              ├── lpa.py             → price + earnings + shares                       (Type 1)
              ├── vpa.py             → price + pl + shares                              (Type 1)
              ├── dpa.py             → price + dividends + earnings + shares           (Type 1, +payout)
              ├── rps.py             → price + revenue + shares                        (Type 1)
              ├── ev_ebitda.py       → price + shares + debt + cash + ebit + da        (Type 1, 6 engines)
+             ├── p_ebit.py          → price + ebit + shares                            (Type 1)
+             ├── p_fco.py           → price + operating_cf + shares                    (Type 1)
+             ├── p_fcf.py           → price + operating_cf + investing_cf + shares     (Type 1, 4 engines)
              ├── roe.py             → earnings + pl                                    (Type 2)
-             ├── roa.py             → earnings + assets                                (Type 2)
-             ├── roic.py            → ebit + tax + pl + debt + cash                    (Type 2, 5 engines, v1.9 cash)
+             ├── roa.py             → earnings + total_assets                          (Type 2, v1.2: total_assets)
+             ├── roic.py            → ebit + tax + ebt + pl + debt + cash              (Type 2, 6 engines, v2.0 EBT-based NOPAT)
              ├── gross_margin.py    → gross_profit + revenue                           (Type 2)
              ├── operating_margin.py → ebit + revenue                                 (Type 2)
              ├── net_margin.py      → earnings + revenue                               (Type 2)
              ├── ebitda_margin.py   → ebit + da + revenue                              (Type 2)
              ├── debt_equity.py     → debt + pl                                        (Type 2)
              ├── net_debt_ebitda.py → debt + cash + ebit + da                          (Type 2, 4 engines)
-             ├── asset_turnover.py  → revenue + assets                                 (Type 2)
+             ├── asset_turnover.py  → revenue + total_assets                          (Type 2, v1.2: total_assets)
              ├── capex_revenue.py   → capex + revenue                                  (Type 2)
-             └── current_ratio.py   → assets + current_liabilities                     (Type 2)
+             ├── current_ratio.py   → current_assets + current_liabilities            (Type 2, v1.2: current_assets)
+             ├── graham_number.py   → earnings + pl + shares                           (Type 2)
+             └── effective_tax_rate.py → tax + ebt                                     (Type 2, v2.0)
 
        (engines never point upward — they're leaves)
 ```
@@ -158,4 +163,4 @@ If you're creating a new skill that follows this pattern:
 
 ---
 
-*Last updated: 2026-07-26 (v1.0). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-28 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*
