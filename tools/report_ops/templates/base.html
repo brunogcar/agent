@@ -31,35 +31,47 @@
     .nav-item.err .nav-dot { background: #ef4444; }
     h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
     h2 { font-size: 20px; font-weight: 600; margin: 24px 0 12px; }
-    .card { background: var(--bg-sec); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    /* StatusInvest-inspired section title — larger, bolder, accent underlined */
+    .section-title { font-size: 18px; font-weight: 700; color: var(--text); margin: 28px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--brand); display: inline-block; }
+    .card { background: var(--bg-sec); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.18); }
     .card-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-sec); margin-bottom: 12px; }
     .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .kpi-card { background: var(--bg-sec); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; }
-    .kpi-value { font-size: 32px; font-weight: 700; color: var(--brand); }
-    .kpi-label { font-size: 12px; color: var(--text-sec); margin-top: 4px; }
-    .kpi-delta { font-size: 14px; font-weight: 600; margin-top: 8px; }
+    .kpi-card { background: var(--bg-sec); border: 1px solid var(--border); border-radius: 14px; padding: 22px 18px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.18); }
+    .kpi-value { font-size: 34px; font-weight: 700; color: var(--brand); line-height: 1.15; }
+    .kpi-label { font-size: 12px; color: var(--text-sec); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .kpi-delta { font-size: 14px; font-weight: 600; margin-top: 10px; }
     .kpi-delta.pos { color: #22c55e; }
     .kpi-delta.neg { color: #ef4444; }
     .kpi-delta.neu { color: var(--text-sec); }
+    /* StatusInvest-inspired data table — alternating rows, sticky header, tighter padding */
     .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .data-table th { text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--border); font-weight: 600; color: var(--text-sec); }
-    .data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
-    .data-table tr:hover { background: rgba(13, 148, 136, 0.05); }
+    .data-table th { text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--border); font-weight: 600; color: var(--text-sec); position: sticky; top: 0; background: var(--bg-sec); z-index: 1; }
+    .data-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+    .data-table tbody tr:nth-child(odd) { background: rgba(148, 163, 184, 0.04); }
+    .data-table tbody tr:hover { background: rgba(13, 148, 136, 0.08); }
+    /* metric-row: key-value pair rows used in summary/indicator tables */
+    .metric-row td:first-child { color: var(--text-sec); font-weight: 600; }
+    .metric-row td:last-child { text-align: right; font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 600; color: var(--text); }
+    /* badge: cheap / fair / expensive tags */
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .badge.cheap { background: rgba(34, 197, 94, 0.18); color: #22c55e; }
+    .badge.fair  { background: rgba(245, 158, 11, 0.18); color: #f59e0b; }
+    .badge.expensive { background: rgba(239, 68, 68, 0.18); color: #ef4444; }
     .code-block { background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; }
-    .chart-box { background: var(--bg-sec); border: 1px solid var(--border); border-radius: 12px; padding: 20px; height: 400px; position: relative; }
+    .chart-box { background: var(--bg-sec); border: 1px solid var(--border); border-radius: 14px; padding: 20px; height: 400px; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.18); }
     .mermaid { background: var(--bg-sec); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
     .tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
     .tab-btn { padding: 8px 16px; border-radius: 8px; border: none; background: transparent; color: var(--text-sec); font-size: 13px; cursor: pointer; }
     .tab-btn.active { background: rgba(13, 148, 136, 0.1); color: var(--brand); font-weight: 600; }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
-    .collapsible { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
+    .collapsible { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; background: var(--bg-sec); overflow: hidden; }
     .collapsible-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; font-weight: 600; }
     .collapsible-body { padding: 0 16px 16px; display: none; }
     .collapsible.open .collapsible-body { display: block; }
     .collapsible.open .chevron { transform: rotate(180deg); }
     .text-block { line-height: 1.7; color: var(--text-sec); }
-    .section { margin-bottom: 32px; }
+    .section { margin-bottom: 36px; }
     @media (max-width: 768px) {
       .sidebar { display: none; }
       .main { margin-left: 0; padding: 16px; }
@@ -78,7 +90,7 @@
   </div>
   <script>
     function showTab(btn, panelId) {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.nav-item, .tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById(panelId).classList.add('active');

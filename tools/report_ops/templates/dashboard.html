@@ -25,6 +25,7 @@
 {% for tab in tabs %}
 <div class="tab-panel {% if loop.first %}active{% endif %}" id="tab-{{ loop.index }}">
   <h2>{{ tab.name | default('Panel') }}</h2>
+  {% set outer_loop = loop %}
   {% for sec in tab.sections %}
   <div class="section">
     {% if sec.text %}
@@ -32,17 +33,20 @@
       {{ sec.text }}
     </div>
     {% endif %}
-    {% if sec.type == 'table' and sec.data %}
-    {{ m.data_table(sec.data[0].keys() | list, sec.data | map('values') | list) }}
+    {% if sec.type == 'table' and sec.columns and sec.rows %}
+    {{ m.data_table(sec.columns, sec.rows) }}
     {% endif %}
     {% if sec.type == 'chart' and sec.chart_data %}
-    {{ m.chart_canvas('chart-' + loop.index|string + '-' + loop.index|string) }}
+    {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
     {% endif %}
     {% if sec.type == 'mermaid' %}
     {{ m.mermaid_diagram(sec.mermaid_src | default(sec.data | default(''))) }}
     {% endif %}
     {% if sec.type == 'code' %}
     {{ m.code_block(sec.code | default(''), sec.lang | default('python')) }}
+    {% endif %}
+    {% if sec.type == 'collapsible' %}
+    {{ m.collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False)) }}
     {% endif %}
     {% if sec.type == 'bug' %}
     {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
@@ -56,12 +60,13 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 {% for tab in tabs %}
+  {% set outer_loop = loop %}
   {% for sec in tab.sections %}
     {% if sec.type == 'chart' and sec.chart_data %}
     <script>
-      var chartData{{ loop.index }}{{ loop.index }} = {{ sec.chart_data | tojson }};
-      var ctx{{ loop.index }}{{ loop.index }} = document.getElementById('chart-{{ loop.index }}-{{ loop.index }}').getContext('2d');
-      new Chart(ctx{{ loop.index }}{{ loop.index }}, chartData{{ loop.index }}{{ loop.index }});
+      var chartData_{{ outer_loop.index }}_{{ loop.index }} = {{ sec.chart_data | tojson }};
+      var ctx_{{ outer_loop.index }}_{{ loop.index }} = document.getElementById('tab-{{ outer_loop.index }}-chart-{{ loop.index }}').getContext('2d');
+      new Chart(ctx_{{ outer_loop.index }}_{{ loop.index }}, chartData_{{ outer_loop.index }}_{{ loop.index }});
     </script>
     {% endif %}
   {% endfor %}

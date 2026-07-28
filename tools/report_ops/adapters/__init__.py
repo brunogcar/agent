@@ -101,15 +101,18 @@ def _safe_num(v: Any) -> Any:
 
 
 # Importing the modules here triggers their @register_adapter decorators.
+# NOTE: financials_chart.py was merged into financials.py (preserved via the
+#       original financials.py path; financials_chart.py was deleted).
+# NOTE: cotahist_chart.py was renamed to cotahist.py (preserving git history)
+#       and cotahist_candlestick.py was merged into cotahist.py (then deleted).
 from tools.report_ops.adapters import financials  # noqa: E402,F401
-from tools.report_ops.adapters import financials_chart  # noqa: E402,F401
 from tools.report_ops.adapters import valuation   # noqa: E402,F401
 from tools.report_ops.adapters import shareholders  # noqa: E402,F401
 from tools.report_ops.adapters import dividends   # noqa: E402,F401
 from tools.report_ops.adapters import comparison  # noqa: E402,F401
-from tools.report_ops.adapters import cotahist_chart  # noqa: E402,F401
-from tools.report_ops.adapters import cotahist_candlestick  # noqa: E402,F401
+from tools.report_ops.adapters import cotahist    # noqa: E402,F401
 from tools.report_ops.adapters import screener  # noqa: E402,F401
 from tools.report_ops.adapters import insider  # noqa: E402,F401
 from tools.report_ops.adapters import governance  # noqa: E402,F401
 from tools.report_ops.adapters import historical  # noqa: E402,F401
+from tools.report_ops.adapters import backtest  # noqa: E402,F401

@@ -66,7 +66,7 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 47
+        assert len(names) == 48
 
     def test_expected_adapter_names(self):
         expected = {
@@ -94,6 +94,7 @@ class TestRegistry:
             "historical_p_ebit_chart", "historical_p_fco_chart",
             "historical_p_fcf_chart", "historical_graham_number_chart",
             "historical_summary",
+            "backtest",
         }
         assert expected == set(list_adapters())
 
@@ -804,3 +805,151 @@ class TestHistoricalSummaryRoeMetric:
         assert "ROE" in rows_text
         assert "TTM Earnings" in rows_text
         assert "Patrim" in rows_text  # Patrimônio Líquido
+
+
+# ── Backtest adapter ────────────────────────────────────────────────────────
+
+BACKTEST_RESULT = {
+    "status": "ok",
+    "ticker": "PETR4",
+    "strategy": "value_pe",
+    "strategy_description": "Buy when P/L < 5 (cheap valuation)",
+    "start_date": "2022-01-01",
+    "end_date": "2025-01-01",
+    "initial_capital": 10000.0,
+    "final_equity": 15800.50,
+    "performance": {
+        "total_return_pct": 58.01,
+        "cagr_pct": 16.55,
+        "max_drawdown_pct": 12.34,
+        "sharpe_ratio": 1.42,
+        "win_rate_pct": 60.0,
+        "num_trades": 5,
+        "buy_hold_return_pct": 35.20,
+        "alpha_vs_buy_hold": 22.81,
+    },
+    "trades": [
+        {"entry_date": "2022-03-15", "entry_price": 28.50,
+         "exit_date": "2022-09-20", "exit_price": 34.20,
+         "shares": 350, "pnl": 1995.00, "return_pct": 20.00,
+         "holding_days": 130, "exit_reason": "max_holding"},
+        {"entry_date": "2023-02-10", "entry_price": 26.00,
+         "exit_date": "2023-08-15", "exit_price": 31.50,
+         "shares": 400, "pnl": 2200.00, "return_pct": 21.15,
+         "holding_days": 145, "exit_reason": "max_holding"},
+    ],
+    "equity_curve": [
+        {"date": "2022-03-15", "equity": 10000.00},
+        {"date": "2022-09-20", "equity": 11995.00},
+        {"date": "2023-02-10", "equity": 11995.00},
+        {"date": "2023-08-15", "equity": 14195.00},
+    ],
+}
+
+
+class TestBacktestAdapter:
+    def test_backtest_kpis_present(self):
+        """Backtest adapter should emit 6 KPIs: CAGR, Return, DD, Sharpe, Win, Alpha."""
+        out = apply_adapter("backtest", BACKTEST_RESULT)
+        labels = [k["label"] for k in out["kpis"]]
+        assert "CAGR" in labels
+        assert "Total Return" in labels
+        assert "Max Drawdown" in labels
+        assert "Sharpe" in labels
+        assert "Win Rate" in labels
+        assert "Alpha" in labels
+        # KPI values are pre-formatted strings
+        cagr = next(k for k in out["kpis"] if k["label"] == "CAGR")
+        assert cagr["value"] == "16.55%"
+
+    def test_backtest_has_4_sections(self):
+        """Sections: Strategy (text), Equity Curve (chart), Trade Log (table), Performance (table)."""
+        out = apply_adapter("backtest", BACKTEST_RESULT)
+        assert len(out["sections"]) == 4
+        titles = [s["title"] for s in out["sections"]]
+        assert "Strategy" in titles
+        assert "Equity Curve" in titles
+        assert "Trade Log" in titles
+        assert "Performance Summary" in titles
+
+    def test_backtest_strategy_section_is_text(self):
+        out = apply_adapter("backtest", BACKTEST_RESULT)
+        sec = next(s for s in out["sections"] if s["title"] == "Strategy")
+        assert sec["type"] == "text"
+        # Plain text — no HTML markup (autoescape would mangle it).
+        # NOTE: the strategy description itself contains "P/L < 5", so the
+        # presence of "<" alone is fine; we just check there are no HTML tags.
+        assert "PETR4" in sec["text"]
+        assert "value_pe" in sec["text"]
+        for tag in ("<strong>", "<br", "<code>", "<div", "<p>", "<a "):
+            assert tag not in sec["text"]
+
+    def test_backtest_equity_section_is_chart_config(self):
+        """Equity section should produce a Chart.js config dict (chart_data)."""
+        out = apply_adapter("backtest", BACKTEST_RESULT)
+        sec = next(s for s in out["sections"] if s["title"] == "Equity Curve")
+        assert sec["type"] == "chart"
+        cfg = sec["chart_data"]
+        # Must be a full Chart.js config (type + data + options)
+        assert cfg["type"] == "line"
+        assert "datasets" in cfg["data"]
+        assert cfg["data"]["datasets"][0]["label"] == "Equity (R$)"
+        # Equity values landed oldest-first
+        assert cfg["data"]["datasets"][0]["data"] == [10000.00, 11995.00, 11995.00, 14195.00]
+        assert cfg["data"]["labels"] == ["2022-03-15", "2022-09-20", "2023-02-10", "2023-08-15"]
+
+    def test_backtest_trade_log_table_shape(self):
+        out = apply_adapter("backtest", BACKTEST_RESULT)
+        sec = next(s for s in out["sections"] if s["title"] == "Trade Log")
+        assert sec["type"] == "table"
+        assert "Entry Date" in sec["columns"]
+        assert "Exit Date" in sec["columns"]
+        assert "PnL (R$)" in sec["columns"]
+        assert "Return %" in sec["columns"]
+        assert "Exit Reason" in sec["columns"]
+        # Two trades from the synthetic result
+        assert len(sec["rows"]) == 2
+        # First trade values landed in column order
+        first = sec["rows"][0]
+        assert first[0] == "2022-03-15"   # entry_date
+        assert first[1] == 28.50          # entry_price
+        assert first[2] == "2022-09-20"   # exit_date
+        assert first[3] == 34.20          # exit_price
+        assert first[4] == 350            # shares
+        assert first[5] == 1995.00        # pnl
+        assert first[6] == 20.00          # return_pct
+        assert first[7] == 130            # holding_days
+        assert first[8] == "max_holding"  # exit_reason
+        # Per-column format specs
+        assert sec["formats"]["Entry Price"] == "brl_full"
+        assert sec["formats"]["Return %"] == "pct_raw"
+        assert sec["formats"]["Shares"] == "int"
+
+    def test_backtest_performance_summary_shape(self):
+        out = apply_adapter("backtest", BACKTEST_RESULT)
+        sec = next(s for s in out["sections"] if s["title"] == "Performance Summary")
+        assert sec["type"] == "table"
+        assert sec["columns"] == ["Metric", "Value"]
+        # Should include the headline metrics
+        rows_text = " ".join(str(r) for r in sec["rows"])
+        assert "CAGR" in rows_text
+        assert "Sharpe" in rows_text
+        assert "Alpha" in rows_text
+        assert "Buy & Hold" in rows_text
+
+    def test_backtest_company_is_ticker(self):
+        out = apply_adapter("backtest", BACKTEST_RESULT)
+        assert out["company"] == "PETR4"
+
+    def test_backtest_error_renders_status_table(self):
+        out = apply_adapter("backtest", {"status": "error", "error": "no price data"})
+        assert out["sections"][0]["rows"][0] == ["error", "no price data"]
+
+    def test_backtest_no_trades_still_renders(self):
+        """A backtest with zero trades should still produce all 4 sections."""
+        result = dict(BACKTEST_RESULT)
+        result["trades"] = []
+        out = apply_adapter("backtest", result)
+        trade_sec = next(s for s in out["sections"] if s["title"] == "Trade Log")
+        assert len(trade_sec["rows"]) == 0
+        assert "0 trade" in trade_sec["note"]

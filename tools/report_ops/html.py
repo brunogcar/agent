@@ -122,27 +122,87 @@ def _write_metrics(
     _atomic_write(metrics_path, json.dumps(metrics, indent=2))
 
 
+def _normalize_table_sections(sections: list) -> None:
+    """Normalize table sections in-place: convert list-of-dicts (sec["data"])
+    to columns + rows so the templates can render via m.data_table(columns, rows).
+
+    Adapters always emit columns+rows, but raw config-driven sections or skill
+    payloads sometimes use list-of-dicts. This is the single normalization
+    point for the report/dashboard actions (table.py has its own equivalent
+    in _normalize_section).
+    """
+    for sec in sections or []:
+        if not isinstance(sec, dict):
+            continue
+        if sec.get("type") != "table":
+            continue
+        if sec.get("columns") and sec.get("rows"):
+            continue
+        data_list = sec.get("data")
+        if isinstance(data_list, list) and data_list and isinstance(data_list[0], dict):
+            sec["columns"] = list(data_list[0].keys())
+            sec["rows"] = [list(d.values()) for d in data_list]
+
+
+def _apply_adapter_if_requested(config: dict, data: Any) -> Any:
+    """Apply a report adapter if config['adapter'] is set; otherwise pass data through.
+
+    Used by both build_report() and build_dashboard() so adapter support is
+    identical across the two multi-section actions (table/chart already had it).
+    """
+    adapter = (config.get("adapter") or "").strip()
+    if adapter:
+        from tools.report_ops.adapters import apply_adapter
+        data = apply_adapter(adapter, data)
+    return data, adapter
+
+
 def build_report(
     trace_id: str,
     title: str,
     data: Any,
     config: dict,
 ) -> dict:
-    """Build a single-scroll HTML report."""
-    data_path = config.get("data_path", "")
-    from tools.report_ops.data import load_data
-    loaded, err = load_data(data=data, data_path=data_path)
-    if err:
-        raise ValueError(err)
+    """Build a single-scroll HTML report.
+
+    Accepts:
+      - data={} (no failure — renders config-driven sections if any)
+      - data=<skill JSON> + config['adapter'] (adapter flattens to sections/kpis)
+      - data={"sections": [...], "kpis": [...]} (pre-shaped report payload)
+      - data=<file path via config['data_path']> (loaded via path guard)
+      - config['sections']/['kpis']/['sources'] (inline sections)
+    """
+    # Apply adapter if requested (flattens a raw skill result into report shape)
+    data, adapter = _apply_adapter_if_requested(config, data)
+
+    # If data is a dict with sections/kpis, use those (adapter output or pre-shaped)
+    if isinstance(data, dict) and ("sections" in data or "kpis" in data):
+        sections = data.get("sections", []) or []
+        kpis = data.get("kpis", []) or []
+        sources = data.get("sources", []) or []
+        loaded: Any = data
+    else:
+        # Fall back to config-driven sections + optional data_path load
+        data_path = config.get("data_path", "")
+        if data_path:
+            from tools.report_ops.data import load_data
+            loaded, err = load_data(data=data, data_path=data_path)
+            if err:
+                raise ValueError(err)
+        else:
+            # No data_path: accept data={} or None without failing
+            loaded = data
+        sections = config.get("sections", []) or []
+        kpis = config.get("kpis", []) or []
+        sources = config.get("sources", []) or []
+
+    # Normalize table sections (list-of-dicts → columns + rows)
+    _normalize_table_sections(sections)
 
     from tools.report_ops.paths import report_out_dir
     out_dir = report_out_dir(trace_id)
     safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in (title or "report"))
     html_path = out_dir / f"{safe_title}.html"
-
-    sections = config.get("sections", [])
-    kpis = config.get("kpis", [])
-    sources = config.get("sources", [])
 
     ctx = {
         "title": title,
@@ -164,6 +224,7 @@ def build_report(
         "title": title,
         "html_path": str(html_path),
         "sections": len(sections),
+        "adapter": adapter,
     }
 
 
@@ -173,21 +234,45 @@ def build_dashboard(
     data: Any,
     config: dict,
 ) -> dict:
-    """Build a multi-panel dashboard."""
-    data_path = config.get("data_path", "")
-    from tools.report_ops.data import load_data
-    loaded, err = load_data(data=data, data_path=data_path)
-    if err:
-        raise ValueError(err)
+    """Build a multi-panel dashboard.
+
+    Accepts the same data shapes as build_report() and additionally normalizes
+    table sections inside each tab.sections list.
+    """
+    # Apply adapter if requested (flattens a raw skill result into report shape)
+    data, adapter = _apply_adapter_if_requested(config, data)
+
+    # If data is a dict with sections/kpis/tabs, use those (adapter output or pre-shaped)
+    if isinstance(data, dict) and ("sections" in data or "kpis" in data or "tabs" in data):
+        tabs = data.get("tabs", []) or []
+        kpis = data.get("kpis", []) or []
+        charts = data.get("charts", []) or []
+        sources = data.get("sources", []) or []
+        loaded: Any = data
+    else:
+        data_path = config.get("data_path", "")
+        if data_path:
+            from tools.report_ops.data import load_data
+            loaded, err = load_data(data=data, data_path=data_path)
+            if err:
+                raise ValueError(err)
+        else:
+            loaded = data
+        tabs = config.get("tabs", []) or []
+        kpis = config.get("kpis", []) or []
+        charts = config.get("charts", []) or []
+        sources = config.get("sources", []) or []
+
+    # Normalize table sections inside every tab
+    for tab in tabs:
+        if isinstance(tab, dict):
+            _normalize_table_sections(tab.get("sections", []))
 
     from tools.report_ops.paths import report_out_dir
     out_dir = report_out_dir(trace_id)
     safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in (title or "dashboard"))
     html_path = out_dir / f"{safe_title}.html"
 
-    tabs = config.get("tabs", [])
-    kpis = config.get("kpis", [])
-    charts = config.get("charts", [])
     columns = max(1, min(config.get("columns", 2), 4))
 
     ctx = {
@@ -213,4 +298,5 @@ def build_dashboard(
         "html_path": str(html_path),
         "tabs": len(tabs),
         "charts": len(charts),
+        "adapter": adapter,
     }
