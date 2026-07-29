@@ -91,5 +91,6 @@ register_metric(MetricSpec(
     ratio_fn=ebitda_margin_at,
     history_fn=ebitda_margin_history,
     engines=["ebit", "da", "revenue"],
+    category="profitability",
     aliases=["em", "margem_ebitda", "ebitda_margin_pct"],
 ))

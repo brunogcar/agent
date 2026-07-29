@@ -106,7 +106,9 @@ def _safe_num(v: Any) -> Any:
 # NOTE: cotahist_chart.py was renamed to cotahist.py (preserving git history)
 #       and cotahist_candlestick.py was merged into cotahist.py (then deleted).
 from tools.report_ops.adapters import financials  # noqa: E402,F401
+from tools.report_ops.adapters import financials_dashboard  # noqa: E402,F401
 from tools.report_ops.adapters import valuation   # noqa: E402,F401
+from tools.report_ops.adapters import valuation_dashboard  # noqa: E402,F401
 from tools.report_ops.adapters import shareholders  # noqa: E402,F401
 from tools.report_ops.adapters import dividends   # noqa: E402,F401
 from tools.report_ops.adapters import comparison  # noqa: E402,F401

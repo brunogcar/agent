@@ -143,5 +143,6 @@ register_metric(MetricSpec(
     ratio_fn=retention_ratio_at,
     history_fn=retention_ratio_history,
     engines=["dividends", "earnings"],
+    category="growth",
     aliases=["taxa_retencao", "retention", "rr"],
 ))

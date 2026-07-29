@@ -173,5 +173,6 @@ register_metric(MetricSpec(
     ratio_fn=fcf_margin_at,
     history_fn=fcf_margin_history,
     engines=["operating_cf", "investing_cf", "revenue"],
+    category="profitability",
     aliases=["margem_fcf", "fcf_margem"],
 ))

@@ -79,5 +79,6 @@ register_metric(MetricSpec(
     ratio_fn=current_ratio_at,
     history_fn=current_ratio_history,
     engines=["current_assets", "current_liabilities"],
+    category="liquidity",
     aliases=["liquidez_corrente", "cr", "current_liquidity"],
 ))

@@ -78,5 +78,6 @@ register_metric(MetricSpec(
     ratio_fn=capex_revenue_at,
     history_fn=capex_revenue_history,
     engines=["capex", "revenue"],
+    category="efficiency",
     aliases=["capex_intensity", "intensidade_capex"],
 ))

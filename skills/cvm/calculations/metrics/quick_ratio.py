@@ -123,5 +123,6 @@ register_metric(MetricSpec(
     ratio_fn=quick_ratio_at,
     history_fn=quick_ratio_history,
     engines=["cash", "receivables", "current_liabilities"],
+    category="liquidity",
     aliases=["liquidez_seca", "acid_test", "qr"],
 ))

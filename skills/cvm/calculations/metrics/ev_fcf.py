@@ -260,5 +260,6 @@ register_metric(MetricSpec(
     ratio_fn=ev_fcf_at,
     history_fn=ev_fcf_history,
     engines=["price", "shares", "debt", "cash", "operating_cf", "investing_cf"],
+    category="valuation",
     aliases=["ev_fcf", "evfcf"],
 ))

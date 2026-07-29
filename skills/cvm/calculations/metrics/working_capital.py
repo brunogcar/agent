@@ -108,5 +108,6 @@ register_metric(MetricSpec(
     ratio_fn=working_capital_at,
     history_fn=working_capital_history,
     engines=["current_assets", "current_liabilities"],
+    category="liquidity",
     aliases=["capital_giro", "giro", "wc"],
 ))

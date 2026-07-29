@@ -222,5 +222,6 @@ register_metric(MetricSpec(
     ratio_fn=p_tangible_book_at,
     history_fn=p_tangible_book_history,
     engines=["price", "pl", "intangibles", "shares"],
+    category="valuation",
     aliases=["p_vpa_tangivel", "ptb", "price_tangible_book"],
 ))

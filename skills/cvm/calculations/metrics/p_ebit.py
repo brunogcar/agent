@@ -175,5 +175,6 @@ register_metric(MetricSpec(
     ratio_fn=p_ebit_at,
     history_fn=p_ebit_history,
     engines=["price", "shares", "ebit"],
+    category="valuation",
     aliases=["p_ebit", "pebit", "preco_ebit"],
 ))

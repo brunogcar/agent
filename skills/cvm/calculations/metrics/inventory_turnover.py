@@ -128,5 +128,6 @@ register_metric(MetricSpec(
     ratio_fn=inventory_turnover_at,
     history_fn=inventory_turnover_history,
     engines=["cogs", "inventory"],
+    category="efficiency",
     aliases=["giro_estoque", "ito", "inventory_turn"],
 ))

@@ -40,6 +40,7 @@
 24. **Always render `None`/NaN as `—` (HTML) / empty cell (xlsx)** — use `formats._is_missing()`; never let `"None"` leak into a report.
 25. **Always make adapters defensive** — a skill `not_found`/`not_synced` result must render a small status table via `_error_table()`, not raise. The LLM should see the cause inline.
 26. **Always honour `config["adapter"]` in both `table` and `export(xlsx)`** — one adapter name must work for both render paths so the LLM's mental model stays simple.
+27. **Always emit the correct section shape for new `dashboard` section types** (v1.5) — `statement` needs `rows: [{label, value, indent?, is_subtotal?, is_total?}]`, `ratio_grid` needs `categories: [{label, items: [{label, value}]}]`, `two_column` needs `left_title` + `left_rows` + `right_title` + `right_rows` (rows use the same shape as `statement`). Pre-format values to strings inside adapters (the macros don't apply `fmt`); use `apply_fmt(value, spec)` from `formats.py` so HTML + xlsx stay consistent. Dashboard adapters (`financials_dashboard`, `valuation_dashboard`) are the reference implementations.
 
 ---
 
@@ -62,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-07-27 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*

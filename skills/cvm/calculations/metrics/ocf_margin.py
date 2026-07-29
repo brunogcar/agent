@@ -100,5 +100,6 @@ register_metric(MetricSpec(
     ratio_fn=ocf_margin_at,
     history_fn=ocf_margin_history,
     engines=["operating_cf", "revenue"],
+    category="profitability",
     aliases=["margem_fco", "ocf_margem", "margem_operacional_caixa"],
 ))

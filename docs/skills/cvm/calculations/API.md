@@ -433,9 +433,10 @@ fixed_asset_turnover_history(company, date_from, date_to) -> list[dict]
 # Engine spec
 EngineSpec(name, quantity, at_fn, periods_fn, source, category="other")
 
-# Metric spec
+# Metric spec (v1.5: added `category` field)
 MetricSpec(name, ratio_label, ratio_key, ratio_fn, history_fn, engines,
-           per_share_label=None, per_share_key=None, per_share_fn=None, aliases=[])
+           per_share_label=None, per_share_key=None, per_share_fn=None,
+           aliases=[], category="other")
 
 ENGINES: dict[str, EngineSpec]
 METRICS: dict[str, MetricSpec]
@@ -448,8 +449,27 @@ list_engines(category: str | None = None) -> list[str]
 list_engine_categories() -> list[str]
 list_metrics() -> list[str]
 list_all_metric_names() -> list[str]
+
+# v1.5 — metric categories (8: valuation, profitability, liquidity, leverage,
+#         efficiency, growth, per_share, tax; "other" fallback)
+list_metric_categories() -> list[str]
+list_metrics_by_category(category: str) -> list[str]
+
+# v1.5 — single entry point for consumer skills. Returns a dict mapping
+# ratio_key -> value for every registered metric (filtered by `categories`
+# include-list and/or `exclude` block-list). Each metric's `ratio_fn` is
+# invoked with (company, date) inside a try/except — a single metric raising
+# (e.g. FileNotFoundError on a missing DB) returns None for that key without
+# poisoning the rest of the result.
+compute_all_ratios(company: str, date: str,
+                   categories: list[str] | None = None,
+                   exclude: list[str] | None = None) -> dict[str, float | None]
 ```
+
+**Metric categories (v1.5):** `valuation`, `profitability`, `liquidity`, `leverage`, `efficiency`, `growth`, `per_share`, `tax` (plus the `"other"` fallback for uncategorized metrics). All 37 metrics are tagged with one of these. Use `list_metric_categories()` to enumerate them at runtime, `list_metrics_by_category("liquidity")` to list the metrics in a category, and `compute_all_ratios(company, date, categories=["liquidity", "leverage"])` to fetch a filtered subset.
+
+**`compute_all_ratios` — usage pattern (v1.5):** Consumer skills (valuation `ratios()`, financials `summary()`, future backtest) call this instead of hardcoding N metric imports. Adding a new metric to `metrics/` + `register_metric()` is sufficient — it appears automatically in every consumer's ratios dict. See [INSTRUCTIONS.md](INSTRUCTIONS.md) rule "Always set `category` when registering a metric".
 
 ---
 
-*Last updated: 2026-07-28 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

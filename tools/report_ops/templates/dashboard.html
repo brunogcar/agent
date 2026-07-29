@@ -53,6 +53,17 @@
     {% if sec.type == 'collapsible' %}
     {{ m.collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False)) }}
     {% endif %}
+    {% if sec.type == 'statement' and sec.rows %}
+    {{ m.statement_table(sec.rows) }}
+    {% elif sec.type == 'statement' %}
+    <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
+    {% endif %}
+    {% if sec.type == 'ratio_grid' and sec.categories %}
+    {{ m.ratio_grid(sec.categories) }}
+    {% endif %}
+    {% if sec.type == 'two_column' and sec.left_rows and sec.right_rows %}
+    {{ m.two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows) }}
+    {% endif %}
     {% if sec.type == 'bug' %}
     {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
     {% endif %}

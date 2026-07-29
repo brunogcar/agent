@@ -66,13 +66,13 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 64
+        assert len(names) == 66
 
     def test_expected_adapter_names(self):
         expected = {
             "financials_quarterly", "financials_annual", "financials_summary",
-            "financials_quarterly_chart",
-            "valuation_ratios", "valuation_summary",
+            "financials_quarterly_chart", "financials_dashboard",
+            "valuation_ratios", "valuation_summary", "valuation_dashboard",
             "shareholders_shareholders", "shareholders_free_float",
             "shareholders_equity_structure", "shareholders_summary",
             "dividends_history", "dividends_annual", "dividends_summary",
@@ -962,3 +962,332 @@ class TestBacktestAdapter:
         trade_sec = next(s for s in out["sections"] if s["title"] == "Trade Log")
         assert len(trade_sec["rows"]) == 0
         assert "0 trade" in trade_sec["note"]
+
+
+# ── Synthetic financials.dashboard() result ─────────────────────────────────
+
+FINANCIALS_DASHBOARD = {
+    "status": "ok",
+    "company": "PETR4",
+    "tabs": [
+        {
+            "name": "Overview",
+            "kpis": [
+                {"label": "Receita Líquida", "value": 500_000_000_000, "unit": "BRL"},
+                {"label": "EBITDA", "value": 230_000_000_000, "unit": "BRL"},
+                {"label": "Lucro Líquido", "value": 120_000_000_000, "unit": "BRL"},
+                {"label": "Margem EBITDA", "value": 0.46, "unit": "ratio"},
+                {"label": "ROE", "value": 0.30, "unit": "ratio"},
+                {"label": "Dívida Líquida/EBITDA", "value": 0.82, "unit": "x"},
+            ],
+            "sections": [
+                {"name": "kpis", "cards": []},
+                {"name": "latest_annual", "period": "2023"},
+                {"name": "latest_quarterly", "period": "4T23"},
+                {"name": "freshness", "data": {
+                    "dfp": {"last_updated": "2024-01-15"},
+                    "itr": {"last_updated": "2024-01-15"},
+                }},
+            ],
+        },
+        {
+            "name": "DRE",
+            "sections": [
+                {"name": "latest_annual", "metrics": {
+                    "receita_liquida": 500_000_000_000,
+                    "lucro_bruto": 200_000_000_000,
+                    "ebit": 200_000_000_000,
+                    "ebitda": 230_000_000_000,
+                    "ebitda_method": "ebit+da",
+                    "resultado_financeiro": -10_000_000_000,
+                    "lucro_liquido": 120_000_000_000,
+                    "da": 30_000_000_000,
+                }, "ratios": {
+                    "marg_bruta": 0.40,
+                    "marg_ebit": 0.40,
+                    "marg_ebitda": 0.46,
+                    "marg_liquida": 0.24,
+                }},
+                {"name": "quarterly_trend", "periods": [
+                    {"period": "1T24", "receita": 100e9, "ebitda": 50e9, "lucro_liquido": 25e9},
+                    {"period": "4T23", "receita": 130e9, "ebitda": 60e9, "lucro_liquido": 30e9},
+                ]},
+            ],
+        },
+        {
+            "name": "Balanço",
+            "sections": [
+                {"name": "latest_annual", "ativo": {
+                    "ativo_total": 800_000_000_000,
+                    "caixa": 34_000_000_000,
+                }, "passivo": {
+                    "patrimonio_liquido": 400_000_000_000,
+                    "divida_bruta": 371_000_000_000,
+                    "divida_liquida": 337_000_000_000,
+                }},
+            ],
+        },
+        {
+            "name": "DFC",
+            "sections": [
+                {"name": "latest_annual", "metrics": {
+                    "fco": 180_000_000_000,
+                    "fci": -80_000_000_000,
+                    "fcf": 100_000_000_000,
+                }},
+                {"name": "quarterly_trend", "periods": [
+                    {"period": "1T24", "fco": 40e9, "fci": -20e9, "fcf": 20e9},
+                    {"period": "4T23", "fco": 50e9, "fci": -25e9, "fcf": 25e9},
+                ]},
+            ],
+        },
+        {
+            "name": "Ratios",
+            "sections": [
+                {"name": "ratio_grid", "date": "2024-01-15", "categories": {
+                    "profitability": {"roe": 0.30, "roa": 0.15, "roic": 0.18,
+                                       "gross_margin": 0.40, "net_margin": 0.24},
+                    "liquidity": {"current_ratio": 1.5, "quick_ratio": 1.1,
+                                  "cash_ratio": 0.30, "working_capital": 50e9},
+                    "leverage": {"debt_equity": 0.93, "net_debt_ebitda": 0.82,
+                                 "interest_coverage": 8.0, "cash_flow_to_debt": 0.80},
+                }},
+            ],
+        },
+    ],
+}
+
+
+class TestFinancialsDashboardAdapter:
+    """[v1.5] Tests for the financials_dashboard adapter."""
+
+    def test_returns_5_tabs(self):
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 5
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "DRE", "Balanço", "DFC", "Ratios"]
+
+    def test_overview_kpis_pulled_to_top_level(self):
+        """The Overview tab's KPIs should be promoted to the top-level `kpis` field."""
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        assert len(out["kpis"]) == 6
+        labels = [k["label"] for k in out["kpis"]]
+        assert "Receita Líquida" in labels
+        assert "ROE" in labels
+
+    def test_overview_kpis_formatted_by_unit(self):
+        """KPI values should be pre-formatted strings based on their `unit`."""
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        receita = next(k for k in out["kpis"] if k["label"] == "Receita Líquida")
+        # BRL -> compact format R$ X,XX B
+        assert "R$" in receita["value"]
+        assert receita["format"] == "brl"
+        roe = next(k for k in out["kpis"] if k["label"] == "ROE")
+        # ratio -> pct format XX,XX%
+        assert roe["value"].endswith("%")
+        assert roe["format"] == "pct"
+
+    def test_dre_tab_has_dre_table_and_trend(self):
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        dre_tab = next(t for t in out["tabs"] if t["name"] == "DRE")
+        titles = [s.get("title", "") for s in dre_tab["sections"]]
+        assert any("DRE" in t for t in titles)
+        assert any("Trend" in t for t in titles)
+
+    def test_balanco_tab_has_ativo_and_passivo(self):
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        balanco_tab = next(t for t in out["tabs"] if t["name"] == "Balanço")
+        titles = [s.get("title", "") for s in balanco_tab["sections"]]
+        assert any("Ativo" in t for t in titles)
+        assert any("Passivo" in t for t in titles)
+
+    def test_ratios_tab_is_ratio_grid_section(self):
+        """The Ratios tab should produce a section with type=ratio_grid."""
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        ratios_tab = next(t for t in out["tabs"] if t["name"] == "Ratios")
+        assert len(ratios_tab["sections"]) == 1
+        sec = ratios_tab["sections"][0]
+        assert sec["type"] == "ratio_grid"
+        # categories should be a list of {label, items}
+        assert isinstance(sec["categories"], list)
+        cat_labels = [c["label"] for c in sec["categories"]]
+        assert "Rentabilidade" in cat_labels  # profitability -> PT-BR
+        assert "Liquidez" in cat_labels        # liquidity
+        assert "Endividamento" in cat_labels   # leverage
+
+    def test_ratio_grid_items_have_label_and_value(self):
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        ratios_tab = next(t for t in out["tabs"] if t["name"] == "Ratios")
+        sec = ratios_tab["sections"][0]
+        profitability = next(c for c in sec["categories"] if c["label"] == "Rentabilidade")
+        assert len(profitability["items"]) > 0
+        first_item = profitability["items"][0]
+        assert "label" in first_item
+        assert "value" in first_item
+        # ROE value should be pct-formatted
+        roe_item = next(i for i in profitability["items"] if i["label"] == "ROE")
+        assert roe_item["value"].endswith("%")
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("financials_dashboard",
+                            {"status": "not_found", "error": "company not found"})
+        assert out["sections"][0]["title"] == "Financials Dashboard"
+
+    def test_freshness_section_converted_to_table(self):
+        """The Overview tab's freshness section should become a small table."""
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        overview_tab = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s.get("title", "") for s in overview_tab["sections"]]
+        assert "Data Freshness" in titles
+        freshness_sec = next(s for s in overview_tab["sections"]
+                             if s.get("title") == "Data Freshness")
+        assert freshness_sec["type"] == "table"
+        assert "Database" in freshness_sec["columns"]
+        assert "Last Updated" in freshness_sec["columns"]
+
+
+# ── Synthetic valuation.ratios() result ─────────────────────────────────────
+
+VALUATION_DASHBOARD_INPUT = {
+    "status": "ok",
+    "ticker": "PETR4",
+    "ratios": {
+        "price": 38.5, "price_date": "2024-01-15", "price_source": "investsite",
+        "total_shares": 13e9, "market_cap": 500.5e9,
+        "ev": 570.5e9, "ebitda": 85e9, "ebitda_method": "ebit+da",
+        "lucro_liquido": 120e9, "receita_liquida": 280e9,
+        "patrimonio_liquido": 350e9, "divida_bruta": 100e9, "caixa": 30e9,
+        "p_l": 4.17, "p_vpa": 1.43, "p_ebit": 7.15, "p_fco": 6.26, "p_fcf": 10.01,
+        "psr": 1.79, "ev_ebitda": 6.71, "ev_sales": 2.05, "ev_fcf": 11.41,
+        "dividend_yield": 0.048, "dpa": 0.048,
+        "divida_liquida_ebitda": 0.82,
+        # From compute_all_ratios():
+        "roe": 0.28, "roa": 0.15, "roic": 0.18,
+        "gross_margin": 0.35, "operating_margin": 0.25, "net_margin": 0.20,
+        "ebitda_margin": 0.30, "ocf_margin": 0.286, "fcf_margin": 0.179,
+        "cash_ratio": 0.30, "current_ratio": 1.5, "quick_ratio": 1.10,
+        "working_capital": 50e9,
+        "debt_equity": 0.29, "net_debt_ebitda": 0.82,
+        "interest_coverage": 8.0, "cash_flow_to_debt": 0.80,
+        "asset_turnover": 0.35, "inventory_turnover": 5.0,
+        "receivables_turnover": 8.0, "fixed_asset_turnover": 0.80,
+        "capex_revenue": 0.05,
+        "retention_ratio": 0.50, "sustainable_growth": 0.14,
+        "graham_number": 75.0, "price_to_tangible_book": 1.55,
+        "effective_tax_rate": 0.34,
+    },
+    "sources": {},
+}
+
+
+class TestValuationDashboardAdapter:
+    """[v1.5] Tests for the valuation_dashboard adapter."""
+
+    def test_returns_5_tabs(self):
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 5
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Multiples", "Profitability",
+                         "Liquidity & Leverage", "Efficiency & Growth"]
+
+    def test_overview_kpis_present(self):
+        """Top-level KPIs: P/L, P/VPA, EV/EBITDA, Div Yield, Market Cap, ROE."""
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        assert len(out["kpis"]) == 6
+        labels = [k["label"] for k in out["kpis"]]
+        assert "P/L" in labels
+        assert "P/VPA" in labels
+        assert "EV/EBITDA" in labels
+        assert "Div Yield" in labels
+        assert "Market Cap" in labels
+        assert "ROE" in labels
+
+    def test_overview_kpis_preformatted(self):
+        """KPI values are pre-formatted strings (apply_fmt applied)."""
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        pl = next(k for k in out["kpis"] if k["label"] == "P/L")
+        # num spec -> "4,17" (BR separator)
+        assert "," in pl["value"]
+        # Market Cap -> brl compact -> contains "R$"
+        mcap = next(k for k in out["kpis"] if k["label"] == "Market Cap")
+        assert "R$" in mcap["value"]
+        # Div Yield -> pct -> ends with %
+        dy = next(k for k in out["kpis"] if k["label"] == "Div Yield")
+        assert dy["value"].endswith("%")
+
+    def test_overview_tab_has_key_value_table(self):
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        overview_tab = next(t for t in out["tabs"] if t["name"] == "Overview")
+        assert len(overview_tab["sections"]) >= 1
+        sec = overview_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["columns"] == ["Indicador", "Valor"]
+        # Should include headline metrics
+        all_rows_text = " ".join(str(r) for r in sec["rows"])
+        assert "Market Cap" in all_rows_text
+        assert "P/L" in all_rows_text
+
+    def test_multiples_tab_has_all_9_multiples(self):
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        multiples_tab = next(t for t in out["tabs"] if t["name"] == "Multiples")
+        sec = multiples_tab["sections"][0]
+        labels_in_table = [r[0] for r in sec["rows"]]
+        for expected in ("P/L", "P/VPA", "P/EBIT", "P/FCO", "P/FCF",
+                         "PSR", "EV/EBITDA", "EV/Sales", "EV/FCF"):
+            assert expected in labels_in_table, f"Missing multiple: {expected}"
+
+    def test_profitability_tab_has_roe_roa_roic_margins(self):
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        profitability_tab = next(t for t in out["tabs"] if t["name"] == "Profitability")
+        sec = profitability_tab["sections"][0]
+        labels_in_table = [r[0] for r in sec["rows"]]
+        for expected in ("ROE", "ROA", "ROIC", "Marg. Bruta",
+                         "Marg. Líquida", "Marg. EBITDA"):
+            assert expected in labels_in_table, f"Missing profitability metric: {expected}"
+
+    def test_liquidity_leverage_tab_has_all_metrics(self):
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        ll_tab = next(t for t in out["tabs"] if t["name"] == "Liquidity & Leverage")
+        sec = ll_tab["sections"][0]
+        labels_in_table = [r[0] for r in sec["rows"]]
+        for expected in ("Liquidez Corrente", "Liquidez Seca", "Liquidez Imediata",
+                         "Dívida/PL", "Dív. Líq/EBITDA", "Cobertura Juros"):
+            assert expected in labels_in_table, f"Missing liquidity/leverage metric: {expected}"
+
+    def test_efficiency_growth_tab_has_all_metrics(self):
+        out = apply_adapter("valuation_dashboard", VALUATION_DASHBOARD_INPUT)
+        eg_tab = next(t for t in out["tabs"] if t["name"] == "Efficiency & Growth")
+        sec = eg_tab["sections"][0]
+        labels_in_table = [r[0] for r in sec["rows"]]
+        for expected in ("Giro do Ativo", "Giro Estoque",
+                         "Taxa de Retenção", "Crescimento Sustentável",
+                         "Taxa de Tributo Efetiva"):
+            assert expected in labels_in_table, f"Missing efficiency/growth metric: {expected}"
+
+    def test_summary_input_adds_availability_section(self):
+        """If the input has data_availability (summary() was called), the
+        Overview tab should include a Data Source Availability section."""
+        result = dict(VALUATION_DASHBOARD_INPUT)
+        result["data_availability"] = {
+            "price": "ok", "dfp_ttm": "ok", "fre_shares": "ok",
+        }
+        out = apply_adapter("valuation_dashboard", result)
+        overview_tab = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s.get("title", "") for s in overview_tab["sections"]]
+        assert "Data Source Availability" in titles
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("valuation_dashboard",
+                            {"status": "error", "error": "price unavailable"})
+        assert out["sections"][0]["title"] == "Valuation Dashboard"
+
+    def test_missing_ratios_renders_error(self):
+        """If the result has no ratios dict, the adapter should error gracefully."""
+        out = apply_adapter("valuation_dashboard",
+                            {"status": "ok", "ticker": "PETR4"})
+        # Falls through to _error_table (no ratios to render)
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Valuation Dashboard"
+

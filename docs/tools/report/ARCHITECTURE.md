@@ -23,7 +23,7 @@
 | `tools/report_ops/timeline.py` | SVG Gantt chart builder |
 | `tools/report_ops/scorecard.py` | RAG status + radar chart builder |
 | `tools/report_ops/table.py` | Tabular statement builder (v1.2) |
-| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.3, 48 adapters across 11 modules) |
+| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.5, 66 adapters across 16 modules) |
 | `tools/report_ops/actions/*.py` | Atomic action wrappers (12 files) |
 | `tools/report_ops/templates/*.html` | Jinja2 templates (11 files) |
 | `tests/tools/report/` | 21 test files + conftest.py |
@@ -59,7 +59,19 @@ tools/report_ops/
 │   ├── financials.py       # financials_{quarterly,annual,summary}
 │   ├── valuation.py        # valuation_{ratios,summary}
 │   ├── shareholders.py     # shareholders_{shareholders,free_float,equity_structure,summary}
-│   └── dividends.py        # dividends_{history,annual,summary}
+│   ├── dividends.py        # dividends_{history,annual,summary}
+│   ├── comparison.py       # comparison_{side_by_side,summary,growth}  (v1.2.1+)
+│   ├── screener.py         # screener_sector  (v1.2.5+)
+│   ├── historical.py       # historical_*  (v1.3+)
+│   ├── governance.py       # governance_*  (v1.3+)
+│   ├── insider.py          # insider_*  (v1.3+)
+│   ├── backtest.py         # backtest_*  (v1.3+)
+│   ├── cotahist.py         # cotahist table adapters  (v1.3+)
+│   ├── cotahist_chart.py   # cotahist_close_chart  (v1.2.3+)
+│   ├── cotahist_candlestick.py  # cotahist_candlestick_chart  (v1.2.6+)
+│   ├── financials_chart.py # financials_quarterly_chart  (v1.2.2+)
+│   ├── financials_dashboard.py  # financials_dashboard  (v1.5 — 5-tab dashboard adapter)
+│   └── valuation_dashboard.py   # valuation_dashboard  (v1.5 — 5-tab dashboard adapter)
 └── actions/                # Atomic action wrappers (one file per action)
     ├── chart.py            # @register_action("report", "chart")
     ├── map.py
@@ -76,7 +88,7 @@ tools/report_ops/
 
 tools/report_ops/templates/
 ├── base.html           # Layout + sidebar + theme toggle + CSS
-├── macros.html         # Reusable components (kpi_card, data_table, bug_card, etc.)
+├── macros.html         # Reusable components (kpi_card, data_table, bug_card, statement_table, ratio_grid, two_column, ...)  — v1.5 added statement/ratio_grid/two_column
 ├── chart.html          # Dedicated Chart.js canvas template (NEW v1.1)
 ├── report.html         # Single-scroll report sections
 ├── dashboard.html      # Multi-panel tabs + KPIs
@@ -182,4 +194,4 @@ tests/tools/report/
 
 ---
 
-*Last updated: 2026-07-25 (v1.2). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-29 (v1.5). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

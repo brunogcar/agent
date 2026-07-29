@@ -21,7 +21,8 @@ MANIFEST = {
         "quarterly: standalone quarters derived from ITR cumulative + DFP (default). "
         "annual: annual summary from DFP. "
         "complete: full statements by grupo + key account codes. "
-        "summary: combined latest annual + quarterly."
+        "summary: combined latest annual + quarterly. "
+        "dashboard: multi-tab composition (Overview/DRE/Balanço/DFC/Ratios)."
     ),
     "source":  "dfp.db (annual) + itr.db (quarterly cumulative) + dfp.db DVA (proventos)",
     "storage": "read-only — no own database",
@@ -77,6 +78,17 @@ MANIFEST = {
                 'skill(domain="cvm", sub_domain="financials", mode="summary", params=\'{"company":"PETR4"}\')',
             ],
         },
+        "dashboard": {
+            "description": "Multi-tab financial dashboard (thin composition of annual() + quarterly() + compute_all_ratios()). Tabs: Overview (KPI cards), DRE, Balanço, DFC, Ratios. Optimized for the report tool's dashboard action.",
+            "include_in_all": False,
+            "params": {
+                "company":     "str. Required.",
+                "consolidado": "int. Default: 1.",
+            },
+            "examples": [
+                'skill(domain="cvm", sub_domain="financials", mode="dashboard", params=\'{"company":"PETR4"}\')',
+            ],
+        },
     },
 }
 
@@ -91,7 +103,7 @@ def route(mode: str = "", **kwargs) -> dict:
                 "error": f"Unknown mode '{mode}'. Available: {list(MANIFEST['modes'].keys())}"}
 
     from skills.cvm.financials.financials import (
-        quarterly, annual, complete, summary,
+        quarterly, annual, complete, summary, dashboard,
     )
 
     dispatch = {
@@ -99,6 +111,7 @@ def route(mode: str = "", **kwargs) -> dict:
         "annual": annual,
         "complete": complete,
         "summary": summary,
+        "dashboard": dashboard,
     }
 
     fn = dispatch[mode]

@@ -109,5 +109,6 @@ register_metric(MetricSpec(
     ratio_fn=effective_tax_rate_at,
     history_fn=effective_tax_rate_history,
     engines=["tax", "ebt"],
+    category="tax",
     aliases=["taxa_efetiva", "etr", "tax_rate", "effective_tax", "aliquota_efetiva"],
 ))

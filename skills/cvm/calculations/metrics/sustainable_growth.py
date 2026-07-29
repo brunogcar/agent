@@ -111,5 +111,6 @@ register_metric(MetricSpec(
     ratio_fn=sustainable_growth_at,
     history_fn=sustainable_growth_history,
     engines=["earnings", "pl", "dividends"],
+    category="growth",
     aliases=["crescimento_sustentavel", "sgr", "gs"],
 ))

@@ -99,5 +99,6 @@ register_metric(MetricSpec(
     ratio_fn=cash_ratio_at,
     history_fn=cash_ratio_history,
     engines=["cash", "current_liabilities"],
+    category="liquidity",
     aliases=["razao_caixa", "cash_ratio", "cr_caixa"],
 ))

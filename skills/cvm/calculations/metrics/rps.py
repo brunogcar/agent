@@ -162,5 +162,6 @@ register_metric(MetricSpec(
     ratio_fn=psr_at,
     history_fn=rps_history,
     engines=["price", "revenue", "shares"],
+    category="per_share",
     aliases=["psr", "p/sr", "price_sales", "preco_venda", "p_venda"],
 ))

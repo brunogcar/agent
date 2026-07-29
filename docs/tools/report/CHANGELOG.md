@@ -6,6 +6,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v1.5 | 2026-07-29 | **Dashboard section types + 2 dashboard adapters.** New section types for `dashboard` action: `statement` (hierarchical rows with indent/subtotal via `statement_table` macro), `ratio_grid` (categorized KPI cards via `ratio_grid` macro), `two_column` (side-by-side balance sheet layout via `two_column` macro). New CSS for all 3. `dashboard.html` template updated to dispatch on the new `sec.type` values. New macros in `macros.html`: `statement_table`, `ratio_grid`, `two_column`. 2 new adapters: `financials_dashboard` (consumes `financials.dashboard()` 5-tab result, promotes Overview KPIs, converts DRE/Balanço/DFC/Ratios tabs to `table`/`ratio_grid` sections), `valuation_dashboard` (consumes `valuation.ratios()`/`summary()`, produces 5 themed tabs Overview/Multiples/Profitability/Liquidity & Leverage/Efficiency & Growth with 6 pre-formatted KPI cards). Total 66 adapters (was 64). |
 | v1.2.6 | 2026-07-25 | **Candlestick chart + screener financials.** (1) New cotahist_candlestick_chart adapter — OHLC candlestick chart from COTAHIST using chartjs-chart-financial plugin. charts.py detects _candlestick shape, chart.html loads financial plugin CDN conditionally. (2) screener_sector adapter enriched with 7 new columns (Receita, EBITDA, Lucro, Marg. EBITDA, Marg. Liquida, Cresc. Receita, Payout). Total 19 adapters. |
 | v1.2.5 | 2026-07-25 | **Screener adapter.** New screener_sector adapter for the new cvm/screener skill. Peers table sorted by P/L cheapest-first + KPI strip with sector medians. Total 18 adapters. |
 | v1.2.4 | 2026-07-25 | **COTAHIST adapter fix.** v1.2.3 cotahist_close_chart accepted ticker strings, but apply_adapter() requires dicts (all adapters receive dicts). Removed the string path — adapter now accepts COTAHIST query result dicts only. Use the 2-step pattern: query COTAHIST first, then pipe result to chart. |
@@ -236,4 +237,4 @@ These were caught by multi-LLM review (Gemini, DeepSeek, Mistral, Qwen, GLM, mim
 
 ---
 
-*Last updated: 2026-07-25 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for action details, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

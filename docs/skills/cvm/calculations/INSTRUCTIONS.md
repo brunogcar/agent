@@ -4,7 +4,7 @@
 
 This library is the **pattern template** for central auto-discovery + registry architecture. Follow these rules when editing this library OR when copying the pattern to a new skill.
 
-**Current scope (v1.3):** 30 engines in 7 categories (market, shares, dre, bpa, bpp, dfc, dva) + 37 metrics in 2 types (9 per-share+ratio and 28 fundamental ratio).
+**Current scope (v1.5):** 30 engines in 7 categories (market, shares, dre, bpa, bpp, dfc, dva) + 37 metrics in 2 types (9 per-share+ratio and 28 fundamental ratio) tagged across 8 metric categories (valuation, profitability, liquidity, leverage, efficiency, growth, per_share, tax).
 
 ## ❌ NEVER DO
 
@@ -30,10 +30,12 @@ This library is the **pattern template** for central auto-discovery + registry a
 2. **Always follow the engine contract** — `<quantity>_at(company, date) -> float | None` + `<quantity>_periods(company) -> list[dict]` + `register_engine(EngineSpec(...))` at module level. Every engine must have all three.
 3. **Always follow the metric contract** — For per-share+ratio metrics (Type 1): `<name>_at` (per-share) + `<ratio>_at` (ratio) + optional `<bonus>_at` + `<name>_history` + `register_metric(MetricSpec(...))`. For fundamental ratios (Type 2): `<ratio>_at` + `<name>_history` + `register_metric(MetricSpec(..., per_share_*=None))`. Every metric must have `history_fn` + `ratio_fn` + `register_metric`.
 4. **Always set `category` when registering an engine** — one of `market`, `shares`, `dre`, `bpa`, `bpp`, `dfc`, `dva`, or `other`. The default is `"other"` but should be overridden for every real engine. `list_engines(category="dre")` relies on this for backtest discovery.
-5. **Always include aliases (Portuguese + English)** — `["pe", "pl", "p/l", "preco_lucro"]` for lpa, `["dy", "dividend_yield", "yld", "payout", "rendimento", "rendimento_dividendo", "div_yield"]` for dpa, `["return_on_equity", "retorno_pl", "retorno_patrimonio"]` for roe. Users expect to call `summary(metric="retorno_pl")`, not just `summary(metric="roe")`.
-6. **Always set `per_share_label=None` for fundamental ratios** — and `per_share_key=None`, `per_share_fn=None`. Consumer skills' chart adapters + summary adapters inspect `per_share_label`: if `None`, single-dataset chart + skip per-share KPI/row.
-7. **Always mock the registry spec in tests** — `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`. Not the module function. See NEVER DO #11.
-8. **Always import from the central `_registry.py`** — `from skills.cvm.calculations._registry import MetricSpec, register_metric`. NOT from `metrics._registry` (old v1.2 location, deleted in v1.3). The central registry at `skills/cvm/calculations/_registry.py` is the ONLY location.
+5. **Always set `category` when registering a metric** (v1.5) — one of: `valuation`, `profitability`, `liquidity`, `leverage`, `efficiency`, `growth`, `per_share`, `tax`, or `other`. The default is `"other"` but should be overridden for every real metric. `list_metrics_by_category("liquidity")` + `compute_all_ratios(company, date, categories=[...])` rely on this for filtered discovery. All 37 existing metrics are tagged as of v1.5 — new metrics MUST set a category at registration time so consumer skills' `compute_all_ratios()` calls continue to discover them automatically.
+6. **Always include aliases (Portuguese + English)** — `["pe", "pl", "p/l", "preco_lucro"]` for lpa, `["dy", "dividend_yield", "yld", "payout", "rendimento", "rendimento_dividendo", "div_yield"]` for dpa, `["return_on_equity", "retorno_pl", "retorno_patrimonio"]` for roe. Users expect to call `summary(metric="retorno_pl")`, not just `summary(metric="roe")`.
+7. **Always set `per_share_label=None` for fundamental ratios** — and `per_share_key=None`, `per_share_fn=None`. Consumer skills' chart adapters + summary adapters inspect `per_share_label`: if `None`, single-dataset chart + skip per-share KPI/row.
+8. **Always mock the registry spec in tests** — `monkeypatch.setattr(METRICS["lpa"], "history_fn", fake_fn)`. Not the module function. See NEVER DO #11.
+9. **Always import from the central `_registry.py`** — `from skills.cvm.calculations._registry import MetricSpec, register_metric`. NOT from `metrics._registry` (old v1.2 location, deleted in v1.3). The central registry at `skills/cvm/calculations/_registry.py` is the ONLY location.
+10. **Always use `compute_all_ratios()` in consumer skills** (v1.5) — never hardcode N individual metric imports. `from skills.cvm.calculations._registry import compute_all_ratios` then `ratios = compute_all_ratios(company, date)`. Use `categories=[...]` to fetch a subset (e.g. `categories=["liquidity", "leverage"]` for a balance-sheet panel) or `exclude=[...]` to drop a few. New metrics added to `metrics/` + `register_metric()` appear automatically in the returned dict — no consumer edits required.
 
 ---
 
@@ -118,7 +120,7 @@ calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + 
 
 ## 📐 Auto-Discovery Rules
 
-1. **`_registry.py` (top level)** — the CENTRAL auto-discovery module (this is rule #1). Globs `engines/*.py` AND `metrics/*.py` (excluding `__init__.py`). Imports each via `importlib.import_module()`. This triggers `register_engine()` and `register_metric()` calls. Idempotent (uses `_done` flag). Also holds `list_engines(category=...)`, `list_metrics()`, `list_all_metric_names()`, `list_engine_categories()`, `resolve_metric()`.
+1. **`_registry.py` (top level)** — the CENTRAL auto-discovery module (this is rule #1). Globs `engines/*.py` AND `metrics/*.py` (excluding `__init__.py`). Imports each via `importlib.import_module()`. This triggers `register_engine()` and `register_metric()` calls. Idempotent (uses `_done` flag). Also holds `list_engines(category=...)`, `list_metrics()`, `list_all_metric_names()`, `list_engine_categories()`, `list_metric_categories()`, `list_metrics_by_category(category)`, `resolve_metric()`, and `compute_all_ratios(company, date, categories=None, exclude=None)` (v1.5 — single entry point for consumer skills).
 2. **`engines/__init__.py`** — minimal docstring (NO auto-discovery code, NO manual inventory). Auto-discovery is in the central `_registry.py`.
 3. **`metrics/__init__.py`** — minimal docstring (NO auto-discovery code, NO manual inventory). Auto-discovery is in the central `_registry.py`.
 4. **Adding an engine = 1 file in `engines/` + `register_engine()`.** It's immediately available for metrics to import. No edits to `_registry.py`, `engines/__init__.py`, or consumer skills.
@@ -164,11 +166,11 @@ calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + 
 
 If you're creating a new skill that follows this pattern:
 
-- [ ] **`_registry.py` (top level)** — `EngineSpec` (with `category`) + `MetricSpec` (with optional `per_share_*`) + `register_engine` + `register_metric` + auto-discovery (globs both `engines/` and `metrics/`) + `resolve_metric` + `list_engines(category=...)` + `list_metrics()` + `list_all_metric_names()` + `list_engine_categories()` + aliases
+- [ ] **`_registry.py` (top level)** — `EngineSpec` (with `category`) + `MetricSpec` (with optional `per_share_*` AND `category` — v1.5) + `register_engine` + `register_metric` + auto-discovery (globs both `engines/` and `metrics/`) + `resolve_metric` + `list_engines(category=...)` + `list_metrics()` + `list_all_metric_names()` + `list_engine_categories()` + `list_metric_categories()` + `list_metrics_by_category(category)` + `compute_all_ratios(company, date, categories=None, exclude=None)` (v1.5) + aliases
 - [ ] **`engines/__init__.py`** — minimal docstring (NO auto-discovery code, NO manual inventory list)
 - [ ] **`engines/<quantity>.py`** — one per raw quantity, follows engine contract + `register_engine(EngineSpec(..., category="..."))` at module level. Categories are domain-specific (calculations uses `market`/`shares`/`dre`/`bpa`/`bpp`/`dfc`; your skill picks its own)
 - [ ] **`metrics/__init__.py`** — minimal docstring (NO auto-discovery code, NO manual inventory list)
-- [ ] **`metrics/<name>.py`** — one per metric, calls `register_metric(MetricSpec(...))` at module level. Use `per_share_*=None` for fundamental ratios. Include Portuguese + English aliases.
+- [ ] **`metrics/<name>.py`** — one per metric, calls `register_metric(MetricSpec(..., category="..."))` at module level (v1.5: `category` is required — one of valuation, profitability, liquidity, leverage, efficiency, growth, per_share, tax, other). Use `per_share_*=None` for fundamental ratios. Include Portuguese + English aliases.
 - [ ] **`<skill>.py`** — `_metric_history()` reads from registry, auto-generates `<metric>_history` functions. Handle BOTH Type 1 and Type 2 metrics via `spec.per_share_key` None-check.
 - [ ] **`__init__.py`** (skill manifest) — MANIFEST modes auto-generate from registry
 - [ ] **`adapters/<skill>.py`** — chart adapters auto-register from registry. Inspect `spec.per_share_label`: dual-axis if set, single-dataset if `None`.
@@ -179,4 +181,4 @@ If you're creating a new skill that follows this pattern:
 
 ---
 
-*Last updated: 2026-07-28 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*

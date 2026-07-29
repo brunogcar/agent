@@ -137,6 +137,7 @@ register_metric(MetricSpec(
     ratio_fn=interest_coverage_at,
     history_fn=interest_coverage_history,
     engines=["ebit", "financial_result"],
+    category="leverage",
     aliases=[
         "cobertura_juros", "ic", "icr",
         "cobertura_despesa_financeira",

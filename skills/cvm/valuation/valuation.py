@@ -2,6 +2,21 @@
 
 Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE shares.
 
+[v1.5] REFACTOR -- calculations-backed metrics now come from compute_all_ratios().
+  - Removed 25 individual metric imports (roe_at, roa_at, gross_margin_at, etc.)
+    + their loops in ratios().
+  - Replaced with a single `compute_all_ratios(ticker, today)` call (no category
+    filter -- valuation wants everything: profitability, liquidity, leverage,
+    efficiency, growth, valuation, per_share, tax).
+  - Manual ratio computation (P/L, P/VPA, EV, PSR, DPA, Div Yield, market_cap,
+    divida_liquida_ebitda) KEEPT -- not in the calculations registry.
+  - Manual ROIC + Graham Number calls REMOVED -- they're in the registry and
+    come through compute_all_ratios().
+  - Engines (ttm_earnings_at, revenue_at, ebit_at, etc.) KEEPT -- they feed
+    the manual market_cap/EV/EBITDA/FCF computations.
+  - summary() headline_v13_metrics block REMOVED -- all metrics are now in
+    ratios() directly, so the headline block was redundant.
+
 [v2.0.0] PHASE 2B REFACTOR -- data fetching now via calculations engines.
   - _get_financials_ttm() (86 lines) REMOVED -> direct engine calls
   - _get_shares_outstanding() (88 lines) REMOVED -> shares_at() engine
@@ -11,15 +26,6 @@ Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE s
     calculations price engine, which is COTAHIST-only)
   - ratios() KEEPS manual ratio computation logic (UNIT ticker handling,
     brapi market_cap, investsite P/L fallback) -- feeds it data from engines
-  - ROIC now uses calculations.metrics.roic (actual tax rate from DRE 3.08,
-    not the 34% IRPJ+CSLL approximation in v1.0.14)
-  - Graham Number now uses calculations.metrics.graham_number (same formula,
-    delegated to canonical implementation)
-  - NEW ratios added from calculations metrics:
-      roe, roa, margem_bruta, margem_operacional, margem_liquida,
-      divida_pl, giro_ativos, liquidez_corrente
-  - All existing ratio keys preserved (p_l, p_vpa, ev_ebitda, etc.) so
-    comparison + screener callers don't break.
 
 [v1.0.14] ROIC + Graham number + TTM valuation + data freshness.
 [v1.0.13] Back-calculate market_cap from investsite P/L for unit tickers.
@@ -49,38 +55,12 @@ from skills.cvm.calculations.engines.operating_cf import operating_cf_at
 from skills.cvm.calculations.engines.investing_cf import investing_cf_at
 from skills.cvm.calculations.engines.dividends import dividends_at
 
-# Phase 2B: calculations metrics for ROIC + Graham + 8 new fundamental ratios.
-# These compose engines internally and handle None/edge cases gracefully.
-from skills.cvm.calculations.metrics.roic import roic_at
-from skills.cvm.calculations.metrics.graham_number import graham_number_at
-from skills.cvm.calculations.metrics.roe import roe_at
-from skills.cvm.calculations.metrics.roa import roa_at
-from skills.cvm.calculations.metrics.gross_margin import gross_margin_at
-from skills.cvm.calculations.metrics.operating_margin import operating_margin_at
-from skills.cvm.calculations.metrics.net_margin import net_margin_at
-from skills.cvm.calculations.metrics.debt_equity import debt_equity_at
-from skills.cvm.calculations.metrics.asset_turnover import asset_turnover_at
-from skills.cvm.calculations.metrics.current_ratio import current_ratio_at
-
-# [v1.4-valuation] Phase 2B+: 15 new v1.3 metrics from calculations.metrics.
-# Each composes engines internally and returns None for missing/edge data.
-# Grouped: EV multiples -> liquidity -> margins -> capital structure ->
-# growth -> coverage -> turnover -> price/tangible.
-from skills.cvm.calculations.metrics.ev_sales import ev_sales_at
-from skills.cvm.calculations.metrics.ev_fcf import ev_fcf_at
-from skills.cvm.calculations.metrics.cash_ratio import cash_ratio_at
-from skills.cvm.calculations.metrics.quick_ratio import quick_ratio_at
-from skills.cvm.calculations.metrics.ocf_margin import ocf_margin_at
-from skills.cvm.calculations.metrics.fcf_margin import fcf_margin_at
-from skills.cvm.calculations.metrics.working_capital import working_capital_at
-from skills.cvm.calculations.metrics.cash_flow_to_debt import cash_flow_to_debt_at
-from skills.cvm.calculations.metrics.retention_ratio import retention_ratio_at
-from skills.cvm.calculations.metrics.sustainable_growth import sustainable_growth_at
-from skills.cvm.calculations.metrics.interest_coverage import interest_coverage_at
-from skills.cvm.calculations.metrics.inventory_turnover import inventory_turnover_at
-from skills.cvm.calculations.metrics.receivables_turnover import receivables_turnover_at
-from skills.cvm.calculations.metrics.fixed_asset_turnover import fixed_asset_turnover_at
-from skills.cvm.calculations.metrics.price_to_tangible_book import p_tangible_book_at
+# [v1.5] Single entry point for all calculations-backed metrics.
+# compute_all_ratios() walks the registry and returns a flat dict of
+# {metric_name: value_or_None} for ALL 37 metrics (no category filter --
+# valuation wants everything). New metrics registered via register_metric()
+# appear here automatically without touching valuation.py.
+from skills.cvm.calculations._registry import compute_all_ratios
 
 
 def _safe_call(fn: Callable, *args, **kwargs):
@@ -101,21 +81,26 @@ def _safe_call(fn: Callable, *args, **kwargs):
 def ratios(company: str = "") -> dict:
     """Compute valuation ratios from b3 price + CVM financials + FRE shares.
 
+    [v1.5] All calculations-backed metrics now come from compute_all_ratios().
+      - Manual ratios (P/L, P/VPA, EV, PSR, DPA, Div Yield, market_cap,
+        divida_liquida_ebitda) -- NOT in the calculations registry; computed
+        manually from brapi_market_cap + engines.
+      - Calculations-backed ratios (ROE, ROA, ROIC, Graham Number, margins,
+        turnover, liquidity, EV multiples, per-share, tax, etc.) -- ALL 37
+        metrics come from compute_all_ratios(ticker, today) with no category
+        filter. New metrics registered via register_metric() appear here
+        automatically without touching this file.
+
     [v2.0.0] Data fetching now via calculations engines (Phase 2B refactor):
       - TTM financials (earnings, revenue, ebit, da, FCO, FCI) from engines
       - Snapshot financials (PL, debt, cash, shares) from engines
       - DPA (per-share, TTM) from dividends engine
-      - ROIC + Graham Number + 8 new fundamental ratios from calculations metrics
+      - Manual market-cap-based ratios use brapi_market_cap with UNIT +
+        investsite fallback (NOT in the calculations registry).
 
     Returns: P/L, P/VPA, EV, P/EBIT, P/FCO, PSR, EV/EBITDA, DPA, Div Yield,
-    ROIC, Graham Number, ROE, ROA, Margins, D/PL, Asset Turnover, Current Ratio,
-    Market Cap, + data_freshness.
-
-    [v1.4-valuation] 15 NEW v1.3 metrics also returned:
-      EV/Sales, EV/FCF, Cash Ratio, Quick Ratio, OCF Margin, FCF Margin,
-      Working Capital, Cash Flow to Debt, Retention Ratio, Sustainable Growth,
-      Interest Coverage, Inventory Turnover, Receivables Turnover,
-      Fixed Asset Turnover, Price to Tangible Book.
+    ROIC, Graham Number, ROE, ROA, Margins, D/PL, Asset Turnover, Current
+    Ratio, Market Cap, + all 37 calculations-backed metrics + data_freshness.
     """
     if not company:
         return {"status": "error", "error": "company (ticker) is required"}
@@ -318,69 +303,53 @@ def ratios(company: str = "") -> dict:
 
     ratios_result["divida_liquida_ebitda"] = _safe_div(divida_liquida, ebitda)
 
-    # [v2.0.0] ROIC via calculations metric -- uses ACTUAL tax (DRE 3.08 IR+CSLL),
-    # not the 34% IRPJ+CSLL approximation in v1.0.14. Better fidelity.
-    # Invested Capital = PL + Debt - Cash (with cash subtraction; v1.9 metric).
-    roic_val = _safe_call(roic_at, ticker, today)
-    ratios_result["roic"] = roic_val
-    # roic_tax_rate is now actual (variable per period) -- not a fixed 0.34.
-    # Leave the key as None for backward-compat; consumers should treat as
-    # "actual tax used" not "34% approximation".
-    ratios_result["roic_tax_rate"] = None
+    # [v1.5] ALL calculations-backed ratios via the registry's single entry point.
+    # compute_all_ratios() walks the METRICS dict (auto-discovered from metrics/*.py)
+    # and returns {metric_name: value_or_None} for ALL 37 metrics, no category
+    # filter -- valuation wants everything: profitability, liquidity, leverage,
+    # efficiency, growth, valuation, per_share, tax. New metrics registered via
+    # register_metric() appear here automatically without touching this file.
+    #
+    # NOTE: this OVERRIDES some of the manual computations above for keys that
+    # exist in BOTH places (ev_ebitda, p_ebit, p_fco, p_fcf, vpa, dpa). The
+    # registry uses COTAHIST price * FRE shares for market cap; the manual
+    # computations above use brapi_market_cap with investsite/UNIT fallback.
+    # The registry versions win (canonical implementation). Manual keys that
+    # have NO registry counterpart (p_l, p_vpa, ev, psr, dividend_yield,
+    # divida_liquida_ebitda, market_cap) are preserved as-is.
+    calc_ratios = compute_all_ratios(ticker, today)
+    ratios_result.update(calc_ratios)
 
-    # [v2.0.0] Graham Number via calculations metric (same formula as v1.0.14,
-    # delegated to the canonical implementation in metrics.graham_number).
-    ratios_result["graham_number"] = _safe_call(graham_number_at, ticker, today)
+    # [v1.5] Preserve manual per-share values that compute_all_ratios overwrites.
+    # compute_all_ratios calls ratio_fn (not per_share_fn) for Type 1 metrics,
+    # so "vpa" gets P/VPA (ratio) and "dpa" gets Div Yield (ratio). But the
+    # manual code above sets "vpa" to the per-share VPA and "dpa" to per-share
+    # DPA. Restore the per-share values — the ratios are available under their
+    # own keys (pvpa, dy) from the registry.
+    ratios_result["vpa"] = vpa  # per-share VPA (PL / shares)
+    ratios_result["dpa"] = dpa_ttm  # per-share DPA (dividends per share TTM)
 
-    # [v2.0.0] NEW fundamental ratios from calculations metrics.
-    # Each composes engines internally and returns None for missing/edge data.
-    # All wrapped in _safe_call so a failure in one (e.g., gross_profit not
-    # filed for a small-cap) doesn't poison the rest.
-    new_metrics: list[tuple[str, Callable]] = [
-        ("roe", roe_at),
-        ("roa", roa_at),
-        ("margem_bruta", gross_margin_at),
-        ("margem_operacional", operating_margin_at),
-        ("margem_liquida", net_margin_at),
-        ("divida_pl", debt_equity_at),
-        ("giro_ativos", asset_turnover_at),
-        ("liquidez_corrente", current_ratio_at),
-    ]
-    for key, fn in new_metrics:
-        ratios_result[key] = _safe_call(fn, ticker, today)
+    # [v1.5] Backward-compatibility aliases: Portuguese keys that comparison +
+    # screener skills read. These map to the canonical English registry keys.
+    # The registry returns English keys (gross_margin, debt_equity, etc.) but
+    # downstream skills were wired with Portuguese keys in v1.2-v1.4. These
+    # aliases ensure backward compat — both English and Portuguese keys work.
+    _pt_aliases = {
+        "margem_bruta": "gross_margin",
+        "margem_operacional": "operating_margin",
+        "margem_liquida": "net_margin",
+        "divida_pl": "debt_equity",
+        "giro_ativos": "asset_turnover",
+        "liquidez_corrente": "current_ratio",
+    }
+    for pt_key, en_key in _pt_aliases.items():
+        if pt_key not in ratios_result and en_key in calc_ratios:
+            ratios_result[pt_key] = calc_ratios[en_key]
 
-    # [v1.4-valuation] Phase 2B+: 15 NEW v1.3 metrics from calculations.metrics.
-    # Same _safe_call pattern as above -- a FileNotFoundError in one (e.g., ITR
-    # db missing in test env) returns None without poisoning the rest.
-    # Grouped by family for readability:
-    #   - EV multiples:      ev_sales, ev_fcf
-    #   - Liquidity (extra): cash_ratio, quick_ratio
-    #   - Margins (cash):    ocf_margin, fcf_margin
-    #   - Capital structure: working_capital, cash_flow_to_debt
-    #   - Growth:            retention_ratio, sustainable_growth
-    #   - Coverage:          interest_coverage
-    #   - Turnover:          inventory_turnover, receivables_turnover,
-    #                        fixed_asset_turnover
-    #   - Price/Tangible:    p_tangible_book
-    v13_new_metrics: list[tuple[str, Callable]] = [
-        ("ev_sales", ev_sales_at),
-        ("ev_fcf", ev_fcf_at),
-        ("cash_ratio", cash_ratio_at),
-        ("quick_ratio", quick_ratio_at),
-        ("ocf_margin", ocf_margin_at),
-        ("fcf_margin", fcf_margin_at),
-        ("working_capital", working_capital_at),
-        ("cash_flow_to_debt", cash_flow_to_debt_at),
-        ("retention_ratio", retention_ratio_at),
-        ("sustainable_growth", sustainable_growth_at),
-        ("interest_coverage", interest_coverage_at),
-        ("inventory_turnover", inventory_turnover_at),
-        ("receivables_turnover", receivables_turnover_at),
-        ("fixed_asset_turnover", fixed_asset_turnover_at),
-        ("p_tangible_book", p_tangible_book_at),
-    ]
-    for key, fn in v13_new_metrics:
-        ratios_result[key] = _safe_call(fn, ticker, today)
+    # roic_tax_rate is no longer computed manually (was 0.34 in v1.0.14, then
+    # set to None in v2.0.0 when ROIC moved to the actual-tax metric). Kept
+    # for backward-compat with consumers that read this key.
+    ratios_result.setdefault("roic_tax_rate", None)
 
     result["ratios"] = ratios_result
 
@@ -392,7 +361,12 @@ def ratios(company: str = "") -> dict:
 # ── Mode: summary ────────────────────────────────────────────────────────────
 
 def summary(company: str = "") -> dict:
-    """Combined: ratios + data source status (which DBs are synced)."""
+    """Combined: ratios + data source status (which DBs are synced).
+
+    [v1.5] The headline_v13_metrics block has been removed -- all metrics are
+    now in ratios() directly via compute_all_ratios(), so a separate headline
+    block was redundant.
+    """
     r = ratios(company=company)
     if r.get("status") != "ok":
         return r
@@ -402,23 +376,6 @@ def summary(company: str = "") -> dict:
         "price_source": r["sources"].get("price", {}).get("source", "unknown"),
         "dfp_ttm": r["sources"].get("financials", {}).get("status", "missing"),
         "fre_shares": r["sources"].get("shares", {}).get("status", "missing"),
-    }
-
-    # [v1.4-valuation] Surface the most important new v1.3 metrics at the top
-    # level of summary() for quick scanning. Values are pulled from the already
-    # computed ratios dict (None when the underlying engine couldn't resolve).
-    ratios_block = r.get("ratios", {})
-    r["headline_v13_metrics"] = {
-        "ev_sales": ratios_block.get("ev_sales"),
-        "ev_fcf": ratios_block.get("ev_fcf"),
-        "quick_ratio": ratios_block.get("quick_ratio"),
-        "cash_ratio": ratios_block.get("cash_ratio"),
-        "ocf_margin": ratios_block.get("ocf_margin"),
-        "fcf_margin": ratios_block.get("fcf_margin"),
-        "interest_coverage": ratios_block.get("interest_coverage"),
-        "cash_flow_to_debt": ratios_block.get("cash_flow_to_debt"),
-        "sustainable_growth": ratios_block.get("sustainable_growth"),
-        "p_tangible_book": ratios_block.get("p_tangible_book"),
     }
     return r
 

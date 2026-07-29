@@ -260,5 +260,6 @@ register_metric(MetricSpec(
     ratio_fn=ev_ebitda_at,
     history_fn=ev_ebitda_history,
     engines=["price", "shares", "debt", "cash", "ebit", "da"],
+    category="valuation",
     aliases=["ev_ebit", "evebitda", "eva_ebitda"],
 ))

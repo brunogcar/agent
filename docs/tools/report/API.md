@@ -71,14 +71,22 @@ config = {
 ### `action="dashboard"`
 ```python
 config = {
-    "tabs": [...],              # [{"title": "", "text": "", "type": "..."}]
+    "tabs": [...],              # [{"name": "", "sections": [{"title": "", "text": "", "type": "..."}]}]
     "kpis": [...],
     "charts": [...],            # list of chart specs
     "columns": 2,               # 1-4
     "theme": "dark",
     "accent": "#0d9488",
 }
-```
+# Each section `type` (v1.5): text | table | chart | mermaid | code | collapsible |
+#                                  statement | ratio_grid | two_column | bug
+#   - statement:  hierarchical rows with indent/subtotal/total styling (uses `statement_table` macro).
+#                 Section shape: {"type":"statement", "rows":[{"label","value","indent"?,"is_subtotal"?,"is_total"?}]}
+#   - ratio_grid: categorized KPI cards laid out in a responsive grid (uses `ratio_grid` macro).
+#                 Section shape: {"type":"ratio_grid", "categories":[{"label","items":[{"label","value"}]}]}
+#   - two_column: side-by-side balance-sheet layout (uses `two_column` macro).
+#                 Section shape: {"type":"two_column", "left_title","left_rows", "right_title","right_rows"}
+#   - financials_dashboard / valuation_dashboard adapters emit sections of these types automatically.
 
 ### `action="diagram"`
 ```python
@@ -268,6 +276,8 @@ tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`
 | `cotahist_close_chart` | `b3/cotahist` query | **Chart adapter** — daily close price line chart from COTAHIST |
 | `cotahist_candlestick_chart` | `b3/cotahist` query | **Chart adapter** — OHLC candlestick chart from COTAHIST (needs chartjs-chart-financial plugin, auto-loaded) |
 | `screener_sector` | `cvm/screener` sector | Peers table (sorted by P/L) + KPI strip (sector medians) |
+| `financials_dashboard` (v1.5) | `cvm/financials` dashboard | **Dashboard adapter** — 5 tabs (Overview KPIs + DRE + Balanço + DFC + Ratios `ratio_grid`). Promotes top-level KPIs, converts statement tabs to `table` sections + ratios tab to `ratio_grid` |
+| `valuation_dashboard` (v1.5) | `cvm/valuation` ratios/summary | **Dashboard adapter** — 5 themed tabs (Overview/Multiples/Profitability/Liquidity & Leverage/Efficiency & Growth) with 6 pre-formatted KPI cards. Uses `ratio_grid` sections for categorized ratios |
 
 Error / not_synced skill results render as a small status table (never crash).
 
@@ -429,4 +439,4 @@ The memory hook is fire-and-forget — if storage fails, the report still return
 
 ---
 
-*Last updated: 2026-07-25 (v1.2). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

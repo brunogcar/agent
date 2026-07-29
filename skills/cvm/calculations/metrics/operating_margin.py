@@ -128,5 +128,6 @@ register_metric(MetricSpec(
     ratio_fn=operating_margin_at,
     history_fn=operating_margin_history,
     engines=["ebit", "revenue"],
+    category="profitability",
     aliases=["margem_operacional", "om", "operating_margin_pct"],
 ))

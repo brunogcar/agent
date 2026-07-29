@@ -181,5 +181,6 @@ register_metric(MetricSpec(
     ratio_fn=p_fco_at,
     history_fn=p_fco_history,
     engines=["price", "shares", "operating_cf"],
+    category="valuation",
     aliases=["p_fco", "pfco", "preco_fco"],
 ))

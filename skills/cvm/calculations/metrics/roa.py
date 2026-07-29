@@ -136,5 +136,6 @@ register_metric(MetricSpec(
     ratio_fn=roa_at,
     history_fn=roa_history,
     engines=["earnings", "total_assets"],
+    category="profitability",
     aliases=["return_on_assets", "retorno_ativos"],
 ))

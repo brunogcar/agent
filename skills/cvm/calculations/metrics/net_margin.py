@@ -74,5 +74,6 @@ register_metric(MetricSpec(
     ratio_fn=net_margin_at,
     history_fn=net_margin_history,
     engines=["earnings", "revenue"],
+    category="profitability",
     aliases=["nm", "margem_liquida", "ml", "net_margin_pct"],
 ))

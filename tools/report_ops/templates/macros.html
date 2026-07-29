@@ -74,3 +74,69 @@
   {% endfor %}
 </ul>
 {% endmacro %}
+
+{% macro statement_table(rows) %}
+<table class="data-table statement-table">
+  <tbody>
+    {% for row in rows %}
+    <tr class="statement-row {{ 'subtotal' if row.get('is_subtotal') else '' }} {{ 'total' if row.get('is_total') else '' }}">
+      <td class="statement-label" style="padding-left: {{ (row.get('indent', 0) * 20) + 12 }}px;">
+        {{ row.get('label', '') }}
+      </td>
+      <td class="statement-value {{ 'pos' if row.value is string and row.value.startswith('+') else 'neg' if row.value is string and row.value.startswith('-') else '' }}">
+        {{ row.get('value', '') }}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+
+{% macro ratio_grid(categories) %}
+<div class="ratio-grid">
+  {% for cat in categories %}
+  <div class="ratio-category">
+    <div class="ratio-category-title">{{ cat.label }}</div>
+    <div class="ratio-items">
+      {% for item in cat.items %}
+      <div class="ratio-item">
+        <span class="ratio-label">{{ item.label }}</span>
+        <span class="ratio-value {{ 'pos' if item.value is string and item.value.startswith('+') else 'neg' if item.value is string and item.value.startswith('-') else 'neu' if item.value in ['—', 'None', 'N/A'] else '' }}">{{ item.value }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro two_column(left_title, left_rows, right_title, right_rows) %}
+<div class="two-col-grid">
+  <div class="two-col-left">
+    <div class="two-col-title">{{ left_title }}</div>
+    <table class="data-table statement-table">
+      <tbody>
+        {% for row in left_rows %}
+        <tr class="statement-row {{ 'subtotal' if row.get('is_subtotal') else '' }} {{ 'total' if row.get('is_total') else '' }}">
+          <td class="statement-label" style="padding-left: {{ (row.get('indent', 0) * 20) + 12 }}px;">{{ row.get('label', '') }}</td>
+          <td class="statement-value">{{ row.get('value', '') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="two-col-right">
+    <div class="two-col-title">{{ right_title }}</div>
+    <table class="data-table statement-table">
+      <tbody>
+        {% for row in right_rows %}
+        <tr class="statement-row {{ 'subtotal' if row.get('is_subtotal') else '' }} {{ 'total' if row.get('is_total') else '' }}">
+          <td class="statement-label" style="padding-left: {{ (row.get('indent', 0) * 20) + 12 }}px;">{{ row.get('label', '') }}</td>
+          <td class="statement-value">{{ row.get('value', '') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endmacro %}

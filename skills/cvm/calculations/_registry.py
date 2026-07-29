@@ -131,20 +131,24 @@ class MetricSpec:
 
     Attributes:
         name:            Canonical metric name (file name without .py).
-        per_share_label: Human label for the per-share value (e.g., "LPA").
-                         None for fundamental ratios (ROE, ROA).
-        per_share_key:   JSON key in series entries (e.g., "lpa").
-                         None for fundamental ratios.
-        per_share_fn:    fn(company, date) -> per-share float | None.
-                         None for fundamental ratios.
         ratio_label:     Human label for the ratio (e.g., "P/L", "ROE").
         ratio_key:       JSON key in series entries (e.g., "pe", "roe").
         ratio_fn:        fn(company, date) -> ratio float | None.
         history_fn:      fn(company, date_from, date_to) -> list[dict].
-                         Each entry has: date, price (if applicable),
-                         <per_share_key> (if applicable), <ratio_key>,
-                         + engine-specific fields + bonus ratios.
         engines:         List of engine names this metric composes (for docs).
+        category:        Metric category for display grouping + filtering.
+                         One of:
+                         - "valuation":    price-based multiples (P/L, EV/EBITDA, etc.)
+                         - "profitability": returns + margins (ROE, ROA, ROIC, margins)
+                         - "liquidity":    short-term solvency (current/quick/cash ratio)
+                         - "leverage":     debt structure (D/E, net debt/EBITDA, coverage)
+                         - "efficiency":   turnover ratios (asset/inventory/receivables turnover)
+                         - "growth":       retention + sustainable growth
+                         - "per_share":    per-share values (LPA, VPA, DPA, RPS)
+                         - "tax":          tax-related (effective tax rate)
+                         - "other":        anything else
+                         Used by compute_all_ratios(category=...) for filtering
+                         which metrics each consumer skill surfaces.
         aliases:         Alternative names for dispatch (e.g., ["pe", "pl"]).
     """
     name: str
@@ -153,6 +157,7 @@ class MetricSpec:
     ratio_fn: Callable
     history_fn: Callable
     engines: list[str]
+    category: str = "other"
     per_share_label: str | None = None
     per_share_key: str | None = None
     per_share_fn: Callable | None = None
@@ -243,6 +248,73 @@ def list_metrics() -> list[str]:
 def list_all_metric_names() -> list[str]:
     """Return sorted list of all metric names (canonical + aliases)."""
     return sorted(set(list(METRICS.keys()) + list(_ALIASES.keys())))
+
+
+def list_metric_categories() -> list[str]:
+    """Return sorted list of all metric categories currently in use."""
+    return sorted(set(spec.category for spec in METRICS.values()))
+
+
+def list_metrics_by_category(category: str) -> list[str]:
+    """Return sorted list of metric names in a given category.
+
+    Args:
+        category: One of "valuation", "profitability", "liquidity", "leverage",
+                  "efficiency", "growth", "per_share", "tax", "other".
+    """
+    return sorted(name for name, spec in METRICS.items() if spec.category == category)
+
+
+def compute_all_ratios(
+    company: str,
+    date: str,
+    categories: list[str] | None = None,
+    exclude: list[str] | None = None,
+) -> dict[str, float | None]:
+    """Compute all (or filtered) ratios for a company at a given date.
+
+    This is the single entry point for consumer skills (financials, valuation)
+    to get calculations-backed ratios without hardcoding individual metric
+    imports. New metrics registered via register_metric() are automatically
+    included — no manual wiring needed.
+
+    Each metric's ratio_fn is called with (company, date). Any exception
+    (FileNotFoundError from missing DB, KeyError from missing account, etc.)
+    is caught and the metric value is set to None — one failing metric
+    doesn't poison the rest.
+
+    Args:
+        company: Ticker, name, or CNPJ.
+        date: YYYY-MM-DD.
+        categories: If provided, only compute metrics in these categories.
+                    If None (default), compute ALL metrics.
+                    Example: ["profitability", "liquidity", "leverage",
+                              "efficiency", "growth", "tax"]
+        exclude: If provided, skip these metric names (canonical names).
+                 Example: ["lpa", "vpa", "dpa", "rps"] to exclude per-share
+                 metrics from financials.
+
+    Returns:
+        Dict mapping metric name -> ratio value (float or None).
+        Example: {"roe": 0.15, "roa": 0.08, "current_ratio": 1.5, ...}
+    """
+    result: dict[str, float | None] = {}
+    exclude_set = set(exclude or [])
+
+    for name, spec in METRICS.items():
+        # Filter by category
+        if categories is not None and spec.category not in categories:
+            continue
+        # Filter by exclusion list
+        if name in exclude_set:
+            continue
+        # Compute — swallow all errors (missing DB, missing account, etc.)
+        try:
+            result[name] = spec.ratio_fn(company, date)
+        except Exception:
+            result[name] = None
+
+    return result
 
 
 # ── Auto-discovery ───────────────────────────────────────────────────────────

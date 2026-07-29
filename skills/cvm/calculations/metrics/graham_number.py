@@ -218,5 +218,6 @@ register_metric(MetricSpec(
     ratio_fn=graham_number_at,
     history_fn=graham_number_history,
     engines=["earnings", "pl", "shares"],
+    category="valuation",
     aliases=["graham", "numero_graham"],
 ))

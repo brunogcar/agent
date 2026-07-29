@@ -117,5 +117,6 @@ register_metric(MetricSpec(
     ratio_fn=receivables_turnover_at,
     history_fn=receivables_turnover_history,
     engines=["revenue", "receivables"],
+    category="efficiency",
     aliases=["giro_contas_receber", "rto", "receivables_turn"],
 ))

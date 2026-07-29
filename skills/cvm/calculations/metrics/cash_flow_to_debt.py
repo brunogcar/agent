@@ -97,5 +97,6 @@ register_metric(MetricSpec(
     ratio_fn=cash_flow_to_debt_at,
     history_fn=cash_flow_to_debt_history,
     engines=["operating_cf", "debt"],
+    category="leverage",
     aliases=["fco_divida", "cfd", "fluxo_caixa_divida"],
 ))

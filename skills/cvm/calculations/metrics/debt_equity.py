@@ -75,5 +75,6 @@ register_metric(MetricSpec(
     ratio_fn=debt_equity_at,
     history_fn=debt_equity_history,
     engines=["debt", "pl"],
+    category="leverage",
     aliases=["de", "divida_pl", "divida_patrimonio"],
 ))

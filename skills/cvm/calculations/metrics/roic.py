@@ -271,5 +271,6 @@ register_metric(MetricSpec(
     ratio_fn=roic_at,
     history_fn=roic_history,
     engines=["ebit", "tax", "ebt", "pl", "debt", "cash"],
+    category="profitability",
     aliases=["return_on_invested_capital", "retorno_capital_investido"],
 ))

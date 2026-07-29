@@ -128,5 +128,6 @@ register_metric(MetricSpec(
     ratio_fn=gross_margin_at,
     history_fn=gross_margin_history,
     engines=["gross_profit", "revenue"],
+    category="profitability",
     aliases=["margem_bruta", "gm", "gross_margin_pct"],
 ))

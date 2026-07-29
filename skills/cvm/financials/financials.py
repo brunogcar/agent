@@ -9,6 +9,7 @@ MODES
   annual              — annual summary + ratios, default 5 years
   complete            — full statements by grupo + key account codes
   summary             — combined latest annual + latest quarterly + key ratios
+  dashboard           — multi-tab composition (Overview/DRE/Balanço/DFC/Ratios)
 
 STANDALONE QUARTER DERIVATION
 -----------------------------
@@ -195,6 +196,15 @@ def summary(company: str = "", consolidado: int = 1) -> dict:
     `compute_ratios()` on raw statement data. Calculations metrics are wrapped
     in _safe_call so a missing DB (e.g. cotahist for price-based ratios)
     returns None instead of crashing the whole summary.
+
+    [v1.5] The current_ratios block now delegates to
+    `compute_all_ratios(company, today, categories=[...], exclude=[...])`
+    instead of hardcoding 6 metric imports. This surfaces ALL registered
+    calculations metrics in the profitability / liquidity / leverage /
+    efficiency / growth / tax categories (currently 25 metrics) and
+    auto-picks up any new metric registered via `register_metric()` — no
+    manual wiring needed. Per-share metrics (lpa, vpa, dpa, rps) are
+    excluded because they belong in the valuation skill.
     """
     if not company:
         return {"status": "error", "error": "company is required"}
@@ -225,28 +235,25 @@ def summary(company: str = "", consolidado: int = 1) -> dict:
     except Exception as e:
         result["sections"]["latest_quarterly"] = {"status": "error", "error": str(e)}
 
-    # [v1.3] Current ratios from calculations metrics (point-in-time).
-    # Lazy import so importing financials.py does NOT trigger calculations
-    # imports (and the corresponding PLANNER_MODEL env-var requirement).
-    # Each metric is wrapped in _safe_call so a missing DB or account returns
-    # None instead of crashing the whole summary.
+    # [v1.5] Current ratios from calculations registry — auto-surfaces ALL
+    # registered metrics in the requested categories. Lazy import so
+    # importing financials.py does NOT trigger calculations imports (and the
+    # corresponding PLANNER_MODEL env-var requirement). compute_all_ratios
+    # catches exceptions per-metric so one failing metric returns None
+    # instead of poisoning the rest.
     today = date.today().isoformat()
     try:
-        from skills.cvm.calculations.metrics.roic import roic_at
-        from skills.cvm.calculations.metrics.graham_number import graham_number_at
-        from skills.cvm.calculations.metrics.ev_ebitda import ev_ebitda_at
-        from skills.cvm.calculations.metrics.p_fcf import p_fcf_at
-        from skills.cvm.calculations.metrics.p_ebit import p_ebit_at
-        from skills.cvm.calculations.metrics.p_fco import p_fco_at
+        from skills.cvm.calculations._registry import compute_all_ratios
 
         result["sections"]["current_ratios"] = {
             "date": today,
-            "roic":           _safe_call(roic_at,           company, today),
-            "graham_number":  _safe_call(graham_number_at,  company, today),
-            "ev_ebitda":      _safe_call(ev_ebitda_at,      company, today),
-            "p_fcf":          _safe_call(p_fcf_at,          company, today),
-            "p_ebit":         _safe_call(p_ebit_at,         company, today),
-            "p_fco":          _safe_call(p_fco_at,          company, today),
+            **compute_all_ratios(
+                company,
+                today,
+                categories=["profitability", "liquidity", "leverage",
+                            "efficiency", "growth", "tax"],
+                exclude=["lpa", "vpa", "dpa", "rps"],  # per-share metrics belong in valuation
+            ),
         }
     except Exception as e:
         # If calculations library itself is unavailable (circular import,
@@ -254,6 +261,245 @@ def summary(company: str = "", consolidado: int = 1) -> dict:
         result["sections"]["current_ratios"] = {"date": today, "error": str(e)}
 
     return result
+
+
+# ── Mode: dashboard ──────────────────────────────────────────────────────────
+
+def dashboard(company: str = "", consolidado: int = 1) -> dict:
+    """Multi-tab financial dashboard (thin composition of existing modes).
+
+    Returns a structured payload with tabs optimized for the report tool's
+    dashboard action:
+      - Overview: KPI cards (Receita, EBITDA, Lucro Líquido, Margem EBITDA,
+        ROE, Dívida Líquida/EBITDA) + freshness metadata
+      - DRE: Income statement (latest annual + 4-quarter trend)
+      - Balanço: Balance sheet (Ativo + Passivo from latest annual)
+      - DFC: Cash flow statement (latest annual + 4-quarter trend)
+      - Ratios: Categorized ratio grid (profitability, liquidity, leverage,
+        efficiency, growth, tax) via `compute_all_ratios()`
+
+    This mode does NOT fetch new data — it calls `annual()`, `quarterly()`,
+    and `compute_all_ratios()` and reshapes their output into a multi-tab
+    payload. Each sub-call is independently try/except-wrapped so a missing
+    DB degrades the corresponding tab to an error payload instead of
+    crashing the whole dashboard.
+
+    Args:
+        company: Ticker, name, or CNPJ. Required.
+        consolidado: 1=consolidated (default), 0=individual.
+
+    Returns:
+        Dict shaped as ``{"status": "ok", "company": ..., "tabs": [...]}``
+        where each tab is ``{"name": str, "sections": [...]}``. The Overview
+        tab additionally carries a ``kpis`` list. On empty company, returns
+        ``{"status": "error", "error": "company is required"}``.
+    """
+    if not company:
+        return {"status": "error", "error": "company is required"}
+
+    # ── Gather underlying data (each call wrapped independently) ────────────
+    annual_payload: dict = {}
+    try:
+        annual_payload = annual(company=company, periods=1, consolidado=consolidado)
+    except Exception as e:
+        annual_payload = {"status": "error", "error": str(e)}
+
+    quarterly_payload: dict = {}
+    try:
+        quarterly_payload = quarterly(company=company, periods=4, consolidado=consolidado)
+    except Exception as e:
+        quarterly_payload = {"status": "error", "error": str(e)}
+
+    # Latest annual period (if available) — drives the KPI cards + DRE/Ativo/DFC tabs
+    latest_annual_period: dict | None = None
+    if annual_payload.get("status") == "ok" and annual_payload.get("periods"):
+        latest_annual_period = annual_payload["periods"][0]
+
+    # Quarterly trend (4 quarters newest-first or oldest-first — we'll reverse for display)
+    quarterly_periods: list[dict] = []
+    if quarterly_payload.get("status") == "ok" and quarterly_payload.get("periods"):
+        quarterly_periods = quarterly_payload["periods"]
+
+    # Current ratios via the calculations registry (same filter as summary())
+    today = date.today().isoformat()
+    ratios_payload: dict = {"date": today}
+    try:
+        from skills.cvm.calculations._registry import (
+            compute_all_ratios, METRICS, list_metrics_by_category,
+        )
+
+        all_ratios = compute_all_ratios(
+            company,
+            today,
+            categories=["profitability", "liquidity", "leverage",
+                        "efficiency", "growth", "tax"],
+            exclude=["lpa", "vpa", "dpa", "rps"],  # per-share metrics belong in valuation
+        )
+        ratios_payload.update(all_ratios)
+    except Exception as e:
+        ratios_payload["error"] = str(e)
+
+    # ── Helper: pull a metric from the latest annual period safely ─────────
+    def _annual_metric(name: str) -> float | None:
+        if not latest_annual_period:
+            return None
+        return (latest_annual_period.get("metrics") or {}).get(name)
+
+    def _annual_ratio(name: str) -> float | None:
+        if not latest_annual_period:
+            return None
+        return (latest_annual_period.get("ratios") or {}).get(name)
+
+    # ── Tab 1: Overview — KPI cards + freshness ────────────────────────────
+    # Pull ROE + Dívida Líquida/EBITDA from the ratios registry (point-in-time
+    # at today), falling back to the annual period's ratios when the registry
+    # value is None (e.g. cotahist missing in test env).
+    roe_val = ratios_payload.get("roe")
+    if roe_val is None:
+        roe_val = _annual_ratio("roe")
+    net_debt_ebitda_val = ratios_payload.get("net_debt_ebitda")
+
+    kpis = [
+        {"label": "Receita Líquida",
+         "value": _annual_metric("receita_liquida"),
+         "unit": "BRL"},
+        {"label": "EBITDA",
+         "value": _annual_metric("ebitda"),
+         "unit": "BRL"},
+        {"label": "Lucro Líquido",
+         "value": _annual_metric("lucro_liquido"),
+         "unit": "BRL"},
+        {"label": "Margem EBITDA",
+         "value": _annual_ratio("marg_ebitda"),
+         "unit": "ratio"},
+        {"label": "ROE",
+         "value": roe_val,
+         "unit": "ratio"},
+        {"label": "Dívida Líquida/EBITDA",
+         "value": net_debt_ebitda_val,
+         "unit": "x"},
+    ]
+
+    overview_sections = [
+        {"name": "kpis", "cards": kpis},
+        {"name": "latest_annual", "period": (
+            latest_annual_period.get("period") if latest_annual_period else None
+        )},
+        {"name": "latest_quarterly", "period": (
+            quarterly_periods[-1].get("period") if quarterly_periods else None
+        )},
+    ]
+    # Attach freshness metadata if available (best-effort).
+    try:
+        from skills.cvm._freshness import add_freshness
+        overview_sections.append({"name": "freshness",
+                                  "data": add_freshness({})["data_freshness"]})
+    except Exception:
+        pass
+
+    # ── Tab 2: DRE — Income statement ──────────────────────────────────────
+    dre_section = {"name": "latest_annual", "metrics": {}}
+    if latest_annual_period:
+        m = latest_annual_period.get("metrics") or {}
+        dre_section["metrics"] = {
+            "receita_liquida":      m.get("receita_liquida"),
+            "lucro_bruto":          m.get("lucro_bruto"),
+            "ebit":                 m.get("ebit"),
+            "ebitda":               m.get("ebitda"),
+            "ebitda_method":        m.get("ebitda_method"),
+            "resultado_financeiro": m.get("resultado_financeiro"),
+            "lucro_liquido":        m.get("lucro_liquido"),
+            "da":                   m.get("da"),
+        }
+        dre_section["ratios"] = {
+            "marg_bruta":   (latest_annual_period.get("ratios") or {}).get("marg_bruta"),
+            "marg_ebit":    (latest_annual_period.get("ratios") or {}).get("marg_ebit"),
+            "marg_ebitda":  (latest_annual_period.get("ratios") or {}).get("marg_ebitda"),
+            "marg_liquida": (latest_annual_period.get("ratios") or {}).get("marg_liquida"),
+        }
+    dre_trend = {
+        "name": "quarterly_trend",
+        "periods": [
+            {
+                "period":        p.get("period"),
+                "receita":       (p.get("metrics") or {}).get("receita_liquida"),
+                "ebitda":        (p.get("metrics") or {}).get("ebitda"),
+                "lucro_liquido": (p.get("metrics") or {}).get("lucro_liquido"),
+            }
+            for p in quarterly_periods
+        ],
+    }
+
+    # ── Tab 3: Balanço — Ativo + Passivo ───────────────────────────────────
+    balanco_section = {"name": "latest_annual", "ativo": {}, "passivo": {}}
+    if latest_annual_period:
+        m = latest_annual_period.get("metrics") or {}
+        balanco_section["ativo"] = {
+            "ativo_total": m.get("ativo_total"),
+            "caixa":       m.get("caixa"),
+        }
+        balanco_section["passivo"] = {
+            "patrimonio_liquido": m.get("patrimonio_liquido"),
+            "divida_bruta":       m.get("divida_bruta"),
+            "divida_liquida":     (latest_annual_period.get("ratios") or {}).get("divida_liquida"),
+        }
+
+    # ── Tab 4: DFC — Cash flow statement ───────────────────────────────────
+    dfc_section = {"name": "latest_annual", "metrics": {}}
+    if latest_annual_period:
+        m = latest_annual_period.get("metrics") or {}
+        dfc_section["metrics"] = {
+            "fco": m.get("fco"),
+            "fci": m.get("fci"),
+            "fcf": m.get("fcf"),
+        }
+    dfc_trend = {
+        "name": "quarterly_trend",
+        "periods": [
+            {
+                "period": p.get("period"),
+                "fco":    (p.get("metrics") or {}).get("fco"),
+                "fci":    (p.get("metrics") or {}).get("fci"),
+                "fcf":    (p.get("metrics") or {}).get("fcf"),
+            }
+            for p in quarterly_periods
+        ],
+    }
+
+    # ── Tab 5: Ratios — categorized ratio grid ─────────────────────────────
+    # Group compute_all_ratios output by metric category using the registry.
+    ratio_grid: dict[str, dict[str, float | None]] = {}
+    try:
+        # Re-import here — the import block above may have failed; this is a
+        # independent fall-through for the grid grouping only.
+        from skills.cvm.calculations._registry import METRICS, list_metrics_by_category
+        for category in ("profitability", "liquidity", "leverage",
+                         "efficiency", "growth", "tax"):
+            ratio_grid[category] = {}
+            for metric_name in list_metrics_by_category(category):
+                if metric_name in ("lpa", "vpa", "dpa", "rps"):
+                    continue
+                ratio_grid[category][metric_name] = ratios_payload.get(metric_name)
+    except Exception:
+        # Fall back to a flat dict if the registry isn't available.
+        ratio_grid = {"_all": {k: v for k, v in ratios_payload.items()
+                               if k not in ("date", "error")}}
+
+    ratios_section = {
+        "name": "ratio_grid",
+        "date": today,
+        "categories": ratio_grid,
+    }
+
+    # ── Assemble the dashboard payload ─────────────────────────────────────
+    tabs = [
+        {"name": "Overview", "kpis": kpis, "sections": overview_sections},
+        {"name": "DRE",      "sections": [dre_section, dre_trend]},
+        {"name": "Balanço",  "sections": [balanco_section]},
+        {"name": "DFC",      "sections": [dfc_section, dfc_trend]},
+        {"name": "Ratios",   "sections": [ratios_section]},
+    ]
+    return {"status": "ok", "company": company, "tabs": tabs}
 
 
 # ── Internal: build summary (annual or quarterly) ────────────────────────────

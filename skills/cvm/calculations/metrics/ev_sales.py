@@ -189,5 +189,6 @@ register_metric(MetricSpec(
     ratio_fn=ev_sales_at,
     history_fn=ev_sales_history,
     engines=["price", "shares", "debt", "cash", "revenue"],
+    category="valuation",
     aliases=["ev_receita", "ev_vendas", "evs"],
 ))

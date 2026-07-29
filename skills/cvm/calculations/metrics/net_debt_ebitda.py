@@ -103,5 +103,6 @@ register_metric(MetricSpec(
     ratio_fn=net_debt_ebitda_at,
     history_fn=net_debt_ebitda_history,
     engines=["debt", "cash", "ebit", "da"],
+    category="leverage",
     aliases=["nde", "dl_ebitda", "divida_liquida_ebitda", "net_debt_to_ebitda"],
 ))

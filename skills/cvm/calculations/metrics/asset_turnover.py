@@ -81,5 +81,6 @@ register_metric(MetricSpec(
     ratio_fn=asset_turnover_at,
     history_fn=asset_turnover_history,
     engines=["revenue", "total_assets"],
+    category="efficiency",
     aliases=["at", "giro_ativos", "asset_turnover_ratio"],
 ))

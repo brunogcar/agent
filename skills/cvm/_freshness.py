@@ -110,8 +110,65 @@ def get_freshness() -> dict[str, str]:
     return result
 
 
+def get_last_synced_period() -> dict[str, str]:
+    """Get the last data period (``data_fim_exerc``) available in each database.
+
+    This complements :func:`get_freshness` (which returns *when* each DB was
+    last synced) by reporting *which fiscal period* is the most recent
+    available in each DB. For DFP this is the latest year-end (e.g.
+    ``"2023-12-31"``); for ITR this is the latest quarter-end (e.g.
+    ``"2024-06-30"``).
+
+    Returns:
+        ``{"dfp": "2023-12-31", "itr": "2024-06-30", ...}`` — one entry per
+        CVM database that has a ``contas`` table. Missing / unsynced / unreadable
+        DBs return ``""``.
+    """
+    from data_sources.cvm._db import (
+        dfp_db_path, itr_db_path, fre_db_path, ipe_db_path,
+        cad_db_path, vlmo_db_path, cgvn_db_path, fca_db_path,
+    )
+
+    result: dict[str, str] = {}
+    for name, path_fn in [
+        ("dfp", dfp_db_path),
+        ("itr", itr_db_path),
+        ("fre", fre_db_path),
+        ("ipe", ipe_db_path),
+        ("cad", cad_db_path),
+        ("vlmo", vlmo_db_path),
+        ("cgvn", cgvn_db_path),
+        ("fca", fca_db_path),
+    ]:
+        try:
+            p = path_fn()
+            if not p.exists():
+                result[name] = ""
+                continue
+            conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            # The contas table holds all financial-statement line items with
+            # data_fim_exerc as the period-end date. MAX(data_fim_exerc) is
+            # the most recent period present in the DB. The query is wrapped
+            # in a try/except OperationalError because some CVM DBs (e.g.
+            # cad, ipe) may not have a `contas` table at all — those return "".
+            try:
+                row = conn.execute(
+                    "SELECT MAX(data_fim_exerc) as max_date FROM contas"
+                ).fetchone()
+                result[name] = str(row["max_date"]) if row and row["max_date"] else ""
+            except sqlite3.OperationalError:
+                # No `contas` table in this DB (e.g. cad / ipe / vlmo / cgvn
+                # / fca are registers, not financial-statement databases).
+                result[name] = ""
+            conn.close()
+        except Exception:
+            result[name] = ""
+    return result
+
+
 def add_freshness(result: dict) -> dict:
-    """Add data_freshness to a skill result dict (in-place + return).
+    """Add data_freshness + last_synced_period to a skill result dict (in-place + return).
 
     Usage at the end of a skill function:
         from skills.cvm._freshness import add_freshness
@@ -121,4 +178,8 @@ def add_freshness(result: dict) -> dict:
         result["data_freshness"] = get_freshness()
     except Exception:
         result["data_freshness"] = {}
+    try:
+        result["last_synced_period"] = get_last_synced_period()
+    except Exception:
+        result["last_synced_period"] = {}
     return result

@@ -122,5 +122,6 @@ register_metric(MetricSpec(
     ratio_fn=fixed_asset_turnover_at,
     history_fn=fixed_asset_turnover_history,
     engines=["revenue", "ppe"],
+    category="efficiency",
     aliases=["giro_imobilizado", "fato", "fat", "fixed_asset_turn"],
 ))

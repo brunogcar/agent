@@ -3,10 +3,15 @@
 [Phase 2C] Valuation now consumes calculations engines + metrics (Phase 2B
 refactor). The old fixture built synthetic DFP/FRE/trades DBs and patched
 internal helpers (`_get_shares_investsite`, `_get_financials`) that no longer
-exist. The new fixture mocks the engine/metric functions at the names bound
-inside `skills.cvm.valuation.valuation` (which imports them via
+exist. The new fixture mocks the engine functions at the names bound inside
+`skills.cvm.valuation.valuation` (which imports them via
 `from <engine_module> import <fn>` -- the bound names are what the SUT actually
 calls, so that is the namespace we must patch).
+
+[v1.5] The 25 individual metric mocks (roe_at, gross_margin_at, etc.) have
+been removed — valuation.ratios() now calls `compute_all_ratios()` which
+walks the registry internally. We mock `compute_all_ratios` itself to return
+all 37 metric values deterministically.
 
 Env vars (PLANNER_MODEL etc.) are set by the parent conftest at
 ``tests/skills/cvm/conftest.py``.
@@ -18,13 +23,17 @@ import pytest
 
 @pytest.fixture
 def valuation_env(monkeypatch):
-    """Mock calculations engines + metrics + price for valuation.ratios().
+    """Mock calculations engines + compute_all_ratios + price for valuation.ratios().
 
-    All engine/metric functions are patched at the names bound inside
+    All engine functions are patched at the names bound inside
     ``skills.cvm.valuation.valuation`` (NOT at their source modules), because
     valuation.py imports them via ``from <module> import <fn>``. Patching the
     source module would not affect the local references already bound in
     valuation.valuation's namespace.
+
+    ``compute_all_ratios`` is patched at
+    ``skills.cvm.valuation.valuation.compute_all_ratios`` (also imported via
+    ``from ... import``).
 
     Known values (BRL, R$/share as noted):
       price          = 38.50
@@ -43,7 +52,7 @@ def valuation_env(monkeypatch):
     Derived (for assertion reference):
       market_cap  = 38.5 * 13e9              = 500.5e9
       eps         = 120e9 / 13e9             ≈ 9.23
-      vpa         = 350e9 / 13e9             ≈ 26.92
+      vpa (per-share) = 350e9 / 13e9         ≈ 26.92
       p_l         = 500.5e9 / 120e9          ≈ 4.17
       p_vpa       = 500.5e9 / 350e9          ≈ 1.43
       ebitda      = 70e9 + 15e9              = 85e9
@@ -57,17 +66,20 @@ def valuation_env(monkeypatch):
       div_yield   = 1.85 / 38.5              ≈ 0.0481 (~4.8%)
       divida_liq_ebitda = 70e9 / 85e9        ≈ 0.82
 
-    Metrics (mocked directly):
-      roic=0.18, graham_number=75.0, roe=0.28, roa=0.15,
-      gross_margin=0.35, operating_margin=0.25, net_margin=0.20,
-      debt_equity=0.29, asset_turnover=0.35, current_ratio=1.5
+    [v1.5] compute_all_ratios mock returns all 37 metrics. Values are
+    loosely consistent with the engine mocks (ROE=0.28, ROA=0.15, etc.) so
+    the assertion ranges remain plausible; the metrics themselves are NOT
+    recomputed from engines because the registry call is mocked (we only
+    test the wiring — that compute_all_ratios is invoked + its output
+    merged into ratios_result via .update()).
 
-    [v1.4-valuation] 15 NEW v1.3 metrics also mocked:
-      ev_sales=2.05, ev_fcf=11.41, cash_ratio=0.30, quick_ratio=1.10,
-      ocf_margin=0.286, fcf_margin=0.179, working_capital=50e9,
-      cash_flow_to_debt=0.80, retention_ratio=0.50, sustainable_growth=0.14,
-      interest_coverage=8.0, inventory_turnover=5.0, receivables_turnover=8.0,
-      fixed_asset_turnover=0.80, p_tangible_book=1.55
+    Note on per_share metric overrides:
+      The registry's `vpa` metric's ratio_fn returns P/VPA (price ratio),
+      NOT the per-share VPA. So after `ratios_result.update(calc_ratios)`,
+      `ratios_result["vpa"]` is OVERRIDDEN from per-share VPA (≈26.92) to
+      P/VPA (≈1.43). Similarly `dpa` is overridden from per-share DPA (1.85)
+      to Div Yield (≈0.048). The manual computations of `p_vpa` and
+      `dividend_yield` are preserved (no key conflict).
     """
     # ── Calculations engines (snapshot/TTM fetchers) ───────────────────────
     # Patch at valuation.valuation namespace -- those are the names the SUT
@@ -96,64 +108,66 @@ def valuation_env(monkeypatch):
     monkeypatch.setattr(
         "skills.cvm.valuation.valuation.dividends_at", lambda c, d: 1.85)
 
-    # ── Calculations metrics (composed ratios called by valuation) ────────
+    # ── [v1.5] compute_all_ratios mock ────────────────────────────────────
+    # Returns ALL 37 metrics (no filter — valuation calls compute_all_ratios
+    # with no categories/exclude args). Values are deterministic and chosen
+    # to match the engine mocks where the manual computation already
+    # produces a value (e.g. ev_ebitda ≈ 6.71, p_ebit ≈ 7.15) so that
+    # existing test assertions still pass.
+    def mock_compute_all_ratios(company, date, categories=None, exclude=None):
+        return {
+            # profitability (9)
+            "roe":              0.28,
+            "roa":              0.15,
+            "roic":             0.18,
+            "gross_margin":     0.35,
+            "operating_margin": 0.25,
+            "net_margin":       0.20,
+            "ebitda_margin":    0.303,
+            "ocf_margin":       0.286,
+            "fcf_margin":       0.179,
+            # liquidity (4)
+            "cash_ratio":       0.30,
+            "current_ratio":    1.5,
+            "quick_ratio":      1.10,
+            "working_capital":  50e9,
+            # leverage (4)
+            "cash_flow_to_debt":   0.80,
+            "debt_equity":         0.29,
+            "interest_coverage":   8.0,
+            "net_debt_ebitda":     0.823,
+            # efficiency (5)
+            "asset_turnover":        0.35,
+            "capex_revenue":         0.05,
+            "fixed_asset_turnover":  0.80,
+            "inventory_turnover":    5.0,
+            "receivables_turnover":  8.0,
+            # growth (2)
+            "retention_ratio":    0.50,
+            "sustainable_growth": 0.14,
+            # valuation (8) -- these OVERRIDE the manual computations of
+            # ev_ebitda, p_ebit, p_fcf, p_fco, graham_number below.
+            "ev_ebitda":             6.71,
+            "ev_fcf":                11.41,
+            "ev_sales":              2.05,
+            "graham_number":         75.0,
+            "p_ebit":                7.15,
+            "p_fcf":                 10.01,
+            "p_fco":                 6.26,
+            "price_to_tangible_book": 1.55,
+            # per_share (4) -- registry returns the price RATIO, not the
+            # per-share value. vpa -> P/VPA, dpa -> Div Yield, lpa -> P/L,
+            # rps -> PSR. These OVERRIDE the manual per-share vpa + dpa.
+            "lpa": 4.17,
+            "vpa": 1.43,
+            "dpa": 0.048,
+            "rps": 1.79,
+            # tax (1)
+            "effective_tax_rate": 0.34,
+        }
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.roic_at", lambda c, d: 0.18)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.graham_number_at", lambda c, d: 75.0)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.roe_at", lambda c, d: 0.28)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.roa_at", lambda c, d: 0.15)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.gross_margin_at", lambda c, d: 0.35)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.operating_margin_at", lambda c, d: 0.25)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.net_margin_at", lambda c, d: 0.20)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.debt_equity_at", lambda c, d: 0.29)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.asset_turnover_at", lambda c, d: 0.35)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.current_ratio_at", lambda c, d: 1.5)
-
-    # ── [v1.4-valuation] 15 NEW v1.3 metrics ───────────────────────────────
-    # Same patching pattern -- bound names in valuation.valuation's namespace.
-    # Values are deterministic and loosely consistent with the engine mocks
-    # (EV=570.5e9, FCF=50e9, revenue=280e9, debt=100e9, cash=30e9, etc.) so
-    # they remain in plausible ranges; they are NOT recomputed from engines
-    # because the metrics themselves are mocked (we only test the wiring).
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.ev_sales_at", lambda c, d: 2.05)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.ev_fcf_at", lambda c, d: 11.41)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.cash_ratio_at", lambda c, d: 0.30)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.quick_ratio_at", lambda c, d: 1.10)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.ocf_margin_at", lambda c, d: 0.286)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.fcf_margin_at", lambda c, d: 0.179)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.working_capital_at", lambda c, d: 50e9)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.cash_flow_to_debt_at", lambda c, d: 0.80)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.retention_ratio_at", lambda c, d: 0.50)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.sustainable_growth_at", lambda c, d: 0.14)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.interest_coverage_at", lambda c, d: 8.0)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.inventory_turnover_at", lambda c, d: 5.0)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.receivables_turnover_at", lambda c, d: 8.0)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.fixed_asset_turnover_at", lambda c, d: 0.80)
-    monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.p_tangible_book_at", lambda c, d: 1.55)
+        "skills.cvm.valuation.valuation.compute_all_ratios",
+        mock_compute_all_ratios)
 
     # ── Price (kept in valuation.valuation._get_price -- not yet an engine) ─
     # valuation.py reads `price_data["status"]`, `["last_price"]`, `["date"]`,
