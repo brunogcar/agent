@@ -16,14 +16,14 @@ class TestDashboardMode:
 
     def test_dashboard_no_company(self, financials_env):
         """Empty company → status=error (does NOT touch DBs)."""
-        from skills.cvm.financials.financials import dashboard
+        from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard()
         assert result["status"] == "error"
         assert "company is required" in result["error"]
 
     def test_dashboard_tab_structure(self, financials_env):
         """Returns 5 tabs with the expected names + each tab has `sections`."""
-        from skills.cvm.financials.financials import dashboard
+        from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
         assert "tabs" in result
@@ -38,7 +38,7 @@ class TestDashboardMode:
 
     def test_dashboard_overview_kpis(self, financials_env):
         """Overview tab carries 6 KPI cards with the expected labels."""
-        from skills.cvm.financials.financials import dashboard
+        from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
         overview = result["tabs"][0]
@@ -68,7 +68,7 @@ class TestDashboardMode:
         category should contain a dict of {metric_name: value_or_None} for
         the registered metrics in that category (excluding per-share).
         """
-        from skills.cvm.financials.financials import dashboard
+        from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
         ratios_tab = result["tabs"][4]

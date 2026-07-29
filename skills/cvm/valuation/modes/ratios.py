@@ -1,41 +1,34 @@
-"""skills/cvm/valuation/valuation.py -- Valuation ratios combining b3 price + CVM financials.
+"""Mode: ratios -- valuation ratios combining b3 price + CVM financials.
 
-Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE shares.
+Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE
+shares. Combines a 3-tier price fallback (brapi -> investsite -> b3 trades)
+with calculations engines for TTM financials and `compute_all_ratios()` for
+the calculations-backed metrics.
 
 [v1.5] REFACTOR -- calculations-backed metrics now come from compute_all_ratios().
   - Removed 25 individual metric imports (roe_at, roa_at, gross_margin_at, etc.)
     + their loops in ratios().
-  - Replaced with a single `compute_all_ratios(ticker, today)` call (no category
-    filter -- valuation wants everything: profitability, liquidity, leverage,
-    efficiency, growth, valuation, per_share, tax).
+  - Replaced with a single `compute_all_ratios(ticker, today)` call (no
+    category filter -- valuation wants everything: profitability, liquidity,
+    leverage, efficiency, growth, valuation, per_share, tax).
   - Manual ratio computation (P/L, P/VPA, EV, PSR, DPA, Div Yield, market_cap,
-    divida_liquida_ebitda) KEEPT -- not in the calculations registry.
+    divida_liquida_ebitda) KEPT -- not in the calculations registry.
   - Manual ROIC + Graham Number calls REMOVED -- they're in the registry and
     come through compute_all_ratios().
-  - Engines (ttm_earnings_at, revenue_at, ebit_at, etc.) KEEPT -- they feed
-    the manual market_cap/EV/EBITDA/FCF computations.
-  - summary() headline_v13_metrics block REMOVED -- all metrics are now in
-    ratios() directly, so the headline block was redundant.
 
 [v2.0.0] PHASE 2B REFACTOR -- data fetching now via calculations engines.
-  - _get_financials_ttm() (86 lines) REMOVED -> direct engine calls
-  - _get_shares_outstanding() (88 lines) REMOVED -> shares_at() engine
-  - _get_shares_investsite() + _parse_share_count() REMOVED (shares engine has
-    its own investsite fallback built in)
-  - _get_price() + 3 helpers KEPT (brapi+investsite+b3 fallback chain not in
-    calculations price engine, which is COTAHIST-only)
-  - ratios() KEEPS manual ratio computation logic (UNIT ticker handling,
-    brapi market_cap, investsite P/L fallback) -- feeds it data from engines
+  - _get_financials_ttm() removed -> direct engine calls
+  - _get_shares_outstanding() removed -> shares_at() engine
+  - _get_price() + 3 helpers KEPT in fetchers.py (brapi+investsite+b3 fallback
+    chain not in calculations price engine, which is COTAHIST-only).
 
-[v1.0.14] ROIC + Graham number + TTM valuation + data freshness.
-[v1.0.13] Back-calculate market_cap from investsite P/L for unit tickers.
-[v1.0.9]  UNIT ticker fix (market-cap-based ratios).
+Registered as "ratios" in skills.cvm.valuation._registry.MODES via the
+@register_mode decorator. Auto-discovered by __init__.py.
 """
-
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from core.br_validator import validate_ticker
 
@@ -59,25 +52,30 @@ from skills.cvm.calculations.engines.dividends import dividends_at
 # compute_all_ratios() walks the registry and returns a flat dict of
 # {metric_name: value_or_None} for ALL 37 metrics (no category filter --
 # valuation wants everything). New metrics registered via register_metric()
-# appear here automatically without touching valuation.py.
+# appear here automatically without touching ratios.py.
 from skills.cvm.calculations._registry import compute_all_ratios
 
-
-def _safe_call(fn: Callable, *args, **kwargs):
-    """Call a calculations engine/metric, return None on any exception.
-
-    Calculations engines raise FileNotFoundError when their backing DB is not
-    synced (e.g., ITR db missing in test environments). Wrap each call so one
-    missing engine doesn't poison the rest of the ratios() result.
-    """
-    try:
-        return fn(*args, **kwargs)
-    except Exception:
-        return None
+from skills.cvm.valuation._registry import register_mode
+from skills.cvm.valuation.helpers import _safe_call, _safe_div
+from skills.cvm.valuation.fetchers import _get_price
 
 
-# ── Mode: ratios (default) ───────────────────────────────────────────────────
-
+@register_mode(
+    "ratios",
+    description=(
+        "Compute all valuation ratios (P/L, P/VPA, EV, P/EBIT, P/FCO, "
+        "P/FCF, EV/EBITDA, EV/Sales, PSR, Div Yield, Market Cap, ROE, ROA, "
+        "ROIC, Graham Number, margins, liquidity, leverage, efficiency, "
+        "growth) from b3 price + CVM financials + FRE shares."
+    ),
+    params={
+        "company": "str. B3 ticker (PETR4). Required.",
+    },
+    include_in_all=True,
+    examples=[
+        'skill(domain="cvm", sub_domain="valuation", mode="ratios", params=\'{"company":"PETR4"}\')',
+    ],
+)
 def ratios(company: str = "") -> dict:
     """Compute valuation ratios from b3 price + CVM financials + FRE shares.
 
@@ -324,7 +322,7 @@ def ratios(company: str = "") -> dict:
     # compute_all_ratios calls ratio_fn (not per_share_fn) for Type 1 metrics,
     # so "vpa" gets P/VPA (ratio) and "dpa" gets Div Yield (ratio). But the
     # manual code above sets "vpa" to the per-share VPA and "dpa" to per-share
-    # DPA. Restore the per-share values — the ratios are available under their
+    # DPA. Restore the per-share values -- the ratios are available under their
     # own keys (pvpa, dy) from the registry.
     ratios_result["vpa"] = vpa  # per-share VPA (PL / shares)
     ratios_result["dpa"] = dpa_ttm  # per-share DPA (dividends per share TTM)
@@ -333,7 +331,7 @@ def ratios(company: str = "") -> dict:
     # screener skills read. These map to the canonical English registry keys.
     # The registry returns English keys (gross_margin, debt_equity, etc.) but
     # downstream skills were wired with Portuguese keys in v1.2-v1.4. These
-    # aliases ensure backward compat — both English and Portuguese keys work.
+    # aliases ensure backward compat -- both English and Portuguese keys work.
     _pt_aliases = {
         "margem_bruta": "gross_margin",
         "margem_operacional": "operating_margin",
@@ -356,173 +354,3 @@ def ratios(company: str = "") -> dict:
     # [v1.0.14] Data freshness
     from skills.cvm._freshness import add_freshness
     return add_freshness(result)
-
-
-# ── Mode: summary ────────────────────────────────────────────────────────────
-
-def summary(company: str = "") -> dict:
-    """Combined: ratios + data source status (which DBs are synced).
-
-    [v1.5] The headline_v13_metrics block has been removed -- all metrics are
-    now in ratios() directly via compute_all_ratios(), so a separate headline
-    block was redundant.
-    """
-    r = ratios(company=company)
-    if r.get("status") != "ok":
-        return r
-
-    r["data_availability"] = {
-        "price": r["sources"].get("price", {}).get("status", "missing"),
-        "price_source": r["sources"].get("price", {}).get("source", "unknown"),
-        "dfp_ttm": r["sources"].get("financials", {}).get("status", "missing"),
-        "fre_shares": r["sources"].get("shares", {}).get("status", "missing"),
-    }
-    return r
-
-
-# ── Internal: get price (brapi -> investsite -> b3 trades) ───────────────────
-# [v2.0.0] KEPT from v1.0.14 -- calculations price engine uses COTAHIST only
-# (historical daily prices). This 3-tier fallback gets the CURRENT price from
-# brapi first, then investsite, then b3 trades.db. Will be merged into the
-# price engine in a future phase.
-
-def _get_price(ticker: str) -> dict:
-    """3-tier price source: brapi -> investsite -> b3 trades."""
-    brapi_data = _get_price_brapi(ticker)
-    if brapi_data.get("status") == "ok":
-        return brapi_data
-
-    investsite_data = _get_price_investsite(ticker)
-    if investsite_data.get("status") == "ok":
-        return investsite_data
-
-    b3_data = _get_latest_price(ticker)
-    if b3_data.get("status") == "ok":
-        b3_data["source"] = "b3_trades"
-        return b3_data
-
-    investsite_data["source"] = "investsite+b3_trades (both failed)"
-    return investsite_data
-
-
-def _get_price_brapi(ticker: str) -> dict:
-    try:
-        from data_sources.b3.brapi.query_engine import quote as brapi_quote
-        r = brapi_quote(ticker=ticker, force=True)
-        if r.get("status") != "ok":
-            return {"status": "error", "error": f"brapi: {r.get('error','')}"}
-        price = r.get("price")
-        if price is None:
-            return {"status": "error", "error": "brapi: no price"}
-        return {
-            "status": "ok", "source": "brapi",
-            "last_price": float(price),
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "market_cap": r.get("market_cap"),
-            "pe_ratio": r.get("pe_ratio"),
-        }
-    except Exception as e:
-        return {"status": "error", "error": f"brapi: {e}"}
-
-
-def _get_price_investsite(ticker: str) -> dict:
-    try:
-        from skills.investsite.investsite import indicators
-        r = indicators(ticker=ticker)
-        if r.get("status") != "ok":
-            return {"status": "error", "error": f"investsite: {r.get('error','')}"}
-
-        precos = r.get("sections", {}).get("precos_relativos", {})
-        price = precos.get("Preco Atual da Acao")
-        date_str = precos.get("Data do Preco da Acao", "")
-
-        if price is None:
-            return {"status": "error", "error": "investsite: no price"}
-
-        if not isinstance(price, (int, float)):
-            from core.br_validator import parse_brl
-            try:
-                price = parse_brl(str(price))
-            except ValueError:
-                return {"status": "error", "error": f"investsite: cannot parse price '{price}'"}
-
-        # [v1.0.12] Extract market cap -- EXACT key match (not substring)
-        market_cap = None
-        _MCAP_KEYS = {"valor de mercado", "market cap", "valor mercado"}
-        for key, raw in precos.items():
-            if key.lower().strip() not in _MCAP_KEYS:
-                continue
-            if isinstance(raw, list) and raw:
-                raw = raw[0]
-            if isinstance(raw, (int, float)):
-                market_cap = float(raw)
-            elif isinstance(raw, str):
-                from core.br_validator import parse_brl
-                try:
-                    market_cap = parse_brl(raw)
-                except ValueError:
-                    pass
-            if market_cap is not None and market_cap > 0:
-                break
-
-        # [v1.0.10] Extract investsite's pre-computed P/L + P/VPA
-        pe_ratio = None
-        raw_pe = precos.get("Preco/Lucro")
-        if raw_pe is not None and isinstance(raw_pe, (int, float)):
-            pe_ratio = float(raw_pe)
-
-        p_vpa_investsite = None
-        raw_pvpa = precos.get("Preco/VPA")
-        if raw_pvpa is not None and isinstance(raw_pvpa, (int, float)):
-            p_vpa_investsite = float(raw_pvpa)
-
-        result = {
-            "status": "ok", "source": "investsite",
-            "last_price": float(price), "date": date_str,
-        }
-        if market_cap is not None:
-            result["market_cap"] = market_cap
-        if pe_ratio is not None:
-            result["pe_ratio"] = pe_ratio
-        if p_vpa_investsite is not None:
-            result["p_vpa"] = p_vpa_investsite
-        return result
-    except Exception as e:
-        return {"status": "error", "error": f"investsite: {e}"}
-
-
-def _get_latest_price(ticker: str) -> dict:
-    """Get latest price from b3 trades.db (fallback)."""
-    try:
-        import sqlite3
-        from data_sources.b3.api.catalog import db_path as b3_db_path
-        trades_db = b3_db_path("trades")
-        if not trades_db.exists():
-            return {"status": "not_synced", "error": "trades.db not found"}
-        conn = sqlite3.connect(f"file:{trades_db}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT RptDt, LastPric FROM trades WHERE TckrSymb=? ORDER BY RptDt DESC LIMIT 1",
-            (ticker,),
-        ).fetchone()
-        conn.close()
-        if not row:
-            return {"status": "not_found", "error": f"No trades for {ticker}"}
-        return {"status": "ok", "date": row["RptDt"],
-                "last_price": float(row["LastPric"]) if row["LastPric"] else None}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _safe_div(a: float | None, b: float | None) -> float | None:
-    """Divide a/b, returning None when either side is None or b is zero.
-
-    Used by the manual ratio computations in ratios() (market_cap / lucro_liquido,
-    etc.). Calculations metrics handle None internally, but the manual ratios
-    that compose brapi_market_cap + investsite fallback still need this helper.
-    """
-    if a is None or b is None or b == 0:
-        return None
-    return a / b

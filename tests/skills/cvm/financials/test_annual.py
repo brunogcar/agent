@@ -14,7 +14,7 @@ class TestAnnualMode:
     """Tests for `financials.annual()`."""
 
     def test_annual_ok(self, financials_env):
-        from skills.cvm.financials.financials import annual
+        from skills.cvm.financials.modes.annual import annual
         result = annual(company="33000167000101", periods=5)
         assert result["status"] == "ok"
         assert result["period_type"] == "annual"
@@ -32,11 +32,11 @@ class TestAnnualMode:
         assert ratios["roe"] == 0.3
 
     def test_annual_no_company(self, financials_env):
-        from skills.cvm.financials.financials import annual
+        from skills.cvm.financials.modes.annual import annual
         result = annual()
         assert result["status"] == "error"
 
     def test_annual_not_found(self, financials_env):
-        from skills.cvm.financials.financials import annual
+        from skills.cvm.financials.modes.annual import annual
         result = annual(company="NONEXISTENT")
         assert result["status"] == "not_found"

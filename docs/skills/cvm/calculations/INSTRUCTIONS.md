@@ -181,4 +181,33 @@ If you're creating a new skill that follows this pattern:
 
 ---
 
+## 📐 Consumer Skill Pattern (financials v1.6 / valuation v1.4)
+
+Consumer skills that surface calculations metrics — currently `skills/cvm/financials/` (v1.6) and `skills/cvm/valuation/` (v1.4) — follow a related but distinct modular pattern. They do **not** use the calculations library's `engines/ + metrics/` split (they're not extensible metric libraries — they expose a fixed set of modes per skill). Instead, each consumer skill is split as:
+
+```text
+skills/cvm/<skill>/
+├── __init__.py       manifest + route() dispatch (auto-discovery via importlib on modes/*.py)
+├── _registry.py      ModeSpec + register_mode + MODES dict (mirrors calculations' _registry.py shape,
+│                     but for modes instead of engines/metrics)
+├── modes/            one file per mode, auto-discovered
+│   ├── __init__.py   minimal package marker
+│   └── <mode>.py     @register_mode("mode", ...) def <mode>(...): ...
+├── fetchers.py       internal data fetching from DBs / calculations engines
+├── helpers.py        shared utilities (_safe_call, _safe_div, _safe_get, etc.)
+├── report.py         dashboard/report section builders (composition logic for dashboard modes)
+└── metrics.py        (financials only) ratio computation operating on raw statement dicts
+```
+
+**Same auto-discovery principle as calculations:** adding a new mode = drop a file in `modes/` + `@register_mode(...)`, no edits to `__init__.py` or `_registry.py`. The dispatcher's `route()` looks up `MODES[mode]` and dispatches via `spec.fn(**filtered)`.
+
+**Differences from the calculations pattern:**
+- `modes/` (one fn per file) instead of `engines/` + `metrics/` (two layers). Consumer skills have no engine/metric split — their modes are top-level user-facing entry points.
+- `fetchers.py` + `helpers.py` + `report.py` are the consumer-skill equivalent of calculations' engine leaves — but they're flat modules, not a registry-extensible folder. New fetchers/helpers/sections are added by editing those files (not by dropping new files into a registry-scanned folder).
+- `_registry.py` uses `ModeSpec` (with `name`, `description`, `fn`, `include_in_all`) instead of `EngineSpec`/`MetricSpec`. `include_in_all` controls whether the mode shows up in the manifest's default mode list.
+
+When editing `skills/cvm/financials/` or `skills/cvm/valuation/`, follow this consumer-skill pattern. Do **not** introduce a new `<skill>.py` monolith or hardcode mode dispatch tables in `__init__.py` — the auto-discovery pattern is the source of truth.
+
+---
+
 *Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*

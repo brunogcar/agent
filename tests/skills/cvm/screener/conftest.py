@@ -92,7 +92,7 @@ def _mock_all(monkeypatch, cad_comps, bridge_map, val_map):
     monkeypatch.setattr("data_sources.cvm.cad.query_engine.search", fake_cad_search)
     monkeypatch.setattr("data_sources.cvm.cad.query_engine.lookup", fake_cad_lookup)
     monkeypatch.setattr("data_sources.cvm.bridge.query_engine.lookup", fake_bridge_lookup)
-    monkeypatch.setattr("skills.cvm.valuation.valuation.ratios", fake_val_ratios)
+    monkeypatch.setattr("skills.cvm.valuation.modes.ratios.ratios", fake_val_ratios)
 
 
 @pytest.fixture

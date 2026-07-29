@@ -23,7 +23,7 @@ class TestSummaryMode:
     """Tests for `financials.summary()`."""
 
     def test_summary_ok(self, financials_env):
-        from skills.cvm.financials.financials import summary
+        from skills.cvm.financials.modes.summary import summary
         result = summary(company="33000167000101")
         assert result["status"] == "ok"
         assert "latest_annual" in result["sections"]
@@ -33,7 +33,7 @@ class TestSummaryMode:
         assert "current_ratios" in result["sections"]
 
     def test_summary_no_company(self, financials_env):
-        from skills.cvm.financials.financials import summary
+        from skills.cvm.financials.modes.summary import summary
         result = summary()
         assert result["status"] == "error"
 
@@ -47,7 +47,7 @@ class TestSummaryV101Regressions:
 
     def test_summary_latest_quarterly_is_newest(self, financials_env):
         """[P1] summary.latest_quarterly should be the NEWEST quarter, not oldest."""
-        from skills.cvm.financials.financials import summary
+        from skills.cvm.financials.modes.summary import summary
         result = summary(company="33000167000101")
         if result["sections"].get("latest_quarterly", {}).get("period"):
             latest = result["sections"]["latest_quarterly"]
@@ -59,7 +59,7 @@ class TestSummaryV101Regressions:
 
     def test_ebitda_method_provenance(self, financials_env):
         """[v1.0.1] EBITDA response includes ebitda_method field."""
-        from skills.cvm.financials.financials import annual
+        from skills.cvm.financials.modes.annual import annual
         result = annual(company="33000167000101", periods=2)
         if result["status"] == "ok" and result["periods"]:
             metrics = result["periods"][0]["metrics"]
@@ -97,7 +97,7 @@ class TestSummaryCurrentRatios:
     """
 
     def test_current_ratios_section_populated(self, financials_env):
-        from skills.cvm.financials.financials import summary
+        from skills.cvm.financials.modes.summary import summary
         result = summary(company="33000167000101")
         assert result["status"] == "ok"
         cr = result["sections"].get("current_ratios")

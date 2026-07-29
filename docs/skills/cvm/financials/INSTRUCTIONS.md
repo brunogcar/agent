@@ -10,7 +10,7 @@
 4. **Never change the EBITDA formula** — `EBITDA = EBIT (DRE 3.05) + D&A (DFC 6.01.01.02)`. The D&A comes from the cash flow statement, not the DRE.
 5. **Never change the Q4 derivation** — `Q4 = DFP annual (meses=12) − ITR Q3 cumulative (meses=9)`. This requires both DFP + ITR to be synced.
 6. **Never replace `compute_ratios()` with calculations metrics in `quarterly`/`annual`/`complete` modes** — Calculations engines are point-in-time (`*_at(company, date)`); per-period rendering needs ratios from raw `{codigo: valor}` dicts. The two patterns coexist intentionally. Calculations integration is confined to `summary()` `current_ratios` only.
-7. **Never import calculations metrics at the top of `financials.py`** — Lazy-import them inside `summary()` so importing the module doesn't trigger the calculations registry (and the `PLANNER_MODEL` env-var requirement).
+7. **Never import calculations metrics at the top of `modes/summary.py`** — Lazy-import them inside `summary()` so importing the module doesn't trigger the calculations registry (and the `PLANNER_MODEL` env-var requirement). *(v1.6: this rule was originally about `financials.py`; the file was split into `modes/summary.py` where `summary()` now lives. The same restriction applies to the new path.)*
 8. **Never call a calculations metric without `_safe_call`** — Engines may raise `FileNotFoundError` when their underlying DB (cotahist, fre, itr) is not synced. Without the wrapper, one missing DB crashes the whole `summary()`.
 9. **Never create `.bak` files** — Forbidden by project rules.
 10. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
@@ -24,7 +24,7 @@
 4. **Always return `period_type` in the result** — So callers know if it's "annual" or "quarterly".
 5. **Always sort periods newest-first** — Consistent with other skills.
 6. **Always run `compileall` before `pytest`** — Catches syntax errors early.
-7. **Always split tests by mode** — `test_metrics.py` / `test_annual.py` / `test_quarterly.py` / `test_complete.py` / `test_summary.py` / `test_route.py` + shared `conftest.py`. One test class per file (regression classes allowed as additional classes in the same file).
+7. **Always split tests by mode** — `test_metrics.py` / `test_annual.py` / `test_quarterly.py` / `test_complete.py` / `test_summary.py` / `test_dashboard.py` / `test_route.py` + shared `conftest.py`. One test class per file (regression classes allowed as additional classes in the same file). *(v1.6: after the file split, per-mode test imports use `from skills.cvm.financials.modes.<mode> import <fn>` instead of `from skills.cvm.financials.financials import <fn>`.)*
 
 ---
 
@@ -38,4 +38,4 @@
 #### v1.3 — Lazy import protects module load from registry initialization
 > - **What happened:** Initial draft imported calculations metrics at the top of `financials.py`. Importing the module then triggered `skills.cvm.calculations._registry` auto-discovery, which transitively imports `core.config`, which requires `PLANNER_MODEL` env var. Importing financials.py for a quick smoke test would crash with `RuntimeError: PLANNER_MODEL is required`.
 > - **Why it matters:** Skills should be importable without runtime env vars (tests, lint, introspection). Pulling in the calculations registry at module-load time breaks that invariant.
-> - **Fix:** Lazy-import calculations metrics inside `summary()` function body. Module load no longer touches the calculations registry. Tests that don't call `summary()` stay fast (no registry init). Documented in NEVER DO #7.
+> - **Fix:** Lazy-import calculations metrics inside `summary()` function body. Module load no longer touches the calculations registry. Tests that don't call `summary()` stay fast (no registry init). Documented in NEVER DO #7. *(v1.6: the file split moved `summary()` to `modes/summary.py` — the lazy-import invariant now applies to that file.)*

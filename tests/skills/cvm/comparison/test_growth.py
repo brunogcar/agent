@@ -33,7 +33,7 @@ class TestGrowthMode:
             return {"status": "ok", "company": company, "period_type": "quarterly",
                     "periods": FIN_QUARTERLY_SUZB3["periods"],
                     "ttm": FIN_QUARTERLY_SUZB3["ttm"]}
-        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        monkeypatch.setattr("skills.cvm.financials.modes.quarterly.quarterly", fake_quarterly)
         r = comparison.growth(tickers=["SUZB3", "KLBN11"])
         assert r["status"] == "ok"
         assert r["tickers"] == ["SUZB3", "KLBN11"]
@@ -48,7 +48,7 @@ class TestGrowthMode:
         """QoQ = (latest - prior) / |prior|."""
         def fake_quarterly(company="", periods=8, consolidado=1):
             return FIN_QUARTERLY_SUZB3
-        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        monkeypatch.setattr("skills.cvm.financials.modes.quarterly.quarterly", fake_quarterly)
         r = comparison.growth(tickers=["SUZB3", "VALE3"])
         sec = r["sections"][0]
         qoq_idx = sec["columns"].index("Receita QoQ")
@@ -59,7 +59,7 @@ class TestGrowthMode:
         """YoY = (latest - same_q_prior_year) / |same_q_prior_year|."""
         def fake_quarterly(company="", periods=8, consolidado=1):
             return FIN_QUARTERLY_SUZB3
-        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        monkeypatch.setattr("skills.cvm.financials.modes.quarterly.quarterly", fake_quarterly)
         r = comparison.growth(tickers=["SUZB3", "VALE3"])
         sec = r["sections"][0]
         yoy_idx = sec["columns"].index("Receita YoY")
@@ -69,7 +69,7 @@ class TestGrowthMode:
     def test_growth_ttm_ratios(self, monkeypatch):
         def fake_quarterly(company="", periods=8, consolidado=1):
             return FIN_QUARTERLY_SUZB3
-        monkeypatch.setattr("skills.cvm.financials.financials.quarterly", fake_quarterly)
+        monkeypatch.setattr("skills.cvm.financials.modes.quarterly.quarterly", fake_quarterly)
         r = comparison.growth(tickers=["SUZB3", "VALE3"])
         sec = r["sections"][0]
         roe_idx = sec["columns"].index("ROE (TTM)")

@@ -13,10 +13,10 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 
 | Skill | Modes | Data Sources |
 |-------|-------|--------------|
-| [**financials**](cvm/FINANCIALS.md) | quarterly (default), annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
+| [**financials**](cvm/FINANCIALS.md) | quarterly (default), annual, complete, summary, dashboard | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
 | [**shareholders**](cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
-| [**valuation**](cvm/VALUATION.md) | ratios, summary | b3 price + DFP/ITR TTM financials + FRE shares — P/L, P/VPA, EV, ROIC, Graham Number |
+| [**valuation**](cvm/VALUATION.md) | ratios, summary, dashboard | b3 price + DFP/ITR TTM financials + FRE shares — P/L, P/VPA, EV, ROIC, Graham Number |
 | [**comparison**](cvm/COMPARISON.md) | side_by_side (default), summary, growth | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
 | [**screener**](cvm/SCREENER.md) | sector, compare | Orchestrates CAD + bridge + valuation + financials + FCA (listing segment) — sector peers + medians |
 | [**insider**](cvm/INSIDER.md) | history, by_role, summary | VLMO (insider trading disclosures) — insider buy/sell + sentiment |
@@ -110,12 +110,21 @@ See [CVM Data Sources](../data_sources/CVM.md) for per-sub-domain details, and [
 LLM → skill(domain="cvm", sub_domain=..., mode=..., params=...)  [skills/dispatcher.py @tool]
        └→ skills/cvm/__init__.py route()
           └→ skills/cvm/<skill>/__init__.py route(mode)
-             └→ skills/cvm/<skill>/<skill>.py  (calls data_source query engines)
-                └→ data_sources/cvm/{dfp,itr,fre,ipe,cad,bridge}/query_engine.py
-                └→ data_sources/b3/dividends/query_engine.py
-                └→ data_sources/cvm/_bridge.py resolve_company()
+             │
+             ├─ financials (v1.6) + valuation (v1.4):
+             │    └→ skills/cvm/<skill>/modes/<mode>.py  (auto-discovered via _registry.py)
+             │       └→ fetchers.py + helpers.py + report.py (+ metrics.py for financials)
+             │          └→ data_source query engines + calculations engines
+             │
+             └─ other CVM skills (shareholders/dividends/comparison/screener/insider/governance):
+                  └→ skills/cvm/<skill>/<skill>.py  (calls data_source query engines)
+                     └→ data_sources/cvm/{dfp,itr,fre,ipe,cad,bridge}/query_engine.py
+                     └→ data_sources/b3/dividends/query_engine.py
+                     └→ data_sources/cvm/_bridge.py resolve_company()
 ```
+
+`financials` (v1.6) and `valuation` (v1.4) use the **modular `modes/ + _registry.py` pattern** (auto-discovery via `importlib` on `modes/*.py`, mirroring `skills/cvm/calculations/_registry.py` + `tools/git_ops/actions/`). Adding a new mode = drop a file in `modes/` + `@register_mode(...)`; no edits to `__init__.py`. Other CVM skills still use the single-file `<skill>.py` pattern — they will be migrated to the modular pattern incrementally.
 
 ---
 
-*Last updated: 2026-07-25.*
+*Last updated: 2026-07-29.*

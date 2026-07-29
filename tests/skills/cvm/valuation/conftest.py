@@ -4,7 +4,7 @@
 refactor). The old fixture built synthetic DFP/FRE/trades DBs and patched
 internal helpers (`_get_shares_investsite`, `_get_financials`) that no longer
 exist. The new fixture mocks the engine functions at the names bound inside
-`skills.cvm.valuation.valuation` (which imports them via
+`skills.cvm.valuation.modes.ratios` (which imports them via
 `from <engine_module> import <fn>` -- the bound names are what the SUT actually
 calls, so that is the namespace we must patch).
 
@@ -12,6 +12,9 @@ calls, so that is the namespace we must patch).
 been removed — valuation.ratios() now calls `compute_all_ratios()` which
 walks the registry internally. We mock `compute_all_ratios` itself to return
 all 37 metric values deterministically.
+
+[v1.6-valuation-split] Patch paths moved from `skills.cvm.valuation.valuation`
+to `skills.cvm.valuation.modes.ratios` (ratios() now lives in modes/ratios.py).
 
 Env vars (PLANNER_MODEL etc.) are set by the parent conftest at
 ``tests/skills/cvm/conftest.py``.
@@ -26,13 +29,13 @@ def valuation_env(monkeypatch):
     """Mock calculations engines + compute_all_ratios + price for valuation.ratios().
 
     All engine functions are patched at the names bound inside
-    ``skills.cvm.valuation.valuation`` (NOT at their source modules), because
-    valuation.py imports them via ``from <module> import <fn>``. Patching the
+    ``skills.cvm.valuation.modes.ratios`` (NOT at their source modules), because
+    modes/ratios.py imports them via ``from <module> import <fn>``. Patching the
     source module would not affect the local references already bound in
-    valuation.valuation's namespace.
+    modes.ratios's namespace.
 
     ``compute_all_ratios`` is patched at
-    ``skills.cvm.valuation.valuation.compute_all_ratios`` (also imported via
+    ``skills.cvm.valuation.modes.ratios.compute_all_ratios`` (also imported via
     ``from ... import``).
 
     Known values (BRL, R$/share as noted):
@@ -82,31 +85,31 @@ def valuation_env(monkeypatch):
       `dividend_yield` are preserved (no key conflict).
     """
     # ── Calculations engines (snapshot/TTM fetchers) ───────────────────────
-    # Patch at valuation.valuation namespace -- those are the names the SUT
+    # Patch at valuation.modes.ratios namespace -- those are the names the SUT
     # actually invokes. (See module docstring for why source-module patching
     # would not work.)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.ttm_earnings_at", lambda c, d: 120e9)
+        "skills.cvm.valuation.modes.ratios.ttm_earnings_at", lambda c, d: 120e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.revenue_at", lambda c, d: 280e9)
+        "skills.cvm.valuation.modes.ratios.revenue_at", lambda c, d: 280e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.ebit_at", lambda c, d: 70e9)
+        "skills.cvm.valuation.modes.ratios.ebit_at", lambda c, d: 70e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.pl_at", lambda c, d: 350e9)
+        "skills.cvm.valuation.modes.ratios.pl_at", lambda c, d: 350e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.debt_at", lambda c, d: 100e9)
+        "skills.cvm.valuation.modes.ratios.debt_at", lambda c, d: 100e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.cash_at", lambda c, d: 30e9)
+        "skills.cvm.valuation.modes.ratios.cash_at", lambda c, d: 30e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.shares_at", lambda c, d: 13e9)
+        "skills.cvm.valuation.modes.ratios.shares_at", lambda c, d: 13e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.da_at", lambda c, d: 15e9)
+        "skills.cvm.valuation.modes.ratios.da_at", lambda c, d: 15e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.operating_cf_at", lambda c, d: 80e9)
+        "skills.cvm.valuation.modes.ratios.operating_cf_at", lambda c, d: 80e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.investing_cf_at", lambda c, d: -30e9)
+        "skills.cvm.valuation.modes.ratios.investing_cf_at", lambda c, d: -30e9)
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.dividends_at", lambda c, d: 1.85)
+        "skills.cvm.valuation.modes.ratios.dividends_at", lambda c, d: 1.85)
 
     # ── [v1.5] compute_all_ratios mock ────────────────────────────────────
     # Returns ALL 37 metrics (no filter — valuation calls compute_all_ratios
@@ -166,10 +169,12 @@ def valuation_env(monkeypatch):
             "effective_tax_rate": 0.34,
         }
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation.compute_all_ratios",
+        "skills.cvm.valuation.modes.ratios.compute_all_ratios",
         mock_compute_all_ratios)
 
-    # ── Price (kept in valuation.valuation._get_price -- not yet an engine) ─
+    # ── Price (kept in valuation.fetchers -- not yet an engine) ─────────
+    # modes/ratios.py imports _get_price via `from skills.cvm.valuation.fetchers
+    # import _get_price`, so the bound name in modes.ratios is what we patch.
     # valuation.py reads `price_data["status"]`, `["last_price"]`, `["date"]`,
     # `["source"]` -- the mock must include those keys.
     def mock_get_price(ticker):
@@ -181,7 +186,7 @@ def valuation_env(monkeypatch):
             "market_cap": None,
         }
     monkeypatch.setattr(
-        "skills.cvm.valuation.valuation._get_price", mock_get_price)
+        "skills.cvm.valuation.modes.ratios._get_price", mock_get_price)
 
     return {
         "price": 38.5,

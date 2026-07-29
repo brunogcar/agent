@@ -176,7 +176,7 @@ class TestFinancialsSkill:
 
     @pytest.mark.parametrize("ticker", TICKERS)
     def test_quarterly_with_ttm(self, dfp_available, ticker):
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         r = quarterly(company=ticker, periods=4)
         assert r["status"] == "ok", f"{ticker}: {r.get('error','')}"
         assert len(r["periods"]) > 0
@@ -194,7 +194,7 @@ class TestFinancialsSkill:
 
     @pytest.mark.parametrize("ticker", TICKERS)
     def test_annual(self, dfp_available, ticker):
-        from skills.cvm.financials.financials import annual
+        from skills.cvm.financials.modes.annual import annual
         r = annual(company=ticker, periods=2)
         assert r["status"] == "ok", f"{ticker}: {r.get('error','')}"
         assert len(r["periods"]) > 0
@@ -205,7 +205,7 @@ class TestValuationSkill:
 
     @pytest.mark.parametrize("ticker", TICKERS)
     def test_ratios_returns_price_and_pl(self, dfp_available, fre_available, bridge_available, ticker):
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         r = ratios(company=ticker)
         assert r["status"] == "ok", f"{ticker}: {r.get('error','')}"
         ratios_data = r["ratios"]
@@ -215,7 +215,7 @@ class TestValuationSkill:
     def test_unit_ticker_market_cap_not_computed(self, dfp_available, fre_available, bridge_available):
         """KLBN11 (UNIT) must NOT have market_cap_source='computed' (wrong for units).
         This is the regression test for the v1.0.9-v1.0.13 unit ticker fix."""
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         r = ratios(company="KLBN11")
         assert r["status"] == "ok"
         ratios_data = r["ratios"]

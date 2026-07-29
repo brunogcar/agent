@@ -17,11 +17,11 @@ from __future__ import annotations
 
 
 class TestRatiosMode:
-    """Tests for skills.cvm.valuation.valuation.ratios()."""
+    """Tests for skills.cvm.valuation.modes.ratios.ratios()."""
 
     def test_ratios_ok(self, valuation_env):
         """ratios() returns status=ok with all expected ratio keys populated."""
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         result = ratios(company="PETR4")
         assert result["status"] == "ok"
         assert result["ticker"] == "PETR4"
@@ -153,13 +153,13 @@ class TestRatiosMode:
 
     def test_ratios_no_company(self, valuation_env):
         """ratios() with no company returns status=error."""
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         result = ratios()
         assert result["status"] == "error"
 
     def test_ratios_invalid_ticker(self, valuation_env):
         """ratios() with invalid ticker returns status=error."""
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         result = ratios(company="!!!")
         assert result["status"] == "error"
 
@@ -171,9 +171,9 @@ class TestRatiosMode:
             return {"status": "error", "source": "all_failed",
                     "error": "all price sources unavailable"}
         monkeypatch.setattr(
-            "skills.cvm.valuation.valuation._get_price", mock_get_price_fail)
+            "skills.cvm.valuation.modes.ratios._get_price", mock_get_price_fail)
 
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         result = ratios(company="PETR4")
         assert result["status"] == "ok"  # outer status ok
         assert result["ratios"]["status"] == "error"
@@ -193,10 +193,10 @@ class TestRatiosMode:
             return {"_sentinel_metric": 42.0}
 
         monkeypatch.setattr(
-            "skills.cvm.valuation.valuation.compute_all_ratios",
+            "skills.cvm.valuation.modes.ratios.compute_all_ratios",
             tracking_mock)
 
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         result = ratios(company="PETR4")
         assert result["status"] == "ok"
         # Confirm compute_all_ratios was called once with (ticker, today)

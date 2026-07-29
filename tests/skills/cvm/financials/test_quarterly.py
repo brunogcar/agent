@@ -28,7 +28,7 @@ class TestQuarterlyMode:
     """Tests for `financials.quarterly()`."""
 
     def test_quarterly_ok(self, financials_env):
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         result = quarterly(company="33000167000101", periods=8)
         assert result["status"] == "ok"
         assert result["period_type"] == "quarterly"
@@ -39,13 +39,13 @@ class TestQuarterlyMode:
         assert first["quarter"] in (1, 2, 3, 4)
 
     def test_quarterly_no_company(self, financials_env):
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         result = quarterly()
         assert result["status"] == "error"
 
     def test_quarterly_standalone_derivation(self, financials_env):
         """Verify Q2 standalone = Q2_cumulative - Q1_cumulative."""
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         result = quarterly(company="33000167000101", periods=8)
         if result["status"] != "ok" or not result["periods"]:
             pytest.skip("Not enough quarterly data")
@@ -127,7 +127,7 @@ class TestQuarterlyV101Regressions:
         monkeypatch.setattr("data_sources.cvm._bridge._resolve_via_cad",
                             lambda name: (None, None))
 
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         result = quarterly(company="33000167000101", periods=8)
         # Before P0 fix: would return empty periods (ITR query with id=1 found nothing)
         # After P0 fix: should find Q1 data from ITR (id=999)
@@ -144,7 +144,7 @@ class TestQuarterlyV101Regressions:
 
         Prior fix: Q1 subtracted prior-year annual total → large negative numbers.
         """
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         result = quarterly(company="33000167000101", periods=8)
         if result["status"] != "ok":
             pytest.skip("Not enough data")

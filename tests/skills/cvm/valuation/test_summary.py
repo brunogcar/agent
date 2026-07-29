@@ -12,11 +12,11 @@ from __future__ import annotations
 
 
 class TestSummaryMode:
-    """Tests for skills.cvm.valuation.valuation.summary()."""
+    """Tests for skills.cvm.valuation.modes.summary.summary()."""
 
     def test_summary_ok(self, valuation_env):
         """summary() returns status=ok with ratios + data_availability."""
-        from skills.cvm.valuation.valuation import summary
+        from skills.cvm.valuation.modes.summary import summary
         result = summary(company="PETR4")
         assert result["status"] == "ok"
         assert "ratios" in result
@@ -46,6 +46,6 @@ class TestSummaryMode:
 
     def test_summary_no_company(self, valuation_env):
         """summary() with no company returns status=error (propagated from ratios)."""
-        from skills.cvm.valuation.valuation import summary
+        from skills.cvm.valuation.modes.summary import summary
         result = summary()
         assert result["status"] == "error"

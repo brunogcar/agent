@@ -6,9 +6,11 @@ Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE s
 
 **Key characteristics:**
 - **Combines 3 data sources** — b3/api (trades.db price) + cvm/dfp (financials) + cvm/fre (shares outstanding) + cvm/bridge (ticker resolution)
-- **7 ratios computed** — P/L, P/VPA, EV, P/EBIT, P/FCO, Dividend Yield, Market Cap
+- **Ratios computed via `compute_all_ratios()`** (v1.3) — 37 calculations metrics auto-discovered; plus manual market-cap-based ratios (P/L, P/VPA, PSR, EV, Dividend Yield, Market Cap)
 - **Underlying values included** — each ratio returns the inputs (price, EPS, VPA, etc.) so callers can verify
 - **Data source status** — `summary` mode shows which DBs are synced vs missing
+- **3 modes** — ratios (default), summary, dashboard (NEW v1.4 — 5-tab multi-tab dashboard)
+- **Modular file structure (v1.4)** — split into `_registry.py` + `modes/` (3 files) + `fetchers.py` + `helpers.py` + `report.py`. `__init__.py` auto-discovers modes via importlib (same pattern as `skills/cvm/financials/` v1.6). Public API unchanged for `ratios` + `summary`; `dashboard` is new. See [ARCHITECTURE.md](valuation/ARCHITECTURE.md) for the file map.
 - **Uses core/br_validator** — `validate_ticker()`, `parse_escala()` for consistent parsing
 - **Read-only** — no sync. Assumes b3 trades.db + dfp.db + fre.db are already synced.
 
@@ -58,11 +60,11 @@ EV/EBITDA, Div Yield, Market Cap) + a full indicator table. See
 
 | File | Purpose |
 |------|---------|
-| [ARCHITECTURE.md](valuation/ARCHITECTURE.md) | Ratio formulas, data flow, data source requirements |
-| [API.md](valuation/API.md) | 2 modes: ratios, summary |
+| [ARCHITECTURE.md](valuation/ARCHITECTURE.md) | Ratio formulas, data flow, data source requirements, modular file map (v1.4) |
+| [API.md](valuation/API.md) | 3 modes: ratios, summary, dashboard |
 | [CHANGELOG.md](valuation/CHANGELOG.md) | Version history + roadmap |
 | [INSTRUCTIONS.md](valuation/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-25 (v1.0.8 + report wiring).*
+*Last updated: 2026-07-29 (v1.4 — file structure split + dashboard mode; see CHANGELOG.md).*

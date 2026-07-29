@@ -4,11 +4,26 @@
 
 ## 🔗 Source Code Reference
 
-| File | Purpose |
-|------|---------|
-| `skills/cvm/financials/__init__.py` | MANIFEST + route — 4 modes |
-| `skills/cvm/financials/financials.py` | Main logic: delegates to DFP/ITR query engines, mode dispatch. v1.3: `summary()` also delegates point-in-time ratios to calculations metrics. |
-| `skills/cvm/financials/metrics.py` | Ratio computation (`compute_ratios`, `compute_ebitda`, `compute_ttm` — operate on raw `{codigo: valor}` dicts) + engine-backed variants (`compute_ebitda_from_engines`, `compute_ttm_with_engines` — v1.3 introduced these to delegate TTM flow metrics to calculations engines; v1.4 moved their 7 engine imports to module top-level in a `[v1.4-financials-migration]` block, so zero direct CVM queries remain in ratio computation). + key account codes (`SUMMARY_CODES`, `KEY_CODES_BY_GRUPO`). |
+```text
+skills/cvm/financials/
+├── __init__.py        manifest + route() dispatch (auto-discovery)
+├── _registry.py       ModeSpec + register_mode + MODES dict
+├── modes/             one file per mode, auto-discovered via importlib
+│   ├── __init__.py    minimal package marker
+│   ├── quarterly.py   @register_mode("quarterly")   — default, 8Q
+│   ├── annual.py      @register_mode("annual")      — 5Y from DFP
+│   ├── complete.py    @register_mode("complete")    — by grupo + key codes
+│   ├── summary.py     @register_mode("summary")     — combined latest + current_ratios
+│   └── dashboard.py   @register_mode("dashboard")   — 5-tab thin composition (v1.5)
+├── fetchers.py        internal data fetching from DFP/ITR (_build_* + _get_* + _extract_metrics)
+├── helpers.py         _safe_call, _compute_ttm_section (shared utilities)
+├── report.py          dashboard section builders (composition logic for dashboard mode)
+└── metrics.py         ratio computation (SUMMARY_CODES, KEY_CODES_BY_GRUPO, compute_ratios,
+                       compute_ebitda, compute_ttm, compute_ebitda_from_engines,
+                       compute_ttm_with_engines) — UNCHANGED across v1.6 split
+```
+
+**v1.6 split (2026-07-29):** the 967-line `financials.py` was split into the structure above. `__init__.py` now auto-discovers modes by globbing `modes/*.py` (sorted) + `importlib.import_module()` — same pattern as `tools/git_ops/actions/` + `skills/cvm/calculations/_registry.py`. Adding a new mode = drop a file in `modes/` + `@register_mode(...)`, no edits to `__init__.py` or `_registry.py`. Public API unchanged.
 
 ### Test module tree
 
@@ -20,10 +35,11 @@ tests/skills/cvm/financials/
 ├── test_quarterly.py      # TestQuarterlyMode + TestQuarterlyV101Regressions (5 tests)
 ├── test_complete.py       # TestCompleteMode (5 tests)
 ├── test_summary.py        # TestSummaryMode + TestSummaryV101Regressions + TestSummaryCurrentRatios (5 tests)
+├── test_dashboard.py      # TestDashboardMode (5-tab payload assertions) — added v1.5
 └── test_route.py          # TestFinancialsRoute (3 tests)
 ```
 
-37 tests total (was 36 in v1.2 — added `test_current_ratios_section_populated`).
+89 tests total (v1.6 — `test_dashboard.py` added in v1.5; per-mode test imports updated to `from skills.cvm.financials.modes.<mode> import <fn>` after the v1.6 file split).
 
 ## Data Flow
 
@@ -112,6 +128,7 @@ Summary metrics use these CVM account codes:
 | `annual` | 5 | DFP | annual metrics + ratios |
 | `complete` | 8 (quarterly) / 5 (annual) | ITR + DFP or DFP | full statements by grupo + key codes |
 | `summary` | 1 annual + 4 quarterly | all + calculations | combined latest + trend + `current_ratios` |
+| `dashboard` | — | summary + report builders | 5-tab thin composition (Overview/DRE/Balanço/DFC/Ratios) for report tool's dashboard action (v1.5) |
 
 ---
 
@@ -138,10 +155,10 @@ The two patterns coexist intentionally:
 
 ### Lazy import + `_safe_call` pattern
 
-Calculations imports in `financials.py` are lazy (inside `summary()` function body, not at module top) so importing `financials.py` does NOT trigger calculations registry initialization (and the corresponding `PLANNER_MODEL` env-var requirement). Each metric is wrapped in `_safe_call(fn, company, today)` which catches `FileNotFoundError` (missing `cotahist.db`, `fre.db`) and any other exception, returning `None`. This makes the integration best-effort: a missing DB degrades gracefully instead of crashing the whole `summary()` call.
+Calculations imports in `modes/summary.py` are lazy (inside `summary()` function body, not at module top) so importing the modes module does NOT trigger calculations registry initialization (and the corresponding `PLANNER_MODEL` env-var requirement). Each metric is wrapped in `_safe_call(fn, company, today)` which catches `FileNotFoundError` (missing `cotahist.db`, `fre.db`) and any other exception, returning `None`. This makes the integration best-effort: a missing DB degrades gracefully instead of crashing the whole `summary()` call. *(v1.6: this pattern moved verbatim from the deleted `financials.py` to `modes/summary.py`.)*
 
-[v1.4] In `metrics.py`, by contrast, the engine-backed variants' imports (`ebit_at`, `da_at`, `revenue_at`, `ttm_earnings_at`, `operating_cf_at`, `investing_cf_at`, `financing_cf_at`) were moved to module top-level in a `[v1.4-financials-migration]` block. This is intentional: `metrics.py` is imported lazily by `financials.py` only when needed, and at that point `PLANNER_MODEL` is already set (financials' conftest sets it at import time). Moving the imports to module top makes the dependency explicit + mockable as `skills.cvm.financials.metrics.<fn>_at` (which is how `test_metrics.py` patches them). Engine calls inside the variants are still wrapped in `_safe_engine_call` (returns None on any error) so a missing DB degrades gracefully.
+[v1.4] In `metrics.py`, by contrast, the engine-backed variants' imports (`ebit_at`, `da_at`, `revenue_at`, `ttm_earnings_at`, `operating_cf_at`, `investing_cf_at`, `financing_cf_at`) were moved to module top-level in a `[v1.4-financials-migration]` block. This is intentional: `metrics.py` is imported lazily by the per-period modes (`modes/quarterly.py`, `modes/annual.py`, `modes/complete.py`) only when needed, and at that point `PLANNER_MODEL` is already set (financials' conftest sets it at import time). Moving the imports to module top makes the dependency explicit + mockable as `skills.cvm.financials.metrics.<fn>_at` (which is how `test_metrics.py` patches them). Engine calls inside the variants are still wrapped in `_safe_engine_call` (returns None on any error) so a missing DB degrades gracefully.
 
 ---
 
-*Last updated: 2026-07-29 (v1.4 — metrics.py migration to top-level engine imports).*
+*Last updated: 2026-07-29 (v1.6 — file structure split; see CHANGELOG.md for details). Public API + per-period mode behavior unchanged.*

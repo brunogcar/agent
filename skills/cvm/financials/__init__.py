@@ -9,11 +9,36 @@ Data sources used:
   - data_sources/cvm/bridge (ticker → CNPJ → empresa_ids)
 
 No sync — read-only over already-synced data.
+
+Auto-discovery:
+  1. Import _registry to ensure the MODES dict exists.
+  2. Auto-discover all modes/*.py files via importlib.
+  3. Each mode module's @register_mode decorator populates MODES.
+  4. build_manifest_modes() turns the registry into MANIFEST["modes"].
+
+Adding a new mode = drop a file in modes/ + register_mode(). No edits to
+__init__.py or _registry.py needed.
 """
 
 from __future__ import annotations
+import importlib
 import inspect
+from pathlib import Path
 
+# Import _registry to ensure MODES dict exists.
+from skills.cvm.financials._registry import MODES, build_manifest_modes  # noqa: F401
+
+# Auto-discover all mode modules from modes/ subdirectory.
+# Each module's @register_mode decorator populates MODES.
+_modes_dir = Path(__file__).parent / "modes"
+for _py_file in sorted(_modes_dir.glob("*.py")):
+    if _py_file.name == "__init__.py":
+        continue
+    _module_name = f"skills.cvm.financials.modes.{_py_file.stem}"
+    importlib.import_module(_module_name)
+
+
+# Build MANIFEST from the registered modes.
 MANIFEST = {
     "sub_domain":  "financials",
     "description": (
@@ -26,95 +51,32 @@ MANIFEST = {
     ),
     "source":  "dfp.db (annual) + itr.db (quarterly cumulative) + dfp.db DVA (proventos)",
     "storage": "read-only — no own database",
-    "modes": {
-        "quarterly": {
-            "description": "Standalone quarterly summary + ratios (default 8 quarters). Derives Q1-Q4 from ITR cumulative + DFP annual.",
-            "include_in_all": False,
-            "params": {
-                "company":     "str. B3 ticker (PETR4), name, or CNPJ. Required.",
-                "periods":     "int. Number of quarters. Default: 8.",
-                "consolidado": "int. 1=consolidated (default), 0=individual.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="financials", mode="quarterly", params=\'{"company":"PETR4"}\')',
-                'skill(domain="cvm", sub_domain="financials", mode="quarterly", params=\'{"company":"VALE3","periods":12}\')',
-            ],
-        },
-        "annual": {
-            "description": "Annual summary + ratios from DFP (default 5 years). Includes EBITDA, margins, ROA/ROE, debt ratios, payout.",
-            "include_in_all": False,
-            "params": {
-                "company":     "str. Required.",
-                "periods":     "int. Number of years. Default: 5.",
-                "consolidado": "int. Default: 1.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="financials", mode="annual", params=\'{"company":"PETR4"}\')',
-            ],
-        },
-        "complete": {
-            "description": "Full statements by grupo + key account codes (not all 497). Default period=quarterly.",
-            "include_in_all": False,
-            "params": {
-                "company":     "str. Required.",
-                "period":      "str. 'quarterly' (default) or 'annual'.",
-                "grupo":       "str. Filter: BPA, BPP, DRE, DFC_MI, DVA. Empty = all key codes.",
-                "consolidado": "int. Default: 1.",
-                "periods":     "int. Default: 8 (quarterly) or 5 (annual).",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="financials", mode="complete", params=\'{"company":"PETR4","grupo":"DRE"}\')',
-                'skill(domain="cvm", sub_domain="financials", mode="complete", params=\'{"company":"PETR4","period":"annual","grupo":"BPA"}\')',
-            ],
-        },
-        "summary": {
-            "description": "Combined: latest annual + latest quarterly (4Q trend) + key ratios.",
-            "include_in_all": True,
-            "params": {
-                "company":     "str. Required.",
-                "consolidado": "int. Default: 1.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="financials", mode="summary", params=\'{"company":"PETR4"}\')',
-            ],
-        },
-        "dashboard": {
-            "description": "Multi-tab financial dashboard (thin composition of annual() + quarterly() + compute_all_ratios()). Tabs: Overview (KPI cards), DRE, Balanço, DFC, Ratios. Optimized for the report tool's dashboard action.",
-            "include_in_all": False,
-            "params": {
-                "company":     "str. Required.",
-                "consolidado": "int. Default: 1.",
-            },
-            "examples": [
-                'skill(domain="cvm", sub_domain="financials", mode="dashboard", params=\'{"company":"PETR4"}\')',
-            ],
-        },
-    },
+    "modes": build_manifest_modes(),
 }
 
 
 def route(mode: str = "", **kwargs) -> dict:
-    """Dispatch financials mode call."""
+    """Dispatch financials mode call.
+
+    Args:
+        mode: Mode name ("quarterly", "annual", "complete", "summary",
+            "dashboard"). Required — empty returns an error.
+        **kwargs: Forwarded to the mode function (filtered by the function's
+            signature — unknown kwargs are silently dropped).
+
+    Returns:
+        Mode-specific dict on success, or ``{"status": "error", "error": ...}``
+        on bad mode name or runtime failure.
+    """
     if not mode:
         return {"status": "error",
-                "error": f"mode required. Options: {list(MANIFEST['modes'].keys())}"}
-    if mode not in MANIFEST["modes"]:
+                "error": f"mode required. Options: {list(MODES.keys())}"}
+    if mode not in MODES:
         return {"status": "error",
-                "error": f"Unknown mode '{mode}'. Available: {list(MANIFEST['modes'].keys())}"}
+                "error": f"Unknown mode '{mode}'. Available: {list(MODES.keys())}"}
 
-    from skills.cvm.financials.financials import (
-        quarterly, annual, complete, summary, dashboard,
-    )
-
-    dispatch = {
-        "quarterly": quarterly,
-        "annual": annual,
-        "complete": complete,
-        "summary": summary,
-        "dashboard": dashboard,
-    }
-
-    fn = dispatch[mode]
+    spec = MODES[mode]
+    fn = spec.fn
     sig = inspect.signature(fn)
     accepted = set(sig.parameters.keys())
     filtered = {k: v for k, v in kwargs.items() if k in accepted}

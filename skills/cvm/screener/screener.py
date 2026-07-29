@@ -55,8 +55,8 @@ def sector(setor: str = "", limit: int = 20) -> dict:
 
     # 2. For each company: resolve ticker via bridge reverse-lookup, get valuation + financials
     from data_sources.cvm.bridge.query_engine import lookup as bridge_lookup
-    from skills.cvm.valuation.valuation import ratios as val_ratios
-    from skills.cvm.financials.financials import annual as fin_annual
+    from skills.cvm.valuation.modes.ratios import ratios as val_ratios
+    from skills.cvm.financials.modes.annual import annual as fin_annual
 
     peers: list[dict] = []
     errors: list[str] = []
@@ -228,7 +228,7 @@ def compare(company: str = "", limit: int = 20) -> dict:
 
     # 4. If not in peers (maybe valuation failed for this ticker), fetch separately
     if my_data is None:
-        from skills.cvm.valuation.valuation import ratios as val_ratios
+        from skills.cvm.valuation.modes.ratios import ratios as val_ratios
         try:
             vr = val_ratios(company=ticker)
             if vr.get("status") == "ok":

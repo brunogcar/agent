@@ -145,8 +145,8 @@ def _mock_skills(monkeypatch, val_map, fin_map, div_map):
     def fake_div_summary(company=""):
         return div_map.get(company.strip().upper(),
                            {"status": "error", "error": f"no data for {company}"})
-    monkeypatch.setattr("skills.cvm.valuation.valuation.ratios", fake_val_ratios)
-    monkeypatch.setattr("skills.cvm.financials.financials.summary", fake_fin_summary)
+    monkeypatch.setattr("skills.cvm.valuation.modes.ratios.ratios", fake_val_ratios)
+    monkeypatch.setattr("skills.cvm.financials.modes.summary.summary", fake_fin_summary)
     monkeypatch.setattr("skills.cvm.dividends.dividends.summary", fake_div_summary)
 
 

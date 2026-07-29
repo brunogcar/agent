@@ -87,7 +87,7 @@ class TestTableAdapters:
     """report(action="table") with real skill data through adapters."""
 
     def test_table_financials_quarterly(self, cvm_dbs_available, bridge_available, tmp_path, monkeypatch):
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         from tools.report_ops import table
         monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         data = quarterly(company="PETR4", periods=4)
@@ -99,7 +99,7 @@ class TestTableAdapters:
 
     def test_table_valuation_unit_ticker(self, cvm_dbs_available, bridge_available, tmp_path, monkeypatch):
         """Verify valuation adapter works for UNIT tickers (KLBN11)."""
-        from skills.cvm.valuation.valuation import ratios
+        from skills.cvm.valuation.modes.ratios import ratios
         from tools.report_ops import table
         monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         data = ratios(company="KLBN11")
@@ -134,7 +134,7 @@ class TestChartAdapters:
     """report(action="chart") with real skill data through adapters."""
 
     def test_chart_financials_trend(self, cvm_dbs_available, bridge_available, tmp_path, monkeypatch):
-        from skills.cvm.financials.financials import quarterly
+        from skills.cvm.financials.modes.quarterly import quarterly
         from tools.report_ops import charts
         monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         data = quarterly(company="PETR4", periods=8)
@@ -192,7 +192,7 @@ class TestXlsxExport:
             pass  # openpyxl not installed — skip deep verify
 
     def test_xlsx_financials(self, cvm_dbs_available, bridge_available, tmp_path, monkeypatch):
-        from skills.cvm.financials.financials import annual
+        from skills.cvm.financials.modes.annual import annual
         from tools.report_ops import export
         monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         data = annual(company="PETR4", periods=3)

@@ -171,27 +171,27 @@ class TestDFCMDFallback:
 
     def test_da_indirect_method_primary(self):
         """D&A from DFC_MI (6.01.01.02) is the primary source."""
-        from skills.cvm.financials.financials import _extract_metrics
+        from skills.cvm.financials.fetchers import _extract_metrics
         vals = {"6.01.01.02": 5000.0, "6.02.01.02": 3000.0}
         m = _extract_metrics(vals)
         assert m["da"] == 5000.0  # indirect method wins
 
     def test_da_direct_method_fallback(self):
         """When DFC_MI D&A is missing, fall back to DFC_MD (6.02.01.02)."""
-        from skills.cvm.financials.financials import _extract_metrics
+        from skills.cvm.financials.fetchers import _extract_metrics
         vals = {"6.02.01.02": 3000.0}  # no 6.01.01.02
         m = _extract_metrics(vals)
         assert m["da"] == 3000.0  # direct method fallback
 
     def test_da_direct_method_alt_fallback(self):
         """Second fallback: 6.01.04 (DFC_MD alternative code)."""
-        from skills.cvm.financials.financials import _extract_metrics
+        from skills.cvm.financials.fetchers import _extract_metrics
         vals = {"6.01.04": 2000.0}  # no 6.01.01.02, no 6.02.01.02
         m = _extract_metrics(vals)
         assert m["da"] == 2000.0
 
     def test_da_none_when_all_missing(self):
-        from skills.cvm.financials.financials import _extract_metrics
+        from skills.cvm.financials.fetchers import _extract_metrics
         m = _extract_metrics({})
         assert m["da"] is None
 
