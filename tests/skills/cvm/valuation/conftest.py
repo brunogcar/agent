@@ -61,6 +61,13 @@ def valuation_env(monkeypatch):
       roic=0.18, graham_number=75.0, roe=0.28, roa=0.15,
       gross_margin=0.35, operating_margin=0.25, net_margin=0.20,
       debt_equity=0.29, asset_turnover=0.35, current_ratio=1.5
+
+    [v1.4-valuation] 15 NEW v1.3 metrics also mocked:
+      ev_sales=2.05, ev_fcf=11.41, cash_ratio=0.30, quick_ratio=1.10,
+      ocf_margin=0.286, fcf_margin=0.179, working_capital=50e9,
+      cash_flow_to_debt=0.80, retention_ratio=0.50, sustainable_growth=0.14,
+      interest_coverage=8.0, inventory_turnover=5.0, receivables_turnover=8.0,
+      fixed_asset_turnover=0.80, p_tangible_book=1.55
     """
     # ── Calculations engines (snapshot/TTM fetchers) ───────────────────────
     # Patch at valuation.valuation namespace -- those are the names the SUT
@@ -110,6 +117,43 @@ def valuation_env(monkeypatch):
         "skills.cvm.valuation.valuation.asset_turnover_at", lambda c, d: 0.35)
     monkeypatch.setattr(
         "skills.cvm.valuation.valuation.current_ratio_at", lambda c, d: 1.5)
+
+    # ── [v1.4-valuation] 15 NEW v1.3 metrics ───────────────────────────────
+    # Same patching pattern -- bound names in valuation.valuation's namespace.
+    # Values are deterministic and loosely consistent with the engine mocks
+    # (EV=570.5e9, FCF=50e9, revenue=280e9, debt=100e9, cash=30e9, etc.) so
+    # they remain in plausible ranges; they are NOT recomputed from engines
+    # because the metrics themselves are mocked (we only test the wiring).
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.ev_sales_at", lambda c, d: 2.05)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.ev_fcf_at", lambda c, d: 11.41)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.cash_ratio_at", lambda c, d: 0.30)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.quick_ratio_at", lambda c, d: 1.10)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.ocf_margin_at", lambda c, d: 0.286)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.fcf_margin_at", lambda c, d: 0.179)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.working_capital_at", lambda c, d: 50e9)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.cash_flow_to_debt_at", lambda c, d: 0.80)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.retention_ratio_at", lambda c, d: 0.50)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.sustainable_growth_at", lambda c, d: 0.14)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.interest_coverage_at", lambda c, d: 8.0)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.inventory_turnover_at", lambda c, d: 5.0)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.receivables_turnover_at", lambda c, d: 8.0)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.fixed_asset_turnover_at", lambda c, d: 0.80)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.valuation.p_tangible_book_at", lambda c, d: 1.55)
 
     # ── Price (kept in valuation.valuation._get_price -- not yet an engine) ─
     # valuation.py reads `price_data["status"]`, `["last_price"]`, `["date"]`,

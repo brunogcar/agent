@@ -7,7 +7,7 @@
 | File | Purpose |
 |------|---------|
 | `skills/cvm/comparison/__init__.py` | MANIFEST + route() — dispatches side_by_side / summary / growth |
-| `skills/cvm/comparison/comparison.py` | Orchestration logic — calls financials + valuation + dividends per ticker, merges into side-by-side. [v1.3] `_VALUATION_COLS` extended with 5 calculations-sourced metrics (roe, roa, margem_liquida, divida_pl, liquidez_corrente) returned by valuation.ratios(). |
+| `skills/cvm/comparison/comparison.py` | Orchestration logic — calls financials + valuation + dividends per ticker, merges into side-by-side. [v1.3] `_VALUATION_COLS` extended with 5 calculations-sourced metrics (roe, roa, margem_liquida, divida_pl, liquidez_corrente) returned by valuation.ratios(). [v1.4] `_VALUATION_COLS` further extended with 15 v1.4 calculations-sourced metrics (ev_sales, ev_fcf, cash_ratio, quick_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover, price_to_tangible_book) — comparison surfaces them transitively via valuation.ratios(). |
 | `tools/report_ops/adapters/comparison.py` | 3 report adapters: comparison_side_by_side, comparison_summary, comparison_growth |
 | `tests/skills/cvm/comparison/conftest.py` | Shared fixtures — synthetic VAL_* / FIN_* / DIV_* data + `mock_skills` + `petr_vale_env` helpers |
 | `tests/skills/cvm/comparison/test_validation.py` | TestValidation (5 tests) — input validation across all modes |
@@ -106,8 +106,25 @@ Both the valuation column (calculations TTM snapshot) and the financials column 
 | Marg. Líq. (val) | `margem_liquida` | pct |
 | Dívida/PL | `divida_pl` | num |
 | Liquidez Corrente | `liquidez_corrente` | num |
+| EV/Sales | `ev_sales` | num |
+| EV/FCF | `ev_fcf` | num |
+| Cash Ratio | `cash_ratio` | num |
+| Quick Ratio | `quick_ratio` | num |
+| OCF Margin | `ocf_margin` | pct |
+| FCF Margin | `fcf_margin` | pct |
+| Working Capital | `working_capital` | brl |
+| Cash Flow to Debt | `cash_flow_to_debt` | num |
+| Retention Ratio | `retention_ratio` | pct |
+| Sustainable Growth | `sustainable_growth` | pct |
+| Interest Coverage | `interest_coverage` | num |
+| Inventory Turnover | `inventory_turnover` | num |
+| Receivables Turnover | `receivables_turnover` | num |
+| Fixed Asset Turnover | `fixed_asset_turnover` | num |
+| P/Tangible Book | `price_to_tangible_book` | num |
 
-[v1.3] The last 5 rows are new — sourced from calculations metrics via `valuation.ratios()`. The `(val)` suffix distinguishes them from the same-named columns in the financials section (which use the annual statement value, not the TTM calculations snapshot).
+[v1.3] Rows 14-18 (ROE (val) through Liquidez Corrente) are sourced from calculations metrics via `valuation.ratios()`. The `(val)` suffix distinguishes them from the same-named columns in the financials section (which use the annual statement value, not the TTM calculations snapshot).
+
+[v1.4] Rows 19-33 (EV/Sales through P/Tangible Book) are sourced from calculations metrics via `valuation.ratios()` (v1.4 wired them in via `_safe_call`). Comparison surfaces them transitively — no new data fetching. Format specs: `num` for multiples/turnover/coverage, `pct` for margins/growth/retention, `brl` for working capital.
 
 ### Financials (from `financials.summary` → `latest_annual`)
 | Column | dict_key | spec |
@@ -140,4 +157,4 @@ Both the valuation column (calculations TTM snapshot) and the financials column 
 
 ---
 
-*Last updated: 2026-07-27 (v1.3).*
+*Last updated: 2026-07-29 (v1.4).*

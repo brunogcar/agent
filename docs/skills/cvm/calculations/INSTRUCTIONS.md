@@ -50,7 +50,7 @@ This library is the **pattern template** for central auto-discovery + registry a
 **JSON keys in series entries:**
 - Per-share value (Type 1 only): metric name (`lpa`, `vpa`, `dpa`, `rps`, `ebitda_ps`, `tangible_book_ps`)
 - Ratio: traditional abbreviation (`pe` for P/L, `pvpa` for P/VPA, `dy` for Div Yield, `psr`, `ev_ebitda`, `p_ebit`, `p_fco`, `p_fcf`, `p_tangible_book`, `roe`, `roa`, `roic`, `gross_margin`, `operating_margin`, `net_margin`, `ebitda_margin`, `debt_equity`, `net_debt_ebitda`, `asset_turnover`, `capex_revenue`, `current_ratio`, `graham_number`, `effective_tax_rate`, `ev_sales`, `ev_fcf`, `cash_ratio`, `ocf_margin`, `fcf_margin`, `working_capital`, `cash_flow_to_debt`, `retention_ratio`, `sustainable_growth`, `quick_ratio`, `interest_coverage`, `inventory_turnover`, `receivables_turnover`, `fixed_asset_turnover`)
-- Engine quantities: `price`, `ttm_earnings`, `shares`, `pl`, `ttm_rev`, `ttm_gp`, `ttm_ebit`, `ttm_ebt`, `ttm_tax`, `ttm_da`, `ttm_capex`, `ttm_fco`, `ttm_fci`, `ttm_fcf`, `current_assets`, `cash`, `total_assets`, `debt`, `current_liabilities`, `receivables`, `inventory`, `ppe`, `intangibles`, `payables`, `ttm_cogs`, `ttm_financial_result`, `ttm_dva_interest`, `ttm_dva_tax`, `ttm_dva_va`
+- Engine quantities: `price`, `ttm_earnings`, `shares`, `pl`, `ttm_rev`, `ttm_gp`, `ttm_ebit`, `ttm_ebt`, `ttm_tax`, `ttm_da`, `ttm_capex`, `ttm_fco`, `ttm_fci`, `ttm_fcf`, `current_assets`, `cash`, `total_assets`, `debt`, `current_liabilities`, `receivables`, `inventory`, `ppe`, `intangibles`, `payables`, `ttm_cogs`, `ttm_financial_result`, `ttm_interest_paid`, `ttm_total_tax`, `ttm_value_added`
 
 ---
 
@@ -66,7 +66,7 @@ calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + 
        │     ├── bpa:    current_assets, cash, total_assets, receivables, inventory, ppe, intangibles
        │     ├── bpp:    pl, debt, current_liabilities, payables
        │     ├── dfc:    da, capex, operating_cf, investing_cf, financing_cf
-       │     └── dva:    dva_interest_paid, dva_total_tax, dva_value_added
+       │     └── dva:    interest_paid, total_tax, value_added
        │
        └── metrics/  (37 metrics — compose engines, never point at other metrics)
              ├── lpa.py             → price + earnings + shares                       (Type 1)
@@ -179,4 +179,4 @@ If you're creating a new skill that follows this pattern:
 
 ---
 
-*Last updated: 2026-07-28 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-28 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history.*

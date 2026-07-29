@@ -268,14 +268,12 @@ class TestRoicCashUpdate:
     def test_roic_subtracts_cash_when_available(self, monkeypatch):
         """v1.9: ROIC should subtract cash from invested capital.
 
-        v2.0: ROIC now also composes EBT to compute the effective tax rate.
-        With EBT=90e9 and tax=-15e9: rate = 15/90 = 1/6, NOPAT = 70×(5/6).
+        v2.1: roic_at now delegates to effective_tax_rate_at(). Mocked directly.
         """
         from skills.cvm.calculations.metrics import roic as roic_metric
 
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
-        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
-        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 15e9 / 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         # Mock cash_at to return 50e9
@@ -291,13 +289,12 @@ class TestRoicCashUpdate:
     def test_roic_falls_back_without_cash(self, monkeypatch):
         """If cash_at returns None (no data), ROIC falls back to PL + Debt.
 
-        v2.0: ROIC now also composes EBT to compute the effective tax rate.
+        v2.1: roic_at now delegates to effective_tax_rate_at(). Mocked directly.
         """
         from skills.cvm.calculations.metrics import roic as roic_metric
 
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: 70e9)
-        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_at", lambda c, d: 90e9)
-        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.tax_at", lambda c, d: -15e9)
+        monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 15e9 / 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         # Mock cash_at to return None

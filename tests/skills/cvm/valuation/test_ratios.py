@@ -89,6 +89,23 @@ class TestRatiosMode:
         assert r["giro_ativos"] == 0.35
         assert r["liquidez_corrente"] == 1.5
 
+        # [v1.4-valuation] 15 NEW v1.3 metrics (mocked in conftest)
+        assert r["ev_sales"] == 2.05
+        assert r["ev_fcf"] == 11.41
+        assert r["cash_ratio"] == 0.30
+        assert r["quick_ratio"] == 1.10
+        assert r["ocf_margin"] == 0.286
+        assert r["fcf_margin"] == 0.179
+        assert r["working_capital"] == 50e9
+        assert r["cash_flow_to_debt"] == 0.80
+        assert r["retention_ratio"] == 0.50
+        assert r["sustainable_growth"] == 0.14
+        assert r["interest_coverage"] == 8.0
+        assert r["inventory_turnover"] == 5.0
+        assert r["receivables_turnover"] == 8.0
+        assert r["fixed_asset_turnover"] == 0.80
+        assert r["p_tangible_book"] == 1.55
+
         # price_source present
         assert r["price_source"] is not None
 

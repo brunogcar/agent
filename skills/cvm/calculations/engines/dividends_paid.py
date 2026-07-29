@@ -1,12 +1,12 @@
-"""engines/dva_value_added.py -- TTM (trailing twelve months) Total Value Added engine.
+"""engines/dividends_paid.py -- TTM (trailing twelve months) Dividends Paid engine.
 
-Mirrors engines/operating_cf.py (DFC 6.01) with two changes:
-  1. CVM account code 7 (Valor Adicionado Total a Distribuir -- total
-     wealth created by the company) instead of 6.01 (FCO).
-  2. SQL filter includes `AND c.grupo = 'DVA'` because the DVA statement
-     re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC scopes.
-     Without the grupo filter, `codigo = '7'` would match nothing (or
-     match the wrong statement).
+Mirrors engines/interest_paid.py (DVA 8.3) with two changes:
+  1. CVM account code 8.4 (Remuneração do Capital Próprio -- dividends /
+     distributions paid to shareholders / own-capital providers) instead of
+     8.3 (interest paid to third-party capital providers).
+  2. SQL filter unchanged: `AND c.grupo = 'DVA' AND c.codigo = '8.4'` (the
+     grupo filter is still required because the DVA statement re-uses codigo
+     numbers that overlap with DRE/BPA/BPP/DFC scopes).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). A CVM
 flow statement showing how wealth is created and distributed. Required
@@ -14,30 +14,21 @@ filing for all B3-listed companies, but OPTIONAL for non-listed filers --
 so some companies have no DVA rows. The engine returns None gracefully
 in that case (the existing `if not itr and not dfp: return None` path).
 
-DVA 7 (Valor Adicionado Total a Distribuir) is the TOP LINE of the
-"distribution" side of the DVA. It equals the sum of all wealth
-distributed to:
-  - Personnel (8.1)
-  - Government (8.2) -- captured separately by dva_total_tax
-  - Lenders / third-party capital (8.3) -- captured by dva_interest_paid
-  - Shareholders / own capital (8.4)
-
-And it equals the "generation" side of the DVA:
-  - Revenues (1) - Inputs (2) = Gross value added (3)
-  - + Retentions (4) - Depreciation (5 adjustments) = Net value added produced (5)
-  - + Value received in transfer (6) = Total value added to distribute (7)
-
-So DVA 7 is conceptually similar to EBITDA but with a different scope
-(it captures wealth created for ALL stakeholders, not just shareholders +
-lenders). Useful for stakeholder-distribution analysis and for verifying
-the consistency of the DVA itself (7 should = 8.1 + 8.2 + 8.3 + 8.4).
+This is dividends DISTRIBUTED (paid to shareholders) as reported in the
+DVA. It is a SECOND independent source for dividends data -- it
+cross-checks the B3 dividends engine (engines/dividends.py), which
+tracks individual proventos from the cash_dividends B3 table and
+produces DPA on a per-share basis. DVA 8.4 reports the aggregate BRL
+amount distributed (not per-share), so the two engines are
+complementary: B3 = per-share cash flow to shareholders; DVA 8.4 =
+aggregate wealth distribution reported by the company.
 
 SIGN CONVENTION
 ---------------
-DVA 7 (Valor Adicionado Total a Distribuir) is typically reported as a
-POSITIVE figure on the DVA (it's the total wealth available for
-distribution). This engine returns the RAW value from the database --
-callers handle the sign as needed.
+DVA 8.4 (Remuneração do Capital Próprio) is typically reported as a
+NEGATIVE figure on the DVA (it's a wealth OUTFLOW -- dividends /
+distributions paid to shareholders). This engine returns the RAW value
+from the database -- callers handle the sign as needed.
 
 TTM ALGORITHM
 -------------
@@ -46,22 +37,22 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
   TTM = DFP_prior_year - ITR_prior_year_same_period + ITR_current_period
 
 Example for D = 2024-08-15 (most recent ITR = Q2 2024, data_fim = 2024-06-30):
-  ITR 2024 Q2 (meses=6) = cumulative H1 2024 total value added
-  ITR 2023 Q2 (meses=6) = cumulative H1 2023 total value added
-  DFP 2023 (meses=12)   = full year 2023 total value added
+  ITR 2024 Q2 (meses=6) = cumulative H1 2024 dividends paid
+  ITR 2023 Q2 (meses=6) = cumulative H1 2023 dividends paid
+  DFP 2023 (meses=12)   = full year 2023 dividends paid
   TTM = DFP_2023 - ITR_2023_H1 + ITR_2024_H1 = 12 months ending 2024-06-30
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual, meses=12)
 ITR: 2011-present (quarterly cumulative, meses=3/6/9)
-TTM value added computable from: ~2012 onwards (need 2 years of ITR)
+TTM dividends paid computable from: ~2012 onwards (need 2 years of ITR)
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_value_added import dva_value_added_at
-    r = dva_value_added_at("PETR4", "2024-06-30")  # -> 250e9 (positive wealth created)
+    from skills.cvm.calculations.engines.dividends_paid import dividends_paid_at
+    r = dividends_paid_at("PETR4", "2024-06-30")  # -> -1.5e10 (negative outflow)
 """
 
 from __future__ import annotations
@@ -71,21 +62,21 @@ from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
 
 
-# CVM account code for Valor Adicionado Total a Distribuir (total wealth
-# created by the company, available for distribution to stakeholders).
-# Lives within the DVA statement group.
-DVA_VALUE_ADDED_CODE = "7"
+# CVM account code for Remuneração do Capital Próprio (dividends /
+# distributions paid to shareholders / own-capital providers). Lives
+# within the DVA statement group.
+DIVIDENDS_PAID_CODE = "8.4"
 
 # DVA statement group identifier in the CVM database. Without this filter,
-# codigo = '7' would match nothing (DVA codes are scoped to the DVA group).
+# codigo = '8.4' would match nothing (DVA codes are scoped to the DVA group).
 DVA_GRUPO = "DVA"
 
 
-def _get_dfp_dva_value_added(company: str) -> dict[str, dict]:
-    """Get all annual total value added from DFP (DVA grupo='DVA', codigo 7, meses=12).
+def _get_dfp_dividends_paid(company: str) -> dict[str, dict]:
+    """Get all annual dividends paid from DFP (DVA grupo='DVA', codigo 8.4, meses=12).
 
-    Returns: {"2024": {"value": 250e9, "date": "2024-12-31"}, ...}
-    Values are in BRL (escala applied). Sign preserved (typically positive).
+    Returns: {"2024": {"value": -1.5e10, "date": "2024-12-31"}, ...}
+    Values are in BRL (escala applied). Sign preserved (typically negative).
     """
     conn = connect_dfp(read_only=True)
     try:
@@ -99,7 +90,7 @@ def _get_dfp_dva_value_added(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DVA_VALUE_ADDED_CODE}'
+                 AND c.codigo = '{DIVIDENDS_PAID_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -118,13 +109,13 @@ def _get_dfp_dva_value_added(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_value_added(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative total value added from ITR (DVA grupo='DVA',
-    codigo 7, meses 3/6/9).
+def _get_itr_dividends_paid(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative dividends paid from ITR (DVA grupo='DVA',
+    codigo 8.4, meses 3/6/9).
 
-    Returns: {"2024-06-30": {"value": 125e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": -7e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
-    Sign preserved (typically positive).
+    Sign preserved (typically negative).
     """
     conn = connect_itr(read_only=True)
     try:
@@ -138,7 +129,7 @@ def _get_itr_dva_value_added(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DVA_VALUE_ADDED_CODE}'
+                 AND c.codigo = '{DIVIDENDS_PAID_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -158,21 +149,20 @@ def _get_itr_dva_value_added(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def dva_value_added_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months total value added (DVA 7) ending at or before date.
+def dividends_paid_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months dividends paid (DVA 8.4) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM total value added in BRL (typically POSITIVE -- raw DVA
-        value, sign preserved), or None if data not available (e.g.,
-        company does not file DVA, or insufficient ITR history to
-        derive TTM).
+        TTM dividends paid in BRL (typically NEGATIVE -- raw DVA value,
+        sign preserved), or None if data not available (e.g., company does
+        not file DVA, or insufficient ITR history to derive TTM).
     """
-    dfp = _get_dfp_dva_value_added(company)
-    itr = _get_itr_dva_value_added(company)
+    dfp = _get_dfp_dividends_paid(company)
+    itr = _get_itr_dividends_paid(company)
 
     if not itr and not dfp:
         return None
@@ -216,19 +206,18 @@ def dva_value_added_at(company: str, date: str) -> float | None:
         return None
 
 
-def dva_value_added_periods(company: str) -> list[dict]:
-    """Get all TTM total value added (DVA 7) periods for a company.
+def dividends_paid_periods(company: str) -> list[dict]:
+    """Get all TTM dividends paid (DVA 8.4) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_va": value}
-    sorted oldest-first. Each entry represents a point where TTM total
-    value added changed (new ITR/DFP filed).
+    Returns a list of {"date": period_end_date, "ttm_dividends_paid": value}
+    sorted oldest-first. Each entry represents a point where TTM dividends
+    paid changed (new ITR/DFP filed).
 
-    Useful for building step-function value-added overlays on price charts
-    or for stakeholder-distribution analysis (DVA 7 should equal the sum
-    of DVA 8.1 + 8.2 + 8.3 + 8.4).
+    Useful for building step-function dividends-paid overlays on price charts
+    or for cross-checking against the B3 dividends engine (engines/dividends.py).
     """
-    dfp = _get_dfp_dva_value_added(company)
-    itr = _get_itr_dva_value_added(company)
+    dfp = _get_dfp_dividends_paid(company)
+    itr = _get_itr_dividends_paid(company)
 
     if not itr and not dfp:
         return []
@@ -238,14 +227,14 @@ def dva_value_added_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_value_added_at(company, itr_date)
+        ttm = dividends_paid_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_va": ttm})
+            periods.append({"date": itr_date, "ttm_dividends_paid": ttm})
 
     # Also add DFP-only periods (for years before ITR data)
     for year, data in sorted(dfp.items()):
         if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_dva_va": data["value"]})
+            periods.append({"date": data["date"], "ttm_dividends_paid": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -264,10 +253,10 @@ def dva_value_added_periods(company: str) -> list[dict]:
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 
 register_engine(EngineSpec(
-    name="dva_value_added",
-    quantity="ttm_dva_va",
-    at_fn=dva_value_added_at,
-    periods_fn=dva_value_added_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 7 -- Valor Adicionado Total TTM",
+    name="dividends_paid",
+    quantity="ttm_dividends_paid",
+    at_fn=dividends_paid_at,
+    periods_fn=dividends_paid_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 8.4 -- Dividendos Pagos (DVA) TTM",
     category="dva",
 ))

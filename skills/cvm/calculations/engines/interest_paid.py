@@ -1,4 +1,4 @@
-"""engines/dva_interest_paid.py -- TTM (trailing twelve months) Interest Paid engine.
+"""engines/interest_paid.py -- TTM (trailing twelve months) Interest Paid engine.
 
 Mirrors engines/operating_cf.py (DFC 6.01) with two changes:
   1. CVM account code 8.3 (Remuneração do Capital de Terceiros -- interest
@@ -49,8 +49,8 @@ TTM interest paid computable from: ~2012 onwards (need 2 years of ITR)
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_interest_paid import dva_interest_paid_at
-    r = dva_interest_paid_at("PETR4", "2024-06-30")  # -> -8e9 (negative outflow)
+    from skills.cvm.calculations.engines.interest_paid import interest_paid_at
+    r = interest_paid_at("PETR4", "2024-06-30")  # -> -8e9 (negative outflow)
 """
 
 from __future__ import annotations
@@ -62,14 +62,14 @@ from data_sources.cvm._bridge import resolve_company
 
 # CVM account code for Remuneração do Capital de Terceiros (interest paid to
 # third-party capital). Lives within the DVA statement group.
-DVA_INTEREST_PAID_CODE = "8.3"
+INTEREST_PAID_CODE = "8.3"
 
 # DVA statement group identifier in the CVM database. Without this filter,
 # codigo = '8.3' would match nothing (DVA codes are scoped to the DVA group).
 DVA_GRUPO = "DVA"
 
 
-def _get_dfp_dva_interest_paid(company: str) -> dict[str, dict]:
+def _get_dfp_interest_paid(company: str) -> dict[str, dict]:
     """Get all annual interest paid from DFP (DVA grupo='DVA', codigo 8.3, meses=12).
 
     Returns: {"2024": {"value": -8e9, "date": "2024-12-31"}, ...}
@@ -87,7 +87,7 @@ def _get_dfp_dva_interest_paid(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DVA_INTEREST_PAID_CODE}'
+                 AND c.codigo = '{INTEREST_PAID_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -106,7 +106,7 @@ def _get_dfp_dva_interest_paid(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_interest_paid(company: str) -> dict[str, dict]:
+def _get_itr_interest_paid(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative interest paid from ITR (DVA grupo='DVA',
     codigo 8.3, meses 3/6/9).
 
@@ -126,7 +126,7 @@ def _get_itr_dva_interest_paid(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DVA_INTEREST_PAID_CODE}'
+                 AND c.codigo = '{INTEREST_PAID_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -146,7 +146,7 @@ def _get_itr_dva_interest_paid(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def dva_interest_paid_at(company: str, date: str) -> float | None:
+def interest_paid_at(company: str, date: str) -> float | None:
     """Get trailing twelve months interest paid (DVA 8.3) ending at or before date.
 
     Args:
@@ -158,8 +158,8 @@ def dva_interest_paid_at(company: str, date: str) -> float | None:
         sign preserved), or None if data not available (e.g., company does
         not file DVA, or insufficient ITR history to derive TTM).
     """
-    dfp = _get_dfp_dva_interest_paid(company)
-    itr = _get_itr_dva_interest_paid(company)
+    dfp = _get_dfp_interest_paid(company)
+    itr = _get_itr_interest_paid(company)
 
     if not itr and not dfp:
         return None
@@ -203,18 +203,18 @@ def dva_interest_paid_at(company: str, date: str) -> float | None:
         return None
 
 
-def dva_interest_paid_periods(company: str) -> list[dict]:
+def interest_paid_periods(company: str) -> list[dict]:
     """Get all TTM interest paid (DVA 8.3) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_interest": value}
+    Returns a list of {"date": period_end_date, "ttm_interest_paid": value}
     sorted oldest-first. Each entry represents a point where TTM interest
     paid changed (new ITR/DFP filed).
 
     Useful for building step-function interest-paid overlays on price charts
     or for cross-checking against the financial_result engine (DRE 3.06).
     """
-    dfp = _get_dfp_dva_interest_paid(company)
-    itr = _get_itr_dva_interest_paid(company)
+    dfp = _get_dfp_interest_paid(company)
+    itr = _get_itr_interest_paid(company)
 
     if not itr and not dfp:
         return []
@@ -224,14 +224,14 @@ def dva_interest_paid_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_interest_paid_at(company, itr_date)
+        ttm = interest_paid_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_interest": ttm})
+            periods.append({"date": itr_date, "ttm_interest_paid": ttm})
 
     # Also add DFP-only periods (for years before ITR data)
     for year, data in sorted(dfp.items()):
         if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_dva_interest": data["value"]})
+            periods.append({"date": data["date"], "ttm_interest_paid": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -250,10 +250,10 @@ def dva_interest_paid_periods(company: str) -> list[dict]:
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 
 register_engine(EngineSpec(
-    name="dva_interest_paid",
-    quantity="ttm_dva_interest",
-    at_fn=dva_interest_paid_at,
-    periods_fn=dva_interest_paid_periods,
+    name="interest_paid",
+    quantity="ttm_interest_paid",
+    at_fn=interest_paid_at,
+    periods_fn=interest_paid_periods,
     source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 8.3 -- Juros Pagos TTM",
     category="dva",
 ))

@@ -208,27 +208,27 @@ class TestDFCMDFallback:
 # ════════════════════════════════════════════════════════════════════════════
 
 class TestEngineBackedVariants:
-    """[v1.3 migration] Engine-backed variants that delegate TTM flows to
-    skills.cvm.calculations engines instead of summing 4 standalone quarters.
+    """[v1.3 migration / v1.4 top-level imports] Engine-backed variants that
+    delegate TTM flows to skills.cvm.calculations engines instead of summing
+    4 standalone quarters.
 
-    These tests mock the calculations engines (ebit_at, da_at, revenue_at,
-    ttm_earnings_at, *_cf_at) via monkeypatch on the metrics module's
-    _safe_engine_call resolution path. The engines themselves are NOT invoked
-    — we verify that compute_ebitda_from_engines / compute_ttm_with_engines
-    correctly compose them and apply the ebit_only fallback.
+    [v1.4] The engines are now imported at the TOP of metrics.py, so we patch
+    them on the metrics module's namespace (`skills.cvm.financials.metrics.<fn>`)
+    rather than on the source engine modules. This is the pattern documented in
+    the task brief and matches how the v1.4-valuation skill tests mock their
+    calculations metric imports.
+
+    These tests verify that compute_ebitda_from_engines / compute_ttm_with_engines
+    correctly compose the engines and apply the ebit_only fallback — the engines
+    themselves are NOT invoked.
     """
 
     def test_compute_ebitda_from_engines_both_available(self, monkeypatch):
         """Both ebit_at + da_at return values → 'ebit+da'."""
         from skills.cvm.financials import metrics as M
 
-        # Patch the engines at their source module path (lazy imports inside
-        # compute_ebitda_from_engines look up ebit_at/da_at from the engine
-        # modules at call time, so we patch the engine module attributes).
-        import skills.cvm.calculations.engines.ebit as ebit_mod
-        import skills.cvm.calculations.engines.da as da_mod
-        monkeypatch.setattr(ebit_mod, "ebit_at", lambda c, d: 20_000_000)
-        monkeypatch.setattr(da_mod, "da_at", lambda c, d: 3_000_000)
+        monkeypatch.setattr(M, "ebit_at", lambda c, d: 20_000_000)
+        monkeypatch.setattr(M, "da_at", lambda c, d: 3_000_000)
 
         ebitda, method = M.compute_ebitda_from_engines("TEST", "2024-12-31")
         assert ebitda == 23_000_000
@@ -237,10 +237,9 @@ class TestEngineBackedVariants:
     def test_compute_ebitda_from_engines_da_missing(self, monkeypatch):
         """da_at returns None → 'ebit_only' (EBITDA = EBIT)."""
         from skills.cvm.financials import metrics as M
-        import skills.cvm.calculations.engines.ebit as ebit_mod
-        import skills.cvm.calculations.engines.da as da_mod
-        monkeypatch.setattr(ebit_mod, "ebit_at", lambda c, d: 20_000_000)
-        monkeypatch.setattr(da_mod, "da_at", lambda c, d: None)
+
+        monkeypatch.setattr(M, "ebit_at", lambda c, d: 20_000_000)
+        monkeypatch.setattr(M, "da_at", lambda c, d: None)
 
         ebitda, method = M.compute_ebitda_from_engines("TEST", "2024-12-31")
         assert ebitda == 20_000_000
@@ -249,10 +248,9 @@ class TestEngineBackedVariants:
     def test_compute_ebitda_from_engines_ebit_missing(self, monkeypatch):
         """ebit_at returns None → 'none'."""
         from skills.cvm.financials import metrics as M
-        import skills.cvm.calculations.engines.ebit as ebit_mod
-        import skills.cvm.calculations.engines.da as da_mod
-        monkeypatch.setattr(ebit_mod, "ebit_at", lambda c, d: None)
-        monkeypatch.setattr(da_mod, "da_at", lambda c, d: 3_000_000)
+
+        monkeypatch.setattr(M, "ebit_at", lambda c, d: None)
+        monkeypatch.setattr(M, "da_at", lambda c, d: 3_000_000)
 
         ebitda, method = M.compute_ebitda_from_engines("TEST", "2024-12-31")
         assert ebitda is None
@@ -262,12 +260,11 @@ class TestEngineBackedVariants:
         """Engine raises FileNotFoundError → _safe_engine_call returns None
         → 'none' (graceful degradation when DFC DB is not synced)."""
         from skills.cvm.financials import metrics as M
-        import skills.cvm.calculations.engines.ebit as ebit_mod
 
         def _raise(*a, **k):
             raise FileNotFoundError("dfp.db not synced")
 
-        monkeypatch.setattr(ebit_mod, "ebit_at", _raise)
+        monkeypatch.setattr(M, "ebit_at", _raise)
 
         ebitda, method = M.compute_ebitda_from_engines("TEST", "2024-12-31")
         assert ebitda is None
@@ -278,21 +275,14 @@ class TestEngineBackedVariants:
         from the 4 periods list (engine returns single point, different
         semantics)."""
         from skills.cvm.financials import metrics as M
-        import skills.cvm.calculations.engines.revenue as rev_mod
-        import skills.cvm.calculations.engines.ebit as ebit_mod
-        import skills.cvm.calculations.engines.da as da_mod
-        import skills.cvm.calculations.engines.earnings as earn_mod
-        import skills.cvm.calculations.engines.operating_cf as fco_mod
-        import skills.cvm.calculations.engines.investing_cf as fci_mod
-        import skills.cvm.calculations.engines.financing_cf as fcf_mod
 
-        monkeypatch.setattr(rev_mod, "revenue_at", lambda c, d: 500_000_000)
-        monkeypatch.setattr(ebit_mod, "ebit_at", lambda c, d: 200_000_000)
-        monkeypatch.setattr(da_mod, "da_at", lambda c, d: 30_000_000)
-        monkeypatch.setattr(earn_mod, "ttm_earnings_at", lambda c, d: 120_000_000)
-        monkeypatch.setattr(fco_mod, "operating_cf_at", lambda c, d: 180_000_000)
-        monkeypatch.setattr(fci_mod, "investing_cf_at", lambda c, d: -80_000_000)
-        monkeypatch.setattr(fcf_mod, "financing_cf_at", lambda c, d: -50_000_000)
+        monkeypatch.setattr(M, "revenue_at",       lambda c, d: 500_000_000)
+        monkeypatch.setattr(M, "ebit_at",          lambda c, d: 200_000_000)
+        monkeypatch.setattr(M, "da_at",            lambda c, d: 30_000_000)
+        monkeypatch.setattr(M, "ttm_earnings_at",  lambda c, d: 120_000_000)
+        monkeypatch.setattr(M, "operating_cf_at",  lambda c, d: 180_000_000)
+        monkeypatch.setattr(M, "investing_cf_at",  lambda c, d: -80_000_000)
+        monkeypatch.setattr(M, "financing_cf_at",  lambda c, d: -50_000_000)
 
         periods = [
             {"period": "1T2024", "year": 2024, "quarter": 1,
@@ -341,21 +331,14 @@ class TestEngineBackedVariants:
     def test_compute_ttm_with_engines_ebit_only_fallback(self, monkeypatch):
         """When da_at returns None, ebitda_method = 'ebit_only' (EBITDA = EBIT)."""
         from skills.cvm.financials import metrics as M
-        import skills.cvm.calculations.engines.revenue as rev_mod
-        import skills.cvm.calculations.engines.ebit as ebit_mod
-        import skills.cvm.calculations.engines.da as da_mod
-        import skills.cvm.calculations.engines.earnings as earn_mod
-        import skills.cvm.calculations.engines.operating_cf as fco_mod
-        import skills.cvm.calculations.engines.investing_cf as fci_mod
-        import skills.cvm.calculations.engines.financing_cf as fcf_mod
 
-        monkeypatch.setattr(rev_mod, "revenue_at", lambda c, d: 500_000_000)
-        monkeypatch.setattr(ebit_mod, "ebit_at", lambda c, d: 200_000_000)
-        monkeypatch.setattr(da_mod, "da_at", lambda c, d: None)  # D&A missing
-        monkeypatch.setattr(earn_mod, "ttm_earnings_at", lambda c, d: 120_000_000)
-        monkeypatch.setattr(fco_mod, "operating_cf_at", lambda c, d: 180_000_000)
-        monkeypatch.setattr(fci_mod, "investing_cf_at", lambda c, d: -80_000_000)
-        monkeypatch.setattr(fcf_mod, "financing_cf_at", lambda c, d: -50_000_000)
+        monkeypatch.setattr(M, "revenue_at",       lambda c, d: 500_000_000)
+        monkeypatch.setattr(M, "ebit_at",          lambda c, d: 200_000_000)
+        monkeypatch.setattr(M, "da_at",            lambda c, d: None)  # D&A missing
+        monkeypatch.setattr(M, "ttm_earnings_at",  lambda c, d: 120_000_000)
+        monkeypatch.setattr(M, "operating_cf_at",  lambda c, d: 180_000_000)
+        monkeypatch.setattr(M, "investing_cf_at",  lambda c, d: -80_000_000)
+        monkeypatch.setattr(M, "financing_cf_at",  lambda c, d: -50_000_000)
 
         periods = [
             {"period": f"Q{i}T2024", "year": 2024, "quarter": i,

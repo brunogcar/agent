@@ -1,4 +1,4 @@
-"""engines/dva_total_tax.py -- TTM (trailing twelve months) Total Tax Burden engine.
+"""engines/total_tax.py -- TTM (trailing twelve months) Total Tax Burden engine.
 
 Mirrors engines/operating_cf.py (DFC 6.01) with two changes:
   1. CVM account code 8.2 (Impostos, Taxas e Contribuições -- total tax
@@ -55,8 +55,8 @@ TTM total tax burden computable from: ~2012 onwards (need 2 years of ITR)
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_total_tax import dva_total_tax_at
-    r = dva_total_tax_at("PETR4", "2024-06-30")  # -> -90e9 (negative outflow)
+    from skills.cvm.calculations.engines.total_tax import total_tax_at
+    r = total_tax_at("PETR4", "2024-06-30")  # -> -90e9 (negative outflow)
 """
 
 from __future__ import annotations
@@ -68,14 +68,14 @@ from data_sources.cvm._bridge import resolve_company
 
 # CVM account code for Impostos, Taxas e Contribuições (total tax burden).
 # Lives within the DVA statement group.
-DVA_TOTAL_TAX_CODE = "8.2"
+TOTAL_TAX_CODE = "8.2"
 
 # DVA statement group identifier in the CVM database. Without this filter,
 # codigo = '8.2' would match nothing (DVA codes are scoped to the DVA group).
 DVA_GRUPO = "DVA"
 
 
-def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
+def _get_dfp_total_tax(company: str) -> dict[str, dict]:
     """Get all annual total tax burden from DFP (DVA grupo='DVA', codigo 8.2, meses=12).
 
     Returns: {"2024": {"value": -90e9, "date": "2024-12-31"}, ...}
@@ -93,7 +93,7 @@ def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DVA_TOTAL_TAX_CODE}'
+                 AND c.codigo = '{TOTAL_TAX_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -112,7 +112,7 @@ def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
+def _get_itr_total_tax(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative total tax burden from ITR (DVA grupo='DVA',
     codigo 8.2, meses 3/6/9).
 
@@ -132,7 +132,7 @@ def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DVA_TOTAL_TAX_CODE}'
+                 AND c.codigo = '{TOTAL_TAX_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -152,7 +152,7 @@ def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def dva_total_tax_at(company: str, date: str) -> float | None:
+def total_tax_at(company: str, date: str) -> float | None:
     """Get trailing twelve months total tax burden (DVA 8.2) ending at or before date.
 
     Args:
@@ -164,8 +164,8 @@ def dva_total_tax_at(company: str, date: str) -> float | None:
         sign preserved), or None if data not available (e.g., company does
         not file DVA, or insufficient ITR history to derive TTM).
     """
-    dfp = _get_dfp_dva_total_tax(company)
-    itr = _get_itr_dva_total_tax(company)
+    dfp = _get_dfp_total_tax(company)
+    itr = _get_itr_total_tax(company)
 
     if not itr and not dfp:
         return None
@@ -209,18 +209,18 @@ def dva_total_tax_at(company: str, date: str) -> float | None:
         return None
 
 
-def dva_total_tax_periods(company: str) -> list[dict]:
+def total_tax_periods(company: str) -> list[dict]:
     """Get all TTM total tax burden (DVA 8.2) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_tax": value}
+    Returns a list of {"date": period_end_date, "ttm_total_tax": value}
     sorted oldest-first. Each entry represents a point where TTM total
     tax burden changed (new ITR/DFP filed).
 
     Useful for building step-function tax-burden overlays on price charts
     or for cross-checking against the tax engine (DRE 3.08, income tax only).
     """
-    dfp = _get_dfp_dva_total_tax(company)
-    itr = _get_itr_dva_total_tax(company)
+    dfp = _get_dfp_total_tax(company)
+    itr = _get_itr_total_tax(company)
 
     if not itr and not dfp:
         return []
@@ -230,14 +230,14 @@ def dva_total_tax_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_total_tax_at(company, itr_date)
+        ttm = total_tax_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_tax": ttm})
+            periods.append({"date": itr_date, "ttm_total_tax": ttm})
 
     # Also add DFP-only periods (for years before ITR data)
     for year, data in sorted(dfp.items()):
         if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_dva_tax": data["value"]})
+            periods.append({"date": data["date"], "ttm_total_tax": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -256,10 +256,10 @@ def dva_total_tax_periods(company: str) -> list[dict]:
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 
 register_engine(EngineSpec(
-    name="dva_total_tax",
-    quantity="ttm_dva_tax",
-    at_fn=dva_total_tax_at,
-    periods_fn=dva_total_tax_periods,
+    name="total_tax",
+    quantity="ttm_total_tax",
+    at_fn=total_tax_at,
+    periods_fn=total_tax_periods,
     source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 8.2 -- Carga Tributária Total TTM",
     category="dva",
 ))

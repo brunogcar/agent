@@ -8,7 +8,7 @@
 |------|---------|
 | `skills/cvm/financials/__init__.py` | MANIFEST + route — 4 modes |
 | `skills/cvm/financials/financials.py` | Main logic: delegates to DFP/ITR query engines, mode dispatch. v1.3: `summary()` also delegates point-in-time ratios to calculations metrics. |
-| `skills/cvm/financials/metrics.py` | Ratio computation (`compute_ratios`, `compute_ebitda`, `compute_ttm`) + key account codes (`SUMMARY_CODES`, `KEY_CODES_BY_GRUPO`). Operates on raw `{codigo: valor}` dicts — NOT calculations engines. |
+| `skills/cvm/financials/metrics.py` | Ratio computation (`compute_ratios`, `compute_ebitda`, `compute_ttm` — operate on raw `{codigo: valor}` dicts) + engine-backed variants (`compute_ebitda_from_engines`, `compute_ttm_with_engines` — v1.3 introduced these to delegate TTM flow metrics to calculations engines; v1.4 moved their 7 engine imports to module top-level in a `[v1.4-financials-migration]` block, so zero direct CVM queries remain in ratio computation). + key account codes (`SUMMARY_CODES`, `KEY_CODES_BY_GRUPO`). |
 
 ### Test module tree
 
@@ -138,8 +138,10 @@ The two patterns coexist intentionally:
 
 ### Lazy import + `_safe_call` pattern
 
-Calculations imports are lazy (inside `summary()` function body, not at module top) so importing `financials.py` does NOT trigger calculations registry initialization (and the corresponding `PLANNER_MODEL` env-var requirement). Each metric is wrapped in `_safe_call(fn, company, today)` which catches `FileNotFoundError` (missing `cotahist.db`, `fre.db`) and any other exception, returning `None`. This makes the integration best-effort: a missing DB degrades gracefully instead of crashing the whole `summary()` call.
+Calculations imports in `financials.py` are lazy (inside `summary()` function body, not at module top) so importing `financials.py` does NOT trigger calculations registry initialization (and the corresponding `PLANNER_MODEL` env-var requirement). Each metric is wrapped in `_safe_call(fn, company, today)` which catches `FileNotFoundError` (missing `cotahist.db`, `fre.db`) and any other exception, returning `None`. This makes the integration best-effort: a missing DB degrades gracefully instead of crashing the whole `summary()` call.
+
+[v1.4] In `metrics.py`, by contrast, the engine-backed variants' imports (`ebit_at`, `da_at`, `revenue_at`, `ttm_earnings_at`, `operating_cf_at`, `investing_cf_at`, `financing_cf_at`) were moved to module top-level in a `[v1.4-financials-migration]` block. This is intentional: `metrics.py` is imported lazily by `financials.py` only when needed, and at that point `PLANNER_MODEL` is already set (financials' conftest sets it at import time). Moving the imports to module top makes the dependency explicit + mockable as `skills.cvm.financials.metrics.<fn>_at` (which is how `test_metrics.py` patches them). Engine calls inside the variants are still wrapped in `_safe_engine_call` (returns None on any error) so a missing DB degrades gracefully.
 
 ---
 
-*Last updated: 2026-07-27 (v1.3 — calculations integration).*
+*Last updated: 2026-07-29 (v1.4 — metrics.py migration to top-level engine imports).*

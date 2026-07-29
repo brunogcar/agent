@@ -64,6 +64,22 @@ _VALUATION_COLS = [
     ("Marg. Líq. (val)", "margem_liquida",   "pct"),
     ("Dívida/PL",        "divida_pl",        "num"),
     ("Liquidez Corrente","liquidez_corrente","num"),
+    # [v1.4] New — v1.3 calculations metrics surfaced via valuation.ratios()
+    ("EV/Receita",       "ev_sales",         "num"),
+    ("EV/FCF",           "ev_fcf",           "num"),
+    ("Liquidez Seca",    "quick_ratio",      "num"),
+    ("Índice Caixa",     "cash_ratio",       "num"),
+    ("Marg. FCO",        "ocf_margin",       "pct"),
+    ("Marg. FCF",        "fcf_margin",       "pct"),
+    ("Cap. Giro",        "working_capital",  "brl"),
+    ("FCO/Dívida",       "cash_flow_to_debt","num"),
+    ("Taxa Retenção",    "retention_ratio",  "pct"),
+    ("Cresc. Sust.",     "sustainable_growth","pct"),
+    ("Cobertura Juros",  "interest_coverage","num"),
+    ("Giro Estoque",     "inventory_turnover","num"),
+    ("Giro Receber",     "receivables_turnover","num"),
+    ("Giro Imob.",       "fixed_asset_turnover","num"),
+    ("P/VPA Tang.",      "p_tangible_book",  "num"),
 ]
 
 # ── Financials columns (from financials.summary -> latest_annual) ────────────

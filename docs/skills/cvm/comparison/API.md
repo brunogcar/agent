@@ -25,6 +25,8 @@ Compare N tickers across 3 sections (valuation, financials, dividends). Each sec
 
 [v1.3] The valuation section now includes 5 calculations-sourced columns: ROE (val), ROA (val), Marg. Líq. (val), Dívida/PL, Liquidez Corrente. These come from `valuation.ratios()` which delegates to calculations metrics (roe_at, roa_at, net_margin_at, debt_equity_at, current_ratio_at). The `(val)` suffix distinguishes them from the same-named columns in the financials section (which use the annual statement value, not the TTM calculations snapshot).
 
+[v1.4] The valuation section now also includes 15 v1.4 calculations-sourced columns grouped by family: EV/Sales, EV/FCF (EV multiples); Cash Ratio, Quick Ratio (liquidity); OCF Margin, FCF Margin (margins); Working Capital, Cash Flow to Debt (capital structure); Retention Ratio, Sustainable Growth (growth); Interest Coverage (coverage); Inventory Turnover, Receivables Turnover, Fixed Asset Turnover (turnover); P/Tangible Book (price/tangible). All come from `valuation.ratios()` (v1.4 wired them in via `_safe_call`); comparison picks them up transitively. See [calculations CHANGELOG](../calculations/CHANGELOG.md) v1.3 for the metric definitions.
+
 ```python
 params = '{"tickers":["SUZB3","KLBN11"],"consolidado":1}'
 ```
@@ -45,9 +47,18 @@ params = '{"tickers":["SUZB3","KLBN11"],"consolidado":1}'
                                     "P/EBIT", "EV/EBITDA", "PSR", "Div Yield", "DPA", "EPS",
                                     "VPA", "Total Ações",
                                     "ROE (val)", "ROA (val)", "Marg. Líq. (val)",
-                                    "Dívida/PL", "Liquidez Corrente"],
+                                    "Dívida/PL", "Liquidez Corrente",
+                                    # [v1.4] 15 new columns
+                                    "EV/Sales", "EV/FCF", "Cash Ratio", "Quick Ratio",
+                                    "OCF Margin", "FCF Margin", "Working Capital",
+                                    "Cash Flow to Debt", "Retention Ratio",
+                                    "Sustainable Growth", "Interest Coverage",
+                                    "Inventory Turnover", "Receivables Turnover",
+                                    "Fixed Asset Turnover", "P/Tangible Book"],
                        "rows": [[...], ...],
-                       "formats": {"Ticker": "text", "P/L": "num", "ROE (val)": "pct", ...}},
+                       "formats": {"Ticker": "text", "P/L": "num", "ROE (val)": "pct",
+                                   "EV/Sales": "num", "Working Capital": "brl",
+                                   "OCF Margin": "pct", ...}},
         "financials": {"title": "Financial Metrics (latest annual)", "columns": [...], "rows": [...], "formats": {...}},
         "dividends":  {"title": "Dividend Metrics", "columns": [...], "rows": [...], "formats": {...}},
     },
@@ -122,4 +133,4 @@ report(action="export", title="SUZB3 vs KLBN11",
 
 ---
 
-*Last updated: 2026-07-27 (v1.3).*
+*Last updated: 2026-07-29 (v1.4).*

@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.4** | 2026-07-29 | **Full migration to calculations engines.** The v1.3 work introduced two engine-backed variants (`compute_ebitda_from_engines`, `compute_ttm_with_engines`) but kept their engine imports LAZY (inside function bodies, not at module top). v1.4 completes the migration: all 7 engine imports (`ebit_at`, `da_at`, `revenue_at`, `ttm_earnings_at`, `operating_cf_at`, `investing_cf_at`, `financing_cf_at`) moved to module top-level in a `[v1.4-financials-migration]` block, making the dependency explicit + mockable as `skills.cvm.financials.metrics.<fn>_at`. Net effect: zero direct CVM queries (no `connect_dfp`/`connect_itr`/`SELECT...FROM`/`codigo=...`) remain in any ratio computation function — every flow metric goes through the calculations engines. This brings the v1.2 hardening (description-search fallback for EBIT at codigo 3.05; section-scoped 6.01.* for D&A) into financials automatically — the engines own that logic. Public API unchanged (`compute_ratios`, `compute_ebitda`, `compute_ttm`, `compute_ebitda_from_engines`, `compute_ttm_with_engines` all preserved). Snapshot metrics (ativo_total, caixa, patrimonio_liquido, divida_bruta) continue to use 4-quarter averaging from the periods list (calculations engines return point-in-time snapshots, semantically different from financials' averaging approach). Statement-rendering modes (`quarterly`, `annual`, `complete`) unchanged — they operate on raw `{codigo: valor}` dicts per period, not point-in-time engine snapshots. Quarterly ROA/ROE ×4 annualization preserved (period semantics differ from TTM-based calculations metrics — flagged as a known TODO). 80/80 financials tests pass with `-W error`. |
 | **v1.3** | 2026-07-27 | **Phase 3: Calculations integration + tests split.** `summary()` mode now delegates point-in-time ratios (ROIC, Graham Number, EV/EBITDA, P/FCF, P/EBIT, P/FCO) to `skills.cvm.calculations.metrics.*` via lazy imports wrapped in `_safe_call` (returns None on missing DB / missing account). New `current_ratios` section complements (does not replace) the per-period `latest_annual` + `latest_quarterly` sections. Statement-rendering modes (`quarterly`, `annual`, `complete`) and `metrics.py` (`compute_ratios`, `compute_ebitda`, `compute_ttm`) are UNCHANGED — they operate on raw statement dicts per period, not point-in-time engine snapshots, so calculations engines cannot replace them. Single 595-line `test_financials.py` split into `conftest.py` + 6 per-mode test files (metrics / annual / quarterly / complete / summary / route). 1 new test for `current_ratios` (37 total, up from 36). |
 | v1.2 | 2026-07-25 | **DFC_MD filer support.** Added D&A fallback codes for direct-method DFC filers (DFC_MD). _extract_metrics now tries 6.01.01.02 (DFC_MI indirect) first, then 6.02.01.02 + 6.01.04 (DFC_MD direct). EBITDA for direct-method filers now uses real D&A instead of falling back to ebit_only. 5 new tests. |
 | v1.1 | 2026-07-25 | **TTM ratios.** Quarterly mode now returns a `ttm` field: trailing twelve months summary computed from the last 4 standalone quarters. Flows (revenue, EBIT, EBITDA, lucro_liquido, FCO) are summed; snapshots (ativo_total, caixa, PL, divida_bruta) are averaged. TTM ROA/ROE replace the v1.0.1 annualized (×4) approach — more accurate for seasonal businesses. New `compute_ttm(periods)` function in metrics.py. |
@@ -25,10 +26,13 @@
 - **TTM ratios** — ✅ v1.1 (was roadmap item). Quarterly mode now returns `ttm` summary.
 - **DFC_MD filer support** — ✅ v1.2 (was roadmap item). _extract_metrics now falls back to DFC_MD codes for direct-method filers.
 - **Calculations integration (summary mode)** — ✅ v1.3. `summary()` delegates ROIC, Graham, EV/EBITDA, P/FCF, P/EBIT, P/FCO to `skills.cvm.calculations.metrics.*`.
+- **Full calculations migration (metrics.py)** — ✅ v1.4. All 7 engine imports moved to module top-level; zero direct CVM queries remain in ratio computation.
 
 ---
 
 ### ⚠️ Breaking Changes
+
+*(None in v1.4 — additive only. The 7 engine imports move from function-body lazy imports to module top-level imports; this changes the import-time side effect (importing `metrics.py` now triggers calculations auto-discovery, which requires `PLANNER_MODEL` to be set in the env). All public functions (`compute_ratios`, `compute_ebitda`, `compute_ttm`, `compute_ebitda_from_engines`, `compute_ttm_with_engines`) preserve their signatures. Callers that already imported `metrics.py` in a context where `PLANNER_MODEL` is set (e.g., the financials skill itself, which sets it via conftest) are unaffected.)*
 
 *(None in v1.3 — additive only. The new `current_ratios` section is added to the `summary()` response; existing `latest_annual`, `latest_quarterly`, `quarterly_trend` sections are unchanged. Consumers that read only those keys are unaffected.)*
 
@@ -43,7 +47,7 @@
 - **QoQ growth** — Quarter-over-quarter % change. Now available via `comparison` skill `growth` mode.
 - **Data freshness indicator** — Expose `last_sync_at` in responses so consumers know data age.
 - **Restatement awareness** — `restated: true` flag when VERSAO > 1.
-- **Deeper calculations integration** — v1.3 added `current_ratios` to `summary`. Future: optionally surface calculations metrics inside `quarterly` + `annual` period entries (e.g., ROIC per period). Currently these modes keep their own `compute_ratios()` because calculations engines are point-in-time, not per-period.
+- **Deeper calculations integration** — ✅ v1.4 (was roadmap item). `metrics.py` engine-backed variants now use top-level imports; zero direct CVM queries remain in ratio computation. Future: surface calculations metrics inside `quarterly` + `annual` period entries (e.g., ROIC per period). Currently these modes keep their own `compute_ratios()` because calculations engines are point-in-time, not per-period.
 
 ---
 
@@ -56,4 +60,4 @@
 
 ---
 
-*Last updated: 2026-07-27 (v1.3).
+*Last updated: 2026-07-29 (v1.4).*

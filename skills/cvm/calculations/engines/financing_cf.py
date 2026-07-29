@@ -62,7 +62,7 @@ from data_sources.cvm._bridge import resolve_company
 # NOTE: This is Financing Cash Flow, NOT Free Cash Flow. The quantity key
 # `ttm_fcf` mirrors the engine name (financing_cf -> ttm_fcf) but does NOT
 # represent Free Cash Flow (which is composed as FCO + FCI in metrics/p_fcf).
-FCF_CODE = "6.03"
+FINANCING_CF_CODE = "6.03"
 
 
 def _get_dfp_financing_cf(company: str) -> dict[str, dict]:
@@ -84,7 +84,7 @@ def _get_dfp_financing_cf(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{FCF_CODE}'
+                 AND c.codigo = '{FINANCING_CF_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -120,7 +120,7 @@ def _get_itr_financing_cf(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{FCF_CODE}'
+                 AND c.codigo = '{FINANCING_CF_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,

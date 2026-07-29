@@ -29,6 +29,21 @@ Compute all valuation ratios from b3 price + CVM TTM financials + FRE shares.
 - **TTM financials** — uses trailing twelve months (sum of last 4 standalone quarters) instead of latest annual DFP. Falls back to annual when TTM key metrics are None.
 - **Data freshness** — `data_freshness` field shows last-sync timestamp for each database.
 
+**v1.4 new metrics (15 — sourced from calculations metrics via `_safe_call`):**
+
+| Family | Metric keys | Calculations source |
+|--------|-------------|---------------------|
+| EV multiples | `ev_sales`, `ev_fcf` | `metrics.ev_sales.ev_sales_at`, `metrics.ev_fcf.ev_fcf_at` |
+| Liquidity | `cash_ratio`, `quick_ratio` | `metrics.cash_ratio.cash_ratio_at`, `metrics.quick_ratio.quick_ratio_at` |
+| Margins | `ocf_margin`, `fcf_margin` | `metrics.ocf_margin.ocf_margin_at`, `metrics.fcf_margin.fcf_margin_at` |
+| Capital structure | `working_capital`, `cash_flow_to_debt` | `metrics.working_capital.working_capital_at`, `metrics.cash_flow_to_debt.cash_flow_to_debt_at` |
+| Growth | `retention_ratio`, `sustainable_growth` | `metrics.retention_ratio.retention_ratio_at`, `metrics.sustainable_growth.sustainable_growth_at` |
+| Coverage | `interest_coverage` | `metrics.interest_coverage.interest_coverage_at` |
+| Turnover | `inventory_turnover`, `receivables_turnover`, `fixed_asset_turnover` | `metrics.inventory_turnover.inventory_turnover_at`, `metrics.receivables_turnover.receivables_turnover_at`, `metrics.fixed_asset_turnover.fixed_asset_turnover_at` |
+| Price/tangible | `price_to_tangible_book` | `metrics.price_to_tangible_book.price_to_tangible_book_at` |
+
+Each metric is wrapped in `_safe_call(fn, ticker, today)` so a FileNotFoundError (e.g., ITR db missing in test env) returns None without poisoning the rest of the ratios result.
+
 Returns:
 ```json
 {
@@ -62,7 +77,22 @@ Returns:
     "divida_bruta": 371000000000.0,
     "fco": 180000000000.0,
     "fcf": 150000000000.0,
-    "annual_dividends": 60000000000.0
+    "annual_dividends": 60000000000.0,
+    "ev_sales": 2.05,
+    "ev_fcf": 11.1,
+    "cash_ratio": 0.09,
+    "quick_ratio": 0.85,
+    "ocf_margin": 0.45,
+    "fcf_margin": 0.18,
+    "working_capital": 15000000000.0,
+    "cash_flow_to_debt": 0.48,
+    "retention_ratio": 0.50,
+    "sustainable_growth": 0.09,
+    "interest_coverage": 8.0,
+    "inventory_turnover": 5.5,
+    "receivables_turnover": 7.2,
+    "fixed_asset_turnover": 1.3,
+    "price_to_tangible_book": 1.6
   },
   "sources": {
     "price": {"status": "ok", "source": "brapi"},
@@ -85,9 +115,23 @@ Returns:
 
 Ratios + data source availability.
 
+[v1.4] Adds a `headline_v13_metrics` block at the top level — the 10 most important v1.4 metrics (EV/Sales, EV/FCF, Quick Ratio, Cash Ratio, OCF Margin, FCF Margin, Interest Coverage, Cash Flow to Debt, Sustainable Growth, P/Tangible Book) surfaced for quick scanning without drilling into `ratios`.
+
 Adds `data_availability` field:
 ```json
 {
+  "headline_v13_metrics": {
+    "ev_sales": 2.05,
+    "ev_fcf": 11.1,
+    "quick_ratio": 0.85,
+    "cash_ratio": 0.09,
+    "ocf_margin": 0.45,
+    "fcf_margin": 0.18,
+    "interest_coverage": 8.0,
+    "cash_flow_to_debt": 0.48,
+    "sustainable_growth": 0.09,
+    "price_to_tangible_book": 1.6
+  },
   "data_availability": {
     "price": "ok",
     "price_source": "brapi",
@@ -123,4 +167,4 @@ Adds `data_availability` field:
 
 ---
 
-*Last updated: 2026-07-25 (v1.0.14).*
+*Last updated: 2026-07-29 (v1.4).*

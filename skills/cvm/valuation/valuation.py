@@ -62,6 +62,26 @@ from skills.cvm.calculations.metrics.debt_equity import debt_equity_at
 from skills.cvm.calculations.metrics.asset_turnover import asset_turnover_at
 from skills.cvm.calculations.metrics.current_ratio import current_ratio_at
 
+# [v1.4-valuation] Phase 2B+: 15 new v1.3 metrics from calculations.metrics.
+# Each composes engines internally and returns None for missing/edge data.
+# Grouped: EV multiples -> liquidity -> margins -> capital structure ->
+# growth -> coverage -> turnover -> price/tangible.
+from skills.cvm.calculations.metrics.ev_sales import ev_sales_at
+from skills.cvm.calculations.metrics.ev_fcf import ev_fcf_at
+from skills.cvm.calculations.metrics.cash_ratio import cash_ratio_at
+from skills.cvm.calculations.metrics.quick_ratio import quick_ratio_at
+from skills.cvm.calculations.metrics.ocf_margin import ocf_margin_at
+from skills.cvm.calculations.metrics.fcf_margin import fcf_margin_at
+from skills.cvm.calculations.metrics.working_capital import working_capital_at
+from skills.cvm.calculations.metrics.cash_flow_to_debt import cash_flow_to_debt_at
+from skills.cvm.calculations.metrics.retention_ratio import retention_ratio_at
+from skills.cvm.calculations.metrics.sustainable_growth import sustainable_growth_at
+from skills.cvm.calculations.metrics.interest_coverage import interest_coverage_at
+from skills.cvm.calculations.metrics.inventory_turnover import inventory_turnover_at
+from skills.cvm.calculations.metrics.receivables_turnover import receivables_turnover_at
+from skills.cvm.calculations.metrics.fixed_asset_turnover import fixed_asset_turnover_at
+from skills.cvm.calculations.metrics.price_to_tangible_book import p_tangible_book_at
+
 
 def _safe_call(fn: Callable, *args, **kwargs):
     """Call a calculations engine/metric, return None on any exception.
@@ -90,6 +110,12 @@ def ratios(company: str = "") -> dict:
     Returns: P/L, P/VPA, EV, P/EBIT, P/FCO, PSR, EV/EBITDA, DPA, Div Yield,
     ROIC, Graham Number, ROE, ROA, Margins, D/PL, Asset Turnover, Current Ratio,
     Market Cap, + data_freshness.
+
+    [v1.4-valuation] 15 NEW v1.3 metrics also returned:
+      EV/Sales, EV/FCF, Cash Ratio, Quick Ratio, OCF Margin, FCF Margin,
+      Working Capital, Cash Flow to Debt, Retention Ratio, Sustainable Growth,
+      Interest Coverage, Inventory Turnover, Receivables Turnover,
+      Fixed Asset Turnover, Price to Tangible Book.
     """
     if not company:
         return {"status": "error", "error": "company (ticker) is required"}
@@ -323,6 +349,39 @@ def ratios(company: str = "") -> dict:
     for key, fn in new_metrics:
         ratios_result[key] = _safe_call(fn, ticker, today)
 
+    # [v1.4-valuation] Phase 2B+: 15 NEW v1.3 metrics from calculations.metrics.
+    # Same _safe_call pattern as above -- a FileNotFoundError in one (e.g., ITR
+    # db missing in test env) returns None without poisoning the rest.
+    # Grouped by family for readability:
+    #   - EV multiples:      ev_sales, ev_fcf
+    #   - Liquidity (extra): cash_ratio, quick_ratio
+    #   - Margins (cash):    ocf_margin, fcf_margin
+    #   - Capital structure: working_capital, cash_flow_to_debt
+    #   - Growth:            retention_ratio, sustainable_growth
+    #   - Coverage:          interest_coverage
+    #   - Turnover:          inventory_turnover, receivables_turnover,
+    #                        fixed_asset_turnover
+    #   - Price/Tangible:    p_tangible_book
+    v13_new_metrics: list[tuple[str, Callable]] = [
+        ("ev_sales", ev_sales_at),
+        ("ev_fcf", ev_fcf_at),
+        ("cash_ratio", cash_ratio_at),
+        ("quick_ratio", quick_ratio_at),
+        ("ocf_margin", ocf_margin_at),
+        ("fcf_margin", fcf_margin_at),
+        ("working_capital", working_capital_at),
+        ("cash_flow_to_debt", cash_flow_to_debt_at),
+        ("retention_ratio", retention_ratio_at),
+        ("sustainable_growth", sustainable_growth_at),
+        ("interest_coverage", interest_coverage_at),
+        ("inventory_turnover", inventory_turnover_at),
+        ("receivables_turnover", receivables_turnover_at),
+        ("fixed_asset_turnover", fixed_asset_turnover_at),
+        ("p_tangible_book", p_tangible_book_at),
+    ]
+    for key, fn in v13_new_metrics:
+        ratios_result[key] = _safe_call(fn, ticker, today)
+
     result["ratios"] = ratios_result
 
     # [v1.0.14] Data freshness
@@ -343,6 +402,23 @@ def summary(company: str = "") -> dict:
         "price_source": r["sources"].get("price", {}).get("source", "unknown"),
         "dfp_ttm": r["sources"].get("financials", {}).get("status", "missing"),
         "fre_shares": r["sources"].get("shares", {}).get("status", "missing"),
+    }
+
+    # [v1.4-valuation] Surface the most important new v1.3 metrics at the top
+    # level of summary() for quick scanning. Values are pulled from the already
+    # computed ratios dict (None when the underlying engine couldn't resolve).
+    ratios_block = r.get("ratios", {})
+    r["headline_v13_metrics"] = {
+        "ev_sales": ratios_block.get("ev_sales"),
+        "ev_fcf": ratios_block.get("ev_fcf"),
+        "quick_ratio": ratios_block.get("quick_ratio"),
+        "cash_ratio": ratios_block.get("cash_ratio"),
+        "ocf_margin": ratios_block.get("ocf_margin"),
+        "fcf_margin": ratios_block.get("fcf_margin"),
+        "interest_coverage": ratios_block.get("interest_coverage"),
+        "cash_flow_to_debt": ratios_block.get("cash_flow_to_debt"),
+        "sustainable_growth": ratios_block.get("sustainable_growth"),
+        "p_tangible_book": ratios_block.get("p_tangible_book"),
     }
     return r
 

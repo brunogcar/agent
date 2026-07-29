@@ -33,10 +33,11 @@ Usage:
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.ebit import ebit_at, ebit_periods
-from skills.cvm.calculations.engines.tax import tax_at, tax_periods
+from skills.cvm.calculations.engines.tax import tax_periods
 from skills.cvm.calculations.engines.ebt import ebt_at, ebt_periods
 from skills.cvm.calculations.engines.pl import pl_at, pl_periods
 from skills.cvm.calculations.engines.debt import debt_at, debt_periods
+from skills.cvm.calculations.metrics.effective_tax_rate import effective_tax_rate_at
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
@@ -73,28 +74,15 @@ def roic_at(company: str, date: str) -> float | None:
     if ebit is None or ebit <= 0:
         return None  # Operating losses -- ROIC meaningless
 
-    # EBT (pre-tax income) is required to compute the effective tax rate.
-    # Without pre-tax income, we can't compute a meaningful tax rate, and
-    # using a flat tax rate (e.g. 34%) would produce misleading NOPAT.
-    ebt = ebt_at(company, date)
-    if ebt is None or ebt <= 0:
-        return None  # Can't compute effective tax rate without positive EBT
-
-    # Tax is typically negative on DRE (expense). We want the positive
-    # tax expense: max(0, -tax). If tax is None or positive (tax credit),
-    # tax_expense = 0.
-    tax = tax_at(company, date)
-    if tax is not None and tax < 0:
-        tax_expense = -tax  # Convert negative DRE value to positive expense
-    else:
-        tax_expense = 0.0
-
-    # Effective tax rate = tax_expense / EBT. Clamp to [0, 0.50]:
-    # - Floor 0: tax credits / zero-tax situations don't inflate NOPAT
-    # - Ceiling 50%: Brazil's combined IRPJ+CSLL is 34% (15+10+9); 50%
-    #   absorbs deferred-tax adjustments without producing negative NOPAT
-    effective_tax_rate = tax_expense / ebt if ebt > 0 else 0.0
-    effective_tax_rate = min(max(effective_tax_rate, 0.0), _MAX_EFFECTIVE_TAX_RATE)
+    # Delegate to effective_tax_rate_at() (single source of truth for the
+    # tax_expense/EBT formula). That function returns None when EBT is
+    # None or <= 0, or 0.0 when there's no tax expense.
+    # We then apply our own ceiling (50%) on top of its [0, 1.0] clamp
+    # to protect NOPAT from going negative on deferred-tax data anomalies.
+    effective_tax_rate = effective_tax_rate_at(company, date)
+    if effective_tax_rate is None:
+        return None  # EBT missing or <= 0 -- can't compute tax rate
+    effective_tax_rate = min(effective_tax_rate, _MAX_EFFECTIVE_TAX_RATE)
 
     # NOPAT = EBIT × (1 - effective_tax_rate) -- correct formula.
     # (v1.x used NOPAT = EBIT - tax_expense, which slightly overestimates
@@ -225,6 +213,12 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
                 break
 
         # Compute NOPAT = EBIT × (1 - effective_tax_rate)  (v2.0)
+        # NOTE: This duplicates the tax-rate formula from effective_tax_rate_at()
+        # for performance — the history function pre-resolves all engine periods
+        # and does O(1) lookups per date. Calling effective_tax_rate_at() per
+        # date would re-fetch ebt_at() + tax_at() redundantly. The _at function
+        # delegates to effective_tax_rate_at() (single source of truth); this
+        # history function is the optimized path.
         # effective_tax_rate = tax_expense / EBT, clamped to [0, 0.50]
         # Requires EBIT > 0 AND EBT > 0.
         nopat = None

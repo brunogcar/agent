@@ -166,22 +166,22 @@ payables_at(company: str, date: str) -> float | None         # BPP 2.01.01 (Forn
 payables_periods(company: str) -> list[dict]
 ```
 
-### `engines/dva_interest_paid.py`
+### `engines/interest_paid.py`
 ```python
-dva_interest_paid_at(company: str, date: str) -> float | None    # TTM interest paid (DVA grupo='DVA' codigo 8.3, typically NEGATIVE)
-dva_interest_paid_periods(company: str) -> list[dict]
+interest_paid_at(company: str, date: str) -> float | None    # TTM interest paid (DVA grupo='DVA' codigo 8.3, typically NEGATIVE)
+interest_paid_periods(company: str) -> list[dict]
 ```
 
-### `engines/dva_total_tax.py`
+### `engines/total_tax.py`
 ```python
-dva_total_tax_at(company: str, date: str) -> float | None    # TTM total tax burden (DVA grupo='DVA' codigo 8.2, typically NEGATIVE)
-dva_total_tax_periods(company: str) -> list[dict]
+total_tax_at(company: str, date: str) -> float | None    # TTM total tax burden (DVA grupo='DVA' codigo 8.2, typically NEGATIVE)
+total_tax_periods(company: str) -> list[dict]
 ```
 
-### `engines/dva_value_added.py`
+### `engines/value_added.py`
 ```python
-dva_value_added_at(company: str, date: str) -> float | None  # TTM total value added (DVA grupo='DVA' codigo 7, typically POSITIVE)
-dva_value_added_periods(company: str) -> list[dict]
+value_added_at(company: str, date: str) -> float | None  # TTM total value added (DVA grupo='DVA' codigo 7, typically POSITIVE)
+value_added_periods(company: str) -> list[dict]
 ```
 
 ---
@@ -452,4 +452,4 @@ list_all_metric_names() -> list[str]
 
 ---
 
-*Last updated: 2026-07-28 (v1.3). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-28 (v1.4). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

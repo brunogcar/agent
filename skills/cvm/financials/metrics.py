@@ -16,6 +16,13 @@ TWO RESPONSIBILITIES
    ttm_earnings_at, *_cf_at) instead of summing 4 standalone quarters.
    The legacy sum-of-4-quarters functions (compute_ebitda, compute_ttm)
    are preserved unchanged for callers that don't have a company handle.
+   [v1.4] Engine imports are now at MODULE TOP (not lazy inside the two
+   *_from_engines / *_with_engines functions). This makes the dependency
+   explicit, the engines mockable as `skills.cvm.financials.metrics.ebit_at`,
+   and brings the v1.2 hardening (description-search fallback for ebit,
+   section-scoping for da) into financials automatically. Ratio
+   computation in metrics.py has ZERO direct CVM queries — every flow
+   metric goes through the engines.
 
 EBITDA FORMULA
 --------------
@@ -24,6 +31,9 @@ The D&A comes from the cash flow statement, not the DRE.
 [v1.3] compute_ebitda_from_engines() fetches EBIT + D&A directly from the
 skills.cvm.calculations engines (ebit_at + da_at) instead of receiving
 pre-fetched values, with the same ebit_only fallback when D&A is missing.
+[v1.4] The hardcoded `3.05` / `6.01.01.02` references in this file are
+ONLY in SUMMARY_CODES (for statement rendering) and docstrings — never
+used to query CVM directly in ratio computation.
 
 QUARTERLY ROA/ROE
 -----------------
@@ -37,6 +47,26 @@ clean 1:1 swap.
 """
 
 from __future__ import annotations
+
+# [v1.4-financials-migration] Top-level imports of the calculations engines.
+# Previously these were lazy imports inside compute_ebitda_from_engines() and
+# compute_ttm_with_engines(). Moving them to module top makes the dependency
+# explicit, the engines mockable as `skills.cvm.financials.metrics.ebit_at`,
+# and brings the v1.2 hardening (description-search fallback for ebit,
+# section-scoping for da) into financials automatically — the engines own
+# that logic now.
+#
+# Auto-discovery side effect: importing any engine module triggers
+# skills.cvm.calculations._registry auto-discovery (globs engines/*.py +
+# metrics/*.py). Tests set PLANNER_MODEL=test at conftest import time, so
+# this is safe in test environments.
+from skills.cvm.calculations.engines.ebit import ebit_at
+from skills.cvm.calculations.engines.da import da_at
+from skills.cvm.calculations.engines.revenue import revenue_at
+from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+from skills.cvm.calculations.engines.operating_cf import operating_cf_at
+from skills.cvm.calculations.engines.investing_cf import investing_cf_at
+from skills.cvm.calculations.engines.financing_cf import financing_cf_at
 
 
 # ── Key account codes for summary metrics ────────────────────────────────────
@@ -221,11 +251,7 @@ def compute_ebitda_from_engines(company: str, date: str) -> tuple[float | None, 
     Returns:
         (ebitda, method) tuple — same shape as compute_ebitda().
     """
-    # Lazy import so importing metrics.py doesn't trigger calculations
-    # auto-discovery (and the corresponding PLANNER_MODEL env-var requirement).
-    from skills.cvm.calculations.engines.ebit import ebit_at
-    from skills.cvm.calculations.engines.da import da_at
-
+    # [v1.4] ebit_at + da_at are imported at module top — see header comment.
     ebit = _safe_engine_call(ebit_at, company, date)
     if ebit is None:
         return None, "none"
@@ -360,14 +386,7 @@ def compute_ttm_with_engines(company: str, date: str, periods: list[dict]) -> di
         return {"status": "insufficient_data",
                 "reason": f"need 4 quarters, got {len(periods) if periods else 0}"}
 
-    # Lazy import — see compute_ebitda_from_engines() for rationale.
-    from skills.cvm.calculations.engines.revenue import revenue_at
-    from skills.cvm.calculations.engines.ebit import ebit_at
-    from skills.cvm.calculations.engines.da import da_at
-    from skills.cvm.calculations.engines.earnings import ttm_earnings_at
-    from skills.cvm.calculations.engines.operating_cf import operating_cf_at
-    from skills.cvm.calculations.engines.investing_cf import investing_cf_at
-    from skills.cvm.calculations.engines.financing_cf import financing_cf_at
+    # [v1.4] All engines are imported at module top — see header comment.
 
     # Sort newest-first by (year, quarter) for snapshot averaging + label
     sorted_periods = sorted(periods,

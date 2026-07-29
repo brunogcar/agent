@@ -35,9 +35,9 @@
 | `skills/cvm/calculations/engines/operating_cf.py` | TTM operating cash flow (DFC 6.01): `operating_cf_at()`, `operating_cf_periods()` |
 | `skills/cvm/calculations/engines/investing_cf.py` | TTM investing cash flow (DFC 6.02): `investing_cf_at()`, `investing_cf_periods()` |
 | `skills/cvm/calculations/engines/financing_cf.py` | TTM financing cash flow (DFC 6.03): `financing_cf_at()`, `financing_cf_periods()` |
-| `skills/cvm/calculations/engines/dva_interest_paid.py` | TTM interest paid (DVA grupo='DVA' codigo 8.3): `dva_interest_paid_at()`, `dva_interest_paid_periods()` |
-| `skills/cvm/calculations/engines/dva_total_tax.py` | TTM total tax burden (DVA grupo='DVA' codigo 8.2): `dva_total_tax_at()`, `dva_total_tax_periods()` |
-| `skills/cvm/calculations/engines/dva_value_added.py` | TTM total value added (DVA grupo='DVA' codigo 7): `dva_value_added_at()`, `dva_value_added_periods()` |
+| `skills/cvm/calculations/engines/interest_paid.py` | TTM interest paid (DVA grupo='DVA' codigo 8.3): `interest_paid_at()`, `interest_paid_periods()` |
+| `skills/cvm/calculations/engines/total_tax.py` | TTM total tax burden (DVA grupo='DVA' codigo 8.2): `total_tax_at()`, `total_tax_periods()` |
+| `skills/cvm/calculations/engines/value_added.py` | TTM total value added (DVA grupo='DVA' codigo 7): `value_added_at()`, `value_added_periods()` |
 | `skills/cvm/calculations/metrics/__init__.py` | Minimal docstring |
 | `skills/cvm/calculations/metrics/lpa.py` | LPA + P/L: `lpa_at()`, `pe_at()`, `lpa_history()` |
 | `skills/cvm/calculations/metrics/vpa.py` | VPA + P/VPA: `vpa_at()`, `pvpa_at()`, `vpa_history()` |
@@ -93,7 +93,7 @@ Engines are leaves (one per raw quantity, fetch from data sources). Metrics comp
 | bpa | current_assets, cash, total_assets, receivables, inventory, ppe, intangibles |
 | bpp | pl, debt, current_liabilities, payables |
 | dfc | da, capex, operating_cf, investing_cf, financing_cf |
-| dva | dva_interest_paid, dva_total_tax, dva_value_added |
+| dva | interest_paid, total_tax, value_added |
 
 ### Metric inventory by type (37 metrics):
 
@@ -156,4 +156,4 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
-*Last updated: 2026-07-28 (v1.3). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-28 (v1.4). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

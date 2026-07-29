@@ -97,6 +97,16 @@ def sector(setor: str = "", limit: int = 20) -> dict:
                     "roa": r.get("roa"),
                     "margem_liquida": r.get("margem_liquida"),
                     "divida_pl": r.get("divida_pl"),
+                    # [v1.4] New v1.3 metrics — liquidity, cash flow, efficiency
+                    "quick_ratio": r.get("quick_ratio"),
+                    "cash_ratio": r.get("cash_ratio"),
+                    "ocf_margin": r.get("ocf_margin"),
+                    "fcf_margin": r.get("fcf_margin"),
+                    "interest_coverage": r.get("interest_coverage"),
+                    "cash_flow_to_debt": r.get("cash_flow_to_debt"),
+                    "ev_sales": r.get("ev_sales"),
+                    "ev_fcf": r.get("ev_fcf"),
+                    "p_tangible_book": r.get("p_tangible_book"),
                 })
             else:
                 errors.append(f"{ticker}: valuation {vr.get('status')}")

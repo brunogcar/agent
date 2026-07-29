@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| **v1.4** | 2026-07-29 | **Surfaced 15 v1.4 valuation metrics in `_VALUATION_COLS`.** The valuation skill's v1.4 work wired 15 new calculations metrics into `ratios()` (EV/Sales, EV/FCF, Cash Ratio, Quick Ratio, OCF Margin, FCF Margin, Working Capital, Cash Flow to Debt, Retention Ratio, Sustainable Growth, Interest Coverage, Inventory Turnover, Receivables Turnover, Fixed Asset Turnover, P/Tangible Book). Comparison picks these up transitively via the existing `entry["valuation"] = r.get("ratios", {})` line in `_fetch_all()` — no new data fetching. Extended `_VALUATION_COLS` with 15 new `(label, dict_key, spec)` entries grouped by family (EV multiples → liquidity → margins → capital structure → growth → coverage → turnover → price/tangible), matching the v1.4 valuation metric families. Format specs: `num` for multiples/turnover/coverage, `pct` for margins/growth/retention, `brl` for working capital. All existing v1.3 columns preserved (ROE (val), ROA (val), Marg. Líq. (val), Dívida/PL, Liquidez Corrente). Now 33 columns in the valuation section (13 base + 5 v1.3 + 15 v1.4). |
 | v1.3 | 2026-07-27 | **Calculations integration.** Side_by_side valuation section now surfaces 5 new columns sourced from `valuation.ratios()` (which since Phase 2B delegates to calculations engines): ROE (val), ROA (val), Marg. Líq. (val), Dívida/PL, Liquidez Corrente. No new data fetching — comparison picks these up transitively via the existing `entry["valuation"] = r.get("ratios", {})` line in `_fetch_all()`. Single test file (431 lines, 7 classes) split into `conftest.py` + 5 per-mode files (validation / side_by_side / summary / growth / route) following the Phase 2C pattern. 36 tests (was 31 — added 1 new test asserting v1.3 metrics land in the valuation section). All existing keys + column labels preserved. |
 | v1.2.2 | 2026-07-25 | **Growth guard relaxed.** v1.2.1 suppressed |result| >= 500% (magnitude guard) which hid legitimate extreme values. Removed the magnitude guard — extreme same-sign growth is real data the LLM should see. Only sign-change guards remain: prev <= 0 and curr*prev < 0 (opposite signs = meaningless %). SUZB3 lucro QoQ now shows its real extreme value instead of None; KLBN11 (sign change) stays None. |
 | v1.2.1 | 2026-07-25 | **Growth sign-change guard fix.** v1.2 caught negative prev and >500% results, but missed profit→loss sign changes (prev positive, curr negative) that produce -400% noise. Fix: add curr*prev<0 check — opposite signs = sign change, % is meaningless. KLBN11 lucro QoQ -395% now correctly suppressed. |
@@ -36,4 +37,4 @@
 
 ---
 
-*Last updated: 2026-07-27 (v1.3).*
+*Last updated: 2026-07-29 (v1.4).*
