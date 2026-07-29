@@ -179,10 +179,18 @@ def _availability_section(result: dict) -> dict:
 
 @register_adapter("valuation_dashboard")
 def valuation_dashboard(result: dict) -> dict:
-    """Flatten valuation.ratios() / valuation.summary() result into a multi-tab
-    dashboard payload."""
+    """Flatten valuation.ratios() / valuation.summary() / valuation.dashboard()
+    result into a multi-tab dashboard payload.
+
+    If the input already has a 'tabs' key (from valuation.dashboard() mode),
+    pass through as-is — the dashboard mode already shapes the data correctly.
+    """
     if not _ok(result):
         return _error_table(result, title="Valuation Dashboard")
+
+    # If dashboard() mode was called, the result already has tabs — pass through.
+    if result.get("tabs"):
+        return result
 
     ratios = result.get("ratios") or {}
     if not ratios:

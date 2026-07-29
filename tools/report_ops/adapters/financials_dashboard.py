@@ -360,6 +360,10 @@ def _convert_section(sec: dict) -> list[dict]:
         return []
 
     # Unknown section shape — pass through as a text block.
+    # But if the section already has a "type" field (new report.py format),
+    # pass it through as-is — it's already in the correct dashboard shape.
+    if sec.get("type"):
+        return [sec]
     return [{
         "title": name,
         "type": "text",
@@ -379,13 +383,19 @@ def financials_dashboard(result: dict) -> dict:
     if not tabs_in:
         return _error_table(result, title="Financials Dashboard")
 
-    # Pull Overview tab's KPIs to the top-level `kpis` field (formatted).
+    # Pull KPIs from top-level result["kpis"] (new format) or from
+    # Overview tab's "kpis" key (old format).
     kpis: list[dict] = []
-    for tab in tabs_in:
-        if tab.get("name") == "Overview":
-            for k in tab.get("kpis") or []:
-                kpis.append(_format_kpi(k))
-            break
+    top_kpis = result.get("kpis") or []
+    if top_kpis:
+        for k in top_kpis:
+            kpis.append(_format_kpi(k))
+    else:
+        for tab in tabs_in:
+            if tab.get("name") == "Overview":
+                for k in tab.get("kpis") or []:
+                    kpis.append(_format_kpi(k))
+                break
 
     # Convert each tab's sections into the dashboard template format.
     tabs_out: list[dict] = []

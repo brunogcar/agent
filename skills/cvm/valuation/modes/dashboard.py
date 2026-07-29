@@ -100,22 +100,24 @@ def dashboard(company: str = "") -> dict:
     # builders handle both via _safe_get().
     ratios_dict = ratios_payload.get("ratios") if isinstance(ratios_payload, dict) else None
 
-    # ── Tab 1: Overview -- KPI cards + price metadata + freshness ──────────
+    # ── Tab 1: Overview -- table of headline metrics ──────────────────────
     kpis = build_overview_kpis(ratios_dict)
-    overview_sections = build_overview_sections(ratios_dict, kpis)
+    overview_sections = build_overview_sections(ratios_dict)
 
-    # ── Tabs 2-5: ratio grids ──────────────────────────────────────────────
+    # ── Tabs 2-5: ratio tables ──────────────────────────────────────────────
     multiples_section = build_multiples_section(ratios_dict)
     profitability_section = build_profitability_section(ratios_dict)
     liquidity_leverage_section = build_liquidity_leverage_section(ratios_dict)
     efficiency_growth_section = build_efficiency_growth_section(ratios_dict)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
+    # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
+    # renders them above all tabs via the kpi-grid div.
     tabs = [
-        {"name": "Overview",              "kpis": kpis, "sections": overview_sections},
+        {"name": "Overview",              "sections": overview_sections},
         {"name": "Multiples",             "sections": [multiples_section]},
         {"name": "Profitability",         "sections": [profitability_section]},
         {"name": "Liquidity & Leverage",  "sections": [liquidity_leverage_section]},
         {"name": "Efficiency & Growth",   "sections": [efficiency_growth_section]},
     ]
-    return {"status": "ok", "company": company, "tabs": tabs}
+    return {"status": "ok", "company": company, "tabs": tabs, "kpis": kpis}

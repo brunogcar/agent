@@ -98,7 +98,7 @@
   <div class="ratio-category">
     <div class="ratio-category-title">{{ cat.label }}</div>
     <div class="ratio-items">
-      {% for item in cat.items %}
+      {% for item in cat["items"] %}
       <div class="ratio-item">
         <span class="ratio-label">{{ item.label }}</span>
         <span class="ratio-value {{ 'pos' if item.value is string and item.value.startswith('+') else 'neg' if item.value is string and item.value.startswith('-') else 'neu' if item.value in ['—', 'None', 'N/A'] else '' }}">{{ item.value }}</span>

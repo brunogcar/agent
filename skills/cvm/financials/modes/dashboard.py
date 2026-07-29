@@ -144,20 +144,22 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
 
     kpis = build_overview_kpis(latest_annual_period, roe_val, net_debt_ebitda_val)
     overview_sections = build_overview_sections(
-        latest_annual_period, quarterly_periods, kpis)
+        latest_annual_period, quarterly_periods)
 
-    # ── Tab 2-5: DRE / Balanço / DFC / Ratios ──────────────────────────────
+    # ── Tab 2-5: DRE / Balanco / DFC / Ratios ─────────────────────────────
     dre_sections = build_dre_sections(latest_annual_period, quarterly_periods)
     balanco_section = build_balanco_section(latest_annual_period)
     dfc_sections = build_dfc_sections(latest_annual_period, quarterly_periods)
     ratios_section = build_ratios_section(today, ratios_payload)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
+    # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
+    # renders them above all tabs via the kpi-grid div.
     tabs = [
-        {"name": "Overview", "kpis": kpis, "sections": overview_sections},
+        {"name": "Overview", "sections": overview_sections},
         {"name": "DRE",      "sections": dre_sections},
-        {"name": "Balanço",  "sections": [balanco_section]},
+        {"name": "Balanco",  "sections": [balanco_section]},
         {"name": "DFC",      "sections": dfc_sections},
         {"name": "Ratios",   "sections": [ratios_section]},
     ]
-    return {"status": "ok", "company": company, "tabs": tabs}
+    return {"status": "ok", "company": company, "tabs": tabs, "kpis": kpis}

@@ -320,12 +320,14 @@ def ratios(company: str = "") -> dict:
 
     # [v1.5] Preserve manual per-share values that compute_all_ratios overwrites.
     # compute_all_ratios calls ratio_fn (not per_share_fn) for Type 1 metrics,
-    # so "vpa" gets P/VPA (ratio) and "dpa" gets Div Yield (ratio). But the
-    # manual code above sets "vpa" to the per-share VPA and "dpa" to per-share
-    # DPA. Restore the per-share values -- the ratios are available under their
-    # own keys (pvpa, dy) from the registry.
+    # so "vpa" gets P/VPA (ratio), "dpa" gets Div Yield (ratio), "lpa" gets P/E
+    # (ratio), and "rps" gets P/S (ratio). But the manual code above sets these
+    # to their per-share values. Restore them -- the ratios are available under
+    # their own keys (pvpa, dy, pe, psr) from the registry.
     ratios_result["vpa"] = vpa  # per-share VPA (PL / shares)
     ratios_result["dpa"] = dpa_ttm  # per-share DPA (dividends per share TTM)
+    ratios_result["lpa"] = eps  # per-share LPA (earnings / shares)
+    ratios_result["rps"] = _safe_div(receita_liquida, total_shares)  # per-share RPS
 
     # [v1.5] Backward-compatibility aliases: Portuguese keys that comparison +
     # screener skills read. These map to the canonical English registry keys.
