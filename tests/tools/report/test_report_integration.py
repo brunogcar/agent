@@ -117,7 +117,7 @@ class TestTableAdapters:
 
     def test_table_comparison_side_by_side(self, cvm_dbs_available, bridge_available,
                                             b3_dividends_available, tmp_path, monkeypatch):
-        from skills.cvm.comparison.comparison import side_by_side
+        from skills.cvm.comparison.modes.side_by_side import side_by_side
         from tools.report_ops import table
         monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         data = side_by_side(tickers=TICKERS)
@@ -162,7 +162,7 @@ class TestXlsxExport:
 
     def test_xlsx_comparison(self, cvm_dbs_available, bridge_available,
                               b3_dividends_available, tmp_path, monkeypatch):
-        from skills.cvm.comparison.comparison import side_by_side
+        from skills.cvm.comparison.modes.side_by_side import side_by_side
         from tools.report_ops import export
         monkeypatch.setattr("tools.report_ops.paths.cfg.workspace_root", tmp_path)
         data = side_by_side(tickers=TICKERS)

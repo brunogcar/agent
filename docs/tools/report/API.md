@@ -278,6 +278,8 @@ tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`
 | `screener_sector` | `cvm/screener` sector | Peers table (sorted by P/L) + KPI strip (sector medians) |
 | `financials_dashboard` (v1.5) | `cvm/financials` dashboard | **Dashboard adapter** — 5 tabs (Overview KPIs + DRE + Balanço + DFC + Ratios `ratio_grid`). Promotes top-level KPIs, converts statement tabs to `table` sections + ratios tab to `ratio_grid` |
 | `valuation_dashboard` (v1.5) | `cvm/valuation` ratios/summary | **Dashboard adapter** — 5 themed tabs (Overview/Multiples/Profitability/Liquidity & Leverage/Efficiency & Growth) with 6 pre-formatted KPI cards. Uses `ratio_grid` sections for categorized ratios |
+| `backtest_dashboard` (v1.6) | `cvm/backtest` dashboard | **Dashboard adapter** — 3 tabs (Overview with KPIs + equity curve, Trades table, Performance summary). Thin pass-through of `backtest.dashboard()` tab payload |
+| `comparison_dashboard` (v1.6) | `cvm/comparison` dashboard | **Dashboard adapter** — 5 tabs (Overview/Valuation/Financials/Dividends/Growth). Thin pass-through of `comparison.dashboard()` tab payload |
 
 Error / not_synced skill results render as a small status table (never crash).
 
@@ -439,4 +441,4 @@ The memory hook is fire-and-forget — if storage fails, the report still return
 
 ---
 
-*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-29 (v1.6). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

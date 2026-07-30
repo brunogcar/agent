@@ -11,28 +11,29 @@ circuits before any underlying skill is called.
 """
 from __future__ import annotations
 
-from skills.cvm.comparison import comparison
+from skills.cvm.comparison.modes.side_by_side import side_by_side
+from skills.cvm.comparison.modes.summary import summary
 
 
 class TestValidation:
     def test_side_by_side_requires_tickers(self):
-        r = comparison.side_by_side()
+        r = side_by_side()
         assert r["status"] == "error"
         assert "tickers" in r["error"]
 
     def test_side_by_side_requires_list(self):
-        r = comparison.side_by_side(tickers="PETR4")
+        r = side_by_side(tickers="PETR4")
         assert r["status"] == "error"
 
     def test_side_by_side_requires_min_two(self):
-        r = comparison.side_by_side(tickers=["PETR4"])
+        r = side_by_side(tickers=["PETR4"])
         assert r["status"] == "error"
         assert "2 tickers" in r["error"]
 
     def test_summary_requires_tickers(self):
-        r = comparison.summary()
+        r = summary()
         assert r["status"] == "error"
 
     def test_summary_requires_min_two(self):
-        r = comparison.summary(tickers=["PETR4"])
+        r = summary(tickers=["PETR4"])
         assert r["status"] == "error"

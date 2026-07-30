@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.comparison import comparison
+from skills.cvm.comparison.modes.side_by_side import side_by_side
+from skills.cvm.comparison.fetchers import _extract_dividend_metrics
 from tests.skills.cvm.comparison.conftest import (
     VAL_PETR4, VAL_VALE3, FIN_PETR4, FIN_VALE3, DIV_PETR4, DIV_VALE3,
 )
@@ -27,7 +28,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": VAL_VALE3},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["PETR4", "VALE3"])
+        r = side_by_side(tickers=["PETR4", "VALE3"])
         assert r["status"] == "ok"
         assert r["tickers"] == ["PETR4", "VALE3"]
         assert set(r["sections"].keys()) == {"valuation", "financials", "dividends"}
@@ -38,7 +39,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": VAL_VALE3},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["PETR4", "VALE3"])
+        r = side_by_side(tickers=["PETR4", "VALE3"])
         val = r["sections"]["valuation"]
         assert val["columns"][0] == "Ticker"
         assert "P/L" in val["columns"]
@@ -58,7 +59,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": VAL_VALE3},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["PETR4", "VALE3"])
+        r = side_by_side(tickers=["PETR4", "VALE3"])
         val = r["sections"]["valuation"]
         # New columns present
         assert "ROE (val)" in val["columns"]
@@ -86,7 +87,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": VAL_VALE3},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["PETR4", "VALE3"])
+        r = side_by_side(tickers=["PETR4", "VALE3"])
         fin = r["sections"]["financials"]
         assert "Receita Líquida" in fin["columns"]
         assert "ROE" in fin["columns"]
@@ -98,7 +99,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": VAL_VALE3},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["PETR4", "VALE3"])
+        r = side_by_side(tickers=["PETR4", "VALE3"])
         div = r["sections"]["dividends"]
         assert "Eventos (B3)" in div["columns"]
         assert "Dividendos (últ ano)" in div["columns"]
@@ -110,7 +111,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": VAL_VALE3},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["PETR4", "VALE3"])
+        r = side_by_side(tickers=["PETR4", "VALE3"])
         val = r["sections"]["valuation"]
         assert val["formats"]["Ticker"] == "text"
         assert val["formats"]["P/L"] == "num"
@@ -123,7 +124,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": {"status": "error", "error": "no price"}},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["PETR4", "VALE3"])
+        r = side_by_side(tickers=["PETR4", "VALE3"])
         assert r["status"] == "ok"
         # VALE3's valuation cells are None (price lookup failed)
         val = r["sections"]["valuation"]
@@ -139,7 +140,7 @@ class TestSideBySide:
                     {"PETR4": VAL_PETR4, "VALE3": VAL_VALE3},
                     {"PETR4": FIN_PETR4, "VALE3": FIN_VALE3},
                     {"PETR4": DIV_PETR4, "VALE3": DIV_VALE3})
-        r = comparison.side_by_side(tickers=["petr4", "vale3"])
+        r = side_by_side(tickers=["petr4", "vale3"])
         assert r["tickers"] == ["PETR4", "VALE3"]
 
 
@@ -151,7 +152,7 @@ class TestExtractDividendMetrics:
     def test_extracts_event_count_and_dpa_avg(self):
         sections = {"recent_events": {"status": "ok", "count": 3,
                                       "events": [{"rate": 1.5}, {"rate": 2.0}, {"rate": 1.0}]}}
-        m = comparison._extract_dividend_metrics(sections)
+        m = _extract_dividend_metrics(sections)
         assert m["event_count"] == 3
         assert m["b3_dpa_avg"] == pytest.approx(1.5)  # (1.5+2.0+1.0)/3
 
@@ -160,12 +161,12 @@ class TestExtractDividendMetrics:
             {"accounts": {"7.08.04": {"valor_brl": 30_000_000_000},
                           "7.08.04.01": {"valor_brl": 5_000_000_000},
                           "7.08.04.02": {"valor_brl": 25_000_000_000}}}]}}
-        m = comparison._extract_dividend_metrics(sections)
+        m = _extract_dividend_metrics(sections)
         assert m["annual_total"] == 30_000_000_000
         assert m["annual_jcp"] == 5_000_000_000
         assert m["annual_dividendos"] == 25_000_000_000
 
     def test_empty_sections_return_nones(self):
-        m = comparison._extract_dividend_metrics({})
+        m = _extract_dividend_metrics({})
         assert m["event_count"] is None
         assert m["annual_total"] is None

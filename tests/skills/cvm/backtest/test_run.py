@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import pytest
-from skills.cvm.backtest.backtest import (
-    run, strategies, BUILTIN_STRATEGIES,
+from skills.cvm.backtest.modes.run import run
+from skills.cvm.backtest.modes.strategies import strategies
+from skills.cvm.backtest.helpers import (
+    BUILTIN_STRATEGIES,
     _precompute_signals, _lookup_signal,
 )
 
@@ -100,7 +102,7 @@ class TestRunMode:
         )
         # Mock pre-compute to return signal data where P/L = 4.0 (below 5.0)
         monkeypatch.setattr(
-            "skills.cvm.backtest.backtest._precompute_signals",
+            "skills.cvm.backtest.modes.run._precompute_signals",
             lambda t, sd, ed, mn: MOCK_SIGNAL_DATA if "pe" in mn else {},
         )
 
@@ -123,7 +125,7 @@ class TestRunMode:
             lambda t, df, dt: MOCK_PRICES,
         )
         monkeypatch.setattr(
-            "skills.cvm.backtest.backtest._precompute_signals",
+            "skills.cvm.backtest.modes.run._precompute_signals",
             lambda t, sd, ed, mn: MOCK_SIGNAL_DATA if "pe" in mn else {},
         )
 
@@ -149,7 +151,7 @@ class TestRunMode:
         )
         # Mock pre-compute to return EMPTY signal data (no P/L values)
         monkeypatch.setattr(
-            "skills.cvm.backtest.backtest._precompute_signals",
+            "skills.cvm.backtest.modes.run._precompute_signals",
             lambda t, sd, ed, mn: {"pe": {}},
         )
 
@@ -168,7 +170,7 @@ class TestRunMode:
             lambda t, df, dt: MOCK_PRICES,
         )
         monkeypatch.setattr(
-            "skills.cvm.backtest.backtest._precompute_signals",
+            "skills.cvm.backtest.modes.run._precompute_signals",
             lambda t, sd, ed, mn: {"pe": {}},
         )
 
@@ -192,7 +194,7 @@ class TestRunMode:
             "roe": {d: 0.20 for d in MOCK_SIGNAL_DATA["pe"]},  # ROE = 20% (> 15%)
         }
         monkeypatch.setattr(
-            "skills.cvm.backtest.backtest._precompute_signals",
+            "skills.cvm.backtest.modes.run._precompute_signals",
             lambda t, sd, ed, mn: composite_signal_data,
         )
 

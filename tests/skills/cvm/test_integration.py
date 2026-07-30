@@ -254,7 +254,7 @@ class TestComparisonSkill:
 
     def test_side_by_side_has_3_sections_and_sectors(self, dfp_available, fre_available,
                                                       b3_dividends_available, bridge_available, cad_available):
-        from skills.cvm.comparison.comparison import side_by_side
+        from skills.cvm.comparison.modes.side_by_side import side_by_side
         r = side_by_side(tickers=TICKERS)
         assert r["status"] == "ok"
         assert len(r["sections"]) == 3
@@ -265,7 +265,7 @@ class TestComparisonSkill:
 
     def test_summary_single_section(self, dfp_available, fre_available,
                                      b3_dividends_available, bridge_available, cad_available):
-        from skills.cvm.comparison.comparison import summary
+        from skills.cvm.comparison.modes.summary import summary
         r = summary(tickers=TICKERS)
         assert r["status"] == "ok"
         assert len(r["sections"]) == 1
@@ -273,7 +273,7 @@ class TestComparisonSkill:
     def test_growth_returns_values(self, dfp_available, itr_available, bridge_available):
         """Growth mode: sign-change guard returns None for profit→loss,
         real values for same-sign growth. No crash."""
-        from skills.cvm.comparison.comparison import growth
+        from skills.cvm.comparison.modes.growth import growth
         r = growth(tickers=TICKERS)
         assert r["status"] == "ok"
         assert len(r["sections"]) == 1

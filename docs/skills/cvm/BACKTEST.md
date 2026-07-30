@@ -11,7 +11,7 @@ Backtesting engine for CVM strategies. Uses calculations engines + metrics for s
 - **Equity curve** — daily equity tracking for charting
 - **Trade log** — entry/exit dates, prices, PnL, return %, holding days, exit reason
 - **Buy & hold comparison** — alpha = strategy return - buy & hold return
-- **3 modes** — run (execute strategy), strategies (list available), results (analyze)
+- **4 modes** — run (execute strategy), strategies (list available), results (analyze), dashboard (3-tab composition: Overview/Trades/Performance)
 
 ---
 
@@ -35,10 +35,10 @@ skill(domain="cvm", sub_domain="backtest", mode="run", params='{"ticker":"VALE3"
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](backtest/ARCHITECTURE.md) | Strategy design, backtest loop, performance metrics, calculations integration |
-| [API.md](backtest/API.md) | 3 modes: run, strategies, results |
+| [API.md](backtest/API.md) | 4 modes: run, strategies, results, dashboard |
 | [CHANGELOG.md](backtest/CHANGELOG.md) | Version history |
 | [INSTRUCTIONS.md](backtest/INSTRUCTIONS.md) | AI editing rules |
 
 ---
 
-*Last updated: 2026-07-26 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

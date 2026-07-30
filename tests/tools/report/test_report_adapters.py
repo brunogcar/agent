@@ -66,7 +66,7 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 66
+        assert len(names) == 68
 
     def test_expected_adapter_names(self):
         expected = {
@@ -77,6 +77,7 @@ class TestRegistry:
             "shareholders_equity_structure", "shareholders_summary",
             "dividends_history", "dividends_annual", "dividends_summary",
             "comparison_side_by_side", "comparison_summary", "comparison_growth",
+            "comparison_dashboard",
             "cotahist_close_chart",
             "cotahist_candlestick_chart",
             "screener_sector",
@@ -104,6 +105,7 @@ class TestRegistry:
             "historical_fixed_asset_turnover_chart", "historical_price_to_tangible_book_chart",
             "historical_summary",
             "backtest",
+            "backtest_dashboard",
         }
         assert expected == set(list_adapters())
 
@@ -962,6 +964,352 @@ class TestBacktestAdapter:
         trade_sec = next(s for s in out["sections"] if s["title"] == "Trade Log")
         assert len(trade_sec["rows"]) == 0
         assert "0 trade" in trade_sec["note"]
+
+
+# ── Synthetic backtest.dashboard() result ───────────────────────────────────
+# Mirrors the shape produced by skills/cvm/backtest/modes/dashboard.py:
+#   {"status": "ok", "ticker": ..., "strategy": ..., "tabs": [...], "kpis": [...]}
+# Each KPI carries a `unit` field (pct/num/int/BRL/ratio/x) that the
+# backtest_dashboard adapter maps to a format spec.
+
+BACKTEST_DASHBOARD = {
+    "status": "ok",
+    "ticker": "PETR4",
+    "strategy": "value_pe",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {"title": "Strategy", "type": "text",
+                 "text": "Ticker: PETR4    Strategy: value_pe\n"
+                         "Description: Buy when P/L < 5 (cheap valuation)\n"
+                         "Period: 2022-01-01 -> 2025-01-01\n"
+                         "Capital: R$ 10,000.00 -> R$ 15,800.50"},
+                {"title": "Equity Curve", "type": "chart",
+                 "chart_data": {
+                     "type": "line",
+                     "data": {
+                         "labels": ["2022-03-15", "2022-09-20",
+                                    "2023-02-10", "2023-08-15"],
+                         "datasets": [{
+                             "label": "Equity (R$)",
+                             "data": [10000.0, 11995.0, 11995.0, 14195.0],
+                             "borderColor": "#0d9488",
+                             "backgroundColor": "rgba(13, 148, 136, 0.15)",
+                             "borderWidth": 2,
+                             "tension": 0.3,
+                             "fill": True,
+                         }],
+                     },
+                     "options": {"responsive": True, "maintainAspectRatio": False},
+                 },
+                 },
+            ],
+        },
+        {
+            "name": "Trades",
+            "sections": [
+                {"title": "Trade Log", "type": "table",
+                 "columns": ["Entry Date", "Entry Price", "Exit Date", "Exit Price",
+                             "Shares", "PnL (R$)", "Return %", "Holding Days",
+                             "Exit Reason"],
+                 "rows": [
+                     ["2022-03-15", 28.50, "2022-09-20", 34.20,
+                      350, 1995.00, 20.00, 130, "max_holding"],
+                     ["2023-02-10", 26.00, "2023-08-15", 31.50,
+                      400, 2200.00, 21.15, 145, "max_holding"],
+                 ],
+                 "formats": {"Entry Price": "brl_full", "Exit Price": "brl_full",
+                             "PnL (R$)": "brl_full", "Return %": "pct_raw",
+                             "Shares": "int", "Holding Days": "int",
+                             "Entry Date": "text", "Exit Date": "text",
+                             "Exit Reason": "text"},
+                 "note": "2 trade(s) executed."},
+            ],
+        },
+        {
+            "name": "Performance",
+            "sections": [
+                {"title": "Performance Summary", "type": "table",
+                 "columns": ["Metric", "Value"],
+                 "rows": [
+                     ["Total Return", "58.01%"],
+                     ["CAGR", "16.55%"],
+                     ["Max Drawdown", "12.34%"],
+                     ["Sharpe Ratio", "1.42"],
+                     ["Win Rate", "60.0%"],
+                     ["Number of Trades", "5"],
+                     ["Buy & Hold Return", "35.20%"],
+                     ["Alpha vs Buy & Hold", "22.81%"],
+                 ]},
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "CAGR",          "value": "16.55%", "unit": "pct"},
+        {"label": "Total Return",  "value": "58.01%", "unit": "pct"},
+        {"label": "Max Drawdown",  "value": "12.34%", "unit": "pct"},
+        {"label": "Sharpe",        "value": "1.42",   "unit": "num"},
+        {"label": "Win Rate",      "value": "60.0%",  "unit": "pct"},
+        {"label": "Alpha",         "value": "22.81%", "unit": "pct"},
+    ],
+}
+
+
+class TestBacktestDashboardAdapter:
+    """Tests for the backtest_dashboard adapter (consumes backtest.dashboard())."""
+
+    def test_returns_3_tabs(self):
+        out = apply_adapter("backtest_dashboard", BACKTEST_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 3
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Trades", "Performance"]
+
+    def test_top_level_kpis_present(self):
+        """6 KPI cards at the top level with exact labels."""
+        out = apply_adapter("backtest_dashboard", BACKTEST_DASHBOARD)
+        assert len(out["kpis"]) == 6
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["CAGR", "Total Return", "Max Drawdown",
+                          "Sharpe", "Win Rate", "Alpha"]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values should be strings (pass-through since report.py already
+        pre-formatted them via apply_fmt)."""
+        out = apply_adapter("backtest_dashboard", BACKTEST_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # pct KPIs end with %, num KPIs are plain numbers.
+        cagr = next(k for k in out["kpis"] if k["label"] == "CAGR")
+        assert cagr["value"].endswith("%")
+        assert cagr["format"] == "pct_raw"
+        sharpe = next(k for k in out["kpis"] if k["label"] == "Sharpe")
+        assert sharpe["format"] == "num"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections should pass through verbatim (Strategy text
+        + Equity Curve chart)."""
+        out = apply_adapter("backtest_dashboard", BACKTEST_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Strategy", "Equity Curve"]
+        # Strategy section is text.
+        strategy_sec = overview["sections"][0]
+        assert strategy_sec["type"] == "text"
+        assert "PETR4" in strategy_sec["text"]
+        # Equity curve section is a chart with Chart.js config.
+        equity_sec = overview["sections"][1]
+        assert equity_sec["type"] == "chart"
+        cfg = equity_sec["chart_data"]
+        assert cfg["type"] == "line"
+        assert cfg["data"]["datasets"][0]["label"] == "Equity (R$)"
+
+    def test_trades_tab_passes_through_table(self):
+        out = apply_adapter("backtest_dashboard", BACKTEST_DASHBOARD)
+        trades_tab = next(t for t in out["tabs"] if t["name"] == "Trades")
+        assert len(trades_tab["sections"]) == 1
+        sec = trades_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Trade Log"
+        # Two synthetic trades.
+        assert len(sec["rows"]) == 2
+        # Column format specs preserved.
+        assert sec["formats"]["Entry Price"] == "brl_full"
+        assert sec["formats"]["Return %"] == "pct_raw"
+
+    def test_performance_tab_passes_through_table(self):
+        out = apply_adapter("backtest_dashboard", BACKTEST_DASHBOARD)
+        perf_tab = next(t for t in out["tabs"] if t["name"] == "Performance")
+        assert len(perf_tab["sections"]) == 1
+        sec = perf_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Performance Summary"
+        # 8 metric rows.
+        assert len(sec["rows"]) == 8
+        rows_text = " ".join(str(r[0]) for r in sec["rows"])
+        assert "CAGR" in rows_text
+        assert "Sharpe Ratio" in rows_text
+        assert "Alpha vs Buy & Hold" in rows_text
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("backtest_dashboard",
+                            {"status": "error", "error": "no price data"})
+        assert out["sections"][0]["title"] == "Backtest Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "no price data"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (run() failed before composing tabs),
+        the adapter should error gracefully."""
+        out = apply_adapter("backtest_dashboard",
+                            {"status": "ok", "ticker": "PETR4"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Backtest Dashboard"
+
+    def test_company_uses_ticker(self):
+        """Adapter maps result['ticker'] -> out['company'] for the report tool."""
+        out = apply_adapter("backtest_dashboard", BACKTEST_DASHBOARD)
+        assert out["company"] == "PETR4"
+
+
+# ── Synthetic comparison.dashboard() result ─────────────────────────────────
+# Mirrors the shape produced by skills/cvm/comparison/modes/dashboard.py:
+#   {"status": "ok", "tickers": [...], "tabs": [...], "kpis": [...]}
+# 5 tabs: Overview (Compared Tickers + Per-Ticker Errors) / Valuation /
+# Financials / Dividends / Growth.
+# 4 top-level KPI cards (Cheapest P/L, Best ROE, Best Div Yield, Cheapest
+# EV/EBITDA) with values pre-formatted by report.py as "<ticker> (<fmt>)".
+
+COMPARISON_DASHBOARD = {
+    "status": "ok",
+    "tickers": ["PETR4", "VALE3"],
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {"title": "Compared Tickers", "type": "table",
+                 "columns": ["Ticker", "Setor"],
+                 "rows": [["PETR4", "Petróleo"], ["VALE3", "Mineração"]],
+                 "formats": {"Ticker": "text", "Setor": "text"}},
+                {"title": "Per-Ticker Errors (best-effort)", "type": "table",
+                 "columns": ["#", "Error"],
+                 "rows": [[1, "VALE3: valuation: no price"]],
+                 "formats": {"#": "int", "Error": "text"}},
+            ],
+        },
+        {
+            "name": "Valuation",
+            "sections": [
+                {"title": "Valuation Ratios", "type": "table",
+                 "columns": ["Ticker", "P/L", "EV/EBITDA", "Div Yield"],
+                 "rows": [["PETR4", 8.2, 4.5, 0.12], ["VALE3", 6.5, 3.8, 0.09]],
+                 "formats": {"Ticker": "text", "P/L": "num",
+                             "EV/EBITDA": "num", "Div Yield": "pct"}},
+            ],
+        },
+        {
+            "name": "Financials",
+            "sections": [
+                {"title": "Financial Metrics (latest annual)", "type": "table",
+                 "columns": ["Ticker", "Receita Líquida", "ROE"],
+                 "rows": [["PETR4", 400_000_000_000, 0.15],
+                          ["VALE3", 300_000_000_000, 0.14]],
+                 "formats": {"Ticker": "text",
+                             "Receita Líquida": "brl", "ROE": "pct"}},
+            ],
+        },
+        {
+            "name": "Dividends",
+            "sections": [
+                {"title": "Dividend Metrics", "type": "table",
+                 "columns": ["Ticker", "Eventos (B3)"],
+                 "rows": [["PETR4", 3], ["VALE3", 2]],
+                 "formats": {"Ticker": "text", "Eventos (B3)": "int"}},
+            ],
+        },
+        {
+            "name": "Growth",
+            "sections": [
+                {"title": "Growth Metrics (QoQ + YoY + TTM)", "type": "table",
+                 "columns": ["Ticker", "Receita QoQ", "Receita YoY"],
+                 "rows": [["PETR4", 0.077, 0.40], ["VALE3", 0.05, 0.30]],
+                 "formats": {"Ticker": "text",
+                             "Receita QoQ": "pct_raw", "Receita YoY": "pct_raw"}},
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "Cheapest P/L",       "value": "VALE3 (6,50)",  "unit": "num"},
+        {"label": "Best ROE",           "value": "PETR4 (15,00%)","unit": "pct"},
+        {"label": "Best Div Yield",     "value": "PETR4 (12,00%)","unit": "pct"},
+        {"label": "Cheapest EV/EBITDA", "value": "VALE3 (3,80)",  "unit": "num"},
+    ],
+}
+
+
+class TestComparisonDashboardAdapter:
+    """Tests for the comparison_dashboard adapter (consumes comparison.dashboard())."""
+
+    def test_returns_5_tabs(self):
+        out = apply_adapter("comparison_dashboard", COMPARISON_DASHBOARD)
+        assert out["company"] == "PETR4 vs VALE3"
+        assert len(out["tabs"]) == 5
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Valuation", "Financials", "Dividends", "Growth"]
+
+    def test_top_level_kpis_present(self):
+        """4 KPI cards at the top level with exact labels."""
+        out = apply_adapter("comparison_dashboard", COMPARISON_DASHBOARD)
+        assert len(out["kpis"]) == 4
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == [
+            "Cheapest P/L", "Best ROE", "Best Div Yield", "Cheapest EV/EBITDA",
+        ]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them as '<ticker> (<fmt>)')."""
+        out = apply_adapter("comparison_dashboard", COMPARISON_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # num KPIs end with a number, pct KPIs end with %.
+        cheapest_pl = next(k for k in out["kpis"] if k["label"] == "Cheapest P/L")
+        assert cheapest_pl["value"].startswith("VALE3")
+        assert cheapest_pl["format"] == "num"
+        best_roe = next(k for k in out["kpis"] if k["label"] == "Best ROE")
+        assert best_roe["value"].startswith("PETR4")
+        assert best_roe["format"] == "pct"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Compared Tickers table
+        + Per-Ticker Errors table)."""
+        out = apply_adapter("comparison_dashboard", COMPARISON_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Compared Tickers", "Per-Ticker Errors (best-effort)"]
+        tickers_sec = overview["sections"][0]
+        assert tickers_sec["type"] == "table"
+        assert tickers_sec["columns"] == ["Ticker", "Setor"]
+        assert len(tickers_sec["rows"]) == 2
+
+    def test_valuation_tab_passes_through_table(self):
+        out = apply_adapter("comparison_dashboard", COMPARISON_DASHBOARD)
+        valuation_tab = next(t for t in out["tabs"] if t["name"] == "Valuation")
+        sec = valuation_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert "P/L" in sec["columns"]
+        assert "EV/EBITDA" in sec["columns"]
+        # Format specs preserved.
+        assert sec["formats"]["P/L"] == "num"
+
+    def test_growth_tab_passes_through_table(self):
+        out = apply_adapter("comparison_dashboard", COMPARISON_DASHBOARD)
+        growth_tab = next(t for t in out["tabs"] if t["name"] == "Growth")
+        sec = growth_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert "Receita QoQ" in sec["columns"]
+        assert sec["formats"]["Receita QoQ"] == "pct_raw"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("comparison_dashboard",
+                            {"status": "error", "error": "tickers required"})
+        assert out["sections"][0]["title"] == "Comparison Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "tickers required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (side_by_side failed before composing
+        tabs), the adapter should error gracefully."""
+        out = apply_adapter("comparison_dashboard",
+                            {"status": "ok", "tickers": ["PETR4", "VALE3"]})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Comparison Dashboard"
+
+    def test_company_uses_tickers_joined(self):
+        """Adapter joins tickers with ' vs ' for the report tool's company field."""
+        out = apply_adapter("comparison_dashboard", COMPARISON_DASHBOARD)
+        assert out["company"] == "PETR4 vs VALE3"
 
 
 # ── Synthetic financials.dashboard() result ─────────────────────────────────

@@ -6,16 +6,25 @@
 
 | File | Purpose |
 |------|---------|
-| `skills/cvm/comparison/__init__.py` | MANIFEST + route() — dispatches side_by_side / summary / growth |
-| `skills/cvm/comparison/comparison.py` | Orchestration logic — calls financials + valuation + dividends per ticker, merges into side-by-side. [v1.3] `_VALUATION_COLS` extended with 5 calculations-sourced metrics (roe, roa, margem_liquida, divida_pl, liquidez_corrente) returned by valuation.ratios(). [v1.4] `_VALUATION_COLS` further extended with 15 v1.4 calculations-sourced metrics (ev_sales, ev_fcf, cash_ratio, quick_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover, price_to_tangible_book) — comparison surfaces them transitively via valuation.ratios(). |
+| `skills/cvm/comparison/__init__.py` | MANIFEST + route() — 4 modes (auto-discovery via importlib on `modes/*.py`) |
+| `skills/cvm/comparison/_registry.py` | `MODES` dict + `@register_mode` decorator + `build_manifest_modes()` |
+| `skills/cvm/comparison/modes/side_by_side.py` | `side_by_side()` — 3 sections (valuation, financials, dividends), tickers as rows. [v1.3] `_VALUATION_COLS` extended with 5 calculations-sourced metrics (roe, roa, margem_liquida, divida_pl, liquidez_corrente) returned by valuation.ratios(). [v1.4] `_VALUATION_COLS` further extended with 15 v1.4 calculations-sourced metrics (ev_sales, ev_fcf, cash_ratio, quick_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover, price_to_tangible_book) — comparison surfaces them transitively via valuation.ratios(). |
+| `skills/cvm/comparison/modes/summary.py` | `summary()` — single quick-compare table (10 KPIs) |
+| `skills/cvm/comparison/modes/growth.py` | `growth()` — QoQ + YoY % change + TTM ratios |
+| `skills/cvm/comparison/modes/dashboard.py` | `dashboard()` — 5-tab dashboard (Overview/Valuation/Financials/Dividends/Growth) (v1.5) |
+| `skills/cvm/comparison/fetchers.py` | `_fetch_all()` — calls financials + valuation + dividends per ticker (best-effort) |
+| `skills/cvm/comparison/helpers.py` | Column-set constants (`_VALUATION_COLS`, `_FINANCIALS_COLS`, `_DIVIDENDS_COLS`, `_SUMMARY_COLS`) + `_build_section()` + `_pct_change()` |
+| `skills/cvm/comparison/report.py` | Report wiring helpers for the comparison skill |
 | `tools/report_ops/adapters/comparison.py` | 3 report adapters: comparison_side_by_side, comparison_summary, comparison_growth |
+| `tools/report_ops/adapters/comparison_dashboard.py` | 1 report adapter: comparison_dashboard (v1.5 — 5-tab dashboard adapter) |
 | `tests/skills/cvm/comparison/conftest.py` | Shared fixtures — synthetic VAL_* / FIN_* / DIV_* data + `mock_skills` + `petr_vale_env` helpers |
 | `tests/skills/cvm/comparison/test_validation.py` | TestValidation (5 tests) — input validation across all modes |
 | `tests/skills/cvm/comparison/test_side_by_side.py` | TestSideBySide (8 tests) + TestExtractDividendMetrics (3 tests) |
 | `tests/skills/cvm/comparison/test_summary.py` | TestSummary (2 tests) |
 | `tests/skills/cvm/comparison/test_growth.py` | TestGrowthMode (6 tests) + TestPctChange (9 tests) |
-| `tests/skills/cvm/comparison/test_route.py` | TestRoute (3 tests) |
-| `tests/tools/report/test_report_adapters.py` | Adapter tests (TestComparisonAdapters + TestComparisonGrowthAdapter classes) |
+| `tests/skills/cvm/comparison/test_dashboard.py` | TestDashboard (14 tests) — dashboard mode 5-tab composition (v1.5) |
+| `tests/skills/cvm/comparison/test_route.py` | TestRoute (9 tests) |
+| `tests/tools/report/test_report_adapters.py` | Adapter tests (TestComparisonAdapters + TestComparisonGrowthAdapter + TestComparisonDashboardAdapter classes) |
 
 ### Test module tree
 
@@ -26,9 +35,15 @@ tests/skills/cvm/comparison/
 ├── test_side_by_side.py   # 11 tests — TestSideBySide (8) + TestExtractDividendMetrics (3)
 ├── test_summary.py        # 2 tests  — TestSummary
 ├── test_growth.py         # 15 tests — TestGrowthMode (6) + TestPctChange (9)
-└── test_route.py          # 3 tests  — TestRoute
-                          # 36 tests total
+├── test_dashboard.py      # 14 tests — TestDashboard  (v1.5)
+└── test_route.py          # 9 tests  — TestRoute
+                          # 56 tests total
 ```
+
+[v1.5] Migrated from a single-file `comparison.py` (518 lines) to the standard
+modular `modes/ + _registry.py` pattern (mirroring `financials` v1.6 +
+`valuation` v1.4 + `calculations`). Adding a new mode = drop a file in `modes/`
++ `@register_mode(...)`; no edits to `__init__.py`.
 
 ---
 
@@ -157,4 +172,4 @@ Both the valuation column (calculations TTM snapshot) and the financials column 
 
 ---
 
-*Last updated: 2026-07-29 (v1.4).*
+*Last updated: 2026-07-29 (v1.5).*

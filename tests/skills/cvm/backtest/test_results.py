@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from skills.cvm.backtest.backtest import results
+from skills.cvm.backtest.modes.results import results
 
 
 class TestResultsMode:

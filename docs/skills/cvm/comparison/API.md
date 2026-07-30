@@ -12,7 +12,7 @@ skill(domain="cvm", sub_domain="comparison", mode="...", params='{"tickers":[...
 |-----------|------|----------|-------------|
 | `domain` | `str` | **Yes** | Always `"cvm"` |
 | `sub_domain` | `str` | **Yes** | Always `"comparison"` |
-| `mode` | `str` | **Yes** | `side_by_side` or `summary` |
+| `mode` | `str` | **Yes** | `side_by_side`, `summary`, `growth`, or `dashboard` |
 | `params` | `str` (JSON) | **Yes** | JSON string with mode-specific args |
 
 ---
@@ -104,6 +104,15 @@ params = '{"tickers":["SUZB3","KLBN11"]}'
 
 Columns: Ticker, Receita QoQ, Receita YoY, EBITDA QoQ, EBITDA YoY, Lucro Liq. QoQ, Lucro Liq. YoY, Marg. EBITDA (TTM), ROE (TTM).
 
+### `mode="dashboard"`  (v1.5)
+Multi-tab dashboard composition — 5 tabs (Overview / Valuation / Financials / Dividends / Growth). Orchestrates the same per-ticker fetches as `side_by_side` + `growth`, then assembles typed sections ready for the `comparison_dashboard` report adapter.
+
+```python
+params = '{"tickers":["SUZB3","KLBN11"]}'
+```
+
+Returns a dict with a `tabs` list (each tab has `name` + typed `sections`). Pipe into the report tool with `config={"adapter":"comparison_dashboard"}`.
+
 ---
 
 ## 🔌 Report Adapters
@@ -113,6 +122,7 @@ Columns: Ticker, Receita QoQ, Receita YoY, EBITDA QoQ, EBITDA YoY, Lucro Liq. Qo
 | `comparison_side_by_side` | side_by_side | 3 sections (valuation, financials, dividends), tickers as rows |
 | `comparison_summary` | summary | Single quick-compare table + KPI strip (one card per ticker showing P/L) |
 | `comparison_growth` | growth | Growth metrics table (QoQ + YoY + TTM ratios) |
+| `comparison_dashboard` (v1.5) | dashboard | 5-tab dashboard (Overview/Valuation/Financials/Dividends/Growth) — thin pass-through of the tab payload |
 
 ```
 report(action="table", title="SUZB3 vs KLBN11",
@@ -133,4 +143,4 @@ report(action="export", title="SUZB3 vs KLBN11",
 
 ---
 
-*Last updated: 2026-07-29 (v1.4).*
+*Last updated: 2026-07-29 (v1.5).*

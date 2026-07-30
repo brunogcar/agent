@@ -17,7 +17,7 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 | [**shareholders**](cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
 | [**valuation**](cvm/VALUATION.md) | ratios, summary, dashboard | b3 price + DFP/ITR TTM financials + FRE shares — P/L, P/VPA, EV, ROIC, Graham Number |
-| [**comparison**](cvm/COMPARISON.md) | side_by_side (default), summary, growth | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
+| [**comparison**](cvm/COMPARISON.md) | side_by_side (default), summary, growth, dashboard | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
 | [**screener**](cvm/SCREENER.md) | sector, compare | Orchestrates CAD + bridge + valuation + financials + FCA (listing segment) — sector peers + medians |
 | [**insider**](cvm/INSIDER.md) | history, by_role, summary | VLMO (insider trading disclosures) — insider buy/sell + sentiment |
 | [**governance**](cvm/GOVERNANCE.md) | practices, score, by_chapter | CGVN (governance practices) — % adopted, chapter breakdown |
@@ -52,7 +52,7 @@ report(action="export", title="PETR4 Financials",
 | valuation ratios / summary | `valuation_ratios` / `valuation_summary` |
 | shareholders shareholders / free_float / equity_structure / summary | `shareholders_shareholders` / `shareholders_free_float` / `shareholders_equity_structure` / `shareholders_summary` |
 | dividends history / annual / summary | `dividends_history` / `dividends_annual` / `dividends_summary` |
-| comparison side_by_side / summary / growth | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` |
+| comparison side_by_side / summary / growth / dashboard | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` / `comparison_dashboard` |
 | screener sector | `screener_sector` |
 | insider history / by_role / summary | `insider_history` / `insider_by_role` / `insider_summary` |
 | governance practices / score / by_chapter | `governance_practices` / `governance_score` / `governance_by_chapter` |
@@ -111,19 +111,19 @@ LLM → skill(domain="cvm", sub_domain=..., mode=..., params=...)  [skills/dispa
        └→ skills/cvm/__init__.py route()
           └→ skills/cvm/<skill>/__init__.py route(mode)
              │
-             ├─ financials (v1.6) + valuation (v1.4):
+             ├─ financials (v1.6) + valuation (v1.4) + backtest (v1.1) + comparison (v1.5):
              │    └→ skills/cvm/<skill>/modes/<mode>.py  (auto-discovered via _registry.py)
              │       └→ fetchers.py + helpers.py + report.py (+ metrics.py for financials)
              │          └→ data_source query engines + calculations engines
              │
-             └─ other CVM skills (shareholders/dividends/comparison/screener/insider/governance):
+             └─ other CVM skills (shareholders/dividends/screener/insider/governance):
                   └→ skills/cvm/<skill>/<skill>.py  (calls data_source query engines)
                      └→ data_sources/cvm/{dfp,itr,fre,ipe,cad,bridge}/query_engine.py
                      └→ data_sources/b3/dividends/query_engine.py
                      └→ data_sources/cvm/_bridge.py resolve_company()
 ```
 
-`financials` (v1.6) and `valuation` (v1.4) use the **modular `modes/ + _registry.py` pattern** (auto-discovery via `importlib` on `modes/*.py`, mirroring `skills/cvm/calculations/_registry.py` + `tools/git_ops/actions/`). Adding a new mode = drop a file in `modes/` + `@register_mode(...)`; no edits to `__init__.py`. Other CVM skills still use the single-file `<skill>.py` pattern — they will be migrated to the modular pattern incrementally.
+`financials` (v1.6), `valuation` (v1.4), `backtest` (v1.1), and `comparison` (v1.5) use the **modular `modes/ + _registry.py` pattern** (auto-discovery via `importlib` on `modes/*.py`, mirroring `skills/cvm/calculations/_registry.py` + `tools/git_ops/actions/`). Adding a new mode = drop a file in `modes/` + `@register_mode(...)`; no edits to `__init__.py`. Other CVM skills still use the single-file `<skill>.py` pattern — they will be migrated to the modular pattern incrementally.
 
 ---
 

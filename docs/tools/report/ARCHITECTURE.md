@@ -23,7 +23,7 @@
 | `tools/report_ops/timeline.py` | SVG Gantt chart builder |
 | `tools/report_ops/scorecard.py` | RAG status + radar chart builder |
 | `tools/report_ops/table.py` | Tabular statement builder (v1.2) |
-| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.5, 66 adapters across 16 modules) |
+| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.5, 68 adapters across 18 modules) |
 | `tools/report_ops/actions/*.py` | Atomic action wrappers (12 files) |
 | `tools/report_ops/templates/*.html` | Jinja2 templates (11 files) |
 | `tests/tools/report/` | 21 test files + conftest.py |
@@ -71,7 +71,9 @@ tools/report_ops/
 │   ├── cotahist_candlestick.py  # cotahist_candlestick_chart  (v1.2.6+)
 │   ├── financials_chart.py # financials_quarterly_chart  (v1.2.2+)
 │   ├── financials_dashboard.py  # financials_dashboard  (v1.5 — 5-tab dashboard adapter)
-│   └── valuation_dashboard.py   # valuation_dashboard  (v1.5 — 5-tab dashboard adapter)
+│   ├── valuation_dashboard.py   # valuation_dashboard  (v1.5 — 5-tab dashboard adapter)
+│   ├── backtest_dashboard.py    # backtest_dashboard  (v1.6 — 3-tab dashboard adapter)
+│   └── comparison_dashboard.py  # comparison_dashboard  (v1.6 — 5-tab dashboard adapter)
 └── actions/                # Atomic action wrappers (one file per action)
     ├── chart.py            # @register_action("report", "chart")
     ├── map.py
@@ -194,4 +196,4 @@ tests/tools/report/
 
 ---
 
-*Last updated: 2026-07-29 (v1.5). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-29 (v1.6). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

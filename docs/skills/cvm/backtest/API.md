@@ -85,6 +85,19 @@ Returns:
 }
 ```
 
+### `mode="dashboard"`  (v1.1)
+Multi-tab dashboard composition for a single ticker — 3 tabs (Overview / Trades / Performance). Runs the backtest internally + assembles typed sections ready for the `backtest_dashboard` report adapter.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `ticker` | `str` | (required) | B3 ticker (e.g., PETR4) |
+| `strategy` | `str` | `value_pe` | Strategy name |
+| `start_date` | `str` | 3 years ago | Backtest start (YYYY-MM-DD) |
+| `end_date` | `str` | today | Backtest end (YYYY-MM-DD) |
+| `initial_capital` | `float` | `10000` | Starting capital in BRL |
+
+Returns a dict with a `tabs` list (each tab has `name` + typed `sections`). Pipe into the report tool with `config={"adapter":"backtest_dashboard"}`.
+
 ## 🛠️ Tool Invocation
 
 ```python
@@ -104,4 +117,4 @@ report(action="chart", title="PETR4 Backtest Equity Curve",
 
 ---
 
-*Last updated: 2026-07-26 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

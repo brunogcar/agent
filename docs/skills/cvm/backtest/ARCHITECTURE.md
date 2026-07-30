@@ -6,8 +6,14 @@
 
 | File | Purpose |
 |---|---|
-| `skills/cvm/backtest/__init__.py` | MANIFEST + route — 3 modes |
-| `skills/cvm/backtest/backtest.py` | Main: run(), strategies(), results() + 6 built-in strategies |
+| `skills/cvm/backtest/__init__.py` | MANIFEST + route — 4 modes (auto-discovery via importlib on `modes/*.py`) |
+| `skills/cvm/backtest/_registry.py` | `MODES` dict + `@register_mode` decorator + `build_manifest_modes()` |
+| `skills/cvm/backtest/modes/run.py` | `run()` — execute a strategy on a ticker over a date range |
+| `skills/cvm/backtest/modes/strategies.py` | `strategies()` — list available built-in strategies |
+| `skills/cvm/backtest/modes/results.py` | `results()` — analyze backtest results (CAGR, Sharpe, drawdown) |
+| `skills/cvm/backtest/modes/dashboard.py` | `dashboard()` — 3-tab dashboard (Overview/Trades/Performance) |
+| `skills/cvm/backtest/helpers.py` | `BUILTIN_STRATEGIES` + signal helpers (`_precompute_signals`, `_lookup_signal`) |
+| `skills/cvm/backtest/report.py` | Report wiring helpers for the backtest skill |
 | `skills/cvm/_freshness.py` | add_freshness() — shared by all CVM skills |
 | `skills/cvm/calculations/engines/price.py` | price_series() — daily close prices for backtest |
 | `skills/cvm/calculations/metrics/*.py` | 21 metric *_at() functions for signal generation |
@@ -16,9 +22,22 @@
 
 ```
 skills/cvm/backtest/
-├── __init__.py           # MANIFEST + route
-└── backtest.py           # run(), strategies(), results() + BUILTIN_STRATEGIES
+├── __init__.py           # MANIFEST + route (auto-discovery)
+├── _registry.py          # MODES dict + @register_mode + build_manifest_modes()
+├── helpers.py            # BUILTIN_STRATEGIES + signal helpers
+├── report.py             # report wiring helpers
+└── modes/
+    ├── __init__.py
+    ├── run.py            # run() — execute strategy
+    ├── strategies.py     # strategies() — list built-in strategies
+    ├── results.py        # results() — analyze results
+    └── dashboard.py      # dashboard() — 3-tab composition
 ```
+
+[v1.1] Migrated from a single-file `backtest.py` (530 lines) to the standard
+modular `modes/ + _registry.py` pattern (mirroring `financials` v1.6 +
+`valuation` v1.4 + `calculations`). Adding a new mode = drop a file in `modes/`
++ `@register_mode(...)`; no edits to `__init__.py`.
 
 ## 🔄 Backtest Loop
 
@@ -77,12 +96,13 @@ Each strategy is a dict with:
 
 ```
 tests/skills/cvm/backtest/
-├── conftest.py       # env vars
-├── test_route.py     # 7 tests (validation + route dispatch)
-├── test_run.py       # 8 tests (strategies list + run mode with mocked prices)
-└── test_results.py   # 4 tests (results analysis)
+├── conftest.py         # env vars
+├── test_route.py       # 11 tests (validation + route dispatch + manifest modes)
+├── test_run.py         # 14 tests (strategies list + run mode with mocked prices)
+├── test_results.py     # 4 tests (results analysis)
+└── test_dashboard.py   # 9 tests (dashboard mode — 3-tab composition)  (v1.1)
 ```
 
 ---
 
-*Last updated: 2026-07-26 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

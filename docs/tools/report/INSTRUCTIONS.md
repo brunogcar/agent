@@ -63,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-29 (v1.6). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps and design decisions, [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history.*
