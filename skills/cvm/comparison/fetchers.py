@@ -60,7 +60,7 @@ def _fetch_all(tickers: list[str], consolidado: int) -> list[dict]:
     """
     from skills.cvm.financials.modes.summary import summary as fin_summary
     from skills.cvm.valuation.modes.ratios import ratios as val_ratios
-    from skills.cvm.dividends.dividends import summary as div_summary
+    from skills.cvm.dividends.modes.summary import summary as div_summary
 
     out = []
     for ticker in tickers:

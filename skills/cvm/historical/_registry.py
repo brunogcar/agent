@@ -134,6 +134,11 @@ def _auto_register_metric_history_modes() -> None:
     _auto_register_metric_history_modes._done = True
 
     for name in list_metrics():
+        mode_name = f"{name}_history"
+        # Collision guard: skip if a mode with this name is already registered
+        # (e.g., an explicit mode file in modes/ that happens to share the name).
+        if mode_name in MODES:
+            continue
         spec = METRICS[name]
         if spec.per_share_label:
             desc = (
@@ -159,7 +164,7 @@ def _auto_register_metric_history_modes() -> None:
         fn = _make_metric_history_fn(name)
         # Use register_mode as a direct call rather than a decorator.
         register_mode(
-            f"{name}_history",
+            mode_name,
             description=desc,
             params=params,
             include_in_all=False,

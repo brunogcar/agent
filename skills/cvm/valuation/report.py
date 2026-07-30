@@ -96,7 +96,7 @@ def build_overview_kpis(ratios_dict: dict | None) -> list[dict]:
         {"label": "P/L",            "value": _fmt(_safe_get(ratios_dict, "p_l"),            "num")},
         {"label": "P/VPA",          "value": _fmt(_safe_get(ratios_dict, "p_vpa"),          "num")},
         {"label": "EV/EBITDA",      "value": _fmt(_safe_get(ratios_dict, "ev_ebitda"),      "num")},
-        {"label": "Div Yield",      "value": _fmt(_safe_get(ratios_dict, "dividend_yield"), "pct")},
+        {"label": "Dividend Yield",    "value": _fmt(_safe_get(ratios_dict, "dividend_yield"), "pct")},
         {"label": "Market Cap",     "value": _fmt(_safe_get(ratios_dict, "market_cap"),     "brl")},
         {"label": "ROE",            "value": _fmt(_safe_get(ratios_dict, "roe"),            "pct")},
     ]

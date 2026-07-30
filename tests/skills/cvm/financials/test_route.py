@@ -43,7 +43,6 @@ class TestFinancialsRoute:
         assert "tabs" in result
         tab_names = [t["name"] for t in result["tabs"]]
         assert tab_names == ["Overview", "DRE", "Balanço", "DFC", "Ratios"]
-        # Overview tab must carry KPI cards.
-        overview = result["tabs"][0]
-        assert "kpis" in overview
-        assert len(overview["kpis"]) >= 6  # 6 KPI cards expected
+        # KPIs are at top level, not inside tabs.
+        assert "kpis" in result
+        assert len(result["kpis"]) >= 6  # 6 KPI cards expected

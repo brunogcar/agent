@@ -66,6 +66,12 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
+        # NOTE: This count is intentionally hardcoded, not derived from len(METRICS).
+        # ~35 of the 71 adapters are dynamically generated (historical_<metric>_chart,
+        # one per calculations metric). The remaining 36 are static @register_adapter
+        # calls. When adding a new calculations metric, bump this number by 1 (the
+        # auto-generated historical chart adapter). When adding a new static adapter,
+        # bump by 1. This catches accidental registration failures.
         assert len(names) == 71
 
     def test_expected_adapter_names(self):

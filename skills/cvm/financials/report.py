@@ -42,12 +42,12 @@ def build_overview_kpis(
 ) -> list[dict]:
     """Build 6 KPI cards with pre-formatted values."""
     return [
-        {"label": "Receita Liquida",     "value": _fmt(annual_metric(latest_annual_period, "receita_liquida"), "brl")},
+        {"label": "Receita Líquida",     "value": _fmt(annual_metric(latest_annual_period, "receita_liquida"), "brl")},
         {"label": "EBITDA",              "value": _fmt(annual_metric(latest_annual_period, "ebitda"), "brl")},
-        {"label": "Lucro Liquido",       "value": _fmt(annual_metric(latest_annual_period, "lucro_liquido"), "brl")},
+        {"label": "Lucro Líquido",       "value": _fmt(annual_metric(latest_annual_period, "lucro_liquido"), "brl")},
         {"label": "Margem EBITDA",       "value": _fmt(annual_ratio(latest_annual_period, "marg_ebitda"), "pct")},
         {"label": "ROE",                 "value": _fmt(roe_val, "pct")},
-        {"label": "Divida Liq/EBITDA",   "value": _fmt(net_debt_ebitda_val, "num")},
+        {"label": "Dívida Líquida/EBITDA",   "value": _fmt(net_debt_ebitda_val, "num")},
     ]
 
 
@@ -63,15 +63,15 @@ def build_overview_sections(
         m = latest_annual_period.get("metrics") or {}
         r = latest_annual_period.get("ratios") or {}
         rows = [
-            ["Periodo",           latest_annual_period.get("period", "—")],
-            ["Receita Liquida",   _fmt(m.get("receita_liquida"),   "brl")],
+            ["Período",           latest_annual_period.get("period", "—")],
+            ["Receita Líquida",   _fmt(m.get("receita_liquida"),   "brl")],
             ["Lucro Bruto",       _fmt(m.get("lucro_bruto"),       "brl")],
             ["EBIT",              _fmt(m.get("ebit"),              "brl")],
             ["EBITDA",            _fmt(m.get("ebitda"),            "brl")],
-            ["Lucro Liquido",     _fmt(m.get("lucro_liquido"),     "brl")],
+            ["Lucro Líquido",     _fmt(m.get("lucro_liquido"),     "brl")],
             ["Margem Bruta",      _fmt(r.get("marg_bruta"),        "pct")],
             ["Margem EBITDA",     _fmt(r.get("marg_ebitda"),       "pct")],
-            ["Margem Liquida",    _fmt(r.get("marg_liquida"),      "pct")],
+            ["Margem Líquida",    _fmt(r.get("marg_liquida"),      "pct")],
             ["Ativo Total",       _fmt(m.get("ativo_total"),       "brl")],
             ["Patrimonio Liq.",   _fmt(m.get("patrimonio_liquido"),"brl")],
             ["Caixa",             _fmt(m.get("caixa"),             "brl")],
@@ -99,7 +99,7 @@ def build_overview_sections(
         sections.append({
             "title": "Quarterly Trend",
             "type": "table",
-            "columns": ["Periodo", "Receita", "EBITDA", "Lucro Liq."],
+            "columns": ["Período", "Receita", "EBITDA", "Lucro Liq."],
             "rows": trend_rows,
         })
     # Freshness
@@ -138,19 +138,19 @@ def build_dre_sections(
         m = latest_annual_period.get("metrics") or {}
         r = latest_annual_period.get("ratios") or {}
         rows = [
-            ["Receita Liquida",       _fmt(m.get("receita_liquida"),     "brl")],
+            ["Receita Líquida",       _fmt(m.get("receita_liquida"),     "brl")],
             ["Lucro Bruto",           _fmt(m.get("lucro_bruto"),         "brl")],
             ["EBIT",                  _fmt(m.get("ebit"),                "brl")],
             ["D&A",                   _fmt(m.get("da"),                  "brl")],
             ["EBITDA",                _fmt(m.get("ebitda"),              "brl")],
             ["EBITDA Method",         str(m.get("ebitda_method") or "—")],
             ["Resultado Financeiro",  _fmt(m.get("resultado_financeiro"),"brl")],
-            ["Lucro Liquido",         _fmt(m.get("lucro_liquido"),       "brl")],
+            ["Lucro Líquido",         _fmt(m.get("lucro_liquido"),       "brl")],
             ["", ""],
             ["Margem Bruta",          _fmt(r.get("marg_bruta"),          "pct")],
             ["Margem EBIT",           _fmt(r.get("marg_ebit"),           "pct")],
             ["Margem EBITDA",         _fmt(r.get("marg_ebitda"),         "pct")],
-            ["Margem Liquida",        _fmt(r.get("marg_liquida"),        "pct")],
+            ["Margem Líquida",        _fmt(r.get("marg_liquida"),        "pct")],
         ]
     sections = [{
         "title": "DRE (Latest Annual)",
@@ -171,7 +171,7 @@ def build_dre_sections(
         sections.append({
             "title": "Quarterly Trend",
             "type": "table",
-            "columns": ["Periodo", "Receita", "EBITDA", "Lucro Liq."],
+            "columns": ["Período", "Receita", "EBITDA", "Lucro Liq."],
             "rows": trend_rows,
         })
     return sections
@@ -234,7 +234,7 @@ def build_dfc_sections(
         sections.append({
             "title": "Quarterly Trend",
             "type": "table",
-            "columns": ["Periodo", "FCO", "FCI", "FCF"],
+            "columns": ["Período", "FCO", "FCI", "FCF"],
             "rows": trend_rows,
         })
     return sections

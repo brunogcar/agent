@@ -278,6 +278,17 @@ def compute_all_ratios(
     imports. New metrics registered via register_metric() are automatically
     included — no manual wiring needed.
 
+    WARNING: For Type-1 metrics (per-share + ratio: lpa, vpa, dpa, rps),
+    this function calls ``ratio_fn`` (NOT ``per_share_fn``). This means the
+    dict key ``"lpa"`` will contain P/E (the price ratio), NOT LPA (the
+    per-share earnings value). Similarly ``"vpa"`` → P/VPA, ``"dpa"`` →
+    Div Yield, ``"rps"`` → P/S. Consumer skills that need the per-share
+    value should either:
+      - Use ``exclude=["lpa","vpa","dpa","rps"]`` and compute per-share
+        values separately (as financials does), OR
+      - Restore per-share values after calling this function (as valuation
+        does: ``ratios_result["lpa"] = eps`` after ``update()``).
+
     Each metric's ratio_fn is called with (company, date). Any exception
     (FileNotFoundError from missing DB, KeyError from missing account, etc.)
     is caught and the metric value is set to None — one failing metric

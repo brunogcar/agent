@@ -158,7 +158,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     tabs = [
         {"name": "Overview", "sections": overview_sections},
         {"name": "DRE",      "sections": dre_sections},
-        {"name": "Balanco",  "sections": [balanco_section]},
+        {"name": "Balanço",  "sections": [balanco_section]},
         {"name": "DFC",      "sections": dfc_sections},
         {"name": "Ratios",   "sections": [ratios_section]},
     ]

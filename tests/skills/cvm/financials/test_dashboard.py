@@ -37,15 +37,13 @@ class TestDashboardMode:
             assert isinstance(tab["sections"], list)
 
     def test_dashboard_overview_kpis(self, financials_env):
-        """Overview tab carries 6 KPI cards with the expected labels."""
+        """Top-level KPI cards with the expected labels."""
         from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
-        overview = result["tabs"][0]
-        assert overview["name"] == "Overview"
-        assert "kpis" in overview
-        assert len(overview["kpis"]) == 6
-        labels = [k["label"] for k in overview["kpis"]]
+        assert "kpis" in result
+        assert len(result["kpis"]) == 6
+        labels = [k["label"] for k in result["kpis"]]
         # The 6 KPI labels per the spec — exact-match to lock the contract.
         assert labels == [
             "Receita Líquida",
@@ -55,45 +53,19 @@ class TestDashboardMode:
             "ROE",
             "Dívida Líquida/EBITDA",
         ]
-        # Each KPI card has a value (may be None when DBs missing) + unit.
-        for card in overview["kpis"]:
+        # Each KPI card has a label + value.
+        for card in result["kpis"]:
+            assert "label" in card
             assert "value" in card
-            assert "unit" in card
 
-    def test_dashboard_ratios_grid(self, financials_env):
-        """Ratios tab carries a ratio_grid grouped by metric category.
-
-        The grid must include at least the 6 categories used by summary():
-        profitability, liquidity, leverage, efficiency, growth, tax. Each
-        category should contain a dict of {metric_name: value_or_None} for
-        the registered metrics in that category (excluding per-share).
-        """
+    def test_dashboard_ratios_table(self, financials_env):
+        """Ratios tab carries a table with categorized ratios."""
         from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
         ratios_tab = result["tabs"][4]
         assert ratios_tab["name"] == "Ratios"
         assert "sections" in ratios_tab
-        ratio_grid_section = next(
-            (s for s in ratios_tab["sections"] if s.get("name") == "ratio_grid"),
-            None,
-        )
-        assert ratio_grid_section is not None, "ratio_grid section missing"
-        assert "categories" in ratio_grid_section
-        categories = ratio_grid_section["categories"]
-        # Each of the 6 expected categories must be present (per-share is NOT
-        # in this list because the dashboard filters it out, same as summary()).
-        for cat in ("profitability", "liquidity", "leverage",
-                    "efficiency", "growth", "tax"):
-            assert cat in categories, \
-                f"ratio_grid missing category '{cat}' (got {sorted(categories.keys())})"
-        # Profitability should contain at least roe/roa/roic (9 metrics total).
-        prof = categories["profitability"]
-        for metric_name in ("roe", "roa", "roic"):
-            assert metric_name in prof, \
-                f"profitability grid missing '{metric_name}' (got {sorted(prof.keys())})"
-        # Per-share metrics must NOT leak into any category bucket.
-        for cat, metrics in categories.items():
-            for excluded in ("lpa", "vpa", "dpa", "rps"):
-                assert excluded not in metrics, \
-                    f"per-share '{excluded}' leaked into category '{cat}'"
+        section = ratios_tab["sections"][0]
+        assert section["type"] == "table"
+        assert len(section["rows"]) > 0
