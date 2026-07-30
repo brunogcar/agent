@@ -4,19 +4,19 @@
 
 **This skill is a thin wrapper over the shared `calculations/` package.** Engine/metric/registry editing rules live in [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) — read those FIRST. This doc covers only the historical-specific rules on top.
 
-**Current scope (v2.2):** 18 engines in 7 categories + 21 metrics in 2 types — all in calculations/. Historical exposes 19 modes (17 auto-generated `<metric>_history` + `ratio_history` + `summary`).
+**Current scope (v1.2):** Engines + metrics live in `calculations/`. Historical exposes 40 modes total: 37 auto-generated `<metric>_history` (one per metric in calculations) + 3 explicit (`ratio_history`, `summary`, `dashboard`). Source is modularized as `_registry.py` + `modes/` + `helpers.py` + `report.py` (the monolithic `historical.py` was decomposed in v1.2).
 
 ## ❌ NEVER DO
 
 **Engine/metric/registry rules are owned by calculations/** — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-never-do) for the 25 NEVER DO rules there. The rules below are historical-specific.
 
 1. **Never add engines or metrics to `skills/cvm/historical/`** — they belong in `skills/cvm/calculations/`. The historical skill is now a thin consumer of calculations; it has no `engines/` or `metrics/` subfolders. Adding them there defeats the purpose of the shared calculations package.
-2. **Never import engines or metrics directly in `historical.py` at module top** — use the registry (`resolve_metric()`) for metric resolution. The only top-level import from calculations should be: `from skills.cvm.calculations._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines`.
+2. **Never import engines or metrics directly in `historical/modes/*.py` at module top** — use the registry (`resolve_metric()`) for metric resolution. The only top-level import from calculations should be: `from skills.cvm.calculations._registry import METRICS, ENGINES, resolve_metric, list_metrics, list_engines`.
 3. **Never manually edit `historical/__init__.py` to add a `<metric>_history` mode** — the MANIFEST auto-generates from the calculations registry. Adding a metric to calculations = a new mode appears in historical automatically.
 4. **Never manually edit `adapters/historical.py` to add a chart adapter** — chart adapters auto-register from the calculations registry. The `historical_<metric>_chart` adapter appears automatically (dual-axis if `per_share_label` is set, single-dataset if `None`).
 5. **Never duplicate an engine or metric in historical** — if historical needs an engine or metric that already exists in calculations, import it. Don't reimplement. If you need a slightly different behavior, add a new engine/metric to calculations with a different name.
 6. **Never compute TTM/snapshot/multi-code/description-search algorithms in historical** — those live in calculations engines. Historical's `summary()` owns only percentile analysis (rank + thresholds). Everything else delegates to `spec.history_fn`.
-7. **Never edit `historical.py`'s `_metric_history()` to special-case a specific metric** — all metric dispatch goes through `resolve_metric()` + `spec.history_fn()`. The function is metric-agnostic.
+7. **Never edit `modes/summary.py`'s `_metric_history()` to special-case a specific metric** — all metric dispatch goes through `resolve_metric()` + `spec.history_fn()`. The function is metric-agnostic.
 8. **Never create `.bak` files** — forbidden by project rules.
 9. **Never rewrite entire files** — surgical edits only.
 10. **Never print to stdout** — MCP stdio corruption.
@@ -61,12 +61,12 @@ Metric types are owned by calculations — see [calculations/INSTRUCTIONS.md](..
 The dependency graph is owned by calculations — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-dependency-graph-rule). Historical sits at the consumer layer:
 
 ```
-historical.py  (consumer orchestrator — reads from calculations registry)
+historical/modes/ + helpers.py  (consumer orchestrator — reads from calculations registry)
        │
        └── skills.cvm.calculations._registry
               │
-              ├── calculations/engines/  (18 engines — LEAVES)
-              └── calculations/metrics/   (21 metrics — compose engines)
+              ├── calculations/engines/  (engines — LEAVES)
+              └── calculations/metrics/   (metrics — compose engines)
 ```
 
 Historical never imports individual engines or metrics — only the registry helpers. All metric dispatch goes through `resolve_metric()` + `spec.history_fn()`.
@@ -77,10 +77,11 @@ Historical never imports individual engines or metrics — only the registry hel
 
 Auto-discovery is owned by calculations — see [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md#-auto-discovery-rules). Historical has no auto-discovery of its own. It relies on calculations' `_auto_discover()` to populate `ENGINES` + `METRICS` at import time, then iterates `METRICS` to generate modes + adapters.
 
-Historical's auto-generation chain (in `historical/__init__.py` + `historical.py` + `adapters/historical.py`):
+Historical's auto-generation chain (in `historical/__init__.py` + `modes/` + `helpers.py` + `adapters/historical.py`):
 1. `_build_metric_modes()` in `historical/__init__.py` — iterates `METRICS` from calculations registry, generates one `<metric>_history` mode entry per metric.
-2. `_make_metric_history_fn()` in `historical.py` — generates `<metric>_history` functions into `globals()` at import time. Each is a thin wrapper around `_metric_history()`.
+2. `_make_metric_history_fn()` in `helpers.py` (extracted in v1.2) — generates `<metric>_history` functions into `globals()` at import time. Each is a thin wrapper around `_metric_history()`.
 3. `adapters/historical.py` — iterates `METRICS`, registers `historical_<metric>_chart` adapter for each. Inspects `spec.per_share_label`: dual-axis if set, single-dataset if `None`.
+4. `modes/dashboard.py` (v1.2) — thin pass-through that aggregates per-metric summaries into a multi-tab dashboard payload for the `historical_dashboard` adapter.
 
 **Adding a metric to calculations = a new mode + a new adapter appear in historical automatically.** Zero edits to historical source files.
 
@@ -118,4 +119,4 @@ If you're creating a new consumer skill (like historical) that wraps calculation
 
 ---
 
-*Last updated: v2.2 (Phase 1 refactor — engines + metrics + registry extracted to calculations/). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric/registry editing rules.*
+*Last updated: v1.2 (modular split + dashboard mode — `_registry.py` + `modes/` + `helpers.py` + `report.py`). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric/registry editing rules.*

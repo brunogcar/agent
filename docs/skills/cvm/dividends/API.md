@@ -60,6 +60,14 @@ Combined: recent events + annual trend + last payable. Best-effort.
 |-------|------|----------|-------------|
 | company | str | yes | Ticker preferred (covers all sources) |
 
+### mode="dashboard" (v1.1)
+
+Multi-tab dashboard payload for the report tool. Pipes into the `dividends_dashboard` adapter (report tool v1.7, 69th adapter) which renders tabs: Overview (KPIs) + Events + Annual + Payable + Filings.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| company | str | yes | Ticker preferred (covers all sources) |
+
 ---
 
 ## Examples
@@ -68,8 +76,9 @@ Combined: recent events + annual trend + last payable. Best-effort.
 skill(domain="cvm", sub_domain="dividends", mode="history", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="dividends", mode="annual", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="dividends", mode="summary", params='{"company":"VALE3"}')
+skill(domain="cvm", sub_domain="dividends", mode="dashboard", params='{"company":"PETR4"}')
 ```
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

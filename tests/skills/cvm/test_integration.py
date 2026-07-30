@@ -242,7 +242,7 @@ class TestShareholdersSkill:
 class TestDividendsSkill:
     @pytest.mark.parametrize("ticker", TICKERS)
     def test_summary(self, dfp_available, b3_dividends_available, bridge_available, ticker):
-        from skills.cvm.dividends.dividends import summary
+        from skills.cvm.dividends.modes.summary import summary
         r = summary(company=ticker)
         assert r["status"] == "ok", f"{ticker}: {r.get('error','')}"
 

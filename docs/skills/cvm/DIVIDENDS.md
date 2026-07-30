@@ -9,8 +9,9 @@ The `dividends` skill combines B3 dividends (individual events) + DFP DVA (annua
 - **Annual declared totals** — DFP DVA 7.08.04.* provides Dividendos + JCP per fiscal year.
 - **Payable** — DFP BPP 2.01.05.02.01 shows dividends declared but not yet paid (balance sheet liability).
 - **Official filings** — CVM IPE provides regulatory announcements (keyword "dividendo").
-- **5 modes** — history, annual, payable, announcements, summary.
+- **6 modes** — history, annual, payable, announcements, summary, dashboard.
 - **Read-only** — no sync. Calls data_source query engines directly.
+- **Modular layout (v1.1)** — `_registry.py` + `modes/` (6 mode files) + `report.py` auto-discovered via `@register_mode`. Mirrors the `financials`/`valuation`/`comparison`/`backtest` modular pattern.
 
 ---
 
@@ -42,13 +43,15 @@ No skill-specific config. Read-only over already-synced data sources:
 ## 📊 Rendering & Export
 
 Pipe a `dividends` result into the `report` tool (adapters: `dividends_history`,
-`dividends_annual`, `dividends_summary`):
+`dividends_annual`, `dividends_summary`, `dividends_dashboard`):
 
 ```
 report(action="table", title="PETR4 Dividends",
        data=<dividends JSON>, config={"adapter":"dividends_history"})
 report(action="export", title="PETR4 Dividends",
        data=<dividends JSON>, config={"format":"xlsx","adapter":"dividends_annual"})
+report(action="dashboard", title="PETR4 Dividends Dashboard",
+       data=<dividends dashboard JSON>, config={"adapter":"dividends_dashboard"})
 ```
 
 See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
@@ -59,11 +62,11 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
 
 | File | Purpose |
 |------|---------|
-| [ARCHITECTURE.md](dividends/ARCHITECTURE.md) | 3-source combination, DVA codes, mode → source mapping |
-| [API.md](dividends/API.md) | 5 modes: history, annual, payable, announcements, summary |
-| [CHANGELOG.md](dividends/CHANGELOG.md) | Version history (v1.0 → v1.0.1) |
+| [ARCHITECTURE.md](dividends/ARCHITECTURE.md) | 3-source combination, DVA codes, mode → source mapping, modular file layout |
+| [API.md](dividends/API.md) | 6 modes: history, annual, payable, announcements, summary, dashboard |
+| [CHANGELOG.md](dividends/CHANGELOG.md) | Version history (v1.0 → v1.1) |
 | [INSTRUCTIONS.md](dividends/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-25 (v1.0.1 + report wiring).*
+*Last updated: 2026-07-29 (v1.1 — modular split + dashboard mode).*

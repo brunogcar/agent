@@ -23,6 +23,8 @@
 
 *(Fill this section with relevant info from edits and refactors.)*
 
+- **v1.1 lesson:** Decomposed monolithic `governance.py` (75 lines) into `_registry.py` + `modes/` + `report.py`. New modes now drop in via `@register_mode(...)` in `modes/<name>.py` with zero edits to `__init__.py`. The `dashboard` mode is a thin pass-through of the per-mode payloads into a multi-tab dashboard dict, mirroring the `financials`/`valuation`/`comparison`/`backtest`/`dividends` dashboard pattern.
+
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

@@ -111,12 +111,15 @@ from tools.report_ops.adapters import valuation   # noqa: E402,F401
 from tools.report_ops.adapters import valuation_dashboard  # noqa: E402,F401
 from tools.report_ops.adapters import shareholders  # noqa: E402,F401
 from tools.report_ops.adapters import dividends   # noqa: E402,F401
+from tools.report_ops.adapters import dividends_dashboard  # noqa: E402,F401
 from tools.report_ops.adapters import comparison  # noqa: E402,F401
 from tools.report_ops.adapters import comparison_dashboard  # noqa: E402,F401
 from tools.report_ops.adapters import cotahist    # noqa: E402,F401
 from tools.report_ops.adapters import screener  # noqa: E402,F401
 from tools.report_ops.adapters import insider  # noqa: E402,F401
 from tools.report_ops.adapters import governance  # noqa: E402,F401
+from tools.report_ops.adapters import governance_dashboard  # noqa: E402,F401
 from tools.report_ops.adapters import historical  # noqa: E402,F401
+from tools.report_ops.adapters import historical_dashboard  # noqa: E402,F401
 from tools.report_ops.adapters import backtest  # noqa: E402,F401
 from tools.report_ops.adapters import backtest_dashboard  # noqa: E402,F401

@@ -296,16 +296,18 @@ skill(domain="cvm", sub_domain="historical", mode="ratio_history", params='{"com
 
 ## 📊 Report Adapters
 
-Chart adapters are auto-registered for each metric. The summary adapter is metric-aware.
+Chart adapters are auto-registered for each metric. The summary adapter is metric-aware. The dashboard adapter (v1.2) is a thin pass-through of the multi-tab `dashboard()` payload.
 
 | Adapter | Source mode | What it renders |
 |---|---|---|
+| `historical_<metric>_chart` (auto-generated, one per metric) | `<metric>_history` | Dual-dataset line chart (Type 1: per-share + ratio) OR single-dataset (Type 2: fundamental ratio) |
 | `historical_lpa_chart` | lpa_history | Dual-dataset line chart: LPA (per-share) + P/L (ratio) |
 | `historical_vpa_chart` | vpa_history | Dual-dataset line chart: VPA (per-share) + P/VPA (ratio) |
 | `historical_dpa_chart` | dpa_history | Dual-dataset line chart: DPA (per-share) + Div Yield (ratio) |
 | `historical_rps_chart` | rps_history | Dual-dataset line chart: RPS (per-share) + PSR (ratio) |
 | `historical_roe_chart` | roe_history | Single-dataset line chart: ROE over time (fundamental ratio, single axis) |
 | `historical_summary` | summary | KPI strip (per-share + ratio + averages + percentile) + summary table. **Metric-aware**: renders TTM Earnings for lpa/dpa, PL for vpa. |
+| `historical_dashboard` (v1.2) | dashboard | **Dashboard adapter** — multi-tab dashboard (Overview + Ratios + Summary). Thin pass-through of the `historical.dashboard()` tab payload |
 
 ```python
 # LPA + P/L dual-dataset chart
@@ -400,4 +402,4 @@ Historical uses `resolve_metric()` (canonical name + alias resolution) for `rati
 
 ---
 
-*Last updated: 2026-07-26 (v2.2 — Phase 1 refactor: engines + metrics + registry extracted to calculations/). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/API.md](../calculations/API.md) for engine/metric/registry API.*
+*Last updated: 2026-07-29 (v1.2 — modular split + dashboard mode). See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/API.md](../calculations/API.md) for engine/metric/registry API.*

@@ -4,9 +4,9 @@ Uses mocked CGVN query_engine — no database needed.
 """
 from __future__ import annotations
 
-import pytest
-
-from skills.cvm.governance import governance
+from skills.cvm.governance.modes.practices import practices
+from skills.cvm.governance.modes.score import score
+from skills.cvm.governance.modes.by_chapter import by_chapter
 
 
 MOCK_PRACTICES = {
@@ -50,35 +50,35 @@ def _mock_query(monkeypatch, return_map):
 
 class TestValidation:
     def test_practices_requires_company(self):
-        r = governance.practices()
+        r = practices()
         assert r["status"] == "error"
 
     def test_score_requires_company(self):
-        r = governance.score()
+        r = score()
         assert r["status"] == "error"
 
     def test_by_chapter_requires_company(self):
-        r = governance.by_chapter()
+        r = by_chapter()
         assert r["status"] == "error"
 
 
 class TestPractices:
     def test_practices_basic(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = governance.practices(company="PETR4")
+        r = practices(company="PETR4")
         assert r["status"] == "ok"
         assert r["count"] == 2
 
     def test_practices_has_freshness(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = governance.practices(company="PETR4")
+        r = practices(company="PETR4")
         assert "data_freshness" in r
 
 
 class TestScore:
     def test_score_basic(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = governance.score(company="PETR4")
+        r = score(company="PETR4")
         assert r["status"] == "ok"
         assert r["total_practices"] == 2
         assert r["score_pct"] == 0.5
@@ -87,7 +87,7 @@ class TestScore:
 class TestByChapter:
     def test_by_chapter_basic(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = governance.by_chapter(company="PETR4")
+        r = by_chapter(company="PETR4")
         assert r["status"] == "ok"
         assert len(r["by_chapter"]) == 2
 
@@ -103,3 +103,13 @@ class TestRoute:
         r = route(mode="nope")
         assert r["status"] == "error"
         assert "Unknown mode" in r["error"]
+
+    def test_route_dashboard_dispatches(self):
+        """[v1.8] route() should now accept 'dashboard' (was unknown before)."""
+        from skills.cvm.governance import route, MANIFEST
+        assert "dashboard" in MANIFEST["modes"]
+        # Calling without company should short-circuit to 'company is required'
+        # inside the dashboard() function (status=error, not 'Unknown mode').
+        r = route(mode="dashboard")
+        assert r["status"] == "error"
+        assert "company is required" in r["error"]

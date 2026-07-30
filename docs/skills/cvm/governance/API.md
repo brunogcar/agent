@@ -27,12 +27,20 @@ Practices grouped by chapter (Capitulo) with adoption counts.
 |---|---|---|---|
 | `company` | `str` | (required) | Ticker, name, or CNPJ |
 
+### `mode="dashboard"` (v1.1)
+Multi-tab dashboard payload for the report tool. Pipes into the `governance_dashboard` adapter (report tool v1.7, 70th adapter) which renders tabs: Overview (score KPIs) + Practices + By Chapter.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | Ticker, name, or CNPJ |
+
 ## Tool Invocation
 
 ```python
 skill(domain="cvm", sub_domain="governance", mode="practices", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="governance", mode="score", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="governance", mode="by_chapter", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="governance", mode="dashboard", params='{"company":"PETR4"}')
 ```
 
 ## Report Adapters
@@ -42,7 +50,8 @@ skill(domain="cvm", sub_domain="governance", mode="by_chapter", params='{"compan
 | `governance_practices` | practices | Practices table (item, chapter, recommended, adopted, explanation) |
 | `governance_score` | score | KPI strip (score %, adopted, partial, not adopted) + summary table |
 | `governance_by_chapter` | by_chapter | Per-chapter adoption table (total, adopted, partial, not adopted, score %) |
+| `governance_dashboard` (v1.1) | dashboard | **Dashboard adapter** — multi-tab dashboard (Overview KPIs + Practices + By Chapter). Thin pass-through of the `governance.dashboard()` tab payload |
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

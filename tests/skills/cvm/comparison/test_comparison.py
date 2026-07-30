@@ -111,7 +111,7 @@ def _mock_skills(monkeypatch, val_map, fin_map, div_map):
                            {"status": "error", "error": f"no data for {company}"})
     monkeypatch.setattr("skills.cvm.valuation.modes.ratios.ratios", fake_val_ratios)
     monkeypatch.setattr("skills.cvm.financials.modes.summary.summary", fake_fin_summary)
-    monkeypatch.setattr("skills.cvm.dividends.dividends.summary", fake_div_summary)
+    monkeypatch.setattr("skills.cvm.dividends.modes.summary.summary", fake_div_summary)
 
 
 # ── Input validation ─────────────────────────────────────────────────────────

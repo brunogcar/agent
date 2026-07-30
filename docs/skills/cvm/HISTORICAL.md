@@ -35,6 +35,7 @@ Computes financial ratios over time by combining **engines** (basics: price, ear
 
 **Key characteristics:**
 - **Thin wrapper over calculations/** — engines, metrics, and the registry moved to `skills/cvm/calculations/` in v2.2 (Phase 1 refactor). Historical adds mode dispatch + percentile analysis on top.
+- **Modular layout (v1.2)** — `_registry.py` + `modes/` (3 explicit mode files: `ratio_history`, `summary`, `dashboard`) + `helpers.py` + `report.py` auto-discovered via `@register_mode`. Mirrors the `financials`/`valuation`/`comparison`/`backtest`/`dividends`/`governance` modular pattern.
 - **Central auto-discovery (in calculations/)** — `_registry.py` lives at the calculations top level, globs both `engines/*.py` and `metrics/*.py`. Adding a metric = drop a file + `register_metric()`. Everything else auto-generates.
 - **Both layers self-register** — engines via `register_engine(EngineSpec(...))`, metrics via `register_metric(MetricSpec(...))`. Consistent pattern.
 - **Step-function optimization** — price changes daily, PL/earnings change quarterly, shares change annually, dividends change on payment dates. Precompute step functions, do O(1) lookups per day.
@@ -112,6 +113,10 @@ report(action="chart", title="PETR4 DPA + Div Yield History",
 # Summary table (metric-aware: shows per-share + ratio + components)
 report(action="table", title="PETR4 Summary",
        data=<summary JSON>, config={"adapter":"historical_summary"})
+
+# Dashboard (multi-tab overview — v1.2)
+report(action="dashboard", title="PETR4 Historical Dashboard",
+       data=<historical dashboard JSON>, config={"adapter":"historical_dashboard"})
 ```
 
 ---
@@ -136,4 +141,4 @@ report(action="table", title="PETR4 Summary",
 
 ---
 
-*Last updated: 2026-07-26 (v2.2 — Phase 1 refactor: engines + metrics + registry extracted to calculations/; historical now a thin wrapper).*
+*Last updated: 2026-07-29 (v1.2 — modular split + dashboard mode: `_registry.py` + `modes/` + `helpers.py` + `report.py`; the calculations extraction happened earlier in v2.2).*

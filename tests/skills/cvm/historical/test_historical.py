@@ -5,7 +5,18 @@ Uses mocked engines + registry — no database needed.
 from __future__ import annotations
 
 import pytest
-from skills.cvm.historical import historical, MANIFEST, route
+
+from skills.cvm.historical import MANIFEST, route
+from skills.cvm.historical._registry import MODES
+from skills.cvm.historical.modes.ratio_history import ratio_history
+from skills.cvm.historical.modes.summary import summary
+
+
+# Auto-generated <metric>_history modes live in MODES (registered by
+# _registry._auto_register_metric_history_modes) — not in a modes/*.py file.
+# Access their .fn via the registry.
+lpa_history = MODES["lpa_history"].fn
+vpa_history = MODES["vpa_history"].fn
 
 
 # ── Mock data ────────────────────────────────────────────────────────────────
@@ -50,19 +61,19 @@ def _mock_metric_history(monkeypatch, metric_name: str, series: list[dict]):
 
 class TestValidation:
     def test_lpa_history_requires_company(self):
-        r = historical.lpa_history()
+        r = lpa_history()
         assert r["status"] == "error"
 
     def test_vpa_history_requires_company(self):
-        r = historical.vpa_history()
+        r = vpa_history()
         assert r["status"] == "error"
 
     def test_ratio_history_requires_company(self):
-        r = historical.ratio_history()
+        r = ratio_history()
         assert r["status"] == "error"
 
     def test_summary_requires_company(self):
-        r = historical.summary()
+        r = summary()
         assert r["status"] == "error"
 
 
@@ -71,7 +82,7 @@ class TestValidation:
 class TestLpaHistory:
     def test_basic_shape(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.lpa_history(company="PETR4", months=6)
+        r = lpa_history(company="PETR4", months=6)
         assert r["status"] == "ok"
         assert r["metric"] == "lpa"
         assert len(r["series"]) == 6
@@ -81,17 +92,17 @@ class TestLpaHistory:
 
     def test_has_freshness(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.lpa_history(company="PETR4")
+        r = lpa_history(company="PETR4")
         assert "data_freshness" in r
 
     def test_pe_count(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.lpa_history(company="PETR4", months=6)
+        r = lpa_history(company="PETR4", months=6)
         assert r["pe_days"] == 6  # all have valid PE
 
     def test_per_share_label_in_result(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.lpa_history(company="PETR4", months=6)
+        r = lpa_history(company="PETR4", months=6)
         assert r["per_share_label"] == "LPA"
         assert r["ratio_label"] == "P/L"
 
@@ -100,7 +111,7 @@ class TestLpaHistory:
 
 class TestVpaHistory:
     def test_requires_company(self):
-        r = historical.vpa_history()
+        r = vpa_history()
         assert r["status"] == "error"
 
     def test_basic_shape(self, monkeypatch):
@@ -112,7 +123,7 @@ class TestVpaHistory:
              "vpa": 300e9 / 13e9, "pvpa": 36.0 / (300e9 / 13e9)},
         ]
         _mock_metric_history(monkeypatch, "vpa", mock_series)
-        r = historical.vpa_history(company="PETR4", months=6)
+        r = vpa_history(company="PETR4", months=6)
         assert r["status"] == "ok"
         assert r["metric"] == "vpa"
         assert r["per_share_label"] == "VPA"
@@ -129,26 +140,26 @@ class TestVpaHistory:
 class TestRatioHistory:
     def test_lpa_metric(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.ratio_history(company="PETR4", metric="lpa", months=6)
+        r = ratio_history(company="PETR4", metric="lpa", months=6)
         assert r["status"] == "ok"
         assert r["metric"] == "lpa"
 
     def test_pe_alias_resolves_to_lpa(self, monkeypatch):
         """ratio_history(metric='pe') should resolve to lpa via the alias."""
         _mock_lpa_history(monkeypatch)
-        r = historical.ratio_history(company="PETR4", metric="pe", months=6)
+        r = ratio_history(company="PETR4", metric="pe", months=6)
         assert r["status"] == "ok"
         assert r["metric"] == "lpa"  # canonical name in result
 
     def test_pl_alias_resolves_to_lpa(self, monkeypatch):
         """ratio_history(metric='pl') should resolve to lpa via the alias."""
         _mock_lpa_history(monkeypatch)
-        r = historical.ratio_history(company="PETR4", metric="pl", months=6)
+        r = ratio_history(company="PETR4", metric="pl", months=6)
         assert r["status"] == "ok"
         assert r["metric"] == "lpa"
 
     def test_unknown_metric(self):
-        r = historical.ratio_history(company="PETR4", metric="unknown")
+        r = ratio_history(company="PETR4", metric="unknown")
         assert r["status"] == "error"
         assert "Unknown metric" in r["error"]
 
@@ -159,7 +170,7 @@ class TestRatioHistory:
              "vpa": 300e9 / 13e9, "pvpa": 35.0 / (300e9 / 13e9)},
         ]
         _mock_metric_history(monkeypatch, "vpa", mock_series)
-        r = historical.ratio_history(company="PETR4", metric="vpa", months=12)
+        r = ratio_history(company="PETR4", metric="vpa", months=12)
         assert r["status"] == "ok"
         assert r["metric"] == "vpa"
 
@@ -169,7 +180,7 @@ class TestRatioHistory:
 class TestSummary:
     def test_basic_shape(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.summary(company="PETR4")
+        r = summary(company="PETR4")
         assert r["status"] == "ok"
         assert "current" in r
         assert "averages" in r
@@ -179,7 +190,7 @@ class TestSummary:
     def test_current_has_both_per_share_and_ratio(self, monkeypatch):
         """summary current block should include both lpa (per-share) and pe (ratio)."""
         _mock_lpa_history(monkeypatch)
-        r = historical.summary(company="PETR4")
+        r = summary(company="PETR4")
         assert "lpa" in r["current"]
         assert "pe" in r["current"]
         assert "price" in r["current"]
@@ -189,14 +200,14 @@ class TestSummary:
 
     def test_current_pe(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.summary(company="PETR4")
+        r = summary(company="PETR4")
         # Last entry: pe = 40 / (110e9 / 13e9) ≈ 4.727, rounded to 2 decimals
         expected_pe = round(40.0 / (110e9 / 13e9), 2)
         assert r["current"]["pe"] == pytest.approx(expected_pe, rel=1e-3)
 
     def test_percentile(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.summary(company="PETR4")
+        r = summary(company="PETR4")
         assert r["percentile"] is not None
         # Current PE is the highest → 100th percentile? Let me check...
         # MOCK_LPA_SERIES PE values: 4.55, 4.68, 4.70, 4.58, 4.83, 4.73
@@ -206,7 +217,7 @@ class TestSummary:
 
     def test_interpretation(self, monkeypatch):
         _mock_lpa_history(monkeypatch)
-        r = historical.summary(company="PETR4")
+        r = summary(company="PETR4")
         assert "expensive" in r["interpretation"] or "fair" in r["interpretation"]
 
     def test_summary_vpa_metric(self, monkeypatch):
@@ -220,7 +231,7 @@ class TestSummary:
              "vpa": 310e9 / 13e9, "pvpa": 38.0 / (310e9 / 13e9)},
         ]
         _mock_metric_history(monkeypatch, "vpa", mock_vpa_series)
-        r = historical.summary(company="PETR4", metric="vpa")
+        r = summary(company="PETR4", metric="vpa")
         assert r["status"] == "ok"
         assert r["metric"] == "vpa"
         assert r["per_share_label"] == "VPA"

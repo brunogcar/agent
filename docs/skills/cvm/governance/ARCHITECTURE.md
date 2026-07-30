@@ -6,8 +6,15 @@
 
 | File | Purpose |
 |---|---|
-| `skills/cvm/governance/__init__.py` | MANIFEST + route — skill hub, 3 modes |
-| `skills/cvm/governance/governance.py` | Main logic: `practices()`, `score()`, `by_chapter()`. Wraps CGVN query_engine with bridge resolution + freshness. |
+| `skills/cvm/governance/__init__.py` | MANIFEST + route — modes auto-generated from `_registry.py` |
+| `skills/cvm/governance/_registry.py` | Central registry: `ModeSpec` + `@register_mode` + auto-discovery (`modes/*.py`) |
+| `skills/cvm/governance/report.py` | Skill-level report helpers (consumed by adapters) |
+| `skills/cvm/governance/modes/practices.py` | `mode="practices"` — all practices for the latest filing |
+| `skills/cvm/governance/modes/score.py` | `mode="score"` — % Sim/Não/Parcialmente + score_pct |
+| `skills/cvm/governance/modes/by_chapter.py` | `mode="by_chapter"` — practices grouped by Capítulo |
+| `skills/cvm/governance/modes/dashboard.py` | `mode="dashboard"` — multi-tab dashboard payload (v1.1) |
+| `tools/report_ops/adapters/governance.py` | `governance_practices` + `governance_score` + `governance_by_chapter` table adapters |
+| `tools/report_ops/adapters/governance_dashboard.py` | `governance_dashboard` adapter (v1.1 — 70th adapter) |
 
 ## Data Flow
 
@@ -38,7 +45,8 @@ Return {status, company, total_practices, adopted_sim, score_pct, ...}
 - **Score computation**: `score_pct = adopted_sim / total_practices`. Simple percentage — no weighting by chapter or principle importance.
 - **Bridge resolution**: Ticker → CNPJ via bridge (FCA first → bridge.db → B3 API). Auto-sync on miss.
 - **Data freshness**: Returns `data_freshness` field with sync timestamps.
+- **Modular pattern (v1.1)**: Decomposed monolithic `governance.py` (75 lines) into `_registry.py` + `modes/` + `report.py`. Adding a new mode = drop a file in `modes/` + `@register_mode(...)`; no edits to `__init__.py`. Mirrors the `financials`/`valuation`/`comparison`/`backtest`/`dividends` modular pattern.
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

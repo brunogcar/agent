@@ -1,4 +1,4 @@
-"""tests/skills/cvm/test_dividends.py -- Tests for the dividends skill.
+"""tests/skills/cvm/dividends/test_dividends.py -- Tests for the dividends skill.
 
 Mocks B3 dividends + DFP DVA/BPP + CVM IPE query engines — no real DBs, no network.
 Tests all 5 modes: history, annual, payable, announcements, summary.
@@ -126,7 +126,7 @@ class TestHistoryMode:
     def test_history_ok(self, monkeypatch):
         monkeypatch.setattr(
             "data_sources.b3.dividends.query_engine.dividends", _mock_b3_history_ok())
-        from skills.cvm.dividends.dividends import history
+        from skills.cvm.dividends.modes.history import history
         result = history(company="PETR4")
         assert result["status"] == "ok"
         assert result["count"] == 2
@@ -134,14 +134,14 @@ class TestHistoryMode:
         assert result["dividends"][1]["label"] == "Dividendo"
 
     def test_history_no_company(self, monkeypatch):
-        from skills.cvm.dividends.dividends import history
+        from skills.cvm.dividends.modes.history import history
         result = history()
         assert result["status"] == "error"
 
     def test_history_not_found(self, monkeypatch):
         monkeypatch.setattr(
             "data_sources.b3.dividends.query_engine.dividends", _mock_b3_not_found())
-        from skills.cvm.dividends.dividends import history
+        from skills.cvm.dividends.modes.history import history
         result = history(company="ZZZZ4")
         assert result["status"] == "not_found"
 
@@ -156,7 +156,7 @@ class TestAnnualMode:
         db_path, mock_connect = _make_dfp_db(tmp_path)
         _patch_dfp(monkeypatch, db_path, mock_connect)
 
-        from skills.cvm.dividends.dividends import annual
+        from skills.cvm.dividends.modes.annual import annual
         result = annual(company="33000167000101", periods=5)
         assert result["status"] == "ok"
         assert len(result["periods"]) == 2
@@ -169,7 +169,7 @@ class TestAnnualMode:
         assert accounts["7.08.04.02"]["valor_brl"] == 35000000000000.0
 
     def test_annual_no_company(self, monkeypatch):
-        from skills.cvm.dividends.dividends import annual
+        from skills.cvm.dividends.modes.annual import annual
         result = annual()
         assert result["status"] == "error"
 
@@ -177,7 +177,7 @@ class TestAnnualMode:
         db_path, mock_connect = _make_dfp_db(tmp_path)
         _patch_dfp(monkeypatch, db_path, mock_connect)
 
-        from skills.cvm.dividends.dividends import annual
+        from skills.cvm.dividends.modes.annual import annual
         result = annual(company="NONEXISTENT")
         assert result["status"] == "not_found"
 
@@ -192,7 +192,7 @@ class TestPayableMode:
         db_path, mock_connect = _make_dfp_db(tmp_path)
         _patch_dfp(monkeypatch, db_path, mock_connect)
 
-        from skills.cvm.dividends.dividends import payable
+        from skills.cvm.dividends.modes.payable import payable
         result = payable(company="33000167000101")
         assert result["status"] == "ok"
         assert len(result["periods"]) == 1
@@ -202,7 +202,7 @@ class TestPayableMode:
         assert accounts[0]["valor_brl"] == 5000000000000.0
 
     def test_payable_no_company(self, monkeypatch):
-        from skills.cvm.dividends.dividends import payable
+        from skills.cvm.dividends.modes.payable import payable
         result = payable()
         assert result["status"] == "error"
 
@@ -210,7 +210,7 @@ class TestPayableMode:
         db_path, mock_connect = _make_dfp_db(tmp_path)
         _patch_dfp(monkeypatch, db_path, mock_connect)
 
-        from skills.cvm.dividends.dividends import payable
+        from skills.cvm.dividends.modes.payable import payable
         result = payable(company="NONEXISTENT")
         assert result["status"] == "not_found"
 
@@ -224,7 +224,7 @@ class TestAnnouncementsMode:
     def test_announcements_ok(self, monkeypatch):
         monkeypatch.setattr(
             "data_sources.cvm.ipe.query_engine.query", _mock_ipe_announcements_ok())
-        from skills.cvm.dividends.dividends import announcements
+        from skills.cvm.dividends.modes.announcements import announcements
         result = announcements(company="PETR4")
         assert result["status"] == "ok"
         assert result["count"] == 1
@@ -234,7 +234,7 @@ class TestAnnouncementsMode:
         """announcements with no company still works (returns all dividend filings)."""
         monkeypatch.setattr(
             "data_sources.cvm.ipe.query_engine.query", _mock_ipe_announcements_ok())
-        from skills.cvm.dividends.dividends import announcements
+        from skills.cvm.dividends.modes.announcements import announcements
         result = announcements()
         assert result["status"] == "ok"
 
@@ -251,7 +251,7 @@ class TestSummaryMode:
         monkeypatch.setattr(
             "data_sources.b3.dividends.query_engine.dividends", _mock_b3_history_ok())
 
-        from skills.cvm.dividends.dividends import summary
+        from skills.cvm.dividends.modes.summary import summary
         result = summary(company="33000167000101")
         assert result["status"] == "ok"
         assert "recent_events" in result["sections"]
@@ -267,14 +267,14 @@ class TestSummaryMode:
         monkeypatch.setattr(
             "data_sources.b3.dividends.query_engine.dividends", _mock_b3_not_found())
 
-        from skills.cvm.dividends.dividends import summary
+        from skills.cvm.dividends.modes.summary import summary
         result = summary(company="33000167000101")
         assert result["status"] == "ok"
         assert result["sections"]["recent_events"]["status"] == "not_found"
         assert "annual_trend" in result["sections"]
 
     def test_summary_no_company(self):
-        from skills.cvm.dividends.dividends import summary
+        from skills.cvm.dividends.modes.summary import summary
         result = summary()
         assert result["status"] == "error"
 

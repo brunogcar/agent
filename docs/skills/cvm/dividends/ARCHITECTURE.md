@@ -45,6 +45,7 @@ equivalent to dividends but tax-deductible for the company.
 | `payable` | DFP BPP | Declared-but-unpaid amount per period |
 | `announcements` | IPE | Official filings (keyword "dividendo") |
 | `summary` | B3 + DFP | Recent events + annual trend + last payable |
+| `dashboard` | B3 + DFP + IPE | Multi-tab dashboard payload (Overview + Events + Annual + Payable + Filings) |
 
 ## Resolution
 
@@ -52,15 +53,33 @@ equivalent to dividends but tax-deductible for the company.
 - `annual` / `payable`: accepts ticker/name/CNPJ (via bridge → DFP)
 - `announcements`: accepts ticker/name/CNPJ (via bridge → IPE)
 - `summary`: ticker preferred (covers all 3 sources)
+- `dashboard`: ticker preferred (covers all sources across the dashboard tabs)
 
 ## File Layout
 
-```
+```text
 skills/cvm/dividends/
-├── __init__.py     # Manifest + route (5 modes)
-└── dividends.py    # Logic: delegates to B3 + DFP + IPE query engines
+├── __init__.py           # MANIFEST + route — modes auto-generated from _registry.py
+├── _registry.py          # Central registry: ModeSpec + @register_mode + auto-discovery (modes/*.py)
+├── report.py             # Skill-level report helpers (consumed by adapters)
+└── modes/
+    ├── __init__.py
+    ├── history.py        # mode="history" — B3 individual events
+    ├── annual.py         # mode="annual" — DFP DVA declared totals
+    ├── payable.py        # mode="payable" — DFP BPP declared-but-unpaid
+    ├── announcements.py  # mode="announcements" — CVM IPE filings
+    ├── summary.py        # mode="summary" — combined multi-source
+    └── dashboard.py      # mode="dashboard" — multi-tab dashboard payload (v1.1)
+
+tools/report_ops/adapters/
+├── dividends.py                # dividends_{history,annual,summary} table adapters
+└── dividends_dashboard.py      # dividends_dashboard adapter (v1.1 — 69th adapter)
 ```
+
+### Modular pattern (v1.1)
+
+The skill follows the same `_registry.py` + `modes/` auto-discovery pattern used by `financials`, `valuation`, `comparison`, and `backtest`. Adding a new mode = drop a file in `modes/` + `@register_mode(...)`; no edits to `__init__.py`. The previous monolithic `dividends.py` (283 lines) was decomposed into the structure above.
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

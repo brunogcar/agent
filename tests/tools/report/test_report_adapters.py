@@ -66,7 +66,7 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        assert len(names) == 68
+        assert len(names) == 71
 
     def test_expected_adapter_names(self):
         expected = {
@@ -76,6 +76,7 @@ class TestRegistry:
             "shareholders_shareholders", "shareholders_free_float",
             "shareholders_equity_structure", "shareholders_summary",
             "dividends_history", "dividends_annual", "dividends_summary",
+            "dividends_dashboard",
             "comparison_side_by_side", "comparison_summary", "comparison_growth",
             "comparison_dashboard",
             "cotahist_close_chart",
@@ -83,6 +84,7 @@ class TestRegistry:
             "screener_sector",
             "insider_history", "insider_by_role", "insider_summary",
             "governance_practices", "governance_score", "governance_by_chapter",
+            "governance_dashboard",
             "historical_lpa_chart", "historical_vpa_chart", "historical_dpa_chart",
             "historical_rps_chart", "historical_roe_chart",
             "historical_roa_chart", "historical_gross_margin_chart",
@@ -104,6 +106,7 @@ class TestRegistry:
             "historical_inventory_turnover_chart", "historical_receivables_turnover_chart",
             "historical_fixed_asset_turnover_chart", "historical_price_to_tangible_book_chart",
             "historical_summary",
+            "historical_dashboard",
             "backtest",
             "backtest_dashboard",
         }
@@ -1312,6 +1315,176 @@ class TestComparisonDashboardAdapter:
         assert out["company"] == "PETR4 vs VALE3"
 
 
+# ── Synthetic dividends.dashboard() result ──────────────────────────────────
+# Mirrors the shape produced by skills/cvm/dividends/modes/dashboard.py:
+#   {"status": "ok", "company": ..., "tabs": [...], "kpis": [...]}
+# 3 tabs: Overview (Summary text) / History (B3 events table) / Annual (DVA
+# 7.08.04.* per fiscal year table).
+# 4 top-level KPI cards (Total Dividends Paid, Dividend Yield, Payout Ratio,
+# Last Payment Date) with values pre-formatted by report.py via apply_fmt.
+
+DIVIDENDS_DASHBOARD = {
+    "status": "ok",
+    "company": "PETR4",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {"title": "Summary", "type": "text",
+                 "text": "Company: PETR4\nTicker: PETR4\nRecent events: 2\n"
+                         "Years of history: 2\nLast payment date: 2024-09-15\n"
+                         "Payable: available"},
+            ],
+        },
+        {
+            "name": "History",
+            "sections": [
+                {"title": "Histórico de Proventos (B3)", "type": "table",
+                 "columns": ["Data Aprovação", "Data Ex", "Data Pagamento",
+                             "Valor/Ação", "Tipo", "Relativo a"],
+                 "rows": [
+                     ["2024-08-15", "2024-08-10", "2024-09-15", 0.35, "JCP", "2T2024"],
+                     ["2024-04-15", "2024-04-10", "2024-05-15", 1.55, "Dividendo", "1T2024"],
+                 ],
+                 "formats": {"Valor/Ação": "brl_full",
+                             "Data Aprovação": "text", "Data Ex": "text",
+                             "Data Pagamento": "text", "Tipo": "text",
+                             "Relativo a": "text"},
+                 "note": "2 evento(s) recente(s). Valor/Ação em R$. "
+                         "Tipo distingue Dividendo de JCP."},
+            ],
+        },
+        {
+            "name": "Annual",
+            "sections": [
+                {"title": "Proventos Anuais Declarados (DVA 7.08.04.*)",
+                 "type": "table",
+                 "columns": ["Ano", "Dividendos", "JCP", "Total Remuneração"],
+                 "rows": [
+                     ["2023", 35000000000000.0, 15000000000000.0, 50000000000000.0],
+                     ["2022", 30000000000000.0, None, 45000000000000.0],
+                 ],
+                 "formats": {"Ano": "text", "Dividendos": "brl", "JCP": "brl",
+                             "Total Remuneração": "brl"},
+                 "note": "Totais anuais declarados em BRL por exercício social."},
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "Total Dividends Paid", "value": "R$ 50,00 B", "unit": "BRL"},
+        {"label": "Dividend Yield",       "value": "—",          "unit": "pct"},
+        {"label": "Payout Ratio",         "value": "—",          "unit": "pct"},
+        {"label": "Last Payment Date",    "value": "2024-09-15", "unit": "date"},
+    ],
+}
+
+
+class TestDividendsDashboardAdapter:
+    """Tests for the dividends_dashboard adapter (consumes dividends.dashboard())."""
+
+    def test_returns_3_tabs(self):
+        out = apply_adapter("dividends_dashboard", DIVIDENDS_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 3
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "History", "Annual"]
+
+    def test_top_level_kpis_present(self):
+        """4 KPI cards at the top level with exact labels."""
+        out = apply_adapter("dividends_dashboard", DIVIDENDS_DASHBOARD)
+        assert len(out["kpis"]) == 4
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == [
+            "Total Dividends Paid", "Dividend Yield",
+            "Payout Ratio", "Last Payment Date",
+        ]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them via apply_fmt)."""
+        out = apply_adapter("dividends_dashboard", DIVIDENDS_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # Total Dividends Paid -> pre-formatted BRL string with "R$" prefix.
+        total_paid = next(k for k in out["kpis"] if k["label"] == "Total Dividends Paid")
+        assert total_paid["value"].startswith("R$")
+        assert total_paid["format"] == "brl"
+        # Dividend Yield + Payout Ratio -> dash (no price/net income in summary).
+        dy = next(k for k in out["kpis"] if k["label"] == "Dividend Yield")
+        assert dy["value"] == "—"
+        assert dy["format"] == "pct"
+        pr = next(k for k in out["kpis"] if k["label"] == "Payout Ratio")
+        assert pr["value"] == "—"
+        assert pr["format"] == "pct"
+        # Last Payment Date -> ISO date string passes through as text.
+        lpd = next(k for k in out["kpis"] if k["label"] == "Last Payment Date")
+        assert lpd["value"] == "2024-09-15"
+        assert lpd["format"] == "text"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Summary text)."""
+        out = apply_adapter("dividends_dashboard", DIVIDENDS_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Summary"]
+        summary_sec = overview["sections"][0]
+        assert summary_sec["type"] == "text"
+        assert "Company: PETR4" in summary_sec["text"]
+        assert "Recent events: 2" in summary_sec["text"]
+
+    def test_history_tab_passes_through_table(self):
+        """History tab table passes through verbatim."""
+        out = apply_adapter("dividends_dashboard", DIVIDENDS_DASHBOARD)
+        history_tab = next(t for t in out["tabs"] if t["name"] == "History")
+        assert len(history_tab["sections"]) == 1
+        sec = history_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Histórico de Proventos (B3)"
+        assert sec["columns"] == [
+            "Data Aprovação", "Data Ex", "Data Pagamento",
+            "Valor/Ação", "Tipo", "Relativo a",
+        ]
+        # Two synthetic events.
+        assert len(sec["rows"]) == 2
+        # Format specs preserved.
+        assert sec["formats"]["Valor/Ação"] == "brl_full"
+
+    def test_annual_tab_passes_through_table(self):
+        """Annual tab table passes through verbatim."""
+        out = apply_adapter("dividends_dashboard", DIVIDENDS_DASHBOARD)
+        annual_tab = next(t for t in out["tabs"] if t["name"] == "Annual")
+        assert len(annual_tab["sections"]) == 1
+        sec = annual_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Proventos Anuais Declarados (DVA 7.08.04.*)"
+        assert sec["columns"] == ["Ano", "Dividendos", "JCP", "Total Remuneração"]
+        # Two fiscal years.
+        assert len(sec["rows"]) == 2
+        # Format specs preserved.
+        assert sec["formats"]["Dividendos"] == "brl"
+        assert sec["formats"]["Total Remuneração"] == "brl"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("dividends_dashboard",
+                            {"status": "error", "error": "company is required"})
+        assert out["sections"][0]["title"] == "Dividends Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "company is required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (summary() failed before composing
+        tabs), the adapter should error gracefully."""
+        out = apply_adapter("dividends_dashboard",
+                            {"status": "ok", "company": "PETR4"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Dividends Dashboard"
+
+    def test_company_uses_company_field(self):
+        """Adapter uses result['company'] -> out['company'] for the report tool."""
+        out = apply_adapter("dividends_dashboard", DIVIDENDS_DASHBOARD)
+        assert out["company"] == "PETR4"
+
+
 # ── Synthetic financials.dashboard() result ─────────────────────────────────
 
 FINANCIALS_DASHBOARD = {
@@ -1638,4 +1811,424 @@ class TestValuationDashboardAdapter:
         # Falls through to _error_table (no ratios to render)
         assert "sections" in out
         assert out["sections"][0]["title"] == "Valuation Dashboard"
+
+
+# ── Synthetic governance.dashboard() result ──────────────────────────────────
+
+GOVERNANCE_DASHBOARD = {
+    "status": "ok",
+    "company": "PETR4",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {
+                    "title": "Summary",
+                    "type": "text",
+                    "text": (
+                        "Company: PETR4\n"
+                        "CNPJ: 33000167000101\n"
+                        "Data de Referência: 2025-06-30\n"
+                        "Total de Práticas: 2\n"
+                        "Adotadas (Sim): 1\n"
+                        "Parcialmente: 0\n"
+                        "Não Adotadas: 1\n"
+                        "Nível de Conformidade: Médio"
+                    ),
+                },
+            ],
+        },
+        {
+            "name": "Practices",
+            "sections": [
+                {
+                    "title": "Governance Practices (2 practices)",
+                    "type": "table",
+                    "columns": ["Item", "Capítulo", "Princípio",
+                                "Prática Recomendada", "Adotada", "Explicação"],
+                    "rows": [
+                        ["1.1", "Conselho", "Independência",
+                         "Diretoria independente", "Sim",
+                         "Aplicada integralmente"],
+                        ["2.1", "Transparência", "Divulgação",
+                         "Transações relacionadas", "Não", "Não aplicável"],
+                    ],
+                    "formats": {
+                        "Item": "text", "Capítulo": "text", "Princípio": "text",
+                        "Prática Recomendada": "text", "Adotada": "text",
+                        "Explicação": "text",
+                    },
+                },
+            ],
+        },
+        {
+            "name": "By Chapter",
+            "sections": [
+                {
+                    "title": "Governance by Chapter (2 chapters)",
+                    "type": "table",
+                    "columns": ["Capítulo", "Total", "Adotadas",
+                                "Parciais", "Não Adotadas", "Score %"],
+                    "rows": [
+                        ["Conselho", 1, 1, 0, 0, "100,00%"],
+                        ["Transparência", 1, 0, 0, 1, "0,00%"],
+                    ],
+                    "formats": {
+                        "Capítulo": "text", "Total": "int", "Adotadas": "int",
+                        "Parciais": "int", "Não Adotadas": "int", "Score %": "text",
+                    },
+                },
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "Governance Score",  "value": "50,00%", "unit": "pct"},
+        {"label": "Practices Count",   "value": "2",       "unit": "int"},
+        {"label": "Compliance Level",  "value": "Médio",   "unit": "text"},
+    ],
+}
+
+
+class TestGovernanceDashboardAdapter:
+    """[v1.8] Tests for the governance_dashboard adapter."""
+
+    def test_returns_3_tabs(self):
+        out = apply_adapter("governance_dashboard", GOVERNANCE_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 3
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Practices", "By Chapter"]
+
+    def test_top_level_kpis_present(self):
+        """3 KPI cards at the top level with exact labels."""
+        out = apply_adapter("governance_dashboard", GOVERNANCE_DASHBOARD)
+        assert len(out["kpis"]) == 3
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["Governance Score", "Practices Count", "Compliance Level"]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them via apply_fmt — they are strings, not raw numbers)."""
+        out = apply_adapter("governance_dashboard", GOVERNANCE_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # Governance Score -> pre-formatted pct string with %.
+        score = next(k for k in out["kpis"] if k["label"] == "Governance Score")
+        assert score["value"].endswith("%")
+        assert score["format"] == "pct"
+        # Practices Count -> pre-formatted int string "2".
+        count = next(k for k in out["kpis"] if k["label"] == "Practices Count")
+        assert "2" in count["value"]
+        assert count["format"] == "int"
+        # Compliance Level -> text label "Médio".
+        level = next(k for k in out["kpis"] if k["label"] == "Compliance Level")
+        assert level["value"] == "Médio"
+        assert level["format"] == "text"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Summary text)."""
+        out = apply_adapter("governance_dashboard", GOVERNANCE_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Summary"]
+        summary_sec = overview["sections"][0]
+        assert summary_sec["type"] == "text"
+        assert "Company: PETR4" in summary_sec["text"]
+        assert "Total de Práticas: 2" in summary_sec["text"]
+        assert "Nível de Conformidade: Médio" in summary_sec["text"]
+
+    def test_practices_tab_passes_through_table(self):
+        """Practices tab table passes through verbatim."""
+        out = apply_adapter("governance_dashboard", GOVERNANCE_DASHBOARD)
+        practices_tab = next(t for t in out["tabs"] if t["name"] == "Practices")
+        assert len(practices_tab["sections"]) == 1
+        sec = practices_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Governance Practices (2 practices)"
+        assert sec["columns"] == [
+            "Item", "Capítulo", "Princípio",
+            "Prática Recomendada", "Adotada", "Explicação",
+        ]
+        # Two synthetic practices.
+        assert len(sec["rows"]) == 2
+        # Format specs preserved.
+        assert sec["formats"]["Item"] == "text"
+        assert sec["formats"]["Adotada"] == "text"
+
+    def test_by_chapter_tab_passes_through_table(self):
+        """By Chapter tab table passes through verbatim."""
+        out = apply_adapter("governance_dashboard", GOVERNANCE_DASHBOARD)
+        chapter_tab = next(t for t in out["tabs"] if t["name"] == "By Chapter")
+        assert len(chapter_tab["sections"]) == 1
+        sec = chapter_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Governance by Chapter (2 chapters)"
+        assert sec["columns"] == [
+            "Capítulo", "Total", "Adotadas",
+            "Parciais", "Não Adotadas", "Score %",
+        ]
+        # Two synthetic chapters.
+        assert len(sec["rows"]) == 2
+        # Format specs preserved.
+        assert sec["formats"]["Capítulo"] == "text"
+        assert sec["formats"]["Total"] == "int"
+        assert sec["formats"]["Score %"] == "text"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("governance_dashboard",
+                            {"status": "error", "error": "company is required"})
+        assert out["sections"][0]["title"] == "Governance Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "company is required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (sub-calls all failed before composing
+        tabs), the adapter should error gracefully."""
+        out = apply_adapter("governance_dashboard",
+                            {"status": "ok", "company": "PETR4"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Governance Dashboard"
+
+    def test_company_uses_company_field(self):
+        """Adapter uses result['company'] -> out['company'] for the report tool."""
+        out = apply_adapter("governance_dashboard", GOVERNANCE_DASHBOARD)
+        assert out["company"] == "PETR4"
+
+    def test_kpi_with_raw_number_value_is_formatted(self):
+        """If a KPI value is a raw number (not pre-formatted), the adapter
+        should re-format it via apply_fmt using the unit -> spec map."""
+        result = dict(GOVERNANCE_DASHBOARD)
+        result["kpis"] = [
+            {"label": "Governance Score", "value": 0.5, "unit": "pct"},
+            {"label": "Practices Count", "value": 2, "unit": "int"},
+        ]
+        out = apply_adapter("governance_dashboard", result)
+        score = next(k for k in out["kpis"] if k["label"] == "Governance Score")
+        # 0.5 -> "50,00%" via pct spec.
+        assert score["value"].endswith("%")
+        count = next(k for k in out["kpis"] if k["label"] == "Practices Count")
+        # 2 -> "2" via int spec.
+        assert "2" in count["value"]
+
+
+# ── Synthetic historical.dashboard() result ──────────────────────────────────
+
+HISTORICAL_DASHBOARD = {
+    "status": "ok",
+    "company": "PETR4",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {"title": "Summary", "type": "text",
+                 "text": (
+                     "Company: PETR4\n"
+                     "Metrics covered:\n"
+                     "  - P/L: 4,95\n"
+                     "  - P/VPA: 1,70\n"
+                     "  - EV/EBITDA: 4,50\n"
+                     "  - ROE: 20,00%\n"
+                     "  - ROIC: 12,00%\n"
+                     "  - Div Yield: 9,00%"
+                 )},
+            ],
+        },
+        {
+            "name": "Percentile Analysis",
+            "sections": [
+                {"title": "Percentile Analysis (5Y)", "type": "table",
+                 "columns": ["Metric", "Current", "Min", "25th", "Median",
+                             "75th", "Max", "Percentile", "Interpretation"],
+                 "rows": [
+                     ["P/L",       4.95, 4.55, 4.63, 4.72, 4.88, 4.95, 83.3,
+                      "expensive (above 75th percentile of history)"],
+                     ["P/VPA",     1.70, 1.52, 1.55, 1.59, 1.67, 1.70, 83.3,
+                      "expensive (above 75th percentile of history)"],
+                     ["EV/EBITDA", 4.50, 4.00, 4.10, 4.20, 4.40, 4.50, 83.3,
+                      "expensive (above 75th percentile of history)"],
+                     ["ROE",       20.0, 15.0, 16.0, 17.0, 19.0, 20.0, 83.3,
+                      "expensive (above 75th percentile of history)"],
+                     ["ROIC",      12.0, 10.0, 10.5, 11.0, 12.0, 12.5, 83.3,
+                      "expensive (above 75th percentile of history)"],
+                     ["Div Yield", 9.0,  8.0,  8.2,  8.4,  8.8,  9.0,  83.3,
+                      "expensive (above 75th percentile of history)"],
+                 ],
+                 "formats": {
+                     "Metric":         "text",
+                     "Current":        "num",
+                     "Min":            "num",
+                     "25th":           "num",
+                     "Median":         "num",
+                     "75th":           "num",
+                     "Max":            "num",
+                     "Percentile":     "num",
+                     "Interpretation": "text",
+                 },
+                 "note": "Where current values sit vs their 5Y historical distribution."},
+            ],
+        },
+        {
+            "name": "Trend",
+            "sections": [
+                {"title": "Trend (Current vs 1Y/3Y averages)", "type": "table",
+                 "columns": ["Metric", "Current", "1Y Avg", "1Y Change",
+                             "3Y Avg", "3Y Change"],
+                 "rows": [
+                     ["P/L",       4.95, 4.75, 0.0421, None, None],
+                     ["P/VPA",     1.70, 1.61, 0.0559, None, None],
+                     ["EV/EBITDA", 4.50, 4.25, 0.0588, None, None],
+                     ["ROE",       20.0, 18.0, 0.1111, None, None],
+                     ["ROIC",      12.0, 11.0, 0.0909, None, None],
+                     ["Div Yield", 9.0,  9.0,  0.0,    None, None],
+                 ],
+                 "formats": {
+                     "Metric":     "text",
+                     "Current":    "num",
+                     "1Y Avg":     "num",
+                     "1Y Change":  "pct",
+                     "3Y Avg":     "num",
+                     "3Y Change":  "pct",
+                 },
+                 "note": "Latest value vs 1Y/3Y averages."},
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "P/L",       "value": "4,95",   "unit": "ratio"},
+        {"label": "P/VPA",     "value": "1,70",   "unit": "ratio"},
+        {"label": "EV/EBITDA", "value": "4,50",   "unit": "ratio"},
+        {"label": "ROE",       "value": "20,00%", "unit": "pct"},
+        {"label": "ROIC",      "value": "12,00%", "unit": "pct"},
+        {"label": "Div Yield", "value": "9,00%",  "unit": "pct"},
+    ],
+}
+
+
+class TestHistoricalDashboardAdapter:
+    """[v1.8] Tests for the historical_dashboard adapter."""
+
+    def test_returns_3_tabs(self):
+        out = apply_adapter("historical_dashboard", HISTORICAL_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 3
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Percentile Analysis", "Trend"]
+
+    def test_top_level_kpis_present(self):
+        """6 KPI cards at the top level with exact labels."""
+        out = apply_adapter("historical_dashboard", HISTORICAL_DASHBOARD)
+        assert len(out["kpis"]) == 6
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["P/L", "P/VPA", "EV/EBITDA", "ROE", "ROIC", "Div Yield"]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them via apply_fmt — they are strings, not raw numbers)."""
+        out = apply_adapter("historical_dashboard", HISTORICAL_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # Ratio-kind KPIs (P/L, P/VPA, EV/EBITDA) -> format=num, no "%" suffix.
+        pl = next(k for k in out["kpis"] if k["label"] == "P/L")
+        assert "%" not in pl["value"]
+        assert pl["format"] == "num"
+        ev = next(k for k in out["kpis"] if k["label"] == "EV/EBITDA")
+        assert "%" not in ev["value"]
+        assert ev["format"] == "num"
+        # Pct-kind KPIs (ROE, ROIC, Div Yield) -> format=pct, "%" suffix.
+        roe = next(k for k in out["kpis"] if k["label"] == "ROE")
+        assert roe["value"].endswith("%")
+        assert roe["format"] == "pct"
+        dy = next(k for k in out["kpis"] if k["label"] == "Div Yield")
+        assert dy["value"].endswith("%")
+        assert dy["format"] == "pct"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Summary text)."""
+        out = apply_adapter("historical_dashboard", HISTORICAL_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Summary"]
+        summary_sec = overview["sections"][0]
+        assert summary_sec["type"] == "text"
+        assert "Company: PETR4" in summary_sec["text"]
+        assert "Metrics covered:" in summary_sec["text"]
+        # All 6 metric labels appear in the text.
+        for label in ("P/L:", "P/VPA:", "EV/EBITDA:", "ROE:", "ROIC:", "Div Yield:"):
+            assert label in summary_sec["text"]
+
+    def test_percentile_tab_passes_through_table(self):
+        """Percentile Analysis tab table passes through verbatim."""
+        out = apply_adapter("historical_dashboard", HISTORICAL_DASHBOARD)
+        percentile = next(t for t in out["tabs"] if t["name"] == "Percentile Analysis")
+        assert len(percentile["sections"]) == 1
+        sec = percentile["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Percentile Analysis (5Y)"
+        assert sec["columns"] == [
+            "Metric", "Current", "Min", "25th", "Median",
+            "75th", "Max", "Percentile", "Interpretation",
+        ]
+        # 6 metric rows.
+        assert len(sec["rows"]) == 6
+        # Format specs preserved.
+        assert sec["formats"]["Current"] == "num"
+        assert sec["formats"]["25th"] == "num"
+        assert sec["formats"]["Interpretation"] == "text"
+
+    def test_trend_tab_passes_through_table(self):
+        """Trend tab table passes through verbatim."""
+        out = apply_adapter("historical_dashboard", HISTORICAL_DASHBOARD)
+        trend = next(t for t in out["tabs"] if t["name"] == "Trend")
+        assert len(trend["sections"]) == 1
+        sec = trend["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Trend (Current vs 1Y/3Y averages)"
+        assert sec["columns"] == [
+            "Metric", "Current", "1Y Avg", "1Y Change",
+            "3Y Avg", "3Y Change",
+        ]
+        # 6 metric rows.
+        assert len(sec["rows"]) == 6
+        # Format specs preserved.
+        assert sec["formats"]["1Y Change"] == "pct"
+        assert sec["formats"]["3Y Change"] == "pct"
+        assert sec["formats"]["Current"] == "num"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("historical_dashboard",
+                            {"status": "error", "error": "company is required"})
+        assert out["sections"][0]["title"] == "Historical Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "company is required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (summary() failed before composing
+        tabs), the adapter should error gracefully."""
+        out = apply_adapter("historical_dashboard",
+                            {"status": "ok", "company": "PETR4"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Historical Dashboard"
+
+    def test_company_uses_company_field(self):
+        """Adapter uses result['company'] -> out['company'] for the report tool."""
+        out = apply_adapter("historical_dashboard", HISTORICAL_DASHBOARD)
+        assert out["company"] == "PETR4"
+
+    def test_kpi_with_raw_number_value_is_formatted(self):
+        """If a KPI value is a raw number (not pre-formatted), the adapter
+        should re-format it via apply_fmt using the unit -> spec map."""
+        result = dict(HISTORICAL_DASHBOARD)
+        result["kpis"] = [
+            {"label": "P/L", "value": 4.95, "unit": "ratio"},
+            {"label": "ROE", "value": 0.20, "unit": "pct"},
+        ]
+        out = apply_adapter("historical_dashboard", result)
+        pl = next(k for k in out["kpis"] if k["label"] == "P/L")
+        # 4.95 -> "4,95" via num spec.
+        assert pl["format"] == "num"
+        assert "," in pl["value"] or "." in pl["value"]
+        roe = next(k for k in out["kpis"] if k["label"] == "ROE")
+        # 0.20 -> "20,00%" via pct spec.
+        assert roe["value"].endswith("%")
+        assert roe["format"] == "pct"
 

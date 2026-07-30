@@ -6,16 +6,23 @@
 
 For the engine/metric library architecture, see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md). This doc covers only the historical-specific layer.
 
-**Current scope (v2.2):** 18 engines in 7 categories + 21 metrics in 2 types — all in calculations/. Historical exposes 19 modes (17 auto-generated `<metric>_history` + `ratio_history` + `summary`).
+**Current scope (v1.2):** Engines + metrics live in `calculations/` (see [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md)). Historical exposes 40 modes total: 37 auto-generated `<metric>_history` (one per metric in calculations) + 3 explicit (`ratio_history`, `summary`, `dashboard`).
 
 ## 🔗 Source Code Reference
 
-Historical is a thin wrapper — only 2 source files. The engine/metric library lives in `calculations/`.
+Historical is a thin wrapper — modularized in v1.2 into `_registry.py` + `modes/` + `helpers.py` + `report.py`. The engine/metric library lives in `calculations/`.
 
 | File | Purpose |
 |---|---|
 | `skills/cvm/historical/__init__.py` | MANIFEST + route — modes auto-generated from the metric registry (imported from calculations) |
-| `skills/cvm/historical/historical.py` | Main: `_metric_history()`, `ratio_history()`, `summary()`. Auto-generates `<metric>_history` functions from the registry. Handles BOTH per-share+ratio and fundamental-ratio metrics via `per_share_key` check. Imports `resolve_metric`, `list_metrics`, `METRICS` from `skills.cvm.calculations._registry`. |
+| `skills/cvm/historical/_registry.py` | Skill-level registry: `ModeSpec` + `@register_mode` + auto-discovery (`modes/*.py`) — mirrors the financials/valuation/comparison/backtest/dividends/governance modular pattern |
+| `skills/cvm/historical/helpers.py` | Historical-specific helpers (date windowing, freshness wrapping, metric-aware summary rendering) extracted from the old monolithic `historical.py` |
+| `skills/cvm/historical/report.py` | Skill-level report helpers (consumed by adapters) |
+| `skills/cvm/historical/modes/ratio_history.py` | `mode="ratio_history"` — generic dispatch via `resolve_metric()` |
+| `skills/cvm/historical/modes/summary.py` | `mode="summary"` — percentile analysis (cheap/fair/expensive) over N-month window |
+| `skills/cvm/historical/modes/dashboard.py` | `mode="dashboard"` (v1.2) — multi-tab dashboard payload for the report tool |
+| `tools/report_ops/adapters/historical.py` | Auto-registered `historical_<metric>_chart` chart adapters + `historical_summary` table adapter |
+| `tools/report_ops/adapters/historical_dashboard.py` | `historical_dashboard` adapter (v1.2 — 71st adapter) |
 
 **Engine/metric library (in calculations/):**
 
@@ -65,13 +72,20 @@ This means historical stays in sync with calculations automatically — when a m
 ## 🌳 Module Tree
 
 ```text
-skills/cvm/historical/                       # THIN WRAPPER — only 2 source files
-├── __init__.py              # MANIFEST + route — modes auto-generated from calculations registry
-└── historical.py            # _metric_history(), ratio_history(), summary() — handles BOTH metric types
+skills/cvm/historical/                       # THIN WRAPPER — modularized in v1.2
+├── __init__.py              # MANIFEST + route — modes auto-generated from calculations registry + skill _registry.py
+├── _registry.py             # Skill-level ModeSpec + @register_mode + auto-discovery (modes/*.py)
+├── helpers.py               # Historical-specific helpers (date windowing, freshness, summary rendering)
+├── report.py                # Skill-level report helpers (consumed by adapters)
+└── modes/
+    ├── __init__.py
+    ├── ratio_history.py     # mode="ratio_history" — generic metric dispatch via resolve_metric()
+    ├── summary.py           # mode="summary" — percentile analysis (cheap/fair/expensive)
+    └── dashboard.py         # mode="dashboard" (v1.2) — multi-tab dashboard payload
 
-skills/cvm/calculations/                     # SHARED ENGINE/METRIC LIBRARY
+skills/cvm/calculations/                     # SHARED ENGINE/METRIC LIBRARY (unchanged in v1.2)
 ├── _registry.py             # CENTRAL: EngineSpec + MetricSpec + auto-discovery + resolve_metric + categories
-├── engines/                 # 18 engines — see calculations/ARCHITECTURE.md for full list
+├── engines/                 # 37 metrics in calculations/metrics/ — see calculations/ARCHITECTURE.md for full list
 │   ├── __init__.py
 │   ├── price.py             # market — COTAHIST
 │   ├── dividends.py         # market — B3 cash_dividends DPA TTM
@@ -89,7 +103,7 @@ skills/cvm/calculations/                     # SHARED ENGINE/METRIC LIBRARY
 │   ├── current_liabilities.py # bpp — DFP+ITR BPP 2.01 snapshot
 │   ├── da.py                # dfc — DFP+ITR DFC %deprec%/%amort% TTM (description search)
 │   └── capex.py             # dfc — DFP+ITR DFC %imobilizado%/%intangivel% TTM (description search)
-└── metrics/                 # 21 metrics — see calculations/ARCHITECTURE.md for full list
+└── metrics/                 # 37 metrics — see calculations/ARCHITECTURE.md for full list
     ├── __init__.py
     ├── lpa.py               # Type 1: LPA + P/L
     ├── vpa.py               # Type 1: VPA + P/VPA
@@ -99,18 +113,11 @@ skills/cvm/calculations/                     # SHARED ENGINE/METRIC LIBRARY
     ├── roe.py               # Type 2: ROE
     ├── roa.py               # Type 2: ROA
     ├── roic.py              # Type 2: ROIC (5 engines)
-    ├── gross_margin.py      # Type 2: Margem Bruta
-    ├── operating_margin.py  # Type 2: Margem Operacional
-    ├── net_margin.py        # Type 2: Margem Líquida
-    ├── ebitda_margin.py     # Type 2: Margem EBITDA
-    ├── debt_equity.py       # Type 2: Dívida/PL
-    ├── net_debt_ebitda.py   # Type 2: DL/EBITDA
-    ├── asset_turnover.py    # Type 2: Giro de Ativos
-    ├── capex_revenue.py     # Type 2: CapEx/Receita
-    └── current_ratio.py     # Type 2: Liquidez Corrente
+    └── ...                  # (29 more — see calculations/ARCHITECTURE.md)
 
 tools/report_ops/adapters/
-└── historical.py            # Auto-registered chart adapters + metric-aware summary adapter
+├── historical.py            # Auto-registered chart adapters + metric-aware summary adapter
+└── historical_dashboard.py  # historical_dashboard adapter (v1.2 — 71st adapter)
 ```
 
 ---
@@ -465,4 +472,4 @@ tests/skills/cvm/
 
 ---
 
-*Last updated: v2.2 (Phase 1 refactor — engines + metrics + registry extracted to calculations/). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for engine/metric library architecture.*
+*Last updated: v1.2 (modular split + dashboard mode — `_registry.py` + `modes/` + `helpers.py` + `report.py`). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for engine/metric library architecture.*
