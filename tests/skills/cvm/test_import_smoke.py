@@ -41,6 +41,13 @@ class TestImportSmoke:
         "skills.cvm.governance",
         "skills.cvm.historical",
         "skills.cvm.calculations",
+        # [v1.8] Added the 4 skills that were split in the modular refactor.
+        # Without these, a stale import path in screener/shareholders/insider/investsite
+        # would go undetected until a user calls the skill.
+        "skills.cvm.screener",
+        "skills.cvm.shareholders",
+        "skills.cvm.insider",
+        "skills.investsite",
     ])
     def test_skill_imports(self, skill):
         errors = _import_all_modules(skill)

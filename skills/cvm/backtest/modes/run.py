@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from skills.cvm._freshness import add_freshness
 from skills.cvm.backtest._registry import register_mode
 from skills.cvm.backtest.helpers import (
     BUILTIN_STRATEGIES,
@@ -278,4 +277,8 @@ def run(
         "equity_curve": equity_curve,
     }
 
+    # [v1.1] Lazy import — was module-level, which bound add_freshness at
+    # import time BEFORE the test fixture could patch it. This made backtest
+    # tests open 9 real SQLite DBs per call (mock_freshness didn't apply).
+    from skills.cvm._freshness import add_freshness
     return add_freshness(result)

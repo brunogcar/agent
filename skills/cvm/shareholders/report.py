@@ -14,8 +14,32 @@ the top level of the dashboard payload (not inside a section).
 from __future__ import annotations
 
 from typing import Any
+from datetime import date
 
 from tools.report_ops.formats import apply_fmt
+
+
+# ── Staleness warning helper ──────────────────────────────────────────────────
+
+def _staleness_note(data_referencia: str) -> str:
+    """Return a warning string if data_referencia is >2 years old.
+
+    Returns "" if the date is recent, missing, or unparseable.
+    CVM filing gaps happen for smaller/less-liquid companies — this gives
+    the user a heads-up that the data may be stale without breaking the
+    dashboard.
+    """
+    if not data_referencia or not isinstance(data_referencia, str):
+        return ""
+    try:
+        ref = date.fromisoformat(data_referencia.strip()[:10])
+    except (ValueError, TypeError):
+        return ""
+    age_days = (date.today() - ref).days
+    if age_days > 730:  # 2 years
+        years = age_days // 365
+        return f"⚠️ Data from {data_referencia} ({years}+ years old) — may be stale."
+    return ""
 
 
 # ── BPP 2.03.* code -> display label ─────────────────────────────────────────
@@ -233,7 +257,9 @@ def build_top_shareholders_section(summary_result: dict) -> dict:
         "rows": rows,
         "formats": formats,
         "note": (f"Data de referência: {sh.get('data_referencia', '—')}. "
-                 "Top 5 acionistas por % total."),
+                 "Top 5 acionistas por % total."
+                 + (_staleness_note(sh.get('data_referencia', '')) and
+                    f" {_staleness_note(sh.get('data_referencia', ''))}" or '')),
     }
 
 
@@ -285,7 +311,12 @@ def build_free_float_section(summary_result: dict) -> dict:
         "rows": rows,
         "formats": formats,
         "note": (f"Data de referência: {ff.get('data_referencia', '—')}. "
-                 "% Free Float = pct_total_circulacao (ON+PN)."),
+                 "% Free Float = pct_total_circulacao (ON+PN)."
+                 + (_staleness_note(ff.get('data_referencia', '')) and
+                    f" {_staleness_note(ff.get('data_referencia', ''))}" or '')
+                 + (" (approximate — shareholder list truncated at 50)"
+                    if summary_result.get("sections", {}).get("_free_float_approximate")
+                    else "")),
     }
 
 

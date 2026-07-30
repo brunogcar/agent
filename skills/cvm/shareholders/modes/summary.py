@@ -74,6 +74,13 @@ def summary(company: str = "") -> dict:
             # name mismatch for some years -> stored as NULL), compute it from
             # posicao_acionaria: free_float = 100 - sum(pct_total for all
             # named shareholders). This gives an approximate free float %.
+            #
+            # [v6] Truncation guard: if shareholders() returned exactly 50 rows
+            # (the limit), the sum may be incomplete (there could be more
+            # shareholders not fetched). In that case, the computed pct_ff is
+            # approximate — we still return it but the dashboard will show
+            # a note. This is rare (most companies have <50 named shareholders
+            # in a single filing).
             if pct_ff is None:
                 try:
                     sh = _shareholders(company=company, limit=50)
@@ -83,6 +90,9 @@ def summary(company: str = "") -> dict:
                         )
                         if named_pct > 0:
                             pct_ff = max(0.0, 100.0 - named_pct)
+                            # [v6] Flag if the shareholder list was truncated.
+                            if len(sh["shareholders"]) >= 50:
+                                result["sections"]["_free_float_approximate"] = True
                 except Exception:
                     pass
 

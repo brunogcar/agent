@@ -143,6 +143,17 @@ class TestCADSearch:
         assert result["total_matches"] == 1
         assert "PETROBRAS" in result["companies"][0]["DENOM_SOCIAL"]
 
+    def test_search_by_setor_ascii_only(self, cad_db):
+        """[v1.2] ASCII-only search 'Petroleo' (no accents) should match
+        accented DB value 'Petróleo'. This is the case the v1.1 fix missed —
+        it only worked when the search term had the same accents as the DB.
+        The v1.2 unaccent() function strips diacritics from BOTH sides."""
+        from data_sources.cvm.cad.query_engine import search
+        result = search(setor="Petroleo")
+        assert result["status"] == "ok"
+        assert result["total_matches"] == 1
+        assert "PETROBRAS" in result["companies"][0]["DENOM_SOCIAL"]
+
     def test_search_by_setor_mining(self, cad_db):
         from data_sources.cvm.cad.query_engine import search
         result = search(setor="Minera")
@@ -154,6 +165,14 @@ class TestCADSearch:
         """[v1.1] Search with accented sector name 'Mineração' should work."""
         from data_sources.cvm.cad.query_engine import search
         result = search(setor="Mineração")
+        assert result["status"] == "ok"
+        assert result["total_matches"] == 1
+        assert "VALE" in result["companies"][0]["DENOM_SOCIAL"]
+
+    def test_search_by_setor_mining_ascii_only(self, cad_db):
+        """[v1.2] ASCII-only search 'Mineracao' should match 'Mineração'."""
+        from data_sources.cvm.cad.query_engine import search
+        result = search(setor="Mineracao")
         assert result["status"] == "ok"
         assert result["total_matches"] == 1
         assert "VALE" in result["companies"][0]["DENOM_SOCIAL"]

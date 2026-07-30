@@ -15,10 +15,28 @@ Without the bridge, users can search by name fragment or CNPJ directly.
 from __future__ import annotations
 
 import sqlite3
+import unicodedata
 from typing import Any
 
 from data_sources.cvm._db import connect_cad, cnpj_digits
 from data_sources.cvm.cad.catalog import ALL_COLS, DEFAULT_COLS
+
+
+def _unaccent(s: Any) -> str:
+    """Strip diacritics from a string, returning ASCII-only.
+
+    "Petróleo e Gás" -> "Petroleo e Gas"
+    "Mineração" -> "Mineracao"
+    None -> None
+
+    Registered as a custom SQLite function so we can do accent-insensitive
+    LIKE queries: unaccent(SETOR_ATIV) LIKE unaccent(?) COLLATE NOCASE.
+    """
+    if s is None:
+        return None
+    if not isinstance(s, str):
+        s = str(s)
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
 
 
 def lookup(
@@ -123,6 +141,12 @@ def search(
     """
     conn = connect_cad(read_only=True)
     try:
+        # [v1.2] Register custom unaccent() function for accent-insensitive search.
+        # This handles all combinations: accented search + accented DB, ASCII
+        # search + accented DB, mixed case. The old UPPER()-only approach failed
+        # because SQLite's UPPER() doesn't fold accented chars.
+        conn.create_function("unaccent", 1, _unaccent)
+
         parts: list[str] = []
         params: list = []
 
@@ -132,19 +156,14 @@ def search(
             params.extend([pct, pct])
 
         if setor:
-            # [v1.1] SQLite's UPPER() doesn't handle accented chars (é, á, ç, etc.),
-            # so "UPPER(SETOR_ATIV) LIKE '%PETRÓLEO%'" fails to match "Petróleo e Gás"
-            # because SQLite UPPER() leaves accented chars unchanged.
-            # Fix: normalize both the search term and the SQL to ASCII before LIKE.
-            # We use the `unaccent` approach: strip diacritics from both sides.
-            # Since SQLite doesn't have a built-in unaccent, we normalize the search
-            # term to ASCII and use LIKE with COLLATE NOCASE (case-insensitive but
-            # accent-sensitive). To handle accents in the DB data, we also try the
-            # raw search term.
-            import unicodedata
-            setor_ascii = unicodedata.normalize("NFKD", setor).encode("ascii", "ignore").decode("ascii")
-            parts.append("(SETOR_ATIV LIKE ? COLLATE NOCASE OR SETOR_ATIV LIKE ? COLLATE NOCASE)")
-            params.extend([f"%{setor}%", f"%{setor_ascii}%"])
+            # [v1.2] Accent-insensitive sector search via custom unaccent() function.
+            # Strips diacritics from BOTH the column value AND the search term,
+            # then does case-insensitive LIKE. Handles all combinations:
+            #   "Petróleo" matches "Petróleo e Gás"  (accented search, accented DB)
+            #   "Petroleo" matches "Petróleo e Gás"  (ASCII search, accented DB)
+            #   "petroleo" matches "PETRÓLEO E GÁS"  (lowercase ASCII, uppercase accented)
+            parts.append("unaccent(SETOR_ATIV) LIKE unaccent(?) COLLATE NOCASE")
+            params.append(f"%{setor}%")
 
         if sit:
             parts.append("UPPER(SIT) = ?")
