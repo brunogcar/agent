@@ -76,6 +76,12 @@ def shareholders(company: str = "", limit: int = 50) -> dict:
         cnpj = cnpjs[0]
         placeholders = ",".join("?" * 1)
 
+        # [v1.1] Fixed: filter to the LATEST filing period only, then sort
+        # by pct_total DESC. The old query had no date filter + sorted purely
+        # by pct_total DESC across ALL years — which returned the highest-%
+        # shareholder from ANY year (often a stale 2010 controlling stake),
+        # not the latest filing's shareholder list. This caused the dashboard
+        # to show "Data de referência: 2010-01-01" even when 2026 data existed.
         rows = conn.execute(
             f"""SELECT acionista, cpf_cnpj_acionista, tipo_pessoa,
                       acionista_controlador, pct_on, pct_pn, pct_total,
@@ -83,9 +89,14 @@ def shareholders(company: str = "", limit: int = 50) -> dict:
                       data_referencia, versao, nome_companhia
                FROM posicao_acionaria
                WHERE cnpj = ?
+                 AND data_referencia = (
+                   SELECT MAX(data_referencia)
+                   FROM posicao_acionaria
+                   WHERE cnpj = ?
+                 )
                ORDER BY pct_total DESC
                LIMIT ?""",
-            (cnpj, limit),
+            (cnpj, cnpj, limit),
         ).fetchall()
 
         if not rows:

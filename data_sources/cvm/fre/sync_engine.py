@@ -256,16 +256,21 @@ def _store_posicao_acionaria(conn: sqlite3.Connection, rows: list[dict]) -> int:
                 (r.get("Nome_Companhia") or "").strip(),
                 (r.get("Acionista") or "").strip(),
                 cnpj_digits(r.get("CPF_CNPJ_Acionista", "")),
-                (r.get("Tipo_Pessoa") or "").strip(),
+                # [v1.1] Fixed — CVM uses Tipo_Pessoa_Acionista.
+                (r.get("Tipo_Pessoa_Acionista") or "").strip(),
                 (r.get("Nacionalidade") or "").strip(),
                 (r.get("Acionista_Controlador") or "").strip(),
                 (r.get("Participante_Acordo_Acionistas") or "").strip(),
-                _safe_float(r.get("Pct_ON", "")),
-                _safe_float(r.get("Pct_PN", "")),
-                _safe_float(r.get("Pct_Total", "")),
-                _safe_int(r.get("Qtd_ON", "")),
-                _safe_int(r.get("Qtd_PN", "")),
-                _safe_int(r.get("Qtd_Total", "")),
+                # [v1.1] Fixed column names — CVM FRE CSV uses full names
+                # (Percentual_Acao_Ordinaria_Circulacao, not Pct_ON).
+                # The old abbreviated names caused all pct/qtd values to be
+                # stored as NULL (r.get returned "" -> _safe_float -> None).
+                _safe_float(r.get("Percentual_Acao_Ordinaria_Circulacao", "")),
+                _safe_float(r.get("Percentual_Acao_Preferencial_Circulacao", "")),
+                _safe_float(r.get("Percentual_Total_Acoes_Circulacao", "")),
+                _safe_int(r.get("Quantidade_Acao_Ordinaria_Circulacao", "")),
+                _safe_int(r.get("Quantidade_Acao_Preferencial_Circulacao", "")),
+                _safe_int(r.get("Quantidade_Total_Acoes_Circulacao", "")),
             ),
         )
         count += 1
@@ -292,15 +297,17 @@ def _store_distribuicao_capital(conn: sqlite3.Connection, rows: list[dict]) -> i
                 (r.get("Data_Referencia") or "").strip(),
                 _safe_int(r.get("Versao", "1")) or 1,
                 (r.get("Nome_Companhia") or "").strip(),
-                _safe_float(r.get("Pct_ON_Circulacao", "")),
-                _safe_float(r.get("Pct_PN_Circulacao", "")),
-                _safe_float(r.get("Pct_Total_Circulacao", "")),
-                _safe_int(r.get("Qtd_ON_Circulacao", "")),
-                _safe_int(r.get("Qtd_PN_Circulacao", "")),
-                _safe_int(r.get("Qtd_Total_Circulacao", "")),
-                _safe_int(r.get("Qtd_Acionistas_PF", "")),
-                _safe_int(r.get("Qtd_Acionistas_PJ", "")),
-                _safe_int(r.get("Qtd_Acionistas_Institucionais", "")),
+                # [v1.1] Fixed column names — CVM FRE CSV uses full names
+                # (Percentual_Acoes_Ordinarias_Circulacao, not Pct_ON_Circulacao).
+                _safe_float(r.get("Percentual_Acoes_Ordinarias_Circulacao", "")),
+                _safe_float(r.get("Percentual_Acoes_Preferenciais_Circulacao", "")),
+                _safe_float(r.get("Percentual_Total_Acoes_Circulacao", "")),
+                _safe_int(r.get("Quantidade_Acoes_Ordinarias_Circulacao", "")),
+                _safe_int(r.get("Quantidade_Acoes_Preferenciais_Circulacao", "")),
+                _safe_int(r.get("Quantidade_Total_Acoes_Circulacao", "")),
+                _safe_int(r.get("Quantidade_Acionistas_PF", "")),
+                _safe_int(r.get("Quantidade_Acionistas_PJ", "")),
+                _safe_int(r.get("Quantidade_Acionistas_Investidores_Institucionais", "")),
                 (r.get("Data_Ultima_Assembleia") or "").strip(),
             ),
         )
@@ -328,9 +335,11 @@ def _store_remuneracao_orgao(conn: sqlite3.Connection, rows: list[dict]) -> int:
                 (r.get("Data_Referencia") or "").strip(),
                 _safe_int(r.get("Versao", "1")) or 1,
                 (r.get("Nome_Companhia") or "").strip(),
-                (r.get("Orgao") or "").strip(),
-                (r.get("Data_Inicio_Exercicio") or "").strip(),
-                (r.get("Data_Fim_Exercicio") or "").strip(),
+                # [v1.1] Fixed column names — CVM uses Orgao_Administracao,
+                # Data_Inicio_Exercicio_Social, Data_Fim_Exercicio_Social.
+                (r.get("Orgao_Administracao") or "").strip(),
+                (r.get("Data_Inicio_Exercicio_Social") or "").strip(),
+                (r.get("Data_Fim_Exercicio_Social") or "").strip(),
                 _safe_float(r.get("Numero_Membros", "")),
                 _safe_float(r.get("Numero_Membros_Remunerados", "")),
                 _safe_float(r.get("Salario", "")),
@@ -366,10 +375,12 @@ def _store_capital_social(conn: sqlite3.Connection, rows: list[dict]) -> int:
                 (r.get("Nome_Companhia") or "").strip(),
                 (r.get("Tipo_Capital") or "").strip(),
                 _safe_float(r.get("Valor_Capital", "")),
-                _safe_int(r.get("Qtd_Acoes_ON", "")),
-                _safe_int(r.get("Qtd_Acoes_PN", "")),
-                _safe_int(r.get("Qtd_Acoes_Total", "")),
-                (r.get("Data_Aprovacao") or "").strip(),
+                # [v1.1] Fixed column names — CVM uses Quantidade_Acoes_*,
+                # Data_Autorizacao_Aprovacao.
+                _safe_int(r.get("Quantidade_Acoes_Ordinarias", "")),
+                _safe_int(r.get("Quantidade_Acoes_Preferenciais", "")),
+                _safe_int(r.get("Quantidade_Total_Acoes", "")),
+                (r.get("Data_Autorizacao_Aprovacao") or "").strip(),
             ),
         )
         count += 1

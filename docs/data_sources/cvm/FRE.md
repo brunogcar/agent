@@ -9,6 +9,7 @@ FRE is the CVM annual governance filing. Contains shareholder composition, free 
 - **5 tables imported** (out of 50+ CSVs in the ZIP) — documentos, posicao_acionaria, distribuicao_capital, remuneracao_orgao, capital_social.
 - **Point-in-time snapshots** — annual filings, not period flows. No meses/flow/snapshot concept.
 - **7 modes** — sync, status, shareholders, free_float, compensation, capital, search.
+- **[v1.1] Column name fix** — the sync engine now uses the correct CVM CSV column names (`Percentual_Total_Acoes_Circulacao` instead of the abbreviated `Pct_Total_Circulacao`). If you synced before 2026-07-30, **re-sync required** to populate previously-NULL pct/qtd values.
 
 ---
 
@@ -49,15 +50,22 @@ D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.fre.sync_engine i
 D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.cvm.fre.sync_engine import sync; print(sync(years=[2024]))"
 ```
 
+> **[v1.1] Re-sync required if you synced before 2026-07-30.**
+> The sync engine had a column name mismatch (used abbreviated names like
+> `Pct_Total_Circulacao` but CVM CSV uses full names like
+> `Percentual_Total_Acoes_Circulacao`). This caused all pct/qtd values to
+> be stored as NULL. Run the full sync command above to re-populate with
+> correct values.
+
 ## 📁 Subfile Directory
 
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](fre/ARCHITECTURE.md) | 5-table schema, source code reference, design decisions |
 | [API.md](fre/API.md) | 7 modes: sync, status, shareholders, free_float, compensation, capital, search |
-| [CHANGELOG.md](fre/CHANGELOG.md) | Version history (v1.0 → v1.0.1) |
+| [CHANGELOG.md](fre/CHANGELOG.md) | Version history (v1.0 → v1.1) |
 | [INSTRUCTIONS.md](fre/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-23 (v1.0.1).*
+*Last updated: 2026-07-30 (v1.1 — column name fix + re-sync required).*
