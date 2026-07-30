@@ -22,6 +22,33 @@ contas   (id_empresa, codigo, descricao, grupo, consolidado,
 sync_state (form, year, synced_at, row_count, file_size)
 ```
 
+### CSV → DB Column Mapping
+
+The sync engine renames CVM CSV columns to shorter DB column names. This is
+intentional (v1.0 design decision — keeps SQL queries concise). When writing
+raw SQL against `dfp.db` or `itr.db`, use the **DB column name**, not the CSV name:
+
+| CVM CSV column | DB column | Type | Notes |
+|---|---|---|---|
+| `CNPJ_CIA` | `empresas.cnpj` | TEXT | Digits only (no formatting) |
+| `DENOM_CIA` | `empresas.nome` | TEXT | Company name |
+| `CD_CVM` | `empresas.cd_cvm` | TEXT | CVM company ID |
+| `DT_FIM_EXERC` | `empresas.ano` + `contas.data_fim_exerc` | TEXT | `ano` = fiscal year (first 4 chars) |
+| `CD_CONTA` | `contas.codigo` | TEXT | Account code (e.g. "1.1.01")
+| `DS_CONTA` | `contas.descricao` | TEXT | Account description |
+| `GRUPO_DFP` | `contas.grupo` | TEXT | Statement group (BPA/BPP/DRE/DFC/DVA) |
+| `DT_INI_EXERC` | `contas.data_ini_exerc` | TEXT | Empty for snapshots (BPA/BPP) |
+| `VL_CONTA` | `contas.valor` | REAL | **Multiply by `escala` for BRL amounts** |
+| `ESCALA_MOEDA` | `contas.escala` | TEXT | "MIL" (thousands) or "MILHOES" (millions) |
+| `MOEDA` | `contas.moeda` | TEXT | Usually "REAL" |
+| `ORDEM_EXERC` | `contas.ordem_exerc` | TEXT | "ÚLTIMO" or "PENÚLTIMO" |
+| `VERSAO` | `contas.versao` | INTEGER | Filing version |
+| `ST_CONTA_FIXA` | `contas.st_conta_fixa` | TEXT | Fixed account flag |
+
+> **Note:** ITR (`itr.db`) uses the same schema + column names. See [ITR ARCHITECTURE](../itr/ARCHITECTURE.md).
+>
+> **Other CVM data sources** (FRE, IPE, VLMO, CGVN, FCA) keep the CSV column names as-is in the DB — no renaming. Only DFP + ITR use this abbreviated schema.
+
 ## Data Flow
 
 ```
@@ -37,4 +64,4 @@ CVM ZIP → parse CSV → compute meses → filter ORDEM_EXERC → dedup VERSAO 
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+*Last updated: 2026-07-30 (v1.0.1 — added CSV → DB column mapping table).*
