@@ -21,8 +21,12 @@ from tools.report_ops.formats import apply_fmt
 
 # ── Staleness warning helper ──────────────────────────────────────────────────
 
-def _staleness_note(data_referencia: str) -> str:
-    """Return a warning string if data_referencia is >2 years old.
+def _staleness_note(data_referencia: str, threshold_days: int = 730) -> str:
+    """Return a warning string if data_referencia is older than threshold_days.
+
+    [v1.2] Added threshold_days parameter (default 730 = 2 years) so callers
+    can customize per data source. FRE (annual) uses 730; VLMO (continuous)
+    would use 60; ITR (quarterly) would use 365.
 
     Returns "" if the date is recent, missing, or unparseable.
     CVM filing gaps happen for smaller/less-liquid companies — this gives
@@ -36,9 +40,13 @@ def _staleness_note(data_referencia: str) -> str:
     except (ValueError, TypeError):
         return ""
     age_days = (date.today() - ref).days
-    if age_days > 730:  # 2 years
-        years = age_days // 365
-        return f"⚠️ Data from {data_referencia} ({years}+ years old) — may be stale."
+    if age_days > threshold_days:
+        if threshold_days >= 365:
+            years = age_days // 365
+            return f"⚠️ Data from {data_referencia} ({years}+ years old) — may be stale."
+        else:
+            months = age_days // 30
+            return f"⚠️ Data from {data_referencia} ({months}+ months old) — may be stale."
     return ""
 
 

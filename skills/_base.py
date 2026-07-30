@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -81,6 +82,9 @@ class ModeSpec:
         params:      Dict of param_name -> description string.
         include_in_all: If True, this mode runs when sub_domain="all".
         examples:    List of example call strings.
+        params_set:  [v1.1] Cached set of accepted parameter names (from
+                     inspect.signature(fn)). Avoids re-calling inspect.signature
+                     on every route() dispatch.
     """
     name: str
     fn: Callable
@@ -88,6 +92,7 @@ class ModeSpec:
     params: dict[str, str] = field(default_factory=dict)
     include_in_all: bool = False
     examples: list[str] = field(default_factory=list)
+    params_set: set = field(default_factory=set)
 
 
 # ── Registry factory ─────────────────────────────────────────────────────────
@@ -138,6 +143,11 @@ def make_registry() -> tuple[dict[str, ModeSpec], Callable]:
         def decorator(fn: Callable) -> Callable:
             if name in MODES:
                 raise ValueError(f"Duplicate mode registration: '{name}'")
+            # [v1.1] Cache the function's accepted parameter names once at
+            # registration time, so route() doesn't re-call inspect.signature
+            # on every dispatch.
+            sig = inspect.signature(fn)
+            accepted = set(sig.parameters.keys())
             MODES[name] = ModeSpec(
                 name=name,
                 fn=fn,
@@ -145,6 +155,7 @@ def make_registry() -> tuple[dict[str, ModeSpec], Callable]:
                 params=params or {},
                 include_in_all=include_in_all,
                 examples=examples or [],
+                params_set=accepted,
             )
             return fn
         return decorator
@@ -194,15 +205,31 @@ def auto_discover_modes(package_path: str) -> None:
     __init__.py AFTER importing the _registry (so MODES exists) and BEFORE
     building the MANIFEST (so all modes are registered).
 
+    [v1.1] Added warning when modes/ directory is missing or empty —
+    prevents a silent 0-mode skill (e.g. typo'd folder name) from going
+    unnoticed until a user tries to call it.
+
     Args:
         package_path: Dotted package path, e.g. "skills.cvm.governance"
                       or "skills.investsite". Use __name__ in __init__.py.
     """
     pkg = importlib.import_module(package_path)
     modes_dir = Path(pkg.__file__).parent / "modes"
-    for py_file in sorted(modes_dir.glob("*.py")):
-        if py_file.name == "__init__.py":
-            continue
+
+    if not modes_dir.is_dir():
+        print(f"[skills._base] WARNING: no modes/ directory found for "
+              f"{package_path} — skill will have 0 modes. Check the folder "
+              f"name for typos.", file=sys.stderr)
+        return
+
+    py_files = sorted(f for f in modes_dir.glob("*.py") if f.name != "__init__.py")
+    if not py_files:
+        print(f"[skills._base] WARNING: modes/ directory for {package_path} "
+              f"is empty (no .py files except __init__.py) — skill will have "
+              f"0 modes.", file=sys.stderr)
+        return
+
+    for py_file in py_files:
         module_name = f"{package_path}.modes.{py_file.stem}"
         importlib.import_module(module_name)
 
@@ -267,8 +294,12 @@ def _dispatch(
 
     spec = MODES[mode]
     fn = spec.fn
-    sig = inspect.signature(fn)
-    accepted = set(sig.parameters.keys())
+    # [v1.1] Use cached params_set instead of re-calling inspect.signature
+    # on every dispatch (Qwen's performance finding).
+    accepted = spec.params_set
+    if not accepted:
+        # Fallback: compute on first use if cache wasn't populated
+        accepted = set(inspect.signature(fn).parameters.keys())
     filtered = {k: v for k, v in kwargs.items() if k in accepted}
 
     try:

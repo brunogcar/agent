@@ -83,7 +83,12 @@ def summary(company: str = "") -> dict:
             # in a single filing).
             if pct_ff is None:
                 try:
-                    sh = _shareholders(company=company, limit=50)
+                    # [v1.2] Raised limit from 50 to 500 for the fallback sum
+                    # (Qwen + Claude finding). The display tab still uses 10,
+                    # but the fallback needs a wider net to compute 100 - named
+                    # accurately. Most companies have <50 named shareholders,
+                    # but complex ownership structures can exceed that.
+                    sh = _shareholders(company=company, limit=500)
                     if sh.get("status") == "ok" and sh.get("shareholders"):
                         named_pct = sum(
                             (s.get("pct_total") or 0) for s in sh["shareholders"]
@@ -91,7 +96,7 @@ def summary(company: str = "") -> dict:
                         if named_pct > 0:
                             pct_ff = max(0.0, 100.0 - named_pct)
                             # [v6] Flag if the shareholder list was truncated.
-                            if len(sh["shareholders"]) >= 50:
+                            if len(sh["shareholders"]) >= 500:
                                 result["sections"]["_free_float_approximate"] = True
                 except Exception:
                     pass

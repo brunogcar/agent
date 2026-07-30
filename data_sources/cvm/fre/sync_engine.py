@@ -142,16 +142,67 @@ def _download_zip(url: str, timeout: int = 120) -> bytes:
 
 # ── CSV helpers ───────────────────────────────────────────────────────────────
 
-def _read_csv_from_zip(zf: zipfile.ZipFile, name_fragment: str) -> list[dict]:
-    """Find a CSV in the ZIP whose name contains `name_fragment` and parse it."""
-    for info in zf.infolist():
-        if not info.filename.endswith(".csv"):
-            continue
-        if name_fragment in info.filename.lower():
-            raw = zf.read(info.filename)
-            text = raw.decode(CSV_ENCODING, errors="replace")
-            reader = csv.DictReader(io.StringIO(text), delimiter=CSV_DELIMITER)
-            return list(reader)
+def _read_csv_from_zip(zf: zipfile.ZipFile, name_fragment: str, year: int | None = None) -> list[dict]:
+    """Find a CSV in the ZIP matching `name_fragment` and parse it.
+
+    [v1.2] Fixed: was loose substring match (`fragment in filename`) which could
+    match sibling files (e.g. "posicao_acionaria" matched BOTH
+    posicao_acionaria_2026.csv AND posicao_acionaria_classe_acao_2026.csv —
+    whichever came first in the zip listing). Now uses exact match against
+    `fre_cia_aberta_{fragment}_{year}.csv` when year is provided, with a
+    fallback that explicitly excludes suffixed variants (_classe_acao,
+    _aumento, _desdobramento, _reducao, etc.).
+    """
+    # Build the list of files to check, sorted for deterministic order.
+    csv_files = [info for info in zf.infolist() if info.filename.lower().endswith(".csv")]
+
+    # If year is provided, try exact match first: fre_cia_aberta_{fragment}_{year}.csv
+    # (or fre_cia_aberta_{year}.csv when fragment is empty — for documentos)
+    if year is not None:
+        if name_fragment:
+            exact_name = f"fre_cia_aberta_{name_fragment}_{year}.csv".lower()
+        else:
+            exact_name = f"fre_cia_aberta_{year}.csv".lower()
+        for info in csv_files:
+            if info.filename.lower() == exact_name:
+                raw = zf.read(info.filename)
+                text = raw.decode(CSV_ENCODING, errors="replace")
+                reader = csv.DictReader(io.StringIO(text), delimiter=CSV_DELIMITER)
+                return list(reader)
+
+    # Fallback: match files that START with fre_cia_aberta_{fragment}_ AND end
+    # with _{year}.csv (or just .csv if year is None). This excludes siblings
+    # like _classe_acao, _aumento, etc. because those have an extra segment
+    # between the fragment and the year.
+    if name_fragment:
+        prefix = f"fre_cia_aberta_{name_fragment}_".lower()
+    else:
+        prefix = "fre_cia_aberta_".lower()
+    suffix = f"_{year}.csv" if year is not None else ".csv"
+
+    for info in csv_files:
+        lower = info.filename.lower()
+        if lower.startswith(prefix) and lower.endswith(suffix):
+            # Exclude suffixed variants: the part between prefix and suffix
+            # should be JUST the year (4 digits), not a sub-table name.
+            middle = lower[len(prefix):-len(suffix)]
+            if year is not None:
+                # When year is provided, middle should be empty (exact match
+                # already tried above) — this handles edge cases.
+                if middle == "":
+                    raw = zf.read(info.filename)
+                    text = raw.decode(CSV_ENCODING, errors="replace")
+                    reader = csv.DictReader(io.StringIO(text), delimiter=CSV_DELIMITER)
+                    return list(reader)
+            else:
+                # No year: accept only if middle is a 4-digit year (not a
+                # sub-table name like "classe_acao").
+                if middle.isdigit() and len(middle) == 4:
+                    raw = zf.read(info.filename)
+                    text = raw.decode(CSV_ENCODING, errors="replace")
+                    reader = csv.DictReader(io.StringIO(text), delimiter=CSV_DELIMITER)
+                    return list(reader)
+
     return []
 
 
@@ -180,27 +231,28 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str) 
     counts = {}
 
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-        # 1. Documentos (filing index)
-        rows = _read_csv_from_zip(zf, f"fre_cia_aberta_{year}.csv")
+        # 1. Documentos (filing index) — the documentos file is just
+        # fre_cia_aberta_{year}.csv (no table-name fragment in the middle).
+        rows = _read_csv_from_zip(zf, "", year=year)
         if not rows:
-            # Try without year suffix (some ZIPs name differently)
-            rows = _read_csv_from_zip(zf, "fre_cia_aberta_")
+            # Fallback: try without year (some older ZIPs name differently)
+            rows = _read_csv_from_zip(zf, "")
         counts["documentos"] = _store_documentos(conn, rows, year)
 
-        # 2. Posição acionária
-        rows = _read_csv_from_zip(zf, "posicao_acionaria")
+        # 2. Posição acionária — excludes posicao_acionaria_classe_acao sibling
+        rows = _read_csv_from_zip(zf, "posicao_acionaria", year=year)
         counts["posicao_acionaria"] = _store_posicao_acionaria(conn, rows)
 
-        # 3. Distribuição capital
-        rows = _read_csv_from_zip(zf, "distribuicao_capital")
+        # 3. Distribuição capital — excludes distribuicao_capital_classe_acao sibling
+        rows = _read_csv_from_zip(zf, "distribuicao_capital", year=year)
         counts["distribuicao_capital"] = _store_distribuicao_capital(conn, rows)
 
-        # 4. Remuneração
-        rows = _read_csv_from_zip(zf, "remuneracao_total_orgao")
+        # 4. Remuneração — excludes remuneracao_total_orgao siblings
+        rows = _read_csv_from_zip(zf, "remuneracao_total_orgao", year=year)
         counts["remuneracao_orgao"] = _store_remuneracao_orgao(conn, rows)
 
-        # 5. Capital social
-        rows = _read_csv_from_zip(zf, "capital_social")
+        # 5. Capital social — excludes capital_social_aumento/desdobramento/reducao siblings
+        rows = _read_csv_from_zip(zf, "capital_social", year=year)
         counts["capital_social"] = _store_capital_social(conn, rows)
 
     conn.commit()
