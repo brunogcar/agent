@@ -95,24 +95,25 @@ Engines are leaves (one per raw quantity, fetch from data sources). Metrics comp
 | dfc | da, capex, operating_cf, investing_cf, financing_cf |
 | dva | interest_paid, total_tax, value_added |
 
-### Metric inventory by type (37 metrics):
+### Metric inventory by type (46 metrics):
 
 | Type | Metrics |
 |------|---------|
-| Per-share + price ratio | lpa (LPA+P/L), vpa (VPA+P/VPA), dpa (DPA+DY+Payout), rps (RPS+PSR), ev_ebitda (EBITDA/share+EV/EBITDA), p_ebit (EBIT/share+P/EBIT), p_fco (FCO/share+P/FCO), p_fcf (FCF/share+P/FCF), price_to_tangible_book (Tangible Book/share+P/Tangible Book) |
-| Fundamental ratio | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin, debt_equity, net_debt_ebitda, asset_turnover, capex_revenue, current_ratio, graham_number, effective_tax_rate, ev_sales, ev_fcf, cash_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, quick_ratio, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover |
+| Per-share + price ratio | lpa (LPA+P/L), vpa (VPA+P/VPA), dpa (DPA+DY+Payout), rps (RPS+PSR), ev_ebitda (EBITDA/share+EV/EBITDA), p_ebit (EBIT/share+P/EBIT), p_fco (FCO/share+P/FCO), p_fcf (FCF/share+P/FCF), price_to_tangible_book (Tangible Book/share+P/Tangible Book), rbpa (RBPA+P/RB), cgpa (CGPA+P/CG), dbpa (DBPA+P/DB), apa (APA+P/Ativo), ppa (PPA+P/Passivo), p_ebitda (EBITDA/share+P/EBITDA) |
+| Fundamental ratio | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin, debt_equity, gross_debt_equity, financial_leverage, net_debt_ebitda, asset_turnover, capex_revenue, current_ratio, graham_number, effective_tax_rate, ev_sales, ev_fcf, cash_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, quick_ratio, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover |
+| Pure price ratio (no per-share) | p_ev (Price/EV) |
 
-### Metric inventory by category (v1.5 — 8 categories, 37 metrics tagged):
+### Metric inventory by category (v1.6 — 8 categories, 46 metrics tagged):
 
 | Category | Metrics |
 |----------|---------|
-| `valuation` | lpa, vpa, dpa, rps, ev_ebitda, p_ebit, p_fco, p_fcf, price_to_tangible_book, ev_sales, ev_fcf, graham_number |
+| `valuation` | lpa, vpa, dpa, rps, ev_ebitda, p_ebit, p_fco, p_fcf, price_to_tangible_book, ev_sales, ev_fcf, graham_number, p_ebitda, p_ev |
 | `profitability` | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin |
 | `liquidity` | current_ratio, cash_ratio, quick_ratio, working_capital |
-| `leverage` | debt_equity, net_debt_ebitda, cash_flow_to_debt, interest_coverage |
+| `leverage` | debt_equity, gross_debt_equity, financial_leverage, net_debt_ebitda, cash_flow_to_debt, interest_coverage |
 | `efficiency` | asset_turnover, capex_revenue, inventory_turnover, receivables_turnover, fixed_asset_turnover |
 | `growth` | retention_ratio, sustainable_growth |
-| `per_share` | lpa, vpa, dpa, rps, ebitda_ps, ebit_ps, fco_ps, fcf_ps, tangible_book_ps (per-share quantities surfaced by Type 1 metrics) |
+| `per_share` | lpa, vpa, dpa, rps, ebitda_ps, ebit_ps, fco_ps, fcf_ps, tangible_book_ps, rbpa, cgpa, dbpa, apa, ppa (per-share quantities surfaced by Type 1 metrics) |
 | `tax` | effective_tax_rate |
 
 Use `list_metric_categories()` to enumerate at runtime and `list_metrics_by_category("liquidity")` to list the metrics in a category. `compute_all_ratios(company, date, categories=["liquidity", "leverage"])` returns only the metrics in the requested categories.
@@ -172,4 +173,4 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
-*Last updated: 2026-07-29 (v1.5). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-30 (v1.6 — 9 new metrics). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
