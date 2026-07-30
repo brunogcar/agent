@@ -72,7 +72,7 @@ class TestRegistry:
         # calls. When adding a new calculations metric, bump this number by 1 (the
         # auto-generated historical chart adapter). When adding a new static adapter,
         # bump by 1. This catches accidental registration failures.
-        assert len(names) == 71
+        assert len(names) == 75
 
     def test_expected_adapter_names(self):
         expected = {
@@ -81,14 +81,16 @@ class TestRegistry:
             "valuation_ratios", "valuation_summary", "valuation_dashboard",
             "shareholders_shareholders", "shareholders_free_float",
             "shareholders_equity_structure", "shareholders_summary",
+            "shareholders_dashboard",
             "dividends_history", "dividends_annual", "dividends_summary",
             "dividends_dashboard",
             "comparison_side_by_side", "comparison_summary", "comparison_growth",
             "comparison_dashboard",
             "cotahist_close_chart",
             "cotahist_candlestick_chart",
-            "screener_sector",
+            "screener_sector", "screener_dashboard",
             "insider_history", "insider_by_role", "insider_summary",
+            "insider_dashboard",
             "governance_practices", "governance_score", "governance_by_chapter",
             "governance_dashboard",
             "historical_lpa_chart", "historical_vpa_chart", "historical_dpa_chart",
@@ -115,6 +117,7 @@ class TestRegistry:
             "historical_dashboard",
             "backtest",
             "backtest_dashboard",
+            "investsite_dashboard",
         }
         assert expected == set(list_adapters())
 
@@ -2238,3 +2241,949 @@ class TestHistoricalDashboardAdapter:
         assert roe["value"].endswith("%")
         assert roe["format"] == "pct"
 
+
+# ── Synthetic screener.dashboard() result ────────────────────────────────────
+
+SCREENER_DASHBOARD = {
+    "status": "ok",
+    "company": "SUZB3",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {"title": "Summary", "type": "text",
+                 "text": (
+                     "Setor: Papel e Celulose\n"
+                     "Peer Count: 2\n"
+                     "Ticker Comparado: SUZB3 (SUZANO S.A.)\n"
+                     "Classificação vs Setor: cheap=4, expensive=0, "
+                     "above=4, below=0, n/a=0"
+                 )},
+            ],
+        },
+        {
+            "name": "Peers",
+            "sections": [
+                {"title": "Sector: Papel e Celulose (2 peers, sorted by P/L cheapest-first)",
+                 "type": "table",
+                 "columns": ["Ticker", "Preço", "Market Cap", "P/L", "P/VPA",
+                             "EV/EBITDA", "ROE", "Div Yield", "Receita Líquida",
+                             "EBITDA", "Marg. EBITDA", "Cresc. Receita", "Segmento"],
+                 "rows": [
+                     ["SUZB3",  42.0, 53_000_000_000, 4.0,  1.2,  6.0,
+                      0.295, 0.250, 10_000_000_000, 3_000_000_000, 0.30,
+                      0.1111, "Novo Mercado"],
+                     ["KLBN11", 17.0, 22_000_000_000, 13.0, 7.0, 20.0,
+                      0.118, 0.015, 9_000_000_000,  2_500_000_000, 0.27,
+                      0.0500, "Novo Mercado"],
+                 ],
+                 "formats": {
+                     "Ticker": "text", "Preço": "brl_full", "Market Cap": "brl",
+                     "P/L": "num", "P/VPA": "num", "EV/EBITDA": "num",
+                     "ROE": "pct", "Div Yield": "pct",
+                     "Receita Líquida": "brl", "EBITDA": "brl",
+                     "Marg. EBITDA": "pct", "Cresc. Receita": "pct",
+                     "Segmento": "text",
+                 },
+                 "note": "2 peer(s) listados para o setor 'Papel e Celulose'."},
+            ],
+        },
+        {
+            "name": "Comparison",
+            "sections": [
+                {"title": "My Ticker vs Sector Medians", "type": "table",
+                 "columns": ["Metric", "My Value", "Sector Median",
+                             "Delta %", "vs Sector"],
+                 "rows": [
+                     ["P/L",           "4,00",   "8,50",   "-52,94%", "cheap"],
+                     ["P/VPA",         "1,20",   "4,10",   "-70,73%", "cheap"],
+                     ["EV/EBITDA",     "6,00",   "13,00",  "-53,85%", "cheap"],
+                     ["Dívida/PL",     "0,85",   "1,18",   "-27,66%", "cheap"],
+                     ["ROE",           "29,50%", "20,65%", "42,86%",  "above"],
+                     ["Div Yield",     "25,00%", "13,25%", "88,68%",  "above"],
+                     ["ROA",           "10,00%", "7,00%",  "42,86%",  "above"],
+                     ["Marg. Líquida", "25,00%", "17,50%", "42,86%",  "above"],
+                 ],
+                 "formats": {"Metric": "text", "My Value": "text",
+                             "Sector Median": "text", "Delta %": "text",
+                             "vs Sector": "text"},
+                 "note": "Comparação métrica-a-métrica entre o ticker e a mediana do setor."},
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "Median P/L",       "value": "8,50",   "unit": "num"},
+        {"label": "Median P/VPA",     "value": "4,10",   "unit": "num"},
+        {"label": "Median EV/EBITDA", "value": "13,00",  "unit": "num"},
+        {"label": "Median ROE",       "value": "20,65%", "unit": "pct"},
+        {"label": "Median Div Yield", "value": "13,25%", "unit": "pct"},
+    ],
+}
+
+
+class TestScreenerDashboardAdapter:
+    """[v1.1] Tests for the screener_dashboard adapter."""
+
+    def test_returns_3_tabs(self):
+        out = apply_adapter("screener_dashboard", SCREENER_DASHBOARD)
+        assert out["company"] == "SUZB3"
+        assert len(out["tabs"]) == 3
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Peers", "Comparison"]
+
+    def test_top_level_kpis_present(self):
+        """5 KPI cards at the top level with exact labels."""
+        out = apply_adapter("screener_dashboard", SCREENER_DASHBOARD)
+        assert len(out["kpis"]) == 5
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["Median P/L", "Median P/VPA", "Median EV/EBITDA",
+                          "Median ROE", "Median Div Yield"]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them via apply_fmt — they are strings, not raw numbers)."""
+        out = apply_adapter("screener_dashboard", SCREENER_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # num-kind KPIs (Median P/L, P/VPA, EV/EBITDA) -> format=num, no "%" suffix.
+        pl = next(k for k in out["kpis"] if k["label"] == "Median P/L")
+        assert "%" not in pl["value"]
+        assert pl["format"] == "num"
+        ev = next(k for k in out["kpis"] if k["label"] == "Median EV/EBITDA")
+        assert "%" not in ev["value"]
+        assert ev["format"] == "num"
+        # pct-kind KPIs (Median ROE, Div Yield) -> format=pct, "%" suffix.
+        roe = next(k for k in out["kpis"] if k["label"] == "Median ROE")
+        assert roe["value"].endswith("%")
+        assert roe["format"] == "pct"
+        dy = next(k for k in out["kpis"] if k["label"] == "Median Div Yield")
+        assert dy["value"].endswith("%")
+        assert dy["format"] == "pct"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Summary text)."""
+        out = apply_adapter("screener_dashboard", SCREENER_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Summary"]
+        summary_sec = overview["sections"][0]
+        assert summary_sec["type"] == "text"
+        assert "Setor: Papel e Celulose" in summary_sec["text"]
+        assert "Peer Count: 2" in summary_sec["text"]
+        assert "Ticker Comparado: SUZB3" in summary_sec["text"]
+        assert "Classificação vs Setor:" in summary_sec["text"]
+
+    def test_peers_tab_passes_through_table(self):
+        """Peers tab table passes through verbatim."""
+        out = apply_adapter("screener_dashboard", SCREENER_DASHBOARD)
+        peers_tab = next(t for t in out["tabs"] if t["name"] == "Peers")
+        assert len(peers_tab["sections"]) == 1
+        sec = peers_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"].startswith("Sector: Papel e Celulose")
+        assert sec["columns"] == [
+            "Ticker", "Preço", "Market Cap", "P/L", "P/VPA", "EV/EBITDA",
+            "ROE", "Div Yield", "Receita Líquida", "EBITDA",
+            "Marg. EBITDA", "Cresc. Receita", "Segmento",
+        ]
+        # Two synthetic peers.
+        assert len(sec["rows"]) == 2
+        # Format specs preserved.
+        assert sec["formats"]["Ticker"] == "text"
+        assert sec["formats"]["Preço"] == "brl_full"
+        assert sec["formats"]["P/L"] == "num"
+        assert sec["formats"]["ROE"] == "pct"
+
+    def test_comparison_tab_passes_through_table(self):
+        """Comparison tab table passes through verbatim."""
+        out = apply_adapter("screener_dashboard", SCREENER_DASHBOARD)
+        comp_tab = next(t for t in out["tabs"] if t["name"] == "Comparison")
+        assert len(comp_tab["sections"]) == 1
+        sec = comp_tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "My Ticker vs Sector Medians"
+        assert sec["columns"] == ["Metric", "My Value", "Sector Median",
+                                  "Delta %", "vs Sector"]
+        # 8 metric rows.
+        assert len(sec["rows"]) == 8
+        # All format specs are text (values pre-formatted via _fmt).
+        for col in sec["columns"]:
+            assert sec["formats"][col] == "text"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("screener_dashboard",
+                            {"status": "error", "error": "company is required"})
+        assert out["sections"][0]["title"] == "Screener Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "company is required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (compare() failed before composing tabs),
+        the adapter should error gracefully."""
+        out = apply_adapter("screener_dashboard",
+                            {"status": "ok", "company": "SUZB3"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Screener Dashboard"
+
+    def test_company_uses_company_field(self):
+        """Adapter uses result['company'] -> out['company'] for the report tool."""
+        out = apply_adapter("screener_dashboard", SCREENER_DASHBOARD)
+        assert out["company"] == "SUZB3"
+
+    def test_kpi_with_raw_number_value_is_formatted(self):
+        """If a KPI value is a raw number (not pre-formatted), the adapter
+        should re-format it via apply_fmt using the unit -> spec map."""
+        result = dict(SCREENER_DASHBOARD)
+        result["kpis"] = [
+            {"label": "Median P/L", "value": 8.5,   "unit": "num"},
+            {"label": "Median ROE", "value": 0.2065, "unit": "pct"},
+        ]
+        out = apply_adapter("screener_dashboard", result)
+        pl = next(k for k in out["kpis"] if k["label"] == "Median P/L")
+        # 8.5 -> "8,50" via num spec.
+        assert pl["format"] == "num"
+        assert "," in pl["value"] or "." in pl["value"]
+        roe = next(k for k in out["kpis"] if k["label"] == "Median ROE")
+        # 0.2065 -> "20,65%" via pct spec.
+        assert roe["value"].endswith("%")
+        assert roe["format"] == "pct"
+
+
+# ── Synthetic shareholders.dashboard() result ────────────────────────────────
+
+SHAREHOLDERS_DASHBOARD = {
+    "status": "ok",
+    "company": "PETR4",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {
+                    "title": "Summary",
+                    "type": "text",
+                    "text": (
+                        "Company: PETROLEO BRASILEIRO S.A.\n"
+                        "Data de Referência: 2023-12-31\n"
+                        "% Free Float: 71,10%\n"
+                        "Total Acionistas: 250.620\n"
+                        "PL Total: R$ 500,00 T"
+                    ),
+                },
+            ],
+        },
+        {
+            "name": "Top Shareholders",
+            "sections": [
+                {
+                    "title": "Principais Acionistas (2 acionistas)",
+                    "type": "table",
+                    "columns": ["Acionista", "% Total", "Qtde Total",
+                                "Controlador"],
+                    "rows": [
+                        ["UNIAO FEDERAL", 28.9, 5000000000, "Sim"],
+                        ["BLACKROCK INC",  3.0, 300000000,  "Não"],
+                    ],
+                    "formats": {
+                        "Acionista":   "text",
+                        "% Total":     "pct_raw",
+                        "Qtde Total":  "int",
+                        "Controlador": "text",
+                    },
+                    "note": "Data de referência: 2023-12-31. Top 5 acionistas por % total.",
+                },
+            ],
+        },
+        {
+            "name": "Free Float",
+            "sections": [
+                {
+                    "title": "Free Float / Distribuição de Acionistas",
+                    "type": "table",
+                    "columns": ["% Free Float", "Acionistas PF",
+                                "Acionistas PJ", "Acionistas Inst."],
+                    "rows": [[71.1, 250000, 500, 120]],
+                    "formats": {
+                        "% Free Float":     "pct_raw",
+                        "Acionistas PF":    "int",
+                        "Acionistas PJ":    "int",
+                        "Acionistas Inst.": "int",
+                    },
+                    "note": "Data de referência: 2023-12-31. % Free Float = pct_total_circulacao (ON+PN).",
+                },
+            ],
+        },
+        {
+            "name": "Equity Structure",
+            "sections": [
+                {
+                    "title": "Composição do PL (2023-12-31)",
+                    "type": "table",
+                    "columns": ["Componente", "Valor BRL"],
+                    "rows": [
+                        ["PL Total",            500000000000000.0],
+                        ["Capital Social",      200000000000000.0],
+                        ["Reservas de Capital",   5000000000000.0],
+                        ["Reservas de Lucros",  100000000000000.0],
+                        ["Lucros Acumulados",   145000000000000.0],
+                        ["Minority Interest",    50000000000000.0],
+                    ],
+                    "formats": {
+                        "Componente": "text",
+                        "Valor BRL":  "brl",
+                    },
+                    "note": "Valores de balanço (snapshot) em BRL por exercício. BPP 2.03.* — Patrimônio Líquido e componentes.",
+                },
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "% Free Float",     "value": "71,10%",       "unit": "pct_raw"},
+        {"label": "Total Acionistas", "value": "250.620",       "unit": "int"},
+        {"label": "PL Total",         "value": "R$ 500,00 T",   "unit": "brl"},
+    ],
+}
+
+
+class TestShareholdersDashboardAdapter:
+    """[v1.1] Tests for the shareholders_dashboard adapter."""
+
+    def test_returns_4_tabs(self):
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 4
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Top Shareholders", "Free Float",
+                         "Equity Structure"]
+
+    def test_top_level_kpis_present(self):
+        """3 KPI cards at the top level with exact labels."""
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        assert len(out["kpis"]) == 3
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["% Free Float", "Total Acionistas", "PL Total"]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them via apply_fmt — they are strings, not raw numbers)."""
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # % Free Float -> pre-formatted pct_raw string with %.
+        ff = next(k for k in out["kpis"] if k["label"] == "% Free Float")
+        assert ff["value"].endswith("%")
+        assert ff["format"] == "pct_raw"
+        # Total Acionistas -> pre-formatted int string "250.620".
+        ta = next(k for k in out["kpis"] if k["label"] == "Total Acionistas")
+        assert "250" in ta["value"]
+        assert ta["format"] == "int"
+        # PL Total -> pre-formatted brl string "R$ 500,00 T".
+        pl = next(k for k in out["kpis"] if k["label"] == "PL Total")
+        assert "R$" in pl["value"]
+        assert pl["format"] == "brl"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Summary text)."""
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Summary"]
+        summary_sec = overview["sections"][0]
+        assert summary_sec["type"] == "text"
+        assert "Company: PETROLEO BRASILEIRO S.A." in summary_sec["text"]
+        assert "% Free Float: 71,10%" in summary_sec["text"]
+        assert "Total Acionistas: 250.620" in summary_sec["text"]
+        assert "PL Total: R$ 500,00 T" in summary_sec["text"]
+
+    def test_top_shareholders_tab_passes_through_table(self):
+        """Top Shareholders tab table passes through verbatim."""
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "Top Shareholders")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Principais Acionistas (2 acionistas)"
+        assert sec["columns"] == ["Acionista", "% Total", "Qtde Total",
+                                  "Controlador"]
+        # Two synthetic shareholders.
+        assert len(sec["rows"]) == 2
+        # Format specs preserved.
+        assert sec["formats"]["Acionista"] == "text"
+        assert sec["formats"]["% Total"] == "pct_raw"
+        assert sec["formats"]["Qtde Total"] == "int"
+        assert sec["formats"]["Controlador"] == "text"
+
+    def test_free_float_tab_passes_through_table(self):
+        """Free Float tab table passes through verbatim (single-row table)."""
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "Free Float")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Free Float / Distribuição de Acionistas"
+        assert sec["columns"] == ["% Free Float", "Acionistas PF",
+                                  "Acionistas PJ", "Acionistas Inst."]
+        # Single row.
+        assert len(sec["rows"]) == 1
+        # Format specs preserved.
+        assert sec["formats"]["% Free Float"] == "pct_raw"
+        assert sec["formats"]["Acionistas PF"] == "int"
+        assert sec["formats"]["Acionistas Inst."] == "int"
+
+    def test_equity_structure_tab_passes_through_table(self):
+        """Equity Structure tab table passes through verbatim (6 component rows)."""
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "Equity Structure")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Composição do PL (2023-12-31)"
+        assert sec["columns"] == ["Componente", "Valor BRL"]
+        # 6 component rows (one per BPP 2.03.* code).
+        assert len(sec["rows"]) == 6
+        # First row is PL Total.
+        assert sec["rows"][0][0] == "PL Total"
+        # Format specs preserved.
+        assert sec["formats"]["Componente"] == "text"
+        assert sec["formats"]["Valor BRL"] == "brl"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("shareholders_dashboard",
+                            {"status": "error", "error": "company is required"})
+        assert out["sections"][0]["title"] == "Shareholders Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "company is required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (summary() failed before composing
+        tabs), the adapter should error gracefully."""
+        out = apply_adapter("shareholders_dashboard",
+                            {"status": "ok", "company": "PETR4"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Shareholders Dashboard"
+
+    def test_company_uses_company_field(self):
+        """Adapter uses result['company'] -> out['company'] for the report tool."""
+        out = apply_adapter("shareholders_dashboard", SHAREHOLDERS_DASHBOARD)
+        assert out["company"] == "PETR4"
+
+    def test_kpi_with_raw_number_value_is_formatted(self):
+        """If a KPI value is a raw number (not pre-formatted), the adapter
+        should re-format it via apply_fmt using the unit -> spec map."""
+        result = dict(SHAREHOLDERS_DASHBOARD)
+        result["kpis"] = [
+            {"label": "% Free Float",     "value": 71.1,            "unit": "pct_raw"},
+            {"label": "Total Acionistas", "value": 250620,         "unit": "int"},
+            {"label": "PL Total",         "value": 500000000000000, "unit": "brl"},
+        ]
+        out = apply_adapter("shareholders_dashboard", result)
+        # 71.1 -> "71,10%" via pct_raw spec.
+        ff = next(k for k in out["kpis"] if k["label"] == "% Free Float")
+        assert ff["value"].endswith("%")
+        assert ff["format"] == "pct_raw"
+        # 250620 -> "250.620" via int spec.
+        ta = next(k for k in out["kpis"] if k["label"] == "Total Acionistas")
+        assert "250" in ta["value"]
+        assert ta["format"] == "int"
+        # 500000000000000 -> "R$ 500,00 T" via brl spec.
+        pl = next(k for k in out["kpis"] if k["label"] == "PL Total")
+        assert "R$" in pl["value"]
+        assert pl["format"] == "brl"
+
+
+# ── Synthetic insider.dashboard() result ─────────────────────────────────────
+
+INSIDER_DASHBOARD = {
+    "status": "ok",
+    "company": "PETR4",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {
+                    "title": "Summary",
+                    "type": "text",
+                    "text": (
+                        "Company: PETR4\n"
+                        "CNPJ: 33000167000101\n"
+                        "Total de Transações: 2\n"
+                        "Volume Comprado: R$ 385,00 K\n"
+                        "Volume Vendido: R$ 189,00 K\n"
+                        "Net Volume: R$ 196,00 K\n"
+                        "Sentimento: BUYING"
+                    ),
+                },
+            ],
+        },
+        {
+            "name": "Recent Transactions",
+            "sections": [
+                {
+                    "title": "Insider Transactions (2 recent)",
+                    "type": "table",
+                    "columns": ["Data", "Cargo", "Tipo", "Ativo",
+                                "Qtd", "Preço", "Volume"],
+                    "rows": [
+                        ["2026-07-15", "Diretor", "Compra", "Ação",
+                         10000, 38.5, 385000],
+                        ["2026-07-10", "Diretor", "Venda", "Ação",
+                         5000, 37.8, 189000],
+                    ],
+                    "formats": {
+                        "Data": "text", "Cargo": "text", "Tipo": "text",
+                        "Ativo": "text", "Qtd": "num", "Preço": "brl_full",
+                        "Volume": "brl",
+                    },
+                    "note": "Movimentações recentes de insiders (newest-first).",
+                },
+            ],
+        },
+        {
+            "name": "By Role",
+            "sections": [
+                {
+                    "title": "Insider Trading by Role (1 roles)",
+                    "type": "table",
+                    "columns": ["Cargo", "Transações", "Qtd Comprada",
+                                "Qtd Vendida", "Vol Comprado",
+                                "Vol Vendido", "Net Volume"],
+                    "rows": [
+                        ["Diretor", 2, 10000, 5000, 385000, 189000, 196000],
+                    ],
+                    "formats": {
+                        "Cargo": "text", "Transações": "int",
+                        "Qtd Comprada": "num", "Qtd Vendida": "num",
+                        "Vol Comprado": "brl", "Vol Vendido": "brl",
+                        "Net Volume": "brl",
+                    },
+                    "note": "Movimentações agrupadas por cargo (Tipo_Cargo).",
+                },
+            ],
+        },
+        {
+            "name": "Monthly Net",
+            "sections": [
+                {
+                    "title": "Insider Net Buy/Sell per Month (1 months)",
+                    "type": "table",
+                    "columns": ["Mês", "Transações", "Comprado", "Vendido",
+                                "Vol Comprado", "Vol Vendido", "Net Volume"],
+                    "rows": [
+                        ["2026-07", 2, 10000, 5000, 385000, 189000, 196000],
+                    ],
+                    "formats": {
+                        "Mês": "text", "Transações": "int",
+                        "Comprado": "num", "Vendido": "num",
+                        "Vol Comprado": "brl", "Vol Vendido": "brl",
+                        "Net Volume": "brl",
+                    },
+                    "note": "Resumo mensal de compra/venda de insiders.",
+                },
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "Sentimento",      "value": "BUYING",      "unit": "text"},
+        {"label": "Volume Comprado", "value": "R$ 385,00 K", "unit": "brl"},
+        {"label": "Volume Vendido",  "value": "R$ 189,00 K", "unit": "brl"},
+        {"label": "Net Volume",      "value": "R$ 196,00 K", "unit": "brl"},
+    ],
+}
+
+
+class TestInsiderDashboardAdapter:
+    """[v1.1] Tests for the insider_dashboard adapter."""
+
+    def test_returns_4_tabs(self):
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 4
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Recent Transactions",
+                         "By Role", "Monthly Net"]
+
+    def test_top_level_kpis_present(self):
+        """4 KPI cards at the top level with exact labels."""
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        assert len(out["kpis"]) == 4
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["Sentimento", "Volume Comprado",
+                          "Volume Vendido", "Net Volume"]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them via apply_fmt — they are strings, not raw numbers)."""
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # Sentimento -> "BUYING" pre-formatted text string.
+        sent = next(k for k in out["kpis"] if k["label"] == "Sentimento")
+        assert sent["value"] == "BUYING"
+        assert sent["format"] == "text"
+        # Volume Comprado -> "R$ 385,00 K" pre-formatted brl string.
+        bought = next(k for k in out["kpis"] if k["label"] == "Volume Comprado")
+        assert "R$" in bought["value"]
+        assert bought["format"] == "brl"
+        # Volume Vendido -> "R$ 189,00 K" pre-formatted brl string.
+        sold = next(k for k in out["kpis"] if k["label"] == "Volume Vendido")
+        assert "R$" in sold["value"]
+        assert sold["format"] == "brl"
+        # Net Volume -> "R$ 196,00 K" pre-formatted brl string.
+        net = next(k for k in out["kpis"] if k["label"] == "Net Volume")
+        assert "R$" in net["value"]
+        assert net["format"] == "brl"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Summary text)."""
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Summary"]
+        summary_sec = overview["sections"][0]
+        assert summary_sec["type"] == "text"
+        assert "Company: PETR4" in summary_sec["text"]
+        assert "Volume Comprado: R$ 385,00 K" in summary_sec["text"]
+        assert "Net Volume: R$ 196,00 K" in summary_sec["text"]
+        assert "Sentimento: BUYING" in summary_sec["text"]
+
+    def test_recent_transactions_tab_passes_through_table(self):
+        """Recent Transactions tab table passes through verbatim."""
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "Recent Transactions")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Insider Transactions (2 recent)"
+        assert sec["columns"] == ["Data", "Cargo", "Tipo", "Ativo",
+                                  "Qtd", "Preço", "Volume"]
+        # Two synthetic transactions.
+        assert len(sec["rows"]) == 2
+        # Format specs preserved.
+        assert sec["formats"]["Data"] == "text"
+        assert sec["formats"]["Cargo"] == "text"
+        assert sec["formats"]["Tipo"] == "text"
+        assert sec["formats"]["Ativo"] == "text"
+        assert sec["formats"]["Qtd"] == "num"
+        assert sec["formats"]["Preço"] == "brl_full"
+        assert sec["formats"]["Volume"] == "brl"
+
+    def test_by_role_tab_passes_through_table(self):
+        """By Role tab table passes through verbatim."""
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "By Role")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Insider Trading by Role (1 roles)"
+        assert sec["columns"] == ["Cargo", "Transações", "Qtd Comprada",
+                                  "Qtd Vendida", "Vol Comprado",
+                                  "Vol Vendido", "Net Volume"]
+        # One synthetic role row.
+        assert len(sec["rows"]) == 1
+        # Format specs preserved.
+        assert sec["formats"]["Cargo"] == "text"
+        assert sec["formats"]["Transações"] == "int"
+        assert sec["formats"]["Qtd Comprada"] == "num"
+        assert sec["formats"]["Qtd Vendida"] == "num"
+        assert sec["formats"]["Vol Comprado"] == "brl"
+        assert sec["formats"]["Vol Vendido"] == "brl"
+        assert sec["formats"]["Net Volume"] == "brl"
+
+    def test_monthly_net_tab_passes_through_table(self):
+        """Monthly Net tab table passes through verbatim."""
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "Monthly Net")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Insider Net Buy/Sell per Month (1 months)"
+        assert sec["columns"] == ["Mês", "Transações", "Comprado", "Vendido",
+                                  "Vol Comprado", "Vol Vendido", "Net Volume"]
+        # One synthetic monthly row.
+        assert len(sec["rows"]) == 1
+        # Format specs preserved.
+        assert sec["formats"]["Mês"] == "text"
+        assert sec["formats"]["Transações"] == "int"
+        assert sec["formats"]["Comprado"] == "num"
+        assert sec["formats"]["Vendido"] == "num"
+        assert sec["formats"]["Vol Comprado"] == "brl"
+        assert sec["formats"]["Vol Vendido"] == "brl"
+        assert sec["formats"]["Net Volume"] == "brl"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("insider_dashboard",
+                            {"status": "error", "error": "company is required"})
+        assert out["sections"][0]["title"] == "Insider Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "company is required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (summary() failed before composing
+        tabs), the adapter should error gracefully."""
+        out = apply_adapter("insider_dashboard",
+                            {"status": "ok", "company": "PETR4"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Insider Dashboard"
+
+    def test_company_uses_company_field(self):
+        """Adapter uses result['company'] -> out['company'] for the report tool."""
+        out = apply_adapter("insider_dashboard", INSIDER_DASHBOARD)
+        assert out["company"] == "PETR4"
+
+    def test_kpi_with_raw_number_value_is_formatted(self):
+        """If a KPI value is a raw number (not pre-formatted), the adapter
+        should re-format it via apply_fmt using the unit -> spec map."""
+        result = dict(INSIDER_DASHBOARD)
+        result["kpis"] = [
+            {"label": "Sentimento",      "value": "BUYING", "unit": "text"},
+            {"label": "Volume Comprado", "value": 385000,   "unit": "brl"},
+            {"label": "Volume Vendido",  "value": 189000,   "unit": "brl"},
+            {"label": "Net Volume",      "value": 196000,   "unit": "brl"},
+        ]
+        out = apply_adapter("insider_dashboard", result)
+        # Sentimento -> "BUYING" pre-formatted text string (passthrough).
+        sent = next(k for k in out["kpis"] if k["label"] == "Sentimento")
+        assert sent["value"] == "BUYING"
+        assert sent["format"] == "text"
+        # 385000 -> "R$ 385,00 K" via brl spec.
+        bought = next(k for k in out["kpis"] if k["label"] == "Volume Comprado")
+        assert "R$" in bought["value"]
+        assert bought["format"] == "brl"
+        # 189000 -> "R$ 189,00 K" via brl spec.
+        sold = next(k for k in out["kpis"] if k["label"] == "Volume Vendido")
+        assert "R$" in sold["value"]
+        assert sold["format"] == "brl"
+        # 196000 -> "R$ 196,00 K" via brl spec.
+        net = next(k for k in out["kpis"] if k["label"] == "Net Volume")
+        assert "R$" in net["value"]
+        assert net["format"] == "brl"
+
+
+# ── Synthetic investsite.dashboard() result ──────────────────────────────────
+
+INVESTSITE_DASHBOARD = {
+    "status": "ok",
+    "company": "PETR4",
+    "tabs": [
+        {
+            "name": "Overview",
+            "sections": [
+                {
+                    "title": "Summary",
+                    "type": "text",
+                    "text": (
+                        "Ticker: PETR4\n"
+                        "Empresa: PETROBRAS\n"
+                        "P/L: 5,15\n"
+                        "P/VPA: 1,24\n"
+                        "EV/EBITDA: 3,80\n"
+                        "ROE: 27,18%\n"
+                        "Dividend Yield: 15,00%"
+                    ),
+                },
+            ],
+        },
+        {
+            "name": "Key Indicators",
+            "sections": [
+                {
+                    "title": "Key Indicators (8 metrics)",
+                    "type": "table",
+                    "columns": ["Indicador", "Valor"],
+                    "rows": [
+                        ["P/L",              "5,15"],
+                        ["P/VPA",            "1,24"],
+                        ["EV/EBITDA",        "3,80"],
+                        ["Dividend Yield",   "15,00%"],
+                        ["ROE",              "27,18%"],
+                        ["ROA",              "10,50%"],
+                        ["Margem EBITDA",    "46,35%"],
+                        ["Margem Líquida",   "21,60%"],
+                    ],
+                    "formats": {"Indicador": "text", "Valor": "text"},
+                    "note": ("Valuation (preços relativos) + retornos/margens "
+                             "extraídos da página principais_indicadores.php."),
+                },
+            ],
+        },
+        {
+            "name": "Latest Events",
+            "sections": [
+                {
+                    "title": "Latest Events (2 recent)",
+                    "type": "table",
+                    "columns": ["Data", "Categoria", "Descrição", "Link"],
+                    "rows": [
+                        ["02/06/2026", "Fato Relevante",
+                         "Petrobras informa sobre adesão",
+                         "https://www.rad.cvm.gov.br/ENET/frmExibirArquivoIPEExterno.aspx?ID=1529607&flnk"],
+                        ["20/05/2026", "Fato Relevante",
+                         "Petrobras informa sobre adesão",
+                         "https://www.rad.cvm.gov.br/ENET/frmExibirArquivoIPEExterno.aspx?ID=1525282&flnk"],
+                    ],
+                    "formats": {"Data": "text", "Categoria": "text",
+                                "Descrição": "text", "Link": "text"},
+                    "note": "Fatos Relevantes recentes com links diretos para o CVM (rad.cvm.gov.br).",
+                },
+            ],
+        },
+    ],
+    "kpis": [
+        {"label": "P/L",             "value": "5,15",   "unit": "num"},
+        {"label": "P/VPA",           "value": "1,24",   "unit": "num"},
+        {"label": "EV/EBITDA",       "value": "3,80",   "unit": "num"},
+        {"label": "ROE",             "value": "27,18%", "unit": "pct"},
+        {"label": "Dividend Yield",  "value": "15,00%", "unit": "pct"},
+    ],
+}
+
+
+class TestInvestsiteDashboardAdapter:
+    """[v1.1] Tests for the investsite_dashboard adapter.
+
+    investsite is a TOP-LEVEL flat domain (not under cvm/), so this is the
+    FIRST investsite adapter — investsite modes were previously consumed
+    directly via route() + JSON, not via the report tool's adapter layer.
+    """
+
+    def test_returns_3_tabs(self):
+        out = apply_adapter("investsite_dashboard", INVESTSITE_DASHBOARD)
+        assert out["company"] == "PETR4"
+        assert len(out["tabs"]) == 3
+        names = [t["name"] for t in out["tabs"]]
+        assert names == ["Overview", "Key Indicators", "Latest Events"]
+
+    def test_top_level_kpis_present(self):
+        """5 KPI cards at the top level with exact labels."""
+        out = apply_adapter("investsite_dashboard", INVESTSITE_DASHBOARD)
+        assert len(out["kpis"]) == 5
+        labels = [k["label"] for k in out["kpis"]]
+        assert labels == ["P/L", "P/VPA", "EV/EBITDA", "ROE", "Dividend Yield"]
+
+    def test_kpi_values_preformatted(self):
+        """KPI values pass through verbatim (report.py already pre-formatted
+        them via apply_fmt — they are strings, not raw numbers)."""
+        out = apply_adapter("investsite_dashboard", INVESTSITE_DASHBOARD)
+        for kpi in out["kpis"]:
+            assert isinstance(kpi["value"], str)
+            assert kpi["value"]  # non-empty
+        # P/L -> "5,15" pre-formatted num string.
+        pl = next(k for k in out["kpis"] if k["label"] == "P/L")
+        assert pl["value"] == "5,15"
+        assert pl["format"] == "num"
+        # P/VPA -> "1,24" pre-formatted num string.
+        pvpa = next(k for k in out["kpis"] if k["label"] == "P/VPA")
+        assert pvpa["value"] == "1,24"
+        assert pvpa["format"] == "num"
+        # EV/EBITDA -> "3,80" pre-formatted num string.
+        ev = next(k for k in out["kpis"] if k["label"] == "EV/EBITDA")
+        assert ev["value"] == "3,80"
+        assert ev["format"] == "num"
+        # ROE -> "27,18%" pre-formatted pct string.
+        roe = next(k for k in out["kpis"] if k["label"] == "ROE")
+        assert roe["value"] == "27,18%"
+        assert roe["format"] == "pct"
+        # Dividend Yield -> "15,00%" pre-formatted pct string.
+        dy = next(k for k in out["kpis"] if k["label"] == "Dividend Yield")
+        assert dy["value"] == "15,00%"
+        assert dy["format"] == "pct"
+
+    def test_overview_tab_passes_through_sections(self):
+        """Overview tab sections pass through verbatim (Summary text)."""
+        out = apply_adapter("investsite_dashboard", INVESTSITE_DASHBOARD)
+        overview = next(t for t in out["tabs"] if t["name"] == "Overview")
+        titles = [s["title"] for s in overview["sections"]]
+        assert titles == ["Summary"]
+        summary_sec = overview["sections"][0]
+        assert summary_sec["type"] == "text"
+        assert "Ticker: PETR4" in summary_sec["text"]
+        assert "Empresa: PETROBRAS" in summary_sec["text"]
+        assert "P/L: 5,15" in summary_sec["text"]
+        assert "ROE: 27,18%" in summary_sec["text"]
+        assert "Dividend Yield: 15,00%" in summary_sec["text"]
+
+    def test_key_indicators_tab_passes_through_table(self):
+        """Key Indicators tab table passes through verbatim."""
+        out = apply_adapter("investsite_dashboard", INVESTSITE_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "Key Indicators")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Key Indicators (8 metrics)"
+        assert sec["columns"] == ["Indicador", "Valor"]
+        # 8 metric rows.
+        assert len(sec["rows"]) == 8
+        # First row is P/L with pre-formatted value.
+        assert sec["rows"][0] == ["P/L", "5,15"]
+        # Format specs preserved.
+        assert sec["formats"]["Indicador"] == "text"
+        assert sec["formats"]["Valor"] == "text"
+
+    def test_latest_events_tab_passes_through_table(self):
+        """Latest Events tab table passes through verbatim."""
+        out = apply_adapter("investsite_dashboard", INVESTSITE_DASHBOARD)
+        tab = next(t for t in out["tabs"] if t["name"] == "Latest Events")
+        assert len(tab["sections"]) == 1
+        sec = tab["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["title"] == "Latest Events (2 recent)"
+        assert sec["columns"] == ["Data", "Categoria", "Descrição", "Link"]
+        # Two synthetic events.
+        assert len(sec["rows"]) == 2
+        # First event: 02/06/2026 Fato Relevante with CVM link.
+        assert sec["rows"][0][0] == "02/06/2026"
+        assert sec["rows"][0][1] == "Fato Relevante"
+        assert "Petrobras" in sec["rows"][0][2]
+        assert "rad.cvm.gov.br" in sec["rows"][0][3]
+        # Format specs preserved (all text).
+        assert sec["formats"]["Data"] == "text"
+        assert sec["formats"]["Categoria"] == "text"
+        assert sec["formats"]["Descrição"] == "text"
+        assert sec["formats"]["Link"] == "text"
+
+    def test_error_renders_status_table(self):
+        out = apply_adapter("investsite_dashboard",
+                            {"status": "error", "error": "ticker is required"})
+        assert out["sections"][0]["title"] == "Investsite Dashboard"
+        assert out["sections"][0]["rows"][0] == ["error", "ticker is required"]
+
+    def test_missing_tabs_renders_error(self):
+        """If the result has no tabs (dashboard() failed before composing
+        tabs), the adapter should error gracefully."""
+        out = apply_adapter("investsite_dashboard",
+                            {"status": "ok", "company": "PETR4"})
+        assert "sections" in out
+        assert out["sections"][0]["title"] == "Investsite Dashboard"
+
+    def test_company_uses_company_field(self):
+        """Adapter uses result['company'] -> out['company'] for the report tool."""
+        out = apply_adapter("investsite_dashboard", INVESTSITE_DASHBOARD)
+        assert out["company"] == "PETR4"
+
+    def test_kpi_with_raw_number_value_is_formatted(self):
+        """If a KPI value is a raw number (not pre-formatted), the adapter
+        should re-format it via apply_fmt using the unit -> spec map."""
+        result = dict(INVESTSITE_DASHBOARD)
+        result["kpis"] = [
+            {"label": "P/L",             "value": 5.15,   "unit": "num"},
+            {"label": "P/VPA",           "value": 1.24,   "unit": "num"},
+            {"label": "EV/EBITDA",       "value": 3.80,   "unit": "num"},
+            {"label": "ROE",             "value": 0.2718, "unit": "pct"},
+            {"label": "Dividend Yield",  "value": 0.15,   "unit": "pct"},
+        ]
+        out = apply_adapter("investsite_dashboard", result)
+        # 5.15 -> "5,15" via num spec.
+        pl = next(k for k in out["kpis"] if k["label"] == "P/L")
+        assert pl["value"] == "5,15"
+        assert pl["format"] == "num"
+        # 3.80 -> "3,80" via num spec.
+        ev = next(k for k in out["kpis"] if k["label"] == "EV/EBITDA")
+        assert ev["value"] == "3,80"
+        assert ev["format"] == "num"
+        # 0.2718 -> "27,18%" via pct spec.
+        roe = next(k for k in out["kpis"] if k["label"] == "ROE")
+        assert roe["value"] == "27,18%"
+        assert roe["format"] == "pct"
+        # 0.15 -> "15,00%" via pct spec.
+        dy = next(k for k in out["kpis"] if k["label"] == "Dividend Yield")
+        assert dy["value"] == "15,00%"
+        assert dy["format"] == "pct"

@@ -14,12 +14,12 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 | Skill | Modes | Data Sources |
 |-------|-------|--------------|
 | [**financials**](cvm/FINANCIALS.md) | quarterly (default), annual, complete, summary, dashboard | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) — rapina-style |
-| [**shareholders**](cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
+| [**shareholders**](cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary, dashboard | FRE (named shareholders, free float) + DFP (equity structure in BRL) |
 | [**dividends**](cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary, dashboard | B3 (individual events) + DFP DVA (annual totals) + DFP BPP (payable) + IPE (filings) |
 | [**valuation**](cvm/VALUATION.md) | ratios, summary, dashboard | b3 price + DFP/ITR TTM financials + FRE shares — P/L, P/VPA, EV, ROIC, Graham Number |
 | [**comparison**](cvm/COMPARISON.md) | side_by_side (default), summary, growth, dashboard | Orchestrates financials + valuation + dividends per ticker — multi-ticker compare |
-| [**screener**](cvm/SCREENER.md) | sector, compare | Orchestrates CAD + bridge + valuation + financials + FCA (listing segment) — sector peers + medians |
-| [**insider**](cvm/INSIDER.md) | history, by_role, summary | VLMO (insider trading disclosures) — insider buy/sell + sentiment |
+| [**screener**](cvm/SCREENER.md) | sector, compare, dashboard | Orchestrates CAD + bridge + valuation + financials + FCA (listing segment) — sector peers + medians |
+| [**insider**](cvm/INSIDER.md) | history, by_role, summary, dashboard | VLMO (insider trading disclosures) — insider buy/sell + sentiment |
 | [**governance**](cvm/GOVERNANCE.md) | practices, score, by_chapter, dashboard | CGVN (governance practices) — % adopted, chapter breakdown |
 
 All CVM skills use `core/br_validator` for BRL/date/ticker parsing.
@@ -50,11 +50,11 @@ report(action="export", title="PETR4 Financials",
 | financials quarterly / annual / summary | `financials_quarterly` / `financials_annual` / `financials_summary` |
 | financials quarterly (chart) | `financials_quarterly_chart` (multi-series line chart) |
 | valuation ratios / summary | `valuation_ratios` / `valuation_summary` |
-| shareholders shareholders / free_float / equity_structure / summary | `shareholders_shareholders` / `shareholders_free_float` / `shareholders_equity_structure` / `shareholders_summary` |
 | dividends history / annual / summary / dashboard | `dividends_history` / `dividends_annual` / `dividends_summary` / `dividends_dashboard` |
 | comparison side_by_side / summary / growth / dashboard | `comparison_side_by_side` / `comparison_summary` / `comparison_growth` / `comparison_dashboard` |
-| screener sector | `screener_sector` |
-| insider history / by_role / summary | `insider_history` / `insider_by_role` / `insider_summary` |
+| screener sector / dashboard | `screener_sector` / `screener_dashboard` |
+| shareholders shareholders / free_float / equity_structure / summary / dashboard | `shareholders_shareholders` / `shareholders_free_float` / `shareholders_equity_structure` / `shareholders_summary` / `shareholders_dashboard` |
+| insider history / by_role / summary / dashboard | `insider_history` / `insider_by_role` / `insider_summary` / `insider_dashboard` |
 | governance practices / score / by_chapter / dashboard | `governance_practices` / `governance_score` / `governance_by_chapter` / `governance_dashboard` |
 | b3 cotahist (price history) | `cotahist_close_chart` (line) / `cotahist_candlestick_chart` (candlestick) |
 
@@ -111,20 +111,18 @@ LLM → skill(domain="cvm", sub_domain=..., mode=..., params=...)  [skills/dispa
        └→ skills/cvm/__init__.py route()
           └→ skills/cvm/<skill>/__init__.py route(mode)
              │
-             ├─ financials (v1.6) + valuation (v1.4) + backtest (v1.1) + comparison (v1.5) + dividends (v1.1) + governance (v1.1) + historical (v1.2):
+             ├─ ALL 10 CVM skills now use the modular pattern (financials v1.6, valuation v1.4,
+             │    backtest v1.1, comparison v1.5, dividends v1.1, governance v1.1, historical v1.2,
+             │    screener v1.4, shareholders v1.1, insider v1.1):
              │    └→ skills/cvm/<skill>/modes/<mode>.py  (auto-discovered via _registry.py)
-             │       └→ fetchers.py + helpers.py + report.py (+ metrics.py for financials)
+             │       └→ helpers.py + report.py (+ fetchers.py / metrics.py where needed)
              │          └→ data_source query engines + calculations engines
              │
-             └─ other CVM skills (shareholders/screener/insider):
-                  └→ skills/cvm/<skill>/<skill>.py  (calls data_source query engines)
-                     └→ data_sources/cvm/{dfp,itr,fre,ipe,cad,bridge}/query_engine.py
-                     └→ data_sources/b3/dividends/query_engine.py
-                     └→ data_sources/cvm/_bridge.py resolve_company()
+             └─ (no CVM skills remain on the single-file pattern — all migrated)
 ```
 
-`financials` (v1.6), `valuation` (v1.4), `backtest` (v1.1), `comparison` (v1.5), `dividends` (v1.1), `governance` (v1.1), and `historical` (v1.2) use the **modular `modes/ + _registry.py` pattern** (auto-discovery via `importlib` on `modes/*.py`, mirroring `skills/cvm/calculations/_registry.py` + `tools/git_ops/actions/`). Adding a new mode = drop a file in `modes/` + `@register_mode(...)`; no edits to `__init__.py`. Other CVM skills still use the single-file `<skill>.py` pattern — they will be migrated to the modular pattern incrementally.
+**All 10 CVM skills** now use the **modular `modes/ + _registry.py` pattern** (auto-discovery via `importlib` on `modes/*.py`, mirroring `skills/cvm/calculations/_registry.py` + `tools/git_ops/actions/`): `financials` (v1.6), `valuation` (v1.4), `backtest` (v1.1), `comparison` (v1.5), `dividends` (v1.1), `governance` (v1.1), `historical` (v1.2), `screener` (v1.4), `shareholders` (v1.1), `insider` (v1.1). Adding a new mode = drop a file in `modes/` + `@register_mode(...)`; no edits to `__init__.py`. Every CVM skill also has a `dashboard` mode + matching `<skill>_dashboard` report adapter.
 
 ---
 
-*Last updated: 2026-07-29.*
+*Last updated: 2026-07-29 (v1.8 — screener/shareholders/insider/investsite modular splits + dashboard modes).*

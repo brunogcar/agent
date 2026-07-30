@@ -23,7 +23,7 @@
 | `tools/report_ops/timeline.py` | SVG Gantt chart builder |
 | `tools/report_ops/scorecard.py` | RAG status + radar chart builder |
 | `tools/report_ops/table.py` | Tabular statement builder (v1.2) |
-| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.7, 71 adapters across 21 modules) |
+| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.8, 75 adapters across 25 modules) |
 | `tools/report_ops/actions/*.py` | Atomic action wrappers (12 files) |
 | `tools/report_ops/templates/*.html` | Jinja2 templates (11 files) |
 | `tests/tools/report/` | 21 test files + conftest.py |
@@ -76,7 +76,11 @@ tools/report_ops/
 │   ├── comparison_dashboard.py  # comparison_dashboard  (v1.6 — 5-tab dashboard adapter)
 │   ├── dividends_dashboard.py   # dividends_dashboard  (v1.7 — multi-tab dashboard adapter)
 │   ├── governance_dashboard.py  # governance_dashboard  (v1.7 — multi-tab dashboard adapter)
-│   └── historical_dashboard.py  # historical_dashboard  (v1.7 — multi-tab dashboard adapter)
+│   ├── historical_dashboard.py  # historical_dashboard  (v1.7 — multi-tab dashboard adapter)
+│   ├── screener_dashboard.py     # screener_dashboard  (v1.8 — multi-tab dashboard adapter)
+│   ├── shareholders_dashboard.py # shareholders_dashboard  (v1.8 — multi-tab dashboard adapter)
+│   ├── insider_dashboard.py      # insider_dashboard  (v1.8 — multi-tab dashboard adapter)
+│   └── investsite_dashboard.py   # investsite_dashboard  (v1.8 — multi-tab dashboard adapter)
 └── actions/                # Atomic action wrappers (one file per action)
     ├── chart.py            # @register_action("report", "chart")
     ├── map.py

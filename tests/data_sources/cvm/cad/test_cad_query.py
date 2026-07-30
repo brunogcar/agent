@@ -133,9 +133,27 @@ class TestCADSearch:
         assert result["total_matches"] == 1
         assert "PETROBRAS" in result["companies"][0]["DENOM_SOCIAL"]
 
+    def test_search_by_setor_accented(self, cad_db):
+        """[v1.1] Search with accented sector name 'Petróleo' should work.
+        SQLite UPPER() doesn't handle accented chars, so we normalize to ASCII.
+        This test verifies the fix works with the full accented sector name."""
+        from data_sources.cvm.cad.query_engine import search
+        result = search(setor="Petróleo")
+        assert result["status"] == "ok"
+        assert result["total_matches"] == 1
+        assert "PETROBRAS" in result["companies"][0]["DENOM_SOCIAL"]
+
     def test_search_by_setor_mining(self, cad_db):
         from data_sources.cvm.cad.query_engine import search
         result = search(setor="Minera")
+        assert result["status"] == "ok"
+        assert result["total_matches"] == 1
+        assert "VALE" in result["companies"][0]["DENOM_SOCIAL"]
+
+    def test_search_by_setor_mining_accented(self, cad_db):
+        """[v1.1] Search with accented sector name 'Mineração' should work."""
+        from data_sources.cvm.cad.query_engine import search
+        result = search(setor="Mineração")
         assert result["status"] == "ok"
         assert result["total_matches"] == 1
         assert "VALE" in result["companies"][0]["DENOM_SOCIAL"]

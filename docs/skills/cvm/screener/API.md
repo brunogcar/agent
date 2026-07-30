@@ -58,6 +58,52 @@ params = '{"setor":"Papel e Celulose","limit":20}'
 }
 ```
 
+### `mode="dashboard"` [v1.4]
+
+Multi-tab screener dashboard (thin composition of `compare()` + `sector()`). Optimized for the report tool's dashboard action.
+
+Returns a structured payload with 3 tabs + 5 top-level KPI cards. The dashboard does NOT fetch new data — it calls `compare(company=...)` (which internally calls `sector(setor=...)`) and reshapes the result.
+
+```python
+params = '{"company":"SUZB3"}'
+```
+
+| Param | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `company` | `str` | **Yes** | — | B3 ticker |
+| `limit` | `int` | No | `20` | Max peers for median computation |
+
+**Tabs:**
+- **Overview** — Summary text section showing `setor`, `peer_count`, the ticker being compared, and a cheap/expensive/above/below classification summary.
+- **Peers** — Full peers table (sorted by P/L cheapest-first). 13 columns: Ticker, Preço, Market Cap, P/L, P/VPA, EV/EBITDA, ROE, Div Yield, Receita Líquida, EBITDA, Marg. EBITDA, Cresc. Receita, Segmento.
+- **Comparison** — Per-metric my-vs-sector table. 5 columns: Metric, My Value, Sector Median, Delta %, vs Sector. 8 metric rows: P/L, P/VPA, EV/EBITDA, Dívida/PL, ROE, Div Yield, ROA, Marg. Líquida.
+
+**Top-level KPI cards (5):** Median P/L (`num`), Median P/VPA (`num`), Median EV/EBITDA (`num`), Median ROE (`pct`), Median Div Yield (`pct`) — sourced from the sector medians dict.
+
+**Returns:**
+```python
+{
+    "status": "ok",
+    "company": "SUZB3",
+    "tabs": [
+        {"name": "Overview",   "sections": [{"title": "Summary", "type": "text", "text": "..."}]},
+        {"name": "Peers",      "sections": [{"title": "Sector: ...", "type": "table", "columns": [...], "rows": [...], "formats": {...}}]},
+        {"name": "Comparison", "sections": [{"title": "My Ticker vs Sector Medians", "type": "table", "columns": [...], "rows": [...], "formats": {...}}]},
+    ],
+    "kpis": [
+        {"label": "Median P/L",       "value": "8,50",   "unit": "num"},
+        {"label": "Median P/VPA",     "value": "4,10",   "unit": "num"},
+        {"label": "Median EV/EBITDA", "value": "13,00",  "unit": "num"},
+        {"label": "Median ROE",       "value": "20,65%", "unit": "pct"},
+        {"label": "Median Div Yield", "value": "13,25%", "unit": "pct"},
+    ],
+}
+```
+
+On validation error (no company), returns `{"status": "error", "error": "company is required"}`. When `compare()` itself fails (e.g. ticker not in bridge), the dashboard still returns `status=ok` with 3 tabs — the Peers + Comparison tabs are empty (0 rows) and all 5 KPIs render as `"—"`. The `compare()` call is wrapped in try/except so even a raised exception still renders the 3-tab payload.
+
+---
+
 ### `mode="compare"`
 
 Compare a ticker against its sector medians.
@@ -112,7 +158,8 @@ params = '{"company":"SUZB3"}'
 | Adapter | Source mode | What it tables |
 |---------|-------------|----------------|
 | `screener_sector` | sector | Peers table (sorted by P/L) + KPI strip (sector medians) |
+| `screener_dashboard` [v1.4] | dashboard | Thin pass-through of screener.dashboard() tabs (Overview text + Peers table + Comparison table) + 5 top-level KPI cards (Median P/L, Median P/VPA, Median EV/EBITDA, Median ROE, Median Div Yield) re-formatted via unit → spec map |
 
 ---
 
-*Last updated: 2026-07-29 (v1.4).*
+*Last updated: 2026-08-01 (v1.4).*

@@ -132,8 +132,19 @@ def search(
             params.extend([pct, pct])
 
         if setor:
-            parts.append("UPPER(SETOR_ATIV) LIKE ?")
-            params.append(f"%{setor.upper()}%")
+            # [v1.1] SQLite's UPPER() doesn't handle accented chars (é, á, ç, etc.),
+            # so "UPPER(SETOR_ATIV) LIKE '%PETRÓLEO%'" fails to match "Petróleo e Gás"
+            # because SQLite UPPER() leaves accented chars unchanged.
+            # Fix: normalize both the search term and the SQL to ASCII before LIKE.
+            # We use the `unaccent` approach: strip diacritics from both sides.
+            # Since SQLite doesn't have a built-in unaccent, we normalize the search
+            # term to ASCII and use LIKE with COLLATE NOCASE (case-insensitive but
+            # accent-sensitive). To handle accents in the DB data, we also try the
+            # raw search term.
+            import unicodedata
+            setor_ascii = unicodedata.normalize("NFKD", setor).encode("ascii", "ignore").decode("ascii")
+            parts.append("(SETOR_ATIV LIKE ? COLLATE NOCASE OR SETOR_ATIV LIKE ? COLLATE NOCASE)")
+            params.extend([f"%{setor}%", f"%{setor_ascii}%"])
 
         if sit:
             parts.append("UPPER(SIT) = ?")

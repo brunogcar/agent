@@ -1,7 +1,12 @@
-"""tests/skills/cvm/test_shareholders.py -- Tests for the shareholders skill.
+"""tests/skills/cvm/shareholders/test_shareholders.py -- Tests for the shareholders skill.
 
 Mocks the underlying data_source query engines (FRE, DFP) — no real DBs, no network.
-Tests all 4 modes: shareholders, free_float, equity_structure, summary.
+Tests 4 of the 5 modes: shareholders, free_float, equity_structure, summary.
+The 5th mode (dashboard) has its own test_dashboard.py file.
+
+[v1.1] Per-mode tests now import their mode function directly from
+`skills.cvm.shareholders.modes.<mode>` (was `from skills.cvm.shareholders.shareholders
+import ...` before the v1.1 modular split).
 """
 
 from __future__ import annotations
@@ -135,7 +140,7 @@ class TestShareholdersMode:
     def test_shareholders_ok(self, monkeypatch):
         monkeypatch.setattr(
             "data_sources.cvm.fre.query_engine.shareholders", _mock_fre_shareholders_ok())
-        from skills.cvm.shareholders.shareholders import shareholders
+        from skills.cvm.shareholders.modes.shareholders import shareholders
         result = shareholders(company="PETR4")
         assert result["status"] == "ok"
         assert result["cnpj"] == "33000167000101"
@@ -144,14 +149,14 @@ class TestShareholdersMode:
         assert result["shareholders"][0]["pct_total"] == 28.9
 
     def test_shareholders_no_company(self, monkeypatch):
-        from skills.cvm.shareholders.shareholders import shareholders
+        from skills.cvm.shareholders.modes.shareholders import shareholders
         result = shareholders()
         assert result["status"] == "error"
 
     def test_shareholders_not_found(self, monkeypatch):
         monkeypatch.setattr(
             "data_sources.cvm.fre.query_engine.shareholders", _mock_fre_not_found())
-        from skills.cvm.shareholders.shareholders import shareholders
+        from skills.cvm.shareholders.modes.shareholders import shareholders
         result = shareholders(company="ZZZZ4")
         assert result["status"] == "not_found"
 
@@ -165,14 +170,14 @@ class TestFreeFloatMode:
     def test_free_float_ok(self, monkeypatch):
         monkeypatch.setattr(
             "data_sources.cvm.fre.query_engine.free_float", _mock_fre_free_float_ok())
-        from skills.cvm.shareholders.shareholders import free_float
+        from skills.cvm.shareholders.modes.free_float import free_float
         result = free_float(company="PETR4")
         assert result["status"] == "ok"
         assert result["periods"][0]["pct_total_circulacao"] == 71.1
         assert result["periods"][0]["qtd_acionistas_pf"] == 250000
 
     def test_free_float_no_company(self, monkeypatch):
-        from skills.cvm.shareholders.shareholders import free_float
+        from skills.cvm.shareholders.modes.free_float import free_float
         result = free_float()
         assert result["status"] == "error"
 
@@ -187,7 +192,7 @@ class TestEquityStructureMode:
         db_path, mock_connect = _make_dfp_db(tmp_path)
         _patch_dfp(monkeypatch, db_path, mock_connect)
 
-        from skills.cvm.shareholders.shareholders import equity_structure
+        from skills.cvm.shareholders.modes.equity_structure import equity_structure
         # Query by CNPJ (normalized) — resolver step 2 finds it
         result = equity_structure(company="33000167000101", periods=5)
         assert result["status"] == "ok"
@@ -200,7 +205,7 @@ class TestEquityStructureMode:
         assert accounts["2.03"]["valor_brl"] == 500000000000000.0
 
     def test_equity_structure_no_company(self, monkeypatch):
-        from skills.cvm.shareholders.shareholders import equity_structure
+        from skills.cvm.shareholders.modes.equity_structure import equity_structure
         result = equity_structure()
         assert result["status"] == "error"
 
@@ -208,7 +213,7 @@ class TestEquityStructureMode:
         db_path, mock_connect = _make_dfp_db(tmp_path)
         _patch_dfp(monkeypatch, db_path, mock_connect)
 
-        from skills.cvm.shareholders.shareholders import equity_structure
+        from skills.cvm.shareholders.modes.equity_structure import equity_structure
         result = equity_structure(company="NONEXISTENT")
         assert result["status"] == "not_found"
 
@@ -217,7 +222,7 @@ class TestEquityStructureMode:
         db_path, mock_connect = _make_dfp_db(tmp_path)
         _patch_dfp(monkeypatch, db_path, mock_connect)
 
-        from skills.cvm.shareholders.shareholders import equity_structure
+        from skills.cvm.shareholders.modes.equity_structure import equity_structure
         result = equity_structure(company="33000167000101", periods=1)
         assert result["status"] == "ok"
         assert len(result["periods"]) == 1
@@ -238,7 +243,7 @@ class TestSummaryMode:
         monkeypatch.setattr(
             "data_sources.cvm.fre.query_engine.free_float", _mock_fre_free_float_ok())
 
-        from skills.cvm.shareholders.shareholders import summary
+        from skills.cvm.shareholders.modes.summary import summary
         result = summary(company="33000167000101")
         assert result["status"] == "ok"
         assert "shareholders" in result["sections"]
@@ -256,14 +261,14 @@ class TestSummaryMode:
         monkeypatch.setattr(
             "data_sources.cvm.fre.query_engine.free_float", _mock_fre_not_found())
 
-        from skills.cvm.shareholders.shareholders import summary
+        from skills.cvm.shareholders.modes.summary import summary
         result = summary(company="33000167000101")
         assert result["status"] == "ok"
         assert result["sections"]["shareholders"]["status"] == "not_found"
         assert result["sections"]["equity"]["patrimonio_liquido_total"] == 500000000000000.0
 
     def test_summary_no_company(self):
-        from skills.cvm.shareholders.shareholders import summary
+        from skills.cvm.shareholders.modes.summary import summary
         result = summary()
         assert result["status"] == "error"
 

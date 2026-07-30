@@ -17,9 +17,19 @@ setdefault() ensures:
   - core.config initializes consistently across all tests
   - Existing env vars are NOT overridden (if the user has real values)
   - No monkeypatch scoping issues -- the singleton is stable
+
+[v2] Added `mock_freshness` autouse fixture — mocks
+skills.cvm._freshness.get_freshness so no test opens real SQLite DBs
+to check sync timestamps. Without this, every CVM skill mode that calls
+add_freshness() (insider, governance, historical, etc.) opens 9 SQLite
+databases per call, making tests take 2+ minutes on a machine with real
+data. The mock returns a dummy dict so data_freshness is still present
+in results.
 """
 from __future__ import annotations
 import os
+
+import pytest
 
 # Set env vars at module level (before any test or core.config import).
 # setdefault = don't override if already set by the user.
@@ -27,3 +37,29 @@ os.environ.setdefault("PLANNER_MODEL", "test")
 os.environ.setdefault("PLANNER_PROVIDER", "test")
 os.environ.setdefault("EXECUTOR_MODEL", "test")
 os.environ.setdefault("EXECUTOR_PROVIDER", "test")
+
+
+@pytest.fixture(autouse=True)
+def mock_freshness(monkeypatch):
+    """[v3] Mock add_freshness directly so no test opens real SQLite DBs.
+
+    add_freshness() calls get_freshness() which opens 9 SQLite databases
+    (dfp, itr, fre, ipe, cad, vlmo, cgvn, fca, bridge) to read sync_state
+    timestamps. On a machine with real databases, each call takes 100-500ms.
+    With 30+ tests calling modes that use add_freshness, this adds 10-30
+    seconds of pure DB-open overhead.
+
+    [v3] Instead of mocking get_freshness (v2 approach — still slow because
+    add_freshness itself runs), we mock add_freshness entirely as a no-op
+    that still injects the data_freshness key so tests that check for it
+    pass. This is MUCH faster because it skips the entire function body.
+    """
+    _dummy_freshness = {
+        "dfp": "", "itr": "", "fre": "", "ipe": "",
+        "cad": "", "vlmo": "", "cgvn": "", "fca": "", "bridge": "",
+    }
+    def _fake_add_freshness(result):
+        if isinstance(result, dict):
+            result["data_freshness"] = _dummy_freshness
+        return result
+    monkeypatch.setattr("skills.cvm._freshness.add_freshness", _fake_add_freshness)

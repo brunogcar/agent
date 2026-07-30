@@ -62,11 +62,21 @@ def test_catch_up_fire_all(mock_cfg, mock_notify):
 
 
 def test_catch_up_grace_drops_old(mock_cfg, mock_notify):
-    """last_fired 30 days ago, grace 24h → all missed fires dropped → 0 deliveries."""
-    n = now()
-    last = (n - timedelta(days=30)).replace(hour=8, minute=59, second=0, microsecond=0)
+    """last_fired 30 days ago, grace 1h → all missed fires dropped → 0 deliveries.
+
+    [v2] Mock now() to a FIXED time (noon today) so the test is deterministic
+    regardless of when it runs. Without this, running the test between 9am
+    and 10am would deliver today's 9am fire (within the 1h grace window),
+    causing fires_delivered=1 instead of the expected 0.
+    """
+    from core.time_utils import now as _real_now
+    n = _real_now()
+    # Fix the reference time to noon — well outside the 1h grace of the 9am cron.
+    fixed_ref = n.replace(hour=12, minute=0, second=0, microsecond=0)
+    last = (fixed_ref - timedelta(days=30)).replace(hour=8, minute=59, second=0, microsecond=0)
     _make_cron_job("cron_x", last.isoformat(), policy="fire_last", grace="1h")
-    summary = catch_up_missed_jobs(force=True)
+    with patch("tools.schedule_ops.state.now", return_value=fixed_ref):
+        summary = catch_up_missed_jobs(force=True)
     assert summary["fires_delivered"] == 0
     assert mock_notify.call_count == 0
 

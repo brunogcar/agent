@@ -5,7 +5,8 @@
 The `insider` skill analyzes VLMO disclosures — when directors, officers, or controlling shareholders buy or sell company securities.
 
 **Key characteristics:**
-- **3 modes** — history (recent transactions), by_role (grouped by role), summary (net buy/sell per month + sentiment)
+- **4 modes** — history (recent transactions), by_role (grouped by role), summary (net buy/sell per month + sentiment), dashboard (multi-tab composition for the report tool)
+- **Modular layout (v1.1)** — split into `_registry.py` + `modes/{history,by_role,summary,dashboard}.py` + `report.py`. Auto-discovery via `@register_mode`.
 - **Read-only** — calls vlmo.query_engine directly
 - **Bridge auto-sync** — first ticker query auto-syncs the bridge
 - **Data freshness** — includes data_freshness field showing last sync timestamps
@@ -42,6 +43,10 @@ report(action="table", title="PETR4 Insider",
        data=<insider JSON>, config={"adapter":"insider_history"})
 report(action="table", title="PETR4 Insider Summary",
        data=<insider summary JSON>, config={"adapter":"insider_summary"})
+
+# Multi-tab dashboard (Overview + Recent Transactions + By Role + Monthly Net)
+report(action="dashboard", title="PETR4 Insider Dashboard",
+       data=<insider dashboard JSON>, config={"adapter":"insider_dashboard"})
 ```
 
 ---
@@ -51,10 +56,10 @@ report(action="table", title="PETR4 Insider Summary",
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](insider/ARCHITECTURE.md) | Data flow, sentiment computation |
-| [API.md](insider/API.md) | 3 modes: history, by_role, summary |
+| [API.md](insider/API.md) | 4 modes: history, by_role, summary, dashboard |
 | [CHANGELOG.md](insider/CHANGELOG.md) | Version history |
 | [INSTRUCTIONS.md](insider/INSTRUCTIONS.md) | AI editing rules |
 
 ---
 
-*Last updated: 2026-07-25 (v1.0).*
+*Last updated: 2026-07-29 (v1.1 — modular split + dashboard mode).*

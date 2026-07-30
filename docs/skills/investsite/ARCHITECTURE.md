@@ -6,10 +6,21 @@
 
 | File | Purpose |
 |------|---------|
-| `skills/investsite/__init__.py` | MANIFEST + route (flat domain, 5 modes) |
-| `skills/investsite/fetcher.py` | HTTP fetch (httpx + browser headers), in-memory cache (1h TTL), rate limiting (0.5s), URL builders |
-| `skills/investsite/parsers.py` | HTML table extraction: `parse_indicators()`, `parse_statement()`, `parse_events()` |
-| `skills/investsite/investsite.py` | Mode logic: indicators, statements, events, summary, listing |
+| `skills/investsite/__init__.py` | MANIFEST + route (flat domain, 6 modes). [v1.1] Auto-discovers `modes/*.py` via importlib + builds `MANIFEST["modes"]` from the registry. Preserves `"domain"` (not `sub_domain`) + `route(sub_domain="", mode="", **kwargs)` signature (sub_domain accepted but ignored). |
+| `skills/investsite/_registry.py` | [v1.1] ModeSpec + `register_mode` decorator + `MODES` dict + `list_modes()`/`get_mode()`/`build_manifest_modes()`. Identical structure to the CVM skill registries (governance/screener/shareholders/insider/historical). |
+| `skills/investsite/fetcher.py` | HTTP fetch (httpx + browser headers), in-memory cache (1h TTL), rate limiting (0.5s), URL builders. UNCHANGED in v1.1. |
+| `skills/investsite/parsers.py` | HTML table extraction: `parse_indicators()`, `parse_statement()`, `parse_events()`. UNCHANGED in v1.1. |
+| `skills/investsite/report.py` | [v1.1] NEW — Dashboard composition helpers (`_fmt`/`_num`/`_kpi`/`_ok` + `build_overview_kpis` + `build_overview_section` + `build_key_indicators_section` + `build_latest_events_section`). |
+| `skills/investsite/modes/__init__.py` | [v1.1] Empty package marker (auto-discovered by `__init__.py`). |
+| `skills/investsite/modes/indicators.py` | [v1.1] `indicators()` mode — moved verbatim from the former `investsite.py` monolith. Fetches principais_indicadores.php. |
+| `skills/investsite/modes/statements.py` | [v1.1] `statements()` mode — moved verbatim. BPA/BPP/DRE/DFC/DVA/shares with % total columns. |
+| `skills/investsite/modes/events.py` | [v1.1] `events()` mode — moved verbatim. IPE by category with CVM rad.cvm.gov.br PDF links. |
+| `skills/investsite/modes/summary.py` | [v1.1] `summary()` mode — moved verbatim. Combined key indicators + latest Fato Relevante. Sibling-mode imports aliased (`indicators as _indicators`, `events as _events`). |
+| `skills/investsite/modes/listing.py` | [v1.1] `listing()` mode — moved verbatim. Lists available event categories. |
+| `skills/investsite/modes/dashboard.py` | [v1.1] NEW — `dashboard()` mode. Thin composition of `indicators()` + `events()`. 3 tabs (Overview/Key Indicators/Latest Events) + 5 top-level KPI cards. |
+| `tools/report_ops/adapters/investsite_dashboard.py` | [v1.1] NEW — Thin pass-through adapter `investsite_dashboard`. Maps KPI `unit` -> format spec (pct/num/int/text/brl). Tabs pass through verbatim. |
+| `tests/skills/investsite/test_investsite.py` | 18 tests covering parsers + 5 modes + route. [v1.1] Per-mode imports updated to `skills.investsite.modes.<mode>`. |
+| `tests/skills/investsite/test_dashboard.py` | [v1.1] NEW — 15 tests covering the new `dashboard()` mode. |
 
 ## Data Flow
 
@@ -102,7 +113,47 @@ The events page has links inside `<td>` cells (in the "Assuntos" column). The pa
 | `events` | 1 (per category) | Events list with CVM PDF links |
 | `summary` | 2 (indicators + events) | Key indicators + latest Fato Relevante |
 | `listing` | 0 (static) | Available event categories |
+| `dashboard` | 2 (indicators + events) | [v1.1] 3-tab payload: Overview (Summary text + 5 KPI cards), Key Indicators (8-row valuation+returns table), Latest Events (4-column Fato Relevante table). Top-level KPIs: P/L, P/VPA, EV/EBITDA, ROE, Dividend Yield. |
+
+## Modular file layout (v1.1)
+
+```
+skills/investsite/
+├── __init__.py            # MANIFEST + route + auto-discovery (105 lines)
+├── _registry.py           # ModeSpec + register_mode + build_manifest_modes (104 lines)
+├── fetcher.py             # HTTP fetch + cache + URL builders (158 lines, UNCHANGED)
+├── parsers.py             # HTML table parsers (319 lines, UNCHANGED)
+├── report.py              # NEW: dashboard composition helpers (271 lines)
+└── modes/
+    ├── __init__.py        # empty package marker (5 lines)
+    ├── indicators.py      # indicators() mode (63 lines)
+    ├── statements.py      # statements() mode (65 lines)
+    ├── events.py          # events() mode (64 lines)
+    ├── summary.py         # summary() mode — uses sibling-mode imports (77 lines)
+    ├── listing.py         # listing() mode (33 lines)
+    └── dashboard.py       # NEW: dashboard() mode (145 lines)
+```
+
+## Key Design Decisions
+
+### Modular pattern (v1.1)
+Same `_registry.py` + `modes/*.py` + `report.py` + dashboard adapter pattern as the CVM skills (financials, valuation, backtest, comparison, dividends, governance, historical, screener, shareholders, insider). Auto-discovery via `importlib.import_module` over `modes/*.py` — adding a new mode = drop a file + `@register_mode()`. No edits to `__init__.py` or `_registry.py` needed.
+
+### Top-level flat domain (v1.1 preserved)
+investsite is a TOP-LEVEL flat domain (not under cvm/). The MANIFEST keeps `"domain": "investsite"` (NOT `sub_domain`) + `"has_sub_domains": False`. The `route()` signature stays `route(sub_domain="", mode="", **kwargs)` — the `sub_domain` param is accepted for dispatcher compatibility with CVM-style routes but ignored. This is the ONLY structural difference from the CVM skill pattern.
+
+### fetcher.py + parsers.py KEPT as separate modules
+Unlike CVM skills where the monolith bundled helpers + fetchers + parsers, investsite.py was already split into 3 files (`investsite.py` for mode logic + `fetcher.py` for HTTP + `parsers.py` for HTML parsing) before v1.1. The v1.1 split only touches the mode logic — `fetcher.py` (158 lines) + `parsers.py` (319 lines) are UNCHANGED. Each mode file imports `fetch_page` + URL builders + parsers directly.
+
+### Dashboard composition (thin)
+The `dashboard` mode does NOT fetch new data beyond what `indicators()` + `events()` fetch — it calls them and reshapes their output. Each sub-call is independently try/except-wrapped so a network/parse failure degrades the corresponding tab to an empty payload (table has 0 rows, KPIs render as "—") instead of crashing the whole dashboard. The 5 top-level KPI cards (P/L, P/VPA, EV/EBITDA, ROE, Dividend Yield) are placed at the TOP LEVEL (not inside a tab) — matches the dashboard contract used by the other 10 CVM skills so the dashboard template's `kpi-grid` div renders them above all tabs.
+
+### Dashboard adapter (thin pass-through)
+The `investsite_dashboard` adapter is THIN — it passes through the dashboard mode's already-shaped tabs verbatim and only re-formats the top-level KPI cards via a unit -> format-spec map (`pct -> pct` for ROE/Dividend Yield stored as fractions, `num -> num` for P/L/P/VPA/EV/EBITDA raw multiples). Defensive: if a KPI value is already a string (pre-formatted by `report.py`), passes through verbatim; otherwise applies the format spec via `apply_fmt()`.
+
+### Per-mode fetch_page imports
+Each mode file imports `fetch_page` from `skills.investsite.fetcher` at the top level (NOT lazy). Tests that mock the fetcher must patch `skills.investsite.modes.<mode>.fetch_page` (the symbol imported into the mode module's namespace), not `skills.investsite.fetcher.fetch_page` (the original definition — patching that wouldn't affect already-imported references).
 
 ---
 
-*Last updated: 2026-07-24 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

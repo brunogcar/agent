@@ -14,7 +14,7 @@ works without falling back to the lucro_liquido/patrimonio_liquido division.
 """
 from __future__ import annotations
 
-from skills.cvm.screener import screener
+from skills.cvm.screener.modes.compare import compare
 from tests.skills.cvm.screener.conftest import (
     CAD_COMPANIES, BRIDGE_SUZB3, BRIDGE_KLBN11, VAL_SUZB3, VAL_KLBN11,
 )
@@ -25,7 +25,7 @@ class TestCompareMode:
         mock_all(monkeypatch, CAD_COMPANIES,
                  {"SUZB3": BRIDGE_SUZB3, "KLBN11": BRIDGE_KLBN11},
                  {"SUZB3": VAL_SUZB3, "KLBN11": VAL_KLBN11})
-        r = screener.compare(company="SUZB3")
+        r = compare(company="SUZB3")
         assert r["status"] == "ok"
         assert r["ticker"] == "SUZB3"
         assert r["setor"] == "Papel e Celulose"
@@ -37,7 +37,7 @@ class TestCompareMode:
         mock_all(monkeypatch, CAD_COMPANIES,
                  {"SUZB3": BRIDGE_SUZB3, "KLBN11": BRIDGE_KLBN11},
                  {"SUZB3": VAL_SUZB3, "KLBN11": VAL_KLBN11})
-        r = screener.compare(company="SUZB3")
+        r = compare(company="SUZB3")
         comp = r["comparison"]
         # SUZB3 P/L=4.0, median=8.5 → cheap
         assert comp["p_l"]["vs_sector"] == "cheap"
@@ -53,5 +53,5 @@ class TestCompareMode:
 
     def test_ticker_not_in_bridge(self, mock_all, monkeypatch):
         mock_all(monkeypatch, CAD_COMPANIES, {}, {})
-        r = screener.compare(company="UNKNOWN4")
+        r = compare(company="UNKNOWN4")
         assert r["status"] == "not_found"

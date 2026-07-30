@@ -5,7 +5,8 @@
 The `screener` skill lists companies in a sector and computes sector medians (P/L, ROE, EV/EBITDA) so the LLM can ask "is SUZB3 cheap vs its sector?".
 
 **Key characteristics:**
-- **2 modes** — sector (list peers + medians), compare (is ticker X cheap/expensive vs sector)
+- **3 modes** — sector (list peers + medians), compare (is ticker X cheap/expensive vs sector), dashboard (multi-tab composition for the report tool)
+- **Modular layout (v1.4)** — split into `_registry.py` + `modes/{sector,compare,dashboard}.py` + `helpers.py` + `report.py`. Auto-discovery via `@register_mode`.
 - **Orchestration only** — calls CAD + bridge + valuation internally. No own database, no sync.
 - **Best-effort** — companies without a ticker (not in bridge) or with failed valuation are skipped, not fatal.
 - **Sorted by P/L** — peers table is sorted cheapest-first so the LLM sees value opportunities immediately.
@@ -40,11 +41,16 @@ No skill-specific config. Requires:
 
 ## 📊 Rendering & Export
 
-Pipe a `screener` result into the `report` tool (adapter: `screener_sector`):
+Pipe a `screener` result into the `report` tool (adapters: `screener_sector`, `screener_dashboard`):
 
 ```
+# Sector peers table + median KPIs
 report(action="table", title="Papel e Celulose Sector",
        data=<screener sector JSON>, config={"adapter":"screener_sector"})
+
+# Multi-tab dashboard (Overview + Peers + Comparison)
+report(action="dashboard", title="SUZB3 vs Sector",
+       data=<screener dashboard JSON>, config={"adapter":"screener_dashboard"})
 ```
 
 See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
@@ -56,10 +62,10 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](screener/ARCHITECTURE.md) | Data flow, median computation, comparison logic |
-| [API.md](screener/API.md) | 2 modes: sector, compare |
+| [API.md](screener/API.md) | 3 modes: sector, compare, dashboard |
 | [CHANGELOG.md](screener/CHANGELOG.md) | Version history + roadmap |
 | [INSTRUCTIONS.md](screener/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-27 (v1.2 — calculations integration).*
+*Last updated: 2026-07-29 (v1.4 — modular split + dashboard mode).*

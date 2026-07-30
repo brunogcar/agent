@@ -1,6 +1,13 @@
 """tests/skills/investsite/test_investsite.py -- Tests for investsite skill.
 
 Mocks HTTP fetcher — no real network calls. Tests all 5 modes + parsers.
+
+[v1.1] Per-mode tests now import their mode function directly from
+`skills.investsite.modes.<mode>` (was `from skills.investsite.investsite
+import ...` before the v1.1 modular split). The fetch_page patch target
+moves from `skills.investsite.investsite.fetch_page` to
+`skills.investsite.modes.<mode>.fetch_page` (each mode module imports its
+own fetch_page symbol).
 """
 
 from __future__ import annotations
@@ -135,10 +142,10 @@ class TestParsers:
 
 class TestIndicatorsMode:
 
-    @patch("skills.investsite.investsite.fetch_page")
+    @patch("skills.investsite.modes.indicators.fetch_page")
     def test_indicators_ok(self, mock_fetch):
         mock_fetch.return_value = INDICATORS_HTML
-        from skills.investsite.investsite import indicators
+        from skills.investsite.modes.indicators import indicators
         result = indicators(ticker="PETR4")
         assert result["status"] == "ok"
         assert result["ticker"] == "PETR4"
@@ -146,14 +153,14 @@ class TestIndicatorsMode:
         assert "retornos_margens" in result["sections"]
 
     def test_indicators_no_ticker(self):
-        from skills.investsite.investsite import indicators
+        from skills.investsite.modes.indicators import indicators
         result = indicators()
         assert result["status"] == "error"
 
-    @patch("skills.investsite.investsite.fetch_page")
+    @patch("skills.investsite.modes.indicators.fetch_page")
     def test_indicators_fetch_error(self, mock_fetch):
         mock_fetch.side_effect = ConnectionError("Network error")
-        from skills.investsite.investsite import indicators
+        from skills.investsite.modes.indicators import indicators
         result = indicators(ticker="PETR4")
         assert result["status"] == "error"
         assert "Network error" in result["error"]
@@ -161,64 +168,67 @@ class TestIndicatorsMode:
 
 class TestStatementsMode:
 
-    @patch("skills.investsite.investsite.fetch_page")
+    @patch("skills.investsite.modes.statements.fetch_page")
     def test_statements_ok(self, mock_fetch):
         mock_fetch.return_value = STATEMENT_HTML
-        from skills.investsite.investsite import statements
+        from skills.investsite.modes.statements import statements
         result = statements(ticker="PETR4", statement="DRE")
         assert result["status"] == "ok"
         assert result["statement_type"] == "DRE"
         assert result["account_count"] == 3
 
     def test_statements_no_ticker(self):
-        from skills.investsite.investsite import statements
+        from skills.investsite.modes.statements import statements
         result = statements()
         assert result["status"] == "error"
 
     def test_statements_invalid_type(self):
-        from skills.investsite.investsite import statements
+        from skills.investsite.modes.statements import statements
         result = statements(ticker="PETR4", statement="INVALID")
         assert result["status"] == "error"
 
 
 class TestEventsMode:
 
-    @patch("skills.investsite.investsite.fetch_page")
+    @patch("skills.investsite.modes.events.fetch_page")
     def test_events_ok(self, mock_fetch):
         mock_fetch.return_value = EVENTS_HTML
-        from skills.investsite.investsite import events
+        from skills.investsite.modes.events import events
         result = events(ticker="PETR4", categoria="Fato Relevante")
         assert result["status"] == "ok"
         assert result["count"] == 3
         assert "rad.cvm.gov.br" in result["events"][0]["link_cvm"]
 
-    @patch("skills.investsite.investsite.fetch_page")
+    @patch("skills.investsite.modes.events.fetch_page")
     def test_events_limit(self, mock_fetch):
         mock_fetch.return_value = EVENTS_HTML
-        from skills.investsite.investsite import events
+        from skills.investsite.modes.events import events
         result = events(ticker="PETR4", limit=2)
         assert result["count"] == 2
 
     def test_events_no_ticker(self):
-        from skills.investsite.investsite import events
+        from skills.investsite.modes.events import events
         result = events()
         assert result["status"] == "error"
 
 
 class TestSummaryMode:
 
-    @patch("skills.investsite.investsite.fetch_page")
-    def test_summary_ok(self, mock_fetch):
-        # First call = indicators, second call = events
-        mock_fetch.side_effect = [INDICATORS_HTML, EVENTS_HTML]
-        from skills.investsite.investsite import summary
+    @patch("skills.investsite.modes.indicators.fetch_page")
+    @patch("skills.investsite.modes.events.fetch_page")
+    def test_summary_ok(self, mock_events_fetch, mock_indicators_fetch):
+        # indicators() fetches via modes.indicators.fetch_page
+        # events() fetches via modes.events.fetch_page
+        mock_indicators_fetch.return_value = INDICATORS_HTML
+        mock_events_fetch.return_value = EVENTS_HTML
+        from skills.investsite.modes.summary import summary
         result = summary(ticker="PETR4")
         assert result["status"] == "ok"
         assert "precos_relativos" in result["sections"]
         assert "latest_events" in result["sections"]
 
     def test_summary_no_ticker(self):
-        from skills.investsite.investsite import summary
+        from skills.investsite.modes.summary import summary
         result = summary()
         assert result["status"] == "error"
 
@@ -226,7 +236,7 @@ class TestSummaryMode:
 class TestListingMode:
 
     def test_listing_ok(self):
-        from skills.investsite.investsite import listing
+        from skills.investsite.modes.listing import listing
         result = listing()
         assert result["status"] == "ok"
         assert "Fato Relevante" in result["categories"]

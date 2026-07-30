@@ -17,6 +17,7 @@
 2. **Always make summary sections best-effort** — If one data source is missing, the summary should still return what's available (not fail entirely).
 3. **Always accept `company` (ticker/name/CNPJ) in all modes** — The resolver + bridge handle resolution. Don't restrict to tickers only.
 4. **Always run `compileall` before `pytest`** — Catches syntax errors early.
+5. **Always use `@register_mode(...)` for new modes (v1.1)** — Drop a file in `modes/` + decorate; no edits to `__init__.py` or `_registry.py` needed (auto-discovery via importlib).
 
 ---
 
@@ -25,3 +26,8 @@
 *(Fill this section with relevant info from edits and refactors. Add lessons learned as they are discovered.)*
 
 - **v1.0.1 lesson:** `equity_structure` mode crashed with `could not convert string to float: 'MIL'` — DFP stores ESCALA_MOEDA as Portuguese words. Fix: use `parse_escala()`.
+- **v1.1 lesson:** Decomposed monolithic `shareholders.py` (233 lines) into `_registry.py` + `modes/` + `report.py`. New modes now drop in via `@register_mode(...)` in `modes/<name>.py` with zero edits to `__init__.py`. The `dashboard` mode is a thin pass-through of the `summary()` result into a 4-tab dashboard dict (Overview / Top Shareholders / Free Float / Equity Structure), mirroring the `financials`/`valuation`/`comparison`/`backtest`/`dividends`/`governance`/`historical`/`screener` dashboard pattern. The summary mode's sibling-mode imports use aliased names (`from ...modes.shareholders import shareholders as _shareholders`) to avoid name clash with the `summary` mode name + to keep call sites short.
+
+---
+
+*Last updated: 2026-07-30 (v1.1).*

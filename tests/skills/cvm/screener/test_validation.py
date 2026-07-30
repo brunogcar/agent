@@ -10,16 +10,17 @@ circuits before any underlying skill is called.
 """
 from __future__ import annotations
 
-from skills.cvm.screener import screener
+from skills.cvm.screener.modes.sector import sector
+from skills.cvm.screener.modes.compare import compare
 
 
 class TestValidation:
     def test_sector_requires_setor(self):
-        r = screener.sector()
+        r = sector()
         assert r["status"] == "error"
         assert "setor" in r["error"]
 
     def test_compare_requires_company(self):
-        r = screener.compare()
+        r = compare()
         assert r["status"] == "error"
         assert "company" in r["error"]

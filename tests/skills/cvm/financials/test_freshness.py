@@ -11,8 +11,31 @@ Covers TestFreshness (4 tests):
 Uses the shared `financials_env` fixture from financials/conftest.py so we get
 synthetic dfp.db + itr.db with known data_fim_exerc values (2023-12-31 for
 DFP, 2023-09-30 for ITR).
+
+[v4] All tests in this file opt out of the parent conftest's mock_freshness
+autouse fixture (which mocks add_freshness as a no-op). These tests NEED the
+real add_freshness to verify it adds both data_freshness AND
+last_synced_period keys. The opt-out is done via `@pytest.fixture(autouse=True)`
+that overrides mock_freshness with a no-op (does nothing), so the real
+add_freshness runs.
 """
 from __future__ import annotations
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def mock_freshness():
+    """[v4] Override the parent conftest's mock_freshness autouse fixture.
+
+    The parent tests/skills/cvm/conftest.py mocks add_freshness as a no-op
+    for speed (so other CVM skill tests don't open 9 SQLite DBs). But THIS
+    file tests add_freshness itself — we need the real implementation.
+
+    Defining this fixture with the same name (mock_freshness) in this module
+    overrides the parent's autouse fixture for tests in this file only.
+    """
+    yield  # do nothing — real add_freshness runs
 
 
 class TestFreshness:

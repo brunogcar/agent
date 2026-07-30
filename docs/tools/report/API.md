@@ -283,6 +283,10 @@ tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`
 | `dividends_dashboard` (v1.7) | `cvm/dividends` dashboard | **Dashboard adapter** — multi-tab (Overview + Events + Annual + Payable + Filings). Thin pass-through of `dividends.dashboard()` tab payload |
 | `governance_dashboard` (v1.7) | `cvm/governance` dashboard | **Dashboard adapter** — multi-tab (Overview KPIs + Practices + By Chapter). Thin pass-through of `governance.dashboard()` tab payload |
 | `historical_dashboard` (v1.7) | `cvm/historical` dashboard | **Dashboard adapter** — multi-tab (Overview + Ratios + Summary). Thin pass-through of `historical.dashboard()` tab payload |
+| `screener_dashboard` (v1.8) | `cvm/screener` dashboard | **Dashboard adapter** — multi-tab (Overview KPIs + Peers + Comparison). Thin pass-through of `screener.dashboard()` tab payload |
+| `shareholders_dashboard` (v1.8) | `cvm/shareholders` dashboard | **Dashboard adapter** — multi-tab (Overview + Top Shareholders + Free Float + Equity Structure). Thin pass-through of `shareholders.dashboard()` tab payload |
+| `insider_dashboard` (v1.8) | `cvm/insider` dashboard | **Dashboard adapter** — multi-tab (Overview + Recent Transactions + By Role + Monthly Net). Thin pass-through of `insider.dashboard()` tab payload |
+| `investsite_dashboard` (v1.8) | `investsite` dashboard | **Dashboard adapter** — multi-tab (Overview + Key Indicators + Latest Events). Thin pass-through of `investsite.dashboard()` tab payload |
 
 Error / not_synced skill results render as a small status table (never crash).
 

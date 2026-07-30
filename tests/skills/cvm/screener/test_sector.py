@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.screener import screener
+from skills.cvm.screener.modes.sector import sector
 from tests.skills.cvm.screener.conftest import (
     CAD_COMPANIES, BRIDGE_SUZB3, BRIDGE_KLBN11, VAL_SUZB3, VAL_KLBN11,
 )
@@ -25,7 +25,7 @@ class TestSectorMode:
         mock_all(monkeypatch, CAD_COMPANIES,
                  {"SUZB3": BRIDGE_SUZB3, "KLBN11": BRIDGE_KLBN11},
                  {"SUZB3": VAL_SUZB3, "KLBN11": VAL_KLBN11})
-        r = screener.sector(setor="Papel e Celulose")
+        r = sector(setor="Papel e Celulose")
         assert r["status"] == "ok"
         assert r["setor"] == "Papel e Celulose"
         assert r["peer_count"] == 2
@@ -36,7 +36,7 @@ class TestSectorMode:
         mock_all(monkeypatch, CAD_COMPANIES,
                  {"SUZB3": BRIDGE_SUZB3, "KLBN11": BRIDGE_KLBN11},
                  {"SUZB3": VAL_SUZB3, "KLBN11": VAL_KLBN11})
-        r = screener.sector(setor="Papel")
+        r = sector(setor="Papel")
         # SUZB3 P/L=4.0, KLBN11 P/L=13.0 → SUZB3 first (cheapest)
         assert r["peers"][0]["ticker"] == "SUZB3"
         assert r["peers"][1]["ticker"] == "KLBN11"
@@ -45,7 +45,7 @@ class TestSectorMode:
         mock_all(monkeypatch, CAD_COMPANIES,
                  {"SUZB3": BRIDGE_SUZB3, "KLBN11": BRIDGE_KLBN11},
                  {"SUZB3": VAL_SUZB3, "KLBN11": VAL_KLBN11})
-        r = screener.sector(setor="Papel")
+        r = sector(setor="Papel")
         # median of [4.0, 13.0] = 8.5
         assert r["medians"]["p_l"] == 8.5
         # median of [0.25, 0.015] = 0.1325
@@ -58,7 +58,7 @@ class TestSectorMode:
 
     def test_no_companies_found(self, mock_all, monkeypatch):
         mock_all(monkeypatch, [], {}, {})
-        r = screener.sector(setor="Nonexistent")
+        r = sector(setor="Nonexistent")
         assert r["status"] == "not_found"
 
     def test_skips_companies_without_ticker(self, mock_all, monkeypatch):
@@ -66,7 +66,7 @@ class TestSectorMode:
         mock_all(monkeypatch, CAD_COMPANIES,
                  {"SUZB3": BRIDGE_SUZB3},  # KLBN11 not in bridge
                  {"SUZB3": VAL_SUZB3})
-        r = screener.sector(setor="Papel")
+        r = sector(setor="Papel")
         assert r["status"] == "ok"
         assert r["peer_count"] == 1  # only SUZB3
 
@@ -76,7 +76,7 @@ class TestSectorMode:
         mock_all(monkeypatch, CAD_COMPANIES,
                  {"SUZB3": BRIDGE_SUZB3, "KLBN11": BRIDGE_KLBN11},
                  {"SUZB3": VAL_SUZB3, "KLBN11": VAL_KLBN11})
-        r = screener.sector(setor="Papel e Celulose")
+        r = sector(setor="Papel e Celulose")
         suzb3 = next(p for p in r["peers"] if p["ticker"] == "SUZB3")
         assert suzb3["roa"] == 0.10
         assert suzb3["margem_liquida"] == 0.25

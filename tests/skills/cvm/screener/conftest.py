@@ -1,8 +1,11 @@
 """Shared fixtures for the screener skill tests.
 
 [Phase 4] Extracted from the original single-file `test_screener.py` so
-each mode (validation / sector / compare / route) can live in its own
-per-mode test module. The fixture provides:
+each mode (validation / sector / compare / route / dashboard) can live in
+its own per-mode test module. [v1.4] per-mode tests now import their mode
+function directly from `skills.cvm.screener.modes.<mode>` instead of from
+the legacy monolithic screener module (which was removed in the v1.4
+modular split). The fixture provides:
 
   - Synthetic CAD company rows (CAD_COMPANIES).
   - Synthetic bridge lookup responses (BRIDGE_*).
@@ -59,11 +62,18 @@ VAL_KLBN11 = {"status": "ok", "ticker": "KLBN11", "ratios": {
 
 
 def _mock_all(monkeypatch, cad_comps, bridge_map, val_map):
-    """Mock CAD search, CAD lookup, bridge lookup, valuation ratios.
+    """Mock CAD search, CAD lookup, bridge lookup, valuation ratios,
+    financials.annual, + FCA segment resolution.
 
     Each map is keyed by the relevant identifier (ticker for bridge + val;
     cad_comps is a list). Identifiers not in the map return a not_found /
     error response so the best-effort skip path can be tested.
+
+    [v2] Added financials.annual + _resolve_via_fca_segmento mocks —
+    sector() calls both of these per-peer, and without mocks they hit real
+    DFP + FCA databases, making tests take 2+ minutes on a machine with
+    real data. The mocks return synthetic financials so the peer dict is
+    fully populated (receita, ebitda, margens, payout, segmento).
     """
     def fake_cad_search(setor="", **kwargs):
         return {"status": "ok",
@@ -89,10 +99,36 @@ def _mock_all(monkeypatch, cad_comps, bridge_map, val_map):
                 return {"status": "ok", "company": c}
         return {"status": "not_found"}
 
+    # [v2] Mock financials.annual — sector() calls fin_annual(company, periods=2)
+    # per peer to enrich the peer dict with receita/ebitda/margens/payout/growth.
+    # Without this mock, every test that calls sector() or compare() hits the
+    # real DFP database for each peer (2 queries × N peers = slow on real data).
+    def fake_fin_annual(company="", periods=2, **kwargs):
+        return {
+            "status": "ok",
+            "company": company,
+            "periods": [
+                {"metrics": {"receita_liquida": 10_000_000_000,
+                             "ebitda": 3_000_000_000,
+                             "lucro_liquido": 2_000_000_000},
+                 "ratios": {"marg_ebitda": 0.30, "marg_liquida": 0.20,
+                            "payout": 0.40}},
+                {"metrics": {"receita_liquida": 9_000_000_000}},
+            ],
+        }
+
+    # [v2] Mock FCA segment resolution — sector() calls _resolve_via_fca_segmento
+    # per peer to get the listing segment (Novo Mercado, Nível 1, etc.).
+    # Without this mock, each call hits the FCA database.
+    def fake_fca_segmento(ticker=""):
+        return "Novo Mercado"
+
     monkeypatch.setattr("data_sources.cvm.cad.query_engine.search", fake_cad_search)
     monkeypatch.setattr("data_sources.cvm.cad.query_engine.lookup", fake_cad_lookup)
     monkeypatch.setattr("data_sources.cvm.bridge.query_engine.lookup", fake_bridge_lookup)
     monkeypatch.setattr("skills.cvm.valuation.modes.ratios.ratios", fake_val_ratios)
+    monkeypatch.setattr("skills.cvm.financials.modes.annual.annual", fake_fin_annual)
+    monkeypatch.setattr("data_sources.cvm._bridge._resolve_via_fca_segmento", fake_fca_segmento)
 
 
 @pytest.fixture

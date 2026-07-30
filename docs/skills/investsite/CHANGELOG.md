@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.1 | 2026-07-29 | **Modular split + dashboard mode.** Split the monolithic `investsite.py` (185 lines) into the canonical modular structure: `_registry.py` (ModeSpec + register_mode + auto-discovery) + `modes/{indicators,statements,events,listing,summary,dashboard}.py` (6 mode files) + `report.py` (NEW dashboard composition helpers). `fetcher.py` + `parsers.py` KEPT as separate modules — only `investsite.py` was split. Added a new `dashboard` mode (the 6th investsite mode) that composes `indicators()` + `events()` into a 3-tab payload (Overview/Key Indicators/Latest Events) with 5 top-level KPI cards (P/L, P/VPA, EV/EBITDA, ROE, Dividend Yield). Added the first investsite report adapter `investsite_dashboard` (top-level flat domain — no pre-existing investsite_* adapters). `__init__.py` rewritten with auto-discovery (preserves `"domain"` not `"sub_domain"` + `route(sub_domain="", mode="", **kwargs)` signature — sub_domain accepted but ignored). 33 tests (18 original + 15 NEW TestDashboardMode) + 10 NEW TestInvestsiteDashboardAdapter. |
 | v1.0 | 2026-07-24 | **Initial implementation.** 5 modes: indicators (default, 10 tables), statements (BPA/BPP/DRE/DFC/DVA/shares with % total), events (IPE by category with CVM PDF links), summary, listing. Live HTTP fetching with httpx + browser headers. In-memory cache (1h TTL). Rate-limited (0.5s). 18 tests. |
 
 ---
@@ -29,4 +30,4 @@
 
 ---
 
-*Last updated: 2026-07-24 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

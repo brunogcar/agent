@@ -51,6 +51,38 @@ List available event categories. No params required.
 
 Returns: `{status, categories: ["Assembleia", "Aviso aos Acionistas", ...]}`
 
+### mode="dashboard" (v1.1)
+
+Multi-tab composition of `indicators()` + `events()`. Optimized for the report tool's dashboard action.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| ticker | str | yes | B3 ticker (PETR4) |
+
+Returns: `{status, company, tabs: [...], kpis: [...]}` where each tab is `{name, sections: [...]}`.
+
+Tabs:
+- **Overview** — Summary text section (ticker, empresa, P/L, P/VPA, EV/EBITDA, ROE, Dividend Yield).
+- **Key Indicators** — 2-column [Indicador, Valor] table flattening `precos_relativos` + `retornos_margens` (8 metric rows: P/L, P/VPA, EV/EBITDA, Dividend Yield, ROE, ROA, Margem EBITDA, Margem Líquida).
+- **Latest Events** — 4-column [Data, Categoria, Descrição, Link] table of the 10 most recent Fato Relevante events with direct CVM rad.cvm.gov.br PDF links.
+
+Top-level KPI cards (5, at the top level — not inside a tab):
+- P/L (num)
+- P/VPA (num)
+- EV/EBITDA (num)
+- ROE (pct)
+- Dividend Yield (pct)
+
+Each sub-call is independently try/except-wrapped so a network/parse failure degrades the corresponding tab to an empty payload (table has 0 rows, KPIs render as "—") instead of crashing the whole dashboard.
+
+---
+
+## Report Adapters
+
+| Adapter | Serves |
+|---------|-------|
+| `investsite_dashboard` | [v1.1] `dashboard` mode — thin pass-through, re-formats KPIs via unit -> spec map. |
+
 ---
 
 ## Available Event Categories
@@ -79,4 +111,4 @@ skill(domain="investsite", mode="listing")
 
 ---
 
-*Last updated: 2026-07-24 (v1.0).*
+*Last updated: 2026-07-29 (v1.1).*

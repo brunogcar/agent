@@ -131,10 +131,16 @@ FIN_QUARTERLY_SUZB3 = {
 
 
 def _mock_skills(monkeypatch, val_map, fin_map, div_map):
-    """Monkeypatch the 3 underlying skills to return synthetic data.
+    """Monkeypatch the 3 underlying skills + financials.quarterly to return
+    synthetic data.
 
     Each map is keyed by uppercase ticker. Tickers not in the map return a
     status=error response so the best-effort path can be tested.
+
+    [v3] Added financials.quarterly mock — growth() calls it per-ticker.
+    Without this mock, tests that call dashboard() (which calls growth())
+    hit the real DFP database, taking 30+ seconds per test on a machine
+    with real data.
     """
     def fake_val_ratios(company=""):
         return val_map.get(company.strip().upper(),
@@ -145,9 +151,14 @@ def _mock_skills(monkeypatch, val_map, fin_map, div_map):
     def fake_div_summary(company=""):
         return div_map.get(company.strip().upper(),
                            {"status": "error", "error": f"no data for {company}"})
+    # [v3] Mock financials.quarterly — growth() calls this per-ticker.
+    def fake_fin_quarterly(company="", periods=8, consolidado=1):
+        return {"status": "ok", "company": company, "period_type": "quarterly",
+                "periods": []}
     monkeypatch.setattr("skills.cvm.valuation.modes.ratios.ratios", fake_val_ratios)
     monkeypatch.setattr("skills.cvm.financials.modes.summary.summary", fake_fin_summary)
     monkeypatch.setattr("skills.cvm.dividends.modes.summary.summary", fake_div_summary)
+    monkeypatch.setattr("skills.cvm.financials.modes.quarterly.quarterly", fake_fin_quarterly)
 
 
 @pytest.fixture

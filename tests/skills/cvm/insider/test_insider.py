@@ -1,12 +1,18 @@
 """Tests for skills/cvm/insider/ — insider trading skill.
 
 Uses mocked VLMO query_engine — no database needed.
+
+[v1.1] Per-mode tests now import their mode function directly from
+`skills.cvm.insider.modes.<mode>` (was `from skills.cvm.insider import insider`
+before the v1.1 modular split).
 """
 from __future__ import annotations
 
 import pytest
 
-from skills.cvm.insider import insider
+from skills.cvm.insider.modes.history import history
+from skills.cvm.insider.modes.by_role import by_role
+from skills.cvm.insider.modes.summary import summary
 
 
 # ── Synthetic data ───────────────────────────────────────────────────────────
@@ -61,15 +67,15 @@ def _mock_query(monkeypatch, return_map):
 
 class TestValidation:
     def test_history_requires_company(self):
-        r = insider.history()
+        r = history()
         assert r["status"] == "error"
 
     def test_by_role_requires_company(self):
-        r = insider.by_role()
+        r = by_role()
         assert r["status"] == "error"
 
     def test_summary_requires_company(self):
-        r = insider.summary()
+        r = summary()
         assert r["status"] == "error"
 
 
@@ -78,14 +84,14 @@ class TestValidation:
 class TestHistory:
     def test_history_basic(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = insider.history(company="PETR4", limit=10)
+        r = history(company="PETR4", limit=10)
         assert r["status"] == "ok"
         assert r["count"] == 2
         assert len(r["movements"]) == 2
 
     def test_history_has_freshness(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = insider.history(company="PETR4")
+        r = history(company="PETR4")
         assert "data_freshness" in r
 
 
@@ -94,7 +100,7 @@ class TestHistory:
 class TestByRole:
     def test_by_role_basic(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = insider.by_role(company="PETR4")
+        r = by_role(company="PETR4")
         assert r["status"] == "ok"
         assert len(r["by_role"]) == 1
         assert r["by_role"][0]["Tipo_Cargo"] == "Diretor"
@@ -105,13 +111,13 @@ class TestByRole:
 class TestSummary:
     def test_summary_basic(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = insider.summary(company="PETR4")
+        r = summary(company="PETR4")
         assert r["status"] == "ok"
         assert len(r["monthly"]) == 1
 
     def test_summary_computes_sentiment(self, monkeypatch):
         _mock_query(monkeypatch, {})
-        r = insider.summary(company="PETR4")
+        r = summary(company="PETR4")
         assert r["sentiment"] == "buying"  # 385000 bought > 189000 sold
         assert r["net_volume"] == 196000
         assert r["total_volume_bought"] == 385000
@@ -131,3 +137,11 @@ class TestRoute:
         r = route(mode="nope")
         assert r["status"] == "error"
         assert "Unknown mode" in r["error"]
+
+    def test_route_dashboard_dispatches(self):
+        """[v1.1] New dashboard mode is reachable via the router."""
+        from skills.cvm.insider import MANIFEST, route
+        assert "dashboard" in MANIFEST["modes"]
+        r = route(mode="dashboard")
+        assert r["status"] == "error"
+        assert "company is required" in r["error"]
