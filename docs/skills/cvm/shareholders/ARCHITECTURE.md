@@ -20,10 +20,13 @@ DFP. This skill combines both into one queryable view.
 
 ## 🔗 Source Code Reference
 
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+
 | File | Purpose |
 |---|---|
-| `skills/cvm/shareholders/__init__.py` | MANIFEST + route — modes auto-generated from `_registry.py` |
-| `skills/cvm/shareholders/_registry.py` | Central registry: `ModeSpec` + `@register_mode` + auto-discovery (`modes/*.py`) |
+| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/cvm/shareholders/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route — modes auto-generated from `_registry.py`. |
+| `skills/cvm/shareholders/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
 | `skills/cvm/shareholders/report.py` | Skill-level report helpers — dashboard section builders (v1.1) |
 | `skills/cvm/shareholders/modes/__init__.py` | Empty package marker for the `modes/` directory |
 | `skills/cvm/shareholders/modes/shareholders.py` | `mode="shareholders"` — named shareholders with ownership % (FRE) |
@@ -97,4 +100,4 @@ If they're not, queries return `not_synced` / `not_found`.
 
 ---
 
-*Last updated: 2026-07-30 (v1.1).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details).*

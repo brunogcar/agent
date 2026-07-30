@@ -4,10 +4,13 @@
 
 ## 🔗 Source Code Reference
 
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+
 | File | Purpose |
 |------|---------|
-| `skills/cvm/screener/__init__.py` | MANIFEST + route() — auto-discovers `modes/*.py` via importlib + dispatches sector / compare / dashboard via the MODES registry |
-| `skills/cvm/screener/_registry.py` | [v1.4] ModeSpec dataclass + `register_mode` decorator + MODES dict + `list_modes` / `get_mode` / `build_manifest_modes`. Mirrors governance/_registry.py. |
+| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/cvm/screener/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route() — dispatches sector / compare / dashboard via the MODES registry. |
+| `skills/cvm/screener/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
 | `skills/cvm/screener/helpers.py` | [v1.4] Internal helpers — `_roe_from_ratios`, `_pct_change`, `_compute_medians`, `_build_comparison`. Shared by modes/sector.py + modes/compare.py. [v1.2] `_roe_from_ratios()` simplified to `ratios.get("roe")` (was lucro_liquido/patrimonio_liquido division). `_compute_medians()` + `_build_comparison()` extended with roa, margem_liquida, divida_pl. |
 | `skills/cvm/screener/report.py` | [v1.4] Dashboard composition helpers — `_fmt`/`_num`/`_kpi`/`_ok` + `build_overview_kpis` (5 sector-median KPI cards) + `build_overview_section` (Overview Summary text) + `build_peers_section` (13-column peers table) + `build_comparison_section` (8-metric my-vs-sector table). Mirrors governance/report.py. |
 | `skills/cvm/screener/modes/__init__.py` | [v1.4] Empty package marker — auto-discovered by `__init__.py`. |
@@ -124,4 +127,4 @@ For each metric, the comparison dict contains:
 
 ---
 
-*Last updated: 2026-08-01 (v1.4).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details).*

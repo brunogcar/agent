@@ -4,10 +4,13 @@
 
 ## 🔗 Source Code Reference
 
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+
 | File | Purpose |
 |---|---|
-| `skills/cvm/backtest/__init__.py` | MANIFEST + route — 4 modes (auto-discovery via importlib on `modes/*.py`) |
-| `skills/cvm/backtest/_registry.py` | `MODES` dict + `@register_mode` decorator + `build_manifest_modes()` |
+| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/cvm/backtest/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route — 4 modes. |
+| `skills/cvm/backtest/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
 | `skills/cvm/backtest/modes/run.py` | `run()` — execute a strategy on a ticker over a date range |
 | `skills/cvm/backtest/modes/strategies.py` | `strategies()` — list available built-in strategies |
 | `skills/cvm/backtest/modes/results.py` | `results()` — analyze backtest results (CAGR, Sharpe, drawdown) |
@@ -22,8 +25,8 @@
 
 ```
 skills/cvm/backtest/
-├── __init__.py           # MANIFEST + route (auto-discovery)
-├── _registry.py          # MODES dict + @register_mode + build_manifest_modes()
+├── __init__.py           # [v2.0] uses auto_discover_modes() + make_route() from skills/_base.py
+├── _registry.py          # [v2.0] delegates to skills/_base.py (make_registry()) — ~16 lines
 ├── helpers.py            # BUILTIN_STRATEGIES + signal helpers
 ├── report.py             # report wiring helpers
 └── modes/
@@ -105,4 +108,4 @@ tests/skills/cvm/backtest/
 
 ---
 
-*Last updated: 2026-07-29 (v1.1).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details).*

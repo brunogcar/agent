@@ -111,4 +111,4 @@ skill(domain="cvm", sub_domain="financials", mode="summary", params='{"company":
 
 ---
 
-*Last updated: 2026-07-27 (v1.3 — summary current_ratios).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; modes + params + return shapes unchanged). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*

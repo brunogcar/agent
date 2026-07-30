@@ -21,12 +21,13 @@ Each metric produces BOTH a per-share value AND a price ratio. The per-share
 value is useful on its own (e.g., backtest filters). The ratio tells you if
 the stock is cheap vs history.
 
-Auto-discovery:
-  1. Import _registry to ensure the MODES dict exists. _registry in turn
-     auto-registers one <metric>_history mode per registered metric.
-  2. Auto-discover all modes/*.py files via importlib.
+Auto-discovery (via skills._base):
+  1. _registry.py calls make_registry() to create historical's MODES dict.
+     _registry in turn auto-registers one <metric>_history mode per
+     registered metric (via _auto_register_metric_history_modes).
+  2. __init__.py calls auto_discover_modes(__name__) to import all modes/*.py.
   3. Each mode module's @register_mode decorator populates MODES.
-  4. build_manifest_modes() turns the registry into MANIFEST["modes"].
+  4. build_manifest_modes(MODES) turns the registry into MANIFEST["modes"].
 
 Adding a new explicit mode = drop a file in modes/ + register_mode().
 Adding a new <metric>_history mode = register_metric() in calculations.
@@ -40,23 +41,16 @@ Example:
 """
 
 from __future__ import annotations
-import importlib
-import inspect
-from pathlib import Path
 
-# Import _registry to ensure MODES dict exists + auto-register <metric>_history
-# modes from the calculations metric registry.
-from skills.cvm.historical._registry import MODES, build_manifest_modes  # noqa: F401
+from skills._base import auto_discover_modes, make_route, build_manifest_modes
+from skills.cvm.historical._registry import MODES  # noqa: F401
 
 # Auto-discover all explicit mode modules from modes/ subdirectory.
 # Each module's @register_mode decorator populates MODES.
-_modes_dir = Path(__file__).parent / "modes"
-for _py_file in sorted(_modes_dir.glob("*.py")):
-    if _py_file.name == "__init__.py":
-        continue
-    _module_name = f"skills.cvm.historical.modes.{_py_file.stem}"
-    importlib.import_module(_module_name)
-
+# NOTE: <metric>_history modes were already registered at _registry.py import
+# time by _auto_register_metric_history_modes() — auto_discover_modes only
+# handles the explicit mode files in modes/.
+auto_discover_modes(__name__)
 
 # Build MANIFEST from the registered modes.
 MANIFEST = {
@@ -71,39 +65,8 @@ MANIFEST = {
     ),
     "source":  "COTAHIST (price) + DFP/ITR (earnings TTM, PL snapshot) + FRE (shares)",
     "storage": "read-only — no own database",
-    "modes": build_manifest_modes(),
+    "modes": build_manifest_modes(MODES),
 }
 
-
-def route(mode: str = "", **kwargs) -> dict:
-    """Dispatch historical mode call.
-
-    Args:
-        mode: Mode name ("ratio_history", "summary", "dashboard", or any
-            "<metric>_history" like "lpa_history" / "vpa_history"). Required
-            — empty returns an error.
-        **kwargs: Forwarded to the mode function (filtered by the function's
-            signature — unknown kwargs are silently dropped).
-
-    Returns:
-        Mode-specific dict on success, or ``{"status": "error", "error": ...}``
-        on bad mode name or runtime failure.
-    """
-    if not mode:
-        return {"status": "error",
-                "error": f"mode required. Options: {list(MODES.keys())}"}
-    if mode not in MODES:
-        return {"status": "error",
-                "error": f"Unknown mode '{mode}'. Available: {list(MODES.keys())}"}
-
-    spec = MODES[mode]
-    fn = spec.fn
-    sig = inspect.signature(fn)
-    accepted = set(sig.parameters.keys())
-    filtered = {k: v for k, v in kwargs.items() if k in accepted}
-
-    try:
-        return fn(**filtered)
-    except Exception as e:
-        return {"status": "error", "sub_domain": "historical",
-                "mode": mode, "error": str(e)}
+# Create the route() dispatcher via the shared factory.
+route = make_route("sub_domain", "historical", MODES)

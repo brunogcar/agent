@@ -4,10 +4,13 @@
 
 ## 🔗 Source Code Reference
 
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+
 | File | Purpose |
 |------|---------|
-| `skills/investsite/__init__.py` | MANIFEST + route (flat domain, 6 modes). [v1.1] Auto-discovers `modes/*.py` via importlib + builds `MANIFEST["modes"]` from the registry. Preserves `"domain"` (not `sub_domain`) + `route(sub_domain="", mode="", **kwargs)` signature (sub_domain accepted but ignored). |
-| `skills/investsite/_registry.py` | [v1.1] ModeSpec + `register_mode` decorator + `MODES` dict + `list_modes()`/`get_mode()`/`build_manifest_modes()`. Identical structure to the CVM skill registries (governance/screener/shareholders/insider/historical). |
+| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/investsite/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route (flat domain, 6 modes). Preserves `"domain"` (not `sub_domain`) + `accept_sub_domain=True` (route accepts + ignores `sub_domain` param). |
+| `skills/investsite/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines. investsite's flat-domain shape (`"domain"` not `"sub_domain"` + `accept_sub_domain=True`) was PRESERVED. |
 | `skills/investsite/fetcher.py` | HTTP fetch (httpx + browser headers), in-memory cache (1h TTL), rate limiting (0.5s), URL builders. UNCHANGED in v1.1. |
 | `skills/investsite/parsers.py` | HTML table extraction: `parse_indicators()`, `parse_statement()`, `parse_events()`. UNCHANGED in v1.1. |
 | `skills/investsite/report.py` | [v1.1] NEW — Dashboard composition helpers (`_fmt`/`_num`/`_kpi`/`_ok` + `build_overview_kpis` + `build_overview_section` + `build_key_indicators_section` + `build_latest_events_section`). |
@@ -156,4 +159,4 @@ Each mode file imports `fetch_page` from `skills.investsite.fetcher` at the top 
 
 ---
 
-*Last updated: 2026-07-29 (v1.1).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; flat-domain shape preserved — see CHANGELOG.md for details).*

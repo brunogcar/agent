@@ -4,10 +4,13 @@
 
 ## 🔗 Source Code Reference
 
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+
 | File | Purpose |
 |---|---|
-| `skills/cvm/governance/__init__.py` | MANIFEST + route — modes auto-generated from `_registry.py` |
-| `skills/cvm/governance/_registry.py` | Central registry: `ModeSpec` + `@register_mode` + auto-discovery (`modes/*.py`) |
+| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/cvm/governance/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route — modes auto-generated from `_registry.py`. |
+| `skills/cvm/governance/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
 | `skills/cvm/governance/report.py` | Skill-level report helpers (consumed by adapters) |
 | `skills/cvm/governance/modes/practices.py` | `mode="practices"` — all practices for the latest filing |
 | `skills/cvm/governance/modes/score.py` | `mode="score"` — % Sim/Não/Parcialmente + score_pct |
@@ -49,4 +52,4 @@ Return {status, company, total_practices, adopted_sim, score_pct, ...}
 
 ---
 
-*Last updated: 2026-07-29 (v1.1).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details).*

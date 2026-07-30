@@ -103,6 +103,8 @@ Historical-specific lessons:
 > - **Why it matters:** Percentile analysis is a consumer concern — different consumers may want different summary styles (e.g., backtest might want return percentiles, not ratio percentiles). Putting it in the registry would couple the library to one summary style.
 > - **Fix:** Percentile analysis lives in `historical.py:summary()` only. The registry + calculations package has no percentile logic. This is the canonical reason historical exists as a separate skill from calculations.
 
+- **v2.0 lesson:** _registry.py + __init__.py now delegate to `skills/_base.py` (shared ModeSpec + make_registry + make_route + auto_discover_modes). The duplicated ~97-line _registry.py + ~88-line __init__.py boilerplate is gone — each skill's _registry.py is now ~16 lines, __init__.py is ~50 lines. Historical's `_auto_register_metric_history_modes()` (which auto-registers `<metric>_history` modes from calculations METRICS) was PRESERVED — historical-only logic not in `_base.py`. Adding a new mode = drop a file in `modes/` + `@register_mode(...)` (unchanged). Adding a new skill = 3 files (_registry.py + __init__.py + modes/) following the pattern in [SKILLS.md → How to Create a New Skill](../../SKILLS.md). Bug fixes to the dispatch infrastructure now only need to be made in ONE place.
+
 ---
 
 ## 📐 Pattern Template Checklist (when copying to a new skill)
@@ -119,4 +121,4 @@ If you're creating a new consumer skill (like historical) that wraps calculation
 
 ---
 
-*Last updated: v1.2 (modular split + dashboard mode — `_registry.py` + `modes/` + `helpers.py` + `report.py`). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric/registry editing rules.*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; `_auto_register_metric_history_modes()` preserved). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric/registry editing rules.*

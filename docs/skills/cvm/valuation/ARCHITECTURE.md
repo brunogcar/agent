@@ -4,10 +4,16 @@
 
 ## 🔗 Source Code Reference
 
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+
+| File | Purpose |
+|------|---------|
+| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+
 ```text
 skills/cvm/valuation/
-├── __init__.py        manifest + route() dispatch (auto-discovery)
-├── _registry.py       ModeSpec + register_mode + MODES dict
+├── __init__.py        [v2.0] uses auto_discover_modes() + make_route() from skills/_base.py — ~50 lines
+├── _registry.py       [v2.0] delegates to skills/_base.py — creates skill's own MODES dict via make_registry(). ~16 lines.
 ├── modes/             one file per mode, auto-discovered via importlib
 │   ├── __init__.py    minimal package marker
 │   ├── ratios.py      @register_mode("ratios")      — include_in_all=True (default)
@@ -88,4 +94,4 @@ This skill uses `validate_ticker()` and `parse_escala()` from `core/br_validator
 
 ---
 
-*Last updated: 2026-07-29 (v1.4 — file structure split + dashboard mode; see CHANGELOG.md for details). Public API unchanged for `ratios` + `summary`; `dashboard` mode is new.*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details). Public API unchanged for `ratios` + `summary`; `dashboard` mode is new.*

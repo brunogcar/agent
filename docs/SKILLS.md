@@ -43,6 +43,166 @@ def execute(action: str, **kwargs) -> dict:
 
 ---
 
+## 🏗️ Modular Skill Pattern (skills/_base.py)
+
+All 11 skills (10 CVM + investsite) use a shared modular pattern built on
+`skills/_base.py`. This file provides the infrastructure (ModeSpec dataclass,
+register_mode decorator, auto-discovery, route factory) so each skill only
+needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
+
+### Architecture
+
+```
+skills/
+├── _base.py                          # Shared infrastructure (ModeSpec, make_registry, make_route)
+├── dispatcher.py                     # Auto-discovers skill domains
+├── cvm/
+│   ├── __init__.py                   # CVM domain hub (routes sub_domain → skill)
+│   ├── financials/
+│   │   ├── __init__.py               # ~20 lines: auto_discover + MANIFEST + route
+│   │   ├── _registry.py              # ~3 lines: MODES, register_mode = make_registry()
+│   │   ├── report.py                 # Dashboard composition helpers
+│   │   ├── fetchers.py / helpers.py  # Internal utilities (optional)
+│   │   └── modes/
+│   │       ├── __init__.py           # Empty marker
+│   │       ├── quarterly.py          # @register_mode("quarterly", ...)
+│   │       ├── annual.py             # @register_mode("annual", ...)
+│   │       └── dashboard.py          # @register_mode("dashboard", ...)
+│   ├── valuation/                    # Same pattern
+│   ├── governance/                   # Same pattern
+│   └── ... (8 more CVM skills)
+└── investsite/
+    ├── __init__.py                   # ~25 lines (accept_sub_domain=True)
+    ├── _registry.py                  # ~3 lines
+    ├── fetcher.py / parsers.py       # Internal utilities (KEPT — not split)
+    ├── report.py
+    └── modes/
+        └── ... (6 mode files)
+```
+
+### How to Create a New Skill
+
+#### 1. Create the skill directory
+```
+skills/cvm/my_skill/
+├── __init__.py
+├── _registry.py
+├── report.py         (only if the skill has a dashboard mode)
+└── modes/
+    └── __init__.py   (empty marker)
+```
+
+#### 2. Write `_registry.py` (3 lines)
+```python
+"""skills/cvm/my_skill/_registry.py — Mode registry for my_skill."""
+from skills._base import make_registry, build_manifest_modes, list_modes, get_mode
+MODES, register_mode = make_registry()
+```
+
+#### 3. Write mode files in `modes/`
+```python
+# skills/cvm/my_skill/modes/my_mode.py
+from skills.cvm.my_skill._registry import register_mode
+
+@register_mode(
+    "my_mode",
+    description="What this mode does.",
+    include_in_all=True,  # True = default mode when mode="all"
+    params={
+        "company": "str. B3 ticker (PETR4). Required.",
+        "periods": "int. Number of periods. Default: 5.",
+    },
+    examples=[
+        'skill(domain="cvm", sub_domain="my_skill", mode="my_mode", params=\'{"company":"PETR4"}\')',
+    ],
+)
+def my_mode(company: str = "", periods: int = 5) -> dict:
+    """Implement the mode logic here."""
+    if not company:
+        return {"status": "error", "error": "company is required"}
+    # ... query data_sources, compute, return dict
+    return {"status": "ok", "company": company, "data": ...}
+```
+
+#### 4. Write `__init__.py` (~20 lines)
+```python
+"""skills/cvm/my_skill/__init__.py -- My skill manifest + router."""
+from __future__ import annotations
+from skills._base import auto_discover_modes, make_route, build_manifest_modes
+from skills.cvm.my_skill._registry import MODES  # noqa: F401
+
+auto_discover_modes(__name__)
+
+MANIFEST = {
+    "sub_domain":  "my_skill",
+    "description": "What this skill does.",
+    "source":      "which data_sources it reads from",
+    "storage":     "read-only — no own database",
+    "modes":       build_manifest_modes(MODES),
+}
+
+route = make_route("sub_domain", "my_skill", MODES)
+```
+
+#### 5. For a top-level flat domain (like investsite)
+Use `"domain"` instead of `"sub_domain"` + `accept_sub_domain=True`:
+```python
+MANIFEST = {
+    "domain":          "my_domain",
+    "has_sub_domains": False,
+    # ...
+}
+route = make_route("domain", "my_domain", MODES, accept_sub_domain=True)
+```
+
+### Key Design Decisions
+
+- **Each skill gets its own MODES dict** via `make_registry()`. This prevents
+  cross-skill mode name pollution (e.g., "dashboard" exists in all 11 skills
+  but each is a different function).
+- **`@register_mode` is a closure** over the skill's MODES dict. The decorator
+  API stays the same regardless of which skill it's used in.
+- **`auto_discover_modes(__name__)`** uses the package's `__name__` to find its
+  `modes/` subdirectory — works for both `skills.cvm.governance` and
+  `skills.investsite`.
+- **`make_route()`** generates a `route()` with the right signature (CVM skills
+  don't accept `sub_domain`; investsite does for dispatcher compat).
+- **Adding a new mode** = drop a file in `modes/` + `@register_mode(...)`. No
+  edits to `__init__.py` or `_registry.py` needed.
+- **Adding a new skill** = create the directory + 3 files (_registry.py +
+  __init__.py + modes/). The dispatcher auto-discovers it on next server restart.
+
+### Dashboard Mode Convention
+
+Every skill has a `dashboard` mode that:
+1. Calls 1-3 of the skill's other modes (wrapped in try/except for graceful degradation)
+2. Builds top-level KPI cards (formatted via `report.py` helpers)
+3. Builds multi-tab payload (each tab has typed sections: text/table)
+4. Returns `{"status": "ok", "company": ..., "tabs": [...], "kpis": [...]}`
+
+When a sub-mode call fails, the dashboard returns `status: ok` with the full
+tab structure (KPIs as "—", error message in Overview text) — not a bare error.
+This ensures the HTML dashboard always renders with the proper layout.
+
+### Data Source Integration
+
+Skills are **read-only** — they call `data_sources/` query engines directly:
+- `data_sources.cvm.dfp` — annual financial statements (DFP)
+- `data_sources.cvm.itr` — quarterly financial statements (ITR)
+- `data_sources.cvm.fre` — shareholders + free float (FRE)
+- `data_sources.cvm.ipe` — material events (IPE)
+- `data_sources.cvm.cad` — company register (CAD)
+- `data_sources.cvm.vlmo` — insider trading (VLMO)
+- `data_sources.cvm.cgvn` — governance practices (CGVN)
+- `data_sources.cvm.fca` — listing segment (FCA)
+- `data_sources.b3.dividends` — B3 dividend events
+- `data_sources.cvm.bridge` — ticker ↔ CNPJ ↔ CD_CVM resolution
+
+Skills never write to databases. They assume data is already synced via
+`data_source(domain="cvm", sub_domain="dfp", mode="sync")`.
+
+---
+
 ## 📈 Current Skill Domains
 
 ### 1. B3 (Brasil, Bolsa, Balcão)

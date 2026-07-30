@@ -85,4 +85,4 @@ skill(domain="cvm", sub_domain="insider", mode="dashboard", params='{"company":"
 
 ---
 
-*Last updated: 2026-07-25 (v1.1).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; modes + params + return shapes unchanged). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
