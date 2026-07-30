@@ -95,7 +95,7 @@ Engines are leaves (one per raw quantity, fetch from data sources). Metrics comp
 | dfc | da, capex, operating_cf, investing_cf, financing_cf |
 | dva | interest_paid, total_tax, value_added |
 
-### Metric inventory by type (46 metrics):
+### Metric inventory by type (55 metrics):
 
 | Type | Metrics |
 |------|---------|
@@ -103,7 +103,7 @@ Engines are leaves (one per raw quantity, fetch from data sources). Metrics comp
 | Fundamental ratio | roe, roa, roic, gross_margin, operating_margin, net_margin, ebitda_margin, debt_equity, gross_debt_equity, financial_leverage, net_debt_ebitda, asset_turnover, capex_revenue, current_ratio, graham_number, effective_tax_rate, ev_sales, ev_fcf, cash_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, quick_ratio, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover |
 | Pure price ratio (no per-share) | p_ev (Price/EV) |
 
-### Metric inventory by category (v1.6 — 8 categories, 46 metrics tagged):
+### Metric inventory by category (v1.7 — 8 categories, 55 metrics tagged):
 
 | Category | Metrics |
 |----------|---------|
@@ -112,7 +112,7 @@ Engines are leaves (one per raw quantity, fetch from data sources). Metrics comp
 | `liquidity` | current_ratio, cash_ratio, quick_ratio, working_capital |
 | `leverage` | debt_equity, gross_debt_equity, financial_leverage, net_debt_ebitda, cash_flow_to_debt, interest_coverage |
 | `efficiency` | asset_turnover, capex_revenue, inventory_turnover, receivables_turnover, fixed_asset_turnover |
-| `growth` | retention_ratio, sustainable_growth |
+| `growth` | retention_ratio, sustainable_growth, revenue_growth_3m, revenue_growth_1y, revenue_growth_5y, gross_profit_growth_3m, gross_profit_growth_1y, gross_profit_growth_5y, net_income_growth_3m, net_income_growth_1y, net_income_growth_5y |
 | `per_share` | lpa, vpa, dpa, rps, ebitda_ps, ebit_ps, fco_ps, fcf_ps, tangible_book_ps, rbpa, cgpa, dbpa, apa, ppa (per-share quantities surfaced by Type 1 metrics) |
 | `tax` | effective_tax_rate |
 
@@ -173,4 +173,4 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
-*Last updated: 2026-07-30 (v1.6 — 9 new metrics). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-30 (v1.7 — 9 growth metrics). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
