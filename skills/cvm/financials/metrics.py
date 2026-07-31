@@ -105,6 +105,11 @@ def _build_summary_codes():
     codes["1.01.01"]    = ("BPA", "Caixa e Equivalentes")
     codes["2.01.04"]    = ("BPP", "Empréstimos e Financiamentos (Circulante)")
     codes["2.02.01"]    = ("BPP", "Empréstimos e Financiamentos (Não Circulante)")
+    # [v1.8] DRE 3.07 — Resultado Líquido das Operações Continuadas. NOT in
+    # RESUMO_ACCOUNTS (the catalog stops at 3.06/3.09/3.11). Real DFP data
+    # has 6629 rows for 3.07 — it sits between Resultado Financeiro (3.06)
+    # and Imposto de Renda (3.08) in the CVM chart of accounts.
+    codes["3.07"]       = ("DRE", "Resultado Líquido das Operações Continuadas")
     codes["6.01.01.02"] = ("DFC_MI", "Depreciação e Amortização (Método Indireto)")
     codes["7.08.04"]    = ("DVA", "Remuneração de Capitais Próprios (total)")
     # [v1.2] DFC_MD (direct method) D&A fallback codes — some filers use direct
@@ -129,7 +134,7 @@ SUMMARY_CODES = _build_summary_codes()
 KEY_CODES_BY_GRUPO = {
     "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.02", "1.02.01"],
     "BPP":    ["2", "2.01", "2.01.04", "2.02", "2.02.01", "2.03", "2.03.01"],
-    "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.09", "3.11"],
+    "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.07", "3.09", "3.11"],
     "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03"],
     # [v1.7] Expanded DVA — CVM DFP uses 7.xx codes (NOT 1-8).
     # Generation side (7.01-7.08) + distribution side (7.08.01-7.08.04)

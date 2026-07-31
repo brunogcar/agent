@@ -9,7 +9,8 @@ The `financials` skill combines DFP (annual) + ITR (quarterly cumulative) + DVA 
 - **EBITDA computed** — EBIT (DRE 3.05) + D&A (DFC 6.01.01.02). D&A comes from the cash flow statement.
 - **Ratios** — margins (bruta, EBITDA, EBIT, líquida), ROA/ROE (annualized for quarterly), debt ratios, payout.
 - **Default: quarterly** — designed to analyze new financials as companies release them. Default 8 quarters.
-- **6 modes** — quarterly (default), annual, complete, summary, dashboard, dva.
+- **7 modes** — quarterly (default), annual, complete, summary, dashboard, dva, dre.
+- **[v1.8] DRE mode** — new `dre` mode (full Demonstração do Resultado, annual + quarterly via ITR); DRE code `3.07` (Resultado Líquido das Operações Continuadas) added to `SUMMARY_CODES` + `KEY_CODES_BY_GRUPO` + `_extract_metrics`. New statement chart-of-accounts docs at [DFP ARCHITECTURE](dfp/ARCHITECTURE.md).
 - **[v1.7] DVA integration** — new `dva` mode (full Value Added Statement, annual + quarterly via ITR); `complete` mode DVA section expanded from 3 proventos codes to full 15-code statement; 5 key DVA metrics (codes 7, 8.1-8.4) added to `annual`/`quarterly` SUMMARY_CODES.
 - **Modular file structure (v1.6)** — split into `_registry.py` + `modes/` (5 files) + `fetchers.py` + `helpers.py` + `report.py` + `metrics.py`. `__init__.py` auto-discovers modes via importlib (same pattern as `tools/git_ops/actions/`). Public API unchanged. See [ARCHITECTURE.md](financials/ARCHITECTURE.md) for the file map.
 - **Read-only** — no sync. Calls DFP/ITR query engines directly.
@@ -71,10 +72,11 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12) and
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](financials/ARCHITECTURE.md) | Standalone quarter derivation, EBITDA formula, mode → source mapping |
-| [API.md](financials/API.md) | 6 modes: quarterly, annual, complete, summary, dashboard, dva |
+| [API.md](financials/API.md) | 7 modes: quarterly, annual, complete, summary, dashboard, dva, dre |
 | [CHANGELOG.md](financials/CHANGELOG.md) | Version history + roadmap (xlsx export, charts, TTM ratios) |
 | [INSTRUCTIONS.md](financials/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
+| [dfp/ARCHITECTURE.md](dfp/ARCHITECTURE.md) | [v1.8] DFP statement charts of accounts (DRE 3.01-3.11, DVA 7.xx) — used by `dre` + `dva` modes |
 
 ---
 
-*Last updated: 2026-07-30 (v1.7 — added dva mode; see CHANGELOG.md).*
+*Last updated: 2026-07-30 (v1.8 — added `dre` mode + DFP statement docs; see CHANGELOG.md).*

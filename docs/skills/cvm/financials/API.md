@@ -119,6 +119,43 @@ The DVA is structured in 2 sections:
 
 [v1.7] `complete` mode DVA section expanded from 3 proventos codes to full 15-code statement.
 
+### mode="dre" (v1.8)
+Demonstração do Resultado do Exercício (Income Statement) for the last N periods.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | Ticker, name, or CNPJ |
+| `periods` | `int` | `5` | Number of periods to return |
+| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
+| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
+
+Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
+
+The DRE is structured top-to-bottom, 10 codes covering the income statement:
+
+| Code | Label (canonical) | Section |
+|------|-------------------|---------|
+| `3.01` | Receita Líquida de Vendas e/ou Serviços | `revenue` |
+| `3.02` | Custo dos Bens e/ou Serviços Vendidos | `costs` |
+| `3.03` | Resultado Bruto | `gross_profit` |
+| `3.04` | Despesas Administrativas, Gerais e Comerciais | `operating_expenses` |
+| `3.05` | Resultado Antes do Resultado Financeiro e dos Tributos | `ebit` |
+| `3.06` | Resultado Financeiro | `financial_result` |
+| `3.07` | Resultado Líquido das Operações Continuadas | `net_continuing` (NEW v1.8) |
+| `3.08` | Imposto de Renda e Contribuição Social sobre o Lucro | `tax` |
+| `3.09` | Lucro/Prejuízo Consolidado do Período | `net_income` |
+| `3.11` | Lucro/Prejuízo Consolidado do Período (alt) | `net_income_alt` |
+
+The `grupo` filter is `LIKE '%Demonstração do Resultado%'` — this matches DRE
+rows from both consolidated and individual filings, and EXCLUDES the separate
+"Demonstração de Resultado Abrangente" (DRA) statement. See
+[DFP Architecture → architecture/DRE.md](../../data_sources/cvm/dfp/architecture/DRE.md) for the
+multiple-labels-per-code quirks (CVM chart drift over filing years).
+
+[v1.8] `SUMMARY_CODES` now also includes `3.07` (Resultado Líquido das
+Operações Continuadas). `_extract_metrics` exposes it as
+`resultado_liquido_continuadas` in the per-period `metrics` dict.
+
 ---
 
 ## Examples
@@ -130,8 +167,10 @@ skill(domain="cvm", sub_domain="financials", mode="complete", params='{"company"
 skill(domain="cvm", sub_domain="financials", mode="summary", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4","quarterly":1,"periods":8}')
+skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PETR4","quarterly":1,"periods":8}')
 ```
 
 ---
 
-*Last updated: 2026-07-30 (v1.7 — DVA mode + quarterly support + DVA metrics in annual/quarterly). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
+*Last updated: 2026-07-30 (v1.8 — DRE mode + 3.07 added to SUMMARY_CODES). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*

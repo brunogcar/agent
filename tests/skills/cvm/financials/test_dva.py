@@ -126,11 +126,17 @@ class TestDVAMode:
     def test_dva_route_dispatches_with_params(self):
         """route(mode='dva', company='PETR4', quarterly=1) dispatches with quarterly param."""
         from skills.cvm.financials import route, MANIFEST
+        from unittest.mock import patch, MagicMock
         assert "dva" in MANIFEST["modes"]
-        # Test that the quarterly param is accepted (will error on missing DB)
-        r = route(mode="dva", company="PETR4", quarterly=1, periods=4)
-        # Status will be not_synced or error (no DB in test env) — just verify it dispatched
-        assert r["status"] in ("error", "not_synced", "not_found")
+        # Mock the DFP connection so it doesn't depend on a real DB
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = []
+        mock_conn.close = MagicMock()
+        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
+             patch("data_sources.cvm._db.connect_itr", side_effect=FileNotFoundError("no itr")), \
+             patch("data_sources.cvm._bridge.resolve_company", return_value=([], "")):
+            r = route(mode="dva", company="UNKNOWN4", quarterly=1, periods=4)
+            assert r["status"] in ("error", "not_synced", "not_found")
 
     def test_dva_accepts_quarterly_param(self):
         """[v1.7] dva() accepts quarterly=1 param."""

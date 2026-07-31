@@ -371,6 +371,9 @@ def _extract_metrics(vals: dict) -> dict:
         "lucro_bruto":          _f(vals, "3.03"),
         "ebit":                 _f(vals, "3.05"),
         "resultado_financeiro": _f(vals, "3.06"),
+        # [v1.8] DRE 3.07 — Resultado Líquido das Operações Continuadas.
+        # Sits between Resultado Financeiro (3.06) and Imposto de Renda (3.08).
+        "resultado_liquido_continuadas": _f(vals, "3.07"),
         "lucro_liquido":        _f(vals, "3.11"),
         "fco":                  _f(vals, "6.01"),
         "fci":                  _f(vals, "6.02"),

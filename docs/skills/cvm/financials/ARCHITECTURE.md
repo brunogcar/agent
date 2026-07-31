@@ -167,4 +167,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-07-30 (v1.7 — DVA mode + DVA metrics in annual/quarterly + complete DVA expansion; see CHANGELOG.md for details).*
+*Last updated: 2026-07-30 (v1.8 — DRE mode + 3.07 added to SUMMARY_CODES/KEY_CODES_BY_GRUPO/_extract_metrics; see [DFP statement charts of accounts](../../data_sources/cvm/dfp/ARCHITECTURE.md) for DRE/DVA chart-of-accounts docs).*
