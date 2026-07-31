@@ -117,11 +117,13 @@ These are entirely new data sources — not yet wired into any engine.
 
 ### D7 — Performance & quality
 
-| Item | Notes |
-|------|-------|
-| **Cache `ratios()` per (ticker, day)** | Currently every dashboard call re-queries every engine. Add a TTL cache (5 min?) keyed by (ticker, today). |
-| **Type-hint the ratios dict** | Currently `dict[str, Any]`. Define a `ValuationRatios` TypedDict so downstream skills get autocomplete + mypy checking. |
-| **Telemetry** | Count how often each metric returns None (per engine). Surface in summary() as `null_rate` per metric. |
+| Item | Priority | Notes |
+|------|----------|-------|
+| **Per-call engine caching in `compute_all_ratios()`** | **P1** | Currently each metric's `ratio_fn` calls its engine's `at_fn`, which opens a DB connection + runs a query. Many engines are called redundantly (e.g., `earnings` is used by ROE, ROIC, sustainable_growth, LPA, DPA). A per-call cache keyed by `(engine_name, company, date)` scoped to a single `compute_all_ratios()` invocation reduces DB queries by 40-60%. Implement via a contextvar or `_cache` kwarg passed to each `at_fn`. |
+| **Materialized ratios table** | **P2** | Pre-compute all ratios on sync (when DFP/ITR/FRE data is refreshed) and store in a `ratios_materialized` table. Dashboard queries become single-row lookups instead of 35 engine calls. Trade-off: adds sync-time compute cost + staleness (ratios are point-in-time at sync, not at query). Best for read-heavy dashboards. |
+| **Cache `ratios()` per (ticker, day)** | P2 | Currently every dashboard call re-queries every engine. Add a TTL cache (5 min?) keyed by (ticker, today). Complements D7-P1 (per-call cache) by extending the cache boundary to cross-call. |
+| **Type-hint the ratios dict** | P3 | Currently `dict[str, Any]`. Define a `ValuationRatios` TypedDict so downstream skills get autocomplete + mypy checking. |
+| **Telemetry** | P3 | Count how often each metric returns None (per engine). Surface in summary() as `null_rate` per metric. |
 
 ---
 

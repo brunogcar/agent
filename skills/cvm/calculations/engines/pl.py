@@ -8,17 +8,39 @@ BPP snapshot with data_fim_exerc <= date.
 
 DATA SOURCE
 -----------
-DFP BPP (Balanço Patrimonial Passivo):
-  - OLD chart (95% of filers): codigo 2.03 = "Patrimônio Líquido"
-  - NEW chart (5% of filers): codigo 2.03 = amortized-cost debt (NOT PL!),
-    and PL moves to codigo 2.08 = "Patrimônio Líquido Consolidado".
-  We query BOTH codes and prefer 2.08 when it exists for a period
-  (NEW-chart filers); otherwise fall back to 2.03 (OLD-chart filers).
-  Annual snapshot at Dec 31 (meses=12).
-ITR BPP, same codigo 2.03 + 2.08 fallback:
+DFP BPP (Balanço Patrimonial Passivo), codigo 2.03 = "Patrimônio Líquido"
+  - Annual snapshot at Dec 31 (meses=12)
+ITR BPP, same codigo 2.03
   - Quarterly snapshot at Mar/Jun/Sep 30 (meses=3/6/9)
 
 Together: ~4 snapshots per year. Between snapshots, PL is constant.
+
+FALLBACK + ZERO-VALUE TRAP  [v1.6 review-fix]
+----------------------------------------------
+Some DFP/ITR rows carry ``valor = 0`` or NULL for codigo 2.03 — a data-
+quality issue (e.g. a company filed a BPP with a placeholder zero in the
+total-equity line, or the escala metadata is corrupt).  The naive
+``float(r["valor"] or 0) * escala`` path returns ``0.0`` for these rows,
+which silently breaks every downstream ratio (ROE → division by zero,
+VPA → zero, debt_equity → infinity).
+
+``_pick_pl_value()`` fixes this by:
+
+  1. Querying BOTH 2.03 (Patrimônio Líquido — the total) AND 2.08
+     (Lucros ou Prejuízos Acumulados — retained earnings, a sub-component)
+     in a single pass.
+  2. For each snapshot date, preferring 2.03 **if its value is non-zero**.
+  3. Falling back to 2.08 **only if** (a) 2.03 is missing or zero for that
+     date, AND (b) the 2.08 row's ``descricao`` contains "Lucro" or
+     "Prejuízo" (description check — prevents matching an unrelated
+     2.08.xx sub-code), AND (c) the 2.08 value is itself non-zero.
+  4. If neither qualifies, the date is dropped entirely (no zero-PL
+     snapshot pollutes the series).
+
+NOTE: 2.08 is retained earnings only — NOT total equity.  Using it as PL
+is a last-resort approximation for old-chart filers (pre-2010 reorg) that
+omit 2.03.  The ``source_code`` field in the returned dict lets callers
+detect when the fallback fired.
 
 DATA RANGE
 ----------
@@ -41,41 +63,98 @@ from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
 
 
-# CVM account code for Patrimônio Líquido Consolidado (BPP group).
-# OLD chart (95% of filers — 6352/6681 rows): 2.03 = "Patrimônio Líquido".
-# NEW chart (5% of filers): 2.03 = amortized-cost debt (NOT PL!);
-# 2.08 = "Patrimônio Líquido Consolidado" (PL moves here).
-# Query BOTH codes; prefer 2.08 when present (NEW-chart filer), otherwise
-# fall back to 2.03 (OLD-chart filer).
+# CVM account code for Patrimônio Líquido Consolidado (BPP group) — the
+# total equity figure we want.
 PATRIMONIO_LIQUIDO_CODE = "2.03"
-PATRIMONIO_LIQUIDO_CODE_NEW = "2.08"
+
+# Fallback code: Lucros ou Prejuízos Acumulados (retained earnings).  Only
+# used when 2.03 is missing/zero for a snapshot date AND the row's
+# descricao confirms it is the retained-earnings account (not some other
+# 2.08.xx sub-code).  See _pick_pl_value() docstring.
+RETAINED_EARNINGS_CODE = "2.08"
+
+# Descricao substrings that identify the retained-earnings account.  The
+# description check prevents false matches on unrelated 2.08.xx codes.
+_RETAINED_EARNINGS_DESC_TOKENS = ("lucro", "prejuízo", "prejuizo")
 
 
-def _pick_pl_value(rows_for_period) -> float | None:
-    """Pick the correct PL value for a single period from candidate rows.
+def _pick_pl_value(candidates: list[dict]) -> tuple[float | None, str | None]:
+    """Pick the best PL value from candidate rows for a single snapshot date.
+
+    Each candidate is ``{"codigo": str, "valor": float, "escala": float,
+    "descricao": str}`` (escala already parsed by the caller is fine, OR
+    raw — see note below).  Returns ``(value_in_brl, source_code)``.
+
+    Selection order (the "zero-value trap" fix):
+
+      1. The 2.03 candidate with ``valor != 0`` (and not None).  Escala
+         is applied.
+      2. The 2.08 candidate with ``descricao`` containing "Lucro" or
+         "Prejuízo" (case-insensitive) AND ``valor != 0``.  Escala applied.
+      3. ``(None, None)`` if neither qualifies — the date is dropped.
 
     Args:
-        rows_for_period: iterable of (codigo, valor) tuples for one date.
-            May contain 2.03, 2.08, or both.
+        candidates: list of row dicts for the SAME data_fim_exerc.  May
+            contain 0, 1, or 2 entries (2.03 only, 2.08 only, or both).
 
     Returns:
-        PL value, preferring 2.08 (NEW chart) over 2.03 (OLD chart) when
-        both exist. Returns None if neither code is present.
+        ``(value_brl_or_none, source_code_or_none)`` where source_code is
+        "2.03" or "2.08" (or None if nothing qualified).
     """
-    values_by_code = {codigo: valor for codigo, valor in rows_for_period}
-    if PATRIMONIO_LIQUIDO_CODE_NEW in values_by_code:
-        return values_by_code[PATRIMONIO_LIQUIDO_CODE_NEW]
-    return values_by_code.get(PATRIMONIO_LIQUIDO_CODE)
+    val_203: float | None = None
+    val_208: float | None = None
+
+    for c in candidates:
+        codigo = c.get("codigo")
+        # valor may be None (DB NULL) or 0 (data error) — both are "zero"
+        # for the purpose of the trap.  ``float(None or 0)`` = 0.0, which
+        # we explicitly reject below via the ``!= 0`` check.
+        escala = parse_escala(c.get("escala"))
+        raw = c.get("valor")
+        valor = float(raw) * escala if raw is not None else 0.0
+
+        if codigo == PATRIMONIO_LIQUIDO_CODE:
+            # [zero-value trap fix] Only accept non-zero 2.03.
+            if valor != 0:
+                val_203 = valor
+        elif codigo == RETAINED_EARNINGS_CODE:
+            # Description check: must look like retained earnings.
+            desc = (c.get("descricao") or "").lower()
+            if any(tok in desc for tok in _RETAINED_EARNINGS_DESC_TOKENS):
+                if valor != 0:
+                    val_208 = valor
+
+    if val_203 is not None:
+        return val_203, PATRIMONIO_LIQUIDO_CODE
+    if val_208 is not None:
+        return val_208, RETAINED_EARNINGS_CODE
+    return None, None
+
+
+def _group_rows_by_date(rows) -> dict[str, list[dict]]:
+    """Group query rows (sqlite3.Row) by data_fim_exerc into plain dicts.
+
+    Each group is a list of ``{codigo, valor, escala, descricao}`` dicts
+    ready for ``_pick_pl_value()``.
+    """
+    by_date: dict[str, list[dict]] = {}
+    for r in rows:
+        d = r["data_fim_exerc"]
+        by_date.setdefault(d, []).append({
+            "codigo": r["codigo"],
+            "valor": r["valor"],
+            "escala": r["escala"],
+            "descricao": r["descricao"],
+        })
+    return by_date
 
 
 def _get_dfp_pl(company: str) -> dict[str, dict]:
-    """Get all annual PL snapshots from DFP (codigo 2.03 + 2.08 fallback, meses=12, BPP).
+    """Get all annual PL snapshots from DFP (codigo 2.03 [+ 2.08 fallback], meses=12, BPP).
 
-    Returns: {"2024-12-31": {"value": 380e9, "year": 2024}, ...}
-    Values are in BRL (escala applied).
-
-    For each period, prefers 2.08 (NEW chart, 5% of filers) over 2.03 (OLD
-    chart, 95% of filers) when both are present.
+    Returns: {"2024-12-31": {"value": 380e9, "year": 2024, "source_code": "2.03"}, ...}
+    Values are in BRL (escala applied).  Dates with only zero-value rows are
+    dropped (zero-value trap fix — see module docstring).
     """
     conn = connect_dfp(read_only=True)
     try:
@@ -84,44 +163,47 @@ def _get_dfp_pl(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         rows = conn.execute(
-            f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.codigo, e.ano
+            f"""SELECT c.codigo, c.valor, c.escala, c.descricao,
+                      c.data_fim_exerc, e.ano
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo IN ('{PATRIMONIO_LIQUIDO_CODE}', '{PATRIMONIO_LIQUIDO_CODE_NEW}')
+                 AND c.codigo IN ('{PATRIMONIO_LIQUIDO_CODE}',
+                                  '{RETAINED_EARNINGS_CODE}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
         ).fetchall()
 
-        # Group by date, then pick 2.08 over 2.03 per period.
-        rows_by_date: dict[str, list[tuple[str, float]]] = {}
-        meta_by_date: dict[str, dict] = {}
+        # Map ano (year) from the FIRST row seen per date (both 2.03 and
+        # 2.08 share the same ano for a given data_fim_exerc).
+        date_to_year: dict[str, int] = {}
         for r in rows:
-            escala = parse_escala(r["escala"])
-            valor = float(r["valor"] or 0) * escala
-            date_key = r["data_fim_exerc"]
-            rows_by_date.setdefault(date_key, []).append((r["codigo"], valor))
-            meta_by_date[date_key] = {"year": r["ano"]}
+            d = r["data_fim_exerc"]
+            if d not in date_to_year:
+                date_to_year[d] = r["ano"]
 
+        grouped = _group_rows_by_date(rows)
         result = {}
-        for date_key, candidates in rows_by_date.items():
-            pl_value = _pick_pl_value(candidates)
-            if pl_value is not None:
-                result[date_key] = {"value": pl_value, **meta_by_date[date_key]}
+        for d, candidates in grouped.items():
+            value, source = _pick_pl_value(candidates)
+            if value is not None:
+                result[d] = {
+                    "value": value,
+                    "year": date_to_year[d],
+                    "source_code": source,
+                }
         return result
     finally:
         conn.close()
 
 
 def _get_itr_pl(company: str) -> dict[str, dict]:
-    """Get all quarterly PL snapshots from ITR (codigo 2.03 + 2.08 fallback, meses 3/6/9, BPP).
+    """Get all quarterly PL snapshots from ITR (codigo 2.03 [+ 2.08 fallback], meses 3/6/9, BPP).
 
-    Returns: {"2024-06-30": {"value": 375e9, "meses": 6, "year": 2024}, ...}
-    Values are in BRL (escala applied).
-
-    For each period, prefers 2.08 (NEW chart, 5% of filers) over 2.03 (OLD
-    chart, 95% of filers) when both are present.
+    Returns: {"2024-06-30": {"value": 375e9, "meses": 6, "year": 2024, "source_code": "2.03"}, ...}
+    Values are in BRL (escala applied).  Dates with only zero-value rows are
+    dropped (zero-value trap fix — see module docstring).
     """
     conn = connect_itr(read_only=True)
     try:
@@ -130,31 +212,36 @@ def _get_itr_pl(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         rows = conn.execute(
-            f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.meses, c.codigo, e.ano
+            f"""SELECT c.codigo, c.valor, c.escala, c.descricao,
+                      c.data_fim_exerc, c.meses, e.ano
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo IN ('{PATRIMONIO_LIQUIDO_CODE}', '{PATRIMONIO_LIQUIDO_CODE_NEW}')
+                 AND c.codigo IN ('{PATRIMONIO_LIQUIDO_CODE}',
+                                  '{RETAINED_EARNINGS_CODE}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
         ).fetchall()
 
-        # Group by date, then pick 2.08 over 2.03 per period.
-        rows_by_date: dict[str, list[tuple[str, float]]] = {}
-        meta_by_date: dict[str, dict] = {}
+        date_to_meta: dict[str, dict] = {}
         for r in rows:
-            escala = parse_escala(r["escala"])
-            valor = float(r["valor"] or 0) * escala
-            date_key = r["data_fim_exerc"]
-            rows_by_date.setdefault(date_key, []).append((r["codigo"], valor))
-            meta_by_date[date_key] = {"meses": r["meses"], "year": r["ano"]}
+            d = r["data_fim_exerc"]
+            if d not in date_to_meta:
+                date_to_meta[d] = {"meses": r["meses"], "year": r["ano"]}
 
+        grouped = _group_rows_by_date(rows)
         result = {}
-        for date_key, candidates in rows_by_date.items():
-            pl_value = _pick_pl_value(candidates)
-            if pl_value is not None:
-                result[date_key] = {"value": pl_value, **meta_by_date[date_key]}
+        for d, candidates in grouped.items():
+            value, source = _pick_pl_value(candidates)
+            if value is not None:
+                meta = date_to_meta[d]
+                result[d] = {
+                    "value": value,
+                    "meses": meta["meses"],
+                    "year": meta["year"],
+                    "source_code": source,
+                }
         return result
     finally:
         conn.close()
@@ -221,6 +308,6 @@ register_engine(EngineSpec(
     quantity="pl",
     at_fn=pl_at,
     periods_fn=pl_periods,
-    source="DFP + ITR BPP codigo 2.03 (or 2.08 for new-chart filers) — Patrimônio Líquido snapshot",
+    source="DFP + ITR BPP codigo 2.03 (Patrimônio Líquido snapshot)",
     category="bpp",
 ))

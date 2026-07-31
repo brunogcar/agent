@@ -180,6 +180,118 @@ class TestVpaHistory:
         assert result[0]["pl"] is None
 
 
+# ── _pick_pl_value() unit tests (zero-value trap + 2.08 fallback) ────────────
+
+class TestPickPlValue:
+    """[v1.6 review-fix] Tests for the zero-value trap + 2.08 fallback logic.
+
+    _pick_pl_value takes a list of candidate rows for a single snapshot
+    date and returns (value, source_code).  The != 0 check prevents
+    zero-value data errors from polluting the PL series; the 2.08
+    fallback (with description check) handles old-chart filers that
+    omit 2.03.
+    """
+
+    def test_picks_nonzero_2_03(self):
+        """When 2.03 is non-zero, it is preferred (source_code = '2.03')."""
+        candidates = [
+            {"codigo": "2.03", "valor": 380e9, "escala": 1, "descricao": "Patrimônio Líquido Consolidado"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val == pytest.approx(380e9)
+        assert src == "2.03"
+
+    def test_zero_value_2_03_rejected(self):
+        """[zero-value trap] A zero 2.03 valor does NOT become 0.0 PL."""
+        candidates = [
+            {"codigo": "2.03", "valor": 0, "escala": 1, "descricao": "Patrimônio Líquido Consolidado"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val is None
+        assert src is None
+
+    def test_null_2_03_rejected(self):
+        """A NULL (None) 2.03 valor is also rejected."""
+        candidates = [
+            {"codigo": "2.03", "valor": None, "escala": 1, "descricao": "Patrimônio Líquido"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val is None
+
+    def test_falls_back_to_2_08_when_2_03_zero(self):
+        """When 2.03 is zero, fall back to 2.08 (retained earnings) if desc matches."""
+        candidates = [
+            {"codigo": "2.03", "valor": 0, "escala": 1, "descricao": "Patrimônio Líquido"},
+            {"codigo": "2.08", "valor": 50e9, "escala": 1, "descricao": "Lucros ou Prejuízos Acumulados"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val == pytest.approx(50e9)
+        assert src == "2.08"
+
+    def test_2_08_description_check_blocks_wrong_desc(self):
+        """2.08 with a non-retained-earnings descricao is rejected."""
+        candidates = [
+            {"codigo": "2.03", "valor": 0, "escala": 1, "descricao": "Patrimônio Líquido"},
+            {"codigo": "2.08", "valor": 50e9, "escala": 1, "descricao": "Reservas de Capital"},  # wrong desc
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val is None  # 2.03 zero + 2.08 desc doesn't match → dropped
+
+    def test_2_08_description_check_accent_insensitive(self):
+        """descricao 'Prejuízo' (accented) and 'Prejuizo' (unaccented) both match."""
+        for desc in ("Prejuízos Acumulados", "Prejuizos Acumulados"):
+            candidates = [
+                {"codigo": "2.08", "valor": 30e9, "escala": 1, "descricao": desc},
+            ]
+            val, src = pl_engine._pick_pl_value(candidates)
+            assert val == pytest.approx(30e9), f"Failed for desc={desc!r}"
+            assert src == "2.08"
+
+    def test_zero_2_08_also_rejected(self):
+        """Both 2.03 and 2.08 zero → date dropped entirely."""
+        candidates = [
+            {"codigo": "2.03", "valor": 0, "escala": 1, "descricao": "Patrimônio Líquido"},
+            {"codigo": "2.08", "valor": 0, "escala": 1, "descricao": "Lucros Acumulados"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val is None
+        assert src is None
+
+    def test_2_03_preferred_over_2_08_when_both_nonzero(self):
+        """When both are non-zero, 2.03 (total equity) wins over 2.08 (RE)."""
+        candidates = [
+            {"codigo": "2.03", "valor": 380e9, "escala": 1, "descricao": "Patrimônio Líquido"},
+            {"codigo": "2.08", "valor": 50e9, "escala": 1, "descricao": "Lucros Acumulados"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val == pytest.approx(380e9)
+        assert src == "2.03"
+
+    def test_escala_applied(self):
+        """escala is applied to the raw valor before the != 0 check."""
+        # valor=380, escala=1e6 → 380e6 (non-zero → accepted)
+        candidates = [
+            {"codigo": "2.03", "valor": 380, "escala": 1e6, "descricao": "Patrimônio Líquido"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val == pytest.approx(380e6)
+        assert src == "2.03"
+
+    def test_escala_zero_after_multiply_rejected(self):
+        """valor=0 with any escala → 0.0 → rejected."""
+        candidates = [
+            {"codigo": "2.03", "valor": 0, "escala": 1e6, "descricao": "Patrimônio Líquido"},
+        ]
+        val, src = pl_engine._pick_pl_value(candidates)
+        assert val is None
+
+    def test_empty_candidates(self):
+        """No candidates → (None, None)."""
+        val, src = pl_engine._pick_pl_value([])
+        assert val is None
+        assert src is None
+
+
 # ── PL engine tests (mocked DB) ──────────────────────────────────────────────
 
 class TestPlEngine:

@@ -271,14 +271,20 @@ _INDICADORES_CATEGORIES = [
 
 
 def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
-    """Build the Indicadores tab's single ratio_grid section.
+    """Build the Indicadores tab as a ``type: "subtabs"`` section.
 
-    Walks the calculations registry (compute_all_ratios output) and groups
-    metrics by category. Each category becomes a card in the ratio grid.
+    [v1.13 review-fix] Previously this returned a single ``ratio_grid``
+    with all 7 categories as cards on one canvas — visually dense and
+    hard to scan.  Now each category becomes its OWN sub-tab, each
+    carrying a single-category ``ratio_grid``:
 
-    Falls back to a flat key-value table if the registry is unavailable.
+      Valuation | Rentabilidade | Liquidez | Endividamento |
+      Eficiência | Crescimento | Tributos
+
+    Falls back to a single "Indicadores" sub-tab with a flat key-value
+    ratio_grid if the calculations registry is unavailable.
     """
-    cats_out: list[dict] = []
+    sub_tabs: list[dict] = []
     try:
         from skills.cvm.calculations._registry import (
             METRICS, list_metrics_by_category,
@@ -303,9 +309,16 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
             if items:
                 cat_label = _RATIO_CATEGORY_LABELS.get(
                     category, category.capitalize())
-                cats_out.append({"label": cat_label, "items": items})
+                sub_tabs.append({
+                    "name": cat_label,
+                    "sections": [{
+                        "title": f"{cat_label} (as of {today})",
+                        "type": "ratio_grid",
+                        "categories": [{"label": cat_label, "items": items}],
+                    }],
+                })
     except Exception:
-        # Fallback: flat list of (name, value)
+        # Fallback: flat list of (name, value) in a single sub-tab.
         items = []
         for k, v in sorted(ratios_payload.items()):
             if k in ("date", "error"):
@@ -314,16 +327,65 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
             label = _METRIC_LABELS.get(k, k)
             items.append({"label": label, "value": _fmt(v, fmt_spec)})
         if items:
-            cats_out.append({"label": "Indicadores", "items": items})
+            sub_tabs.append({
+                "name": "Indicadores",
+                "sections": [{
+                    "title": f"Indicadores (as of {today})",
+                    "type": "ratio_grid",
+                    "categories": [{"label": "Indicadores", "items": items}],
+                }],
+            })
+
+    if not sub_tabs:
+        return {
+            "type": "text",
+            "text": "Nenhum indicador disponível para esta empresa.",
+        }
 
     return {
         "title": f"Indicadores (as of {today})",
-        "type": "ratio_grid",
-        "categories": cats_out,
+        "type": "subtabs",
+        "tabs": sub_tabs,
     }
 
 
 # ── Tab 3: Crescimento (growth table + bar chart) ────────────────────────────
+
+def _period_date(p: dict) -> str:
+    """Extract a YYYY-MM-DD date from an annual period dict.
+
+    Falls back to "{period}-12-31" when data_fim_exerc is absent (annual
+    periods always end on Dec 31).
+    """
+    d = p.get("data_fim_exerc")
+    if d:
+        return str(d)[:10]
+    period = p.get("period")
+    if period:
+        return f"{period}-12-31"
+    return "1900-01-01"
+
+
+def _build_metric_periods(
+    annual_periods: list[dict], metric_key: str,
+) -> list[dict]:
+    """Build a [{"date": str, "value": float|None}, ...] list for growth_helpers.
+
+    Walks annual_periods (any order), extracts the named metric from each
+    period's ``metrics`` dict, and returns a list sorted oldest-first.
+    """
+    out: list[dict] = []
+    for p in annual_periods:
+        if not p.get("period"):
+            continue
+        val = (p.get("metrics") or {}).get(metric_key)
+        out.append({
+            "date": _period_date(p),
+            "value": float(val) if val is not None else None,
+        })
+    out.sort(key=lambda x: x["date"])
+    return out
+
 
 def build_crescimento_sections(
     latest_annual_period: dict | None,
@@ -331,75 +393,70 @@ def build_crescimento_sections(
 ) -> list[dict]:
     """Build the Crescimento tab: 3M/1Y/5Y growth table + bar chart.
 
+    [v1.7 review-fix] Growth now uses ``growth_helpers.growth_at()`` with
+    period-specific gap tolerance (1.5x for 3M/1Y, 1.2x for 5Y).  This
+    handles missing annual periods gracefully: if a company skipped a
+    filing year, the helper finds the closest period within the tolerance
+    window instead of blindly indexing ``sorted_periods[N]``.
+
     Growth metrics (Revenue / Gross Profit / Net Income) are derived from
     the annual periods list when available; otherwise the table shows "—"
-    and the chart is skipped.
+    and the chart is skipped.  3M remains "—" in annual-only mode (no
+    quarterly data available here).
     """
+    from skills.cvm.calculations.growth_helpers import (
+        growth_at, LOOKBACK_1Y, LOOKBACK_5Y,
+    )
+
     sections: list[dict] = []
 
-    # Sort annual periods newest-first (they already come newest-first from
-    # annual() — but we sort defensively).
+    # Determine the "current" date: latest annual period's data_fim_exerc.
     sorted_periods = sorted(
         [p for p in annual_periods if p.get("period")],
         key=lambda p: str(p.get("period")),
         reverse=True,
     )
-
-    def _period_metric(p: dict | None, key: str) -> float | None:
-        if not p:
-            return None
-        return (p.get("metrics") or {}).get(key)
-
-    def _growth(curr: float | None, prev: float | None) -> float | None:
-        if curr is None or prev is None or prev == 0:
-            return None
-        return (curr - prev) / abs(prev)
-
-    # 1Y growth = (latest - prior) / |prior|
     latest = sorted_periods[0] if sorted_periods else latest_annual_period
-    prior_1y = sorted_periods[1] if len(sorted_periods) >= 2 else None
-    prior_5y = sorted_periods[5] if len(sorted_periods) >= 6 else None
+    if not latest:
+        sections.append({
+            "type": "text",
+            "text": "Crescimento indisponível — sem períodos anuais.",
+        })
+        return sections
+    target_date = _period_date(latest)
 
-    # "3M" growth here is a proxy: we don't have monthly data, so we use the
-    # QoQ change from the latest quarterly if available — otherwise "—".
-    # The annual-only dashboard shows 1Y and 5Y primarily; 3M is "—".
-    rev_curr = _period_metric(latest, "receita_liquida")
-    rev_1y = _period_metric(prior_1y, "receita_liquida")
-    rev_5y = _period_metric(prior_5y, "receita_liquida")
-    gp_curr = _period_metric(latest, "lucro_bruto")
-    gp_1y = _period_metric(prior_1y, "lucro_bruto")
-    gp_5y = _period_metric(prior_5y, "lucro_bruto")
-    ni_curr = _period_metric(latest, "lucro_liquido")
-    ni_1y = _period_metric(prior_1y, "lucro_liquido")
-    ni_5y = _period_metric(prior_5y, "lucro_liquido")
+    # Build per-metric period lists for growth_helpers.
+    rev_periods = _build_metric_periods(annual_periods, "receita_liquida")
+    gp_periods = _build_metric_periods(annual_periods, "lucro_bruto")
+    ni_periods = _build_metric_periods(annual_periods, "lucro_liquido")
+
+    rev_1y = growth_at(rev_periods, target_date, LOOKBACK_1Y)
+    rev_5y = growth_at(rev_periods, target_date, LOOKBACK_5Y)
+    gp_1y = growth_at(gp_periods, target_date, LOOKBACK_1Y)
+    gp_5y = growth_at(gp_periods, target_date, LOOKBACK_5Y)
+    ni_1y = growth_at(ni_periods, target_date, LOOKBACK_1Y)
+    ni_5y = growth_at(ni_periods, target_date, LOOKBACK_5Y)
 
     rows = [
-        ["Receita Líquida",   "—", _fmt(_growth(rev_curr, rev_1y), "pct"),
-         _fmt(_growth(rev_curr, rev_5y), "pct")],
-        ["Lucro Bruto",       "—", _fmt(_growth(gp_curr, gp_1y), "pct"),
-         _fmt(_growth(gp_curr, gp_5y), "pct")],
-        ["Lucro Líquido",     "—", _fmt(_growth(ni_curr, ni_1y), "pct"),
-         _fmt(_growth(ni_curr, ni_5y), "pct")],
+        ["Receita Líquida",   "—", _fmt(rev_1y, "pct"), _fmt(rev_5y, "pct")],
+        ["Lucro Bruto",       "—", _fmt(gp_1y, "pct"), _fmt(gp_5y, "pct")],
+        ["Lucro Líquido",     "—", _fmt(ni_1y, "pct"), _fmt(ni_5y, "pct")],
     ]
     sections.append({
         "title": "Growth Metrics (3M / 1Y / 5Y)",
         "type": "table",
         "columns": ["Métrica", "3M", "1Y", "5Y"],
         "rows": rows,
-        "note": "3M growth requires quarterly data; shows '—' in annual-only mode.",
+        "note": (
+            "3M growth requires quarterly data; shows '—' in annual-only mode. "
+            "1Y/5Y use period-specific gap tolerance (1.5x / 1.2x) — a missed "
+            "filing year is bridged if a period falls within the tolerance window."
+        ),
     })
 
     # Bar chart: 1Y + 5Y for each metric (3M excluded — usually missing).
-    chart_data_1y = [
-        _growth(rev_curr, rev_1y),
-        _growth(gp_curr, gp_1y),
-        _growth(ni_curr, ni_1y),
-    ]
-    chart_data_5y = [
-        _growth(rev_curr, rev_5y),
-        _growth(gp_curr, gp_5y),
-        _growth(ni_curr, ni_5y),
-    ]
+    chart_data_1y = [rev_1y, gp_1y, ni_1y]
+    chart_data_5y = [rev_5y, gp_5y, ni_5y]
     if any(v is not None for v in chart_data_1y + chart_data_5y):
         sections.append({
             "type": "chart",
@@ -805,6 +862,13 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
                 "options": {
                     "responsive": True,
                     "maintainAspectRatio": False,
+                    # [v1.13 review-fix] Flag consumed by dashboard.html's
+                    # chart-rendering script to attach a tooltip callback
+                    # showing each slice's percentage of the total.  The
+                    # callback is a JS function (not JSON-serializable), so
+                    # we set a flag here and the template injects the
+                    # callback at render time.
+                    "_tooltipPercent": True,
                 },
             },
         })

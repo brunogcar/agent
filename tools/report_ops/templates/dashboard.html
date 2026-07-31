@@ -2,6 +2,10 @@
 {% import "macros.html" as m %}
 
 {% block sidebar %}
+<div class="sidebar-brand">
+  <div class="sidebar-brand-tag">{{ subtitle | default('Dashboard') }}</div>
+  <div class="sidebar-brand-title">{{ title | default('Dashboard') }}</div>
+</div>
 <div class="nav-section-label">Dashboard</div>
 {% for tab in tabs %}
 <button class="nav-item {% if loop.first %}ok active{% endif %}" data-target="tab-{{ loop.index }}" onclick="showTab(this, 'tab-{{ loop.index }}')">
@@ -11,10 +15,6 @@
 {% endblock %}
 
 {% block content %}
-<div style="margin-bottom: 16px;">
-  <h1 style="font-size: 24px; font-weight: 700; color: var(--text); margin: 0 0 8px;">{{ title }}</h1>
-  {% if subtitle %}<p style="color: var(--text-sec);">{{ subtitle }}</p>{% endif %}
-</div>
 
 <div class="kpi-grid">
 {% for k in kpis %}
@@ -28,6 +28,7 @@
   {% set outer_loop = loop %}
   {% for sec in tab.sections %}
   <div class="section">
+    {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
     {% if sec.text %}
     <div class="text-block">
       {{ sec.text }}
@@ -78,16 +79,106 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{# ── Chart-rendering infrastructure ────────────────────────────────────────
+   [v1.13 review-fix] Two issues addressed here:
+
+   1. SUBTAB CHARTS NEVER RENDERED (Minimax P2 — CRITICAL).  The old
+      script block only iterated ``tab.sections`` (top-level), so any
+      ``type: "chart"`` section INSIDE a ``type: "subtabs"`` section was
+      never wired up — its <canvas> existed in the DOM (rendered by
+      macros.html) but no ``new Chart()`` was called.  Now we recurse
+      into subtabs: for each ``type: "subtabs"`` section, we iterate its
+      ``.tabs[*].sections`` and render charts there too.
+
+   2. DVA DOUGHNUT PERCENTAGES.  Chart.js tooltip callbacks are JS
+      functions (not JSON-serializable), so we can't put them in
+      ``chart_data`` (which is rendered via ``| tojson``).  Instead, the
+      Python side sets ``options._tooltipPercent = true`` as a flag, and
+      ``_applyTooltipPercent()`` here attaches the callback at render
+      time.  The original chartData (with the flag) is preserved in
+      ``_chartRegistry`` so theme-toggle re-rendering still applies the
+      callback.
+
+   Canvas-ID contract (must match macros.html exactly):
+     Top-level:  tab-{tabIdx}-chart-{secIdx}
+     Subtab:     tab-{tabIdx}-sub-{secIdx}-{subIdx}-chart-{subSecIdx}
+#}
+<script>
+  // Registry of all rendered charts for theme-toggle re-rendering.
+  // Each entry: {canvas, chartData, chart}.
+  var _chartRegistry = [];
+
+  // Attach a percentage tooltip callback when chartData.options._tooltipPercent
+  // is true.  Mutates `config` in place (strips the flag).
+  function _applyTooltipPercent(config) {
+    if (!config || !config.options || !config.options._tooltipPercent) return;
+    delete config.options._tooltipPercent;
+    config.options.plugins = config.options.plugins || {};
+    config.options.plugins.tooltip = config.options.plugins.tooltip || {};
+    config.options.plugins.tooltip.callbacks = config.options.plugins.tooltip.callbacks || {};
+    config.options.plugins.tooltip.callbacks.label = function(ctx) {
+      var data = (ctx.dataset && ctx.dataset.data) || [];
+      var total = data.reduce(function(a, b) {
+        return (typeof a === 'number' ? a : 0) + (typeof b === 'number' ? b : 0);
+      }, 0);
+      var val = ctx.parsed !== undefined ? ctx.parsed
+              : (ctx.raw !== undefined ? ctx.raw : 0);
+      var pctVal = total ? (val / total * 100).toFixed(1) : '0.0';
+      var label = ctx.label || '';
+      return label + ': ' + Number(val).toLocaleString('pt-BR') + ' (' + pctVal + '%)';
+    };
+  }
+
+  // Render a single chart by canvas ID.  Deep-copies chartData so the
+  // original (with _tooltipPercent flag) is preserved in the registry.
+  function _renderChart(canvasId, chartData) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas) { return; }
+    var config = JSON.parse(JSON.stringify(chartData));
+    _applyTooltipPercent(config);
+    var chart = new Chart(canvas.getContext('2d'), config);
+    _chartRegistry.push({canvas: canvas, chartData: chartData, chart: chart});
+  }
+</script>
+
 {% for tab in tabs %}
   {% set outer_loop = loop %}
   {% for sec in tab.sections %}
+    {# Top-level chart #}
     {% if sec.type == 'chart' and sec.chart_data %}
-    <script>
-      var chartData_{{ outer_loop.index }}_{{ loop.index }} = {{ sec.chart_data | tojson }};
-      var ctx_{{ outer_loop.index }}_{{ loop.index }} = document.getElementById('tab-{{ outer_loop.index }}-chart-{{ loop.index }}').getContext('2d');
-      new Chart(ctx_{{ outer_loop.index }}_{{ loop.index }}, chartData_{{ outer_loop.index }}_{{ loop.index }});
-    </script>
+    <script>_renderChart('tab-{{ outer_loop.index }}-chart-{{ loop.index }}', {{ sec.chart_data | tojson }});</script>
+    {% endif %}
+    {# Subtab charts — recurse into type="subtabs" sections #}
+    {% if sec.type == 'subtabs' and sec.tabs %}
+      {% set subtabs_sec_idx = loop.index %}
+      {% for subtab in sec.tabs %}
+        {% set sub_loop = loop %}
+        {% for sub_sec in subtab.sections %}
+          {% if sub_sec.type == 'chart' and sub_sec.chart_data %}
+          <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
     {% endif %}
   {% endfor %}
 {% endfor %}
+
+<script>
+  // Re-render charts on theme change (preserves _tooltipPercent flag by
+  // re-rendering from the original chartData stored in _chartRegistry).
+  var origToggle = window.toggleTheme;
+  if (origToggle) {
+    window.toggleTheme = function() {
+      origToggle();
+      _chartRegistry.forEach(function(entry) {
+        if (entry.chart) {
+          entry.chart.destroy();
+        }
+        var config = JSON.parse(JSON.stringify(entry.chartData));
+        _applyTooltipPercent(config);
+        entry.chart = new Chart(entry.canvas.getContext('2d'), config);
+      });
+    };
+  }
+</script>
 {% endblock %}

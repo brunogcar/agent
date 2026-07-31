@@ -1,255 +1,301 @@
-"""skills/cvm/calculations/growth_helpers.py -- Shared helpers for growth metrics.
+"""skills/cvm/calculations/growth_helpers.py -- Reusable growth-rate helpers
+with period-specific gap tolerance.
 
-Growth metrics compare the SAME engine's value at two different dates:
-  growth = (value_at_latest - value_at_lookback) / |value_at_lookback|
+[v1.7 review-fix] Period-specific gap-tolerance multipliers.
 
-This is a different pattern from existing fundamental ratios which compare
-two DIFFERENT engines at the SAME date. The helpers here handle the lookback
-logic shared by all growth metrics (revenue_growth, gross_profit_growth,
-net_income_growth).
+PROBLEM
+-------
+Growth metrics (3M / 1Y / 5Y) need a "prior" data point N days back.  In
+real CVM data, periods are not perfectly regular:
 
-Lookback horizons (matching the private spreadsheet):
-  - 3M: 90 days back (quarter-over-quarter TTM change)
-  - 1Y: 365 days back (year-over-year)
-  - 5Y: 1825 days back (5-year growth)
+  - Annual DFP: a company may skip a year (no filing) → the "1Y prior"
+    is actually 2Y back.
+  - Quarterly ITR: a quarter may be missing → the "3M prior" is 6M back.
 
-GAP TOLERANCE (added v1.8):
-  When the engine's most recent period at or before the lookback date is
-  STALE (much older than the requested lookback horizon), the growth
-  number is misleading. For example, requesting 1Y growth but only
-  having 2Y-old data would yield a misleading growth figure that's
-  actually 2Y growth. We mitigate this by rejecting "old" values whose
-  date is more than ``lookback_days * max_gap_multiplier`` days before
-  the lookback date (default multiplier = 1.5).
+The original implementation used a fixed ``max_gap_multiplier = 1.5``
+regardless of the lookback window.  That is too loose for 5Y (allows a
+data point up to 7.5Y back — distorts CAGR) and too tight for 3M (a
+single missed quarter rejects the whole window).
 
-  - 3M horizon (90 days): reject old value if it's > 135 days before
-    the lookback date.
-  - 1Y horizon (365 days): reject if > 547 days before.
-  - 5Y horizon (1825 days): reject if > 2737 days before.
+FIX
+---
+Period-specific multipliers:
 
-  Without the gap tolerance, a metric like revenue_growth_1y_at() would
-  return a number based on the most recent period ≤ the 365-day-ago
-  date, even if that period is 2+ years old (e.g., for a company that
-  recently stopped filing). The number would silently misrepresent the
-  growth horizon. With the gap tolerance, such cases return None
-  instead, surfacing the data gap rather than hiding it.
+  ┌──────────────┬───────────┬──────────────────┬────────────────────────┐
+  │ Window       │ Lookback  │ max_gap_mult     │ Max gap (days)         │
+  ├──────────────┼───────────┼──────────────────┼────────────────────────┤
+  │ 3M           │   90 days │ 1.5  (loose)     │  135 days (~4.5 months)│
+  │ 1Y           │  365 days │ 1.5  (loose)     │  547 days (~1.5 years) │
+  │ 5Y           │ 1825 days │ 1.2  (tight)     │ 2190 days (~6.0 years) │
+  └──────────────┴───────────┴──────────────────┴────────────────────────┘
 
-Usage:
-    from skills.cvm.calculations.growth_helpers import growth_at, growth_history
+Rationale:
+  - Short windows (3M/1Y): a missed period is common (ITR optional for
+    some filers).  1.5x tolerance avoids spurious None.
+  - Long windows (5Y): the further back you go, the more the company's
+    business may have changed (M&A, spin-offs).  A tight 1.2x tolerance
+    prevents comparing against a structurally different era.
 
-    # In a metric file:
-    def revenue_growth_1y_at(company, date):
-        return growth_at(company, date, revenue_periods, "ttm_rev", 365)
+USAGE
+-----
+    from skills.cvm.calculations.growth_helpers import (
+        growth_at, growth_history, gap_multiplier_for_lookback,
+        LOOKBACK_3M, LOOKBACK_1Y, LOOKBACK_5Y,
+    )
 
-    def revenue_growth_1y_history(company, date_from, date_to):
-        return growth_history(company, date_from, date_to,
-                              revenue_periods, "ttm_rev", 365,
-                              "revenue_growth_1y")
+    # Point-in-time growth: latest vs ~1Y ago.
+    g = growth_at(periods, target_date="2024-06-30", lookback_days=365)
+
+    # Time series of 5Y growth.
+    hist = growth_history(periods, lookback_days=1825)
+
+``periods`` is a list of ``{"date": "YYYY-MM-DD", "value": float}`` dicts
+sorted oldest-first (duplicates by date are tolerated — last wins).
+
+DESIGN
+------
+This module is PURE (no DB access, no I/O).  It operates on pre-fetched
+``periods`` lists so it can be unit-tested without a database and reused
+by both the calculations registry growth metrics AND the financials
+dashboard's Crescimento tab (report.py).
+
+The helpers are NOT registered as engines/metrics themselves — they are
+building blocks.  Individual growth metrics (revenue_growth,
+net_income_growth, etc.) will call ``growth_at`` with their engine's
+period list.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Callable
+from datetime import date as _date, datetime, timedelta
+
+# ── Lookback windows (days) ──────────────────────────────────────────────────
+
+LOOKBACK_3M = 90
+LOOKBACK_1Y = 365
+LOOKBACK_5Y = 1825
+
+# ── Period-specific gap-tolerance multipliers ────────────────────────────────
+# Maps a lookback (in days) to the max acceptable gap multiplier.  A lookback
+# <= 365 days (3M, 1Y) uses the loose 1.5x; a lookback > 365 days (5Y) uses
+# the tight 1.2x.  See module docstring for rationale.
+
+_GAP_MULT_SHORT = 1.5   # for lookback <= 365 days (3M / 1Y)
+_GAP_MULT_LONG = 1.2    # for lookback >  365 days (5Y)
+_GAP_MULT_THRESHOLD_DAYS = 365
 
 
-def _find_value_at_or_before(
+def gap_multiplier_for_lookback(lookback_days: int) -> float:
+    """Return the period-specific gap-tolerance multiplier for a lookback.
+
+    - lookback <= 365 days → 1.5  (loose; tolerates one missed period)
+    - lookback >  365 days → 1.2  (tight; avoids comparing different eras)
+
+    >>> gap_multiplier_for_lookback(90)
+    1.5
+    >>> gap_multiplier_for_lookback(365)
+    1.5
+    >>> gap_multiplier_for_lookback(1825)
+    1.2
+    """
+    if lookback_days <= _GAP_MULT_THRESHOLD_DAYS:
+        return _GAP_MULT_SHORT
+    return _GAP_MULT_LONG
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _parse_date(d) -> _date:
+    """Parse a date string (YYYY-MM-DD) or pass through a date object."""
+    if isinstance(d, _date):
+        return d
+    return datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
+
+
+def _period_value(periods: list[dict], target: _date) -> float | None:
+    """Get the value for exact target date, or None."""
+    for p in periods:
+        if _parse_date(p["date"]) == target:
+            v = p.get("value")
+            return float(v) if v is not None else None
+    return None
+
+
+def _find_latest_on_or_before(periods: list[dict], target: _date) -> dict | None:
+    """Most recent period with date <= target AND a non-None value.
+
+    Periods with ``value is None`` (missing data) are skipped so the
+    growth computation falls back to the next-most-recent period that
+    actually has a figure.
+    """
+    best: dict | None = None
+    best_date: _date | None = None
+    for p in periods:
+        if p.get("value") is None:
+            continue
+        d = _parse_date(p["date"])
+        if d <= target:
+            if best_date is None or d > best_date:
+                best = p
+                best_date = d
+    return best
+
+
+def _find_prior_within_gap(
     periods: list[dict],
-    target_date: str,
-    value_key: str,
-) -> float | None:
-    """Find the engine value at or before target_date.
+    target: _date,
+    lookback_days: int,
+    max_gap_multiplier: float | None = None,
+) -> dict | None:
+    """Find the prior period closest to (target - lookback_days) within gap.
+
+    The "prior" date is ``target - lookback_days``.  We accept any period
+    whose date falls in the window::
+
+        [target - lookback_days * max_gap_multiplier,
+         target - lookback_days / max_gap_multiplier]
+
+    (symmetric tolerance around the ideal prior date).  Among periods in
+    that window with a non-None value, we pick the one CLOSEST to the
+    ideal prior date.
 
     Args:
-        periods: List of {"date": "YYYY-MM-DD", value_key: float} sorted oldest-first.
-        target_date: The date to look up (YYYY-MM-DD).
-        value_key: The dict key holding the value (e.g. "ttm_rev", "ttm_gp", "ttm").
+        periods: list of {"date": str, "value": float|None} dicts.
+        target: the "current" date.
+        lookback_days: ideal lookback (90 / 365 / 1825).
+        max_gap_multiplier: override the period-specific default (None →
+            auto-select via gap_multiplier_for_lookback).
 
     Returns:
-        The value at the most recent period <= target_date, or None if no
-        period exists before target_date.
+        The best-matching period dict (value is guaranteed non-None), or
+        None if no period with a value falls within the gap window.
     """
-    result = None
+    if max_gap_multiplier is None:
+        max_gap_multiplier = gap_multiplier_for_lookback(lookback_days)
+
+    ideal_prior = target - timedelta(days=lookback_days)
+    # Symmetric tolerance window around the ideal prior date.
+    earliest = target - timedelta(days=int(lookback_days * max_gap_multiplier))
+    latest = target - timedelta(days=int(lookback_days / max_gap_multiplier))
+
+    best: dict | None = None
+    best_dist: timedelta | None = None
     for p in periods:
-        if p["date"] <= target_date:
-            result = p.get(value_key)
-        else:
-            break
-    return result
+        if p.get("value") is None:
+            continue  # skip missing-data periods
+        d = _parse_date(p["date"])
+        if d < earliest or d > latest:
+            continue
+        dist = abs((d - ideal_prior).days)
+        if best_dist is None or dist < best_dist:
+            best = p
+            best_dist = dist
+    return best
 
 
-def _find_value_and_date_at_or_before(
-    periods: list[dict],
-    target_date: str,
-    value_key: str,
-) -> tuple[float | None, str | None]:
-    """Find (value, date) at or before target_date.
-
-    Same as `_find_value_at_or_before` but also returns the matched
-    period's date — used by gap-tolerance checks in `growth_at` and
-    `growth_history`.
-
-    Returns:
-        (value, date) tuple. Both None if no period exists before target_date.
-    """
-    result_value = None
-    result_date = None
-    for p in periods:
-        if p["date"] <= target_date:
-            result_value = p.get(value_key)
-            result_date = p["date"]
-        else:
-            break
-    return result_value, result_date
-
+# ── Public API ───────────────────────────────────────────────────────────────
 
 def growth_at(
-    company: str,
-    date: str,
-    periods_fn: Callable,
-    value_key: str,
+    periods: list[dict],
+    target_date: str | _date,
     lookback_days: int,
-    max_gap_multiplier: float = 1.5,
+    max_gap_multiplier: float | None = None,
 ) -> float | None:
-    """Compute growth = (latest - old) / |old| for a given lookback period.
+    """Compute growth rate at target_date over a lookback window.
 
-    Args:
-        company: Ticker, name, or CNPJ.
-        date: The reference date (YYYY-MM-DD). Growth is measured from
-              (date - lookback_days) to date.
-        periods_fn: The engine's _periods() function (e.g. revenue_periods).
-        value_key: The dict key in period entries holding the value
-                   (e.g. "ttm_rev", "ttm_gp", "ttm").
-        lookback_days: How many days back to compare (90=3M, 365=1Y, 1825=5Y).
-        max_gap_multiplier: Reject the "old" value if it's more than
-                            ``lookback_days * max_gap_multiplier`` days before
-                            the lookback date (default 1.5 — see module
-                            docstring for rationale).
+    growth = (current - prior) / |prior|
 
-    Returns:
-        Growth as a fraction (0.15 = 15% growth, -0.05 = 5% decline),
-        or None if either value is missing, the old value is zero, OR
-        the old value's date is too far before the lookback date
-        (gap-tolerance check).
+    - "current" = the most recent period on or before target_date with a
+      non-None value.
+    - "prior"   = the period closest to (target_date - lookback_days)
+      within the gap-tolerance window, with a non-None, non-zero value.
+
+    Returns None if either current or prior is unavailable, or if prior
+    is zero (avoids division by zero).
+
+    >>> periods = [
+    ...     {"date": "2023-12-31", "value": 100.0},
+    ...     {"date": "2024-12-31", "value": 120.0},
+    ... ]
+    >>> growth_at(periods, "2024-12-31", 365)  # (120-100)/100 = 0.20
+    0.2
     """
-    periods = periods_fn(company)
     if not periods:
         return None
 
-    # Get the "latest" value at or before `date`
-    latest = _find_value_at_or_before(periods, date, value_key)
-    if latest is None:
+    target = _parse_date(target_date)
+    curr_p = _find_latest_on_or_before(periods, target)
+    if curr_p is None:
         return None
-
-    # Compute the lookback date
-    try:
-        dt = datetime.fromisoformat(date[:10])
-    except (ValueError, TypeError):
+    curr_val = curr_p.get("value")
+    if curr_val is None:
         return None
-    lookback_date = (dt - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    curr_val = float(curr_val)
 
-    # Get the "old" value at or before the lookback date (and its actual date)
-    old, old_date = _find_value_and_date_at_or_before(periods, lookback_date, value_key)
-    if old is None or old == 0:
+    prior_p = _find_prior_within_gap(
+        periods, target, lookback_days, max_gap_multiplier)
+    if prior_p is None:
         return None
+    prior_val = prior_p.get("value")
+    if prior_val is None or prior_val == 0:
+        return None
+    prior_val = float(prior_val)
 
-    # Gap-tolerance check: if old_date is too far before the lookback date,
-    # the "old" value is stale and the growth number would misrepresent the
-    # requested horizon. Return None to surface the data gap.
-    if old_date is not None and max_gap_multiplier > 0:
-        try:
-            old_dt = datetime.fromisoformat(old_date[:10])
-            gap_days = (datetime.fromisoformat(lookback_date[:10]) - old_dt).days
-            max_gap_days = lookback_days * max_gap_multiplier
-            if gap_days > max_gap_days:
-                return None
-        except (ValueError, TypeError):
-            # If we can't parse dates, fall through and compute growth anyway.
-            pass
-
-    return (latest - old) / abs(old)
+    return (curr_val - prior_val) / abs(prior_val)
 
 
 def growth_history(
-    company: str,
-    date_from: str,
-    date_to: str,
-    periods_fn: Callable,
-    value_key: str,
+    periods: list[dict],
     lookback_days: int,
-    growth_key: str,
-    max_gap_multiplier: float = 1.5,
+    date_from: str | _date | None = None,
+    date_to: str | _date | None = None,
+    max_gap_multiplier: float | None = None,
 ) -> list[dict]:
-    """Compute growth time series across all engine periods in [date_from, date_to].
+    """Time series of growth rates over a lookback window.
 
-    For each period date in the range, computes growth vs (date - lookback_days).
+    For each period date in ``periods`` (optionally clamped to
+    [date_from, date_to]), compute ``growth_at(periods, date, lookback)``.
 
-    Args:
-        company: Ticker.
-        date_from: Start date (YYYY-MM-DD).
-        date_to: End date (YYYY-MM-DD).
-        periods_fn: The engine's _periods() function.
-        value_key: The dict key in period entries holding the value.
-        lookback_days: How many days back to compare.
-        growth_key: The key to use for the growth value in the output dicts
-                    (e.g. "revenue_growth_1y").
-        max_gap_multiplier: Reject the "old" value if it's more than
-                            ``lookback_days * max_gap_multiplier`` days before
-                            the lookback date (default 1.5 — see module
-                            docstring for rationale).
+    Returns: ``[{"date": str, "growth": float|None, "current": float|None,
+    "prior": float|None, "prior_date": str|None}, ...]`` sorted oldest-first.
 
-    Returns:
-        List of {"date", growth_key, "value", "old_value", "old_date"}
-        sorted oldest-first. Entries where growth can't be computed (missing
-        old value, zero old value, OR stale old value past the gap-tolerance
-        threshold) are included with growth_key=None.
+    The ``prior_date`` field lets callers show WHICH period was used as the
+    baseline (useful when gap tolerance selected a non-ideal date).
     """
-    periods = periods_fn(company)
     if not periods:
         return []
 
-    result = []
-    for p in periods:
-        date = p["date"]
-        if date < date_from or date > date_to:
+    df = _parse_date(date_from) if date_from else None
+    dt = _parse_date(date_to) if date_to else None
+
+    if max_gap_multiplier is None:
+        max_gap_multiplier = gap_multiplier_for_lookback(lookback_days)
+
+    result: list[dict] = []
+    for p in sorted(periods, key=lambda x: _parse_date(x["date"])):
+        d = _parse_date(p["date"])
+        if df and d < df:
+            continue
+        if dt and d > dt:
             continue
 
-        value = p.get(value_key)
-        if value is None:
-            continue
+        curr_val = p.get("value")
+        target = d
 
-        # Compute lookback date
-        try:
-            dt = datetime.fromisoformat(date[:10])
-        except (ValueError, TypeError):
-            continue
-        lookback_date = (dt - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-
-        old, old_date = _find_value_and_date_at_or_before(periods, lookback_date, value_key)
+        prior_p = _find_prior_within_gap(
+            periods, target, lookback_days, max_gap_multiplier)
+        prior_val = prior_p.get("value") if prior_p else None
+        prior_date = prior_p["date"] if prior_p else None
 
         growth = None
-        if old is not None and old != 0:
-            # Gap-tolerance check: skip growth computation if old_date is too
-            # far before the lookback date (stale data — see module docstring).
-            stale = False
-            if old_date is not None and max_gap_multiplier > 0:
-                try:
-                    old_dt = datetime.fromisoformat(old_date[:10])
-                    gap_days = (datetime.fromisoformat(lookback_date[:10]) - old_dt).days
-                    max_gap_days = lookback_days * max_gap_multiplier
-                    if gap_days > max_gap_days:
-                        stale = True
-                except (ValueError, TypeError):
-                    pass
-            if not stale:
-                growth = (value - old) / abs(old)
+        if (curr_val is not None and prior_val is not None
+                and prior_val != 0):
+            growth = (float(curr_val) - float(prior_val)) / abs(float(prior_val))
 
-        entry = {
-            "date": date,
-            growth_key: growth,
-            "value": value,
-            "old_value": old,
-            "old_date": old_date,
-        }
-        result.append(entry)
-
+        result.append({
+            "date": p["date"],
+            "growth": growth,
+            "current": float(curr_val) if curr_val is not None else None,
+            "prior": float(prior_val) if prior_val is not None else None,
+            "prior_date": prior_date,
+        })
     return result

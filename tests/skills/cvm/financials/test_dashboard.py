@@ -64,7 +64,13 @@ class TestDashboardMode:
             assert "value" in card
 
     def test_dashboard_indicadores_grid(self, financials_env):
-        """Indicadores tab (index 1) carries a ratio_grid section."""
+        """Indicadores tab (index 1) uses type=subtabs (v1.13 review-fix).
+
+        [v1.13] Previously a single ratio_grid with all 7 categories as
+        cards.  Now each category is its own sub-tab, each carrying a
+        single-category ratio_grid.  This verifies the subtabs structure
+        + that each sub-tab has a ratio_grid with at least one category.
+        """
         from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
@@ -72,10 +78,20 @@ class TestDashboardMode:
         assert indicadores_tab["name"] == "Indicadores"
         assert "sections" in indicadores_tab
         section = indicadores_tab["sections"][0]
-        assert section["type"] == "ratio_grid"
-        assert "categories" in section
-        assert isinstance(section["categories"], list)
-        assert len(section["categories"]) > 0
+        # [v1.13] Now a subtabs section, not a flat ratio_grid.
+        assert section["type"] == "subtabs"
+        assert "tabs" in section
+        assert isinstance(section["tabs"], list)
+        assert len(section["tabs"]) > 0
+        # Each sub-tab must carry a ratio_grid section with ≥1 category.
+        for sub in section["tabs"]:
+            assert "name" in sub
+            assert "sections" in sub
+            assert len(sub["sections"]) >= 1
+            rg = sub["sections"][0]
+            assert rg["type"] == "ratio_grid"
+            assert isinstance(rg.get("categories"), list)
+            assert len(rg["categories"]) >= 1
 
     def test_dashboard_balanco_uses_subtabs(self, financials_env):
         """Balanço tab uses type=subtabs with BPA + BPP sub-tabs."""
