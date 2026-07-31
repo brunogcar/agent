@@ -744,6 +744,16 @@ def ensure_fresh(
         sync_result = _trigger_sync(source, company=company, trace_id=trace_id)
         if sync_result.get("status") == "ok":
             synced.append(source)
+            # [v1.10 F8] Event-driven materialization: after a successful
+            # force-sync, re-materialize ratios for the requested company
+            # so the materialized table reflects the new data. Only for
+            # CVM sources that affect fundamental metrics (dfp/itr/fre/fca).
+            if source in ("dfp", "itr", "fre", "fca") and company:
+                try:
+                    from skills.cvm.calculations._materialized import on_sync_complete
+                    on_sync_complete(source, company=company)
+                except Exception:
+                    pass  # best-effort — don't crash if materialization fails
         else:
             errors.append({
                 "source": source,

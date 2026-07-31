@@ -91,16 +91,26 @@ def get_freshness() -> dict[str, str]:
     except Exception:
         result["b3_dividends"] = ""
 
-    # COTAHIST — no sync_state table; use max(refdate) from cotahist
+    # COTAHIST — use synced_at from sync_state (NOT MAX(refdate)).
+    # [v1.10.1 fix] Previously used MAX(refdate) which is the last TRADING
+    # DATE, not the sync timestamp. This caused the sync guard to see
+    # cotahist as "stale" whenever the market was open today but cotahist
+    # didn't have today's data yet (market still open) → force-sync every
+    # call. Now uses synced_at from sync_state, which is WHEN the sync ran.
     try:
         cp = cotahist_path()
         if cp.exists():
             conn = sqlite3.connect(f"file:{cp}?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT MAX(refdate) as max_date FROM cotahist"
-            ).fetchone()
-            result["cotahist"] = str(row["max_date"]) if row and row["max_date"] else ""
+            # Try sync_state table first (has synced_at timestamp)
+            try:
+                row = conn.execute(
+                    "SELECT synced_at FROM sync_state ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()
+                result["cotahist"] = str(row["synced_at"]) if row and row["synced_at"] else ""
+            except Exception:
+                # Fallback: no sync_state table → empty (treated as stale)
+                result["cotahist"] = ""
             conn.close()
         else:
             result["cotahist"] = ""

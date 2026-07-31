@@ -497,6 +497,35 @@ with engine_cache_scope() as scope:
 
 **Engine cache (v1.9 F7):** `compute_all_ratios()` wraps its loop in `with engine_cache_scope():` — engines shared across metrics (`earnings` used by 11 metrics, `pl` by 10, `debt` by 10, `revenue` by 15) are queried ONCE per `(company, date)` instead of N times. ~60% fewer DB queries. The cache is `ContextVar`-scoped (per-thread + per-asyncio-task), re-entrancy-safe (nested `compute_all_ratios` calls reuse the outer cache), and zero-overhead when no scope is active. See [ARCHITECTURE.md](ARCHITECTURE.md#-engine-cache-v18-f7) for the full design.
 
+**Materialized ratios (v1.10 F8):** `compute_all_ratios()` reads stable fundamental metrics (profitability/liquidity/leverage/efficiency/tax) from the `ratios_materialized` SQLite table first; only price-based + growth + stale/missing metrics are computed live. Turns a 35-engine call into ~15 live + 1 DB lookup. Event-driven invalidation: `ensure_fresh()` calls `materialize_ratios(company, today)` after successful force-sync. Escape hatch: `CVM_SKIP_MATERIALIZED=1`. See [ARCHITECTURE.md](ARCHITECTURE.md#-materialized-ratios-v110-f8) for the full design.
+
+### `skills/cvm/calculations/_materialized.py` — Materialized Ratios API (v1.10 F8)
+```python
+from skills.cvm.calculations._materialized import (
+    materialize_ratios, get_materialized, clear_materialized,
+    materialized_stats, on_sync_complete, MATERIALIZED_CATEGORIES,
+)
+
+# Compute + store all stable fundamentals for (company, date)
+materialize_ratios(company: str, date: str) -> dict
+# Returns: {"status": "ok", "ticker": ..., "date": ..., "materialized_count": N, "errors": [...]}
+
+# Read materialized rows (returns None if missing or CVM_SKIP_MATERIALIZED=1)
+get_materialized(company: str, date: str) -> dict[str, float | None] | None
+
+# Clear rows (all or per-company)
+clear_materialized(company: str | None = None) -> int
+
+# Diagnostics
+materialized_stats() -> dict  # {total_rows, distinct_tickers, distinct_dates, latest_computed_at}
+
+# Sync hook (called by ensure_fresh after force-sync)
+on_sync_complete(source: str, company: str | None = None) -> dict
+
+# Categories that get materialized (growth + valuation + per_share stay live)
+MATERIALIZED_CATEGORIES = ["profitability", "liquidity", "leverage", "efficiency", "tax"]
+```
+
 ---
 
-*Last updated: 2026-07-31 (v1.9 — F7 engine cache). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-31 (v1.10 — F8 materialized ratios). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

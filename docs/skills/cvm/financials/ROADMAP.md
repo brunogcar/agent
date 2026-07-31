@@ -2,22 +2,35 @@
 
 # 🗺️ Financials ROADMAP
 
-Living roadmap for the financials skill. Items here are inspired by LLM
-review findings (Claude 2, Qwen, Minimax) on the v1.12 dashboard reorg +
-the v1.13 review-fix sprint. Items move from **Backlog** → **In
-Progress** → **Completed** (then they appear in CHANGELOG.md).
+## 📋 Quick View — What's Next
 
-The v1.13 review-fix sprint (this commit) addressed 5 P1/P2 findings:
-subtab chart rendering, `_pick_pl_value()` zero-value trap, period-specific
-growth gap tolerance, Indicadores sub-tab split, and DVA doughnut
-percentages. The items below are the REMAINING backlog from those reviews.
+| Priority | Item | Description |
+|----------|------|-------------|
+| P2 | F1 — Chart serialization test | Regression test for JSON-serializable chart_data |
+| P2 | F2 — Comparison tab | Company vs sector medians (needs reusable sector-median computation) |
+| P2 | F3 — Price history overlay | COTAHIST daily price on DRE/DFC/DVA charts (dual Y-axis) |
+| P2 | F4 — Period selector | TTM toggle plumbing (annual/TTM/quarterly dropdown) |
+| P3 | F5 — Cross-skill dashboard | Unified company profile (financials + valuation + governance + insider) |
+| P2 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
+| Next | Backtest/Historical/Investsite dashboard reorg | Apply v1.12 dashboard pattern to 3 more skills |
+| Done | F7 — Engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
+| Done | F8 — Materialized ratios (v1.10) | Pre-computed fundamentals in SQLite — event-driven on sync |
+| Done | Force sync guard (v1.14) | `ensure_fresh()` + HEAD check + current-year force sync |
 
 ---
 
-## 🚧 In Progress
+## ✅ Recently Completed
 
-(none — v1.13 review-fix sprint complete; next up is Backtest/Historical/
-Investsite dashboard reorg.)
+- **v1.14 (2026-07-31)** — Force sync guard. `__init__.py` passes
+  `required_sources=["dfp","itr","bridge"]` to `make_route()`. route() calls
+  `ensure_fresh()` before dispatch — force-syncs if stale (>24h). HEAD check
+  for CVM sources. Re-entrancy guard. Escape hatches: `CVM_SKIP_SYNC=1` +
+  `skip_sync=True`.
+- **v1.13 (2026-07-31)** — 5 LLM-review fixes: subtab chart rendering,
+  `_pick_pl_value()` zero-value trap, period-specific growth gap tolerance,
+  Indicadores sub-tab split, DVA doughnut percentages.
+- **v1.12 (2026-07-29)** — 7-tab dashboard reorg + 5 standalone statement
+  modes + generic adapter.
 
 ---
 
@@ -131,61 +144,6 @@ well-known tickers (PETR4, VALE3, ITUB4, etc.) and reports:
 **Purpose:** catches silent data-quality regressions before users see
 broken dashboards. Should run nightly (cron) in production.
 
-### F7 — Performance: per-call engine caching in compute_all_ratios()
-
-**Priority:** P1
-**Source:** Performance audit (user request)
-
-`compute_all_ratios()` currently calls each metric's `ratio_fn`, which
-calls each engine's `at_fn`, which opens a DB connection + runs a query.
-For a dashboard with 35+ metrics, many engines are called redundantly
-(e.g., `earnings` is used by ROE, ROIC, sustainable_growth, LPA, DPA,
-earnings_yield). A per-call cache keyed by `(engine_name, company, date)`
-reduces DB queries by 40-60%.
-
-**Implementation:** add an LRU cache dict scoped to a single
-`compute_all_ratios()` invocation (cleared at the end). Pass it as a
-`_cache` kwarg to each `at_fn`, or use a contextvar.
-
-### F8 — Performance: materialized ratios table
-
-**Priority:** P2
-**Source:** Performance audit (user request)
-
-Pre-compute all ratios on sync (when DFP/ITR/FRE data is refreshed) and
-store in a `ratios_materialized` table. Dashboard queries become
-single-row lookups instead of 35 engine calls.
-
-**Schema:**
-```sql
-CREATE TABLE ratios_materialized (
-  ticker TEXT, date TEXT,
-  roe REAL, roa REAL, roic REAL, ... -- one column per metric
-  computed_at TEXT,
-  PRIMARY KEY (ticker, date)
-);
-```
-
-**Trade-off:** adds sync-time compute cost + staleness (ratios are
-point-in-time at sync, not at query). Best for read-heavy dashboards.
-
 ---
 
-## ✅ Recently Completed
-
-(See [CHANGELOG.md](CHANGELOG.md) for the full version history.)
-
-- **v1.13 (review-fix sprint)** — 5 LLM-review fixes: (1) recursive
-  subtab chart rendering in dashboard.html, (2) `_pick_pl_value()` with
-  `!= 0` check + 2.08 fallback (description-checked), (3) period-specific
-  growth gap tolerance (1.5x for 3M/1Y, 1.2x for 5Y) via new
-  `growth_helpers.py`, (4) Indicadores tab split into category sub-tabs,
-  (5) DVA doughnut tooltip percentages via `_tooltipPercent` flag.
-- **v1.12** — 7-tab dashboard reorg (Overview / Indicadores / Crescimento
-  / Balanço / DRE / DFC / DVA) with sub-tabs, charts, collapsibles.
-- **v1.6** — File structure split + valuation dashboard mode.
-
----
-
-*Last updated: v1.13 review-fix sprint (subtab charts + PL zero-value
-trap + growth gap tolerance + Indicadores sub-tabs + DVA percentages).*
+*Last updated: 2026-07-31 (v1.14 — force sync guard + F7 engine cache + F8 materialized ratios). See [CHANGELOG.md](CHANGELOG.md) for version history.*

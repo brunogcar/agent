@@ -2,6 +2,35 @@
 
 # 🗺️ Valuation ROADMAP
 
+## 📋 Quick View — What's Next
+
+| Priority | Item | Description |
+|----------|------|-------------|
+| P2 | D1 — Per-statement adapters | BPA/BPP/DRE/DFC/DVA adapters for Per-share tab |
+| P2 | D2 — Additional metrics | ROI, COE/CAPM, CAGR, Earnings Yield, P/Ativos, P/Passivos, P/RB |
+| P2 | D3 — Cash flow metrics | FCT, FCL, Saldo Inicial/Final |
+| P3 | D4 — New data sources | B3 index, Beta, options, volatility, BCB macro, FX rates |
+| P2 | D5 — Dashboard enhancements | Sub-tabs, price trend, margin trend, peer comparison |
+| P2 | D6 — Report adapters | valuation_bpa/bpp/dre/dfc/dva/macro |
+| P3 | D7 — Performance & quality | Per-call cache done (F7); materialized done (F8); TypedDict + telemetry remaining |
+| Next | Backtest/Historical/Investsite dashboard reorg | Apply v1.12 dashboard pattern to 3 more skills |
+| Done | F7 engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
+| Done | F8 materialized ratios (v1.10) | Pre-computed fundamentals in SQLite — event-driven on sync |
+| Done | Force sync guard (v1.7) | `ensure_fresh()` + HEAD check + current-year force sync |
+
+---
+
+## ✅ Recently Completed
+
+- **v1.7 (2026-07-31)** — Force sync guard. `__init__.py` passes
+  `required_sources=["dfp","itr","fca","cotahist","bridge"]` to `make_route()`.
+  route() calls `ensure_fresh()` before dispatch. HEAD check for CVM sources.
+  Re-entrancy guard. Escape hatches: `CVM_SKIP_SYNC=1` + `skip_sync=True`.
+- **v1.5 (2026-07-29)** — 6-tab dashboard reorg: added Per-share tab,
+  charts, collapsibles, `_derive_*()` helpers.
+
+---
+
 Living roadmap for the valuation skill. Items here are inspired by a private
 valuation spreadsheet analysis (covering B3 stocks comprehensively) + by
 gaps surfaced during the v1.5 6-tab dashboard reorg. Items move from
@@ -119,9 +148,9 @@ These are entirely new data sources — not yet wired into any engine.
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| **Per-call engine caching in `compute_all_ratios()`** | **P1** | Currently each metric's `ratio_fn` calls its engine's `at_fn`, which opens a DB connection + runs a query. Many engines are called redundantly (e.g., `earnings` is used by ROE, ROIC, sustainable_growth, LPA, DPA). A per-call cache keyed by `(engine_name, company, date)` scoped to a single `compute_all_ratios()` invocation reduces DB queries by 40-60%. Implement via a contextvar or `_cache` kwarg passed to each `at_fn`. |
-| **Materialized ratios table** | **P2** | Pre-compute all ratios on sync (when DFP/ITR/FRE data is refreshed) and store in a `ratios_materialized` table. Dashboard queries become single-row lookups instead of 35 engine calls. Trade-off: adds sync-time compute cost + staleness (ratios are point-in-time at sync, not at query). Best for read-heavy dashboards. |
-| **Cache `ratios()` per (ticker, day)** | P2 | Currently every dashboard call re-queries every engine. Add a TTL cache (5 min?) keyed by (ticker, today). Complements D7-P1 (per-call cache) by extending the cache boundary to cross-call. |
+| ~~Per-call engine caching in `compute_all_ratios()`~~ | ~~P1~~ | ✅ **Done (v1.9 F7)** — `@engine_cached` decorator + `engine_cache_scope` ContextVar. ~60% fewer DB queries. |
+| ~~Materialized ratios table~~ | ~~P2~~ | ✅ **Done (v1.10 F8)** — `ratios_materialized` table in `memory_db/cvm/ratios.db`. Only stable fundamentals materialized; growth + price-based stay live. Event-driven invalidation on sync. |
+| **Cache `ratios()` per (ticker, day)** | P2 | Currently every dashboard call re-queries every engine. Add a TTL cache (5 min?) keyed by (ticker, today). Complements F7 (per-call cache) by extending the cache boundary to cross-call. |
 | **Type-hint the ratios dict** | P3 | Currently `dict[str, Any]`. Define a `ValuationRatios` TypedDict so downstream skills get autocomplete + mypy checking. |
 | **Telemetry** | P3 | Count how often each metric returns None (per engine). Surface in summary() as `null_rate` per metric. |
 
@@ -143,4 +172,4 @@ These are entirely new data sources — not yet wired into any engine.
 
 ---
 
-*Last updated: 2026-07-29 (v1.5 — 6-tab dashboard reorg; see CHANGELOG.md).*
+*Last updated: 2026-07-31 (v1.7 — force sync guard + F7 engine cache + F8 materialized ratios). See [CHANGELOG.md](CHANGELOG.md) for version history.*

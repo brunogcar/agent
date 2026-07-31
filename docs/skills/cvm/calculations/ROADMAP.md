@@ -2,7 +2,31 @@
 
 # 🗺️ Roadmap
 
-Items remaining after the v1.3 P2 sprint. The P2 sprint added 10 new engines + 15 new metrics (see CHANGELOG.md v1.3). Remaining items are P3 — defer until consumer skills demand them.
+## 📋 Quick View — What's Next
+
+| Priority | Item | Description |
+|----------|------|-------------|
+| P3 | New engines (DVA 8.1 + 8.4) | Personnel costs + shareholder remuneration — completes DVA distribution decomposition |
+| P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
+| P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
+| Done | F7 engine cache (v1.9) | `@engine_cached` decorator + ContextVar scope — ~60% fewer DB queries |
+| Done | F8 materialized ratios (v1.10) | Pre-computed fundamental metrics in SQLite — single-row lookups |
+
+---
+
+## ✅ Recently Completed
+
+- **v1.10 (2026-07-31)** — F8 materialized ratios. NEW `_materialized.py` with
+  `ratios_materialized` table. Only stable fundamentals materialized (profitability/
+  liquidity/leverage/efficiency/tax); growth + price-based stay live. Event-driven
+  invalidation on sync. Thread-local SQLite + WAL.
+- **v1.9 (2026-07-31)** — F7 engine cache. `@engine_cached` decorator on all 34
+  engines + `engine_cache_scope` ContextVar. ~60% fewer DB queries in
+  `compute_all_ratios()`. Zero test changes (decorator applied at definition time).
+- **v1.8 (2026-07-31)** — LLM-review fixes (P0+P1+P2): DVA 4th engine fix, 7.11
+  fallback, PL 2.08 fallback, growth gap tolerance, shared helpers.
+
+---
 
 ## P3 — Defer / roadmap
 
@@ -44,4 +68,4 @@ Items remaining after the v1.3 P2 sprint. The P2 sprint added 10 new engines + 1
 
 ---
 
-*Last updated: 2026-07-28 (v1.3). Items will be promoted to P1/P0 as consumer skills demand them.*
+*Last updated: 2026-07-31 (v1.10 — F8 materialized ratios). Items will be promoted to P1/P0 as consumer skills demand them.*

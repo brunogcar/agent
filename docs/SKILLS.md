@@ -46,9 +46,26 @@ def execute(action: str, **kwargs) -> dict:
 ## 🏗️ Modular Skill Pattern (skills/_base.py)
 
 All 11 skills (10 CVM + investsite) use a shared modular pattern built on
-`skills/_base.py`. This file provides the infrastructure (ModeSpec dataclass,
-register_mode decorator, auto-discovery, route factory) so each skill only
+`skills/_base.py`. This file provides the infrastructure so each skill only
 needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
+
+**What `skills/_base.py` provides:**
+
+| Component | Purpose | Version |
+|-----------|---------|---------|
+| `ModeSpec` dataclass | Mode metadata (name, fn, description, params, examples) | v1.0 |
+| `make_registry()` | Creates a per-skill MODES dict + `register_mode` decorator | v1.0 |
+| `build_manifest_modes(MODES)` | Turns registry into MANIFEST["modes"] dict | v1.0 |
+| `auto_discover_modes(__name__)` | Importlib-based modes/*.py auto-discovery | v1.0 |
+| `make_route(manifest_key, skill_name, MODES, ...)` | Generates the route() dispatcher | v1.0 |
+| `_dispatch(...)` | Internal dispatch (filters kwargs by signature) | v1.0 |
+| `@engine_cached` decorator | Caches engine at_fn/periods_fn within a scope | v1.9 F7 |
+| `engine_cache_scope` context manager | Activates the engine cache for its block | v1.9 F7 |
+| `ensure_fresh(sources, ...)` | Force-syncs stale data sources before dispatch | v1.14 |
+| `_source_is_stale(source)` | Checks sync_state timestamp against 24h window | v1.14 |
+| `_cvm_has_new_data(source, year)` | HEAD check before downloading (CVM only) | v1.14 |
+| `_trigger_sync(source, company, ...)` | Maps source name to sync fn with right args | v1.14 |
+| `_route_with_sync_guard(...)` | Wraps sync check + dispatch with re-entrancy guard | v1.14 |
 
 ### Architecture
 
@@ -281,6 +298,30 @@ REQUIRED_SOURCES = ["dfp", "itr", "bridge"]
 route = make_route("sub_domain", "<skill>", MODES,
                    required_sources=REQUIRED_SOURCES)
 ```
+
+### Materialized Ratios (v1.10 F8)
+
+`skills/cvm/calculations/_materialized.py` stores pre-computed fundamental
+metrics in a SQLite table (`memory_db/cvm/ratios.db`) so `compute_all_ratios()`
+reads them via single-row lookups instead of 35 engine calls.
+
+**What gets materialized** (~20 stable fundamental metrics):
+- Profitability (ROE, ROA, ROIC, margins)
+- Liquidity (current/quick/cash ratio, working capital)
+- Leverage (D/E, net debt/EBITDA, interest coverage)
+- Efficiency (turnover ratios, capex/revenue)
+- Tax (effective tax rate)
+
+**What stays live** (~29 metrics):
+- Valuation + per_share (price-dependent — depend on daily COTAHIST)
+- Growth (lookback-dependent — value depends on when evaluated)
+
+**Event-driven invalidation:** After a successful force-sync, `ensure_fresh()`
+calls `materialize_ratios(company, today)` to re-compute + upsert. No
+time-based staleness window — a materialized row is valid until explicitly
+invalidated by a re-materialization on the next sync.
+
+**Escape hatch:** `CVM_SKIP_MATERIALIZED=1` env var (set in conftest for tests).
 
 ---
 

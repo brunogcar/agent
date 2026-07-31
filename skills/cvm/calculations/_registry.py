@@ -314,19 +314,46 @@ def compute_all_ratios(
     result: dict[str, float | None] = {}
     exclude_set = set(exclude or [])
 
-    # [v1.8 F7] Cache engines for the duration of this call. Engines shared
+    # [v1.10 F8] Try materialized first for stable fundamental metrics.
+    # Only metrics NOT in the materialized table (or skipped via env var)
+    # are computed live below. This turns a 35-engine call into ~15 live
+    # calls + 1 DB lookup for most dashboard calls.
+    metrics_to_compute_live: set[str] = set()
+    for name, spec in METRICS.items():
+        if categories is not None and spec.category not in categories:
+            continue
+        if name in exclude_set:
+            continue
+        metrics_to_compute_live.add(name)
+
+    try:
+        from skills.cvm.calculations._materialized import (
+            get_materialized, MATERIALIZED_CATEGORIES,
+        )
+        materialized = get_materialized(company, date)
+        if materialized:
+            # Use materialized values for fundamental metrics; compute
+            # price-based + growth live (not materialized).
+            for name, spec in METRICS.items():
+                if name not in metrics_to_compute_live:
+                    continue
+                if spec.category in MATERIALIZED_CATEGORIES and name in materialized:
+                    result[name] = materialized[name]
+                    metrics_to_compute_live.discard(name)
+    except Exception:
+        # Materialized read failed (missing DB, schema error, etc.) —
+        # fall through to live computation for all metrics.
+        pass
+
+    # [v1.9 F7] Cache engines for the duration of this call. Engines shared
     # across metrics (earnings used by 11 metrics, pl by 10, debt by 10,
     # revenue by 15) are queried ONCE per (company, date) instead of N times.
     # The scope is re-entrancy-safe: if a scope is already active (nested
     # compute_all_ratios call), this is a no-op (reuses the outer cache).
     with engine_cache_scope():
         for name, spec in METRICS.items():
-            # Filter by category
-            if categories is not None and spec.category not in categories:
-                continue
-            # Filter by exclusion list
-            if name in exclude_set:
-                continue
+            if name not in metrics_to_compute_live:
+                continue  # already filled from materialized
             # Compute — swallow all errors (missing DB, missing account, etc.)
             try:
                 result[name] = spec.ratio_fn(company, date)
