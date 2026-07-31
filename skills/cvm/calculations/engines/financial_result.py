@@ -53,6 +53,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Resultado Financeiro (Financial Result = financial
@@ -134,6 +135,7 @@ def _get_itr_financial_result(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def financial_result_at(company: str, date: str) -> float | None:
     """Get trailing twelve months financial result ending at or before date.
 
@@ -190,6 +192,7 @@ def financial_result_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def financial_result_periods(company: str) -> list[dict]:
     """Get all TTM financial result periods for a company.
 
@@ -234,7 +237,6 @@ def financial_result_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="financial_result",
     quantity="ttm_financial_result",

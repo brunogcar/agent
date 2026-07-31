@@ -48,6 +48,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for net revenue (Receita Liquida). Standard position in
@@ -253,6 +254,7 @@ def _get_itr_revenue_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def revenue_at(company: str, date: str) -> float | None:
     """Get trailing twelve months net revenue ending at or before date.
 
@@ -308,6 +310,7 @@ def revenue_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def revenue_periods(company: str) -> list[dict]:
     """Get all TTM revenue periods for a company.
 
@@ -351,7 +354,6 @@ def revenue_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="revenue",
     quantity="ttm_rev",

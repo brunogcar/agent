@@ -309,21 +309,29 @@ def compute_all_ratios(
         Dict mapping metric name -> ratio value (float or None).
         Example: {"roe": 0.15, "roa": 0.08, "current_ratio": 1.5, ...}
     """
+    from skills._base import engine_cache_scope
+
     result: dict[str, float | None] = {}
     exclude_set = set(exclude or [])
 
-    for name, spec in METRICS.items():
-        # Filter by category
-        if categories is not None and spec.category not in categories:
-            continue
-        # Filter by exclusion list
-        if name in exclude_set:
-            continue
-        # Compute — swallow all errors (missing DB, missing account, etc.)
-        try:
-            result[name] = spec.ratio_fn(company, date)
-        except Exception:
-            result[name] = None
+    # [v1.8 F7] Cache engines for the duration of this call. Engines shared
+    # across metrics (earnings used by 11 metrics, pl by 10, debt by 10,
+    # revenue by 15) are queried ONCE per (company, date) instead of N times.
+    # The scope is re-entrancy-safe: if a scope is already active (nested
+    # compute_all_ratios call), this is a no-op (reuses the outer cache).
+    with engine_cache_scope():
+        for name, spec in METRICS.items():
+            # Filter by category
+            if categories is not None and spec.category not in categories:
+                continue
+            # Filter by exclusion list
+            if name in exclude_set:
+                continue
+            # Compute — swallow all errors (missing DB, missing account, etc.)
+            try:
+                result[name] = spec.ratio_fn(company, date)
+            except Exception:
+                result[name] = None
 
     return result
 

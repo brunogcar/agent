@@ -67,6 +67,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Impostos, Taxas e Contribuições (total tax burden).
@@ -155,6 +156,7 @@ def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def dva_total_tax_at(company: str, date: str) -> float | None:
     """Get trailing twelve months total tax burden (DVA 7.08.02 or 7.11.02) ending at or before date.
 
@@ -212,6 +214,7 @@ def dva_total_tax_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def dva_total_tax_periods(company: str) -> list[dict]:
     """Get all TTM total tax burden (DVA 7.08.02 or 7.11.02) periods for a company.
 
@@ -257,7 +260,6 @@ def dva_total_tax_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="dva_total_tax",
     quantity="ttm_dva_tax",

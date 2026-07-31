@@ -52,6 +52,7 @@ import unicodedata
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CapEx has no single fixed CVM code in the DFC. We search by description.
@@ -215,6 +216,7 @@ def _get_itr_capex(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def capex_at(company: str, date: str) -> float | None:
     """Get trailing twelve months CapEx ending at or before date.
 
@@ -271,6 +273,7 @@ def capex_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def capex_periods(company: str) -> list[dict]:
     """Get all TTM CapEx periods for a company.
 
@@ -314,7 +317,6 @@ def capex_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="capex",
     quantity="ttm_capex",

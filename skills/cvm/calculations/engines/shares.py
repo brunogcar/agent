@@ -12,6 +12,7 @@ Usage:
 """
 
 from __future__ import annotations
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 def _try_fre(cnpj: str, date: str) -> int | None:
@@ -100,6 +101,7 @@ def _try_investsite(ticker: str) -> int | None:
         return None
 
 
+@engine_cached
 def shares_at(company: str, date: str) -> int | None:
     """Get shares outstanding closest to date.
 
@@ -138,6 +140,7 @@ def shares_at(company: str, date: str) -> int | None:
     return None
 
 
+@engine_cached
 def shares_periods(company: str) -> list[dict]:
     """Get all shares outstanding periods for a company.
 

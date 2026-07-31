@@ -42,6 +42,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for FCI (Fluxo de Caixa de Investimento)
@@ -122,6 +123,7 @@ def _get_itr_investing_cf(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def investing_cf_at(company: str, date: str) -> float | None:
     """Get trailing twelve months FCI ending at or before date.
 
@@ -177,6 +179,7 @@ def investing_cf_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def investing_cf_periods(company: str) -> list[dict]:
     """Get all TTM FCI periods for a company.
 
@@ -220,7 +223,6 @@ def investing_cf_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="investing_cf",
     quantity="ttm_fci",

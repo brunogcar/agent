@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 def _cotahist_db() -> Path:
@@ -35,6 +36,7 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+@engine_cached
 def price_at(ticker: str, date: str) -> float | None:
     """Get close price on a specific date (or nearest trading day <= date).
 
@@ -60,6 +62,7 @@ def price_at(ticker: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def price_series(ticker: str, date_from: str, date_to: str) -> list[dict]:
     """Get daily close prices for a date range.
 

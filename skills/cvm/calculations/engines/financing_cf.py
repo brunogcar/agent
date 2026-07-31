@@ -56,6 +56,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for FCF (Fluxo de Caixa de Financiamento).
@@ -140,6 +141,7 @@ def _get_itr_financing_cf(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def financing_cf_at(company: str, date: str) -> float | None:
     """Get trailing twelve months FCF ending at or before date.
 
@@ -196,6 +198,7 @@ def financing_cf_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def financing_cf_periods(company: str) -> list[dict]:
     """Get all TTM FCF periods for a company.
 
@@ -239,7 +242,6 @@ def financing_cf_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="financing_cf",
     quantity="ttm_fcf",

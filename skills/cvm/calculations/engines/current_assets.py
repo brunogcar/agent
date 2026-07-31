@@ -39,6 +39,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Ativo Circulante Consolidado (BPA group)
@@ -118,6 +119,7 @@ def _get_itr_current_assets(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def current_assets_at(company: str, date: str) -> float | None:
     """Get Ativo Circulante closest to date (most recent snapshot <= date).
 
@@ -149,6 +151,7 @@ def current_assets_at(company: str, date: str) -> float | None:
     return dfp[latest]["value"]
 
 
+@engine_cached
 def current_assets_periods(company: str) -> list[dict]:
     """Get all current assets snapshot periods for a company.
 

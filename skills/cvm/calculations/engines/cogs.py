@@ -50,6 +50,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Custo dos Bens e/ou Serviços Vendidos (COGS).
@@ -133,6 +134,7 @@ def _get_itr_cogs(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def cogs_at(company: str, date: str) -> float | None:
     """Get trailing twelve months COGS ending at or before date.
 
@@ -189,6 +191,7 @@ def cogs_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def cogs_periods(company: str) -> list[dict]:
     """Get all TTM COGS periods for a company.
 
@@ -232,7 +235,6 @@ def cogs_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="cogs",
     quantity="ttm_cogs",

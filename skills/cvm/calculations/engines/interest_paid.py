@@ -68,6 +68,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Remuneração do Capital de Terceiros (interest paid to
@@ -156,6 +157,7 @@ def _get_itr_interest_paid(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def interest_paid_at(company: str, date: str) -> float | None:
     """Get trailing twelve months interest paid (DVA 7.08.03 or 7.11.03) ending at or before date.
 
@@ -213,6 +215,7 @@ def interest_paid_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def interest_paid_periods(company: str) -> list[dict]:
     """Get all TTM interest paid (DVA 7.08.03 or 7.11.03) periods for a company.
 
@@ -258,7 +261,6 @@ def interest_paid_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="interest_paid",
     quantity="ttm_interest_paid",

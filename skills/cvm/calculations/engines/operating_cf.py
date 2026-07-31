@@ -40,6 +40,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for FCO (Fluxo de Caixa Operacional)
@@ -119,6 +120,7 @@ def _get_itr_operating_cf(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def operating_cf_at(company: str, date: str) -> float | None:
     """Get trailing twelve months FCO ending at or before date.
 
@@ -174,6 +176,7 @@ def operating_cf_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def operating_cf_periods(company: str) -> list[dict]:
     """Get all TTM FCO periods for a company.
 
@@ -217,7 +220,6 @@ def operating_cf_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="operating_cf",
     quantity="ttm_fco",

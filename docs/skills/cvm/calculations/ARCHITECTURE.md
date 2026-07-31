@@ -6,7 +6,8 @@
 
 | File | Purpose |
 |---|---|
-| `skills/cvm/calculations/_registry.py` | **Central registry** — EngineSpec + MetricSpec + auto-discovery for both engines/ and metrics/ |
+| `skills/_base.py` | **Shared skill infrastructure** — ModeSpec + make_registry + make_route + auto_discover_modes + **[v1.8] `@engine_cached` decorator + `engine_cache_scope`** |
+| `skills/cvm/calculations/_registry.py` | **Central registry** — EngineSpec + MetricSpec + auto-discovery for both engines/ and metrics/ + `compute_all_ratios()` (wraps loop in `engine_cache_scope()`) |
 | `skills/cvm/calculations/engines/__init__.py` | Minimal docstring (auto-discovery is in `_registry.py`) |
 | `skills/cvm/calculations/engines/price.py` | COTAHIST daily close: `price_at()`, `price_series()` |
 | `skills/cvm/calculations/engines/earnings.py` | TTM earnings: `ttm_earnings_at()`, `ttm_earnings_periods()` |
@@ -157,6 +158,43 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
+## ⚡ Engine Cache (v1.8 F7)
+
+All 34 engines are decorated with `@engine_cached` (from `skills._base`) at
+module definition time. The decorator uses a `ContextVar`-scoped dict to
+cache results within a `compute_all_ratios()` call.
+
+**Why:** 49 metrics compose 34 engines, but many engines are shared —
+`earnings` is used by 11 metrics, `pl` by 10, `debt` by 10, `revenue` by 15.
+Without caching, a single `compute_all_ratios()` call fires ~90 engine
+queries, ~60% redundant (same engine, same company, same date). With the
+cache, each engine is queried ONCE per `(company, date)` → ~60% fewer DB
+queries.
+
+**How it works:**
+1. `@engine_cached` is applied to `at_fn` + `periods_fn` in each engine file
+   (at definition time, before any metric imports the function).
+2. The decorator checks `_ENGINE_CACHE` ContextVar; if `None` (no scope
+   active), it's a passthrough (zero overhead for standalone calls).
+3. `compute_all_ratios()` wraps its loop in `with engine_cache_scope():`
+   to activate the cache.
+4. Cache key: `(fn.__name__, company, str(date))` for `at_fn`;
+   `(fn.__name__, company)` for `periods_fn`.
+5. `None` values ARE cached (prevents re-querying missing data).
+
+**Why decorator (not monkey-patch):** Metrics use
+`from engines.earnings import ttm_earnings_at` — a direct reference bound
+at import time. Monkey-patching the module attribute after import is
+invisible to metrics. The decorator is applied at definition time, so
+`spec.at_fn` and `module.fn` are the same wrapper object, permanently.
+
+**Thread safety:** `ContextVar` is per-thread + per-asyncio-task. No lock
+needed. **Reentrancy:** Nested `compute_all_ratios()` calls reuse the outer
+scope's cache (the inner `engine_cache_scope.__enter__` detects an active
+scope and doesn't install a new one).
+
+---
+
 ## 📐 Key Design Patterns
 
 1. **Central `_registry.py`** — single source of truth for auto-discovery
@@ -166,11 +204,12 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 5. **Snapshot lookup** — most recent BPP/BPA snapshot <= date (balance engines)
 6. **Description-based search** — da + capex search DFC by descricao keywords
 7. **Multi-code sum** — debt sums BPP 2.01.04 + 2.02.01
-8. **Step-function optimization** — precompute periods, O(1) lookups per day
-9. **Flexible MetricSpec** — per_share fields optional for fundamental ratios; `category` field (v1.5) for filtered discovery
-10. **PT + EN aliases** on all metrics
-11. **Idempotent auto-discovery** — `_done` flag prevents re-registration
+8. **[v1.8] Engine cache** — `@engine_cached` decorator + `engine_cache_scope()` ContextVar; engines shared across metrics are queried ONCE per (company, date)
+9. **Step-function optimization** — precompute periods, O(1) lookups per day
+10. **Flexible MetricSpec** — per_share fields optional for fundamental ratios; `category` field (v1.5) for filtered discovery
+11. **PT + EN aliases** on all metrics
+12. **Idempotent auto-discovery** — `_done` flag prevents re-registration
 
 ---
 
-*Last updated: 2026-07-30 (v1.7 — 9 growth metrics). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-31 (v1.8 — F7 engine cache). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

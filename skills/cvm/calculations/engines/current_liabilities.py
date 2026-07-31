@@ -39,6 +39,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Passivo Circulante Consolidado (BPP group)
@@ -118,6 +119,7 @@ def _get_itr_current_liabilities(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def current_liabilities_at(company: str, date: str) -> float | None:
     """Get Passivo Circulante closest to date (most recent snapshot <= date).
 
@@ -150,6 +152,7 @@ def current_liabilities_at(company: str, date: str) -> float | None:
     return dfp[latest]["value"]
 
 
+@engine_cached
 def current_liabilities_periods(company: str) -> list[dict]:
     """Get all current liabilities snapshot periods for a company.
 

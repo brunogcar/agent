@@ -52,6 +52,7 @@ Usage:
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # SQL expression for the best available date (v1.3.1 fix).
@@ -135,6 +136,7 @@ def _get_all_event_dates(ticker: str) -> list[str]:
         conn.close()
 
 
+@engine_cached
 def dividends_at(ticker: str, date: str) -> float | None:
     """Get trailing twelve months dividends per share ending at or before date.
 
@@ -165,6 +167,7 @@ def dividends_at(ticker: str, date: str) -> float | None:
     return total
 
 
+@engine_cached
 def dividends_periods(ticker: str) -> list[dict]:
     """Get all DPA TTM periods for a ticker.
 

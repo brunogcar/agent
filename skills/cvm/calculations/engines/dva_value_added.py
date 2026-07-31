@@ -79,6 +79,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Valor Adicionado Total a Distribuir (total wealth
@@ -168,6 +169,7 @@ def _get_itr_dva_value_added(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def dva_value_added_at(company: str, date: str) -> float | None:
     """Get trailing twelve months total value added (DVA 7.08 or 7.10) ending at or before date.
 
@@ -226,6 +228,7 @@ def dva_value_added_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def dva_value_added_periods(company: str) -> list[dict]:
     """Get all TTM total value added (DVA 7.08 or 7.10) periods for a company.
 
@@ -272,7 +275,6 @@ def dva_value_added_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="dva_value_added",
     quantity="ttm_dva_va",

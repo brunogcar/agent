@@ -41,6 +41,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Imobilizado Consolidado (BPA line within Ativo Não Circulante)
@@ -120,6 +121,7 @@ def _get_itr_ppe(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def ppe_at(company: str, date: str) -> float | None:
     """Get Imobilizado (PP&E) closest to date (most recent snapshot <= date).
 
@@ -151,6 +153,7 @@ def ppe_at(company: str, date: str) -> float | None:
     return dfp[latest]["value"]
 
 
+@engine_cached
 def ppe_periods(company: str) -> list[dict]:
     """Get all PP&E snapshot periods for a company.
 
@@ -176,7 +179,6 @@ def ppe_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="ppe",
     quantity="ppe",

@@ -461,15 +461,42 @@ list_metrics_by_category(category: str) -> list[str]
 # invoked with (company, date) inside a try/except — a single metric raising
 # (e.g. FileNotFoundError on a missing DB) returns None for that key without
 # poisoning the rest of the result.
+#
+# [v1.9 F7] The loop is wrapped in `with engine_cache_scope():` so engines
+# shared across metrics are queried ONCE per (company, date) instead of N
+# times. ~60% fewer DB queries per call.
 compute_all_ratios(company: str, date: str,
                    categories: list[str] | None = None,
                    exclude: list[str] | None = None) -> dict[str, float | None]
+```
+
+### `skills/_base.py` — Engine Cache API (v1.9 F7)
+```python
+# Decorator — apply to engine at_fn + periods_fn at definition time.
+# Passthrough when no scope active (zero overhead). Caches within scope.
+from skills._base import engine_cached
+
+@engine_cached
+def my_engine_at(company, date): ...
+
+@engine_cached
+def my_engine_periods(company): ...
+
+# Context manager — activates the cache for its block. Re-entrancy-safe
+# (nested scopes reuse the outer cache instead of wiping it).
+from skills._base import engine_cache_scope
+
+with engine_cache_scope() as scope:
+    result = compute_all_ratios("PETR4", "2024-06-30")
+    print(scope.stats)  # {"hits": N, "misses": M, "size": K}
 ```
 
 **Metric categories (v1.5):** `valuation`, `profitability`, `liquidity`, `leverage`, `efficiency`, `growth`, `per_share`, `tax` (plus the `"other"` fallback for uncategorized metrics). All 37 metrics are tagged with one of these. Use `list_metric_categories()` to enumerate them at runtime, `list_metrics_by_category("liquidity")` to list the metrics in a category, and `compute_all_ratios(company, date, categories=["liquidity", "leverage"])` to fetch a filtered subset.
 
 **`compute_all_ratios` — usage pattern (v1.5):** Consumer skills (valuation `ratios()`, financials `summary()`, future backtest) call this instead of hardcoding N metric imports. Adding a new metric to `metrics/` + `register_metric()` is sufficient — it appears automatically in every consumer's ratios dict. See [INSTRUCTIONS.md](INSTRUCTIONS.md) rule "Always set `category` when registering a metric".
 
+**Engine cache (v1.9 F7):** `compute_all_ratios()` wraps its loop in `with engine_cache_scope():` — engines shared across metrics (`earnings` used by 11 metrics, `pl` by 10, `debt` by 10, `revenue` by 15) are queried ONCE per `(company, date)` instead of N times. ~60% fewer DB queries. The cache is `ContextVar`-scoped (per-thread + per-asyncio-task), re-entrancy-safe (nested `compute_all_ratios` calls reuse the outer cache), and zero-overhead when no scope is active. See [ARCHITECTURE.md](ARCHITECTURE.md#-engine-cache-v18-f7) for the full design.
+
 ---
 
-*Last updated: 2026-07-29 (v1.5). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-31 (v1.9 — F7 engine cache). See [ARCHITECTURE.md](ARCHITECTURE.md) for design, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

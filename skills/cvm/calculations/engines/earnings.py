@@ -49,6 +49,7 @@ from typing import Any
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for net income (lucro líquido). Standard position in the
@@ -255,6 +256,7 @@ def _get_itr_earnings_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def ttm_earnings_at(company: str, date: str) -> float | None:
     """Get trailing twelve months earnings ending at or before date.
 
@@ -310,6 +312,7 @@ def ttm_earnings_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def ttm_earnings_periods(company: str) -> list[dict]:
     """Get all TTM earnings periods for a company.
 

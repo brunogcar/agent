@@ -34,6 +34,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for gross profit (Lucro Bruto)
@@ -113,6 +114,7 @@ def _get_itr_gross_profit(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def gross_profit_at(company: str, date: str) -> float | None:
     """Get trailing twelve months gross profit ending at or before date.
 
@@ -168,6 +170,7 @@ def gross_profit_at(company: str, date: str) -> float | None:
         return None
 
 
+@engine_cached
 def gross_profit_periods(company: str) -> list[dict]:
     """Get all TTM gross profit periods for a company.
 
@@ -211,7 +214,6 @@ def gross_profit_periods(company: str) -> list[dict]:
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
-
 register_engine(EngineSpec(
     name="gross_profit",
     quantity="ttm_gp",

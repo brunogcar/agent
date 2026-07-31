@@ -34,6 +34,7 @@ from __future__ import annotations
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
+from skills._base import engine_cached  # [v1.8 F7]
 
 
 # CVM account code for Caixa e Equivalentes de Caixa Consolidado (BPA group)
@@ -113,6 +114,7 @@ def _get_itr_cash(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def cash_at(company: str, date: str) -> float | None:
     """Get Caixa e Equivalentes de Caixa closest to date (most recent snapshot <= date).
 
@@ -143,6 +145,7 @@ def cash_at(company: str, date: str) -> float | None:
     return dfp[latest]["value"]
 
 
+@engine_cached
 def cash_periods(company: str) -> list[dict]:
     """Get all cash snapshot periods for a company.
 

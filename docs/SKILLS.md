@@ -201,6 +201,49 @@ Skills are **read-only** — they call `data_sources/` query engines directly:
 Skills never write to databases. They assume data is already synced via
 `data_source(domain="cvm", sub_domain="dfp", mode="sync")`.
 
+### Performance Infrastructure (v1.8 F7)
+
+`skills/_base.py` provides a **ContextVar-scoped engine cache** that
+eliminates redundant DB queries when multiple metrics compose the same
+engine within a single `compute_all_ratios()` call.
+
+**How it works:**
+- Each engine's `at_fn` + `periods_fn` is decorated with `@engine_cached`
+  at module definition time (before any metric imports the function).
+- The decorator checks a `ContextVar`-scoped dict; if no scope is active,
+  it's a passthrough (zero overhead for standalone calls).
+- `compute_all_ratios()` wraps its loop in `with engine_cache_scope():`
+  to activate the cache for the duration of the call.
+- Engines shared across metrics (`earnings` used by 11 metrics, `pl` by 10,
+  `debt` by 10, `revenue` by 15) are queried ONCE per `(company, date)`
+  instead of N times — ~60% fewer DB queries.
+
+**Why decorator (not monkey-patch):** Metrics use
+`from engines.earnings import ttm_earnings_at` — a direct reference bound
+at import time. Monkey-patching the module attribute after import is
+invisible to metrics. The decorator is applied at definition time, so
+`spec.at_fn` and `module.fn` are the same wrapper object, permanently.
+
+**Thread safety:** `ContextVar` is per-thread + per-asyncio-task. No lock
+needed. **Reentrancy:** If `compute_all_ratios()` is called nested, the
+inner call reuses the outer scope's cache instead of wiping it.
+
+**To add a new engine:** Just apply `@engine_cached` to the engine's
+`at_fn` + `periods_fn`:
+
+```python
+# engines/my_engine.py
+from skills._base import engine_cached
+
+@engine_cached
+def my_engine_at(company, date):
+    ...
+
+@engine_cached
+def my_engine_periods(company):
+    ...
+```
+
 ---
 
 ## 📈 Current Skill Domains
