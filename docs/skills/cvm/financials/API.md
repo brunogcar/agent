@@ -98,6 +98,56 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 
 `current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
 
+### mode="bpa" (v1.9)
+Balanço Patrimonial Ativo (Balance Sheet — Assets) for the last N periods.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | Ticker, name, or CNPJ |
+| `periods` | `int` | `5` | Number of periods to return |
+| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
+| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
+
+Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
+
+The BPA is structured top-to-bottom (Total → Circulante → Cash → Investments → Receivables → Inventories → Não Circulante → PP&E → Intangibles), 16 codes:
+
+| Code | Label (canonical) | Section |
+|------|-------------------|---------|
+| `1` | Ativo Total | `total` |
+| `1.01` | Ativo Circulante | `current` |
+| `1.01.01` | Caixa e Equivalentes | `cash` |
+| `1.01.02` | Aplicações Financeiras | `investments_short` |
+| `1.01.03` | Contas a Receber | `receivables` (NEW v1.9) |
+| `1.01.04` | Estoques | `inventory` (NEW v1.9) |
+| `1.02` | Ativo Não Circulante | `non_current` |
+| `1.02.01` | Ativo Não Circulante (sub) | `non_current_sub` |
+| `1.02.03` | Imobilizado | `ppe` (NEW v1.9) |
+| `1.02.04` | Intangível | `intangibles` (NEW v1.9) |
+| `1.03`–`1.06` | (varies — multiple descriptions per code) | `other_1`–`other_4` |
+| `1.07` | Imobilizado (novo formato) | `ppe_new` |
+| `1.08` | Intangível (novo formato) | `intangibles_new` |
+
+The `grupo` filter is `LIKE '%Patrimonial Ativo%'` — this matches BPA
+rows from both consolidated and individual filings, and EXCLUDES the
+separate "Patrimonial Passivo" (BPP) statement. See
+[DFP Architecture → architecture/BPA.md](../../data_sources/cvm/dfp/architecture/BPA.md)
+for the old-vs-new chart drift (codes 1.01, 1.02, 1.02.03, 1.02.04 have
+DIFFERENT meanings in old vs new CVM charts — engines query by codigo
+only, so callers needing precise semantics should filter by `descricao`).
+
+[v1.9] `SUMMARY_CODES` now also includes the 4 BPA asset sub-codes
+(`1.01.03`, `1.01.04`, `1.02.03`, `1.02.04`). `_extract_metrics` exposes
+them as `contas_a_receber`, `estoques`, `imobilizado`, `intangivel` in
+the per-period `metrics` dict.
+
+[v1.9] `_extract_metrics` also exposes the 3 previously-missing DRE codes
+that were in `SUMMARY_CODES` but never extracted: `custo_mercadorias`
+(`3.02`), `despesas_operacionais` (`3.04`), `imposto_renda` (`3.08`).
+
+[v1.9] `KEY_CODES_BY_GRUPO["BPA"]` expanded from 6 codes to 16 codes
+(covering both OLD and NEW CVM chart formats).
+
 ### mode="dva" (v1.7)
 Demonstração do Valor Adicionado (Value Added Statement) for the last N periods.
 
@@ -165,6 +215,8 @@ skill(domain="cvm", sub_domain="financials", mode="quarterly", params='{"company
 skill(domain="cvm", sub_domain="financials", mode="annual", params='{"company":"VALE3","periods":10}')
 skill(domain="cvm", sub_domain="financials", mode="complete", params='{"company":"PETR4","grupo":"DRE"}')
 skill(domain="cvm", sub_domain="financials", mode="summary", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4","quarterly":1,"periods":8}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4","quarterly":1,"periods":8}')
 skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PETR4"}')
@@ -173,4 +225,4 @@ skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PET
 
 ---
 
-*Last updated: 2026-07-30 (v1.8 — DRE mode + 3.07 added to SUMMARY_CODES). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
+*Last updated: 2026-07-30 (v1.9 — BPA mode + BPA sub-codes in SUMMARY_CODES + 3 missing DRE codes in `_extract_metrics`). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*

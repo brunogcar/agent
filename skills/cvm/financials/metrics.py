@@ -103,6 +103,17 @@ def _build_summary_codes():
 
     # Add financials-specific codes not in RESUMO_ACCOUNTS
     codes["1.01.01"]    = ("BPA", "Caixa e Equivalentes")
+    # [v1.9] BPA asset sub-codes — verified against real DFP data (6377-6536
+    # rows each). NOT in RESUMO_ACCOUNTS (the catalog stops at 1 / 1.01).
+    # Real DFP data confirms:
+    #   1.01.03 — Contas a Receber (6389 rows)
+    #   1.01.04 — Estoques (6377 rows)
+    #   1.02.03 — Imobilizado (6505 rows) — OLD chart (NEW uses 1.07)
+    #   1.02.04 — Intangível (6430 rows) — OLD chart (NEW uses 1.08)
+    codes["1.01.03"]    = ("BPA", "Contas a Receber")
+    codes["1.01.04"]    = ("BPA", "Estoques")
+    codes["1.02.03"]    = ("BPA", "Imobilizado")
+    codes["1.02.04"]    = ("BPA", "Intangível")
     codes["2.01.04"]    = ("BPP", "Empréstimos e Financiamentos (Circulante)")
     codes["2.02.01"]    = ("BPP", "Empréstimos e Financiamentos (Não Circulante)")
     # [v1.8] DRE 3.07 — Resultado Líquido das Operações Continuadas. NOT in
@@ -132,7 +143,13 @@ SUMMARY_CODES = _build_summary_codes()
 
 # Key codes for `complete` mode (per grupo, not all 497)
 KEY_CODES_BY_GRUPO = {
-    "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.02", "1.02.01"],
+    # [v1.9] Expanded BPA — covers OLD chart (1.01, 1.02, 1.02.03, 1.02.04)
+    # AND NEW chart (1.07 = Imobilizado, 1.08 = Intangível). Codes 1.03-1.06
+    # are also included because they exist in real DFP data with multiple
+    # descriptions per code (CVM chart drift over years).
+    "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.01.03", "1.01.04",
+               "1.02", "1.02.01", "1.02.03", "1.02.04",
+               "1.03", "1.04", "1.05", "1.06", "1.07", "1.08"],
     "BPP":    ["2", "2.01", "2.01.04", "2.02", "2.02.01", "2.03", "2.03.01"],
     "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.07", "3.09", "3.11"],
     "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03"],

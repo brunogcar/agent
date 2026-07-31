@@ -348,6 +348,12 @@ def _extract_metrics(vals: dict) -> dict:
     [v1.2] D&A fallback: try DFC_MI (6.01.01.02) first, then DFC_MD codes
     (6.02.01.02, 6.01.04) for direct-method filers. compute_ebitda() gets
     whichever is non-None.
+
+    [v1.9] BPA asset sub-codes added: contas_a_receber (1.01.03), estoques
+    (1.01.04), imobilizado (1.02.03), intangivel (1.02.04). Also added the
+    3 missing DRE codes that were in SUMMARY_CODES but never extracted:
+    custo_mercadorias (3.02), despesas_operacionais (3.04), imposto_renda
+    (3.08).
     """
     divida_bruta = None
     d_circ = _f(vals, "2.01.04")
@@ -365,15 +371,27 @@ def _extract_metrics(vals: dict) -> dict:
     return {
         "ativo_total":          _f(vals, "1"),
         "caixa":                _f(vals, "1.01.01"),
+        # [v1.9] BPA asset sub-codes — Contas a Receber, Estoques, Imobilizado,
+        # Intangível. Verified against real DFP data (6377-6536 rows each).
+        "contas_a_receber":     _f(vals, "1.01.03"),
+        "estoques":             _f(vals, "1.01.04"),
+        "imobilizado":          _f(vals, "1.02.03"),
+        "intangivel":           _f(vals, "1.02.04"),
         "patrimonio_liquido":   _f(vals, "2.03"),
         "divida_bruta":         divida_bruta,
         "receita_liquida":      _f(vals, "3.01"),
         "lucro_bruto":          _f(vals, "3.03"),
+        # [v1.9] Missing DRE codes that were in SUMMARY_CODES but not
+        # extracted: 3.02 (COGS), 3.04 (operating expenses),
+        # 3.08 (income tax). Real DFP data confirms all three exist.
+        "custo_mercadorias":      _f(vals, "3.02"),
+        "despesas_operacionais":  _f(vals, "3.04"),
         "ebit":                 _f(vals, "3.05"),
         "resultado_financeiro": _f(vals, "3.06"),
         # [v1.8] DRE 3.07 — Resultado Líquido das Operações Continuadas.
         # Sits between Resultado Financeiro (3.06) and Imposto de Renda (3.08).
         "resultado_liquido_continuadas": _f(vals, "3.07"),
+        "imposto_renda":          _f(vals, "3.08"),
         "lucro_liquido":        _f(vals, "3.11"),
         "fco":                  _f(vals, "6.01"),
         "fci":                  _f(vals, "6.02"),
