@@ -356,6 +356,22 @@ def _extract_metrics(vals: dict) -> dict:
     The 6.02.01.02 fallback is also dead code (0 rows in real DFP) but
     kept for completeness — it returns None silently.
 
+    [v1.12] KNOWN LIMITATION — D&A code-level chain vs da_at() description-search.
+    This function operates on a pre-fetched ``{codigo: valor}`` dict, so it
+    cannot do the description-search fallback (``descricao LIKE '%deprec%'
+    OR '%amort%'``) that the standalone ``da_at()`` engine in
+    ``skills/cvm/calculations/engines/da.py`` performs. For DFC_MD filers
+    (banks, insurers — 1.4% of filers, 4433 rows) where 6.01.01.02 is absent,
+    this chain silently returns None and EBITDA falls back to ebit_only.
+    Callers needing authoritative D&A for DFC_MD filers should call
+    ``da_at(company, date)`` directly — it queries the DB and uses
+    description-search to recover D&A regardless of which code the filer
+    populated. The financials skill's summary() mode already does this via
+    compute_ttm_with_engines() which delegates D&A to da_at(); this chain
+    is only used by the legacy compute_ebitda() path and by the standalone
+    quarterly/annual modes (which pre-fetch a {codigo: valor} dict per
+    period and cannot reach into the DB row descriptions).
+
     [v1.9] BPA asset sub-codes added: contas_a_receber (1.01.03), estoques
     (1.01.04), imobilizado (1.02.03), intangivel (1.02.04). Also added the
     3 missing DRE codes that were in SUMMARY_CODES but never extracted:
@@ -385,6 +401,15 @@ def _extract_metrics(vals: dict) -> dict:
     # (11 rows in real DFP), NOT D&A. Keeping it would return wrong data.
     # The 6.02.01.02 fallback has 0 rows in real DFP (dead code path) but
     # is kept for completeness — it returns None silently.
+    #
+    # [v1.12] KNOWN LIMITATION: this code-level chain cannot do description-
+    # search like the standalone `da_at()` engine does. For DFC_MD filers
+    # (banks/insurers, ~1.4% of filers) where 6.01.01.02 is absent, this
+    # returns None silently. Callers needing authoritative D&A should call
+    # `skills.cvm.calculations.engines.da.da_at()` directly — it queries
+    # the DB and uses `descricao LIKE '%deprec%' OR '%amort%'` to recover
+    # D&A regardless of which code the filer populated. See the module
+    # docstring above for the full rationale.
     da = _f(vals, "6.01.01.02")
     if da is None:
         da = _f(vals, "6.02.01.02")  # DFC_MD direct method (0 rows in real DFP)

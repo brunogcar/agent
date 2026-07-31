@@ -136,20 +136,25 @@ for PL will populate that).
 
 ## Impact on existing engines
 
-### `patrimonio_liquido` engine (uses `2.03`)
+### `patrimonio_liquido` engine (uses `2.03` + `2.08` fallback — v1.8)
 
-The pl engine queries `2.03` and gets whatever the filer uses:
+The pl engine queries BOTH `2.03` AND `2.08` and picks the right one
+per-period via the `_pick_pl_value()` helper:
 
-- **95% of filers (6352/6681 rows)**: `2.03` = "Patrimônio Líquido" (PL) ✓
-- **5% of filers (NEW chart)**: `2.03` = "Passivos Financeiros ao Custo
-  Amortizado" (DEBT, not PL!) — engine would return debt instead of equity.
+- **Old-chart filers (95% — 6352/6681 rows)**: only `2.03` exists (=
+  "Patrimônio Líquido") → engine returns `2.03` ✓
+- **New-chart filers (5%)**: BOTH `2.03` (= amortized-cost DEBT) AND
+  `2.08` (= "Patrimônio Líquido Consolidado") exist → engine prefers
+  `2.08` and returns the correct PL ✓
 
-For the 95% majority, the pl engine works correctly. For the 5% minority,
-the result is wrong but silent — no error raised. Callers needing precise
-semantics should check whether `2.08` exists (NEW chart) and read PL from
-there instead. A future engine hardening could add a `descricao`-search
-fallback similar to what the EBIT engine does for `3.05` (description-search
-fallback for banks).
+[v1.8] Before this fix, the engine queried only `2.03` and silently
+returned debt for the 5% new-chart filers. The v1.8 fix queries both
+codes and prefers `2.08` when present — the rule is simple and works
+because chart drift is per-filer (a filer either uses the old chart for
+all periods or the new chart for all periods, not a mix). The constants
+are `PATRIMONIO_LIQUIDO_CODE = "2.03"` (old chart) and
+`PATRIMONIO_LIQUIDO_CODE_NEW = "2.08"` (new chart); the SQL uses
+`codigo IN ('2.03', '2.08')` and Python disambiguates per-period.
 
 ### `fornecedores` / payables engine (uses `2.01.01`)
 
@@ -184,11 +189,12 @@ data correctness issue, not a code bug.
    the filer puts at `2.01.01`. Same chart drift pattern as BPA's `1.01`.
 
 3. **95% of filers still use the OLD chart (PL at `2.03`).** The pl engine
-   works correctly for the majority — 6352 of 6681 rows. The 5% on the NEW
-   chart get debt instead of equity from the engine, silently. No fix is
-   planned at the engine level (would break the 95% majority); instead,
-   the standalone `bpp` mode (v1.10) surfaces both `2.03` and `2.08` so
-   callers can disambiguate which chart the filer uses.
+   works correctly for the majority — 6352 of 6681 rows. **[v1.8]** The 5%
+   on the NEW chart (PL at `2.08`, with `2.03` becoming amortized-cost
+   debt) are now handled correctly too — the engine queries both codes and
+   prefers `2.08` when present (see "Impact on existing engines" above).
+   The standalone `bpp` mode (v1.10) surfaces both `2.03` and `2.08` so
+   callers can see which chart the filer uses.
 
 4. **Codes `2.04`–`2.07` exist only in the NEW chart.** Old-chart filers
    don't populate these rows. A caller checking `if "2.08" in accounts`
@@ -206,4 +212,7 @@ data correctness issue, not a code bug.
 
 ---
 
-*Last updated: 2026-07-30 (v1.10 — created alongside the standalone `bpp` mode + BPP sub-codes added to SUMMARY_CODES).*
+*Last updated: 2026-07-31 (v1.8 calculations fix — `pl` engine now queries
+both `2.03` and `2.08` with per-period disambiguation via `_pick_pl_value`;
+sibling of BPA.md / DRE.md / DVA.md / DFC.md). Originally created v1.10
+alongside the standalone `bpp` mode + BPP sub-codes added to SUMMARY_CODES.*

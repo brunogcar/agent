@@ -8,9 +8,14 @@ BPP snapshot with data_fim_exerc <= date.
 
 DATA SOURCE
 -----------
-DFP BPP (Balanço Patrimonial Passivo), codigo 2.03 = "Patrimônio Líquido"
-  - Annual snapshot at Dec 31 (meses=12)
-ITR BPP, same codigo 2.03
+DFP BPP (Balanço Patrimonial Passivo):
+  - OLD chart (95% of filers): codigo 2.03 = "Patrimônio Líquido"
+  - NEW chart (5% of filers): codigo 2.03 = amortized-cost debt (NOT PL!),
+    and PL moves to codigo 2.08 = "Patrimônio Líquido Consolidado".
+  We query BOTH codes and prefer 2.08 when it exists for a period
+  (NEW-chart filers); otherwise fall back to 2.03 (OLD-chart filers).
+  Annual snapshot at Dec 31 (meses=12).
+ITR BPP, same codigo 2.03 + 2.08 fallback:
   - Quarterly snapshot at Mar/Jun/Sep 30 (meses=3/6/9)
 
 Together: ~4 snapshots per year. Between snapshots, PL is constant.
@@ -36,15 +41,41 @@ from data_sources.cvm._db import connect_dfp, connect_itr
 from data_sources.cvm._bridge import resolve_company
 
 
-# CVM account code for Patrimônio Líquido Consolidado (BPP group)
+# CVM account code for Patrimônio Líquido Consolidado (BPP group).
+# OLD chart (95% of filers — 6352/6681 rows): 2.03 = "Patrimônio Líquido".
+# NEW chart (5% of filers): 2.03 = amortized-cost debt (NOT PL!);
+# 2.08 = "Patrimônio Líquido Consolidado" (PL moves here).
+# Query BOTH codes; prefer 2.08 when present (NEW-chart filer), otherwise
+# fall back to 2.03 (OLD-chart filer).
 PATRIMONIO_LIQUIDO_CODE = "2.03"
+PATRIMONIO_LIQUIDO_CODE_NEW = "2.08"
+
+
+def _pick_pl_value(rows_for_period) -> float | None:
+    """Pick the correct PL value for a single period from candidate rows.
+
+    Args:
+        rows_for_period: iterable of (codigo, valor) tuples for one date.
+            May contain 2.03, 2.08, or both.
+
+    Returns:
+        PL value, preferring 2.08 (NEW chart) over 2.03 (OLD chart) when
+        both exist. Returns None if neither code is present.
+    """
+    values_by_code = {codigo: valor for codigo, valor in rows_for_period}
+    if PATRIMONIO_LIQUIDO_CODE_NEW in values_by_code:
+        return values_by_code[PATRIMONIO_LIQUIDO_CODE_NEW]
+    return values_by_code.get(PATRIMONIO_LIQUIDO_CODE)
 
 
 def _get_dfp_pl(company: str) -> dict[str, dict]:
-    """Get all annual PL snapshots from DFP (codigo 2.03, meses=12, BPP).
+    """Get all annual PL snapshots from DFP (codigo 2.03 + 2.08 fallback, meses=12, BPP).
 
     Returns: {"2024-12-31": {"value": 380e9, "year": 2024}, ...}
     Values are in BRL (escala applied).
+
+    For each period, prefers 2.08 (NEW chart, 5% of filers) over 2.03 (OLD
+    chart, 95% of filers) when both are present.
     """
     conn = connect_dfp(read_only=True)
     try:
@@ -53,34 +84,44 @@ def _get_dfp_pl(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         rows = conn.execute(
-            f"""SELECT c.valor, c.escala, c.data_fim_exerc, e.ano
+            f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.codigo, e.ano
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{PATRIMONIO_LIQUIDO_CODE}'
+                 AND c.codigo IN ('{PATRIMONIO_LIQUIDO_CODE}', '{PATRIMONIO_LIQUIDO_CODE_NEW}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
         ).fetchall()
 
-        result = {}
+        # Group by date, then pick 2.08 over 2.03 per period.
+        rows_by_date: dict[str, list[tuple[str, float]]] = {}
+        meta_by_date: dict[str, dict] = {}
         for r in rows:
             escala = parse_escala(r["escala"])
             valor = float(r["valor"] or 0) * escala
-            result[r["data_fim_exerc"]] = {
-                "value": valor,
-                "year": r["ano"],
-            }
+            date_key = r["data_fim_exerc"]
+            rows_by_date.setdefault(date_key, []).append((r["codigo"], valor))
+            meta_by_date[date_key] = {"year": r["ano"]}
+
+        result = {}
+        for date_key, candidates in rows_by_date.items():
+            pl_value = _pick_pl_value(candidates)
+            if pl_value is not None:
+                result[date_key] = {"value": pl_value, **meta_by_date[date_key]}
         return result
     finally:
         conn.close()
 
 
 def _get_itr_pl(company: str) -> dict[str, dict]:
-    """Get all quarterly PL snapshots from ITR (codigo 2.03, meses 3/6/9, BPP).
+    """Get all quarterly PL snapshots from ITR (codigo 2.03 + 2.08 fallback, meses 3/6/9, BPP).
 
     Returns: {"2024-06-30": {"value": 375e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied).
+
+    For each period, prefers 2.08 (NEW chart, 5% of filers) over 2.03 (OLD
+    chart, 95% of filers) when both are present.
     """
     conn = connect_itr(read_only=True)
     try:
@@ -89,25 +130,31 @@ def _get_itr_pl(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         rows = conn.execute(
-            f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.meses, e.ano
+            f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.meses, c.codigo, e.ano
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{PATRIMONIO_LIQUIDO_CODE}'
+                 AND c.codigo IN ('{PATRIMONIO_LIQUIDO_CODE}', '{PATRIMONIO_LIQUIDO_CODE_NEW}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
         ).fetchall()
 
-        result = {}
+        # Group by date, then pick 2.08 over 2.03 per period.
+        rows_by_date: dict[str, list[tuple[str, float]]] = {}
+        meta_by_date: dict[str, dict] = {}
         for r in rows:
             escala = parse_escala(r["escala"])
             valor = float(r["valor"] or 0) * escala
-            result[r["data_fim_exerc"]] = {
-                "value": valor,
-                "meses": r["meses"],
-                "year": r["ano"],
-            }
+            date_key = r["data_fim_exerc"]
+            rows_by_date.setdefault(date_key, []).append((r["codigo"], valor))
+            meta_by_date[date_key] = {"meses": r["meses"], "year": r["ano"]}
+
+        result = {}
+        for date_key, candidates in rows_by_date.items():
+            pl_value = _pick_pl_value(candidates)
+            if pl_value is not None:
+                result[date_key] = {"value": pl_value, **meta_by_date[date_key]}
         return result
     finally:
         conn.close()
@@ -174,6 +221,6 @@ register_engine(EngineSpec(
     quantity="pl",
     at_fn=pl_at,
     periods_fn=pl_periods,
-    source="DFP + ITR BPP codigo 2.03 (Patrimônio Líquido snapshot)",
+    source="DFP + ITR BPP codigo 2.03 (or 2.08 for new-chart filers) — Patrimônio Líquido snapshot",
     category="bpp",
 ))

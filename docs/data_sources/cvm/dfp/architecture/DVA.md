@@ -88,6 +88,12 @@ Surfaces ALL 16 codes above, with `label` + `section` + `valor_brl` per
 period. Filters `grupo LIKE '%Valor Adicionado%'`. Supports both annual
 (DFP, `meses=12`) and quarterly (ITR `meses=3/6/9` + DFP `meses=12`).
 
+[v1.12] The standalone `dva` mode (along with `dre`, `bpa`, `bpp`, `dfc`)
+was refactored to use the shared `fetch_statement_data` helper from
+`skills/cvm/financials/helpers`. The `_DVA_CODES` list + grupo filter +
+statement name ("DVA") are passed as parameters; the helper owns the
+DFP/ITR fetch + periods-data assembly logic.
+
 ### `SUMMARY_CODES` (annual / quarterly / summary / dashboard)
 
 After v1.7 the SUMMARY_CODES for DVA are:
@@ -120,12 +126,29 @@ After v1.7 the SUMMARY_CODES for DVA are:
 
 4. **The new 7.11 format is rare (~75 rows).** Most filers still use
    `7.08.xx`. But a complete DVA implementation must handle both — the new
-   format will likely grow as CVM rolls it out.
+   format will likely grow as CVM rolls it out. **[v1.8]** The 4 DVA
+   calculations engines (`value_added`, `dva_total_tax`, `dva_interest_paid`,
+   `dividends_paid`) all query both old + new codes via
+   `codigo IN ('7.08.0x', '7.11.0x')` — the same pattern is applied to
+   `7.08`/`7.10` (total) and `7.08.0x`/`7.11.0x` (distribution components).
 
 5. **DVA is available in BOTH DFP and ITR.** Annual DVA comes from DFP
    (`meses=12`). Quarterly cumulative DVA comes from ITR (`meses=3/6/9`).
    The `dva` mode with `quarterly=1` queries both.
 
+6. **`DVA_GRUPO = "DVA"` is dead code.** [v1.8] The 4 DVA calculations
+   engines used to define a `DVA_GRUPO = "DVA"` module-level constant,
+   ostensibly for the SQL `grupo = '{DVA_GRUPO}'` clause. But the SQL
+   actually used `grupo LIKE '%Valor Adicionado%'` (which matches the real
+   DFP grupo value `DF Consolidado - Demonstração de Valor Adicionado`),
+   so the constant was never referenced. v1.8 removed the dead constant +
+   its stale "Without this filter, codigo = '7' would match nothing"
+   comment from all 4 engines. Callers that imported `DVA_GRUPO` from
+   these engines should switch to the literal `'%Valor Adicionado%'` or
+   to the engine's `*_CODE` constants.
+
 ---
 
-*Last updated: 2026-07-30 (v1.8 — documents the v1.7 DVA fix; sibling of DRE.md).*
+*Last updated: 2026-07-31 (v1.8 — documents the v1.8 calculations-review fixes:
+4 DVA engines now query `codigo IN ('7.08.0x', '7.11.0x')` for old + new
+chart coverage; dead `DVA_GRUPO` constants removed. Sibling of DRE.md).*

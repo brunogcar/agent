@@ -1,12 +1,22 @@
 """engines/interest_paid.py -- TTM (trailing twelve months) Interest Paid engine.
 
-Mirrors engines/operating_cf.py (DFC 6.01) with two changes:
-  1. CVM account code 8.3 (Remuneração do Capital de Terceiros -- interest
-     paid to third-party capital providers) instead of 6.01 (FCO).
-  2. SQL filter includes `AND c.grupo = 'DVA'` because the DVA statement
-     re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC scopes. Without
-     the grupo filter, `codigo = '8.3'` would match nothing (or, in some
-     schema versions, match the wrong statement).
+This engine mirrors `engines/dva_interest_paid.py` 1:1 and is preserved as a
+secondary entry point for callers that import via the `interest_paid_*`
+naming convention. The two engines track the SAME DVA line (Remuneração
+do Capital de Terceiros). Prefer `engines/dva_interest_paid.py` for new
+imports; this file is kept for backwards compatibility.
+
+Mirrors engines/operating_cf.py (DFC 6.01) with one change:
+  - CVM account code 7.08.03 (Remuneração do Capital de Terceiros --
+    interest paid to third-party capital providers) instead of 6.01 (FCO).
+    New-chart filers use code 7.11.03 instead — queried in the same SQL
+    via `codigo IN (...)`.
+
+SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo IN
+('7.08.03', '7.11.03')` (the grupo filter is required because the DVA
+statement re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC
+scopes; the codigo IN covers BOTH the old-chart `7.08.03` and the
+new-chart `7.11.03` formats).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). A CVM
 flow statement showing how wealth is created and distributed. Required
@@ -16,17 +26,17 @@ in that case (the existing `if not itr and not dfp: return None` path).
 
 This is the INTEREST PAID (gross) -- not net financial result. It
 cross-checks the financial_result engine (DRE 3.06), which returns the
-NET financial result (income - expense). When 8.3 is significantly larger
-in magnitude than 3.06, the company has material offsetting financial
-income (e.g., interest on cash holdings). DVA 8.3 isolates the gross
-interest burden on debt only.
+NET financial result (income - expense). When 7.08.03 is significantly
+larger in magnitude than 3.06, the company has material offsetting
+financial income (e.g., interest on cash holdings). DVA 7.08.03 isolates
+the gross interest burden on debt only.
 
 SIGN CONVENTION
 ---------------
-DVA 8.3 (Remuneração do Capital de Terceiros) is typically reported as a
-NEGATIVE figure on the DVA (it's a wealth OUTFLOW -- interest paid to
-lenders). This engine returns the RAW value from the database -- callers
-handle the sign as needed.
+DVA 7.08.03 (Remuneração do Capital de Terceiros) is typically reported
+as a NEGATIVE figure on the DVA (it's a wealth OUTFLOW -- interest paid
+to lenders). This engine returns the RAW value from the database --
+callers handle the sign as needed.
 
 TTM ALGORITHM
 -------------
@@ -62,15 +72,15 @@ from data_sources.cvm._bridge import resolve_company
 
 # CVM account code for Remuneração do Capital de Terceiros (interest paid to
 # third-party capital). Lives within the DVA statement group.
-INTEREST_PAID_CODE = "8.3"
-
-# DVA statement group identifier in the CVM database. Without this filter,
-# codigo = '8.3' would match nothing (DVA codes are scoped to the DVA group).
-DVA_GRUPO = "DVA"
+# Old chart: 7.08.03 (dominant). New chart: 7.11.03 (~75 rows).
+# Query both via the SQL `codigo IN (...)` clause below.
+INTEREST_PAID_CODE = "7.08.03"
+INTEREST_PAID_CODE_NEW = "7.11.03"
 
 
 def _get_dfp_interest_paid(company: str) -> dict[str, dict]:
-    """Get all annual interest paid from DFP (DVA grupo='DVA', codigo 8.3, meses=12).
+    """Get all annual interest paid from DFP (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08.03', '7.11.03'), meses=12).
 
     Returns: {"2024": {"value": -8e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied). Sign preserved (typically negative).
@@ -86,8 +96,8 @@ def _get_dfp_interest_paid(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{INTEREST_PAID_CODE}'
+                 AND c.grupo LIKE '%Valor Adicionado%'
+                 AND c.codigo IN ('{INTEREST_PAID_CODE}', '{INTEREST_PAID_CODE_NEW}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -107,8 +117,8 @@ def _get_dfp_interest_paid(company: str) -> dict[str, dict]:
 
 
 def _get_itr_interest_paid(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative interest paid from ITR (DVA grupo='DVA',
-    codigo 8.3, meses 3/6/9).
+    """Get all quarterly cumulative interest paid from ITR (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08.03', '7.11.03'), meses 3/6/9).
 
     Returns: {"2024-06-30": {"value": -4e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
@@ -125,8 +135,8 @@ def _get_itr_interest_paid(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{INTEREST_PAID_CODE}'
+                 AND c.grupo LIKE '%Valor Adicionado%'
+                 AND c.codigo IN ('{INTEREST_PAID_CODE}', '{INTEREST_PAID_CODE_NEW}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -147,7 +157,7 @@ def _get_itr_interest_paid(company: str) -> dict[str, dict]:
 
 
 def interest_paid_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months interest paid (DVA 8.3) ending at or before date.
+    """Get trailing twelve months interest paid (DVA 7.08.03 or 7.11.03) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
@@ -204,7 +214,7 @@ def interest_paid_at(company: str, date: str) -> float | None:
 
 
 def interest_paid_periods(company: str) -> list[dict]:
-    """Get all TTM interest paid (DVA 8.3) periods for a company.
+    """Get all TTM interest paid (DVA 7.08.03 or 7.11.03) periods for a company.
 
     Returns a list of {"date": period_end_date, "ttm_interest_paid": value}
     sorted oldest-first. Each entry represents a point where TTM interest
@@ -254,6 +264,6 @@ register_engine(EngineSpec(
     quantity="ttm_interest_paid",
     at_fn=interest_paid_at,
     periods_fn=interest_paid_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 8.3 -- Juros Pagos TTM",
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.08.03 (or 7.11.03) -- Juros Pagos TTM",
     category="dva",
 ))

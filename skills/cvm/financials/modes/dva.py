@@ -25,12 +25,18 @@ cumulative, meses=3/6/9). This mode queries both databases — DFP for annual
 periods and ITR+DFP for quarterly periods — matching how the quarterly mode
 handles BPA/BPP/DRE/DFC.
 
+[v1.12] Refactored to use the shared `fetch_statement_data` helper from
+`skills.cvm.financials.helpers` — eliminates ~150 lines of duplicated
+fetch boilerplate. The `_DVA_CODES` list, `@register_mode` decorator, and
+public function signature are preserved; only the fetch logic is delegated.
+
 Registered as "dva" in skills.cvm.financials._registry.MODES via the
 @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
 
 from skills.cvm.financials._registry import register_mode
+from skills.cvm.financials.helpers import fetch_statement_data
 
 
 # ── DVA account codes + labels ───────────────────────────────────────────────
@@ -61,6 +67,12 @@ _DVA_CODES: list[tuple[str, str, str]] = [
     ("7.11.03", "Remuneração de Capital de Terceiros (novo)",        "distribution"),
     ("7.11.04", "Remuneração de Capital Próprio (novo)",             "distribution"),
 ]
+
+
+# grupo filter: matches DVA (Demonstração de Valor Adicionado). The grupo
+# field stores the full Portuguese statement name (e.g. "DF Consolidado -
+# Demonstração de Valor Adicionado"), NOT the short "DVA" abbreviation.
+_DVA_GRUPO_FILTER = "%Valor Adicionado%"
 
 
 @register_mode(
@@ -106,188 +118,18 @@ def dva(company: str = "", periods: int = 5, consolidado: int = 1,
           - periods: list of {data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}
             sorted newest-first.
           - If the company has no DVA data, returns status="not_found".
+
+    [v1.12] Delegates to the shared `fetch_statement_data` helper from
+    `skills.cvm.financials.helpers`. The `_DVA_CODES` list + grupo filter
+    + statement name ("DVA") are passed as parameters; the helper owns the
+    DFP/ITR fetch + periods-data assembly logic.
     """
-    if not company:
-        return {"status": "error", "error": "company is required"}
-
-    from data_sources.cvm._db import connect_dfp, connect_itr, parse_escala
-    from data_sources.cvm._bridge import resolve_company
-
-    codes = [c[0] for c in _DVA_CODES]
-    code_ph = ",".join("?" * len(codes))
-    label_map = {c[0]: c[1] for c in _DVA_CODES}
-    section_map = {c[0]: c[2] for c in _DVA_CODES}
-
-    # ── Helper: fetch DVA rows from a connection ──────────────────────────
-    def _fetch_dva_rows(conn, empresa_ids, target_dates, consol):
-        emp_ph = ",".join("?" * len(empresa_ids))
-        date_ph = ",".join("?" * len(target_dates))
-        return conn.execute(
-            f"""SELECT codigo, descricao, data_fim_exerc, meses, valor, escala
-                FROM contas
-                WHERE id_empresa IN ({emp_ph})
-                AND codigo IN ({code_ph})
-                AND consolidado=?
-                AND grupo LIKE '%Valor Adicionado%'
-                AND data_fim_exerc IN ({date_ph})
-                ORDER BY data_fim_exerc DESC, codigo""",
-            (*empresa_ids, *codes, consol, *target_dates),
-        ).fetchall()
-
-    def _build_periods_data(rows):
-        periods_data: dict[str, dict] = {}
-        for r in rows:
-            date_key = r["data_fim_exerc"]
-            if date_key not in periods_data:
-                periods_data[date_key] = {"meses": r["meses"], "accounts": {}}
-            escala = parse_escala(r["escala"])
-            try:
-                valor_brl = float(r["valor"] or 0) * escala
-            except (TypeError, ValueError):
-                valor_brl = 0.0
-            periods_data[date_key]["accounts"][r["codigo"]] = {
-                "label": label_map.get(r["codigo"], r["descricao"]),
-                "section": section_map.get(r["codigo"], "unknown"),
-                "valor_brl": valor_brl,
-            }
-        return periods_data
-
-    # ── Annual mode (DFP only) ────────────────────────────────────────────
-    if not quarterly:
-        conn = connect_dfp(read_only=True)
-        try:
-            empresa_ids, company_name = resolve_company(conn, company)
-            if not empresa_ids:
-                return {"status": "not_found", "error": f"Company '{company}' not found in DFP"}
-
-            emp_ph = ",".join("?" * len(empresa_ids))
-
-            year_rows = conn.execute(
-                f"""SELECT DISTINCT data_fim_exerc FROM contas
-                    WHERE id_empresa IN ({emp_ph})
-                    AND codigo IN ({code_ph})
-                    AND meses=12 AND consolidado=?
-                    AND grupo LIKE '%Valor Adicionado%'
-                    ORDER BY data_fim_exerc DESC LIMIT ?""",
-                (*empresa_ids, *codes, consolidado, periods),
-            ).fetchall()
-
-            if not year_rows:
-                return {"status": "not_found",
-                        "error": f"No DVA data found for '{company}' (company may not file DVA)"}
-
-            target_dates = [r["data_fim_exerc"] for r in year_rows]
-            rows = _fetch_dva_rows(conn, empresa_ids, target_dates, consolidado)
-            periods_data = _build_periods_data(rows)
-
-            return {
-                "status": "ok",
-                "company": company_name,
-                "period_type": "annual",
-                "periods": [
-                    {"data_fim_exerc": date, "meses": periods_data[date]["meses"],
-                     "accounts": periods_data[date]["accounts"]}
-                    for date in sorted(periods_data.keys(), reverse=True)
-                ],
-            }
-        except FileNotFoundError as e:
-            return {"status": "not_synced", "error": str(e)}
-        finally:
-            conn.close()
-
-    # ── Quarterly mode (ITR + DFP) ────────────────────────────────────────
-    # ITR has meses=3/6/9 (cumulative), DFP has meses=12 (annual).
-    # We fetch all periods sorted by date DESC, LIMIT periods.
-    dfp_conn = connect_dfp(read_only=True)
-    try:
-        empresa_ids, company_name = resolve_company(dfp_conn, company)
-        if not empresa_ids:
-            return {"status": "not_found", "error": f"Company '{company}' not found in DFP"}
-
-        emp_ph = ",".join("?" * len(empresa_ids))
-
-        # Get DFP annual DVA dates
-        dfp_dates = dfp_conn.execute(
-            f"""SELECT DISTINCT data_fim_exerc FROM contas
-                WHERE id_empresa IN ({emp_ph})
-                AND codigo IN ({code_ph})
-                AND meses=12 AND consolidado=?
-                AND grupo LIKE '%Valor Adicionado%'
-                ORDER BY data_fim_exerc DESC""",
-            (*empresa_ids, *codes, consolidado),
-        ).fetchall()
-        dfp_date_list = [r["data_fim_exerc"] for r in dfp_dates]
-    except FileNotFoundError as e:
-        return {"status": "not_synced", "error": str(e)}
-    finally:
-        dfp_conn.close()
-
-    # Get ITR quarterly DVA dates
-    itr_date_list = []
-    try:
-        itr_conn = connect_itr(read_only=True)
-        try:
-            itr_empresa_ids, _ = resolve_company(itr_conn, company)
-            if itr_empresa_ids:
-                itr_emp_ph = ",".join("?" * len(itr_empresa_ids))
-                itr_dates = itr_conn.execute(
-                    f"""SELECT DISTINCT data_fim_exerc FROM contas
-                        WHERE id_empresa IN ({itr_emp_ph})
-                        AND codigo IN ({code_ph})
-                        AND meses IN (3, 6, 9) AND consolidado=?
-                        AND grupo LIKE '%Valor Adicionado%'
-                        ORDER BY data_fim_exerc DESC""",
-                    (*itr_empresa_ids, *codes, consolidado),
-                ).fetchall()
-                itr_date_list = [r["data_fim_exerc"] for r in itr_dates]
-        finally:
-            itr_conn.close()
-    except FileNotFoundError:
-        pass  # ITR not synced — return annual only
-
-    # Merge + deduplicate dates (ITR Q4 = DFP annual, same date)
-    all_dates = sorted(set(dfp_date_list + itr_date_list), reverse=True)[:periods]
-
-    if not all_dates:
-        return {"status": "not_found",
-                "error": f"No DVA data found for '{company}' (company may not file DVA)"}
-
-    # Fetch rows from both DBs
-    all_rows = []
-
-    # DFP rows
-    dfp_conn = connect_dfp(read_only=True)
-    try:
-        dfp_rows = _fetch_dva_rows(dfp_conn, empresa_ids, all_dates, consolidado)
-        all_rows.extend(dfp_rows)
-    finally:
-        dfp_conn.close()
-
-    # ITR rows (if any ITR dates exist in all_dates)
-    itr_dates_in_range = [d for d in all_dates if d in itr_date_list and d not in dfp_date_list]
-    if itr_dates_in_range:
-        try:
-            itr_conn = connect_itr(read_only=True)
-            try:
-                itr_empresa_ids, _ = resolve_company(itr_conn, company)
-                if itr_empresa_ids:
-                    itr_rows = _fetch_dva_rows(itr_conn, itr_empresa_ids, itr_dates_in_range, consolidado)
-                    all_rows.extend(itr_rows)
-            finally:
-                itr_conn.close()
-        except FileNotFoundError:
-            pass
-
-    periods_data = _build_periods_data(all_rows)
-
-    return {
-        "status": "ok",
-        "company": company_name,
-        "period_type": "quarterly",
-        "periods": [
-            {"data_fim_exerc": date, "meses": periods_data[date]["meses"],
-             "accounts": periods_data[date]["accounts"]}
-            for date in sorted(periods_data.keys(), reverse=True)
-            if date in periods_data
-        ],
-    }
+    return fetch_statement_data(
+        company=company,
+        grupo_filter=_DVA_GRUPO_FILTER,
+        codes=_DVA_CODES,
+        periods=periods,
+        consolidado=consolidado,
+        quarterly=quarterly,
+        statement_name="DVA",
+    )

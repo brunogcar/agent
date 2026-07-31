@@ -1,12 +1,15 @@
 """engines/dividends_paid.py -- TTM (trailing twelve months) Dividends Paid engine.
 
-Mirrors engines/interest_paid.py (DVA 8.3) with two changes:
-  1. CVM account code 8.4 (Remuneração do Capital Próprio -- dividends /
-     distributions paid to shareholders / own-capital providers) instead of
-     8.3 (interest paid to third-party capital providers).
-  2. SQL filter unchanged: `AND c.grupo = 'DVA' AND c.codigo = '8.4'` (the
-     grupo filter is still required because the DVA statement re-uses codigo
-     numbers that overlap with DRE/BPA/BPP/DFC scopes).
+Mirrors engines/dva_interest_paid.py (DVA 7.08.03) with one change:
+  - CVM account code 7.08.04 (Remuneração do Capital Próprio -- dividends /
+    distributions paid to shareholders / own-capital providers) instead of
+    7.08.03 (interest paid to third-party capital providers).
+
+SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo IN
+('7.08.04', '7.11.04')` (the grupo filter is required because the DVA
+statement re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC
+scopes; the codigo IN covers BOTH the old-chart `7.08.04` and the
+new-chart `7.11.04` formats).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). A CVM
 flow statement showing how wealth is created and distributed. Required
@@ -18,14 +21,14 @@ This is dividends DISTRIBUTED (paid to shareholders) as reported in the
 DVA. It is a SECOND independent source for dividends data -- it
 cross-checks the B3 dividends engine (engines/dividends.py), which
 tracks individual proventos from the cash_dividends B3 table and
-produces DPA on a per-share basis. DVA 8.4 reports the aggregate BRL
+produces DPA on a per-share basis. DVA 7.08.04 reports the aggregate BRL
 amount distributed (not per-share), so the two engines are
-complementary: B3 = per-share cash flow to shareholders; DVA 8.4 =
+complementary: B3 = per-share cash flow to shareholders; DVA 7.08.04 =
 aggregate wealth distribution reported by the company.
 
 SIGN CONVENTION
 ---------------
-DVA 8.4 (Remuneração do Capital Próprio) is typically reported as a
+DVA 7.08.04 (Remuneração do Capital Próprio) is typically reported as a
 NEGATIVE figure on the DVA (it's a wealth OUTFLOW -- dividends /
 distributions paid to shareholders). This engine returns the RAW value
 from the database -- callers handle the sign as needed.
@@ -65,15 +68,15 @@ from data_sources.cvm._bridge import resolve_company
 # CVM account code for Remuneração do Capital Próprio (dividends /
 # distributions paid to shareholders / own-capital providers). Lives
 # within the DVA statement group.
-DIVIDENDS_PAID_CODE = "8.4"
-
-# DVA statement group identifier in the CVM database. Without this filter,
-# codigo = '8.4' would match nothing (DVA codes are scoped to the DVA group).
-DVA_GRUPO = "DVA"
+# Old chart: 7.08.04 (dominant — 16808 rows in DFP). New chart: 7.11.04
+# (~75 rows). Query both via the SQL `codigo IN (...)` clause below.
+DIVIDENDS_PAID_CODE = "7.08.04"
+DIVIDENDS_PAID_CODE_NEW = "7.11.04"
 
 
 def _get_dfp_dividends_paid(company: str) -> dict[str, dict]:
-    """Get all annual dividends paid from DFP (DVA grupo='DVA', codigo 8.4, meses=12).
+    """Get all annual dividends paid from DFP (DVA grupo LIKE '%Valor Adicionado%',
+    codigo IN ('7.08.04', '7.11.04'), meses=12).
 
     Returns: {"2024": {"value": -1.5e10, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied). Sign preserved (typically negative).
@@ -89,8 +92,8 @@ def _get_dfp_dividends_paid(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DIVIDENDS_PAID_CODE}'
+                 AND c.grupo LIKE '%Valor Adicionado%'
+                 AND c.codigo IN ('{DIVIDENDS_PAID_CODE}', '{DIVIDENDS_PAID_CODE_NEW}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -110,8 +113,8 @@ def _get_dfp_dividends_paid(company: str) -> dict[str, dict]:
 
 
 def _get_itr_dividends_paid(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative dividends paid from ITR (DVA grupo='DVA',
-    codigo 8.4, meses 3/6/9).
+    """Get all quarterly cumulative dividends paid from ITR (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08.04', '7.11.04'), meses 3/6/9).
 
     Returns: {"2024-06-30": {"value": -7e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
@@ -128,8 +131,8 @@ def _get_itr_dividends_paid(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.grupo = '{DVA_GRUPO}'
-                 AND c.codigo = '{DIVIDENDS_PAID_CODE}'
+                 AND c.grupo LIKE '%Valor Adicionado%'
+                 AND c.codigo IN ('{DIVIDENDS_PAID_CODE}', '{DIVIDENDS_PAID_CODE_NEW}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -150,7 +153,7 @@ def _get_itr_dividends_paid(company: str) -> dict[str, dict]:
 
 
 def dividends_paid_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months dividends paid (DVA 8.4) ending at or before date.
+    """Get trailing twelve months dividends paid (DVA 7.08.04 or 7.11.04) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
@@ -207,7 +210,7 @@ def dividends_paid_at(company: str, date: str) -> float | None:
 
 
 def dividends_paid_periods(company: str) -> list[dict]:
-    """Get all TTM dividends paid (DVA 8.4) periods for a company.
+    """Get all TTM dividends paid (DVA 7.08.04 or 7.11.04) periods for a company.
 
     Returns a list of {"date": period_end_date, "ttm_dividends_paid": value}
     sorted oldest-first. Each entry represents a point where TTM dividends
@@ -257,6 +260,6 @@ register_engine(EngineSpec(
     quantity="ttm_dividends_paid",
     at_fn=dividends_paid_at,
     periods_fn=dividends_paid_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 8.4 -- Dividendos Pagos (DVA) TTM",
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.08.04 (or 7.11.04) -- Dividendos Pagos (DVA) TTM",
     category="dva",
 ))

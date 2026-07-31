@@ -109,9 +109,19 @@ class TestDividendsPaidRegistry:
         assert spec.periods_fn is dp_engine.dividends_paid_periods
 
     def test_uses_correct_cvm_code(self):
-        """Engine should query DVA codigo 8.4 (Remuneração do Capital Próprio)."""
-        assert dp_engine.DIVIDENDS_PAID_CODE == "8.4"
+        """Engine should query DVA codigo 7.08.04 (Remuneração do Capital Próprio)."""
+        assert dp_engine.DIVIDENDS_PAID_CODE == "7.08.04"
 
-    def test_uses_correct_grupo(self):
-        """Engine should filter by grupo='DVA' (DVA codes are scoped to the DVA group)."""
-        assert dp_engine.DVA_GRUPO == "DVA"
+    def test_uses_new_chart_fallback_code(self):
+        """Engine should also query the new-chart codigo 7.11.04 as a fallback."""
+        assert dp_engine.DIVIDENDS_PAID_CODE_NEW == "7.11.04"
+
+    def test_uses_grupo_like_filter(self):
+        """Engine should NOT use a literal DVA_GRUPO variable (SQL uses LIKE).
+
+        The grupo field stores the full Portuguese statement name (e.g.
+        "DF Consolidado - Demonstração de Valor Adicionado"), not the
+        short "DVA" abbreviation — so the SQL uses ``grupo LIKE '%Valor
+        Adicionado%'`` and there is no DVA_GRUPO constant on the module.
+        """
+        assert not hasattr(dp_engine, "DVA_GRUPO")

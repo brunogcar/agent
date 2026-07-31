@@ -1,12 +1,15 @@
 """engines/dva_total_tax.py -- TTM (trailing twelve months) Total Tax Burden engine.
 
-Mirrors engines/operating_cf.py (DFC 6.01) with two changes:
-  1. CVM account code 8.2 (Impostos, Taxas e Contribuições -- total tax
-     burden) instead of 6.01 (FCO).
-  2. SQL filter includes `AND c.grupo = 'DVA'` because the DVA statement
-     re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC scopes.
-     Without the grupo filter, `codigo = '8.2'` would match nothing (or
-     match the wrong statement).
+Mirrors engines/operating_cf.py (DFC 6.01) with one change:
+  - CVM account code 7.08.02 (Impostos, Taxas e Contribuições -- total tax
+    burden) instead of 6.01 (FCO). New-chart filers use code 7.11.02
+    instead — queried in the same SQL via `codigo IN (...)`.
+
+SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo IN
+('7.08.02', '7.11.02')` (the grupo filter is required because the DVA
+statement re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC
+scopes; the codigo IN covers BOTH the old-chart `7.08.02` and the
+new-chart `7.11.02` formats).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). A CVM
 flow statement showing how wealth is created and distributed. Required
@@ -15,21 +18,21 @@ so some companies have no DVA rows. The engine returns None gracefully
 in that case (the existing `if not itr and not dfp: return None` path).
 
 This is the TOTAL TAX BURDEN -- broader than the `tax` engine (DRE 3.08,
-which captures only INCOME TAX). DVA 8.2 includes:
+which captures only INCOME TAX). DVA 7.08.02 includes:
   - Income tax (IRPJ + CSLL) -- cross-checks DRE 3.08
   - Indirect taxes on revenue (PIS, COFINS)
   - Taxes on goods/services (ICMS, IPI, ISS)
   - Other contributions (FGTS, INSS -- depending on reporting practice)
 
 For industrial/commercial companies, indirect taxes often dwarf income
-tax -- so DVA 8.2 gives a more complete picture of the company's total
+tax -- so DVA 7.08.02 gives a more complete picture of the company's total
 tax contribution to society. Useful for tax-burden analysis and for
 cross-checking effective_tax_rate (DRE 3.08 / EBT) against the broader
 DVA figure.
 
 SIGN CONVENTION
 ---------------
-DVA 8.2 (Impostos, Taxas e Contribuições) is typically reported as a
+DVA 7.08.02 (Impostos, Taxas e Contribuições) is typically reported as a
 NEGATIVE figure on the DVA (it's a wealth OUTFLOW -- taxes distributed
 to government). This engine returns the RAW value from the database --
 callers handle the sign as needed.
@@ -68,15 +71,15 @@ from data_sources.cvm._bridge import resolve_company
 
 # CVM account code for Impostos, Taxas e Contribuições (total tax burden).
 # Lives within the DVA statement group.
+# Old chart: 7.08.02 (dominant). New chart: 7.11.02 (~75 rows).
+# Query both via the SQL `codigo IN (...)` clause below.
 DVA_TOTAL_TAX_CODE = "7.08.02"
-
-# DVA statement group identifier in the CVM database. Without this filter,
-# codigo = '8.2' would match nothing (DVA codes are scoped to the DVA group).
-DVA_GRUPO = "DVA"
+DVA_TOTAL_TAX_CODE_NEW = "7.11.02"
 
 
 def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
-    """Get all annual total tax burden from DFP (DVA grupo='DVA', codigo 7.08.02, meses=12).
+    """Get all annual total tax burden from DFP (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08.02', '7.11.02'), meses=12).
 
     Returns: {"2024": {"value": -90e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied). Sign preserved (typically negative).
@@ -93,7 +96,7 @@ def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo = '{DVA_TOTAL_TAX_CODE}'
+                 AND c.codigo IN ('{DVA_TOTAL_TAX_CODE}', '{DVA_TOTAL_TAX_CODE_NEW}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -113,8 +116,8 @@ def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
 
 
 def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative total tax burden from ITR (DVA grupo='DVA',
-    codigo 7.08.02, meses 3/6/9).
+    """Get all quarterly cumulative total tax burden from ITR (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08.02', '7.11.02'), meses 3/6/9).
 
     Returns: {"2024-06-30": {"value": -45e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
@@ -132,7 +135,7 @@ def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo = '{DVA_TOTAL_TAX_CODE}'
+                 AND c.codigo IN ('{DVA_TOTAL_TAX_CODE}', '{DVA_TOTAL_TAX_CODE_NEW}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -153,7 +156,7 @@ def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
 
 
 def dva_total_tax_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months total tax burden (DVA 8.2) ending at or before date.
+    """Get trailing twelve months total tax burden (DVA 7.08.02 or 7.11.02) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
@@ -210,7 +213,7 @@ def dva_total_tax_at(company: str, date: str) -> float | None:
 
 
 def dva_total_tax_periods(company: str) -> list[dict]:
-    """Get all TTM total tax burden (DVA 8.2) periods for a company.
+    """Get all TTM total tax burden (DVA 7.08.02 or 7.11.02) periods for a company.
 
     Returns a list of {"date": period_end_date, "ttm_dva_tax": value}
     sorted oldest-first. Each entry represents a point where TTM total
@@ -260,6 +263,6 @@ register_engine(EngineSpec(
     quantity="ttm_dva_tax",
     at_fn=dva_total_tax_at,
     periods_fn=dva_total_tax_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 7.08.02 -- Carga Tributária Total TTM",
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.08.02 (or 7.11.02) -- Carga Tributária Total TTM",
     category="dva",
 ))

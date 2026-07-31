@@ -146,19 +146,30 @@ class TestTotalTaxRegistry:
         assert spec.periods_fn is tt_engine.total_tax_periods
 
     def test_uses_correct_cvm_code(self):
-        """Engine should query DVA codigo 8.2 (Impostos, Taxas e Contribuições)."""
-        assert tt_engine.TOTAL_TAX_CODE == "8.2"
+        """Engine should query DVA codigo 7.08.02 (Impostos, Taxas e Contribuições)."""
+        assert tt_engine.TOTAL_TAX_CODE == "7.08.02"
 
-    def test_uses_correct_grupo(self):
-        """Engine should filter by grupo='DVA' (DVA codes are scoped to the DVA group)."""
-        assert tt_engine.DVA_GRUPO == "DVA"
+    def test_uses_new_chart_fallback_code(self):
+        """Engine should also query the new-chart codigo 7.11.02 as a fallback."""
+        assert tt_engine.TOTAL_TAX_CODE_NEW == "7.11.02"
+
+    def test_uses_grupo_like_filter(self):
+        """Engine should NOT use a literal DVA_GRUPO variable (SQL uses LIKE).
+
+        The grupo field stores the full Portuguese statement name (e.g.
+        "DF Consolidado - Demonstração de Valor Adicionado"), not the
+        short "DVA" abbreviation — so the SQL uses ``grupo LIKE '%Valor
+        Adicionado%'`` and there is no DVA_GRUPO constant on the module.
+        """
+        assert not hasattr(tt_engine, "DVA_GRUPO")
 
     def test_source_mentions_codigo(self):
         """Engine source string should mention the CVM code for documentation."""
         from skills.cvm.calculations._registry import ENGINES
-        assert "8.2" in ENGINES["total_tax"].source
+        assert "7.08.02" in ENGINES["total_tax"].source
+        assert "7.11.02" in ENGINES["total_tax"].source  # new-chart fallback
 
     def test_source_mentions_grupo_dva(self):
-        """Engine source string should mention grupo='DVA' for documentation."""
+        """Engine source string should mention the DVA grupo filter for documentation."""
         from skills.cvm.calculations._registry import ENGINES
-        assert "DVA" in ENGINES["total_tax"].source
+        assert "Valor Adicionado" in ENGINES["total_tax"].source

@@ -1,12 +1,15 @@
 """engines/value_added.py -- TTM (trailing twelve months) Total Value Added engine.
 
-Mirrors engines/operating_cf.py (DFC 6.01) with two changes:
-  1. CVM account code 7 (Valor Adicionado Total a Distribuir -- total
-     wealth created by the company) instead of 6.01 (FCO).
-  2. SQL filter includes `AND c.grupo = 'DVA'` because the DVA statement
-     re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC scopes.
-     Without the grupo filter, `codigo = '7'` would match nothing (or
-     match the wrong statement).
+Mirrors engines/operating_cf.py (DFC 6.01) with one change:
+  - CVM account code 7.08 (Valor Adicionado Total a Distribuir -- total
+    wealth created by the company) instead of 6.01 (FCO). New-chart filers
+    use code 7.10 instead — queried in the same SQL via `codigo IN (...)`.
+
+SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo IN
+('7.08', '7.10')` (the grupo filter is required because the DVA
+statement re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC
+scopes; the codigo IN covers BOTH the old-chart `7.08` and the
+new-chart `7.10` formats).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). A CVM
 flow statement showing how wealth is created and distributed. Required
@@ -14,7 +17,7 @@ filing for all B3-listed companies, but OPTIONAL for non-listed filers --
 so some companies have no DVA rows. The engine returns None gracefully
 in that case (the existing `if not itr and not dfp: return None` path).
 
-DVA 7 (Valor Adicionado Total a Distribuir) is the TOP LINE of the
+DVA 7.08 (Valor Adicionado Total a Distribuir) is the TOP LINE of the
 "distribution" side of the DVA. It equals the sum of all wealth
 distributed to:
   - Personnel (8.1)
@@ -27,14 +30,15 @@ And it equals the "generation" side of the DVA:
   - + Retentions (4) - Depreciation (5 adjustments) = Net value added produced (5)
   - + Value received in transfer (6) = Total value added to distribute (7)
 
-So DVA 7 is conceptually similar to EBITDA but with a different scope
+So DVA 7.08 is conceptually similar to EBITDA but with a different scope
 (it captures wealth created for ALL stakeholders, not just shareholders +
 lenders). Useful for stakeholder-distribution analysis and for verifying
-the consistency of the DVA itself (7 should = 8.1 + 8.2 + 8.3 + 8.4).
+the consistency of the DVA itself (7.08 should = 7.08.01 + 7.08.02 +
+7.08.03 + 7.08.04).
 
 SIGN CONVENTION
 ---------------
-DVA 7 (Valor Adicionado Total a Distribuir) is typically reported as a
+DVA 7.08 (Valor Adicionado Total a Distribuir) is typically reported as a
 POSITIVE figure on the DVA (it's the total wealth available for
 distribution). This engine returns the RAW value from the database --
 callers handle the sign as needed.
@@ -74,15 +78,15 @@ from data_sources.cvm._bridge import resolve_company
 # CVM account code for Valor Adicionado Total a Distribuir (total wealth
 # created by the company, available for distribution to stakeholders).
 # Lives within the DVA statement group.
+# Old chart: 7.08 (dominant — 16808 rows in DFP). New chart: 7.10 (~75
+# rows). Query both via the SQL `codigo IN (...)` clause below.
 VALUE_ADDED_CODE = "7.08"
-
-# DVA statement group identifier in the CVM database. Without this filter,
-# codigo = '7' would match nothing (DVA codes are scoped to the DVA group).
-DVA_GRUPO = "DVA"
+VALUE_ADDED_CODE_NEW = "7.10"
 
 
 def _get_dfp_value_added(company: str) -> dict[str, dict]:
-    """Get all annual total value added from DFP (DVA grupo='DVA', codigo 7, meses=12).
+    """Get all annual total value added from DFP (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08', '7.10'), meses=12).
 
     Returns: {"2024": {"value": 250e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied). Sign preserved (typically positive).
@@ -99,7 +103,7 @@ def _get_dfp_value_added(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo = '{VALUE_ADDED_CODE}'
+                 AND c.codigo IN ('{VALUE_ADDED_CODE}', '{VALUE_ADDED_CODE_NEW}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -119,8 +123,8 @@ def _get_dfp_value_added(company: str) -> dict[str, dict]:
 
 
 def _get_itr_value_added(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative total value added from ITR (DVA grupo='DVA',
-    codigo 7, meses 3/6/9).
+    """Get all quarterly cumulative total value added from ITR (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08', '7.10'), meses 3/6/9).
 
     Returns: {"2024-06-30": {"value": 125e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
@@ -138,7 +142,7 @@ def _get_itr_value_added(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo = '{VALUE_ADDED_CODE}'
+                 AND c.codigo IN ('{VALUE_ADDED_CODE}', '{VALUE_ADDED_CODE_NEW}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -159,7 +163,7 @@ def _get_itr_value_added(company: str) -> dict[str, dict]:
 
 
 def value_added_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months total value added (DVA 7) ending at or before date.
+    """Get trailing twelve months total value added (DVA 7.08 or 7.10) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
@@ -217,15 +221,15 @@ def value_added_at(company: str, date: str) -> float | None:
 
 
 def value_added_periods(company: str) -> list[dict]:
-    """Get all TTM total value added (DVA 7) periods for a company.
+    """Get all TTM total value added (DVA 7.08 or 7.10) periods for a company.
 
     Returns a list of {"date": period_end_date, "ttm_value_added": value}
     sorted oldest-first. Each entry represents a point where TTM total
     value added changed (new ITR/DFP filed).
 
     Useful for building step-function value-added overlays on price charts
-    or for stakeholder-distribution analysis (DVA 7 should equal the sum
-    of DVA 8.1 + 8.2 + 8.3 + 8.4).
+    or for stakeholder-distribution analysis (DVA 7.08 should equal the sum
+    of DVA 7.08.01 + 7.08.02 + 7.08.03 + 7.08.04).
     """
     dfp = _get_dfp_value_added(company)
     itr = _get_itr_value_added(company)
@@ -268,6 +272,6 @@ register_engine(EngineSpec(
     quantity="ttm_value_added",
     at_fn=value_added_at,
     periods_fn=value_added_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo='DVA' codigo 7 -- Valor Adicionado Total TTM",
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.08 (or 7.10) -- Valor Adicionado Total TTM",
     category="dva",
 ))

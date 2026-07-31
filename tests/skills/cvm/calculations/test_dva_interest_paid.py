@@ -146,16 +146,27 @@ class TestDvaInterestPaidRegistry:
         """Engine should query DVA codigo 7.08.03 (Remuneração do Capital de Terceiros)."""
         assert dva_ip_engine.DVA_INTEREST_PAID_CODE == "7.08.03"
 
-    def test_uses_correct_grupo(self):
-        """Engine should filter by grupo='DVA' (DVA codes are scoped to the DVA group)."""
-        assert dva_ip_engine.DVA_GRUPO == "DVA"
+    def test_uses_new_chart_fallback_code(self):
+        """Engine should also query the new-chart codigo 7.11.03 as a fallback."""
+        assert dva_ip_engine.DVA_INTEREST_PAID_CODE_NEW == "7.11.03"
+
+    def test_uses_grupo_like_filter(self):
+        """Engine should NOT use a literal DVA_GRUPO variable (SQL uses LIKE).
+
+        The grupo field stores the full Portuguese statement name (e.g.
+        "DF Consolidado - Demonstração de Valor Adicionado"), not the
+        short "DVA" abbreviation — so the SQL uses ``grupo LIKE '%Valor
+        Adicionado%'`` and there is no DVA_GRUPO constant on the module.
+        """
+        assert not hasattr(dva_ip_engine, "DVA_GRUPO")
 
     def test_source_mentions_codigo(self):
         """Engine source string should mention the CVM code for documentation."""
         from skills.cvm.calculations._registry import ENGINES
         assert "7.08.03" in ENGINES["dva_interest_paid"].source
+        assert "7.11.03" in ENGINES["dva_interest_paid"].source  # new-chart fallback
 
     def test_source_mentions_grupo_dva(self):
-        """Engine source string should mention grupo='DVA' for documentation."""
+        """Engine source string should mention the DVA grupo filter for documentation."""
         from skills.cvm.calculations._registry import ENGINES
-        assert "DVA" in ENGINES["dva_interest_paid"].source
+        assert "Valor Adicionado" in ENGINES["dva_interest_paid"].source
