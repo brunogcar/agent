@@ -4,27 +4,26 @@
 
 ## 🔗 Source Code Reference
 
-**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
-
-| File | Purpose |
-|------|---------|
-| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
-
 ```text
 skills/cvm/valuation/
-├── __init__.py        [v2.0] uses auto_discover_modes() + make_route() from skills/_base.py — ~50 lines
-├── _registry.py       [v2.0] delegates to skills/_base.py — creates skill's own MODES dict via make_registry(). ~16 lines.
+├── __init__.py        manifest + route() dispatch (auto-discovery)
+├── _registry.py       ModeSpec + register_mode + MODES dict
 ├── modes/             one file per mode, auto-discovered via importlib
 │   ├── __init__.py    minimal package marker
 │   ├── ratios.py      @register_mode("ratios")      — include_in_all=True (default)
 │   ├── summary.py     @register_mode("summary")     — include_in_all=False
-│   └── dashboard.py   @register_mode("dashboard")   — include_in_all=False (NEW v1.4)
+│   └── dashboard.py   @register_mode("dashboard")   — include_in_all=False (v1.4 5-tab,
+│                     v1.5 reorganized to 6 tabs with sub-tabs + charts + collapsibles)
 ├── fetchers.py        price fetching (_get_price / _get_price_brapi /
 │                     _get_price_investsite / _get_latest_price — b3 trades.db fallback)
 ├── helpers.py         _safe_call, _safe_div (shared utilities)
-└── report.py          dashboard section builders (7 builders for the 5-tab payload,
-                       incl. _safe_get defensive accessor for failed-ratios() case)
+└── report.py          dashboard section builders (v1.5: 7 builders for the 6-tab payload,
+                       incl. _safe_get defensive accessor for failed-ratios() case +
+                       _derive_multiples / _derive_per_share / _derive_detailed_leverage
+                       helpers that compute additional metrics from ratios_dict components)
 ```
+
+**v1.5 reorg (2026-07-29):** `dashboard.py` + `report.py` rewritten to produce 6 tabs (was 5). New tab "Per-share" inserted between Multiples and Profitability. Each tab builder is independently try/except-wrapped via the `_safe_build()` helper in `dashboard.py` so a failure in one tab degrades to an error section in that tab, not a crash of the whole dashboard. `ratios()` is now called ONCE in `dashboard()` and the resulting dict is passed to every tab builder (previously each builder received the same dict but the pattern was less explicit). Three new helpers added to `report.py`: `_derive_multiples()` (P/EBITDA, EV/EBIT, P/EV, P/CG, P/DB), `_derive_per_share()` (CGPA, DBPA), `_derive_detailed_leverage()` (DL/EBIT, Gross D/E) — these compute additional metrics from components already in `ratios_dict` without requiring new engine calls.
 
 **v1.4 split (2026-07-29):** the 528-line `valuation.py` was split into the structure above + a new `dashboard` mode was added (the third valuation mode after `ratios` + `summary`). `__init__.py` now auto-discovers modes by globbing `modes/*.py` (sorted) + `importlib.import_module()` — same pattern as `skills/cvm/financials/` (v1.6) and `tools/git_ops/actions/`. Adding a new mode = drop a file in `modes/` + `@register_mode(...)`, no edits to `__init__.py` or `_registry.py`. Public API unchanged for `ratios` + `summary`; `dashboard` is new.
 
@@ -94,4 +93,4 @@ This skill uses `validate_ticker()` and `parse_escala()` from `core/br_validator
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details). Public API unchanged for `ratios` + `summary`; `dashboard` mode is new.*
+*Last updated: 2026-07-29 (v1.5 — 6-tab dashboard reorg; see CHANGELOG.md for details). Public API unchanged for `ratios` + `summary`; `dashboard` mode v1.5 adds Per-share tab + charts + collapsibles on top of v1.4.*

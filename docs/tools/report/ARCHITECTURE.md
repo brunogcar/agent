@@ -23,7 +23,7 @@
 | `tools/report_ops/timeline.py` | SVG Gantt chart builder |
 | `tools/report_ops/scorecard.py` | RAG status + radar chart builder |
 | `tools/report_ops/table.py` | Tabular statement builder (v1.2) |
-| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.8, 75 adapters across 25 modules) |
+| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.9, 76 adapters across 26 modules) |
 | `tools/report_ops/actions/*.py` | Atomic action wrappers (12 files) |
 | `tools/report_ops/templates/*.html` | Jinja2 templates (11 files) |
 | `tests/tools/report/` | 21 test files + conftest.py |
@@ -70,7 +70,8 @@ tools/report_ops/
 │   ├── cotahist_chart.py   # cotahist_close_chart  (v1.2.3+)
 │   ├── cotahist_candlestick.py  # cotahist_candlestick_chart  (v1.2.6+)
 │   ├── financials_chart.py # financials_quarterly_chart  (v1.2.2+)
-│   ├── financials_dashboard.py  # financials_dashboard  (v1.5 — 5-tab dashboard adapter)
+│   ├── financials_dashboard.py  # financials_dashboard  (v1.5 — 7-tab dashboard adapter; v1.9 KPI pass-through fix)
+│   ├── financials_statement.py  # financials_statement  (v1.9 — generic statement adapter for bpa/bpp/dre/dfc/dva)
 │   ├── valuation_dashboard.py   # valuation_dashboard  (v1.5 — 5-tab dashboard adapter)
 │   ├── backtest_dashboard.py    # backtest_dashboard  (v1.6 — 3-tab dashboard adapter)
 │   ├── comparison_dashboard.py  # comparison_dashboard  (v1.6 — 5-tab dashboard adapter)
@@ -97,10 +98,10 @@ tools/report_ops/
 
 tools/report_ops/templates/
 ├── base.html           # Layout + sidebar + theme toggle + CSS
-├── macros.html         # Reusable components (kpi_card, data_table, bug_card, statement_table, ratio_grid, two_column, ...)  — v1.5 added statement/ratio_grid/two_column
+├── macros.html         # Reusable components (kpi_card, data_table, bug_card, statement_table, ratio_grid, two_column, subtabs, ...)  — v1.5 added statement/ratio_grid/two_column; v1.9 added subtabs
 ├── chart.html          # Dedicated Chart.js canvas template (NEW v1.1)
 ├── report.html         # Single-scroll report sections
-├── dashboard.html      # Multi-panel tabs + KPIs
+├── dashboard.html      # Multi-panel tabs + KPIs + subtabs (v1.9 added subtabs dispatch + centered body)
 ├── map.html            # Full-screen Leaflet map
 ├── diagram.html        # Mermaid architecture diagram
 ├── compare.html        # Side-by-side diff with delta highlighting
@@ -203,4 +204,4 @@ tests/tools/report/
 
 ---
 
-*Last updated: 2026-07-29 (v1.7). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-29 (v1.9 — subtabs support + financials_statement adapter + dashboard centering). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

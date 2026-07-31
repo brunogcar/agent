@@ -58,15 +58,32 @@ def _format_kpi(k: dict) -> dict:
 
     Input:  {"label": "Receita Líquida", "value": 100000, "unit": "BRL"}
     Output: {"label": "Receita Líquida", "value": "R$ 100 mil", "format": "brl"}
+
+    [v1.12] The dashboard mode now pre-formats KPI values as strings via
+    `apply_fmt` in skills/cvm/financials/report.py (so the value is ready
+    for direct display). When the value is already a string, pass it
+    through verbatim — re-running apply_fmt on a pre-formatted string
+    would yield "—" because the string can't be coerced to float. Only
+    raw numbers (legacy callers + the synthetic test data with raw
+    numeric values) get re-formatted via the unit→spec map.
     """
     from tools.report_ops.formats import apply_fmt
     label = k.get("label", "")
     value = k.get("value")
     unit = (k.get("unit") or "").strip()
     spec = _UNIT_TO_SPEC.get(unit, "text")
+
+    if isinstance(value, str):
+        formatted = value
+    else:
+        try:
+            formatted = apply_fmt(_safe_num(value), spec)
+        except Exception:
+            formatted = str(value) if value is not None else "—"
+
     return {
         "label": label,
-        "value": apply_fmt(value, spec),
+        "value": formatted,
         "format": spec,
     }
 

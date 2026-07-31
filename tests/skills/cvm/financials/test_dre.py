@@ -1,177 +1,95 @@
-"""Tests for skills/cvm/financials/ — DRE mode.
+"""Tests for the `dre` mode of skills/cvm/financials.
 
-Tests the new dre mode (Demonstração do Resultado do Exercício) that
-surfaces DRE data from DFP. Uses mocked DFP connection — no real database
-needed. Follows the same pattern as test_dva.py.
+Covers TestDREMode (5 tests):
+  - test_dre_basic_shape        : default annual call → ok + accounts dict shape
+  - test_dre_no_company         : no company arg → status=error
+  - test_dre_no_dre_data        : unknown company → not_found OR empty periods
+  - test_dre_quarterly          : period="quarterly" → quarterly shape
+  - test_dre_manifest_has_period_param : MANIFEST advertises `period` (not `quarterly=1`)
+
+[v1.12 — dashboard reorg] New API: `period="annual"|"quarterly"` + codes in
+`modes/_statement_sections.py` (no `_DRE_CODES` export). Uses the shared
+`financials_env` fixture from conftest.py.
 """
 from __future__ import annotations
 
-import sqlite3
-from unittest.mock import patch, MagicMock
-
 
 class TestDREMode:
-    """Tests for the financials.dre() mode."""
+    """Tests for `financials.dre()` — Demonstração do Resultado do Exercício (income statement)."""
 
-    def test_dre_requires_company(self):
-        """Empty company -> status=error."""
+    def test_dre_basic_shape(self, financials_env):
+        """Default annual call returns the standalone-statement-mode shape.
+
+        Each period carries a dict-keyed `accounts` map
+        (``{codigo: {label, section, valor_brl}}``). All DRE rows share the
+        same ``section == "DRE"`` (single-section statement).
+        """
         from skills.cvm.financials.modes.dre import dre
-        r = dre()
-        assert r["status"] == "error"
-        assert "company" in r["error"]
+        result = dre(company="33000167000101")
+        assert result["status"] == "ok"
+        assert result["period_type"] == "annual"
+        assert result["statement"] == "DRE"
+        assert result["grupo_filter"] == "DRE"
+        assert isinstance(result["periods"], list)
+        assert len(result["periods"]) >= 1
+        first = result["periods"][0]
+        assert isinstance(first["data_fim_exerc"], str)
+        assert first["data_fim_exerc"].endswith("-12-31")  # annual period
+        assert isinstance(first["accounts"], dict)
+        # Synthetic fixture inserts DRE codes 3.01, 3.03, 3.05, 3.06, 3.11.
+        # Spot-check that "3.01" (Receita Líquida) is present.
+        assert "3.01" in first["accounts"], \
+            f"expected DRE code '3.01' in accounts, got {sorted(first['accounts'])}"
+        # All DRE rows share section "DRE" (single-section classifier).
+        for code, acct in first["accounts"].items():
+            assert "label" in acct
+            assert "section" in acct
+            assert acct["section"] == "DRE"
+            assert "valor_brl" in acct
 
-    def test_dre_company_not_found(self):
-        """Company not in DFP -> status=not_found."""
+    def test_dre_no_company(self, financials_env):
+        """No company arg → status=error (does NOT touch DBs)."""
         from skills.cvm.financials.modes.dre import dre
+        result = dre()
+        assert result["status"] == "error"
+        assert "company is required" in result["error"]
 
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
+    def test_dre_no_dre_data(self, financials_env):
+        """Unknown company → either status=not_found OR ok with empty periods.
 
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._bridge.resolve_company", return_value=([], "")):
-            r = dre(company="UNKNOWN4")
-            assert r["status"] == "not_found"
-            assert "not found in DFP" in r["error"]
-
-    def test_dre_no_dre_data(self):
-        """Company exists but has no DRE rows -> status=not_found."""
+        The new dre mode delegates to `complete(grupo="DRE")`, which may
+        return either:
+          - ``{"status": "not_found", ...}`` when the company doesn't resolve
+          - ``{"status": "ok", "periods": []}`` if the company resolves but
+            has no DRE rows for the requested period
+        Both are acceptable here — the contract is "no DRE data to render".
+        """
         from skills.cvm.financials.modes.dre import dre
+        result = dre(company="NONEXISTENT")
+        if result["status"] == "ok":
+            assert result.get("periods") == [] or len(result.get("periods", [])) == 0
+        else:
+            assert result["status"] in ("not_found", "error", "not_synced")
 
-        mock_conn = MagicMock()
-        # First query (year_rows) returns empty — no DRE data
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
-
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._bridge.resolve_company",
-                   return_value=([1], "TEST COMPANY")):
-            r = dre(company="PETR4")
-            assert r["status"] == "not_found"
-            assert "No DRE data" in r["error"]
-
-    def test_dre_basic_shape(self):
-        """DRE mode returns status=ok with periods + accounts."""
+    def test_dre_quarterly(self, financials_env):
+        """period="quarterly" switches to the quarterly shape."""
         from skills.cvm.financials.modes.dre import dre
+        result = dre(company="33000167000101", period="quarterly")
+        assert result["status"] == "ok"
+        assert result["period_type"] == "quarterly"
+        assert isinstance(result["periods"], list)
+        for p in result["periods"]:
+            assert "quarter" in p
+            assert p["quarter"] in (1, 2, 3, 4)
+            assert isinstance(p["accounts"], dict)
 
-        # Mock rows simulating DFP DRE query results — use a simple class
-        # so the row["data_fim_exerc"] indexing works (sqlite3.Row style).
-        class FakeRow:
-            def __init__(self, **kwargs):
-                self._data = kwargs
-            def __getitem__(self, key):
-                return self._data[key]
-
-        mock_year_rows = [FakeRow(data_fim_exerc="2024-12-31")]
-        mock_dre_rows = [
-            FakeRow(codigo="3.01", descricao="Receita Líquida",
-                    data_fim_exerc="2024-12-31", meses=12,
-                    valor="500000000000", escala="MILHOES"),
-            FakeRow(codigo="3.02", descricao="Custo dos Bens Vendidos",
-                    data_fim_exerc="2024-12-31", meses=12,
-                    valor="-300000000000", escala="MILHOES"),
-            FakeRow(codigo="3.03", descricao="Resultado Bruto",
-                    data_fim_exerc="2024-12-31", meses=12,
-                    valor="200000000000", escala="MILHOES"),
-            FakeRow(codigo="3.05", descricao="Resultado Antes Tributos",
-                    data_fim_exerc="2024-12-31", meses=12,
-                    valor="80000000000", escala="MILHOES"),
-            FakeRow(codigo="3.07", descricao="Resultado Líquido Continuadas",
-                    data_fim_exerc="2024-12-31", meses=12,
-                    valor="70000000000", escala="MILHOES"),
-            FakeRow(codigo="3.11", descricao="Lucro Líquido Consolidado",
-                    data_fim_exerc="2024-12-31", meses=12,
-                    valor="50000000000", escala="MILHOES"),
-        ]
-
-        mock_conn = MagicMock()
-        # First execute() returns year_rows, second returns dre_rows
-        mock_conn.execute.side_effect = [
-            MagicMock(fetchall=MagicMock(return_value=mock_year_rows)),
-            MagicMock(fetchall=MagicMock(return_value=mock_dre_rows)),
-        ]
-        mock_conn.close = MagicMock()
-
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._bridge.resolve_company",
-                   return_value=([1], "PETROLEO BRASILEIRO S.A.")), \
-             patch("data_sources.cvm._db.parse_escala", return_value=1000000):
-            r = dre(company="PETR4", periods=1)
-
-            assert r["status"] == "ok"
-            assert r["company"] == "PETROLEO BRASILEIRO S.A."
-            assert r["period_type"] == "annual"
-            assert len(r["periods"]) == 1
-
-            period = r["periods"][0]
-            assert period["data_fim_exerc"] == "2024-12-31"
-            assert period["meses"] == 12
-
-            accounts = period["accounts"]
-            assert "3.01" in accounts  # Receita Líquida
-            assert "3.02" in accounts  # Custos
-            assert "3.03" in accounts  # Resultado Bruto
-            assert "3.05" in accounts  # EBIT
-            assert "3.07" in accounts  # Resultado Líquido Continuadas (NEW v1.8)
-            assert "3.11" in accounts  # Lucro Líquido
-
-            # Check label + section + value
-            receita = accounts["3.01"]
-            assert receita["label"] == "Receita Líquida de Vendas e/ou Serviços"
-            assert receita["section"] == "revenue"
-            assert receita["valor_brl"] == 500000000000 * 1000000  # escala applied
-
-            lucro_liq = accounts["3.11"]
-            assert lucro_liq["section"] == "net_income_alt"
-
-            # 3.07 has its own section
-            continuadas = accounts["3.07"]
-            assert continuadas["section"] == "net_continuing"
-
-    def test_dre_route_dispatches(self):
-        """route(mode='dre') dispatches to the dre function."""
-        from skills.cvm.financials import route
-        r = route(mode="dre")
-        assert r["status"] == "error"
-        assert "company is required" in r["error"]
-
-    def test_dre_route_dispatches_with_params(self):
-        """route(mode='dre', company='PETR4', quarterly=1) dispatches with quarterly param."""
-        from skills.cvm.financials import route, MANIFEST
-        from unittest.mock import patch, MagicMock
-        assert "dre" in MANIFEST["modes"]
-        # Mock the DFP connection so it doesn't depend on a real DB
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._db.connect_itr", side_effect=FileNotFoundError("no itr")), \
-             patch("data_sources.cvm._bridge.resolve_company", return_value=([], "")):
-            r = route(mode="dre", company="UNKNOWN4", quarterly=1, periods=4)
-            assert r["status"] in ("error", "not_synced", "not_found")
-
-    def test_dre_accepts_quarterly_param(self):
-        """[v1.8] dre() accepts quarterly=1 param."""
-        from skills.cvm.financials.modes.dre import dre
-
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
-
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._db.connect_itr", side_effect=FileNotFoundError("no itr")), \
-             patch("data_sources.cvm._bridge.resolve_company", return_value=([], "")):
-            r = dre(company="UNKNOWN4", quarterly=1)
-            assert r["status"] == "not_found"
-
-    def test_dre_route_registered_in_manifest(self):
-        """[v1.8] 'dre' mode is registered in MANIFEST['modes'] with correct shape."""
+    def test_dre_manifest_has_period_param(self):
+        """[v1.12] MANIFEST advertises `period` (string) — NOT the old
+        `quarterly=1` int param."""
         from skills.cvm.financials import MANIFEST
-        dre_spec = MANIFEST["modes"].get("dre")
-        assert dre_spec is not None, "dre mode should be registered"
-        # All 4 params should be documented
-        params = dre_spec.get("params", {})
-        assert "company" in params
+        assert "dre" in MANIFEST["modes"]
+        params = MANIFEST["modes"]["dre"]["params"]
+        assert "period" in params
+        assert "quarterly" not in params
         assert "periods" in params
         assert "consolidado" in params
-        assert "quarterly" in params

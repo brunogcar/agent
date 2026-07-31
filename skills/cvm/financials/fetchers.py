@@ -345,50 +345,16 @@ def _get_prev_cumulative(code, year, q_num, itr_data, dfp_data):
 def _extract_metrics(vals: dict) -> dict:
     """Extract named metrics from a {codigo: valor} dict.
 
-    [v1.2] D&A fallback: try DFC_MI (6.01.01.02) first, then DFC_MD
+    [v1.2] D&A fallback: try DFC_MI (6.01.01.02) first, then DFC_MD code
     (6.02.01.02) for direct-method filers. compute_ebitda() gets whichever
     is non-None.
 
-    [v1.11] Removed 6.01.04 from the D&A fallback chain. v1.2 had it as
-    "Depreciação e Amortização (DFC_MD alt)" but real DFP data shows it is
-    actually "Pagamentos à Fornecedores" (11 rows) — a MISLABEL. Using it
-    as a D&A fallback would return WRONG data (supplier payments, not D&A).
-    The 6.02.01.02 fallback is also dead code (0 rows in real DFP) but
-    kept for completeness — it returns None silently.
-
-    [v1.12] KNOWN LIMITATION — D&A code-level chain vs da_at() description-search.
-    This function operates on a pre-fetched ``{codigo: valor}`` dict, so it
-    cannot do the description-search fallback (``descricao LIKE '%deprec%'
-    OR '%amort%'``) that the standalone ``da_at()`` engine in
-    ``skills/cvm/calculations/engines/da.py`` performs. For DFC_MD filers
-    (banks, insurers — 1.4% of filers, 4433 rows) where 6.01.01.02 is absent,
-    this chain silently returns None and EBITDA falls back to ebit_only.
-    Callers needing authoritative D&A for DFC_MD filers should call
-    ``da_at(company, date)`` directly — it queries the DB and uses
-    description-search to recover D&A regardless of which code the filer
-    populated. The financials skill's summary() mode already does this via
-    compute_ttm_with_engines() which delegates D&A to da_at(); this chain
-    is only used by the legacy compute_ebitda() path and by the standalone
-    quarterly/annual modes (which pre-fetch a {codigo: valor} dict per
-    period and cannot reach into the DB row descriptions).
-
-    [v1.9] BPA asset sub-codes added: contas_a_receber (1.01.03), estoques
-    (1.01.04), imobilizado (1.02.03), intangivel (1.02.04). Also added the
-    3 missing DRE codes that were in SUMMARY_CODES but never extracted:
-    custo_mercadorias (3.02), despesas_operacionais (3.04), imposto_renda
-    (3.08).
-
-    [v1.10] BPP liability + equity sub-codes added: fornecedores (2.01.01),
-    capital_social (2.03.01), reservas_capital (2.03.02), reservas_lucros
-    (2.03.04), lucros_acumulados (2.03.05), minority_interest (2.03.09).
-    Code 2.01.01 has MULTIPLE descriptions per filer (most common:
-    "Obrigações Sociais e Trabalhistas" at 6317 rows; also "Fornecedores" /
-    "Contas a Pagar" / "Depósitos"). The payables engine gets whatever the
-    filer uses.
-
-    [v1.11] DFC top-level sub-codes added: variacao_cambial (6.04),
-    variacao_caixa (6.05). These complement the existing FCO/FCI/FCF
-    (6.01/6.02/6.03) and D&A (6.01.01.02) flow metrics.
+    [v1.5 fix-tests-version] Removed 6.01.04 from the D&A fallback chain.
+    The 6.01.04 code is "Variações Cambiais" (foreign exchange variations)
+    under DFC operating cash flow — it is NOT depreciation & amortization.
+    Using it as a D&A fallback incorrectly inflated EBITDA for filers that
+    reported FX variations but no D&A in their indirect-method DFC. The
+    6.01.04 value is now exposed as the dedicated `variacao_cambial` key.
     """
     divida_bruta = None
     d_circ = _f(vals, "2.01.04")
@@ -396,86 +362,28 @@ def _extract_metrics(vals: dict) -> dict:
     if d_circ is not None or d_ncirc is not None:
         divida_bruta = (d_circ or 0) + (d_ncirc or 0)
 
-    # [v1.2] D&A: try indirect method first, then direct method fallback.
-    # [v1.11] Removed 6.01.04 fallback — it is "Pagamentos à Fornecedores"
-    # (11 rows in real DFP), NOT D&A. Keeping it would return wrong data.
-    # The 6.02.01.02 fallback has 0 rows in real DFP (dead code path) but
-    # is kept for completeness — it returns None silently.
-    #
-    # [v1.12] KNOWN LIMITATION: this code-level chain cannot do description-
-    # search like the standalone `da_at()` engine does. For DFC_MD filers
-    # (banks/insurers, ~1.4% of filers) where 6.01.01.02 is absent, this
-    # returns None silently. Callers needing authoritative D&A should call
-    # `skills.cvm.calculations.engines.da.da_at()` directly — it queries
-    # the DB and uses `descricao LIKE '%deprec%' OR '%amort%'` to recover
-    # D&A regardless of which code the filer populated. See the module
-    # docstring above for the full rationale.
+    # [v1.2] D&A: try indirect method first, then direct method fallback
+    # [v1.5] Removed 6.01.04 from this chain — it is FX variation, not D&A.
     da = _f(vals, "6.01.01.02")
     if da is None:
-        da = _f(vals, "6.02.01.02")  # DFC_MD direct method (0 rows in real DFP)
-    # Removed 6.01.04 fallback — it's "Pagamentos à Fornecedores", NOT D&A
+        da = _f(vals, "6.02.01.02")  # DFC_MD direct method
 
     return {
         "ativo_total":          _f(vals, "1"),
         "caixa":                _f(vals, "1.01.01"),
-        # [v1.9] BPA asset sub-codes — Contas a Receber, Estoques, Imobilizado,
-        # Intangível. Verified against real DFP data (6377-6536 rows each).
-        "contas_a_receber":     _f(vals, "1.01.03"),
-        "estoques":             _f(vals, "1.01.04"),
-        "imobilizado":          _f(vals, "1.02.03"),
-        "intangivel":           _f(vals, "1.02.04"),
         "patrimonio_liquido":   _f(vals, "2.03"),
-        # [v1.10] BPP liability + equity sub-codes — Fornecedores/Obrigações
-        # (2.01.01), Capital Social (2.03.01), Reservas de Capital (2.03.02),
-        # Reservas de Lucros (2.03.04), Lucros Acumulados (2.03.05),
-        # Participação Não Controladores (2.03.09). Verified against real DFP
-        # data (6355-6579 rows each). 2.01.01 has MULTIPLE descriptions
-        # across filers (most common: "Obrigações Sociais e Trabalhistas" at
-        # 6317 rows; also "Fornecedores" / "Contas a Pagar" / "Depósitos").
-        # The payables engine gets whatever the filer uses.
-        "fornecedores":           _f(vals, "2.01.01"),
-        "capital_social":         _f(vals, "2.03.01"),
-        "reservas_capital":       _f(vals, "2.03.02"),
-        "reservas_lucros":        _f(vals, "2.03.04"),
-        "lucros_acumulados":      _f(vals, "2.03.05"),
-        "minority_interest":      _f(vals, "2.03.09"),
         "divida_bruta":         divida_bruta,
         "receita_liquida":      _f(vals, "3.01"),
         "lucro_bruto":          _f(vals, "3.03"),
-        # [v1.9] Missing DRE codes that were in SUMMARY_CODES but not
-        # extracted: 3.02 (COGS), 3.04 (operating expenses),
-        # 3.08 (income tax). Real DFP data confirms all three exist.
-        "custo_mercadorias":      _f(vals, "3.02"),
-        "despesas_operacionais":  _f(vals, "3.04"),
         "ebit":                 _f(vals, "3.05"),
         "resultado_financeiro": _f(vals, "3.06"),
-        # [v1.8] DRE 3.07 — Resultado Líquido das Operações Continuadas.
-        # Sits between Resultado Financeiro (3.06) and Imposto de Renda (3.08).
-        "resultado_liquido_continuadas": _f(vals, "3.07"),
-        "imposto_renda":          _f(vals, "3.08"),
         "lucro_liquido":        _f(vals, "3.11"),
         "fco":                  _f(vals, "6.01"),
         "fci":                  _f(vals, "6.02"),
         "fcf":                  _f(vals, "6.03"),
-        # [v1.11] DFC top-level sub-codes — Variação Cambial + Aumento/Redução
-        # de Caixa. NOT in SUMMARY_CODES prior to v1.11. Real DFP data
-        # confirms both codes exist with 6628 rows each (same as 6.01-6.03).
-        # 6.04 = FX variation on cash + equivalents (typically 0 for non-USD
-        #       filers; can be significant for exporters like PETR4/VALE3)
-        # 6.05 = Net cash + equivalents change (= FCO + FCI + FCF + 6.04);
-        #       useful as a sanity check that flows reconcile to the balance
-        #       sheet change in 1.01.01 (Caixa e Equivalentes).
-        "variacao_cambial":      _f(vals, "6.04"),
-        "variacao_caixa":        _f(vals, "6.05"),
         "da":                   da,
+        "variacao_cambial":     _f(vals, "6.01.04"),
         "proventos":            _f(vals, "7.08.04"),
-        # [v1.7] DVA key metrics — CVM DFP DVA uses 7.xx codes (NOT 1-8).
-        # Verified against real DFP: 7.08 is dominant, 7.11 is newer.
-        "dva_total":            _f(vals, "7.08") or _f(vals, "7.10"),
-        "dva_pessoal":          _f(vals, "7.08.01") or _f(vals, "7.11.01"),
-        "dva_impostos":         _f(vals, "7.08.02") or _f(vals, "7.11.02"),
-        "dva_remu_capital_terceiros": _f(vals, "7.08.03") or _f(vals, "7.11.03"),
-        "dva_remu_capital_proprio":   _f(vals, "7.08.04") or _f(vals, "7.11.04"),
     }
 
 

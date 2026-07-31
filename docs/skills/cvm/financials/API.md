@@ -98,217 +98,99 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 
 `current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
 
-### mode="bpp" (v1.10)
-Balanço Patrimonial Passivo (Balance Sheet — Liabilities + Equity) for the last N periods.
+### mode="dashboard" (v1.12)
+
+7-tab multi-section dashboard, optimized for the report tool's `dashboard` action.
 
 | Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | Ticker, name, or CNPJ |
-| `periods` | `int` | `5` | Number of periods to return |
-| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
-| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
+|-------|------|---------|-------------|
+| company | str | — | Required |
+| consolidado | int | 1 | 1=consolidated, 0=individual |
 
-Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
+**v1.12 tabs:**
 
-The BPP is structured top-to-bottom (Total → Circulante → Fornecedores → Empréstimos Circulante → Não Circulante → Empréstimos Não Circulante → Patrimônio Líquido → Capital Social → Reservas → Lucros Acumulados → Participação Não Controladores), 17 codes:
+1. **Overview** — KPI cards (Receita TTM, EBITDA, Lucro Líquido, ROE, ROIC, Dív.Líq/EBITDA) + summary text + latest-annual metrics table + quarterly trend + freshness metadata.
+2. **Indicadores** — `type: "ratio_grid"` with all 7 ratio categories (Valuation / Rentabilidade / Liquidez / Endividamento / Eficiência / Crescimento / Tributos) via `compute_all_ratios()`.
+3. **Crescimento** — 3M/1Y/5Y growth table (Receita, Lucro Bruto, Lucro Líquido) + bar chart comparing 1Y vs 5Y.
+4. **Balanço** — `type: "subtabs"` with BPA + BPP sub-tabs (latest annual accounts, grouped by section).
+5. **DRE** — latest annual accounts table + 5Y margin trend line chart (Bruta / EBIT / EBITDA / Líquida).
+6. **DFC** — latest annual accounts table + 5Y stacked bar chart (FCO / FCI / FCF).
+7. **DVA** — latest annual accounts table + doughnut chart of wealth distribution (Pessoal / Governo / Credores / Acionistas).
 
-| Code | Label (canonical) | Section |
-|------|-------------------|---------|
-| `2` | Passivo Total | `total` |
-| `2.01` | Passivo Circulante | `current` |
-| `2.01.01` | Fornecedores / Obrigações | `payables` (NEW v1.10) |
-| `2.01.04` | Empréstimos e Financiamentos (Circulante) | `debt_short` |
-| `2.02` | Passivo Não Circulante | `non_current` |
-| `2.02.01` | Empréstimos e Financiamentos (Não Circ.) | `debt_long` |
-| `2.03` | Patrimônio Líquido | `equity` (⚠️ 2.03 meaning trap — see below) |
-| `2.03.01` | Capital Social | `capital` (NEW v1.10) |
-| `2.03.02` | Reservas de Capital | `reserves_capital` (NEW v1.10) |
-| `2.03.04` | Reservas de Lucros | `reserves_profit` (NEW v1.10) |
-| `2.03.05` | Lucros Acumulados | `retained_earnings` (NEW v1.10) |
-| `2.03.09` | Participação Não Controladores | `minority` (NEW v1.10) |
-| `2.04` | Provisões (novo formato) | `provisions_new` |
-| `2.05` | Passivos Fiscais (novo formato) | `tax_liabilities_new` |
-| `2.06` | Outros Passivos (novo formato) | `other_liabilities_new` |
-| `2.07` | Passivos s/ Ativos Não Correntes (novo) | `non_current_new` |
-| `2.08` | Patrimônio Líquido (novo formato) | `equity_new` |
+The dashboard calls the 5 standalone statement modes (bpa/bpp/dre/dfc/dva) via try/except — a failure in one statement degrades the corresponding tab to an error text section instead of crashing the whole dashboard.
 
-The `grupo` filter is `LIKE '%Patrimonial Passivo%'` — this matches BPP
-rows from both consolidated and individual filings, and EXCLUDES the
-separate "Patrimonial Ativo" (BPA) statement. See
-[DFP Architecture → architecture/BPP.md](../../data_sources/cvm/dfp/architecture/BPP.md)
-for the **2.03 meaning trap** (OLD chart = "Patrimônio Líquido" / PL at
-2.03; NEW chart = "Passivos Financeiros ao Custo Amortizado" / DEBT at
-2.03 — PL moves to 2.08 in the NEW chart — 95% of filers still use the
-OLD chart so the pl engine works for the majority) and the **2.01.01
-multiple-descriptions** issue (most filers use "Obrigações Sociais e
-Trabalhistas" at 6317 rows, not "Fornecedores" — the payables engine
-gets whatever the filer uses).
+**Response shape:**
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "kpis": [
+    {"label": "Receita (TTM)", "value": "R$ 500,00 B", "unit": "BRL"},
+    ...
+  ],
+  "tabs": [
+    {"name": "Overview",    "sections": [...]},
+    {"name": "Indicadores", "sections": [{"type": "ratio_grid", ...}]},
+    {"name": "Crescimento", "sections": [{"type": "table", ...}, {"type": "chart", ...}]},
+    {"name": "Balanço",     "sections": [{"type": "subtabs", "tabs": [{"name": "BPA", ...}, {"name": "BPP", ...}]}]},
+    {"name": "DRE",         "sections": [{"type": "table", ...}, {"type": "chart", ...}]},
+    {"name": "DFC",         "sections": [{"type": "table", ...}, {"type": "chart", ...}]},
+    {"name": "DVA",         "sections": [{"type": "table", ...}, {"type": "chart", ...}]}
+  ]
+}
+```
 
-[v1.10] `SUMMARY_CODES` now also includes the 6 BPP liability + equity
-sub-codes (`2.01.01`, `2.03.01`, `2.03.02`, `2.03.04`, `2.03.05`,
-`2.03.09`). `_extract_metrics` exposes them as `fornecedores`,
-`capital_social`, `reservas_capital`, `reservas_lucros`,
-`lucros_acumulados`, `minority_interest` in the per-period `metrics` dict.
+### mode="bpa" / "bpp" / "dre" / "dfc" / "dva" (v1.12)
 
-[v1.10] `KEY_CODES_BY_GRUPO["BPP"]` expanded from 7 codes to 17 codes
-(covering both OLD and NEW CVM chart formats).
-
-### mode="dfc" (v1.11)
-Demonstração do Fluxo de Caixa (Cash Flow Statement) for the last N periods.
+Standalone statement modes — thin wrappers over `complete(grupo=...)` that reshape the per-period accounts list into a dict-keyed shape with `section` labels.
 
 | Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | Ticker, name, or CNPJ |
-| `periods` | `int` | `5` | Number of periods to return |
-| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
-| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
+|-------|------|---------|-------------|
+| company | str | — | Required |
+| period | str | "annual" | "annual" or "quarterly" |
+| consolidado | int | 1 | 1=consolidated, 0=individual |
+| periods | int | 1 (annual) / 4 (quarterly) | Number of periods |
 
-Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
+**Response shape:**
+```json
+{
+  "status": "ok",
+  "company": "PETROLEO BRASILEIRO S.A.",
+  "period_type": "annual",
+  "statement": "DRE",
+  "grupo_filter": "DRE",
+  "periods": [
+    {
+      "data_fim_exerc": "2023-12-31",
+      "meses": 12,
+      "period": "2023",
+      "year": 2023,
+      "quarter": null,
+      "accounts": {
+        "3.01": {"label": "Receita Líquida", "section": "DRE", "valor_brl": 50000000000},
+        "3.03": {"label": "Lucro Bruto",     "section": "DRE", "valor_brl": 20000000000},
+        ...
+      }
+    }
+  ]
+}
+```
 
-The DFC is structured top-to-bottom (FCO → D&A → FCI → FCF → Variação Cambial → Aumento/Redução de Caixa), 6 codes:
+The `section` field is derived from the codigo prefix:
 
-| Code | Label (canonical) | Section |
-|------|-------------------|---------|
-| `6.01`       | Caixa Líquido Atividades Operacionais (FCO) | `operating` |
-| `6.01.01.02` | Depreciação e Amortização | `da` |
-| `6.02`       | Caixa Líquido Atividades de Investimento (FCI) | `investing` |
-| `6.03`       | Caixa Líquido Atividades de Financiamento (FCF) | `financing` |
-| `6.04`       | Variação Cambial s/ Caixa e Equivalentes | `fx_change` (NEW v1.11) |
-| `6.05`       | Aumento (Redução) de Caixa e Equivalentes | `net_change` (NEW v1.11) |
+| Mode | Section labels |
+|------|----------------|
+| bpa  | Ativo Total / Ativo Circulante / Ativo Não Circulante |
+| bpp  | Passivo Total / Passivo Circulante / Passivo Não Circulante / Patrimônio Líquido |
+| dre  | DRE (single section) |
+| dfc  | Operações / Investimento / Financiamento |
+| dva  | Geração (codes 1-7) / Distribuição (codes 8.*) |
 
-The `grupo` filter is `LIKE '%Fluxo de Caixa%'` — this matches BOTH
-DFC_MI (Método Indireto, 98.6% of filers, 318873 rows) AND DFC_MD (Método
-Direto, 1.4% — 4433 rows, banks + insurers) from both consolidated and
-individual filings. See
-[DFP Architecture → architecture/DFC.md](../../data_sources/cvm/dfp/architecture/DFC.md)
-for the **DFC_MI vs DFC_MD** split and the **D&A code issues**:
+Pipe any of these results into the report tool via the generic `financials_statement` adapter:
 
-- `6.01.01.02` (D&A indirect method) — WORKS, 6021 rows in real DFP. Primary D&A code.
-- `6.02.01.02` (D&A direct method fallback) — 0 ROWS in real DFP. Dead code path (returns None silently). Kept for completeness.
-- `6.01.04` — was MISLABELED in v1.2 as "Depreciação e Amortização (DFC_MD alt)" but real DFP shows it is "Pagamentos à Fornecedores" (11 rows), NOT D&A. v1.11 REMOVED from `SUMMARY_CODES` + the `_extract_metrics` D&A fallback chain. The chain is now `6.01.01.02 → 6.02.01.02 → None` (was `6.01.01.02 → 6.02.01.02 → 6.01.04 → None`).
-
-[v1.11] `SUMMARY_CODES` now also includes the 2 new DFC top-level codes
-(`6.04`, `6.05`). `_extract_metrics` exposes them as `variacao_cambial`,
-`variacao_caixa` in the per-period `metrics` dict.
-
-[v1.11] `KEY_CODES_BY_GRUPO["DFC_MI"]` expanded from 4 codes to 6 codes.
-
-[v1.11] **D&A code `6.01.04` removed** — v1.2 had it as a fallback in
-the `_extract_metrics` D&A chain but real DFP shows it is "Pagamentos à
-Fornecedores" (supplier payments — 11 rows), NOT D&A. Keeping it would
-have silently returned wrong D&A values for any filer that populated
-`6.01.04`, corrupting EBITDA = EBIT + D&A. The `da_at` engine in
-`skills/cvm/calculations/engines/da.py` is UNAFFECTED — it uses
-`descricao LIKE '%deprec%' OR '%amort%'` description search (scoped to
-`codigo LIKE '6.01.%'`), NOT code-level fallbacks.
-
-### mode="bpa" (v1.9)
-Balanço Patrimonial Ativo (Balance Sheet — Assets) for the last N periods.
-
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | Ticker, name, or CNPJ |
-| `periods` | `int` | `5` | Number of periods to return |
-| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
-| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
-
-Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
-
-The BPA is structured top-to-bottom (Total → Circulante → Cash → Investments → Receivables → Inventories → Não Circulante → PP&E → Intangibles), 16 codes:
-
-| Code | Label (canonical) | Section |
-|------|-------------------|---------|
-| `1` | Ativo Total | `total` |
-| `1.01` | Ativo Circulante | `current` |
-| `1.01.01` | Caixa e Equivalentes | `cash` |
-| `1.01.02` | Aplicações Financeiras | `investments_short` |
-| `1.01.03` | Contas a Receber | `receivables` (NEW v1.9) |
-| `1.01.04` | Estoques | `inventory` (NEW v1.9) |
-| `1.02` | Ativo Não Circulante | `non_current` |
-| `1.02.01` | Ativo Não Circulante (sub) | `non_current_sub` |
-| `1.02.03` | Imobilizado | `ppe` (NEW v1.9) |
-| `1.02.04` | Intangível | `intangibles` (NEW v1.9) |
-| `1.03`–`1.06` | (varies — multiple descriptions per code) | `other_1`–`other_4` |
-| `1.07` | Imobilizado (novo formato) | `ppe_new` |
-| `1.08` | Intangível (novo formato) | `intangibles_new` |
-
-The `grupo` filter is `LIKE '%Patrimonial Ativo%'` — this matches BPA
-rows from both consolidated and individual filings, and EXCLUDES the
-separate "Patrimonial Passivo" (BPP) statement. See
-[DFP Architecture → architecture/BPA.md](../../data_sources/cvm/dfp/architecture/BPA.md)
-for the old-vs-new chart drift (codes 1.01, 1.02, 1.02.03, 1.02.04 have
-DIFFERENT meanings in old vs new CVM charts — engines query by codigo
-only, so callers needing precise semantics should filter by `descricao`).
-
-[v1.9] `SUMMARY_CODES` now also includes the 4 BPA asset sub-codes
-(`1.01.03`, `1.01.04`, `1.02.03`, `1.02.04`). `_extract_metrics` exposes
-them as `contas_a_receber`, `estoques`, `imobilizado`, `intangivel` in
-the per-period `metrics` dict.
-
-[v1.9] `_extract_metrics` also exposes the 3 previously-missing DRE codes
-that were in `SUMMARY_CODES` but never extracted: `custo_mercadorias`
-(`3.02`), `despesas_operacionais` (`3.04`), `imposto_renda` (`3.08`).
-
-[v1.9] `KEY_CODES_BY_GRUPO["BPA"]` expanded from 6 codes to 16 codes
-(covering both OLD and NEW CVM chart formats).
-
-### mode="dva" (v1.7)
-Demonstração do Valor Adicionado (Value Added Statement) for the last N periods.
-
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | Ticker, name, or CNPJ |
-| `periods` | `int` | `5` | Number of periods to return |
-| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
-| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
-
-Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
-
-The DVA is structured in 2 sections:
-- **Generation side** (codes 1-7): Receitas, Insumos, Valor Adicionado Bruto, Retenções, Valor Adicionado Líquido, VA Recebido, Total a Distribuir
-- **Distribution side** (codes 8.1-8.4): Pessoal, Impostos, Remuneração Capital de Terceiros, Remuneração Capital Próprio
-
-[v1.7] annual/quarterly modes now also include 5 DVA metrics in the `metrics` dict:
-`dva_total`, `dva_pessoal`, `dva_impostos`, `dva_remu_capital_terceiros`, `dva_remu_capital_proprio`.
-
-[v1.7] `complete` mode DVA section expanded from 3 proventos codes to full 15-code statement.
-
-### mode="dre" (v1.8)
-Demonstração do Resultado do Exercício (Income Statement) for the last N periods.
-
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `company` | `str` | (required) | Ticker, name, or CNPJ |
-| `periods` | `int` | `5` | Number of periods to return |
-| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
-| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
-
-Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
-
-The DRE is structured top-to-bottom, 10 codes covering the income statement:
-
-| Code | Label (canonical) | Section |
-|------|-------------------|---------|
-| `3.01` | Receita Líquida de Vendas e/ou Serviços | `revenue` |
-| `3.02` | Custo dos Bens e/ou Serviços Vendidos | `costs` |
-| `3.03` | Resultado Bruto | `gross_profit` |
-| `3.04` | Despesas Administrativas, Gerais e Comerciais | `operating_expenses` |
-| `3.05` | Resultado Antes do Resultado Financeiro e dos Tributos | `ebit` |
-| `3.06` | Resultado Financeiro | `financial_result` |
-| `3.07` | Resultado Líquido das Operações Continuadas | `net_continuing` (NEW v1.8) |
-| `3.08` | Imposto de Renda e Contribuição Social sobre o Lucro | `tax` |
-| `3.09` | Lucro/Prejuízo Consolidado do Período | `net_income` |
-| `3.11` | Lucro/Prejuízo Consolidado do Período (alt) | `net_income_alt` |
-
-The `grupo` filter is `LIKE '%Demonstração do Resultado%'` — this matches DRE
-rows from both consolidated and individual filings, and EXCLUDES the separate
-"Demonstração de Resultado Abrangente" (DRA) statement. See
-[DFP Architecture → architecture/DRE.md](../../data_sources/cvm/dfp/architecture/DRE.md) for the
-multiple-labels-per-code quirks (CVM chart drift over filing years).
-
-[v1.8] `SUMMARY_CODES` now also includes `3.07` (Resultado Líquido das
-Operações Continuadas). `_extract_metrics` exposes it as
-`resultado_liquido_continuadas` in the per-period `metrics` dict.
+```
+report(action="table", data=<bpa result>, config={"adapter": "financials_statement"})
+```
 
 ---
 
@@ -319,18 +201,12 @@ skill(domain="cvm", sub_domain="financials", mode="quarterly", params='{"company
 skill(domain="cvm", sub_domain="financials", mode="annual", params='{"company":"VALE3","periods":10}')
 skill(domain="cvm", sub_domain="financials", mode="complete", params='{"company":"PETR4","grupo":"DRE"}')
 skill(domain="cvm", sub_domain="financials", mode="summary", params='{"company":"PETR4"}')
-skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4"}')
-skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4","quarterly":1,"periods":8}')
-skill(domain="cvm", sub_domain="financials", mode="bpp", params='{"company":"PETR4"}')
-skill(domain="cvm", sub_domain="financials", mode="bpp", params='{"company":"PETR4","quarterly":1,"periods":8}')
-skill(domain="cvm", sub_domain="financials", mode="dfc", params='{"company":"PETR4"}')
-skill(domain="cvm", sub_domain="financials", mode="dfc", params='{"company":"PETR4","quarterly":1,"periods":8}')
-skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4"}')
-skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4","quarterly":1,"periods":8}')
+skill(domain="cvm", sub_domain="financials", mode="dashboard", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PETR4"}')
-skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PETR4","quarterly":1,"periods":8}')
+skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4","period":"annual"}')
+skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4"}')
 ```
 
 ---
 
-*Last updated: 2026-07-30 (v1.11 — DFC mode + 6.04/6.05 codes in SUMMARY_CODES + 6.01.04 mislabel fix). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
+*Last updated: 2026-07-29 (v1.12 — 5 standalone statement modes + 7-tab dashboard).*

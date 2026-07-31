@@ -64,6 +64,9 @@
     {% if sec.type == 'two_column' and sec.left_rows and sec.right_rows %}
     {{ m.two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows) }}
     {% endif %}
+    {% if sec.type == 'subtabs' and sec.tabs %}
+    {{ m.subtabs(sec.tabs, 'tab-' + outer_loop.index|string + '-sub-' + loop.index|string) }}
+    {% endif %}
     {% if sec.type == 'bug' %}
     {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
     {% endif %}

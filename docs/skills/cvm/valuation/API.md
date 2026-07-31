@@ -12,7 +12,7 @@ skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"P
 |-----------|------|----------|-------------|
 | `domain` | `str` | **Yes** | Always `"cvm"` |
 | `sub_domain` | `str` | **Yes** | Always `"valuation"` |
-| `mode` | `str` | **Yes** | `ratios` or `summary` |
+| `mode` | `str` | **Yes** | `ratios`, `summary`, or `dashboard` |
 | `params` | `str` (JSON) | **Yes** | JSON string: `{"company":"PETR4"}` |
 
 ---
@@ -141,6 +141,79 @@ Adds `data_availability` field:
 }
 ```
 
+### `mode="dashboard"` (v1.5 — 6-tab multi-tab dashboard)
+
+Multi-tab valuation dashboard optimized for the report tool's `dashboard`
+action. Calls `ratios()` ONCE and passes the resulting dict to every tab
+builder (no per-tab re-fetching). Each tab builder is independently
+try/except-wrapped so a failure in one tab degrades to an error section
+in that tab, not a crash of the whole dashboard.
+
+**Returns:** `{"status": "ok", "company": ..., "tabs": [...], "kpis": [...]}`
+where `kpis` is a 6-card top-level list (P/L, P/VPA, EV/EBITDA, Div Yield,
+Market Cap, ROE) rendered above all tabs by the dashboard template.
+
+**6 tabs (v1.5):**
+
+| # | Tab | Sections |
+|---|-----|----------|
+| 1 | **Overview** | Key Metrics table (Preço, Market Cap, EV, EBITDA, headline ratios) + Price Details collapsible (price/date/source/shares/market-cap-source/UNIT) |
+| 2 | **Multiples** | Top-10 multiples table `[Métrica, Valor, Interpretação]` (P/L, P/VPA, P/EBIT, P/EBITDA, EV/EBIT, EV/EBITDA, PSR, P/EV, P/FCO, P/FCF) + bar chart (P/L, P/VPA, EV/EBITDA, PSR) + Less Common Multiples collapsible (P/Ativos, P/Passivos, P/RB, P/CG, P/DB, P/Tangible Book) |
+| 3 | **Per-share** | Per-share table `[Métrica, Valor (R$), Preço/Valor]` for LPA, VPA, DPA, RPA, RBPA, CGPA, DBPA, APA, PPA + bar chart (per-share values side-by-side) |
+| 4 | **Profitability** | `ratio_grid` with 1 category: ROE, ROA, ROIC, Gross Margin, Operating Margin, Net Margin, EBITDA Margin, OCF Margin, FCF Margin |
+| 5 | **Liquidity & Leverage** | `ratio_grid` with 2 categories (Liquidity: Current/Quick/Cash Ratio + Working Capital; Leverage: D/E, Net Debt/EBITDA, Financial Leverage, Interest Coverage, Cash Flow to Debt) + Detailed Leverage collapsible (DL/EBIT, DL/EBITDA, Gross D/E) |
+| 6 | **Efficiency & Growth** | Efficiency table (Asset/Inventory/Receivables/Fixed Asset Turnover, CapEx/Revenue) + Growth table (3M/1Y/5Y for Revenue/GP/NI — currently `—` pending historical engines) + growth bar chart (rendered when growth data is available) |
+
+**Section types used** (all already supported by the dashboard template):
+- `{"type": "table", ...}` — for tabular metrics
+- `{"type": "ratio_grid", "categories": [...]}` — for categorized metric cards
+- `{"type": "chart", "chart_data": {...}}` — Chart.js bar chart
+- `{"type": "collapsible", "title": ..., "text": ..., "open": False}` — collapsible text block for less-important metrics
+- `{"type": "text", "text": ...}` — for error sections
+
+**Derived metrics:** The Multiples tab uses `_derive_multiples()` to compute
+P/EBITDA (= market_cap / ebitda), EV/EBIT (= ev / ebit), P/EV
+(= market_cap / ev), P/CG (= market_cap / working_capital), P/DB
+(= market_cap / divida_bruta) from components already in `ratios_dict`.
+The Per-share tab uses `_derive_per_share()` to compute CGPA
+(= working_capital / shares) and DBPA (= divida_bruta / shares). The
+Detailed Leverage collapsible uses `_derive_detailed_leverage()` to
+compute DL/EBIT and Gross D/E. P/Ativos, P/Passivos, P/RB, RBPA, APA,
+PPA are NOT yet computable (require total_assets / total_liabilities /
+gross_revenue engines) — they render as `—` and are tracked in
+[ROADMAP.md](ROADMAP.md).
+
+**Example:**
+
+```
+skill(domain="cvm", sub_domain="valuation", mode="dashboard",
+      params='{"company":"PETR4"}')
+```
+
+Returns:
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "kpis": [
+    {"label": "P/L",            "value": "4,17"},
+    {"label": "P/VPA",          "value": "1,43"},
+    {"label": "EV/EBITDA",      "value": "6,71"},
+    {"label": "Dividend Yield", "value": "4,81%"},
+    {"label": "Market Cap",     "value": "R$ 500,50 B"},
+    {"label": "ROE",            "value": "28,00%"}
+  ],
+  "tabs": [
+    {"name": "Overview",             "sections": [...]},
+    {"name": "Multiples",            "sections": [...]},
+    {"name": "Per-share",            "sections": [...]},
+    {"name": "Profitability",        "sections": [...]},
+    {"name": "Liquidity & Leverage", "sections": [...]},
+    {"name": "Efficiency & Growth",  "sections": [...]}
+  ]
+}
+```
+
 ---
 
 ## 🔢 Metric Formulas
@@ -167,4 +240,4 @@ Adds `data_availability` field:
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; modes + params + return shapes unchanged). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
+*Last updated: 2026-07-29 (v1.5).*

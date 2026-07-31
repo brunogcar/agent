@@ -6,10 +6,10 @@ Covers:
   - TestTTM             : compute_ttm (insufficient data / 4Q sums flows /
                           missing metric → None) — 4 tests.
   - TestDFCMDFallback   : _extract_metrics D&A fallback chain
-                          (DFC_MI 6.01.01.02 → DFC_MD 6.02.01.02 → None).
-                          [v1.11] 6.01.04 fallback removed — that code is
-                          "Pagamentos à Fornecedores" (11 rows in real DFP),
-                          NOT D&A. EBITDA with direct-method D&A — 5 tests.
+                          (DFC_MI 6.01.01.02 → DFC_MD 6.02.01.02 →
+                          None; 6.01.04 is FX variation, not D&A) +
+                          variacao_cambial key + EBITDA with direct-method
+                          D&A — 6 tests.
 
 Pure-Python tests — no DB fixture required.
 """
@@ -169,13 +169,7 @@ class TestTTM:
 # ════════════════════════════════════════════════════════════════════════════
 
 class TestDFCMDFallback:
-    """v1.2 — D&A fallback for direct-method (DFC_MD) filers.
-
-    [v1.11] The 6.01.04 fallback was REMOVED — that code is actually
-    "Pagamentos à Fornecedores" (11 rows in real DFP), NOT D&A. v1.2 had
-    incorrectly labeled it "Depreciação e Amortização (DFC_MD alt)".
-    See test_da_direct_method_alt_fallback for the regression test.
-    """
+    """v1.2 — D&A fallback for direct-method (DFC_MD) filers."""
 
     def test_da_indirect_method_primary(self):
         """D&A from DFC_MI (6.01.01.02) is the primary source."""
@@ -192,16 +186,40 @@ class TestDFCMDFallback:
         assert m["da"] == 3000.0  # direct method fallback
 
     def test_da_direct_method_alt_fallback(self):
-        """[v1.11] 6.01.04 is NOT a D&A fallback — it's "Pagamentos à
-        Fornecedores" (11 rows in real DFP), NOT D&A. v1.2 incorrectly
-        labeled it "Depreciação e Amortização (DFC_MD alt)" — would have
-        returned wrong data (supplier payments, not D&A). v1.11 removed
-        the fallback; now providing only 6.01.04 yields da=None.
+        """[v1.5 fix-tests-version] 6.01.04 is NO LONGER a D&A fallback.
+
+        The 6.01.04 code is "Variações Cambiais" (foreign exchange variations)
+        under DFC operating cash flow — it is NOT depreciation & amortization.
+        Using it as a D&A fallback incorrectly inflated EBITDA for filers that
+        reported FX variations but no D&A in their indirect-method DFC.
+        The 6.01.04 value is now exposed as the dedicated `variacao_cambial`
+        key (see test_variacao_cambial_key below).
         """
         from skills.cvm.financials.fetchers import _extract_metrics
         vals = {"6.01.04": 2000.0}  # no 6.01.01.02, no 6.02.01.02
         m = _extract_metrics(vals)
-        assert m["da"] is None  # 6.01.04 is NOT D&A — fallback removed
+        assert m["da"] is None  # FX variation is not D&A
+        # The value surfaces on the variacao_cambial key instead.
+        assert m["variacao_cambial"] == 2000.0
+
+    def test_variacao_cambial_key(self):
+        """[v1.5 fix-tests-version] _extract_metrics exposes a
+        `variacao_cambial` key sourced from DFC code 6.01.04.
+
+        This is the same code that used to (incorrectly) be a D&A fallback.
+        The key is always present (None when 6.01.04 is missing) so consumers
+        can render the FX variation row on the DFC statement independently
+        from D&A.
+        """
+        from skills.cvm.financials.fetchers import _extract_metrics
+        # When 6.01.04 is present, variacao_cambial carries its value.
+        m = _extract_metrics({"6.01.04": 2000.0})
+        assert m["variacao_cambial"] == 2000.0
+        # When 6.01.04 is absent, variacao_cambial is None (not a KeyError).
+        m2 = _extract_metrics({"6.01.01.02": 5000.0})
+        assert m2["variacao_cambial"] is None
+        # And it's always in the returned dict.
+        assert "variacao_cambial" in _extract_metrics({})
 
     def test_da_none_when_all_missing(self):
         from skills.cvm.financials.fetchers import _extract_metrics

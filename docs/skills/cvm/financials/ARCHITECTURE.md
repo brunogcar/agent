@@ -4,26 +4,26 @@
 
 ## 🔗 Source Code Reference
 
-**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
-
-| File | Purpose |
-|------|---------|
-| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
-
 ```text
 skills/cvm/financials/
-├── __init__.py        [v2.0] uses auto_discover_modes() + make_route() from skills/_base.py — ~50 lines
-├── _registry.py       [v2.0] delegates to skills/_base.py — creates skill's own MODES dict via make_registry(). ~16 lines.
+├── __init__.py        manifest + route() dispatch (auto-discovery)
+├── _registry.py       ModeSpec + register_mode + MODES dict
 ├── modes/             one file per mode, auto-discovered via importlib
 │   ├── __init__.py    minimal package marker
 │   ├── quarterly.py   @register_mode("quarterly")   — default, 8Q
 │   ├── annual.py      @register_mode("annual")      — 5Y from DFP
 │   ├── complete.py    @register_mode("complete")    — by grupo + key codes
 │   ├── summary.py     @register_mode("summary")     — combined latest + current_ratios
-│   └── dashboard.py   @register_mode("dashboard")   — 5-tab thin composition (v1.5)
+│   ├── dashboard.py   @register_mode("dashboard")   — 7-tab thin composition (v1.5; v1.12 reorg)
+│   ├── bpa.py         @register_mode("bpa")         — Balance Patrimonial Ativo (v1.12)
+│   ├── bpp.py         @register_mode("bpp")         — Balance Patrimonial Passivo (v1.12)
+│   ├── dre.py         @register_mode("dre")         — Demonstração do Resultado (v1.12)
+│   ├── dfc.py         @register_mode("dfc")         — Demonstração dos Fluxos de Caixa (v1.12)
+│   ├── dva.py         @register_mode("dva")         — Demonstração do Valor Adicionado (v1.12)
+│   └── _statement_sections.py  shared section classifiers + reshape helper (v1.12)
 ├── fetchers.py        internal data fetching from DFP/ITR (_build_* + _get_* + _extract_metrics)
 ├── helpers.py         _safe_call, _compute_ttm_section (shared utilities)
-├── report.py          dashboard section builders (composition logic for dashboard mode)
+├── report.py          dashboard section builders (composition logic for 7-tab dashboard mode)
 └── metrics.py         ratio computation (SUMMARY_CODES, KEY_CODES_BY_GRUPO, compute_ratios,
                        compute_ebitda, compute_ttm, compute_ebitda_from_engines,
                        compute_ttm_with_engines) — UNCHANGED across v1.6 split
@@ -41,16 +41,11 @@ tests/skills/cvm/financials/
 ├── test_quarterly.py      # TestQuarterlyMode + TestQuarterlyV101Regressions (5 tests)
 ├── test_complete.py       # TestCompleteMode (5 tests)
 ├── test_summary.py        # TestSummaryMode + TestSummaryV101Regressions + TestSummaryCurrentRatios (5 tests)
-├── test_dashboard.py      # TestDashboardMode (5-tab payload assertions) — added v1.5
-├── test_route.py          # TestFinancialsRoute (3 tests)
-├── test_bpa.py            # TestBPAMode — added v1.9
-├── test_bpp.py            # TestBPPMode — added v1.10
-├── test_dre.py            # TestDREMode — added v1.8
-├── test_dfc.py            # TestDFCMode — added v1.11
-└── test_dva.py            # TestDVAMode — added v1.7
+├── test_dashboard.py      # TestDashboardMode (7-tab payload assertions) — added v1.5; v1.12 reorg
+└── test_route.py          # TestFinancialsRoute (4 tests)
 ```
 
-[v1.11] `test_dfc.py` added (11 tests — DFC mode validation, basic shape, route dispatch, quarterly param, manifest registration, codes complete, _extract_metrics new keys, 6.01.04 mislabel regression).
+90 tests total (v1.12 — 5 new standalone modes (bpa/bpp/dre/dfc/dva) auto-discovered; `test_dashboard.py` updated for 7-tab assertions; `test_route.py` updated for 7-tab name list).
 
 ## Data Flow
 
@@ -139,7 +134,12 @@ Summary metrics use these CVM account codes:
 | `annual` | 5 | DFP | annual metrics + ratios |
 | `complete` | 8 (quarterly) / 5 (annual) | ITR + DFP or DFP | full statements by grupo + key codes |
 | `summary` | 1 annual + 4 quarterly | all + calculations | combined latest + trend + `current_ratios` |
-| `dashboard` | — | summary + report builders | 5-tab thin composition (Overview/DRE/Balanço/DFC/Ratios) for report tool's dashboard action (v1.5) |
+| `dashboard` | — | annual + quarterly + calculations + 5 standalone statement modes | 7-tab thin composition (Overview / Indicadores / Crescimento / Balanço / DRE / DFC / DVA) for report tool's dashboard action (v1.5; v1.12 reorg) |
+| `bpa` | 1 (annual) | DFP (BPA grupo) | asset accounts (dict-keyed with section labels) (v1.12) |
+| `bpp` | 1 (annual) | DFP (BPP grupo) | liabilities + equity accounts (dict-keyed) (v1.12) |
+| `dre` | 1 (annual) | DFP (DRE grupo) | income-statement accounts (dict-keyed) (v1.12) |
+| `dfc` | 1 (annual) | DFP (DFC_MI grupo) | cash-flow accounts (dict-keyed) (v1.12) |
+| `dva` | 1 (annual) | DFP (DVA grupo) | value-added accounts (dict-keyed with Geração/Distribuição sections) (v1.12) |
 
 ---
 
@@ -172,4 +172,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-07-30 (v1.11 — DFC mode + 6.04/6.05 sub-codes in SUMMARY_CODES/KEY_CODES_BY_GRUPO/_extract_metrics + 6.01.04 mislabel fix; see [DFP statement charts of accounts](../../data_sources/cvm/dfp/ARCHITECTURE.md) for BPA/BPP/DRE/DFC/DVA chart-of-accounts docs).*
+*Last updated: 2026-07-29 (v1.12 — 5 standalone statement modes + 7-tab dashboard reorg; see CHANGELOG.md for details). Public API + per-period mode behavior unchanged for the 5 pre-existing modes (quarterly / annual / complete / summary). The 5 new statement modes (bpa/bpp/dre/dfc/dva) are additive — thin wrappers over `complete(grupo=...)`.*

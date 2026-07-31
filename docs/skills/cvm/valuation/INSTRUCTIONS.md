@@ -36,8 +36,16 @@
 > - **v1.0.12 (final):** EXACT key match (`key.lower().strip() in {"valor de mercado", "market cap", "valor mercado"}`) + handle list values (investsite returns lists for Consolidado+Individual rows; take first).
 > - **Lesson:** investsite keys are NOT predictable enough for substring matching. Use exact match. Always handle lists — investsite's parser returns lists when rows have multiple value columns.
 
-- **v2.0 lesson:** _registry.py + __init__.py now delegate to `skills/_base.py` (shared ModeSpec + make_registry + make_route + auto_discover_modes). The duplicated ~97-line _registry.py + ~88-line __init__.py boilerplate is gone — each skill's _registry.py is now ~16 lines, __init__.py is ~50 lines. Adding a new mode = drop a file in `modes/` + `@register_mode(...)` (unchanged). Adding a new skill = 3 files (_registry.py + __init__.py + modes/) following the pattern in [SKILLS.md → How to Create a New Skill](../../SKILLS.md). Bug fixes to the dispatch infrastructure now only need to be made in ONE place.
+#### v1.5 — Dashboard reorg: call ratios() ONCE, wrap each builder in try/except
+> - **What changed:** The v1.4 dashboard had 5 tabs built by separate `build_*_section()` helpers, each called with the ratios dict. The v1.5 dashboard has 6 tabs + charts + collapsibles. The v1.4 structure worked but had no defensive wrapping — a single builder exception would crash the whole dashboard.
+> - **Rule:** Call `ratios()` ONCE at the top of `dashboard()` and pass the resulting dict to every tab builder. Do NOT call `ratios()` per-tab (6 calls = 6× the engine load). Wrap each tab builder in `_safe_build()` (try/except) so a failure degrades to an error section in that tab, not a crash.
+> - **Lesson:** The dashboard's value is its resilience — even if every engine fails, the dashboard payload must still build (with all-None values) so the report tool renders a "missing data" page instead of erroring out.
+
+#### v1.5 — Derived metrics via _derive_*() helpers (no new engine calls)
+> - **What changed:** The v1.5 Multiples tab lists 16 price ratios, but only ~10 are directly in `ratios_dict`. The remaining 6 (P/EBITDA, EV/EBIT, P/EV, P/CG, P/DB, etc.) are computable from components already in `ratios_dict` (market_cap, ebit, ebitda, ev, working_capital, divida_bruta).
+> - **Rule:** For metrics NOT in `ratios_dict` but computable from existing keys, use a `_derive_*()` helper in `report.py` (e.g. `_derive_multiples()`, `_derive_per_share()`, `_derive_detailed_leverage()`). Do NOT add new engine calls inside the dashboard — that breaks the "call ratios() once" rule. For metrics requiring NEW data sources (total_assets, total_liabilities, gross_revenue), return None and track in ROADMAP.md.
+> - **Lesson:** The dashboard is a VIEW layer, not a data-fetching layer. If a metric needs new data, it goes in ROADMAP.md (D1 / D2) and stays as '—' until an engine exists.
 
 ---
 
-*Last updated: 2026-07-30 (v2.0).*
+*Last updated: 2026-07-29 (v1.5 — 6-tab dashboard reorg; added v1.5 instructions for ratios()-once + try/except + _derive_*() helpers).*

@@ -45,9 +45,9 @@ class TestValuationRoute:
         assert result["status"] == "ok"
 
     def test_route_dispatches_to_dashboard(self, valuation_env):
-        """[v1.6-valuation-split] route(mode='dashboard', company='PETR4') returns status=ok."""
+        """[v1.5] route(mode='dashboard', company='PETR4') returns status=ok with 6 tabs."""
         from skills.cvm.valuation import route
         result = route(mode="dashboard", company="PETR4")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 5
+        assert len(result["tabs"]) == 6

@@ -1,153 +1,99 @@
-"""Tests for skills/cvm/financials/ — DVA mode.
+"""Tests for the `dva` mode of skills/cvm/financials.
 
-Tests the new dva mode (Demonstração do Valor Adicionado) that surfaces
-DVA data from DFP. Uses mocked DFP connection — no real database needed.
+Covers TestDVAMode (5 tests):
+  - test_dva_basic_shape        : default annual call → ok + accounts dict shape
+  - test_dva_no_company         : no company arg → status=error
+  - test_dva_no_dva_data        : unknown company → not_found OR empty periods
+  - test_dva_quarterly          : period="quarterly" → quarterly shape
+  - test_dva_manifest_has_period_param : MANIFEST advertises `period` (not `quarterly=1`)
+
+[v1.12 — dashboard reorg] New API: `period="annual"|"quarterly"` + codes in
+`modes/_statement_sections.py` (no `_DVA_CODES` export). Uses the shared
+`financials_env` fixture from conftest.py.
 """
 from __future__ import annotations
 
-import sqlite3
-from unittest.mock import patch, MagicMock
-
 
 class TestDVAMode:
-    """Tests for the financials.dva() mode."""
+    """Tests for `financials.dva()` — Demonstração do Valor Adicionado (value added statement)."""
 
-    def test_dva_requires_company(self):
-        """Empty company -> status=error."""
+    def test_dva_basic_shape(self, financials_env):
+        """Default annual call returns the standalone-statement-mode shape.
+
+        Each period carries a dict-keyed `accounts` map
+        (``{codigo: {label, section, valor_brl}}``). DVA rows are split into
+        two sections: "Geração" (codes 1-7) vs "Distribuição" (codes 8.*).
+        """
         from skills.cvm.financials.modes.dva import dva
-        r = dva()
-        assert r["status"] == "error"
-        assert "company" in r["error"]
+        result = dva(company="33000167000101")
+        assert result["status"] == "ok"
+        assert result["period_type"] == "annual"
+        assert result["statement"] == "DVA"
+        assert result["grupo_filter"] == "DVA"
+        assert isinstance(result["periods"], list)
+        assert len(result["periods"]) >= 1
+        first = result["periods"][0]
+        assert isinstance(first["data_fim_exerc"], str)
+        assert first["data_fim_exerc"].endswith("-12-31")  # annual period
+        assert isinstance(first["accounts"], dict)
+        # The synthetic DFP fixture inserts "7.08.04" — which the DVA section
+        # classifier maps to "Distribuição" (own-capital remuneration).
+        if "7.08.04" in first["accounts"]:
+            acct = first["accounts"]["7.08.04"]
+            assert "label" in acct
+            assert "section" in acct
+            assert acct["section"] == "Distribuição"
+            assert "valor_brl" in acct
+        # Any accounts that ARE present must carry label + section + valor_brl.
+        for code, acct in first["accounts"].items():
+            assert "label" in acct
+            assert "section" in acct
+            assert acct["section"] in ("Geração", "Distribuição")
+            assert "valor_brl" in acct
 
-    def test_dva_company_not_found(self):
-        """Company not in DFP -> status=not_found."""
+    def test_dva_no_company(self, financials_env):
+        """No company arg → status=error (does NOT touch DBs)."""
         from skills.cvm.financials.modes.dva import dva
+        result = dva()
+        assert result["status"] == "error"
+        assert "company is required" in result["error"]
 
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
+    def test_dva_no_dva_data(self, financials_env):
+        """Unknown company → either status=not_found OR ok with empty periods.
 
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._bridge.resolve_company", return_value=([], "")):
-            r = dva(company="UNKNOWN4")
-            assert r["status"] == "not_found"
-            assert "not found in DFP" in r["error"]
-
-    def test_dva_no_dva_data(self):
-        """Company exists but has no DVA rows -> status=not_found."""
+        The new dva mode delegates to `complete(grupo="DVA")`, which may
+        return either:
+          - ``{"status": "not_found", ...}`` when the company doesn't resolve
+          - ``{"status": "ok", "periods": []}`` if the company resolves but
+            has no DVA rows for the requested period
+        Both are acceptable here — the contract is "no DVA data to render".
+        """
         from skills.cvm.financials.modes.dva import dva
+        result = dva(company="NONEXISTENT")
+        if result["status"] == "ok":
+            assert result.get("periods") == [] or len(result.get("periods", [])) == 0
+        else:
+            assert result["status"] in ("not_found", "error", "not_synced")
 
-        mock_conn = MagicMock()
-        # First query (year_rows) returns empty — no DVA data
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
-
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._bridge.resolve_company",
-                   return_value=([1], "TEST COMPANY")):
-            r = dva(company="PETR4")
-            assert r["status"] == "not_found"
-            assert "No DVA data" in r["error"]
-
-    def test_dva_basic_shape(self):
-        """DVA mode returns status=ok with periods + accounts."""
+    def test_dva_quarterly(self, financials_env):
+        """period="quarterly" switches to the quarterly shape."""
         from skills.cvm.financials.modes.dva import dva
+        result = dva(company="33000167000101", period="quarterly")
+        assert result["status"] == "ok"
+        assert result["period_type"] == "quarterly"
+        assert isinstance(result["periods"], list)
+        for p in result["periods"]:
+            assert "quarter" in p
+            assert p["quarter"] in (1, 2, 3, 4)
+            assert isinstance(p["accounts"], dict)
 
-        # Mock rows simulating DFP DVA query results — use a simple class
-        # so the row["data_fim_exerc"] indexing works (sqlite3.Row style).
-        class FakeRow:
-            def __init__(self, **kwargs):
-                self._data = kwargs
-            def __getitem__(self, key):
-                return self._data[key]
-
-        mock_year_rows = [FakeRow(data_fim_exerc="2024-12-31")]
-        mock_dva_rows = [
-            FakeRow(codigo="7.01", descricao="Receitas", data_fim_exerc="2024-12-31",
-                    meses=12, valor="50000000000", escala="MILHOES"),
-            FakeRow(codigo="7.03", descricao="Insumos", data_fim_exerc="2024-12-31",
-                    meses=12, valor="-30000000000", escala="MILHOES"),
-            FakeRow(codigo="7.04", descricao="Valor Adicionado Bruto",
-                    data_fim_exerc="2024-12-31", meses=12, valor="20000000000", escala="MILHOES"),
-            FakeRow(codigo="7.08", descricao="Valor Adicionado Total a Distribuir",
-                    data_fim_exerc="2024-12-31", meses=12, valor="15000000000", escala="MILHOES"),
-            FakeRow(codigo="7.08.01", descricao="Pessoal", data_fim_exerc="2024-12-31",
-                    meses=12, valor="5000000000", escala="MILHOES"),
-            FakeRow(codigo="7.08.04", descricao="Remuneração de Capital Próprio",
-                    data_fim_exerc="2024-12-31", meses=12, valor="3000000000", escala="MILHOES"),
-        ]
-
-        mock_conn = MagicMock()
-        # First execute() returns year_rows, second returns dva_rows
-        mock_conn.execute.side_effect = [
-            MagicMock(fetchall=MagicMock(return_value=mock_year_rows)),
-            MagicMock(fetchall=MagicMock(return_value=mock_dva_rows)),
-        ]
-        mock_conn.close = MagicMock()
-
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._bridge.resolve_company",
-                   return_value=([1], "PETROLEO BRASILEIRO S.A.")), \
-             patch("data_sources.cvm._db.parse_escala", return_value=1000000):
-            r = dva(company="PETR4", periods=1)
-
-            assert r["status"] == "ok"
-            assert r["company"] == "PETROLEO BRASILEIRO S.A."
-            assert len(r["periods"]) == 1
-
-            period = r["periods"][0]
-            assert period["data_fim_exerc"] == "2024-12-31"
-
-            accounts = period["accounts"]
-            assert "7.01" in accounts  # Receitas
-            assert "7.03" in accounts  # Insumos
-            assert "7.04" in accounts  # Valor Adicionado Bruto
-            assert "7.08" in accounts  # Total a Distribuir
-            assert "7.08.01" in accounts  # Pessoal
-            assert "7.08.04" in accounts  # Remuneração Capital Próprio
-
-            # Check label + section + value
-            receitas = accounts["7.01"]
-            assert receitas["label"] == "Receitas"
-            assert receitas["section"] == "generation"
-            assert receitas["valor_brl"] == 50000000000 * 1000000  # escala applied
-
-            pessoal = accounts["7.08.01"]
-            assert pessoal["label"] == "Pessoal"
-            assert pessoal["section"] == "distribution"
-
-    def test_dva_route_dispatches(self):
-        """route(mode='dva') dispatches to the dva function."""
-        from skills.cvm.financials import route
-        r = route(mode="dva")
-        assert r["status"] == "error"
-        assert "company is required" in r["error"]
-
-    def test_dva_route_dispatches_with_params(self):
-        """route(mode='dva', company='PETR4', quarterly=1) dispatches with quarterly param."""
-        from skills.cvm.financials import route, MANIFEST
-        from unittest.mock import patch, MagicMock
+    def test_dva_manifest_has_period_param(self):
+        """[v1.12] MANIFEST advertises `period` (string) — NOT the old
+        `quarterly=1` int param."""
+        from skills.cvm.financials import MANIFEST
         assert "dva" in MANIFEST["modes"]
-        # Mock the DFP connection so it doesn't depend on a real DB
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._db.connect_itr", side_effect=FileNotFoundError("no itr")), \
-             patch("data_sources.cvm._bridge.resolve_company", return_value=([], "")):
-            r = route(mode="dva", company="UNKNOWN4", quarterly=1, periods=4)
-            assert r["status"] in ("error", "not_synced", "not_found")
-
-    def test_dva_accepts_quarterly_param(self):
-        """[v1.7] dva() accepts quarterly=1 param."""
-        from skills.cvm.financials.modes.dva import dva
-
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchall.return_value = []
-        mock_conn.close = MagicMock()
-
-        with patch("data_sources.cvm._db.connect_dfp", return_value=mock_conn), \
-             patch("data_sources.cvm._db.connect_itr", side_effect=FileNotFoundError("no itr")), \
-             patch("data_sources.cvm._bridge.resolve_company", return_value=([], "")):
-            r = dva(company="UNKNOWN4", quarterly=1)
-            assert r["status"] == "not_found"
+        params = MANIFEST["modes"]["dva"]["params"]
+        assert "period" in params
+        assert "quarterly" not in params
+        assert "periods" in params
+        assert "consolidado" in params

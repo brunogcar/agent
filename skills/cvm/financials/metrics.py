@@ -103,75 +103,20 @@ def _build_summary_codes():
 
     # Add financials-specific codes not in RESUMO_ACCOUNTS
     codes["1.01.01"]    = ("BPA", "Caixa e Equivalentes")
-    # [v1.9] BPA asset sub-codes — verified against real DFP data (6377-6536
-    # rows each). NOT in RESUMO_ACCOUNTS (the catalog stops at 1 / 1.01).
-    # Real DFP data confirms:
-    #   1.01.03 — Contas a Receber (6389 rows)
-    #   1.01.04 — Estoques (6377 rows)
-    #   1.02.03 — Imobilizado (6505 rows) — OLD chart (NEW uses 1.07)
-    #   1.02.04 — Intangível (6430 rows) — OLD chart (NEW uses 1.08)
-    codes["1.01.03"]    = ("BPA", "Contas a Receber")
-    codes["1.01.04"]    = ("BPA", "Estoques")
-    codes["1.02.03"]    = ("BPA", "Imobilizado")
-    codes["1.02.04"]    = ("BPA", "Intangível")
     codes["2.01.04"]    = ("BPP", "Empréstimos e Financiamentos (Circulante)")
     codes["2.02.01"]    = ("BPP", "Empréstimos e Financiamentos (Não Circulante)")
-    # [v1.10] BPP liability + equity sub-codes — verified against real DFP
-    # data (6355-6579 rows each). NOT in RESUMO_ACCOUNTS (the catalog stops
-    # at 2 / 2.03). Real DFP data confirms:
-    #   2.01.01 — Fornecedores / Obrigações Sociais / Contas a Pagar
-    #             (6476 rows; MULTIPLE descriptions per code — most common
-    #             "Obrigações Sociais e Trabalhistas" at 6317 rows; also
-    #             "Fornecedores", "Contas a Pagar", "Depósitos")
-    #   2.03.01 — Capital Social (6579 rows)
-    #   2.03.02 — Reservas de Capital (6558 rows)
-    #   2.03.04 — Reservas de Lucros (6480 rows)
-    #   2.03.05 — Lucros Acumulados (6453 rows)
-    #   2.03.09 — Participação Não Controladores (6355 rows)
-    # ⚠️ 2.03 itself has chart-drift: OLD chart = "Patrimônio Líquido" (PL);
-    #    NEW chart = "Passivos Financeiros ao Custo Amortizado" (DEBT — not
-    #    PL!). 95% of filers (6352/6681 rows) still use the OLD chart, so
-    #    the pl engine works for the majority. Documented in BPP.md.
-    codes["2.01.01"]    = ("BPP", "Fornecedores / Obrigações")
-    codes["2.03.01"]    = ("BPP", "Capital Social")
-    codes["2.03.02"]    = ("BPP", "Reservas de Capital")
-    codes["2.03.04"]    = ("BPP", "Reservas de Lucros")
-    codes["2.03.05"]    = ("BPP", "Lucros Acumulados")
-    codes["2.03.09"]    = ("BPP", "Participação Não Controladores")
-    # [v1.8] DRE 3.07 — Resultado Líquido das Operações Continuadas. NOT in
-    # RESUMO_ACCOUNTS (the catalog stops at 3.06/3.09/3.11). Real DFP data
-    # has 6629 rows for 3.07 — it sits between Resultado Financeiro (3.06)
-    # and Imposto de Renda (3.08) in the CVM chart of accounts.
-    codes["3.07"]       = ("DRE", "Resultado Líquido das Operações Continuadas")
     codes["6.01.01.02"] = ("DFC_MI", "Depreciação e Amortização (Método Indireto)")
     codes["7.08.04"]    = ("DVA", "Remuneração de Capitais Próprios (total)")
     # [v1.2] DFC_MD (direct method) D&A fallback code — some filers use direct
-    # method where D&A is in a different sub-account. The query engine returns
-    # whichever exists for a given company.
-    # ⚠️ [v1.11] Verified against real DFP data:
-    #   - 6.02.01.02 has 0 ROWS — dead code path, returns None silently.
-    #     Kept for completeness (no harm; just a no-op fallback).
-    #   - 6.01.04 was MISLABELED in v1.2 as "Depreciação e Amortização (DFC_MD
-    #     alt)" — the DB actually says "Pagamentos à Fornecedores" (11 rows).
-    #     Using it as a D&A fallback would return WRONG data (supplier
-    #     payments, not D&A). REMOVED from SUMMARY_CODES and from the
-    #     `_extract_metrics` fallback chain in v1.11.
+    # method where D&A is in a different sub-account. We fetch both; the query
+    # engine returns whichever exists for a given company.
     codes["6.02.01.02"] = ("DFC_MD", "Depreciação e Amortização (Método Direto)")
-    # [v1.11] DFC top-level codes — Variação Cambial + Aumento/Redução de
-    # Caixa. NOT in RESUMO_ACCOUNTS (the catalog only has 6.01-6.03). Real
-    # DFP data confirms both exist with 6628 rows each (same as 6.01-6.03).
-    # 6.04 = FX variation on cash + equivalents (typically 0 for non-USD filers)
-    # 6.05 = Net cash + equivalents change (= FCO + FCI + FCF + 6.04)
-    codes["6.04"] = ("DFC_MI", "Variação Cambial s/ Caixa e Equivalentes")
-    codes["6.05"] = ("DFC_MI", "Aumento (Redução) de Caixa e Equivalentes")
-    # [v1.7] DVA key metrics — CVM DFP DVA uses 7.xx codes (NOT 1-8).
-    # Verified against real DFP: code "7" has 0 rows; "7.08" has data.
-    # 7.08 is the dominant format; 7.11 is newer (~75 rows).
-    codes["7.08"]     = ("DVA", "Valor Adicionado Total a Distribuir")
-    codes["7.08.01"]  = ("DVA", "Pessoal (DVA)")
-    codes["7.08.02"]  = ("DVA", "Impostos, Taxas e Contribuições (DVA)")
-    codes["7.08.03"]  = ("DVA", "Remuneração de Capital de Terceiros (DVA)")
-    # 7.08.04 already added above (Remuneração de Capitais Próprios / proventos)
+    # [v1.5 fix-tests-version] 6.01.04 is "Variações Cambiais" (foreign
+    # exchange variations) under DFC operating cash flow — NOT D&A. It was
+    # previously (mis)labelled as a D&A fallback. It now has its own dedicated
+    # `variacao_cambial` key in _extract_metrics, so it is fetched as part of
+    # the DFC operating-cash-flow family (DFC_MI grupo prefix 6.01.*).
+    codes["6.01.04"]    = ("DFC_MI", "Variações Cambiais (FCO)")
     return codes
 
 
@@ -179,39 +124,11 @@ SUMMARY_CODES = _build_summary_codes()
 
 # Key codes for `complete` mode (per grupo, not all 497)
 KEY_CODES_BY_GRUPO = {
-    # [v1.9] Expanded BPA — covers OLD chart (1.01, 1.02, 1.02.03, 1.02.04)
-    # AND NEW chart (1.07 = Imobilizado, 1.08 = Intangível). Codes 1.03-1.06
-    # are also included because they exist in real DFP data with multiple
-    # descriptions per code (CVM chart drift over years).
-    "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.01.03", "1.01.04",
-               "1.02", "1.02.01", "1.02.03", "1.02.04",
-               "1.03", "1.04", "1.05", "1.06", "1.07", "1.08"],
-    # [v1.10] Expanded BPP — covers OLD chart (2.01, 2.02, 2.03, 2.03.01-2.03.09)
-    # AND NEW chart (2.04=Provisões, 2.05=Passivos Fiscais, 2.06=Outros
-    # Passivos, 2.07=Passivos s/ Ativos Não Correntes, 2.08=Patrimônio Líquido
-    # — in the NEW chart, 2.03 becomes amortized-cost debt and PL moves to
-    # 2.08). 95% of filers (6352/6681 rows) still use OLD chart. Codes 2.xx
-    # are unique to BPP (BPA uses 1.xx).
-    "BPP":    ["2", "2.01", "2.01.01", "2.01.04", "2.02", "2.02.01",
-               "2.03", "2.03.01", "2.03.02", "2.03.04", "2.03.05", "2.03.09",
-               "2.04", "2.05", "2.06", "2.07", "2.08"],
-    "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.07", "3.09", "3.11"],
-    # [v1.11] Expanded DFC — added 6.04 (Variação Cambial s/ Caixa e
-    # Equivalentes) + 6.05 (Aumento/Redução de Caixa e Equivalentes). The
-    # standalone `dfc` mode also surfaces these. Real DFP data confirms both
-    # codes exist with 6628 rows each (same as 6.01-6.03). Codes 6.xx are
-    # unique to DFC (BPA uses 1.xx, BPP uses 2.xx, DRE uses 3.xx, DVA uses
-    # 7.xx). The `grupo LIKE '%Fluxo de Caixa%'` filter matches BOTH DFC_MI
-    # (Método Indireto, 98.6% of filers) AND DFC_MD (Método Direto, 1.4% —
-    # banks + insurers).
-    "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03", "6.04", "6.05"],
-    # [v1.7] Expanded DVA — CVM DFP uses 7.xx codes (NOT 1-8).
-    # Generation side (7.01-7.08) + distribution side (7.08.01-7.08.04)
-    # + new format (7.11.01-7.11.04) + existing proventos.
-    "DVA":    ["7.01", "7.03", "7.04", "7.05", "7.06", "7.07", "7.08", "7.10",
-               "7.08.01", "7.08.02", "7.08.03", "7.08.04",
-               "7.11.01", "7.11.02", "7.11.03", "7.11.04",
-               "7.08.04.01", "7.08.04.02"],
+    "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.02", "1.02.01"],
+    "BPP":    ["2", "2.01", "2.01.04", "2.02", "2.02.01", "2.03", "2.03.01"],
+    "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.09", "3.11"],
+    "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03"],
+    "DVA":    ["7.08.04", "7.08.04.01", "7.08.04.02"],
 }
 
 

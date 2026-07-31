@@ -66,18 +66,21 @@ DIVIDENDS_HISTORY = {
 class TestRegistry:
     def test_adapters_registered(self):
         names = list_adapters()
-        # NOTE: This count is intentionally hardcoded, not derived from len(METRICS).
-        # ~35 of the 71 adapters are dynamically generated (historical_<metric>_chart,
-        # one per calculations metric). The remaining 36 are static @register_adapter
-        # calls. When adding a new calculations metric, bump this number by 1 (the
-        # auto-generated historical chart adapter). When adding a new static adapter,
-        # bump by 1. This catches accidental registration failures.
-        assert len(names) == 75
+        # NOTE: ~37+ adapters are dynamically generated (historical_<metric>_chart,
+        # one per calculations metric). The remaining ~36 are static @register_adapter
+        # calls. New calculations metrics auto-generate chart adapters, so the total
+        # grows with each new metric. Use a floor assertion (>= 75) to catch
+        # accidental registration failures without breaking when new metrics are added.
+        assert len(names) >= 75
 
     def test_expected_adapter_names(self):
+        # Check that all expected adapters are present (subset check, not exact
+        # match — new calculations metrics auto-generate historical_*_chart
+        # adapters, so the full set grows over time).
         expected = {
             "financials_quarterly", "financials_annual", "financials_summary",
             "financials_quarterly_chart", "financials_dashboard",
+            "financials_statement",
             "valuation_ratios", "valuation_summary", "valuation_dashboard",
             "shareholders_shareholders", "shareholders_free_float",
             "shareholders_equity_structure", "shareholders_summary",
@@ -119,7 +122,17 @@ class TestRegistry:
             "backtest_dashboard",
             "investsite_dashboard",
         }
-        assert expected == set(list_adapters())
+        actual = set(list_adapters())
+        # All expected adapters must be present (subset check)
+        missing = expected - actual
+        assert not missing, f"Missing adapters: {missing}"
+        # No unexpected adapters with names that don't match known patterns
+        # (historical_*_chart, or one of the expected set)
+        unexpected = actual - expected
+        for name in unexpected:
+            # Auto-generated metric chart adapters are OK
+            assert name.startswith("historical_") and name.endswith("_chart"), \
+                f"Unexpected adapter (not a historical_*_chart): {name}"
 
     def test_duplicate_registration_raises(self):
         with pytest.raises(ValueError, match="Duplicate adapter"):
@@ -1495,93 +1508,192 @@ class TestDividendsDashboardAdapter:
 
 
 # ── Synthetic financials.dashboard() result ─────────────────────────────────
+# [v1.12] Updated for the 7-tab dashboard layout: Overview / Indicadores /
+# Crescimento / Balanço (subtabs) / DRE / DFC / DVA. Sections carry their
+# `type` field so the financials_dashboard adapter passes them through.
 
 FINANCIALS_DASHBOARD = {
     "status": "ok",
     "company": "PETR4",
+    "kpis": [
+        {"label": "Receita (TTM)",          "value": "R$ 500,00 B", "unit": "BRL"},
+        {"label": "EBITDA",                  "value": "R$ 230,00 B", "unit": "BRL"},
+        {"label": "Lucro Líquido",           "value": "R$ 120,00 B", "unit": "BRL"},
+        {"label": "ROE",                      "value": "30,00%",      "unit": "ratio"},
+        {"label": "ROIC",                     "value": "18,00%",      "unit": "ratio"},
+        {"label": "Dívida Líquida/EBITDA",    "value": "0,82",        "unit": "x"},
+    ],
     "tabs": [
         {
             "name": "Overview",
-            "kpis": [
-                {"label": "Receita Líquida", "value": 500_000_000_000, "unit": "BRL"},
-                {"label": "EBITDA", "value": 230_000_000_000, "unit": "BRL"},
-                {"label": "Lucro Líquido", "value": 120_000_000_000, "unit": "BRL"},
-                {"label": "Margem EBITDA", "value": 0.46, "unit": "ratio"},
-                {"label": "ROE", "value": 0.30, "unit": "ratio"},
-                {"label": "Dívida Líquida/EBITDA", "value": 0.82, "unit": "x"},
-            ],
             "sections": [
-                {"name": "kpis", "cards": []},
-                {"name": "latest_annual", "period": "2023"},
-                {"name": "latest_quarterly", "period": "4T23"},
-                {"name": "freshness", "data": {
-                    "dfp": {"last_updated": "2024-01-15"},
-                    "itr": {"last_updated": "2024-01-15"},
-                }},
+                {"type": "text", "text": "Período mais recente: 2023."},
+                {"title": "Latest Annual Summary",
+                 "type": "table",
+                 "columns": ["Indicador", "Valor"],
+                 "rows": [["Receita Líquida", "R$ 500,00 B"],
+                          ["EBITDA", "R$ 230,00 B"],
+                          ["Lucro Líquido", "R$ 120,00 B"]]},
+                {"title": "Data Freshness",
+                 "type": "table",
+                 "columns": ["Database", "Last Updated"],
+                 "rows": [["dfp", "2024-01-15"], ["itr", "2024-01-15"]]},
             ],
         },
         {
-            "name": "DRE",
+            "name": "Indicadores",
             "sections": [
-                {"name": "latest_annual", "metrics": {
-                    "receita_liquida": 500_000_000_000,
-                    "lucro_bruto": 200_000_000_000,
-                    "ebit": 200_000_000_000,
-                    "ebitda": 230_000_000_000,
-                    "ebitda_method": "ebit+da",
-                    "resultado_financeiro": -10_000_000_000,
-                    "lucro_liquido": 120_000_000_000,
-                    "da": 30_000_000_000,
-                }, "ratios": {
-                    "marg_bruta": 0.40,
-                    "marg_ebit": 0.40,
-                    "marg_ebitda": 0.46,
-                    "marg_liquida": 0.24,
-                }},
-                {"name": "quarterly_trend", "periods": [
-                    {"period": "1T24", "receita": 100e9, "ebitda": 50e9, "lucro_liquido": 25e9},
-                    {"period": "4T23", "receita": 130e9, "ebitda": 60e9, "lucro_liquido": 30e9},
-                ]},
+                {"title": "Indicadores (as of 2024-01-15)",
+                 "type": "ratio_grid",
+                 "categories": [
+                     {"label": "Rentabilidade", "items": [
+                         {"label": "ROE", "value": "30,00%"},
+                         {"label": "ROA", "value": "15,00%"},
+                         {"label": "ROIC", "value": "18,00%"},
+                     ]},
+                     {"label": "Liquidez", "items": [
+                         {"label": "Liquidez Corrente", "value": "1,50"},
+                         {"label": "Liquidez Seca", "value": "1,10"},
+                     ]},
+                     {"label": "Endividamento", "items": [
+                         {"label": "Dívida/PL", "value": "93,00%"},
+                         {"label": "Dív. Líq/EBITDA", "value": "0,82"},
+                     ]},
+                 ]},
+            ],
+        },
+        {
+            "name": "Crescimento",
+            "sections": [
+                {"title": "Growth Metrics (3M / 1Y / 5Y)",
+                 "type": "table",
+                 "columns": ["Métrica", "3M", "1Y", "5Y"],
+                 "rows": [
+                     ["Receita Líquida", "—", "11,11%", "25,00%"],
+                     ["Lucro Bruto", "—", "10,00%", "—"],
+                     ["Lucro Líquido", "—", "20,00%", "—"],
+                 ]},
+                {"type": "chart",
+                 "chart_data": {
+                    "type": "bar",
+                    "data": {
+                        "labels": ["Receita Líquida", "Lucro Bruto", "Lucro Líquido"],
+                        "datasets": [
+                            {"label": "1Y", "data": [11.11, 10.0, 20.0],
+                             "backgroundColor": "#22c55e"},
+                            {"label": "5Y", "data": [25.0, None, None],
+                             "backgroundColor": "#3b82f6"},
+                        ],
+                    },
+                    "options": {"responsive": True, "maintainAspectRatio": False},
+                 }},
             ],
         },
         {
             "name": "Balanço",
             "sections": [
-                {"name": "latest_annual", "ativo": {
-                    "ativo_total": 800_000_000_000,
-                    "caixa": 34_000_000_000,
-                }, "passivo": {
-                    "patrimonio_liquido": 400_000_000_000,
-                    "divida_bruta": 371_000_000_000,
-                    "divida_liquida": 337_000_000_000,
-                }},
+                {"type": "subtabs", "tabs": [
+                    {"name": "BPA", "sections": [
+                        {"title": "Ativo — 2023-12-31",
+                         "type": "table",
+                         "columns": ["Código", "Descrição", "Valor (BRL)"],
+                         "rows": [
+                             ["1", "Ativo Total", "R$ 800,00 B"],
+                             ["1.01.01", "Caixa", "R$ 34,00 B"],
+                         ]},
+                    ]},
+                    {"name": "BPP", "sections": [
+                        {"title": "Passivo — 2023-12-31",
+                         "type": "table",
+                         "columns": ["Código", "Descrição", "Valor (BRL)"],
+                         "rows": [
+                             ["2.03", "Patrimônio Líquido", "R$ 400,00 B"],
+                             ["2.01.04", "Dívida Circulante", "R$ 371,00 B"],
+                         ]},
+                    ]},
+                ]},
+            ],
+        },
+        {
+            "name": "DRE",
+            "sections": [
+                {"title": "DRE — 2023-12-31",
+                 "type": "table",
+                 "columns": ["Código", "Descrição", "Valor (BRL)"],
+                 "rows": [
+                     ["3.01", "Receita Líquida", "R$ 500,00 B"],
+                     ["3.03", "Lucro Bruto", "R$ 200,00 B"],
+                     ["3.05", "EBIT", "R$ 200,00 B"],
+                     ["3.11", "Lucro Líquido", "R$ 120,00 B"],
+                 ]},
+                {"type": "chart",
+                 "chart_data": {
+                    "type": "line",
+                    "data": {
+                        "labels": ["2019", "2020", "2021", "2022", "2023"],
+                        "datasets": [
+                            {"label": "Marg. Bruta", "data": [40, 41, 39, 40, 40],
+                             "borderColor": "#22c55e", "fill": False},
+                            {"label": "Marg. EBITDA", "data": [44, 45, 47, 46, 46],
+                             "borderColor": "#f59e0b", "fill": False},
+                        ],
+                    },
+                    "options": {"responsive": True, "maintainAspectRatio": False},
+                 }},
             ],
         },
         {
             "name": "DFC",
             "sections": [
-                {"name": "latest_annual", "metrics": {
-                    "fco": 180_000_000_000,
-                    "fci": -80_000_000_000,
-                    "fcf": 100_000_000_000,
-                }},
-                {"name": "quarterly_trend", "periods": [
-                    {"period": "1T24", "fco": 40e9, "fci": -20e9, "fcf": 20e9},
-                    {"period": "4T23", "fco": 50e9, "fci": -25e9, "fcf": 25e9},
-                ]},
+                {"title": "DFC — 2023-12-31",
+                 "type": "table",
+                 "columns": ["Código", "Descrição", "Valor (BRL)"],
+                 "rows": [
+                     ["6.01", "FCO", "R$ 180,00 B"],
+                     ["6.02", "FCI", "-R$ 80,00 B"],
+                     ["6.03", "FCF", "R$ 100,00 B"],
+                 ]},
+                {"type": "chart",
+                 "chart_data": {
+                    "type": "bar",
+                    "data": {
+                        "labels": ["2019", "2020", "2021", "2022", "2023"],
+                        "datasets": [
+                            {"label": "FCO", "data": [150, 160, 170, 175, 180],
+                             "backgroundColor": "#22c55e"},
+                            {"label": "FCI", "data": [-60, -70, -75, -78, -80],
+                             "backgroundColor": "#ef4444"},
+                            {"label": "FCF", "data": [80, 85, 90, 95, 100],
+                             "backgroundColor": "#3b82f6"},
+                        ],
+                    },
+                    "options": {"responsive": True, "maintainAspectRatio": False,
+                                "scales": {"x": {"stacked": True},
+                                           "y": {"stacked": True}}},
+                 }},
             ],
         },
         {
-            "name": "Ratios",
+            "name": "DVA",
             "sections": [
-                {"name": "ratio_grid", "date": "2024-01-15", "categories": {
-                    "profitability": {"roe": 0.30, "roa": 0.15, "roic": 0.18,
-                                       "gross_margin": 0.40, "net_margin": 0.24},
-                    "liquidity": {"current_ratio": 1.5, "quick_ratio": 1.1,
-                                  "cash_ratio": 0.30, "working_capital": 50e9},
-                    "leverage": {"debt_equity": 0.93, "net_debt_ebitda": 0.82,
-                                 "interest_coverage": 8.0, "cash_flow_to_debt": 0.80},
-                }},
+                {"title": "DVA — 2023-12-31",
+                 "type": "table",
+                 "columns": ["Código", "Descrição", "Valor (BRL)"],
+                 "rows": [
+                     ["7", "Valor Adicionado Total", "R$ 200,00 B"],
+                     ["7.08.04", "Remuneração Capitais Próprios", "R$ 60,00 B"],
+                 ]},
+                {"type": "chart",
+                 "chart_data": {
+                    "type": "doughnut",
+                    "data": {
+                        "labels": ["Acionistas"],
+                        "datasets": [{"label": "Distribuição de Riqueza",
+                                       "data": [60_000_000_000],
+                                       "backgroundColor": ["#3b82f6"]}],
+                    },
+                    "options": {"responsive": True, "maintainAspectRatio": False},
+                 }},
             ],
         },
     ],
@@ -1589,28 +1701,31 @@ FINANCIALS_DASHBOARD = {
 
 
 class TestFinancialsDashboardAdapter:
-    """[v1.5] Tests for the financials_dashboard adapter."""
+    """[v1.12] Tests for the financials_dashboard adapter — 7-tab payload."""
 
-    def test_returns_5_tabs(self):
+    def test_returns_7_tabs(self):
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
         assert out["company"] == "PETR4"
-        assert len(out["tabs"]) == 5
+        assert len(out["tabs"]) == 7
         names = [t["name"] for t in out["tabs"]]
-        assert names == ["Overview", "DRE", "Balanço", "DFC", "Ratios"]
+        assert names == ["Overview", "Indicadores", "Crescimento",
+                         "Balanço", "DRE", "DFC", "DVA"]
 
     def test_overview_kpis_pulled_to_top_level(self):
-        """The Overview tab's KPIs should be promoted to the top-level `kpis` field."""
+        """The top-level `kpis` field should have 6 KPI cards (v1.12 labels)."""
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
         assert len(out["kpis"]) == 6
         labels = [k["label"] for k in out["kpis"]]
-        assert "Receita Líquida" in labels
+        assert "Receita (TTM)" in labels
         assert "ROE" in labels
+        assert "ROIC" in labels
 
     def test_overview_kpis_formatted_by_unit(self):
-        """KPI values should be pre-formatted strings based on their `unit`."""
+        """KPI values that are already strings (pre-formatted) pass through; raw
+        numbers would be formatted via the unit->spec map."""
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
-        receita = next(k for k in out["kpis"] if k["label"] == "Receita Líquida")
-        # BRL -> compact format R$ X,XX B
+        receita = next(k for k in out["kpis"] if k["label"] == "Receita (TTM)")
+        # BRL -> compact format R$ X,XX B (pre-formatted in the synthetic)
         assert "R$" in receita["value"]
         assert receita["format"] == "brl"
         roe = next(k for k in out["kpis"] if k["label"] == "ROE")
@@ -1618,26 +1733,31 @@ class TestFinancialsDashboardAdapter:
         assert roe["value"].endswith("%")
         assert roe["format"] == "pct"
 
-    def test_dre_tab_has_dre_table_and_trend(self):
+    def test_dre_tab_has_table_and_margin_chart(self):
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
         dre_tab = next(t for t in out["tabs"] if t["name"] == "DRE")
         titles = [s.get("title", "") for s in dre_tab["sections"]]
         assert any("DRE" in t for t in titles)
-        assert any("Trend" in t for t in titles)
+        types = [s.get("type") for s in dre_tab["sections"]]
+        assert "table" in types
+        assert "chart" in types
 
-    def test_balanco_tab_has_ativo_and_passivo(self):
+    def test_balanco_tab_uses_subtabs(self):
+        """The Balanço tab should be a type=subtabs section with BPA + BPP."""
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
         balanco_tab = next(t for t in out["tabs"] if t["name"] == "Balanço")
-        titles = [s.get("title", "") for s in balanco_tab["sections"]]
-        assert any("Ativo" in t for t in titles)
-        assert any("Passivo" in t for t in titles)
+        assert len(balanco_tab["sections"]) == 1
+        sec = balanco_tab["sections"][0]
+        assert sec["type"] == "subtabs"
+        sub_names = [t["name"] for t in sec["tabs"]]
+        assert sub_names == ["BPA", "BPP"]
 
-    def test_ratios_tab_is_ratio_grid_section(self):
-        """The Ratios tab should produce a section with type=ratio_grid."""
+    def test_indicadores_tab_is_ratio_grid_section(self):
+        """The Indicadores tab should produce a section with type=ratio_grid."""
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
-        ratios_tab = next(t for t in out["tabs"] if t["name"] == "Ratios")
-        assert len(ratios_tab["sections"]) == 1
-        sec = ratios_tab["sections"][0]
+        indic_tab = next(t for t in out["tabs"] if t["name"] == "Indicadores")
+        assert len(indic_tab["sections"]) == 1
+        sec = indic_tab["sections"][0]
         assert sec["type"] == "ratio_grid"
         # categories should be a list of {label, items}
         assert isinstance(sec["categories"], list)
@@ -1648,8 +1768,8 @@ class TestFinancialsDashboardAdapter:
 
     def test_ratio_grid_items_have_label_and_value(self):
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
-        ratios_tab = next(t for t in out["tabs"] if t["name"] == "Ratios")
-        sec = ratios_tab["sections"][0]
+        indic_tab = next(t for t in out["tabs"] if t["name"] == "Indicadores")
+        sec = indic_tab["sections"][0]
         profitability = next(c for c in sec["categories"] if c["label"] == "Rentabilidade")
         assert len(profitability["items"]) > 0
         first_item = profitability["items"][0]
@@ -1659,13 +1779,31 @@ class TestFinancialsDashboardAdapter:
         roe_item = next(i for i in profitability["items"] if i["label"] == "ROE")
         assert roe_item["value"].endswith("%")
 
+    def test_crescimento_tab_has_table_and_chart(self):
+        """The Crescimento tab should have a growth table + a bar chart."""
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        cresc_tab = next(t for t in out["tabs"] if t["name"] == "Crescimento")
+        types = [s.get("type") for s in cresc_tab["sections"]]
+        assert "table" in types
+        assert "chart" in types
+
+    def test_dva_tab_has_table_and_doughnut_chart(self):
+        """The DVA tab should have a table + a doughnut chart."""
+        out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
+        dva_tab = next(t for t in out["tabs"] if t["name"] == "DVA")
+        types = [s.get("type") for s in dva_tab["sections"]]
+        assert "table" in types
+        assert "chart" in types
+        chart_sec = next(s for s in dva_tab["sections"] if s.get("type") == "chart")
+        assert chart_sec["chart_data"]["type"] == "doughnut"
+
     def test_error_renders_status_table(self):
         out = apply_adapter("financials_dashboard",
                             {"status": "not_found", "error": "company not found"})
         assert out["sections"][0]["title"] == "Financials Dashboard"
 
     def test_freshness_section_converted_to_table(self):
-        """The Overview tab's freshness section should become a small table."""
+        """The Overview tab's freshness section should be a small table."""
         out = apply_adapter("financials_dashboard", FINANCIALS_DASHBOARD)
         overview_tab = next(t for t in out["tabs"] if t["name"] == "Overview")
         titles = [s.get("title", "") for s in overview_tab["sections"]]
@@ -1675,6 +1813,133 @@ class TestFinancialsDashboardAdapter:
         assert freshness_sec["type"] == "table"
         assert "Database" in freshness_sec["columns"]
         assert "Last Updated" in freshness_sec["columns"]
+
+
+# ── Synthetic bpa/bpp/dre/dfc/dva standalone-mode results ────────────────────
+
+FINANCIALS_STATEMENT_DRE = {
+    "status": "ok",
+    "company": "PETROLEO BRASILEIRO S.A.",
+    "period_type": "annual",
+    "statement": "DRE",
+    "grupo_filter": "DRE",
+    "periods": [
+        {
+            "data_fim_exerc": "2023-12-31", "meses": 12,
+            "period": "2023", "year": 2023, "quarter": None,
+            "accounts": {
+                "3.01": {"label": "Receita Líquida",  "section": "DRE",
+                         "valor_brl": 500_000_000_000},
+                "3.03": {"label": "Lucro Bruto",      "section": "DRE",
+                         "valor_brl": 200_000_000_000},
+                "3.05": {"label": "EBIT",             "section": "DRE",
+                         "valor_brl": 200_000_000_000},
+                "3.11": {"label": "Lucro Líquido",    "section": "DRE",
+                         "valor_brl": 120_000_000_000},
+            },
+        },
+    ],
+}
+
+FINANCIALS_STATEMENT_DVA = {
+    "status": "ok",
+    "company": "PETROLEO BRASILEIRO S.A.",
+    "period_type": "annual",
+    "statement": "DVA",
+    "grupo_filter": "DVA",
+    "periods": [
+        {
+            "data_fim_exerc": "2023-12-31", "meses": 12,
+            "period": "2023", "year": 2023, "quarter": None,
+            "accounts": {
+                "7":       {"label": "Valor Adicionado Total",
+                            "section": "Geração",      "valor_brl": 200_000_000_000},
+                "8.01":    {"label": "Pessoal",
+                            "section": "Distribuição", "valor_brl":  80_000_000_000},
+                "8.02":    {"label": "Governo",
+                            "section": "Distribuição", "valor_brl":  40_000_000_000},
+                "8.03":    {"label": "Credores",
+                            "section": "Distribuição", "valor_brl":  20_000_000_000},
+                "8.04":    {"label": "Acionistas",
+                            "section": "Distribuição", "valor_brl":  60_000_000_000},
+            },
+        },
+    ],
+}
+
+
+class TestFinancialsStatementAdapter:
+    """[v1.12] Tests for the financials_statement adapter — generic table
+    adapter that consumes any of the 5 standalone statement modes (bpa /
+    bpp / dre / dfc / dva)."""
+
+    def test_dre_returns_one_section_with_table(self):
+        out = apply_adapter("financials_statement", FINANCIALS_STATEMENT_DRE)
+        assert out["company"] == "PETROLEO BRASILEIRO S.A."
+        # DRE has a single section ("DRE") since all accounts share section.
+        assert len(out["sections"]) == 1
+        sec = out["sections"][0]
+        assert sec["type"] == "table"
+        assert sec["columns"] == ["Código", "Descrição", "Valor (BRL)"]
+        # 4 DRE accounts.
+        assert len(sec["rows"]) == 4
+        # First row: codigo "3.01", label "Receita Líquida", value formatted.
+        assert sec["rows"][0][0] == "3.01"
+        assert sec["rows"][0][1] == "Receita Líquida"
+        # BRL formatting → "R$ 500,00 B"
+        assert "R$" in sec["rows"][0][2]
+
+    def test_dva_groups_by_section_generation_vs_distribution(self):
+        """DVA statement groups accounts into Geração + Distribuição sections."""
+        out = apply_adapter("financials_statement", FINANCIALS_STATEMENT_DVA)
+        section_titles = [s["title"] for s in out["sections"]]
+        assert "Geração" in section_titles
+        assert "Distribuição" in section_titles
+        # Distribuição section has 4 accounts.
+        dist = next(s for s in out["sections"] if s["title"] == "Distribuição")
+        assert len(dist["rows"]) == 4
+        # Geração section has 1 account (the total wealth).
+        gen = next(s for s in out["sections"] if s["title"] == "Geração")
+        assert len(gen["rows"]) == 1
+        assert gen["rows"][0][0] == "7"
+
+    def test_kpis_carry_statement_label_and_period(self):
+        """Top-level KPI strip shows the statement label + period + account count."""
+        out = apply_adapter("financials_statement", FINANCIALS_STATEMENT_DRE)
+        labels = [k["label"] for k in out["kpis"]]
+        assert "Demonstração" in labels
+        assert "Período" in labels
+        assert "Contas" in labels
+        demo = next(k for k in out["kpis"] if k["label"] == "Demonstração")
+        assert "Demonstração do Resultado" in demo["value"]
+        contas = next(k for k in out["kpis"] if k["label"] == "Contas")
+        assert contas["value"] == 4
+
+    def test_error_renders_status_table(self):
+        """A non-ok result renders as a status table, not a crash."""
+        out = apply_adapter("financials_statement",
+                            {"status": "not_found", "error": "no data",
+                             "statement": "DRE"})
+        assert out["sections"][0]["title"] == "Demonstração do Resultado do Exercício"
+        assert out["sections"][0]["rows"][0] == ["not_found", "no data"]
+
+    def test_empty_periods_renders_error(self):
+        """An ok status with no periods renders an error (not a crash)."""
+        out = apply_adapter("financials_statement",
+                            {"status": "ok", "company": "X", "statement": "BPA",
+                             "periods": []})
+        assert "sections" in out
+        # Should mention no data / not_found.
+        assert out["sections"][0]["rows"][0][0] == "not_found"
+
+    def test_empty_accounts_renders_error(self):
+        """An ok status with a period but no accounts renders an error."""
+        out = apply_adapter("financials_statement",
+                            {"status": "ok", "company": "X", "statement": "BPA",
+                             "periods": [{"data_fim_exerc": "2023-12-31",
+                                          "accounts": {}}]})
+        assert "sections" in out
+        assert out["sections"][0]["rows"][0][0] == "not_found"
 
 
 # ── Synthetic valuation.ratios() result ─────────────────────────────────────

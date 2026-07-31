@@ -52,6 +52,49 @@
 </div>
 {% endmacro %}
 
+{% macro subtabs(tabs_list, prefix) %}
+<div class="subtabs-container">
+  <div class="subtabs-bar">
+    {% for t in tabs_list %}
+    <button class="subtab-btn {{ 'active' if loop.first else '' }}" onclick="showSubTab(this, '{{ prefix }}-{{ loop.index }}')">{{ t.name }}</button>
+    {% endfor %}
+  </div>
+  {% for t in tabs_list %}
+  <div class="subtab-panel {{ 'active' if loop.first else '' }}" id="{{ prefix }}-{{ loop.index }}">
+    {% set sub_loop = loop %}
+    {% for sec in t.sections %}
+    <div class="section">
+      {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
+      {% if sec.text %}
+      <div class="text-block">{{ sec.text }}</div>
+      {% endif %}
+      {% if sec.type == 'table' and sec.columns and sec.rows %}
+      {{ data_table(sec.columns, sec.rows) }}
+      {% elif sec.type == 'table' %}
+      <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
+      {% endif %}
+      {% if sec.note %}
+      <div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
+      {% endif %}
+      {% if sec.type == 'chart' and sec.chart_data %}
+      {{ chart_canvas(prefix + '-' + sub_loop.index|string + '-chart-' + loop.index|string) }}
+      {% endif %}
+      {% if sec.type == 'two_column' and sec.left_rows and sec.right_rows %}
+      {{ two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows) }}
+      {% endif %}
+      {% if sec.type == 'ratio_grid' and sec.categories %}
+      {{ ratio_grid(sec.categories) }}
+      {% endif %}
+      {% if sec.type == 'collapsible' %}
+      {{ collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False)) }}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
 {% macro tabs(tab_list, panel_prefix) %}
 <div class="tabs">
   {% for t in tab_list %}
