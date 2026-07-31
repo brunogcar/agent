@@ -3,7 +3,7 @@
 Gross Profit Growth = (TTM Gross Profit now - TTM Gross Profit N periods ago) / |old|
 
 Measures how fast the company's gross profit is growing across 3 time horizons.
-Matches the StatusInvest spreadsheet's "Resultado Bruto" growth row.
+Matches the private spreadsheet's "Resultado Bruto" growth row.
 
 This file registers 3 separate metrics (one per horizon). Each uses the
 shared growth_helpers module for the lookback logic.

@@ -11,7 +11,7 @@ NOTE
 The `debt` engine returns Empréstimos e Financiamentos (BPP codes 2.01.04 +
 2.02.01), which is gross debt (loans + financing) -- NOT net debt (which
 would subtract cash). So this metric is the canonical "Gross Debt / Equity"
-leverage ratio from the StatusInvest-style spreadsheet.
+leverage ratio from the private spreadsheet.
 
 The existing `debt_equity` metric computes the same formula. We keep
 `gross_debt_equity` as a separate canonical name with Portuguese aliases

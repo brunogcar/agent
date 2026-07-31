@@ -112,6 +112,14 @@ def _build_summary_codes():
     # engine returns whichever exists for a given company.
     codes["6.02.01.02"] = ("DFC_MD", "Depreciação e Amortização (Método Direto)")
     codes["6.01.04"]    = ("DFC_MD", "Depreciação e Amortização (DFC_MD alt)")
+    # [v1.7] DVA key metrics — CVM DFP DVA uses 7.xx codes (NOT 1-8).
+    # Verified against real DFP: code "7" has 0 rows; "7.08" has data.
+    # 7.08 is the dominant format; 7.11 is newer (~75 rows).
+    codes["7.08"]     = ("DVA", "Valor Adicionado Total a Distribuir")
+    codes["7.08.01"]  = ("DVA", "Pessoal (DVA)")
+    codes["7.08.02"]  = ("DVA", "Impostos, Taxas e Contribuições (DVA)")
+    codes["7.08.03"]  = ("DVA", "Remuneração de Capital de Terceiros (DVA)")
+    # 7.08.04 already added above (Remuneração de Capitais Próprios / proventos)
     return codes
 
 
@@ -123,7 +131,13 @@ KEY_CODES_BY_GRUPO = {
     "BPP":    ["2", "2.01", "2.01.04", "2.02", "2.02.01", "2.03", "2.03.01"],
     "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.09", "3.11"],
     "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03"],
-    "DVA":    ["7.08.04", "7.08.04.01", "7.08.04.02"],
+    # [v1.7] Expanded DVA — CVM DFP uses 7.xx codes (NOT 1-8).
+    # Generation side (7.01-7.08) + distribution side (7.08.01-7.08.04)
+    # + new format (7.11.01-7.11.04) + existing proventos.
+    "DVA":    ["7.01", "7.03", "7.04", "7.05", "7.06", "7.07", "7.08", "7.10",
+               "7.08.01", "7.08.02", "7.08.03", "7.08.04",
+               "7.11.01", "7.11.02", "7.11.03", "7.11.04",
+               "7.08.04.01", "7.08.04.02"],
 }
 
 

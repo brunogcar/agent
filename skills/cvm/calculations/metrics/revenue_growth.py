@@ -7,7 +7,7 @@ Measures how fast the company's top line is growing across 3 time horizons:
   - 1Y:  year-over-year (365 days back)
   - 5Y:  5-year growth (1825 days back)
 
-Inspired by the StatusInvest spreadsheet's "CRESCIMENTO" section which shows
+Inspired by the private spreadsheet's "CRESCIMENTO" section which shows
 3 Meses / 1 Ano / 5 Anos growth for Receita Líquida, Resultado Bruto, and
 Lucro Líquido.
 

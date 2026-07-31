@@ -377,6 +377,13 @@ def _extract_metrics(vals: dict) -> dict:
         "fcf":                  _f(vals, "6.03"),
         "da":                   da,
         "proventos":            _f(vals, "7.08.04"),
+        # [v1.7] DVA key metrics — CVM DFP DVA uses 7.xx codes (NOT 1-8).
+        # Verified against real DFP: 7.08 is dominant, 7.11 is newer.
+        "dva_total":            _f(vals, "7.08") or _f(vals, "7.10"),
+        "dva_pessoal":          _f(vals, "7.08.01") or _f(vals, "7.11.01"),
+        "dva_impostos":         _f(vals, "7.08.02") or _f(vals, "7.11.02"),
+        "dva_remu_capital_terceiros": _f(vals, "7.08.03") or _f(vals, "7.11.03"),
+        "dva_remu_capital_proprio":   _f(vals, "7.08.04") or _f(vals, "7.11.04"),
     }
 
 

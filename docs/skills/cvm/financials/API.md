@@ -98,6 +98,27 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 
 `current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
 
+### mode="dva" (v1.7)
+Demonstração do Valor Adicionado (Value Added Statement) for the last N periods.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | Ticker, name, or CNPJ |
+| `periods` | `int` | `5` | Number of periods to return |
+| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
+| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
+
+Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
+
+The DVA is structured in 2 sections:
+- **Generation side** (codes 1-7): Receitas, Insumos, Valor Adicionado Bruto, Retenções, Valor Adicionado Líquido, VA Recebido, Total a Distribuir
+- **Distribution side** (codes 8.1-8.4): Pessoal, Impostos, Remuneração Capital de Terceiros, Remuneração Capital Próprio
+
+[v1.7] annual/quarterly modes now also include 5 DVA metrics in the `metrics` dict:
+`dva_total`, `dva_pessoal`, `dva_impostos`, `dva_remu_capital_terceiros`, `dva_remu_capital_proprio`.
+
+[v1.7] `complete` mode DVA section expanded from 3 proventos codes to full 15-code statement.
+
 ---
 
 ## Examples
@@ -107,8 +128,10 @@ skill(domain="cvm", sub_domain="financials", mode="quarterly", params='{"company
 skill(domain="cvm", sub_domain="financials", mode="annual", params='{"company":"VALE3","periods":10}')
 skill(domain="cvm", sub_domain="financials", mode="complete", params='{"company":"PETR4","grupo":"DRE"}')
 skill(domain="cvm", sub_domain="financials", mode="summary", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4","quarterly":1,"periods":8}')
 ```
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; modes + params + return shapes unchanged). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
+*Last updated: 2026-07-30 (v1.7 — DVA mode + quarterly support + DVA metrics in annual/quarterly). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*

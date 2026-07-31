@@ -44,4 +44,4 @@
 
 ---
 
-*Last updated: 2026-07-30 (v2.0).*
+*Last updated: 2026-07-30 (v1.7 — DVA mode added; 6 modes total).*

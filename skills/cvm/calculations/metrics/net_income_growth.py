@@ -3,7 +3,7 @@
 Net Income Growth = (TTM Earnings now - TTM Earnings N periods ago) / |old|
 
 Measures how fast the company's bottom line is growing across 3 time horizons.
-Matches the StatusInvest spreadsheet's "Lucro Líquido" growth row.
+Matches the private spreadsheet's "Lucro Líquido" growth row.
 
 Uses the earnings engine (TTM earnings = TTM net income / lucro líquido).
 

@@ -9,7 +9,8 @@ The `financials` skill combines DFP (annual) + ITR (quarterly cumulative) + DVA 
 - **EBITDA computed** — EBIT (DRE 3.05) + D&A (DFC 6.01.01.02). D&A comes from the cash flow statement.
 - **Ratios** — margins (bruta, EBITDA, EBIT, líquida), ROA/ROE (annualized for quarterly), debt ratios, payout.
 - **Default: quarterly** — designed to analyze new financials as companies release them. Default 8 quarters.
-- **5 modes** — quarterly (default), annual, complete, summary, dashboard.
+- **6 modes** — quarterly (default), annual, complete, summary, dashboard, dva.
+- **[v1.7] DVA integration** — new `dva` mode (full Value Added Statement, annual + quarterly via ITR); `complete` mode DVA section expanded from 3 proventos codes to full 15-code statement; 5 key DVA metrics (codes 7, 8.1-8.4) added to `annual`/`quarterly` SUMMARY_CODES.
 - **Modular file structure (v1.6)** — split into `_registry.py` + `modes/` (5 files) + `fetchers.py` + `helpers.py` + `report.py` + `metrics.py`. `__init__.py` auto-discovers modes via importlib (same pattern as `tools/git_ops/actions/`). Public API unchanged. See [ARCHITECTURE.md](financials/ARCHITECTURE.md) for the file map.
 - **Read-only** — no sync. Calls DFP/ITR query engines directly.
 - **[v1.3] Calculations integration** — `summary` mode now delegates point-in-time ratios (ROIC, Graham, EV/EBITDA, P/FCF, P/EBIT, P/FCO) to `skills.cvm.calculations.metrics.*`. Statement rendering (quarterly/annual/complete) keeps its own per-period `compute_ratios()` because it operates on raw statement dicts, not point-in-time engine snapshots.
@@ -70,10 +71,10 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12) and
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](financials/ARCHITECTURE.md) | Standalone quarter derivation, EBITDA formula, mode → source mapping |
-| [API.md](financials/API.md) | 5 modes: quarterly, annual, complete, summary, dashboard |
+| [API.md](financials/API.md) | 6 modes: quarterly, annual, complete, summary, dashboard, dva |
 | [CHANGELOG.md](financials/CHANGELOG.md) | Version history + roadmap (xlsx export, charts, TTM ratios) |
 | [INSTRUCTIONS.md](financials/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-29 (v1.6 — file structure split; see CHANGELOG.md).*
+*Last updated: 2026-07-30 (v1.7 — added dva mode; see CHANGELOG.md).*

@@ -167,4 +167,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — _base.py extraction; see CHANGELOG.md for details). Public API + per-period mode behavior unchanged.*
+*Last updated: 2026-07-30 (v1.7 — DVA mode + DVA metrics in annual/quarterly + complete DVA expansion; see CHANGELOG.md for details).*

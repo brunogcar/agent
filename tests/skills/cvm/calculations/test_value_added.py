@@ -149,7 +149,7 @@ class TestValueAddedRegistry:
 
     def test_uses_correct_cvm_code(self):
         """Engine should query DVA codigo 7 (Valor Adicionado Total a Distribuir)."""
-        assert va_engine.VALUE_ADDED_CODE == "7"
+        assert va_engine.VALUE_ADDED_CODE == "7.08"
 
     def test_uses_correct_grupo(self):
         """Engine should filter by grupo='DVA' (DVA codes are scoped to the DVA group)."""

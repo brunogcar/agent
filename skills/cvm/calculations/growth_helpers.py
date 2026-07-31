@@ -8,7 +8,7 @@ two DIFFERENT engines at the SAME date. The helpers here handle the lookback
 logic shared by all growth metrics (revenue_growth, gross_profit_growth,
 net_income_growth).
 
-Lookback horizons (matching the StatusInvest spreadsheet):
+Lookback horizons (matching the private spreadsheet):
   - 3M: 90 days back (quarter-over-quarter TTM change)
   - 1Y: 365 days back (year-over-year)
   - 5Y: 1825 days back (5-year growth)
