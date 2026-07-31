@@ -116,6 +116,28 @@ def _build_summary_codes():
     codes["1.02.04"]    = ("BPA", "Intangível")
     codes["2.01.04"]    = ("BPP", "Empréstimos e Financiamentos (Circulante)")
     codes["2.02.01"]    = ("BPP", "Empréstimos e Financiamentos (Não Circulante)")
+    # [v1.10] BPP liability + equity sub-codes — verified against real DFP
+    # data (6355-6579 rows each). NOT in RESUMO_ACCOUNTS (the catalog stops
+    # at 2 / 2.03). Real DFP data confirms:
+    #   2.01.01 — Fornecedores / Obrigações Sociais / Contas a Pagar
+    #             (6476 rows; MULTIPLE descriptions per code — most common
+    #             "Obrigações Sociais e Trabalhistas" at 6317 rows; also
+    #             "Fornecedores", "Contas a Pagar", "Depósitos")
+    #   2.03.01 — Capital Social (6579 rows)
+    #   2.03.02 — Reservas de Capital (6558 rows)
+    #   2.03.04 — Reservas de Lucros (6480 rows)
+    #   2.03.05 — Lucros Acumulados (6453 rows)
+    #   2.03.09 — Participação Não Controladores (6355 rows)
+    # ⚠️ 2.03 itself has chart-drift: OLD chart = "Patrimônio Líquido" (PL);
+    #    NEW chart = "Passivos Financeiros ao Custo Amortizado" (DEBT — not
+    #    PL!). 95% of filers (6352/6681 rows) still use the OLD chart, so
+    #    the pl engine works for the majority. Documented in BPP.md.
+    codes["2.01.01"]    = ("BPP", "Fornecedores / Obrigações")
+    codes["2.03.01"]    = ("BPP", "Capital Social")
+    codes["2.03.02"]    = ("BPP", "Reservas de Capital")
+    codes["2.03.04"]    = ("BPP", "Reservas de Lucros")
+    codes["2.03.05"]    = ("BPP", "Lucros Acumulados")
+    codes["2.03.09"]    = ("BPP", "Participação Não Controladores")
     # [v1.8] DRE 3.07 — Resultado Líquido das Operações Continuadas. NOT in
     # RESUMO_ACCOUNTS (the catalog stops at 3.06/3.09/3.11). Real DFP data
     # has 6629 rows for 3.07 — it sits between Resultado Financeiro (3.06)
@@ -150,7 +172,15 @@ KEY_CODES_BY_GRUPO = {
     "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.01.03", "1.01.04",
                "1.02", "1.02.01", "1.02.03", "1.02.04",
                "1.03", "1.04", "1.05", "1.06", "1.07", "1.08"],
-    "BPP":    ["2", "2.01", "2.01.04", "2.02", "2.02.01", "2.03", "2.03.01"],
+    # [v1.10] Expanded BPP — covers OLD chart (2.01, 2.02, 2.03, 2.03.01-2.03.09)
+    # AND NEW chart (2.04=Provisões, 2.05=Passivos Fiscais, 2.06=Outros
+    # Passivos, 2.07=Passivos s/ Ativos Não Correntes, 2.08=Patrimônio Líquido
+    # — in the NEW chart, 2.03 becomes amortized-cost debt and PL moves to
+    # 2.08). 95% of filers (6352/6681 rows) still use OLD chart. Codes 2.xx
+    # are unique to BPP (BPA uses 1.xx).
+    "BPP":    ["2", "2.01", "2.01.01", "2.01.04", "2.02", "2.02.01",
+               "2.03", "2.03.01", "2.03.02", "2.03.04", "2.03.05", "2.03.09",
+               "2.04", "2.05", "2.06", "2.07", "2.08"],
     "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.07", "3.09", "3.11"],
     "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03"],
     # [v1.7] Expanded DVA — CVM DFP uses 7.xx codes (NOT 1-8).

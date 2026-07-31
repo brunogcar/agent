@@ -354,6 +354,14 @@ def _extract_metrics(vals: dict) -> dict:
     3 missing DRE codes that were in SUMMARY_CODES but never extracted:
     custo_mercadorias (3.02), despesas_operacionais (3.04), imposto_renda
     (3.08).
+
+    [v1.10] BPP liability + equity sub-codes added: fornecedores (2.01.01),
+    capital_social (2.03.01), reservas_capital (2.03.02), reservas_lucros
+    (2.03.04), lucros_acumulados (2.03.05), minority_interest (2.03.09).
+    Code 2.01.01 has MULTIPLE descriptions per filer (most common:
+    "Obrigações Sociais e Trabalhistas" at 6317 rows; also "Fornecedores" /
+    "Contas a Pagar" / "Depósitos"). The payables engine gets whatever the
+    filer uses.
     """
     divida_bruta = None
     d_circ = _f(vals, "2.01.04")
@@ -378,6 +386,20 @@ def _extract_metrics(vals: dict) -> dict:
         "imobilizado":          _f(vals, "1.02.03"),
         "intangivel":           _f(vals, "1.02.04"),
         "patrimonio_liquido":   _f(vals, "2.03"),
+        # [v1.10] BPP liability + equity sub-codes — Fornecedores/Obrigações
+        # (2.01.01), Capital Social (2.03.01), Reservas de Capital (2.03.02),
+        # Reservas de Lucros (2.03.04), Lucros Acumulados (2.03.05),
+        # Participação Não Controladores (2.03.09). Verified against real DFP
+        # data (6355-6579 rows each). 2.01.01 has MULTIPLE descriptions
+        # across filers (most common: "Obrigações Sociais e Trabalhistas" at
+        # 6317 rows; also "Fornecedores" / "Contas a Pagar" / "Depósitos").
+        # The payables engine gets whatever the filer uses.
+        "fornecedores":           _f(vals, "2.01.01"),
+        "capital_social":         _f(vals, "2.03.01"),
+        "reservas_capital":       _f(vals, "2.03.02"),
+        "reservas_lucros":        _f(vals, "2.03.04"),
+        "lucros_acumulados":      _f(vals, "2.03.05"),
+        "minority_interest":      _f(vals, "2.03.09"),
         "divida_bruta":         divida_bruta,
         "receita_liquida":      _f(vals, "3.01"),
         "lucro_bruto":          _f(vals, "3.03"),

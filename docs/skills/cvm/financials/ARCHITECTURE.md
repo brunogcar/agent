@@ -167,4 +167,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-07-30 (v1.9 — BPA mode + BPA sub-codes in SUMMARY_CODES/KEY_CODES_BY_GRUPO/_extract_metrics + 3 missing DRE codes in _extract_metrics; see [DFP statement charts of accounts](../../data_sources/cvm/dfp/ARCHITECTURE.md) for BPA/DRE/DVA chart-of-accounts docs).*
+*Last updated: 2026-07-30 (v1.10 — BPP mode + BPP sub-codes in SUMMARY_CODES/KEY_CODES_BY_GRUPO/_extract_metrics; see [DFP statement charts of accounts](../../data_sources/cvm/dfp/ARCHITECTURE.md) for BPA/BPP/DRE/DVA chart-of-accounts docs).*

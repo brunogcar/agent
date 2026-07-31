@@ -98,6 +98,61 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 
 `current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
 
+### mode="bpp" (v1.10)
+Balanço Patrimonial Passivo (Balance Sheet — Liabilities + Equity) for the last N periods.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | Ticker, name, or CNPJ |
+| `periods` | `int` | `5` | Number of periods to return |
+| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
+| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
+
+Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
+
+The BPP is structured top-to-bottom (Total → Circulante → Fornecedores → Empréstimos Circulante → Não Circulante → Empréstimos Não Circulante → Patrimônio Líquido → Capital Social → Reservas → Lucros Acumulados → Participação Não Controladores), 17 codes:
+
+| Code | Label (canonical) | Section |
+|------|-------------------|---------|
+| `2` | Passivo Total | `total` |
+| `2.01` | Passivo Circulante | `current` |
+| `2.01.01` | Fornecedores / Obrigações | `payables` (NEW v1.10) |
+| `2.01.04` | Empréstimos e Financiamentos (Circulante) | `debt_short` |
+| `2.02` | Passivo Não Circulante | `non_current` |
+| `2.02.01` | Empréstimos e Financiamentos (Não Circ.) | `debt_long` |
+| `2.03` | Patrimônio Líquido | `equity` (⚠️ 2.03 meaning trap — see below) |
+| `2.03.01` | Capital Social | `capital` (NEW v1.10) |
+| `2.03.02` | Reservas de Capital | `reserves_capital` (NEW v1.10) |
+| `2.03.04` | Reservas de Lucros | `reserves_profit` (NEW v1.10) |
+| `2.03.05` | Lucros Acumulados | `retained_earnings` (NEW v1.10) |
+| `2.03.09` | Participação Não Controladores | `minority` (NEW v1.10) |
+| `2.04` | Provisões (novo formato) | `provisions_new` |
+| `2.05` | Passivos Fiscais (novo formato) | `tax_liabilities_new` |
+| `2.06` | Outros Passivos (novo formato) | `other_liabilities_new` |
+| `2.07` | Passivos s/ Ativos Não Correntes (novo) | `non_current_new` |
+| `2.08` | Patrimônio Líquido (novo formato) | `equity_new` |
+
+The `grupo` filter is `LIKE '%Patrimonial Passivo%'` — this matches BPP
+rows from both consolidated and individual filings, and EXCLUDES the
+separate "Patrimonial Ativo" (BPA) statement. See
+[DFP Architecture → architecture/BPP.md](../../data_sources/cvm/dfp/architecture/BPP.md)
+for the **2.03 meaning trap** (OLD chart = "Patrimônio Líquido" / PL at
+2.03; NEW chart = "Passivos Financeiros ao Custo Amortizado" / DEBT at
+2.03 — PL moves to 2.08 in the NEW chart — 95% of filers still use the
+OLD chart so the pl engine works for the majority) and the **2.01.01
+multiple-descriptions** issue (most filers use "Obrigações Sociais e
+Trabalhistas" at 6317 rows, not "Fornecedores" — the payables engine
+gets whatever the filer uses).
+
+[v1.10] `SUMMARY_CODES` now also includes the 6 BPP liability + equity
+sub-codes (`2.01.01`, `2.03.01`, `2.03.02`, `2.03.04`, `2.03.05`,
+`2.03.09`). `_extract_metrics` exposes them as `fornecedores`,
+`capital_social`, `reservas_capital`, `reservas_lucros`,
+`lucros_acumulados`, `minority_interest` in the per-period `metrics` dict.
+
+[v1.10] `KEY_CODES_BY_GRUPO["BPP"]` expanded from 7 codes to 17 codes
+(covering both OLD and NEW CVM chart formats).
+
 ### mode="bpa" (v1.9)
 Balanço Patrimonial Ativo (Balance Sheet — Assets) for the last N periods.
 
@@ -217,6 +272,8 @@ skill(domain="cvm", sub_domain="financials", mode="complete", params='{"company"
 skill(domain="cvm", sub_domain="financials", mode="summary", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4","quarterly":1,"periods":8}')
+skill(domain="cvm", sub_domain="financials", mode="bpp", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="financials", mode="bpp", params='{"company":"PETR4","quarterly":1,"periods":8}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4","quarterly":1,"periods":8}')
 skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PETR4"}')
@@ -225,4 +282,4 @@ skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PET
 
 ---
 
-*Last updated: 2026-07-30 (v1.9 — BPA mode + BPA sub-codes in SUMMARY_CODES + 3 missing DRE codes in `_extract_metrics`). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
+*Last updated: 2026-07-30 (v1.10 — BPP mode + BPP sub-codes in SUMMARY_CODES). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*

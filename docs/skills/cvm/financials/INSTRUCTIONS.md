@@ -44,4 +44,4 @@
 
 ---
 
-*Last updated: 2026-07-30 (v1.9 — BPA mode added; 8 modes total).*
+*Last updated: 2026-07-30 (v1.10 — BPP mode added; 9 modes total).*

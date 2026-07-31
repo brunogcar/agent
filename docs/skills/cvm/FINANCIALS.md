@@ -9,7 +9,8 @@ The `financials` skill combines DFP (annual) + ITR (quarterly cumulative) + DVA 
 - **EBITDA computed** — EBIT (DRE 3.05) + D&A (DFC 6.01.01.02). D&A comes from the cash flow statement.
 - **Ratios** — margins (bruta, EBITDA, EBIT, líquida), ROA/ROE (annualized for quarterly), debt ratios, payout.
 - **Default: quarterly** — designed to analyze new financials as companies release them. Default 8 quarters.
-- **8 modes** — quarterly (default), annual, complete, summary, dashboard, bpa, dva, dre.
+- **9 modes** — quarterly (default), annual, complete, summary, dashboard, bpa, bpp, dva, dre.
+- **[v1.10] BPP mode + BPP sub-codes** — new `bpp` mode (full Balanço Patrimonial Passivo / Balance Sheet Liabilities + Equity, annual + quarterly via ITR); BPP liability + equity sub-codes `2.01.01` (Fornecedores / Obrigações), `2.03.01` (Capital Social), `2.03.02` (Reservas de Capital), `2.03.04` (Reservas de Lucros), `2.03.05` (Lucros Acumulados), `2.03.09` (Participação Não Controladores) added to `SUMMARY_CODES` + `_extract_metrics` + `KEY_CODES_BY_GRUPO["BPP"]` (expanded from 7 to 17 codes covering both OLD and NEW CVM chart formats). Documents the **2.03 meaning trap** (OLD chart = PL, NEW chart = amortized-cost debt — 95% of filers still use OLD) and the **2.01.01 multiple-descriptions** issue (most filers use "Obrigações Sociais e Trabalhistas", not "Fornecedores"). New statement chart-of-accounts doc at [DFP ARCHITECTURE → BPP.md](dfp/architecture/BPP.md).
 - **[v1.9] BPA mode + DRE integration** — new `bpa` mode (full Balanço Patrimonial Ativo / Balance Sheet Assets, annual + quarterly via ITR); DRE codes `3.02` (COGS), `3.04` (operating expenses), `3.08` (income tax) added to `_extract_metrics` (were in SUMMARY_CODES but never extracted); BPA asset sub-codes `1.01.03` (Contas a Receber), `1.01.04` (Estoques), `1.02.03` (Imobilizado), `1.02.04` (Intangível) added to `SUMMARY_CODES` + `_extract_metrics` + `KEY_CODES_BY_GRUPO["BPA"]` (expanded from 6 to 16 codes covering both OLD and NEW CVM chart formats). New statement chart-of-accounts doc at [DFP ARCHITECTURE → BPA.md](dfp/architecture/BPA.md).
 - **[v1.8] DRE mode** — new `dre` mode (full Demonstração do Resultado, annual + quarterly via ITR); DRE code `3.07` (Resultado Líquido das Operações Continuadas) added to `SUMMARY_CODES` + `KEY_CODES_BY_GRUPO` + `_extract_metrics`. New statement chart-of-accounts docs at [DFP ARCHITECTURE](dfp/ARCHITECTURE.md).
 - **[v1.7] DVA integration** — new `dva` mode (full Value Added Statement, annual + quarterly via ITR); `complete` mode DVA section expanded from 3 proventos codes to full 15-code statement; 5 key DVA metrics (codes 7, 8.1-8.4) added to `annual`/`quarterly` SUMMARY_CODES.
@@ -73,11 +74,11 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12) and
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](financials/ARCHITECTURE.md) | Standalone quarter derivation, EBITDA formula, mode → source mapping |
-| [API.md](financials/API.md) | 8 modes: quarterly, annual, complete, summary, dashboard, bpa, dva, dre |
+| [API.md](financials/API.md) | 9 modes: quarterly, annual, complete, summary, dashboard, bpa, bpp, dva, dre |
 | [CHANGELOG.md](financials/CHANGELOG.md) | Version history + roadmap (xlsx export, charts, TTM ratios) |
 | [INSTRUCTIONS.md](financials/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
-| [dfp/ARCHITECTURE.md](dfp/ARCHITECTURE.md) | [v1.9] DFP statement charts of accounts (BPA 1.xx, DRE 3.01-3.11, DVA 7.xx) — used by `bpa` + `dre` + `dva` modes |
+| [dfp/ARCHITECTURE.md](dfp/ARCHITECTURE.md) | [v1.10] DFP statement charts of accounts (BPA 1.xx, BPP 2.xx, DRE 3.01-3.11, DVA 7.xx) — used by `bpa` + `bpp` + `dre` + `dva` modes |
 
 ---
 
-*Last updated: 2026-07-30 (v1.9 — added `bpa` mode + DRE integration; see CHANGELOG.md).*
+*Last updated: 2026-07-30 (v1.10 — added `bpp` mode + BPP sub-codes; see CHANGELOG.md).*
