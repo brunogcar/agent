@@ -19,6 +19,7 @@
 3. **Always return data source status** — If b3 trades.db or fre.db is missing, return `None` for affected ratios + a note explaining what's missing.
 4. **Always use `parse_escala()` for DFP escala values** — DFP stores escala as Portuguese words ("MIL", "MILHOES").
 5. **Always run `compileall` before `pytest`** — Catches syntax errors early.
+6. **Always declare `REQUIRED_SOURCES` in `__init__.py`** (v1.7) — `REQUIRED_SOURCES = ["dfp", "itr", "fca", "cotahist", "bridge"]` + pass to `make_route(required_sources=REQUIRED_SOURCES)`. The sync guard checks freshness before each dispatch + force-syncs if stale. Tests use `CVM_SKIP_SYNC=1` (set in conftest). Per-call bypass: `route(..., skip_sync=True)`.
 
 ---
 

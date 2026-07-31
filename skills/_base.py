@@ -64,6 +64,7 @@ from __future__ import annotations
 import functools
 import importlib
 import inspect
+import os
 import sys
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -243,6 +244,7 @@ def make_route(
     skill_name: str,
     MODES: dict[str, ModeSpec],
     accept_sub_domain: bool = False,
+    required_sources: list[str] | None = None,
 ) -> Callable:
     """Create a route() dispatcher function for a skill.
 
@@ -256,27 +258,75 @@ def make_route(
                          for dispatcher compatibility. investsite needs this;
                          CVM skills don't (their dispatcher resolves sub_domain
                          before calling route()).
+        required_sources: [v1.14] List of data sources this skill needs (e.g.
+                         ["dfp", "itr", "bridge"]). The route() wrapper checks
+                         freshness before each dispatch and triggers force-sync
+                         if any source is older than 24h (or missing). Set to
+                         None or [] to disable. Tests use CVM_SKIP_SYNC=1.
 
     Returns:
         A route(mode="", **kwargs) function (or route(sub_domain="", mode="")
         if accept_sub_domain=True) that dispatches to the registered mode.
 
     Usage in __init__.py:
-        # CVM skill:
+        # CVM skill with sync guard:
+        route = make_route("sub_domain", "governance", MODES,
+                           required_sources=["dfp", "itr", "bridge"])
+        # CVM skill without sync guard:
         route = make_route("sub_domain", "governance", MODES)
         # Top-level flat domain:
         route = make_route("domain", "investsite", MODES, accept_sub_domain=True)
     """
+    srcs = required_sources or []
+
     if accept_sub_domain:
         def route(sub_domain: str = "", mode: str = "", **kwargs) -> dict:
             # sub_domain is intentionally ignored (flat domain compat).
             _ = sub_domain
-            return _dispatch(manifest_key, skill_name, MODES, mode, kwargs)
+            return _route_with_sync_guard(srcs, manifest_key, skill_name, MODES, mode, kwargs)
         return route
     else:
         def route(mode: str = "", **kwargs) -> dict:
-            return _dispatch(manifest_key, skill_name, MODES, mode, kwargs)
+            return _route_with_sync_guard(srcs, manifest_key, skill_name, MODES, mode, kwargs)
         return route
+
+
+def _route_with_sync_guard(
+    srcs: list[str],
+    manifest_key: str,
+    skill_name: str,
+    MODES: dict[str, ModeSpec],
+    mode: str,
+    kwargs: dict,
+) -> dict:
+    """Run sync guard + dispatch with re-entrancy protection.
+
+    [v1.14] The re-entrancy guard wraps the ENTIRE route() call (sync check
+    + dispatch), not just the sync check. This ensures that if a mode
+    function (e.g., dashboard()) internally calls another route() (e.g.,
+    annual()), the inner route() skips the sync check — it's already been
+    done by the outer route().
+    """
+    # Re-entrancy guard: if we're already inside a route() call, skip sync.
+    if _SYNC_CHECKED.get():
+        # Inner call — just dispatch, no sync check
+        kwargs.pop("skip_sync", False)
+        return _dispatch(manifest_key, skill_name, MODES, mode, kwargs)
+
+    # Outer call — set guard, run sync check, dispatch, then reset guard
+    token = _SYNC_CHECKED.set(True)
+    try:
+        skip_sync = kwargs.pop("skip_sync", False)
+        sync_report = None
+        if srcs:
+            company = kwargs.get("company")
+            sync_report = ensure_fresh(srcs, company=company, skip_sync=skip_sync)
+        result = _dispatch(manifest_key, skill_name, MODES, mode, kwargs)
+        if sync_report is not None:
+            result["_sync"] = sync_report
+        return result
+    finally:
+        _SYNC_CHECKED.reset(token)
 
 
 def _dispatch(
@@ -450,3 +500,259 @@ class engine_cache_scope:
             "misses": cache.get("_misses", 0),
             "size": len(cache),
         }
+
+
+# ── Force Sync Guard (v1.14) ────────────────────────────────────────────────
+#
+# When a user calls a skill, check if the required data sources are stale
+# (>24h since last sync). If stale, force-sync them BEFORE running the skill.
+#
+# This is NOT auto-sync (scheduled cron). It's on-demand when a skill is used.
+# The first call of the day may take 30+ seconds (DFP sync); subsequent calls
+# within 24h are fast.
+#
+# DESIGN (per LLM review consensus):
+#   - 24h freshness window for ALL sources (earnings season releases daily)
+#   - HEAD check before downloading (CVM only — compare Last-Modified header
+#     to last sync timestamp). Timeout=5s. On network error → sync anyway
+#     (safer to sync than to skip).
+#   - Current-year-only force sync (not full history) for DFP/ITR/FRE/etc.
+#   - bridge: sync only the requested ticker, not all tickers
+#   - Failure path: proceed with stale data + warning (don't hard-fail)
+#   - Escape hatches: CVM_SKIP_SYNC=1 env var + skip_sync=True kwarg
+#   - Re-entrancy: ContextVar guard ensures ensure_fresh() runs at most
+#     once per top-level route() call (dashboard composes other modes)
+
+from datetime import datetime, timedelta
+
+# Re-entrancy guard: ensures ensure_fresh() runs at most once per top-level
+# route() call. Without this, dashboard() → annual() → quarterly() would
+# each trigger ensure_fresh() separately.
+_SYNC_CHECKED: ContextVar[bool] = ContextVar("_sync_checked", default=False)
+
+# Freshness window (hours). A source is "stale" if its last sync is older
+# than this, or if it has no sync_state entry at all.
+SYNC_FRESHNESS_HOURS = 24
+
+
+def _source_last_sync(source: str) -> str:
+    """Get the last-sync timestamp for a data source (ISO string, or "").
+
+    Delegates to skills.cvm._freshness.get_freshness() for CVM sources.
+    """
+    try:
+        from skills.cvm._freshness import get_freshness
+        fresh = get_freshness()
+        return fresh.get(source, "")
+    except Exception:
+        return ""
+
+
+def _source_is_stale(source: str, max_age_hours: int = SYNC_FRESHNESS_HOURS) -> bool:
+    """Check if a data source is stale (last sync older than max_age_hours, or missing).
+
+    A source is stale if:
+      - Its last-sync timestamp is "" (never synced / DB missing), OR
+      - Its last-sync timestamp is older than max_age_hours from now.
+    """
+    ts = _source_last_sync(source)
+    if not ts:
+        return True  # never synced
+    try:
+        last = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if last.tzinfo is not None:
+            last = last.replace(tzinfo=None)
+        age = datetime.now() - last
+        return age > timedelta(hours=max_age_hours)
+    except (ValueError, TypeError):
+        return True  # can't parse → treat as stale
+
+
+def _cvm_has_new_data(source: str, year: int) -> bool:
+    """HEAD request to CVM ZIP URL — check if server has new data since last sync.
+
+    Returns True if:
+      - The remote Last-Modified header is newer than the last sync timestamp, OR
+      - The HEAD request fails (network error, timeout) — safer to sync than skip.
+
+    Returns False only if:
+      - The HEAD succeeds AND Last-Modified is older than the last sync.
+
+    Args:
+        source: One of "dfp", "itr", "fca".
+        year: The year to check (e.g., 2025).
+    """
+    import requests
+    import email.utils
+
+    url_map = {
+        "dfp": f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_{year}.zip",
+        "itr": f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/itr_cia_aberta_{year}.zip",
+        "fca": f"http://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_{year}.zip",
+    }
+
+    if source not in url_map:
+        return True  # unknown source → sync anyway
+
+    try:
+        resp = requests.head(url_map[source], timeout=5, allow_redirects=True)
+        remote_mtime_str = resp.headers.get("Last-Modified", "")
+        if not remote_mtime_str:
+            return True  # no Last-Modified header → sync
+        remote_mtime = email.utils.parsedate_to_datetime(remote_mtime_str)
+        if remote_mtime.tzinfo is not None:
+            remote_mtime = remote_mtime.replace(tzinfo=None)
+
+        last_sync_str = _source_last_sync(source)
+        if not last_sync_str:
+            return True  # never synced → sync
+        last_sync = datetime.fromisoformat(last_sync_str.replace("Z", "+00:00"))
+        if last_sync.tzinfo is not None:
+            last_sync = last_sync.replace(tzinfo=None)
+
+        return remote_mtime > last_sync
+    except Exception:
+        # Network error, timeout, parse error → safer to sync than skip
+        return True
+
+
+def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -> dict:
+    """Trigger force-sync for a single data source. Returns sync result dict.
+
+    Maps source names to their sync functions with the right args:
+      - DFP/ITR/FRE/IPE: sync(years=[current_year], force=True)
+      - FCA:             sync(year=current_year, force=True)
+      - CAD:             sync(force=True)
+      - VLMO/CGVN:       sync(year=current_year, force=True)
+      - bridge:          sync(ticker=company, force=True) — only requested ticker
+      - cotahist:        sync(year=current_year, force=True)
+      - brapi:           sync_tickers(force=True)
+
+    Args:
+        source: One of the source names above.
+        company: Ticker (for bridge sync). None for other sources.
+        trace_id: Tracer ID for logging.
+    """
+    import traceback
+
+    current_year = datetime.now().year
+
+    # (module_path, fn_name, kwargs_fn) — kwargs_fn builds the kwargs dict
+    sync_map = {
+        "dfp":          ("data_sources.cvm.dfp.sync_engine", "sync",
+                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+        "itr":          ("data_sources.cvm.itr.sync_engine", "sync",
+                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+        "fre":          ("data_sources.cvm.fre.sync_engine", "sync",
+                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+        "ipe":          ("data_sources.cvm.ipe.sync_engine", "sync",
+                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+        "fca":          ("data_sources.cvm.fca.sync_engine", "sync",
+                         lambda: {"year": current_year, "force": True}),
+        "cad":          ("data_sources.cvm.cad.sync_engine", "sync",
+                         lambda: {"force": True, "trace_id": trace_id}),
+        "vlmo":         ("data_sources.cvm.vlmo.sync_engine", "sync",
+                         lambda: {"year": current_year, "force": True}),
+        "cgvn":         ("data_sources.cvm.cgvn.sync_engine", "sync",
+                         lambda: {"year": current_year, "force": True}),
+        "bridge":       ("data_sources.cvm.bridge.sync_engine", "sync",
+                         lambda: {"ticker": company or "", "force": True, "trace_id": trace_id}),
+        "cotahist":     ("data_sources.b3.cotahist.sync_engine", "sync",
+                         lambda: {"year": current_year, "force": True, "trace_id": trace_id}),
+        "b3_dividends": ("data_sources.b3.dividends.sync_engine", "sync",
+                         lambda: {"force": True, "trace_id": trace_id}),
+        "brapi":        ("data_sources.b3.brapi.sync_engine", "sync_tickers",
+                         lambda: {"force": True}),
+    }
+
+    if source not in sync_map:
+        return {"status": "error", "source": source,
+                "error": f"unknown source '{source}' (no sync function mapped)"}
+
+    module_path, fn_name, kwargs_fn = sync_map[source]
+    try:
+        mod = importlib.import_module(module_path)
+        sync_fn = getattr(mod, fn_name)
+        kwargs = kwargs_fn()
+        print(f"  [sync] Force-syncing {source} (kwargs: {kwargs})...", flush=True)
+        result = sync_fn(**kwargs)
+        print(f"  [sync] {source} done.", flush=True)
+        return {"status": "ok", "source": source, "result": result}
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"  [sync] {source} FAILED: {e}", flush=True)
+        return {"status": "error", "source": source,
+                "error": str(e), "traceback": tb}
+
+
+def ensure_fresh(
+    sources: list[str],
+    company: str | None = None,
+    skip_sync: bool = False,
+    trace_id: str = "",
+) -> dict:
+    """Ensure all named data sources are fresh (synced within 24h).
+
+    For each source:
+      1. Check freshness via _source_is_stale() (24h window).
+      2. If stale AND not skip_sync:
+         a. For CVM sources (dfp/itr/fca): HEAD check — only sync if CVM
+            has new data (or HEAD fails).
+         b. For other sources: sync directly.
+      3. On sync failure: record error but DON'T raise (proceed with stale).
+      4. Record result.
+
+    Args:
+        sources: List of source names (e.g., ["dfp", "itr", "bridge"]).
+        company: Ticker (for bridge sync — only syncs this ticker).
+        skip_sync: If True, only check — don't trigger sync.
+        trace_id: Tracer ID for sync logging.
+
+    Returns:
+        {"synced": [...], "fresh": [...], "errors": [...], "skipped": [...]}
+
+    Escape hatches (sync is NEVER triggered):
+      - CVM_SKIP_SYNC=1 env var
+      - skip_sync=True kwarg
+    """
+    # Global escape hatch for tests
+    if os.environ.get("CVM_SKIP_SYNC") == "1":
+        skip_sync = True
+
+    synced: list[str] = []
+    fresh: list[str] = []
+    errors: list[dict] = []
+    skipped: list[str] = []
+
+    for source in sources:
+        if not _source_is_stale(source):
+            fresh.append(source)
+            continue
+
+        if skip_sync:
+            skipped.append(source)
+            continue
+
+        # HEAD check for CVM sources (avoid pointless re-downloads)
+        if source in ("dfp", "itr", "fca"):
+            current_year = datetime.now().year
+            if not _cvm_has_new_data(source, current_year):
+                fresh.append(source)
+                continue
+
+        # Trigger force-sync (blocking)
+        sync_result = _trigger_sync(source, company=company, trace_id=trace_id)
+        if sync_result.get("status") == "ok":
+            synced.append(source)
+        else:
+            errors.append({
+                "source": source,
+                "error": sync_result.get("error", "unknown sync error"),
+            })
+
+    return {
+        "synced": synced,
+        "fresh": fresh,
+        "errors": errors,
+        "skipped": skipped,
+    }

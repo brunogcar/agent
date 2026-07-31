@@ -394,3 +394,210 @@ class TestRealEngineIdentity:
             assert hasattr(spec.periods_fn, "__wrapped__"), (
                 f"Engine '{name}' periods_fn is not decorated with @engine_cached."
             )
+
+
+# ── Sync Guard (v1.14) ──────────────────────────────────────────────────────
+
+class TestSyncGuard:
+    """Tests for ensure_fresh() + _source_is_stale() + _cvm_has_new_data().
+
+    All sync functions are MOCKED — no real syncs (which download gigabytes).
+    """
+
+    def test_ensure_fresh_skips_when_fresh(self, monkeypatch):
+        """Fresh source → no sync called."""
+        from datetime import datetime
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        recent = datetime.now().isoformat()
+        monkeypatch.setattr("skills._base._source_last_sync", lambda s: recent)
+        sync_called = []
+        monkeypatch.setattr("skills._base._trigger_sync",
+                            lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
+        from skills._base import ensure_fresh
+        result = ensure_fresh(["dfp"])
+        assert result["fresh"] == ["dfp"]
+        assert result["synced"] == []
+        assert sync_called == []  # no sync triggered
+
+    def test_ensure_fresh_triggers_sync_when_stale(self, monkeypatch):
+        """Stale source → sync called with force=True."""
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        # Mock HEAD check to return True (new data available)
+        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: True)
+        sync_called = []
+        monkeypatch.setattr("skills._base._trigger_sync",
+                            lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
+        from skills._base import ensure_fresh
+        result = ensure_fresh(["dfp"])
+        assert result["synced"] == ["dfp"]
+        assert sync_called == ["dfp"]
+
+    def test_ensure_fresh_skips_when_env_set(self, monkeypatch):
+        """CVM_SKIP_SYNC=1 → no sync, source goes to 'skipped'."""
+        monkeypatch.setenv("CVM_SKIP_SYNC", "1")
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        sync_called = []
+        monkeypatch.setattr("skills._base._trigger_sync",
+                            lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
+        from skills._base import ensure_fresh
+        result = ensure_fresh(["dfp"])
+        assert result["skipped"] == ["dfp"]
+        assert result["synced"] == []
+        assert sync_called == []
+
+    def test_ensure_fresh_skips_with_kwarg(self, monkeypatch):
+        """skip_sync=True kwarg → no sync."""
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        sync_called = []
+        monkeypatch.setattr("skills._base._trigger_sync",
+                            lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
+        from skills._base import ensure_fresh
+        result = ensure_fresh(["dfp"], skip_sync=True)
+        assert result["skipped"] == ["dfp"]
+        assert sync_called == []
+
+    def test_ensure_fresh_head_check_skips_when_no_new_data(self, monkeypatch):
+        """Stale source but HEAD says no new data → no sync, goes to 'fresh'."""
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: False)
+        sync_called = []
+        monkeypatch.setattr("skills._base._trigger_sync",
+                            lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
+        from skills._base import ensure_fresh
+        result = ensure_fresh(["dfp"])
+        assert result["fresh"] == ["dfp"]
+        assert result["synced"] == []
+        assert sync_called == []
+
+    def test_ensure_fresh_sync_failure_proceeds(self, monkeypatch):
+        """Sync failure → recorded in errors, doesn't raise."""
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: True)
+        monkeypatch.setattr("skills._base._trigger_sync",
+                            lambda s, company=None, trace_id="": {"status": "error", "source": s, "error": "network"})
+        from skills._base import ensure_fresh
+        result = ensure_fresh(["dfp"])
+        assert result["synced"] == []
+        assert len(result["errors"]) == 1
+        assert result["errors"][0]["source"] == "dfp"
+
+    def test_cvm_has_new_data_true_when_newer(self, monkeypatch):
+        """HEAD Last-Modified newer than last sync → True."""
+        from datetime import datetime, timedelta
+        from unittest.mock import MagicMock
+        recent_sync = (datetime.now() - timedelta(hours=1)).isoformat()
+        older_remote = (datetime.now() - timedelta(days=2)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        monkeypatch.setattr("skills._base._source_last_sync", lambda s: recent_sync)
+        mock_resp = MagicMock()
+        mock_resp.headers = {"Last-Modified": older_remote}
+        monkeypatch.setattr("requests.head", lambda *a, **kw: mock_resp)
+        from skills._base import _cvm_has_new_data
+        # Remote is OLDER than sync → no new data → False
+        assert _cvm_has_new_data("dfp", 2025) is False
+
+    def test_cvm_has_new_data_true_on_network_error(self, monkeypatch):
+        """HEAD fails → True (safer to sync than skip)."""
+        monkeypatch.setattr("requests.head", lambda *a, **kw: (_ for _ in ()).throw(Exception("timeout")))
+        from skills._base import _cvm_has_new_data
+        assert _cvm_has_new_data("dfp", 2025) is True
+
+    def test_source_is_stale_empty_timestamp(self, monkeypatch):
+        """Source with no sync timestamp → stale."""
+        monkeypatch.setattr("skills._base._source_last_sync", lambda s: "")
+        from skills._base import _source_is_stale
+        assert _source_is_stale("dfp") is True
+
+    def test_source_is_stale_recent_timestamp(self, monkeypatch):
+        """Source synced 1 hour ago → NOT stale."""
+        from datetime import datetime, timedelta
+        recent = (datetime.now() - timedelta(hours=1)).isoformat()
+        monkeypatch.setattr("skills._base._source_last_sync", lambda s: recent)
+        from skills._base import _source_is_stale
+        assert _source_is_stale("dfp") is False
+
+
+class TestRouteSyncGuard:
+    """Tests that route() generated by make_route() calls ensure_fresh()."""
+
+    def test_route_attaches_sync_report(self, monkeypatch):
+        """route() with required_sources attaches _sync to result."""
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: False)
+        from skills._base import make_route, make_registry
+        MODES, register_mode = make_registry()
+
+        @register_mode("test_mode", description="test")
+        def test_mode(company=""):
+            return {"status": "ok", "company": company}
+
+        route = make_route("sub_domain", "test_skill", MODES,
+                           required_sources=["dfp"])
+        result = route(mode="test_mode", company="PETR4")
+        assert result["status"] == "ok"
+        assert "_sync" in result
+        assert result["_sync"]["fresh"] == ["dfp"]
+
+    def test_route_without_required_sources_no_sync_report(self, monkeypatch):
+        """route() without required_sources does NOT attach _sync."""
+        from skills._base import make_route, make_registry
+        MODES, register_mode = make_registry()
+
+        @register_mode("test_mode", description="test")
+        def test_mode(company=""):
+            return {"status": "ok", "company": company}
+
+        route = make_route("sub_domain", "test_skill", MODES)
+        result = route(mode="test_mode", company="PETR4")
+        assert result["status"] == "ok"
+        assert "_sync" not in result
+
+    def test_route_skip_sync_kwarg(self, monkeypatch):
+        """route(..., skip_sync=True) bypasses sync."""
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        from skills._base import make_route, make_registry
+        MODES, register_mode = make_registry()
+
+        @register_mode("test_mode", description="test")
+        def test_mode(company=""):
+            return {"status": "ok", "company": company}
+
+        route = make_route("sub_domain", "test_skill", MODES,
+                           required_sources=["dfp"])
+        result = route(mode="test_mode", company="PETR4", skip_sync=True)
+        assert result["status"] == "ok"
+        assert result["_sync"]["skipped"] == ["dfp"]
+
+    def test_reentrancy_guard(self, monkeypatch):
+        """Nested route() calls trigger ensure_fresh() at most once."""
+        monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        sync_count = []
+        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: True)
+        monkeypatch.setattr("skills._base._trigger_sync",
+                            lambda s, company=None, trace_id="": sync_count.append(s) or {"status": "ok", "source": s})
+        from skills._base import make_route, make_registry
+        MODES, register_mode = make_registry()
+
+        @register_mode("outer", description="outer")
+        def outer(company=""):
+            # Simulate dashboard composing another mode via route()
+            inner_result = route(mode="inner", company=company)
+            return {"status": "ok", "inner": inner_result}
+
+        @register_mode("inner", description="inner")
+        def inner(company=""):
+            return {"status": "ok", "company": company}
+
+        route = make_route("sub_domain", "test_skill", MODES,
+                           required_sources=["dfp"])
+        result = route(mode="outer", company="PETR4")
+        assert result["status"] == "ok"
+        # ensure_fresh should have run only ONCE (outer call), not twice
+        assert len(sync_count) == 1
+        # Inner call's _sync should be None (re-entrancy guard skipped it)
+        assert "_sync" not in result["inner"] or result["inner"].get("_sync") is None

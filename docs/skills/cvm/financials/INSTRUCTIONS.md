@@ -4,7 +4,7 @@
 
 ### NEVER DO
 
-1. **Never add sync logic to a skill** — Skills are read-only. They call data_source query engines. Sync belongs in `data_sources/`.
+1. **Never add sync logic to a skill mode function** — Skills are read-only. Sync belongs in `data_sources/`. **[v1.14 exception]** The sync GUARD (`ensure_fresh()`) lives in `skills/_base.py` and is wired via `make_route(required_sources=[...])` in `__init__.py` — it triggers `data_sources/` sync functions before dispatch, but the skill mode functions themselves never call sync. This is a routing-layer concern, not a mode-function concern.
 2. **Never use `float(escala)` directly** — DFP stores escala as Portuguese words ("MIL", "MILHOES"). Always use `parse_escala()` from `_db.py`.
 3. **Never return cumulative values as standalone** — ITR values are cumulative. Flow items (DRE/DFC/DVA) must be subtracted to get standalone quarters. Snapshot items (BPA/BPP) use period-end value directly.
 4. **Never change the EBITDA formula** — `EBITDA = EBIT (DRE 3.05) + D&A (DFC 6.01.01.02)`. The D&A comes from the cash flow statement, not the DRE.
@@ -27,6 +27,7 @@
 5. **Always sort periods newest-first** — Consistent with other skills.
 6. **Always run `compileall` before `pytest`** — Catches syntax errors early.
 7. **Always split tests by mode** — `test_metrics.py` / `test_annual.py` / `test_quarterly.py` / `test_complete.py` / `test_summary.py` / `test_dashboard.py` / `test_route.py` + shared `conftest.py`. One test class per file (regression classes allowed as additional classes in the same file). *(v1.6: after the file split, per-mode test imports use `from skills.cvm.financials.modes.<mode> import <fn>` instead of `from skills.cvm.financials.financials import <fn>`.)*
+8. **Always declare `REQUIRED_SOURCES` in `__init__.py`** (v1.14) — `REQUIRED_SOURCES = ["dfp", "itr", "bridge"]` + pass to `make_route(required_sources=REQUIRED_SOURCES)`. The sync guard checks freshness before each dispatch + force-syncs if stale. Tests use `CVM_SKIP_SYNC=1` (set in conftest). Per-call bypass: `route(..., skip_sync=True)`.
 
 ---
 

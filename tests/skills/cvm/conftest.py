@@ -38,6 +38,12 @@ os.environ.setdefault("PLANNER_PROVIDER", "test")
 os.environ.setdefault("EXECUTOR_MODEL", "test")
 os.environ.setdefault("EXECUTOR_PROVIDER", "test")
 
+# [v1.14] Disable sync guard for ALL CVM tests. Tests use synthetic DBs —
+# they must NOT trigger real syncs (which download gigabytes + take minutes).
+# Individual tests that need to exercise the sync guard set CVM_SKIP_SYNC=0
+# locally + mock the sync functions.
+os.environ.setdefault("CVM_SKIP_SYNC", "1")
+
 
 @pytest.fixture(autouse=True)
 def mock_freshness(monkeypatch):

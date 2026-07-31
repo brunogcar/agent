@@ -158,6 +158,45 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
+## 🔄 Force Sync Guard (v1.14)
+
+When a user calls a skill via `route()`, the sync guard checks if the
+required data sources are fresh (synced within 24h). If stale, it
+force-syncs them BEFORE dispatching to the mode function.
+
+**This is NOT auto-sync (cron).** It's on-demand when a skill is used.
+The first call of the day may take 30+ seconds (DFP sync); subsequent
+calls within 24h are fast.
+
+**Components (all in `skills/_base.py`):**
+- `ensure_fresh(sources, company, skip_sync, trace_id)` — main entry point
+- `_source_is_stale(source)` — reads `sync_state` timestamp, checks 24h window
+- `_cvm_has_new_data(source, year)` — HEAD request to CVM URL, compares
+  `Last-Modified` header to last sync. Timeout=5s. On network error → sync.
+- `_trigger_sync(source, company, trace_id)` — maps source name to sync fn
+  with right args (current-year-only `force=True`, ticker-only for bridge)
+- `_SYNC_CHECKED` ContextVar — re-entrancy guard (nested route calls run
+  ensure_fresh at most once)
+- `_route_with_sync_guard()` — wraps sync check + dispatch in the guard
+
+**Force-sync args by source:**
+- DFP/ITR/FRE/IPE: `sync(years=[current_year], force=True)`
+- FCA/VLMO/CGVN: `sync(year=current_year, force=True)`
+- CAD: `sync(force=True)`
+- bridge: `sync(ticker=<company>, force=True)` — only requested ticker
+- cotahist: `sync(year=current_year, force=True)`
+- brapi: `sync_tickers(force=True)`
+
+**Escape hatches:**
+- `CVM_SKIP_SYNC=1` env var (set in `tests/skills/cvm/conftest.py` for all tests)
+- `route(..., skip_sync=True)` per-call kwarg
+
+**Failure path:** If sync fails, the skill proceeds with stale data + the
+error is recorded in `result["_sync"]["errors"]`. Stale-but-available is
+better than no answer for dashboards.
+
+---
+
 ## ⚡ Engine Cache (v1.8 F7)
 
 All 34 engines are decorated with `@engine_cached` (from `skills._base`) at
@@ -212,4 +251,4 @@ scope and doesn't install a new one).
 
 ---
 
-*Last updated: 2026-07-31 (v1.8 — F7 engine cache). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-31 (v1.14 — force sync guard). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
