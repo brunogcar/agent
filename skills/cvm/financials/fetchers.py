@@ -345,9 +345,16 @@ def _get_prev_cumulative(code, year, q_num, itr_data, dfp_data):
 def _extract_metrics(vals: dict) -> dict:
     """Extract named metrics from a {codigo: valor} dict.
 
-    [v1.2] D&A fallback: try DFC_MI (6.01.01.02) first, then DFC_MD codes
-    (6.02.01.02, 6.01.04) for direct-method filers. compute_ebitda() gets
-    whichever is non-None.
+    [v1.2] D&A fallback: try DFC_MI (6.01.01.02) first, then DFC_MD
+    (6.02.01.02) for direct-method filers. compute_ebitda() gets whichever
+    is non-None.
+
+    [v1.11] Removed 6.01.04 from the D&A fallback chain. v1.2 had it as
+    "Depreciação e Amortização (DFC_MD alt)" but real DFP data shows it is
+    actually "Pagamentos à Fornecedores" (11 rows) — a MISLABEL. Using it
+    as a D&A fallback would return WRONG data (supplier payments, not D&A).
+    The 6.02.01.02 fallback is also dead code (0 rows in real DFP) but
+    kept for completeness — it returns None silently.
 
     [v1.9] BPA asset sub-codes added: contas_a_receber (1.01.03), estoques
     (1.01.04), imobilizado (1.02.03), intangivel (1.02.04). Also added the
@@ -362,6 +369,10 @@ def _extract_metrics(vals: dict) -> dict:
     "Obrigações Sociais e Trabalhistas" at 6317 rows; also "Fornecedores" /
     "Contas a Pagar" / "Depósitos"). The payables engine gets whatever the
     filer uses.
+
+    [v1.11] DFC top-level sub-codes added: variacao_cambial (6.04),
+    variacao_caixa (6.05). These complement the existing FCO/FCI/FCF
+    (6.01/6.02/6.03) and D&A (6.01.01.02) flow metrics.
     """
     divida_bruta = None
     d_circ = _f(vals, "2.01.04")
@@ -369,12 +380,15 @@ def _extract_metrics(vals: dict) -> dict:
     if d_circ is not None or d_ncirc is not None:
         divida_bruta = (d_circ or 0) + (d_ncirc or 0)
 
-    # [v1.2] D&A: try indirect method first, then direct method fallbacks
+    # [v1.2] D&A: try indirect method first, then direct method fallback.
+    # [v1.11] Removed 6.01.04 fallback — it is "Pagamentos à Fornecedores"
+    # (11 rows in real DFP), NOT D&A. Keeping it would return wrong data.
+    # The 6.02.01.02 fallback has 0 rows in real DFP (dead code path) but
+    # is kept for completeness — it returns None silently.
     da = _f(vals, "6.01.01.02")
     if da is None:
-        da = _f(vals, "6.02.01.02")  # DFC_MD direct method
-    if da is None:
-        da = _f(vals, "6.01.04")     # DFC_MD alternative code
+        da = _f(vals, "6.02.01.02")  # DFC_MD direct method (0 rows in real DFP)
+    # Removed 6.01.04 fallback — it's "Pagamentos à Fornecedores", NOT D&A
 
     return {
         "ativo_total":          _f(vals, "1"),
@@ -418,6 +432,16 @@ def _extract_metrics(vals: dict) -> dict:
         "fco":                  _f(vals, "6.01"),
         "fci":                  _f(vals, "6.02"),
         "fcf":                  _f(vals, "6.03"),
+        # [v1.11] DFC top-level sub-codes — Variação Cambial + Aumento/Redução
+        # de Caixa. NOT in SUMMARY_CODES prior to v1.11. Real DFP data
+        # confirms both codes exist with 6628 rows each (same as 6.01-6.03).
+        # 6.04 = FX variation on cash + equivalents (typically 0 for non-USD
+        #       filers; can be significant for exporters like PETR4/VALE3)
+        # 6.05 = Net cash + equivalents change (= FCO + FCI + FCF + 6.04);
+        #       useful as a sanity check that flows reconcile to the balance
+        #       sheet change in 1.01.01 (Caixa e Equivalentes).
+        "variacao_cambial":      _f(vals, "6.04"),
+        "variacao_caixa":        _f(vals, "6.05"),
         "da":                   da,
         "proventos":            _f(vals, "7.08.04"),
         # [v1.7] DVA key metrics — CVM DFP DVA uses 7.xx codes (NOT 1-8).

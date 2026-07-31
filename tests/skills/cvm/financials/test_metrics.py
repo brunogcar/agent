@@ -6,8 +6,10 @@ Covers:
   - TestTTM             : compute_ttm (insufficient data / 4Q sums flows /
                           missing metric → None) — 4 tests.
   - TestDFCMDFallback   : _extract_metrics D&A fallback chain
-                          (DFC_MI 6.01.01.02 → DFC_MD 6.02.01.02 → 6.01.04 →
-                          None) + EBITDA with direct-method D&A — 5 tests.
+                          (DFC_MI 6.01.01.02 → DFC_MD 6.02.01.02 → None).
+                          [v1.11] 6.01.04 fallback removed — that code is
+                          "Pagamentos à Fornecedores" (11 rows in real DFP),
+                          NOT D&A. EBITDA with direct-method D&A — 5 tests.
 
 Pure-Python tests — no DB fixture required.
 """
@@ -167,7 +169,13 @@ class TestTTM:
 # ════════════════════════════════════════════════════════════════════════════
 
 class TestDFCMDFallback:
-    """v1.2 — D&A fallback for direct-method (DFC_MD) filers."""
+    """v1.2 — D&A fallback for direct-method (DFC_MD) filers.
+
+    [v1.11] The 6.01.04 fallback was REMOVED — that code is actually
+    "Pagamentos à Fornecedores" (11 rows in real DFP), NOT D&A. v1.2 had
+    incorrectly labeled it "Depreciação e Amortização (DFC_MD alt)".
+    See test_da_direct_method_alt_fallback for the regression test.
+    """
 
     def test_da_indirect_method_primary(self):
         """D&A from DFC_MI (6.01.01.02) is the primary source."""
@@ -184,11 +192,16 @@ class TestDFCMDFallback:
         assert m["da"] == 3000.0  # direct method fallback
 
     def test_da_direct_method_alt_fallback(self):
-        """Second fallback: 6.01.04 (DFC_MD alternative code)."""
+        """[v1.11] 6.01.04 is NOT a D&A fallback — it's "Pagamentos à
+        Fornecedores" (11 rows in real DFP), NOT D&A. v1.2 incorrectly
+        labeled it "Depreciação e Amortização (DFC_MD alt)" — would have
+        returned wrong data (supplier payments, not D&A). v1.11 removed
+        the fallback; now providing only 6.01.04 yields da=None.
+        """
         from skills.cvm.financials.fetchers import _extract_metrics
         vals = {"6.01.04": 2000.0}  # no 6.01.01.02, no 6.02.01.02
         m = _extract_metrics(vals)
-        assert m["da"] == 2000.0
+        assert m["da"] is None  # 6.01.04 is NOT D&A — fallback removed
 
     def test_da_none_when_all_missing(self):
         from skills.cvm.financials.fetchers import _extract_metrics

@@ -153,6 +153,55 @@ sub-codes (`2.01.01`, `2.03.01`, `2.03.02`, `2.03.04`, `2.03.05`,
 [v1.10] `KEY_CODES_BY_GRUPO["BPP"]` expanded from 7 codes to 17 codes
 (covering both OLD and NEW CVM chart formats).
 
+### mode="dfc" (v1.11)
+Demonstração do Fluxo de Caixa (Cash Flow Statement) for the last N periods.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `company` | `str` | (required) | Ticker, name, or CNPJ |
+| `periods` | `int` | `5` | Number of periods to return |
+| `consolidado` | `int` | `1` | 1=consolidated, 0=individual |
+| `quarterly` | `int` | `0` | 1=quarterly (ITR+DFP), 0=annual only (DFP) |
+
+Returns: `{status, company, period_type, periods: [{data_fim_exerc, meses, accounts: {codigo: {label, section, valor_brl}}}]}`
+
+The DFC is structured top-to-bottom (FCO → D&A → FCI → FCF → Variação Cambial → Aumento/Redução de Caixa), 6 codes:
+
+| Code | Label (canonical) | Section |
+|------|-------------------|---------|
+| `6.01`       | Caixa Líquido Atividades Operacionais (FCO) | `operating` |
+| `6.01.01.02` | Depreciação e Amortização | `da` |
+| `6.02`       | Caixa Líquido Atividades de Investimento (FCI) | `investing` |
+| `6.03`       | Caixa Líquido Atividades de Financiamento (FCF) | `financing` |
+| `6.04`       | Variação Cambial s/ Caixa e Equivalentes | `fx_change` (NEW v1.11) |
+| `6.05`       | Aumento (Redução) de Caixa e Equivalentes | `net_change` (NEW v1.11) |
+
+The `grupo` filter is `LIKE '%Fluxo de Caixa%'` — this matches BOTH
+DFC_MI (Método Indireto, 98.6% of filers, 318873 rows) AND DFC_MD (Método
+Direto, 1.4% — 4433 rows, banks + insurers) from both consolidated and
+individual filings. See
+[DFP Architecture → architecture/DFC.md](../../data_sources/cvm/dfp/architecture/DFC.md)
+for the **DFC_MI vs DFC_MD** split and the **D&A code issues**:
+
+- `6.01.01.02` (D&A indirect method) — WORKS, 6021 rows in real DFP. Primary D&A code.
+- `6.02.01.02` (D&A direct method fallback) — 0 ROWS in real DFP. Dead code path (returns None silently). Kept for completeness.
+- `6.01.04` — was MISLABELED in v1.2 as "Depreciação e Amortização (DFC_MD alt)" but real DFP shows it is "Pagamentos à Fornecedores" (11 rows), NOT D&A. v1.11 REMOVED from `SUMMARY_CODES` + the `_extract_metrics` D&A fallback chain. The chain is now `6.01.01.02 → 6.02.01.02 → None` (was `6.01.01.02 → 6.02.01.02 → 6.01.04 → None`).
+
+[v1.11] `SUMMARY_CODES` now also includes the 2 new DFC top-level codes
+(`6.04`, `6.05`). `_extract_metrics` exposes them as `variacao_cambial`,
+`variacao_caixa` in the per-period `metrics` dict.
+
+[v1.11] `KEY_CODES_BY_GRUPO["DFC_MI"]` expanded from 4 codes to 6 codes.
+
+[v1.11] **D&A code `6.01.04` removed** — v1.2 had it as a fallback in
+the `_extract_metrics` D&A chain but real DFP shows it is "Pagamentos à
+Fornecedores" (supplier payments — 11 rows), NOT D&A. Keeping it would
+have silently returned wrong D&A values for any filer that populated
+`6.01.04`, corrupting EBITDA = EBIT + D&A. The `da_at` engine in
+`skills/cvm/calculations/engines/da.py` is UNAFFECTED — it uses
+`descricao LIKE '%deprec%' OR '%amort%'` description search (scoped to
+`codigo LIKE '6.01.%'`), NOT code-level fallbacks.
+
 ### mode="bpa" (v1.9)
 Balanço Patrimonial Ativo (Balance Sheet — Assets) for the last N periods.
 
@@ -274,6 +323,8 @@ skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PET
 skill(domain="cvm", sub_domain="financials", mode="bpa", params='{"company":"PETR4","quarterly":1,"periods":8}')
 skill(domain="cvm", sub_domain="financials", mode="bpp", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="bpp", params='{"company":"PETR4","quarterly":1,"periods":8}')
+skill(domain="cvm", sub_domain="financials", mode="dfc", params='{"company":"PETR4"}')
+skill(domain="cvm", sub_domain="financials", mode="dfc", params='{"company":"PETR4","quarterly":1,"periods":8}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4"}')
 skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PETR4","quarterly":1,"periods":8}')
 skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PETR4"}')
@@ -282,4 +333,4 @@ skill(domain="cvm", sub_domain="financials", mode="dre", params='{"company":"PET
 
 ---
 
-*Last updated: 2026-07-30 (v1.10 — BPP mode + BPP sub-codes in SUMMARY_CODES). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*
+*Last updated: 2026-07-30 (v1.11 — DFC mode + 6.04/6.05 codes in SUMMARY_CODES + 6.01.04 mislabel fix). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference.*

@@ -40,6 +40,19 @@ TTM D&A computable from: ~2012 onwards (need 2 years of ITR)
 
 Standalone module: importable by historical skill + future backtest skill.
 
+[v1.11] D&A code-level fallback audit: This engine uses a DESCRIPTION search
+(`descricao LIKE '%deprec%' OR descricao LIKE '%amort%'`), NOT code-level
+fallbacks — so it does NOT depend on 6.01.04. Real DFP row counts confirm:
+  - 6.01.01.02 (indirect method, "Depreciação e Amortização") — 6021 rows.
+    Primary D&A code; both this engine and `_extract_metrics` use it.
+  - 6.02.01.02 (v1.2 direct-method fallback in `_extract_metrics`) — 0 rows
+    in real DFP. Dead code path; returns None silently. Kept for completeness.
+  - 6.01.04 (v1.2 "alt" fallback in `_extract_metrics`) — MISLABELED in v1.2
+    as "Depreciação e Amortização (DFC_MD alt)" but the DB actually says
+    "Pagamentos à Fornecedores" (11 rows). v1.11 REMOVED from SUMMARY_CODES
+    + the `_extract_metrics` fallback chain (would have returned wrong data).
+This engine (da_at) is unaffected by the v1.11 trim — it never used 6.01.04.
+
 Usage:
     from skills.cvm.calculations.engines.da import da_at
     d = da_at("PETR4", "2024-06-30")  # -> 15_000_000_000.0

@@ -44,4 +44,4 @@
 
 ---
 
-*Last updated: 2026-07-30 (v1.10 — BPP mode added; 9 modes total).*
+*Last updated: 2026-07-30 (v1.11 — DFC mode added; 10 modes total).*

@@ -42,10 +42,15 @@ tests/skills/cvm/financials/
 ├── test_complete.py       # TestCompleteMode (5 tests)
 ├── test_summary.py        # TestSummaryMode + TestSummaryV101Regressions + TestSummaryCurrentRatios (5 tests)
 ├── test_dashboard.py      # TestDashboardMode (5-tab payload assertions) — added v1.5
-└── test_route.py          # TestFinancialsRoute (3 tests)
+├── test_route.py          # TestFinancialsRoute (3 tests)
+├── test_bpa.py            # TestBPAMode — added v1.9
+├── test_bpp.py            # TestBPPMode — added v1.10
+├── test_dre.py            # TestDREMode — added v1.8
+├── test_dfc.py            # TestDFCMode — added v1.11
+└── test_dva.py            # TestDVAMode — added v1.7
 ```
 
-89 tests total (v1.6 — `test_dashboard.py` added in v1.5; per-mode test imports updated to `from skills.cvm.financials.modes.<mode> import <fn>` after the v1.6 file split).
+[v1.11] `test_dfc.py` added (11 tests — DFC mode validation, basic shape, route dispatch, quarterly param, manifest registration, codes complete, _extract_metrics new keys, 6.01.04 mislabel regression).
 
 ## Data Flow
 
@@ -167,4 +172,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-07-30 (v1.10 — BPP mode + BPP sub-codes in SUMMARY_CODES/KEY_CODES_BY_GRUPO/_extract_metrics; see [DFP statement charts of accounts](../../data_sources/cvm/dfp/ARCHITECTURE.md) for BPA/BPP/DRE/DVA chart-of-accounts docs).*
+*Last updated: 2026-07-30 (v1.11 — DFC mode + 6.04/6.05 sub-codes in SUMMARY_CODES/KEY_CODES_BY_GRUPO/_extract_metrics + 6.01.04 mislabel fix; see [DFP statement charts of accounts](../../data_sources/cvm/dfp/ARCHITECTURE.md) for BPA/BPP/DRE/DFC/DVA chart-of-accounts docs).*

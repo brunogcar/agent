@@ -49,10 +49,11 @@ raw SQL against `dfp.db` or `itr.db`, use the **DB column name**, not the CSV na
 >
 > **Other CVM data sources** (FRE, IPE, VLMO, CGVN, FCA) keep the CSV column names as-is in the DB — no renaming. Only DFP + ITR use this abbreviated schema.
 >
-> **Statement charts of accounts** — for the per-statement code maps + label quirks (DRE 3.01-3.11, DVA 7.xx, BPA 1.xx, BPP 2.xx, etc.) used by the `financials` skill modes (`bpa`, `bpp`, `dre`, `dva`, `complete`), see:
+> **Statement charts of accounts** — for the per-statement code maps + label quirks (DRE 3.01-3.11, DVA 7.xx, BPA 1.xx, BPP 2.xx, DFC 6.xx, etc.) used by the `financials` skill modes (`bpa`, `bpp`, `dre`, `dfc`, `dva`, `complete`), see:
 > - [architecture/BPA.md](architecture/BPA.md) — BPA chart of accounts (codes 1.xx, old vs new chart, multiple labels per code)
 > - [architecture/BPP.md](architecture/BPP.md) — BPP chart of accounts (codes 2.xx, old vs new chart, 2.03 meaning change)
 > - [architecture/DRE.md](architecture/DRE.md) — DRE chart of accounts (codes, multiple labels per code, DRE vs DRA)
+> - [architecture/DFC.md](architecture/DFC.md) — DFC chart of accounts (codes 6.xx, DFC_MI vs DFC_MD, D&A code issues)
 > - [architecture/DVA.md](architecture/DVA.md) — DVA chart of accounts (7.xx codes, old vs new format, grupo filter bug)
 
 ## Data Flow
@@ -70,4 +71,4 @@ CVM ZIP → parse CSV → compute meses → filter ORDEM_EXERC → dedup VERSAO 
 
 ---
 
-*Last updated: 2026-07-30 (v1.10 — added cross-link to BPP chart of accounts).*
+*Last updated: 2026-07-30 (v1.11 — added cross-link to DFC chart of accounts).*

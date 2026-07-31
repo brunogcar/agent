@@ -145,11 +145,25 @@ def _build_summary_codes():
     codes["3.07"]       = ("DRE", "Resultado Líquido das Operações Continuadas")
     codes["6.01.01.02"] = ("DFC_MI", "Depreciação e Amortização (Método Indireto)")
     codes["7.08.04"]    = ("DVA", "Remuneração de Capitais Próprios (total)")
-    # [v1.2] DFC_MD (direct method) D&A fallback codes — some filers use direct
-    # method where D&A is in a different sub-account. We fetch both; the query
-    # engine returns whichever exists for a given company.
+    # [v1.2] DFC_MD (direct method) D&A fallback code — some filers use direct
+    # method where D&A is in a different sub-account. The query engine returns
+    # whichever exists for a given company.
+    # ⚠️ [v1.11] Verified against real DFP data:
+    #   - 6.02.01.02 has 0 ROWS — dead code path, returns None silently.
+    #     Kept for completeness (no harm; just a no-op fallback).
+    #   - 6.01.04 was MISLABELED in v1.2 as "Depreciação e Amortização (DFC_MD
+    #     alt)" — the DB actually says "Pagamentos à Fornecedores" (11 rows).
+    #     Using it as a D&A fallback would return WRONG data (supplier
+    #     payments, not D&A). REMOVED from SUMMARY_CODES and from the
+    #     `_extract_metrics` fallback chain in v1.11.
     codes["6.02.01.02"] = ("DFC_MD", "Depreciação e Amortização (Método Direto)")
-    codes["6.01.04"]    = ("DFC_MD", "Depreciação e Amortização (DFC_MD alt)")
+    # [v1.11] DFC top-level codes — Variação Cambial + Aumento/Redução de
+    # Caixa. NOT in RESUMO_ACCOUNTS (the catalog only has 6.01-6.03). Real
+    # DFP data confirms both exist with 6628 rows each (same as 6.01-6.03).
+    # 6.04 = FX variation on cash + equivalents (typically 0 for non-USD filers)
+    # 6.05 = Net cash + equivalents change (= FCO + FCI + FCF + 6.04)
+    codes["6.04"] = ("DFC_MI", "Variação Cambial s/ Caixa e Equivalentes")
+    codes["6.05"] = ("DFC_MI", "Aumento (Redução) de Caixa e Equivalentes")
     # [v1.7] DVA key metrics — CVM DFP DVA uses 7.xx codes (NOT 1-8).
     # Verified against real DFP: code "7" has 0 rows; "7.08" has data.
     # 7.08 is the dominant format; 7.11 is newer (~75 rows).
@@ -182,7 +196,15 @@ KEY_CODES_BY_GRUPO = {
                "2.03", "2.03.01", "2.03.02", "2.03.04", "2.03.05", "2.03.09",
                "2.04", "2.05", "2.06", "2.07", "2.08"],
     "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.07", "3.09", "3.11"],
-    "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03"],
+    # [v1.11] Expanded DFC — added 6.04 (Variação Cambial s/ Caixa e
+    # Equivalentes) + 6.05 (Aumento/Redução de Caixa e Equivalentes). The
+    # standalone `dfc` mode also surfaces these. Real DFP data confirms both
+    # codes exist with 6628 rows each (same as 6.01-6.03). Codes 6.xx are
+    # unique to DFC (BPA uses 1.xx, BPP uses 2.xx, DRE uses 3.xx, DVA uses
+    # 7.xx). The `grupo LIKE '%Fluxo de Caixa%'` filter matches BOTH DFC_MI
+    # (Método Indireto, 98.6% of filers) AND DFC_MD (Método Direto, 1.4% —
+    # banks + insurers).
+    "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03", "6.04", "6.05"],
     # [v1.7] Expanded DVA — CVM DFP uses 7.xx codes (NOT 1-8).
     # Generation side (7.01-7.08) + distribution side (7.08.01-7.08.04)
     # + new format (7.11.01-7.11.04) + existing proventos.
