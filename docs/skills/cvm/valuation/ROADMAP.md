@@ -17,24 +17,12 @@
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
 | Done | Force sync guard (v1.7) | `ensure_fresh()` + HEAD check + current-year force sync |
 
----
-
-## ✅ Recently Completed
-
-- **v1.7 (2026-07-31)** — Force sync guard. `__init__.py` passes
-  `required_sources=["dfp","itr","fca","cotahist","bridge"]` to `make_route()`.
-  route() calls `ensure_fresh()` before dispatch. HEAD check for CVM sources.
-  Re-entrancy guard. Escape hatches: `CVM_SKIP_SYNC=1` + `skip_sync=True`.
-- **v1.5 (2026-07-29)** — 6-tab dashboard reorg: added Per-share tab,
-  charts, collapsibles, `_derive_*()` helpers.
-
----
+> **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
 Living roadmap for the valuation skill. Items here are inspired by a private
 valuation spreadsheet analysis (covering B3 stocks comprehensively) + by
 gaps surfaced during the v1.5 6-tab dashboard reorg. Items move from
-**Backlog** → **In Progress** → **Completed** (then they appear in
-CHANGELOG.md).
+**Backlog** → **Completed** (then they appear in CHANGELOG.md).
 
 The dashboard's v1.5 Multiples tab already lists all 16 price ratios in
 its top-10 table + "Less Common Multiples" collapsible — but several of
@@ -155,20 +143,4 @@ These are entirely new data sources — not yet wired into any engine.
 
 ---
 
-## ✅ Recently Completed
-
-(See [CHANGELOG.md](CHANGELOG.md) for the full version history.)
-
-- **v1.5 (2026-07-29)** — 6-tab dashboard reorg: added Per-share tab,
-  added charts (Multiples bar chart, Per-share bar chart, planned
-  Efficiency & Growth growth chart), added collapsibles (Price Details,
-  Less Common Multiples, Detailed Leverage), added `_derive_multiples()`
-  + `_derive_per_share()` + `_derive_detailed_leverage()` helpers that
-  compute additional metrics from components already in ratios_dict.
-- **v1.4 (2026-07-29)** — File structure split + 5-tab dashboard mode.
-- **v1.3 (2026-07-29)** — Registry-driven ratios via compute_all_ratios().
-- **v1.2 (2026-07-29)** — Wired 15 v1.3 calculations metrics into ratios().
-
----
-
-*Last updated: 2026-07-31 (v1.7 — force sync guard + F7 engine cache). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*

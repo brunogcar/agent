@@ -8,6 +8,7 @@ Each builder produces a section dict in the canonical dashboard shape:
   - Table section:  {"title", "type": "table", "columns", "rows", "formats"}
   - Text section:   {"title", "type": "text", "text"}
   - KPI card:       {"label", "value", "unit"}
+  - Chart section:  {"title", "type": "chart", "chart_data": <Chart.js config>}
 
 The KPI cards are produced separately (build_overview_kpis) and placed at
 the top level of the dashboard payload (not inside a section).
@@ -17,6 +18,14 @@ from __future__ import annotations
 from typing import Any
 
 from tools.report_ops.formats import apply_fmt
+
+
+# ── Brand colors for chart builders ──────────────────────────────────────────
+_TEAL = "#0d9488"
+_ORANGE = "#f59e0b"
+_RED = "#ef4444"
+_BLUE = "#3b82f6"
+_PURPLE = "#a855f7"
 
 
 # ── Safe accessor + formatter ────────────────────────────────────────────────
@@ -277,4 +286,112 @@ def build_comparison_section(compare_result: dict) -> dict:
             "above/below = métricas de qualidade (maior = melhor). "
             "n/a = valor indisponível ou mediana zero."
         ),
+    }
+
+
+# ── Top companies chart (v1.2) ────────────────────────────────────────────────
+
+# Metric → (peer dict key, label, format_spec, sort_direction)
+# direction = "asc" (cheapest/best first when lower is better — multiples),
+#             "desc" (best first when higher is better — quality metrics).
+# The chart sorts peers by the chosen metric and shows top N as bars.
+_TOP_METRIC_DEFS: dict[str, tuple[str, str, str, str]] = {
+    "p_l":            ("p_l",            "P/L",            "num", "asc"),
+    "p_vpa":          ("p_vpa",          "P/VPA",          "num", "asc"),
+    "ev_ebitda":      ("ev_ebitda",      "EV/EBITDA",      "num", "asc"),
+    "roe":            ("roe",            "ROE",            "pct", "desc"),
+    "dividend_yield": ("dividend_yield", "Div Yield",      "pct", "desc"),
+}
+
+
+def build_top_companies_chart(peers_data: dict | list,
+                              metric: str = "p_l",
+                              top_n: int = 10) -> dict | None:
+    """Build a bar chart showing top-screened companies sorted by a key metric.
+
+    Args:
+        peers_data: either a sector() result dict (with a "peers" key) OR a
+                    raw list of peer dicts. Each peer must have a "ticker"
+                    field + the metric key (e.g. "p_l" / "roe" / ...).
+        metric:     which metric to sort by (one of: p_l, p_vpa, ev_ebitda,
+                    roe, dividend_yield). Default "p_l".
+        top_n:      max number of companies to include in the chart. Default 10.
+
+    Returns None if there is no peer data or no valid values for the metric.
+    """
+    if isinstance(peers_data, dict):
+        peers = peers_data.get("peers") or []
+    else:
+        peers = list(peers_data or [])
+
+    if not peers:
+        return None
+
+    metric_def = _TOP_METRIC_DEFS.get(metric)
+    if metric_def is None:
+        return None
+    key, label, spec, direction = metric_def
+
+    # Build (ticker, value) pairs, filtering out peers without a numeric value.
+    pairs: list[tuple[str, float]] = []
+    for p in peers:
+        raw = p.get(key)
+        if raw is None:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        pairs.append((p.get("ticker", "") or "—", v))
+
+    if not pairs:
+        return None
+
+    # Sort + slice.
+    pairs.sort(key=lambda t: t[1],
+               reverse=(direction == "desc"))
+    pairs = pairs[:top_n]
+
+    labels = [t for t, _ in pairs]
+    values = [v for _, v in pairs]
+    # Pct-kind metrics are stored as fractions (0.185 = 18.5%); scale by 100
+    # so the chart reads naturally.
+    if spec == "pct":
+        values = [round(v * 100, 2) for v in values]
+    else:
+        values = [round(v, 2) for v in values]
+
+    # Choose bar color by metric kind: teal for valuation (lower=better),
+    # orange for quality (higher=better).
+    bar_color = _ORANGE if direction == "desc" else _TEAL
+
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": f"{label} ({'%' if spec == 'pct' else '×'})",
+                    "data": values,
+                    "backgroundColor": bar_color,
+                    "borderColor": bar_color,
+                    "borderWidth": 1,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "indexAxis": "y",  # horizontal bar chart (ticker names on Y)
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": f"Top {len(labels)} Companies by {label}"},
+                },
+                "scales": {
+                    "x": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                    "y": {"grid": {"display": False}},
+                },
+            },
+        },
     }

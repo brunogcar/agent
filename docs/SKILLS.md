@@ -482,22 +482,35 @@ skill(domain, sub_domain, mode, params)  # @tool in skills/dispatcher.py
 
 Identical pattern to `data_source()` — JSON params string, auto-discovery.
 
-### CVM Skills
+### All 11 Skills
 
-See [CVM Skills Overview](skills/CVM.md) for the full landing page.
+See [CVM Skills Overview](skills/CVM.md) for the CVM landing page, or
+[Investsite Overview](skills/INVESTSITE.md) for the investsite landing page.
 
-| Sub-domain | Modes | Data Sources |
-|------------|-------|--------------|
-| [shareholders](skills/cvm/SHAREHOLDERS.md) | shareholders, free_float, equity_structure, summary | FRE (posicao_acionaria, distribuicao_capital) + DFP (BPP 2.03.*) |
-| [dividends](skills/cvm/DIVIDENDS.md) | history, annual, payable, announcements, summary | B3 dividends + DFP (DVA 7.08.04.*, BPP 2.01.05.02.*) + IPE |
-| [financials](skills/cvm/FINANCIALS.md) | quarterly, annual, complete, summary | DFP (annual) + ITR (quarterly cumulative) + DVA (proventos) |
-| [valuation](skills/cvm/VALUATION.md) | ratios, summary | b3 trades (price) + DFP (financials) + FRE (shares) — P/L, P/VPA, EV, Div Yield |
+| Skill | Domain | Dashboard Tabs | Charts | Sync Guard | Doc |
+|-------|--------|---------------|--------|------------|-----|
+| [financials](skills/cvm/FINANCIALS.md) | cvm | 7 | ✅ | ✅ | FINANCIALS.md |
+| [valuation](skills/cvm/VALUATION.md) | cvm | 6 | ✅ | ✅ | VALUATION.md |
+| [historical](skills/cvm/HISTORICAL.md) | cvm | 5 | ✅ | ✅ | HISTORICAL.md |
+| [backtest](skills/cvm/BACKTEST.md) | cvm | 3 | ✅ | ✅ | BACKTEST.md |
+| [dividends](skills/cvm/DIVIDENDS.md) | cvm | 3 | ✅ | ✅ | DIVIDENDS.md |
+| [governance](skills/cvm/GOVERNANCE.md) | cvm | 3 | ✅ | ✅ | GOVERNANCE.md |
+| [shareholders](skills/cvm/SHAREHOLDERS.md) | cvm | 4 | ✅ | ✅ | SHAREHOLDERS.md |
+| [insider](skills/cvm/INSIDER.md) | cvm | 4 | ✅ | ❌ | INSIDER.md |
+| [screener](skills/cvm/SCREENER.md) | cvm | 3 | ✅ | ❌ | SCREENER.md |
+| [comparison](skills/cvm/COMPARISON.md) | cvm | 5 | ✅ | ❌ | COMPARISON.md |
+| [investsite](skills/INVESTSITE.md) | investsite | 3 | ✅ | N/A (web) | INVESTSITE.md |
 
-### Investsite Skills
+**Notes:**
 
-| Domain | Modes | Source |
-|--------|-------|--------|
-| [investsite](skills/INVESTSITE.md) | indicators, statements, events, summary, listing | investsite.com.br (live web scraping, no local DB) |
+- **Dashboard Tabs**: Each skill has a `dashboard` mode returning a multi-tab
+  payload (`{"status": "ok", "tabs": [...], "kpis": [...]}`). The tab count
+  reflects the current `len(result["tabs"])`.
+- **Charts**: ✅ = dashboard emits Chart.js-compatible `chart_data` sections
+  (bar / line / doughnut / stacked bar).
+- **Sync Guard**: ✅ = `route()` calls `ensure_fresh()` to force-sync stale
+  data sources (dfp/itr/fca/cotahist/bridge) before dispatch. `N/A (web)` for
+  investsite (live web scraping, no local DB). ❌ = sync guard not yet wired.
 
 ### Architecture
 

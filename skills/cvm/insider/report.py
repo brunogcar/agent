@@ -8,6 +8,7 @@ Each builder produces a section dict in the canonical dashboard shape:
   - Table section:  {"title", "type": "table", "columns", "rows", "formats"}
   - Text section:   {"title", "type": "text", "text"}
   - KPI card:       {"label", "value", "unit"}
+  - Chart section:  {"title", "type": "chart", "chart_data": <Chart.js config>}
 
 The KPI cards are produced separately (build_overview_kpis) and placed at
 the top level of the dashboard payload (not inside a section).
@@ -17,6 +18,14 @@ from __future__ import annotations
 from typing import Any
 
 from tools.report_ops.formats import apply_fmt
+
+
+# ── Brand colors for chart builders ──────────────────────────────────────────
+_TEAL = "#0d9488"
+_ORANGE = "#f59e0b"
+_RED = "#ef4444"
+_BLUE = "#3b82f6"
+_PURPLE = "#a855f7"
 
 
 # ── Safe accessor + formatter ────────────────────────────────────────────────
@@ -278,3 +287,152 @@ def _ok(result: dict) -> bool:
     Mirrors tools.report_ops.adapters._ok: status == "ok" and dict-typed.
     """
     return isinstance(result, dict) and result.get("status") == "ok"
+
+
+# ── Monthly Net chart (v1.2) ──────────────────────────────────────────────────
+
+def build_monthly_net_chart(summary_result: dict) -> dict | None:
+    """Build a bar chart showing monthly net insider buy/sell volume.
+
+    A single-dataset bar chart where each bar's color encodes the direction:
+      - green (teal)  for net buying months (net_volume > 0)
+      - red           for net selling months (net_volume < 0)
+
+    Args:
+        summary_result: summary() result dict (must contain a "monthly" list
+                        with month/net_volume keys).
+
+    Returns None if there is no monthly data or no valid net volumes.
+    """
+    monthly = (summary_result.get("monthly")
+               if _ok(summary_result) else []) or []
+    if not monthly:
+        return None
+
+    labels: list[str] = []
+    values: list[float] = []
+    colors: list[str] = []
+    for m in monthly:
+        net = m.get("net_volume")
+        if net is None:
+            continue
+        try:
+            v = float(net)
+        except (TypeError, ValueError):
+            continue
+        labels.append(m.get("month", "") or "—")
+        values.append(round(v, 2))
+        colors.append(_TEAL if v >= 0 else _RED)
+
+    if not labels:
+        return None
+
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Net Volume (R$)",
+                    "data": values,
+                    "backgroundColor": colors,
+                    "borderColor": colors,
+                    "borderWidth": 1,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Monthly Net Insider Volume"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }
+
+
+# ── Cumulative chart (v1.2) ──────────────────────────────────────────────────
+
+def build_cumulative_chart(transactions: dict) -> dict | None:
+    """Build a line chart showing cumulative insider trading volume over time.
+
+    Walks the transactions list (newest-first by convention from history())
+    in chronological order, accumulating the signed volume (positive for buys,
+    negative for sells) and plotting a line chart.
+
+    Args:
+        transactions: history() result dict (must contain a "movements" list
+                      with Data_Movimentacao/Tipo_Movimentacao/Volume keys).
+
+    Returns None if there are fewer than 2 transactions or no valid volumes.
+    """
+    movements = (transactions.get("movements")
+                 if _ok(transactions) else []) or []
+    if len(movements) < 2:
+        return None
+
+    # Oldest-first so cumulative makes sense.
+    chronological = sorted(
+        [m for m in movements if m.get("Data_Movimentacao")],
+        key=lambda m: m.get("Data_Movimentacao", ""),
+    )
+
+    labels: list[str] = []
+    cumulative: list[float] = []
+    running = 0.0
+    for m in chronological:
+        vol = m.get("Volume")
+        if vol is None:
+            continue
+        try:
+            v = float(vol)
+        except (TypeError, ValueError):
+            continue
+        tipo = (m.get("Tipo_Movimentacao") or "").lower()
+        # Sell reduces cumulative net volume; buy increases it.
+        signed = -v if "venda" in tipo else v
+        running += signed
+        labels.append(m.get("Data_Movimentacao", "") or "—")
+        cumulative.append(round(running, 2))
+
+    if len(labels) < 2:
+        return None
+
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Cumulative Net Volume (R$)",
+                    "data": cumulative,
+                    "borderColor": _BLUE,
+                    "backgroundColor": "rgba(59, 130, 246, 0.15)",
+                    "borderWidth": 2,
+                    "tension": 0.3,
+                    "fill": True,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Cumulative Insider Net Volume"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }

@@ -11,17 +11,7 @@
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator + ContextVar scope — ~60% fewer DB queries |
 
----
-
-## ✅ Recently Completed
-
-- **v1.9 (2026-07-31)** — F7 engine cache. `@engine_cached` decorator on all 34
-  engines + `engine_cache_scope` ContextVar. ~60% fewer DB queries in
-  `compute_all_ratios()`. Zero test changes (decorator applied at definition time).
-- **v1.8 (2026-07-31)** — LLM-review fixes (P0+P1+P2): DVA 4th engine fix, 7.11
-  fallback, PL 2.08 fallback, growth gap tolerance, shared helpers.
-
----
+> **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
 ## P3 — Defer / roadmap
 
@@ -63,4 +53,4 @@
 
 ---
 
-*Last updated: 2026-07-31 (v1.9 — F7 engine cache). Items will be promoted to P1/P0 as consumer skills demand them.*
+*Last updated: 2026-08-01. Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*

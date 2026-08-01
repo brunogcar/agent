@@ -14,15 +14,7 @@
 | Done | Sync guard (v1.2) | required_sources wired via make_route() |
 | Done | F7 engine cache (v1.9) | Inherited from calculations skill |
 
----
-
-## ✅ Recently Completed
-
-- **v1.2 (2026-07-31)** — Dashboard reorg: added drawdown chart (underwater
-  equity curve) to Performance tab. Sync guard wired via
-  `required_sources=["cotahist", "bridge"]` + `make_route()`.
-
----
+> **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📋 Backlog
 
@@ -59,4 +51,4 @@ sector rotation, dividend-focused.
 
 ---
 
-*Last updated: 2026-07-31 (v1.2 — dashboard reorg + sync guard). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*

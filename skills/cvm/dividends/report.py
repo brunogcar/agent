@@ -272,3 +272,142 @@ def build_annual_section(summary_result: dict) -> dict:
         "formats": formats,
         "note": "Totais anuais declarados em BRL por exercício social.",
     }
+
+
+# ── Chart builders (v1.2) ────────────────────────────────────────────────────
+# Each chart builder returns {"type": "chart", "chart_data": <Chart.js config>}
+# or None when no data. The dashboard template passes chart_data verbatim to
+# `new Chart(ctx, chart_data)`.
+
+# Brand palette (matches the report theme).
+_TEAL   = "#0d9488"
+_ORANGE = "#f59e0b"
+_RED    = "#ef4444"
+_BLUE   = "#3b82f6"
+_PURPLE = "#a855f7"
+
+
+def build_dividend_history_chart(history_data: Any) -> dict | None:
+    """Build a Chart.js line chart showing dividend payments over time.
+
+    history_data is the events list from summary()['sections']
+    ['recent_events']['events']. Each event has payment_date + rate.
+    The chart shows rate per share (R$) over time.
+
+    Returns None when the events list is empty or no events carry both
+    a payment_date + a numeric rate.
+    """
+    if not history_data:
+        return None
+
+    labels: list[str] = []
+    values: list[float] = []
+    for e in history_data:
+        pay_date = e.get("payment_date") or ""
+        rate = e.get("rate")
+        if not pay_date or rate is None:
+            continue
+        try:
+            rate_f = float(rate)
+        except (TypeError, ValueError):
+            continue
+        labels.append(pay_date)
+        values.append(rate_f)
+
+    if not labels:
+        return None
+
+    return {
+        "title": "Dividend Payments Over Time",
+        "type": "chart",
+        "chart_data": {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Value per Share (R$)",
+                    "data": values,
+                    "borderColor": _TEAL,
+                    "backgroundColor": "rgba(13, 148, 136, 0.15)",
+                    "borderWidth": 2,
+                    "tension": 0.3,
+                    "fill": True,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Dividend Payments Over Time"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }
+
+
+def build_annual_dividend_chart(annual_data: Any) -> dict | None:
+    """Build a Chart.js bar chart showing total dividends per year.
+
+    annual_data is the periods list from summary()['sections']
+    ['annual_trend']['periods']. Each period has data_fim_exerc +
+    accounts['7.08.04'] (or 7.08.04.02 + 7.08.04.01 fallback). The chart
+    shows the total dividend value (BRL) per fiscal year.
+
+    Returns None when the periods list is empty or no periods yield a
+    numeric total.
+    """
+    if not annual_data:
+        return None
+
+    labels: list[str] = []
+    values: list[float] = []
+    for p in annual_data:
+        date = p.get("data_fim_exerc") or ""
+        year = date[:4] if date else ""
+        if not year:
+            continue
+        total = _annual_total(p)
+        if total is None:
+            continue
+        labels.append(year)
+        values.append(total)
+
+    if not labels:
+        return None
+
+    return {
+        "title": "Total Dividends per Year",
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Total Dividends (BRL)",
+                    "data": values,
+                    "backgroundColor": _TEAL,
+                    "borderColor": _TEAL,
+                    "borderWidth": 1,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Total Dividends per Year"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }

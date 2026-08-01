@@ -35,6 +35,8 @@ from skills.cvm.comparison.report import (
     build_financials_section,
     build_dividends_section,
     build_growth_section,
+    build_peer_comparison_chart,
+    build_peer_ratio_grid,
 )
 
 
@@ -49,6 +51,7 @@ from skills.cvm.comparison.report import (
     ),
     params={
         "tickers":     "list[str]. B3 tickers, e.g. [\"PETR4\",\"VALE3\"]. Required (min 2).",
+        "company":     "str. Single ticker (fallback if tickers not provided). Note: comparison needs 2+ tickers.",
         "consolidado": "int. 1=consolidated (default), 0=individual.",
     },
     include_in_all=False,
@@ -56,7 +59,7 @@ from skills.cvm.comparison.report import (
         'skill(domain="cvm", sub_domain="comparison", mode="dashboard", params=\'{"tickers":["PETR4","VALE3","ITUB4"]}\')',
     ],
 )
-def dashboard(tickers: list = None, consolidado: int = 1) -> dict:
+def dashboard(tickers: list = None, consolidado: int = 1, company: str = "") -> dict:
     """Multi-tab comparison dashboard (thin composition of side_by_side() + growth()).
 
     Returns a structured payload with tabs optimized for the report tool's
@@ -84,7 +87,15 @@ def dashboard(tickers: list = None, consolidado: int = 1) -> dict:
         On validation error (no tickers / < 2 tickers), returns the
         ``side_by_side()`` error dict verbatim.
     """
+    # [v1.3] If tickers not provided but company is, use company as a single-ticker list.
+    # Note: comparison requires min 2 tickers — a single company will return an error
+    # from side_by_side(). The user should provide tickers=["PETR4","VALE3"].
+    if not tickers and company:
+        tickers = [company]
+
     # ── Gather underlying data (side_by_side + growth, wrapped defensively) ──
+    print(f"[comparison] Starting comparison dashboard for {tickers}...", flush=True)
+    print(f"[comparison] Fetching side_by_side()...", flush=True)
     try:
         sbs = side_by_side(tickers=tickers, consolidado=consolidado)
     except Exception as e:
@@ -99,12 +110,14 @@ def dashboard(tickers: list = None, consolidado: int = 1) -> dict:
 
     # Growth mode is best-effort — if it fails for all tickers, the dashboard
     # still renders the other 4 tabs.
+    print(f"[comparison] Fetching growth()...", flush=True)
     try:
         growth_result = growth(tickers=tickers, consolidado=consolidado)
     except Exception:
         growth_result = {"status": "error", "sections": []}
 
     # ── Top-level KPI cards (leader per metric across all compared tickers) ──
+    print(f"[comparison] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(sbs)
 
     # ── Tab 1: Overview -- KPI cards + tickers/sectors + per-ticker errors ─
@@ -113,8 +126,13 @@ def dashboard(tickers: list = None, consolidado: int = 1) -> dict:
     if errors_section is not None:
         overview_sections.append(errors_section)
 
-    # ── Tab 2: Valuation -- side-by-side valuation ratios ──────────────────
+    # ── Tab 2: Valuation -- side-by-side valuation ratios + peer comparison chart ──
     valuation_sections = [build_valuation_section(sbs)]
+    # Use the first ticker as the “target” for the peer comparison chart.
+    target = (tickers[0] if tickers else "")
+    peer_chart = build_peer_comparison_chart(target, sbs, metric_name="p_l")
+    if peer_chart:
+        valuation_sections.append(peer_chart)
 
     # ── Tab 3: Financials -- side-by-side financial metrics ────────────────
     financials_sections = [build_financials_section(sbs)]
@@ -124,6 +142,10 @@ def dashboard(tickers: list = None, consolidado: int = 1) -> dict:
 
     # ── Tab 5: Growth -- QoQ + YoY + TTM ratios ────────────────────────────
     growth_sections = [build_growth_section(growth_result)]
+
+    # ── Tab 6: Ratio Grid -- peer metrics grouped by category ──────────────
+    grid_section = build_peer_ratio_grid(sbs)
+    grid_sections = [grid_section] if grid_section else []
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -135,6 +157,10 @@ def dashboard(tickers: list = None, consolidado: int = 1) -> dict:
         {"name": "Dividends",   "sections": dividends_sections},
         {"name": "Growth",      "sections": growth_sections},
     ]
+    if grid_sections:
+        tabs.append({"name": "Ratio Grid", "sections": grid_sections})
+
+    print(f"[comparison] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
     return {
         "status": "ok",
         "tickers": sbs.get("tickers") or [],

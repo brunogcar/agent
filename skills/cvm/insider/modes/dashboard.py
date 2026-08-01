@@ -35,6 +35,8 @@ from skills.cvm.insider.report import (
     build_recent_transactions_section,
     build_by_role_section,
     build_monthly_section,
+    build_monthly_net_chart,
+    build_cumulative_chart,
 )
 
 
@@ -88,23 +90,28 @@ def dashboard(company: str = "") -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
 
+    print(f"[insider] Starting insider dashboard for {company}...", flush=True)
+
     # ── Gather underlying data (each call wrapped independently) ────────────
     # The dashboard degrades gracefully: if summary()/history()/by_role()
     # returns an error payload (e.g. not_synced, not_found), the corresponding
     # tab is built from the error payload (sections will be empty or show a
     # status row via the adapter's _error_table fallback).
+    print(f"[insider] Fetching summary()...", flush=True)
     summary_payload: dict = {}
     try:
         summary_payload = summary(company=company)
     except Exception as e:
         summary_payload = {"status": "error", "error": str(e)}
 
+    print(f"[insider] Fetching history() (limit=10)...", flush=True)
     history_payload: dict = {}
     try:
         history_payload = history(company=company, limit=10)
     except Exception as e:
         history_payload = {"status": "error", "error": str(e)}
 
+    print(f"[insider] Fetching by_role()...", flush=True)
     by_role_payload: dict = {}
     try:
         by_role_payload = by_role(company=company)
@@ -113,19 +120,26 @@ def dashboard(company: str = "") -> dict:
 
     # ── Top-level KPI cards (Sentimento, Volume Comprado, Volume Vendido,
     #     Net Volume) ─────────────────────────────────────────────────────────
+    print(f"[insider] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(summary_payload)
 
     # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
     overview_sections = [build_overview_section(summary_payload)]
 
-    # ── Tab 2: Recent Transactions -- last 10 transactions table ──
+    # ── Tab 2: Recent Transactions -- last 10 transactions table + cumulative chart ──
     recent_sections = [build_recent_transactions_section(history_payload)]
+    cumulative_chart = build_cumulative_chart(history_payload)
+    if cumulative_chart:
+        recent_sections.append(cumulative_chart)
 
     # ── Tab 3: By Role -- per-role summary table ──
     by_role_sections = [build_by_role_section(by_role_payload)]
 
-    # ── Tab 4: Monthly Net -- monthly net buy/sell table ──
+    # ── Tab 4: Monthly Net -- monthly net buy/sell table + monthly net chart ──
     monthly_sections = [build_monthly_section(summary_payload)]
+    monthly_chart = build_monthly_net_chart(summary_payload)
+    if monthly_chart:
+        monthly_sections.append(monthly_chart)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -136,6 +150,8 @@ def dashboard(company: str = "") -> dict:
         {"name": "By Role",             "sections": by_role_sections},
         {"name": "Monthly Net",         "sections": monthly_sections},
     ]
+
+    print(f"[insider] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
 
     # Prefer the summary() result's company/cnpj when present (matches what
     # the Overview text section uses); fall back to the input company.

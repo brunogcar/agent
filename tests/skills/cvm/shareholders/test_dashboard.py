@@ -235,3 +235,34 @@ class TestDashboardMode:
         r = route(mode="dashboard")
         assert r["status"] == "error"
         assert "company is required" in r["error"]
+
+    def test_dashboard_charts_present(self, tmp_path, monkeypatch):
+        """[v1.2] Top Shareholders tab has a doughnut chart showing the
+        distribution of top shareholders, and Equity Structure tab has a
+        bar chart showing the BPP 2.03.* components. Both chart sections
+        carry type='chart' + chart_data with the Chart.js config."""
+        _patch_all_ok(tmp_path, monkeypatch)
+        r = dashboard(company="33000167000101")
+        assert r["status"] == "ok"
+
+        # Top Shareholders tab — doughnut chart for top shareholder distribution.
+        ts_tab = next(t for t in r["tabs"] if t["name"] == "Top Shareholders")
+        ts_chart = next(
+            (s for s in ts_tab["sections"] if s.get("type") == "chart"),
+            None,
+        )
+        assert ts_chart is not None, \
+            "Top Shareholders tab should have a chart section"
+        assert ts_chart["chart_data"]["type"] == "doughnut"
+        assert len(ts_chart["chart_data"]["data"]["labels"]) >= 1
+
+        # Equity Structure tab — bar chart for equity structure components.
+        eq_tab = next(t for t in r["tabs"] if t["name"] == "Equity Structure")
+        eq_chart = next(
+            (s for s in eq_tab["sections"] if s.get("type") == "chart"),
+            None,
+        )
+        assert eq_chart is not None, \
+            "Equity Structure tab should have a chart section"
+        assert eq_chart["chart_data"]["type"] == "bar"
+        assert len(eq_chart["chart_data"]["data"]["labels"]) >= 1

@@ -144,3 +144,15 @@ class TestDashboardMode:
         r = route(mode="dashboard")
         assert r["status"] == "error"
         assert "company is required" in r["error"]
+
+    def test_dashboard_monthly_net_tab_has_chart(self, monkeypatch):
+        """[v1.2] Monthly Net tab has a chart section (build_monthly_net_chart)."""
+        _mock_query(monkeypatch, {})
+        r = dashboard(company="PETR4")
+        monthly_tab = next(t for t in r["tabs"] if t["name"] == "Monthly Net")
+        types = [s.get("type") for s in monthly_tab["sections"]]
+        assert "chart" in types
+        # The chart section has a chart_data block with Chart.js config.
+        chart = next(s for s in monthly_tab["sections"] if s.get("type") == "chart")
+        assert "chart_data" in chart
+        assert chart["chart_data"]["type"] == "bar"

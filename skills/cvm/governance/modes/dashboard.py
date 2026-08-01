@@ -33,6 +33,7 @@ from skills.cvm.governance.report import (
     build_overview_section,
     build_practices_section,
     build_by_chapter_section,
+    build_practices_doughnut,
 )
 
 
@@ -88,33 +89,47 @@ def dashboard(company: str = "") -> dict:
     # returns an error payload (e.g. not_synced, not_found), the corresponding
     # tab is built from the error payload (sections will be empty or show a
     # status row via the adapter's _error_table fallback).
+    print(f"[governance] Starting governance dashboard for company='{company}'...",
+          flush=True)
+    print(f"[governance] Fetching score data...", flush=True)
     score_payload: dict = {}
     try:
         score_payload = score(company=company)
     except Exception as e:
         score_payload = {"status": "error", "error": str(e)}
 
+    print(f"[governance] Fetching practices data...", flush=True)
     practices_payload: dict = {}
     try:
         practices_payload = practices(company=company)
     except Exception as e:
         practices_payload = {"status": "error", "error": str(e)}
 
+    print(f"[governance] Fetching by-chapter data...", flush=True)
     by_chapter_payload: dict = {}
     try:
         by_chapter_payload = by_chapter(company=company)
     except Exception as e:
         by_chapter_payload = {"status": "error", "error": str(e)}
 
+    practices_count = (len(practices_payload.get("practices") or [])
+                       if isinstance(practices_payload, dict) else 0)
+    print(f"[governance] Data fetched: {practices_count} practices.",
+          flush=True)
+
     # ── Top-level KPI cards (Governance Score, Practices Count,
     #     Compliance Level) ──────────────────────────────────────────────────
+    print(f"[governance] Building KPI cards + tab sections...", flush=True)
     kpis = build_overview_kpis(score_payload, practices_payload)
 
     # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
     overview_sections = [build_overview_section(score_payload, practices_payload)]
 
-    # ── Tab 2: Practices -- full practices table ──
+    # ── Tab 2: Practices -- full practices table + compliance doughnut ──
     practices_sections = [build_practices_section(practices_payload)]
+    practices_doughnut = build_practices_doughnut(practices_payload)
+    if practices_doughnut:
+        practices_sections.append(practices_doughnut)
 
     # ── Tab 3: By Chapter -- per-chapter adoption table ──
     by_chapter_sections = [build_by_chapter_section(by_chapter_payload)]
@@ -127,6 +142,8 @@ def dashboard(company: str = "") -> dict:
         {"name": "Practices",  "sections": practices_sections},
         {"name": "By Chapter", "sections": by_chapter_sections},
     ]
+    print(f"[governance] Done! {len(tabs)} tabs, {len(kpis)} KPIs, "
+          f"{practices_count} practices.", flush=True)
 
     # Prefer the score() result's company/cnpj/data_referencia when present
     # (matches what the Overview text section uses); fall back to the

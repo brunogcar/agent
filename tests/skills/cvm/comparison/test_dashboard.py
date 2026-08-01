@@ -55,14 +55,15 @@ class TestDashboardMode:
         assert "tickers" in r["error"]
 
     def test_dashboard_tab_structure(self, mock_skills, monkeypatch):
-        """Dashboard produces 5 tabs with the canonical names."""
+        """[v1.2] Dashboard produces 6 tabs (added Ratio Grid)."""
         _patch_underlying(mock_skills, monkeypatch)
         r = dashboard(tickers=["PETR4", "VALE3"])
         assert r["status"] == "ok"
         assert r["tickers"] == ["PETR4", "VALE3"]
         assert "tabs" in r
         names = [t["name"] for t in r["tabs"]]
-        assert names == ["Overview", "Valuation", "Financials", "Dividends", "Growth"]
+        assert names == ["Overview", "Valuation", "Financials", "Dividends",
+                         "Growth", "Ratio Grid"]
         # Each tab has a non-empty sections list.
         for tab in r["tabs"]:
             assert isinstance(tab["sections"], list)
@@ -136,3 +137,15 @@ class TestDashboardMode:
         titles = [s["title"] for s in overview["sections"]]
         assert "Compared Tickers" in titles
         assert "Per-Ticker Errors (best-effort)" in titles
+
+    def test_dashboard_valuation_tab_has_chart(self, mock_skills, monkeypatch):
+        """[v1.2] Valuation tab has a chart section (build_peer_comparison_chart)."""
+        _patch_underlying(mock_skills, monkeypatch)
+        r = dashboard(tickers=["PETR4", "VALE3"])
+        val_tab = next(t for t in r["tabs"] if t["name"] == "Valuation")
+        types = [s.get("type") for s in val_tab["sections"]]
+        assert "chart" in types
+        # The chart section has a chart_data block with Chart.js config.
+        chart = next(s for s in val_tab["sections"] if s.get("type") == "chart")
+        assert "chart_data" in chart
+        assert chart["chart_data"]["type"] == "bar"

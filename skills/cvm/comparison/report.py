@@ -7,6 +7,8 @@ dashboard payload.
 Each builder produces a section dict in the canonical dashboard shape:
   - Table section:  {"title", "type": "table", "columns", "rows", "formats"}
   - KPI card:       {"label", "value", "unit"}
+  - Chart section:  {"title", "type": "chart", "chart_data": <Chart.js config>}
+  - Ratio grid:     {"title", "type": "ratio_grid", "categories": [...]}
 
 The KPI cards are produced separately (build_overview_kpis) and placed at
 the top level of the dashboard payload (not inside a section).
@@ -16,6 +18,14 @@ from __future__ import annotations
 from typing import Any
 
 from tools.report_ops.formats import apply_fmt
+
+
+# ── Brand colors for chart builders ──────────────────────────────────────────
+_TEAL = "#0d9488"
+_ORANGE = "#f59e0b"
+_RED = "#ef4444"
+_BLUE = "#3b82f6"
+_PURPLE = "#a855f7"
 
 
 # ── Safe accessor + formatter ────────────────────────────────────────────────
@@ -192,3 +202,202 @@ def build_growth_section(growth_result: dict) -> dict:
             "columns": ["Ticker"], "rows": [], "formats": {"Ticker": "text"},
         }
     return _as_table_section(sections[0])
+
+
+# ── Peer comparison chart (v1.2) ─────────────────────────────────────────────
+
+# Mapping of metric_name → (column_label_in_section, scale, color)
+# scale = 100.0 for pct-kind (stored as fraction), 1.0 for raw multiples.
+_PEER_METRIC_DEFS: dict[str, tuple[str, float, str]] = {
+    "p_l":            ("P/L",              1.0,   _TEAL),
+    "p_vpa":          ("P/VPA",            1.0,   _TEAL),
+    "ev_ebitda":      ("EV/EBITDA",        1.0,   _TEAL),
+    "roe":            ("ROE",              100.0, _ORANGE),
+    "dividend_yield": ("Div Yield",        100.0, _ORANGE),
+    "roa":            ("ROA",              100.0, _ORANGE),
+    "margem_liquida": ("Marg. Líq. (val)", 100.0, _ORANGE),
+    "divida_pl":      ("Dívida/PL",        1.0,   _RED),
+}
+
+
+def build_peer_comparison_chart(company: str, peers: dict,
+                                metric_name: str = "p_l") -> dict | None:
+    """Build a bar chart comparing the target company vs peers on a key metric.
+
+    Args:
+        company:     target ticker (highlighted with a different color).
+        peers:       side_by_side() result dict (must contain "tickers" + a
+                     "sections" dict with at least one of valuation/financials).
+        metric_name: which metric to chart (p_l, p_vpa, ev_ebitda, roe,
+                     dividend_yield, roa, margem_liquida, divida_pl).
+                     Default "p_l".
+
+    Returns None if no peer data exists or the metric isn't found in the
+    valuation/financials section.
+    """
+    metric_def = _PEER_METRIC_DEFS.get(metric_name)
+    if metric_def is None:
+        return None
+    col_label, scale, default_color = metric_def
+
+    tickers = peers.get("tickers") or []
+    if not tickers:
+        return None
+
+    sections = peers.get("sections") or {}
+    # Try valuation section first (most metrics live there), fall back to
+    # financials (for ROE/ROA/Marg. Líquida — they exist in both sections).
+    section = sections.get("valuation") or sections.get("financials") or {}
+    columns = section.get("columns") or []
+    rows = section.get("rows") or []
+
+    if col_label not in columns or not rows:
+        return None
+
+    col_idx = columns.index(col_label)
+    labels: list[str] = []
+    values: list[float] = []
+    colors: list[str] = []
+    for row in rows:
+        if len(row) <= col_idx:
+            continue
+        value = row[col_idx]
+        ticker = row[0] if row else ""
+        if value is None:
+            continue
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        labels.append(str(ticker))
+        values.append(round(v * scale, 2))
+        # Highlight the target company in purple; peers use the metric color.
+        colors.append(_PURPLE if str(ticker) == str(company) else default_color)
+
+    if not labels:
+        return None
+
+    unit = "%" if scale == 100.0 else "×"
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": f"{col_label} ({unit})",
+                    "data": values,
+                    "backgroundColor": colors,
+                    "borderColor": colors,
+                    "borderWidth": 1,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": f"{col_label} — {company} vs Peers"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }
+
+
+# ── Peer ratio grid (v1.2) ───────────────────────────────────────────────────
+
+# (peer_label, section_key, col_label, scale, spec)
+# Group metrics into 3 categories: Valuation, Profitability, Leverage.
+_PEER_GRID_DEFS: list[tuple[str, str, str, str, float, str]] = [
+    # category_label, section_key, column_label, display_label, scale, spec
+    ("Valuation",     "valuation", "P/L",              "P/L",              1.0,   "num"),
+    ("Valuation",     "valuation", "P/VPA",            "P/VPA",            1.0,   "num"),
+    ("Valuation",     "valuation", "EV/EBITDA",        "EV/EBITDA",        1.0,   "num"),
+    ("Profitability", "valuation", "ROE (val)",        "ROE",              100.0, "pct"),
+    ("Profitability", "valuation", "ROA (val)",        "ROA",              100.0, "pct"),
+    ("Profitability", "valuation", "Marg. Líq. (val)", "Marg. Líquida",    100.0, "pct"),
+    ("Profitability", "valuation", "Div Yield",        "Div Yield",        100.0, "pct"),
+    ("Leverage",      "valuation", "Dívida/PL",        "Dívida/PL",        1.0,   "num"),
+    ("Leverage",      "valuation", "Liquidez Corrente","Liquidez Corrente",1.0,   "num"),
+]
+
+
+def build_peer_ratio_grid(peers: dict) -> dict | None:
+    """Build a ratio_grid section grouping peer metrics by category.
+
+    Groups the comparison metrics (P/L, P/VPA, EV/EBITDA, ROE, ROA, Marg.
+    Líquida, Div Yield, Dívida/PL, Liquidez Corrente) into 3 categories:
+    Valuation, Profitability, Leverage. Each item shows the metric label +
+    per-ticker formatted values.
+
+    Args:
+        peers: side_by_side() result dict (must contain "tickers" +
+               "sections" with a valuation/financials section).
+
+    Returns None if no peer data exists or no metrics can be resolved.
+    """
+    tickers = peers.get("tickers") or []
+    if not tickers:
+        return None
+
+    sections = peers.get("sections") or {}
+    valuation_section = sections.get("valuation") or {}
+    financials_section = sections.get("financials") or {}
+    val_cols = valuation_section.get("columns") or []
+    val_rows = valuation_section.get("rows") or []
+    fin_cols = financials_section.get("columns") or []
+    fin_rows = financials_section.get("rows") or []
+
+    # Build a {ticker: {col_label: raw_value}} lookup for fast access.
+    val_lookup: dict[str, dict[str, Any]] = {}
+    for row in val_rows:
+        if not row:
+            continue
+        val_lookup[row[0]] = {c: row[i] if i < len(row) else None
+                              for i, c in enumerate(val_cols)}
+    fin_lookup: dict[str, dict[str, Any]] = {}
+    for row in fin_rows:
+        if not row:
+            continue
+        fin_lookup[row[0]] = {c: row[i] if i < len(row) else None
+                              for i, c in enumerate(fin_cols)}
+
+    categories: dict[str, list[dict]] = {}
+    for cat_label, section_key, col_label, display_label, scale, spec in _PEER_GRID_DEFS:
+        lookup = val_lookup if section_key == "valuation" else fin_lookup
+        cols = val_cols if section_key == "valuation" else fin_cols
+        if col_label not in cols:
+            continue
+        values_per_ticker = []
+        for t in tickers:
+            raw = lookup.get(t, {}).get(col_label)
+            if raw is None:
+                values_per_ticker.append("—")
+            else:
+                try:
+                    v = float(raw) * scale
+                    values_per_ticker.append(_fmt(v, spec))
+                except (TypeError, ValueError):
+                    values_per_ticker.append("—")
+        if all(v == "—" for v in values_per_ticker):
+            continue  # skip metrics with no data for any ticker
+        categories.setdefault(cat_label, [])
+        categories[cat_label].append({
+            "label": f"{display_label} ({' / '.join(tickers)})",
+            "value": " / ".join(values_per_ticker),
+        })
+
+    if not categories:
+        return None
+
+    cats_out = [{"label": k, "items": v} for k, v in categories.items()]
+    return {
+        "title": "Peer Metrics by Category",
+        "type": "ratio_grid",
+        "categories": cats_out,
+    }

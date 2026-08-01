@@ -33,6 +33,8 @@ from skills.cvm.shareholders.report import (
     build_top_shareholders_section,
     build_free_float_section,
     build_equity_section,
+    build_shareholder_doughnut,
+    build_equity_structure_bar,
 )
 
 
@@ -90,26 +92,50 @@ def dashboard(company: str = "") -> dict:
     # returns an error payload, each tab is built from the empty sections
     # (Top Shareholders tab has 0 rows, Free Float tab has 1 row of None
     # values, Equity Structure tab has 0 rows, all KPIs render as '—').
+    print(f"[shareholders] Starting shareholders dashboard for "
+          f"company='{company}'...", flush=True)
+    print(f"[shareholders] Fetching summary data (shareholders + free float "
+          f"+ equity)...", flush=True)
     summary_payload: dict = {}
     try:
         summary_payload = summary(company=company)
     except Exception as e:
         summary_payload = {"status": "error", "error": str(e)}
 
+    # Pull out counts for the progress log.
+    sh_section = ((summary_payload.get("sections") or {}).get("shareholders")
+                  if isinstance(summary_payload, dict) else None) or {}
+    eq_section = ((summary_payload.get("sections") or {}).get("equity")
+                  if isinstance(summary_payload, dict) else None) or {}
+    top_count = len(sh_section.get("top") or []) if isinstance(sh_section, dict) else 0
+    eq_components = (eq_section.get("components")
+                     if isinstance(eq_section, dict) else None) or {}
+    eq_count = len(eq_components) if isinstance(eq_components, dict) else 0
+    print(f"[shareholders] Data fetched: {top_count} top shareholders, "
+          f"{eq_count} equity components.", flush=True)
+
     # ── Top-level KPI cards (% Free Float, Total Acionistas, PL Total) ─────
+    print(f"[shareholders] Building KPI cards + tab sections...", flush=True)
     kpis = build_overview_kpis(summary_payload)
 
     # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
     overview_sections = [build_overview_section(summary_payload)]
 
-    # ── Tab 2: Top Shareholders -- top 5 named shareholders table ──
+    # ── Tab 2: Top Shareholders -- top 5 named shareholders table + doughnut
     top_shareholders_sections = [build_top_shareholders_section(summary_payload)]
+    top_list = (sh_section.get("top") or []) if isinstance(sh_section, dict) else []
+    shareholder_doughnut = build_shareholder_doughnut(top_list)
+    if shareholder_doughnut:
+        top_shareholders_sections.append(shareholder_doughnut)
 
     # ── Tab 3: Free Float -- single-row table of free float metrics ──
     free_float_sections = [build_free_float_section(summary_payload)]
 
-    # ── Tab 4: Equity Structure -- BPP 2.03.* components table ──
+    # ── Tab 4: Equity Structure -- BPP 2.03.* components table + bar chart ──
     equity_sections = [build_equity_section(summary_payload)]
+    equity_bar = build_equity_structure_bar(eq_section)
+    if equity_bar:
+        equity_sections.append(equity_bar)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -120,6 +146,8 @@ def dashboard(company: str = "") -> dict:
         {"name": "Free Float",       "sections": free_float_sections},
         {"name": "Equity Structure", "sections": equity_sections},
     ]
+    print(f"[shareholders] Done! {len(tabs)} tabs, {len(kpis)} KPIs, "
+          f"{top_count} shareholders.", flush=True)
 
     # Prefer summary()'s company field when present (it's the resolved
     # company name from FRE/DFP); fall back to the input company string.

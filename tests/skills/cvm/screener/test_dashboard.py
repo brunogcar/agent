@@ -108,3 +108,17 @@ class TestDashboardMode:
         r = route(mode="dashboard")
         assert r["status"] == "error"
         assert "company is required" in r["error"]
+
+    def test_dashboard_peers_tab_has_chart(self, mock_all, monkeypatch):
+        """[v1.2] Peers tab has a chart section (build_top_companies_chart)."""
+        mock_all(monkeypatch, CAD_COMPANIES,
+                 {"SUZB3": BRIDGE_SUZB3, "KLBN11": BRIDGE_KLBN11},
+                 {"SUZB3": VAL_SUZB3, "KLBN11": VAL_KLBN11})
+        r = dashboard(company="SUZB3")
+        peers_tab = next(t for t in r["tabs"] if t["name"] == "Peers")
+        types = [s.get("type") for s in peers_tab["sections"]]
+        assert "chart" in types
+        # The chart section has a chart_data block with Chart.js config.
+        chart = next(s for s in peers_tab["sections"] if s.get("type") == "chart")
+        assert "chart_data" in chart
+        assert chart["chart_data"]["type"] == "bar"

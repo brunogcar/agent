@@ -132,10 +132,13 @@ def dashboard(company: str = "") -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
 
+    print(f"[valuation] Starting dashboard for {company}...", flush=True)
+
     # ── Gather underlying data (ratios() wrapped defensively) ──────────────
     # ratios() can return status="ok" with ratios={"status": "error", ...}
     # when the price source fails. In that case we still build the dashboard
     # payload, but every ratio value will be None.
+    print(f"[valuation] Fetching ratios (via compute_all_ratios)...", flush=True)
     try:
         ratios_payload = ratios(company=company)
     except Exception as e:
@@ -149,10 +152,17 @@ def dashboard(company: str = "") -> dict:
         ratios_payload.get("ratios")
         if isinstance(ratios_payload, dict) else None
     )
+    _n_metrics = (
+        len([k for k in ratios_dict
+             if k not in ("status", "error", "date")])
+        if isinstance(ratios_dict, dict) else 0
+    )
+    print(f"[valuation] Ratios computed: {_n_metrics} metrics.", flush=True)
 
     # ── Tab 1: Overview -- KPI cards (top-level) + Key Metrics + Price Details ──
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
     # renders them above all tabs via the kpi-grid div.
+    print(f"[valuation] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(ratios_dict)
     overview_sections = _safe_build(build_overview_sections, ratios_dict)
 
@@ -183,4 +193,5 @@ def dashboard(company: str = "") -> dict:
         {"name": "Liquidity & Leverage",  "sections": liquidity_leverage_sections},
         {"name": "Efficiency & Growth",   "sections": efficiency_growth_sections},
     ]
+    print(f"[valuation] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
     return {"status": "ok", "company": company, "tabs": tabs, "kpis": kpis}

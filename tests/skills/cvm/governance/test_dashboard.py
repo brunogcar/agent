@@ -37,6 +37,27 @@ class TestDashboardMode:
         kpi = next(k for k in r["kpis"] if k["label"] == "Compliance Level")
         assert kpi["unit"] == "text"
 
+    def test_dashboard_practices_chart(self, tmp_path, monkeypatch):
+        """[v1.2] Practices tab has a doughnut chart showing the distribution
+        of practice compliance levels (Adequado / Parcialmente / Não Adequado).
+        The chart section carries type='chart' + chart_data with the Chart.js
+        doughnut config."""
+        _patch_environment(tmp_path, monkeypatch)
+        r = dashboard(company="33000167000101")
+        assert r["status"] == "ok"
+
+        practices_tab = next(t for t in r["tabs"] if t["name"] == "Practices")
+        chart = next(
+            (s for s in practices_tab["sections"] if s.get("type") == "chart"),
+            None,
+        )
+        assert chart is not None, "Practices tab should have a chart section"
+        assert chart["chart_data"]["type"] == "doughnut"
+        # Labels are the dashboard-friendly compliance levels.
+        labels = chart["chart_data"]["data"]["labels"]
+        assert "Adequado" in labels
+        assert len(chart["chart_data"]["data"]["datasets"][0]["data"]) >= 1
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 import sqlite3
@@ -45,6 +66,7 @@ from pathlib import Path
 def _make_cgvn_db(tmp_path):
     db_path = tmp_path / "cgvn.db"
     conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
     conn.execute("""CREATE TABLE contas (codigo TEXT, descricao TEXT, grupo TEXT,
         data_fim_exerc TEXT, valor TEXT, meses INTEGER, consolidado INTEGER,
         id_empresa INTEGER)""")
@@ -52,6 +74,27 @@ def _make_cgvn_db(tmp_path):
     conn.execute("INSERT INTO empresas VALUES (1, '9512', 'PETROBRAS')")
     conn.execute("""INSERT INTO contas VALUES ('1', 'Pratica', 'CGVN',
         '2023-12-31', 'Sim', 12, 1, 1)""")
+    # [v1.2] cgvn_practices table — what the CGVN query_engine actually
+    # queries. Populate 3 rows with distinct Pratica_Adotada values so the
+    # practices doughnut chart has 3 segments (Adequado / Parcialmente / Não
+    # Adequado). CNPJ_Companhia is stored normalized (digits-only) to match
+    # the production sync_engine format.
+    conn.execute("""CREATE TABLE cgvn_practices (
+        CNPJ_Companhia TEXT, Data_Referencia TEXT, ID_Documento INTEGER,
+        Nome_Empresarial TEXT, Versao INTEGER, ID_Item TEXT,
+        Pratica_Recomendada TEXT, Pratica_Adotada TEXT, Capitulo TEXT,
+        Principio TEXT, Explicacao TEXT)""")
+    conn.executemany(
+        "INSERT INTO cgvn_practices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("33000167000101", "2023-12-31", 1, "PETROBRAS", 1, "3.1",
+             "Practice A", "Sim", "Cap 1", "P1", "Adopted"),
+            ("33000167000101", "2023-12-31", 1, "PETROBRAS", 1, "3.2",
+             "Practice B", "Parcialmente", "Cap 1", "P2", "Partial"),
+            ("33000167000101", "2023-12-31", 1, "PETROBRAS", 1, "3.3",
+             "Practice C", "Não", "Cap 2", "P3", "Not adopted"),
+        ],
+    )
     conn.commit()
     conn.close()
     def mock_connect(read_only=True):

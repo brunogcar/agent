@@ -12,14 +12,7 @@
 | P3 | I4 — Caching | TTL cache for fetched pages (currently fetches live each call) |
 | Done | v1.2 dashboard reorg | Added indicator bar chart to Key Indicators tab |
 
----
-
-## ✅ Recently Completed
-
-- **v1.2 (2026-07-31)** — Dashboard reorg: added indicator bar chart
-  (P/L, P/VPA, EV/EBITDA comparison) to Key Indicators tab.
-
----
+> **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📋 Backlog
 
@@ -57,4 +50,4 @@ fetches live on every call.
 
 ---
 
-*Last updated: 2026-07-31 (v1.2 — dashboard reorg). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*

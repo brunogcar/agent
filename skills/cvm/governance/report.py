@@ -243,6 +243,117 @@ def build_by_chapter_section(by_chapter_result: dict) -> dict:
     }
 
 
+# ── Chart builders (v1.2) ────────────────────────────────────────────────────
+# Each chart builder returns {"type": "chart", "chart_data": <Chart.js config>}
+# or None when no data. The dashboard template passes chart_data verbatim to
+# `new Chart(ctx, chart_data)`.
+
+# Brand palette (matches the report theme).
+_TEAL   = "#0d9488"
+_ORANGE = "#f59e0b"
+_RED    = "#ef4444"
+_BLUE   = "#3b82f6"
+_PURPLE = "#a855f7"
+
+# Map CGVN Pratica_Adotada raw values to dashboard-friendly labels.
+# CGVN stores: "Sim", "Parcialmente", "Não" — the chart renames them to
+# Adequado / Parcialmente / Não Adequado per the governance terminology.
+_ADOPTED_LABELS = {
+    "Sim":          "Adequado",
+    "Parcialmente": "Parcialmente",
+    "Não":          "Não Adequado",
+}
+
+# Doughnut segment colors (one per compliance level).
+_ADOPTED_COLORS = {
+    "Adequado":     _TEAL,
+    "Parcialmente": _ORANGE,
+    "Não Adequado": _RED,
+}
+
+
+def build_practices_doughnut(practices_data: Any) -> dict | None:
+    """Build a Chart.js doughnut chart showing distribution of practice
+    compliance levels (Adequado / Parcialmente / Não Adequado).
+
+    practices_data is the practices() result dict (which contains a
+    ``practices`` list of rows with ``Pratica_Adotada`` values). When
+    passed a list directly, treats it as the practices list.
+
+    Returns None when there are no practices or no recognizable adoption
+    values, so the dashboard can skip the section gracefully.
+    """
+    # Accept either a practices() result dict or a raw list.
+    if isinstance(practices_data, dict):
+        practices_list = practices_data.get("practices") or []
+    elif isinstance(practices_data, list):
+        practices_list = practices_data
+    else:
+        return None
+
+    if not practices_list:
+        return None
+
+    # Count by Pratica_Adotada raw value.
+    raw_counts: dict[str, int] = {}
+    for p in practices_list:
+        if not isinstance(p, dict):
+            continue
+        val = (p.get("Pratica_Adotada") or "").strip()
+        if not val:
+            continue
+        raw_counts[val] = raw_counts.get(val, 0) + 1
+
+    if not raw_counts:
+        return None
+
+    # Build ordered labels (Adequado first, then Parcialmente, then Não
+    # Adequado), then any unknown values appended at the end.
+    ordered_labels = ["Sim", "Parcialmente", "Não"]
+    seen = set()
+    label_seq: list[str] = []
+    for k in ordered_labels:
+        if k in raw_counts:
+            label_seq.append(k)
+            seen.add(k)
+    for k in raw_counts:
+        if k not in seen:
+            label_seq.append(k)
+            seen.add(k)
+
+    labels = [_ADOPTED_LABELS.get(k, k) for k in label_seq]
+    counts = [raw_counts[k] for k in label_seq]
+    colors = [_ADOPTED_COLORS.get(lbl, _BLUE) for lbl in labels]
+
+    return {
+        "title": "Practices Compliance Distribution",
+        "type": "chart",
+        "chart_data": {
+            "type": "doughnut",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Practices",
+                    "data": counts,
+                    "backgroundColor": colors,
+                    "borderColor": "#ffffff",
+                    "borderWidth": 2,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Practices Compliance Distribution"},
+                },
+                "cutout": "60%",
+            },
+        },
+    }
+
+
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 def _ok(result: dict) -> bool:

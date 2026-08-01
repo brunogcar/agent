@@ -30,6 +30,8 @@ from skills.cvm.dividends.report import (
     build_overview_section,
     build_history_section,
     build_annual_section,
+    build_dividend_history_chart,
+    build_annual_dividend_chart,
 )
 
 
@@ -77,6 +79,10 @@ def dashboard(company: str = "") -> dict:
         dict verbatim.
     """
     # ── Gather underlying data (summary, wrapped defensively) ──
+    print(f"[dividends] Starting dividends dashboard for company='{company}'...",
+          flush=True)
+    print(f"[dividends] Fetching summary data (history + annual + payable)...",
+          flush=True)
     try:
         s = summary(company=company)
     except Exception as e:
@@ -89,18 +95,33 @@ def dashboard(company: str = "") -> dict:
     if s.get("status") != "ok":
         return s
 
+    sections = s.get("sections") or {}
+    recent_events = sections.get("recent_events") or {}
+    annual_trend = sections.get("annual_trend") or {}
+    events_list = recent_events.get("events") or []
+    periods_list = annual_trend.get("periods") or []
+    print(f"[dividends] Data fetched: {len(events_list)} recent events, "
+          f"{len(periods_list)} annual periods.", flush=True)
+
     # ── Top-level KPI cards (Total Dividends Paid, Div Yield, Payout Ratio,
     #     Last Payment Date) ──
+    print(f"[dividends] Building KPI cards + tab sections...", flush=True)
     kpis = build_overview_kpis(s, company=company)
 
     # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
     overview_sections = [build_overview_section(s)]
 
-    # ── Tab 2: History -- recent B3 dividend events table ──
+    # ── Tab 2: History -- recent B3 dividend events table + line chart ──
     history_sections = [build_history_section(s)]
+    history_chart = build_dividend_history_chart(events_list)
+    if history_chart:
+        history_sections.append(history_chart)
 
-    # ── Tab 3: Annual -- DVA 7.08.04.* per fiscal year table ──
+    # ── Tab 3: Annual -- DVA 7.08.04.* per fiscal year table + bar chart ──
     annual_sections = [build_annual_section(s)]
+    annual_chart = build_annual_dividend_chart(periods_list)
+    if annual_chart:
+        annual_sections.append(annual_chart)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -110,6 +131,8 @@ def dashboard(company: str = "") -> dict:
         {"name": "History",  "sections": history_sections},
         {"name": "Annual",   "sections": annual_sections},
     ]
+    print(f"[dividends] Done! {len(tabs)} tabs, {len(kpis)} KPIs, "
+          f"{len(events_list)} events.", flush=True)
     return {
         "status": "ok",
         "company": s.get("company", company),

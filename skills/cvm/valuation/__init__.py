@@ -37,7 +37,7 @@ auto_discover_modes(__name__)
 # freshness before each dispatch and triggers force-sync if any source
 # is older than 24h (or missing). Tests use CVM_SKIP_SYNC=1 to bypass.
 # cotahist is for daily price data.
-REQUIRED_SOURCES = ["dfp", "itr", "fca", "cotahist", "bridge"]
+REQUIRED_SOURCES = ["dfp", "itr", "fca", "cotahist", "brapi", "bridge"]
 
 # Build MANIFEST from the registered modes.
 MANIFEST = {

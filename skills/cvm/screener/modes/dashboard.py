@@ -31,6 +31,7 @@ from skills.cvm.screener.report import (
     build_overview_section,
     build_peers_section,
     build_comparison_section,
+    build_top_companies_chart,
 )
 
 
@@ -83,7 +84,10 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
 
+    print(f"[screener] Starting screener dashboard for {company}...", flush=True)
+
     # ── Gather underlying data: compare() (which internally calls sector()) ──
+    print(f"[screener] Fetching compare() (limit={limit})...", flush=True)
     compare_payload: dict = {}
     try:
         compare_payload = compare(company=company, limit=limit)
@@ -158,13 +162,17 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     medians = sector_payload.get("medians") or {}
 
     # ── Top-level KPI cards (5 sector medians) ──
+    print(f"[screener] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(medians, compare_payload.get("my_data"))
 
     # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ──
     overview_sections = [build_overview_section(sector_payload, compare_payload)]
 
-    # ── Tab 2: Peers -- full peers table ──
+    # ── Tab 2: Peers -- full peers table + top companies chart ──
     peers_sections = [build_peers_section(sector_payload)]
+    top_chart = build_top_companies_chart(sector_payload, metric="p_l")
+    if top_chart:
+        peers_sections.append(top_chart)
 
     # ── Tab 3: Comparison -- my ticker vs sector medians ──
     comparison_sections = [build_comparison_section(compare_payload)]
@@ -177,6 +185,8 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
         {"name": "Peers",       "sections": peers_sections},
         {"name": "Comparison",  "sections": comparison_sections},
     ]
+
+    print(f"[screener] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
 
     # Prefer compare()'s ticker (uppercased) for the company field; fall
     # back to the input company string.

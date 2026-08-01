@@ -93,6 +93,13 @@ def get_freshness() -> dict[str, str]:
     except Exception:
         result["b3_dividends"] = ""
 
+    # B3 brapi — sync_state table (brapi.db stores ticker list + quote history)
+    try:
+        from data_sources.b3.brapi.catalog import db_path as brapi_path
+        result["brapi"] = _check_db_freshness(brapi_path())
+    except Exception:
+        result["brapi"] = ""
+
     # COTAHIST — use synced_at from sync_state (NOT MAX(refdate)).
     # [v1.10.1 fix] Previously used MAX(refdate) which is the last TRADING
     # DATE, not the sync timestamp. This caused the sync guard to see

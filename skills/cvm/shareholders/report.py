@@ -361,3 +361,154 @@ def build_equity_section(summary_result: dict) -> dict:
         "note": ("Valores de balanço (snapshot) em BRL por exercício. "
                  "BPP 2.03.* — Patrimônio Líquido e componentes."),
     }
+
+
+# ── Chart builders (v1.2) ────────────────────────────────────────────────────
+# Each chart builder returns {"type": "chart", "chart_data": <Chart.js config>}
+# or None when no data. The dashboard template passes chart_data verbatim to
+# `new Chart(ctx, chart_data)`.
+
+# Brand palette (matches the report theme).
+_TEAL   = "#0d9488"
+_ORANGE = "#f59e0b"
+_RED    = "#ef4444"
+_BLUE   = "#3b82f6"
+_PURPLE = "#a855f7"
+
+
+def build_shareholder_doughnut(top_shareholders: Any) -> dict | None:
+    """Build a Chart.js doughnut chart showing top shareholder distribution.
+
+    top_shareholders is the list from summary()['sections']['shareholders']
+    ['top']. Each shareholder has 'acionista' + 'pct_total'. The chart
+    shows the % of total shares held by each top shareholder.
+
+    Returns None when the list is empty or no shareholders carry a
+    numeric pct_total, so the dashboard can skip the section gracefully.
+    """
+    if not top_shareholders:
+        return None
+
+    labels: list[str] = []
+    values: list[float] = []
+    for s in top_shareholders:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("acionista") or "—"
+        pct = s.get("pct_total")
+        if pct is None:
+            continue
+        try:
+            pct_f = float(pct)
+        except (TypeError, ValueError):
+            continue
+        labels.append(name)
+        values.append(pct_f)
+
+    if not labels:
+        return None
+
+    # Top shareholders get distinct colors from the brand palette.
+    palette = [_TEAL, _ORANGE, _BLUE, _PURPLE, _RED]
+    colors = [palette[i % len(palette)] for i in range(len(labels))]
+
+    return {
+        "title": "Top Shareholders Distribution",
+        "type": "chart",
+        "chart_data": {
+            "type": "doughnut",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "% Total",
+                    "data": values,
+                    "backgroundColor": colors,
+                    "borderColor": "#ffffff",
+                    "borderWidth": 2,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Top Shareholders Distribution"},
+                },
+                "cutout": "60%",
+            },
+        },
+    }
+
+
+def build_equity_structure_bar(equity_data: Any) -> dict | None:
+    """Build a Chart.js bar chart showing equity structure categories.
+
+    equity_data is either:
+      - the summary()['sections']['equity'] dict (with a 'components'
+        sub-dict mapping BPP 2.03.* codes to BRL values), or
+      - the components dict directly (code -> value).
+
+    Only the codes listed in ``_EQUITY_CODES`` (PL Total, Capital Social,
+    Reservas de Capital, Reservas de Lucros, Lucros Acumulados, Minority
+    Interest) are charted, in that fixed order so the chart is stable.
+
+    Returns None when no components are present or no values are
+    numeric, so the dashboard can skip the section gracefully.
+    """
+    if isinstance(equity_data, dict):
+        components = equity_data.get("components") or equity_data
+    else:
+        return None
+
+    if not components:
+        return None
+
+    labels: list[str] = []
+    values: list[float] = []
+    for code, label in _EQUITY_CODES:
+        if code not in components:
+            continue
+        val = components.get(code)
+        if val is None:
+            continue
+        try:
+            val_f = float(val)
+        except (TypeError, ValueError):
+            continue
+        labels.append(label)
+        values.append(val_f)
+
+    if not labels:
+        return None
+
+    return {
+        "title": "Equity Structure Components",
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "BRL",
+                    "data": values,
+                    "backgroundColor": _TEAL,
+                    "borderColor": _TEAL,
+                    "borderWidth": 1,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Equity Structure Components"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }

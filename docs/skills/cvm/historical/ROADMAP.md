@@ -15,17 +15,7 @@
 | Done | Subtabs by category (v2.1) | Valuation / Profitability subtab split |
 | Done | More metrics (v2.1) | Added Marg. Bruta + Marg. Líquida |
 
----
-
-## ✅ Recently Completed
-
-- **v2.1 (2026-07-31)** — Dashboard reorg: 3→5 tabs (Overview / Valuation
-  subtabs / Profitability subtabs / Ratio Grid / Percentile Analysis). F7
-  speed fix: wrapped all summary() + fetch_quartiles() in engine_cache_scope.
-  Added 2 metrics (Marg. Bruta + Marg. Líquida). Detailed [historical] output.
-  Sync guard wired. 8 tests.
-
----
+> **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📋 Backlog
 
@@ -75,4 +65,4 @@ each tab to a sheet.
 
 ---
 
-*Last updated: 2026-07-31 (v2.0 — dashboard reorg + sync guard). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*

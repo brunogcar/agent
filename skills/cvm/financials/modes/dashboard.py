@@ -114,9 +114,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
 
+    print(f"[financials] Starting dashboard for {company}...", flush=True)
+
     # ── Gather underlying data (each call wrapped independently) ────────────
+    print(f"[financials] Fetching annual data (5 periods)...", flush=True)
     annual_payload = _safe_call(annual, company=company, periods=5,
                                 consolidado=consolidado)
+    print(f"[financials] Fetching quarterly data (4 periods)...", flush=True)
     quarterly_payload = _safe_call(quarterly, company=company, periods=4,
                                    consolidado=consolidado)
 
@@ -133,6 +137,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # Current ratios via the calculations registry (point-in-time at today).
     today = date.today().isoformat()
     ratios_payload: dict = {"date": today}
+    print(f"[financials] Computing ratios (via compute_all_ratios)...", flush=True)
     try:
         from skills.cvm.calculations._registry import compute_all_ratios
 
@@ -150,13 +155,20 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # ── Standalone statement modes (each wrapped independently) ─────────────
     # We fetch the latest annual period for each statement. Failures degrade
     # the corresponding tab to an error section, not a crash.
+    print(f"[financials] Fetching statement modes (BPA/BPP/DRE/DFC/DVA)...", flush=True)
     bpa_result = _safe_call(_call_bpa, company, consolidado)
+    print(f"[financials]   Fetching BPA... done.", flush=True)
     bpp_result = _safe_call(_call_bpp, company, consolidado)
+    print(f"[financials]   Fetching BPP... done.", flush=True)
     dre_result = _safe_call(_call_dre, company, consolidado)
+    print(f"[financials]   Fetching DRE... done.", flush=True)
     dfc_result = _safe_call(_call_dfc, company, consolidado)
+    print(f"[financials]   Fetching DFC... done.", flush=True)
     dva_result = _safe_call(_call_dva, company, consolidado)
+    print(f"[financials]   Fetching DVA... done.", flush=True)
 
     # ── Tab 1: Overview ─────────────────────────────────────────────────────
+    print(f"[financials] Building dashboard sections...", flush=True)
     # Pull ROE + ROIC + Net Debt/EBITDA from the ratios registry (point-in-time
     # at today), falling back to the annual period's ratios when the registry
     # value is None (e.g. cotahist missing in test env).
@@ -228,6 +240,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         {"name": "DFC",          "sections": dfc_sections},
         {"name": "DVA",          "sections": dva_sections},
     ]
+    print(f"[financials] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
     return {"status": "ok", "company": company, "tabs": tabs, "kpis": kpis}
 
 

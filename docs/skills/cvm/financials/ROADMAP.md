@@ -16,22 +16,7 @@
 | Done | F7 — Engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
 | Done | Force sync guard (v1.14) | `ensure_fresh()` + HEAD check + current-year force sync |
 
----
-
-## ✅ Recently Completed
-
-- **v1.14 (2026-07-31)** — Force sync guard. `__init__.py` passes
-  `required_sources=["dfp","itr","bridge"]` to `make_route()`. route() calls
-  `ensure_fresh()` before dispatch — force-syncs if stale (>24h). HEAD check
-  for CVM sources. Re-entrancy guard. Escape hatches: `CVM_SKIP_SYNC=1` +
-  `skip_sync=True`.
-- **v1.13 (2026-07-31)** — 5 LLM-review fixes: subtab chart rendering,
-  `_pick_pl_value()` zero-value trap, period-specific growth gap tolerance,
-  Indicadores sub-tab split, DVA doughnut percentages.
-- **v1.12 (2026-07-29)** — 7-tab dashboard reorg + 5 standalone statement
-  modes + generic adapter.
-
----
+> **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📋 Backlog
 
@@ -145,4 +130,4 @@ broken dashboards. Should run nightly (cron) in production.
 
 ---
 
-*Last updated: 2026-07-31 (v1.14 — force sync guard + F7 engine cache). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*

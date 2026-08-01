@@ -28,6 +28,10 @@ from skills.cvm.dividends._registry import MODES  # noqa: F401
 # Auto-discover all mode modules from modes/ subdirectory.
 auto_discover_modes(__name__)
 
+# [v1.2] Data sources this skill needs. The route() wrapper checks freshness
+# before each dispatch and triggers force-sync if any source is stale.
+REQUIRED_SOURCES = ["dfp", "b3_dividends", "bridge"]
+
 # Build MANIFEST from the registered modes.
 MANIFEST = {
     "sub_domain":  "dividends",
@@ -43,7 +47,9 @@ MANIFEST = {
     "source":  "dividends.db (B3) + dfp.db (DVA 7.08.04.*) + ipe.db (filings)",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
+    "required_sources": REQUIRED_SOURCES,
 }
 
-# Create the route() dispatcher via the shared factory.
-route = make_route("sub_domain", "dividends", MODES)
+# [v1.2] route() with sync guard.
+route = make_route("sub_domain", "dividends", MODES,
+                   required_sources=REQUIRED_SOURCES)
