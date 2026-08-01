@@ -158,46 +158,6 @@ skills/cvm/backtest/    (Phase 4: future, will use calculations)
 
 ---
 
-## 💾 Materialized Ratios (v1.10 F8)
-
-Pre-computes stable fundamental metrics in a SQLite table
-(`memory_db/cvm/ratios.db`) so `compute_all_ratios()` reads them via
-single-row lookups instead of 35 engine calls.
-
-**What gets materialized** (~20 stable fundamental metrics):
-- Profitability (ROE, ROA, ROIC, margins)
-- Liquidity (current/quick/cash ratio, working capital)
-- Leverage (D/E, net debt/EBITDA, interest coverage)
-- Efficiency (turnover ratios, capex/revenue)
-- Tax (effective tax rate)
-
-**What stays live** (~29 metrics):
-- Valuation + per_share (price-dependent — depend on daily COTAHIST)
-- Growth (lookback-dependent — value depends on when evaluated)
-
-**Schema** (normalized — one row per metric):
-```sql
-CREATE TABLE ratios_materialized (
-    ticker        TEXT NOT NULL,
-    date          TEXT NOT NULL,
-    metric_name   TEXT NOT NULL,
-    value         REAL,
-    computed_at   TEXT NOT NULL,
-    PRIMARY KEY (ticker, date, metric_name)
-);
-CREATE INDEX idx_ratios_ticker_date ON ratios_materialized(ticker, date);
-```
-
-**Event-driven invalidation:** After a successful force-sync,
-`ensure_fresh()` calls `materialize_ratios(company, today)` to re-compute +
-upsert. No time-based staleness window — a materialized row is valid until
-explicitly invalidated by a re-materialization on the next sync.
-
-**Thread-local connection:** `_get_ratios_conn()` uses `threading.local()`
-+ WAL journal mode for concurrent read performance.
-
-**Escape hatch:** `CVM_SKIP_MATERIALIZED=1` env var (set in conftest for tests).
-
 ---
 
 ## 🔄 Force Sync Guard (v1.14)
@@ -293,4 +253,4 @@ scope and doesn't install a new one).
 
 ---
 
-*Last updated: 2026-07-31 (v1.10 — F8 materialized ratios). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-07-31 (v1.14 — force sync guard). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

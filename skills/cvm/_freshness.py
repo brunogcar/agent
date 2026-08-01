@@ -78,7 +78,9 @@ def get_freshness() -> dict[str, str]:
             row = conn.execute(
                 "SELECT synced_at FROM sync_log ORDER BY rowid DESC LIMIT 1"
             ).fetchone()
-            result["bridge"] = str(row["ts"]) if row and row["synced_at"] else ""
+            # [v1.10.2 fix] Was row["ts"] (nonexistent column) → always raised
+            # exception → bridge always seen as stale → force-synced every call.
+            result["bridge"] = str(row["synced_at"]) if row and row["synced_at"] else ""
             conn.close()
         else:
             result["bridge"] = ""

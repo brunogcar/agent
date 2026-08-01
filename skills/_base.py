@@ -656,7 +656,7 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         "cgvn":         ("data_sources.cvm.cgvn.sync_engine", "sync",
                          lambda: {"year": current_year, "force": True}),
         "bridge":       ("data_sources.cvm.bridge.sync_engine", "sync",
-                         lambda: {"ticker": company or "", "force": True, "trace_id": trace_id}),
+                         lambda: {"ticker": company or "", "force": False, "trace_id": trace_id}),
         "cotahist":     ("data_sources.b3.cotahist.sync_engine", "sync",
                          lambda: {"year": current_year, "force": True, "trace_id": trace_id}),
         "b3_dividends": ("data_sources.b3.dividends.sync_engine", "sync",
@@ -742,18 +742,10 @@ def ensure_fresh(
 
         # Trigger force-sync (blocking)
         sync_result = _trigger_sync(source, company=company, trace_id=trace_id)
-        if sync_result.get("status") == "ok":
+        sync_status = sync_result.get("status")
+        # Treat both "ok" (synced) and "skipped" (already up-to-date) as success
+        if sync_status in ("ok", "skipped"):
             synced.append(source)
-            # [v1.10 F8] Event-driven materialization: after a successful
-            # force-sync, re-materialize ratios for the requested company
-            # so the materialized table reflects the new data. Only for
-            # CVM sources that affect fundamental metrics (dfp/itr/fre/fca).
-            if source in ("dfp", "itr", "fre", "fca") and company:
-                try:
-                    from skills.cvm.calculations._materialized import on_sync_complete
-                    on_sync_complete(source, company=company)
-                except Exception:
-                    pass  # best-effort — don't crash if materialization fails
         else:
             errors.append({
                 "source": source,

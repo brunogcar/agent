@@ -10,16 +10,11 @@
 | P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator + ContextVar scope — ~60% fewer DB queries |
-| Done | F8 materialized ratios (v1.10) | Pre-computed fundamental metrics in SQLite — single-row lookups |
 
 ---
 
 ## ✅ Recently Completed
 
-- **v1.10 (2026-07-31)** — F8 materialized ratios. NEW `_materialized.py` with
-  `ratios_materialized` table. Only stable fundamentals materialized (profitability/
-  liquidity/leverage/efficiency/tax); growth + price-based stay live. Event-driven
-  invalidation on sync. Thread-local SQLite + WAL.
 - **v1.9 (2026-07-31)** — F7 engine cache. `@engine_cached` decorator on all 34
   engines + `engine_cache_scope` ContextVar. ~60% fewer DB queries in
   `compute_all_ratios()`. Zero test changes (decorator applied at definition time).
@@ -68,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-07-31 (v1.10 — F8 materialized ratios). Items will be promoted to P1/P0 as consumer skills demand them.*
+*Last updated: 2026-07-31 (v1.9 — F7 engine cache). Items will be promoted to P1/P0 as consumer skills demand them.*

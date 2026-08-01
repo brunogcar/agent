@@ -299,30 +299,6 @@ route = make_route("sub_domain", "<skill>", MODES,
                    required_sources=REQUIRED_SOURCES)
 ```
 
-### Materialized Ratios (v1.10 F8)
-
-`skills/cvm/calculations/_materialized.py` stores pre-computed fundamental
-metrics in a SQLite table (`memory_db/cvm/ratios.db`) so `compute_all_ratios()`
-reads them via single-row lookups instead of 35 engine calls.
-
-**What gets materialized** (~20 stable fundamental metrics):
-- Profitability (ROE, ROA, ROIC, margins)
-- Liquidity (current/quick/cash ratio, working capital)
-- Leverage (D/E, net debt/EBITDA, interest coverage)
-- Efficiency (turnover ratios, capex/revenue)
-- Tax (effective tax rate)
-
-**What stays live** (~29 metrics):
-- Valuation + per_share (price-dependent — depend on daily COTAHIST)
-- Growth (lookback-dependent — value depends on when evaluated)
-
-**Event-driven invalidation:** After a successful force-sync, `ensure_fresh()`
-calls `materialize_ratios(company, today)` to re-compute + upsert. No
-time-based staleness window — a materialized row is valid until explicitly
-invalidated by a re-materialization on the next sync.
-
-**Escape hatch:** `CVM_SKIP_MATERIALIZED=1` env var (set in conftest for tests).
-
 ---
 
 ## 📈 Current Skill Domains

@@ -15,7 +15,6 @@
 | P3 | D7 — Performance & quality | Per-call cache done (F7); materialized done (F8); TypedDict + telemetry remaining |
 | Next | Backtest/Historical/Investsite dashboard reorg | Apply v1.12 dashboard pattern to 3 more skills |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
-| Done | F8 materialized ratios (v1.10) | Pre-computed fundamentals in SQLite — event-driven on sync |
 | Done | Force sync guard (v1.7) | `ensure_fresh()` + HEAD check + current-year force sync |
 
 ---
@@ -149,7 +148,7 @@ These are entirely new data sources — not yet wired into any engine.
 | Item | Priority | Notes |
 |------|----------|-------|
 | ~~Per-call engine caching in `compute_all_ratios()`~~ | ~~P1~~ | ✅ **Done (v1.9 F7)** — `@engine_cached` decorator + `engine_cache_scope` ContextVar. ~60% fewer DB queries. |
-| ~~Materialized ratios table~~ | ~~P2~~ | ✅ **Done (v1.10 F8)** — `ratios_materialized` table in `memory_db/cvm/ratios.db`. Only stable fundamentals materialized; growth + price-based stay live. Event-driven invalidation on sync. |
+| **Materialized ratios table** | P3 | Deferred — F8 was implemented (v1.10) but removed (v1.10.3) because it only cached ~20 of 49 metrics + added overhead. F7 (engine cache) provides the real speedup. May revisit if statement modes are optimized. |
 | **Cache `ratios()` per (ticker, day)** | P2 | Currently every dashboard call re-queries every engine. Add a TTL cache (5 min?) keyed by (ticker, today). Complements F7 (per-call cache) by extending the cache boundary to cross-call. |
 | **Type-hint the ratios dict** | P3 | Currently `dict[str, Any]`. Define a `ValuationRatios` TypedDict so downstream skills get autocomplete + mypy checking. |
 | **Telemetry** | P3 | Count how often each metric returns None (per engine). Surface in summary() as `null_rate` per metric. |
@@ -172,4 +171,4 @@ These are entirely new data sources — not yet wired into any engine.
 
 ---
 
-*Last updated: 2026-07-31 (v1.7 — force sync guard + F7 engine cache + F8 materialized ratios). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-31 (v1.7 — force sync guard + F7 engine cache). See [CHANGELOG.md](CHANGELOG.md) for version history.*

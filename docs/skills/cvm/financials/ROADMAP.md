@@ -14,7 +14,6 @@
 | P2 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
 | Next | Backtest/Historical/Investsite dashboard reorg | Apply v1.12 dashboard pattern to 3 more skills |
 | Done | F7 — Engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
-| Done | F8 — Materialized ratios (v1.10) | Pre-computed fundamentals in SQLite — event-driven on sync |
 | Done | Force sync guard (v1.14) | `ensure_fresh()` + HEAD check + current-year force sync |
 
 ---
@@ -146,4 +145,4 @@ broken dashboards. Should run nightly (cron) in production.
 
 ---
 
-*Last updated: 2026-07-31 (v1.14 — force sync guard + F7 engine cache + F8 materialized ratios). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-07-31 (v1.14 — force sync guard + F7 engine cache). See [CHANGELOG.md](CHANGELOG.md) for version history.*

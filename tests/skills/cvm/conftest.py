@@ -44,12 +44,6 @@ os.environ.setdefault("EXECUTOR_PROVIDER", "test")
 # locally + mock the sync functions.
 os.environ.setdefault("CVM_SKIP_SYNC", "1")
 
-# [v1.10 F8] Disable materialized ratios read path for ALL CVM tests.
-# Tests use synthetic DBs — they should compute metrics live, not read from
-# a materialized table. Individual tests that need to exercise the materialized
-# path set CVM_SKIP_MATERIALIZED=0 locally + use a tmp_path DB.
-os.environ.setdefault("CVM_SKIP_MATERIALIZED", "1")
-
 
 @pytest.fixture(autouse=True)
 def mock_freshness(monkeypatch):
