@@ -40,6 +40,8 @@ from datetime import date
 from skills.cvm.financials._registry import register_mode
 from skills.cvm.financials.modes.annual import annual
 from skills.cvm.financials.modes.quarterly import quarterly
+from skills.cvm.financials.modes.ttm import ttm as ttm_mode
+from skills.cvm.financials.modes.yoy_quarterly import yoy_quarterly as yoy_mode
 from skills.cvm.financials.report import (
     annual_metric,
     annual_ratio,
@@ -52,6 +54,10 @@ from skills.cvm.financials.report import (
     build_dfc_sections,
     build_dva_sections,
     build_error_section,
+    build_ttm_chart,
+    build_ttm_table,
+    build_yoy_chart,
+    build_yoy_table,
 )
 
 
@@ -228,6 +234,34 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         dva_sections = [build_error_section(
             "DVA", dva_result.get("error", "unknown"))]
 
+    # ── Tab 8: TTM (Anualizado) ─────────────────────────────────────────────
+    print(f"[financials] Fetching TTM series...", flush=True)
+    ttm_sections: list[dict] = []
+    ttm_result = _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
+    if isinstance(ttm_result, dict) and ttm_result.get("status") == "ok":
+        ttm_periods = ttm_result.get("periods") or []
+        if ttm_periods:
+            ttm_sections.append(build_ttm_table(ttm_periods))
+            ttm_chart = build_ttm_chart(ttm_periods)
+            if ttm_chart:
+                ttm_sections.append(ttm_chart)
+    if not ttm_sections:
+        ttm_sections = [build_error_section("TTM", ttm_result.get("error", "unknown") if isinstance(ttm_result, dict) else "unknown")]
+
+    # ── Tab 9: YoY Quarterly (Trimestre) ────────────────────────────────────
+    print(f"[financials] Fetching YoY quarterly comparison...", flush=True)
+    yoy_sections: list[dict] = []
+    yoy_result = _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
+    if isinstance(yoy_result, dict) and yoy_result.get("status") == "ok":
+        yoy_groups = yoy_result.get("groups") or []
+        if yoy_groups:
+            yoy_sections.append(build_yoy_table(yoy_groups))
+            yoy_chart = build_yoy_chart(yoy_groups)
+            if yoy_chart:
+                yoy_sections.append(yoy_chart)
+    if not yoy_sections:
+        yoy_sections = [build_error_section("YoY Quarterly", yoy_result.get("error", "unknown") if isinstance(yoy_result, dict) else "unknown")]
+
     # ── Assemble the dashboard payload ──────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
     # renders them above all tabs via the kpi-grid div.
@@ -239,6 +273,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         {"name": "DRE",          "sections": dre_sections},
         {"name": "DFC",          "sections": dfc_sections},
         {"name": "DVA",          "sections": dva_sections},
+        {"name": "TTM",          "sections": ttm_sections},
+        {"name": "YoY Quarterly", "sections": yoy_sections},
     ]
     print(f"[financials] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
     return {"status": "ok", "company": company, "tabs": tabs, "kpis": kpis}

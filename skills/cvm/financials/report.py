@@ -889,3 +889,176 @@ def build_error_section(stage: str, error: str) -> dict:
             f"Detalhe: {error}"
         ),
     }
+
+
+# ── TTM chart builder (v1.15) ────────────────────────────────────────────────
+
+def build_ttm_chart(ttm_periods: list[dict]) -> dict | None:
+    """Build a line chart showing TTM Revenue + EBITDA + Net Income over time.
+
+    Args:
+        ttm_periods: list of TTM period dicts (from ttm() mode) with
+                     "quarter" and "metrics" keys.
+
+    Returns None if no valid data.
+    """
+    labels = []
+    revenue = []
+    ebitda = []
+    net_income = []
+    for p in ttm_periods:
+        m = p.get("metrics") or {}
+        rev = m.get("receita_liquida")
+        ebd = m.get("ebitda")
+        ni = m.get("lucro_liquido")
+        if rev is None and ebd is None and ni is None:
+            continue
+        labels.append(p.get("quarter", ""))
+        revenue.append(_num_or_none(rev))
+        ebitda.append(_num_or_none(ebd))
+        net_income.append(_num_or_none(ni))
+
+    if not labels:
+        return None
+
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {"label": "Receita (TTM)", "data": revenue,
+                     "borderColor": "#0d9488", "fill": False, "tension": 0.3},
+                    {"label": "EBITDA (TTM)", "data": ebitda,
+                     "borderColor": "#f59e0b", "fill": False, "tension": 0.3},
+                    {"label": "Lucro Líq. (TTM)", "data": net_income,
+                     "borderColor": "#3b82f6", "fill": False, "tension": 0.3},
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {"y": {"ticks": {}}},
+            },
+        },
+    }
+
+
+def build_ttm_table(ttm_periods: list[dict]) -> dict:
+    """Build a table showing TTM metrics per period.
+
+    Columns: Período, Receita, EBITDA, Lucro Líquido, Marg. EBITDA, Marg. Líq.
+    """
+    columns = ["Período", "Receita (TTM)", "EBITDA", "Lucro Líq.",
+               "Marg. EBITDA", "Marg. Líq."]
+    rows = []
+    for p in ttm_periods:
+        m = p.get("metrics") or {}
+        r = p.get("ratios") or {}
+        rows.append([
+            p.get("quarter", ""),
+            _fmt(m.get("receita_liquida"), "brl"),
+            _fmt(m.get("ebitda"), "brl"),
+            _fmt(m.get("lucro_liquido"), "brl"),
+            _fmt(r.get("marg_ebitda"), "pct"),
+            _fmt(r.get("marg_liquida"), "pct"),
+        ])
+    return {
+        "title": "Rolling TTM (Anualizado)",
+        "type": "table",
+        "columns": columns,
+        "rows": rows,
+        "note": "Trailing 12 months recomputed at each quarter boundary. Deseasonalized.",
+    }
+
+
+# ── YoY Quarterly chart builder (v1.15) ──────────────────────────────────────
+
+def build_yoy_chart(groups: list[dict]) -> dict | None:
+    """Build a bar chart showing Revenue YoY growth per quarter group.
+
+    One dataset per quarter (Q1, Q2, Q3, Q4), x-axis = years.
+    Shows whether each quarter is growing or shrinking YoY.
+
+    Args:
+        groups: list of group dicts (from yoy_quarterly() mode) with
+                "quarter" and "periods" keys.
+
+    Returns None if no valid data.
+    """
+    datasets = []
+    all_years: set[int] = set()
+
+    for g in groups:
+        q_label = g.get("quarter", "")
+        periods = g.get("periods") or []
+        if not periods:
+            continue
+
+        years = []
+        growths = []
+        for p in periods:
+            year = p.get("year")
+            yoy = p.get("yoy_growth") or {}
+            growth = yoy.get("receita_liquida")
+            if year is not None:
+                years.append(str(year))
+                all_years.add(year)
+                growths.append(_num_or_none(growth) * 100 if growth is not None else None)
+
+        if years:
+            datasets.append({
+                "label": q_label,
+                "data": growths,
+            })
+
+    if not datasets:
+        return None
+
+    labels = sorted(str(y) for y in all_years)
+
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": datasets,
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {"y": {"ticks": {}}},
+            },
+        },
+    }
+
+
+def build_yoy_table(groups: list[dict]) -> dict:
+    """Build a table showing same-quarter YoY comparison.
+
+    Columns: Quarter, Year, Receita, EBITDA, Lucro Líq., Receita YoY %
+    """
+    columns = ["Quarter", "Year", "Receita", "EBITDA", "Lucro Líq.", "Receita YoY %"]
+    rows = []
+    for g in groups:
+        q_label = g.get("quarter", "")
+        for p in g.get("periods") or []:
+            m = p.get("metrics") or {}
+            yoy = p.get("yoy_growth") or {}
+            rows.append([
+                q_label,
+                str(p.get("year", "")),
+                _fmt(m.get("receita_liquida"), "brl"),
+                _fmt(m.get("ebitda"), "brl"),
+                _fmt(m.get("lucro_liquido"), "brl"),
+                _fmt(yoy.get("receita_liquida"), "pct"),
+            ])
+    return {
+        "title": "Same-Quarter YoY Comparison (Trimestre)",
+        "type": "table",
+        "columns": columns,
+        "rows": rows,
+        "note": "Same quarter compared across years. YoY % = (curr - prev) / |prev|.",
+    }

@@ -183,6 +183,12 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 - DVA doughnut chart shows tooltip percentages via `_tooltipPercent` flag.
 - Crescimento tab uses `growth_helpers.growth_at()` with period-specific gap tolerance.
 
+**v1.15** — TTM + YoY Quarterly modes:
+- New `ttm` mode: rolling TTM (anualizado) time series — computes TTM at every historical quarter boundary via `compute_ttm_with_engines()`. Produces ~4 deseasonalized data points per year. Flow metrics (DRE/DFC) use TTM derivation; snapshot metrics (BPA/BPP) use 4-quarter averaging.
+- New `yoy_quarterly` mode: same-quarter year-over-year comparison — groups quarters by Q1/Q2/Q3/Q4 and compares across years with YoY growth.
+- Dashboard 7→9 tabs (added TTM tab with table + line chart, YoY Quarterly tab with table + bar chart).
+- Mode families: Period views (quarterly/annual/ttm/yoy_quarterly) + Statement views (bpa/bpp/dre/dfc/dva) + Composition layers (complete/summary/dashboard).
+
 **v1.14** — Sync guard + print output:
 - `REQUIRED_SOURCES = ["dfp", "itr", "bridge"]` wired via `make_route()`.
 - `route()` calls `ensure_fresh()` before dispatch — force-syncs stale sources.
@@ -190,4 +196,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-07-31 (v1.14 — sync guard + review fixes + dashboard reorg). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.15 — sync guard + review fixes + dashboard reorg). See [CHANGELOG.md](CHANGELOG.md) for version history.*

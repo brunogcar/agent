@@ -16,6 +16,7 @@
 | Done | Force sync guard (v1.14) | `ensure_fresh()` + HEAD check + current-year force sync |
 | Done | Review-fix sprint (v1.13) | Subtab charts, PL zero-value trap, growth gap tolerance, Indicadores subtabs, DVA % |
 | Done | Dashboard reorg (v1.12) | 5→7 tabs, 5 standalone statement modes, charts, subtabs, ratio_grid |
+| Done | TTM + YoY Quarterly (v1.15) | 2 new period-view modes: rolling TTM series + same-quarter YoY comparison. Dashboard 7→9 tabs |
 
 > **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 

@@ -55,4 +55,4 @@
 
 ---
 
-*Last updated: 2026-07-31 (v1.14 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.15 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*

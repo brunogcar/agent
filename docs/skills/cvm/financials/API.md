@@ -149,6 +149,52 @@ The dashboard calls the 5 standalone statement modes (bpa/bpp/dre/dfc/dva) via t
 
 **`_sync` field** [v1.14]: Present when sync guard is active (i.e., `skip_sync` not passed). Shows which sources were force-synced, which were already fresh, which had errors, and which were skipped (via `CVM_SKIP_SYNC=1` env var).
 
+### mode="ttm" (v1.15)
+
+Rolling TTM (anualizado) time series. For each historical quarter-end date, computes trailing-12-months values via calculations engines. Deseasonalizes flow metrics — 4 data points per year with quarterly noise smoothed.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| company | str | — | Required |
+| periods | int | 8 | Number of TTM periods to return |
+| consolidado | int | 1 | 1=consolidated, 0=individual |
+
+**Response shape:**
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "periods": [
+    {"period_range": "2T2023–1T2024", "ttm_date": "2024-03-31", "quarter": "1T2024", "metrics": {...}, "ratios": {...}},
+    ...
+  ]
+}
+```
+
+### mode="yoy_quarterly" (v1.15)
+
+Same-quarter year-over-year comparison (Trimestre). Groups standalone quarters by Q1/Q2/Q3/Q4 and compares each quarter across years. Shows YoY growth per quarter.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| company | str | — | Required |
+| years | int | 5 | Number of years to compare |
+| consolidado | int | 1 | 1=consolidated, 0=individual |
+
+**Response shape:**
+```json
+{
+  "status": "ok",
+  "company": "PETR4",
+  "groups": [
+    {"quarter": "Q1", "periods": [{"period": "1T2024", "year": 2024, "quarter": 1, "metrics": {...}, "ratios": {...}, "yoy_growth": {"receita_liquida": 0.15}}]},
+    {"quarter": "Q2", "periods": [...]},
+    {"quarter": "Q3", "periods": [...]},
+    {"quarter": "Q4", "periods": [...]}
+  ]
+}
+```
+
 ### mode="bpa" / "bpp" / "dre" / "dfc" / "dva" (v1.12)
 
 Standalone statement modes — thin wrappers over `complete(grupo=...)` that reshape the per-period accounts list into a dict-keyed shape with `section` labels.
@@ -218,4 +264,4 @@ skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PET
 
 ---
 
-*Last updated: 2026-07-31 (v1.14 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.15 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*

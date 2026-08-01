@@ -24,15 +24,16 @@ class TestDashboardMode:
         assert "company is required" in result["error"]
 
     def test_dashboard_tab_structure(self, financials_env):
-        """Returns 7 tabs with the expected names + each tab has `sections`."""
+        """Returns 9 tabs with the expected names + each tab has `sections`."""
         from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 7
+        assert len(result["tabs"]) == 9
         expected_names = [
             "Overview", "Indicadores", "Crescimento",
             "Balanço", "DRE", "DFC", "DVA",
+            "TTM", "YoY Quarterly",
         ]
         assert [t["name"] for t in result["tabs"]] == expected_names
         # Every tab must have a `sections` list (the Overview tab also has
