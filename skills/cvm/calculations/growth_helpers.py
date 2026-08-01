@@ -299,3 +299,123 @@ def growth_history(
             "prior_date": prior_date,
         })
     return result
+
+
+# ── CAGR (Compound Annual Growth Rate) ──────────────────────────────────────
+
+def cagr_at(
+    periods: list[dict],
+    target_date: str | _date,
+    years: int,
+    max_gap_multiplier: float | None = None,
+) -> float | None:
+    """Compute CAGR (Compound Annual Growth Rate) at target_date.
+
+    CAGR = (end / start) ^ (1 / years) - 1
+
+    Unlike growth_at() which computes simple point-to-point % change,
+    CAGR gives the annualized compounded rate — the constant rate that
+    would take you from start to end over N years.
+
+    Args:
+        periods: list of {"date": str, "value": float|None} sorted oldest-first.
+        target_date: the "end" date (current period).
+        years: number of years to look back (1, 3, 5, 10, etc.).
+        max_gap_multiplier: override the period-specific default.
+
+    Returns:
+        CAGR as a fraction (0.085 = 8.5% annualized), or None if either
+        start or end value is unavailable, or if start <= 0 (CAGR
+        undefined for negative/zero base).
+
+    >>> periods = [
+    ...     {"date": "2019-12-31", "value": 100.0},
+    ...     {"date": "2024-12-31", "value": 150.0},
+    ... ]
+    >>> cagr_at(periods, "2024-12-31", years=5)
+    0.08447177119768055  # (150/100)^(1/5) - 1 ≈ 8.45%
+    """
+    target = _parse_date(target_date)
+
+    # Find the current (end) value
+    curr_p = _find_latest_on_or_before(periods, target)
+    if curr_p is None:
+        return None
+    end_val = curr_p.get("value")
+    if end_val is None or end_val <= 0:
+        return None  # CAGR undefined for negative/zero base
+
+    # Find the start value (N years back)
+    lookback_days = years * 365
+    if max_gap_multiplier is None:
+        max_gap_multiplier = gap_multiplier_for_lookback(lookback_days)
+
+    start_p = _find_prior_within_gap(
+        periods, target, lookback_days, max_gap_multiplier)
+    if start_p is None:
+        return None
+    start_val = start_p.get("value")
+    if start_val is None or start_val <= 0:
+        return None
+
+    # CAGR = (end / start) ^ (1 / years) - 1
+    ratio = end_val / start_val
+    if ratio <= 0:
+        return None
+
+    return ratio ** (1.0 / years) - 1.0
+
+
+def cagr_history(
+    periods: list[dict],
+    years: int,
+    date_from: str | _date | None = None,
+    date_to: str | _date | None = None,
+    max_gap_multiplier: float | None = None,
+) -> list[dict]:
+    """Time series of CAGR over N years.
+
+    For each period date, computes CAGR looking back `years` years.
+
+    Returns: [{"date": str, "cagr": float|None, "end_value": float|None,
+    "start_value": float|None, "start_date": str|None}, ...] sorted oldest-first.
+    """
+    if not periods:
+        return []
+
+    df = _parse_date(date_from) if date_from else None
+    dt = _parse_date(date_to) if date_to else None
+
+    if max_gap_multiplier is None:
+        max_gap_multiplier = gap_multiplier_for_lookback(years * 365)
+
+    result: list[dict] = []
+    for p in sorted(periods, key=lambda x: _parse_date(x["date"])):
+        d = _parse_date(p["date"])
+        if df and d < df:
+            continue
+        if dt and d > dt:
+            continue
+
+        end_val = p.get("value")
+
+        start_p = _find_prior_within_gap(
+            periods, d, years * 365, max_gap_multiplier)
+        start_val = start_p.get("value") if start_p else None
+        start_date = start_p["date"] if start_p else None
+
+        cagr = None
+        if (end_val is not None and end_val > 0
+            and start_val is not None and start_val > 0):
+            ratio = end_val / start_val
+            if ratio > 0:
+                cagr = ratio ** (1.0 / years) - 1.0
+
+        result.append({
+            "date": p["date"],
+            "cagr": cagr,
+            "end_value": float(end_val) if end_val is not None else None,
+            "start_value": float(start_val) if start_val is not None else None,
+            "start_date": start_date,
+        })
+    return result

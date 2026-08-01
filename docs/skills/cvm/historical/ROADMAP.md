@@ -9,6 +9,8 @@
 | P2 | H1 — Trend line charts | Line chart per metric showing 5Y time series |
 | P3 | H2 — More metrics | Add leverage, efficiency, growth to dashboard |
 | P3 | H3 — Export to xlsx | Export percentile + trend tables to Excel |
+| P3 | H4 — Beta (5Y) | Rolling regression of stock returns vs IBOV. Needs COTAHIST + IBOV index series. Different architecture (regression, not ratio). Belongs here, not in calculations. |
+| P3 | H5 — BCB SGS macro indicators | Selic, CDI, IPCA, IGP-M via BCB SGS API. For real returns + COE. Blocks on new data source. |
 | Done | v1.14 dashboard reorg | 3→5 tabs: subtabs by category, F7 speed fix, charts, ratio_grid |
 | Done | Sync guard (v1.14) | required_sources wired via make_route() |
 | Done | F7 engine cache (v1.9) | Inherited from calculations skill |

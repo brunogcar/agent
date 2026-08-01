@@ -6,10 +6,19 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
+| P2 | DVA generation-side engines (7.01-7.06) | Receitas, Insumos, V.A. Bruto, V.A. Recebido — completes DVA statement |
+| P2 | BCB SGS data source + COE metric | Selic/CDI/IPCA/IGP-M + Cost of Equity (Rf + β × (Rm − Rf)). COE blocks on SGS. One unit of work. |
+| P2 | Performance: statement mode single-fetch | Dashboard calls 7 statement modes separately — single `complete(grupo="")` + Python filter eliminates 6 redundant SQL round-trips |
+| P2 | Performance: brapi batching | Screener fetches brapi sequentially for 20 peers — batch or concurrent |
+| P3 | Beta (5Y) — belongs in historical, not calculations | Rolling regression of stock returns vs IBOV. Needs COTAHIST + IBOV index series. Different architecture (regression, not ratio). |
 | P3 | New engines (DVA 8.1 + 8.4) | Personnel costs + shareholder remuneration — completes DVA distribution decomposition |
 | P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
+| Future | Technical analysis skill | FIBO, Swing, BTC, Termo — separate skill, not calculations-layer |
+| Done | EV/EBIT + DL/EBIT + CAGR (v1.10) | 2 new metrics + CAGR function + margem_ebit alias |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator + ContextVar scope — ~60% fewer DB queries |
+| Done | Growth metrics (v1.7) | 9 growth metrics (3M/1Y/5Y) with period-specific gap tolerance |
+| Done | LLM-review fixes (v1.8) | DVA 4th engine fix, 7.11 fallback, PL 2.08, growth gap tolerance |
 
 > **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
