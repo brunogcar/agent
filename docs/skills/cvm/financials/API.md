@@ -98,7 +98,7 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 
 `current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
 
-### mode="dashboard" (v1.12)
+### mode="dashboard" (v1.12; v1.13 review fixes; v1.14 sync guard)
 
 7-tab multi-section dashboard, optimized for the report tool's `dashboard` action.
 
@@ -106,6 +106,7 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 |-------|------|---------|-------------|
 | company | str | — | Required |
 | consolidado | int | 1 | 1=consolidated, 0=individual |
+| skip_sync | bool | False | [v1.14] Bypass sync guard (no freshness check, no force-sync) |
 
 **v1.12 tabs:**
 
@@ -136,9 +137,17 @@ The dashboard calls the 5 standalone statement modes (bpa/bpp/dre/dfc/dva) via t
     {"name": "DRE",         "sections": [{"type": "table", ...}, {"type": "chart", ...}]},
     {"name": "DFC",         "sections": [{"type": "table", ...}, {"type": "chart", ...}]},
     {"name": "DVA",         "sections": [{"type": "table", ...}, {"type": "chart", ...}]}
-  ]
+  ],
+  "_sync": {
+    "synced": ["dfp"],
+    "fresh": ["itr", "bridge"],
+    "errors": [],
+    "skipped": []
+  }
 }
 ```
+
+**`_sync` field** [v1.14]: Present when sync guard is active (i.e., `skip_sync` not passed). Shows which sources were force-synced, which were already fresh, which had errors, and which were skipped (via `CVM_SKIP_SYNC=1` env var).
 
 ### mode="bpa" / "bpp" / "dre" / "dfc" / "dva" (v1.12)
 
@@ -209,4 +218,4 @@ skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PET
 
 ---
 
-*Last updated: 2026-07-29 (v1.12 — 5 standalone statement modes + 7-tab dashboard).*
+*Last updated: 2026-07-31 (v1.14 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*

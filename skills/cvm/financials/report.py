@@ -221,6 +221,7 @@ _METRIC_LABELS = {
     "cash_ratio": "Liquidez Imediata", "working_capital": "Capital de Giro",
     # leverage
     "debt_equity": "Dívida/PL", "net_debt_ebitda": "Dív. Líq/EBITDA",
+    "dl_ebit": "Dív. Líq/EBIT",
     "interest_coverage": "Cobertura Juros", "cash_flow_to_debt": "FCO/Dívida",
     # efficiency
     "asset_turnover": "Giro do Ativo",
@@ -232,7 +233,8 @@ _METRIC_LABELS = {
     "retention_ratio": "Taxa de Retenção",
     "sustainable_growth": "Crescimento Sustentável",
     # valuation
-    "ev_ebitda": "EV/EBITDA", "ev_fcf": "EV/FCF", "ev_sales": "EV/Sales",
+    "ev_ebitda": "EV/EBITDA", "ev_ebit": "EV/EBIT",
+    "ev_fcf": "EV/FCF", "ev_sales": "EV/Sales",
     "p_ebit": "P/EBIT", "p_fcf": "P/FCF", "p_fco": "P/FCO",
     "graham_number": "Graham Number",
     "price_to_tangible_book": "P/VPA Tangível",

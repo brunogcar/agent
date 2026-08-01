@@ -170,6 +170,24 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 [v1.4] In `metrics.py`, by contrast, the engine-backed variants' imports (`ebit_at`, `da_at`, `revenue_at`, `ttm_earnings_at`, `operating_cf_at`, `investing_cf_at`, `financing_cf_at`) were moved to module top-level in a `[v1.4-financials-migration]` block. This is intentional: `metrics.py` is imported lazily by the per-period modes (`modes/quarterly.py`, `modes/annual.py`, `modes/complete.py`) only when needed, and at that point `PLANNER_MODEL` is already set (financials' conftest sets it at import time). Moving the imports to module top makes the dependency explicit + mockable as `skills.cvm.financials.metrics.<fn>_at` (which is how `test_metrics.py` patches them). Engine calls inside the variants are still wrapped in `_safe_engine_call` (returns None on any error) so a missing DB degrades gracefully.
 
+## Dashboard Architecture (v1.12 + v1.13 + v1.14)
+
+**v1.12** — 7-tab dashboard (Overview / Indicadores / Crescimento / Balanço / DRE / DFC / DVA):
+- `dashboard.py` is a thin composition mode — calls `annual()`, `quarterly()`, `compute_all_ratios()`, and 5 standalone statement modes (bpa/bpp/dre/dfc/dva).
+- `report.py` contains section builders (`build_overview_kpis`, `build_indicadores_section`, `build_crescimento_sections`, `build_balanco_section`, `build_dre_sections`, `build_dfc_sections`, `build_dva_sections`).
+- Each statement-mode call is wrapped in `_safe_call()` — a failure degrades the corresponding tab to an error text section.
+- Section types: `table`, `chart`, `ratio_grid`, `subtabs`, `collapsible`, `text`.
+
+**v1.13** — Review fixes:
+- Indicadores tab split into sub-tabs by category (Valuation / Rentabilidade / Liquidez / Endividamento / Eficiência / Crescimento / Tributos).
+- DVA doughnut chart shows tooltip percentages via `_tooltipPercent` flag.
+- Crescimento tab uses `growth_helpers.growth_at()` with period-specific gap tolerance.
+
+**v1.14** — Sync guard + print output:
+- `REQUIRED_SOURCES = ["dfp", "itr", "bridge"]` wired via `make_route()`.
+- `route()` calls `ensure_fresh()` before dispatch — force-syncs stale sources.
+- 11 `[financials]` print statements showing progress (start, fetch annual, fetch quarterly, computing ratios, 5x statement fetch, build, done).
+
 ---
 
-*Last updated: 2026-07-29 (v1.12 — 5 standalone statement modes + 7-tab dashboard reorg; see CHANGELOG.md for details). Public API + per-period mode behavior unchanged for the 5 pre-existing modes (quarterly / annual / complete / summary). The 5 new statement modes (bpa/bpp/dre/dfc/dva) are additive — thin wrappers over `complete(grupo=...)`.*
+*Last updated: 2026-07-31 (v1.14 — sync guard + review fixes + dashboard reorg). See [CHANGELOG.md](CHANGELOG.md) for version history.*

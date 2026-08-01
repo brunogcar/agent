@@ -55,4 +55,4 @@
 
 ---
 
-*Last updated: 2026-07-29 (v1.12 — 5 standalone statement modes + 7-tab dashboard reorg).*
+*Last updated: 2026-07-31 (v1.14 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*

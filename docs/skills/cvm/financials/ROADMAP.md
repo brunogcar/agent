@@ -12,9 +12,10 @@
 | P2 | F4 — Period selector | TTM toggle plumbing (annual/TTM/quarterly dropdown) |
 | P3 | F5 — Cross-skill dashboard | Unified company profile (financials + valuation + governance + insider) |
 | P2 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
-| Next | Backtest/Historical/Investsite dashboard reorg | Apply v1.12 dashboard pattern to 3 more skills |
 | Done | F7 — Engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
 | Done | Force sync guard (v1.14) | `ensure_fresh()` + HEAD check + current-year force sync |
+| Done | Review-fix sprint (v1.13) | Subtab charts, PL zero-value trap, growth gap tolerance, Indicadores subtabs, DVA % |
+| Done | Dashboard reorg (v1.12) | 5→7 tabs, 5 standalone statement modes, charts, subtabs, ratio_grid |
 
 > **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
