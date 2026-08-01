@@ -330,3 +330,117 @@ def build_trend_section(summaries: dict,
             "metrics scaled to percentages; ratio-kind shown as raw multiples."
         ),
     }
+
+
+# ── Percentile bar chart (v2.0) ──────────────────────────────────────────────
+
+def build_percentile_chart(summaries: dict, quartiles: dict,
+                            metric_defs: list[tuple[str, str, str]]) -> dict | None:
+    """Build a bar chart showing current vs median for each metric.
+
+    A grouped bar chart with 2 datasets per metric:
+      - Current value (teal)
+      - 5Y Median (orange)
+
+    Pct-kind metrics are scaled to percentages; ratio-kind shown as raw
+    multiples. Returns None if no valid data.
+    """
+    labels = []
+    current_vals = []
+    median_vals = []
+    for metric_name, label, unit in metric_defs:
+        s = summaries.get(metric_name) or {}
+        q = quartiles.get(metric_name) or {}
+        if not _ok(s):
+            continue
+        try:
+            spec = resolve_metric(metric_name)
+        except ValueError:
+            continue
+        current = s.get("current", {}).get(spec.ratio_key)
+        median = q.get("median")
+        if current is None and median is None:
+            continue
+        scale = 100.0 if unit == "pct" else 1.0
+        labels.append(label)
+        current_vals.append(_scaled(current, scale))
+        median_vals.append(_scaled(median, scale))
+
+    if not labels:
+        return None
+
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "Current",
+                        "data": current_vals,
+                        "backgroundColor": "#0d9488",
+                    },
+                    {
+                        "label": "5Y Median",
+                        "data": median_vals,
+                        "backgroundColor": "#f59e0b",
+                    },
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {"y": {"ticks": {}}},
+            },
+        },
+    }
+
+
+# ── Ratio grid (v2.0) ────────────────────────────────────────────────────────
+
+# Category labels for the ratio grid.
+_GRID_CATEGORY_LABELS = {
+    "ratio": "Valuation",
+    "pct":   "Profitability",
+}
+
+
+def build_ratio_grid_section(summaries: dict,
+                              metric_defs: list[tuple[str, str, str]]) -> dict:
+    """Build a ratio_grid section showing current vs 1Y/3Y averages.
+
+    Groups metrics by unit_kind (ratio → Valuation, pct → Profitability).
+    Each item shows the metric label + formatted current value.
+    """
+    categories: dict[str, list[dict]] = {}
+    for metric_name, label, unit in metric_defs:
+        s = summaries.get(metric_name) or {}
+        if not _ok(s):
+            continue
+        try:
+            spec = resolve_metric(metric_name)
+        except ValueError:
+            continue
+        current = s.get("current", {}).get(spec.ratio_key)
+        avgs = s.get("averages", {})
+        avg_1y = avgs.get("1y")
+        avg_3y = avgs.get("3y")
+        scale = 100.0 if unit == "pct" else 1.0
+        spec_str = "pct" if unit == "pct" else "num"
+
+        cat_label = _GRID_CATEGORY_LABELS.get(unit, unit.capitalize())
+        categories.setdefault(cat_label, [])
+        categories[cat_label].append({
+            "label": f"{label} (current / 1Y / 3Y)",
+            "value": f"{_fmt(_scaled(current, scale), spec_str)} / "
+                     f"{_fmt(_scaled(avg_1y, scale), spec_str)} / "
+                     f"{_fmt(_scaled(avg_3y, scale), spec_str)}",
+        })
+
+    cats_out = [{"label": k, "items": v} for k, v in categories.items()]
+    return {
+        "title": "Current vs Averages (1Y / 3Y)",
+        "type": "ratio_grid",
+        "categories": cats_out,
+    }

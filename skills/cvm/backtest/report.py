@@ -202,3 +202,66 @@ def build_performance_section(perf: dict) -> dict:
         "columns": columns,
         "rows": rows,
     }
+
+
+# ── Drawdown chart (v1.2) ───────────────────────────────────────────────────
+
+def build_drawdown_section(equity_curve: list) -> dict | None:
+    """Build a Chart.js line chart showing the underwater equity curve (drawdown).
+
+    Drawdown at each point = (equity[i] - running_max) / running_max * 100.
+    Shows how far below the peak the equity is at each point, as a negative
+    percentage. The chart is filled (area chart) to visualize the depth +
+    duration of drawdowns.
+
+    Returns None if the equity curve is empty or has fewer than 2 points.
+    """
+    if not equity_curve or len(equity_curve) < 2:
+        return None
+
+    labels = []
+    drawdowns = []
+    running_max = float("-inf")
+    for pt in equity_curve:
+        eq = pt.get("equity")
+        if eq is None:
+            continue
+        running_max = max(running_max, eq)
+        dd = ((eq - running_max) / running_max * 100) if running_max > 0 else 0
+        labels.append(pt.get("date", ""))
+        drawdowns.append(round(dd, 2))
+
+    if not labels:
+        return None
+
+    return {
+        "title": "Drawdown (Underwater Equity)",
+        "type": "chart",
+        "chart_data": {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Drawdown %",
+                    "data": drawdowns,
+                    "borderColor": "#ef4444",
+                    "backgroundColor": "rgba(239, 68, 68, 0.15)",
+                    "borderWidth": 2,
+                    "tension": 0.3,
+                    "fill": True,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True, "text": "Drawdown (%)"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }

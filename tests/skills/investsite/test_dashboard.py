@@ -139,3 +139,12 @@ class TestDashboardMode:
         r = route(mode="dashboard")
         assert r["status"] == "error"
         assert "ticker is required" in r["error"]
+
+    def test_dashboard_key_indicators_has_chart(self, monkeypatch):
+        """[v1.2] Key Indicators tab has a table + chart section."""
+        _mock_fetches(monkeypatch)
+        r = dashboard(ticker="PETR4")
+        ki_tab = next(t for t in r["tabs"] if t["name"] == "Key Indicators")
+        types = [s.get("type") for s in ki_tab["sections"]]
+        assert "table" in types
+        assert "chart" in types

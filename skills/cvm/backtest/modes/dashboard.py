@@ -31,6 +31,7 @@ from skills.cvm.backtest.report import (
     build_equity_curve_section,
     build_trades_section,
     build_performance_section,
+    build_drawdown_section,
 )
 
 
@@ -96,7 +97,10 @@ def dashboard(
     if not ticker:
         return {"status": "error", "error": "ticker is required"}
 
+    print(f"[backtest] Starting backtest: {ticker} / {strategy}...", flush=True)
+
     # ── Gather underlying data (run() wrapped defensively) ─────────────────
+    print(f"[backtest] Running strategy backtest...", flush=True)
     try:
         run_result = run(
             ticker=ticker,
@@ -120,7 +124,12 @@ def dashboard(
     trades = run_result.get("trades") or []
     equity_curve = run_result.get("equity_curve") or []
 
+    print(f"[backtest] Backtest complete: {len(trades)} trades, "
+          f"{perf.get('num_trades', 0)} total, "
+          f"return={perf.get('total_return_pct', 0):.2f}%", flush=True)
+
     # ── Top-level KPI cards (Overview tab's KPIs) ──────────────────────────
+    print(f"[backtest] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(perf)
 
     # ── Tab 1: Overview -- strategy description + equity curve chart ───────
@@ -132,8 +141,11 @@ def dashboard(
     # ── Tab 2: Trades -- trade log table ───────────────────────────────────
     trades_sections = [build_trades_section(trades)]
 
-    # ── Tab 3: Performance -- performance summary table ────────────────────
+    # ── Tab 3: Performance -- performance summary table + drawdown chart ──
     performance_sections = [build_performance_section(perf)]
+    drawdown = build_drawdown_section(equity_curve)
+    if drawdown:
+        performance_sections.append(drawdown)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) -- the dashboard template
@@ -143,6 +155,7 @@ def dashboard(
         {"name": "Trades",      "sections": trades_sections},
         {"name": "Performance", "sections": performance_sections},
     ]
+    print(f"[backtest] Done! {len(tabs)} tabs, {len(kpis)} KPIs, {len(trades)} trades.", flush=True)
     return {
         "status": "ok",
         "ticker": run_result.get("ticker", ""),

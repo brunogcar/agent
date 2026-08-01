@@ -46,11 +46,11 @@ from skills._base import auto_discover_modes, make_route, build_manifest_modes
 from skills.cvm.historical._registry import MODES  # noqa: F401
 
 # Auto-discover all explicit mode modules from modes/ subdirectory.
-# Each module's @register_mode decorator populates MODES.
-# NOTE: <metric>_history modes were already registered at _registry.py import
-# time by _auto_register_metric_history_modes() — auto_discover_modes only
-# handles the explicit mode files in modes/.
 auto_discover_modes(__name__)
+
+# [v2.0] Data sources this skill needs. The route() wrapper checks freshness
+# before each dispatch and triggers force-sync if any source is stale.
+REQUIRED_SOURCES = ["dfp", "itr", "cotahist", "bridge"]
 
 # Build MANIFEST from the registered modes.
 MANIFEST = {
@@ -61,12 +61,14 @@ MANIFEST = {
         "<metric>_history: daily time series (auto-generated per metric). "
         "ratio_history: any metric over time. "
         "summary: current vs 1Y/3Y/5Y average + percentile. "
-        "dashboard: multi-tab composition (Overview/Percentile Analysis/Trend)."
+        "dashboard: multi-tab composition (Overview/Percentile Analysis/Trend/Ratio Grid)."
     ),
     "source":  "COTAHIST (price) + DFP/ITR (earnings TTM, PL snapshot) + FRE (shares)",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
+    "required_sources": REQUIRED_SOURCES,
 }
 
-# Create the route() dispatcher via the shared factory.
-route = make_route("sub_domain", "historical", MODES)
+# [v2.0] route() with sync guard.
+route = make_route("sub_domain", "historical", MODES,
+                   required_sources=REQUIRED_SOURCES)

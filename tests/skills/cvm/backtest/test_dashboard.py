@@ -135,12 +135,13 @@ class TestDashboardMode:
         assert sec["formats"]["Shares"] == "int"
 
     def test_dashboard_performance_tab_has_summary(self, monkeypatch):
-        """Performance tab has a Performance Summary table with all metrics."""
+        """Performance tab has a Performance Summary table + drawdown chart."""
         _patch_run_environment(monkeypatch)
         r = dashboard(ticker="PETR4", strategy="value_pe",
                       start_date="2023-01-01", end_date="2023-02-28")
         perf_tab = next(t for t in r["tabs"] if t["name"] == "Performance")
-        assert len(perf_tab["sections"]) == 1
+        # [v1.2] Now has table + drawdown chart (was 1, now >= 1)
+        assert len(perf_tab["sections"]) >= 1
         sec = perf_tab["sections"][0]
         assert sec["title"] == "Performance Summary"
         assert sec["type"] == "table"
@@ -151,6 +152,15 @@ class TestDashboardMode:
                        "Win Rate", "Number of Trades", "Buy & Hold Return",
                        "Alpha vs Buy & Hold"):
             assert metric in rows_text, f"Missing metric: {metric}"
+
+    def test_dashboard_performance_tab_has_drawdown_chart(self, monkeypatch):
+        """[v1.2] Performance tab has a drawdown chart section."""
+        _patch_run_environment(monkeypatch)
+        r = dashboard(ticker="PETR4", strategy="value_pe",
+                      start_date="2023-01-01", end_date="2023-02-28")
+        perf_tab = next(t for t in r["tabs"] if t["name"] == "Performance")
+        types = [s.get("type") for s in perf_tab["sections"]]
+        assert "chart" in types
 
     def test_dashboard_propagates_run_failure(self, monkeypatch):
         """When run() returns not_found (no price data), dashboard returns the

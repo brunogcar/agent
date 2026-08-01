@@ -288,3 +288,54 @@ def _ok(result: dict) -> bool:
     Mirrors tools.report_ops.adapters._ok: status == "ok" and dict-typed.
     """
     return isinstance(result, dict) and result.get("status") == "ok"
+
+
+# ── Indicator bar chart (v1.2) ──────────────────────────────────────────────
+
+def build_indicator_chart(indicators_result: dict) -> dict | None:
+    """Build a bar chart comparing valuation ratios (P/L, P/VPA, EV/EBITDA).
+
+    A simple bar chart with one bar per valuation ratio. Helps visualize
+    how "expensive" the stock is across different metrics.
+
+    Returns None if no valuation ratios are available.
+    """
+    if not _ok(indicators_result):
+        return None
+
+    sections = indicators_result.get("sections", {}) or {}
+    precos = sections.get("precos_relativos", {}) or {}
+
+    labels = []
+    values = []
+    for label, key in [("P/L", "Preco/Lucro"), ("P/VPA", "Preco/VPA"), ("EV/EBITDA", "EV/EBITDA")]:
+        v = _first_value(precos.get(key))
+        if v is not None:
+            try:
+                labels.append(label)
+                values.append(float(str(v).replace(",", ".")))
+            except (TypeError, ValueError):
+                pass
+
+    if not labels:
+        return None
+
+    return {
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Valuation Ratios",
+                    "data": values,
+                    "backgroundColor": ["#0d9488", "#f59e0b", "#3b82f6"],
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {"y": {"ticks": {}}},
+            },
+        },
+    }

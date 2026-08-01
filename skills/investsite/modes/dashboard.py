@@ -36,6 +36,7 @@ from skills.investsite.report import (
     build_overview_section,
     build_key_indicators_section,
     build_latest_events_section,
+    build_indicator_chart,
 )
 
 
@@ -94,23 +95,31 @@ def dashboard(ticker: str = "") -> dict:
     # an error payload (e.g. ConnectionError, parse failure), the
     # corresponding tab is built from the error payload (sections will be
     # empty or show a status row via the adapter's _error_table fallback).
+    print(f"[investsite] Starting dashboard for {ticker}...", flush=True)
+
     indicators_payload: dict = {}
     try:
+        print(f"[investsite] Fetching indicators from investsite.com.br...", flush=True)
         indicators_payload = indicators(ticker=ticker)
+        print(f"[investsite] Indicators: {'ok' if indicators_payload.get('status') == 'ok' else 'error'}", flush=True)
     except Exception as e:
         indicators_payload = {"status": "error", "error": str(e)}
 
     events_payload: dict = {}
     try:
+        print(f"[investsite] Fetching recent events (Fato Relevante)...", flush=True)
         events_payload = events(
             ticker=ticker,
             categoria="Fato Relevante",
             limit=10,
         )
+        n_events = len(events_payload.get("events", [])) if events_payload.get("status") == "ok" else 0
+        print(f"[investsite] Events: {n_events} found", flush=True)
     except Exception as e:
         events_payload = {"status": "error", "error": str(e)}
 
     # ── Top-level KPI cards (P/L, P/VPA, EV/EBITDA, ROE, Dividend Yield) ───
+    print(f"[investsite] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(indicators_payload)
 
     # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
@@ -118,18 +127,21 @@ def dashboard(ticker: str = "") -> dict:
 
     # ── Tab 2: Key Indicators -- precos_relativos + retornos_margens table ──
     key_indicators_sections = [build_key_indicators_section(indicators_payload)]
+    # [v1.2] Add indicator bar chart (P/L, P/VPA, EV/EBITDA comparison)
+    indicator_chart = build_indicator_chart(indicators_payload)
+    if indicator_chart:
+        key_indicators_sections.append(indicator_chart)
 
     # ── Tab 3: Latest Events -- recent Fato Relevante table ──────────────────
     latest_events_sections = [build_latest_events_section(events_payload)]
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
-    # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
-    # renders them above all tabs via the kpi-grid div.
     tabs = [
         {"name": "Overview",        "sections": overview_sections},
         {"name": "Key Indicators",  "sections": key_indicators_sections},
         {"name": "Latest Events",   "sections": latest_events_sections},
     ]
+    print(f"[investsite] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
 
     # Prefer the indicators() result's ticker (uppercased by indicators());
     # fall back to the events() result, then the input ticker.
