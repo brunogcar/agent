@@ -77,4 +77,4 @@ No own config. Uses:
 
 ---
 
-*Last updated: 2026-07-26 (v1.0 — extracted from historical v2.1).*
+*Last updated: 2026-07-26 (v1.0 — extracted from historical v1.10).*

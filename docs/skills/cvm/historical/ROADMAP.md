@@ -9,11 +9,11 @@
 | P2 | H1 — Trend line charts | Line chart per metric showing 5Y time series |
 | P3 | H2 — More metrics | Add leverage, efficiency, growth to dashboard |
 | P3 | H3 — Export to xlsx | Export percentile + trend tables to Excel |
-| Done | v2.1 dashboard reorg | 3→5 tabs: subtabs by category, F7 speed fix, charts, ratio_grid |
-| Done | Sync guard (v2.1) | required_sources wired via make_route() |
+| Done | v1.14 dashboard reorg | 3→5 tabs: subtabs by category, F7 speed fix, charts, ratio_grid |
+| Done | Sync guard (v1.14) | required_sources wired via make_route() |
 | Done | F7 engine cache (v1.9) | Inherited from calculations skill |
-| Done | Subtabs by category (v2.1) | Valuation / Profitability subtab split |
-| Done | More metrics (v2.1) | Added Marg. Bruta + Marg. Líquida |
+| Done | Subtabs by category (v1.14) | Valuation / Profitability subtab split |
+| Done | More metrics (v1.14) | Added Marg. Bruta + Marg. Líquida |
 
 > **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 

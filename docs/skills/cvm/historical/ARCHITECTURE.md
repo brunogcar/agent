@@ -10,15 +10,15 @@ For the engine/metric library architecture, see [calculations/ARCHITECTURE.md](.
 
 ## 🔗 Source Code Reference
 
-**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+**[v1.13]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
 
 Historical is a thin wrapper — modularized in v1.2 into `_registry.py` + `modes/` + `helpers.py` + `report.py`. The engine/metric library lives in `calculations/`.
 
 | File | Purpose |
 |---|---|
-| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
-| `skills/cvm/historical/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route — modes auto-generated from the metric registry (imported from calculations) |
-| `skills/cvm/historical/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines + `_auto_register_metric_history_modes()` PRESERVED (auto-registers `<metric>_history` modes from calculations `METRICS` — historical-only logic, not in `_base.py`). |
+| `skills/_base.py` | [v1.13] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/cvm/historical/__init__.py` | [v1.13] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route — modes auto-generated from the metric registry (imported from calculations) |
+| `skills/cvm/historical/_registry.py` | [v1.13] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines + `_auto_register_metric_history_modes()` PRESERVED (auto-registers `<metric>_history` modes from calculations `METRICS` — historical-only logic, not in `_base.py`). |
 | `skills/cvm/historical/helpers.py` | Historical-specific helpers (date windowing, freshness wrapping, metric-aware summary rendering) extracted from the old monolithic `historical.py` |
 | `skills/cvm/historical/report.py` | Skill-level report helpers (consumed by adapters) |
 | `skills/cvm/historical/modes/ratio_history.py` | `mode="ratio_history"` — generic dispatch via `resolve_metric()` |
@@ -178,7 +178,7 @@ The `category` field on `EngineSpec` groups engines by financial statement / dat
 
 Before v1.3 (historical version), the registry lived in `metrics/_registry.py` and only handled metrics. Engines had no registry — they were imported by name by metrics. This created an inconsistency: metrics self-registered, but engines didn't.
 
-In v1.3, the registry moved to the **top level** (`skills/cvm/historical/_registry.py` at the time) and handles BOTH engines and metrics. In v1.4.1 (historical), the `category` field was added to `EngineSpec` so engines could be grouped + filtered. In v1.7 (historical), `per_share_*` fields on `MetricSpec` became optional, enabling fundamental-ratio metrics. In v2.2 (Phase 1 refactor), the registry + engines + metrics were extracted from `historical/` into the shared `calculations/` package so other CVM skills can reuse them. This gives:
+In v1.3, the registry moved to the **top level** (`skills/cvm/historical/_registry.py` at the time) and handles BOTH engines and metrics. In v1.4.1 (historical), the `category` field was added to `EngineSpec` so engines could be grouped + filtered. In v1.7 (historical), `per_share_*` fields on `MetricSpec` became optional, enabling fundamental-ratio metrics. In v1.11 (Phase 1 refactor), the registry + engines + metrics were extracted from `historical/` into the shared `calculations/` package so other CVM skills can reuse them. This gives:
 - **Consistent pattern** — both layers self-register via `register_engine()` / `register_metric()`
 - **Single source of truth** — one file holds all specs + auto-discovery logic + category metadata
 - **Engine discoverability** — `list_engines()` + `list_engines(category=...)` enable docs auto-generation + backtest skill discovery by statement type
@@ -464,7 +464,7 @@ tests/skills/cvm/
 └── valuation/test_valuation.py                # Valuation skill
 ```
 
-**Bridge test split (historical v2.0):**
+**Bridge test split (historical v1.13):**
 `test_bridge.py` (968 lines, 42 tests) was split into 4 files under `tests/data_sources/cvm/bridge/`:
 - `conftest.py` — shared fixtures (bridge_db, populated_bridge, dfp_with_bridge)
 - `_helpers.py` — mock factories (_mock_dividends_ok, _patch_cad, etc.)
